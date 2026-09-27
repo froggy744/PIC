@@ -508,7 +508,10 @@ pub fn upsert_photo(
             folder_id,
             metadata.taken_at,
             metadata.camera,
-            metadata.aperture,
+            // Zero records that the file was examined but carried no aperture.
+            // NULL is reserved for rows created before aperture indexing so a
+            // refresh can repair them exactly once.
+            metadata.aperture.or(Some(0.0)),
             metadata.width,
             metadata.height,
             metadata.size_bytes,
@@ -532,14 +535,14 @@ pub fn set_photo_folder(connection: &Connection, path: &str, folder_id: i64) -> 
 
 pub fn photo_fingerprints(
     connection: &Connection,
-) -> Result<std::collections::HashMap<String, (Option<i64>, Option<i64>, Option<i64>, Option<i64>)>>
+) -> Result<std::collections::HashMap<String, (Option<i64>, Option<i64>, Option<i64>, Option<i64>, Option<f64>)>>
 {
     let mut statement =
-        connection.prepare("SELECT path, mtime, size_bytes, width, height FROM photos")?;
+        connection.prepare("SELECT path, mtime, size_bytes, width, height, CAST(aperture AS REAL) FROM photos")?;
     let rows = statement.query_map([], |row| {
         Ok((
             row.get::<_, String>(0)?,
-            (row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?),
+            (row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?),
         ))
     })?;
     Ok(rows.collect::<rusqlite::Result<std::collections::HashMap<_, _>>>()?)
@@ -548,7 +551,7 @@ pub fn photo_fingerprints(
 pub fn photo(connection: &Connection, id: i64) -> Result<Option<Photo>> {
     Ok(connection
         .query_row(
-            "SELECT p.id,p.path,p.folder_id,p.taken_at,p.camera,p.aperture,p.width,p.height,p.size_bytes,p.mtime,p.added_at,p.rotation,p.edit_recipe,p.favorite,p.trashed,f.path
+            "SELECT p.id,p.path,p.folder_id,p.taken_at,p.camera,CAST(p.aperture AS REAL),p.width,p.height,p.size_bytes,p.mtime,p.added_at,p.rotation,p.edit_recipe,p.favorite,p.trashed,f.path
              FROM photos p LEFT JOIN folders f ON f.id = p.folder_id WHERE p.id = ?1",
             [id],
             photo_from_row,
@@ -574,7 +577,7 @@ pub fn photos_limited(
 ) -> Result<Vec<Photo>> {
     let search = search.map(|value| format!("%{}%", value.replace('%', "\\%").replace('_', "\\_")));
     let mut statement = connection.prepare(
-        "SELECT p.id,p.path,p.folder_id,p.taken_at,p.camera,p.aperture,p.width,p.height,p.size_bytes,p.mtime,p.added_at,p.rotation,p.edit_recipe,p.favorite,p.trashed,f.path
+        "SELECT p.id,p.path,p.folder_id,p.taken_at,p.camera,CAST(p.aperture AS REAL),p.width,p.height,p.size_bytes,p.mtime,p.added_at,p.rotation,p.edit_recipe,p.favorite,p.trashed,f.path
          FROM photos p LEFT JOIN folders f ON f.id = p.folder_id
          WHERE p.trashed = 0 AND (?1 IS NULL OR p.folder_id IN
              (WITH RECURSIVE descendants(id) AS (
@@ -617,7 +620,7 @@ pub fn photos_in_album(
 ) -> Result<Vec<Photo>> {
     let search = search.map(|value| format!("%{}%", value.replace('%', "\\%").replace('_', "\\_")));
     let mut statement = connection.prepare(
-        "SELECT p.id,p.path,p.folder_id,p.taken_at,p.camera,p.aperture,p.width,p.height,p.size_bytes,p.mtime,p.added_at,p.rotation,p.edit_recipe,p.favorite,p.trashed,f.path
+        "SELECT p.id,p.path,p.folder_id,p.taken_at,p.camera,CAST(p.aperture AS REAL),p.width,p.height,p.size_bytes,p.mtime,p.added_at,p.rotation,p.edit_recipe,p.favorite,p.trashed,f.path
          FROM album_photos ap
          JOIN photos p ON p.id = ap.photo_id
          LEFT JOIN folders f ON f.id = p.folder_id

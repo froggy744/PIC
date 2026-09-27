@@ -65,7 +65,8 @@ window, .layout-left-column, .navigation-sidebar { background: @window_bg_color;
     }
     .group-heading-bar { background: transparent; padding: 0; }
     .photo-frame { box-shadow: none; }
-    .photo-tile { border-radius: 10px; border: 2px solid transparent; background: alpha(@theme_fg_color, 0.05); box-shadow: none; }
+    /* 10 px at the 300x200 reference tile, scaled continuously with zoom. */
+    .photo-tile { border-radius: 3.333% / 5%; border: 2px solid transparent; background: alpha(@theme_fg_color, 0.05); box-shadow: none; }
     .photo-tile:hover { border-color: alpha(@accent_bg_color, 0.40); box-shadow: none; }
     .folder-photo-flow > flowboxchild { padding: 6px; margin: 0; min-height: 0; background: transparent; background-image: none; box-shadow: none; }
     .folder-photo-flow > flowboxchild:hover,

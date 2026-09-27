@@ -64,7 +64,7 @@ pub fn history_photos(connection: &Connection) -> Result<Vec<Photo>> {
 
 pub fn history_photos_limited(connection: &Connection, limit: i64) -> Result<Vec<Photo>> {
     let mut statement = connection.prepare(
-        "SELECT p.id,p.path,p.folder_id,p.taken_at,p.camera,p.aperture,p.width,p.height,p.size_bytes,p.mtime,p.added_at,p.rotation,p.edit_recipe,p.favorite,p.trashed,f.path,
+        "SELECT p.id,p.path,p.folder_id,p.taken_at,p.camera,CAST(p.aperture AS REAL),p.width,p.height,p.size_bytes,p.mtime,p.added_at,p.rotation,p.edit_recipe,p.favorite,p.trashed,f.path,
                 h.edited_at, c.photo_id IS NOT NULL
          FROM recently_edited h JOIN photos p ON p.id=h.photo_id
          LEFT JOIN folders f ON f.id=p.folder_id

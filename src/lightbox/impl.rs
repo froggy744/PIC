@@ -1192,6 +1192,24 @@ impl Lightbox {
                 "open",
             );
 
+            // The catalog may still contain pre-migration sensor dimensions
+            // for an EXIF-rotated RAW. The clicked thumbnail is already in
+            // display orientation, so use its intrinsic axes to choose the
+            // destination orientation before the animation begins. The full
+            // decode then replaces pixels without changing this geometry.
+            if let Some((_, source_paintable)) = source_for_first_frame.borrow().as_ref() {
+                if let Some(photo) = photos.borrow().get(index.get()) {
+                    set_fit_geometry_from_intrinsic(
+                        &picture,
+                        photo,
+                        root,
+                        zoom.get(),
+                        source_paintable.intrinsic_width(),
+                        source_paintable.intrinsic_height(),
+                    );
+                }
+            }
+
             if let Some((source_widget, source_paintable)) =
                 source_for_first_frame.borrow_mut().take()
             {
@@ -1225,6 +1243,13 @@ impl Lightbox {
                         let end_h = dest_height as f64;
                         let end_x = (root.width() as f64 - end_w) * 0.5;
                         let end_y = (root.height() as f64 - end_h) * 0.5;
+                        viewer_trace(format!(
+                            "open_transition start={start_x:.1},{start_y:.1} {start_w:.1}x{start_h:.1} end={end_x:.1},{end_y:.1} {end_w:.1}x{end_h:.1} root={}x{} picture_request={}x{}",
+                            root.width(),
+                            root.height(),
+                            picture.width_request(),
+                            picture.height_request(),
+                        ));
                         let started = Instant::now();
                         let picture_for_transition = picture.clone();
                         let backdrop = backdrop_for_transition.clone();
@@ -1260,6 +1285,14 @@ impl Lightbox {
                                 }
                                 picture_for_transition.set_opacity(1.0);
                                 backdrop.set_opacity(1.0);
+                                viewer_trace(format!(
+                                    "open_transition complete picture_alloc={}x{} picture_request={}x{} source_backstop={}",
+                                    picture_for_transition.width(),
+                                    picture_for_transition.height(),
+                                    picture_for_transition.width_request(),
+                                    picture_for_transition.height_request(),
+                                    picture_for_transition.paintable().is_some(),
+                                ));
                                 root_for_transition.remove_overlay(transition);
                                 glib::ControlFlow::Break
                             } else {

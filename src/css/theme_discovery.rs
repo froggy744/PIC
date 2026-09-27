@@ -269,6 +269,8 @@ pub(crate) fn resolve_active(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::RefCell;
+    use std::rc::Rc;
 
     fn unique_temp_dir(label: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
@@ -299,6 +301,23 @@ mod tests {
         assert_eq!(metadata.name.as_deref(), Some("Deep Ocean"));
         assert!(metadata.dark);
         assert!(metadata.is_base);
+    }
+
+    #[test]
+    fn standard_theme_scaled_corner_radius_parses() {
+        gtk4::init().unwrap();
+        let css = std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("themes/standard/theme.css"),
+        )
+        .unwrap();
+        let errors = Rc::new(RefCell::new(Vec::new()));
+        let errors_for_signal = errors.clone();
+        let provider = gtk4::CssProvider::new();
+        provider.connect_parsing_error(move |_, _, error| {
+            errors_for_signal.borrow_mut().push(error.to_string());
+        });
+        provider.load_from_data(&css);
+        assert!(errors.borrow().is_empty(), "{:?}", errors.borrow());
     }
 
     #[test]

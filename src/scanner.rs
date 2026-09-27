@@ -166,12 +166,16 @@ fn scan_with_control(
         );
         let existing = indexed.get(&path);
         let fingerprint_matches =
-            existing.is_some_and(|(mtime, size, _, _)| (*mtime, *size) == fingerprint);
+            existing.is_some_and(|(mtime, size, _, _, _)| (*mtime, *size) == fingerprint);
         let missing_raw_dimensions = is_raw(&path)
             && !remote_raw_thumbnail_unsupported(&path)
-            && existing.is_some_and(|(_, _, width, height)| {
+            && existing.is_some_and(|(_, _, width, height, _)| {
                 width.unwrap_or_default() <= 0 || height.unwrap_or_default() <= 0
             });
+        // NULL means the row predates aperture indexing. A zero is the stored
+        // "metadata examined but absent" sentinel and must not re-trigger a
+        // source read on every refresh.
+        let missing_aperture_metadata = existing.is_some_and(|(_, _, _, _, aperture)| aperture.is_none());
         let missing_heif_thumbnail = is_heif(&path)
             && existing.is_some()
             && thumbnail::existing_cache_path(&path, fingerprint.0, fingerprint.1)
@@ -187,6 +191,7 @@ fn scan_with_control(
                 .is_none();
         if fingerprint_matches
             && !missing_raw_dimensions
+            && !missing_aperture_metadata
             && !missing_heif_thumbnail
             && !missing_raw_thumbnail
         {
@@ -496,14 +501,20 @@ fn read_metadata(path: &str, attributes: &gio::FileInfo) -> Result<PhotoMetadata
             _ => None,
         }
     });
-    let aperture = exif.as_ref().and_then(|data| {
-        data.get_field(Tag::FNumber, In::PRIMARY).and_then(|field| match &field.value {
-            Value::Rational(values) => values.first().and_then(|value| {
-                (value.denom != 0).then_some(value.num as f64 / value.denom as f64)
-            }),
-            _ => None,
-        })
-    });
+    let aperture = exif.as_ref().and_then(exif_aperture);
+    // image-rs/rawler report stored sensor axes, while the viewer applies the
+    // EXIF orientation to decoded pixels. Persist display-oriented dimensions
+    // so the shared-element destination has the same aspect ratio before and
+    // after a RAW/JPEG decode completes.
+    let (width, height) = if exif
+        .as_ref()
+        .and_then(exif_orientation_value)
+        .is_some_and(|orientation| matches!(orientation, 5..=8))
+    {
+        (height, width)
+    } else {
+        (width, height)
+    };
     Ok(PhotoMetadata {
         taken_at,
         camera,
@@ -513,6 +524,33 @@ fn read_metadata(path: &str, attributes: &gio::FileInfo) -> Result<PhotoMetadata
         size_bytes: Some(attributes.size()),
         mtime,
     })
+}
+
+fn exif_aperture(exif: &exif::Exif) -> Option<f64> {
+    // RAW cameras often store FNumber outside the primary IFD. Search all
+    // parsed fields, then fall back to the equivalent APEX aperture value.
+    let rational = |tag| {
+        exif.fields().find(|field| field.tag == tag).and_then(|field| match &field.value {
+            Value::Rational(values) => values.first().and_then(|value| {
+                (value.denom != 0).then_some(value.num as f64 / value.denom as f64)
+            }),
+            _ => None,
+        })
+    };
+    rational(Tag::FNumber)
+        .or_else(|| rational(Tag::ApertureValue).map(|value| 2_f64.powf(value / 2.0)))
+        .filter(|value| value.is_finite() && *value > 0.0)
+}
+
+fn exif_orientation_value(exif: &exif::Exif) -> Option<u16> {
+    exif.fields()
+        .find(|field| field.tag == Tag::Orientation)
+        .and_then(|field| match &field.value {
+            Value::Short(values) => values.first().copied(),
+            Value::Long(values) => values.first().copied().map(|value| value as u16),
+            _ => None,
+        })
+        .filter(|orientation| (1..=8).contains(orientation))
 }
 
 fn exif_date(exif: &exif::Exif) -> Option<String> {
@@ -562,6 +600,7 @@ fn is_heif(path: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::BufReader;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
@@ -589,5 +628,18 @@ mod tests {
             .any(|(folder, _)| folder.ends_with("FB-Marianne")));
 
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn configured_raw_fixture_exposes_aperture_and_orientation() {
+        let Ok(path) = std::env::var("PICASA_TEST_RAW_METADATA") else {
+            return;
+        };
+        let file = fs::File::open(path).unwrap();
+        let exif = ExifReader::new()
+            .read_from_container(&mut BufReader::new(file))
+            .unwrap();
+        assert!(exif_aperture(&exif).is_some_and(|value| value > 0.0));
+        assert!(exif_orientation_value(&exif).is_some());
     }
 }

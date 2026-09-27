@@ -21,6 +21,9 @@ Behavior:
 - The temporary transition picture is removed when complete.
 - The fit geometry is fixed before the transition starts; a decode completing
   during or after it must replace pixels only, never trigger a second fit.
+- The clicked thumbnail's already-oriented intrinsic axes resolve legacy RAW
+  sensor dimensions before the destination is calculated, so portrait RAW
+  previews do not change aspect ratio at the decode handoff.
 
 This animation is considered correct and should be preserved.
 

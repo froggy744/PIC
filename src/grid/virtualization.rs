@@ -412,11 +412,11 @@ impl Gallery {
             {
                 return glib::ControlFlow::Break;
             }
-            if this
-                .stable_zoom_anchor
-                .get()
-                .is_none_or(|current| current.photo_id != anchor.photo_id)
-            {
+            let anchor_changed = match this.stable_zoom_anchor.get() {
+                Some(current) => current.photo_id != anchor.photo_id,
+                None => true,
+            };
+            if anchor_changed {
                 return glib::ControlFlow::Break;
             }
 

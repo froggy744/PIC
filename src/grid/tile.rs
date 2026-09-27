@@ -96,6 +96,12 @@ const FILENAME_CAPTION_HEIGHT: i32 = 24;
 /// the top and bottom edge of the grid item or Folder line.
 const TILE_ROW_SPACING: i32 = 12;
 
+/// Margin every folder tile keeps around its thumbnail (the padding the old
+/// FlowBoxChild supplied). GTK adds it to the tile's placed position, so a
+/// section heading needs the same margin to line up with the first column
+/// instead of sitting 6 px to its left.
+pub(crate) const FOLDER_ITEM_MARGIN: i32 = 6;
+
 thread_local! {
     static FILENAME_LABEL_TRACE_STATS: RefCell<(u64, u128, u128)> =
         const { RefCell::new((0, 0, 0)) };

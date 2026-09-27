@@ -215,10 +215,10 @@ fn make_folder_tile(
     tile.set_hexpand(true);
     tile.set_vexpand(false);
     tile.set_valign(gtk::Align::Start);
-    tile.set_margin_start(6);
-    tile.set_margin_end(6);
-    tile.set_margin_top(6);
-    tile.set_margin_bottom(6);
+    tile.set_margin_start(FOLDER_ITEM_MARGIN);
+    tile.set_margin_end(FOLDER_ITEM_MARGIN);
+    tile.set_margin_top(FOLDER_ITEM_MARGIN);
+    tile.set_margin_bottom(FOLDER_ITEM_MARGIN);
     tile.set_focusable(true);
 
     tile

@@ -871,6 +871,17 @@ impl SectionedFolderView {
             }
         }
 
+        // Headings belong to the first tile column, not to the fixed side
+        // margin. The tile grid centers itself whenever spare width remains
+        // (the smallest zoom levels clamp the column count, so a lot of width
+        // is left over in fullscreen), and a margin-pinned title slid away
+        // from its own row as the window or zoom level changed (issue #104).
+        let (heading_x, _) = self.horizontal_grid_metrics(width);
+        let heading_width = (width
+            - heading_x.ceil() as i32
+            - FOLDER_ITEM_MARGIN
+            - SECTIONED_SIDE_MARGIN as i32)
+            .max(1);
         for section_index in wanted_headers {
             let existing = {
                 let live = self.live_headers.borrow();
@@ -888,6 +899,9 @@ impl SectionedFolderView {
                         let label = gtk::Label::new(None);
                         label.set_xalign(0.0);
                         label.set_yalign(0.5);
+                        // Same margin as the tiles: the heading is placed at the
+                        // column position, and GTK offsets a child by its margin.
+                        label.set_margin_start(FOLDER_ITEM_MARGIN);
                         label.add_css_class("section-heading");
                         label.add_css_class("folder-section-heading");
                         label
@@ -898,19 +912,16 @@ impl SectionedFolderView {
                     range.label,
                     range.end.saturating_sub(range.start)
                 ));
-                self.root.put(&label, SECTIONED_SIDE_MARGIN, 0.0);
+                self.root.put(&label, heading_x, 0.0);
                 self.live_headers
                     .borrow_mut()
                     .insert(section_index, label.clone());
                 label
             };
-            label.set_size_request(
-                (width - (SECTIONED_SIDE_MARGIN * 2.0) as i32).max(1),
-                SECTIONED_HEADER_HEIGHT as i32,
-            );
+            label.set_size_request(heading_width, SECTIONED_HEADER_HEIGHT as i32);
             if !self.reflow_active.get() || !header_was_existing {
                 self.root
-                    .move_(&label, SECTIONED_SIDE_MARGIN, geometry[section_index].header_y);
+                    .move_(&label, heading_x, geometry[section_index].header_y);
             }
         }
         drop(geometry);
@@ -1169,7 +1180,7 @@ impl SectionedFolderView {
         layer.queue_draw();
         for (section, label) in self.live_headers.borrow().iter() {
             if let Some(frame) = presentation.layout.sections.get(*section) {
-                self.root.move_(label, SECTIONED_SIDE_MARGIN, frame.header_y);
+                self.root.move_(label, presentation.layout.left, frame.header_y);
             }
         }
         self.strip_presentation.replace(Some(presentation));
@@ -1633,7 +1644,8 @@ mod section_lookup_tests {
                 saw_split |= slices.iter().any(|slice| !seen.insert(slice.index));
                 for (section, header) in view.live_headers.borrow().iter() {
                     let (x, y) = view.root.child_position(header);
-                    assert_eq!(x, SECTIONED_SIDE_MARGIN);
+                    // Headings track the centered tile column, never the margin.
+                    assert_eq!(x, presentation.layout.left);
                     assert!((y - presentation.layout.sections[*section].header_y).abs() < 0.01);
                 }
                 assert!(before.is_subset(&view.live_tiles.borrow().keys().copied().collect()));
@@ -1718,6 +1730,112 @@ mod section_lookup_tests {
         assert!(scroll.vadjustment().upper() <= scroll.vadjustment().page_size() + 1.0);
         view.refresh_model();
         assert!(view.strip_layer.borrow().is_none());
+        window.close();
+    }
+
+    /// Issue #104: on a fullscreen-sized surface the tile grid centers itself
+    /// (the smallest zoom levels clamp the column count and leave real spare
+    /// width). Headings used to stay pinned to `SECTIONED_SIDE_MARGIN`, so they
+    /// slid away from their own first row as the zoom level changed.
+    #[test]
+    #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+    fn section_headings_sit_above_the_first_tile_column() {
+        fn settle(milliseconds: u64) {
+            let context = glib::MainContext::default();
+            let until = Instant::now() + std::time::Duration::from_millis(milliseconds);
+            while Instant::now() < until {
+                while context.pending() {
+                    context.iteration(false);
+                }
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+        }
+
+        gtk::init().unwrap();
+        let gallery = Rc::new(Gallery::new(&[], 120, |_| {}, |_, _, _| {}, |_, _, _, _| {}, |_, _| {}, |_| {}));
+        gallery.group_mode.set(GroupMode::Folder);
+        let sample_root = std::env::current_dir().unwrap().join("samples");
+        gallery.current_photos.replace((1..=96_i64).map(|id| {
+            let path = sample_root.join(format!("ZoomOUT-{}.jpg", id % 30 + 1));
+            let folder_id = if id <= 48 { 1_i64 } else { 2_i64 };
+            glib::Object::builder::<PhotoObject>()
+                .property("id", id)
+                .property("path", path.to_string_lossy().to_string())
+                .property("cached-thumbnail-path", path.to_string_lossy().to_string())
+                .property("thumbnail-available", true)
+                .property("filename", format!("photo-{id:03}.jpg"))
+                .property("folder-id", folder_id)
+                .property("folder-path", format!("/zoom-align-test/folder-{folder_id}"))
+                .property("original-available", true)
+                .build()
+        }).collect());
+        gallery.rebuild_group_ranges();
+
+        let scroll = gtk::ScrolledWindow::builder()
+            .child(&gallery.folder_sectioned_root)
+            .build();
+        gallery.attach_sectioned_folder_scroll(&scroll);
+        let window = gtk::Window::builder()
+            .title("issue-104-heading-alignment-test")
+            .default_width(2400)
+            .default_height(900)
+            .child(&scroll)
+            .build();
+        window.present();
+        settle(200);
+        scroll.vadjustment().set_value(0.0);
+
+        let view = &gallery.sectioned_folder;
+        let mut exercised_centered_grid = false;
+        for (columns, tile) in [(12_u32, 100_i32), (8, 219), (6, 300)] {
+            gallery.current_columns.set(columns);
+            gallery.tile_width.set(tile);
+            gallery.tile_height.set(tile * 2 / 3);
+
+            // gtk::Fixed only reports a queued move once the next layout pass
+            // has run, so remap the window and read until the positions stop
+            // changing instead of trusting the first value.
+            let mut last = (f64::NAN, f64::NAN);
+            for _ in 0..8 {
+                view.refresh();
+                window.hide();
+                window.present();
+                settle(150);
+                let tiles_x = view
+                    .live_tiles
+                    .borrow()
+                    .values()
+                    .map(|entry| view.root.child_position(&entry.tile).0)
+                    .fold(f64::INFINITY, f64::min);
+                let heading_x = view
+                    .live_headers
+                    .borrow()
+                    .values()
+                    .map(|header| view.root.child_position(header).0)
+                    .fold(f64::INFINITY, f64::min);
+                let current = (tiles_x, heading_x);
+                if current == last {
+                    break;
+                }
+                last = current;
+            }
+            let (first_column_x, heading_x) = last;
+
+            assert!(first_column_x.is_finite(), "columns={columns}: no realized tiles");
+            assert!(heading_x.is_finite(), "columns={columns}: no realized heading");
+            // The grid has to be centered (off the side margin) for this case
+            // to say anything about the fullscreen drift from issue #104.
+            exercised_centered_grid |=
+                first_column_x > SECTIONED_SIDE_MARGIN + f64::from(FOLDER_ITEM_MARGIN);
+            assert_eq!(
+                heading_x, first_column_x,
+                "columns={columns} tile={tile}: heading x={heading_x}, first column x={first_column_x}"
+            );
+        }
+        assert!(
+            exercised_centered_grid,
+            "every case landed on the side margin, so this run never exercised the centered grid"
+        );
         window.close();
     }
 

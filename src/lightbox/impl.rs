@@ -138,8 +138,6 @@ impl Lightbox {
         let last_height = Rc::new(Cell::new(0i32));
         let zoom = Rc::new(Cell::new(0.0)); // 0 means fit-to-window
         let zoom_before_one_to_one = Rc::new(Cell::new(0.0));
-        let zoom_center_source: Rc<RefCell<Option<glib::SourceId>>> =
-            Rc::new(RefCell::new(None));
         let load_generation = Rc::new(Cell::new(0u64));
         let decode_cancel: Rc<RefCell<Option<Arc<ViewerRequestLease>>>> = Rc::new(RefCell::new(None));
         let key_navigation_ready = Rc::new(Cell::new(true));
@@ -200,12 +198,8 @@ impl Lightbox {
         let zoom_for_visibility = zoom.clone();
         let picture_for_visibility = picture.clone();
         let viewport_for_visibility = picture_viewport.clone();
-        let zoom_center_source_for_visibility = zoom_center_source.clone();
         root.connect_visible_notify(move |root| {
             if !root.is_visible() {
-                if let Some(source) = zoom_center_source_for_visibility.borrow_mut().take() {
-                    source.remove();
-                }
                 let mut child = root.first_child();
                 while let Some(widget) = child {
                     child = widget.next_sibling();
@@ -725,7 +719,6 @@ impl Lightbox {
             last_height,
             zoom,
             zoom_before_one_to_one,
-            zoom_center_source,
             one_to_one_active,
             native_texture,
             display_texture_cache,
@@ -787,7 +780,6 @@ impl Lightbox {
         let fit_scale = presentation_fit_scale(&photo, self.root.width(), self.root.height());
 
         if native_scale <= 0.0 || native_scale <= fit_scale * 1.001 {
-            self.cancel_pending_slider_center();
             self.zoom.set(0.0);
             fit_picture(
                 &self.picture,
@@ -818,8 +810,6 @@ impl Lightbox {
             self.root.height(),
             self.zoom.get(),
         );
-        self.schedule_slider_center();
-
         if notify_zoom_sync {
             if let Some(handler) = self.zoom_sync.borrow().as_ref() {
                 handler(native_scale);
@@ -827,38 +817,14 @@ impl Lightbox {
         }
     }
 
-    fn cancel_pending_slider_center(&self) {
-        if let Some(source) = self.zoom_center_source.borrow_mut().take() {
-            source.remove();
+    /// Recenter the current lightbox photo after an external continuous zoom
+    /// gesture settles. The slider deliberately does not call this per frame:
+    /// resizing and changing scroll adjustments in alternating frames caused
+    /// the visible photo to shake.
+    pub fn center_manual_zoom(&self) {
+        if self.root.is_visible() && self.zoom.get() > 0.0 {
+            center_viewport_soon(&self.picture_viewport);
         }
-    }
-
-    fn schedule_slider_center(&self) {
-        if self.zoom_center_source.borrow().is_some() {
-            return;
-        }
-
-        let viewport = self.picture_viewport.clone();
-        let root = self.root.clone();
-        let source_slot = self.zoom_center_source.clone();
-        let source = glib::timeout_add_local_once(Duration::from_millis(16), move || {
-            source_slot.borrow_mut().take();
-            if !root.is_visible() {
-                return;
-            }
-
-            let horizontal = viewport.hadjustment();
-            let vertical = viewport.vadjustment();
-            let max_h = (horizontal.upper() - horizontal.page_size()).max(horizontal.lower());
-            let max_v = (vertical.upper() - vertical.page_size()).max(vertical.lower());
-            horizontal.set_value(
-                horizontal.lower() + (max_h - horizontal.lower()) * 0.5,
-            );
-            vertical.set_value(
-                vertical.lower() + (max_v - vertical.lower()) * 0.5,
-            );
-        });
-        self.zoom_center_source.replace(Some(source));
     }
 
     pub fn current_fit_scale(&self) -> f64 {
@@ -895,8 +861,6 @@ impl Lightbox {
     /// Toggle native-pixel presentation while remembering the previous zoom.
     /// A negative zoom is reserved for this temporary 1:1 mode.
     pub fn set_one_to_one(&self, enabled: bool) {
-        self.cancel_pending_slider_center();
-
         if self.one_to_one_active.get() == enabled {
             return;
         }
@@ -1012,7 +976,6 @@ impl Lightbox {
         }
 
         self.index.set(selected.min(len - 1));
-        self.cancel_pending_slider_center();
         self.zoom.set(0.0);
         self.zoom_before_one_to_one.set(0.0);
         self.one_to_one_active.set(false);

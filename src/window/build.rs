@@ -2644,8 +2644,11 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let pending_lightbox_slider_scale = Rc::new(Cell::new(None::<f64>));
     let pending_lightbox_slider_source: Rc<RefCell<Option<glib::SourceId>>> =
         Rc::new(RefCell::new(None));
+    let pending_lightbox_center_source: Rc<RefCell<Option<glib::SourceId>>> =
+        Rc::new(RefCell::new(None));
     let pending_lightbox_slider_scale_for_change = pending_lightbox_slider_scale.clone();
     let pending_lightbox_slider_source_for_change = pending_lightbox_slider_source.clone();
+    let pending_lightbox_center_source_for_change = pending_lightbox_center_source.clone();
 
     info.grid_zoom.connect_value_changed(move |scale| {
         if grid_zoom_syncing_for_slider.get() {
@@ -2680,6 +2683,25 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 );
                 pending_lightbox_slider_source_for_change.replace(Some(source));
             }
+
+            // Recenter only after slider motion has stopped. Re-centering on
+            // every zoom frame made GtkScrolledWindow adjustments fight the
+            // changing child size and produced the visible shake.
+            if let Some(source) = pending_lightbox_center_source_for_change.borrow_mut().take() {
+                source.remove();
+            }
+            let lightbox = lightbox_for_zoom_slider.clone();
+            let center_slot = pending_lightbox_center_source_for_change.clone();
+            let source = glib::timeout_add_local_once(
+                std::time::Duration::from_millis(120),
+                move || {
+                    center_slot.borrow_mut().take();
+                    if lightbox.root.is_visible() {
+                        lightbox.center_manual_zoom();
+                    }
+                },
+            );
+            pending_lightbox_center_source_for_change.replace(Some(source));
         } else if main_stack_for_zoom_slider.visible_child_name().as_deref() == Some("edit") {
             let previous = slider_last_value_for_change.get();
             if let Some(editor) = edit_editor_for_zoom_slider.borrow().as_ref() {
@@ -2724,6 +2746,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let slider_last_value_for_visibility = slider_last_value.clone();
     let pending_lightbox_slider_scale_for_visibility = pending_lightbox_slider_scale.clone();
     let pending_lightbox_slider_source_for_visibility = pending_lightbox_slider_source.clone();
+    let pending_lightbox_center_source_for_visibility = pending_lightbox_center_source.clone();
     lightbox.root.connect_visible_notify(move |root| {
         grid_zoom_syncing_for_visibility.set(true);
         if root.is_visible() {
@@ -2744,6 +2767,12 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         } else {
             pending_lightbox_slider_scale_for_visibility.set(None);
             if let Some(source) = pending_lightbox_slider_source_for_visibility
+                .borrow_mut()
+                .take()
+            {
+                source.remove();
+            }
+            if let Some(source) = pending_lightbox_center_source_for_visibility
                 .borrow_mut()
                 .take()
             {

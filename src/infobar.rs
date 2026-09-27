@@ -88,9 +88,9 @@ impl InfoBar {
         for (label, value) in [
             ("Taken", "—"),
             ("Camera", "—"),
-            ("Aperture", "—"),
             ("Dimensions", "—"),
             ("Size", "—"),
+            ("Aperture", "—"),
         ] {
             let metric = gtk::Box::new(gtk::Orientation::Vertical, 1);
             let key = gtk::Label::new(Some(label));
@@ -326,9 +326,9 @@ impl InfoBar {
             [
                 formatted_date,
                 camera,
-                format_aperture(aperture).unwrap_or_default(),
                 dimensions,
                 size,
+                format_aperture(aperture).unwrap_or_default(),
             ],
         );
 

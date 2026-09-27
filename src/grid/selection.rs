@@ -390,15 +390,19 @@ impl Gallery {
         }
     }
 
-    pub fn update_dimensions(&self, id: i64, width: Option<i64>, height: Option<i64>) {
+    /// Refresh all catalog metadata on an existing grid object after a scan.
+    ///
+    /// A metadata repair can discover more than dimensions (for example RAW
+    /// aperture). Updating only width/height leaves both the selected object
+    /// and its infobar stale until the entire view is rebuilt.
+    pub fn update_photo(&self, updated: &Photo) {
         if let Some(photo) = self
             .current_photos
             .borrow()
             .iter()
-            .find(|photo| photo.id() == id)
+            .find(|photo| photo.id() == updated.id)
         {
-            photo.set_width(width.unwrap_or_default());
-            photo.set_height(height.unwrap_or_default());
+            photo.set_from_photo(updated);
         }
     }
 

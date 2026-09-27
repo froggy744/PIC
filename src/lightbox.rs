@@ -381,6 +381,7 @@ pub struct Lightbox {
     index: Rc<Cell<usize>>,
     last_width: Rc<Cell<i32>>,
     last_height: Rc<Cell<i32>>,
+    opening_fit_pending: Rc<Cell<bool>>,
     zoom: Rc<Cell<f64>>,
     zoom_before_one_to_one: Rc<Cell<f64>>,
     // Last native-image scale written by the manual zoom path, so a control

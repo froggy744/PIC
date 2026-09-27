@@ -137,6 +137,7 @@ impl Lightbox {
         let index = Rc::new(Cell::new(0usize));
         let last_width = Rc::new(Cell::new(0i32));
         let last_height = Rc::new(Cell::new(0i32));
+        let opening_fit_pending = Rc::new(Cell::new(false));
         let zoom = Rc::new(Cell::new(0.0)); // 0 means fit-to-window
         let zoom_before_one_to_one = Rc::new(Cell::new(0.0));
         let applied_native_scale = Rc::new(Cell::new(APPLIED_SCALE_UNKNOWN));
@@ -314,10 +315,17 @@ impl Lightbox {
         let index_for_fit = index.clone();
         let last_width_for_fit = last_width.clone();
         let last_height_for_fit = last_height.clone();
+        let opening_fit_pending_for_fit = opening_fit_pending.clone();
         let zoom_for_fit = zoom.clone();
 
         root.add_tick_callback(move |root, _| {
             if !root.is_visible() {
+                return glib::ControlFlow::Continue;
+            }
+            // The one-shot opening callback owns geometry until it has used
+            // the clicked thumbnail's oriented axes. The generic resize path
+            // has only catalog dimensions while the decode is pending.
+            if opening_fit_pending_for_fit.get() {
                 return glib::ControlFlow::Continue;
             }
 
@@ -769,6 +777,7 @@ impl Lightbox {
             index,
             last_width,
             last_height,
+            opening_fit_pending,
             zoom,
             zoom_before_one_to_one,
             applied_native_scale,
@@ -1092,6 +1101,7 @@ impl Lightbox {
         notify_photo_changed(&self.photo_changed, &self.photos.borrow(), self.index.get());
         self.last_width.set(0);
         self.last_height.set(0);
+        self.opening_fit_pending.set(true);
         let generation = self.load_generation.get().wrapping_add(1);
         self.load_generation.set(generation);
 
@@ -1144,6 +1154,9 @@ impl Lightbox {
         let native_texture = self.native_texture.clone();
         let display_texture_cache = self.display_texture_cache.clone();
         let backdrop_for_transition = self.backdrop.clone();
+        let last_width_for_open = self.last_width.clone();
+        let last_height_for_open = self.last_height.clone();
+        let opening_fit_pending_for_open = self.opening_fit_pending.clone();
         let source_for_transition = Rc::new(RefCell::new(source));
         let source_for_first_frame = source_for_transition.clone();
         self.root.add_tick_callback(move |root, _| {
@@ -1209,6 +1222,16 @@ impl Lightbox {
                     );
                 }
             }
+
+            // The one-shot opening callback has now fitted the real picture
+            // for this exact viewport. Mark that allocation as handled before
+            // the persistent resize callback runs. Otherwise that callback
+            // performs a second fit from stale catalog axes while the real
+            // paintable is still empty, overwriting the source-oriented RAW
+            // destination during the 200 ms transition.
+            last_width_for_open.set(root.width());
+            last_height_for_open.set(root.height());
+            opening_fit_pending_for_open.set(false);
 
             if let Some((source_widget, source_paintable)) =
                 source_for_first_frame.borrow_mut().take()

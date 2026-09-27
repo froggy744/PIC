@@ -3960,13 +3960,19 @@ fn start_photo_export_single(
                         {
                             pending_photos.push_back(photo.clone());
                         } else if !newly_discovered {
-                            gallery_for_events.update_dimensions(photo.id, photo.width, photo.height);
+                            gallery_for_events.update_photo(photo);
                             if selected_photo_for_events
                                 .borrow()
                                 .as_ref()
                                 .is_some_and(|selected| selected.id() == photo.id)
                             {
                                 let selected = selected_photo_for_events.borrow().clone();
+                                // Folder refreshes deliberately avoid a full
+                                // gallery rebuild. Keep an independently held
+                                // selected object current as well.
+                                if let Some(selected) = selected.as_ref() {
+                                    selected.set_from_photo(photo);
+                                }
                                 info_for_events.set_photo(selected.as_ref());
                             }
                         }

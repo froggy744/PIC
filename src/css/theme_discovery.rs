@@ -304,7 +304,7 @@ mod tests {
     }
 
     #[test]
-    fn standard_theme_scaled_corner_radius_parses() {
+    fn standard_theme_corner_radius_parses() {
         gtk4::init().unwrap();
         let css = std::fs::read_to_string(
             Path::new(env!("CARGO_MANIFEST_DIR")).join("themes/standard/theme.css"),

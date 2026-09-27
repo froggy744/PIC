@@ -24,6 +24,9 @@ Behavior:
 - The clicked thumbnail's already-oriented intrinsic axes resolve legacy RAW
   sensor dimensions before the destination is calculated, so portrait RAW
   previews do not change aspect ratio at the decode handoff.
+- The opening frame records its fitted viewport before the normal resize
+  callback can run, preventing that callback from overwriting the oriented
+  destination while the decoded paintable is still pending.
 
 This animation is considered correct and should be preserved.
 

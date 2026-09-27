@@ -914,15 +914,18 @@ impl Lightbox {
             } else {
                 next
             };
-            this.apply_manual_zoom_scale(apply_scale, false);
+            // When settled, apply the exact destination once. Otherwise apply
+            // the interpolated frame. The old code applied both in the same
+            // frame, causing a duplicate geometry/layout pass at the end of
+            // every slider movement.
+            let frame_scale = if settled {
+                if target_raw <= 0.0 { 0.0 } else { target }
+            } else {
+                apply_scale
+            };
+            this.apply_manual_zoom_scale(frame_scale, false);
 
             if settled {
-                if target_raw <= 0.0 {
-                    this.apply_manual_zoom_scale(0.0, false);
-                } else {
-                    this.apply_manual_zoom_scale(target, false);
-                }
-
                 this.slider_zoom_tick_active.set(false);
                 if !this.slider_zoom_input_active.get() {
                     center_viewport_now(&this.picture_viewport);

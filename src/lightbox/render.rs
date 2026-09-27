@@ -759,7 +759,12 @@ fn reset_viewport(viewport: &gtk::ScrolledWindow) {
 
 fn center_adjustment(adjustment: &gtk::Adjustment) {
     let max = (adjustment.upper() - adjustment.page_size()).max(adjustment.lower());
-    adjustment.set_value(adjustment.lower() + (max - adjustment.lower()) * 0.5);
+    // Keep the scroll origin on an integer device-pixel boundary. Exact
+    // mathematical centring can land on x.5 whenever the child/page overflow
+    // is odd, which makes the resampled image alternate between two subpixel
+    // phases while zooming and looks like a small shake.
+    let centered = adjustment.lower() + (max - adjustment.lower()) * 0.5;
+    adjustment.set_value(centered.round());
 }
 
 fn center_viewport_now(viewport: &gtk::ScrolledWindow) {

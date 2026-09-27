@@ -757,6 +757,20 @@ fn reset_viewport(viewport: &gtk::ScrolledWindow) {
     vertical.set_value(vertical.lower());
 }
 
+fn load_slider_zoom_css(provider: &gtk::CssProvider, factor: f64, animate: bool) {
+    let factor = factor.clamp(0.05, 16.0);
+    let duration = if animate { 45 } else { 0 };
+    provider.load_from_data(&format!(
+        "#lightbox-zoom-picture {{ \
+            transform: scale({factor:.8}); \
+            transform-origin: center; \
+            transition-property: transform; \
+            transition-duration: {duration}ms; \
+            transition-timing-function: linear; \
+        }}"
+    ));
+}
+
 fn center_adjustment(adjustment: &gtk::Adjustment) {
     let max = (adjustment.upper() - adjustment.page_size()).max(adjustment.lower());
     // Keep the scroll origin on an integer device-pixel boundary. Exact

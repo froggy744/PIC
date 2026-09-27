@@ -24,7 +24,22 @@ impl Lightbox {
         picture.set_halign(gtk::Align::Center);
         picture.set_valign(gtk::Align::Center);
         picture.set_can_target(true);
+        picture.set_overflow(gtk::Overflow::Visible);
+        picture.set_widget_name("lightbox-zoom-picture");
         picture.add_css_class("lightbox-picture");
+
+        // Slider dragging uses a render-only CSS transform. This deliberately
+        // does not change GtkPicture's requested size or ScrolledWindow ranges;
+        // the real geometry is committed once when slider input settles.
+        let slider_zoom_css = gtk::CssProvider::new();
+        load_slider_zoom_css(&slider_zoom_css, 1.0, false);
+        if let Some(display) = gtk::gdk::Display::default() {
+            gtk::style_context_add_provider_for_display(
+                &display,
+                &slider_zoom_css,
+                gtk::STYLE_PROVIDER_PRIORITY_APPLICATION + 20,
+            );
+        }
 
         // Keep the image in a viewport so native-size presentation can be
         // larger than the window and remain pannable instead of being forced
@@ -139,9 +154,8 @@ impl Lightbox {
         let zoom = Rc::new(Cell::new(0.0)); // 0 means fit-to-window
         let zoom_before_one_to_one = Rc::new(Cell::new(0.0));
         let slider_zoom_center_lock = Rc::new(Cell::new(false));
-        let pending_slider_zoom_scale = Rc::new(Cell::new(None::<f64>));
-        let slider_zoom_tick_active = Rc::new(Cell::new(false));
-        let slider_zoom_input_active = Rc::new(Cell::new(false));
+        let slider_zoom_base_scale = Rc::new(Cell::new(None::<f64>));
+        let slider_zoom_target_scale = Rc::new(Cell::new(None::<f64>));
         let load_generation = Rc::new(Cell::new(0u64));
         let decode_cancel: Rc<RefCell<Option<Arc<ViewerRequestLease>>>> = Rc::new(RefCell::new(None));
         let key_navigation_ready = Rc::new(Cell::new(true));
@@ -195,59 +209,20 @@ impl Lightbox {
                 .connect_changed(move |_| update_for_h());
         }
 
-        // While the InfoBar slider is moving, keep the viewport mathematically
-        // centred as GTK updates the scroll ranges for the newly sized image.
-        // Adjustment::changed is emitted as part of the layout/range update,
-        // so this happens in the same GTK layout cycle instead of a later timer.
+        // A slider drag itself never changes scroll geometry. This lock is used
+        // only for the single real-size commit after input settles, so the new
+        // scroll range lands at its centre without a visible follow-up correction.
         {
             let lock = slider_zoom_center_lock.clone();
-            let picture_for_h = picture.clone();
-            let viewport_for_h = picture_viewport.clone();
             picture_viewport.hadjustment().connect_changed(move |adjustment| {
                 if lock.get() {
-                    zoom_trace(format!(
-                        "adjust_changed axis=h before lower={:.2} upper={:.2} page={:.2} value={:.2} picture_alloc={}x{} picture_req={}x{} viewport={}x{}",
-                        adjustment.lower(),
-                        adjustment.upper(),
-                        adjustment.page_size(),
-                        adjustment.value(),
-                        picture_for_h.width(),
-                        picture_for_h.height(),
-                        picture_for_h.width_request(),
-                        picture_for_h.height_request(),
-                        viewport_for_h.width(),
-                        viewport_for_h.height(),
-                    ));
                     center_adjustment(adjustment);
-                    zoom_trace(format!(
-                        "adjust_changed axis=h after value={:.2}",
-                        adjustment.value()
-                    ));
                 }
             });
             let lock = slider_zoom_center_lock.clone();
-            let picture_for_v = picture.clone();
-            let viewport_for_v = picture_viewport.clone();
             picture_viewport.vadjustment().connect_changed(move |adjustment| {
                 if lock.get() {
-                    zoom_trace(format!(
-                        "adjust_changed axis=v before lower={:.2} upper={:.2} page={:.2} value={:.2} picture_alloc={}x{} picture_req={}x{} viewport={}x{}",
-                        adjustment.lower(),
-                        adjustment.upper(),
-                        adjustment.page_size(),
-                        adjustment.value(),
-                        picture_for_v.width(),
-                        picture_for_v.height(),
-                        picture_for_v.width_request(),
-                        picture_for_v.height_request(),
-                        viewport_for_v.width(),
-                        viewport_for_v.height(),
-                    ));
                     center_adjustment(adjustment);
-                    zoom_trace(format!(
-                        "adjust_changed axis=v after value={:.2}",
-                        adjustment.value()
-                    ));
                 }
             });
         }
@@ -258,9 +233,9 @@ impl Lightbox {
         let one_to_one_for_visibility = one_to_one_active.clone();
         let zoom_for_visibility = zoom.clone();
         let slider_zoom_center_lock_for_visibility = slider_zoom_center_lock.clone();
-        let pending_slider_zoom_scale_for_visibility = pending_slider_zoom_scale.clone();
-        let slider_zoom_tick_active_for_visibility = slider_zoom_tick_active.clone();
-        let slider_zoom_input_active_for_visibility = slider_zoom_input_active.clone();
+        let slider_zoom_base_scale_for_visibility = slider_zoom_base_scale.clone();
+        let slider_zoom_target_scale_for_visibility = slider_zoom_target_scale.clone();
+        let slider_zoom_css_for_visibility = slider_zoom_css.clone();
         let picture_for_visibility = picture.clone();
         let viewport_for_visibility = picture_viewport.clone();
         root.connect_visible_notify(move |root| {
@@ -276,9 +251,9 @@ impl Lightbox {
                 one_to_one_for_visibility.set(false);
                 zoom_for_visibility.set(0.0);
                 slider_zoom_center_lock_for_visibility.set(false);
-                pending_slider_zoom_scale_for_visibility.set(None);
-                slider_zoom_tick_active_for_visibility.set(false);
-                slider_zoom_input_active_for_visibility.set(false);
+                slider_zoom_base_scale_for_visibility.set(None);
+                slider_zoom_target_scale_for_visibility.set(None);
+                load_slider_zoom_css(&slider_zoom_css_for_visibility, 1.0, false);
                 picture_for_visibility.set_can_shrink(true);
                 viewport_for_visibility.set_cursor_from_name(None);
                 reset_viewport(&viewport_for_visibility);
@@ -789,9 +764,9 @@ impl Lightbox {
             zoom,
             zoom_before_one_to_one,
             slider_zoom_center_lock,
-            pending_slider_zoom_scale,
-            slider_zoom_tick_active,
-            slider_zoom_input_active,
+            slider_zoom_css,
+            slider_zoom_base_scale,
+            slider_zoom_target_scale,
             one_to_one_active,
             native_texture,
             display_texture_cache,
@@ -822,133 +797,74 @@ impl Lightbox {
     /// Set the lightbox by native-image scale. 0.0 is Fit; 1.0 is true
     /// 100%, and values above 1.0 are magnified.
     pub fn set_manual_zoom_scale(&self, native_scale: f64) {
+        self.slider_zoom_base_scale.set(None);
+        self.slider_zoom_target_scale.set(None);
+        load_slider_zoom_css(&self.slider_zoom_css, 1.0, false);
         self.apply_manual_zoom_scale(native_scale, true);
     }
 
-    /// Queue slider zoom onto GTK's frame clock. The physical InfoBar slider
-    /// is compact, so raw pointer steps can represent very large image-size
-    /// jumps (especially from 100% to 400%). Follow the latest target with a
-    /// short time-based interpolation instead of snapping the picture geometry
-    /// directly to each coarse slider step.
-    pub fn request_slider_zoom(self: &Rc<Self>, native_scale: f64) {
-        zoom_trace_geometry(
-            "slider_request",
-            &self.picture,
-            &self.picture_viewport,
-            native_scale,
-            self.zoom.get(),
-        );
-
-        self.slider_zoom_input_active.set(true);
-        if !self.slider_zoom_center_lock.replace(true) {
-            center_viewport_now(&self.picture_viewport);
-        }
-        self.pending_slider_zoom_scale.set(Some(native_scale));
-
-        if self.slider_zoom_tick_active.replace(true) {
+    /// Slider dragging is render-only: keep GtkPicture and ScrolledWindow
+    /// allocations fixed and scale the already-decoded image around its centre.
+    /// This removes the resize -> scroll-range -> recenter feedback loop that
+    /// made the photo shake even when the centre arithmetic was correct.
+    pub fn request_slider_zoom(&self, native_scale: f64) {
+        if !self.root.is_visible() {
             return;
         }
 
-        let this = self.clone();
-        let last_frame_us = Rc::new(Cell::new(0_i64));
-        self.root.add_tick_callback(move |_, clock| {
-            if !this.root.is_visible() {
-                this.pending_slider_zoom_scale.set(None);
-                this.slider_zoom_tick_active.set(false);
-                this.slider_zoom_center_lock.set(false);
-                this.slider_zoom_input_active.set(false);
-                return glib::ControlFlow::Break;
-            }
+        let fit_scale = self.current_fit_scale();
+        let current_scale = {
+            let current = self.current_manual_zoom_scale();
+            if current <= 0.0 { fit_scale } else { current.max(fit_scale) }
+        };
 
-            let Some(target_raw) = this.pending_slider_zoom_scale.get() else {
-                this.slider_zoom_tick_active.set(false);
-                if !this.slider_zoom_input_active.get() {
-                    this.slider_zoom_center_lock.set(false);
-                }
-                return glib::ControlFlow::Break;
-            };
-
-            let fit_scale = this.current_fit_scale();
-            let target = if target_raw <= 0.0 {
-                fit_scale
-            } else {
-                target_raw.clamp(fit_scale, 4.0)
-            };
-            let current_raw = this.current_manual_zoom_scale();
-            let current = if current_raw <= 0.0 {
-                fit_scale
-            } else {
-                current_raw.clamp(fit_scale, 4.0)
-            };
-
-            let now = clock.frame_time();
-            let previous = last_frame_us.replace(now);
-            let dt = if previous > 0 && now > previous {
-                ((now - previous) as f64 / 1_000_000.0).clamp(1.0 / 240.0, 0.033)
-            } else {
-                1.0 / 60.0
-            };
-
-            // Exponential smoothing gives the same feel on 60/120/144 Hz
-            // displays. ~32ms time constant is responsive but removes the
-            // 100-300px geometry jumps visible in PIC_ZOOM traces.
-            const ZOOM_SMOOTH_TAU_S: f64 = 0.032;
-            let alpha = 1.0 - (-dt / ZOOM_SMOOTH_TAU_S).exp();
-            let delta = target - current;
-            let settled = delta.abs() <= 0.0025;
-            let next = if settled {
-                target
-            } else {
-                current + delta * alpha
-            };
-
-            zoom_trace(format!(
-                "slider_smooth target_raw={target_raw:.5} target={target:.5} current={current:.5} next={next:.5} dt_ms={:.2} alpha={alpha:.4}",
-                dt * 1000.0
-            ));
-
-            // Preserve Fit as the sentinel once the interpolation reaches the
-            // fitted scale; all other values are native-image scale.
-            let apply_scale = if target_raw <= 0.0 && settled {
-                0.0
-            } else {
-                next
-            };
-            // When settled, apply the exact destination once. Otherwise apply
-            // the interpolated frame. The old code applied both in the same
-            // frame, causing a duplicate geometry/layout pass at the end of
-            // every slider movement.
-            let frame_scale = if settled {
-                if target_raw <= 0.0 { 0.0 } else { target }
-            } else {
-                apply_scale
-            };
-            this.apply_manual_zoom_scale(frame_scale, false);
-
-            if settled {
-                this.slider_zoom_tick_active.set(false);
-                if !this.slider_zoom_input_active.get() {
-                    center_viewport_now(&this.picture_viewport);
-                    this.slider_zoom_center_lock.set(false);
-                }
-                return glib::ControlFlow::Break;
-            }
-
-            glib::ControlFlow::Continue
+        let base_scale = self.slider_zoom_base_scale.get().unwrap_or_else(|| {
+            center_viewport_now(&self.picture_viewport);
+            self.slider_zoom_base_scale.set(Some(current_scale));
+            current_scale
         });
+        let target_scale = if native_scale <= 0.0 {
+            fit_scale
+        } else {
+            native_scale.clamp(fit_scale, 4.0)
+        };
+
+        self.slider_zoom_target_scale.set(Some(native_scale));
+        let visual_factor = (target_scale / base_scale.max(f64::EPSILON)).clamp(0.05, 16.0);
+        load_slider_zoom_css(&self.slider_zoom_css, visual_factor, true);
+
+        zoom_trace(format!(
+            "slider_visual base={base_scale:.5} target_raw={native_scale:.5} target={target_scale:.5} factor={visual_factor:.5}"
+        ));
     }
 
-    /// Called after slider input has been quiet briefly. If smoothing is still
-    /// converging, keep the centre lock until the frame-clock animation lands
-    /// exactly on the target; otherwise release it immediately.
-    pub fn end_slider_zoom(&self) {
-        self.slider_zoom_input_active.set(false);
-        if !self.slider_zoom_tick_active.get() {
-            if self.root.is_visible() {
-                center_viewport_now(&self.picture_viewport);
-            }
+    /// Commit the final requested scale exactly once after slider input settles.
+    /// The render transform is reset in the same turn; only this one commit
+    /// changes the ScrolledWindow child geometry.
+    pub fn end_slider_zoom(self: &Rc<Self>) {
+        let Some(target_raw) = self.slider_zoom_target_scale.take() else {
+            load_slider_zoom_css(&self.slider_zoom_css, 1.0, false);
+            self.slider_zoom_base_scale.set(None);
             self.slider_zoom_center_lock.set(false);
-        }
+            return;
+        };
+
+        self.slider_zoom_center_lock.set(true);
+        self.apply_manual_zoom_scale(target_raw, false);
+        load_slider_zoom_css(&self.slider_zoom_css, 1.0, false);
+        self.slider_zoom_base_scale.set(None);
+
+        // Keep the lock through GTK's resulting layout pass. Range-change
+        // callbacks centre the new geometry in that same pass; release on the
+        // following frame so normal panning works again.
+        let this = self.clone();
+        self.root.add_tick_callback(move |_, _| {
+            if this.root.is_visible() {
+                center_viewport_now(&this.picture_viewport);
+            }
+            this.slider_zoom_center_lock.set(false);
+            glib::ControlFlow::Break
+        });
     }
 
     fn apply_manual_zoom_scale(&self, native_scale: f64, notify_zoom_sync: bool) {

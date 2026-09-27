@@ -427,6 +427,10 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         operation_progress: operation_progress.clone(),
     };
     let saved_grid_thumbnail_size = grid_thumbnail_size_from_setting(&connection.borrow());
+    let grid_zoom_syncing = Rc::new(Cell::new(false));
+    info.grid_zoom.set_value(grid_zoom_slider_value(
+        saved_grid_thumbnail_size.unwrap_or(DEFAULT_GRID_THUMBNAIL_SIZE),
+    ));
 
     // Result activation should dismiss the visible search UI without running the
     // normal empty-query handler. Running that handler here would immediately
@@ -522,6 +526,8 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         },
         {
             let connection = connection.clone();
+            let grid_zoom = info.grid_zoom.clone();
+            let grid_zoom_syncing = grid_zoom_syncing.clone();
             move |width| {
                 if let Err(error) = db::set_setting(
                     &connection.borrow(),
@@ -530,6 +536,10 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 ) {
                     eprintln!("Could not save grid thumbnail size: {error}");
                 }
+
+                grid_zoom_syncing.set(true);
+                grid_zoom.set_value(grid_zoom_slider_value(width));
+                grid_zoom_syncing.set(false);
             }
         },
     ));
@@ -2585,41 +2595,18 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         }
     });
 
-    let gallery_for_zoom_out = gallery.clone();
-    let edit_editor_for_zoom_out = edit_editor.clone();
-    let main_stack_for_zoom_out = main_stack.clone();
-    info.grid_zoom_out.connect_clicked(move |_| {
-        if main_stack_for_zoom_out.visible_child_name().as_deref() == Some("edit") {
-            if let Some(editor) = edit_editor_for_zoom_out.borrow().as_ref() {
-                editor.zoom_out();
-            }
-        } else {
-            gallery_for_zoom_out.zoom_out();
+    let gallery_for_zoom_slider = gallery.clone();
+    let grid_zoom_syncing_for_slider = grid_zoom_syncing.clone();
+    info.grid_zoom.connect_value_changed(move |scale| {
+        if grid_zoom_syncing_for_slider.get() {
+            return;
         }
+        gallery_for_zoom_slider.request_zoom(grid_zoom_width_from_slider(scale.value()));
     });
+
     let gallery_for_zoom_reset = gallery.clone();
-    let edit_editor_for_zoom_reset = edit_editor.clone();
-    let main_stack_for_zoom_reset = main_stack.clone();
     info.grid_zoom_reset.connect_clicked(move |_| {
-        if main_stack_for_zoom_reset.visible_child_name().as_deref() == Some("edit") {
-            if let Some(editor) = edit_editor_for_zoom_reset.borrow().as_ref() {
-                editor.fit();
-            }
-        } else {
-            gallery_for_zoom_reset.reset_zoom();
-        }
-    });
-    let gallery_for_zoom_in = gallery.clone();
-    let edit_editor_for_zoom_in = edit_editor.clone();
-    let main_stack_for_zoom_in = main_stack.clone();
-    info.grid_zoom_in.connect_clicked(move |_| {
-        if main_stack_for_zoom_in.visible_child_name().as_deref() == Some("edit") {
-            if let Some(editor) = edit_editor_for_zoom_in.borrow().as_ref() {
-                editor.zoom_in();
-            }
-        } else {
-            gallery_for_zoom_in.zoom_in();
-        }
+        gallery_for_zoom_reset.reset_zoom();
     });
 
     let selected_for_rotate = selected_photo.clone();

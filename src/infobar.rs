@@ -21,10 +21,8 @@ pub struct InfoBar {
     pub export: gtk::Button,
     pub more: gtk::Button,
     pub print: gtk::Button,
-    pub grid_zoom_menu: gtk::MenuButton,
-    pub grid_zoom_out: gtk::Button,
+    pub grid_zoom: gtk::Scale,
     pub grid_zoom_reset: gtk::Button,
-    pub grid_zoom_in: gtk::Button,
     has_photo: Rc<Cell<bool>>,
     collage_active: Rc<Cell<bool>>,
 }
@@ -141,42 +139,27 @@ impl InfoBar {
         configure_action_button(&add_to_album);
         add_to_album.set_tooltip_text(Some("Add to Album"));
 
-        let grid_zoom_menu = gtk::MenuButton::new();
-        grid_zoom_menu.set_icon_name("view-app-grid-symbolic");
-        configure_action_button(&grid_zoom_menu);
-        grid_zoom_menu.set_tooltip_text(Some("Grid size"));
-        grid_zoom_menu.set_direction(gtk::ArrowType::Up);
+        // Direct grid-size slider. Its values are indices into the Gallery's
+        // existing canonical zoom ladder; the centre dot resets the Gallery
+        // through its existing adaptive reset_zoom() path.
+        let grid_zoom = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.0, 7.0, 1.0);
+        grid_zoom.set_draw_value(false);
+        grid_zoom.set_width_request(128);
+        grid_zoom.set_hexpand(false);
+        grid_zoom.set_valign(gtk::Align::Center);
+        grid_zoom.set_tooltip_text(Some("Thumbnail size (Ctrl + wheel)"));
 
-        let grid_zoom_popover = gtk::Popover::new();
-        grid_zoom_popover.set_has_arrow(true);
-        grid_zoom_popover.set_position(gtk::PositionType::Top);
+        let grid_zoom_reset = gtk::Button::with_label("•");
+        grid_zoom_reset.add_css_class("flat");
+        grid_zoom_reset.add_css_class("circular");
+        grid_zoom_reset.set_size_request(18, 18);
+        grid_zoom_reset.set_halign(gtk::Align::Center);
+        grid_zoom_reset.set_valign(gtk::Align::Center);
+        grid_zoom_reset.set_tooltip_text(Some("Reset thumbnail size"));
 
-        let grid_zoom_box = gtk::Box::new(gtk::Orientation::Horizontal, 4);
-        grid_zoom_box.set_margin_top(6);
-        grid_zoom_box.set_margin_bottom(6);
-        grid_zoom_box.set_margin_start(6);
-        grid_zoom_box.set_margin_end(6);
-
-        let grid_zoom_out = gtk::Button::with_label("−");
-        configure_action_button(&grid_zoom_out);
-        grid_zoom_out.set_width_request(34);
-        grid_zoom_out.set_height_request(34);
-
-        let grid_zoom_reset = gtk::Button::with_label("Reset");
-        configure_action_button(&grid_zoom_reset);
-        grid_zoom_reset.set_width_request(56);
-        grid_zoom_reset.set_height_request(34);
-
-        let grid_zoom_in = gtk::Button::with_label("+");
-        configure_action_button(&grid_zoom_in);
-        grid_zoom_in.set_width_request(34);
-        grid_zoom_in.set_height_request(34);
-
-        grid_zoom_box.append(&grid_zoom_out);
-        grid_zoom_box.append(&grid_zoom_reset);
-        grid_zoom_box.append(&grid_zoom_in);
-        grid_zoom_popover.set_child(Some(&grid_zoom_box));
-        grid_zoom_menu.set_popover(Some(&grid_zoom_popover));
+        let grid_zoom_control = gtk::Overlay::new();
+        grid_zoom_control.set_child(Some(&grid_zoom));
+        grid_zoom_control.add_overlay(&grid_zoom_reset);
 
         let one_to_one = gtk::ToggleButton::with_label("1:1");
         configure_action_button(&one_to_one);
@@ -199,11 +182,11 @@ impl InfoBar {
         configure_action_button(&print);
         print.set_tooltip_text(Some("Print photo"));
 
+        actions.append(&grid_zoom_control);
         actions.append(&favorite);
         actions.append(&edit);
         actions.append(&collage);
         actions.append(&add_to_album);
-        actions.append(&grid_zoom_menu);
         actions.append(&one_to_one);
         actions.append(&rotate);
         actions.append(&export);
@@ -252,10 +235,8 @@ impl InfoBar {
             export,
             more,
             print,
-            grid_zoom_menu,
-            grid_zoom_out,
+            grid_zoom,
             grid_zoom_reset,
-            grid_zoom_in,
             has_photo,
             collage_active,
         }

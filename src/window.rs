@@ -49,6 +49,20 @@ const DEFAULT_GRID_THUMBNAIL_SIZE: i32 = 160;
 // never picked a size themselves, so they get the new 4-per-row default.
 const LEGACY_GRID_THUMBNAIL_SIZE: i32 = 136;
 
+fn grid_zoom_slider_value(width: i32) -> f64 {
+    let level = grid::nearest_zoom_level(width);
+    grid::ZOOM_LEVELS
+        .iter()
+        .position(|candidate| *candidate == level)
+        .unwrap_or(0) as f64
+}
+
+fn grid_zoom_width_from_slider(value: f64) -> i32 {
+    let last = grid::ZOOM_LEVELS.len().saturating_sub(1);
+    let index = (value.round() as isize).clamp(0, last as isize) as usize;
+    grid::ZOOM_LEVELS[index]
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SortField {
     DateTaken,

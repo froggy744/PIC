@@ -2638,21 +2638,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
 
         if lightbox_for_zoom_slider.root.is_visible() {
             // In lightbox mode the slider range is 0..100 with 50 exactly 1:1.
-            let current = lightbox_for_zoom_slider.current_manual_zoom_scale();
-            let fit_scale = if current > 0.0 && scale.value() > 0.0 && scale.value() <= 50.0 {
-                // Derive the fitted native scale from the current slider/scale
-                // relationship where possible; otherwise the Lightbox clamps
-                // the requested value safely to Fit.
-                let old_slider = slider_last_value_for_change.get().clamp(0.0, 50.0);
-                if old_slider > 0.0 && old_slider < 50.0 {
-                    ((current - old_slider / 50.0) / (1.0 - old_slider / 50.0))
-                        .clamp(f64::EPSILON, 1.0)
-                } else {
-                    current.clamp(f64::EPSILON, 1.0)
-                }
-            } else {
-                current.clamp(f64::EPSILON, 1.0)
-            };
+            let fit_scale = lightbox_for_zoom_slider.current_fit_scale();
             lightbox_for_zoom_slider
                 .set_manual_zoom_scale(lightbox_scale_from_slider(scale.value(), fit_scale));
         } else if main_stack_for_zoom_slider.visible_child_name().as_deref() == Some("edit") {
@@ -2675,23 +2661,15 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let grid_zoom_for_lightbox_sync = info.grid_zoom.clone();
     let grid_zoom_syncing_for_lightbox = grid_zoom_syncing.clone();
     let slider_last_value_for_sync = slider_last_value.clone();
+    let lightbox_for_zoom_sync = lightbox.clone();
     lightbox.set_zoom_sync_handler(move |native_scale| {
         if !grid_zoom_for_lightbox_sync.is_visible() {
             return;
         }
-        // Fit is always the left endpoint. Positive scales are mapped using a
-        // conservative fit estimate here; the exact midpoint remains 100%.
-        let fit_scale = native_scale.min(1.0).max(f64::EPSILON);
-        let value = if native_scale <= 0.0 {
-            0.0
-        } else if (native_scale - 1.0).abs() < 0.0001 {
-            50.0
-        } else if native_scale > 1.0 {
-            lightbox_slider_from_scale(native_scale, fit_scale)
-        } else {
-            // Ctrl+wheel below 100% advances from the left toward the middle.
-            50.0 * native_scale.clamp(0.0, 1.0)
-        };
+        // Fit is always the left endpoint and native 100% is always the
+        // midpoint, independent of photo dimensions or window size.
+        let fit_scale = lightbox_for_zoom_sync.current_fit_scale();
+        let value = lightbox_slider_from_scale(native_scale, fit_scale);
         grid_zoom_syncing_for_lightbox.set(true);
         grid_zoom_for_lightbox_sync.set_value(value);
         grid_zoom_syncing_for_lightbox.set(false);
@@ -2709,15 +2687,10 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         if root.is_visible() {
             grid_zoom_for_visibility.set_range(0.0, 100.0);
             let native_scale = lightbox_for_zoom_visibility.current_manual_zoom_scale();
-            let value = if native_scale <= 0.0 {
-                0.0
-            } else if (native_scale - 1.0).abs() < 0.0001 {
-                50.0
-            } else if native_scale > 1.0 {
-                50.0 + 50.0 * ((native_scale - 1.0) / 3.0).clamp(0.0, 1.0)
-            } else {
-                50.0 * native_scale
-            };
+            let value = lightbox_slider_from_scale(
+                native_scale,
+                lightbox_for_zoom_visibility.current_fit_scale(),
+            );
             grid_zoom_for_visibility.set_value(value);
             slider_last_value_for_visibility.set(value);
             grid_zoom_for_visibility.set_tooltip_text(Some(

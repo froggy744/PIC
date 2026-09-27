@@ -822,6 +822,13 @@ impl Lightbox {
         }
     }
 
+    pub fn current_fit_scale(&self) -> f64 {
+        let Some(photo) = self.photos.borrow().get(self.index.get()).cloned() else {
+            return 1.0;
+        };
+        presentation_fit_scale(&photo, self.root.width(), self.root.height())
+    }
+
     pub fn current_manual_zoom_scale(&self) -> f64 {
         if self.one_to_one_active.get() {
             return 1.0;

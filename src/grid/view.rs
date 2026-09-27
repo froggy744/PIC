@@ -1,3 +1,17 @@
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ZoomAnchorKind {
+    Pointer,
+    ViewportCenter,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ZoomAnchor {
+    photo_id: i64,
+    desired_x: f64,
+    desired_y: f64,
+    kind: ZoomAnchorKind,
+}
+
 pub struct Gallery {
     // GtkGridView must remain the direct GtkScrolledWindow child. GTK's list
     // widgets are GtkScrollable and rely on that relationship for correct
@@ -49,6 +63,14 @@ pub struct Gallery {
     // Photo at the viewport top captured before a zoom resizes the tiles, so
     // the row reshape can restore the same viewport after the relayout.
     zoom_anchor: Rc<Cell<Option<i64>>>,
+    // Presentation-only stable zoom focus. Unlike the legacy Folder anchor
+    // above, this stores the exact realized photo and its viewport-relative
+    // position so GridView/SectionedFolder zoom can preserve what the user is
+    // looking at without changing model order or selection.
+    stable_zoom_anchor: Rc<Cell<Option<ZoomAnchor>>>,
+    // Invalidates bounded frame-clock restoration callbacks when a newer zoom
+    // or model/navigation change supersedes the old request.
+    zoom_anchor_restore_generation: Rc<Cell<u64>>,
     folder_scroll_generation: Rc<Cell<u64>>,
     folder_anchor_photo: Cell<Option<i64>>,
     // True while a column change is still positioning the viewport. A second
@@ -794,6 +816,8 @@ impl Gallery {
             group_ranges,
             last_scroll_y: Rc::new(Cell::new(0.0)),
             zoom_anchor: Rc::new(Cell::new(None)),
+            stable_zoom_anchor: Rc::new(Cell::new(None)),
+            zoom_anchor_restore_generation: Rc::new(Cell::new(0)),
             folder_scroll_generation: Rc::new(Cell::new(0)),
             folder_anchor_photo: Cell::new(None),
             folder_pending_reframe: Rc::new(Cell::new(false)),

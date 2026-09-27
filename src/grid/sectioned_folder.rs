@@ -13,10 +13,14 @@ struct SectionedFolderGeometry {
 
 #[derive(Clone)]
 struct SectionedReflowSnapshot {
-    tile_positions: HashMap<u32, (f64, f64)>,
-    header_positions: HashMap<usize, f64>,
+    old_columns: u32,
+    old_geometry: Vec<SectionedFolderGeometry>,
     tile_width: i32,
     tile_height: i32,
+    old_scroll_y: f64,
+    old_width: i32,
+    presentation: Option<StripPresentation>,
+    photos: HashMap<u32, StripPhoto>,
 }
 
 #[derive(Clone)]
@@ -64,6 +68,172 @@ fn upper_edge_anchor(
         })
 }
 
+// A row is a clipped window onto one ordered strip. Fractional capacity lets
+// a boundary move through a photo: its two pieces stay in adjacent rows.
+#[derive(Clone)]
+struct StripPhoto {
+    node: gtk::gsk::RenderNode,
+    width: f32,
+    height: f32,
+}
+
+#[derive(Clone, Debug)]
+struct StripSection {
+    first_index: f64,
+    first_y: f64,
+    row_height: f64,
+    header_y: f64,
+    end_y: f64,
+}
+
+#[derive(Clone, Debug)]
+struct StripLayout {
+    columns: f64,
+    tile_width: f64,
+    tile_height: f64,
+    pitch: f64,
+    left: f64,
+    sections: Vec<StripSection>,
+}
+
+impl StripLayout {
+    fn between(&self, target: &Self, progress: f64) -> Self {
+        let mix = |a: f64, b: f64| a + (b - a) * progress;
+        Self {
+            columns: mix(self.columns, target.columns),
+            tile_width: mix(self.tile_width, target.tile_width),
+            tile_height: mix(self.tile_height, target.tile_height),
+            pitch: mix(self.pitch, target.pitch),
+            left: mix(self.left, target.left),
+            sections: self.sections.iter().zip(&target.sections).map(|(a, b)| StripSection {
+                first_index: mix(a.first_index, b.first_index),
+                first_y: mix(a.first_y, b.first_y),
+                row_height: mix(a.row_height, b.row_height),
+                header_y: mix(a.header_y, b.header_y),
+                end_y: mix(a.end_y, b.end_y),
+            }).collect(),
+        }
+    }
+}
+
+#[derive(Clone)]
+struct StripPresentation {
+    layout: StripLayout,
+    photos: HashMap<u32, StripPhoto>,
+}
+
+#[derive(Clone, Debug)]
+struct StripSlice {
+    index: u32,
+    row: i32,
+    x: f64,
+    y: f64,
+    clip_x: f64,
+    clip_y: f64,
+    clip_width: f64,
+    clip_height: f64,
+}
+
+fn strip_slices(layout: &StripLayout, ranges: &[GroupRange], top: f64, bottom: f64) -> Vec<StripSlice> {
+    let mut slices = Vec::new();
+    let span = layout.columns * layout.pitch;
+    let inset = (layout.pitch - layout.tile_width) * 0.5;
+    for (section, range) in layout.sections.iter().zip(ranges) {
+        let photo_top = (section.header_y + SECTIONED_HEADER_HEIGHT).max(top);
+        let photo_bottom = section.end_y.min(bottom);
+        if photo_bottom <= photo_top { continue; }
+        let first_row = ((photo_top - section.first_y) / section.row_height).floor() as i32;
+        let last_row = ((photo_bottom - section.first_y) / section.row_height).ceil() as i32;
+        let count = range.end.saturating_sub(range.start) as i64;
+        for row in first_row..last_row {
+            let y = section.first_y + f64::from(row) * section.row_height;
+            let clip_y = y.max(photo_top);
+            let clip_bottom = (y + layout.tile_height).min(photo_bottom);
+            if clip_bottom <= clip_y { continue; }
+            let strip_start = section.first_index + f64::from(row) * layout.columns;
+            let first = (strip_start.floor() as i64 - 1).max(0);
+            let last = ((strip_start + layout.columns).ceil() as i64 + 1).min(count);
+            for local in first..last {
+                let x = layout.left + (local as f64 - strip_start) * layout.pitch + inset;
+                let clip_x = x.max(layout.left);
+                let clip_right = (x + layout.tile_width).min(layout.left + span);
+                if clip_right - clip_x <= 0.001 { continue; }
+                slices.push(StripSlice {
+                    index: (range.start as i64 + local) as u32, row, x, y,
+                    clip_x, clip_y, clip_width: clip_right - clip_x,
+                    clip_height: clip_bottom - clip_y,
+                });
+            }
+        }
+    }
+    slices
+}
+
+mod sectioned_strip_imp {
+    use super::*;
+    use gtk::subclass::prelude::*;
+
+    #[derive(Default)]
+    pub struct Layer {
+        pub(super) draws: RefCell<Vec<(StripSlice, StripPhoto)>>,
+        pub(super) size: Cell<(f64, f64)>,
+        pub(super) top: Cell<f64>,
+    }
+    #[glib::object_subclass]
+    impl ObjectSubclass for Layer {
+        const NAME: &'static str = "PicasaSectionedStripLayer";
+        type Type = super::SectionedStripLayer;
+        type ParentType = gtk::Widget;
+    }
+    impl ObjectImpl for Layer {}
+    impl WidgetImpl for Layer {
+        fn snapshot(&self, snapshot: &gtk::Snapshot) {
+            let (width, height) = self.size.get();
+            for (slice, photo) in self.draws.borrow().iter() {
+                snapshot.push_clip(&gtk::graphene::Rect::new(
+                    slice.clip_x as f32, (slice.clip_y - self.top.get()) as f32,
+                    slice.clip_width as f32, slice.clip_height as f32,
+                ));
+                snapshot.save();
+                snapshot.translate(&gtk::graphene::Point::new(
+                    slice.x as f32, (slice.y - self.top.get()) as f32,
+                ));
+                snapshot.scale(width as f32 / photo.width, height as f32 / photo.height);
+                snapshot.append_node(&photo.node);
+                snapshot.restore();
+                snapshot.pop();
+            }
+        }
+    }
+}
+
+glib::wrapper! {
+    pub struct SectionedStripLayer(ObjectSubclass<sectioned_strip_imp::Layer>)
+        @extends gtk::Widget,
+        @implements gtk::Accessible, gtk::Buildable, gtk::ConstraintTarget;
+}
+
+fn freeze_strip_photo(tile: &SquareTile) -> Option<StripPhoto> {
+    let width = tile.width().max(1) as f64;
+    let height = tile.height().max(1) as f64;
+    if tile.opacity() > 0.0 {
+        let snapshot = gtk::Snapshot::new();
+        gtk::WidgetPaintable::new(Some(tile)).snapshot(&snapshot, width, height);
+        if let Some(node) = snapshot.to_node() {
+            return Some(StripPhoto { node, width: width as f32, height: height as f32 });
+        }
+    }
+    let snapshot = gtk::Snapshot::new();
+    if let Some(paintable) = tile.transition_paintable() {
+        paintable.snapshot(&snapshot, width, height);
+    } else {
+        snapshot.append_color(&gtk::gdk::RGBA::new(0.5, 0.5, 0.5, 0.15),
+            &gtk::graphene::Rect::new(0.0, 0.0, width as f32, height as f32));
+    }
+    snapshot.to_node().map(|node| StripPhoto { node, width: width as f32, height: height as f32 })
+}
+
+
 struct SectionedFolderView {
     root: gtk::Fixed,
     spacer: gtk::Box,
@@ -95,6 +265,9 @@ struct SectionedFolderView {
     scroll_animation_generation: Cell<u64>,
     reflow_animation_generation: Cell<u64>,
     reflow_active: Cell<bool>,
+    preserve_headers_during_reflow: Cell<bool>,
+    strip_layer: RefCell<Option<SectionedStripLayer>>,
+    strip_presentation: RefCell<Option<StripPresentation>>,
 }
 
 impl SectionedFolderView {
@@ -167,6 +340,9 @@ impl SectionedFolderView {
             scroll_animation_generation: Cell::new(0),
             reflow_animation_generation: Cell::new(0),
             reflow_active: Cell::new(false),
+            preserve_headers_during_reflow: Cell::new(false),
+            strip_layer: RefCell::new(None),
+            strip_presentation: RefCell::new(None),
         });
 
         let keyboard = gtk::EventControllerKey::new();
@@ -603,13 +779,16 @@ impl SectionedFolderView {
             .copied()
             .filter(|index| !wanted_ids.contains(index))
             .collect::<Vec<_>>();
-        for index in stale {
-            if let Some(tile) = self.live_tiles.borrow_mut().remove(&index) {
-                self.root.remove(&tile.tile);
-                tile.index.set(None);
-                let mut pool = self.tile_pool.borrow_mut();
-                if pool.len() < SECTIONED_TILE_POOL_CAP {
-                    pool.push_back(tile);
+        if !self.reflow_active.get() {
+            for index in stale {
+                if let Some(tile) = self.live_tiles.borrow_mut().remove(&index) {
+                    self.root.remove(&tile.tile);
+                    tile.tile.set_opacity(1.0);
+                    tile.index.set(None);
+                    let mut pool = self.tile_pool.borrow_mut();
+                    if pool.len() < SECTIONED_TILE_POOL_CAP {
+                        pool.push_back(tile);
+                    }
                 }
             }
         }
@@ -633,6 +812,7 @@ impl SectionedFolderView {
                     continue;
                 };
                 tile.index.set(Some(index));
+                tile.tile.set_opacity(1.0);
                 tile.tile
                     .set_tile_size(self.tile_width.get(), self.tile_height.get());
                 tile.tile.set_filename_visible(self.show_file_names.get());
@@ -642,6 +822,7 @@ impl SectionedFolderView {
                     gtk::ContentFit::Cover
                 });
                 tile.tile.bind_photo_folder_fast(photo, index as usize);
+                if self.strip_layer.borrow().is_some() { tile.tile.set_opacity(0.0); }
                 tile.tile.set_manual_selected(self.selection.is_selected(index));
                 self.root.put(&tile.tile, 0.0, 0.0);
                 self.live_tiles.borrow_mut().insert(index, tile.clone());
@@ -669,19 +850,21 @@ impl SectionedFolderView {
         drop(photos);
 
         let wanted_header_ids = wanted_headers.iter().copied().collect::<HashSet<_>>();
-        let stale_headers = self
-            .live_headers
-            .borrow()
-            .keys()
-            .copied()
-            .filter(|index| !wanted_header_ids.contains(index))
-            .collect::<Vec<_>>();
-        for index in stale_headers {
-            if let Some(label) = self.live_headers.borrow_mut().remove(&index) {
-                self.root.remove(&label);
-                let mut pool = self.header_pool.borrow_mut();
-                if pool.len() < SECTIONED_HEADER_POOL_CAP {
-                    pool.push_back(label);
+        if !self.preserve_headers_during_reflow.get() {
+            let stale_headers = self
+                .live_headers
+                .borrow()
+                .keys()
+                .copied()
+                .filter(|index| !wanted_header_ids.contains(index))
+                .collect::<Vec<_>>();
+            for index in stale_headers {
+                if let Some(label) = self.live_headers.borrow_mut().remove(&index) {
+                    self.root.remove(&label);
+                    let mut pool = self.header_pool.borrow_mut();
+                    if pool.len() < SECTIONED_HEADER_POOL_CAP {
+                        pool.push_back(label);
+                    }
                 }
             }
         }
@@ -739,15 +922,18 @@ impl SectionedFolderView {
     }
 
     fn refresh_model(self: &Rc<Self>) {
+        self.clear_strip_layer();
         self.reflow_animation_generation
             .set(self.reflow_animation_generation.get().wrapping_add(1));
         self.reflow_active.set(false);
+        self.preserve_headers_during_reflow.set(false);
         // A replacement can keep the same numeric positions while changing
         // PhotoObject metadata. Recycle the bounded realized set so every
         // visible tile is rebound exactly once to the current model.
         let live = std::mem::take(&mut *self.live_tiles.borrow_mut());
         for (_, tile) in live {
             self.root.remove(&tile.tile);
+            tile.tile.set_opacity(1.0);
             tile.index.set(None);
             let mut pool = self.tile_pool.borrow_mut();
             if pool.len() < SECTIONED_TILE_POOL_CAP {
@@ -767,38 +953,32 @@ impl SectionedFolderView {
     }
 
     fn capture_reflow_snapshot(&self) -> SectionedReflowSnapshot {
-        let mut tile_positions = HashMap::new();
+        let presentation = self.strip_presentation.borrow().clone();
+        let mut photos = presentation.as_ref().map(|p| p.photos.clone()).unwrap_or_default();
         for (index, entry) in self.live_tiles.borrow().iter() {
-            if let Some(bounds) = entry.tile.compute_bounds(&self.root) {
-                let (offset_x, offset_y) = entry.tile.presentation_offset();
-                tile_positions.insert(
-                    *index,
-                    (
-                        f64::from(bounds.x() + offset_x),
-                        f64::from(bounds.y() + offset_y),
-                    ),
-                );
+            if !photos.contains_key(index) {
+                if let Some(photo) = freeze_strip_photo(&entry.tile) { photos.insert(*index, photo); }
             }
         }
-
-        let mut header_positions = HashMap::new();
-        for (index, label) in self.live_headers.borrow().iter() {
-            if let Some(bounds) = label.compute_bounds(&self.root) {
-                header_positions.insert(*index, f64::from(bounds.y()));
-            }
-        }
-
         SectionedReflowSnapshot {
-            tile_positions,
-            header_positions,
+            old_columns: self.current_columns.get().max(1),
+            old_geometry: self.geometry.borrow().clone(),
             tile_width: self.tile_width.get(),
             tile_height: self.tile_height.get(),
+            old_scroll_y: self.scroll_position(),
+            old_width: self.geometry_width.get().max(1),
+            presentation,
+            photos,
         }
     }
 
     fn horizontal_grid_metrics(&self, width: i32) -> (f64, f64) {
-        let columns = self.current_columns.get().max(1);
-        let tile_width = f64::from(self.tile_width.get().max(1));
+        Self::grid_metrics_for(width, self.current_columns.get(), self.tile_width.get())
+    }
+
+    fn grid_metrics_for(width: i32, columns: u32, tile_width: i32) -> (f64, f64) {
+        let columns = columns.max(1);
+        let tile_width = f64::from(tile_width.max(1));
         let width = f64::from(width.max(1));
         let available = (width - SECTIONED_SIDE_MARGIN * 2.0).max(tile_width);
         if columns <= 1 {
@@ -816,281 +996,154 @@ impl SectionedFolderView {
         (start_x, gap)
     }
 
-    fn placement_for_index(&self, index: u32) -> Option<(f64, f64)> {
-        let columns = self.current_columns.get().max(1);
-        let row_height = f64::from(folder_line_height(self.tile_height.get()));
-        let section_index = self.section_index_for_photo(index)?;
-        let ranges = self.group_ranges.borrow();
-        let geometry = self.geometry.borrow();
-        let range = ranges.get(section_index)?;
-        let geom = geometry.get(section_index)?;
-        let local = index as usize - range.start;
-        let row = local as u32 / columns;
-        let col = local as u32 % columns;
-        let (start_x, gap) = self.horizontal_grid_metrics(self.geometry_width.get().max(1));
-        let x = start_x + f64::from(col) * (f64::from(self.tile_width.get()) + gap);
-        let y = geom.first_photo_y + f64::from(row) * row_height;
-        Some((x, y))
-    }
-
     fn section_index_for_photo(&self, index: u32) -> Option<usize> {
         let ranges = self.group_ranges.borrow();
         section_index_for_photo(&ranges, index as usize)
     }
 
-    /// Match the Library/All Photos resize transition: apply the final
-    /// section layout immediately, then visually translate surviving tiles
-    /// from their previous screen positions back to their real allocations.
-    /// This is presentation-only FLIP; model membership and Prototype B
-    /// section lookup/anchoring are untouched.
+    /// Repack the visible photos from their section-local model order on each
+    /// frame. The resize and zoom paths use the same layout animation.
     fn animate_reflow(
         self: &Rc<Self>,
         snapshot: SectionedReflowSnapshot,
         anchor: Option<(i64, f64)>,
     ) {
-        const RESIZE_FLIP_MS: f64 = 300.0;
-
-        self.reflow_animation_generation
-            .set(self.reflow_animation_generation.get().wrapping_add(1));
-        let generation = self.reflow_animation_generation.get();
-
-        // A newer transition may interrupt an older one. Capture included the
-        // old presentation offset, so clear stale transforms before installing
-        // the new destination layout.
-        for entry in self.live_tiles.borrow().values() {
-            entry.tile.set_presentation_offset(0.0, 0.0);
-        }
-
-        self.reflow_active.set(false);
-        self.invalidate_geometry();
-        self.refresh();
-        if let Some((photo_id, offset)) = anchor {
-            self.restore_anchor(photo_id, offset);
-        }
-
-        let mut motion = Vec::<(SquareTile, f32, f32)>::new();
-        {
-            let live = self.live_tiles.borrow();
-            for (index, (old_x, old_y)) in snapshot.tile_positions.iter() {
-                let Some(entry) = live.get(index) else {
-                    continue;
-                };
-                let Some(bounds) = entry.tile.compute_bounds(&self.root) else {
-                    continue;
-                };
-                let dx = (*old_x as f32) - bounds.x();
-                let dy = (*old_y as f32) - bounds.y();
-                if dx.abs() < 0.5 && dy.abs() < 0.5 {
-                    continue;
-                }
-                entry.tile.set_presentation_offset(dx, dy);
-                motion.push((entry.tile.clone(), dx, dy));
-            }
-        }
-
-        let mut header_motion = Vec::<(gtk::Label, f64, f64)>::new();
-        {
-            let headers = self.live_headers.borrow();
-            let geometry = self.geometry.borrow();
-            for (index, old_y) in snapshot.header_positions.iter() {
-                let (Some(label), Some(target)) = (headers.get(index), geometry.get(*index)) else {
-                    continue;
-                };
-                if (*old_y - target.header_y).abs() < 0.5 {
-                    continue;
-                }
-                self.root.move_(label, SECTIONED_SIDE_MARGIN, *old_y);
-                header_motion.push((label.clone(), *old_y, target.header_y));
-            }
-        }
-
-        if motion.is_empty() && header_motion.is_empty() {
-            self.reflow_active.set(false);
-            return;
-        }
-
-        self.reflow_active.set(true);
-        if std::env::var_os("PICASA_TRACE").is_some() {
-            eprintln!(
-                "PIC_SECTIONED_ANIM resize_flip_begin tiles={} headers={} duration_ms={}",
-                motion.len(),
-                header_motion.len(),
-                RESIZE_FLIP_MS as u32,
-            );
-        }
-
-        let started = Instant::now();
-        let weak = Rc::downgrade(self);
-        self.root.add_tick_callback(move |_, _| {
-            let Some(view) = weak.upgrade() else {
-                return glib::ControlFlow::Break;
-            };
-            if view.reflow_animation_generation.get() != generation {
-                return glib::ControlFlow::Break;
-            }
-
-            let linear = (started.elapsed().as_secs_f64() * 1000.0 / RESIZE_FLIP_MS)
-                .clamp(0.0, 1.0);
-            // Exactly match Library resize FLIP.
-            let eased = 1.0 - (1.0 - linear).powi(3);
-            let remaining = (1.0 - eased) as f32;
-
-            for (tile, dx, dy) in motion.iter() {
-                tile.set_presentation_offset(*dx * remaining, *dy * remaining);
-            }
-            for (label, old_y, target_y) in header_motion.iter() {
-                let y = old_y + (target_y - old_y) * eased;
-                view.root.move_(label, SECTIONED_SIDE_MARGIN, y);
-            }
-
-            if linear >= 1.0 {
-                for (tile, _, _) in motion.iter() {
-                    tile.set_presentation_offset(0.0, 0.0);
-                }
-                for (label, _, target_y) in header_motion.iter() {
-                    view.root.move_(label, SECTIONED_SIDE_MARGIN, *target_y);
-                }
-                view.reflow_active.set(false);
-                view.refresh();
-                if std::env::var_os("PICASA_TRACE").is_some() {
-                    eprintln!(
-                        "PIC_SECTIONED_ANIM resize_flip_end elapsed_ms={}",
-                        started.elapsed().as_millis()
-                    );
-                }
-                glib::ControlFlow::Break
-            } else {
-                glib::ControlFlow::Continue
-            }
-        });
+        self.animate_strip_reflow(snapshot, anchor);
     }
 
-    /// Match the Library/All Photos thumbnail zoom timing and easing while
-    /// retaining section-aware physical geometry and the Prototype B anchor.
     fn animate_zoom_reflow(
         self: &Rc<Self>,
         snapshot: SectionedReflowSnapshot,
         anchor: Option<(i64, f64)>,
     ) {
-        const ZOOM_ANIMATION_MS: f64 = 180.0;
+        self.animate_strip_reflow(snapshot, anchor);
+    }
 
-        self.reflow_animation_generation
-            .set(self.reflow_animation_generation.get().wrapping_add(1));
-        let generation = self.reflow_animation_generation.get();
+    fn clear_strip_layer(&self) {
+        if let Some(layer) = self.strip_layer.borrow_mut().take() { self.root.remove(&layer); }
+        self.strip_presentation.borrow_mut().take();
+        for entry in self.live_tiles.borrow().values() { entry.tile.set_opacity(1.0); }
+    }
 
-        for entry in self.live_tiles.borrow().values() {
-            entry.tile.set_presentation_offset(0.0, 0.0);
+    fn paint_strip(&self, mut presentation: StripPresentation, ranges: &[GroupRange]) {
+        for (index, entry) in self.live_tiles.borrow().iter() {
+            if !presentation.photos.contains_key(index) {
+                if let Some(photo) = freeze_strip_photo(&entry.tile) {
+                    presentation.photos.insert(*index, photo);
+                }
+            }
+            entry.tile.set_opacity(0.0);
         }
-        self.reflow_active.set(true);
+        let Some(layer) = self.strip_layer.borrow().as_ref().cloned() else { return; };
+        let scroll = self.scroll.borrow();
+        let Some(scroll) = scroll.as_ref() else { return; };
+        let top = (scroll.vadjustment().value() - SECTIONED_OVERSCAN_PX).max(0.0);
+        let page = scroll.vadjustment().page_size();
+        let height = (page + SECTIONED_OVERSCAN_PX * 2.0)
+            .min((self.total_height.get().max(page) - top).max(1.0));
+        let slices = strip_slices(&presentation.layout, ranges, top, top + height);
+        let draws = slices.into_iter().filter_map(|slice| {
+            presentation.photos.get(&slice.index).cloned().map(|photo| (slice, photo))
+        }).collect();
+        layer.imp().draws.replace(draws);
+        layer.imp().size.set((presentation.layout.tile_width, presentation.layout.tile_height));
+        layer.imp().top.set(top);
+        layer.set_size_request(scroll.width().max(1), height.ceil() as i32);
+        self.root.move_(&layer, 0.0, top);
+        layer.queue_draw();
+        for (section, label) in self.live_headers.borrow().iter() {
+            if let Some(frame) = presentation.layout.sections.get(*section) {
+                self.root.move_(label, SECTIONED_SIDE_MARGIN, frame.header_y);
+            }
+        }
+        self.strip_presentation.replace(Some(presentation));
+    }
 
+    fn animate_strip_reflow(
+        self: &Rc<Self>,
+        snapshot: SectionedReflowSnapshot,
+        anchor: Option<(i64, f64)>,
+    ) {
+        self.reflow_animation_generation.set(self.reflow_animation_generation.get().wrapping_add(1));
+        let generation = self.reflow_animation_generation.get();
+        self.clear_strip_layer();
+        self.reflow_active.set(true);
+        self.preserve_headers_during_reflow.set(true);
         self.invalidate_geometry();
         self.refresh();
-        if let Some((photo_id, offset)) = anchor {
-            self.restore_anchor(photo_id, offset);
-        }
-
-        let target_tile_width = self.tile_width.get();
-        let target_tile_height = self.tile_height.get();
-        if std::env::var_os("PICASA_TRACE").is_some() {
-            eprintln!(
-                "PIC_SECTIONED_ANIM zoom_reflow_begin live_tiles={} old_tile={}x{} new_tile={}x{} duration_ms={} anchor={:?}",
-                self.live_tiles.borrow().len(),
-                snapshot.tile_width,
-                snapshot.tile_height,
-                target_tile_width,
-                target_tile_height,
-                ZOOM_ANIMATION_MS as u32,
-                anchor.map(|(id, _)| id),
-            );
-        }
-
-        {
-            let live = self.live_tiles.borrow();
-            for (index, (old_x, old_y)) in snapshot.tile_positions.iter() {
-                let Some(entry) = live.get(index) else {
-                    continue;
-                };
-                self.root.move_(&entry.tile, *old_x, *old_y);
-                entry
-                    .tile
-                    .set_tile_size(snapshot.tile_width, snapshot.tile_height);
+        if let Some((photo_id, offset)) = anchor { self.restore_anchor(photo_id, offset); }
+        let scroll_delta = self.scroll_position() - snapshot.old_scroll_y;
+        let ranges = self.group_ranges.borrow().clone();
+        let geometry = self.geometry.borrow().clone();
+        let columns = self.current_columns.get().max(1);
+        let width = self.geometry_width.get().max(1);
+        let tile_width = self.tile_width.get();
+        let tile_height = self.tile_height.get();
+        let mut first_indices = vec![usize::MAX; ranges.len()];
+        let mut photos = snapshot.photos;
+        for (index, entry) in self.live_tiles.borrow().iter() {
+            if let Some(section) = section_index_for_photo(&ranges, *index as usize) {
+                first_indices[section] = first_indices[section].min(*index as usize - ranges[section].start);
+            }
+            if !photos.contains_key(index) {
+                if let Some(photo) = freeze_strip_photo(&entry.tile) { photos.insert(*index, photo); }
             }
         }
-        {
-            let headers = self.live_headers.borrow();
-            for (index, old_y) in snapshot.header_positions.iter() {
-                let Some(label) = headers.get(index) else {
-                    continue;
-                };
-                self.root.move_(label, SECTIONED_SIDE_MARGIN, *old_y);
+        for first in &mut first_indices { if *first == usize::MAX { *first = 0; } }
+        let make_layout = |columns: u32, tile_width: i32, tile_height: i32, width: i32,
+                           geometry: &[SectionedFolderGeometry]| {
+            let (start_x, gap) = Self::grid_metrics_for(width, columns, tile_width);
+            let row_height = f64::from(folder_line_height(tile_height));
+            StripLayout {
+                columns: f64::from(columns), tile_width: f64::from(tile_width),
+                tile_height: f64::from(tile_height), pitch: f64::from(tile_width) + gap,
+                left: start_x - gap * 0.5,
+                sections: geometry.iter().enumerate().map(|(section, geom)| {
+                    let row = first_indices[section] / columns as usize;
+                    StripSection {
+                        first_index: (row * columns as usize) as f64,
+                        first_y: geom.first_photo_y + row as f64 * row_height,
+                        row_height, header_y: geom.header_y, end_y: geom.end_y,
+                    }
+                }).collect(),
             }
+        };
+        let target = make_layout(columns, tile_width, tile_height, width, &geometry);
+        let mut start = snapshot.presentation.map(|p| p.layout).unwrap_or_else(|| {
+            make_layout(snapshot.old_columns, snapshot.tile_width, snapshot.tile_height,
+                snapshot.old_width, &snapshot.old_geometry)
+        });
+        for section in &mut start.sections {
+            section.first_y += scroll_delta;
+            section.header_y += scroll_delta;
+            section.end_y += scroll_delta;
         }
-
+        let layer: SectionedStripLayer = glib::Object::new();
+        layer.set_can_target(false);
+        self.root.put(&layer, 0.0, 0.0);
+        self.strip_layer.replace(Some(layer));
+        for entry in self.live_tiles.borrow().values() {
+            entry.tile.set_presentation_offset(0.0, 0.0);
+            entry.tile.set_opacity(0.0);
+        }
+        self.paint_strip(StripPresentation { layout: start.clone(), photos: photos.clone() }, &ranges);
         let started = Instant::now();
         let weak = Rc::downgrade(self);
         self.root.add_tick_callback(move |_, _| {
-            let Some(view) = weak.upgrade() else {
-                return glib::ControlFlow::Break;
-            };
-            if view.reflow_animation_generation.get() != generation {
-                return glib::ControlFlow::Break;
-            }
-
-            let linear = (started.elapsed().as_secs_f64() * 1000.0 / ZOOM_ANIMATION_MS)
-                .clamp(0.0, 1.0);
-            // Exactly match Library zoom.
-            let eased = 1.0 - (1.0 - linear).powi(3);
-            let frame_width = (f64::from(snapshot.tile_width)
-                + f64::from(target_tile_width - snapshot.tile_width) * eased)
-                .round() as i32;
-            let frame_height = (f64::from(snapshot.tile_height)
-                + f64::from(target_tile_height - snapshot.tile_height) * eased)
-                .round() as i32;
-
-            {
-                let live = view.live_tiles.borrow();
-                for (index, (old_x, old_y)) in snapshot.tile_positions.iter() {
-                    let Some(entry) = live.get(index) else {
-                        continue;
-                    };
-                    let Some((target_x, target_y)) = view.placement_for_index(*index) else {
-                        continue;
-                    };
-                    let x = old_x + (target_x - old_x) * eased;
-                    let y = old_y + (target_y - old_y) * eased;
-                    view.root.move_(&entry.tile, x, y);
-                    entry.tile.set_tile_size(frame_width, frame_height);
-                }
-            }
-
-            {
-                let headers = view.live_headers.borrow();
-                let geometry = view.geometry.borrow();
-                for (index, old_y) in snapshot.header_positions.iter() {
-                    let Some(label) = headers.get(index) else {
-                        continue;
-                    };
-                    let Some(target) = geometry.get(*index) else {
-                        continue;
-                    };
-                    let y = old_y + (target.header_y - old_y) * eased;
-                    view.root.move_(label, SECTIONED_SIDE_MARGIN, y);
-                }
-            }
-
+            let Some(view) = weak.upgrade() else { return glib::ControlFlow::Break; };
+            if view.reflow_animation_generation.get() != generation { return glib::ControlFlow::Break; }
+            let linear = (started.elapsed().as_secs_f64() / 0.42).clamp(0.0, 1.0);
+            let eased = linear * linear * (3.0 - 2.0 * linear);
+            let photos = view.strip_presentation.borrow().as_ref()
+                .map(|p| p.photos.clone()).unwrap_or_else(|| photos.clone());
+            view.paint_strip(StripPresentation { layout: start.between(&target, eased), photos }, &ranges);
             if linear >= 1.0 {
                 view.reflow_active.set(false);
+                view.preserve_headers_during_reflow.set(false);
+                view.clear_strip_layer();
                 view.refresh();
-                if std::env::var_os("PICASA_TRACE").is_some() {
-                    eprintln!(
-                        "PIC_SECTIONED_ANIM zoom_reflow_end elapsed_ms={}",
-                        started.elapsed().as_millis()
-                    );
-                }
                 glib::ControlFlow::Break
-            } else {
-                glib::ControlFlow::Continue
-            }
+            } else { glib::ControlFlow::Continue }
         });
     }
 
@@ -1464,4 +1517,216 @@ mod section_lookup_tests {
         assert_eq!(zoomed_first_row_y - offset, 0.0);
         assert!(upper_edge_anchor(&ranges, &geometry, 281.0, 0.0, 280.0).is_none());
     }
+
+    #[test]
+    fn strip_wrap_preserves_every_pixel_and_model_order_in_both_directions() {
+        // The clip partition must conserve a whole photo at every intermediate
+        // capacity. A photo may occupy only two adjacent rows at a wrap.
+        for step in 0..=100 {
+            for columns in [3.0 - step as f64 / 100.0, 2.0 + step as f64 / 100.0] {
+                let layout = StripLayout {
+                    columns, tile_width: 90.0, tile_height: 60.0, pitch: 100.0, left: 0.0,
+                    sections: vec![StripSection {
+                        first_index: 0.0, first_y: 70.0, row_height: 80.0,
+                        header_y: 0.0, end_y: 2000.0,
+                    }],
+                };
+                let slices = strip_slices(&layout, &[range(0, 9)], 0.0, 2000.0);
+                for index in 0..9 {
+                    let pieces = slices.iter().filter(|p| p.index == index).collect::<Vec<_>>();
+                    assert!(!pieces.is_empty() && pieces.len() <= 2);
+                    assert!((pieces.iter().map(|p| p.clip_width).sum::<f64>() - 90.0).abs() < 1e-7);
+                    if pieces.len() == 2 { assert_eq!(pieces[1].row, pieces[0].row + 1); }
+                }
+                for row in 0..6 {
+                    let pieces = slices.iter().filter(|p| p.row == row).collect::<Vec<_>>();
+                    for pair in pieces.windows(2) {
+                        assert!(pair[0].index < pair[1].index);
+                        assert!(pair[0].clip_x + pair[0].clip_width <= pair[1].clip_x + 1e-7);
+                        assert_eq!(pair[0].y, pair[1].y);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+    fn strip_zoom_resize_and_retarget_keep_photos_and_headers_together() {
+        fn settle(milliseconds: u64) {
+            let context = glib::MainContext::default();
+            let until = Instant::now() + std::time::Duration::from_millis(milliseconds);
+            while Instant::now() < until {
+                while context.pending() {
+                    context.iteration(false);
+                }
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+        }
+
+        gtk::init().unwrap();
+        let gallery = Rc::new(Gallery::new(&[], 120, |_| {}, |_, _, _| {}, |_, _, _, _| {}, |_, _| {}, |_| {}));
+        gallery.group_mode.set(GroupMode::Folder);
+        gallery.current_columns.set(5);
+        let sample_root = std::env::current_dir().unwrap().join("samples");
+        gallery.current_photos.replace((1..=100_i64).map(|id| {
+            let path = sample_root.join(format!("ZoomOUT-{}.jpg", id % 30 + 1));
+            let folder_id = if id <= 12 { 1_i64 } else { 2_i64 };
+            let folder_path = if folder_id == 1 { "/zoom-test/first" } else { "/zoom-test/second" };
+            glib::Object::builder::<PhotoObject>()
+                .property("id", id)
+                .property("path", path.to_string_lossy().to_string())
+                .property("cached-thumbnail-path", path.to_string_lossy().to_string())
+                .property("thumbnail-available", true)
+                .property("filename", format!("photo-{id:03}.jpg"))
+                .property("folder-id", folder_id)
+                .property("folder-path", folder_path)
+                .property("original-available", true)
+                .build()
+        }).collect());
+        let mut cached = HashSet::new();
+        for photo in gallery.current_photos.borrow().iter() {
+            if let Some(key) = photo_presentation_key(photo) {
+                if cached.insert(key.clone()) {
+                    let file = gtk::gio::File::for_path(photo.path());
+                    let texture = gtk::gdk::Texture::from_file(&file).unwrap();
+                    folder_thumbnail_cache_insert(key, texture.upcast());
+                }
+            }
+        }
+        gallery.rebuild_group_ranges();
+
+        let scroll = gtk::ScrolledWindow::builder()
+            .child(&gallery.folder_sectioned_root)
+            .build();
+        gallery.attach_sectioned_folder_scroll(&scroll);
+        let window = gtk::Window::builder()
+            .title("rc6-grid-reflow-test")
+            .default_width(800)
+            .default_height(500)
+            .child(&scroll)
+            .build();
+        window.present();
+        if std::env::var_os("PICASA_VISUAL_TEST").is_some() {
+            settle(2500);
+        }
+        settle(150);
+        scroll.vadjustment().set_value(0.0);
+        settle(100);
+        gallery.sectioned_folder.refresh();
+        let before = gallery.sectioned_folder.live_tiles.borrow()
+            .keys().copied().collect::<HashSet<_>>();
+        assert!(!before.is_empty());
+
+        let view = &gallery.sectioned_folder;
+        let snapshot = view.capture_reflow_snapshot();
+        let anchor = view.capture_center_anchor();
+        gallery.current_columns.set(4);
+        gallery.tile_width.set(137);
+        gallery.tile_height.set(91);
+        view.animate_zoom_reflow(snapshot, anchor);
+        let mut frames = 0;
+        let mut saw_split = false;
+        let until = Instant::now() + std::time::Duration::from_secs(2);
+        while view.reflow_active.get() && Instant::now() < until {
+            if let Some(presentation) = view.strip_presentation.borrow().as_ref() {
+                let slices = strip_slices(&presentation.layout, &view.group_ranges.borrow(), 0.0, 2000.0);
+                for slice in &slices {
+                    // Only viewport/overscan photos are realized.
+                    if slice.y < 800.0 {
+                        assert!(presentation.photos.contains_key(&slice.index), "missing photo {}", slice.index);
+                    }
+                }
+                let mut seen = HashSet::new();
+                saw_split |= slices.iter().any(|slice| !seen.insert(slice.index));
+                for (section, header) in view.live_headers.borrow().iter() {
+                    let (x, y) = view.root.child_position(header);
+                    assert_eq!(x, SECTIONED_SIDE_MARGIN);
+                    assert!((y - presentation.layout.sections[*section].header_y).abs() < 0.01);
+                }
+                assert!(before.is_subset(&view.live_tiles.borrow().keys().copied().collect()));
+                frames += 1;
+            }
+            settle(12);
+        }
+        assert!(!view.reflow_active.get());
+        assert!(frames > 3 && saw_split, "the recorded transition never split a wrapping photo");
+        assert!(view.strip_layer.borrow().is_none());
+        assert!(view.live_tiles.borrow().values().all(|entry| entry.tile.opacity() == 1.0));
+
+        // Reverse, then change direction again while the first animation is
+        // still visible. The new animation must start at that exact strip state.
+        let snapshot = view.capture_reflow_snapshot();
+        let anchor = view.capture_center_anchor();
+        gallery.current_columns.set(5);
+        gallery.tile_width.set(120);
+        gallery.tile_height.set(80);
+        view.animate_reflow(snapshot, anchor);
+        settle(120);
+        let old = view.strip_presentation.borrow().as_ref().unwrap().layout.clone();
+        let old_scroll = view.scroll_position();
+        let snapshot = view.capture_reflow_snapshot();
+        let anchor = view.capture_center_anchor();
+        gallery.current_columns.set(4);
+        gallery.tile_width.set(137);
+        gallery.tile_height.set(91);
+        view.animate_zoom_reflow(snapshot, anchor);
+        let current = view.strip_presentation.borrow().as_ref().unwrap().layout.clone();
+        assert_eq!(old.columns, current.columns);
+        assert_eq!(old.pitch, current.pitch);
+        assert_eq!(old.left, current.left);
+        let scroll_delta = view.scroll_position() - old_scroll;
+        for (a, b) in old.sections.iter().zip(&current.sections) {
+            assert_eq!(a.first_index, b.first_index);
+            assert!((a.first_y + scroll_delta - b.first_y).abs() < 0.001);
+        }
+        settle(650);
+        assert!(!view.reflow_active.get());
+        assert!(view.strip_layer.borrow().is_none());
+        assert!(view.live_tiles.borrow().values().all(|entry| entry.tile.opacity() == 1.0));
+        // A scrolled section must start at the same screen coordinates, even
+        // when its first realized photo is far from the section's first row.
+        scroll.vadjustment().set_value(1200.0);
+        settle(80);
+        let old_scroll = view.scroll_position();
+        let old_positions = view.live_tiles.borrow().iter().map(|(index, entry)| {
+            (*index, view.root.child_position(&entry.tile))
+        }).collect::<HashMap<_, _>>();
+        let snapshot = view.capture_reflow_snapshot();
+        let anchor = view.capture_center_anchor();
+        gallery.current_columns.set(5);
+        gallery.tile_width.set(120);
+        gallery.tile_height.set(80);
+        view.animate_reflow(snapshot, anchor);
+        let presentation = view.strip_presentation.borrow().as_ref().unwrap().clone();
+        let slices = strip_slices(&presentation.layout, &view.group_ranges.borrow(), 0.0, 10000.0);
+        let delta = view.scroll_position() - old_scroll;
+        let mut matched = 0;
+        for slice in &slices {
+            if let Some((x, y)) = old_positions.get(&slice.index) {
+                assert!((slice.x - x).abs() < 1.0);
+                assert!((slice.y - y - delta).abs() < 1.0);
+                matched += 1;
+            }
+        }
+        assert!(matched > 5);
+        view.refresh_model();
+        assert!(view.strip_layer.borrow().is_none());
+        assert!(view.live_tiles.borrow().values().all(|entry| entry.tile.opacity() == 1.0));
+
+        // A tiny folder must not gain a scrollbar from the temporary layer.
+        gallery.current_photos.borrow_mut().truncate(3);
+        gallery.rebuild_group_ranges();
+        view.refresh_model();
+        settle(80);
+        let snapshot = view.capture_reflow_snapshot();
+        gallery.current_columns.set(3);
+        view.animate_zoom_reflow(snapshot, None);
+        settle(80);
+        assert!(scroll.vadjustment().upper() <= scroll.vadjustment().page_size() + 1.0);
+        view.refresh_model();
+        assert!(view.strip_layer.borrow().is_none());
+        window.close();
+    }
+
 }

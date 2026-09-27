@@ -15,8 +15,6 @@ struct SectionedFolderGeometry {
 struct SectionedReflowSnapshot {
     tile_positions: HashMap<u32, (f64, f64)>,
     header_positions: HashMap<usize, f64>,
-    old_columns: u32,
-    old_geometry: Vec<SectionedFolderGeometry>,
     tile_width: i32,
     tile_height: i32,
 }
@@ -65,49 +63,6 @@ fn upper_edge_anchor(
                 .map(|section| (range.start, section.first_photo_y - scroll_y))
         })
 }
-
-fn row_flow_local_position(
-    old_x: f64,
-    old_y: f64,
-    target_x: f64,
-    target_y: f64,
-    old_row: u32,
-    new_row: u32,
-    progress: f64,
-) -> (f64, f64) {
-    let progress = progress.clamp(0.0, 1.0);
-    const TURN: f64 = 0.56;
-
-    if old_row == new_row {
-        return (
-            old_x + (target_x - old_x) * progress,
-            old_y + (target_y - old_y) * progress,
-        );
-    }
-
-    if new_row > old_row {
-        // Wrapping to a later row: drop into the destination row first,
-        // then slide across that row into the new slot.
-        if progress <= TURN {
-            let p = progress / TURN;
-            (old_x, old_y + (target_y - old_y) * p)
-        } else {
-            let p = (progress - TURN) / (1.0 - TURN);
-            (old_x + (target_x - old_x) * p, target_y)
-        }
-    } else {
-        // Unwrapping upward is the visual reverse: slide into the destination
-        // column first, then rise into the earlier row.
-        if progress <= TURN {
-            let p = progress / TURN;
-            (old_x + (target_x - old_x) * p, old_y)
-        } else {
-            let p = (progress - TURN) / (1.0 - TURN);
-            (target_x, old_y + (target_y - old_y) * p)
-        }
-    }
-}
-
 
 struct SectionedFolderView {
     root: gtk::Fixed,
@@ -861,8 +816,6 @@ impl SectionedFolderView {
         SectionedReflowSnapshot {
             tile_positions,
             header_positions,
-            old_columns: self.current_columns.get().max(1),
-            old_geometry: self.geometry.borrow().clone(),
             tile_width,
             tile_height,
         }
@@ -939,13 +892,9 @@ impl SectionedFolderView {
             self.restore_anchor(photo_id, offset);
         }
 
-        let mut motion =
-            Vec::<(SquareTile, u32, usize, u32, u32, f64, f64, f64, f64, f64, f64)>::new();
+        let mut motion = Vec::<(SquareTile, f32, f32)>::new();
         {
             let live = self.live_tiles.borrow();
-            let ranges = self.group_ranges.borrow();
-            let geometry = self.geometry.borrow();
-            let new_columns = self.current_columns.get().max(1);
             for (index, (old_x, old_y)) in snapshot.tile_positions.iter() {
                 let Some(entry) = live.get(index) else {
                     continue;
@@ -953,47 +902,13 @@ impl SectionedFolderView {
                 let Some(bounds) = entry.tile.compute_bounds(&self.root) else {
                     continue;
                 };
-                let Some(section_index) = section_index_for_photo(&ranges, *index as usize) else {
-                    continue;
-                };
-                let Some(range) = ranges.get(section_index) else {
-                    continue;
-                };
-                let Some(old_geom) = snapshot.old_geometry.get(section_index) else {
-                    continue;
-                };
-                let Some(new_geom) = geometry.get(section_index) else {
-                    continue;
-                };
-
-                let local_index = *index as usize - range.start;
-                let old_row = local_index as u32 / snapshot.old_columns.max(1);
-                let new_row = local_index as u32 / new_columns;
-                let target_x = f64::from(bounds.x());
-                let target_y = f64::from(bounds.y());
-
-                let old_local_y = *old_y - old_geom.first_photo_y;
-                let new_local_y = target_y - new_geom.first_photo_y;
-                let dx = (*old_x - target_x) as f32;
-                let dy = (*old_y - target_y) as f32;
+                let dx = (*old_x as f32) - bounds.x();
+                let dy = (*old_y as f32) - bounds.y();
                 if dx.abs() < 0.5 && dy.abs() < 0.5 {
                     continue;
                 }
-
                 entry.tile.set_presentation_offset(dx, dy);
-                motion.push((
-                    entry.tile.clone(),
-                    *index,
-                    section_index,
-                    old_row,
-                    new_row,
-                    *old_x,
-                    old_local_y,
-                    target_x,
-                    new_local_y,
-                    old_geom.first_photo_y,
-                    new_geom.first_photo_y,
-                ));
+                motion.push((entry.tile.clone(), dx, dy));
             }
         }
 
@@ -1025,11 +940,7 @@ impl SectionedFolderView {
         // section shifts do not feel like they are being thrown into place.
         let max_tile_distance = motion
             .iter()
-            .map(|(_, _, _, _, _, old_x, old_local_y, target_x, new_local_y, old_section_y, new_section_y)| {
-                let old_y = *old_section_y + *old_local_y;
-                let target_y = *new_section_y + *new_local_y;
-                ((*target_x - *old_x).powi(2) + (target_y - old_y).powi(2)).sqrt()
-            })
+            .map(|(_, dx, dy)| f64::from((*dx * *dx + *dy * *dy).sqrt()))
             .fold(0.0_f64, f64::max);
         let max_header_distance = header_motion
             .iter()
@@ -1064,38 +975,10 @@ impl SectionedFolderView {
             // Smoothstep starts and finishes gently. Re-targeting no longer
             // repeatedly exposes the high-velocity first frame of ease-out.
             let eased = linear * linear * (3.0 - 2.0 * linear);
+            let remaining = (1.0 - eased) as f32;
 
-            for (
-                tile,
-                _,
-                _,
-                old_row,
-                new_row,
-                old_x,
-                old_local_y,
-                target_x,
-                new_local_y,
-                old_section_y,
-                new_section_y,
-            ) in motion.iter()
-            {
-                let section_y =
-                    old_section_y + (new_section_y - old_section_y) * eased;
-                let (flow_x, flow_local_y) = row_flow_local_position(
-                    *old_x,
-                    *old_local_y,
-                    *target_x,
-                    *new_local_y,
-                    *old_row,
-                    *new_row,
-                    eased,
-                );
-                let visual_y = section_y + flow_local_y;
-                let target_y = new_section_y + new_local_y;
-                tile.set_presentation_offset(
-                    (flow_x - target_x) as f32,
-                    (visual_y - target_y) as f32,
-                );
+            for (tile, dx, dy) in motion.iter() {
+                tile.set_presentation_offset(*dx * remaining, *dy * remaining);
             }
             for (label, old_y, target_y) in header_motion.iter() {
                 let y = old_y + (target_y - old_y) * eased;
@@ -1103,7 +986,7 @@ impl SectionedFolderView {
             }
 
             if linear >= 1.0 {
-                for (tile, ..) in motion.iter() {
+                for (tile, _, _) in motion.iter() {
                     tile.set_presentation_offset(0.0, 0.0);
                 }
                 for (label, _, target_y) in header_motion.iter() {
@@ -1628,27 +1511,4 @@ mod section_lookup_tests {
         assert_eq!(zoomed_first_row_y - offset, 0.0);
         assert!(upper_edge_anchor(&ranges, &geometry, 281.0, 0.0, 280.0).is_none());
     }
-
-    #[test]
-    fn row_flow_wraps_down_before_sliding_across_new_row() {
-        let (x1, y1) = row_flow_local_position(300.0, 0.0, 20.0, 180.0, 0, 1, 0.25);
-        assert_eq!(x1, 300.0);
-        assert!(y1 > 0.0 && y1 < 180.0);
-
-        let (x2, y2) = row_flow_local_position(300.0, 0.0, 20.0, 180.0, 0, 1, 0.80);
-        assert!(x2 < 300.0 && x2 > 20.0);
-        assert_eq!(y2, 180.0);
-    }
-
-    #[test]
-    fn row_flow_unwraps_across_before_rising() {
-        let (x1, y1) = row_flow_local_position(20.0, 180.0, 300.0, 0.0, 1, 0, 0.25);
-        assert!(x1 > 20.0 && x1 < 300.0);
-        assert_eq!(y1, 180.0);
-
-        let (x2, y2) = row_flow_local_position(20.0, 180.0, 300.0, 0.0, 1, 0, 0.80);
-        assert_eq!(x2, 300.0);
-        assert!(y2 < 180.0 && y2 > 0.0);
-    }
-
 }

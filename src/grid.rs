@@ -395,26 +395,49 @@ mod folder_stream_tests {
 
         // At tile height 88 photo rows are 100 px while headers stay at 70 px.
         // Before row 4 there are two headers and two photo rows: 70+100+100+70.
-        assert_eq!(super::folder_row_offset(&rows, 4, 88), 340.0);
+        assert_eq!(
+            super::folder_row_offset(&rows, 4, 88, false),
+            340.0
+        );
+        // With the filename row visible every photo line is 24 px taller, so
+        // the same rows land 48 px lower.
+        assert_eq!(
+            super::folder_row_offset(&rows, 4, 88, true),
+            388.0
+        );
     }
 
     #[test]
     fn folder_model_rows_use_compact_headers_and_zoomed_photo_lines() {
         assert_eq!(
-            super::folder_model_row_height(FolderRowKind::Header, 88),
+            super::folder_model_row_height(FolderRowKind::Header, 88, false),
             super::FOLDER_HEADER_HEIGHT
         );
         assert_eq!(
-            super::folder_model_row_height(FolderRowKind::Photos, 88),
+            super::folder_model_row_height(FolderRowKind::Photos, 88, false),
             100
         );
         assert_eq!(
-            super::folder_model_row_height(FolderRowKind::Header, 155),
+            super::folder_model_row_height(FolderRowKind::Header, 155, false),
             super::FOLDER_HEADER_HEIGHT
         );
         assert_eq!(
-            super::folder_model_row_height(FolderRowKind::Photos, 155),
+            super::folder_model_row_height(FolderRowKind::Photos, 155, false),
             167
+        );
+        // Headers never grow for captions; photo lines carry the caption row
+        // below the square thumbnail instead of shrinking it.
+        assert_eq!(
+            super::folder_model_row_height(FolderRowKind::Header, 88, true),
+            super::FOLDER_HEADER_HEIGHT
+        );
+        assert_eq!(
+            super::folder_model_row_height(FolderRowKind::Photos, 88, true),
+            124
+        );
+        assert_eq!(
+            super::folder_model_row_height(FolderRowKind::Photos, 155, true),
+            191
         );
     }
 
@@ -619,8 +642,13 @@ mod folder_stream_tests {
 
     #[test]
     fn folder_photo_line_height_is_fixed() {
-        assert_eq!(folder_line_height(100), 112);
-        assert_eq!(folder_line_height(163), 175);
+        assert_eq!(folder_line_height(100, false), 112);
+        assert_eq!(folder_line_height(163, false), 175);
+        // The filename caption row is added under the square thumbnail, so the
+        // line grows by exactly FILENAME_CAPTION_HEIGHT and never overlaps the
+        // next row of squares.
+        assert_eq!(folder_line_height(100, true), 136);
+        assert_eq!(folder_line_height(163, true), 199);
     }
 
     #[test]

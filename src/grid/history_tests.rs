@@ -184,13 +184,21 @@ fn history_grid_reuses_items_without_leaking_captions_into_other_views() {
     let tile = SquareTile::new(180, 120, &frame);
     let plain = PhotoObject::from_photo(&ordinary[0]);
     tile.bind_photo(&plain);
-    let size_before_caption = tile.measure(gtk::Orientation::Vertical, -1);
+    let (height_before, natural_before, _, _) = tile.measure(gtk::Orientation::Vertical, -1);
+    let (width_before, width_natural_before, _, _) = tile.measure(gtk::Orientation::Horizontal, -1);
     tile.set_filename_visible(true);
+    // The square thumbnail keeps its full height; only the caption row below
+    // it extends the tile's vertical size request.
+    let (height_after, natural_after, _, _) = tile.measure(gtk::Orientation::Vertical, -1);
+    let (width_after, width_natural_after, _, _) = tile.measure(gtk::Orientation::Horizontal, -1);
     assert_eq!(
-        tile.measure(gtk::Orientation::Vertical, -1),
-        size_before_caption,
-        "filename caption must not change fixed tile height"
+        height_after - height_before,
+        FILENAME_CAPTION_HEIGHT,
+        "filename row must be added below the square, not carved out of it"
     );
+    assert_eq!(natural_after - natural_before, FILENAME_CAPTION_HEIGHT);
+    assert_eq!(width_after, width_before, "caption must not change tile width");
+    assert_eq!(width_natural_after, width_natural_before);
     let filename = tile
         .last_child()
         .and_downcast::<gtk::Label>()

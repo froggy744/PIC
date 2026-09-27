@@ -92,19 +92,75 @@ fn queue_photo_presentation_async(photo: &PhotoObject, visible_priority: bool) -
 
 const FILENAME_CAPTION_HEIGHT: i32 = 24;
 
+/// Row pitch that already surrounds every tile: 6 px of CSS padding/margin on
+/// the top and bottom edge of the grid item or Folder line.
+const TILE_ROW_SPACING: i32 = 12;
+
 thread_local! {
     static FILENAME_LABEL_TRACE_STATS: RefCell<(u64, u128, u128)> =
         const { RefCell::new((0, 0, 0)) };
 }
 
-fn filename_caption_height(tile_height: i32, visible: bool) -> i32 {
+/// Height of the single-line filename row drawn under the square thumbnail.
+/// It is always *added* to the tile: the image never gives up any of its own
+/// height for the caption.
+fn filename_caption_height(visible: bool) -> i32 {
     if visible {
-        tile_height
-            .max(1)
-            .saturating_sub(1)
-            .min(FILENAME_CAPTION_HEIGHT)
+        FILENAME_CAPTION_HEIGHT
     } else {
         0
+    }
+}
+
+/// Total height of one grid item: the square thumbnail plus the optional
+/// filename row below it. Every row-pitch calculation must go through this so
+/// rows can never overlap a caption.
+fn tile_block_height(tile_height: i32, filename_visible: bool) -> i32 {
+    tile_height.max(1) + filename_caption_height(filename_visible)
+}
+
+/// Pure geometry for one tile, split out of `size_allocate` so the square-image
+/// guarantee is testable without a display.
+///
+/// The image frame keeps the full `tile_width x tile_height` square whenever
+/// the parent allocates at least that much; the caption row is laid out under
+/// the square and only ever extends the block downwards.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TileLayout {
+    frame_x: i32,
+    frame_y: i32,
+    frame_width: i32,
+    frame_height: i32,
+    caption_y: i32,
+    caption_height: i32,
+    block_height: i32,
+}
+
+fn tile_layout(
+    tile_width: i32,
+    tile_height: i32,
+    allocated_width: i32,
+    allocated_height: i32,
+    caption_visible: bool,
+) -> TileLayout {
+    let tile_width = tile_width.max(1);
+    let tile_height = tile_height.max(1);
+    let allocated_width = allocated_width.max(1);
+    let allocated_height = allocated_height.max(1);
+    let caption_height = filename_caption_height(caption_visible);
+    let frame_width = tile_width.min(allocated_width);
+    let frame_height = tile_height.min(allocated_height);
+    let block_height = frame_height + caption_height;
+    let frame_x = ((allocated_width - frame_width) / 2).max(0);
+    let frame_y = ((allocated_height - block_height) / 2).max(0);
+    TileLayout {
+        frame_x,
+        frame_y,
+        frame_width,
+        frame_height,
+        caption_y: frame_y + frame_height,
+        caption_height,
+        block_height,
     }
 }
 
@@ -199,11 +255,27 @@ mod square_tile {
         }
     }
 
+    impl SquareTile {
+        fn caption_visible(&self) -> bool {
+            self.filename_visible.get()
+                && self
+                    .filename_label
+                    .borrow()
+                    .as_ref()
+                    .is_some_and(|label| label.is_visible())
+        }
+    }
+
     impl WidgetImpl for SquareTile {
         fn measure(&self, orientation: gtk::Orientation, _for_size: i32) -> (i32, i32, i32, i32) {
             let requested = match orientation {
                 gtk::Orientation::Horizontal => self.width.get().max(1),
-                gtk::Orientation::Vertical => self.height.get().max(1),
+                // The vertical request is the square thumbnail plus the
+                // filename row underneath it, so a caption can never squeeze
+                // the image out of its TILE_SIZE x TILE_SIZE allocation.
+                gtk::Orientation::Vertical => {
+                    self.height.get().max(1) + super::filename_caption_height(self.caption_visible())
+                }
                 _ => self.width.get().max(1),
             };
 
@@ -211,32 +283,37 @@ mod square_tile {
         }
 
         fn size_allocate(&self, width: i32, height: i32, baseline: i32) {
-            let child_width = self.width.get().min(width).max(1);
-            let child_height = self.height.get().min(height).max(1);
-            let has_caption = self.filename_visible.get()
-                && self
-                    .filename_label
-                    .borrow()
-                    .as_ref()
-                    .is_some_and(|label| label.is_visible());
-            let caption_height = super::filename_caption_height(child_height, has_caption);
-            let frame_height = child_height - caption_height;
+            let layout = super::tile_layout(
+                self.width.get(),
+                self.height.get(),
+                width,
+                height,
+                self.caption_visible(),
+            );
 
             if let Some(child) = self.obj().first_child() {
-                let x = ((width - child_width) / 2).max(0) as f32;
-                let y = ((height - child_height) / 2).max(0) as f32;
+                let transform = gtk::gsk::Transform::new().translate(&gtk::graphene::Point::new(
+                    layout.frame_x as f32,
+                    layout.frame_y as f32,
+                ));
 
-                let transform =
-                    gtk::gsk::Transform::new().translate(&gtk::graphene::Point::new(x, y));
-
-                child.allocate(child_width, frame_height, baseline, Some(transform));
-                if has_caption {
+                child.allocate(
+                    layout.frame_width,
+                    layout.frame_height,
+                    baseline,
+                    Some(transform),
+                );
+                if layout.caption_height > 0 {
                     if let Some(label) = self.filename_label.borrow().as_ref() {
-                        let label_transform = gtk::gsk::Transform::new()
-                            .translate(&gtk::graphene::Point::new(x, y + frame_height as f32));
+                        let label_transform = gtk::gsk::Transform::new().translate(
+                            &gtk::graphene::Point::new(
+                                layout.frame_x as f32,
+                                layout.caption_y as f32,
+                            ),
+                        );
                         label.allocate(
-                            child_width,
-                            caption_height,
+                            layout.frame_width,
+                            layout.caption_height,
                             baseline,
                             Some(label_transform),
                         );
@@ -274,15 +351,104 @@ mod square_tile {
 mod filename_caption_tests {
     use super::*;
 
+    /// The four smallest zoom-ladder levels that were reported to render the
+    /// thumbnail visibly non-square once the filename row was present.
+    const VERIFY_SIZES: [i32; 4] = [100, 117, 137, 160];
+
     #[test]
-    fn filename_caption_uses_space_inside_the_fixed_tile_height() {
-        for tile_height in [1, 24, 80, 180, 300] {
-            let caption = filename_caption_height(tile_height, true);
-            let photo = tile_height - caption;
-            assert_eq!(photo + caption, tile_height);
-            assert!(photo >= 1);
-            assert!(caption <= FILENAME_CAPTION_HEIGHT);
-            assert_eq!(filename_caption_height(tile_height, false), 0);
+    fn caption_row_is_appended_below_the_square_image() {
+        for tile_size in VERIFY_SIZES {
+            for caption_visible in [false, true] {
+                let caption = filename_caption_height(caption_visible);
+                assert_eq!(caption, if caption_visible { 24 } else { 0 });
+                assert_eq!(tile_block_height(tile_size, caption_visible), tile_size + caption);
+
+                // A parent that allocates exactly the measured block height
+                // must still hand the image its whole square.
+                let block = tile_size + caption;
+                let layout = tile_layout(tile_size, tile_size, tile_size, block, caption_visible);
+                assert_eq!(layout.frame_width, tile_size, "width at {tile_size}px");
+                assert_eq!(layout.frame_height, tile_size, "height at {tile_size}px");
+                assert_eq!(layout.caption_height, caption);
+                assert_eq!(layout.block_height, block);
+                assert_eq!(layout.caption_y, layout.frame_y + tile_size);
+                assert!(layout.caption_y + caption <= block);
+            }
+        }
+    }
+
+    #[test]
+    fn filename_visibility_never_changes_the_image_allocation() {
+        for tile_size in VERIFY_SIZES {
+            let without = tile_layout(tile_size, tile_size, tile_size, tile_size, false);
+            let with = tile_layout(
+                tile_size,
+                tile_size,
+                tile_size,
+                tile_size + FILENAME_CAPTION_HEIGHT,
+                true,
+            );
+            assert_eq!(with.frame_width, without.frame_width);
+            assert_eq!(with.frame_height, without.frame_height);
+            assert_eq!(with.frame_height, tile_size);
+            assert_eq!(with.frame_width, with.frame_height, "frame must stay square");
+        }
+    }
+
+    #[test]
+    fn folder_rows_reserve_the_caption_between_squares() {
+        for tile_size in VERIFY_SIZES {
+            assert_eq!(folder_line_height(tile_size, false), tile_size + 12);
+            assert_eq!(
+                folder_line_height(tile_size, true),
+                tile_size + FILENAME_CAPTION_HEIGHT + 12
+            );
+        }
+    }
+
+    /// Real GTK allocation check: the Overlay that owns the picture must end
+    /// up exactly `size x size` whether or not the filename row is shown.
+    #[test]
+    #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+    fn allocated_thumbnail_frame_is_square_at_every_zoom_level() {
+        gtk::init().unwrap();
+        let context = glib::MainContext::default();
+        let settle = || {
+            for _ in 0..30 {
+                while context.pending() {
+                    context.iteration(false);
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+        };
+
+        for tile_size in VERIFY_SIZES {
+            for caption_visible in [false, true] {
+                let frame = gtk::Overlay::new();
+                let tile = SquareTile::new(tile_size, tile_size, &frame);
+                tile.set_halign(gtk::Align::Start);
+                tile.set_valign(gtk::Align::Start);
+                tile.set_filename_visible(caption_visible);
+                let window = gtk::Window::builder().child(&tile).build();
+                window.present();
+                settle();
+
+                let (_, natural_width, _, _) = tile.measure(gtk::Orientation::Horizontal, -1);
+                let (_, natural_height, _, _) = tile.measure(gtk::Orientation::Vertical, -1);
+                assert_eq!(
+                    natural_height,
+                    tile_size + filename_caption_height(caption_visible),
+                    "tile height at {tile_size}px caption={caption_visible}"
+                );
+                assert_eq!(natural_width, tile_size, "tile width at {tile_size}px");
+                assert_eq!(
+                    (frame.width(), frame.height()),
+                    (tile_size, tile_size),
+                    "image frame at {tile_size}px caption={caption_visible}"
+                );
+                window.close();
+                settle();
+            }
         }
     }
 }
@@ -343,9 +509,12 @@ impl SquareTile {
         self.queue_resize();
     }
 
-    /// Show a single-line filename inside the tile's fixed outer dimensions.
-    /// The image frame gives up caption height, so grid and Folder row geometry
-    /// stay unchanged when this preference is toggled.
+    /// Show a single-line filename in its own row below the square thumbnail.
+    ///
+    /// The caption is *added* to the tile's vertical size request: the image
+    /// frame always keeps its full TILE_SIZE x TILE_SIZE square, and row
+    /// geometry (grid item height, Folder line height) grows by exactly
+    /// `filename_caption_height()`.
     pub(crate) fn set_filename_visible(&self, visible: bool) -> bool {
         let changed = self.imp().filename_visible.replace(visible) != visible;
         let mut created = false;
@@ -370,7 +539,9 @@ impl SquareTile {
             label.set_visible(visible);
         }
         if changed || created {
-            self.queue_allocate();
+            // The vertical size request changed (caption row added/removed),
+            // so parents must re-measure, not just re-allocate.
+            self.queue_resize();
         }
         created
     }

@@ -43,10 +43,17 @@ const FOLDER_HEADER_HEIGHT: i32 = 70;
 /// lines continue to follow the current thumbnail zoom. Every scroll/anchor
 /// calculation uses this helper so GtkListView allocation and our own geometry
 /// stay in sync even though the two row kinds have different heights.
-fn folder_model_row_height(kind: FolderRowKind, tile_height: i32) -> i32 {
+///
+/// Photo lines are sized from `tile_block_height`, so the filename caption row
+/// is part of the row instead of eating into the square thumbnail.
+fn folder_model_row_height(
+    kind: FolderRowKind,
+    tile_height: i32,
+    filename_visible: bool,
+) -> i32 {
     match kind {
         FolderRowKind::Header => FOLDER_HEADER_HEIGHT,
-        FolderRowKind::Photos => folder_line_height(tile_height),
+        FolderRowKind::Photos => folder_line_height(tile_height, filename_visible),
     }
 }
 
@@ -57,10 +64,21 @@ fn folder_chunk_size(columns: u32) -> usize {
 /// Exact vertical offset for a virtual Folder row. Folder mode deliberately
 /// gives every model row a fixed height, so we do not need GtkListView's
 /// estimated far-row position when restoring an anchor after a column change.
-fn folder_row_offset(rows: &[FolderVirtualRow], target_row: usize, tile_height: i32) -> f64 {
+fn folder_row_offset(
+    rows: &[FolderVirtualRow],
+    target_row: usize,
+    tile_height: i32,
+    filename_visible: bool,
+) -> f64 {
     rows.iter()
         .take(target_row)
-        .map(|row| f64::from(folder_model_row_height(row.kind, tile_height)))
+        .map(|row| {
+            f64::from(folder_model_row_height(
+                row.kind,
+                tile_height,
+                filename_visible,
+            ))
+        })
         .sum()
 }
 
@@ -669,9 +687,10 @@ impl Gallery {
         }
     }
 
-    /// Toggle filenames in the fixed-height tile caption area. This only walks
-    /// GTK's realized tile pool; future GridView and Folder tiles read the
-    /// shared setting during setup/bind.
+    /// Toggle the filename caption row. The caption is part of the tile's
+    /// vertical size request, so this changes row geometry too: the caption
+    /// flag is applied to the realized pool and every row model is recomputed
+    /// from the same `tile_block_height` the tiles now measure with.
     pub fn set_show_file_names(self: &Rc<Self>, show: bool) {
         if self.show_file_names.get() == show {
             return;
@@ -684,6 +703,16 @@ impl Gallery {
         for tile in tiles {
             tile.set_filename_visible(show);
         }
+        // Sectioned Folder positions tiles itself from a cached photo-row
+        // height, and the legacy Folder rows carry an explicit height request.
+        // Both are recomputed from the same caption flag the tiles just got.
+        self.sectioned_folder.refresh();
+        update_folder_realized_rows(
+            self.folder_root.upcast_ref(),
+            self.tile_width.get(),
+            self.tile_height.get(),
+            show,
+        );
     }
 
     pub fn wheel_zoom_in(self: &Rc<Self>) {
@@ -1264,7 +1293,8 @@ impl Gallery {
 
         const ITEM_PADDING: f64 = 6.0;
         let columns = self.current_columns.get().max(1) as usize;
-        let row_pitch = self.tile_height.get().max(1) as f64 + ITEM_PADDING * 2.0;
+        let row_pitch = tile_block_height(self.tile_height.get(), self.show_file_names.get()) as f64
+            + ITEM_PADDING * 2.0;
         let first = self.index_for_scroll_position(scroll_y);
         let visible_rows =
             ((viewport_height.max(row_pitch) / row_pitch).ceil() as usize).saturating_add(2);
@@ -1555,9 +1585,17 @@ impl Gallery {
 
         let columns = self.current_columns.get().max(1) as usize;
         let tile_height = self.tile_height.get().max(1);
-        let header_height = f64::from(folder_model_row_height(FolderRowKind::Header, tile_height));
-        let photo_row_height =
-            f64::from(folder_model_row_height(FolderRowKind::Photos, tile_height));
+        let filename_visible = self.show_file_names.get();
+        let header_height = f64::from(folder_model_row_height(
+            FolderRowKind::Header,
+            tile_height,
+            filename_visible,
+        ));
+        let photo_row_height = f64::from(folder_model_row_height(
+            FolderRowKind::Photos,
+            tile_height,
+            filename_visible,
+        ));
         let smallest_row_height = header_height.min(photo_row_height).max(1.0);
         let view_start = scroll_y.max(0.0);
         let view_end = view_start + viewport_height.max(smallest_row_height);
@@ -2221,6 +2259,7 @@ impl Gallery {
         let last_scroll_y = self.last_scroll_y.clone();
         let current_columns = self.current_columns.clone();
         let tile_height = self.tile_height.clone();
+        let show_file_names = self.show_file_names.clone();
         let folder_store = self.folder_store.clone();
         let folder_order = self.folder_order.clone();
         let folder_catalog = self.folder_catalog.clone();
@@ -2291,7 +2330,10 @@ impl Gallery {
                             &group_title,
                             &group_count,
                             (((last_scroll_y.get() - 20.0).max(0.0)
-                                / (tile_height.get().max(1) as f64 + 12.0))
+                                / f64::from(
+                                    tile_block_height(tile_height.get(), show_file_names.get())
+                                        + TILE_ROW_SPACING,
+                                ))
                                 .floor() as usize)
                                 * current_columns.get().max(1) as usize,
                         );
@@ -2308,7 +2350,10 @@ impl Gallery {
                         &group_title,
                         &group_count,
                         (((last_scroll_y.get() - 20.0).max(0.0)
-                            / (tile_height.get().max(1) as f64 + 12.0))
+                            / f64::from(
+                                tile_block_height(tile_height.get(), show_file_names.get())
+                                    + TILE_ROW_SPACING,
+                            ))
                             .floor() as usize)
                             * current_columns.get().max(1) as usize,
                     );

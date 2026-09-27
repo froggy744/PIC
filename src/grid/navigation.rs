@@ -34,7 +34,13 @@ impl Gallery {
                     .item(position)
                     .and_downcast::<FolderRowObject>()
             })
-            .map(|row| f64::from(folder_model_row_height(row.data().kind, tile_height)))
+            .map(|row| {
+                f64::from(folder_model_row_height(
+                    row.data().kind,
+                    tile_height,
+                    self.show_file_names.get(),
+                ))
+            })
             .sum::<f64>();
         let root = self.folder_root.clone();
         let generation = self.folder_scroll_generation.clone();
@@ -150,8 +156,10 @@ fn schedule_scroll_restore(
     });
 }
 
-fn folder_line_height(tile_height: i32) -> i32 {
-    tile_height.max(1) + 12
+/// One Folder photo line: the tile block (square thumbnail plus its optional
+/// filename row) plus the 6 px top/bottom spacing every tile line carries.
+fn folder_line_height(tile_height: i32, filename_visible: bool) -> i32 {
+    tile_block_height(tile_height, filename_visible) + TILE_ROW_SPACING
 }
 
 fn box_tiles(line: &gtk::Box) -> Vec<SquareTile> {
@@ -166,17 +174,24 @@ fn box_tiles(line: &gtk::Box) -> Vec<SquareTile> {
     tiles
 }
 
-fn update_folder_realized_rows(widget: &gtk::Widget, tile_width: i32, tile_height: i32) {
+fn update_folder_realized_rows(
+    widget: &gtk::Widget,
+    tile_width: i32,
+    tile_height: i32,
+    filename_visible: bool,
+) {
     if widget.widget_name().as_str() == "picasa-folder-photo-line" {
         if let Some(line) = widget.downcast_ref::<gtk::Box>() {
             for tile in box_tiles(line) {
                 tile.set_tile_size(tile_width, tile_height);
+                tile.set_filename_visible(filename_visible);
             }
             if line.is_visible() {
                 if let Some(row_root) = line.parent().and_downcast::<gtk::Box>() {
                     row_root.set_height_request(folder_model_row_height(
                         FolderRowKind::Photos,
                         tile_height,
+                        filename_visible,
                     ));
                 }
             }
@@ -184,7 +199,7 @@ fn update_folder_realized_rows(widget: &gtk::Widget, tile_width: i32, tile_heigh
     }
     let mut child = widget.first_child();
     while let Some(current) = child {
-        update_folder_realized_rows(&current, tile_width, tile_height);
+        update_folder_realized_rows(&current, tile_width, tile_height, filename_visible);
         child = current.next_sibling();
     }
 }

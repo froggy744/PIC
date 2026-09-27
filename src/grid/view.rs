@@ -474,6 +474,7 @@ impl Gallery {
         let folder_selected_ids: Rc<RefCell<HashSet<i64>>> = Rc::new(RefCell::new(HashSet::new()));
 
         let setup_tile_height = tile_height.clone();
+        let setup_show_file_names = show_file_names.clone();
         folder_factory.connect_setup(move |_, object| {
             let Some(list_item) = object.downcast_ref::<gtk::ListItem>() else {
                 return;
@@ -486,6 +487,7 @@ impl Gallery {
             row_root.set_height_request(folder_model_row_height(
                 FolderRowKind::Header,
                 setup_tile_height.get(),
+                setup_show_file_names.get(),
             ));
 
             let header_outer = gtk::Box::new(gtk::Orientation::Vertical, 0);
@@ -581,6 +583,7 @@ impl Gallery {
                     let row_height = folder_model_row_height(
                         FolderRowKind::Header,
                         tile_height_for_folder_bind.get(),
+                        show_file_names_for_folder_bind.get(),
                     );
                     if row_root.height_request() != row_height {
                         row_root.set_height_request(row_height);
@@ -646,6 +649,7 @@ impl Gallery {
                     let row_height = folder_model_row_height(
                         FolderRowKind::Photos,
                         tile_height_for_folder_bind.get(),
+                        show_file_names_for_folder_bind.get(),
                     );
                     if row_root.height_request() != row_height {
                         row_root.set_height_request(row_height);
@@ -702,9 +706,9 @@ impl Gallery {
                                 tile.set_can_target(true);
                             }
                             tile.bind_photo_folder_fast(photo, data.start + slot);
-                            if show_file_names_for_folder_bind.get() {
-                                tile.set_filename_visible(true);
-                            }
+                            // Keep the recycled tile's caption flag identical to
+                            // the row height this line was sized with.
+                            tile.set_filename_visible(show_file_names_for_folder_bind.get());
                             tile.set_manual_selected(
                                 selected_ids_for_folder_bind.borrow().contains(&photo.id()),
                             );
@@ -961,6 +965,7 @@ impl Gallery {
                     self.folder_root.upcast_ref(),
                     self.tile_width.get(),
                     self.tile_height.get(),
+                    self.show_file_names.get(),
                 );
                 self.folder_root.queue_resize();
                 if let Some(anchor) = anchor {

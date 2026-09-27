@@ -255,7 +255,7 @@ struct SectionedFolderView {
     geometry: RefCell<Vec<SectionedFolderGeometry>>,
     geometry_width: Cell<i32>,
     geometry_columns: Cell<u32>,
-    geometry_tile_height: Cell<i32>,
+    geometry_row_height: Cell<i32>,
     total_height: Cell<f64>,
     live_tiles: RefCell<HashMap<u32, SectionedFolderTile>>,
     tile_pool: RefCell<VecDeque<SectionedFolderTile>>,
@@ -330,7 +330,7 @@ impl SectionedFolderView {
             geometry: RefCell::new(Vec::new()),
             geometry_width: Cell::new(0),
             geometry_columns: Cell::new(0),
-            geometry_tile_height: Cell::new(0),
+            geometry_row_height: Cell::new(0),
             total_height: Cell::new(1.0),
             live_tiles: RefCell::new(HashMap::new()),
             tile_pool: RefCell::new(VecDeque::new()),
@@ -548,27 +548,29 @@ impl SectionedFolderView {
     fn invalidate_geometry(&self) {
         self.geometry_width.set(0);
         self.geometry_columns.set(0);
-        self.geometry_tile_height.set(0);
+        self.geometry_row_height.set(0);
     }
 
     fn geometry_for_current_layout(&self, width: i32) {
         let columns = self.current_columns.get().max(1);
         let tile_height = self.tile_height.get();
         let range_count = self.group_ranges.borrow().len();
+        let row_height_px = folder_line_height(tile_height, self.show_file_names.get());
 
         // Width by itself does not affect section Y positions. Only the number
-        // of columns, tile height, or section membership changes vertical
-        // geometry. Remember the latest width for diagnostics/header sizing,
-        // but avoid rebuilding every frame while the sidebar/window animates.
+        // of columns, the photo-row height (tile size plus the filename caption
+        // row), or section membership changes vertical geometry. Remember the
+        // latest width for diagnostics/header sizing, but avoid rebuilding every
+        // frame while the sidebar/window animates.
         if self.geometry_columns.get() == columns
-            && self.geometry_tile_height.get() == tile_height
+            && self.geometry_row_height.get() == row_height_px
             && self.geometry.borrow().len() == range_count
         {
             self.geometry_width.set(width);
             return;
         }
 
-        let row_height = f64::from(folder_line_height(tile_height));
+        let row_height = f64::from(row_height_px);
         let ranges = self.group_ranges.borrow();
         let mut y = 0.0;
         let mut geometry = Vec::with_capacity(ranges.len());
@@ -590,7 +592,7 @@ impl SectionedFolderView {
         self.geometry.replace(geometry);
         self.geometry_width.set(width);
         self.geometry_columns.set(columns);
-        self.geometry_tile_height.set(tile_height);
+        self.geometry_row_height.set(row_height_px);
         self.total_height.set(y.max(1.0));
     }
 
@@ -727,7 +729,7 @@ impl SectionedFolderView {
         let top = (adjustment.value() - SECTIONED_OVERSCAN_PX).max(0.0);
         let bottom = adjustment.value() + adjustment.page_size() + SECTIONED_OVERSCAN_PX;
         let columns = self.current_columns.get().max(1);
-        let row_height = f64::from(folder_line_height(self.tile_height.get()));
+        let row_height = f64::from(folder_line_height(self.tile_height.get(), self.show_file_names.get()));
         let ranges = self.group_ranges.borrow();
         let geometry = self.geometry.borrow();
 
@@ -1179,7 +1181,7 @@ impl SectionedFolderView {
         let adjustment = scrolled.vadjustment();
         let scroll_y = adjustment.value();
         let lower = adjustment.lower();
-        let row_height = f64::from(folder_line_height(self.tile_height.get()));
+        let row_height = f64::from(folder_line_height(self.tile_height.get(), self.show_file_names.get()));
         if let Some((photo_index, offset)) = upper_edge_anchor(
             &self.group_ranges.borrow(),
             &self.geometry.borrow(),
@@ -1245,7 +1247,7 @@ impl SectionedFolderView {
 
     fn y_for_index(&self, index: u32) -> Option<f64> {
         let columns = self.current_columns.get().max(1);
-        let row_height = f64::from(folder_line_height(self.tile_height.get()));
+        let row_height = f64::from(folder_line_height(self.tile_height.get(), self.show_file_names.get()));
         let section_index = self.section_index_for_photo(index)?;
         let ranges = self.group_ranges.borrow();
         let geometry = self.geometry.borrow();
@@ -1269,7 +1271,7 @@ impl SectionedFolderView {
                 let local = index as usize - range.start;
                 let row = local as u32 / self.current_columns.get().max(1);
                 geom.first_photo_y
-                    + f64::from(row) * f64::from(folder_line_height(self.tile_height.get()))
+                    + f64::from(row) * f64::from(folder_line_height(self.tile_height.get(), self.show_file_names.get()))
             })
         });
         drop(geometry);
@@ -1304,7 +1306,7 @@ impl SectionedFolderView {
                 let local = index as usize - range.start;
                 let row = local as u32 / self.current_columns.get().max(1);
                 geom.first_photo_y
-                    + f64::from(row) * f64::from(folder_line_height(self.tile_height.get()))
+                    + f64::from(row) * f64::from(folder_line_height(self.tile_height.get(), self.show_file_names.get()))
             })
         });
         drop(geometry);
@@ -1352,7 +1354,7 @@ impl SectionedFolderView {
 
     fn photo_for_scroll_position(&self, scroll_y: f64) -> Option<PhotoObject> {
         let columns = self.current_columns.get().max(1);
-        let row_height = f64::from(folder_line_height(self.tile_height.get()));
+        let row_height = f64::from(folder_line_height(self.tile_height.get(), self.show_file_names.get()));
         let ranges = self.group_ranges.borrow();
         let geometry = self.geometry.borrow();
         for (range, geom) in ranges.iter().zip(geometry.iter()) {

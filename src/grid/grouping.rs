@@ -151,8 +151,11 @@ impl Gallery {
         // margin is 20px. Keep this calculation shared with the sticky heading.
         const ITEM_PADDING: f64 = 6.0;
         const GRID_TOP_MARGIN: f64 = 20.0;
-        let tile_height = self.tile_height.get().max(1) as f64;
-        let row_pitch = tile_height + ITEM_PADDING * 2.0;
+        // The tile block already contains the filename caption row, so this
+        // stays in step with the real GridView row pitch.
+        let row_pitch = tile_block_height(self.tile_height.get(), self.show_file_names.get())
+            as f64
+            + ITEM_PADDING * 2.0;
         let row = ((scroll_y - GRID_TOP_MARGIN).max(0.0) / row_pitch).floor() as usize;
         row.saturating_mul(self.current_columns.get().max(1) as usize)
     }

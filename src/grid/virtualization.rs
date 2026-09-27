@@ -206,7 +206,286 @@ fn make_folder_tile(
     tile
 }
 
+fn zoom_anchor_correction(actual_y: f64, desired_y: f64) -> f64 {
+    actual_y - desired_y
+}
+
+fn clamp_zoom_adjustment(value: f64, lower: f64, upper: f64, page_size: f64) -> f64 {
+    value.clamp(lower, (upper - page_size).max(lower))
+}
+
+fn scrolled_ancestor(widget: &gtk::Widget) -> Option<gtk::ScrolledWindow> {
+    let mut parent = widget.parent();
+    while let Some(current) = parent {
+        if let Ok(scrolled) = current.clone().downcast::<gtk::ScrolledWindow>() {
+            return Some(scrolled);
+        }
+        parent = current.parent();
+    }
+    None
+}
+
 impl Gallery {
+    fn active_zoom_root(&self) -> gtk::Widget {
+        let folder_mode = self.group_mode.get() == GroupMode::Folder;
+        if folder_mode && crate::grid::sectioned_folder_view_enabled() {
+            self.folder_sectioned_root.clone().upcast()
+        } else if folder_mode && !crate::grid::folder_gridview_experiment_enabled() {
+            self.folder_root.clone().upcast()
+        } else {
+            self.root.clone().upcast()
+        }
+    }
+
+    fn capture_zoom_anchor_at(
+        &self,
+        viewport: &gtk::Widget,
+        x: f64,
+        y: f64,
+        kind: ZoomAnchorKind,
+    ) -> Option<ZoomAnchor> {
+        let folder_mode = self.group_mode.get() == GroupMode::Folder;
+        if folder_mode
+            && !crate::grid::sectioned_folder_view_enabled()
+            && !crate::grid::folder_gridview_experiment_enabled()
+        {
+            // The legacy Folder ListView keeps its existing exact-row reframe
+            // path. Do not mix the new GridView/SectionedFolder anchor into it.
+            return None;
+        }
+
+        let root = self.active_zoom_root();
+        let mut tiles = Vec::new();
+        collect_tiles(&root, &mut tiles);
+
+        let mut best: Option<(bool, f64, ZoomAnchor)> = None;
+        for tile in tiles {
+            if !tile.is_mapped() || !tile.is_visible() {
+                continue;
+            }
+            let Some(photo) = tile.photo() else {
+                continue;
+            };
+            let Some(bounds) = tile.compute_bounds(viewport) else {
+                continue;
+            };
+            let (presentation_x, presentation_y) = tile.presentation_offset();
+            let left = f64::from(bounds.x() + presentation_x);
+            let top = f64::from(bounds.y() + presentation_y);
+            let width = f64::from(bounds.width());
+            let height = f64::from(bounds.height());
+            if width <= 0.0 || height <= 0.0 {
+                continue;
+            }
+
+            let inside = x >= left && x <= left + width && y >= top && y <= top + height;
+            let center_x = left + width * 0.5;
+            let center_y = top + height * 0.5;
+            let distance_sq = (center_x - x).powi(2) + (center_y - y).powi(2);
+            let anchor = ZoomAnchor {
+                photo_id: photo.id(),
+                desired_x: left,
+                desired_y: top,
+                kind,
+            };
+
+            let replace = match best {
+                None => true,
+                Some((best_inside, best_distance, _)) => {
+                    (inside && !best_inside)
+                        || (inside == best_inside && distance_sq < best_distance)
+                }
+            };
+            if replace {
+                best = Some((inside, distance_sq, anchor));
+            }
+        }
+
+        best.map(|(_, _, anchor)| anchor)
+    }
+
+    fn capture_center_zoom_anchor(&self) -> Option<ZoomAnchor> {
+        let folder_mode = self.group_mode.get() == GroupMode::Folder;
+        if folder_mode && crate::grid::sectioned_folder_view_enabled() {
+            return self
+                .sectioned_folder
+                .capture_center_anchor()
+                .map(|(photo_id, desired_y)| ZoomAnchor {
+                    photo_id,
+                    desired_x: 0.0,
+                    desired_y,
+                    kind: ZoomAnchorKind::ViewportCenter,
+                });
+        }
+        if folder_mode && !crate::grid::folder_gridview_experiment_enabled() {
+            return None;
+        }
+
+        let root = self.active_zoom_root();
+        let scrolled = scrolled_ancestor(&root)?;
+        let viewport: gtk::Widget = scrolled.clone().upcast();
+        self.capture_zoom_anchor_at(
+            &viewport,
+            f64::from(scrolled.width()) * 0.5,
+            f64::from(scrolled.height()) * 0.5,
+            ZoomAnchorKind::ViewportCenter,
+        )
+    }
+
+    fn begin_center_zoom_anchor(&self) {
+        self.zoom_anchor_restore_generation
+            .set(self.zoom_anchor_restore_generation.get().wrapping_add(1));
+        self.stable_zoom_anchor
+            .set(self.capture_center_zoom_anchor());
+    }
+
+    fn begin_pointer_zoom_anchor(&self, viewport: &gtk::Widget, x: f64, y: f64) {
+        self.zoom_anchor_restore_generation
+            .set(self.zoom_anchor_restore_generation.get().wrapping_add(1));
+        self.stable_zoom_anchor.set(self.capture_zoom_anchor_at(
+            viewport,
+            x,
+            y,
+            ZoomAnchorKind::Pointer,
+        ));
+    }
+
+    fn measure_and_correct_grid_zoom_anchor(&self, anchor: ZoomAnchor) -> Option<(f64, f64, bool)> {
+        let root_widget: gtk::Widget = self.root.clone().upcast();
+        let scrolled = scrolled_ancestor(&root_widget)?;
+        let viewport: gtk::Widget = scrolled.clone().upcast();
+        let mut tiles = Vec::new();
+        collect_tiles(&root_widget, &mut tiles);
+        let tile = tiles.into_iter().find(|tile| {
+            tile.is_mapped()
+                && tile.is_visible()
+                && tile
+                    .photo()
+                    .as_ref()
+                    .is_some_and(|photo| photo.id() == anchor.photo_id)
+        })?;
+        let bounds = tile.compute_bounds(&viewport)?;
+        let (_, presentation_y) = tile.presentation_offset();
+        let actual_y = f64::from(bounds.y() + presentation_y);
+        let error = zoom_anchor_correction(actual_y, anchor.desired_y);
+        if error.abs() <= 1.0 {
+            return Some((error, actual_y, false));
+        }
+
+        let adjustment = scrolled.vadjustment();
+        let next = clamp_zoom_adjustment(
+            adjustment.value() + error,
+            adjustment.lower(),
+            adjustment.upper(),
+            adjustment.page_size(),
+        );
+        adjustment.set_value(next);
+        Some((error, actual_y, true))
+    }
+
+    fn schedule_grid_zoom_anchor_restore(
+        self: &Rc<Self>,
+        animation_generation: u64,
+        final_pass: bool,
+    ) {
+        let folder_mode = self.group_mode.get() == GroupMode::Folder;
+        if folder_mode
+            && (crate::grid::sectioned_folder_view_enabled()
+                || !crate::grid::folder_gridview_experiment_enabled())
+        {
+            return;
+        }
+        let Some(anchor) = self.stable_zoom_anchor.get() else {
+            return;
+        };
+
+        let restore_generation = self.zoom_anchor_restore_generation.get().wrapping_add(1);
+        self.zoom_anchor_restore_generation.set(restore_generation);
+        let attempts = Cell::new(0_u8);
+        let corrections = Cell::new(0_u8);
+        let reveal_requested = Cell::new(false);
+        let this = self.clone();
+
+        self.root.add_tick_callback(move |_, _| {
+            if this.zoom_animation_generation.get() != animation_generation
+                || this.zoom_anchor_restore_generation.get() != restore_generation
+            {
+                return glib::ControlFlow::Break;
+            }
+            if this
+                .stable_zoom_anchor
+                .get()
+                .is_none_or(|current| current.photo_id != anchor.photo_id)
+            {
+                return glib::ControlFlow::Break;
+            }
+
+            attempts.set(attempts.get().saturating_add(1));
+            if let Some((error, actual_y, corrected)) =
+                this.measure_and_correct_grid_zoom_anchor(anchor)
+            {
+                if corrected {
+                    corrections.set(corrections.get().saturating_add(1));
+                }
+                if error.abs() <= 1.0 || attempts.get() >= 4 {
+                    if final_pass {
+                        if std::env::var_os("PICASA_TRACE").is_some() {
+                            eprintln!(
+                                "PIC_ZOOM anchor_complete anchor_id={} anchor_kind={:?} desired_x={:.1} desired_y={:.1} final_y={:.1} anchor_error_px={:.2} corrections={} attempts={}",
+                                anchor.photo_id,
+                                anchor.kind,
+                                anchor.desired_x,
+                                anchor.desired_y,
+                                actual_y,
+                                error,
+                                corrections.get(),
+                                attempts.get(),
+                            );
+                        }
+                        this.stable_zoom_anchor.set(None);
+                    }
+                    return glib::ControlFlow::Break;
+                }
+                return glib::ControlFlow::Continue;
+            }
+
+            // A large column-count change can move the anchor outside the
+            // realized GridView pool. Reveal the same model item once, then
+            // measure its real allocated bounds on the following frame and
+            // perform the exact adjustment correction.
+            if !reveal_requested.get() && attempts.get() >= 2 {
+                if let Some(position) = this
+                    .current_photos
+                    .borrow()
+                    .iter()
+                    .position(|photo| photo.id() == anchor.photo_id)
+                {
+                    this.root
+                        .scroll_to(position as u32, gtk::ListScrollFlags::FOCUS, None);
+                    reveal_requested.set(true);
+                    return glib::ControlFlow::Continue;
+                }
+            }
+
+            if attempts.get() >= 5 {
+                if final_pass {
+                    if std::env::var_os("PICASA_TRACE").is_some() {
+                        eprintln!(
+                            "PIC_ZOOM anchor_complete anchor_id={} anchor_kind={:?} result=unresolved attempts={}",
+                            anchor.photo_id,
+                            anchor.kind,
+                            attempts.get(),
+                        );
+                    }
+                    this.stable_zoom_anchor.set(None);
+                }
+                glib::ControlFlow::Break
+            } else {
+                glib::ControlFlow::Continue
+            }
+        });
+    }
+
     pub fn current_zoom_width(&self) -> i32 {
         self.pending_zoom_width
             .get()
@@ -221,6 +500,8 @@ impl Gallery {
             return;
         }
 
+        self.begin_center_zoom_anchor();
+
         // Slider input is already discrete (the existing 8-level ladder).
         // Cancel wheel/click debounce and any in-flight animation, then apply
         // exactly one reflow for the newly selected level. This prevents an
@@ -234,7 +515,9 @@ impl Gallery {
             .set(self.zoom_animation_generation.get().wrapping_add(1));
         self.zoom_animation_layout_width.set(None);
         set_grid_zoom_animation_active(false);
+        let generation = self.zoom_animation_generation.get();
         self.apply_tile_size(width, true);
+        self.schedule_grid_zoom_anchor_restore(generation, true);
     }
 
     pub fn zoom_in(self: &Rc<Self>) {
@@ -331,6 +614,9 @@ impl Gallery {
     }
 
     pub fn wheel_zoom_in(self: &Rc<Self>) {
+        if self.pending_zoom_width.get().is_none() {
+            self.begin_center_zoom_anchor();
+        }
         let base = self
             .pending_zoom_width
             .get()
@@ -339,6 +625,41 @@ impl Gallery {
     }
 
     pub fn wheel_zoom_out(self: &Rc<Self>) {
+        if self.pending_zoom_width.get().is_none() {
+            self.begin_center_zoom_anchor();
+        }
+        let base = self
+            .pending_zoom_width
+            .get()
+            .unwrap_or_else(|| self.tile_width.get());
+        self.request_wheel_zoom(prev_zoom_level(base));
+    }
+
+    pub fn wheel_zoom_in_at(
+        self: &Rc<Self>,
+        viewport: &gtk::Widget,
+        x: f64,
+        y: f64,
+    ) {
+        if self.pending_zoom_width.get().is_none() {
+            self.begin_pointer_zoom_anchor(viewport, x, y);
+        }
+        let base = self
+            .pending_zoom_width
+            .get()
+            .unwrap_or_else(|| self.tile_width.get());
+        self.request_wheel_zoom(next_zoom_level(base));
+    }
+
+    pub fn wheel_zoom_out_at(
+        self: &Rc<Self>,
+        viewport: &gtk::Widget,
+        x: f64,
+        y: f64,
+    ) {
+        if self.pending_zoom_width.get().is_none() {
+            self.begin_pointer_zoom_anchor(viewport, x, y);
+        }
         let base = self
             .pending_zoom_width
             .get()
@@ -389,6 +710,9 @@ impl Gallery {
         }
         // A burst is already in progress if a trailing source exists.
         let leading = self.zoom_reflow_source.borrow().is_none();
+        if leading {
+            self.begin_center_zoom_anchor();
+        }
         self.pending_zoom_width.set(Some(width));
         if leading {
             let this = self.clone();
@@ -421,6 +745,7 @@ impl Gallery {
         let target_width = width.clamp(MIN_TILE_WIDTH, MAX_TILE_WIDTH);
         let start_width = self.tile_width.get().max(1);
         if target_width == start_width {
+            self.stable_zoom_anchor.set(None);
             return;
         }
 
@@ -433,7 +758,11 @@ impl Gallery {
                 .round()
                 .max(1.0) as i32;
             let snapshot = self.sectioned_folder.capture_reflow_snapshot();
-            let anchor = self.sectioned_folder.capture_center_anchor();
+            let anchor = self
+                .stable_zoom_anchor
+                .get()
+                .map(|anchor| (anchor.photo_id, anchor.desired_y))
+                .or_else(|| self.sectioned_folder.capture_center_anchor());
 
             // Publish only the destination geometry. update_layout changes the
             // sectioned column count but deliberately does not move widgets for
@@ -458,6 +787,7 @@ impl Gallery {
                     self.current_columns.get(),
                 );
             }
+            self.stable_zoom_anchor.set(None);
             return;
         }
 
@@ -476,6 +806,9 @@ impl Gallery {
             .round()
             .max(1.0) as i32;
 
+        if self.stable_zoom_anchor.get().is_none() {
+            self.begin_center_zoom_anchor();
+        }
         let generation = self.zoom_animation_generation.get().wrapping_add(1);
         self.zoom_animation_generation.set(generation);
         // Use the last width supplied by the outer gallery surface, not
@@ -511,7 +844,11 @@ impl Gallery {
                 + (target_height - start_height) as f64 * eased)
                 .round() as i32;
 
+            let columns_before = this.current_columns.get();
             this.apply_tile_geometry(frame_width, frame_height, false);
+            if this.current_columns.get() != columns_before {
+                this.schedule_grid_zoom_anchor_restore(generation, false);
+            }
 
             if linear >= 1.0 {
                 // Land exactly on the canonical zoom level and persist only
@@ -519,6 +856,7 @@ impl Gallery {
                 this.apply_tile_geometry(target_width, target_height, true);
                 this.zoom_animation_layout_width.set(None);
                 set_grid_zoom_animation_active(false);
+                this.schedule_grid_zoom_anchor_restore(generation, true);
                 glib::ControlFlow::Break
             } else {
                 glib::ControlFlow::Continue
@@ -559,9 +897,14 @@ impl Gallery {
             folder_mode && crate::grid::sectioned_folder_view_enabled();
         let folder_list_mode =
             folder_mode && !sectioned_folder_mode && !crate::grid::folder_gridview_experiment_enabled();
-        let sectioned_anchor = sectioned_folder_mode
-            .then(|| self.sectioned_folder.capture_center_anchor())
-            .flatten();
+        let sectioned_anchor = if sectioned_folder_mode {
+            self.stable_zoom_anchor
+                .get()
+                .map(|anchor| (anchor.photo_id, anchor.desired_y))
+                .or_else(|| self.sectioned_folder.capture_center_anchor())
+        } else {
+            None
+        };
         let anchor_started = trace_zoom.then(Instant::now);
         if folder_mode && !sectioned_folder_mode {
             self.zoom_anchor.set(
@@ -621,6 +964,9 @@ impl Gallery {
         }
         let layout_us = layout_started.map_or(0, |started| started.elapsed().as_micros());
         self.zoom_anchor.set(None);
+        if persist && sectioned_folder_mode {
+            self.stable_zoom_anchor.set(None);
+        }
 
         if let Some(started) = zoom_started {
             eprintln!(
@@ -1612,6 +1958,9 @@ impl Gallery {
 
     pub fn replace(&self, photos: &[Photo]) {
         if std::env::var_os("PICASA_TRACE").is_some() { eprintln!("PIC_NAV gallery_replace photos={}", photos.len()); }
+        self.stable_zoom_anchor.set(None);
+        self.zoom_anchor_restore_generation
+            .set(self.zoom_anchor_restore_generation.get().wrapping_add(1));
         let generation = self.replace_generation.get().wrapping_add(1);
         self.replace_generation.set(generation);
         // Assume a build is in progress until each completion path clears it.
@@ -1914,6 +2263,9 @@ impl Gallery {
     pub fn cancel_progressive_build(&self) {
         self.replace_generation
             .set(self.replace_generation.get().wrapping_add(1));
+        self.stable_zoom_anchor.set(None);
+        self.zoom_anchor_restore_generation
+            .set(self.zoom_anchor_restore_generation.get().wrapping_add(1));
         self.stream_building.set(false);
     }
 
@@ -2141,4 +2493,24 @@ fn rebuild_folder_rows_for(
     // rebuilding it.
     folder_store.splice(prefix as u32, removed, inserted);
 
+}
+
+
+#[cfg(test)]
+mod zoom_anchor_unit_tests {
+    use super::{clamp_zoom_adjustment, zoom_anchor_correction};
+
+    #[test]
+    fn correction_preserves_the_requested_viewport_y() {
+        assert_eq!(zoom_anchor_correction(240.0, 180.0), 60.0);
+        assert_eq!(zoom_anchor_correction(120.0, 180.0), -60.0);
+        assert_eq!(zoom_anchor_correction(180.0, 180.0), 0.0);
+    }
+
+    #[test]
+    fn correction_clamps_at_scroll_extents() {
+        assert_eq!(clamp_zoom_adjustment(-50.0, 0.0, 1000.0, 300.0), 0.0);
+        assert_eq!(clamp_zoom_adjustment(900.0, 0.0, 1000.0, 300.0), 700.0);
+        assert_eq!(clamp_zoom_adjustment(420.0, 0.0, 1000.0, 300.0), 420.0);
+    }
 }

@@ -354,6 +354,7 @@ pub struct Lightbox {
     last_height: Rc<Cell<i32>>,
     zoom: Rc<Cell<f64>>,
     zoom_before_one_to_one: Rc<Cell<f64>>,
+    zoom_center_source: Rc<RefCell<Option<glib::SourceId>>>,
     one_to_one_active: Rc<Cell<bool>>,
     native_texture: Rc<RefCell<Option<NativeTextureCache>>>,
     display_texture_cache: DisplayTextureCache,

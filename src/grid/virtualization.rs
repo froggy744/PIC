@@ -213,6 +213,30 @@ impl Gallery {
             .unwrap_or_else(|| self.tile_width.get())
     }
 
+    pub fn request_slider_zoom(self: &Rc<Self>, width: i32) {
+        let width = nearest_zoom_level(width).clamp(MIN_TILE_WIDTH, MAX_TILE_WIDTH);
+        self.auto_default_zoom.set(false);
+
+        if width == self.tile_width.get() {
+            return;
+        }
+
+        // Slider input is already discrete (the existing 8-level ladder).
+        // Cancel wheel/click debounce and any in-flight animation, then apply
+        // exactly one reflow for the newly selected level. This prevents an
+        // old trailing timeout/animation from pulling the grid back after the
+        // thumb has moved on.
+        if let Some(source) = self.zoom_reflow_source.borrow_mut().take() {
+            source.remove();
+        }
+        self.pending_zoom_width.set(None);
+        self.zoom_animation_generation
+            .set(self.zoom_animation_generation.get().wrapping_add(1));
+        self.zoom_animation_layout_width.set(None);
+        set_grid_zoom_animation_active(false);
+        self.apply_tile_size(width, true);
+    }
+
     pub fn zoom_in(self: &Rc<Self>) {
         let base = self
             .pending_zoom_width

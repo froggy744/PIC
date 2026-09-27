@@ -528,6 +528,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             let connection = connection.clone();
             let grid_zoom = info.grid_zoom.clone();
             let grid_zoom_syncing = grid_zoom_syncing.clone();
+            let lightbox = lightbox.clone();
             move |width| {
                 if let Err(error) = db::set_setting(
                     &connection.borrow(),
@@ -537,9 +538,14 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                     eprintln!("Could not save grid thumbnail size: {error}");
                 }
 
-                grid_zoom_syncing.set(true);
-                grid_zoom.set_value(grid_zoom_slider_value(width));
-                grid_zoom_syncing.set(false);
+                // A gallery zoom may finish just after the viewer opens.
+                // Never let that stale completion overwrite the lightbox's
+                // 0..100 zoom slider.
+                if !lightbox.root.is_visible() {
+                    grid_zoom_syncing.set(true);
+                    grid_zoom.set_value(grid_zoom_slider_value(width));
+                    grid_zoom_syncing.set(false);
+                }
             }
         },
     ));
@@ -2639,8 +2645,9 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         if lightbox_for_zoom_slider.root.is_visible() {
             // In lightbox mode the slider range is 0..100 with 50 exactly 1:1.
             let fit_scale = lightbox_for_zoom_slider.current_fit_scale();
-            lightbox_for_zoom_slider
-                .set_manual_zoom_scale(lightbox_scale_from_slider(scale.value(), fit_scale));
+            lightbox_for_zoom_slider.set_manual_zoom_scale_from_slider(
+                lightbox_scale_from_slider(scale.value(), fit_scale),
+            );
         } else if main_stack_for_zoom_slider.visible_child_name().as_deref() == Some("edit") {
             let previous = slider_last_value_for_change.get();
             if let Some(editor) = edit_editor_for_zoom_slider.borrow().as_ref() {
@@ -2651,7 +2658,8 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 }
             }
         } else {
-            gallery_for_zoom_slider.request_zoom(grid_zoom_width_from_slider(scale.value()));
+            gallery_for_zoom_slider
+                .request_slider_zoom(grid_zoom_width_from_slider(scale.value()));
         }
         slider_last_value_for_change.set(scale.value());
     });
@@ -2663,7 +2671,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let slider_last_value_for_sync = slider_last_value.clone();
     let lightbox_for_zoom_sync = lightbox.clone();
     lightbox.set_zoom_sync_handler(move |native_scale| {
-        if !grid_zoom_for_lightbox_sync.is_visible() {
+        if !lightbox_for_zoom_sync.root.is_visible() {
             return;
         }
         // Fit is always the left endpoint and native 100% is always the
@@ -2686,6 +2694,9 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         grid_zoom_syncing_for_visibility.set(true);
         if root.is_visible() {
             grid_zoom_for_visibility.set_range(0.0, 100.0);
+            grid_zoom_for_visibility.set_increments(0.25, 5.0);
+            grid_zoom_for_visibility.clear_marks();
+            grid_zoom_for_visibility.add_mark(50.0, gtk::PositionType::Bottom, None);
             let native_scale = lightbox_for_zoom_visibility.current_manual_zoom_scale();
             let value = lightbox_slider_from_scale(
                 native_scale,
@@ -2698,6 +2709,9 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             ));
         } else {
             grid_zoom_for_visibility.set_range(0.0, 7.0);
+            grid_zoom_for_visibility.set_increments(1.0, 1.0);
+            grid_zoom_for_visibility.clear_marks();
+            grid_zoom_for_visibility.add_mark(3.5, gtk::PositionType::Bottom, None);
             let value = grid_zoom_slider_value(gallery_for_zoom_visibility.current_zoom_width());
             grid_zoom_for_visibility.set_value(value);
             slider_last_value_for_visibility.set(value);
@@ -2706,21 +2720,41 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         grid_zoom_syncing_for_visibility.set(false);
     });
 
+    let grid_zoom_reset_press_x = Rc::new(Cell::new(f64::NAN));
+    let grid_zoom_reset_press_x_for_press = grid_zoom_reset_press_x.clone();
+    info.grid_zoom_reset.connect_pressed(move |_, _, x, _| {
+        grid_zoom_reset_press_x_for_press.set(x);
+    });
+
     let gallery_for_zoom_reset = gallery.clone();
     let lightbox_for_zoom_reset = lightbox.clone();
     let edit_editor_for_zoom_reset = edit_editor.clone();
     let main_stack_for_zoom_reset = main_stack.clone();
-    info.grid_zoom_reset.connect_clicked(move |_| {
-        if lightbox_for_zoom_reset.root.is_visible() {
-            lightbox_for_zoom_reset.set_manual_zoom_scale(1.0);
-        } else if main_stack_for_zoom_reset.visible_child_name().as_deref() == Some("edit") {
-            if let Some(editor) = edit_editor_for_zoom_reset.borrow().as_ref() {
-                editor.fit();
+    let grid_zoom_for_reset = info.grid_zoom.clone();
+    let grid_zoom_reset_press_x_for_release = grid_zoom_reset_press_x.clone();
+    info.grid_zoom_reset
+        .connect_released(move |_, n_press, x, _| {
+            let press_x = grid_zoom_reset_press_x_for_release.replace(f64::NAN);
+            if n_press != 1 || !press_x.is_finite() || grid_zoom_for_reset.width() <= 0 {
+                return;
             }
-        } else {
-            gallery_for_zoom_reset.reset_zoom();
-        }
-    });
+
+            let centre_x = f64::from(grid_zoom_for_reset.width()) * 0.5;
+            let was_click = (x - press_x).abs() <= 4.0;
+            if !was_click || (x - centre_x).abs() > 12.0 {
+                return;
+            }
+
+            if lightbox_for_zoom_reset.root.is_visible() {
+                lightbox_for_zoom_reset.set_manual_zoom_scale(1.0);
+            } else if main_stack_for_zoom_reset.visible_child_name().as_deref() == Some("edit") {
+                if let Some(editor) = edit_editor_for_zoom_reset.borrow().as_ref() {
+                    editor.fit();
+                }
+            } else {
+                gallery_for_zoom_reset.reset_zoom();
+            }
+        });
 
     let selected_for_rotate = selected_photo.clone();
     let db_for_rotate = connection.clone();

@@ -22,7 +22,7 @@ pub struct InfoBar {
     pub more: gtk::Button,
     pub print: gtk::Button,
     pub grid_zoom: gtk::Scale,
-    pub grid_zoom_reset: gtk::Button,
+    pub grid_zoom_reset: gtk::GestureClick,
     has_photo: Rc<Cell<bool>>,
     collage_active: Rc<Cell<bool>>,
 }
@@ -139,27 +139,25 @@ impl InfoBar {
         configure_action_button(&add_to_album);
         add_to_album.set_tooltip_text(Some("Add to Album"));
 
-        // Direct grid-size slider. Its values are indices into the Gallery's
-        // existing canonical zoom ladder; the centre dot resets the Gallery
-        // through its existing adaptive reset_zoom() path.
+        // Direct grid-size slider. Use GtkScale's native centre mark instead
+        // of placing a Button over the trough: the overlay button intercepted
+        // pointer motion and made dragging appear to stick at the midpoint.
         let grid_zoom = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.0, 7.0, 1.0);
         grid_zoom.set_draw_value(false);
         grid_zoom.set_width_request(128);
         grid_zoom.set_hexpand(false);
         grid_zoom.set_valign(gtk::Align::Center);
-        grid_zoom.set_tooltip_text(Some("Thumbnail size (Ctrl + wheel)"));
+        grid_zoom.add_mark(3.5, gtk::PositionType::Bottom, None);
+        grid_zoom.set_tooltip_text(Some(
+            "Thumbnail size (Ctrl + wheel); click the middle mark to reset",
+        ));
 
-        let grid_zoom_reset = gtk::Button::with_label("•");
-        grid_zoom_reset.add_css_class("flat");
-        grid_zoom_reset.add_css_class("circular");
-        grid_zoom_reset.set_size_request(18, 18);
-        grid_zoom_reset.set_halign(gtk::Align::Center);
-        grid_zoom_reset.set_valign(gtk::Align::Center);
-        grid_zoom_reset.set_tooltip_text(Some("Reset thumbnail size"));
-
-        let grid_zoom_control = gtk::Overlay::new();
-        grid_zoom_control.set_child(Some(&grid_zoom));
-        grid_zoom_control.add_overlay(&grid_zoom_reset);
+        // Observe centre clicks without placing another widget on the trough.
+        // The gesture never claims the sequence, so GtkScale owns dragging.
+        let grid_zoom_reset = gtk::GestureClick::new();
+        grid_zoom_reset.set_button(1);
+        grid_zoom_reset.set_propagation_phase(gtk::PropagationPhase::Capture);
+        grid_zoom.add_controller(grid_zoom_reset.clone());
 
         let one_to_one = gtk::ToggleButton::with_label("1:1");
         configure_action_button(&one_to_one);
@@ -182,7 +180,7 @@ impl InfoBar {
         configure_action_button(&print);
         print.set_tooltip_text(Some("Print photo"));
 
-        actions.append(&grid_zoom_control);
+        actions.append(&grid_zoom);
         actions.append(&favorite);
         actions.append(&edit);
         actions.append(&collage);

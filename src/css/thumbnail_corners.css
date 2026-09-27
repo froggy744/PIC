@@ -1,0 +1,6 @@
+/* The tile overlay is the clipping surface and owns the theme's prescribed
+ * corner radius. Applying a second fixed radius to its GtkPicture child makes
+ * the corners visually compound as the content area gets small at zoom-out. */
+.photo-tile > .thumbnail {
+    border-radius: 0;
+}

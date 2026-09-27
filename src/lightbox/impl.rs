@@ -1154,7 +1154,7 @@ impl Lightbox {
                 return glib::ControlFlow::Continue;
             }
 
-            let (fit_geometry_fixed, cache_hit) = prepare_navigation_photo(
+            let (_fit_geometry_fixed, cache_hit) = prepare_navigation_photo(
                 &picture,
                 photos.borrow().get(index.get()),
                 root,
@@ -1173,7 +1173,11 @@ impl Lightbox {
                 &picture_viewport,
                 native_texture.clone(),
                 display_texture_cache.clone(),
-                fit_geometry_fixed,
+                // fit_picture below establishes the same final geometry used
+                // by the shared-element transition. Do not let a later decode
+                // re-fit from its intrinsic dimensions and make the real
+                // picture settle a second time after the 200 ms animation.
+                true,
                 cache_hit,
                 None,
                 None,

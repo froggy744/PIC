@@ -100,6 +100,7 @@ fn history_group_ranges_merge_contiguous_edit_buckets() {
             folder_path: None,
             taken_at: None,
             camera: None,
+            aperture: None,
             width: None,
             height: None,
             size_bytes: None,

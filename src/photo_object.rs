@@ -28,6 +28,8 @@ mod imp {
         #[property(get, set)]
         pub camera: RefCell<Option<String>>,
         #[property(get, set)]
+        pub aperture: Cell<f64>,
+        #[property(get, set)]
         pub width: Cell<i64>,
         #[property(get, set)]
         pub height: Cell<i64>,
@@ -113,6 +115,7 @@ impl PhotoObject {
         imp.edited_at.set(photo.edited_at);
         *imp.taken_at.borrow_mut() = photo.taken_at.clone();
         *imp.camera.borrow_mut() = photo.camera.clone();
+        imp.aperture.set(photo.aperture.unwrap_or_default());
         imp.width.set(photo.width.unwrap_or_default());
         imp.height.set(photo.height.unwrap_or_default());
         imp.size_bytes.set(photo.size_bytes.unwrap_or_default());

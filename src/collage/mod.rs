@@ -103,9 +103,13 @@ pub fn open(
             "Your last collage with {} photos was saved when you left the editor. Resume it or start a new one.",
             draft_count
         ))
-        .close_response("fresh")
+        // Dismissing the dialog must leave the saved draft untouched. In
+        // particular, the window-manager close button must not accidentally
+        // start a new collage (or otherwise enter the editor).
+        .close_response("cancel")
         .default_response("resume")
         .build();
+    dialog.add_response("cancel", "Cancel");
     dialog.add_response("fresh", "Start New");
     dialog.add_response("resume", "Resume");
     dialog.set_response_appearance("resume", adw::ResponseAppearance::Suggested);

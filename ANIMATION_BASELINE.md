@@ -19,6 +19,8 @@ Behavior:
 - The real lightbox picture stays hidden until the transition completes.
 - If the full decode is still pending, the source paintable becomes a seamless temporary backstop.
 - The temporary transition picture is removed when complete.
+- The fit geometry is fixed before the transition starts; a decode completing
+  during or after it must replace pixels only, never trigger a second fit.
 
 This animation is considered correct and should be preserved.
 

@@ -498,16 +498,17 @@ pub fn upsert_photo(
 ) -> Result<i64> {
     let path = path.to_string_lossy();
     connection.execute(
-        "INSERT INTO photos(path, folder_id, taken_at, camera, width, height, size_bytes, mtime, added_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, CAST(strftime('%s', 'now') AS INTEGER))
+        "INSERT INTO photos(path, folder_id, taken_at, camera, aperture, width, height, size_bytes, mtime, added_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, CAST(strftime('%s', 'now') AS INTEGER))
          ON CONFLICT(path) DO UPDATE SET folder_id=excluded.folder_id,
-           taken_at=excluded.taken_at, camera=excluded.camera, width=excluded.width,
+           taken_at=excluded.taken_at, camera=excluded.camera, aperture=excluded.aperture, width=excluded.width,
            height=excluded.height, size_bytes=excluded.size_bytes, mtime=excluded.mtime",
         params![
             path.as_ref(),
             folder_id,
             metadata.taken_at,
             metadata.camera,
+            metadata.aperture,
             metadata.width,
             metadata.height,
             metadata.size_bytes,
@@ -547,7 +548,7 @@ pub fn photo_fingerprints(
 pub fn photo(connection: &Connection, id: i64) -> Result<Option<Photo>> {
     Ok(connection
         .query_row(
-            "SELECT p.id,p.path,p.folder_id,p.taken_at,p.camera,p.width,p.height,p.size_bytes,p.mtime,p.added_at,p.rotation,p.edit_recipe,p.favorite,p.trashed,f.path
+            "SELECT p.id,p.path,p.folder_id,p.taken_at,p.camera,p.aperture,p.width,p.height,p.size_bytes,p.mtime,p.added_at,p.rotation,p.edit_recipe,p.favorite,p.trashed,f.path
              FROM photos p LEFT JOIN folders f ON f.id = p.folder_id WHERE p.id = ?1",
             [id],
             photo_from_row,
@@ -573,7 +574,7 @@ pub fn photos_limited(
 ) -> Result<Vec<Photo>> {
     let search = search.map(|value| format!("%{}%", value.replace('%', "\\%").replace('_', "\\_")));
     let mut statement = connection.prepare(
-        "SELECT p.id,p.path,p.folder_id,p.taken_at,p.camera,p.width,p.height,p.size_bytes,p.mtime,p.added_at,p.rotation,p.edit_recipe,p.favorite,p.trashed,f.path
+        "SELECT p.id,p.path,p.folder_id,p.taken_at,p.camera,p.aperture,p.width,p.height,p.size_bytes,p.mtime,p.added_at,p.rotation,p.edit_recipe,p.favorite,p.trashed,f.path
          FROM photos p LEFT JOIN folders f ON f.id = p.folder_id
          WHERE p.trashed = 0 AND (?1 IS NULL OR p.folder_id IN
              (WITH RECURSIVE descendants(id) AS (
@@ -616,7 +617,7 @@ pub fn photos_in_album(
 ) -> Result<Vec<Photo>> {
     let search = search.map(|value| format!("%{}%", value.replace('%', "\\%").replace('_', "\\_")));
     let mut statement = connection.prepare(
-        "SELECT p.id,p.path,p.folder_id,p.taken_at,p.camera,p.width,p.height,p.size_bytes,p.mtime,p.added_at,p.rotation,p.edit_recipe,p.favorite,p.trashed,f.path
+        "SELECT p.id,p.path,p.folder_id,p.taken_at,p.camera,p.aperture,p.width,p.height,p.size_bytes,p.mtime,p.added_at,p.rotation,p.edit_recipe,p.favorite,p.trashed,f.path
          FROM album_photos ap
          JOIN photos p ON p.id = ap.photo_id
          LEFT JOIN folders f ON f.id = p.folder_id

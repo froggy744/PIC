@@ -463,6 +463,7 @@ mod photo_action_tests {
             folder_path: None,
             taken_at: taken_at.map(str::to_string),
             camera: None,
+            aperture: None,
             width: dimensions.map(|value| value.0),
             height: dimensions.map(|value| value.1),
             size_bytes,

@@ -12,6 +12,7 @@ pub struct InfoBar {
     preview: gtk::Image,
     filename: gtk::Label,
     details: gtk::Box,
+    aperture_metric: gtk::Box,
     pub favorite: gtk::Button,
     pub edit: gtk::Button,
     pub collage: gtk::Button,
@@ -24,6 +25,7 @@ pub struct InfoBar {
     pub grid_zoom: gtk::Scale,
     pub grid_zoom_reset: gtk::GestureClick,
     has_photo: Rc<Cell<bool>>,
+    has_aperture: Rc<Cell<bool>>,
     collage_active: Rc<Cell<bool>>,
 }
 
@@ -82,9 +84,11 @@ impl InfoBar {
         details.set_visible(false);
 
         let mut other_metrics = Vec::<gtk::Box>::new();
+        let mut aperture_metric = None;
         for (label, value) in [
             ("Taken", "—"),
             ("Camera", "—"),
+            ("Aperture", "—"),
             ("Dimensions", "—"),
             ("Size", "—"),
         ] {
@@ -106,6 +110,8 @@ impl InfoBar {
                 // Fixed-width date column: the filename and the other metrics
                 // shrink first, so the date is never squeezed or ellipsized.
                 metric.set_width_request(110);
+            } else if label == "Aperture" {
+                aperture_metric = Some(metric.clone());
             } else {
                 other_metrics.push(metric.clone());
             }
@@ -197,12 +203,15 @@ impl InfoBar {
         // from filename/preview presentation. This prevents the bar's natural
         // minimum width from making the application appear clipped.
         let has_photo = Rc::new(Cell::new(false));
+        let has_aperture = Rc::new(Cell::new(false));
         let collage_active = Rc::new(Cell::new(false));
         let has_photo_for_resize = has_photo.clone();
         let details_for_resize = details.clone();
         let text_for_resize = text.clone();
         let preview_for_resize = preview.clone();
         let other_metrics_for_resize = other_metrics;
+        let aperture_metric_for_resize = aperture_metric.clone().expect("aperture metric exists");
+        let has_aperture_for_resize = has_aperture.clone();
         root.add_tick_callback(move |bar, _| {
             let width = bar.width();
             if width > 0 {
@@ -213,6 +222,8 @@ impl InfoBar {
                 for metric in &other_metrics_for_resize {
                     metric.set_visible(full_details);
                 }
+                aperture_metric_for_resize
+                    .set_visible(full_details && has_aperture_for_resize.get());
                 text_for_resize.set_visible(width >= 790);
                 preview_for_resize.set_visible(width >= 520);
             }
@@ -224,6 +235,7 @@ impl InfoBar {
             preview,
             filename,
             details,
+            aperture_metric: aperture_metric.expect("aperture metric exists"),
             favorite,
             edit,
             collage,
@@ -236,6 +248,7 @@ impl InfoBar {
             grid_zoom,
             grid_zoom_reset,
             has_photo,
+            has_aperture,
             collage_active,
         }
     }
@@ -249,10 +262,11 @@ impl InfoBar {
     pub fn set_photo(&self, photo: Option<&PhotoObject>) {
         let Some(photo) = photo else {
             self.has_photo.set(false);
+            self.has_aperture.set(false);
             self.filename.set_text("No photo selected");
             self.preview.set_icon_name(Some("image-x-generic-symbolic"));
             self.details.set_visible(false);
-            set_metric_values(&self.details, ["—", "—", "—", "—"]);
+            set_metric_values(&self.details, ["—", "—", "—", "—", "—"]);
             self.favorite.set_sensitive(false);
             self.edit
                 .set_sensitive(edit_button_sensitive(false, self.collage_active.get()));
@@ -299,10 +313,24 @@ impl InfoBar {
             .taken_at()
             .unwrap_or_else(|| "Unknown date".to_string());
         let formatted_date = format_date(&raw_date);
+        let aperture = photo.aperture();
+        let has_aperture = aperture.is_finite() && aperture > 0.0;
+        self.has_aperture.set(has_aperture);
+        self.aperture_metric
+            .set_visible(has_aperture && self.root.width() >= 1030);
 
         // The camera stays a metric beside Taken; the filename subtitle slot
         // that previously duplicated it now holds the actual file name.
-        set_metric_values(&self.details, [formatted_date, camera, dimensions, size]);
+        set_metric_values(
+            &self.details,
+            [
+                formatted_date,
+                camera,
+                format_aperture(aperture).unwrap_or_default(),
+                dimensions,
+                size,
+            ],
+        );
 
         self.favorite.set_sensitive(true);
         self.edit
@@ -330,9 +358,19 @@ fn edit_button_sensitive(has_photo: bool, collage_active: bool) -> bool {
     has_photo && !collage_active
 }
 
+fn format_aperture(value: f64) -> Option<String> {
+    (value.is_finite() && value > 0.0).then(|| {
+        if (value - value.round()).abs() < 0.05 {
+            format!("f/{}", value.round() as i64)
+        } else {
+            format!("f/{value:.1}")
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{edit_button_sensitive, format_date};
+    use super::{edit_button_sensitive, format_aperture, format_date};
 
     #[test]
     fn edit_is_disabled_while_collage_is_active() {
@@ -355,6 +393,13 @@ mod tests {
         assert_eq!(format_date("2026-09-17"), "17 Sep 2026");
         // unparseable values pass through untouched
         assert_eq!(format_date("not a date"), "not a date");
+    }
+
+    #[test]
+    fn aperture_uses_photography_formatting() {
+        assert_eq!(format_aperture(4.0).as_deref(), Some("f/4"));
+        assert_eq!(format_aperture(5.6).as_deref(), Some("f/5.6"));
+        assert_eq!(format_aperture(0.0), None);
     }
 }
 

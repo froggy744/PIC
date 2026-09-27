@@ -435,7 +435,7 @@ fn read_metadata(path: &str, attributes: &gio::FileInfo) -> Result<PhotoMetadata
     if crate::network_shares::private(path) {
         let taken_at=mtime.and_then(|seconds|Local.timestamp_opt(seconds,0).single()
             .map(|date|date.to_rfc3339()));
-        return Ok(PhotoMetadata{taken_at,camera:None,width:None,height:None,
+        return Ok(PhotoMetadata{taken_at,camera:None,aperture:None,width:None,height:None,
             size_bytes:Some(attributes.size()),mtime});
     }
     let (width, height, exif) = if is_raw(path) {
@@ -496,9 +496,18 @@ fn read_metadata(path: &str, attributes: &gio::FileInfo) -> Result<PhotoMetadata
             _ => None,
         }
     });
+    let aperture = exif.as_ref().and_then(|data| {
+        data.get_field(Tag::FNumber, In::PRIMARY).and_then(|field| match &field.value {
+            Value::Rational(values) => values.first().and_then(|value| {
+                (value.denom != 0).then_some(value.num as f64 / value.denom as f64)
+            }),
+            _ => None,
+        })
+    });
     Ok(PhotoMetadata {
         taken_at,
         camera,
+        aperture,
         width: width.map(i64::from),
         height: height.map(i64::from),
         size_bytes: Some(attributes.size()),

@@ -5,6 +5,7 @@ use gtk4 as gtk;
 
 pub(crate) const BASE: &str = include_str!("base.css");
 pub(crate) const SQUARE_CORNERS: &str = include_str!("square_corners.css");
+pub(crate) const THUMBNAIL_CORNERS: &str = include_str!("thumbnail_corners.css");
 pub(crate) const ALBUMS: &str = include_str!("components/albums.css");
 pub(crate) const PHOTO_CONTEXT_MENU: &str = include_str!("components/photo_context_menu.css");
 
@@ -48,6 +49,17 @@ pub(crate) fn install_foundation(display: &gtk::gdk::Display) {
         display,
         &base,
         gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+    );
+
+    // Themes set the visual radius on .photo-tile. The overlay clips its
+    // child, so suppress the nested GtkPicture radius at a higher priority to
+    // prevent two radii from compounding at the smaller grid sizes.
+    let thumbnail_corners = gtk::CssProvider::new();
+    thumbnail_corners.load_from_data(THUMBNAIL_CORNERS);
+    gtk::style_context_add_provider_for_display(
+        display,
+        &thumbnail_corners,
+        gtk::STYLE_PROVIDER_PRIORITY_APPLICATION + 4,
     );
 
     let platform = gtk::CssProvider::new();

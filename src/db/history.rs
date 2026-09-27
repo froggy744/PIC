@@ -64,7 +64,7 @@ pub fn history_photos(connection: &Connection) -> Result<Vec<Photo>> {
 
 pub fn history_photos_limited(connection: &Connection, limit: i64) -> Result<Vec<Photo>> {
     let mut statement = connection.prepare(
-        "SELECT p.id,p.path,p.folder_id,p.taken_at,p.camera,p.width,p.height,p.size_bytes,p.mtime,p.added_at,p.rotation,p.edit_recipe,p.favorite,p.trashed,f.path,
+        "SELECT p.id,p.path,p.folder_id,p.taken_at,p.camera,p.aperture,p.width,p.height,p.size_bytes,p.mtime,p.added_at,p.rotation,p.edit_recipe,p.favorite,p.trashed,f.path,
                 h.edited_at, c.photo_id IS NOT NULL
          FROM recently_edited h JOIN photos p ON p.id=h.photo_id
          LEFT JOIN folders f ON f.id=p.folder_id
@@ -73,9 +73,9 @@ pub fn history_photos_limited(connection: &Connection, limit: i64) -> Result<Vec
     )?;
     let rows = statement.query_map([limit], |row| {
         let mut photo = photo_from_row(row)?;
-        let timestamp: i64 = row.get(15)?;
+        let timestamp: i64 = row.get(16)?;
         photo.edited_at = timestamp;
-        let kind = if row.get::<_, bool>(16)? {
+        let kind = if row.get::<_, bool>(17)? {
             "Collage"
         } else {
             "Photo"

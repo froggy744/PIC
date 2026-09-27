@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS photos (
   folder_id INTEGER,
   taken_at TEXT,
   camera TEXT,
+  aperture REAL,
   width INTEGER,
   height INTEGER,
   size_bytes INTEGER,
@@ -117,6 +118,7 @@ pub struct Photo {
     pub folder_path: Option<String>,
     pub taken_at: Option<String>,
     pub camera: Option<String>,
+    pub aperture: Option<f64>,
     pub width: Option<i64>,
     pub height: Option<i64>,
     pub size_bytes: Option<i64>,
@@ -137,6 +139,7 @@ pub struct Photo {
 pub struct PhotoMetadata {
     pub taken_at: Option<String>,
     pub camera: Option<String>,
+    pub aperture: Option<f64>,
     pub width: Option<i64>,
     pub height: Option<i64>,
     pub size_bytes: Option<i64>,

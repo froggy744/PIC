@@ -203,6 +203,7 @@ mod folder_stream_tests {
                 folder_path: Some("/probe/folder".into()),
                 taken_at: None,
                 camera: None,
+                aperture: None,
                 width: Some(16),
                 height: Some(16),
                 size_bytes: Some(1),

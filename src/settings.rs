@@ -80,7 +80,7 @@ impl SettingsWindow {
         let stack = gtk::Stack::new();
         stack.set_hexpand(true);
         stack.set_vexpand(true);
-        stack.set_transition_type(gtk::StackTransitionType::Crossfade);
+        stack.set_transition_type(gtk::StackTransitionType::None);
 
         stack.add_titled(
             &formats_page(connection.clone(), formats_changed.clone()),

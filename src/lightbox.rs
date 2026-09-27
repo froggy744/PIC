@@ -357,6 +357,7 @@ pub struct Lightbox {
     slider_zoom_center_lock: Rc<Cell<bool>>,
     pending_slider_zoom_scale: Rc<Cell<Option<f64>>>,
     slider_zoom_tick_active: Rc<Cell<bool>>,
+    slider_zoom_input_active: Rc<Cell<bool>>,
     one_to_one_active: Rc<Cell<bool>>,
     native_texture: Rc<RefCell<Option<NativeTextureCache>>>,
     display_texture_cache: DisplayTextureCache,

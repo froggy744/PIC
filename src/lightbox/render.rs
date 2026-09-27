@@ -229,6 +229,52 @@ fn viewer_trace(message: impl std::fmt::Display) {
     }
 }
 
+fn zoom_trace(message: impl std::fmt::Display) {
+    if std::env::var_os("PICASA_TRACE").is_some() {
+        static TRACE_STARTED: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+        let elapsed = TRACE_STARTED.get_or_init(std::time::Instant::now).elapsed();
+        eprintln!(
+            "PIC_ZOOM t_ms={} tid={:?} {message}",
+            elapsed.as_millis(),
+            std::thread::current().id()
+        );
+    }
+}
+
+fn zoom_trace_geometry(
+    event: &str,
+    picture: &gtk::Picture,
+    viewport: &gtk::ScrolledWindow,
+    native_scale: f64,
+    internal_zoom: f64,
+) {
+    if std::env::var_os("PICASA_TRACE").is_none() {
+        return;
+    }
+    let h = viewport.hadjustment();
+    let v = viewport.vadjustment();
+    zoom_trace(format!(
+        "{event} native_scale={native_scale:.5} internal_zoom={internal_zoom:.5} \
+picture_alloc={}x{} picture_req={}x{} viewport={}x{} \
+h_lower={:.2} h_upper={:.2} h_page={:.2} h_value={:.2} \
+v_lower={:.2} v_upper={:.2} v_page={:.2} v_value={:.2}",
+        picture.width(),
+        picture.height(),
+        picture.width_request(),
+        picture.height_request(),
+        viewport.width(),
+        viewport.height(),
+        h.lower(),
+        h.upper(),
+        h.page_size(),
+        h.value(),
+        v.lower(),
+        v.upper(),
+        v.page_size(),
+        v.value(),
+    ));
+}
+
 fn viewer_trace_uri(uri: &str) -> String {
     let Some((scheme, rest)) = uri.split_once("://") else {
         return uri.to_owned();
@@ -823,6 +869,22 @@ fn fit_picture(
         zoom,
     );
 
+    if std::env::var_os("PICASA_TRACE").is_some() {
+        zoom_trace(format!(
+            "fit_picture index={} zoom={zoom:.5} viewport={}x{} intrinsic={}x{} native={}x{} target={}x{} current_alloc={}x{}",
+            index,
+            viewport_width,
+            viewport_height,
+            intrinsic_width,
+            intrinsic_height,
+            native_width,
+            native_height,
+            fitted_width,
+            fitted_height,
+            picture.width(),
+            picture.height(),
+        ));
+    }
     picture.set_size_request(fitted_width, fitted_height);
 }
 

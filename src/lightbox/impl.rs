@@ -200,15 +200,53 @@ impl Lightbox {
         // so this happens in the same GTK layout cycle instead of a later timer.
         {
             let lock = slider_zoom_center_lock.clone();
+            let picture_for_h = picture.clone();
+            let viewport_for_h = picture_viewport.clone();
             picture_viewport.hadjustment().connect_changed(move |adjustment| {
                 if lock.get() {
+                    zoom_trace(format!(
+                        "adjust_changed axis=h before lower={:.2} upper={:.2} page={:.2} value={:.2} picture_alloc={}x{} picture_req={}x{} viewport={}x{}",
+                        adjustment.lower(),
+                        adjustment.upper(),
+                        adjustment.page_size(),
+                        adjustment.value(),
+                        picture_for_h.width(),
+                        picture_for_h.height(),
+                        picture_for_h.width_request(),
+                        picture_for_h.height_request(),
+                        viewport_for_h.width(),
+                        viewport_for_h.height(),
+                    ));
                     center_adjustment(adjustment);
+                    zoom_trace(format!(
+                        "adjust_changed axis=h after value={:.2}",
+                        adjustment.value()
+                    ));
                 }
             });
             let lock = slider_zoom_center_lock.clone();
+            let picture_for_v = picture.clone();
+            let viewport_for_v = picture_viewport.clone();
             picture_viewport.vadjustment().connect_changed(move |adjustment| {
                 if lock.get() {
+                    zoom_trace(format!(
+                        "adjust_changed axis=v before lower={:.2} upper={:.2} page={:.2} value={:.2} picture_alloc={}x{} picture_req={}x{} viewport={}x{}",
+                        adjustment.lower(),
+                        adjustment.upper(),
+                        adjustment.page_size(),
+                        adjustment.value(),
+                        picture_for_v.width(),
+                        picture_for_v.height(),
+                        picture_for_v.width_request(),
+                        picture_for_v.height_request(),
+                        viewport_for_v.width(),
+                        viewport_for_v.height(),
+                    ));
                     center_adjustment(adjustment);
+                    zoom_trace(format!(
+                        "adjust_changed axis=v after value={:.2}",
+                        adjustment.value()
+                    ));
                 }
             });
         }
@@ -786,6 +824,13 @@ impl Lightbox {
     /// Queue slider zoom onto GTK's frame clock. Multiple value_changed
     /// signals before the next frame collapse to the latest requested scale.
     pub fn request_slider_zoom(self: &Rc<Self>, native_scale: f64) {
+        zoom_trace_geometry(
+            "slider_request",
+            &self.picture,
+            &self.picture_viewport,
+            native_scale,
+            self.zoom.get(),
+        );
         self.slider_zoom_center_lock.set(true);
         center_viewport_now(&self.picture_viewport);
         self.pending_slider_zoom_scale.set(Some(native_scale));
@@ -804,7 +849,21 @@ impl Lightbox {
             }
 
             if let Some(scale) = this.pending_slider_zoom_scale.take() {
+                zoom_trace_geometry(
+                    "slider_tick_before",
+                    &this.picture,
+                    &this.picture_viewport,
+                    scale,
+                    this.zoom.get(),
+                );
                 this.apply_manual_zoom_scale(scale, false);
+                zoom_trace_geometry(
+                    "slider_tick_after",
+                    &this.picture,
+                    &this.picture_viewport,
+                    scale,
+                    this.zoom.get(),
+                );
             }
             this.slider_zoom_tick_active.set(false);
             glib::ControlFlow::Break
@@ -815,7 +874,21 @@ impl Lightbox {
     /// when the slider gesture has settled.
     pub fn end_slider_zoom(&self) {
         if self.root.is_visible() {
+            zoom_trace_geometry(
+                "slider_end_before",
+                &self.picture,
+                &self.picture_viewport,
+                self.current_manual_zoom_scale(),
+                self.zoom.get(),
+            );
             center_viewport_now(&self.picture_viewport);
+            zoom_trace_geometry(
+                "slider_end_after",
+                &self.picture,
+                &self.picture_viewport,
+                self.current_manual_zoom_scale(),
+                self.zoom.get(),
+            );
         }
         self.slider_zoom_center_lock.set(false);
     }

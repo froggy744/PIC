@@ -271,6 +271,10 @@ fn install_smooth_gallery_scroll(
     motion.set_propagation_phase(gtk::PropagationPhase::Capture);
     {
         let last_pointer = last_pointer.clone();
+        motion.connect_enter(move |_, x, y| last_pointer.set(Some((x, y))));
+    }
+    {
+        let last_pointer = last_pointer.clone();
         motion.connect_motion(move |_, x, y| last_pointer.set(Some((x, y))));
     }
     {

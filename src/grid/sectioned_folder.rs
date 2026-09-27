@@ -770,7 +770,14 @@ impl SectionedFolderView {
         let mut tile_positions = HashMap::new();
         for (index, entry) in self.live_tiles.borrow().iter() {
             if let Some(bounds) = entry.tile.compute_bounds(&self.root) {
-                tile_positions.insert(*index, (f64::from(bounds.x()), f64::from(bounds.y())));
+                let (offset_x, offset_y) = entry.tile.presentation_offset();
+                tile_positions.insert(
+                    *index,
+                    (
+                        f64::from(bounds.x() + offset_x),
+                        f64::from(bounds.y() + offset_y),
+                    ),
+                );
             }
         }
 
@@ -831,14 +838,149 @@ impl SectionedFolderView {
         section_index_for_photo(&ranges, index as usize)
     }
 
+    /// Match the Library/All Photos resize transition: apply the final
+    /// section layout immediately, then visually translate surviving tiles
+    /// from their previous screen positions back to their real allocations.
+    /// This is presentation-only FLIP; model membership and Prototype B
+    /// section lookup/anchoring are untouched.
     fn animate_reflow(
         self: &Rc<Self>,
         snapshot: SectionedReflowSnapshot,
         anchor: Option<(i64, f64)>,
     ) {
+        const RESIZE_FLIP_MS: f64 = 300.0;
+
         self.reflow_animation_generation
             .set(self.reflow_animation_generation.get().wrapping_add(1));
         let generation = self.reflow_animation_generation.get();
+
+        // A newer transition may interrupt an older one. Capture included the
+        // old presentation offset, so clear stale transforms before installing
+        // the new destination layout.
+        for entry in self.live_tiles.borrow().values() {
+            entry.tile.set_presentation_offset(0.0, 0.0);
+        }
+
+        self.reflow_active.set(false);
+        self.invalidate_geometry();
+        self.refresh();
+        if let Some((photo_id, offset)) = anchor {
+            self.restore_anchor(photo_id, offset);
+        }
+
+        let mut motion = Vec::<(SquareTile, f32, f32)>::new();
+        {
+            let live = self.live_tiles.borrow();
+            for (index, (old_x, old_y)) in snapshot.tile_positions.iter() {
+                let Some(entry) = live.get(index) else {
+                    continue;
+                };
+                let Some(bounds) = entry.tile.compute_bounds(&self.root) else {
+                    continue;
+                };
+                let dx = (*old_x as f32) - bounds.x();
+                let dy = (*old_y as f32) - bounds.y();
+                if dx.abs() < 0.5 && dy.abs() < 0.5 {
+                    continue;
+                }
+                entry.tile.set_presentation_offset(dx, dy);
+                motion.push((entry.tile.clone(), dx, dy));
+            }
+        }
+
+        let mut header_motion = Vec::<(gtk::Label, f64, f64)>::new();
+        {
+            let headers = self.live_headers.borrow();
+            let geometry = self.geometry.borrow();
+            for (index, old_y) in snapshot.header_positions.iter() {
+                let (Some(label), Some(target)) = (headers.get(index), geometry.get(*index)) else {
+                    continue;
+                };
+                if (*old_y - target.header_y).abs() < 0.5 {
+                    continue;
+                }
+                self.root.move_(label, SECTIONED_SIDE_MARGIN, *old_y);
+                header_motion.push((label.clone(), *old_y, target.header_y));
+            }
+        }
+
+        if motion.is_empty() && header_motion.is_empty() {
+            self.reflow_active.set(false);
+            return;
+        }
+
+        self.reflow_active.set(true);
+        if std::env::var_os("PICASA_TRACE").is_some() {
+            eprintln!(
+                "PIC_SECTIONED_ANIM resize_flip_begin tiles={} headers={} duration_ms={}",
+                motion.len(),
+                header_motion.len(),
+                RESIZE_FLIP_MS as u32,
+            );
+        }
+
+        let started = Instant::now();
+        let weak = Rc::downgrade(self);
+        self.root.add_tick_callback(move |_, _| {
+            let Some(view) = weak.upgrade() else {
+                return glib::ControlFlow::Break;
+            };
+            if view.reflow_animation_generation.get() != generation {
+                return glib::ControlFlow::Break;
+            }
+
+            let linear = (started.elapsed().as_secs_f64() * 1000.0 / RESIZE_FLIP_MS)
+                .clamp(0.0, 1.0);
+            // Exactly match Library resize FLIP.
+            let eased = 1.0 - (1.0 - linear).powi(3);
+            let remaining = (1.0 - eased) as f32;
+
+            for (tile, dx, dy) in motion.iter() {
+                tile.set_presentation_offset(*dx * remaining, *dy * remaining);
+            }
+            for (label, old_y, target_y) in header_motion.iter() {
+                let y = old_y + (target_y - old_y) * eased;
+                view.root.move_(label, SECTIONED_SIDE_MARGIN, y);
+            }
+
+            if linear >= 1.0 {
+                for (tile, _, _) in motion.iter() {
+                    tile.set_presentation_offset(0.0, 0.0);
+                }
+                for (label, _, target_y) in header_motion.iter() {
+                    view.root.move_(label, SECTIONED_SIDE_MARGIN, *target_y);
+                }
+                view.reflow_active.set(false);
+                view.refresh();
+                if std::env::var_os("PICASA_TRACE").is_some() {
+                    eprintln!(
+                        "PIC_SECTIONED_ANIM resize_flip_end elapsed_ms={}",
+                        started.elapsed().as_millis()
+                    );
+                }
+                glib::ControlFlow::Break
+            } else {
+                glib::ControlFlow::Continue
+            }
+        });
+    }
+
+    /// Match the Library/All Photos thumbnail zoom timing and easing while
+    /// retaining section-aware physical geometry and the Prototype B anchor.
+    fn animate_zoom_reflow(
+        self: &Rc<Self>,
+        snapshot: SectionedReflowSnapshot,
+        anchor: Option<(i64, f64)>,
+    ) {
+        const ZOOM_ANIMATION_MS: f64 = 180.0;
+
+        self.reflow_animation_generation
+            .set(self.reflow_animation_generation.get().wrapping_add(1));
+        let generation = self.reflow_animation_generation.get();
+
+        for entry in self.live_tiles.borrow().values() {
+            entry.tile.set_presentation_offset(0.0, 0.0);
+        }
         self.reflow_active.set(true);
 
         self.invalidate_geometry();
@@ -851,18 +993,17 @@ impl SectionedFolderView {
         let target_tile_height = self.tile_height.get();
         if std::env::var_os("PICASA_TRACE").is_some() {
             eprintln!(
-                "PIC_SECTIONED_ANIM reflow_begin live_tiles={} old_tile={}x{} new_tile={}x{} anchor={:?}",
+                "PIC_SECTIONED_ANIM zoom_reflow_begin live_tiles={} old_tile={}x{} new_tile={}x{} duration_ms={} anchor={:?}",
                 self.live_tiles.borrow().len(),
                 snapshot.tile_width,
                 snapshot.tile_height,
                 target_tile_width,
                 target_tile_height,
+                ZOOM_ANIMATION_MS as u32,
                 anchor.map(|(id, _)| id),
             );
         }
 
-        // Put surviving realized widgets back at their previous visual
-        // positions. New widgets simply appear at their destination.
         {
             let live = self.live_tiles.borrow();
             for (index, (old_x, old_y)) in snapshot.tile_positions.iter() {
@@ -886,7 +1027,6 @@ impl SectionedFolderView {
         }
 
         let started = Instant::now();
-        let duration_s = 0.30_f64;
         let weak = Rc::downgrade(self);
         self.root.add_tick_callback(move |_, _| {
             let Some(view) = weak.upgrade() else {
@@ -896,10 +1036,10 @@ impl SectionedFolderView {
                 return glib::ControlFlow::Break;
             }
 
-            let t = (started.elapsed().as_secs_f64() / duration_s).clamp(0.0, 1.0);
-            // Smoothstep avoids the old ease-out "kick" where most movement
-            // happened in the first few frames and tiles appeared to jump.
-            let eased = t * t * (3.0 - 2.0 * t);
+            let linear = (started.elapsed().as_secs_f64() * 1000.0 / ZOOM_ANIMATION_MS)
+                .clamp(0.0, 1.0);
+            // Exactly match Library zoom.
+            let eased = 1.0 - (1.0 - linear).powi(3);
             let frame_width = (f64::from(snapshot.tile_width)
                 + f64::from(target_tile_width - snapshot.tile_width) * eased)
                 .round() as i32;
@@ -938,12 +1078,12 @@ impl SectionedFolderView {
                 }
             }
 
-            if t >= 1.0 {
+            if linear >= 1.0 {
                 view.reflow_active.set(false);
                 view.refresh();
                 if std::env::var_os("PICASA_TRACE").is_some() {
                     eprintln!(
-                        "PIC_SECTIONED_ANIM reflow_end elapsed_ms={}",
+                        "PIC_SECTIONED_ANIM zoom_reflow_end elapsed_ms={}",
                         started.elapsed().as_millis()
                     );
                 }

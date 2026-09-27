@@ -740,8 +740,6 @@ impl Gallery {
     /// the custom width/height shape configured above. `persist` is false for
     /// the startup default so adopting it does not turn it into a preference.
     fn apply_zoom(self: &Rc<Self>, width: i32) {
-        const ZOOM_ANIMATION_MS: f64 = 180.0;
-
         let target_width = width.clamp(MIN_TILE_WIDTH, MAX_TILE_WIDTH);
         let start_width = self.tile_width.get().max(1);
         if target_width == start_width {
@@ -764,9 +762,9 @@ impl Gallery {
                 .map(|anchor| (anchor.photo_id, anchor.desired_y))
                 .or_else(|| self.sectioned_folder.capture_center_anchor());
 
-            // Publish only the destination geometry. update_layout changes the
-            // sectioned column count but deliberately does not move widgets for
-            // tile-size changes; animate_reflow owns the visual transition.
+            // SectionedFolder owns its custom reflow animation, so publish the
+            // destination geometry once and let that surface animate from its
+            // captured snapshot.
             self.tile_width.set(target_width);
             self.tile_height.set(target_height);
             (self.on_zoom_changed)(target_width);
@@ -792,8 +790,8 @@ impl Gallery {
         }
 
         // The legacy Folder ListView still has model rows whose membership is
-        // tied to the column count. Keep that fallback on its old immediate
-        // path.
+        // tied to the column count. Keep that fallback on its existing exact
+        // row-reframe path.
         if folder_mode && !crate::grid::folder_gridview_experiment_enabled() {
             self.apply_tile_size(target_width, true);
             return;
@@ -809,59 +807,35 @@ impl Gallery {
         if self.stable_zoom_anchor.get().is_none() {
             self.begin_center_zoom_anchor();
         }
-        let generation = self.zoom_animation_generation.get().wrapping_add(1);
-        self.zoom_animation_generation.set(generation);
-        // Use the last width supplied by the outer gallery surface, not
-        // GridView::width(). The GridView's own width changes as its column
-        // requisition changes and was the source of the 40px feedback loop.
-        let stable_layout_width = if self.last_layout_width.get() > 100 {
-            self.last_layout_width.get()
-        } else {
-            self.root.width().max(1)
-        };
-        self.zoom_animation_layout_width.set(Some(stable_layout_width));
-        set_grid_zoom_animation_active(true);
-        let started = Instant::now();
-        let this = self.clone();
 
-        // Drive presentation geometry from GTK's frame clock. GridView keeps
-        // the same PhotoObject model while realized tiles grow/shrink and GTK
-        // continuously repositions them toward the destination layout.
-        self.root.add_tick_callback(move |_, _| {
-            if this.zoom_animation_generation.get() != generation {
-                // A newer zoom animation owns the shared motion flag.
-                return glib::ControlFlow::Break;
-            }
+        // Do NOT animate GtkGridView by changing real tile geometry every
+        // frame. Every intermediate size can change the computed column count,
+        // forcing GTK to repeatedly rewrap the model while the user watches.
+        // That is what made rc7 look as if tiles were flying around.
+        //
+        // Move to the canonical destination geometry exactly once. GTK performs
+        // one deterministic reflow, then the stable anchor restoration runs on
+        // the final allocations. A later presentation-only animation can be
+        // layered on top without ever changing model order or layout geometry.
+        self.zoom_animation_generation
+            .set(self.zoom_animation_generation.get().wrapping_add(1));
+        let generation = self.zoom_animation_generation.get();
+        self.zoom_animation_layout_width.set(None);
+        set_grid_zoom_animation_active(false);
 
-            let linear = (started.elapsed().as_secs_f64() * 1000.0 / ZOOM_ANIMATION_MS)
-                .clamp(0.0, 1.0);
-            // Cubic ease-out: quick response to input, gentle arrival.
-            let eased = 1.0 - (1.0 - linear).powi(3);
-            let frame_width = (start_width as f64
-                + (target_width - start_width) as f64 * eased)
-                .round() as i32;
-            let frame_height = (start_height as f64
-                + (target_height - start_height) as f64 * eased)
-                .round() as i32;
+        self.apply_tile_geometry(target_width, target_height, true);
+        self.schedule_grid_zoom_anchor_restore(generation, true);
 
-            let columns_before = this.current_columns.get();
-            this.apply_tile_geometry(frame_width, frame_height, false);
-            if this.current_columns.get() != columns_before {
-                this.schedule_grid_zoom_anchor_restore(generation, false);
-            }
-
-            if linear >= 1.0 {
-                // Land exactly on the canonical zoom level and persist only
-                // once. Intermediate animation frames never touch settings.
-                this.apply_tile_geometry(target_width, target_height, true);
-                this.zoom_animation_layout_width.set(None);
-                set_grid_zoom_animation_active(false);
-                this.schedule_grid_zoom_anchor_restore(generation, true);
-                glib::ControlFlow::Break
-            } else {
-                glib::ControlFlow::Continue
-            }
-        });
+        if std::env::var_os("PICASA_TRACE").is_some() {
+            eprintln!(
+                "PIC_ZOOM grid_discrete old_width={} width={} old_height={} height={} columns={}",
+                start_width,
+                target_width,
+                start_height,
+                target_height,
+                self.current_columns.get(),
+            );
+        }
     }
 
     fn apply_tile_size(&self, width: i32, persist: bool) {

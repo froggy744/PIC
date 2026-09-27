@@ -28,19 +28,6 @@ impl Lightbox {
         picture.set_widget_name("lightbox-zoom-picture");
         picture.add_css_class("lightbox-picture");
 
-        // Slider dragging uses a render-only CSS transform. This deliberately
-        // does not change GtkPicture's requested size or ScrolledWindow ranges;
-        // the real geometry is committed once when slider input settles.
-        let slider_zoom_css = gtk::CssProvider::new();
-        load_slider_zoom_css(&slider_zoom_css, 1.0, false);
-        if let Some(display) = gtk::gdk::Display::default() {
-            gtk::style_context_add_provider_for_display(
-                &display,
-                &slider_zoom_css,
-                gtk::STYLE_PROVIDER_PRIORITY_APPLICATION + 20,
-            );
-        }
-
         // Keep the image in a viewport so native-size presentation can be
         // larger than the window and remain pannable instead of being forced
         // back into the overlay's allocation.
@@ -87,8 +74,8 @@ impl Lightbox {
             // Ctrl+wheel as well as 1:1, not 1:1 only.
             let hadj = viewport_for_drag_begin.hadjustment();
             let vadj = viewport_for_drag_begin.vadjustment();
-            let scrollable = hadj.upper() - hadj.page_size() > 1.0
-                || vadj.upper() - vadj.page_size() > 1.0;
+            let scrollable =
+                hadj.upper() - hadj.page_size() > 1.0 || vadj.upper() - vadj.page_size() > 1.0;
             if !scrollable {
                 gesture.set_state(gtk::EventSequenceState::Denied);
                 return;
@@ -110,8 +97,6 @@ impl Lightbox {
             drag_start_h_begin.set(hadj.value());
             drag_start_v_begin.set(vadj.value());
             viewport_for_drag_begin.set_cursor_from_name(Some("grabbing"));
-
-            
         });
 
         let pan_active_for_drag_update = pan_active.clone();
@@ -132,8 +117,6 @@ impl Lightbox {
             let new_v = (drag_start_v_update.get() - offset_y).clamp(vadj.lower(), max_v);
             hadj.set_value(new_h);
             vadj.set_value(new_v);
-
-            
         });
 
         let pan_active_for_drag_end = pan_active.clone();
@@ -142,10 +125,13 @@ impl Lightbox {
             pan_active_for_drag_end.set(false);
             let hadj = viewport_for_drag_end.hadjustment();
             let vadj = viewport_for_drag_end.vadjustment();
-            let scrollable = hadj.upper() - hadj.page_size() > 1.0
-                || vadj.upper() - vadj.page_size() > 1.0;
-            viewport_for_drag_end
-                .set_cursor_from_name(if scrollable { Some("grab") } else { None });
+            let scrollable =
+                hadj.upper() - hadj.page_size() > 1.0 || vadj.upper() - vadj.page_size() > 1.0;
+            viewport_for_drag_end.set_cursor_from_name(if scrollable {
+                Some("grab")
+            } else {
+                None
+            });
         });
         let photos = Rc::new(RefCell::new(Vec::<PhotoObject>::new()));
         let index = Rc::new(Cell::new(0usize));
@@ -153,11 +139,10 @@ impl Lightbox {
         let last_height = Rc::new(Cell::new(0i32));
         let zoom = Rc::new(Cell::new(0.0)); // 0 means fit-to-window
         let zoom_before_one_to_one = Rc::new(Cell::new(0.0));
-        let slider_zoom_center_lock = Rc::new(Cell::new(false));
-        let slider_zoom_base_scale = Rc::new(Cell::new(None::<f64>));
-        let slider_zoom_target_scale = Rc::new(Cell::new(None::<f64>));
+        let applied_native_scale = Rc::new(Cell::new(APPLIED_SCALE_UNKNOWN));
         let load_generation = Rc::new(Cell::new(0u64));
-        let decode_cancel: Rc<RefCell<Option<Arc<ViewerRequestLease>>>> = Rc::new(RefCell::new(None));
+        let decode_cancel: Rc<RefCell<Option<Arc<ViewerRequestLease>>>> =
+            Rc::new(RefCell::new(None));
         let key_navigation_ready = Rc::new(Cell::new(true));
         let wheel_navigation = Rc::new(RefCell::new(WheelNavigationState::default()));
         let photo_changed: PhotoChangedHandler = Rc::new(RefCell::new(None));
@@ -194,10 +179,13 @@ impl Lightbox {
             let update_cursor: Rc<dyn Fn()> = Rc::new(move || {
                 let hadj = viewport_for_cursor.hadjustment();
                 let vadj = viewport_for_cursor.vadjustment();
-                let scrollable = hadj.upper() - hadj.page_size() > 1.0
-                    || vadj.upper() - vadj.page_size() > 1.0;
-                viewport_for_cursor
-                    .set_cursor_from_name(if scrollable { Some("grab") } else { None });
+                let scrollable =
+                    hadj.upper() - hadj.page_size() > 1.0 || vadj.upper() - vadj.page_size() > 1.0;
+                viewport_for_cursor.set_cursor_from_name(if scrollable {
+                    Some("grab")
+                } else {
+                    None
+                });
             });
             let update_for_v = update_cursor.clone();
             picture_viewport
@@ -209,33 +197,20 @@ impl Lightbox {
                 .connect_changed(move |_| update_for_h());
         }
 
-        // A slider drag itself never changes scroll geometry. This lock is used
-        // only for the single real-size commit after input settles, so the new
-        // scroll range lands at its centre without a visible follow-up correction.
-        {
-            let lock = slider_zoom_center_lock.clone();
-            picture_viewport.hadjustment().connect_changed(move |adjustment| {
-                if lock.get() {
-                    center_adjustment(adjustment);
-                }
-            });
-            let lock = slider_zoom_center_lock.clone();
-            picture_viewport.vadjustment().connect_changed(move |adjustment| {
-                if lock.get() {
-                    center_adjustment(adjustment);
-                }
-            });
-        }
+        // Every zoom path writes real GtkPicture geometry, and GTK publishes
+        // the resulting scroll range before it places the child. Keeping the
+        // point under the viewport centre anchored on that range change is the
+        // single recentering rule: slider, Ctrl+wheel, keys, 1:1 and window
+        // resizes all keep their centre without timers or deferred fixes.
+        install_viewport_anchor(&picture_viewport.hadjustment());
+        install_viewport_anchor(&picture_viewport.vadjustment());
 
         // Some close paths intentionally hide the overlay directly (outside
         // click and double-click). Reset the internal presentation state for
         // those paths as well as for Lightbox::close().
         let one_to_one_for_visibility = one_to_one_active.clone();
         let zoom_for_visibility = zoom.clone();
-        let slider_zoom_center_lock_for_visibility = slider_zoom_center_lock.clone();
-        let slider_zoom_base_scale_for_visibility = slider_zoom_base_scale.clone();
-        let slider_zoom_target_scale_for_visibility = slider_zoom_target_scale.clone();
-        let slider_zoom_css_for_visibility = slider_zoom_css.clone();
+        let applied_for_visibility = applied_native_scale.clone();
         let picture_for_visibility = picture.clone();
         let viewport_for_visibility = picture_viewport.clone();
         root.connect_visible_notify(move |root| {
@@ -249,11 +224,7 @@ impl Lightbox {
                     }
                 }
                 one_to_one_for_visibility.set(false);
-                zoom_for_visibility.set(0.0);
-                slider_zoom_center_lock_for_visibility.set(false);
-                slider_zoom_base_scale_for_visibility.set(None);
-                slider_zoom_target_scale_for_visibility.set(None);
-                load_slider_zoom_css(&slider_zoom_css_for_visibility, 1.0, false);
+                set_zoom_state(&zoom_for_visibility, &applied_for_visibility, 0.0);
                 picture_for_visibility.set_can_shrink(true);
                 viewport_for_visibility.set_cursor_from_name(None);
                 reset_viewport(&viewport_for_visibility);
@@ -327,7 +298,6 @@ impl Lightbox {
                 return;
             };
             if let Some(handler) = context_menu_for_context.borrow().as_ref() {
-                
                 handler(
                     photo,
                     viewport_for_context.clone().upcast::<gtk::Widget>(),
@@ -368,6 +338,7 @@ impl Lightbox {
                     width,
                     height,
                     zoom_for_fit.get(),
+                    "context-menu",
                 );
             }
 
@@ -387,7 +358,7 @@ impl Lightbox {
         let picture_for_scroll = picture.clone();
         let root_for_scroll = root.clone();
         let zoom_for_scroll = zoom.clone();
-        let native_texture_for_scroll = native_texture.clone();
+        let applied_for_scroll = applied_native_scale.clone();
         let one_to_one_for_scroll = one_to_one_active.clone();
         let one_to_one_sync_for_scroll = one_to_one_sync.clone();
         let zoom_sync_for_scroll = zoom_sync.clone();
@@ -401,6 +372,7 @@ impl Lightbox {
             let picture = picture.clone();
             let root = root.clone();
             let zoom = zoom.clone();
+            let applied_native_scale = applied_native_scale.clone();
             let generation = load_generation.clone();
             let decode_cancel = decode_cancel.clone();
             let photo_changed = photo_changed.clone();
@@ -440,7 +412,7 @@ impl Lightbox {
                 key_navigation_ready.set(true);
                 wheel_navigation.borrow_mut().begin(direction);
                 index.set(next);
-                zoom.set(0.0);
+                set_zoom_state(&zoom, &applied_native_scale, 0.0);
                 one_to_one.set(false);
                 native_texture.borrow_mut().take();
                 reset_viewport(&viewport);
@@ -490,7 +462,6 @@ impl Lightbox {
         wheel_dispatch_slot.replace(Some(wheel_dispatch.clone()));
 
         scroll.connect_scroll(move |controller, _, dy| {
-            
             // Ctrl+wheel zooms the image; ordinary wheel keeps navigation.
             // The controller's modifier state is sampled on the GTK thread.
             if controller
@@ -499,7 +470,8 @@ impl Lightbox {
             {
                 // Ctrl+wheel and the InfoBar slider share native-image scale
                 // semantics. Fit is the lower bound, 100% is the native-pixel
-                // midpoint, and the upper bound is 400%.
+                // midpoint, and the upper bound matches the slider's right
+                // endpoint.
                 if one_to_one_for_scroll.get() {
                     one_to_one_for_scroll.set(false);
                     picture_for_scroll.set_can_shrink(true);
@@ -512,23 +484,32 @@ impl Lightbox {
                 else {
                     return glib::Propagation::Stop;
                 };
+                let (intrinsic_width, intrinsic_height) =
+                    picture_intrinsic_dimensions(&picture_for_scroll);
                 let fit_scale = presentation_fit_scale(
                     &photo,
                     root_for_scroll.width(),
                     root_for_scroll.height(),
+                    intrinsic_width,
+                    intrinsic_height,
                 );
                 let current_scale = if zoom_for_scroll.get() <= 0.0 {
                     fit_scale
                 } else {
                     (fit_scale * zoom_for_scroll.get()).max(fit_scale)
                 };
-                let next_scale =
-                    (current_scale * if dy < 0.0 { 1.12 } else { 0.89 }).clamp(fit_scale, 4.0);
+                let next_scale = (current_scale * if dy < 0.0 { 1.12 } else { 0.89 })
+                    .clamp(fit_scale, LIGHTBOX_MAX_ZOOM_FACTOR);
 
                 if next_scale <= fit_scale * 1.001 {
                     zoom_for_scroll.set(0.0);
+                    applied_for_scroll.set(0.0);
                 } else {
                     zoom_for_scroll.set(next_scale / fit_scale.max(f64::EPSILON));
+                    // Ctrl+wheel knows the native scale it landed on, so the
+                    // record stays exact and a slider reporting the same value
+                    // is still correctly treated as a repeat.
+                    applied_for_scroll.set(next_scale);
                 }
 
                 fit_picture(
@@ -538,8 +519,8 @@ impl Lightbox {
                     root_for_scroll.width(),
                     root_for_scroll.height(),
                     zoom_for_scroll.get(),
+                    "ctrl-wheel",
                 );
-                picture_for_scroll.queue_resize();
 
                 if let Some(handler) = zoom_sync_for_scroll.borrow().as_ref() {
                     handler(if zoom_for_scroll.get() == 0.0 {
@@ -606,6 +587,7 @@ impl Lightbox {
         let photos_for_key = photos.clone();
         let index_for_key = index.clone();
         let zoom_for_key = zoom.clone();
+        let applied_for_key = applied_native_scale.clone();
         let generation_for_key = load_generation.clone();
         let cancel_for_key = decode_cancel.clone();
         let photo_changed_for_key = photo_changed.clone();
@@ -629,7 +611,29 @@ impl Lightbox {
                 } else {
                     zoom_for_key.get()
                 };
-                zoom_for_key.set((current * 1.15).min(4.0));
+                // Cap the internal (fit-relative) zoom at the same native
+                // magnification the slider and wheel allow.
+                let max_internal = photos_for_key
+                    .borrow()
+                    .get(index_for_key.get())
+                    .map(|photo| {
+                        let (intrinsic_width, intrinsic_height) =
+                            picture_intrinsic_dimensions(&picture_for_key);
+                        let fit_scale = presentation_fit_scale(
+                            photo,
+                            root_for_escape.width(),
+                            root_for_escape.height(),
+                            intrinsic_width,
+                            intrinsic_height,
+                        );
+                        LIGHTBOX_MAX_ZOOM_FACTOR / fit_scale.max(f64::EPSILON)
+                    })
+                    .unwrap_or(4.0);
+                set_zoom_state(
+                    &zoom_for_key,
+                    &applied_for_key,
+                    (current * 1.15).min(max_internal),
+                );
                 fit_picture(
                     &picture_for_key,
                     &photos_for_key.borrow(),
@@ -637,6 +641,7 @@ impl Lightbox {
                     root_for_escape.width(),
                     root_for_escape.height(),
                     zoom_for_key.get(),
+                    "key",
                 );
                 glib::Propagation::Stop
             } else if key == gtk::gdk::Key::minus {
@@ -645,7 +650,7 @@ impl Lightbox {
                 } else {
                     zoom_for_key.get()
                 };
-                zoom_for_key.set((current * 0.87).max(0.25));
+                set_zoom_state(&zoom_for_key, &applied_for_key, (current * 0.87).max(0.25));
                 fit_picture(
                     &picture_for_key,
                     &photos_for_key.borrow(),
@@ -653,10 +658,11 @@ impl Lightbox {
                     root_for_escape.width(),
                     root_for_escape.height(),
                     zoom_for_key.get(),
+                    "key",
                 );
                 glib::Propagation::Stop
             } else if key == gtk::gdk::Key::_0 {
-                zoom_for_key.set(0.0);
+                set_zoom_state(&zoom_for_key, &applied_for_key, 0.0);
                 fit_picture(
                     &picture_for_key,
                     &photos_for_key.borrow(),
@@ -664,10 +670,11 @@ impl Lightbox {
                     root_for_escape.width(),
                     root_for_escape.height(),
                     0.0,
+                    "key",
                 );
                 glib::Propagation::Stop
             } else if key == gtk::gdk::Key::_1 {
-                zoom_for_key.set(1.0);
+                set_zoom_state(&zoom_for_key, &applied_for_key, 1.0);
                 fit_picture(
                     &picture_for_key,
                     &photos_for_key.borrow(),
@@ -675,6 +682,7 @@ impl Lightbox {
                     root_for_escape.width(),
                     root_for_escape.height(),
                     1.0,
+                    "key",
                 );
                 glib::Propagation::Stop
             } else if key == gtk::gdk::Key::Left || key == gtk::gdk::Key::Right {
@@ -696,7 +704,7 @@ impl Lightbox {
                 if next != current {
                     key_navigation_ready_for_key.set(false);
                     index_for_key.set(next);
-                    zoom_for_key.set(0.0);
+                    set_zoom_state(&zoom_for_key, &applied_for_key, 0.0);
                     one_to_one_for_key.set(false);
                     native_texture_for_key.borrow_mut().take();
                     reset_viewport(&viewport_for_key);
@@ -763,10 +771,7 @@ impl Lightbox {
             last_height,
             zoom,
             zoom_before_one_to_one,
-            slider_zoom_center_lock,
-            slider_zoom_css,
-            slider_zoom_base_scale,
-            slider_zoom_target_scale,
+            applied_native_scale,
             one_to_one_active,
             native_texture,
             display_texture_cache,
@@ -794,83 +799,45 @@ impl Lightbox {
         self.zoom_sync.replace(Some(Box::new(handler)));
     }
 
+    /// Reset the viewer's zoom to a fit-relative value and invalidate the record
+    /// of the last applied native scale. See `set_zoom_state`.
+    fn set_zoom(&self, value: f64) {
+        set_zoom_state(&self.zoom, &self.applied_native_scale, value);
+    }
+
     /// Set the lightbox by native-image scale. 0.0 is Fit; 1.0 is true
     /// 100%, and values above 1.0 are magnified.
     pub fn set_manual_zoom_scale(&self, native_scale: f64) {
-        self.slider_zoom_base_scale.set(None);
-        self.slider_zoom_target_scale.set(None);
-        load_slider_zoom_css(&self.slider_zoom_css, 1.0, false);
-        self.apply_manual_zoom_scale(native_scale, true);
+        self.apply_manual_zoom_scale(native_scale, true, "reset");
     }
 
-    /// Slider dragging is render-only: keep GtkPicture and ScrolledWindow
-    /// allocations fixed and scale the already-decoded image around its centre.
-    /// This removes the resize -> scroll-range -> recenter feedback loop that
-    /// made the photo shake even when the centre arithmetic was correct.
+    /// Slider input applies the requested scale immediately, exactly like
+    /// Ctrl+wheel and the zoom keys: one geometry write per event, coalesced
+    /// by GTK into a single layout per frame. There is no separate render
+    /// transform, no base scale to remember and no deferred commit, so the
+    /// image on screen is always at the scale the slider asked for. The
+    /// range-change anchor keeps the visual centre fixed while that geometry
+    /// is laid out, in the same frame the geometry changes.
     pub fn request_slider_zoom(&self, native_scale: f64) {
+        // A GtkScale keeps reporting its value while the pointer is held still
+        // on the trough, and each report would otherwise redo the metadata
+        // lookup, the fit maths and the size write for a scale that is already
+        // on screen. Dropping the repeat here also keeps a held slider from
+        // re-queuing work between frames.
+        let previous = self.applied_native_scale.get();
+        if (previous - native_scale).abs() <= f64::EPSILON {
+            return;
+        }
+        // The slider already displays the requested value, so echoing it back
+        // through zoom_sync would only fight the drag.
+        self.apply_manual_zoom_scale(native_scale, false, "slider");
+    }
+
+    fn apply_manual_zoom_scale(&self, native_scale: f64, notify_zoom_sync: bool, source: &str) {
         if !self.root.is_visible() {
             return;
         }
-
-        let fit_scale = self.current_fit_scale();
-        let current_scale = {
-            let current = self.current_manual_zoom_scale();
-            if current <= 0.0 { fit_scale } else { current.max(fit_scale) }
-        };
-
-        let base_scale = self.slider_zoom_base_scale.get().unwrap_or_else(|| {
-            center_viewport_now(&self.picture_viewport);
-            self.slider_zoom_base_scale.set(Some(current_scale));
-            current_scale
-        });
-        let target_scale = if native_scale <= 0.0 {
-            fit_scale
-        } else {
-            native_scale.clamp(fit_scale, 4.0)
-        };
-
-        self.slider_zoom_target_scale.set(Some(native_scale));
-        let visual_factor = (target_scale / base_scale.max(f64::EPSILON)).clamp(0.05, 16.0);
-        load_slider_zoom_css(&self.slider_zoom_css, visual_factor, true);
-
-        zoom_trace(format!(
-            "slider_visual base={base_scale:.5} target_raw={native_scale:.5} target={target_scale:.5} factor={visual_factor:.5}"
-        ));
-    }
-
-    /// Commit the final requested scale exactly once after slider input settles.
-    /// The render transform is reset in the same turn; only this one commit
-    /// changes the ScrolledWindow child geometry.
-    pub fn end_slider_zoom(self: &Rc<Self>) {
-        let Some(target_raw) = self.slider_zoom_target_scale.take() else {
-            load_slider_zoom_css(&self.slider_zoom_css, 1.0, false);
-            self.slider_zoom_base_scale.set(None);
-            self.slider_zoom_center_lock.set(false);
-            return;
-        };
-
-        self.slider_zoom_center_lock.set(true);
-        self.apply_manual_zoom_scale(target_raw, false);
-        load_slider_zoom_css(&self.slider_zoom_css, 1.0, false);
-        self.slider_zoom_base_scale.set(None);
-
-        // Keep the lock through GTK's resulting layout pass. Range-change
-        // callbacks centre the new geometry in that same pass; release on the
-        // following frame so normal panning works again.
-        let this = self.clone();
-        self.root.add_tick_callback(move |_, _| {
-            if this.root.is_visible() {
-                center_viewport_now(&this.picture_viewport);
-            }
-            this.slider_zoom_center_lock.set(false);
-            glib::ControlFlow::Break
-        });
-    }
-
-    fn apply_manual_zoom_scale(&self, native_scale: f64, notify_zoom_sync: bool) {
-        if !self.root.is_visible() {
-            return;
-        }
+        let commit_started = std::time::Instant::now();
 
         // Do not enter the expensive special 1:1/native-texture mode merely
         // because a continuous slider crosses 100%. The geometry is still
@@ -886,10 +853,17 @@ impl Lightbox {
         let Some(photo) = self.photos.borrow().get(self.index.get()).cloned() else {
             return;
         };
-        let fit_scale = presentation_fit_scale(&photo, self.root.width(), self.root.height());
+        let (intrinsic_width, intrinsic_height) = picture_intrinsic_dimensions(&self.picture);
+        let fit_scale = presentation_fit_scale(
+            &photo,
+            self.root.width(),
+            self.root.height(),
+            intrinsic_width,
+            intrinsic_height,
+        );
 
         if native_scale <= 0.0 || native_scale <= fit_scale * 1.001 {
-            self.zoom.set(0.0);
+            self.set_zoom(0.0);
             fit_picture(
                 &self.picture,
                 &self.photos.borrow(),
@@ -897,8 +871,12 @@ impl Lightbox {
                 self.root.width(),
                 self.root.height(),
                 0.0,
+                source,
             );
-            reset_viewport(&self.picture_viewport);
+            // Fitted geometry never overflows the viewport, so GTK clamps the
+            // scroll range to nothing and centres by alignment. Writing the
+            // origin here as well would only race the range change that is
+            // about to do the same thing.
             if notify_zoom_sync {
                 if let Some(handler) = self.zoom_sync.borrow().as_ref() {
                     handler(0.0);
@@ -907,9 +885,11 @@ impl Lightbox {
             return;
         }
 
-        let native_scale = native_scale.clamp(fit_scale, 4.0);
-        self.zoom
-            .set(native_scale / fit_scale.max(f64::EPSILON));
+        let native_scale = native_scale.clamp(fit_scale, LIGHTBOX_MAX_ZOOM_FACTOR);
+        self.zoom.set(native_scale / fit_scale.max(f64::EPSILON));
+        // This path knows the native scale it landed on, so the record stays
+        // exact: only `set_zoom` (fit and 1:1) has to invalidate it.
+        self.applied_native_scale.set(native_scale);
 
         fit_picture(
             &self.picture,
@@ -918,7 +898,13 @@ impl Lightbox {
             self.root.width(),
             self.root.height(),
             self.zoom.get(),
+            source,
         );
+        zoom_trace(format!(
+            "slider_geometry source={source} native={native_scale:.5} fit={fit_scale:.5} zoom={:.5} commit_us={}",
+            self.zoom.get(),
+            commit_started.elapsed().as_micros(),
+        ));
         if notify_zoom_sync {
             if let Some(handler) = self.zoom_sync.borrow().as_ref() {
                 handler(native_scale);
@@ -926,21 +912,18 @@ impl Lightbox {
         }
     }
 
-    /// Recenter the current lightbox photo after an external continuous zoom
-    /// gesture settles. The slider deliberately does not call this per frame:
-    /// resizing and changing scroll adjustments in alternating frames caused
-    /// the visible photo to shake.
-    pub fn center_manual_zoom(&self) {
-        if self.root.is_visible() && self.zoom.get() > 0.0 {
-            center_viewport_soon(&self.picture_viewport);
-        }
-    }
-
     pub fn current_fit_scale(&self) -> f64 {
         let Some(photo) = self.photos.borrow().get(self.index.get()).cloned() else {
             return 1.0;
         };
-        presentation_fit_scale(&photo, self.root.width(), self.root.height())
+        let (intrinsic_width, intrinsic_height) = picture_intrinsic_dimensions(&self.picture);
+        presentation_fit_scale(
+            &photo,
+            self.root.width(),
+            self.root.height(),
+            intrinsic_width,
+            intrinsic_height,
+        )
     }
 
     pub fn current_manual_zoom_scale(&self) -> f64 {
@@ -953,7 +936,14 @@ impl Lightbox {
         let Some(photo) = self.photos.borrow().get(self.index.get()).cloned() else {
             return 0.0;
         };
-        presentation_fit_scale(&photo, self.root.width(), self.root.height()) * self.zoom.get()
+        let (intrinsic_width, intrinsic_height) = picture_intrinsic_dimensions(&self.picture);
+        presentation_fit_scale(
+            &photo,
+            self.root.width(),
+            self.root.height(),
+            intrinsic_width,
+            intrinsic_height,
+        ) * self.zoom.get()
     }
 
     pub fn set_context_menu_handler(
@@ -988,7 +978,7 @@ impl Lightbox {
         if enabled {
             if self.zoom.get() != -1.0 {
                 self.zoom_before_one_to_one.set(self.zoom.get());
-                self.zoom.set(-1.0);
+                self.set_zoom(-1.0);
             }
 
             // Reuse the already decoded native texture when possible. This
@@ -1002,7 +992,10 @@ impl Lightbox {
                 .map(|photo| (photo.path(), photo.rotation(), photo.edit_recipe()));
 
             if let (Some(cache), Some((path, rotation, edit_recipe))) = (cached, current) {
-                if cache.path == path && cache.rotation == rotation && cache.edit_recipe == edit_recipe {
+                if cache.path == path
+                    && cache.rotation == rotation
+                    && cache.edit_recipe == edit_recipe
+                {
                     self.picture.set_paintable(Some(&cache.texture));
                     fit_picture(
                         &self.picture,
@@ -1011,16 +1004,16 @@ impl Lightbox {
                         self.root.width(),
                         self.root.height(),
                         -1.0,
+                        "one-to-one",
                     );
                     self.picture.queue_resize();
                     self.picture_viewport.queue_resize();
-                    center_viewport_soon(&self.picture_viewport);
                     return;
                 }
             }
         } else {
             // 1:1 off always returns to fit-to-window.
-            self.zoom.set(0.0);
+            self.set_zoom(0.0);
             fit_picture(
                 &self.picture,
                 &self.photos.borrow(),
@@ -1028,6 +1021,7 @@ impl Lightbox {
                 self.root.width(),
                 self.root.height(),
                 0.0,
+                "one-to-one-off",
             );
             self.picture.queue_resize();
             self.picture_viewport.queue_resize();
@@ -1085,7 +1079,7 @@ impl Lightbox {
         }
 
         self.index.set(selected.min(len - 1));
-        self.zoom.set(0.0);
+        self.set_zoom(0.0);
         self.zoom_before_one_to_one.set(0.0);
         self.one_to_one_active.set(false);
         if let Some(handler) = self.zoom_sync.borrow().as_ref() {
@@ -1115,7 +1109,7 @@ impl Lightbox {
         // the first open it was previously still 0x0 here, so the initial
         // photo used a fallback size and appeared smaller until navigation.
         self.root.set_visible(true);
-        
+
         // The overlay can still be unmapped/unallocated at this exact point,
         // so the immediate focus request is not always enough. That left the
         // underlying GtkGridView owning the arrow keys until another action
@@ -1191,6 +1185,7 @@ impl Lightbox {
                 root.width(),
                 root.height(),
                 zoom.get(),
+                "open",
             );
 
             if let Some((source_widget, source_paintable)) =
@@ -1292,7 +1287,6 @@ impl Lightbox {
         );
     }
 
-
     pub fn navigate_photo(&self, direction: i32) {
         self.wheel_navigation.borrow_mut().cancel();
         if !self.root.is_visible() || !self.key_navigation_ready.get() {
@@ -1311,7 +1305,7 @@ impl Lightbox {
 
         self.key_navigation_ready.set(false);
         self.index.set(next);
-        self.zoom.set(0.0);
+        self.set_zoom(0.0);
         self.one_to_one_active.set(false);
         self.native_texture.borrow_mut().take();
         reset_viewport(&self.picture_viewport);
@@ -1394,7 +1388,7 @@ impl Lightbox {
             return;
         }
 
-        self.zoom.set(0.0);
+        self.set_zoom(0.0);
         self.zoom_before_one_to_one.set(0.0);
         self.one_to_one_active.set(false);
         self.picture.set_can_shrink(true);
@@ -1455,7 +1449,7 @@ impl Lightbox {
         self.one_to_one_active.set(false);
         self.key_navigation_ready.set(true);
         self.wheel_navigation.borrow_mut().cancel();
-        self.zoom.set(0.0);
+        self.set_zoom(0.0);
         reset_viewport(&self.picture_viewport);
         self.root.set_visible(false);
     }

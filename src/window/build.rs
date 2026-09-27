@@ -2609,7 +2609,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             let fit_scale = fit_scale.clamp(f64::EPSILON, 1.0);
             fit_scale + (1.0 - fit_scale) * (value / 50.0)
         } else {
-            1.0 + 3.0 * ((value - 50.0) / 50.0)
+            1.0 + crate::lightbox::LIGHTBOX_MAX_ZOOM_FACTOR * ((value - 50.0) / 50.0)
         }
     }
 
@@ -2625,7 +2625,8 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 50.0 * ((scale - fit_scale) / (1.0 - fit_scale)).clamp(0.0, 1.0)
             }
         } else {
-            50.0 + 50.0 * ((scale - 1.0) / 3.0).clamp(0.0, 1.0)
+            50.0
+                + 50.0 * ((scale - 1.0) / (crate::lightbox::LIGHTBOX_MAX_ZOOM_FACTOR - 1.0)).clamp(0.0, 1.0)
         }
     }
 
@@ -2637,12 +2638,6 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let slider_last_value = Rc::new(Cell::new(info.grid_zoom.value()));
     let slider_last_value_for_change = slider_last_value.clone();
 
-    // Lightbox owns frame-clock coalescing. Window wiring only keeps one
-    // trailing unlock timer so centre lock survives the final GTK allocation.
-    let pending_lightbox_center_source: Rc<RefCell<Option<glib::SourceId>>> =
-        Rc::new(RefCell::new(None));
-    let pending_lightbox_center_source_for_change = pending_lightbox_center_source.clone();
-
     info.grid_zoom.connect_value_changed(move |scale| {
         if grid_zoom_syncing_for_slider.get() {
             slider_last_value_for_change.set(scale.value());
@@ -2651,28 +2646,15 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
 
         if lightbox_for_zoom_slider.root.is_visible() {
             // In lightbox mode the slider range is 0..100 with 50 exactly 1:1.
-            // The Lightbox coalesces these requests on GTK's frame clock and
-            // holds both scroll adjustments at their midpoint while geometry
-            // changes, so the photo centre remains visually fixed.
+            // Each event writes the requested geometry directly; GTK coalesces
+            // them into one layout per frame and the range-change anchor keeps
+            // the photo's visual centre fixed while it is applied, so there is
+            // no separate commit and no trailing timer.
             let fit_scale = lightbox_for_zoom_slider.current_fit_scale();
             lightbox_for_zoom_slider.request_slider_zoom(lightbox_scale_from_slider(
                 scale.value(),
                 fit_scale,
             ));
-
-            if let Some(source) = pending_lightbox_center_source_for_change.borrow_mut().take() {
-                source.remove();
-            }
-            let lightbox = lightbox_for_zoom_slider.clone();
-            let center_slot = pending_lightbox_center_source_for_change.clone();
-            let source = glib::timeout_add_local_once(
-                std::time::Duration::from_millis(80),
-                move || {
-                    center_slot.borrow_mut().take();
-                    lightbox.end_slider_zoom();
-                },
-            );
-            pending_lightbox_center_source_for_change.replace(Some(source));
         } else if main_stack_for_zoom_slider.visible_child_name().as_deref() == Some("edit") {
             let previous = slider_last_value_for_change.get();
             if let Some(editor) = edit_editor_for_zoom_slider.borrow().as_ref() {
@@ -2715,7 +2697,6 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let gallery_for_zoom_visibility = gallery.clone();
     let lightbox_for_zoom_visibility = lightbox.clone();
     let slider_last_value_for_visibility = slider_last_value.clone();
-    let pending_lightbox_center_source_for_visibility = pending_lightbox_center_source.clone();
     lightbox.root.connect_visible_notify(move |root| {
         grid_zoom_syncing_for_visibility.set(true);
         if root.is_visible() {
@@ -2731,17 +2712,9 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             grid_zoom_for_visibility.set_value(value);
             slider_last_value_for_visibility.set(value);
             grid_zoom_for_visibility.set_tooltip_text(Some(
-                "Photo zoom — left: Fit, middle: 100%, right: 400%",
+                "Photo zoom — left: Fit, middle: 100%, right: 200%",
             ));
         } else {
-            if let Some(source) = pending_lightbox_center_source_for_visibility
-                .borrow_mut()
-                .take()
-            {
-                source.remove();
-            }
-            lightbox_for_zoom_visibility.end_slider_zoom();
-
             grid_zoom_for_visibility.set_range(0.0, 7.0);
             grid_zoom_for_visibility.set_increments(1.0, 1.0);
             grid_zoom_for_visibility.clear_marks();

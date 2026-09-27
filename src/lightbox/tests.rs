@@ -157,4 +157,146 @@ mod viewer_presentation_tests {
             (3936, 2624)
         );
     }
+
+    fn center_of(upper: f64, page_size: f64) -> f64 {
+        (upper - page_size) * 0.5
+    }
+
+    #[test]
+    fn scroll_anchor_centers_geometry_that_newly_overflows() {
+        // Fitted (child no larger than the viewport, GTK centres it by
+        // alignment) growing into a scrollable range on both axes. The values
+        // come straight from a traced zoom: 1663x937 page, target sizes
+        // stepping up to 200%.
+        assert_eq!(centered_scroll_value(2647.0, 1663.0, 0.0), 492.0);
+        assert_eq!(centered_scroll_value(3965.0, 937.0, 0.0), 1514.0);
+        assert_eq!(centered_scroll_value(5248.0, 1663.0, 0.0), 1792.0);
+        assert_eq!(centered_scroll_value(7872.0, 937.0, 0.0), 3468.0);
+    }
+
+    #[test]
+    fn scroll_anchor_does_not_drift_across_a_zoom_cycle() {
+        // 4x up, then all the way back down to fit, on both a page that makes
+        // every step land on an exact pixel and one that makes every step land
+        // on a half pixel. Neither previous range nor previous value is fed
+        // back in, so the only way to drift is for the rule itself to be
+        // history-dependent: every step must be exactly the centre of the
+        // range it is given.
+        for page_size in [937.0_f64, 938.0] {
+            let uppers = [
+                1035.0, 1230.0, 1425.0, 1816.0, 2304.0, 3086.0, 4063.0, 5174.0, 6265.0,
+            ];
+            let mut all = Vec::new();
+            all.extend(uppers);
+            all.extend(uppers.iter().rev().copied());
+            all.push(page_size);
+            for upper in all {
+                let value = centered_scroll_value(upper, page_size, 0.0);
+                // The scroll origin is an integer logical pixel, so an exact
+                // centre on a half pixel is the worst case, and it is flat in
+                // the magnification rather than growing with it.
+                assert!(
+                    (value - center_of(upper, page_size)).abs() <= 0.5,
+                    "page {page_size} child {upper} landed at {value}"
+                );
+            }
+        }
+
+        // Zoomed all the way back out the image is at fit again: nothing to
+        // scroll, so the origin is the only legal value.
+        assert_eq!(centered_scroll_value(937.0, 937.0, 0.0), 0.0);
+    }
+
+    #[test]
+    fn scroll_anchor_recenters_a_panned_photo() {
+        // Zooming is expected to re-centre, so a photo left scrolled to 4000 by
+        // an earlier pan is pulled back to the middle of the new range instead
+        // of carrying the pan forward.
+        assert_eq!(centered_scroll_value(7930.0, 937.0, 0.0), 3496.0);
+    }
+
+    #[test]
+    fn scroll_anchor_recenters_when_the_viewport_resizes() {
+        // Window resize: the child keeps its size and only the page changes.
+        assert_eq!(centered_scroll_value(2000.0, 1500.0, 0.0), 250.0);
+        assert_eq!(centered_scroll_value(2000.0, 1000.0, 0.0), 500.0);
+    }
+
+    #[test]
+    fn scroll_anchor_collapses_to_the_origin_without_overflow() {
+        // Nothing to scroll: the origin is the only legal value, and GTK
+        // centres the child by alignment anyway.
+        assert_eq!(centered_scroll_value(1663.0, 1663.0, 0.0), 0.0);
+        assert_eq!(centered_scroll_value(800.0, 1663.0, 0.0), 0.0);
+    }
+
+    #[test]
+    fn resetting_the_zoom_invalidates_the_applied_native_scale() {
+        let zoom = Cell::new(0.0);
+        let applied = Cell::new(APPLIED_SCALE_UNKNOWN);
+
+        // The manual zoom path knows the native scale it landed on, so the
+        // record is exact and the slider's repeat of it can be dropped.
+        applied.set(1.5);
+
+        // Navigating returns to fit. The record must not survive that, or
+        // dragging the slider back to the same 1.5 would look like a repeat and
+        // be dropped, leaving the image at fit under a slider that claims 1.5.
+        set_zoom_state(&zoom, &applied, 0.0);
+        assert_eq!(zoom.get(), 0.0);
+        assert_eq!(applied.get(), 0.0);
+        assert!((applied.get() - 1.5).abs() > f64::EPSILON);
+
+        // Fit is the native scale 0.0, so a repeated fit report is still a
+        // genuine repeat and stays droppable.
+        assert!((applied.get() - 0.0).abs() <= f64::EPSILON);
+
+        // The reserved 1:1 mode carries no manual scale, so it invalidates.
+        set_zoom_state(&zoom, &applied, -1.0);
+        assert_eq!(zoom.get(), -1.0);
+        assert_eq!(applied.get(), APPLIED_SCALE_UNKNOWN);
+
+        // A fit-relative zoom can only become a native scale where the fit
+        // maths runs, so writing it here invalidates rather than guesses.
+        set_zoom_state(&zoom, &applied, 1.5);
+        assert_eq!(zoom.get(), 1.5);
+        assert_eq!(applied.get(), APPLIED_SCALE_UNKNOWN);
+    }
+
+    #[test]
+    fn fit_scale_and_renderer_agree_on_a_rotated_catalog() {
+        // The catalog says 6016x4016 but the decoded texture is portrait, so
+        // the source the viewer scales from is the swapped pair. The slider's
+        // fit scale has to be the renderer's, or 100% on the slider stops
+        // meaning native pixels.
+        let native = (6016_i64, 4016_i64);
+        let intrinsic = (214_i32, 320_i32);
+        let viewport = (1663_i32, 937_i32);
+
+        let (source_width, source_height, native_valid) =
+            presentation_source_dimensions(native.0, native.1, intrinsic.0, intrinsic.1, false);
+        assert_eq!((source_width, source_height), (4016.0, 6016.0));
+        let fit = presentation_fit_scale_from_source(
+            source_width,
+            source_height,
+            native_valid,
+            viewport.0,
+            viewport.1,
+        );
+        assert_eq!(fit, 937.0 / 6016.0);
+
+        // 100% is fit * 1/fit, so the rendered size must be the native one.
+        assert_eq!(
+            fitted_picture_dimensions(
+                native.0,
+                native.1,
+                intrinsic.0,
+                intrinsic.1,
+                viewport.0,
+                viewport.1,
+                1.0 / fit,
+            ),
+            (4016, 6016)
+        );
+    }
 }

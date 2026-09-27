@@ -72,6 +72,35 @@ impl Drop for DecodePermit<'_> {
 
 const MAX_CONCURRENT_VIEWER_DECODES: usize = 3;
 const VIEWER_PADDING: i32 = 0;
+/// Highest magnification the continuous zoom paths allow, in native-image
+/// terms. The InfoBar slider's right endpoint is this multiple of 1:1.
+pub(crate) const LIGHTBOX_MAX_ZOOM_FACTOR: f64 = 2.0;
+/// `applied_native_scale` sentinel: no manual zoom has been written since the
+/// last reset, so any scale a control reports has to be applied. Native scales
+/// are never negative, so this can never collide with a real value.
+const APPLIED_SCALE_UNKNOWN: f64 = -1.0;
+
+/// The single writer of the viewer's internal zoom state.
+///
+/// `applied_native_scale` records the last native-image scale the geometry path
+/// applied, so a control that reports the same value again can be dropped
+/// before any metadata, fit or layout work happens. Every path that changes
+/// `zoom` therefore has to invalidate that record through here: a stale one
+/// makes the next slider request look like a repeat and get dropped, leaving
+/// the image at its old magnification while the slider shows the new one. The
+/// fit-relative `zoom` can only be turned into a native scale where the fit
+/// maths runs, so a change invalidates the record instead of recomputing it.
+fn set_zoom_state(zoom: &Cell<f64>, applied_native_scale: &Cell<f64>, value: f64) {
+    zoom.set(value);
+    // Fit is the native scale 0.0 and is therefore already exact. Every other
+    // value, including the reserved negative 1:1 mode, has to be recomputed by
+    // the path that knows the fit scale.
+    applied_native_scale.set(if value == 0.0 {
+        0.0
+    } else {
+        APPLIED_SCALE_UNKNOWN
+    });
+}
 static VIEWER_DECODE_GATE: OnceLock<DecodeSemaphore> = OnceLock::new();
 // Nonzero while the selected photo has a foreground decode outstanding.
 // Prefetch must not use decode slots while the user is waiting for a photo.
@@ -354,10 +383,12 @@ pub struct Lightbox {
     last_height: Rc<Cell<i32>>,
     zoom: Rc<Cell<f64>>,
     zoom_before_one_to_one: Rc<Cell<f64>>,
-    slider_zoom_center_lock: Rc<Cell<bool>>,
-    slider_zoom_css: gtk::CssProvider,
-    slider_zoom_base_scale: Rc<Cell<Option<f64>>>,
-    slider_zoom_target_scale: Rc<Cell<Option<f64>>>,
+    // Last native-image scale written by the manual zoom path, so a control
+    // that reports the same value again can be dropped before any geometry,
+    // metadata or layout work happens. Only `apply_manual_zoom_scale` knows the
+    // real value; every other writer goes through `set_zoom_state`, which
+    // invalidates it.
+    applied_native_scale: Rc<Cell<f64>>,
     one_to_one_active: Rc<Cell<bool>>,
     native_texture: Rc<RefCell<Option<NativeTextureCache>>>,
     display_texture_cache: DisplayTextureCache,

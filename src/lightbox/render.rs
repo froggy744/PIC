@@ -183,6 +183,7 @@ fn show_photo(
                             root.width(),
                             root.height(),
                             zoom.get(),
+                            "navigate",
                         );
                     }
                     display_texture_cache_insert(
@@ -196,9 +197,11 @@ fn show_photo(
                     );
                 }
                 if zoom.get() < 0.0 {
+                    // The range-change handler keeps the viewport-centred
+                    // point anchored while the new geometry is laid out, so a
+                    // 1:1 allocation lands centred without a follow-up timer.
                     picture.queue_resize();
                     picture_viewport.queue_resize();
-                    center_viewport_soon(&picture_viewport);
                 }
             }
             Err(_) => {
@@ -225,7 +228,11 @@ fn viewer_trace(message: impl std::fmt::Display) {
     if std::env::var_os("PICASA_TRACE").is_some() {
         static TRACE_STARTED: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
         let elapsed = TRACE_STARTED.get_or_init(std::time::Instant::now).elapsed();
-        eprintln!("PIC_VIEWER t_ms={} tid={:?} {message}", elapsed.as_millis(), std::thread::current().id());
+        eprintln!(
+            "PIC_VIEWER t_ms={} tid={:?} {message}",
+            elapsed.as_millis(),
+            std::thread::current().id()
+        );
     }
 }
 
@@ -239,40 +246,6 @@ fn zoom_trace(message: impl std::fmt::Display) {
             std::thread::current().id()
         );
     }
-}
-
-fn zoom_trace_geometry(
-    event: &str,
-    picture: &gtk::Picture,
-    viewport: &gtk::ScrolledWindow,
-    native_scale: f64,
-    internal_zoom: f64,
-) {
-    if std::env::var_os("PICASA_TRACE").is_none() {
-        return;
-    }
-    let h = viewport.hadjustment();
-    let v = viewport.vadjustment();
-    zoom_trace(format!(
-        "{event} native_scale={native_scale:.5} internal_zoom={internal_zoom:.5} \
-picture_alloc={}x{} picture_req={}x{} viewport={}x{} \
-h_lower={:.2} h_upper={:.2} h_page={:.2} h_value={:.2} \
-v_lower={:.2} v_upper={:.2} v_page={:.2} v_value={:.2}",
-        picture.width(),
-        picture.height(),
-        picture.width_request(),
-        picture.height_request(),
-        viewport.width(),
-        viewport.height(),
-        h.lower(),
-        h.upper(),
-        h.page_size(),
-        h.value(),
-        v.lower(),
-        v.upper(),
-        v.page_size(),
-        v.value(),
-    ));
 }
 
 fn viewer_trace_uri(uri: &str) -> String {
@@ -730,14 +703,86 @@ fn set_fit_geometry_from_intrinsic(
     picture.set_size_request(width, height);
 }
 
-fn presentation_fit_scale(photo: &PhotoObject, viewport_width: i32, viewport_height: i32) -> f64 {
-    let (native_width, native_height) = presentation_native_dimensions(photo);
+/// The dimensions the viewer scales from, and whether they came from the
+/// catalog. Database dimensions are frequently described in a different
+/// orientation than the decoded texture (EXIF rotation applied to the pixels
+/// but not to the stored width/height), so the texture's aspect decides which
+/// axis is which. Every scale computation in the viewer must agree on this or
+/// the slider's 100% mark drifts away from the rendered size.
+fn presentation_source_dimensions(
+    native_width: i64,
+    native_height: i64,
+    intrinsic_width: i32,
+    intrinsic_height: i32,
+    one_to_one: bool,
+) -> (f64, f64, bool) {
+    let intrinsic_valid = intrinsic_width > 0 && intrinsic_height > 0;
+    let native_valid = native_width > 0 && native_height > 0;
+
+    let (mut source_width, mut source_height) = if one_to_one && intrinsic_valid {
+        (f64::from(intrinsic_width), f64::from(intrinsic_height))
+    } else if native_valid {
+        (native_width as f64, native_height as f64)
+    } else if intrinsic_valid {
+        (f64::from(intrinsic_width), f64::from(intrinsic_height))
+    } else {
+        (1.0, 1.0)
+    };
+
+    if native_valid
+        && intrinsic_valid
+        && (source_width > source_height) != (intrinsic_width > intrinsic_height)
+    {
+        std::mem::swap(&mut source_width, &mut source_height);
+    }
+
+    (source_width, source_height, native_valid)
+}
+
+fn presentation_fit_scale_from_source(
+    source_width: f64,
+    source_height: f64,
+    native_valid: bool,
+    viewport_width: i32,
+    viewport_height: i32,
+) -> f64 {
     let available_width = (viewport_width - VIEWER_PADDING).max(1) as f64;
     let available_height = (viewport_height - VIEWER_PADDING).max(1) as f64;
-    (available_width / native_width.max(1) as f64)
-        .min(available_height / native_height.max(1) as f64)
-        .min(1.0)
-        .max(f64::EPSILON)
+    let fit_scale =
+        (available_width / source_width.max(1.0)).min(available_height / source_height.max(1.0));
+    // Known native dimensions remain the hard cap, so small source images are
+    // never enlarged. Without metadata the texture is only a cached opening
+    // preview and is allowed to fill the viewer while the real decode runs.
+    if native_valid {
+        fit_scale.min(1.0)
+    } else {
+        fit_scale
+    }
+    .max(f64::EPSILON)
+}
+
+fn presentation_fit_scale(
+    photo: &PhotoObject,
+    viewport_width: i32,
+    viewport_height: i32,
+    intrinsic_width: i32,
+    intrinsic_height: i32,
+) -> f64 {
+    let (native_width, native_height) = presentation_native_dimensions(photo);
+    let (source_width, source_height, native_valid) = presentation_source_dimensions(
+        native_width,
+        native_height,
+        intrinsic_width,
+        intrinsic_height,
+        false,
+    );
+    presentation_fit_scale_from_source(
+        source_width,
+        source_height,
+        native_valid,
+        viewport_width,
+        viewport_height,
+    )
 }
 
 fn presentation_native_dimensions(photo: &PhotoObject) -> (i64, i64) {
@@ -757,44 +802,69 @@ fn reset_viewport(viewport: &gtk::ScrolledWindow) {
     vertical.set_value(vertical.lower());
 }
 
-fn load_slider_zoom_css(provider: &gtk::CssProvider, factor: f64, animate: bool) {
-    let factor = factor.clamp(0.05, 16.0);
-    let duration = if animate { 45 } else { 0 };
-    provider.load_from_data(&format!(
-        "#lightbox-zoom-picture {{ \
-            transform: scale({factor:.8}); \
-            transform-origin: center; \
-            transition-property: transform; \
-            transition-duration: {duration}ms; \
-            transition-timing-function: linear; \
-        }}"
-    ));
+/// Scroll position that centres the child in the viewport after its scroll
+/// range changed.
+///
+/// `GtkViewport` publishes its new range before it allocates the child at
+/// `-value`, so writing the corrected value from the range-change handler
+/// lands in the same layout pass: the child is placed once, at the right
+/// offset, and the frame that shows the new geometry already matches it. No
+/// deferred correction, so there is nothing to overshoot and settle.
+///
+/// The value is derived from the new range alone. Carrying the previous
+/// centre-relative offset across steps was tried and is wrong for a zoom
+/// control: a pan inherited from an earlier gesture persists for the whole
+/// drag, and because the offset is only ever re-expressed in whole pixels it
+/// unwinds at a fraction of a pixel per step rather than being corrected, so
+/// the photo stays visibly off centre long after the pan. Zooming is expected
+/// to re-centre; dragging the image afterwards re-pans it.
+///
+/// With no carried state there is nothing to accumulate, so the only error
+/// left is the snap of the scroll origin to an integer logical pixel, at most
+/// half a pixel, at any magnification.
+fn centered_scroll_value(upper: f64, page_size: f64, lower: f64) -> f64 {
+    let max_scroll = upper - page_size;
+    if max_scroll <= lower {
+        return lower;
+    }
+    // Ties are broken to even. An odd overflow puts the exact centre on x.5,
+    // and rounding halves away from zero would bias every step the same way.
+    (upper * 0.5 - page_size * 0.5)
+        .round_ties_even()
+        .clamp(lower, max_scroll)
 }
 
-fn center_adjustment(adjustment: &gtk::Adjustment) {
-    let max = (adjustment.upper() - adjustment.page_size()).max(adjustment.lower());
-    // Keep the scroll origin on an integer device-pixel boundary. Exact
-    // mathematical centring can land on x.5 whenever the child/page overflow
-    // is odd, which makes the resampled image alternate between two subpixel
-    // phases while zooming and looks like a small shake.
-    let centered = adjustment.lower() + (max - adjustment.lower()) * 0.5;
-    adjustment.set_value(centered.round());
-}
-
-fn center_viewport_now(viewport: &gtk::ScrolledWindow) {
-    center_adjustment(&viewport.hadjustment());
-    center_adjustment(&viewport.vadjustment());
-}
-
-fn center_viewport_soon(viewport: &gtk::ScrolledWindow) {
-    let viewport = viewport.clone();
-
-    // Wait until GTK has applied the native-size child allocation and the
-    // ScrolledWindow adjustments expose their real upper/page_size values.
-    // A plain idle callback can run too early, leaving the 1:1 view at 0,0.
-    glib::timeout_add_local_once(Duration::from_millis(16), move || {
-        center_viewport_now(&viewport);
+/// Wire one viewport axis to the centring rule described above. Only the
+/// `changed` signal is needed: `GtkAdjustment::configure` clamps the stored
+/// value into the new range before emitting it, and the viewport allocates the
+/// child at `-value` afterwards in the same pass.
+fn install_viewport_anchor(adjustment: &gtk::Adjustment) {
+    adjustment.connect_changed(move |adjustment| {
+        let value = centered_scroll_value(
+            adjustment.upper(),
+            adjustment.page_size(),
+            adjustment.lower(),
+        );
+        if (adjustment.value() - value).abs() > f64::EPSILON {
+            adjustment.set_value(value);
+        }
+        zoom_trace(format!(
+            "viewport_anchor value={:.1} upper={:.1} page={:.1} target={:.1}",
+            adjustment.value(),
+            adjustment.upper(),
+            adjustment.page_size(),
+            value
+        ));
+        // GtkViewport measures, updates the range, then allocates the child at
+        // -value in the same pass, so the child is only ever placed once.
     });
+}
+
+fn picture_intrinsic_dimensions(picture: &gtk::Picture) -> (i32, i32) {
+    let Some(paintable) = picture.paintable() else {
+        return (0, 0);
+    };
+    (paintable.intrinsic_width(), paintable.intrinsic_height())
 }
 
 fn viewer_decode_target(
@@ -859,6 +929,7 @@ fn fit_picture(
     viewport_width: i32,
     viewport_height: i32,
     zoom: f64,
+    source: &str,
 ) {
     let Some(photo) = photos.get(index) else {
         return;
@@ -888,9 +959,16 @@ fn fit_picture(
         zoom,
     );
 
+    // A zoom control sitting at one of its stops still reports a value on every
+    // tick, and GTK re-queues a layout for any set_size_request even when the
+    // request is unchanged. Re-laying out the same geometry makes the picture
+    // re-rasterise at the device scale, which flickers for as long as the
+    // control is held still, so an already-correct size is left alone.
+    let already_applied = picture.size_request() == (fitted_width, fitted_height);
+
     if std::env::var_os("PICASA_TRACE").is_some() {
         zoom_trace(format!(
-            "fit_picture index={} zoom={zoom:.5} viewport={}x{} intrinsic={}x{} native={}x{} target={}x{} current_alloc={}x{}",
+            "fit_picture source={source} index={} zoom={zoom:.5} viewport={}x{} intrinsic={}x{} native={}x{} target={}x{} current_alloc={}x{} applied={}",
             index,
             viewport_width,
             viewport_height,
@@ -902,9 +980,12 @@ fn fit_picture(
             fitted_height,
             picture.width(),
             picture.height(),
+            !already_applied,
         ));
     }
-    picture.set_size_request(fitted_width, fitted_height);
+    if !already_applied {
+        picture.set_size_request(fitted_width, fitted_height);
+    }
 }
 
 fn fitted_picture_dimensions(
@@ -916,45 +997,24 @@ fn fitted_picture_dimensions(
     viewport_height: i32,
     zoom: f64,
 ) -> (i32, i32) {
-    let intrinsic_valid = intrinsic_width > 0 && intrinsic_height > 0;
-    let native_valid = native_width > 0 && native_height > 0;
-
-    // At 1:1, use the pixels actually present in the decoded texture. A RAW
-    // embedded preview may differ from the sensor dimensions in the catalog.
-    let (mut source_width, mut source_height) = if zoom < 0.0 && intrinsic_valid {
-        (f64::from(intrinsic_width), f64::from(intrinsic_height))
-    } else if native_valid {
-        (native_width as f64, native_height as f64)
-    } else if intrinsic_valid {
-        (f64::from(intrinsic_width), f64::from(intrinsic_height))
-    } else {
-        (1.0, 1.0)
-    };
-
-    // Cached thumbnails are already EXIF-oriented, while database dimensions
-    // generally describe the encoded source. Use the thumbnail only to detect
-    // an axis swap; keep the native dimensions as the scaling limit. This
-    // presents a large photo's thumbnail at its final fitted size without
-    // treating a genuinely small source as a large image.
-    if native_valid
-        && intrinsic_valid
-        && (source_width > source_height) != (intrinsic_width > intrinsic_height)
-    {
-        std::mem::swap(&mut source_width, &mut source_height);
-    }
-
-    let available_width = (viewport_width - VIEWER_PADDING).max(1) as f64;
-    let available_height = (viewport_height - VIEWER_PADDING).max(1) as f64;
-    let fit_scale = (available_width / source_width).min(available_height / source_height);
-    // Known native dimensions remain the hard cap, so small source images are
-    // never enlarged. If metadata is unavailable (common for RAW), this is a
-    // cached opening preview rather than the decoded source; present it at the
-    // viewer's fitted size while the correctly sized full decode is pending.
-    let fit_scale = if native_valid {
-        fit_scale.min(1.0)
-    } else {
-        fit_scale
-    };
+    let (source_width, source_height, native_valid) = presentation_source_dimensions(
+        native_width,
+        native_height,
+        intrinsic_width,
+        intrinsic_height,
+        zoom < 0.0,
+    );
+    let fit_scale = presentation_fit_scale_from_source(
+        source_width,
+        source_height,
+        native_valid,
+        viewport_width,
+        viewport_height,
+    );
+    // At 1:1 the decoded texture is the limit, so its pixels are presented
+    // unscaled; a RAW embedded preview may differ from the catalog's sensor
+    // dimensions. Fit and every slider step are relative to the same fitted
+    // size, which is what keeps `zoom` a stable fraction of the real range.
     let scale = if zoom < 0.0 {
         1.0
     } else if zoom == 0.0 {

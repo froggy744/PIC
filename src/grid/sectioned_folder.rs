@@ -1031,7 +1031,15 @@ impl SectionedFolderView {
                     .old_geometry
                     .iter()
                     .enumerate()
-                    .filter(|(_, geom)| geom.header_y >= top && geom.header_y <= bottom)
+                    // A header is visible when any part of its 70 px box
+                    // overlaps the viewport. Checking only header_y missed
+                    // partially clipped titles at the top edge and caused the
+                    // zoom path to fall back to a photo anchor, making the
+                    // visible title jump.
+                    .filter(|(_, geom)| {
+                        geom.header_y < bottom
+                            && geom.header_y + f64::from(SECTIONED_HEADER_HEIGHT) > top
+                    })
                     .min_by(|(_, a), (_, b)| {
                         (a.header_y - top)
                             .abs()

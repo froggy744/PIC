@@ -271,7 +271,12 @@ fn install_smooth_gallery_scroll(
     motion.set_propagation_phase(gtk::PropagationPhase::Capture);
     {
         let last_pointer = last_pointer.clone();
-        motion.connect_enter(move |_, x, y| last_pointer.set(Some((x, y))));
+        motion.connect_enter(move |_, x, y| {
+            last_pointer.set(Some((x, y)));
+            if std::env::var_os("PICASA_TRACE").is_some() {
+                eprintln!("PIC_ZOOM_TRACE pointer_enter x={:.1} y={:.1}", x, y);
+            }
+        });
     }
     {
         let last_pointer = last_pointer.clone();
@@ -279,7 +284,12 @@ fn install_smooth_gallery_scroll(
     }
     {
         let last_pointer = last_pointer.clone();
-        motion.connect_leave(move |_| last_pointer.set(None));
+        motion.connect_leave(move |_| {
+            last_pointer.set(None);
+            if std::env::var_os("PICASA_TRACE").is_some() {
+                eprintln!("PIC_ZOOM_TRACE pointer_leave");
+            }
+        });
     }
     scrolled.add_controller(motion);
     let zoom_viewport: gtk::Widget = scrolled.clone().upcast();
@@ -305,6 +315,18 @@ fn install_smooth_gallery_scroll(
 
             if ctrl_zoom {
                 let pointer = last_pointer_for_scroll.get();
+                if std::env::var_os("PICASA_TRACE").is_some() {
+                    eprintln!(
+                        "PIC_ZOOM_TRACE input_ctrl_wheel dy={:.3} unit={:?} pointer={:?} scroll_y={:.1} lower={:.1} upper={:.1} page={:.1}",
+                        dy,
+                        controller.unit(),
+                        pointer,
+                        adjustment_for_scroll.value(),
+                        adjustment_for_scroll.lower(),
+                        adjustment_for_scroll.upper(),
+                        adjustment_for_scroll.page_size(),
+                    );
+                }
                 if dy < 0.0 {
                     if let Some((x, y)) = pointer {
                         gallery.wheel_zoom_in_at(&zoom_viewport_for_scroll, x, y);

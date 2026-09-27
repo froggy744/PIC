@@ -144,6 +144,7 @@ impl Lightbox {
         let wheel_navigation = Rc::new(RefCell::new(WheelNavigationState::default()));
         let photo_changed: PhotoChangedHandler = Rc::new(RefCell::new(None));
         let one_to_one_sync: OneToOneSyncHandler = Rc::new(RefCell::new(None));
+        let zoom_sync: ZoomSyncHandler = Rc::new(RefCell::new(None));
         let context_menu: ContextMenuHandler = Rc::new(RefCell::new(None));
         let collection_navigation: CollectionNavigationHandler = Rc::new(RefCell::new(None));
 
@@ -345,6 +346,7 @@ impl Lightbox {
         let native_texture_for_scroll = native_texture.clone();
         let one_to_one_for_scroll = one_to_one_active.clone();
         let one_to_one_sync_for_scroll = one_to_one_sync.clone();
+        let zoom_sync_for_scroll = zoom_sync.clone();
         let wheel_navigation_for_scroll = wheel_navigation.clone();
         let wheel_dispatch_slot: Rc<RefCell<Option<Rc<dyn Fn(usize, i32)>>>> =
             Rc::new(RefCell::new(None));
@@ -451,24 +453,40 @@ impl Lightbox {
                 .current_event_state()
                 .contains(gtk::gdk::ModifierType::CONTROL_MASK)
             {
-                // Ctrl+wheel is a manual zoom, so leave 1:1 and sync the
-                // toolbar toggle; otherwise the toggle and pan state desync.
+                // Ctrl+wheel and the InfoBar slider share native-image scale
+                // semantics. Fit is the lower bound, 100% is the native-pixel
+                // midpoint, and the upper bound is 400%.
                 if one_to_one_for_scroll.get() {
                     one_to_one_for_scroll.set(false);
-                    native_texture_for_scroll.borrow_mut().take();
                     picture_for_scroll.set_can_shrink(true);
                     if let Some(handler) = one_to_one_sync_for_scroll.borrow().as_ref() {
                         handler(false);
                     }
                 }
-                let current = if zoom_for_scroll.get() <= 0.0 {
-                    1.0
-                } else {
-                    zoom_for_scroll.get()
+
+                let Some(photo) = photos_for_scroll.borrow().get(index_for_scroll.get()).cloned()
+                else {
+                    return glib::Propagation::Stop;
                 };
-                zoom_for_scroll
-                    .set((current * if dy < 0.0 { 1.12 } else { 0.89 }).clamp(0.25, 4.0));
-                
+                let fit_scale = presentation_fit_scale(
+                    &photo,
+                    root_for_scroll.width(),
+                    root_for_scroll.height(),
+                );
+                let current_scale = if zoom_for_scroll.get() <= 0.0 {
+                    fit_scale
+                } else {
+                    (fit_scale * zoom_for_scroll.get()).max(fit_scale)
+                };
+                let next_scale =
+                    (current_scale * if dy < 0.0 { 1.12 } else { 0.89 }).clamp(fit_scale, 4.0);
+
+                if next_scale <= fit_scale * 1.001 {
+                    zoom_for_scroll.set(0.0);
+                } else {
+                    zoom_for_scroll.set(next_scale / fit_scale.max(f64::EPSILON));
+                }
+
                 fit_picture(
                     &picture_for_scroll,
                     &photos_for_scroll.borrow(),
@@ -477,6 +495,15 @@ impl Lightbox {
                     root_for_scroll.height(),
                     zoom_for_scroll.get(),
                 );
+                picture_for_scroll.queue_resize();
+
+                if let Some(handler) = zoom_sync_for_scroll.borrow().as_ref() {
+                    handler(if zoom_for_scroll.get() == 0.0 {
+                        0.0
+                    } else {
+                        next_scale
+                    });
+                }
                 return glib::Propagation::Stop;
             }
             if dy == 0.0 || !root_for_scroll.is_visible() {
@@ -701,6 +728,7 @@ impl Lightbox {
             wheel_navigation,
             photo_changed,
             one_to_one_sync,
+            zoom_sync,
             context_menu,
             collection_navigation,
         }
@@ -712,6 +740,99 @@ impl Lightbox {
 
     pub fn set_one_to_one_sync_handler(&self, handler: impl Fn(bool) + 'static) {
         self.one_to_one_sync.replace(Some(Box::new(handler)));
+    }
+
+    pub fn set_zoom_sync_handler(&self, handler: impl Fn(f64) + 'static) {
+        self.zoom_sync.replace(Some(Box::new(handler)));
+    }
+
+    /// Set the lightbox by native-image scale. 0.0 is Fit; 1.0 is true
+    /// 100% / 1:1. Other positive values use the same fit-picture path as
+    /// Ctrl+wheel, with 4.0 (400%) as the upper limit.
+    pub fn set_manual_zoom_scale(&self, native_scale: f64) {
+        if !self.root.is_visible() {
+            return;
+        }
+
+        if native_scale <= 0.0 {
+            if self.one_to_one_active.get() {
+                self.set_one_to_one(false);
+            } else {
+                self.zoom.set(0.0);
+                fit_picture(
+                    &self.picture,
+                    &self.photos.borrow(),
+                    self.index.get(),
+                    self.root.width(),
+                    self.root.height(),
+                    0.0,
+                );
+                self.picture.queue_resize();
+                reset_viewport(&self.picture_viewport);
+                if let Some(handler) = self.zoom_sync.borrow().as_ref() {
+                    handler(0.0);
+                }
+            }
+            return;
+        }
+
+        let native_scale = native_scale.clamp(0.01, 4.0);
+        if (native_scale - 1.0).abs() < 0.0001 {
+            self.set_one_to_one(true);
+            return;
+        }
+
+        if self.one_to_one_active.get() {
+            self.one_to_one_active.set(false);
+            self.picture.set_can_shrink(true);
+            if let Some(handler) = self.one_to_one_sync.borrow().as_ref() {
+                handler(false);
+            }
+        }
+
+        let Some(photo) = self.photos.borrow().get(self.index.get()).cloned() else {
+            return;
+        };
+        let fit_scale = presentation_fit_scale(&photo, self.root.width(), self.root.height());
+        if native_scale <= fit_scale * 1.001 {
+            self.zoom.set(0.0);
+            reset_viewport(&self.picture_viewport);
+        } else {
+            self.zoom
+                .set(native_scale / fit_scale.max(f64::EPSILON));
+        }
+
+        fit_picture(
+            &self.picture,
+            &self.photos.borrow(),
+            self.index.get(),
+            self.root.width(),
+            self.root.height(),
+            self.zoom.get(),
+        );
+        self.picture.queue_resize();
+        self.picture_viewport.queue_resize();
+
+        if let Some(handler) = self.zoom_sync.borrow().as_ref() {
+            handler(if self.zoom.get() == 0.0 {
+                0.0
+            } else {
+                native_scale
+            });
+        }
+    }
+
+    pub fn current_manual_zoom_scale(&self) -> f64 {
+        if self.one_to_one_active.get() {
+            return 1.0;
+        }
+        if self.zoom.get() <= 0.0 {
+            return 0.0;
+        }
+        let Some(photo) = self.photos.borrow().get(self.index.get()).cloned() else {
+            return 0.0;
+        };
+        presentation_fit_scale(&photo, self.root.width(), self.root.height()) * self.zoom.get()
     }
 
     pub fn set_context_menu_handler(
@@ -737,6 +858,9 @@ impl Lightbox {
         self.one_to_one_active.set(enabled);
         if let Some(handler) = self.one_to_one_sync.borrow().as_ref() {
             handler(enabled);
+        }
+        if let Some(handler) = self.zoom_sync.borrow().as_ref() {
+            handler(if enabled { 1.0 } else { 0.0 });
         }
         self.picture.set_can_shrink(!enabled);
         self.picture_viewport
@@ -845,6 +969,9 @@ impl Lightbox {
         self.zoom.set(0.0);
         self.zoom_before_one_to_one.set(0.0);
         self.one_to_one_active.set(false);
+        if let Some(handler) = self.zoom_sync.borrow().as_ref() {
+            handler(0.0);
+        }
         self.key_navigation_ready.set(true);
         self.wheel_navigation.borrow_mut().cancel();
         self.native_texture.borrow_mut().take();

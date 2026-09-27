@@ -2595,18 +2595,158 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         }
     });
 
+    fn lightbox_scale_from_slider(value: f64, fit_scale: f64) -> f64 {
+        let value = value.clamp(0.0, 100.0);
+        if value <= 0.0 {
+            0.0
+        } else if value <= 50.0 {
+            let fit_scale = fit_scale.clamp(f64::EPSILON, 1.0);
+            fit_scale + (1.0 - fit_scale) * (value / 50.0)
+        } else {
+            1.0 + 3.0 * ((value - 50.0) / 50.0)
+        }
+    }
+
+    fn lightbox_slider_from_scale(scale: f64, fit_scale: f64) -> f64 {
+        if scale <= 0.0 {
+            return 0.0;
+        }
+        let fit_scale = fit_scale.clamp(f64::EPSILON, 1.0);
+        if scale <= 1.0 {
+            if (1.0 - fit_scale).abs() < f64::EPSILON {
+                50.0
+            } else {
+                50.0 * ((scale - fit_scale) / (1.0 - fit_scale)).clamp(0.0, 1.0)
+            }
+        } else {
+            50.0 + 50.0 * ((scale - 1.0) / 3.0).clamp(0.0, 1.0)
+        }
+    }
+
     let gallery_for_zoom_slider = gallery.clone();
+    let lightbox_for_zoom_slider = lightbox.clone();
+    let edit_editor_for_zoom_slider = edit_editor.clone();
+    let main_stack_for_zoom_slider = main_stack.clone();
     let grid_zoom_syncing_for_slider = grid_zoom_syncing.clone();
+    let slider_last_value = Rc::new(Cell::new(info.grid_zoom.value()));
+    let slider_last_value_for_change = slider_last_value.clone();
     info.grid_zoom.connect_value_changed(move |scale| {
         if grid_zoom_syncing_for_slider.get() {
+            slider_last_value_for_change.set(scale.value());
             return;
         }
-        gallery_for_zoom_slider.request_zoom(grid_zoom_width_from_slider(scale.value()));
+
+        if lightbox_for_zoom_slider.root.is_visible() {
+            // In lightbox mode the slider range is 0..100 with 50 exactly 1:1.
+            let current = lightbox_for_zoom_slider.current_manual_zoom_scale();
+            let fit_scale = if current > 0.0 && scale.value() > 0.0 && scale.value() <= 50.0 {
+                // Derive the fitted native scale from the current slider/scale
+                // relationship where possible; otherwise the Lightbox clamps
+                // the requested value safely to Fit.
+                let old_slider = slider_last_value_for_change.get().clamp(0.0, 50.0);
+                if old_slider > 0.0 && old_slider < 50.0 {
+                    ((current - old_slider / 50.0) / (1.0 - old_slider / 50.0))
+                        .clamp(f64::EPSILON, 1.0)
+                } else {
+                    current.clamp(f64::EPSILON, 1.0)
+                }
+            } else {
+                current.clamp(f64::EPSILON, 1.0)
+            };
+            lightbox_for_zoom_slider
+                .set_manual_zoom_scale(lightbox_scale_from_slider(scale.value(), fit_scale));
+        } else if main_stack_for_zoom_slider.visible_child_name().as_deref() == Some("edit") {
+            let previous = slider_last_value_for_change.get();
+            if let Some(editor) = edit_editor_for_zoom_slider.borrow().as_ref() {
+                if scale.value() > previous {
+                    editor.zoom_in();
+                } else if scale.value() < previous {
+                    editor.zoom_out();
+                }
+            }
+        } else {
+            gallery_for_zoom_slider.request_zoom(grid_zoom_width_from_slider(scale.value()));
+        }
+        slider_last_value_for_change.set(scale.value());
+    });
+
+    // Lightbox drives the same slider when Ctrl+wheel or the 1:1 action changes
+    // the viewer zoom. The midpoint is always true native 100%.
+    let grid_zoom_for_lightbox_sync = info.grid_zoom.clone();
+    let grid_zoom_syncing_for_lightbox = grid_zoom_syncing.clone();
+    let slider_last_value_for_sync = slider_last_value.clone();
+    lightbox.set_zoom_sync_handler(move |native_scale| {
+        if !grid_zoom_for_lightbox_sync.is_visible() {
+            return;
+        }
+        // Fit is always the left endpoint. Positive scales are mapped using a
+        // conservative fit estimate here; the exact midpoint remains 100%.
+        let fit_scale = native_scale.min(1.0).max(f64::EPSILON);
+        let value = if native_scale <= 0.0 {
+            0.0
+        } else if (native_scale - 1.0).abs() < 0.0001 {
+            50.0
+        } else if native_scale > 1.0 {
+            lightbox_slider_from_scale(native_scale, fit_scale)
+        } else {
+            // Ctrl+wheel below 100% advances from the left toward the middle.
+            50.0 * native_scale.clamp(0.0, 1.0)
+        };
+        grid_zoom_syncing_for_lightbox.set(true);
+        grid_zoom_for_lightbox_sync.set_value(value);
+        grid_zoom_syncing_for_lightbox.set(false);
+        slider_last_value_for_sync.set(value);
+    });
+
+    // Swap the physical slider between Gallery indices and Lightbox percentages.
+    let grid_zoom_for_visibility = info.grid_zoom.clone();
+    let grid_zoom_syncing_for_visibility = grid_zoom_syncing.clone();
+    let gallery_for_zoom_visibility = gallery.clone();
+    let lightbox_for_zoom_visibility = lightbox.clone();
+    let slider_last_value_for_visibility = slider_last_value.clone();
+    lightbox.root.connect_visible_notify(move |root| {
+        grid_zoom_syncing_for_visibility.set(true);
+        if root.is_visible() {
+            grid_zoom_for_visibility.set_range(0.0, 100.0);
+            let native_scale = lightbox_for_zoom_visibility.current_manual_zoom_scale();
+            let value = if native_scale <= 0.0 {
+                0.0
+            } else if (native_scale - 1.0).abs() < 0.0001 {
+                50.0
+            } else if native_scale > 1.0 {
+                50.0 + 50.0 * ((native_scale - 1.0) / 3.0).clamp(0.0, 1.0)
+            } else {
+                50.0 * native_scale
+            };
+            grid_zoom_for_visibility.set_value(value);
+            slider_last_value_for_visibility.set(value);
+            grid_zoom_for_visibility.set_tooltip_text(Some(
+                "Photo zoom — left: Fit, middle: 100%, right: 400%",
+            ));
+        } else {
+            grid_zoom_for_visibility.set_range(0.0, 7.0);
+            let value = grid_zoom_slider_value(gallery_for_zoom_visibility.current_zoom_width());
+            grid_zoom_for_visibility.set_value(value);
+            slider_last_value_for_visibility.set(value);
+            grid_zoom_for_visibility.set_tooltip_text(Some("Thumbnail size (Ctrl + wheel)"));
+        }
+        grid_zoom_syncing_for_visibility.set(false);
     });
 
     let gallery_for_zoom_reset = gallery.clone();
+    let lightbox_for_zoom_reset = lightbox.clone();
+    let edit_editor_for_zoom_reset = edit_editor.clone();
+    let main_stack_for_zoom_reset = main_stack.clone();
     info.grid_zoom_reset.connect_clicked(move |_| {
-        gallery_for_zoom_reset.reset_zoom();
+        if lightbox_for_zoom_reset.root.is_visible() {
+            lightbox_for_zoom_reset.set_manual_zoom_scale(1.0);
+        } else if main_stack_for_zoom_reset.visible_child_name().as_deref() == Some("edit") {
+            if let Some(editor) = edit_editor_for_zoom_reset.borrow().as_ref() {
+                editor.fit();
+            }
+        } else {
+            gallery_for_zoom_reset.reset_zoom();
+        }
     });
 
     let selected_for_rotate = selected_photo.clone();

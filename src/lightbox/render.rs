@@ -684,6 +684,16 @@ fn set_fit_geometry_from_intrinsic(
     picture.set_size_request(width, height);
 }
 
+fn presentation_fit_scale(photo: &PhotoObject, viewport_width: i32, viewport_height: i32) -> f64 {
+    let (native_width, native_height) = presentation_native_dimensions(photo);
+    let available_width = (viewport_width - VIEWER_PADDING).max(1) as f64;
+    let available_height = (viewport_height - VIEWER_PADDING).max(1) as f64;
+    (available_width / native_width.max(1) as f64)
+        .min(available_height / native_height.max(1) as f64)
+        .min(1.0)
+        .max(f64::EPSILON)
+}
+
 fn presentation_native_dimensions(photo: &PhotoObject) -> (i64, i64) {
     let (mut width, mut height) = (photo.width().max(1) as u32, photo.height().max(1) as u32);
     if matches!(photo.rotation().rem_euclid(360), 90 | 270) {

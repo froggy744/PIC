@@ -265,6 +265,7 @@ fn remove_finished_viewer_request(key: &ViewerRequestKey, request: &Arc<ViewerRe
 
 type PhotoChangedHandler = Rc<RefCell<Option<Box<dyn Fn(PhotoObject)>>>>;
 type OneToOneSyncHandler = Rc<RefCell<Option<Box<dyn Fn(bool)>>>>;
+type ZoomSyncHandler = Rc<RefCell<Option<Box<dyn Fn(f64)>>>>;
 type ContextMenuHandler = Rc<RefCell<Option<Box<dyn Fn(PhotoObject, gtk::Widget, f64, f64)>>>>;
 type CollectionNavigationHandler = Rc<RefCell<Option<Box<dyn Fn(i32)>>>>;
 
@@ -364,6 +365,9 @@ pub struct Lightbox {
     // Keeps the toolbar 1:1 toggle in sync when the lightbox changes the mode
     // itself (for example Ctrl+wheel leaves 1:1 for a manual zoom).
     one_to_one_sync: OneToOneSyncHandler,
+    // Reports the visible photo scale in native-image terms: 0.0 is Fit,
+    // 1.0 is 100% / 1:1, and values above 1.0 are magnified.
+    zoom_sync: ZoomSyncHandler,
     context_menu: ContextMenuHandler,
     collection_navigation: CollectionNavigationHandler,
 }

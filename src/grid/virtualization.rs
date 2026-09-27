@@ -207,6 +207,12 @@ fn make_folder_tile(
 }
 
 impl Gallery {
+    pub fn current_zoom_width(&self) -> i32 {
+        self.pending_zoom_width
+            .get()
+            .unwrap_or_else(|| self.tile_width.get())
+    }
+
     pub fn zoom_in(self: &Rc<Self>) {
         let base = self
             .pending_zoom_width

@@ -831,14 +831,28 @@ impl Gallery {
         let target_width = width.clamp(MIN_TILE_WIDTH, MAX_TILE_WIDTH);
         let start_width = self.tile_width.get().max(1);
         if std::env::var_os("PICASA_TRACE").is_some() {
-            let root_widget: gtk::Widget = self.root.clone().upcast();
-            let scroll = scrolled_ancestor(&root_widget)
-                .map(|s| s.vadjustment().value())
-                .unwrap_or(-1.0);
+            let folder_sectioned = self.group_mode.get() == GroupMode::Folder
+                && crate::grid::sectioned_folder_view_enabled();
+            let (grid_width, grid_height, scroll) = if folder_sectioned {
+                (
+                    self.folder_sectioned_root.width(),
+                    self.folder_sectioned_root.height(),
+                    self.sectioned_folder.scroll_position(),
+                )
+            } else {
+                let root_widget: gtk::Widget = self.root.clone().upcast();
+                (
+                    self.root.width(),
+                    self.root.height(),
+                    scrolled_ancestor(&root_widget)
+                        .map(|s| s.vadjustment().value())
+                        .unwrap_or(-1.0),
+                )
+            };
             eprintln!(
                 "PIC_ZOOM_TRACE apply_begin requested={} target={} start={} tile_height={} columns={} grid={}x{} last_layout_width={} scroll_y={:.1} anchor={:?}",
                 width, target_width, start_width, self.tile_height.get(),
-                self.current_columns.get(), self.root.width(), self.root.height(),
+                self.current_columns.get(), grid_width, grid_height,
                 self.last_layout_width.get(), scroll, self.stable_zoom_anchor.get(),
             );
         }

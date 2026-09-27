@@ -416,7 +416,7 @@ impl Gallery {
             if root_width > 100 {
                 self.update_layout(root_width, true);
             }
-            self.sectioned_folder.animate_reflow(snapshot, anchor);
+            self.sectioned_folder.animate_zoom_reflow(snapshot, anchor);
 
             if std::env::var_os("PICASA_TRACE").is_some() {
                 eprintln!(

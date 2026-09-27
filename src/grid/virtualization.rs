@@ -461,7 +461,7 @@ impl Gallery {
                     .position(|photo| photo.id() == anchor.photo_id)
                 {
                     this.root
-                        .scroll_to(position as u32, gtk::ListScrollFlags::FOCUS, None);
+                        .scroll_to(position as u32, gtk::ListScrollFlags::NONE, None);
                     reveal_requested.set(true);
                     return glib::ControlFlow::Continue;
                 }

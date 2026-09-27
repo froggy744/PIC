@@ -33,6 +33,11 @@ impl Gallery {
         let old_mode = self.group_mode.replace(mode);
         let old_date = self.group_date.replace(date);
         let changed = old_mode != mode || old_date != date;
+        if changed {
+            self.stable_zoom_anchor.set(None);
+            self.zoom_anchor_restore_generation
+                .set(self.zoom_anchor_restore_generation.get().wrapping_add(1));
+        }
         if changed || mode != GroupMode::None {
             self.rebuild_group_ranges();
         }

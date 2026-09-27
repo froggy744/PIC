@@ -34,7 +34,7 @@ gridview.section-grid { background: transparent; padding: 20px 20px 24px 20px; }
 gridview.section-grid > child, gridview.section-grid > item { padding: 6px; margin: 0; background: transparent; background-image: none; box-shadow: none; border-radius: 10px; }
 gridview.section-grid > child:hover, gridview.section-grid > child:selected, gridview.section-grid > child:focus, gridview.section-grid > child:active, gridview.section-grid > item:hover, gridview.section-grid > item:selected, gridview.section-grid > item:focus, gridview.section-grid > item:active { background: transparent; background-image: none; outline: none; box-shadow: none; }
 .photo-frame { box-shadow: 0 2px 5px rgba(0,0,0,0.62), 0 0 0 1px rgba(255,255,255,0.12); }
-.photo-tile { border-radius: 7px; border: 2px solid transparent; background: #3a3a3a; transition: border-color 150ms ease, box-shadow 150ms ease; }
+.photo-tile { border-radius: 7px; border: 2px solid transparent; background: #3a3a3a; }
 .photo-tile:hover { border-color: rgba(140,196,237,0.70); box-shadow: 0 3px 10px rgba(0,0,0,0.75), 0 0 0 1px rgba(255,255,255,0.18); }
 .folder-photo-line { background: transparent; }
 .folder-photo-selected.photo-tile { border-color: #78b9e8; box-shadow: 0 0 0 1px #c6e6ff, 0 3px 10px rgba(0,0,0,0.75); }
@@ -43,7 +43,7 @@ gridview.section-grid > child:hover, gridview.section-grid > child:selected, gri
 button.album-card { min-width: 0; padding: 0; margin: 0; background: transparent; background-image: none; border: none; box-shadow: none; }
 button.album-card:hover, button.album-card:focus, button.album-card:active { background: transparent; background-image: none; box-shadow: none; }
 gridview.section-grid > child:selected .photo-tile, gridview.section-grid > item:selected .photo-tile { border-color: #78b9e8; box-shadow: 0 0 0 1px #c6e6ff, 0 3px 10px rgba(0,0,0,0.75); }
-.selection-badge { opacity: 0; transition: opacity 150ms ease; background: #4d9fdb; color: white; border-radius: 9999px; padding: 3px; box-shadow: 0 1px 3px rgba(0,0,0,0.55); }
+.selection-badge { opacity: 0; background: #4d9fdb; color: white; border-radius: 9999px; padding: 3px; box-shadow: 0 1px 3px rgba(0,0,0,0.55); }
 gridview.section-grid > child:selected .selection-badge, gridview.section-grid > item:selected .selection-badge { opacity: 1; }
 .offline-badge { min-width: 20px; min-height: 20px; padding: 0; border-radius: 9999px; color: #2a1a00; background: #f2c14e; font-weight: 700; }
 .sidebar-offline-badge { min-width: 16px; min-height: 16px; padding: 0; border-radius: 9999px; color: #2a1a00; background: #f2c14e; font-weight: 700; font-size: 10px; }

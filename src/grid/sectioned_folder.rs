@@ -1173,93 +1173,6 @@ impl SectionedFolderView {
         self.strip_presentation.replace(Some(presentation));
     }
 
-    fn animate_strip_reflow(
-        self: &Rc<Self>,
-        snapshot: SectionedReflowSnapshot,
-        anchor: Option<(i64, f64)>,
-    ) {
-        self.reflow_animation_generation.set(self.reflow_animation_generation.get().wrapping_add(1));
-        let generation = self.reflow_animation_generation.get();
-        self.clear_strip_layer();
-        self.reflow_active.set(true);
-        self.preserve_headers_during_reflow.set(true);
-        self.invalidate_geometry();
-        self.refresh();
-        if let Some((photo_id, offset)) = anchor { self.restore_anchor(photo_id, offset); }
-        let scroll_delta = self.scroll_position() - snapshot.old_scroll_y;
-        let ranges = self.group_ranges.borrow().clone();
-        let geometry = self.geometry.borrow().clone();
-        let columns = self.current_columns.get().max(1);
-        let width = self.geometry_width.get().max(1);
-        let tile_width = self.tile_width.get();
-        let tile_height = self.tile_height.get();
-        let mut first_indices = vec![usize::MAX; ranges.len()];
-        let mut photos = snapshot.photos;
-        for (index, entry) in self.live_tiles.borrow().iter() {
-            if let Some(section) = section_index_for_photo(&ranges, *index as usize) {
-                first_indices[section] = first_indices[section].min(*index as usize - ranges[section].start);
-            }
-            if !photos.contains_key(index) {
-                if let Some(photo) = freeze_strip_photo(&entry.tile) { photos.insert(*index, photo); }
-            }
-        }
-        for first in &mut first_indices { if *first == usize::MAX { *first = 0; } }
-        let make_layout = |columns: u32, tile_width: i32, tile_height: i32, width: i32,
-                           geometry: &[SectionedFolderGeometry]| {
-            let (start_x, gap) = Self::grid_metrics_for(width, columns, tile_width);
-            let row_height = f64::from(folder_line_height(tile_height));
-            StripLayout {
-                columns: f64::from(columns), tile_width: f64::from(tile_width),
-                tile_height: f64::from(tile_height), pitch: f64::from(tile_width) + gap,
-                left: start_x - gap * 0.5,
-                sections: geometry.iter().enumerate().map(|(section, geom)| {
-                    let row = first_indices[section] / columns as usize;
-                    StripSection {
-                        first_index: (row * columns as usize) as f64,
-                        first_y: geom.first_photo_y + row as f64 * row_height,
-                        row_height, header_y: geom.header_y, end_y: geom.end_y,
-                    }
-                }).collect(),
-            }
-        };
-        let target = make_layout(columns, tile_width, tile_height, width, &geometry);
-        let mut start = snapshot.presentation.map(|p| p.layout).unwrap_or_else(|| {
-            make_layout(snapshot.old_columns, snapshot.tile_width, snapshot.tile_height,
-                snapshot.old_width, &snapshot.old_geometry)
-        });
-        for section in &mut start.sections {
-            section.first_y += scroll_delta;
-            section.header_y += scroll_delta;
-            section.end_y += scroll_delta;
-        }
-        let layer: SectionedStripLayer = glib::Object::new();
-        layer.set_can_target(false);
-        self.root.put(&layer, 0.0, 0.0);
-        self.strip_layer.replace(Some(layer));
-        for entry in self.live_tiles.borrow().values() {
-            entry.tile.set_presentation_offset(0.0, 0.0);
-            entry.tile.set_opacity(0.0);
-        }
-        self.paint_strip(StripPresentation { layout: start.clone(), photos: photos.clone() }, &ranges);
-        let started = Instant::now();
-        let weak = Rc::downgrade(self);
-        self.root.add_tick_callback(move |_, _| {
-            let Some(view) = weak.upgrade() else { return glib::ControlFlow::Break; };
-            if view.reflow_animation_generation.get() != generation { return glib::ControlFlow::Break; }
-            let linear = (started.elapsed().as_secs_f64() / 0.42).clamp(0.0, 1.0);
-            let eased = linear * linear * (3.0 - 2.0 * linear);
-            let photos = view.strip_presentation.borrow().as_ref()
-                .map(|p| p.photos.clone()).unwrap_or_else(|| photos.clone());
-            view.paint_strip(StripPresentation { layout: start.between(&target, eased), photos }, &ranges);
-            if linear >= 1.0 {
-                view.reflow_active.set(false);
-                view.preserve_headers_during_reflow.set(false);
-                view.clear_strip_layer();
-                view.refresh();
-                glib::ControlFlow::Break
-            } else { glib::ControlFlow::Continue }
-        });
-    }
 
     fn capture_center_anchor(&self) -> Option<(i64, f64)> {
         let scrolled = self.scroll.borrow().as_ref()?.clone();
@@ -1375,7 +1288,10 @@ impl SectionedFolderView {
     }
 
     fn scroll_to_index_smooth(self: &Rc<Self>, index: u32, header: bool) -> bool {
+        self.scroll_animation_generation
+            .set(self.scroll_animation_generation.get().wrapping_add(1));
         self.refresh();
+
         let section_index = self.section_index_for_photo(index);
         let ranges = self.group_ranges.borrow();
         let geometry = self.geometry.borrow();
@@ -1393,6 +1309,7 @@ impl SectionedFolderView {
         });
         drop(geometry);
         drop(ranges);
+
         let Some(target) = target else {
             return false;
         };
@@ -1403,66 +1320,25 @@ impl SectionedFolderView {
         let adjustment = scrolled.vadjustment();
         let lower = adjustment.lower();
         let upper = (adjustment.upper() - adjustment.page_size()).max(lower);
-        let target = target.clamp(lower, upper);
-        let start = adjustment.value().clamp(lower, upper);
-        if (target - start).abs() < 1.0 {
-            adjustment.set_value(target);
-            self.refresh();
-            return true;
-        }
+        adjustment.set_value(target.clamp(lower, upper));
+        self.refresh();
 
-        let generation = self.scroll_animation_generation.get().wrapping_add(1);
-        self.scroll_animation_generation.set(generation);
-        let started = Instant::now();
-        if std::env::var_os("PICASA_TRACE").is_some() {
-            eprintln!(
-                "PIC_SECTIONED_ANIM folder_jump_begin index={} start_y={:.1} target_y={:.1}",
-                index,
-                start,
-                target
-            );
-        }
-        let duration_s = 0.18_f64;
-        let weak = Rc::downgrade(self);
-        let photo_id = self
+        if let Some(photo_id) = self
             .current_photos
             .borrow()
             .get(index as usize)
-            .map(PhotoObject::id);
+            .map(PhotoObject::id)
+        {
+            self.focus_photo(photo_id);
+        }
 
-        self.root.add_tick_callback(move |_, _| {
-            let Some(view) = weak.upgrade() else {
-                return glib::ControlFlow::Break;
-            };
-            if view.scroll_animation_generation.get() != generation {
-                return glib::ControlFlow::Break;
-            }
-            let Some(scrolled) = view.scroll.borrow().as_ref().cloned() else {
-                return glib::ControlFlow::Break;
-            };
-            let adjustment = scrolled.vadjustment();
-            let t = (started.elapsed().as_secs_f64() / duration_s).clamp(0.0, 1.0);
-            let eased = 1.0 - (1.0 - t).powi(3);
-            adjustment.set_value(start + (target - start) * eased);
-
-            if t >= 1.0 {
-                adjustment.set_value(target);
-                view.refresh();
-                if let Some(photo_id) = photo_id {
-                    view.focus_photo(photo_id);
-                }
-                if std::env::var_os("PICASA_TRACE").is_some() {
-                    eprintln!(
-                        "PIC_SECTIONED_ANIM folder_jump_end index={} elapsed_ms={}",
-                        index,
-                        started.elapsed().as_millis()
-                    );
-                }
-                glib::ControlFlow::Break
-            } else {
-                glib::ControlFlow::Continue
-            }
-        });
+        if std::env::var_os("PICASA_TRACE").is_some() {
+            eprintln!(
+                "PIC_SECTIONED_JUMP index={} target_y={:.1} animated=false",
+                index,
+                target
+            );
+        }
         true
     }
 

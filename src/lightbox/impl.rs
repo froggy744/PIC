@@ -1244,6 +1244,17 @@ impl Lightbox {
                         && dest_width > 1
                         && dest_height > 1
                     {
+                        // The tile's paintable is the cached JPEG thumbnail,
+                        // which lost a PNG's alpha and paints black where the
+                        // source is transparent. The viewer decode is RGBA, so
+                        // swap the decoded texture into the moving overlay as
+                        // soon as it is available; the animated geometry is
+                        // untouched.
+                        let png_transition = photos
+                            .borrow()
+                            .get(index.get())
+                            .is_some_and(|photo| png_uses_theme_background(&photo.path()));
+                        let decoded_swapped = Cell::new(false);
                         let transition = gtk::Picture::for_paintable(&source_paintable);
                         transition.set_can_shrink(true);
                         transition.set_content_fit(gtk::ContentFit::Cover);
@@ -1260,6 +1271,12 @@ impl Lightbox {
                         transition.set_margin_start(source_bounds.x().round().max(0.0) as i32);
                         transition.set_margin_top(source_bounds.y().round().max(0.0) as i32);
                         root.add_overlay(&transition);
+                        if png_transition {
+                            if let Some(decoded) = picture.paintable() {
+                                decoded_swapped.set(true);
+                                transition.set_paintable(Some(&decoded));
+                            }
+                        }
 
                         let start_x = source_bounds.x() as f64;
                         let start_y = source_bounds.y() as f64;
@@ -1280,6 +1297,7 @@ impl Lightbox {
                         let picture_for_transition = picture.clone();
                         let backdrop = backdrop_for_transition.clone();
                         let root_for_transition = root.clone();
+                        let generation_for_transition = current_generation.clone();
 
                         transition.add_tick_callback(move |transition, _| {
                             const OPEN_TRANSITION_MS: f64 = 200.0;
@@ -1300,12 +1318,26 @@ impl Lightbox {
                             );
                             backdrop.set_opacity(linear);
 
+                            if png_transition
+                                && !decoded_swapped.get()
+                                && generation_for_transition.get() == generation
+                            {
+                                if let Some(decoded) = picture_for_transition.paintable() {
+                                    decoded_swapped.set(true);
+                                    transition.set_paintable(Some(&decoded));
+                                }
+                            }
+
                             if linear >= 1.0 {
                                 // If the full viewer decode is still pending,
                                 // keep the source paintable as a seamless visual
                                 // backstop. show_photo() will replace it with the
                                 // full-resolution texture when that result lands.
-                                if picture_for_transition.paintable().is_none() {
+                                // A PNG skips this: its source paintable is the
+                                // cached JPEG thumbnail, whose black pixels would
+                                // cover the viewer's alpha-correct background
+                                // until the decode lands.
+                                if picture_for_transition.paintable().is_none() && !png_transition {
                                     picture_for_transition
                                         .set_paintable(transition.paintable().as_ref());
                                 }

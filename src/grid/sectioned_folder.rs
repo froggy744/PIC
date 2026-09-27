@@ -768,6 +768,7 @@ impl SectionedFolderView {
 
     fn capture_reflow_snapshot(&self) -> SectionedReflowSnapshot {
         let mut tile_positions = HashMap::new();
+        let mut visual_tile_size = None::<(i32, i32)>;
         for (index, entry) in self.live_tiles.borrow().iter() {
             if let Some(bounds) = entry.tile.compute_bounds(&self.root) {
                 let (offset_x, offset_y) = entry.tile.presentation_offset();
@@ -778,6 +779,18 @@ impl SectionedFolderView {
                         f64::from(bounds.y() + offset_y),
                     ),
                 );
+                // During an interrupted zoom the shared tile_width/tile_height
+                // already contain the previous destination. Library mode, in
+                // contrast, updates those values every animation frame. Capture
+                // the actual on-screen tile size so a new Folder zoom resumes
+                // from what the user is seeing instead of snapping to the old
+                // destination first.
+                if visual_tile_size.is_none() {
+                    visual_tile_size = Some((
+                        bounds.width().round().max(1.0) as i32,
+                        bounds.height().round().max(1.0) as i32,
+                    ));
+                }
             }
         }
 
@@ -788,11 +801,13 @@ impl SectionedFolderView {
             }
         }
 
+        let (tile_width, tile_height) =
+            visual_tile_size.unwrap_or((self.tile_width.get(), self.tile_height.get()));
         SectionedReflowSnapshot {
             tile_positions,
             header_positions,
-            tile_width: self.tile_width.get(),
-            tile_height: self.tile_height.get(),
+            tile_width,
+            tile_height,
         }
     }
 

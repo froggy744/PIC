@@ -95,6 +95,7 @@ struct SectionedFolderView {
     scroll_animation_generation: Cell<u64>,
     reflow_animation_generation: Cell<u64>,
     reflow_active: Cell<bool>,
+    preserve_headers_during_reflow: Cell<bool>,
 }
 
 impl SectionedFolderView {
@@ -167,6 +168,7 @@ impl SectionedFolderView {
             scroll_animation_generation: Cell::new(0),
             reflow_animation_generation: Cell::new(0),
             reflow_active: Cell::new(false),
+            preserve_headers_during_reflow: Cell::new(false),
         });
 
         let keyboard = gtk::EventControllerKey::new();
@@ -669,24 +671,31 @@ impl SectionedFolderView {
         drop(photos);
 
         let wanted_header_ids = wanted_headers.iter().copied().collect::<HashSet<_>>();
-        let stale_headers = self
-            .live_headers
-            .borrow()
-            .keys()
-            .copied()
-            .filter(|index| !wanted_header_ids.contains(index))
-            .collect::<Vec<_>>();
-        for index in stale_headers {
-            if let Some(label) = self.live_headers.borrow_mut().remove(&index) {
-                self.root.remove(&label);
-                let mut pool = self.header_pool.borrow_mut();
-                if pool.len() < SECTIONED_HEADER_POOL_CAP {
-                    pool.push_back(label);
+        if !self.preserve_headers_during_reflow.get() {
+            let stale_headers = self
+                .live_headers
+                .borrow()
+                .keys()
+                .copied()
+                .filter(|index| !wanted_header_ids.contains(index))
+                .collect::<Vec<_>>();
+            for index in stale_headers {
+                if let Some(label) = self.live_headers.borrow_mut().remove(&index) {
+                    self.root.remove(&label);
+                    let mut pool = self.header_pool.borrow_mut();
+                    if pool.len() < SECTIONED_HEADER_POOL_CAP {
+                        pool.push_back(label);
+                    }
                 }
             }
         }
 
         for section_index in wanted_headers {
+            if self.preserve_headers_during_reflow.get()
+                && !self.live_headers.borrow().contains_key(&section_index)
+            {
+                continue;
+            }
             let existing = {
                 let live = self.live_headers.borrow();
                 live.get(&section_index).cloned()
@@ -742,6 +751,7 @@ impl SectionedFolderView {
         self.reflow_animation_generation
             .set(self.reflow_animation_generation.get().wrapping_add(1));
         self.reflow_active.set(false);
+        self.preserve_headers_during_reflow.set(false);
         // A replacement can keep the same numeric positions while changing
         // PhotoObject metadata. Recycle the bounded realized set so every
         // visible tile is rebound exactly once to the current model.
@@ -863,8 +873,6 @@ impl SectionedFolderView {
         snapshot: SectionedReflowSnapshot,
         anchor: Option<(i64, f64)>,
     ) {
-        const RESIZE_FLIP_MS: f64 = 300.0;
-
         self.reflow_animation_generation
             .set(self.reflow_animation_generation.get().wrapping_add(1));
         let generation = self.reflow_animation_generation.get();
@@ -877,6 +885,7 @@ impl SectionedFolderView {
         }
 
         self.reflow_active.set(false);
+        self.preserve_headers_during_reflow.set(true);
         self.invalidate_geometry();
         self.refresh();
         if let Some((photo_id, offset)) = anchor {
@@ -921,16 +930,33 @@ impl SectionedFolderView {
 
         if motion.is_empty() && header_motion.is_empty() {
             self.reflow_active.set(false);
+            self.preserve_headers_during_reflow.set(false);
+            self.refresh();
             return;
         }
+
+        // Folder sections can travel much farther than a normal flat-grid
+        // reflow. Scale the duration with travel distance so large vertical
+        // section shifts do not feel like they are being thrown into place.
+        let max_tile_distance = motion
+            .iter()
+            .map(|(_, dx, dy)| f64::from((*dx * *dx + *dy * *dy).sqrt()))
+            .fold(0.0_f64, f64::max);
+        let max_header_distance = header_motion
+            .iter()
+            .map(|(_, old_y, target_y)| (target_y - old_y).abs())
+            .fold(0.0_f64, f64::max);
+        let max_distance = max_tile_distance.max(max_header_distance);
+        let duration_ms = (340.0 + max_distance * 0.18).clamp(360.0, 540.0);
 
         self.reflow_active.set(true);
         if std::env::var_os("PICASA_TRACE").is_some() {
             eprintln!(
-                "PIC_SECTIONED_ANIM resize_flip_begin tiles={} headers={} duration_ms={}",
+                "PIC_SECTIONED_ANIM resize_flip_begin tiles={} headers={} duration_ms={} max_distance={:.1}",
                 motion.len(),
                 header_motion.len(),
-                RESIZE_FLIP_MS as u32,
+                duration_ms.round() as u32,
+                max_distance,
             );
         }
 
@@ -944,10 +970,11 @@ impl SectionedFolderView {
                 return glib::ControlFlow::Break;
             }
 
-            let linear = (started.elapsed().as_secs_f64() * 1000.0 / RESIZE_FLIP_MS)
+            let linear = (started.elapsed().as_secs_f64() * 1000.0 / duration_ms)
                 .clamp(0.0, 1.0);
-            // Exactly match Library resize FLIP.
-            let eased = 1.0 - (1.0 - linear).powi(3);
+            // Smoothstep starts and finishes gently. Re-targeting no longer
+            // repeatedly exposes the high-velocity first frame of ease-out.
+            let eased = linear * linear * (3.0 - 2.0 * linear);
             let remaining = (1.0 - eased) as f32;
 
             for (tile, dx, dy) in motion.iter() {
@@ -966,6 +993,7 @@ impl SectionedFolderView {
                     view.root.move_(label, SECTIONED_SIDE_MARGIN, *target_y);
                 }
                 view.reflow_active.set(false);
+                view.preserve_headers_during_reflow.set(false);
                 view.refresh();
                 if std::env::var_os("PICASA_TRACE").is_some() {
                     eprintln!(
@@ -987,7 +1015,7 @@ impl SectionedFolderView {
         snapshot: SectionedReflowSnapshot,
         anchor: Option<(i64, f64)>,
     ) {
-        const ZOOM_ANIMATION_MS: f64 = 180.0;
+        const ZOOM_ANIMATION_MS: f64 = 300.0;
 
         self.reflow_animation_generation
             .set(self.reflow_animation_generation.get().wrapping_add(1));
@@ -997,6 +1025,7 @@ impl SectionedFolderView {
             entry.tile.set_presentation_offset(0.0, 0.0);
         }
         self.reflow_active.set(true);
+        self.preserve_headers_during_reflow.set(true);
 
         self.invalidate_geometry();
         self.refresh();
@@ -1053,8 +1082,10 @@ impl SectionedFolderView {
 
             let linear = (started.elapsed().as_secs_f64() * 1000.0 / ZOOM_ANIMATION_MS)
                 .clamp(0.0, 1.0);
-            // Exactly match Library zoom.
-            let eased = 1.0 - (1.0 - linear).powi(3);
+            // The sectioned renderer moves both photos and folder headings.
+            // Smoothstep avoids the sharp launch that made the grouped view
+            // feel rushed even when the nominal duration matched Library.
+            let eased = linear * linear * (3.0 - 2.0 * linear);
             let frame_width = (f64::from(snapshot.tile_width)
                 + f64::from(target_tile_width - snapshot.tile_width) * eased)
                 .round() as i32;
@@ -1095,6 +1126,7 @@ impl SectionedFolderView {
 
             if linear >= 1.0 {
                 view.reflow_active.set(false);
+                view.preserve_headers_during_reflow.set(false);
                 view.refresh();
                 if std::env::var_os("PICASA_TRACE").is_some() {
                     eprintln!(

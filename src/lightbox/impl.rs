@@ -1247,6 +1247,9 @@ impl Lightbox {
                         let transition = gtk::Picture::for_paintable(&source_paintable);
                         transition.set_can_shrink(true);
                         transition.set_content_fit(gtk::ContentFit::Cover);
+                        if picture.has_css_class("photo-grid") {
+                            transition.add_css_class("photo-grid");
+                        }
                         transition.set_halign(gtk::Align::Start);
                         transition.set_valign(gtk::Align::Start);
                         transition.set_can_target(false);

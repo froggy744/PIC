@@ -797,8 +797,6 @@ impl Lightbox {
                 self.root.height(),
                 0.0,
             );
-            self.picture.queue_resize();
-            self.picture_viewport.queue_resize();
             reset_viewport(&self.picture_viewport);
             if notify_zoom_sync {
                 if let Some(handler) = self.zoom_sync.borrow().as_ref() {
@@ -820,8 +818,6 @@ impl Lightbox {
             self.root.height(),
             self.zoom.get(),
         );
-        self.picture.queue_resize();
-        self.picture_viewport.queue_resize();
         self.schedule_slider_center();
 
         if notify_zoom_sync {

@@ -2636,6 +2636,15 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let grid_zoom_syncing_for_slider = grid_zoom_syncing.clone();
     let slider_last_value = Rc::new(Cell::new(info.grid_zoom.value()));
     let slider_last_value_for_change = slider_last_value.clone();
+
+    // GtkScale can emit many value_changed signals during one pointer drag.
+    // Keep only the latest requested lightbox zoom and apply it at most once
+    // per frame. This prevents redundant size/layout work from producing
+    // visible stutter while the thumb moves.
+    let pending_lightbox_slider_scale = Rc::new(Cell::new(None::<f64>));
+    let pending_lightbox_slider_source: Rc<RefCell<Option<glib::SourceId>>> =
+        Rc::new(RefCell::new(None));
+
     info.grid_zoom.connect_value_changed(move |scale| {
         if grid_zoom_syncing_for_slider.get() {
             slider_last_value_for_change.set(scale.value());
@@ -2645,9 +2654,30 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         if lightbox_for_zoom_slider.root.is_visible() {
             // In lightbox mode the slider range is 0..100 with 50 exactly 1:1.
             let fit_scale = lightbox_for_zoom_slider.current_fit_scale();
-            lightbox_for_zoom_slider.set_manual_zoom_scale_from_slider(
-                lightbox_scale_from_slider(scale.value(), fit_scale),
-            );
+            pending_lightbox_slider_scale.set(Some(lightbox_scale_from_slider(
+                scale.value(),
+                fit_scale,
+            )));
+
+            if pending_lightbox_slider_source.borrow().is_none() {
+                let lightbox = lightbox_for_zoom_slider.clone();
+                let pending_scale = pending_lightbox_slider_scale.clone();
+                let source_slot = pending_lightbox_slider_source.clone();
+                let source = glib::timeout_add_local_once(
+                    std::time::Duration::from_millis(16),
+                    move || {
+                        source_slot.borrow_mut().take();
+                        if !lightbox.root.is_visible() {
+                            pending_scale.set(None);
+                            return;
+                        }
+                        if let Some(native_scale) = pending_scale.take() {
+                            lightbox.set_manual_zoom_scale_from_slider(native_scale);
+                        }
+                    },
+                );
+                pending_lightbox_slider_source.replace(Some(source));
+            }
         } else if main_stack_for_zoom_slider.visible_child_name().as_deref() == Some("edit") {
             let previous = slider_last_value_for_change.get();
             if let Some(editor) = edit_editor_for_zoom_slider.borrow().as_ref() {
@@ -2690,6 +2720,8 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let gallery_for_zoom_visibility = gallery.clone();
     let lightbox_for_zoom_visibility = lightbox.clone();
     let slider_last_value_for_visibility = slider_last_value.clone();
+    let pending_lightbox_slider_scale_for_visibility = pending_lightbox_slider_scale.clone();
+    let pending_lightbox_slider_source_for_visibility = pending_lightbox_slider_source.clone();
     lightbox.root.connect_visible_notify(move |root| {
         grid_zoom_syncing_for_visibility.set(true);
         if root.is_visible() {
@@ -2708,6 +2740,14 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 "Photo zoom — left: Fit, middle: 100%, right: 400%",
             ));
         } else {
+            pending_lightbox_slider_scale_for_visibility.set(None);
+            if let Some(source) = pending_lightbox_slider_source_for_visibility
+                .borrow_mut()
+                .take()
+            {
+                source.remove();
+            }
+
             grid_zoom_for_visibility.set_range(0.0, 7.0);
             grid_zoom_for_visibility.set_increments(1.0, 1.0);
             grid_zoom_for_visibility.clear_marks();

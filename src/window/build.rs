@@ -2644,6 +2644,8 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let pending_lightbox_slider_scale = Rc::new(Cell::new(None::<f64>));
     let pending_lightbox_slider_source: Rc<RefCell<Option<glib::SourceId>>> =
         Rc::new(RefCell::new(None));
+    let pending_lightbox_slider_scale_for_change = pending_lightbox_slider_scale.clone();
+    let pending_lightbox_slider_source_for_change = pending_lightbox_slider_source.clone();
 
     info.grid_zoom.connect_value_changed(move |scale| {
         if grid_zoom_syncing_for_slider.get() {
@@ -2654,15 +2656,15 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         if lightbox_for_zoom_slider.root.is_visible() {
             // In lightbox mode the slider range is 0..100 with 50 exactly 1:1.
             let fit_scale = lightbox_for_zoom_slider.current_fit_scale();
-            pending_lightbox_slider_scale.set(Some(lightbox_scale_from_slider(
+            pending_lightbox_slider_scale_for_change.set(Some(lightbox_scale_from_slider(
                 scale.value(),
                 fit_scale,
             )));
 
-            if pending_lightbox_slider_source.borrow().is_none() {
+            if pending_lightbox_slider_source_for_change.borrow().is_none() {
                 let lightbox = lightbox_for_zoom_slider.clone();
-                let pending_scale = pending_lightbox_slider_scale.clone();
-                let source_slot = pending_lightbox_slider_source.clone();
+                let pending_scale = pending_lightbox_slider_scale_for_change.clone();
+                let source_slot = pending_lightbox_slider_source_for_change.clone();
                 let source = glib::timeout_add_local_once(
                     std::time::Duration::from_millis(16),
                     move || {
@@ -2676,7 +2678,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                         }
                     },
                 );
-                pending_lightbox_slider_source.replace(Some(source));
+                pending_lightbox_slider_source_for_change.replace(Some(source));
             }
         } else if main_stack_for_zoom_slider.visible_child_name().as_deref() == Some("edit") {
             let previous = slider_last_value_for_change.get();

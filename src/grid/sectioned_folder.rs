@@ -25,6 +25,45 @@ struct SectionedFolderTile {
     index: Rc<Cell<Option<u32>>>,
 }
 
+fn visible_section_span(
+    geometry: &[SectionedFolderGeometry],
+    top: f64,
+    bottom: f64,
+) -> std::ops::Range<usize> {
+    let start = geometry.partition_point(|section| section.end_y < top);
+    let end = geometry.partition_point(|section| section.header_y <= bottom);
+    start.min(end)..end
+}
+
+fn section_index_for_photo(ranges: &[GroupRange], photo_index: usize) -> Option<usize> {
+    let index = ranges.partition_point(|range| range.end <= photo_index);
+    ranges
+        .get(index)
+        .filter(|range| photo_index >= range.start && photo_index < range.end)
+        .map(|_| index)
+}
+
+fn upper_edge_anchor(
+    ranges: &[GroupRange],
+    geometry: &[SectionedFolderGeometry],
+    scroll_y: f64,
+    lower: f64,
+    row_height: f64,
+) -> Option<(usize, f64)> {
+    if scroll_y - lower > row_height {
+        return None;
+    }
+    ranges
+        .iter()
+        .enumerate()
+        .find(|(_, range)| range.start < range.end)
+        .and_then(|(section_index, range)| {
+            geometry
+                .get(section_index)
+                .map(|section| (range.start, section.first_photo_y - scroll_y))
+        })
+}
+
 struct SectionedFolderView {
     root: gtk::Fixed,
     spacer: gtk::Box,
@@ -513,16 +552,19 @@ impl SectionedFolderView {
         let bottom = adjustment.value() + adjustment.page_size() + SECTIONED_OVERSCAN_PX;
         let columns = self.current_columns.get().max(1);
         let row_height = f64::from(folder_line_height(self.tile_height.get()));
-        let ranges = self.group_ranges.borrow().clone();
-        let geometry = self.geometry.borrow().clone();
+        let ranges = self.group_ranges.borrow();
+        let geometry = self.geometry.borrow();
 
         let mut wanted_headers = Vec::<usize>::new();
         let mut wanted_tiles = Vec::<(u32, usize, u32, u32)>::new();
 
-        for (section_index, (range, geom)) in ranges.iter().zip(geometry.iter()).enumerate() {
-            if geom.end_y < top || geom.header_y > bottom {
-                continue;
-            }
+        // Section geometry is ordered by Y. Jump to the first section that
+        // overlaps the overscan band and stop after its final section instead
+        // of copying and scanning the complete folder catalog on every scroll.
+        let section_span = visible_section_span(&geometry, top, bottom);
+        for section_index in section_span {
+            let range = &ranges[section_index];
+            let geom = &geometry[section_index];
             wanted_headers.push(section_index);
             let count = range.end.saturating_sub(range.start) as u32;
             if count == 0 {
@@ -686,6 +728,8 @@ impl SectionedFolderView {
                     .move_(&label, SECTIONED_SIDE_MARGIN, geometry[section_index].header_y);
             }
         }
+        drop(geometry);
+        drop(ranges);
     }
 
     fn sync_selection(&self) {
@@ -768,24 +812,23 @@ impl SectionedFolderView {
     fn placement_for_index(&self, index: u32) -> Option<(f64, f64)> {
         let columns = self.current_columns.get().max(1);
         let row_height = f64::from(folder_line_height(self.tile_height.get()));
+        let section_index = self.section_index_for_photo(index)?;
         let ranges = self.group_ranges.borrow();
         let geometry = self.geometry.borrow();
+        let range = ranges.get(section_index)?;
+        let geom = geometry.get(section_index)?;
+        let local = index as usize - range.start;
+        let row = local as u32 / columns;
+        let col = local as u32 % columns;
+        let (start_x, gap) = self.horizontal_grid_metrics(self.geometry_width.get().max(1));
+        let x = start_x + f64::from(col) * (f64::from(self.tile_width.get()) + gap);
+        let y = geom.first_photo_y + f64::from(row) * row_height;
+        Some((x, y))
+    }
 
-        for (section_index, (range, geom)) in ranges.iter().zip(geometry.iter()).enumerate() {
-            if index < range.start as u32 || index >= range.end as u32 {
-                continue;
-            }
-            let local = index - range.start as u32;
-            let row = local / columns;
-            let col = local % columns;
-            let (start_x, gap) =
-                self.horizontal_grid_metrics(self.geometry_width.get().max(1));
-            let x = start_x
-                + f64::from(col) * (f64::from(self.tile_width.get()) + gap);
-            let y = geometry[section_index].first_photo_y + f64::from(row) * row_height;
-            return Some((x, y));
-        }
-        None
+    fn section_index_for_photo(&self, index: u32) -> Option<usize> {
+        let ranges = self.group_ranges.borrow();
+        section_index_for_photo(&ranges, index as usize)
     }
 
     fn animate_reflow(
@@ -914,15 +957,33 @@ impl SectionedFolderView {
     fn capture_center_anchor(&self) -> Option<(i64, f64)> {
         let scrolled = self.scroll.borrow().as_ref()?.clone();
         let adjustment = scrolled.vadjustment();
+        let scroll_y = adjustment.value();
+        let lower = adjustment.lower();
+        let row_height = f64::from(folder_line_height(self.tile_height.get()));
+        if let Some((photo_index, offset)) = upper_edge_anchor(
+            &self.group_ranges.borrow(),
+            &self.geometry.borrow(),
+            scroll_y,
+            lower,
+            row_height,
+        ) {
+            // The first photo row stays at the same content Y as tile width
+            // changes. Near the upper bound, anchoring the viewport center can
+            // request a negative scroll value after zoom and get clamped. Use
+            // this invariant row so the existing scroll position is preserved.
+            if let Some(photo) = self.current_photos.borrow().get(photo_index) {
+                return Some((photo.id(), offset));
+            }
+        }
         let target = adjustment.value() + adjustment.page_size() * 0.5;
         let columns = self.current_columns.get().max(1);
-        let row_height = f64::from(folder_line_height(self.tile_height.get()));
         let ranges = self.group_ranges.borrow();
         let geometry = self.geometry.borrow();
-
-        for (range, geom) in ranges.iter().zip(geometry.iter()) {
-            if target >= geom.end_y || range.start == range.end {
-                continue;
+        let section_index = geometry.partition_point(|geom| geom.end_y <= target);
+        if let (Some(range), Some(geom)) = (ranges.get(section_index), geometry.get(section_index))
+        {
+            if range.start == range.end {
+                return None;
             }
             let row = if target <= geom.first_photo_y {
                 0
@@ -935,9 +996,8 @@ impl SectionedFolderView {
             let index = range.start as u32 + local;
             let photo = self.current_photos.borrow().get(index as usize)?.clone();
             let y = geom.first_photo_y + f64::from(row) * row_height;
-            return Some((photo.id(), y - adjustment.value()));
-        }
-        None
+            return Some((photo.id(), y - scroll_y));
+        }        None
     }
 
     fn restore_anchor(self: &Rc<Self>, photo_id: i64, offset: f64) -> bool {
@@ -966,36 +1026,32 @@ impl SectionedFolderView {
     fn y_for_index(&self, index: u32) -> Option<f64> {
         let columns = self.current_columns.get().max(1);
         let row_height = f64::from(folder_line_height(self.tile_height.get()));
+        let section_index = self.section_index_for_photo(index)?;
         let ranges = self.group_ranges.borrow();
         let geometry = self.geometry.borrow();
-        for (range, geom) in ranges.iter().zip(geometry.iter()) {
-            if index >= range.start as u32 && index < range.end as u32 {
-                let local = index - range.start as u32;
-                return Some(geom.first_photo_y + f64::from(local / columns) * row_height);
-            }
-        }
-        None
+        let range = ranges.get(section_index)?;
+        let geom = geometry.get(section_index)?;
+        let local = index as usize - range.start;
+        Some(geom.first_photo_y + (local as u32 / columns) as f64 * row_height)
     }
 
     fn scroll_to_index(self: &Rc<Self>, index: u32, header: bool) -> bool {
         self.refresh();
+        let section_index = self.section_index_for_photo(index);
         let ranges = self.group_ranges.borrow();
         let geometry = self.geometry.borrow();
-        let target = ranges
-            .iter()
-            .zip(geometry.iter())
-            .find_map(|(range, geom)| {
-                (index >= range.start as u32 && index < range.end as u32).then(|| {
-                    if header {
-                        geom.header_y
-                    } else {
-                        let local = index - range.start as u32;
-                        let row = local / self.current_columns.get().max(1);
-                        geom.first_photo_y
-                            + f64::from(row) * f64::from(folder_line_height(self.tile_height.get()))
-                    }
-                })
-            });
+        let target = section_index.and_then(|section_index| {
+            let range = ranges.get(section_index)?;
+            let geom = geometry.get(section_index)?;
+            Some(if header {
+                geom.header_y
+            } else {
+                let local = index as usize - range.start;
+                let row = local as u32 / self.current_columns.get().max(1);
+                geom.first_photo_y
+                    + f64::from(row) * f64::from(folder_line_height(self.tile_height.get()))
+            })
+        });
         drop(geometry);
         drop(ranges);
         let Some(target) = target else {
@@ -1013,23 +1069,21 @@ impl SectionedFolderView {
 
     fn scroll_to_index_smooth(self: &Rc<Self>, index: u32, header: bool) -> bool {
         self.refresh();
+        let section_index = self.section_index_for_photo(index);
         let ranges = self.group_ranges.borrow();
         let geometry = self.geometry.borrow();
-        let target = ranges
-            .iter()
-            .zip(geometry.iter())
-            .find_map(|(range, geom)| {
-                (index >= range.start as u32 && index < range.end as u32).then(|| {
-                    if header {
-                        geom.header_y
-                    } else {
-                        let local = index - range.start as u32;
-                        let row = local / self.current_columns.get().max(1);
-                        geom.first_photo_y
-                            + f64::from(row) * f64::from(folder_line_height(self.tile_height.get()))
-                    }
-                })
-            });
+        let target = section_index.and_then(|section_index| {
+            let range = ranges.get(section_index)?;
+            let geom = geometry.get(section_index)?;
+            Some(if header {
+                geom.header_y
+            } else {
+                let local = index as usize - range.start;
+                let row = local as u32 / self.current_columns.get().max(1);
+                geom.first_photo_y
+                    + f64::from(row) * f64::from(folder_line_height(self.tile_height.get()))
+            })
+        });
         drop(geometry);
         drop(ranges);
         let Some(target) = target else {
@@ -1199,5 +1253,75 @@ impl Gallery {
 
     fn sectioned_sync_selection(&self) {
         self.sectioned_folder.sync_selection();
+    }
+}
+
+#[cfg(test)]
+mod section_lookup_tests {
+    use super::*;
+
+    fn range(start: usize, end: usize) -> GroupRange {
+        GroupRange {
+            start,
+            end,
+            label: format!("folder-{start}"),
+            folder_id: start as i64,
+        }
+    }
+
+    #[test]
+    fn binary_photo_section_lookup_matches_contiguous_ranges() {
+        let ranges = [range(0, 3), range(3, 8), range(8, 9)];
+        assert_eq!(section_index_for_photo(&ranges, 0), Some(0));
+        assert_eq!(section_index_for_photo(&ranges, 2), Some(0));
+        assert_eq!(section_index_for_photo(&ranges, 3), Some(1));
+        assert_eq!(section_index_for_photo(&ranges, 8), Some(2));
+        assert_eq!(section_index_for_photo(&ranges, 9), None);
+    }
+
+    #[test]
+    fn binary_visible_section_span_keeps_exact_boundary_semantics() {
+        let geometry = [
+            SectionedFolderGeometry {
+                header_y: 0.0,
+                first_photo_y: 70.0,
+                end_y: 370.0,
+            },
+            SectionedFolderGeometry {
+                header_y: 370.0,
+                first_photo_y: 440.0,
+                end_y: 740.0,
+            },
+            SectionedFolderGeometry {
+                header_y: 740.0,
+                first_photo_y: 810.0,
+                end_y: 1110.0,
+            },
+        ];
+        assert_eq!(visible_section_span(&geometry, 370.0, 740.0), 0..3);
+        assert_eq!(visible_section_span(&geometry, 371.0, 739.0), 1..2);
+        assert_eq!(visible_section_span(&geometry, 1200.0, 1300.0), 3..3);
+    }
+
+    #[test]
+    fn upper_edge_anchor_keeps_scroll_value_when_zoom_changes_rows() {
+        let ranges = [range(0, 4), range(4, 10)];
+        let geometry = [
+            SectionedFolderGeometry {
+                header_y: 0.0,
+                first_photo_y: SECTIONED_HEADER_HEIGHT,
+                end_y: 300.0,
+            },
+            SectionedFolderGeometry {
+                header_y: 300.0,
+                first_photo_y: 370.0,
+                end_y: 670.0,
+            },
+        ];
+        let (photo_index, offset) = upper_edge_anchor(&ranges, &geometry, 0.0, 0.0, 280.0).unwrap();
+        assert_eq!(photo_index, 0);
+        let zoomed_first_row_y = geometry[0].first_photo_y;
+        assert_eq!(zoomed_first_row_y - offset, 0.0);
+        assert!(upper_edge_anchor(&ranges, &geometry, 281.0, 0.0, 280.0).is_none());
     }
 }

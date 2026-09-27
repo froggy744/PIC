@@ -257,6 +257,15 @@ impl Gallery {
         let root = self.active_zoom_root();
         let mut tiles = Vec::new();
         collect_tiles(&root, &mut tiles);
+        let trace = std::env::var_os("PICASA_TRACE").is_some();
+        if trace {
+            eprintln!(
+                "PIC_ZOOM_TRACE anchor_capture_begin kind={:?} pointer_x={:.1} pointer_y={:.1} root_width={} root_height={} realized_tiles={} current_tile={}x{} columns={} pending_width={:?}",
+                kind, x, y, root.width(), root.height(), tiles.len(),
+                self.tile_width.get(), self.tile_height.get(),
+                self.current_columns.get(), self.pending_zoom_width.get(),
+            );
+        }
 
         let mut best: Option<(bool, f64, ZoomAnchor)> = None;
         for tile in tiles {
@@ -301,7 +310,17 @@ impl Gallery {
             }
         }
 
-        best.map(|(_, _, anchor)| anchor)
+        let result = best.map(|(_, _, anchor)| anchor);
+        if trace {
+            match result {
+                Some(anchor) => eprintln!(
+                    "PIC_ZOOM_TRACE anchor_capture_end result=found photo_id={} kind={:?} desired_x={:.1} desired_y={:.1}",
+                    anchor.photo_id, anchor.kind, anchor.desired_x, anchor.desired_y,
+                ),
+                None => eprintln!("PIC_ZOOM_TRACE anchor_capture_end result=none"),
+            }
+        }
+        result
     }
 
     fn capture_center_zoom_anchor(&self) -> Option<ZoomAnchor> {
@@ -333,21 +352,29 @@ impl Gallery {
     }
 
     fn begin_center_zoom_anchor(&self) {
-        self.zoom_anchor_restore_generation
-            .set(self.zoom_anchor_restore_generation.get().wrapping_add(1));
-        self.stable_zoom_anchor
-            .set(self.capture_center_zoom_anchor());
+        let next_generation = self.zoom_anchor_restore_generation.get().wrapping_add(1);
+        self.zoom_anchor_restore_generation.set(next_generation);
+        let anchor = self.capture_center_zoom_anchor();
+        self.stable_zoom_anchor.set(anchor);
+        if std::env::var_os("PICASA_TRACE").is_some() {
+            eprintln!(
+                "PIC_ZOOM_TRACE anchor_begin mode=center restore_generation={} anchor={:?}",
+                next_generation, anchor,
+            );
+        }
     }
 
     fn begin_pointer_zoom_anchor(&self, viewport: &gtk::Widget, x: f64, y: f64) {
-        self.zoom_anchor_restore_generation
-            .set(self.zoom_anchor_restore_generation.get().wrapping_add(1));
-        self.stable_zoom_anchor.set(self.capture_zoom_anchor_at(
-            viewport,
-            x,
-            y,
-            ZoomAnchorKind::Pointer,
-        ));
+        let next_generation = self.zoom_anchor_restore_generation.get().wrapping_add(1);
+        self.zoom_anchor_restore_generation.set(next_generation);
+        let anchor = self.capture_zoom_anchor_at(viewport, x, y, ZoomAnchorKind::Pointer);
+        self.stable_zoom_anchor.set(anchor);
+        if std::env::var_os("PICASA_TRACE").is_some() {
+            eprintln!(
+                "PIC_ZOOM_TRACE anchor_begin mode=pointer restore_generation={} pointer_x={:.1} pointer_y={:.1} anchor={:?}",
+                next_generation, x, y, anchor,
+            );
+        }
     }
 
     fn measure_and_correct_grid_zoom_anchor(&self, anchor: ZoomAnchor) -> Option<(f64, f64, bool)> {
@@ -373,12 +400,20 @@ impl Gallery {
         }
 
         let adjustment = scrolled.vadjustment();
+        let before = adjustment.value();
         let next = clamp_zoom_adjustment(
-            adjustment.value() + error,
+            before + error,
             adjustment.lower(),
             adjustment.upper(),
             adjustment.page_size(),
         );
+        if std::env::var_os("PICASA_TRACE").is_some() {
+            eprintln!(
+                "PIC_ZOOM_TRACE anchor_correct photo_id={} desired_y={:.1} actual_y={:.1} error={:.1} scroll_before={:.1} scroll_after={:.1} lower={:.1} upper={:.1} page={:.1}",
+                anchor.photo_id, anchor.desired_y, actual_y, error, before, next,
+                adjustment.lower(), adjustment.upper(), adjustment.page_size(),
+            );
+        }
         adjustment.set_value(next);
         Some((error, actual_y, true))
     }
@@ -401,6 +436,18 @@ impl Gallery {
 
         let restore_generation = self.zoom_anchor_restore_generation.get().wrapping_add(1);
         self.zoom_anchor_restore_generation.set(restore_generation);
+        if std::env::var_os("PICASA_TRACE").is_some() {
+            let root_widget: gtk::Widget = self.root.clone().upcast();
+            let scroll = scrolled_ancestor(&root_widget)
+                .map(|s| s.vadjustment().value())
+                .unwrap_or(-1.0);
+            eprintln!(
+                "PIC_ZOOM_TRACE restore_schedule animation_generation={} restore_generation={} final_pass={} anchor_id={} kind={:?} desired_y={:.1} scroll_y={:.1} tile={}x{} columns={}",
+                animation_generation, restore_generation, final_pass,
+                anchor.photo_id, anchor.kind, anchor.desired_y, scroll,
+                self.tile_width.get(), self.tile_height.get(), self.current_columns.get(),
+            );
+        }
         let attempts = Cell::new(0_u8);
         let corrections = Cell::new(0_u8);
         let reveal_requested = Cell::new(false);
@@ -410,6 +457,13 @@ impl Gallery {
             if this.zoom_animation_generation.get() != animation_generation
                 || this.zoom_anchor_restore_generation.get() != restore_generation
             {
+                if std::env::var_os("PICASA_TRACE").is_some() {
+                    eprintln!(
+                        "PIC_ZOOM_TRACE restore_cancel reason=generation expected_animation={} actual_animation={} expected_restore={} actual_restore={}",
+                        animation_generation, this.zoom_animation_generation.get(),
+                        restore_generation, this.zoom_anchor_restore_generation.get(),
+                    );
+                }
                 return glib::ControlFlow::Break;
             }
             let anchor_changed = match this.stable_zoom_anchor.get() {
@@ -421,6 +475,19 @@ impl Gallery {
             }
 
             attempts.set(attempts.get().saturating_add(1));
+            if std::env::var_os("PICASA_TRACE").is_some() {
+                let root_widget: gtk::Widget = this.root.clone().upcast();
+                let mut realized = Vec::new();
+                collect_tiles(&root_widget, &mut realized);
+                let scroll = scrolled_ancestor(&root_widget)
+                    .map(|s| s.vadjustment().value())
+                    .unwrap_or(-1.0);
+                eprintln!(
+                    "PIC_ZOOM_TRACE restore_attempt attempt={} anchor_id={} realized_tiles={} scroll_y={:.1} grid={}x{} columns={}",
+                    attempts.get(), anchor.photo_id, realized.len(), scroll,
+                    this.root.width(), this.root.height(), this.current_columns.get(),
+                );
+            }
             if let Some((error, actual_y, corrected)) =
                 this.measure_and_correct_grid_zoom_anchor(anchor)
             {
@@ -460,6 +527,12 @@ impl Gallery {
                     .iter()
                     .position(|photo| photo.id() == anchor.photo_id)
                 {
+                    if std::env::var_os("PICASA_TRACE").is_some() {
+                        eprintln!(
+                            "PIC_ZOOM_TRACE restore_reveal anchor_id={} model_position={} attempt={}",
+                            anchor.photo_id, position, attempts.get(),
+                        );
+                    }
                     this.root
                         .scroll_to(position as u32, gtk::ListScrollFlags::NONE, None);
                     reveal_requested.set(true);
@@ -673,8 +746,16 @@ impl Gallery {
     /// Accumulate the requested ladder level, then perform one 300ms reflow
     /// after the wheel burst settles.
     fn request_wheel_zoom(self: &Rc<Self>, width: i32) {
+        let requested = width;
         let width = nearest_zoom_level(width).clamp(MIN_TILE_WIDTH, MAX_TILE_WIDTH);
         self.auto_default_zoom.set(false);
+        if std::env::var_os("PICASA_TRACE").is_some() {
+            eprintln!(
+                "PIC_ZOOM_TRACE wheel_request requested={} snapped={} current={} pending_before={:?} columns={} anchor={:?}",
+                requested, width, self.tile_width.get(), self.pending_zoom_width.get(),
+                self.current_columns.get(), self.stable_zoom_anchor.get(),
+            );
+        }
         self.pending_zoom_width.set(Some(width));
 
         if let Some(source) = self.zoom_reflow_source.borrow_mut().take() {
@@ -684,6 +765,13 @@ impl Gallery {
         let source = glib::timeout_add_local(std::time::Duration::from_millis(220), move || {
             this.zoom_reflow_source.borrow_mut().take();
             if let Some(width) = this.pending_zoom_width.take() {
+                if std::env::var_os("PICASA_TRACE").is_some() {
+                    eprintln!(
+                        "PIC_ZOOM_TRACE wheel_commit target={} current={} columns={} anchor={:?}",
+                        width, this.tile_width.get(), this.current_columns.get(),
+                        this.stable_zoom_anchor.get(),
+                    );
+                }
                 this.apply_zoom(width);
             }
             glib::ControlFlow::Break
@@ -742,6 +830,18 @@ impl Gallery {
     fn apply_zoom(self: &Rc<Self>, width: i32) {
         let target_width = width.clamp(MIN_TILE_WIDTH, MAX_TILE_WIDTH);
         let start_width = self.tile_width.get().max(1);
+        if std::env::var_os("PICASA_TRACE").is_some() {
+            let root_widget: gtk::Widget = self.root.clone().upcast();
+            let scroll = scrolled_ancestor(&root_widget)
+                .map(|s| s.vadjustment().value())
+                .unwrap_or(-1.0);
+            eprintln!(
+                "PIC_ZOOM_TRACE apply_begin requested={} target={} start={} tile_height={} columns={} grid={}x{} last_layout_width={} scroll_y={:.1} anchor={:?}",
+                width, target_width, start_width, self.tile_height.get(),
+                self.current_columns.get(), self.root.width(), self.root.height(),
+                self.last_layout_width.get(), scroll, self.stable_zoom_anchor.get(),
+            );
+        }
         if target_width == start_width {
             self.stable_zoom_anchor.set(None);
             return;
@@ -823,7 +923,25 @@ impl Gallery {
         self.zoom_animation_layout_width.set(None);
         set_grid_zoom_animation_active(false);
 
+        if std::env::var_os("PICASA_TRACE").is_some() {
+            eprintln!(
+                "PIC_ZOOM_TRACE geometry_before target={}x{} columns={} grid={}x{}",
+                target_width, target_height, self.current_columns.get(),
+                self.root.width(), self.root.height(),
+            );
+        }
         self.apply_tile_geometry(target_width, target_height, true);
+        if std::env::var_os("PICASA_TRACE").is_some() {
+            let root_widget: gtk::Widget = self.root.clone().upcast();
+            let scroll = scrolled_ancestor(&root_widget)
+                .map(|s| s.vadjustment().value())
+                .unwrap_or(-1.0);
+            eprintln!(
+                "PIC_ZOOM_TRACE geometry_after tile={}x{} columns={} grid={}x{} scroll_y={:.1}",
+                self.tile_width.get(), self.tile_height.get(),
+                self.current_columns.get(), self.root.width(), self.root.height(), scroll,
+            );
+        }
         self.schedule_grid_zoom_anchor_restore(generation, true);
 
         if std::env::var_os("PICASA_TRACE").is_some() {

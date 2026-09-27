@@ -1001,14 +1001,120 @@ impl SectionedFolderView {
         section_index_for_photo(&ranges, index as usize)
     }
 
-    /// Repack the visible photos from their section-local model order on each
-    /// frame. The resize and zoom paths use the same layout animation.
+    /// Apply a section reflow as one deterministic layout change.
+    ///
+    /// Folder headers are ordinary in-flow section headers, not sticky
+    /// overlays. When a visible header exists, preserve its viewport-relative
+    /// Y exactly while the ordered photo strip underneath it re-wraps. This is
+    /// intentionally non-animated: interpolating section/header geometry made
+    /// the title drift while thumbnails appeared to fly between rows.
+    fn apply_reflow_without_animation(
+        self: &Rc<Self>,
+        snapshot: SectionedReflowSnapshot,
+        anchor: Option<(i64, f64)>,
+    ) {
+        self.reflow_animation_generation
+            .set(self.reflow_animation_generation.get().wrapping_add(1));
+        self.clear_strip_layer();
+        self.reflow_active.set(false);
+        self.preserve_headers_during_reflow.set(false);
+
+        let header_anchor = self
+            .scroll
+            .borrow()
+            .as_ref()
+            .and_then(|scroll| {
+                let page = scroll.vadjustment().page_size();
+                let top = snapshot.old_scroll_y;
+                let bottom = top + page;
+                snapshot
+                    .old_geometry
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, geom)| geom.header_y >= top && geom.header_y <= bottom)
+                    .min_by(|(_, a), (_, b)| {
+                        (a.header_y - top)
+                            .abs()
+                            .partial_cmp(&(b.header_y - top).abs())
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    })
+                    .map(|(section, geom)| (section, geom.header_y - top))
+            });
+
+        self.invalidate_geometry();
+        self.refresh();
+
+        let mut restored_header = false;
+        if let Some((section, viewport_y)) = header_anchor {
+            let new_header_y = self
+                .geometry
+                .borrow()
+                .get(section)
+                .map(|geom| geom.header_y);
+            if let (Some(new_header_y), Some(scroll)) =
+                (new_header_y, self.scroll.borrow().as_ref().cloned())
+            {
+                let adjustment = scroll.vadjustment();
+                let upper =
+                    (adjustment.upper() - adjustment.page_size()).max(adjustment.lower());
+                let target = (new_header_y - viewport_y)
+                    .clamp(adjustment.lower(), upper);
+                adjustment.set_value(target);
+                self.refresh();
+                restored_header = true;
+
+                if std::env::var_os("PICASA_TRACE").is_some() {
+                    eprintln!(
+                        "PIC_SECTIONED_REFLOW header_stable section={} viewport_y={:.1} old_scroll={:.1} new_scroll={:.1} old_columns={} new_columns={} old_tile={}x{} new_tile={}x{}",
+                        section,
+                        viewport_y,
+                        snapshot.old_scroll_y,
+                        target,
+                        snapshot.old_columns,
+                        self.current_columns.get(),
+                        snapshot.tile_width,
+                        snapshot.tile_height,
+                        self.tile_width.get(),
+                        self.tile_height.get(),
+                    );
+                }
+            }
+        }
+
+        if !restored_header {
+            if let Some((photo_id, offset)) = anchor {
+                let restored = self.restore_anchor(photo_id, offset);
+                if std::env::var_os("PICASA_TRACE").is_some() {
+                    eprintln!(
+                        "PIC_SECTIONED_REFLOW photo_anchor photo_id={} offset={:.1} restored={} old_columns={} new_columns={}",
+                        photo_id,
+                        offset,
+                        restored,
+                        snapshot.old_columns,
+                        self.current_columns.get(),
+                    );
+                }
+            }
+        }
+
+        if std::env::var_os("PICASA_TRACE").is_some() {
+            eprintln!(
+                "PIC_SECTIONED_REFLOW complete animated=false header_anchor={} old_scroll={:.1} final_scroll={:.1} old_columns={} new_columns={}",
+                restored_header,
+                snapshot.old_scroll_y,
+                self.scroll_position(),
+                snapshot.old_columns,
+                self.current_columns.get(),
+            );
+        }
+    }
+
     fn animate_reflow(
         self: &Rc<Self>,
         snapshot: SectionedReflowSnapshot,
         anchor: Option<(i64, f64)>,
     ) {
-        self.animate_strip_reflow(snapshot, anchor);
+        self.apply_reflow_without_animation(snapshot, anchor);
     }
 
     fn animate_zoom_reflow(
@@ -1016,7 +1122,7 @@ impl SectionedFolderView {
         snapshot: SectionedReflowSnapshot,
         anchor: Option<(i64, f64)>,
     ) {
-        self.animate_strip_reflow(snapshot, anchor);
+        self.apply_reflow_without_animation(snapshot, anchor);
     }
 
     fn clear_strip_layer(&self) {

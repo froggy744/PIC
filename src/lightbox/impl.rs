@@ -813,6 +813,12 @@ impl Lightbox {
         self.picture.queue_resize();
         self.picture_viewport.queue_resize();
 
+        // The InfoBar slider is a centre-focused zoom control. Once GTK has
+        // applied the new child size, keep the photo's centre at the centre of
+        // the viewport instead of letting the scroll adjustments drift toward
+        // the top-left while the slider is dragged.
+        center_viewport_soon(&self.picture_viewport);
+
         if let Some(handler) = self.zoom_sync.borrow().as_ref() {
             handler(if self.zoom.get() == 0.0 {
                 0.0

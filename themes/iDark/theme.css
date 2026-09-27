@@ -88,4 +88,3 @@ button.clear-action-button:active { background: #d2d2d2; }
 .lightbox-backdrop.standard-light { background: @view_bg_color; }
 .lightbox-backdrop.standard-dark { background: #000000; }
 .lightbox-picture { background: transparent; }
-.lightbox-picture.photo-grid { background: #292929; }

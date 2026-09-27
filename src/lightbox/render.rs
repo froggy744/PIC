@@ -33,15 +33,6 @@ fn show_photo(
     // thumbnail in the lightbox; keep the previous full-size image during
     // navigation and show a neutral backdrop on initial open.
     let path = photo.path();
-    if png_uses_theme_background(&path) {
-        // PNG alpha should reveal the active theme's photo surface, not the
-        // lightbox's black/dark backdrop. Every bundled theme already owns
-        // this class, so the matte follows theme changes without duplicating
-        // palette values in the viewer.
-        picture.add_css_class("photo-grid");
-    } else {
-        picture.remove_css_class("photo-grid");
-    }
     viewer_trace(format!(
         "show_photo_request generation={} index={} uri={}",
         expected_generation,
@@ -233,21 +224,10 @@ fn show_photo(
     });
 }
 
-fn png_uses_theme_background(path: &str) -> bool {
-    crate::image_format::for_path(path).is_some_and(|format| format.id == "png")
-}
-
-#[cfg(test)]
-mod png_background_tests {
-    use super::png_uses_theme_background;
-
-    #[test]
-    fn only_png_uses_the_theme_photo_background() {
-        assert!(png_uses_theme_background("/photos/transparent.png"));
-        assert!(png_uses_theme_background("/photos/transparent.PNG"));
-        assert!(!png_uses_theme_background("/photos/opaque.jpg"));
-        assert!(!png_uses_theme_background("/photos/camera.nef"));
-    }
+fn png_uses_alpha_transition_source(photo: &PhotoObject) -> bool {
+    photo.rotation().rem_euclid(360) == 0
+        && crate::edit::EditRecipe::decode(&photo.edit_recipe()).is_default()
+        && crate::image_format::for_path(photo.path()).is_some_and(|format| format.id == "png")
 }
 
 fn viewer_trace(message: impl std::fmt::Display) {

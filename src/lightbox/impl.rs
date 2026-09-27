@@ -1078,7 +1078,7 @@ impl Lightbox {
         &self,
         photos: Vec<PhotoObject>,
         selected: usize,
-        source: Option<(gtk::Widget, gtk::gdk::Paintable)>,
+        mut source: Option<(gtk::Widget, gtk::gdk::Paintable)>,
     ) {
         self.photos.replace(photos);
 
@@ -1088,6 +1088,19 @@ impl Lightbox {
         }
 
         self.index.set(selected.min(len - 1));
+        if let (Some(photo), Some((source_widget, fallback))) = (
+            self.photos.borrow().get(self.index.get()),
+            source.take(),
+        ) {
+            let paintable = if png_uses_alpha_transition_source(photo) {
+                gtk::gdk::Texture::from_filename(photo.path())
+                    .map(|texture| texture.upcast::<gtk::gdk::Paintable>())
+                    .unwrap_or(fallback)
+            } else {
+                fallback
+            };
+            source = Some((source_widget, paintable));
+        }
         self.set_zoom(0.0);
         self.zoom_before_one_to_one.set(0.0);
         self.one_to_one_active.set(false);
@@ -1247,9 +1260,6 @@ impl Lightbox {
                         let transition = gtk::Picture::for_paintable(&source_paintable);
                         transition.set_can_shrink(true);
                         transition.set_content_fit(gtk::ContentFit::Cover);
-                        if picture.has_css_class("photo-grid") {
-                            transition.add_css_class("photo-grid");
-                        }
                         transition.set_halign(gtk::Align::Start);
                         transition.set_valign(gtk::Align::Start);
                         transition.set_can_target(false);

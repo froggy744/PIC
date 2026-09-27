@@ -2637,17 +2637,10 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let slider_last_value = Rc::new(Cell::new(info.grid_zoom.value()));
     let slider_last_value_for_change = slider_last_value.clone();
 
-    // GtkScale can emit many value_changed signals during one pointer drag.
-    // Keep only the latest requested lightbox zoom and apply it at most once
-    // per frame. This prevents redundant size/layout work from producing
-    // visible stutter while the thumb moves.
-    let pending_lightbox_slider_scale = Rc::new(Cell::new(None::<f64>));
-    let pending_lightbox_slider_source: Rc<RefCell<Option<glib::SourceId>>> =
-        Rc::new(RefCell::new(None));
+    // Lightbox owns frame-clock coalescing. Window wiring only keeps one
+    // trailing unlock timer so centre lock survives the final GTK allocation.
     let pending_lightbox_center_source: Rc<RefCell<Option<glib::SourceId>>> =
         Rc::new(RefCell::new(None));
-    let pending_lightbox_slider_scale_for_change = pending_lightbox_slider_scale.clone();
-    let pending_lightbox_slider_source_for_change = pending_lightbox_slider_source.clone();
     let pending_lightbox_center_source_for_change = pending_lightbox_center_source.clone();
 
     info.grid_zoom.connect_value_changed(move |scale| {
@@ -2658,47 +2651,25 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
 
         if lightbox_for_zoom_slider.root.is_visible() {
             // In lightbox mode the slider range is 0..100 with 50 exactly 1:1.
+            // The Lightbox coalesces these requests on GTK's frame clock and
+            // holds both scroll adjustments at their midpoint while geometry
+            // changes, so the photo centre remains visually fixed.
             let fit_scale = lightbox_for_zoom_slider.current_fit_scale();
-            pending_lightbox_slider_scale_for_change.set(Some(lightbox_scale_from_slider(
+            lightbox_for_zoom_slider.request_slider_zoom(lightbox_scale_from_slider(
                 scale.value(),
                 fit_scale,
-            )));
+            ));
 
-            if pending_lightbox_slider_source_for_change.borrow().is_none() {
-                let lightbox = lightbox_for_zoom_slider.clone();
-                let pending_scale = pending_lightbox_slider_scale_for_change.clone();
-                let source_slot = pending_lightbox_slider_source_for_change.clone();
-                let source = glib::timeout_add_local_once(
-                    std::time::Duration::from_millis(16),
-                    move || {
-                        source_slot.borrow_mut().take();
-                        if !lightbox.root.is_visible() {
-                            pending_scale.set(None);
-                            return;
-                        }
-                        if let Some(native_scale) = pending_scale.take() {
-                            lightbox.set_manual_zoom_scale_from_slider(native_scale);
-                        }
-                    },
-                );
-                pending_lightbox_slider_source_for_change.replace(Some(source));
-            }
-
-            // Recenter only after slider motion has stopped. Re-centering on
-            // every zoom frame made GtkScrolledWindow adjustments fight the
-            // changing child size and produced the visible shake.
             if let Some(source) = pending_lightbox_center_source_for_change.borrow_mut().take() {
                 source.remove();
             }
             let lightbox = lightbox_for_zoom_slider.clone();
             let center_slot = pending_lightbox_center_source_for_change.clone();
             let source = glib::timeout_add_local_once(
-                std::time::Duration::from_millis(120),
+                std::time::Duration::from_millis(80),
                 move || {
                     center_slot.borrow_mut().take();
-                    if lightbox.root.is_visible() {
-                        lightbox.center_manual_zoom();
-                    }
+                    lightbox.end_slider_zoom();
                 },
             );
             pending_lightbox_center_source_for_change.replace(Some(source));
@@ -2744,8 +2715,6 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let gallery_for_zoom_visibility = gallery.clone();
     let lightbox_for_zoom_visibility = lightbox.clone();
     let slider_last_value_for_visibility = slider_last_value.clone();
-    let pending_lightbox_slider_scale_for_visibility = pending_lightbox_slider_scale.clone();
-    let pending_lightbox_slider_source_for_visibility = pending_lightbox_slider_source.clone();
     let pending_lightbox_center_source_for_visibility = pending_lightbox_center_source.clone();
     lightbox.root.connect_visible_notify(move |root| {
         grid_zoom_syncing_for_visibility.set(true);
@@ -2765,19 +2734,13 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 "Photo zoom — left: Fit, middle: 100%, right: 400%",
             ));
         } else {
-            pending_lightbox_slider_scale_for_visibility.set(None);
-            if let Some(source) = pending_lightbox_slider_source_for_visibility
-                .borrow_mut()
-                .take()
-            {
-                source.remove();
-            }
             if let Some(source) = pending_lightbox_center_source_for_visibility
                 .borrow_mut()
                 .take()
             {
                 source.remove();
             }
+            lightbox_for_zoom_visibility.end_slider_zoom();
 
             grid_zoom_for_visibility.set_range(0.0, 7.0);
             grid_zoom_for_visibility.set_increments(1.0, 1.0);

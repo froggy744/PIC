@@ -711,6 +711,16 @@ fn reset_viewport(viewport: &gtk::ScrolledWindow) {
     vertical.set_value(vertical.lower());
 }
 
+fn center_adjustment(adjustment: &gtk::Adjustment) {
+    let max = (adjustment.upper() - adjustment.page_size()).max(adjustment.lower());
+    adjustment.set_value(adjustment.lower() + (max - adjustment.lower()) * 0.5);
+}
+
+fn center_viewport_now(viewport: &gtk::ScrolledWindow) {
+    center_adjustment(&viewport.hadjustment());
+    center_adjustment(&viewport.vadjustment());
+}
+
 fn center_viewport_soon(viewport: &gtk::ScrolledWindow) {
     let viewport = viewport.clone();
 
@@ -718,17 +728,7 @@ fn center_viewport_soon(viewport: &gtk::ScrolledWindow) {
     // ScrolledWindow adjustments expose their real upper/page_size values.
     // A plain idle callback can run too early, leaving the 1:1 view at 0,0.
     glib::timeout_add_local_once(Duration::from_millis(16), move || {
-        let horizontal = viewport.hadjustment();
-        let vertical = viewport.vadjustment();
-
-        let max_h = (horizontal.upper() - horizontal.page_size()).max(horizontal.lower());
-        let max_v = (vertical.upper() - vertical.page_size()).max(vertical.lower());
-
-        let centered_h = horizontal.lower() + (max_h - horizontal.lower()) / 2.0;
-        let centered_v = vertical.lower() + (max_v - vertical.lower()) / 2.0;
-
-        horizontal.set_value(centered_h);
-        vertical.set_value(centered_v);
+        center_viewport_now(&viewport);
     });
 }
 

@@ -138,6 +138,9 @@ impl Lightbox {
         let last_height = Rc::new(Cell::new(0i32));
         let zoom = Rc::new(Cell::new(0.0)); // 0 means fit-to-window
         let zoom_before_one_to_one = Rc::new(Cell::new(0.0));
+        let slider_zoom_center_lock = Rc::new(Cell::new(false));
+        let pending_slider_zoom_scale = Rc::new(Cell::new(None::<f64>));
+        let slider_zoom_tick_active = Rc::new(Cell::new(false));
         let load_generation = Rc::new(Cell::new(0u64));
         let decode_cancel: Rc<RefCell<Option<Arc<ViewerRequestLease>>>> = Rc::new(RefCell::new(None));
         let key_navigation_ready = Rc::new(Cell::new(true));
@@ -191,11 +194,33 @@ impl Lightbox {
                 .connect_changed(move |_| update_for_h());
         }
 
+        // While the InfoBar slider is moving, keep the viewport mathematically
+        // centred as GTK updates the scroll ranges for the newly sized image.
+        // Adjustment::changed is emitted as part of the layout/range update,
+        // so this happens in the same GTK layout cycle instead of a later timer.
+        {
+            let lock = slider_zoom_center_lock.clone();
+            picture_viewport.hadjustment().connect_changed(move |adjustment| {
+                if lock.get() {
+                    center_adjustment(adjustment);
+                }
+            });
+            let lock = slider_zoom_center_lock.clone();
+            picture_viewport.vadjustment().connect_changed(move |adjustment| {
+                if lock.get() {
+                    center_adjustment(adjustment);
+                }
+            });
+        }
+
         // Some close paths intentionally hide the overlay directly (outside
         // click and double-click). Reset the internal presentation state for
         // those paths as well as for Lightbox::close().
         let one_to_one_for_visibility = one_to_one_active.clone();
         let zoom_for_visibility = zoom.clone();
+        let slider_zoom_center_lock_for_visibility = slider_zoom_center_lock.clone();
+        let pending_slider_zoom_scale_for_visibility = pending_slider_zoom_scale.clone();
+        let slider_zoom_tick_active_for_visibility = slider_zoom_tick_active.clone();
         let picture_for_visibility = picture.clone();
         let viewport_for_visibility = picture_viewport.clone();
         root.connect_visible_notify(move |root| {
@@ -210,6 +235,9 @@ impl Lightbox {
                 }
                 one_to_one_for_visibility.set(false);
                 zoom_for_visibility.set(0.0);
+                slider_zoom_center_lock_for_visibility.set(false);
+                pending_slider_zoom_scale_for_visibility.set(None);
+                slider_zoom_tick_active_for_visibility.set(false);
                 picture_for_visibility.set_can_shrink(true);
                 viewport_for_visibility.set_cursor_from_name(None);
                 reset_viewport(&viewport_for_visibility);
@@ -719,6 +747,9 @@ impl Lightbox {
             last_height,
             zoom,
             zoom_before_one_to_one,
+            slider_zoom_center_lock,
+            pending_slider_zoom_scale,
+            slider_zoom_tick_active,
             one_to_one_active,
             native_texture,
             display_texture_cache,
@@ -752,10 +783,41 @@ impl Lightbox {
         self.apply_manual_zoom_scale(native_scale, true);
     }
 
-    /// Slider-originated changes do not echo back into GtkScale while its
-    /// thumb is being dragged. That feedback caused visible thumb/zoom jitter.
-    pub fn set_manual_zoom_scale_from_slider(&self, native_scale: f64) {
-        self.apply_manual_zoom_scale(native_scale, false);
+    /// Queue slider zoom onto GTK's frame clock. Multiple value_changed
+    /// signals before the next frame collapse to the latest requested scale.
+    pub fn request_slider_zoom(self: &Rc<Self>, native_scale: f64) {
+        self.slider_zoom_center_lock.set(true);
+        center_viewport_now(&self.picture_viewport);
+        self.pending_slider_zoom_scale.set(Some(native_scale));
+
+        if self.slider_zoom_tick_active.replace(true) {
+            return;
+        }
+
+        let this = self.clone();
+        self.root.add_tick_callback(move |_, _| {
+            if !this.root.is_visible() {
+                this.pending_slider_zoom_scale.set(None);
+                this.slider_zoom_tick_active.set(false);
+                this.slider_zoom_center_lock.set(false);
+                return glib::ControlFlow::Break;
+            }
+
+            if let Some(scale) = this.pending_slider_zoom_scale.take() {
+                this.apply_manual_zoom_scale(scale, false);
+            }
+            this.slider_zoom_tick_active.set(false);
+            glib::ControlFlow::Break
+        });
+    }
+
+    /// Keep centre lock alive through the final allocation, then release it
+    /// when the slider gesture has settled.
+    pub fn end_slider_zoom(&self) {
+        if self.root.is_visible() {
+            center_viewport_now(&self.picture_viewport);
+        }
+        self.slider_zoom_center_lock.set(false);
     }
 
     fn apply_manual_zoom_scale(&self, native_scale: f64, notify_zoom_sync: bool) {

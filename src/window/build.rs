@@ -2700,9 +2700,11 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let lightbox_slider_latest = Rc::new(Cell::new(info.grid_zoom.value()));
     let lightbox_slider_applied = Rc::new(Cell::new(info.grid_zoom.value()));
     let lightbox_slider_tick_running = Rc::new(Cell::new(false));
+    let lightbox_slider_frame_phase = Rc::new(Cell::new(false));
     let lightbox_slider_latest_for_change = lightbox_slider_latest.clone();
     let lightbox_slider_applied_for_change = lightbox_slider_applied.clone();
     let lightbox_slider_tick_running_for_change = lightbox_slider_tick_running.clone();
+    let lightbox_slider_frame_phase_for_change = lightbox_slider_frame_phase.clone();
 
     info.grid_zoom.connect_value_changed(move |scale| {
         if std::env::var_os("PICASA_TRACE").is_some() {

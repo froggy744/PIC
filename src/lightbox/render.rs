@@ -812,7 +812,19 @@ fn presentation_fit_scale(
 }
 
 fn presentation_native_dimensions(photo: &PhotoObject) -> (i64, i64) {
-    let (mut width, mut height) = (photo.width().max(1) as u32, photo.height().max(1) as u32);
+    // Preserve "unknown" catalogue dimensions as unknown. The previous
+    // max(1) coercion turned a missing 0x0 metadata record into a seemingly
+    // valid 1x1 native image. presentation_source_dimensions() would then
+    // prefer that bogus 1x1 value over the decoded paintable (for example
+    // 4000x3000), collapsing slider geometry to 1x1/2x2 and making the
+    // Lightbox jump while zooming.
+    let raw_width = photo.width();
+    let raw_height = photo.height();
+    if raw_width <= 1 || raw_height <= 1 {
+        return (0, 0);
+    }
+
+    let (mut width, mut height) = (raw_width as u32, raw_height as u32);
     if matches!(photo.rotation().rem_euclid(360), 90 | 270) {
         std::mem::swap(&mut width, &mut height);
     }

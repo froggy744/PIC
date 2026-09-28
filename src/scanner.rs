@@ -23,11 +23,15 @@ pub enum ScanEvent {
     FolderStarted {
         folder: db::Folder,
     },
-    PhotoIndexed {
-        path: PathBuf,
-        id: i64,
-        photo: db::Photo,
-        newly_discovered: bool,
+    DiscoveryProgress {
+        found: usize,
+    },
+    PhotosIndexed {
+        photos: Vec<IndexedPhoto>,
+        counts: db::SidebarCounts,
+    },
+    LibraryCountsChanged {
+        counts: db::SidebarCounts,
     },
     IndexingFinished {
         imported: usize,
@@ -52,6 +56,12 @@ pub enum ScanEvent {
     Cancelled {
         imported: usize,
     },
+}
+
+#[derive(Debug, Clone)]
+pub struct IndexedPhoto {
+    pub photo: db::Photo,
+    pub newly_discovered: bool,
 }
 
 /// Cooperative cancellation handle for an import and its thumbnail pass.
@@ -101,7 +111,7 @@ fn scan_with_control(
     }
     let indexed = db::photo_fingerprints(&connection)?;
     let root_file = crate::source::file(root);
-    let (files, discovered_folders) = collect_files(&root_file, control)?;
+    let (files, discovered_folders) = collect_files(&root_file, events, control)?;
     if control.is_cancelled() {
         send(events, ScanEvent::Cancelled { imported: 0 });
         return Ok(0);
@@ -118,12 +128,14 @@ fn scan_with_control(
         .map(|(file, _, _)| crate::source::reference(file))
         .collect::<HashSet<_>>();
     let removed = db::remove_missing_photos(&connection, folder_id, &present_paths)?;
-    if removed > 0 {}
+    if removed > 0 {
+        send_library_counts(events, &connection);
+    }
 
     let mut imported = 0;
     let mut failed = 0;
     let mut thumbnails = Vec::new();
-    let mut indexed_events = Vec::new();
+    let mut indexed_photos = Vec::new();
     let mut folder_ids = HashMap::from([(root.to_string(), folder_id)]);
     // Folder reconciliation is SQL-only and committed in bounded batches.
     // In particular, no network enumeration or metadata read occurs while a
@@ -233,32 +245,45 @@ fn scan_with_control(
             }
         }
         if prepared.len() == 32 {
-            commit_prepared(
+            let counts = commit_prepared(
                 &connection,
                 &mut prepared,
                 &mut imported,
                 &mut thumbnails,
-                &mut indexed_events,
+                &mut indexed_photos,
             )?;
-            for event in indexed_events.drain(..) {
-                send(events, event);
+            if !indexed_photos.is_empty() {
+                send(
+                    events,
+                    ScanEvent::PhotosIndexed {
+                        photos: std::mem::take(&mut indexed_photos),
+                        counts: counts.expect("indexed batch has a count snapshot"),
+                    },
+                );
             }
         }
     }
-    commit_prepared(
+    let counts = commit_prepared(
         &connection,
         &mut prepared,
         &mut imported,
         &mut thumbnails,
-        &mut indexed_events,
+        &mut indexed_photos,
     )?;
-    for event in indexed_events.drain(..) {
-        send(events, event);
+    if !indexed_photos.is_empty() {
+        send(
+            events,
+            ScanEvent::PhotosIndexed {
+                photos: std::mem::take(&mut indexed_photos),
+                counts: counts.expect("indexed batch has a count snapshot"),
+            },
+        );
     }
     if control.is_cancelled() {
         send(events, ScanEvent::Cancelled { imported });
         return Ok(imported);
     }
+    send_library_counts(events, &connection);
     send(events, ScanEvent::IndexingFinished { imported });
     send(
         events,
@@ -329,10 +354,10 @@ fn commit_prepared(
     prepared: &mut Vec<PreparedPhoto>,
     imported: &mut usize,
     thumbnails: &mut Vec<(String, Option<i64>, Option<i64>)>,
-    indexed_events: &mut Vec<ScanEvent>,
-) -> Result<()> {
+    indexed_photos: &mut Vec<IndexedPhoto>,
+) -> Result<Option<db::SidebarCounts>> {
     if prepared.is_empty() {
-        return Ok(());
+        return Ok(None);
     }
     let transaction = connection.unchecked_transaction()?;
     for item in prepared.drain(..) {
@@ -364,17 +389,18 @@ fn commit_prepared(
                     }
                     thumbnails.push((path.clone(), metadata.mtime, metadata.size_bytes));
                 }
-                indexed_events.push(ScanEvent::PhotoIndexed {
-                    path: PathBuf::from(path),
-                    id,
+                indexed_photos.push(IndexedPhoto {
                     photo,
                     newly_discovered,
                 });
             }
         }
     }
+    let counts = (!indexed_photos.is_empty())
+        .then(|| db::sidebar_counts(&transaction))
+        .transpose()?;
     transaction.commit()?;
-    Ok(())
+    Ok(counts)
 }
 
 fn root_is_available(root: &str) -> bool {
@@ -420,8 +446,15 @@ fn send(events: Option<&Sender<ScanEvent>>, event: ScanEvent) {
     }
 }
 
+fn send_library_counts(events: Option<&Sender<ScanEvent>>, connection: &Connection) {
+    if let Ok(counts) = db::sidebar_counts(connection) {
+        send(events, ScanEvent::LibraryCountsChanged { counts });
+    }
+}
+
 fn collect_files(
     root: &gio::File,
+    events: Option<&Sender<ScanEvent>>,
     control: &ScanControl,
 ) -> Result<(
     Vec<(gio::File, gio::FileInfo, String)>,
@@ -431,6 +464,8 @@ fn collect_files(
     let mut pending = vec![(root.clone(), root_path.clone(), None)];
     let mut files = Vec::new();
     let mut folders = Vec::new();
+    let mut last_reported = 0usize;
+    let mut last_report = std::time::Instant::now();
     while let Some((directory, folder_path, parent_path)) = pending.pop() {
         if control.is_cancelled() {
             break;
@@ -455,6 +490,12 @@ fn collect_files(
                     let info=crate::network_shares::info(&item.uri)
                         .with_context(|| format!("could not stat {}",item.uri))?;
                     files.push((child,info,folder_path.clone()));
+                    report_discovery_progress(
+                        events,
+                        files.len(),
+                        &mut last_reported,
+                        &mut last_report,
+                    );
                 }
             }
             continue;
@@ -487,13 +528,37 @@ fn collect_files(
                     }
                 }
                 gio::FileType::Regular if supported(Path::new(&info.name())) => {
-                    files.push((child, info, folder_path.clone()))
+                    files.push((child, info, folder_path.clone()));
+                    report_discovery_progress(
+                        events,
+                        files.len(),
+                        &mut last_reported,
+                        &mut last_report,
+                    );
                 }
                 _ => {}
             }
         }
     }
+    if files.len() != last_reported {
+        send(events, ScanEvent::DiscoveryProgress { found: files.len() });
+    }
     Ok((files, folders))
+}
+
+fn report_discovery_progress(
+    events: Option<&Sender<ScanEvent>>,
+    found: usize,
+    last_reported: &mut usize,
+    last_report: &mut std::time::Instant,
+) {
+    if found.saturating_sub(*last_reported) >= 50
+        || last_report.elapsed() >= std::time::Duration::from_millis(250)
+    {
+        send(events, ScanEvent::DiscoveryProgress { found });
+        *last_reported = found;
+        *last_report = std::time::Instant::now();
+    }
 }
 
 fn read_metadata(path: &str, attributes: &gio::FileInfo) -> Result<PhotoMetadata> {
@@ -687,7 +752,12 @@ mod tests {
         fs::write(&photo, []).unwrap();
 
         let (files, folders) =
-            collect_files(&gio::File::for_path(&root), &ScanControl::default()).unwrap();
+            collect_files(
+                &gio::File::for_path(&root),
+                None,
+                &ScanControl::default(),
+            )
+            .unwrap();
         assert!(files
             .iter()
             .any(|(_, _, folder)| folder.ends_with("FB-Marianne")));
@@ -695,6 +765,43 @@ mod tests {
             .iter()
             .any(|(folder, _)| folder.ends_with("FB-Marianne")));
 
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn collection_reports_discovery_progress_in_bounded_batches() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "picasa-rs-scanner-progress-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        for index in 0..51 {
+            fs::write(root.join(format!("photo-{index}.jpg")), []).unwrap();
+        }
+        let (sender, receiver) = std::sync::mpsc::channel();
+
+        let (files, _) = collect_files(
+            &gio::File::for_path(&root),
+            Some(&sender),
+            &ScanControl::default(),
+        )
+        .unwrap();
+        drop(sender);
+        let progress = receiver
+            .into_iter()
+            .filter_map(|event| match event {
+                ScanEvent::DiscoveryProgress { found } => Some(found),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(files.len(), 51);
+        assert!(progress.contains(&50));
+        assert_eq!(progress.last(), Some(&51));
         let _ = fs::remove_dir_all(&root);
     }
 

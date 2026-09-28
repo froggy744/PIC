@@ -144,6 +144,7 @@ const SECTION_PANED_KEY: &str = "picasa-sidebar-section-paned";
 const FOLDER_SECTION_KEY: &str = "picasa-sidebar-folder-section";
 const SHARE_SECTION_KEY: &str = "picasa-sidebar-share-section";
 const FILTER_SYNCING_KEY: &str = "picasa-sidebar-filter-syncing";
+const FILTER_COUNT_LABEL_KEY: &str = "picasa-sidebar-filter-count-label";
 const FOLDER_REFRESH_KEY: &str = "picasa-sidebar-folder-refresh";
 const REFRESH_GATE_KEY: &str = "picasa-sidebar-refresh-gate";
 const ALBUM_PANE_ANIMATION_MS: u32 = 250;
@@ -1433,6 +1434,27 @@ pub fn refresh_library_counts(
 
     if let Some(filter) = current_filter(scrolled) {
         set_active_filter(scrolled, filter);
+    }
+}
+
+/// Update the three library counters without replacing sidebar rows. Scan
+/// progress calls this frequently, so preserving row identity avoids repeated
+/// layout, selection changes, and signal reconnection on the GTK thread.
+pub fn update_library_counts(scrolled: &gtk::ScrolledWindow, counts: SidebarCounts) {
+    let Some(list) = stored_widget::<gtk::ListBox>(scrolled, LIBRARY_LIST_KEY) else {
+        return;
+    };
+    for (filter, count) in [
+        (SidebarFilter::All, counts.photos),
+        (SidebarFilter::Favorites, counts.favorites),
+        (SidebarFilter::RecentlyAdded, counts.recently_added),
+    ] {
+        let Some(row) = row_for_filter(&list, filter) else {
+            continue;
+        };
+        if let Some(label) = unsafe { row.data::<gtk::Label>(FILTER_COUNT_LABEL_KEY) } {
+            unsafe { label.as_ref() }.set_text(&format_count(count));
+        }
     }
 }
 
@@ -2897,6 +2919,9 @@ fn append_filter(
         count_label.add_css_class("dim-label");
         count_label.add_css_class("sidebar-count");
         content.append(&count_label);
+        unsafe {
+            row.set_data(FILTER_COUNT_LABEL_KEY, count_label);
+        }
     }
 
     if offline {

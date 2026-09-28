@@ -4140,8 +4140,11 @@ fn start_photo_export_single(
     let mut failure_message_shown = false;
     let mut thumbnail_total: usize = 0;
     let mut last_progress_update = Instant::now();
+    let mut pending_sidebar_counts: Option<db::SidebarCounts> = None;
+    let mut photos_since_sidebar_update = 0usize;
+    let mut last_sidebar_count_update = Instant::now();
 
-    glib::timeout_add_local(Duration::from_millis(250), move || {
+    glib::timeout_add_local(Duration::from_millis(50), move || {
         let ui_tick_started = Instant::now();
         // Drain event-triggered recovery requests once the current scan ends.
         // With no request, this checks only a flag and performs no disk probes.
@@ -4271,16 +4274,15 @@ fn start_photo_export_single(
         } else if priority_completions > 0 && thumbnail_total == 0 {
             refresh_status_box_for_events.set_visible(false);
         }
-        // Never monopolize the GTK loop when a fast scanner has queued many
-        // results. Leaving some events queued lets GTK process input, redraws,
-        // scrolling, and folder changes between import batches.
-        // Keep scan/photo events from monopolizing GTK while a large refresh
-        // or thumbnail recovery is active. A smaller batch lets input,
-        // redraws, and the Stop button run between worker updates.
-        const MAX_EVENTS_PER_TICK: usize = 16;
+        // Drain committed batches promptly, but cap both event count and wall
+        // time so input, redraws, scrolling, and Stop remain responsive.
+        const MAX_EVENTS_PER_TICK: usize = 64;
+        const MAX_EVENT_TIME_PER_TICK: Duration = Duration::from_millis(8);
         let mut handled_events = 0;
         let mut max_event_queue_wait = Duration::ZERO;
-        while handled_events < MAX_EVENTS_PER_TICK {
+        while handled_events < MAX_EVENTS_PER_TICK
+            && ui_tick_started.elapsed() < MAX_EVENT_TIME_PER_TICK
+        {
             let Ok(ui_event) = scan_receiver.try_recv() else {
                 break;
             };
@@ -4300,6 +4302,8 @@ fn start_photo_export_single(
                 scan_count = 0;
                 thumbnail_total = 0;
                 failure_message_shown = false;
+                pending_sidebar_counts = None;
+                photos_since_sidebar_update = 0;
             }
 
             let event = ui_event.event;
@@ -4340,40 +4344,46 @@ fn start_photo_export_single(
                     }
                 }
 
-                scanner::ScanEvent::PhotoIndexed {
-                    path,
-                    photo,
-                    newly_discovered,
-                    ..
-                } => {
-                    scan_count += 1;
-                    
+                scanner::ScanEvent::DiscoveryProgress { found } => {
+                    refresh_status_label_for_events
+                        .set_text(&format!("Scanning… found {found} photos"));
+                    refresh_status_box_for_events.set_visible(true);
+                }
+
+                scanner::ScanEvent::PhotosIndexed { photos, counts } => {
+                    scan_count += photos.len();
+                    photos_since_sidebar_update += photos.len();
+                    pending_sidebar_counts = Some(*counts);
+
                     let search_active = !search_for_events.borrow().is_empty();
                     if !search_active {
-                        if *newly_discovered
-                            && crate::image_format::path_is_enabled(
-                                &connection_for_events.borrow(),
-                                &photo.path,
-                            )
-                            && (matches!(filter_for_events.get(), sidebar::SidebarFilter::All)
-                                || matches!(filter_for_events.get(), sidebar::SidebarFilter::Folder(id) if Some(id) == photo.folder_id))
-                        {
-                            pending_photos.push_back(photo.clone());
-                        } else if !newly_discovered {
-                            gallery_for_events.update_photo(photo);
-                            if selected_photo_for_events
-                                .borrow()
-                                .as_ref()
-                                .is_some_and(|selected| selected.id() == photo.id)
+                        for indexed in photos {
+                            let photo = &indexed.photo;
+                            if indexed.newly_discovered
+                                && crate::image_format::path_is_enabled(
+                                    &connection_for_events.borrow(),
+                                    &photo.path,
+                                )
+                                && (matches!(filter_for_events.get(), sidebar::SidebarFilter::All)
+                                    || matches!(filter_for_events.get(), sidebar::SidebarFilter::Folder(id) if Some(id) == photo.folder_id))
                             {
-                                let selected = selected_photo_for_events.borrow().clone();
-                                // Folder refreshes deliberately avoid a full
-                                // gallery rebuild. Keep an independently held
-                                // selected object current as well.
-                                if let Some(selected) = selected.as_ref() {
-                                    selected.set_from_photo(photo);
+                                pending_photos.push_back(photo.clone());
+                            } else if !indexed.newly_discovered {
+                                gallery_for_events.update_photo(photo);
+                                if selected_photo_for_events
+                                    .borrow()
+                                    .as_ref()
+                                    .is_some_and(|selected| selected.id() == photo.id)
+                                {
+                                    let selected = selected_photo_for_events.borrow().clone();
+                                    // Folder refreshes deliberately avoid a full
+                                    // gallery rebuild. Keep an independently held
+                                    // selected object current as well.
+                                    if let Some(selected) = selected.as_ref() {
+                                        selected.set_from_photo(photo);
+                                    }
+                                    info_for_events.set_photo(selected.as_ref());
                                 }
-                                info_for_events.set_photo(selected.as_ref());
                             }
                         }
                     }
@@ -4384,6 +4394,13 @@ fn start_photo_export_single(
                         refresh_status_box_for_events.set_visible(true);
                         last_progress_update = Instant::now();
                     }
+                }
+
+                scanner::ScanEvent::LibraryCountsChanged { counts } => {
+                    pending_sidebar_counts = Some(*counts);
+                    // Reconciliation and final snapshots should be visible on
+                    // the next UI tick even when no photos needed reindexing.
+                    photos_since_sidebar_update = photos_since_sidebar_update.max(50);
                 }
 
                 scanner::ScanEvent::IndexingFinished { imported } => {
@@ -4604,17 +4621,28 @@ fn start_photo_export_single(
             }
         }
 
-        
-
-        const PHOTO_APPEND_BATCH: usize = 192;
         if displayed_generation.is_some()
             && displayed_generation != Some(scan_job_for_events.borrow().generation)
         {
             // A library switch or scan preemption invalidates already-drained
             // photo events as well as events still waiting in the channel.
             pending_photos.clear();
+            pending_sidebar_counts = None;
+            photos_since_sidebar_update = 0;
             displayed_generation = None;
         }
+        if pending_sidebar_counts.is_some()
+            && (photos_since_sidebar_update >= 50
+                || last_sidebar_count_update.elapsed() >= Duration::from_millis(250))
+        {
+            if let Some(counts) = pending_sidebar_counts.take() {
+                sidebar::update_library_counts(&sidebar_for_events, counts);
+            }
+            photos_since_sidebar_update = 0;
+            last_sidebar_count_update = Instant::now();
+        }
+
+        const PHOTO_APPEND_BATCH: usize = 192;
         if !search_for_events.borrow().is_empty() {
             // Search results supersede progressive scan appends. The next
             // debounced refresh will replace the model from the DB.

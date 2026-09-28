@@ -523,7 +523,7 @@ fn spawn_tagged_scan(
         let mut failures = 0usize;
         while let Ok(event) = scan_receiver.recv() {
             match &event {
-                scanner::ScanEvent::PhotoIndexed { .. } => indexed += 1,
+                scanner::ScanEvent::PhotosIndexed { photos, .. } => indexed += photos.len(),
                 scanner::ScanEvent::Failed { .. } => failures += 1,
                 scanner::ScanEvent::Finished { .. } | scanner::ScanEvent::Cancelled { .. } => {
                     terminal_seen = true;

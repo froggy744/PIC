@@ -313,6 +313,9 @@ impl InfoBar {
         self.collage_active.set(active);
         self.edit
             .set_sensitive(edit_button_sensitive(self.has_photo.get(), active));
+        // Collage has no presentation zoom. Disable the shared zoom slider
+        // instead of letting it fall through and resize the hidden Gallery.
+        self.grid_zoom.set_sensitive(!active);
     }
 
     fn set_rating_presentation(&self, rating: i32) {

@@ -3219,6 +3219,49 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+    fn progressive_count_update_preserves_sidebar_rows() {
+        gtk::init().unwrap();
+        let no_args: Rc<dyn Fn()> = Rc::new(|| {});
+        let list = gtk::ListBox::new();
+        populate_library(
+            &list,
+            SidebarCounts {
+                photos: 10,
+                favorites: 2,
+                recently_added: 10,
+            },
+            &no_args,
+        );
+        let all_row = row_for_filter(&list, SidebarFilter::All).unwrap();
+        let sidebar = gtk::ScrolledWindow::new();
+        unsafe {
+            sidebar.set_data(LIBRARY_LIST_KEY, list);
+        }
+
+        update_library_counts(
+            &sidebar,
+            SidebarCounts {
+                photos: 12_345,
+                favorites: 7,
+                recently_added: 100,
+            },
+        );
+
+        let current_row = {
+            let list = stored_widget::<gtk::ListBox>(&sidebar, LIBRARY_LIST_KEY).unwrap();
+            row_for_filter(&list, SidebarFilter::All).unwrap()
+        };
+        assert_eq!(all_row, current_row);
+        let count = unsafe {
+            current_row
+                .data::<gtk::Label>(FILTER_COUNT_LABEL_KEY)
+                .unwrap()
+        };
+        assert_eq!(unsafe { count.as_ref() }.text(), "12,345");
+    }
+
+    #[test]
     fn sidebar_visibility_defaults_to_on_and_restores_saved_switches() {
         let connection = rusqlite::Connection::open_in_memory().unwrap();
         connection

@@ -2693,18 +2693,24 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let gallery_for_lightbox_close = gallery.clone();
     let selected_photo_for_lightbox_close = selected_photo.clone();
     lightbox.root.connect_visible_notify(move |root| {
-        if !root.is_visible() {
-            one_to_one_for_visibility.set_active(false);
-
-            let gallery = gallery_for_lightbox_close.clone();
-            let selected_photo = selected_photo_for_lightbox_close.borrow().clone();
-            glib::idle_add_local_once(move || {
-                if let Some(photo) = selected_photo {
-                    gallery.restore_activated_photo(photo.id());
-                }
-                gallery.grab_focus();
-            });
+        if root.is_visible() {
+            // A previous Lightbox return may still be easing the Folder view.
+            // Once the viewer opens, freeze the hidden gallery exactly where it
+            // is so no stale scroll callback can keep moving it underneath us.
+            gallery_for_lightbox_close.cancel_sectioned_folder_scroll_animation();
+            return;
         }
+
+        one_to_one_for_visibility.set_active(false);
+
+        let gallery = gallery_for_lightbox_close.clone();
+        let selected_photo = selected_photo_for_lightbox_close.borrow().clone();
+        glib::idle_add_local_once(move || {
+            if let Some(photo) = selected_photo {
+                gallery.restore_activated_photo(photo.id());
+            }
+            gallery.grab_focus();
+        });
     });
 
     fn lightbox_scale_from_slider(value: f64, fit_scale: f64) -> f64 {

@@ -2705,6 +2705,16 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let lightbox_slider_tick_running_for_change = lightbox_slider_tick_running.clone();
 
     info.grid_zoom.connect_value_changed(move |scale| {
+        if std::env::var_os("PICASA_TRACE").is_some() {
+            eprintln!(
+                "PIC_ZOOM_UI event=value_changed value={:.3} lightbox_visible={} edit_visible={} syncing={} last={:.3}",
+                scale.value(),
+                lightbox_for_zoom_slider.root.is_visible(),
+                main_stack_for_zoom_slider.visible_child_name().as_deref() == Some("edit"),
+                grid_zoom_syncing_for_slider.get(),
+                slider_last_value_for_change.get(),
+            );
+        }
         if grid_zoom_syncing_for_slider.get() {
             slider_last_value_for_change.set(scale.value());
             lightbox_slider_latest_for_change.set(scale.value());
@@ -2715,6 +2725,14 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         if lightbox_for_zoom_slider.root.is_visible() {
             let value = scale.value();
             lightbox_slider_latest_for_change.set(value);
+            if std::env::var_os("PICASA_TRACE").is_some() {
+                let fit = lightbox_for_zoom_slider.current_fit_scale();
+                eprintln!(
+                    "PIC_ZOOM_UI lightbox_input slider={value:.3} fit={fit:.6} native_req={:.6} current_native={:.6}",
+                    lightbox_scale_from_slider(value, fit),
+                    lightbox_for_zoom_slider.current_manual_zoom_scale(),
+                );
+            }
 
             if !lightbox_slider_tick_running_for_change.get() {
                 lightbox_slider_tick_running_for_change.set(true);
@@ -2742,7 +2760,14 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                     }
 
                     let fit_scale = lightbox.current_fit_scale();
-                    lightbox.request_slider_zoom(lightbox_scale_from_slider(value, fit_scale));
+                    let requested = lightbox_scale_from_slider(value, fit_scale);
+                    if std::env::var_os("PICASA_TRACE").is_some() {
+                        eprintln!(
+                            "PIC_ZOOM_UI frame_apply slider={value:.3} fit={fit_scale:.6} native_req={requested:.6} previous_slider={:.3}",
+                            applied.get(),
+                        );
+                    }
+                    lightbox.request_slider_zoom(requested);
                     applied.set(value);
                     glib::ControlFlow::Continue
                 });
@@ -2826,6 +2851,9 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let grid_zoom_reset_press_x = Rc::new(Cell::new(f64::NAN));
     let grid_zoom_reset_press_x_for_press = grid_zoom_reset_press_x.clone();
     info.grid_zoom_reset.connect_pressed(move |_, _, x, _| {
+        if std::env::var_os("PICASA_TRACE").is_some() {
+            eprintln!("PIC_ZOOM_UI gesture=press x={x:.2}");
+        }
         grid_zoom_reset_press_x_for_press.set(x);
     });
 

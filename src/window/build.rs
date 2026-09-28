@@ -2386,6 +2386,9 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         let edit_space_slot = edit_space_slot.clone();
         let collage_editing = collage_editing.clone();
         let collage_editor = collage_editor.clone();
+        // Keep the shared slider synchronization handle available to the rest
+        // of build.rs. The editor-open move closure owns only this cheap clone.
+        let grid_zoom_syncing_for_editor = grid_zoom_syncing.clone();
         // Edit-mode Export uses the exact same dialog → destination → progress
         // pipeline as the info-bar Export button (size + file type + Stop bar).
         let export_for_editor: Rc<dyn Fn(Vec<crate::edit::export_batch::ExportJob>)> = {
@@ -2417,7 +2420,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 let main_stack = main_stack.clone();
                 let one_to_one = info.one_to_one.clone();
                 let info = info.clone();
-                let grid_zoom_syncing = grid_zoom_syncing.clone();
+                let grid_zoom_syncing = grid_zoom_syncing_for_editor.clone();
                 let gallery = gallery.clone();
                 let edit_space_slot = edit_space_slot.clone();
                 let edit_page = edit_page.clone();
@@ -2496,7 +2499,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             }
             {
                 let zoom_scale = info.grid_zoom.clone();
-                let syncing = grid_zoom_syncing.clone();
+                let syncing = grid_zoom_syncing_for_editor.clone();
                 let stack = main_stack.clone();
                 editor.set_zoom_sync_handler(move |native_scale, fit_scale| {
                     if stack.visible_child_name().as_deref() != Some("edit") {
@@ -2511,7 +2514,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             {
                 let fit_scale = editor.current_fit_scale();
                 let native_scale = editor.current_manual_zoom_scale();
-                grid_zoom_syncing.set(true);
+                grid_zoom_syncing_for_editor.set(true);
                 info.grid_zoom.set_range(0.0, 100.0);
                 info.grid_zoom.set_increments(0.25, 5.0);
                 info.grid_zoom.set_round_digits(-1);
@@ -2523,7 +2526,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 info.grid_zoom.set_tooltip_text(Some(
                     "Edit zoom — left: Fit, middle: 100%, right: 200%",
                 ));
-                grid_zoom_syncing.set(false);
+                grid_zoom_syncing_for_editor.set(false);
             }
             // Make the way back explicit when the editor was opened from a
             // collage tile; Done saves and follows the same return path.

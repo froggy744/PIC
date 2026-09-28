@@ -1527,6 +1527,9 @@
                     let gallery = gallery_for_search.clone();
                     let filter = filter_for_search.clone();
                     let search_text = search_text_for_search.clone();
+                    let search_entry = entry.clone();
+                    let search_suppressed = search_suppressed_for_search.clone();
+                    let search_debounce = search_debounce_for_search.clone();
                     let folders = folders_for_search.clone();
                     move |folder_id| {
                         
@@ -1535,9 +1538,29 @@
                             .find(|folder| folder.id == folder_id)
                             .map(|folder| folder.path.clone());
 
-                        // Folder suggestions are navigation results. Clear the search and
-                        // enter the normal continuous Folder view, then focus this folder.
-                        // destination_click restores the cached Folder stream when available.
+                        // Folder suggestions are navigation results, not text-search
+                        // submissions. Clear every piece of search state *before* changing
+                        // destination; otherwise destination_click still sees the old query
+                        // and leaves the gallery in the global search result model.
+                        if let Some(source) = search_debounce.borrow_mut().take() {
+                            let _ = std::panic::catch_unwind(
+                                std::panic::AssertUnwindSafe(|| source.remove()),
+                            );
+                        }
+                        search_suppressed.set(true);
+                        search_entry.set_text("");
+                        search_text.replace(String::new());
+                        search_suppressed.set(false);
+
+                        if std::env::var_os("PICASA_TRACE").is_some() {
+                            eprintln!(
+                                "PIC_SEARCH folder_activate folder_id={} search_cleared=true",
+                                folder_id
+                            );
+                        }
+
+                        // Now enter the normal continuous Folder view. With search state
+                        // already empty, the cached/rebuilt Folder stream is authoritative.
                         destination_click(sidebar::SidebarFilter::Folder(folder_id));
 
                         // The first Folder navigation after startup has no cache yet. The

@@ -2416,6 +2416,8 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             let close = {
                 let main_stack = main_stack.clone();
                 let one_to_one = info.one_to_one.clone();
+                let info = info.clone();
+                let grid_zoom_syncing = grid_zoom_syncing.clone();
                 let gallery = gallery.clone();
                 let edit_space_slot = edit_space_slot.clone();
                 let edit_page = edit_page.clone();
@@ -2444,6 +2446,19 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                         main_stack.set_visible_child_name("collage");
                     } else {
                         main_stack.set_visible_child_name("photos");
+                        grid_zoom_syncing.set(true);
+                        info.grid_zoom.set_range(0.0, 7.0);
+                        info.grid_zoom.set_increments(1.0, 1.0);
+                        info.grid_zoom.set_round_digits(0);
+                        info.grid_zoom.clear_marks();
+                        info.grid_zoom.add_mark(3.5, gtk::PositionType::Top, None);
+                        info.grid_zoom.add_mark(3.5, gtk::PositionType::Bottom, None);
+                        info.grid_zoom.set_value(grid_zoom_slider_value(
+                            gallery.current_zoom_width(),
+                        ));
+                        info.grid_zoom
+                            .set_tooltip_text(Some("Thumbnail size (Ctrl + wheel)"));
+                        grid_zoom_syncing.set(false);
                         gallery.restore_view(id, library_scroll_y);
                     }
                     // Detach the editor so it stops contributing to the
@@ -2478,6 +2493,37 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 editor.set_one_to_one_sync_handler(move |enabled| {
                     one_to_one.set_active(enabled);
                 });
+            }
+            {
+                let zoom_scale = info.grid_zoom.clone();
+                let syncing = grid_zoom_syncing.clone();
+                let stack = main_stack.clone();
+                editor.set_zoom_sync_handler(move |native_scale, fit_scale| {
+                    if stack.visible_child_name().as_deref() != Some("edit") {
+                        return;
+                    }
+                    let value = lightbox_slider_from_scale(native_scale, fit_scale);
+                    syncing.set(true);
+                    zoom_scale.set_value(value);
+                    syncing.set(false);
+                });
+            }
+            {
+                let fit_scale = editor.current_fit_scale();
+                let native_scale = editor.current_manual_zoom_scale();
+                grid_zoom_syncing.set(true);
+                info.grid_zoom.set_range(0.0, 100.0);
+                info.grid_zoom.set_increments(0.25, 5.0);
+                info.grid_zoom.set_round_digits(-1);
+                info.grid_zoom.clear_marks();
+                info.grid_zoom.add_mark(50.0, gtk::PositionType::Top, None);
+                info.grid_zoom.add_mark(50.0, gtk::PositionType::Bottom, None);
+                info.grid_zoom
+                    .set_value(lightbox_slider_from_scale(native_scale, fit_scale));
+                info.grid_zoom.set_tooltip_text(Some(
+                    "Edit zoom — left: Fit, middle: 100%, right: 200%",
+                ));
+                grid_zoom_syncing.set(false);
             }
             // Make the way back explicit when the editor was opened from a
             // collage tile; Done saves and follows the same return path.
@@ -2789,13 +2835,12 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 });
             }
         } else if main_stack_for_zoom_slider.visible_child_name().as_deref() == Some("edit") {
-            let previous = slider_last_value_for_change.get();
             if let Some(editor) = edit_editor_for_zoom_slider.borrow().as_ref() {
-                if scale.value() > previous {
-                    editor.zoom_in();
-                } else if scale.value() < previous {
-                    editor.zoom_out();
-                }
+                let fit_scale = editor.current_fit_scale();
+                editor.set_manual_zoom_scale(lightbox_scale_from_slider(
+                    scale.value(),
+                    fit_scale,
+                ));
             }
         } else {
             gallery_for_zoom_slider
@@ -2884,7 +2929,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         let step = if lightbox_for_scale_scroll.root.is_visible() {
             20.0
         } else if main_stack_for_scale_scroll.visible_child_name().as_deref() == Some("edit") {
-            1.0
+            10.0
         } else {
             1.0
         };

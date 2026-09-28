@@ -70,6 +70,12 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 .unwrap_or_default(),
         ),
     }));
+    let rating_filter = Rc::new(Cell::new(RatingFilter::from_key(
+        &db::setting(&connection.borrow(), RATING_FILTER_SETTING_KEY)
+            .ok()
+            .flatten()
+            .unwrap_or_default(),
+    )));
     let saved_group_mode = group_mode_from_key(
         &db::setting(&connection.borrow(), GROUP_MODE_SETTING_KEY)
             .ok()
@@ -97,6 +103,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         initial_filter,
         &mut photos,
     );
+    apply_rating_filter(&mut photos, rating_filter.get());
     if matches!(initial_filter, sidebar::SidebarFilter::Folder(_)) {
         let display_mode = sidebar::FolderDisplayMode::from_setting(
             db::setting(
@@ -2546,6 +2553,10 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         let db_for_rating = connection.clone();
         let info_for_rating = info.clone();
         let gallery_for_rating = gallery.clone();
+        let sort_for_rating = sort.clone();
+        let rating_filter_for_rating = rating_filter.clone();
+        let filter_for_rating = filter.clone();
+        let search_for_rating = search_text.clone();
         let rating = (index + 1) as i32;
         button.connect_clicked(move |_| {
             let Some(photo) = selected_for_rating.borrow().clone() else {
@@ -2559,6 +2570,20 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             photo.set_rating(target);
             gallery_for_rating.update_ratings(&[photo.id()], target);
             info_for_rating.set_photo(Some(&photo));
+
+            // Rebuild only when this edit can change visible membership or
+            // ordering. Otherwise rating remains a cheap in-place badge update.
+            if rating_filter_for_rating.get() != RatingFilter::All
+                || sort_for_rating.get().field == SortField::Rating
+            {
+                refresh_grid(
+                    &db_for_rating,
+                    filter_for_rating.get(),
+                    &search_for_rating.borrow(),
+                    sort_for_rating.get(),
+                    &gallery_for_rating,
+                );
+            }
             if std::env::var_os("PICASA_TRACE").is_some() {
                 eprintln!("UI TRACE photo_rating_changed id={} rating={}", photo.id(), target);
             }

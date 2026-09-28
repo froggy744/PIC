@@ -24,6 +24,7 @@ const THEME_SETTING_KEY: &str = "appearance-theme";
 pub(crate) const EDIT_PANEL_CSS: &str = crate::css::BASE;
 const SORT_FIELD_SETTING_KEY: &str = "photo-sort-field";
 const SORT_DIRECTION_SETTING_KEY: &str = "photo-sort-direction";
+const RATING_FILTER_SETTING_KEY: &str = "photo-rating-filter";
 const GROUP_MODE_SETTING_KEY: &str = "photo-group-mode";
 const GRID_THUMBNAIL_SIZE_SETTING_KEY: &str = "grid-thumbnail-size";
 const LAST_VIEW_SETTING_KEY: &str = "last-view";
@@ -66,29 +67,32 @@ fn grid_zoom_width_from_slider(value: f64) -> i32 {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SortField {
     DateTaken,
+    DateAdded,
+    Rating,
     Name,
     FileSize,
     Dimensions,
-    DateAdded,
 }
 
 impl SortField {
     fn key(self) -> &'static str {
         match self {
             Self::DateTaken => "date-taken",
+            Self::DateAdded => "date-added",
+            Self::Rating => "rating",
             Self::Name => "name",
             Self::FileSize => "file-size",
             Self::Dimensions => "dimensions",
-            Self::DateAdded => "date-added",
         }
     }
 
     fn from_key(key: &str) -> Self {
         match key {
+            "date-added" => Self::DateAdded,
+            "rating" => Self::Rating,
             "name" => Self::Name,
             "file-size" => Self::FileSize,
             "dimensions" => Self::Dimensions,
-            "date-added" => Self::DateAdded,
             _ => Self::DateTaken,
         }
     }
@@ -121,6 +125,67 @@ impl SortDirection {
 struct PhotoSort {
     field: SortField,
     direction: SortDirection,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RatingFilter {
+    All,
+    Unrated,
+    One,
+    Two,
+    Three,
+    Four,
+    Five,
+}
+
+impl RatingFilter {
+    fn key(self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::Unrated => "unrated",
+            Self::One => "1",
+            Self::Two => "2",
+            Self::Three => "3",
+            Self::Four => "4",
+            Self::Five => "5",
+        }
+    }
+
+    fn from_key(key: &str) -> Self {
+        match key {
+            "unrated" | "0" => Self::Unrated,
+            "1" => Self::One,
+            "2" => Self::Two,
+            "3" => Self::Three,
+            "4" => Self::Four,
+            "5" => Self::Five,
+            _ => Self::All,
+        }
+    }
+
+    fn rating(self) -> Option<i32> {
+        match self {
+            Self::All => None,
+            Self::Unrated => Some(0),
+            Self::One => Some(1),
+            Self::Two => Some(2),
+            Self::Three => Some(3),
+            Self::Four => Some(4),
+            Self::Five => Some(5),
+        }
+    }
+
+    fn tooltip(self) -> &'static str {
+        match self {
+            Self::All => "Filter by rating",
+            Self::Unrated => "Rating filter: Unrated",
+            Self::One => "Rating filter: 1 star",
+            Self::Two => "Rating filter: 2 stars",
+            Self::Three => "Rating filter: 3 stars",
+            Self::Four => "Rating filter: 4 stars",
+            Self::Five => "Rating filter: 5 stars",
+        }
+    }
 }
 
 fn group_mode_key(mode: grid::GroupMode) -> &'static str {

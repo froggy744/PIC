@@ -69,7 +69,12 @@ fn refresh_grid_inner(
     gallery: &Rc<grid::Gallery>,
     folder_target: Option<(i64, String)>,
 ) {
-    let _ = connection;
+    let rating_filter = RatingFilter::from_key(
+        &db::setting(&connection.borrow(), RATING_FILTER_SETTING_KEY)
+            .ok()
+            .flatten()
+            .unwrap_or_default(),
+    );
     if filter == sidebar::SidebarFilter::Albums
         || (filter == sidebar::SidebarFilter::Library && search.is_empty())
     {
@@ -120,6 +125,7 @@ fn refresh_grid_inner(
 
         retain_enabled_formats(&connection, &mut photos);
         limit_recently_added(&connection, filter, &mut photos);
+        apply_rating_filter(&mut photos, rating_filter);
         if folder_stream {
             let folders = db::folders(&connection).unwrap_or_default();
             let display_mode = sidebar::FolderDisplayMode::from_setting(
@@ -254,6 +260,12 @@ fn retain_enabled_formats(connection: &Connection, photos: &mut Vec<db::Photo>) 
     photos.retain(|photo| crate::image_format::path_is_enabled_in(&enabled, &photo.path));
 }
 
+fn apply_rating_filter(photos: &mut Vec<db::Photo>, filter: RatingFilter) {
+    if let Some(rating) = filter.rating() {
+        photos.retain(|photo| photo.rating == rating);
+    }
+}
+
 fn sort_photos(photos: &mut [db::Photo], sort: PhotoSort) {
     photos.sort_by(|left, right| photo_ordering(left, right, sort));
 }
@@ -283,6 +295,7 @@ fn photo_ordering(left: &db::Photo, right: &db::Photo, sort: PhotoSort) -> Order
                 .then(left.id.cmp(&right.id)),
             sort.direction,
         ),
+        SortField::Rating => directed_ordering(left.rating.cmp(&right.rating), sort.direction),
     };
 
     ordering.then_with(|| left.path.to_lowercase().cmp(&right.path.to_lowercase()))
@@ -420,8 +433,9 @@ fn pixel_count(width: Option<i64>, height: Option<i64>) -> Option<i128> {
 #[cfg(test)]
 mod photo_action_tests {
     use super::{
-        folder_stream_order, sort_folder_stream, sort_photos, valid_file_name, wallpaper_layout,
-        PhotoSort, SortDirection, SortField, WallpaperLayout,
+        apply_rating_filter, folder_stream_order, sort_folder_stream, sort_photos,
+        valid_file_name, wallpaper_layout, PhotoSort, RatingFilter, SortDirection, SortField,
+        WallpaperLayout,
     };
     use crate::db::{Folder, Photo};
 
@@ -577,8 +591,8 @@ mod photo_action_tests {
     }
 
     #[test]
-    fn photo_sort_supports_names_dates_sizes_and_dimensions() {
-        let source = vec![
+    fn photo_sort_supports_names_dates_sizes_dimensions_and_ratings() {
+        let mut source = vec![
             photo("/photos/z.jpg", Some("2022"), Some(20), None, Some(2)),
             photo(
                 "/photos/A.jpg",
@@ -589,6 +603,9 @@ mod photo_action_tests {
             ),
             photo("/photos/m.jpg", None, Some(30), Some((3000, 2000)), Some(1)),
         ];
+        source[0].rating = 1;
+        source[1].rating = 5;
+        source[2].rating = 3;
 
         let sorted_paths = |field, direction| {
             let mut photos = source.clone();
@@ -618,5 +635,42 @@ mod photo_action_tests {
             sorted_paths(SortField::DateAdded, SortDirection::Ascending),
             ["/photos/m.jpg", "/photos/z.jpg", "/photos/A.jpg"]
         );
+        assert_eq!(
+            sorted_paths(SortField::Rating, SortDirection::Descending),
+            ["/photos/A.jpg", "/photos/m.jpg", "/photos/z.jpg"]
+        );
+        assert_eq!(
+            sorted_paths(SortField::Rating, SortDirection::Ascending),
+            ["/photos/z.jpg", "/photos/m.jpg", "/photos/A.jpg"]
+        );
+    }
+
+    #[test]
+    fn rating_filter_is_exact_and_all_keeps_every_photo() {
+        let mut photos = vec![
+            photo("/photos/unrated.jpg", None, None, None, None),
+            photo("/photos/one.jpg", None, None, None, None),
+            photo("/photos/three.jpg", None, None, None, None),
+        ];
+        photos[1].rating = 1;
+        photos[2].rating = 3;
+
+        let original = photos.clone();
+        apply_rating_filter(&mut photos, RatingFilter::One);
+        assert_eq!(
+            photos.iter().map(|photo| photo.path.as_str()).collect::<Vec<_>>(),
+            vec!["/photos/one.jpg"]
+        );
+
+        let mut unrated = original.clone();
+        apply_rating_filter(&mut unrated, RatingFilter::Unrated);
+        assert_eq!(
+            unrated.iter().map(|photo| photo.path.as_str()).collect::<Vec<_>>(),
+            vec!["/photos/unrated.jpg"]
+        );
+
+        let mut all = original;
+        apply_rating_filter(&mut all, RatingFilter::All);
+        assert_eq!(all.len(), 3);
     }
 }

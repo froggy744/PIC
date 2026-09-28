@@ -24,31 +24,35 @@
     sort_box.append(&sort_heading);
 
     let date_taken_sort = gtk::CheckButton::with_label("Date taken");
+    let date_added_sort = gtk::CheckButton::with_label("Date added");
+    let rating_sort = gtk::CheckButton::with_label("Rating");
     let name_sort = gtk::CheckButton::with_label("Name");
     let file_size_sort = gtk::CheckButton::with_label("File size");
     let dimensions_sort = gtk::CheckButton::with_label("Dimensions");
-    let date_added_sort = gtk::CheckButton::with_label("Date added");
     for button in [
+        &date_added_sort,
+        &rating_sort,
         &name_sort,
         &file_size_sort,
         &dimensions_sort,
-        &date_added_sort,
     ] {
         button.set_group(Some(&date_taken_sort));
     }
     match sort.get().field {
         SortField::DateTaken => date_taken_sort.set_active(true),
+        SortField::DateAdded => date_added_sort.set_active(true),
+        SortField::Rating => rating_sort.set_active(true),
         SortField::Name => name_sort.set_active(true),
         SortField::FileSize => file_size_sort.set_active(true),
         SortField::Dimensions => dimensions_sort.set_active(true),
-        SortField::DateAdded => date_added_sort.set_active(true),
     }
     for button in [
         &date_taken_sort,
+        &date_added_sort,
+        &rating_sort,
         &name_sort,
         &file_size_sort,
         &dimensions_sort,
-        &date_added_sort,
     ] {
         sort_box.append(button);
     }
@@ -140,10 +144,11 @@
         });
     };
     connect_sort_field(&date_taken_sort, SortField::DateTaken);
+    connect_sort_field(&date_added_sort, SortField::DateAdded);
+    connect_sort_field(&rating_sort, SortField::Rating);
     connect_sort_field(&name_sort, SortField::Name);
     connect_sort_field(&file_size_sort, SortField::FileSize);
     connect_sort_field(&dimensions_sort, SortField::Dimensions);
-    connect_sort_field(&date_added_sort, SortField::DateAdded);
 
     let connect_sort_direction = |button: &gtk::CheckButton, direction: SortDirection| {
         let sort = sort.clone();
@@ -240,8 +245,114 @@
     });
 
     sort_button.set_popover(Some(&sort_popover));
+
+    // Keep rating filtering independent from sorting. The filtered subset can
+    // still be sorted by Date, Rating, Name, Size, or Dimensions.
+    let rating_filter_button = gtk::MenuButton::new();
+    rating_filter_button.set_icon_name(if rating_filter.get() == RatingFilter::All {
+        "non-starred-symbolic"
+    } else {
+        "starred-symbolic"
+    });
+    rating_filter_button.set_tooltip_text(Some(rating_filter.get().tooltip()));
+
+    let rating_filter_popover = gtk::Popover::new();
+    let rating_filter_box = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    rating_filter_box.set_margin_top(8);
+    rating_filter_box.set_margin_bottom(8);
+    rating_filter_box.set_margin_start(8);
+    rating_filter_box.set_margin_end(8);
+
+    let rating_filter_heading = gtk::Label::new(Some("Filter by rating"));
+    rating_filter_heading.set_xalign(0.0);
+    rating_filter_heading.add_css_class("heading");
+    rating_filter_box.append(&rating_filter_heading);
+
+    let rating_all = gtk::CheckButton::with_label("All ratings");
+    let rating_unrated = gtk::CheckButton::with_label("Unrated");
+    let rating_one = gtk::CheckButton::with_label("★ 1");
+    let rating_two = gtk::CheckButton::with_label("★★ 2");
+    let rating_three = gtk::CheckButton::with_label("★★★ 3");
+    let rating_four = gtk::CheckButton::with_label("★★★★ 4");
+    let rating_five = gtk::CheckButton::with_label("★★★★★ 5");
+    for button in [
+        &rating_unrated,
+        &rating_one,
+        &rating_two,
+        &rating_three,
+        &rating_four,
+        &rating_five,
+    ] {
+        button.set_group(Some(&rating_all));
+    }
+    match rating_filter.get() {
+        RatingFilter::All => rating_all.set_active(true),
+        RatingFilter::Unrated => rating_unrated.set_active(true),
+        RatingFilter::One => rating_one.set_active(true),
+        RatingFilter::Two => rating_two.set_active(true),
+        RatingFilter::Three => rating_three.set_active(true),
+        RatingFilter::Four => rating_four.set_active(true),
+        RatingFilter::Five => rating_five.set_active(true),
+    }
+    for button in [
+        &rating_all,
+        &rating_unrated,
+        &rating_one,
+        &rating_two,
+        &rating_three,
+        &rating_four,
+        &rating_five,
+    ] {
+        rating_filter_box.append(button);
+    }
+
+    let connect_rating_filter = |button: &gtk::CheckButton, value: RatingFilter| {
+        let rating_filter = rating_filter.clone();
+        let rating_filter_button = rating_filter_button.clone();
+        let connection = connection.clone();
+        let filter = filter.clone();
+        let search = search_text.clone();
+        let sort = sort.clone();
+        let gallery = gallery.clone();
+        button.connect_toggled(move |button| {
+            if !button.is_active() {
+                return;
+            }
+            rating_filter.set(value);
+            rating_filter_button.set_icon_name(if value == RatingFilter::All {
+                "non-starred-symbolic"
+            } else {
+                "starred-symbolic"
+            });
+            rating_filter_button.set_tooltip_text(Some(value.tooltip()));
+            if let Err(error) =
+                db::set_setting(&connection.borrow(), RATING_FILTER_SETTING_KEY, value.key())
+            {
+                eprintln!("Could not save photo rating filter: {error}");
+            }
+            refresh_grid(
+                &connection,
+                filter.get(),
+                &search.borrow(),
+                sort.get(),
+                &gallery,
+            );
+        });
+    };
+    connect_rating_filter(&rating_all, RatingFilter::All);
+    connect_rating_filter(&rating_unrated, RatingFilter::Unrated);
+    connect_rating_filter(&rating_one, RatingFilter::One);
+    connect_rating_filter(&rating_two, RatingFilter::Two);
+    connect_rating_filter(&rating_three, RatingFilter::Three);
+    connect_rating_filter(&rating_four, RatingFilter::Four);
+    connect_rating_filter(&rating_five, RatingFilter::Five);
+
+    rating_filter_popover.set_child(Some(&rating_filter_box));
+    rating_filter_button.set_popover(Some(&rating_filter_popover));
+
     let header_tools = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     header_tools.append(&sort_button);
+    header_tools.append(&rating_filter_button);
     header_tools.append(&settings);
     right_header.pack_end(&header_tools);
 

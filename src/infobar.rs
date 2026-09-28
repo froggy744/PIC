@@ -187,9 +187,17 @@ impl InfoBar {
         // pointer motion and made dragging appear to stick at the midpoint.
         let grid_zoom = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.0, 7.0, 1.0);
         grid_zoom.set_draw_value(false);
+        // Grid has exactly eight canonical thumbnail sizes. Let the Scale
+        // itself own that discrete contract instead of emitting fractional
+        // values that are immediately rounded by the gallery and echoed back
+        // into the same thumb during a drag.
+        grid_zoom.set_round_digits(0);
         grid_zoom.set_width_request(128);
         grid_zoom.set_hexpand(false);
         grid_zoom.set_valign(gtk::Align::Center);
+        // Symmetric marks keep the trough vertically centred beside the
+        // infobar buttons; a bottom-only mark shifts GtkScale's layout upward.
+        grid_zoom.add_mark(3.5, gtk::PositionType::Top, None);
         grid_zoom.add_mark(3.5, gtk::PositionType::Bottom, None);
         grid_zoom.set_tooltip_text(Some(
             "Thumbnail size (Ctrl + wheel); click the middle mark to reset",

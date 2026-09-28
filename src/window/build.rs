@@ -2449,7 +2449,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                         main_stack.set_visible_child_name("collage");
                     } else {
                         main_stack.set_visible_child_name("photos");
-                        grid_zoom_syncing_for_editor.set(true);
+                        grid_zoom_syncing.set(true);
                         info.grid_zoom.set_range(0.0, 7.0);
                         info.grid_zoom.set_increments(1.0, 1.0);
                         info.grid_zoom.set_round_digits(0);
@@ -2461,7 +2461,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                         ));
                         info.grid_zoom
                             .set_tooltip_text(Some("Thumbnail size (Ctrl + wheel)"));
-                        grid_zoom_syncing_for_editor.set(false);
+                        grid_zoom_syncing.set(false);
                         gallery.restore_view(id, library_scroll_y);
                     }
                     // Detach the editor so it stops contributing to the

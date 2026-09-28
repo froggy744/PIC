@@ -1254,7 +1254,7 @@ impl SectionedFolderView {
         snapshot: SectionedReflowSnapshot,
         anchor: Option<(i64, f64)>,
     ) {
-        const DURATION_MS: f64 = 190.0;
+        const DURATION_MS: f64 = 220.0;
 
         let old_columns = snapshot.old_columns.max(1);
         let old_width = snapshot.old_width.max(1);
@@ -1370,7 +1370,7 @@ impl SectionedFolderView {
             .map(|entry| entry.tile.clone())
             .collect::<Vec<_>>();
         for tile in &fade_tiles {
-            tile.set_opacity(0.88);
+            tile.set_opacity(0.94);
         }
 
         if motion.is_empty() && header_motion.is_empty() && fade_tiles.is_empty() {
@@ -1412,7 +1412,7 @@ impl SectionedFolderView {
             for (tile, dx) in &motion {
                 tile.set_presentation_offset(dx * remaining, 0.0);
             }
-            let opacity = 0.88 + 0.12 * eased;
+            let opacity = 0.94 + 0.06 * eased;
             for tile in &fade_tiles {
                 tile.set_opacity(opacity);
             }

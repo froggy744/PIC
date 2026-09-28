@@ -440,6 +440,19 @@ impl Gallery {
         }
     }
 
+    /// Folder containing the first photo in the real GTK selection model.
+    /// In the continuous Folder view this is the authoritative Ctrl+A scope:
+    /// it follows the thumbnail the user actually clicked, not the sidebar's
+    /// scroll-follow state which may already point at an adjacent section.
+    pub fn selected_folder_id(&self) -> Option<i64> {
+        let selected = self.selection.selection();
+        let (_, position) = gtk::BitsetIter::init_first(&selected)?;
+        self.current_photos
+            .borrow()
+            .get(position as usize)
+            .map(|photo| photo.folder_id())
+    }
+
     pub fn selected_photo_ids(&self, fallback_id: Option<i64>) -> Vec<i64> {
         if self.collage_selection_mode.get() {
             return self.collage_selected_ids.borrow().iter().copied().collect();

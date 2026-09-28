@@ -2658,7 +2658,9 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             let fit_scale = fit_scale.clamp(f64::EPSILON, 1.0);
             fit_scale + (1.0 - fit_scale) * (value / 50.0)
         } else {
-            1.0 + crate::lightbox::LIGHTBOX_MAX_ZOOM_FACTOR * ((value - 50.0) / 50.0)
+            1.0
+                + (crate::lightbox::LIGHTBOX_MAX_ZOOM_FACTOR - 1.0)
+                    * ((value - 50.0) / 50.0)
         }
     }
 
@@ -2686,24 +2688,67 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let grid_zoom_syncing_for_slider = grid_zoom_syncing.clone();
     let slider_last_value = Rc::new(Cell::new(info.grid_zoom.value()));
     let slider_last_value_for_change = slider_last_value.clone();
+    // Lightbox slider drags can emit many value changes inside one display
+    // frame. Applying every one forces GtkPicture + GtkScrolledWindow to
+    // renegotiate geometry and recenter their adjustments repeatedly, which
+    // becomes visible as shaking once the image overflows the viewport.
+    //
+    // Apply the first movement immediately for direct response, then keep only
+    // the newest absolute slider value and publish at most once per ~60 Hz
+    // frame. This is throttling, not a trailing debounce: the control remains
+    // live under the pointer and never waits hundreds of milliseconds.
+    let lightbox_slider_latest = Rc::new(Cell::new(info.grid_zoom.value()));
+    let lightbox_slider_applied = Rc::new(Cell::new(info.grid_zoom.value()));
+    let lightbox_slider_tick_running = Rc::new(Cell::new(false));
+    let lightbox_slider_latest_for_change = lightbox_slider_latest.clone();
+    let lightbox_slider_applied_for_change = lightbox_slider_applied.clone();
+    let lightbox_slider_tick_running_for_change = lightbox_slider_tick_running.clone();
 
     info.grid_zoom.connect_value_changed(move |scale| {
         if grid_zoom_syncing_for_slider.get() {
             slider_last_value_for_change.set(scale.value());
+            lightbox_slider_latest_for_change.set(scale.value());
+            lightbox_slider_applied_for_change.set(scale.value());
             return;
         }
 
         if lightbox_for_zoom_slider.root.is_visible() {
-            // In lightbox mode the slider range is 0..100 with 50 exactly 1:1.
-            // Each event writes the requested geometry directly; GTK coalesces
-            // them into one layout per frame and the range-change anchor keeps
-            // the photo's visual centre fixed while it is applied, so there is
-            // no separate commit and no trailing timer.
-            let fit_scale = lightbox_for_zoom_slider.current_fit_scale();
-            lightbox_for_zoom_slider.request_slider_zoom(lightbox_scale_from_slider(
-                scale.value(),
-                fit_scale,
-            ));
+            let value = scale.value();
+            lightbox_slider_latest_for_change.set(value);
+
+            if !lightbox_slider_tick_running_for_change.get() {
+                // First movement is immediate so the thumb never feels
+                // detached from the photo.
+                let fit_scale = lightbox_for_zoom_slider.current_fit_scale();
+                lightbox_for_zoom_slider.request_slider_zoom(lightbox_scale_from_slider(
+                    value,
+                    fit_scale,
+                ));
+                lightbox_slider_applied_for_change.set(value);
+                lightbox_slider_tick_running_for_change.set(true);
+
+                let lightbox = lightbox_for_zoom_slider.clone();
+                let latest = lightbox_slider_latest_for_change.clone();
+                let applied = lightbox_slider_applied_for_change.clone();
+                let running = lightbox_slider_tick_running_for_change.clone();
+                glib::timeout_add_local(Duration::from_millis(16), move || {
+                    if !lightbox.root.is_visible() {
+                        running.set(false);
+                        return glib::ControlFlow::Break;
+                    }
+
+                    let value = latest.get();
+                    if (value - applied.get()).abs() <= f64::EPSILON {
+                        running.set(false);
+                        return glib::ControlFlow::Break;
+                    }
+
+                    let fit_scale = lightbox.current_fit_scale();
+                    lightbox.request_slider_zoom(lightbox_scale_from_slider(value, fit_scale));
+                    applied.set(value);
+                    glib::ControlFlow::Continue
+                });
+            }
         } else if main_stack_for_zoom_slider.visible_child_name().as_deref() == Some("edit") {
             let previous = slider_last_value_for_change.get();
             if let Some(editor) = edit_editor_for_zoom_slider.borrow().as_ref() {

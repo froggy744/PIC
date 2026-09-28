@@ -20,9 +20,13 @@ pub struct EditEditor {
     zoom_in_action: Rc<dyn Fn()>,
     zoom_out_action: Rc<dyn Fn()>,
     fit_action: Rc<dyn Fn()>,
+    set_manual_zoom_action: Rc<dyn Fn(f64)>,
+    current_fit_scale_action: Rc<dyn Fn() -> f64>,
+    current_manual_zoom_scale_action: Rc<dyn Fn() -> f64>,
     one_to_one_action: Rc<dyn Fn(bool)>,
     set_library_rotation_action: Rc<dyn Fn(i32)>,
     one_to_one_sync: Rc<RefCell<Option<Box<dyn Fn(bool)>>>>,
+    zoom_sync: Rc<RefCell<Option<Box<dyn Fn(f64, f64)>>>>,
     text_toggle: gtk::ToggleButton,
 }
 
@@ -50,6 +54,20 @@ impl EditEditor {
         (self.fit_action)();
     }
 
+    /// Set an absolute source-image scale. 0.0 means Fit, 1.0 is native
+    /// 100%, and 2.0 is 200%. This is the shared infobar slider entry point.
+    pub fn set_manual_zoom_scale(&self, native_scale: f64) {
+        (self.set_manual_zoom_action)(native_scale);
+    }
+
+    pub fn current_fit_scale(&self) -> f64 {
+        (self.current_fit_scale_action)()
+    }
+
+    pub fn current_manual_zoom_scale(&self) -> f64 {
+        (self.current_manual_zoom_scale_action)()
+    }
+
     pub fn set_one_to_one(&self, enabled: bool) {
         (self.one_to_one_action)(enabled);
     }
@@ -60,6 +78,12 @@ impl EditEditor {
 
     pub fn set_one_to_one_sync_handler(&self, handler: impl Fn(bool) + 'static) {
         self.one_to_one_sync.replace(Some(Box::new(handler)));
+    }
+
+    /// Reports absolute native-image scale together with the current Fit scale
+    /// so the shared infobar slider stays synchronized with +/- and Ctrl+wheel.
+    pub fn set_zoom_sync_handler(&self, handler: impl Fn(f64, f64) + 'static) {
+        self.zoom_sync.replace(Some(Box::new(handler)));
     }
 
     /// True while the sidebar Text tab is active. Space must not toggle
@@ -343,6 +367,7 @@ pub fn build(
     let pending_one_to_one_anchor: Rc<RefCell<Option<OneToOneAnchor>>> =
         Rc::new(RefCell::new(None));
     let one_to_one_sync: Rc<RefCell<Option<Box<dyn Fn(bool)>>>> = Rc::new(RefCell::new(None));
+    let zoom_sync: Rc<RefCell<Option<Box<dyn Fn(f64, f64)>>>> = Rc::new(RefCell::new(None));
     let generation = Rc::new(Cell::new(0u64));
     let preview_debounce: Rc<RefCell<Option<glib::SourceId>>> = Rc::new(RefCell::new(None));
     // Keep both the normal Fit preview base and a prefetched native-resolution
@@ -1234,6 +1259,7 @@ pub fn build(
         let canvas_zoom = canvas_zoom.clone();
         let native_one_to_one = native_one_to_one.clone();
         let one_to_one_sync = one_to_one_sync.clone();
+        let zoom_sync = zoom_sync.clone();
         Rc::new(move || {
             let was_one_to_one = native_one_to_one.replace(false);
             if was_one_to_one {
@@ -1241,8 +1267,12 @@ pub fn build(
                     handler(false);
                 }
             }
+            let dimensions = preview_dimensions.get();
             canvas_zoom.set(0.0);
-            apply_canvas_zoom(&picture, &picture_scroll, preview_dimensions.get(), 0.0);
+            apply_canvas_zoom(&picture, &picture_scroll, dimensions, 0.0);
+            if let Some(handler) = zoom_sync.borrow().as_ref() {
+                handler(0.0, fit_zoom_for_canvas(&picture_scroll, dimensions));
+            }
         })
     };
     // Canvas zoom is stored as a multiplier relative to Fit, not as an
@@ -1256,6 +1286,7 @@ pub fn build(
         let canvas_zoom = canvas_zoom.clone();
         let native_one_to_one = native_one_to_one.clone();
         let one_to_one_sync = one_to_one_sync.clone();
+        let zoom_sync = zoom_sync.clone();
         Rc::new(move || {
             let was_one_to_one = native_one_to_one.replace(false);
             if was_one_to_one {
@@ -1272,6 +1303,10 @@ pub fn build(
             let next_multiplier = (current_multiplier - 0.10).clamp(0.25, 8.0);
             canvas_zoom.set(next_multiplier);
             apply_canvas_zoom(&picture, &picture_scroll, dimensions, next_multiplier);
+            if let Some(handler) = zoom_sync.borrow().as_ref() {
+                let fit = fit_zoom_for_canvas(&picture_scroll, dimensions);
+                handler(fit * next_multiplier, fit);
+            }
         })
     };
     let zoom_in_action: Rc<dyn Fn()> = {
@@ -1281,6 +1316,7 @@ pub fn build(
         let canvas_zoom = canvas_zoom.clone();
         let native_one_to_one = native_one_to_one.clone();
         let one_to_one_sync = one_to_one_sync.clone();
+        let zoom_sync = zoom_sync.clone();
         Rc::new(move || {
             let was_one_to_one = native_one_to_one.replace(false);
             if was_one_to_one {
@@ -1297,8 +1333,69 @@ pub fn build(
             let next_multiplier = (current_multiplier + 0.10).clamp(0.25, 8.0);
             canvas_zoom.set(next_multiplier);
             apply_canvas_zoom(&picture, &picture_scroll, dimensions, next_multiplier);
+            if let Some(handler) = zoom_sync.borrow().as_ref() {
+                let fit = fit_zoom_for_canvas(&picture_scroll, dimensions);
+                handler(fit * next_multiplier, fit);
+            }
         })
     };
+    let set_manual_zoom_action: Rc<dyn Fn(f64)> = {
+        let picture = picture.clone();
+        let picture_scroll = picture_scroll.clone();
+        let preview_dimensions = preview_dimensions.clone();
+        let canvas_zoom = canvas_zoom.clone();
+        let native_one_to_one = native_one_to_one.clone();
+        let one_to_one_sync = one_to_one_sync.clone();
+        let zoom_sync = zoom_sync.clone();
+        Rc::new(move |native_scale| {
+            let was_one_to_one = native_one_to_one.replace(false);
+            if was_one_to_one {
+                if let Some(handler) = one_to_one_sync.borrow().as_ref() {
+                    handler(false);
+                }
+            }
+
+            let dimensions = preview_dimensions.get();
+            let fit = fit_zoom_for_canvas(&picture_scroll, dimensions);
+            if native_scale <= 0.0 || native_scale <= fit * 1.001 {
+                canvas_zoom.set(0.0);
+                apply_canvas_zoom(&picture, &picture_scroll, dimensions, 0.0);
+                if let Some(handler) = zoom_sync.borrow().as_ref() {
+                    handler(0.0, fit);
+                }
+                return;
+            }
+
+            let native_scale = native_scale.clamp(fit, 2.0);
+            let multiplier = (native_scale / fit.max(f64::EPSILON)).clamp(0.25, 8.0);
+            canvas_zoom.set(multiplier);
+            apply_canvas_zoom(&picture, &picture_scroll, dimensions, multiplier);
+            if let Some(handler) = zoom_sync.borrow().as_ref() {
+                handler(native_scale, fit);
+            }
+        })
+    };
+    let current_fit_scale_action: Rc<dyn Fn() -> f64> = {
+        let picture_scroll = picture_scroll.clone();
+        let preview_dimensions = preview_dimensions.clone();
+        Rc::new(move || fit_zoom_for_canvas(&picture_scroll, preview_dimensions.get()))
+    };
+    let current_manual_zoom_scale_action: Rc<dyn Fn() -> f64> = {
+        let picture_scroll = picture_scroll.clone();
+        let preview_dimensions = preview_dimensions.clone();
+        let canvas_zoom = canvas_zoom.clone();
+        let native_one_to_one = native_one_to_one.clone();
+        Rc::new(move || {
+            if native_one_to_one.get() {
+                1.0
+            } else if canvas_zoom.get() <= 0.0 {
+                0.0
+            } else {
+                fit_zoom_for_canvas(&picture_scroll, preview_dimensions.get()) * canvas_zoom.get()
+            }
+        })
+    };
+
     {
         let zoom_out_action = zoom_out_action.clone();
         toolbar_zoom_out.connect_clicked(move |_| zoom_out_action());
@@ -1419,6 +1516,7 @@ pub fn build(
         let picture_scroll = picture_scroll.clone();
         let queue_preview = queue_preview.clone();
         let fit_action = fit_action.clone();
+        let zoom_sync = zoom_sync.clone();
         Rc::new(move |enabled| {
             if enabled {
                 let dimensions = preview_dimensions.get();
@@ -1486,6 +1584,12 @@ pub fn build(
                 // normal Fit-relative zoom multiplier.
                 canvas_zoom.set(0.0);
                 queue_preview();
+                if let Some(handler) = zoom_sync.borrow().as_ref() {
+                    handler(
+                        1.0,
+                        fit_zoom_for_canvas(&picture_scroll, preview_dimensions.get()),
+                    );
+                }
             } else {
                 pending_one_to_one_anchor.borrow_mut().take();
                 fit_action();
@@ -1949,9 +2053,13 @@ pub fn build(
         zoom_in_action,
         zoom_out_action,
         fit_action,
+        set_manual_zoom_action,
+        current_fit_scale_action,
+        current_manual_zoom_scale_action,
         one_to_one_action,
         set_library_rotation_action,
         one_to_one_sync,
+        zoom_sync,
         text_toggle,
     }
 }

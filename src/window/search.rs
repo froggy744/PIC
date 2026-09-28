@@ -299,6 +299,11 @@ fn update_folder_suggestions(
     if matches.is_empty() || query.chars().count() < 2 {
         popover.popdown();
     } else {
+        // Enter should activate the best folder match immediately after
+        // typing, without requiring an extra Down key first.
+        if let Some(first) = list.row_at_index(0) {
+            list.select_row(Some(&first));
+        }
         if !popover.is_visible() {
             popover.popup();
         }

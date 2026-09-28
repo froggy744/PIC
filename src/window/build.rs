@@ -2653,9 +2653,18 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     fn lightbox_scale_from_slider(value: f64, fit_scale: f64) -> f64 {
         let value = value.clamp(0.0, 100.0);
         if value <= 0.0 {
-            0.0
-        } else if value <= 50.0 {
-            let fit_scale = fit_scale.clamp(f64::EPSILON, 1.0);
+            return 0.0;
+        }
+
+        let fit_scale = fit_scale.clamp(f64::EPSILON, 1.0);
+        if fit_scale >= 0.999 {
+            // Fit and 1:1 are the same visual state. Do not waste half the
+            // physical slider on a dead Fit->100% range.
+            return 1.0
+                + (crate::lightbox::LIGHTBOX_MAX_ZOOM_FACTOR - 1.0) * (value / 100.0);
+        }
+
+        if value <= 50.0 {
             fit_scale + (1.0 - fit_scale) * (value / 50.0)
         } else {
             1.0
@@ -2668,16 +2677,23 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         if scale <= 0.0 {
             return 0.0;
         }
+
         let fit_scale = fit_scale.clamp(f64::EPSILON, 1.0);
+        if fit_scale >= 0.999 {
+            return 100.0
+                * ((scale - 1.0)
+                    / (crate::lightbox::LIGHTBOX_MAX_ZOOM_FACTOR - 1.0))
+                    .clamp(0.0, 1.0);
+        }
+
         if scale <= 1.0 {
-            if (1.0 - fit_scale).abs() < f64::EPSILON {
-                50.0
-            } else {
-                50.0 * ((scale - fit_scale) / (1.0 - fit_scale)).clamp(0.0, 1.0)
-            }
+            50.0 * ((scale - fit_scale) / (1.0 - fit_scale)).clamp(0.0, 1.0)
         } else {
             50.0
-                + 50.0 * ((scale - 1.0) / (crate::lightbox::LIGHTBOX_MAX_ZOOM_FACTOR - 1.0)).clamp(0.0, 1.0)
+                + 50.0
+                    * ((scale - 1.0)
+                        / (crate::lightbox::LIGHTBOX_MAX_ZOOM_FACTOR - 1.0))
+                        .clamp(0.0, 1.0)
         }
     }
 
@@ -2877,7 +2893,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         }
 
         let step = if lightbox_for_scale_scroll.root.is_visible() {
-            2.0
+            10.0
         } else if main_stack_for_scale_scroll.visible_child_name().as_deref() == Some("edit") {
             1.0
         } else {

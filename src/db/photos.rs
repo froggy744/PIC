@@ -649,6 +649,25 @@ pub fn set_rating(connection: &Connection, id: i64, rating: i32) -> Result<()> {
     Ok(())
 }
 
+pub fn set_rating_for_photos(connection: &Connection, ids: &[i64], rating: i32) -> Result<()> {
+    anyhow::ensure!((0..=5).contains(&rating), "invalid rating: {rating}");
+    if ids.is_empty() {
+        return Ok(());
+    }
+
+    let transaction = connection.unchecked_transaction()?;
+    {
+        let mut statement = transaction.prepare(
+            "UPDATE photos SET rating = ?1 WHERE id = ?2 AND trashed = 0",
+        )?;
+        for id in ids {
+            statement.execute(params![rating, id])?;
+        }
+    }
+    transaction.commit()?;
+    Ok(())
+}
+
 pub fn set_favorite_for_folder(
     connection: &Connection,
     folder_id: i64,

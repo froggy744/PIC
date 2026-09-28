@@ -2065,7 +2065,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 {
                     // Legacy Folder ListView still benefits from coalescing
                     // because a column change rebuilds its row model.
-                    gallery_for_resize.update_width(width);
+                    gallery_for_resize.update_width_with_flip(width);
                 }
             }
         }

@@ -1,3 +1,11 @@
+// Shared with keyboard scrolling so gallery motion has one timing and curve.
+const GALLERY_MOTION_MS: f64 = 190.0;
+
+fn gallery_ease_in_out(t: f64) -> f64 {
+    let t = t.clamp(0.0, 1.0);
+    if t < 0.5 { 4.0 * t * t * t } else { 1.0 - (-2.0 * t + 2.0).powi(3) / 2.0 }
+}
+
 const SECTIONED_HEADER_HEIGHT: f64 = 70.0;
 const SECTIONED_SIDE_MARGIN: f64 = 20.0;
 const SECTIONED_OVERSCAN_PX: f64 = 320.0;
@@ -13,6 +21,8 @@ struct SectionedFolderGeometry {
 
 #[derive(Clone)]
 struct SectionedReflowSnapshot {
+    tile_positions: HashMap<u32, (f64, f64)>,
+    header_positions: HashMap<usize, (f64, f64)>,
     old_columns: u32,
     old_geometry: Vec<SectionedFolderGeometry>,
     tile_width: i32,
@@ -1026,6 +1036,9 @@ impl SectionedFolderView {
         self.clear_strip_layer();
         self.reflow_animation_generation
             .set(self.reflow_animation_generation.get().wrapping_add(1));
+        for entry in self.live_tiles.borrow().values() {
+            entry.tile.set_presentation_offset(0.0, 0.0);
+        }
         self.reflow_active.set(false);
         self.preserve_headers_during_reflow.set(false);
         // A replacement can keep the same numeric positions while changing
@@ -1062,6 +1075,14 @@ impl SectionedFolderView {
             }
         }
         SectionedReflowSnapshot {
+            tile_positions: self.live_tiles.borrow().iter().map(|(index, entry)| {
+                let (x, y) = self.root.child_position(&entry.tile);
+                let (dx, dy) = entry.tile.presentation_offset();
+                (*index, (x + f64::from(dx), y + f64::from(dy)))
+            }).collect(),
+            header_positions: self.live_headers.borrow().iter().map(|(index, header)| {
+                (*index, self.root.child_position(header))
+            }).collect(),
             old_columns: self.current_columns.get().max(1),
             old_geometry: self.geometry.borrow().clone(),
             tile_width: self.tile_width.get(),
@@ -1117,6 +1138,9 @@ impl SectionedFolderView {
         self.reflow_animation_generation
             .set(self.reflow_animation_generation.get().wrapping_add(1));
         self.clear_strip_layer();
+        for entry in self.live_tiles.borrow().values() {
+            entry.tile.set_presentation_offset(0.0, 0.0);
+        }
         self.reflow_active.set(false);
         self.preserve_headers_during_reflow.set(false);
 
@@ -1223,7 +1247,66 @@ impl SectionedFolderView {
         snapshot: SectionedReflowSnapshot,
         anchor: Option<(i64, f64)>,
     ) {
+        let old_scroll = snapshot.old_scroll_y;
+        let positions = snapshot.tile_positions.clone();
+        let headers = snapshot.header_positions.clone();
         self.apply_reflow_without_animation(snapshot, anchor);
+        if !self.root.settings().is_gtk_enable_animations() || !self.root.is_mapped() {
+            return;
+        }
+        let scroll_delta = self.scroll_position() - old_scroll;
+        let tiles = self.live_tiles.borrow().iter().filter_map(|(index, entry)| {
+            let &(old_x, old_y) = positions.get(index)?;
+            let ranges = self.group_ranges.borrow();
+            let section = section_index_for_photo(&ranges, *index as usize)?;
+            let local = *index as usize - ranges[section].start;
+            let columns = self.current_columns.get() as usize;
+            let (left, gap) = self.horizontal_grid_metrics(self.geometry_width.get());
+            let x = left + (local % columns) as f64 * (f64::from(self.tile_width.get()) + gap);
+            let y = self.geometry.borrow()[section].first_photo_y
+                + (local / columns) as f64 * f64::from(folder_line_height(
+                    self.tile_height.get(), self.show_file_names.get()));
+            let offset = ((old_x - x) as f32, (old_y + scroll_delta - y) as f32);
+            entry.tile.set_presentation_offset(offset.0, offset.1);
+            Some((entry.tile.clone(), offset))
+        }).collect::<Vec<_>>();
+        let headers = self.live_headers.borrow().iter().filter_map(|(index, header)| {
+            let &(old_x, old_y) = headers.get(index)?;
+            let target = (self.horizontal_grid_metrics(self.geometry_width.get()).0,
+                self.geometry.borrow().get(*index)?.header_y);
+            let start = (old_x, old_y + scroll_delta);
+            self.root.move_(header, start.0, start.1);
+            Some((header.clone(), start, target))
+        }).collect::<Vec<_>>();
+        self.reflow_active.set(true);
+        self.preserve_headers_during_reflow.set(true);
+        let generation = self.reflow_animation_generation.get();
+        let weak = Rc::downgrade(self);
+        let started = Instant::now();
+        self.root.add_tick_callback(move |_, _| {
+            let Some(view) = weak.upgrade() else { return glib::ControlFlow::Break; };
+            if view.reflow_animation_generation.get() != generation {
+                return glib::ControlFlow::Break;
+            }
+            let t = (started.elapsed().as_secs_f64() * 1000.0 / GALLERY_MOTION_MS).min(1.0);
+            let remaining = 1.0 - gallery_ease_in_out(t);
+            for (tile, (dx, dy)) in &tiles {
+                tile.set_presentation_offset(dx * remaining as f32, dy * remaining as f32);
+            }
+            for (header, start, target) in &headers {
+                view.root.move_(header,
+                    target.0 + (start.0 - target.0) * remaining,
+                    target.1 + (start.1 - target.1) * remaining);
+            }
+            if t >= 1.0 {
+                view.reflow_active.set(false);
+                view.preserve_headers_during_reflow.set(false);
+                view.refresh();
+                glib::ControlFlow::Break
+            } else {
+                glib::ControlFlow::Continue
+            }
+        });
     }
 
     fn animate_zoom_reflow(
@@ -1414,7 +1497,6 @@ impl SectionedFolderView {
         self.scroll_animation_generation.set(generation);
         let weak = Rc::downgrade(self);
         let started = Instant::now();
-        const DURATION_MS: f64 = 190.0;
 
         self.root.add_tick_callback(move |_, _| {
             let Some(view) = weak.upgrade() else {
@@ -1424,13 +1506,8 @@ impl SectionedFolderView {
                 return glib::ControlFlow::Break;
             }
 
-            let t = (started.elapsed().as_secs_f64() * 1000.0 / DURATION_MS).clamp(0.0, 1.0);
-            // Cubic ease-in-out: gentle start, quick middle, soft landing.
-            let eased = if t < 0.5 {
-                4.0 * t * t * t
-            } else {
-                1.0 - (-2.0 * t + 2.0).powi(3) / 2.0
-            };
+            let t = (started.elapsed().as_secs_f64() * 1000.0 / GALLERY_MOTION_MS).clamp(0.0, 1.0);
+            let eased = gallery_ease_in_out(t);
             adjustment.set_value(start + (target - start) * eased);
             view.refresh();
 
@@ -1837,6 +1914,120 @@ mod section_lookup_tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn gallery_motion_uses_existing_cubic_ease_in_out() {
+        assert_eq!(gallery_ease_in_out(0.0), 0.0);
+        assert_eq!(gallery_ease_in_out(0.25), 0.0625);
+        assert_eq!(gallery_ease_in_out(0.5), 0.5);
+        assert_eq!(gallery_ease_in_out(0.75), 0.9375);
+        assert_eq!(gallery_ease_in_out(1.0), 1.0);
+    }
+
+    #[test]
+    #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+    fn resize_easing_retargets_finishes_and_cancels_without_changing_photos() {
+        fn settle(ms: u64) {
+            let context = glib::MainContext::default();
+            let until = Instant::now() + std::time::Duration::from_millis(ms);
+            while Instant::now() < until {
+                while context.pending() { context.iteration(false); }
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
+        }
+        gtk::init().unwrap();
+        let gallery = Rc::new(Gallery::new(&[], 120, |_| {}, |_, _, _| {},
+            |_, _, _, _| {}, |_, _| {}, |_| {}));
+        gallery.group_mode.set(GroupMode::Folder);
+        gallery.current_columns.set(5);
+        gallery.current_photos.replace((1..=60_i64).map(|id| {
+            glib::Object::builder::<PhotoObject>()
+                .property("id", id).property("path", format!("/resize/{id}.jpg"))
+                .property("folder-id", 1_i64).property("folder-path", "/resize")
+                .build()
+        }).collect());
+        gallery.rebuild_group_ranges();
+        let scroll = gtk::ScrolledWindow::builder().child(&gallery.folder_sectioned_root).build();
+        gallery.attach_sectioned_folder_scroll(&scroll);
+        let window = gtk::Window::builder().default_width(800).default_height(500)
+            .child(&scroll).build();
+        let settings = window.settings();
+        let animations = settings.is_gtk_enable_animations();
+        settings.set_gtk_enable_animations(true);
+        window.present();
+        settle(150);
+        let view = &gallery.sectioned_folder;
+        let original_ids = gallery.photo_objects().iter().map(|p| p.id()).collect::<Vec<_>>();
+        let snapshot = view.capture_reflow_snapshot();
+        gallery.current_columns.set(4);
+        view.animate_reflow(snapshot, None);
+        assert!(view.reflow_active.get());
+        assert!(view.live_tiles.borrow().values().any(|e| e.tile.presentation_offset() != (0.0, 0.0)));
+        settle(50);
+        let snapshot = view.capture_reflow_snapshot();
+        let positions = snapshot.tile_positions.clone();
+        let old_scroll = snapshot.old_scroll_y;
+        gallery.current_columns.set(5);
+        view.animate_reflow(snapshot, None);
+        // The reverse transition starts at the current visual coordinates,
+        // including the unfinished first transition's presentation offset.
+        for (index, entry) in view.live_tiles.borrow().iter() {
+            if let Some(&(old_x, old_y)) = positions.get(index) {
+                let (left, gap) = view.horizontal_grid_metrics(view.geometry_width.get());
+                let target_x = left + f64::from(index % 5) * (120.0 + gap);
+                let target_y = view.geometry.borrow()[0].first_photo_y
+                    + f64::from(index / 5) * f64::from(folder_line_height(view.tile_height.get(), view.show_file_names.get()));
+                let (dx, dy) = entry.tile.presentation_offset();
+                assert!((target_x + f64::from(dx) - old_x).abs() < 0.1);
+                assert!((target_y + f64::from(dy) - old_y - view.scroll_position() + old_scroll).abs() < 0.1);
+            }
+        }
+        settle(300);
+        assert!(!view.reflow_active.get());
+        assert!(view.live_tiles.borrow().values().all(|e| e.tile.presentation_offset() == (0.0, 0.0)));
+        assert_eq!(gallery.photo_objects().iter().map(|p| p.id()).collect::<Vec<_>>(), original_ids);
+        let snapshot = view.capture_reflow_snapshot();
+        gallery.current_columns.set(4);
+        view.animate_reflow(snapshot, None);
+        view.refresh_model();
+        settle(220);
+        assert!(!view.reflow_active.get());
+        assert!(view.live_tiles.borrow().values().all(|e| e.tile.presentation_offset() == (0.0, 0.0)));
+        settings.set_gtk_enable_animations(false);
+        let snapshot = view.capture_reflow_snapshot();
+        gallery.current_columns.set(5);
+        view.animate_reflow(snapshot, None);
+        assert!(!view.reflow_active.get());
+        window.close();
+
+        // Exercise the ordinary GridView path with real allocations as well.
+        settings.set_gtk_enable_animations(true);
+        let connection = rusqlite::Connection::open_in_memory().unwrap();
+        connection.execute_batch(crate::db::SCHEMA).unwrap();
+        connection.execute_batch("WITH RECURSIVE ids(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM ids WHERE n<60)
+            INSERT INTO photos(id,path) SELECT n, '/resize/' || n || '.jpg' FROM ids;").unwrap();
+        let photos = crate::db::photos(&connection, None, false, None).unwrap();
+        let flat = Rc::new(Gallery::new(&photos, 120, |_| {}, |_, _, _| {},
+            |_, _, _, _| {}, |_, _| {}, |_| {}));
+        flat.auto_default_zoom.set(false);
+        let flat_scroll = gtk::ScrolledWindow::builder().child(&flat.root).build();
+        let flat_window = gtk::Window::builder().default_width(800).default_height(500)
+            .child(&flat_scroll).build();
+        flat.update_width(800);
+        flat_window.present();
+        settle(150);
+        flat.update_width_with_flip(600);
+        settle(50);
+        let mut tiles = Vec::new();
+        collect_tiles(flat.root.upcast_ref(), &mut tiles);
+        assert!(tiles.iter().any(|tile| tile.presentation_offset() != (0.0, 0.0)));
+        flat.update_width_with_flip(800);
+        settle(300);
+        assert!(tiles.iter().all(|tile| tile.presentation_offset() == (0.0, 0.0)));
+        assert_eq!(flat.photo_objects().len(), 60);
+        flat_window.close();
+        settings.set_gtk_enable_animations(animations);
     }
 
     #[test]

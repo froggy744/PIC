@@ -884,11 +884,66 @@ impl Gallery {
     }
 
     pub fn update_width_with_flip(self: &Rc<Self>, width: i32) {
-        // No presentation animation on resize. GTK owns the real destination
-        // layout and we publish it immediately. Smooth wheel/touchpad scrolling
-        // is unrelated and remains enabled elsewhere.
+        if self.using_sectioned_folder_view() {
+            self.update_width(width);
+            return;
+        }
+        if self.columns_for_width(width) == self.current_columns.get()
+            || self.zoom_animation_layout_width.get().is_some()
+        {
+            self.update_width(width);
+            return;
+        }
+        let mut tiles = Vec::new();
+        collect_tiles(self.root.upcast_ref(), &mut tiles);
+        let starts = tiles.iter().filter_map(|tile| {
+            let photo = tile.photo()?;
+            let bounds = tile.compute_bounds(&self.root)?;
+            let (dx, dy) = tile.presentation_offset();
+            Some((photo.id(), (bounds.x() + dx, bounds.y() + dy)))
+        }).collect::<HashMap<_, _>>();
         self.cancel_resize_flip();
         self.update_width(width);
+        if !self.root.settings().is_gtk_enable_animations() || !self.root.is_mapped() {
+            return;
+        }
+        let generation = self.resize_flip_generation.get();
+        let model_generation = self.replace_generation.get();
+        let weak = Rc::downgrade(self);
+        let started = Cell::new(None);
+        self.root.add_tick_callback(move |_, _| {
+            let Some(gallery) = weak.upgrade() else { return glib::ControlFlow::Break; };
+            if gallery.resize_flip_generation.get() != generation {
+                return glib::ControlFlow::Break;
+            }
+            if gallery.replace_generation.get() != model_generation {
+                gallery.cancel_resize_flip();
+                return glib::ControlFlow::Break;
+            }
+            let start = started.get().unwrap_or_else(|| {
+                let now = Instant::now();
+                started.set(Some(now));
+                now
+            });
+            let t = (start.elapsed().as_secs_f64() * 1000.0 / GALLERY_MOTION_MS).min(1.0);
+            let remaining = (1.0 - gallery_ease_in_out(t)) as f32;
+            let mut tiles = Vec::new();
+            collect_tiles(gallery.root.upcast_ref(), &mut tiles);
+            for tile in tiles {
+                let start = tile.photo().and_then(|photo| starts.get(&photo.id()));
+                if let (Some(&(x, y)), Some(bounds)) = (start, tile.compute_bounds(&gallery.root)) {
+                    tile.set_presentation_offset((x - bounds.x()) * remaining, (y - bounds.y()) * remaining);
+                } else {
+                    tile.set_presentation_offset(0.0, 0.0);
+                }
+            }
+            if t >= 1.0 {
+                gallery.cancel_resize_flip();
+                glib::ControlFlow::Break
+            } else {
+                glib::ControlFlow::Continue
+            }
+        });
     }
 
     fn update_layout(&self, width: i32, tile_size_changed: bool) {

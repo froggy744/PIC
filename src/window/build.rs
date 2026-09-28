@@ -3488,10 +3488,11 @@ fn start_photo_export_single(
                                 }
                             }
                         }
-                        // Digits 1..5 are reserved for rating outside a text
-                        // field even when there is currently no photo selected.
-                        return glib::Propagation::Stop;
                     }
+                    // Digits 1..5 are reserved for ratings everywhere outside
+                    // a real text field. They must never trigger type-to-search;
+                    // clicking Search explicitly gives numeric keys back to it.
+                    return glib::Propagation::Stop;
                 }
             }
 

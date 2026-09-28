@@ -304,6 +304,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
     fn standard_theme_corner_radius_parses() {
         gtk4::init().unwrap();
         let css = std::fs::read_to_string(

@@ -974,6 +974,30 @@ fn fit_picture(
         .as_ref()
         .map(gtk::gdk::Paintable::intrinsic_height)
         .unwrap_or(0);
+    // Fit-to-window does not need explicit pixel geometry. Let GtkPicture fill
+    // the viewport and let ContentFit::Contain do the presentation scaling.
+    // During a live window resize this avoids issuing a new size request for
+    // every single pixel of motion, which otherwise makes the texture
+    // repeatedly re-rasterise and visibly flicker.
+    if zoom == 0.0 {
+        picture.set_can_shrink(true);
+        picture.set_hexpand(true);
+        picture.set_vexpand(true);
+        picture.set_halign(gtk::Align::Fill);
+        picture.set_valign(gtk::Align::Fill);
+        if picture.size_request() != (1, 1) {
+            picture.set_size_request(1, 1);
+        }
+        return;
+    }
+
+    // Explicit zoom/1:1 presentation is intentionally larger than the
+    // viewport when required, so switch back to centred intrinsic geometry.
+    picture.set_hexpand(false);
+    picture.set_vexpand(false);
+    picture.set_halign(gtk::Align::Center);
+    picture.set_valign(gtk::Align::Center);
+
     let (native_width, native_height) = presentation_native_dimensions(photo);
     let (fitted_width, fitted_height) = fitted_picture_dimensions(
         native_width,

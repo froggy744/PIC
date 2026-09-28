@@ -568,6 +568,14 @@ impl Lightbox {
                 let next_scale = (current_scale * if dy < 0.0 { 1.12 } else { 0.89 })
                     .clamp(fit_scale, LIGHTBOX_MAX_ZOOM_FACTOR);
 
+                zoom_trace(format!(
+                    "ctrl_wheel dy={dy:.3} fit={fit_scale:.6} current_native={current_scale:.6} next_native={next_scale:.6} zoom_before={:.6} picture_req={:?} alloc={}x{}",
+                    zoom_for_scroll.get(),
+                    picture_for_scroll.size_request(),
+                    picture_for_scroll.width(),
+                    picture_for_scroll.height(),
+                ));
+
                 if next_scale <= fit_scale * 1.001 {
                     zoom_for_scroll.set(0.0);
                     applied_for_scroll.set(0.0);

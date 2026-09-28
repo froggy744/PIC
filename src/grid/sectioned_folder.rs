@@ -1254,45 +1254,131 @@ impl SectionedFolderView {
         snapshot: SectionedReflowSnapshot,
         anchor: Option<(i64, f64)>,
     ) {
-        const DURATION_MS: f64 = 170.0;
-        self.apply_reflow_without_animation(snapshot.clone(), anchor);
+        const DURATION_MS: f64 = 175.0;
 
-        let mut motion = Vec::new();
-        for (index, (old_x, old_y)) in snapshot.tile_positions {
-            let Some(entry) = self.live_tiles.borrow().get(&index).cloned() else {
-                continue;
-            };
-            let (x, y) = self.root.child_position(&entry.tile);
-            let dx = (old_x - x) as f32;
-            let dy = (old_y - y) as f32;
-            if dx.abs() < 0.5 && dy.abs() < 0.5 {
-                continue;
+        let old_columns = snapshot.old_columns.max(1);
+        let old_width = snapshot.old_width.max(1);
+        let old_tile_width = snapshot.tile_width.max(1);
+
+        // If a previous column transition is still active, remember the
+        // current visual X offset per old column. That lets a rapid resize
+        // continue from what is actually on screen instead of snapping back.
+        let mut interrupted_column_offsets = HashMap::<u32, f32>::new();
+        {
+            let live = self.live_tiles.borrow();
+            for (index, entry) in live.iter() {
+                let Some(column) = self.column_for_index(*index) else {
+                    continue;
+                };
+                let (dx, _) = entry.tile.presentation_offset();
+                interrupted_column_offsets.entry(column).or_insert(dx);
             }
-            entry.tile.set_presentation_offset(dx, dy);
-            motion.push((entry.tile, dx, dy));
         }
 
-        let mut header_motion = Vec::new();
-        for (index, (old_x, old_y)) in snapshot.header_positions {
-            let Some(header) = self.live_headers.borrow().get(&index).cloned() else {
-                continue;
+        // Publish the destination layout once. Rewrapping happens
+        // immediately inside the new columns; the animation below moves only
+        // the column lanes horizontally. No tile ever animates its Y position
+        // or its size.
+        self.apply_reflow_without_animation(snapshot, anchor);
+
+        let new_columns = self.current_columns.get().max(1);
+        if old_columns == new_columns {
+            return;
+        }
+
+        let new_width = self.geometry_width.get().max(1);
+        let (old_start_x, old_gap) =
+            Self::grid_metrics_for(old_width, old_columns, old_tile_width);
+        let (new_start_x, new_gap) = self.horizontal_grid_metrics(new_width);
+        let old_pitch = f64::from(old_tile_width) + old_gap;
+        let new_pitch = f64::from(self.tile_width.get().max(1)) + new_gap;
+
+        // One X delta per destination column. Every tile in a column receives
+        // exactly the same horizontal offset, so the column behaves like one
+        // rigid vertical strip instead of individual photos flying between
+        // row slots.
+        let mut column_dx = HashMap::<u32, f32>::new();
+        for new_column in 0..new_columns {
+            let source_column = if new_columns <= 1 || old_columns <= 1 {
+                0
+            } else {
+                ((f64::from(new_column) * f64::from(old_columns - 1)
+                    / f64::from(new_columns - 1))
+                    .round() as u32)
+                    .min(old_columns - 1)
             };
-            let target = self.root.child_position(&header);
-            if (old_x - target.0).abs() < 0.5 && (old_y - target.1).abs() < 0.5 {
-                continue;
+            let old_x = old_start_x
+                + f64::from(source_column) * old_pitch
+                + f64::from(
+                    interrupted_column_offsets
+                        .get(&source_column)
+                        .copied()
+                        .unwrap_or(0.0),
+                );
+            let new_x = new_start_x + f64::from(new_column) * new_pitch;
+            column_dx.insert(new_column, (old_x - new_x) as f32);
+        }
+
+        let mut motion = Vec::<(SquareTile, f32)>::new();
+        {
+            let live = self.live_tiles.borrow();
+            for (index, entry) in live.iter() {
+                let Some(column) = self.column_for_index(*index) else {
+                    continue;
+                };
+                let dx = column_dx.get(&column).copied().unwrap_or(0.0);
+                if dx.abs() < 0.5 {
+                    entry.tile.set_presentation_offset(0.0, 0.0);
+                    continue;
+                }
+                entry.tile.set_presentation_offset(dx, 0.0);
+                motion.push((entry.tile.clone(), dx));
             }
-            self.root.move_(&header, old_x, old_y);
-            header_motion.push((header, (old_x, old_y), target));
+        }
+
+        // Folder headings belong to the same horizontal grid presentation.
+        // Their vertical position is already final; only slide the heading X
+        // with the first column.
+        let header_dx = (old_start_x
+            + f64::from(
+                interrupted_column_offsets
+                    .get(&0)
+                    .copied()
+                    .unwrap_or(0.0),
+            )
+            - new_start_x) as f32;
+        let mut header_motion = Vec::<(gtk::Label, f64, f64)>::new();
+        if header_dx.abs() >= 0.5 {
+            let headers = self.live_headers.borrow();
+            for header in headers.values() {
+                let (_, y) = self.root.child_position(header);
+                self.root
+                    .move_(header, new_start_x + f64::from(header_dx), y);
+                header_motion.push((header.clone(), new_start_x, y));
+            }
         }
 
         if motion.is_empty() && header_motion.is_empty() {
             return;
         }
+
         self.reflow_active.set(true);
         self.preserve_headers_during_reflow.set(true);
         self.reflow_animation_generation
             .set(self.reflow_animation_generation.get().wrapping_add(1));
         let generation = self.reflow_animation_generation.get();
+
+        if std::env::var_os("PICASA_TRACE").is_some() {
+            eprintln!(
+                "PIC_SECTIONED_ANIM column_reflow_begin old_columns={} new_columns={} tiles={} headers={} duration_ms={}",
+                old_columns,
+                new_columns,
+                motion.len(),
+                header_motion.len(),
+                DURATION_MS as u32,
+            );
+        }
+
         let weak = Rc::downgrade(self);
         let started = Instant::now();
         self.root.add_tick_callback(move |_, _| {
@@ -1302,26 +1388,40 @@ impl SectionedFolderView {
             if view.reflow_animation_generation.get() != generation {
                 return glib::ControlFlow::Break;
             }
-            let t = (started.elapsed().as_secs_f64() * 1000.0 / DURATION_MS).clamp(0.0, 1.0);
+
+            let t = (started.elapsed().as_secs_f64() * 1000.0 / DURATION_MS)
+                .clamp(0.0, 1.0);
             let eased = crate::grid::zoom_transition::ease_in_out_cubic(t);
             let remaining = (1.0 - eased) as f32;
-            for (tile, dx, dy) in &motion {
-                tile.set_presentation_offset(dx * remaining, dy * remaining);
+
+            for (tile, dx) in &motion {
+                tile.set_presentation_offset(dx * remaining, 0.0);
             }
-            for (header, (old_x, old_y), (new_x, new_y)) in &header_motion {
+            for (header, target_x, y) in &header_motion {
                 view.root.move_(
                     header,
-                    new_x + (old_x - new_x) * remaining as f64,
-                    new_y + (old_y - new_y) * remaining as f64,
+                    *target_x + f64::from(header_dx * remaining),
+                    *y,
                 );
             }
+
             if t >= 1.0 {
-                for (tile, _, _) in &motion {
+                for (tile, _) in &motion {
                     tile.set_presentation_offset(0.0, 0.0);
+                }
+                for (header, target_x, y) in &header_motion {
+                    view.root.move_(header, *target_x, *y);
                 }
                 view.reflow_active.set(false);
                 view.preserve_headers_during_reflow.set(false);
                 view.refresh();
+
+                if std::env::var_os("PICASA_TRACE").is_some() {
+                    eprintln!(
+                        "PIC_SECTIONED_ANIM column_reflow_end elapsed_ms={}",
+                        started.elapsed().as_millis()
+                    );
+                }
                 glib::ControlFlow::Break
             } else {
                 glib::ControlFlow::Continue

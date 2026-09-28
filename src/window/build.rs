@@ -2796,7 +2796,9 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         if root.is_visible() {
             grid_zoom_for_visibility.set_range(0.0, 100.0);
             grid_zoom_for_visibility.set_increments(0.25, 5.0);
+            grid_zoom_for_visibility.set_round_digits(-1);
             grid_zoom_for_visibility.clear_marks();
+            grid_zoom_for_visibility.add_mark(50.0, gtk::PositionType::Top, None);
             grid_zoom_for_visibility.add_mark(50.0, gtk::PositionType::Bottom, None);
             let native_scale = lightbox_for_zoom_visibility.current_manual_zoom_scale();
             let value = lightbox_slider_from_scale(
@@ -2811,7 +2813,9 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         } else {
             grid_zoom_for_visibility.set_range(0.0, 7.0);
             grid_zoom_for_visibility.set_increments(1.0, 1.0);
+            grid_zoom_for_visibility.set_round_digits(0);
             grid_zoom_for_visibility.clear_marks();
+            grid_zoom_for_visibility.add_mark(3.5, gtk::PositionType::Top, None);
             grid_zoom_for_visibility.add_mark(3.5, gtk::PositionType::Bottom, None);
             let value = grid_zoom_slider_value(gallery_for_zoom_visibility.current_zoom_width());
             grid_zoom_for_visibility.set_value(value);

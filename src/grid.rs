@@ -27,12 +27,7 @@ const DEFAULT_TILE_HEIGHT: i32 = 120;
 const MIN_TILE_WIDTH: i32 = 100;
 const MAX_TILE_WIDTH: i32 = 300;
 
-// Perceptually uniform zoom ladder. Every level is ~17% wider than the one
-// before (a fixed pixel step feels huge on small thumbnails and invisible on
-// large ones; ratio steps feel equal at every size). The first and last
-// levels are pinned to MIN/MAX_TILE_WIDTH. All zoom input snaps to these
-// levels so +/-, Ctrl+wheel and Reset always land on the same canonical
-// sizes instead of drifting with the starting width.
+// Discrete slider stops and startup defaults. Buttons and wheel use 24 px steps.
 pub(crate) const ZOOM_LEVELS: [i32; 8] = [100, 117, 137, 160, 187, 219, 256, 300];
 
 /// Gallery-v2 default: render Folder mode through the shared photo GtkGridView.
@@ -59,21 +54,12 @@ pub(crate) fn nearest_zoom_level(width: i32) -> i32 {
     best
 }
 
-fn zoom_level_index(level: i32) -> usize {
-    ZOOM_LEVELS
-        .iter()
-        .position(|&candidate| candidate == level)
-        .unwrap_or(0)
-}
-
 pub(crate) fn next_zoom_level(width: i32) -> i32 {
-    let index = zoom_level_index(nearest_zoom_level(width));
-    ZOOM_LEVELS[(index + 1).min(ZOOM_LEVELS.len() - 1)]
+    (width + 24).clamp(MIN_TILE_WIDTH, MAX_TILE_WIDTH)
 }
 
 pub(crate) fn prev_zoom_level(width: i32) -> i32 {
-    let index = zoom_level_index(nearest_zoom_level(width));
-    ZOOM_LEVELS[index.saturating_sub(1)]
+    (width - 24).clamp(MIN_TILE_WIDTH, MAX_TILE_WIDTH)
 }
 
 /// Tile width that shows ~4 thumbnails per row at `surface_width`, snapped to
@@ -113,6 +99,9 @@ thread_local! {
 
 // The grid stays one Rust module for private-state compatibility, while its
 // implementation is split into focused source files for maintenance.
+mod zoom_transition;
+use zoom_transition::ZoomSurface;
+
 include!("grid/tile.rs");
 include!("grid/grouping.rs");
 include!("grid/sectioned_folder.rs");
@@ -140,13 +129,12 @@ mod zoom_ladder_tests {
     }
 
     #[test]
-    fn stepping_from_legacy_defaults_stays_on_ladder() {
-        // The old fixed default 136 and the old initial width 180 sit between
-        // levels; stepping must snap onto the ladder, never reproduce them.
+    fn zoom_steps_are_24_pixels_and_clamp() {
+        // Buttons and wheel retain exact 24 px steps between the bounds.
         assert_eq!(next_zoom_level(136), 160);
-        assert_eq!(prev_zoom_level(136), 117);
-        assert_eq!(next_zoom_level(180), 219);
-        assert_eq!(prev_zoom_level(180), 160);
+        assert_eq!(prev_zoom_level(136), 112);
+        assert_eq!(next_zoom_level(180), 204);
+        assert_eq!(prev_zoom_level(180), 156);
         // Ends clamp.
         assert_eq!(next_zoom_level(300), 300);
         assert_eq!(prev_zoom_level(100), 100);

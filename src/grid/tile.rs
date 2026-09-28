@@ -494,11 +494,8 @@ impl SquareTile {
     }
 
     pub(crate) fn set_presentation_offset(&self, x: f32, y: f32) {
-        // Animation completion must clear even subpixel residual offsets.
-        if self.presentation_offset() == (x, y)
-            || ((x != 0.0 || y != 0.0)
-                && (self.imp().presentation_offset_x.get() - x).abs() < 0.01
-                && (self.imp().presentation_offset_y.get() - y).abs() < 0.01)
+        if (self.imp().presentation_offset_x.get() - x).abs() < 0.01
+            && (self.imp().presentation_offset_y.get() - y).abs() < 0.01
         {
             return;
         }

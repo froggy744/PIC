@@ -584,31 +584,7 @@ impl Gallery {
     }
 
     pub fn request_slider_zoom(self: &Rc<Self>, width: i32) {
-        let width = nearest_zoom_level(width).clamp(MIN_TILE_WIDTH, MAX_TILE_WIDTH);
-        self.auto_default_zoom.set(false);
-
-        if width == self.tile_width.get() {
-            return;
-        }
-
-        self.begin_center_zoom_anchor();
-
-        // Slider input is already discrete (the existing 8-level ladder).
-        // Cancel wheel/click debounce and any in-flight animation, then apply
-        // exactly one reflow for the newly selected level. This prevents an
-        // old trailing timeout/animation from pulling the grid back after the
-        // thumb has moved on.
-        if let Some(source) = self.zoom_reflow_source.borrow_mut().take() {
-            source.remove();
-        }
-        self.pending_zoom_width.set(None);
-        self.zoom_animation_generation
-            .set(self.zoom_animation_generation.get().wrapping_add(1));
-        self.zoom_animation_layout_width.set(None);
-        set_grid_zoom_animation_active(false);
-        let generation = self.zoom_animation_generation.get();
-        self.apply_tile_size(width, true);
-        self.schedule_grid_zoom_anchor_restore(generation, true);
+        self.request_zoom(nearest_zoom_level(width));
     }
 
     pub fn zoom_in(self: &Rc<Self>) {
@@ -769,88 +745,117 @@ impl Gallery {
         self.request_wheel_zoom(prev_zoom_level(base));
     }
 
-    /// Ctrl+wheel is intentionally trailing-edge only. A mouse wheel can emit
-    /// several notches in a fraction of a second; applying the first notch
-    /// immediately and another at the end made the sectioned grid feel dizzy.
-    /// Accumulate the requested ladder level, then perform one 300ms reflow
-    /// after the wheel burst settles.
-    fn request_wheel_zoom(self: &Rc<Self>, width: i32) {
-        let requested = width;
-        let width = nearest_zoom_level(width).clamp(MIN_TILE_WIDTH, MAX_TILE_WIDTH);
-        self.auto_default_zoom.set(false);
-        if std::env::var_os("PICASA_TRACE").is_some() {
-            eprintln!(
-                "PIC_ZOOM_TRACE wheel_request requested={} snapped={} current={} pending_before={:?} columns={} anchor={:?}",
-                requested, width, self.tile_width.get(), self.pending_zoom_width.get(),
-                self.current_columns.get(), self.stable_zoom_anchor.get(),
-            );
-        }
-        self.pending_zoom_width.set(Some(width));
-
-        if let Some(source) = self.zoom_reflow_source.borrow_mut().take() {
-            source.remove();
-        }
-        let this = self.clone();
-        let source = glib::timeout_add_local(std::time::Duration::from_millis(220), move || {
-            this.zoom_reflow_source.borrow_mut().take();
-            if let Some(width) = this.pending_zoom_width.take() {
-                if std::env::var_os("PICASA_TRACE").is_some() {
-                    eprintln!(
-                        "PIC_ZOOM_TRACE wheel_commit target={} current={} columns={} anchor={:?}",
-                        width, this.tile_width.get(), this.current_columns.get(),
-                        this.stable_zoom_anchor.get(),
-                    );
-                }
-                this.apply_zoom(width);
+    pub fn wrap_zoom_surface(self: &Rc<Self>, child: &impl IsA<gtk::Widget>) -> ZoomSurface {
+        let surface = ZoomSurface::new(child);
+        let weak = Rc::downgrade(self);
+        surface.connect_unmap(move |_| {
+            if let Some(gallery) = weak.upgrade() {
+                gallery.cancel_zoom_transition();
             }
-            glib::ControlFlow::Break
         });
-        self.zoom_reflow_source.replace(Some(source));
+        self.zoom_surface.replace(Some(surface.clone()));
+        surface
     }
 
-    /// Record a zoom request. Isolated clicks apply immediately; a rapid
-    /// Ctrl+wheel spin coalesces its extra notches into one trailing reflow so
-    /// crossing several column boundaries does not rebuild the Folder rows per
-    /// notch.
+    pub(crate) fn cancel_zoom_transition(&self) {
+        if let Some(tick) = self.zoom_tick.borrow_mut().take() {
+            tick.remove();
+        }
+        self.pending_zoom_width.set(None);
+        self.zoom_committed.set(false);
+        self.zoom_animation_layout_width.set(None);
+        if let Some(surface) = self.zoom_surface.borrow().as_ref() {
+            surface.reset();
+        }
+    }
+
+    fn request_wheel_zoom(self: &Rc<Self>, width: i32) {
+        self.request_zoom(width);
+    }
+
     pub fn request_zoom(self: &Rc<Self>, width: i32) {
-        // Snap every request onto the canonical ladder so +/-, Ctrl+wheel and
-        // Reset converge on the same sizes no matter where they start.
-        let width = nearest_zoom_level(width).clamp(MIN_TILE_WIDTH, MAX_TILE_WIDTH);
-        // An explicit zoom always wins over the pending startup default.
+        let width = width.clamp(MIN_TILE_WIDTH, MAX_TILE_WIDTH);
         self.auto_default_zoom.set(false);
-        let base = self
-            .pending_zoom_width
-            .get()
-            .unwrap_or_else(|| self.tile_width.get());
-        if width == base {
+        if width == self.current_zoom_width() {
             return;
         }
-        // A burst is already in progress if a trailing source exists.
-        let leading = self.zoom_reflow_source.borrow().is_none();
-        if leading {
+        // All input before the midpoint is one latest-target commit. Input
+        // after it starts a new transition; there is never an animation queue.
+        if self.zoom_tick.borrow().is_some() && !self.zoom_committed.get() {
+            self.pending_zoom_width.set(Some(width));
+            return;
+        }
+        self.cancel_zoom_transition();
+        if width == self.tile_width.get() {
+            return;
+        }
+        if self.stable_zoom_anchor.get().is_none() {
             self.begin_center_zoom_anchor();
         }
+        let surface = self.zoom_surface.borrow().clone();
+        let Some(surface) =
+            surface.filter(|s| s.is_mapped() && s.settings().is_gtk_enable_animations())
+        else {
+            self.apply_zoom(width);
+            return;
+        };
         self.pending_zoom_width.set(Some(width));
-        if leading {
-            let this = self.clone();
-            glib::idle_add_local_once(move || {
-                if let Some(width) = this.pending_zoom_width.take() {
-                    this.apply_zoom(width);
-                }
-            });
-        }
-        if let Some(source) = self.zoom_reflow_source.borrow_mut().take() {
-            source.remove();
-        }
-        let this = self.clone();
-        let source = glib::timeout_add_local(std::time::Duration::from_millis(150), move || {
-            this.zoom_reflow_source.borrow_mut().take();
-            if let Some(width) = this.pending_zoom_width.take() {
-                this.apply_zoom(width);
+        self.zoom_animation_layout_width
+            .set(Some(self.last_layout_width.get()));
+        let start_width = self.tile_width.get();
+        let generation = self.replace_generation.get();
+        let mode = self.group_mode.get();
+        let started = Cell::new(None);
+        let post_started = Cell::new(None);
+        let direction = Cell::new(if width > start_width { 1.0 } else { -1.0 });
+        surface.frame(false, direction.get(), 0.0);
+        let weak = Rc::downgrade(self);
+        let tick = surface.add_tick_callback(move |surface, clock| {
+            let Some(gallery) = weak.upgrade() else {
+                surface.reset();
+                return glib::ControlFlow::Break;
+            };
+            if gallery.replace_generation.get() != generation || gallery.group_mode.get() != mode {
+                gallery.zoom_tick.borrow_mut().take();
+                gallery.pending_zoom_width.set(None);
+                gallery.zoom_animation_layout_width.set(None);
+                gallery.zoom_committed.set(false);
+                surface.reset();
+                return glib::ControlFlow::Break;
             }
-            glib::ControlFlow::Break
+            let now = clock.frame_time();
+            let start = started.get().unwrap_or_else(|| {
+                started.set(Some(now));
+                now
+            });
+            if let Some(post_start) = post_started.get() {
+                let t = (now - post_start) as f64 / 115_000.0;
+                surface.frame(true, direction.get(), t);
+                if t >= 1.0 {
+                    gallery.zoom_tick.borrow_mut().take();
+                    gallery.zoom_animation_layout_width.set(None);
+                    gallery.zoom_committed.set(false);
+                    surface.reset();
+                    return glib::ControlFlow::Break;
+                }
+            } else {
+                let target = gallery.pending_zoom_width.get().unwrap_or(start_width);
+                direction.set(if target > start_width { 1.0 } else { -1.0 });
+                let t = (now - start) as f64 / 85_000.0;
+                surface.frame(false, direction.get(), t);
+                if t >= 1.0 {
+                    surface.freeze();
+                    gallery.pending_zoom_width.set(None);
+                    gallery.zoom_committed.set(true);
+                    // The only tile-size/column mutation in the entire transition.
+                    gallery.apply_zoom(target);
+                    post_started.set(Some(now));
+                    surface.frame(true, direction.get(), 0.0);
+                }
+            }
+            glib::ControlFlow::Continue
         });
-        self.zoom_reflow_source.replace(Some(source));
+        self.zoom_tick.replace(Some(tick));
     }
 
     /// Zoom is driven by width. Height scales by the same factor, preserving
@@ -905,9 +910,8 @@ impl Gallery {
                 .map(|anchor| (anchor.photo_id, anchor.desired_y))
                 .or_else(|| self.sectioned_folder.capture_center_anchor());
 
-            // SectionedFolder owns its custom reflow animation, so publish the
-            // destination geometry once and let that surface animate from its
-            // captured snapshot.
+            // Publish the destination once and restore the existing header/photo
+            // anchor. The outer snapshot wrapper owns the visual transition.
             self.tile_width.set(target_width);
             self.tile_height.set(target_height);
             (self.on_zoom_changed)(target_width);
@@ -920,7 +924,7 @@ impl Gallery {
 
             if std::env::var_os("PICASA_TRACE").is_some() {
                 eprintln!(
-                    "PIC_ZOOM sectioned_animated old_width={} width={} old_height={} height={} columns={}",
+                    "PIC_ZOOM sectioned_discrete old_width={} width={} old_height={} height={} columns={}",
                     start_width,
                     target_width,
                     start_height,
@@ -958,12 +962,10 @@ impl Gallery {
         //
         // Move to the canonical destination geometry exactly once. GTK performs
         // one deterministic reflow, then the stable anchor restoration runs on
-        // the final allocations. A later presentation-only animation can be
-        // layered on top without ever changing model order or layout geometry.
+        // the final allocations under the wrapper's retained old snapshot.
         self.zoom_animation_generation
             .set(self.zoom_animation_generation.get().wrapping_add(1));
         let generation = self.zoom_animation_generation.get();
-        self.zoom_animation_layout_width.set(None);
         set_grid_zoom_animation_active(false);
 
         if std::env::var_os("PICASA_TRACE").is_some() {
@@ -2121,6 +2123,7 @@ impl Gallery {
     }
 
     pub fn replace(&self, photos: &[Photo]) {
+        self.cancel_zoom_transition();
         if std::env::var_os("PICASA_TRACE").is_some() { eprintln!("PIC_NAV gallery_replace photos={}", photos.len()); }
         self.stable_zoom_anchor.set(None);
         self.zoom_anchor_restore_generation

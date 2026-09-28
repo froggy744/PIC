@@ -78,22 +78,17 @@ pub struct Gallery {
     // reading GTK's transient (often zeroed) adjustment.
     folder_pending_reframe: Rc<Cell<bool>>,
     folder_reframe_photo: Rc<Cell<Option<i64>>>,
-    // Coalesces rapid Ctrl+wheel zoom input: the visual reflow is deferred while
-    // the user is still spinning so crossing several column boundaries triggers
-    // one Folder row rebuild instead of one per notch.
+    // Latest requested target, coalesced until the visual transition commits.
     pending_zoom_width: Rc<Cell<Option<i32>>>,
-    zoom_reflow_source: Rc<RefCell<Option<glib::SourceId>>>,
-    // Invalidates an in-flight frame-clock zoom animation when a newer zoom
-    // target arrives. The next animation starts from the current visual size,
-    // so rapid wheel input retargets instead of queueing animations.
+    zoom_surface: RefCell<Option<ZoomSurface>>,
+    zoom_tick: RefCell<Option<gtk::TickCallbackId>>,
+    zoom_committed: Cell<bool>,
+    // Invalidates anchor restoration callbacks when a newer zoom commits.
     zoom_animation_generation: Rc<Cell<u64>>,
     // Stable content width captured at zoom-animation start. GTK can briefly
     // report two competing allocations while GridView reflows; using one
     // width for the whole animation prevents column-count ping-pong.
     zoom_animation_layout_width: Rc<Cell<Option<i32>>>,
-    // Invalidates/retargets presentation-only FLIP animations when live
-    // window resizing crosses another column boundary mid-transition.
-    resize_flip_generation: Rc<Cell<u64>>,
     // Set when no user-chosen thumbnail size exists: the first real layout
     // adopts the ~4-thumbnails-per-row default instead of a fixed pixel size.
     auto_default_zoom: Cell<bool>,
@@ -826,11 +821,12 @@ impl Gallery {
             folder_anchor_photo: Cell::new(None),
             folder_pending_reframe: Rc::new(Cell::new(false)),
             folder_reframe_photo: Rc::new(Cell::new(None)),
+            zoom_surface: RefCell::new(None),
+            zoom_tick: RefCell::new(None),
+            zoom_committed: Cell::new(false),
             pending_zoom_width: Rc::new(Cell::new(None)),
-            zoom_reflow_source: Rc::new(RefCell::new(None)),
             zoom_animation_generation: Rc::new(Cell::new(0)),
             zoom_animation_layout_width: Rc::new(Cell::new(None)),
-            resize_flip_generation: Rc::new(Cell::new(0)),
             auto_default_zoom: Cell::new(false),
             fit_whole_photo,
             show_file_names,
@@ -853,97 +849,12 @@ impl Gallery {
     }
 
     pub fn update_width(&self, width: i32) {
-        // While a zoom animation is active, ignore transient width feedback
-        // from GridView/ScrolledWindow reflow and keep using the outer gallery
-        // width captured before the animation began. This prevents the column
-        // calculation from chasing its own changing requisition.
-        if let Some(stable_width) = self.zoom_animation_layout_width.get() {
-            self.update_layout(stable_width, false);
+        // The zoom transition owns its single layout commit. Resume ordinary
+        // window-width updates when the presentation animation has finished.
+        if self.zoom_tick.borrow().is_some() {
             return;
         }
         self.update_layout(width, false);
-    }
-
-    /// Presentation-only FLIP reflow for live application resizing.
-    ///
-    /// GTK computes and owns the real destination layout immediately. We only
-    /// translate snapshots of realized tiles from their previous visual
-    /// positions back to their new allocations. No synthetic width, tile size,
-    /// model membership or GridView column input is introduced.
-    pub fn cancel_resize_flip(&self) {
-        self.resize_flip_generation
-            .set(self.resize_flip_generation.get().wrapping_add(1));
-
-        let root_widget: gtk::Widget = self.root.clone().upcast();
-        let mut tiles = Vec::new();
-        collect_tiles(&root_widget, &mut tiles);
-        for tile in tiles {
-            tile.set_presentation_offset(0.0, 0.0);
-        }
-        set_grid_zoom_animation_active(false);
-    }
-
-    pub fn update_width_with_flip(self: &Rc<Self>, width: i32) {
-        if self.using_sectioned_folder_view() {
-            self.update_width(width);
-            return;
-        }
-        if self.columns_for_width(width) == self.current_columns.get()
-            || self.zoom_animation_layout_width.get().is_some()
-        {
-            self.update_width(width);
-            return;
-        }
-        let mut tiles = Vec::new();
-        collect_tiles(self.root.upcast_ref(), &mut tiles);
-        let starts = tiles.iter().filter_map(|tile| {
-            let photo = tile.photo()?;
-            let bounds = tile.compute_bounds(&self.root)?;
-            let (dx, dy) = tile.presentation_offset();
-            Some((photo.id(), (bounds.x() + dx, bounds.y() + dy)))
-        }).collect::<HashMap<_, _>>();
-        self.cancel_resize_flip();
-        self.update_width(width);
-        if !self.root.settings().is_gtk_enable_animations() || !self.root.is_mapped() {
-            return;
-        }
-        let generation = self.resize_flip_generation.get();
-        let model_generation = self.replace_generation.get();
-        let weak = Rc::downgrade(self);
-        let started = Cell::new(None);
-        self.root.add_tick_callback(move |_, _| {
-            let Some(gallery) = weak.upgrade() else { return glib::ControlFlow::Break; };
-            if gallery.resize_flip_generation.get() != generation {
-                return glib::ControlFlow::Break;
-            }
-            if gallery.replace_generation.get() != model_generation {
-                gallery.cancel_resize_flip();
-                return glib::ControlFlow::Break;
-            }
-            let start = started.get().unwrap_or_else(|| {
-                let now = Instant::now();
-                started.set(Some(now));
-                now
-            });
-            let t = (start.elapsed().as_secs_f64() * 1000.0 / GALLERY_MOTION_MS).min(1.0);
-            let remaining = (1.0 - gallery_ease_in_out(t)) as f32;
-            let mut tiles = Vec::new();
-            collect_tiles(gallery.root.upcast_ref(), &mut tiles);
-            for tile in tiles {
-                let start = tile.photo().and_then(|photo| starts.get(&photo.id()));
-                if let (Some(&(x, y)), Some(bounds)) = (start, tile.compute_bounds(&gallery.root)) {
-                    tile.set_presentation_offset((x - bounds.x()) * remaining, (y - bounds.y()) * remaining);
-                } else {
-                    tile.set_presentation_offset(0.0, 0.0);
-                }
-            }
-            if t >= 1.0 {
-                gallery.cancel_resize_flip();
-                glib::ControlFlow::Break
-            } else {
-                glib::ControlFlow::Continue
-            }
-        });
     }
 
     fn update_layout(&self, width: i32, tile_size_changed: bool) {

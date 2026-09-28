@@ -780,7 +780,7 @@
         // Sidebar reveal/hide is a structural OverlaySplitView transition, not
         // a user window resize. Abort any live-resize FLIP and clear all tile
         // snapshot offsets before the split starts reallocating the gallery.
-        gallery_for_sidebar_visibility.cancel_resize_flip();
+        gallery_for_sidebar_visibility.cancel_zoom_transition();
 
         let sidebar_visible = split.shows_sidebar();
         sidebar_hover_reveal_for_state.set_visible(!sidebar_visible);

@@ -425,6 +425,7 @@
             &[
                 gallery.root.clone().upcast::<gtk::Widget>(),
                 gallery.folder_root.clone().upcast::<gtk::Widget>(),
+                gallery.folder_sectioned_root.clone().upcast::<gtk::Widget>(),
             ],
         );
     }

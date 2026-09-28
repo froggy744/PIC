@@ -1070,19 +1070,24 @@ pub fn set_keyboard_grid_target(
         let sidebar_for_grid = scrolled.clone();
         let grid_keyboard = gtk::EventControllerKey::new();
         grid_keyboard.set_propagation_phase(gtk::PropagationPhase::Capture);
-        grid_keyboard.connect_key_pressed(move |_, key, _, _| {
-            if key != gtk::gdk::Key::Tab && key != gtk::gdk::Key::ISO_Left_Tab {
+        grid_keyboard.connect_key_pressed(move |_, key, _, modifiers| {
+            let shift_tab = key == gtk::gdk::Key::ISO_Left_Tab
+                || (key == gtk::gdk::Key::Tab
+                    && modifiers.contains(gtk::gdk::ModifierType::SHIFT_MASK));
+            if key != gtk::gdk::Key::Tab && !shift_tab {
                 return glib::Propagation::Proceed;
             }
+
             let sections = navigation_sections(&sidebar_for_grid);
-            if let Some(row) = selected_navigation_row(&sections).or_else(|| {
-                sections
-                    .last()
-                    .and_then(|(_, rows)| rows.first().cloned())
-            }) {
-                select_navigation_row(&sections, &row);
+            if sections.is_empty() {
+                return glib::Propagation::Proceed;
             }
-            glib::Propagation::Stop
+            let index = if shift_tab { sections.len() - 1 } else { 0 };
+            if focus_navigation_section(&sections, index, shift_tab) {
+                glib::Propagation::Stop
+            } else {
+                glib::Propagation::Proceed
+            }
         });
         grid.add_controller(grid_keyboard);
     }
@@ -1093,12 +1098,41 @@ fn handle_keyboard_navigation(
     key: gtk::gdk::Key,
     modifiers: gtk::gdk::ModifierType,
 ) -> glib::Propagation {
+    let sections = navigation_sections(scrolled);
+    let focused = focused_navigation_row(scrolled);
+    let selected = selected_navigation_row(&sections);
+    let current_row = focused.or(selected);
+    let current_section = current_row.as_ref().and_then(|row| {
+        sections
+            .iter()
+            .position(|(_, rows)| rows.iter().any(|candidate| candidate == row))
+    });
+
     let shift_tab = key == gtk::gdk::Key::ISO_Left_Tab
-        || (key == gtk::gdk::Key::Tab && modifiers.contains(gtk::gdk::ModifierType::SHIFT_MASK));
-    if shift_tab {
-        return focus_previous_sidebar_section(scrolled);
-    }
-    if key == gtk::gdk::Key::Tab {
+        || (key == gtk::gdk::Key::Tab
+            && modifiers.contains(gtk::gdk::ModifierType::SHIFT_MASK));
+    if key == gtk::gdk::Key::Tab || shift_tab {
+        if sections.is_empty() {
+            return glib::Propagation::Proceed;
+        }
+
+        let next_section = if shift_tab {
+            current_section.and_then(|index| index.checked_sub(1))
+        } else {
+            current_section
+                .map(|index| index + 1)
+                .filter(|index| *index < sections.len())
+        };
+
+        if let Some(index) = next_section {
+            if focus_navigation_section(&sections, index, shift_tab) {
+                return glib::Propagation::Stop;
+            }
+        }
+
+        // The grid is the fifth keyboard section. Tab from the last sidebar
+        // section (or Shift+Tab from the first) crosses to it without changing
+        // the active Library/Album/Folder/Share selection.
         let target = unsafe {
             scrolled
                 .data::<Rc<dyn Fn() -> gtk::Widget>>(KEYBOARD_GRID_TARGET_KEY)
@@ -1111,9 +1145,9 @@ fn handle_keyboard_navigation(
                 return glib::Propagation::Stop;
             }
         }
+        return glib::Propagation::Proceed;
     }
 
-    let sections = navigation_sections(scrolled);
     let all_rows = sections
         .iter()
         .flat_map(|(_, rows)| rows.iter().cloned())
@@ -1124,8 +1158,7 @@ fn handle_keyboard_navigation(
 
     match key {
         gtk::gdk::Key::Up | gtk::gdk::Key::Down => {
-            let selected = selected_navigation_row(&sections);
-            let current = selected
+            let current = current_row
                 .as_ref()
                 .and_then(|row| all_rows.iter().position(|candidate| candidate == row));
             let next = match (current, key == gtk::gdk::Key::Down) {
@@ -1138,7 +1171,7 @@ fn handle_keyboard_navigation(
             glib::Propagation::Stop
         }
         gtk::gdk::Key::Left | gtk::gdk::Key::Right => {
-            let Some((list, row)) = selected_folder_navigation_row(scrolled) else {
+            let Some((list, row)) = focused_or_selected_folder_navigation_row(scrolled) else {
                 return glib::Propagation::Proceed;
             };
             let rows = folder_rows(&list);
@@ -1172,6 +1205,7 @@ fn handle_keyboard_navigation(
                         .nth(1)
                     {
                         list.select_row(Some(child));
+                        child.grab_focus();
                     }
                 }
             } else if has_children && expanded {
@@ -1179,12 +1213,13 @@ fn handle_keyboard_navigation(
                 rebuild_folder_list_from_rows(&list, &state);
                 set_active_filter(scrolled, SidebarFilter::Folder(folder.id));
             } else if let Some(parent_id) = folder.parent_id {
-                if rows.iter().any(|candidate| unsafe {
+                if let Some(parent) = rows.iter().find(|candidate| unsafe {
                     candidate
                         .data::<Folder>("picasa-folder-record")
                         .is_some_and(|parent| parent.as_ref().id == parent_id)
                 }) {
-                    set_active_filter(scrolled, SidebarFilter::Folder(parent_id));
+                    list.select_row(Some(parent));
+                    parent.grab_focus();
                 }
             }
             glib::Propagation::Stop
@@ -1243,11 +1278,49 @@ fn selected_navigation_row(
     sections.iter().find_map(|(list, _)| list.selected_row())
 }
 
-fn selected_folder_navigation_row(
+fn focused_navigation_row(scrolled: &gtk::ScrolledWindow) -> Option<gtk::ListBoxRow> {
+    let root = scrolled.root()?;
+    let mut focus = root.focus();
+    while let Some(widget) = focus {
+        if let Ok(row) = widget.clone().downcast::<gtk::ListBoxRow>() {
+            return Some(row);
+        }
+        focus = widget.parent();
+    }
+    None
+}
+
+fn focused_or_selected_folder_navigation_row(
     scrolled: &gtk::ScrolledWindow,
 ) -> Option<(gtk::ListBox, gtk::ListBoxRow)> {
     let list = stored_widget::<gtk::ListBox>(scrolled, FOLDER_LIST_KEY)?;
+    if let Some(row) = focused_navigation_row(scrolled) {
+        if folder_rows(&list).iter().any(|candidate| candidate == &row) {
+            return Some((list, row));
+        }
+    }
     Some((list.clone(), list.selected_row()?))
+}
+
+fn focus_navigation_section(
+    sections: &[(gtk::ListBox, Vec<gtk::ListBoxRow>)],
+    index: usize,
+    reverse: bool,
+) -> bool {
+    let Some((list, rows)) = sections.get(index) else {
+        return false;
+    };
+    let selected = list
+        .selected_row()
+        .filter(|row| rows.iter().any(|candidate| candidate == row));
+    let row = selected.or_else(|| {
+        if reverse {
+            rows.last().cloned()
+        } else {
+            rows.first().cloned()
+        }
+    });
+    row.is_some_and(|row| row.grab_focus())
 }
 
 fn select_navigation_row(sections: &[(gtk::ListBox, Vec<gtk::ListBoxRow>)], row: &gtk::ListBoxRow) {
@@ -1260,28 +1333,6 @@ fn select_navigation_row(sections: &[(gtk::ListBox, Vec<gtk::ListBoxRow>)], row:
     }
 }
 
-fn focus_previous_sidebar_section(scrolled: &gtk::ScrolledWindow) -> glib::Propagation {
-    let sections = navigation_sections(scrolled);
-    let Some(selected) = selected_navigation_row(&sections) else {
-        return glib::Propagation::Proceed;
-    };
-    let Some(section_index) = sections
-        .iter()
-        .position(|(_, rows)| rows.iter().any(|row| row == &selected))
-    else {
-        return glib::Propagation::Proceed;
-    };
-    if section_index == 0 {
-        return glib::Propagation::Proceed;
-    }
-    if let Some((list, rows)) = sections.get(section_index - 1) {
-        if let Some(row) = rows.last() {
-            list.select_row(Some(row));
-            row.grab_focus();
-        }
-    }
-    glib::Propagation::Stop
-}
 
 pub fn refresh(
     scrolled: &gtk::ScrolledWindow,

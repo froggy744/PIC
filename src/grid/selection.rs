@@ -406,6 +406,43 @@ impl Gallery {
         }
     }
 
+    /// Keyboard Ctrl+A. In the continuous Folder stream, scope selection to
+    /// the active folder (including descendant folders); everywhere else
+    /// select the complete current gallery model.
+    pub fn select_all_keyboard_scope(&self, folder_id: Option<i64>) {
+        if self.group_mode.get() == GroupMode::Folder {
+            if let Some(folder_id) = folder_id {
+                let scope = folder_navigation_scope(
+                    self.folder_catalog
+                        .borrow()
+                        .iter()
+                        .map(|folder| (folder.folder_id, folder.parent_id)),
+                    folder_id,
+                );
+                let ranges = self.group_ranges.borrow();
+                self.selection.unselect_all();
+                for range in ranges.iter().filter(|range| scope.contains(&range.folder_id)) {
+                    let len = range.end.saturating_sub(range.start);
+                    if len > 0 {
+                        self.selection
+                            .select_range(range.start as u32, len as u32, false);
+                    }
+                }
+                return;
+            }
+        }
+        self.selection.select_all();
+    }
+
+    /// Keyboard Ctrl+D. Clear the real photo selection rather than relying on
+    /// whichever GTK view currently owns focus.
+    pub fn clear_keyboard_selection(&self) {
+        self.selection.unselect_all();
+        if self.collage_selection_mode.get() {
+            self.collage_selected_ids.borrow_mut().clear();
+        }
+    }
+
     pub fn selected_photo_ids(&self, fallback_id: Option<i64>) -> Vec<i64> {
         if self.collage_selection_mode.get() {
             return self.collage_selected_ids.borrow().iter().copied().collect();

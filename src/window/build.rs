@@ -3417,6 +3417,93 @@ fn start_photo_export_single(
         search,
     ) = include!("layout.rs");
 
+    // Window-level photo shortcuts own keys that must work regardless of
+    // whether the GridView, sectioned Folder renderer or Lightbox has focus.
+    // Real text editors always keep their normal keyboard behaviour.
+    {
+        let window_for_keys = window.clone();
+        let gallery_for_keys = gallery.clone();
+        let filter_for_keys = filter.clone();
+        let stack_for_keys = main_stack.clone();
+        let lightbox_for_keys = lightbox.clone();
+        let selected_for_keys = selected_photo.clone();
+        let rating_buttons_for_keys = info.rating_buttons.clone();
+
+        let photo_keys = gtk::EventControllerKey::new();
+        photo_keys.set_propagation_phase(gtk::PropagationPhase::Capture);
+        photo_keys.connect_key_pressed(move |_, key, _, modifiers| {
+            let typing = std::iter::successors(
+                gtk::prelude::RootExt::focus(&window_for_keys),
+                |widget| widget.parent(),
+            )
+            .any(|widget| widget.is::<gtk::Editable>() || widget.is::<gtk::TextView>());
+            if typing {
+                return glib::Propagation::Proceed;
+            }
+
+            let control = modifiers.contains(gtk::gdk::ModifierType::CONTROL_MASK);
+            let disallowed_modifier = modifiers.intersects(
+                gtk::gdk::ModifierType::ALT_MASK
+                    | gtk::gdk::ModifierType::SUPER_MASK
+                    | gtk::gdk::ModifierType::META_MASK,
+            );
+            let photos_page =
+                stack_for_keys.visible_child_name().as_deref() == Some("photos");
+
+            if control && !disallowed_modifier && matches!(key, gtk::gdk::Key::a | gtk::gdk::Key::A) {
+                if photos_page && !lightbox_for_keys.root.is_visible() {
+                    let folder_id = match filter_for_keys.get() {
+                        sidebar::SidebarFilter::Folder(folder_id) => Some(folder_id),
+                        _ => None,
+                    };
+                    gallery_for_keys.select_all_keyboard_scope(folder_id);
+                    return glib::Propagation::Stop;
+                }
+                return glib::Propagation::Proceed;
+            }
+
+            if control && !disallowed_modifier && matches!(key, gtk::gdk::Key::d | gtk::gdk::Key::D) {
+                if photos_page && !lightbox_for_keys.root.is_visible() {
+                    gallery_for_keys.clear_keyboard_selection();
+                    return glib::Propagation::Stop;
+                }
+                return glib::Propagation::Proceed;
+            }
+
+            // Bare 1..5 are photo ratings, not type-to-search. The exception
+            // is explicit text focus above, so clicking Search makes numeric
+            // typing work normally. Using the current rating as a guard also
+            // makes key-repeat idempotent instead of toggling the rating.
+            if !control && !disallowed_modifier {
+                if let Some(rating) = key
+                    .to_unicode()
+                    .and_then(|character| character.to_digit(10))
+                    .filter(|rating| (1..=5).contains(rating))
+                    .map(|rating| rating as i32)
+                {
+                    if photos_page || lightbox_for_keys.root.is_visible() {
+                        if let Some(photo) = selected_for_keys.borrow().as_ref() {
+                            if photo.rating() != rating {
+                                if let Some(button) =
+                                    rating_buttons_for_keys.get((rating - 1) as usize)
+                                {
+                                    button.emit_clicked();
+                                }
+                            }
+                        }
+                    }
+                    // Digits 1..5 are reserved for ratings everywhere outside
+                    // a real text field. They must never trigger type-to-search;
+                    // clicking Search explicitly gives numeric keys back to it.
+                    return glib::Propagation::Stop;
+                }
+            }
+
+            glib::Propagation::Proceed
+        });
+        window.add_controller(photo_keys);
+    }
+
     // Appearance button: opens Settings → Themes, where the theme list is
     // built from the theme folders on disk. toolbar.rs appends the
     // `settings` button to the header tools.

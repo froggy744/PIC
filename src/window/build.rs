@@ -2716,11 +2716,9 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let lightbox_slider_latest = Rc::new(Cell::new(info.grid_zoom.value()));
     let lightbox_slider_applied = Rc::new(Cell::new(info.grid_zoom.value()));
     let lightbox_slider_tick_running = Rc::new(Cell::new(false));
-    let lightbox_slider_frame_phase = Rc::new(Cell::new(false));
     let lightbox_slider_latest_for_change = lightbox_slider_latest.clone();
     let lightbox_slider_applied_for_change = lightbox_slider_applied.clone();
     let lightbox_slider_tick_running_for_change = lightbox_slider_tick_running.clone();
-    let lightbox_slider_frame_phase_for_change = lightbox_slider_frame_phase.clone();
 
     info.grid_zoom.connect_value_changed(move |scale| {
         if std::env::var_os("PICASA_TRACE").is_some() {
@@ -2764,8 +2762,6 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 let latest = lightbox_slider_latest_for_change.clone();
                 let applied = lightbox_slider_applied_for_change.clone();
                 let running = lightbox_slider_tick_running_for_change.clone();
-                let frame_phase = lightbox_slider_frame_phase_for_change.clone();
-                frame_phase.set(false);
                 let tick_root = lightbox.root.clone();
                 tick_root.add_tick_callback(move |root, _| {
                     if !root.is_visible() {
@@ -2776,14 +2772,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                     let value = latest.get();
                     if (value - applied.get()).abs() <= f64::EPSILON {
                         running.set(false);
-                        frame_phase.set(false);
                         return glib::ControlFlow::Break;
-                    }
-
-                    let publish_this_frame = frame_phase.get();
-                    frame_phase.set(!publish_this_frame);
-                    if !publish_this_frame {
-                        return glib::ControlFlow::Continue;
                     }
 
                     let fit_scale = lightbox.current_fit_scale();

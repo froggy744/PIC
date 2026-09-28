@@ -47,6 +47,59 @@ fn section_index_for_photo(ranges: &[GroupRange], photo_index: usize) -> Option<
         .map(|_| index)
 }
 
+fn vertical_navigation_target(
+    ranges: &[GroupRange],
+    current: u32,
+    columns: u32,
+    preferred_column: u32,
+    direction: i32,
+) -> Option<u32> {
+    let columns = columns.max(1) as usize;
+    let section = section_index_for_photo(ranges, current as usize)?;
+    let current_range = ranges.get(section)?;
+    let local = current as usize - current_range.start;
+    let row = local / columns;
+
+    let pick_row = |range: &GroupRange, row: usize| -> Option<u32> {
+        let count = range.end.saturating_sub(range.start);
+        if count == 0 {
+            return None;
+        }
+        let row_start = row.saturating_mul(columns);
+        if row_start >= count {
+            return None;
+        }
+        let row_len = (count - row_start).min(columns);
+        let column = (preferred_column as usize).min(row_len.saturating_sub(1));
+        Some((range.start + row_start + column) as u32)
+    };
+
+    if direction < 0 {
+        if row > 0 {
+            return pick_row(current_range, row - 1);
+        }
+        for range in ranges[..section].iter().rev() {
+            let count = range.end.saturating_sub(range.start);
+            if count == 0 {
+                continue;
+            }
+            return pick_row(range, (count - 1) / columns);
+        }
+    } else if direction > 0 {
+        let count = current_range.end.saturating_sub(current_range.start);
+        let last_row = count.saturating_sub(1) / columns;
+        if row < last_row {
+            return pick_row(current_range, row + 1);
+        }
+        for range in ranges.iter().skip(section + 1) {
+            if range.start < range.end {
+                return pick_row(range, 0);
+            }
+        }
+    }
+    None
+}
+
 fn upper_edge_anchor(
     ranges: &[GroupRange],
     geometry: &[SectionedFolderGeometry],
@@ -262,6 +315,7 @@ struct SectionedFolderView {
     live_headers: RefCell<HashMap<usize, gtk::Label>>,
     header_pool: RefCell<VecDeque<gtk::Label>>,
     selection_anchor: Rc<Cell<Option<u32>>>,
+    keyboard_preferred_column: Cell<Option<u32>>,
     scroll_animation_generation: Cell<u64>,
     reflow_animation_generation: Cell<u64>,
     reflow_active: Cell<bool>,
@@ -337,6 +391,7 @@ impl SectionedFolderView {
             live_headers: RefCell::new(HashMap::new()),
             header_pool: RefCell::new(VecDeque::new()),
             selection_anchor: Rc::new(Cell::new(None)),
+            keyboard_preferred_column: Cell::new(None),
             scroll_animation_generation: Cell::new(0),
             reflow_animation_generation: Cell::new(0),
             reflow_active: Cell::new(false),
@@ -378,21 +433,38 @@ impl SectionedFolderView {
             }
             let columns = view.current_columns.get().max(1);
             let next = match key {
-                gtk::gdk::Key::Left => current.checked_sub(1),
+                gtk::gdk::Key::Left => {
+                    let next = current.checked_sub(1);
+                    if let Some(next) = next {
+                        view.keyboard_preferred_column
+                            .set(view.column_for_index(next));
+                    }
+                    next
+                }
                 gtk::gdk::Key::Right => {
                     let candidate = current.saturating_add(1);
-                    (candidate < count).then_some(candidate)
-                }
-                gtk::gdk::Key::Up => current.checked_sub(columns),
-                gtk::gdk::Key::Down => {
-                    let candidate = current.saturating_add(columns);
-                    if candidate < count {
-                        Some(candidate)
-                    } else if current + 1 < count {
-                        Some(count - 1)
-                    } else {
-                        None
+                    let next = (candidate < count).then_some(candidate);
+                    if let Some(next) = next {
+                        view.keyboard_preferred_column
+                            .set(view.column_for_index(next));
                     }
+                    next
+                }
+                gtk::gdk::Key::Up | gtk::gdk::Key::Down => {
+                    let preferred = view
+                        .keyboard_preferred_column
+                        .get()
+                        .or_else(|| view.column_for_index(current))
+                        .unwrap_or(0);
+                    view.keyboard_preferred_column.set(Some(preferred));
+                    let direction = if key == gtk::gdk::Key::Up { -1 } else { 1 };
+                    vertical_navigation_target(
+                        &view.group_ranges.borrow(),
+                        current,
+                        columns,
+                        preferred,
+                        direction,
+                    )
                 }
                 _ => return glib::Propagation::Proceed,
             };
@@ -401,10 +473,7 @@ impl SectionedFolderView {
             };
             view.selection.select_item(next, true);
             view.selection_anchor.set(Some(next));
-            // Arrow navigation must move the selection, not reposition the
-            // whole Folder section at the top of the viewport. Only adjust
-            // the scroll value when the destination actually leaves view.
-            view.reveal_index_if_needed(next);
+            view.smooth_keep_index_in_center_zone(next);
             if let Some(photo) = view.current_photos.borrow().get(next as usize) {
                 view.focus_photo(photo.id());
             }
@@ -624,6 +693,9 @@ impl SectionedFolderView {
         let tile_for_click = tile.clone();
         let self_for_click_collage_mode = self.collage_mode.clone();
         let self_for_click_collage_ids = self.collage_ids.clone();
+        let self_for_click_columns = self.current_columns.clone();
+        let self_for_click_ranges = self.group_ranges.clone();
+        let self_for_click_preferred = self.keyboard_preferred_column.clone();
         click.connect_pressed(move |gesture, presses, _, _| {
             let Some(position) = index_for_click.get() else {
                 return;
@@ -670,6 +742,19 @@ impl SectionedFolderView {
             } else {
                 selection.select_item(position, true);
                 selection_anchor.set(Some(position));
+            }
+
+            if !shift && !control {
+                // A direct click establishes the visual column that Up/Down
+                // should keep while crossing short rows and folder headers.
+                let columns = self_for_click_columns.get().max(1);
+                let ranges = self_for_click_ranges.borrow();
+                if let Some(section) = section_index_for_photo(&ranges, position as usize) {
+                    if let Some(range) = ranges.get(section) {
+                        let local = position as usize - range.start;
+                        self_for_click_preferred.set(Some((local as u32) % columns));
+                    }
+                }
             }
 
             if presses == 2 {
@@ -1269,6 +1354,105 @@ impl SectionedFolderView {
         let geom = geometry.get(section_index)?;
         let local = index as usize - range.start;
         Some(geom.first_photo_y + (local as u32 / columns) as f64 * row_height)
+    }
+
+    fn column_for_index(&self, index: u32) -> Option<u32> {
+        let columns = self.current_columns.get().max(1);
+        let ranges = self.group_ranges.borrow();
+        let section = section_index_for_photo(&ranges, index as usize)?;
+        let range = ranges.get(section)?;
+        let local = index as usize - range.start;
+        Some((local as u32) % columns)
+    }
+
+    fn smooth_keep_index_in_center_zone(self: &Rc<Self>, index: u32) -> bool {
+        self.refresh();
+        let Some(row_top) = self.y_for_index(index) else {
+            return false;
+        };
+        let Some(scrolled) = self.scroll.borrow().as_ref().cloned() else {
+            return false;
+        };
+        let adjustment = scrolled.vadjustment();
+        let page = adjustment.page_size().max(1.0);
+        let row_height = f64::from(folder_line_height(
+            self.tile_height.get(),
+            self.show_file_names.get(),
+        ));
+        let row_center = row_top + row_height * 0.5;
+        let current_top = adjustment.value();
+        let comfort_top = current_top + page * 0.35;
+        let comfort_bottom = current_top + page * 0.65;
+
+        if row_center >= comfort_top && row_center <= comfort_bottom {
+            return true;
+        }
+
+        let lower = adjustment.lower();
+        let upper = (adjustment.upper() - page).max(lower);
+        let target = (row_center - page * 0.5).clamp(lower, upper);
+        self.animate_scroll_to(target, index);
+        true
+    }
+
+    fn animate_scroll_to(self: &Rc<Self>, target: f64, index: u32) {
+        let Some(scrolled) = self.scroll.borrow().as_ref().cloned() else {
+            return;
+        };
+        let adjustment = scrolled.vadjustment();
+        let start = adjustment.value();
+        if (target - start).abs() < 0.5 {
+            return;
+        }
+
+        let generation = self.scroll_animation_generation.get().wrapping_add(1);
+        self.scroll_animation_generation.set(generation);
+        let weak = Rc::downgrade(self);
+        let started = Instant::now();
+        const DURATION_MS: f64 = 190.0;
+
+        self.root.add_tick_callback(move |_, _| {
+            let Some(view) = weak.upgrade() else {
+                return glib::ControlFlow::Break;
+            };
+            if view.scroll_animation_generation.get() != generation {
+                return glib::ControlFlow::Break;
+            }
+
+            let t = (started.elapsed().as_secs_f64() * 1000.0 / DURATION_MS).clamp(0.0, 1.0);
+            // Cubic ease-in-out: gentle start, quick middle, soft landing.
+            let eased = if t < 0.5 {
+                4.0 * t * t * t
+            } else {
+                1.0 - (-2.0 * t + 2.0).powi(3) / 2.0
+            };
+            adjustment.set_value(start + (target - start) * eased);
+            view.refresh();
+
+            if t >= 1.0 {
+                adjustment.set_value(target);
+                view.refresh();
+                if let Some(photo_id) = view
+                    .current_photos
+                    .borrow()
+                    .get(index as usize)
+                    .map(PhotoObject::id)
+                {
+                    view.focus_photo(photo_id);
+                }
+                if std::env::var_os("PICASA_TRACE").is_some() {
+                    eprintln!(
+                        "PIC_SECTIONED_KEY_SCROLL index={} from_y={:.1} target_y={:.1} eased=true",
+                        index,
+                        start,
+                        target
+                    );
+                }
+                glib::ControlFlow::Break
+            } else {
+                glib::ControlFlow::Continue
+            }
+        });
     }
 
     fn reveal_index_if_needed(self: &Rc<Self>, index: u32) -> bool {

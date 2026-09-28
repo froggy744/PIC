@@ -392,6 +392,10 @@ pub struct Lightbox {
     applied_native_scale: Rc<Cell<f64>>,
     one_to_one_active: Rc<Cell<bool>>,
     native_texture: Rc<RefCell<Option<NativeTextureCache>>>,
+    // A normal viewer decode is only viewport-sized. The first manual zoom
+    // starts one native-quality decode and shares it with every subsequent
+    // slider event instead of spawning duplicate full-resolution work.
+    native_quality_pending: Rc<Cell<bool>>,
     display_texture_cache: DisplayTextureCache,
     load_generation: Rc<Cell<u64>>,
     decode_cancel: Rc<RefCell<Option<Arc<ViewerRequestLease>>>>,

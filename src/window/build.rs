@@ -2882,7 +2882,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         }
 
         let step = if lightbox_for_scale_scroll.root.is_visible() {
-            10.0
+            20.0
         } else if main_stack_for_scale_scroll.visible_child_name().as_deref() == Some("edit") {
             1.0
         } else {

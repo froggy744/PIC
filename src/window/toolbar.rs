@@ -268,7 +268,8 @@
     rating_filter_heading.add_css_class("heading");
     rating_filter_box.append(&rating_filter_heading);
 
-    let rating_all = gtk::CheckButton::with_label("All ratings");
+    let rating_clear = gtk::CheckButton::with_label("Clear");
+    let rating_all_stars = gtk::CheckButton::with_label("All Stars");
     let rating_unrated = gtk::CheckButton::with_label("Unrated");
     let rating_one = gtk::CheckButton::with_label("★ 1");
     let rating_two = gtk::CheckButton::with_label("★★ 2");
@@ -276,6 +277,7 @@
     let rating_four = gtk::CheckButton::with_label("★★★★ 4");
     let rating_five = gtk::CheckButton::with_label("★★★★★ 5");
     for button in [
+        &rating_all_stars,
         &rating_unrated,
         &rating_one,
         &rating_two,
@@ -283,10 +285,11 @@
         &rating_four,
         &rating_five,
     ] {
-        button.set_group(Some(&rating_all));
+        button.set_group(Some(&rating_clear));
     }
     match rating_filter.get() {
-        RatingFilter::All => rating_all.set_active(true),
+        RatingFilter::All => rating_clear.set_active(true),
+        RatingFilter::AllStars => rating_all_stars.set_active(true),
         RatingFilter::Unrated => rating_unrated.set_active(true),
         RatingFilter::One => rating_one.set_active(true),
         RatingFilter::Two => rating_two.set_active(true),
@@ -295,7 +298,8 @@
         RatingFilter::Five => rating_five.set_active(true),
     }
     for button in [
-        &rating_all,
+        &rating_clear,
+        &rating_all_stars,
         &rating_unrated,
         &rating_one,
         &rating_two,
@@ -339,7 +343,8 @@
             );
         });
     };
-    connect_rating_filter(&rating_all, RatingFilter::All);
+    connect_rating_filter(&rating_clear, RatingFilter::All);
+    connect_rating_filter(&rating_all_stars, RatingFilter::AllStars);
     connect_rating_filter(&rating_unrated, RatingFilter::Unrated);
     connect_rating_filter(&rating_one, RatingFilter::One);
     connect_rating_filter(&rating_two, RatingFilter::Two);

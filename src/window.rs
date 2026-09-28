@@ -130,6 +130,7 @@ struct PhotoSort {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RatingFilter {
     All,
+    AllStars,
     Unrated,
     One,
     Two,
@@ -142,6 +143,7 @@ impl RatingFilter {
     fn key(self) -> &'static str {
         match self {
             Self::All => "all",
+            Self::AllStars => "stars",
             Self::Unrated => "unrated",
             Self::One => "1",
             Self::Two => "2",
@@ -153,6 +155,7 @@ impl RatingFilter {
 
     fn from_key(key: &str) -> Self {
         match key {
+            "stars" => Self::AllStars,
             "unrated" | "0" => Self::Unrated,
             "1" => Self::One,
             "2" => Self::Two,
@@ -166,6 +169,7 @@ impl RatingFilter {
     fn rating(self) -> Option<i32> {
         match self {
             Self::All => None,
+            Self::AllStars => None,
             Self::Unrated => Some(0),
             Self::One => Some(1),
             Self::Two => Some(2),
@@ -177,7 +181,8 @@ impl RatingFilter {
 
     fn tooltip(self) -> &'static str {
         match self {
-            Self::All => "Filter by rating",
+            Self::All => "Filter by rating (clear)",
+            Self::AllStars => "Rating filter: All Stars",
             Self::Unrated => "Rating filter: Unrated",
             Self::One => "Rating filter: 1 star",
             Self::Two => "Rating filter: 2 stars",

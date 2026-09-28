@@ -618,6 +618,34 @@ impl SquareTile {
         } else if let Some(child) = find_overlay_child(&frame, "favorite-badge") {
             child.set_visible(false);
         }
+        self.refresh_rating_indicator();
+    }
+
+    fn refresh_rating_indicator(&self) {
+        let Some(photo) = self.imp().photo.borrow().clone() else {
+            return;
+        };
+        let Some(frame) = self.first_child().and_downcast::<gtk::Overlay>() else {
+            return;
+        };
+        let rating = photo.rating().clamp(0, 5);
+        if rating == 0 {
+            if let Some(child) = find_overlay_child(&frame, "rating-badge") {
+                child.set_visible(false);
+            }
+            return;
+        }
+
+        let favorite_visible =
+            self.imp().favorite_indicators_visible.get() && photo.favorite();
+        let badge = ensure_rating_badge(&frame);
+        badge.set_text(&format!("★ {rating}"));
+        badge.set_tooltip_text(Some(&format!("Rating: {rating} of 5")));
+        // With no Favourite heart the rating owns the normal bottom-right
+        // position. When both are present, leave the heart at the far right
+        // and shift the rating just far enough left to sit beside it.
+        badge.set_margin_end(if favorite_visible { 32 } else { 8 });
+        badge.set_visible(true);
     }
 
     fn set_photo_deferred(&self, photo: &PhotoObject) {
@@ -760,6 +788,7 @@ impl SquareTile {
         } else if let Some(child) = find_overlay_child(&frame, "favorite-badge") {
             child.set_visible(false);
         }
+        self.refresh_rating_indicator();
 
         let edited = !crate::edit::EditRecipe::decode(&photo.edit_recipe()).is_default();
         if edited {
@@ -1193,6 +1222,26 @@ fn ensure_favorite_badge(frame: &gtk::Overlay) -> gtk::Image {
     badge.set_margin_bottom(8);
     badge.set_margin_end(8);
     badge.add_css_class("favorite-badge");
+    badge.set_visible(false);
+    frame.add_overlay(&badge);
+    badge
+}
+
+fn ensure_rating_badge(frame: &gtk::Overlay) -> gtk::Label {
+    if let Some(existing) = find_overlay_child(frame, "rating-badge") {
+        if let Ok(label) = existing.downcast::<gtk::Label>() {
+            return label;
+        }
+    }
+    let badge = gtk::Label::new(None);
+    badge.set_halign(gtk::Align::End);
+    badge.set_valign(gtk::Align::End);
+    badge.set_margin_bottom(8);
+    badge.set_margin_end(8);
+    badge.add_css_class("rating-badge");
+    badge.add_css_class("osd");
+    badge.add_css_class("caption");
+    badge.set_can_target(false);
     badge.set_visible(false);
     frame.add_overlay(&badge);
     badge

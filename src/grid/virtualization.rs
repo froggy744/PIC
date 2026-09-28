@@ -1893,6 +1893,16 @@ impl Gallery {
         self.refresh_favorite_indicators();
     }
 
+    pub fn refresh_rating_indicators(&self) {
+        let mut tiles = Vec::new();
+        collect_tiles(self.root.upcast_ref(), &mut tiles);
+        collect_tiles(self.folder_root.upcast_ref(), &mut tiles);
+        collect_tiles(self.folder_sectioned_root.upcast_ref(), &mut tiles);
+        for tile in tiles {
+            tile.refresh_rating_indicator();
+        }
+    }
+
     pub fn update_ratings(&self, ids: &[i64], rating: i32) {
         let ids = ids.iter().copied().collect::<HashSet<_>>();
         for photo in self.current_photos.borrow().iter() {
@@ -1900,6 +1910,7 @@ impl Gallery {
                 photo.set_rating(rating);
             }
         }
+        self.refresh_rating_indicators();
     }
 
     /// Remove visible photos from the current grid without rebuilding the model.

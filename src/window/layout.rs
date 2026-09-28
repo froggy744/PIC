@@ -2,7 +2,7 @@
     let main_split = adw::OverlaySplitView::new();
 
     let album_theme_changed_for_destination = album_theme_changed.clone();
-    let destination_click_with_target: Rc<dyn Fn(sidebar::SidebarFilter, bool)> = {
+    let destination_click_with_target: Rc<dyn Fn(sidebar::SidebarFilter, bool, bool)> = {
         let search_entry = search_entry_slot.clone();
         let search_text = search_text.clone();
         let suppressed = search_suppressed.clone();
@@ -21,7 +21,7 @@
         let connection_for_albums = connection.clone();
         let album_home_click_slot = album_home_click_slot.clone();
         let open_in_folder_exact_target = open_in_folder_exact_target.clone();
-        Rc::new(move |new_filter, exact_photo_target| {
+        Rc::new(move |new_filter, exact_photo_target, center_folder_target| {
             // Cancel stale async refresh/folder-scroll work before this new
             // destination is established. This also covers Folder-to-Folder
             // reuse, which otherwise would not bump the refresh generation.
@@ -126,9 +126,12 @@
                 }
                 FolderDestinationPlan::Normal => {
                     if let Some((folder_id, folder_path)) = folder_target {
-                        if reuse_folder_stream
-                            && gallery.scroll_to_folder(folder_id, &folder_path)
-                        {
+                        let revealed = if center_folder_target {
+                            gallery.scroll_to_folder_centered(folder_id, &folder_path)
+                        } else {
+                            gallery.scroll_to_folder(folder_id, &folder_path)
+                        };
+                        if reuse_folder_stream && revealed {
                             return;
                         }
                         refresh_grid_to_folder(
@@ -139,6 +142,7 @@
                             &gallery,
                             folder_id,
                             folder_path,
+                            center_folder_target,
                         );
                     } else {
                         refresh_grid(&connection, new_filter, "", sort.get(), &gallery);
@@ -150,9 +154,14 @@
 
     let destination_click: Rc<dyn Fn(sidebar::SidebarFilter)> = {
         let destination_click_with_target = destination_click_with_target.clone();
-        Rc::new(move |new_filter| destination_click_with_target(new_filter, false))
+        Rc::new(move |new_filter| destination_click_with_target(new_filter, false, false))
     };
     library_navigation_slot.replace(Some(destination_click.clone()));
+
+    let search_destination_click: Rc<dyn Fn(sidebar::SidebarFilter)> = {
+        let destination_click_with_target = destination_click_with_target.clone();
+        Rc::new(move |new_filter| destination_click_with_target(new_filter, false, true))
+    };
 
     album_home_click_slot.replace(Some({
         let destination_click = destination_click.clone();
@@ -165,7 +174,7 @@
         let exact_target = open_in_folder_exact_target.clone();
         Rc::new(move |folder_id, photo_id| {
             exact_target.set(Some(photo_id));
-            destination_click_with_target(sidebar::SidebarFilter::Folder(folder_id), true);
+            destination_click_with_target(sidebar::SidebarFilter::Folder(folder_id), true, false);
             let gallery = gallery.clone();
             let exact_target_for_timer = exact_target.clone();
             let attempts = Rc::new(Cell::new(0u32));
@@ -1445,7 +1454,7 @@
     let search_suppressed_for_search = search_suppressed.clone();
     let cleared_search_query_for_search = cleared_search_query.clone();
     let search_debounce_for_search = search_debounce.clone();
-    let destination_click_for_search = destination_click.clone();
+    let destination_click_for_search = search_destination_click.clone();
     let sidebar_selection_for_search = sidebar_selection_slot.clone();
     let suggestion_popover_for_search = suggestion_popover.clone();
     let suggestion_list_for_search = suggestion_list.clone();

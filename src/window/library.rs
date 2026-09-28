@@ -216,21 +216,24 @@ fn scroll_gallery_to_folder_when_ready(
             } else {
                 glib::ControlFlow::Continue
             }
-        } else if if center_folder {
-            gallery.scroll_to_folder_centered(folder_id, &folder_path)
         } else {
-            gallery.scroll_to_folder(folder_id, &folder_path)
-        } {
-            glib::ControlFlow::Break
-        } else {
-            let settled = settled_for_timer.get() + 1;
-            settled_for_timer.set(settled);
-            if settled >= 240 {
-                // Six seconds after the Folder stream is fully built is
-                // generous; a missing/empty folder leaves the position as-is.
+            let revealed = if center_folder {
+                gallery.scroll_to_folder_centered(folder_id, &folder_path)
+            } else {
+                gallery.scroll_to_folder(folder_id, &folder_path)
+            };
+            if revealed {
                 glib::ControlFlow::Break
             } else {
-                glib::ControlFlow::Continue
+                let settled = settled_for_timer.get() + 1;
+                settled_for_timer.set(settled);
+                if settled >= 240 {
+                    // Six seconds after the Folder stream is fully built is
+                    // generous; a missing/empty folder leaves the position as-is.
+                    glib::ControlFlow::Break
+                } else {
+                    glib::ControlFlow::Continue
+                }
             }
         }
     });

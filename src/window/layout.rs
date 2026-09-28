@@ -1652,9 +1652,8 @@
     let group_mode_for_activate = group_mode.clone();
     let gallery_for_activate = gallery.clone();
     let suggestion_popover_for_activate = suggestion_popover.clone();
+    let suggestion_list_for_activate = suggestion_list.clone();
     let stack_for_home_activate = main_stack.clone();
-    let destination_click_for_activate = destination_click.clone();
-    let sidebar_selection_for_activate = sidebar_selection_slot.clone();
     search.connect_activate(move |entry| {
         if let Some(source) = search_debounce_for_activate.borrow_mut().take() {
             let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| source.remove()));
@@ -1662,60 +1661,16 @@
         let query = entry.text().to_string();
         search_text_for_activate.replace(query.clone());
 
-        // Enter on Search is deterministic folder navigation when the same
-        // folder lookup shown by the suggestion popup has a match. Do not rely
-        // on popup selection/key propagation: GTK can deliver SearchEntry
-        // activate even when the popup row never became the key target.
-        if let Some(folder) = db::search_folders(
-            &connection_for_activate.borrow(),
-            &query,
-            1,
-        )
-        .ok()
-        .and_then(|mut folders| folders.drain(..).next())
-        {
-            suggestion_popover_for_activate.popdown();
-            if std::env::var_os("PICASA_TRACE").is_some() {
-                eprintln!(
-                    "PIC_SEARCH enter_folder query={:?} folder_id={} path={:?}",
-                    query,
-                    folder.id,
-                    folder.path
-                );
+        if suggestion_popover_for_activate.is_visible() {
+            if let Some(button) = suggestion_list_for_activate
+                .selected_row()
+                .or_else(|| suggestion_list_for_activate.row_at_index(0))
+                .and_then(|row| row.child())
+                .and_downcast::<gtk::Button>()
+            {
+                button.emit_clicked();
+                return;
             }
-
-            destination_click_for_activate(sidebar::SidebarFilter::Folder(folder.id));
-            gallery_for_activate
-                .set_pending_folder_target(folder.id, folder.path.clone());
-
-            if !gallery_for_activate.try_focus_pending_folder() {
-                let gallery = gallery_for_activate.clone();
-                let filter = filter_for_activate.clone();
-                let folder_id = folder.id;
-                let attempts = Rc::new(Cell::new(0u32));
-                let attempts_for_timer = attempts.clone();
-                glib::timeout_add_local(Duration::from_millis(25), move || {
-                    let attempt = attempts_for_timer.get() + 1;
-                    attempts_for_timer.set(attempt);
-                    if filter.get() != sidebar::SidebarFilter::Folder(folder_id) {
-                        return glib::ControlFlow::Break;
-                    }
-                    if !gallery.stream_building() && gallery.try_focus_pending_folder() {
-                        glib::ControlFlow::Break
-                    } else if attempt >= 1200 {
-                        glib::ControlFlow::Break
-                    } else {
-                        glib::ControlFlow::Continue
-                    }
-                });
-            }
-
-            if let Some(sidebar) = sidebar_selection_for_activate.borrow().as_ref().cloned() {
-                glib::timeout_add_local_once(Duration::from_millis(100), move || {
-                    sidebar::scroll_to_folder(&sidebar, folder.id);
-                });
-            }
-            return;
         }
 
         if filter_for_activate.get() == sidebar::SidebarFilter::Library {

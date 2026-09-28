@@ -768,6 +768,37 @@ impl Gallery {
         true
     }
 
+    /// Search-only Folder reveal: center the folder header in the viewport so
+    /// the destination name remains visible instead of sitting against the top edge.
+    pub fn scroll_to_folder_centered(&self, folder_id: i64, folder_path: &str) -> bool {
+        if self.group_mode.get() == GroupMode::Folder
+            && crate::grid::sectioned_folder_view_enabled()
+        {
+            let scope = folder_navigation_scope(
+                self.folder_catalog
+                    .borrow()
+                    .iter()
+                    .map(|folder| (folder.folder_id, folder.parent_id)),
+                folder_id,
+            );
+            let Some(photo_position) = self
+                .current_photos
+                .borrow()
+                .iter()
+                .position(|photo| scope.contains(&photo.folder_id()))
+            else {
+                return false;
+            };
+
+            self.selection.select_item(photo_position as u32, true);
+            return self
+                .sectioned_folder
+                .scroll_to_index_centered(photo_position as u32);
+        }
+
+        self.scroll_to_folder(folder_id, folder_path)
+    }
+
     pub fn select_last_photo(&self) {
         let count = self.store.n_items();
         if count == 0 {

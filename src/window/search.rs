@@ -129,16 +129,9 @@ fn folder_suggestion_popup(search: &gtk::SearchEntry) -> (gtk::Popover, gtk::Lis
                 glib::Propagation::Stop
             }
             gtk::gdk::Key::Return | gtk::gdk::Key::KP_Enter => {
-                if let Some(button) = list
-                    .selected_row()
-                    .and_then(|row| row.child())
-                    .and_downcast::<gtk::Button>()
-                {
-                    button.emit_clicked();
-                    glib::Propagation::Stop
-                } else {
-                    glib::Propagation::Proceed
-                }
+                // Let GtkSearchEntry emit its normal activate signal. Folder
+                // navigation is resolved there from the current query.
+                glib::Propagation::Proceed
             }
             gtk::gdk::Key::Escape => {
                 popup.popdown();

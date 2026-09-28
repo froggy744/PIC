@@ -1524,70 +1524,15 @@
                 Rc::new({
                     let destination_click = destination_click_for_search.clone();
                     let sidebar_selection = sidebar_selection_for_search.clone();
-                    let gallery = gallery_for_search.clone();
-                    let filter = filter_for_search.clone();
-                    let search_text = search_text_for_search.clone();
-                    let folders = folders_for_search.clone();
                     move |folder_id| {
-                        
-                        let folder_path = folders
-                            .iter()
-                            .find(|folder| folder.id == folder_id)
-                            .map(|folder| folder.path.clone());
-
-                        // Folder suggestions are navigation results. destination_click
-                        // owns the canonical search-clear + Folder-stream transition.
+                        // Use one authoritative Gallery navigation path.
+                        // destination_click owns cache restore/rebuild and the
+                        // grid scroll; do not queue a second pending scroll.
                         destination_click(sidebar::SidebarFilter::Folder(folder_id));
 
-                        // The first Folder navigation after startup has no cache yet. The
-                        // continuous stream is built progressively, so preserve the requested
-                        // folder on the Gallery until its rows are ready. This also lets a
-                        // valid cache restore focus immediately without reloading the stream.
-                        if let Some(folder_path) = folder_path {
-                            gallery.set_pending_folder_target(folder_id, folder_path);
-                            
-                            let focused_immediately = gallery.try_focus_pending_folder();
-                            let gallery = gallery.clone();
-                            let filter = filter.clone();
-                            let search_text = search_text.clone();
-                            let attempts = Rc::new(Cell::new(0u32));
-                            let attempts_for_timer = attempts.clone();
-                            if !focused_immediately {
-                                glib::timeout_add_local(Duration::from_millis(25), move || {
-                                let attempt = attempts_for_timer.get() + 1;
-                                attempts_for_timer.set(attempt);
-                                let still_on_target = filter.get()
-                                    == sidebar::SidebarFilter::Folder(folder_id);
-                                let search_is_clear = search_text.borrow().is_empty();
-                                let building = gallery.stream_building();
-                                let focused = if still_on_target && search_is_clear {
-                                    gallery.try_focus_pending_folder()
-                                } else {
-                                    false
-                                };
-                                let pending = gallery.has_pending_folder_target();
-
-                                if search_folder_focus_should_stop(
-                                    still_on_target,
-                                    search_is_clear,
-                                    building,
-                                    pending,
-                                    focused,
-                                    attempt,
-                                ) {
-                                    glib::ControlFlow::Break
-                                } else {
-                                    glib::ControlFlow::Continue
-                                }
-                                });
-                            }
-                        }
-
+                        // The sidebar still needs to reveal/focus the row.
                         if let Some(sidebar) = sidebar_selection.borrow().as_ref().cloned() {
-                            glib::timeout_add_local_once(
-                                Duration::from_millis(100),
-                                move || sidebar::scroll_to_folder(&sidebar, folder_id),
-                            );
+                            sidebar::scroll_to_folder(&sidebar, folder_id);
                         }
                     }
                 }),

@@ -1060,12 +1060,15 @@ fn fit_picture(
         return;
     }
 
-    // Explicit zoom/1:1 presentation is intentionally larger than the
-    // viewport when required, so switch back to centred intrinsic geometry.
+    // Explicit zoom/1:1 presentation may overflow the viewport. Do not
+    // centre an overflowing GtkPicture with widget alignment *and* centre it
+    // again with the ScrolledWindow adjustments: those are two competing
+    // origins and rapid slider updates make the child visibly oscillate.
+    //
+    // Axes that still fit may use normal GTK centring. Overflowing axes are
+    // anchored at Start and the adjustment is the single owner of centring.
     picture.set_hexpand(false);
     picture.set_vexpand(false);
-    picture.set_halign(gtk::Align::Center);
-    picture.set_valign(gtk::Align::Center);
 
     let (native_width, native_height) = presentation_native_dimensions(photo);
     let (fitted_width, fitted_height) = fitted_picture_dimensions(
@@ -1077,6 +1080,16 @@ fn fit_picture(
         viewport_height,
         zoom,
     );
+    picture.set_halign(if fitted_width > viewport_width {
+        gtk::Align::Start
+    } else {
+        gtk::Align::Center
+    });
+    picture.set_valign(if fitted_height > viewport_height {
+        gtk::Align::Start
+    } else {
+        gtk::Align::Center
+    });
 
     // A zoom control sitting at one of its stops still reports a value on every
     // tick, and GTK re-queues a layout for any set_size_request even when the

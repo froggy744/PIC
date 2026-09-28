@@ -1591,22 +1591,8 @@ impl SectionedFolderView {
     }
 
     fn scroll_to_index_centered(self: &Rc<Self>, index: u32) -> bool {
-        self.scroll_animation_generation
-            .set(self.scroll_animation_generation.get().wrapping_add(1));
         self.refresh();
-
-        let section_index = self.section_index_for_photo(index);
-        let ranges = self.group_ranges.borrow();
-        let geometry = self.geometry.borrow();
-        let header_center = section_index.and_then(|section_index| {
-            let _range = ranges.get(section_index)?;
-            let geom = geometry.get(section_index)?;
-            Some(geom.header_y + SECTIONED_HEADER_HEIGHT * 0.5)
-        });
-        drop(geometry);
-        drop(ranges);
-
-        let Some(header_center) = header_center else {
+        let Some(row_top) = self.y_for_index(index) else {
             return false;
         };
         let Some(scrolled) = self.scroll.borrow().as_ref().cloned() else {
@@ -1617,22 +1603,18 @@ impl SectionedFolderView {
         let lower = adjustment.lower();
         let page = adjustment.page_size().max(1.0);
         let upper = (adjustment.upper() - page).max(lower);
-        let target = (header_center - page * 0.5).clamp(lower, upper);
-        adjustment.set_value(target);
-        self.refresh();
+        let row_height = f64::from(folder_line_height(
+            self.tile_height.get(),
+            self.show_file_names.get(),
+        ));
+        let row_center = row_top + row_height * 0.5;
+        let target = (row_center - page * 0.5).clamp(lower, upper);
 
-        if let Some(photo_id) = self
-            .current_photos
-            .borrow()
-            .get(index as usize)
-            .map(PhotoObject::id)
-        {
-            self.focus_photo(photo_id);
-        }
+        self.animate_scroll_to(target, index);
 
         if std::env::var_os("PICASA_TRACE").is_some() {
             eprintln!(
-                "PIC_SECTIONED_CENTER index={} target_y={:.1}",
+                "PIC_SECTIONED_CENTER index={} target_y={:.1} eased=true",
                 index,
                 target
             );

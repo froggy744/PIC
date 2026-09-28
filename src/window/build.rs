@@ -2748,6 +2748,8 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 let latest = lightbox_slider_latest_for_change.clone();
                 let applied = lightbox_slider_applied_for_change.clone();
                 let running = lightbox_slider_tick_running_for_change.clone();
+                let frame_phase = lightbox_slider_frame_phase_for_change.clone();
+                frame_phase.set(false);
                 let tick_root = lightbox.root.clone();
                 tick_root.add_tick_callback(move |root, _| {
                     if !root.is_visible() {
@@ -2758,7 +2760,14 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                     let value = latest.get();
                     if (value - applied.get()).abs() <= f64::EPSILON {
                         running.set(false);
+                        frame_phase.set(false);
                         return glib::ControlFlow::Break;
+                    }
+
+                    let publish_this_frame = frame_phase.get();
+                    frame_phase.set(!publish_this_frame);
+                    if !publish_this_frame {
+                        return glib::ControlFlow::Continue;
                     }
 
                     let fit_scale = lightbox.current_fit_scale();

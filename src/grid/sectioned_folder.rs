@@ -1271,7 +1271,7 @@ impl SectionedFolderView {
         Some(geom.first_photo_y + (local as u32 / columns) as f64 * row_height)
     }
 
-    fn reveal_index_if_needed(&self, index: u32) -> bool {
+    fn reveal_index_if_needed(self: &Rc<Self>, index: u32) -> bool {
         self.refresh();
         let section_index = self.section_index_for_photo(index);
         let ranges = self.group_ranges.borrow();

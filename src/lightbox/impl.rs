@@ -317,6 +317,7 @@ impl Lightbox {
         let last_height_for_fit = last_height.clone();
         let opening_fit_pending_for_fit = opening_fit_pending.clone();
         let zoom_for_fit = zoom.clone();
+        let applied_native_scale_for_fit = applied_native_scale.clone();
 
         root.add_tick_callback(move |root, _| {
             if !root.is_visible() {
@@ -331,11 +332,60 @@ impl Lightbox {
 
             let width = root.width();
             let height = root.height();
+            let old_width = last_width_for_fit.get();
+            let old_height = last_height_for_fit.get();
 
             if width > 0
                 && height > 0
-                && (width != last_width_for_fit.get() || height != last_height_for_fit.get())
+                && (width != old_width || height != old_height)
             {
+                // Fit mode follows the window. Manual zoom does not: 125%
+                // must remain 125% while only the viewport grows/shrinks.
+                //
+                // The internal zoom is fit-relative for layout, so preserve
+                // the current native-image scale first, then recompute only
+                // the fit-relative multiplier for the new viewport.
+                let mut resize_zoom = zoom_for_fit.get();
+                if resize_zoom > 0.0 {
+                    if let Some(photo) = photos_for_fit.borrow().get(index_for_fit.get()).cloned() {
+                        let (intrinsic_width, intrinsic_height) =
+                            picture_intrinsic_dimensions(&picture_for_fit);
+
+                        let native_scale = if applied_native_scale_for_fit.get() > 0.0 {
+                            applied_native_scale_for_fit.get()
+                        } else if old_width > 0 && old_height > 0 {
+                            let old_fit_scale = presentation_fit_scale(
+                                &photo,
+                                old_width,
+                                old_height,
+                                intrinsic_width,
+                                intrinsic_height,
+                            );
+                            old_fit_scale * resize_zoom
+                        } else {
+                            let current_fit_scale = presentation_fit_scale(
+                                &photo,
+                                width,
+                                height,
+                                intrinsic_width,
+                                intrinsic_height,
+                            );
+                            current_fit_scale * resize_zoom
+                        };
+
+                        let new_fit_scale = presentation_fit_scale(
+                            &photo,
+                            width,
+                            height,
+                            intrinsic_width,
+                            intrinsic_height,
+                        );
+                        resize_zoom = native_scale / new_fit_scale.max(f64::EPSILON);
+                        zoom_for_fit.set(resize_zoom);
+                        applied_native_scale_for_fit.set(native_scale);
+                    }
+                }
+
                 last_width_for_fit.set(width);
                 last_height_for_fit.set(height);
 
@@ -345,8 +395,8 @@ impl Lightbox {
                     index_for_fit.get(),
                     width,
                     height,
-                    zoom_for_fit.get(),
-                    "context-menu",
+                    resize_zoom,
+                    "resize",
                 );
             }
 

@@ -2717,22 +2717,20 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             lightbox_slider_latest_for_change.set(value);
 
             if !lightbox_slider_tick_running_for_change.get() {
-                // First movement is immediate so the thumb never feels
-                // detached from the photo.
-                let fit_scale = lightbox_for_zoom_slider.current_fit_scale();
-                lightbox_for_zoom_slider.request_slider_zoom(lightbox_scale_from_slider(
-                    value,
-                    fit_scale,
-                ));
-                lightbox_slider_applied_for_change.set(value);
                 lightbox_slider_tick_running_for_change.set(true);
 
+                // Drive geometry from GTK's real frame clock rather than an
+                // approximate 16 ms wall-clock timer. A timer can fire between
+                // layout/paint phases and make GtkPicture resize twice around
+                // one rendered frame, which shows up as a small flash. The
+                // frame callback applies only the newest absolute slider value.
                 let lightbox = lightbox_for_zoom_slider.clone();
                 let latest = lightbox_slider_latest_for_change.clone();
                 let applied = lightbox_slider_applied_for_change.clone();
                 let running = lightbox_slider_tick_running_for_change.clone();
-                glib::timeout_add_local(Duration::from_millis(16), move || {
-                    if !lightbox.root.is_visible() {
+                let tick_root = lightbox.root.clone();
+                tick_root.add_tick_callback(move |root, _| {
+                    if !root.is_visible() {
                         running.set(false);
                         return glib::ControlFlow::Break;
                     }

@@ -70,12 +70,17 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 .unwrap_or_default(),
         ),
     }));
-    let rating_filter = Rc::new(Cell::new(RatingFilter::from_key(
-        &db::setting(&connection.borrow(), RATING_FILTER_SETTING_KEY)
-            .ok()
-            .flatten()
-            .unwrap_or_default(),
-    )));
+    // Rating filtering is session-only. Starting PIC with a stale saved
+    // star filter is surprising and can make rating shortcuts appear to throw
+    // the gallery around or hide the photo immediately.
+    let rating_filter = Rc::new(Cell::new(RatingFilter::All));
+    if let Err(error) = db::set_setting(
+        &connection.borrow(),
+        RATING_FILTER_SETTING_KEY,
+        RatingFilter::All.key(),
+    ) {
+        eprintln!("Could not clear photo rating filter at startup: {error}");
+    }
     let saved_group_mode = group_mode_from_key(
         &db::setting(&connection.borrow(), GROUP_MODE_SETTING_KEY)
             .ok()

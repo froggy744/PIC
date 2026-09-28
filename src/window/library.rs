@@ -24,7 +24,7 @@ fn refresh_grid(
             db::folders(&connection.borrow())
                 .ok()
                 .and_then(|folders| folders.into_iter().find(|folder| folder.id == folder_id))
-                .map(|folder| (folder.id, folder.path))
+                .map(|folder| (folder.id, folder.path, false))
         } else {
             None
         }
@@ -50,6 +50,7 @@ fn refresh_grid_to_folder(
     gallery: &Rc<grid::Gallery>,
     folder_id: i64,
     folder_path: String,
+    center_folder: bool,
 ) {
     refresh_grid_inner(
         connection,
@@ -57,7 +58,7 @@ fn refresh_grid_to_folder(
         search,
         sort,
         gallery,
-        Some((folder_id, folder_path)),
+        Some((folder_id, folder_path, center_folder)),
     );
 }
 
@@ -67,7 +68,7 @@ fn refresh_grid_inner(
     search: &str,
     sort: PhotoSort,
     gallery: &Rc<grid::Gallery>,
-    folder_target: Option<(i64, String)>,
+    folder_target: Option<(i64, String, bool)>,
 ) {
     let rating_filter = RatingFilter::from_key(
         &db::setting(&connection.borrow(), RATING_FILTER_SETTING_KEY)
@@ -157,7 +158,7 @@ fn refresh_grid_inner(
                             replace_started.elapsed().as_millis()
                         );
                     }
-                    if let Some((folder_id, folder_path)) = folder_target.clone() {
+                    if let Some((folder_id, folder_path, center_folder)) = folder_target.clone() {
                         let gallery = gallery.clone();
                         // replace() may schedule a progressive model build.
                         // Start the scroll helper on the next main-loop turn so
@@ -168,6 +169,7 @@ fn refresh_grid_inner(
                                 folder_id,
                                 folder_path,
                                 generation,
+                                center_folder,
                             );
                         });
                     }
@@ -187,6 +189,7 @@ fn scroll_gallery_to_folder_when_ready(
     folder_id: i64,
     folder_path: String,
     generation: u64,
+    center_folder: bool,
 ) {
     let total_attempts = Rc::new(Cell::new(0u32));
     // Counts only the attempts made after the progressive stream finished.
@@ -213,7 +216,11 @@ fn scroll_gallery_to_folder_when_ready(
             } else {
                 glib::ControlFlow::Continue
             }
-        } else if gallery.scroll_to_folder(folder_id, &folder_path) {
+        } else if if center_folder {
+            gallery.scroll_to_folder_centered(folder_id, &folder_path)
+        } else {
+            gallery.scroll_to_folder(folder_id, &folder_path)
+        } {
             glib::ControlFlow::Break
         } else {
             let settled = settled_for_timer.get() + 1;

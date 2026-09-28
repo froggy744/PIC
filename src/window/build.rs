@@ -2616,13 +2616,16 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             let Some(photo) = selected_for_rating.borrow().clone() else {
                 return;
             };
+            let ids = gallery_for_rating.selected_photo_ids(Some(photo.id()));
             let target = if photo.rating() == rating { 0 } else { rating };
-            if let Err(error) = db::set_rating(&db_for_rating.borrow(), photo.id(), target) {
+            if let Err(error) =
+                db::set_rating_for_photos(&db_for_rating.borrow(), &ids, target)
+            {
                 eprintln!("Could not update rating: {error}");
                 return;
             }
+            gallery_for_rating.update_ratings(&ids, target);
             photo.set_rating(target);
-            gallery_for_rating.update_ratings(&[photo.id()], target);
             info_for_rating.set_photo(Some(&photo));
 
             // Rebuild only when this edit can change visible membership or
@@ -3432,7 +3435,11 @@ fn start_photo_export_single(
         let stack_for_keys = main_stack.clone();
         let lightbox_for_keys = lightbox.clone();
         let selected_for_keys = selected_photo.clone();
-        let rating_buttons_for_keys = info.rating_buttons.clone();
+        let db_for_keys = connection.clone();
+        let info_for_keys = info.clone();
+        let sort_for_keys = sort.clone();
+        let rating_filter_for_keys = rating_filter.clone();
+        let search_for_keys = search_text.clone();
 
         let photo_keys = gtk::EventControllerKey::new();
         photo_keys.set_propagation_phase(gtk::PropagationPhase::Capture);
@@ -3475,31 +3482,53 @@ fn start_photo_export_single(
                 return glib::Propagation::Proceed;
             }
 
-            // Bare 1..5 are photo ratings, not type-to-search. The exception
-            // is explicit text focus above, so clicking Search makes numeric
-            // typing work normally. Using the current rating as a guard also
-            // makes key-repeat idempotent instead of toggling the rating.
+            // Bare numeric keys are reserved outside text fields so a year such
+            // as 2026 cannot accidentally start type-to-search. 0 clears the
+            // rating, 1..5 assign that rating to the complete current selection,
+            // and 6..9 are intentionally consumed without an action.
             if !control && !disallowed_modifier {
-                if let Some(rating) = key
+                if let Some(digit) = key
                     .to_unicode()
                     .and_then(|character| character.to_digit(10))
-                    .filter(|rating| (1..=5).contains(rating))
-                    .map(|rating| rating as i32)
                 {
-                    if photos_page || lightbox_for_keys.root.is_visible() {
-                        if let Some(photo) = selected_for_keys.borrow().as_ref() {
-                            if photo.rating() != rating {
-                                if let Some(button) =
-                                    rating_buttons_for_keys.get((rating - 1) as usize)
+                    if digit <= 5 && (photos_page || lightbox_for_keys.root.is_visible()) {
+                        if let Some(photo) = selected_for_keys.borrow().clone() {
+                            let rating = digit as i32;
+                            let ids = if lightbox_for_keys.root.is_visible() {
+                                vec![photo.id()]
+                            } else {
+                                gallery_for_keys.selected_photo_ids(Some(photo.id()))
+                            };
+                            if let Err(error) =
+                                db::set_rating_for_photos(&db_for_keys.borrow(), &ids, rating)
+                            {
+                                eprintln!("Could not update rating: {error}");
+                            } else {
+                                gallery_for_keys.update_ratings(&ids, rating);
+                                photo.set_rating(rating);
+                                info_for_keys.set_photo(Some(&photo));
+
+                                if rating_filter_for_keys.get() != RatingFilter::All
+                                    || sort_for_keys.get().field == SortField::Rating
                                 {
-                                    button.emit_clicked();
+                                    refresh_grid(
+                                        &db_for_keys,
+                                        filter_for_keys.get(),
+                                        &search_for_keys.borrow(),
+                                        sort_for_keys.get(),
+                                        &gallery_for_keys,
+                                    );
+                                }
+                                if std::env::var_os("PICASA_TRACE").is_some() {
+                                    eprintln!(
+                                        "UI TRACE photo_rating_shortcut ids={} rating={}",
+                                        ids.len(),
+                                        rating
+                                    );
                                 }
                             }
                         }
                     }
-                    // Digits 1..5 are reserved for ratings everywhere outside
-                    // a real text field. They must never trigger type-to-search;
-                    // clicking Search explicitly gives numeric keys back to it.
                     return glib::Propagation::Stop;
                 }
             }

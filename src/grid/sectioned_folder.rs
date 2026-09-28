@@ -1365,6 +1365,11 @@ impl SectionedFolderView {
         Some((local as u32) % columns)
     }
 
+    fn cancel_scroll_animation(&self) {
+        self.scroll_animation_generation
+            .set(self.scroll_animation_generation.get().wrapping_add(1));
+    }
+
     fn smooth_keep_index_in_center_zone(self: &Rc<Self>, index: u32) -> bool {
         self.refresh();
         let Some(row_top) = self.y_for_index(index) else {
@@ -1391,11 +1396,11 @@ impl SectionedFolderView {
         let lower = adjustment.lower();
         let upper = (adjustment.upper() - page).max(lower);
         let target = (row_center - page * 0.5).clamp(lower, upper);
-        self.animate_scroll_to(target, index);
+        self.animate_scroll_to(target, index, "keyboard");
         true
     }
 
-    fn animate_scroll_to(self: &Rc<Self>, target: f64, index: u32) {
+    fn animate_scroll_to(self: &Rc<Self>, target: f64, index: u32, source: &'static str) {
         let Some(scrolled) = self.scroll.borrow().as_ref().cloned() else {
             return;
         };
@@ -1442,8 +1447,10 @@ impl SectionedFolderView {
                 }
                 if std::env::var_os("PICASA_TRACE").is_some() {
                     eprintln!(
-                        "PIC_SECTIONED_KEY_SCROLL index={} from_y={:.1} target_y={:.1} eased=true",
+                        "PIC_SECTIONED_SCROLL source={} index={} generation={} from_y={:.1} target_y={:.1} eased=true",
+                        source,
                         index,
+                        generation,
                         start,
                         target
                     );
@@ -1610,7 +1617,10 @@ impl SectionedFolderView {
         let row_center = row_top + row_height * 0.5;
         let target = (row_center - page * 0.5).clamp(lower, upper);
 
-        self.animate_scroll_to(target, index);
+        // Lightbox return owns the viewport. Explicitly invalidate any older
+        // keyboard/folder-scroll callback before starting the centered return.
+        self.cancel_scroll_animation();
+        self.animate_scroll_to(target, index, "lightbox_return");
 
         if std::env::var_os("PICASA_TRACE").is_some() {
             eprintln!(

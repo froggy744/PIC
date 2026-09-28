@@ -48,6 +48,12 @@ fn migrate_photo_schema(connection: &Connection) -> Result<()> {
     if !columns.iter().any(|column| column == "aperture") {
         connection.execute("ALTER TABLE photos ADD COLUMN aperture REAL", [])?;
     }
+    if !columns.iter().any(|column| column == "rating") {
+        connection.execute(
+            "ALTER TABLE photos ADD COLUMN rating INTEGER NOT NULL DEFAULT 0",
+            [],
+        )?;
+    }
     // Existing records have no import timestamp. Their stable row IDs retain
     // the database's historical insertion order until they are refreshed.
     connection.execute("UPDATE photos SET added_at = id WHERE added_at = 0", [])?;

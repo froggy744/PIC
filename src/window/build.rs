@@ -2541,6 +2541,30 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         
     });
 
+    for (index, button) in info.rating_buttons.iter().enumerate() {
+        let selected_for_rating = selected_photo.clone();
+        let db_for_rating = connection.clone();
+        let info_for_rating = info.clone();
+        let gallery_for_rating = gallery.clone();
+        let rating = (index + 1) as i32;
+        button.connect_clicked(move |_| {
+            let Some(photo) = selected_for_rating.borrow().clone() else {
+                return;
+            };
+            let target = if photo.rating() == rating { 0 } else { rating };
+            if let Err(error) = db::set_rating(&db_for_rating.borrow(), photo.id(), target) {
+                eprintln!("Could not update rating: {error}");
+                return;
+            }
+            photo.set_rating(target);
+            gallery_for_rating.update_ratings(&[photo.id()], target);
+            info_for_rating.set_photo(Some(&photo));
+            if std::env::var_os("PICASA_TRACE").is_some() {
+                eprintln!("UI TRACE photo_rating_changed id={} rating={}", photo.id(), target);
+            }
+        });
+    }
+
     let lightbox_for_one_to_one = lightbox.clone();
     {
         // Keep the toolbar 1:1 toggle in sync when the lightbox changes mode

@@ -109,6 +109,7 @@ fn history_group_ranges_merge_contiguous_edit_buckets() {
             rotation: 0,
             edit_recipe: "edited".into(),
             favorite: false,
+            rating: 0,
             trashed: false,
             history_caption: None,
             edited_at: millis,

@@ -44,6 +44,8 @@ mod imp {
         #[property(get, set)]
         pub favorite: Cell<bool>,
         #[property(get, set)]
+        pub rating: Cell<i32>,
+        #[property(get, set)]
         pub folder_id: Cell<i64>,
         #[property(get, set)]
         pub folder_path: RefCell<Option<String>>,
@@ -123,6 +125,7 @@ impl PhotoObject {
         imp.rotation.set(photo.rotation);
         *imp.edit_recipe.borrow_mut() = photo.edit_recipe.clone();
         imp.favorite.set(photo.favorite);
+        imp.rating.set(photo.rating);
         imp.folder_id.set(photo.folder_id.unwrap_or_default());
         *imp.folder_path.borrow_mut() = photo.folder_path.clone();
         // Offline is source-folder state, not an individual-file check. The

@@ -551,7 +551,7 @@ pub fn photo_fingerprints(
 pub fn photo(connection: &Connection, id: i64) -> Result<Option<Photo>> {
     Ok(connection
         .query_row(
-            "SELECT p.id,p.path,p.folder_id,p.taken_at,p.camera,CAST(p.aperture AS REAL),p.width,p.height,p.size_bytes,p.mtime,p.added_at,p.rotation,p.edit_recipe,p.favorite,p.trashed,f.path
+            "SELECT p.id,p.path,p.folder_id,p.taken_at,p.camera,CAST(p.aperture AS REAL),p.width,p.height,p.size_bytes,p.mtime,p.added_at,p.rotation,p.edit_recipe,p.favorite,p.rating,p.trashed,f.path
              FROM photos p LEFT JOIN folders f ON f.id = p.folder_id WHERE p.id = ?1",
             [id],
             photo_from_row,
@@ -577,7 +577,7 @@ pub fn photos_limited(
 ) -> Result<Vec<Photo>> {
     let search = search.map(|value| format!("%{}%", value.replace('%', "\\%").replace('_', "\\_")));
     let mut statement = connection.prepare(
-        "SELECT p.id,p.path,p.folder_id,p.taken_at,p.camera,CAST(p.aperture AS REAL),p.width,p.height,p.size_bytes,p.mtime,p.added_at,p.rotation,p.edit_recipe,p.favorite,p.trashed,f.path
+        "SELECT p.id,p.path,p.folder_id,p.taken_at,p.camera,CAST(p.aperture AS REAL),p.width,p.height,p.size_bytes,p.mtime,p.added_at,p.rotation,p.edit_recipe,p.favorite,p.rating,p.trashed,f.path
          FROM photos p LEFT JOIN folders f ON f.id = p.folder_id
          WHERE p.trashed = 0 AND (?1 IS NULL OR p.folder_id IN
              (WITH RECURSIVE descendants(id) AS (
@@ -620,7 +620,7 @@ pub fn photos_in_album(
 ) -> Result<Vec<Photo>> {
     let search = search.map(|value| format!("%{}%", value.replace('%', "\\%").replace('_', "\\_")));
     let mut statement = connection.prepare(
-        "SELECT p.id,p.path,p.folder_id,p.taken_at,p.camera,CAST(p.aperture AS REAL),p.width,p.height,p.size_bytes,p.mtime,p.added_at,p.rotation,p.edit_recipe,p.favorite,p.trashed,f.path
+        "SELECT p.id,p.path,p.folder_id,p.taken_at,p.camera,CAST(p.aperture AS REAL),p.width,p.height,p.size_bytes,p.mtime,p.added_at,p.rotation,p.edit_recipe,p.favorite,p.rating,p.trashed,f.path
          FROM album_photos ap
          JOIN photos p ON p.id = ap.photo_id
          LEFT JOIN folders f ON f.id = p.folder_id
@@ -636,6 +636,15 @@ pub fn set_favorite(connection: &Connection, id: i64, favorite: bool) -> Result<
     connection.execute(
         "UPDATE photos SET favorite = ?1 WHERE id = ?2",
         params![favorite, id],
+    )?;
+    Ok(())
+}
+
+pub fn set_rating(connection: &Connection, id: i64, rating: i32) -> Result<()> {
+    anyhow::ensure!((0..=5).contains(&rating), "invalid rating: {rating}");
+    connection.execute(
+        "UPDATE photos SET rating = ?1 WHERE id = ?2",
+        params![rating, id],
     )?;
     Ok(())
 }

@@ -212,6 +212,7 @@ mod folder_stream_tests {
                 rotation: 0,
                 edit_recipe: String::new(),
                 favorite: false,
+                rating: 0,
                 trashed: false,
                 history_caption: None,
                 edited_at: 0,

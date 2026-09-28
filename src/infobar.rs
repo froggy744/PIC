@@ -14,6 +14,8 @@ pub struct InfoBar {
     details: gtk::Box,
     aperture_metric: gtk::Box,
     pub favorite: gtk::Button,
+    pub rating: gtk::MenuButton,
+    pub rating_buttons: Vec<gtk::Button>,
     pub edit: gtk::Button,
     pub collage: gtk::Button,
     pub add_to_album: gtk::MenuButton,
@@ -132,6 +134,41 @@ impl InfoBar {
         favorite.add_css_class("favorite-btn");
         favorite.set_tooltip_text(Some("Add to Favourites"));
 
+        let rating = gtk::MenuButton::new();
+        rating.set_icon_name("non-starred-symbolic");
+        configure_action_button(&rating);
+        rating.add_css_class("rating-btn");
+        rating.set_tooltip_text(Some("Rate photo"));
+        rating.set_direction(gtk::ArrowType::Up);
+
+        let rating_popover = gtk::Popover::new();
+        rating_popover.set_has_arrow(true);
+        rating_popover.set_position(gtk::PositionType::Top);
+        let rating_box = gtk::Box::new(gtk::Orientation::Horizontal, 2);
+        rating_box.set_margin_top(6);
+        rating_box.set_margin_bottom(6);
+        rating_box.set_margin_start(6);
+        rating_box.set_margin_end(6);
+
+        let mut rating_buttons = Vec::with_capacity(5);
+        for value in 1..=5 {
+            let star = gtk::Button::from_icon_name("non-starred-symbolic");
+            star.add_css_class("flat");
+            star.set_size_request(30, 30);
+            star.set_tooltip_text(Some(&format!("Rate {value} of 5")));
+            let popover_for_click = rating_popover.clone();
+            star.connect_clicked(move |_| popover_for_click.popdown());
+            rating_box.append(&star);
+            rating_buttons.push(star);
+        }
+        rating_popover.set_child(Some(&rating_box));
+        rating.set_popover(Some(&rating_popover));
+
+        let rating_hover = gtk::EventControllerMotion::new();
+        let rating_for_hover = rating.clone();
+        rating_hover.connect_enter(move |_, _, _| rating_for_hover.popup());
+        rating.add_controller(rating_hover);
+
         let edit = gtk::Button::from_icon_name("document-edit-symbolic");
         configure_action_button(&edit);
         edit.set_tooltip_text(Some("Open or close photo editor"));
@@ -188,6 +225,7 @@ impl InfoBar {
 
         actions.append(&grid_zoom);
         actions.append(&favorite);
+        actions.append(&rating);
         actions.append(&edit);
         actions.append(&collage);
         actions.append(&add_to_album);
@@ -237,6 +275,8 @@ impl InfoBar {
             details,
             aperture_metric: aperture_metric.expect("aperture metric exists"),
             favorite,
+            rating,
+            rating_buttons,
             edit,
             collage,
             add_to_album,
@@ -259,6 +299,28 @@ impl InfoBar {
             .set_sensitive(edit_button_sensitive(self.has_photo.get(), active));
     }
 
+    fn set_rating_presentation(&self, rating: i32) {
+        let rating = rating.clamp(0, 5);
+        self.rating.set_icon_name(if rating == 0 {
+            "non-starred-symbolic"
+        } else {
+            "starred-symbolic"
+        });
+        let tooltip = if rating == 0 {
+            "Rate photo".to_string()
+        } else {
+            format!("Rating: {rating} of 5")
+        };
+        self.rating.set_tooltip_text(Some(&tooltip));
+        for (index, button) in self.rating_buttons.iter().enumerate() {
+            button.set_icon_name(if (index as i32) < rating {
+                "starred-symbolic"
+            } else {
+                "non-starred-symbolic"
+            });
+        }
+    }
+
     pub fn set_photo(&self, photo: Option<&PhotoObject>) {
         let Some(photo) = photo else {
             self.has_photo.set(false);
@@ -268,6 +330,8 @@ impl InfoBar {
             self.details.set_visible(false);
             set_metric_values(&self.details, ["—", "—", "—", "—", "—"]);
             self.favorite.set_sensitive(false);
+            self.rating.set_sensitive(false);
+            self.set_rating_presentation(0);
             self.edit
                 .set_sensitive(edit_button_sensitive(false, self.collage_active.get()));
             self.add_to_album.set_sensitive(false);
@@ -333,6 +397,8 @@ impl InfoBar {
         );
 
         self.favorite.set_sensitive(true);
+        self.rating.set_sensitive(true);
+        self.set_rating_presentation(photo.rating());
         self.edit
             .set_sensitive(edit_button_sensitive(true, self.collage_active.get()));
         self.add_to_album.set_sensitive(true);

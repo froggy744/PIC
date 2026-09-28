@@ -1893,6 +1893,15 @@ impl Gallery {
         self.refresh_favorite_indicators();
     }
 
+    pub fn update_ratings(&self, ids: &[i64], rating: i32) {
+        let ids = ids.iter().copied().collect::<HashSet<_>>();
+        for photo in self.current_photos.borrow().iter() {
+            if ids.contains(&photo.id()) {
+                photo.set_rating(rating);
+            }
+        }
+    }
+
     /// Remove visible photos from the current grid without rebuilding the model.
     /// This is used when a photo stops belonging to the active virtual view
     /// (Favourites or an Album). Preserve the viewport and move selection to

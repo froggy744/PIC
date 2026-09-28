@@ -11,7 +11,7 @@ pub struct LibraryHomeData {
 pub fn library_home_data(connection: &Connection) -> Result<LibraryHomeData> {
     let added = {
         let mut query = connection.prepare(
-            "SELECT p.id,p.path,p.folder_id,p.taken_at,p.camera,CAST(p.aperture AS REAL),p.width,p.height,p.size_bytes,p.mtime,p.added_at,p.rotation,p.edit_recipe,p.favorite,p.trashed,f.path
+            "SELECT p.id,p.path,p.folder_id,p.taken_at,p.camera,CAST(p.aperture AS REAL),p.width,p.height,p.size_bytes,p.mtime,p.added_at,p.rotation,p.edit_recipe,p.favorite,p.rating,p.trashed,f.path
              FROM photos p LEFT JOIN folders f ON f.id=p.folder_id
              WHERE p.trashed=0 ORDER BY p.added_at DESC,p.id DESC LIMIT ?1",
         )?;

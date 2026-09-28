@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS photos (
   rotation INTEGER DEFAULT 0,
   edit_recipe TEXT NOT NULL DEFAULT '',
   favorite BOOLEAN DEFAULT 0,
+  rating INTEGER NOT NULL DEFAULT 0,
   trashed BOOLEAN DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS folders (
@@ -127,6 +128,7 @@ pub struct Photo {
     pub rotation: i32,
     pub edit_recipe: String,
     pub favorite: bool,
+    pub rating: i32,
     pub trashed: bool,
     /// Presentation metadata populated only by the History query.
     pub history_caption: Option<String>,

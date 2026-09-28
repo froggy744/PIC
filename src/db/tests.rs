@@ -14,8 +14,9 @@ fn photo_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Photo> {
         rotation: row.get(11)?,
         edit_recipe: row.get(12)?,
         favorite: row.get(13)?,
-        trashed: row.get(14)?,
-        folder_path: row.get(15)?,
+        rating: row.get(14)?,
+        trashed: row.get(15)?,
+        folder_path: row.get(16)?,
         history_caption: None,
         edited_at: 0,
     })
@@ -26,6 +27,23 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::*;
+
+    #[test]
+    fn rating_round_trips_and_rejects_out_of_range_values() {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(SCHEMA).unwrap();
+        c.execute("INSERT INTO photos(id,path) VALUES (1,'/rated.jpg')", [])
+            .unwrap();
+
+        set_rating(&c, 1, 4).unwrap();
+        assert_eq!(photo(&c, 1).unwrap().unwrap().rating, 4);
+
+        set_rating(&c, 1, 0).unwrap();
+        assert_eq!(photo(&c, 1).unwrap().unwrap().rating, 0);
+
+        assert!(set_rating(&c, 1, -1).is_err());
+        assert!(set_rating(&c, 1, 6).is_err());
+    }
 
     #[test]
     fn history_records_only_changed_commits_and_reorders_unique_items() {

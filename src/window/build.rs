@@ -3465,9 +3465,14 @@ fn start_photo_export_single(
             if control && !disallowed_modifier && matches!(key, gtk::gdk::Key::a | gtk::gdk::Key::A) {
                 if photos_page && !lightbox_for_keys.root.is_visible() {
                     let folder_id = match filter_for_keys.get() {
-                        sidebar::SidebarFilter::Folder(folder_id) => Some(folder_id),
+                        sidebar::SidebarFilter::Folder(sidebar_folder_id) => {
+                            gallery_for_keys.selected_folder_id().or(Some(sidebar_folder_id))
+                        }
                         _ => None,
                     };
+                    if std::env::var_os("PICASA_TRACE").is_some() {
+                        eprintln!("UI TRACE ctrl_a folder_id={folder_id:?}");
+                    }
                     gallery_for_keys.select_all_keyboard_scope(folder_id);
                     return glib::Propagation::Stop;
                 }

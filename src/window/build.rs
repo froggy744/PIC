@@ -2700,7 +2700,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             let selected_photo = selected_photo_for_lightbox_close.borrow().clone();
             glib::idle_add_local_once(move || {
                 if let Some(photo) = selected_photo {
-                    gallery.select_photo(photo.id());
+                    gallery.restore_activated_photo(photo.id());
                 }
                 gallery.grab_focus();
             });

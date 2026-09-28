@@ -2664,6 +2664,38 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         }
     }
 
+    fn quantize_lightbox_slider_scale(scale: f64, fit_scale: f64) -> f64 {
+        let fit_scale = fit_scale.clamp(f64::EPSILON, 1.0);
+        if scale <= fit_scale * 1.001 {
+            return 0.0;
+        }
+
+        // Match the proven Ctrl+wheel feel: each visible zoom level is about
+        // 12% larger than the previous one. Build the ladder from Fit so a
+        // slider drag never asks GtkPicture/ScrolledWindow to negotiate dozens
+        // of tiny geometry changes between rendered frames.
+        let mut levels = Vec::with_capacity(32);
+        let mut current = fit_scale;
+        levels.push(current);
+        while current < crate::lightbox::LIGHTBOX_MAX_ZOOM_FACTOR {
+            current = (current * 1.12).min(crate::lightbox::LIGHTBOX_MAX_ZOOM_FACTOR);
+            if (current - *levels.last().unwrap()).abs() <= f64::EPSILON {
+                break;
+            }
+            levels.push(current);
+        }
+
+        levels
+            .into_iter()
+            .min_by(|a, b| {
+                (a - scale)
+                    .abs()
+                    .partial_cmp(&(b - scale).abs())
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .unwrap_or(fit_scale)
+    }
+
     fn lightbox_slider_from_scale(scale: f64, fit_scale: f64) -> f64 {
         if scale <= 0.0 {
             return 0.0;
@@ -2742,7 +2774,9 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                     }
 
                     let fit_scale = lightbox.current_fit_scale();
-                    lightbox.request_slider_zoom(lightbox_scale_from_slider(value, fit_scale));
+                    let requested = lightbox_scale_from_slider(value, fit_scale);
+                    let requested = quantize_lightbox_slider_scale(requested, fit_scale);
+                    lightbox.request_slider_zoom(requested);
                     applied.set(value);
                     glib::ControlFlow::Continue
                 });

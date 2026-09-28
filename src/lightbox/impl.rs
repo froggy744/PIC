@@ -46,6 +46,7 @@ impl Lightbox {
 
         let one_to_one_active = Rc::new(Cell::new(false));
         let native_texture: Rc<RefCell<Option<NativeTextureCache>>> = Rc::new(RefCell::new(None));
+        let native_quality_pending = Rc::new(Cell::new(false));
         let display_texture_cache: DisplayTextureCache = Rc::new(RefCell::new(VecDeque::new()));
 
         // Native-size 1:1 panning. Keep the drag gesture on the picture itself:
@@ -445,6 +446,7 @@ impl Lightbox {
             let photo_changed = photo_changed.clone();
             let viewport = picture_viewport.clone();
             let native_texture = native_texture.clone();
+            let native_quality_pending = native_quality_pending.clone();
             let display_cache = display_texture_cache.clone();
             let one_to_one = one_to_one_active.clone();
             let key_navigation_ready = key_navigation_ready.clone();
@@ -482,6 +484,10 @@ impl Lightbox {
                 set_zoom_state(&zoom, &applied_native_scale, 0.0);
                 one_to_one.set(false);
                 native_texture.borrow_mut().take();
+                // A pending native-quality request belongs to the photo that
+                // just left the viewer. The completion path checks identity
+                // before applying, so the new photo may start its own request.
+                native_quality_pending.set(false);
                 reset_viewport(&viewport);
                 let (fit_geometry_fixed, cache_hit) = prepare_navigation_photo(
                     &picture,
@@ -850,6 +856,7 @@ impl Lightbox {
             applied_native_scale,
             one_to_one_active,
             native_texture,
+            native_quality_pending,
             display_texture_cache,
             load_generation,
             decode_cancel,
@@ -1189,6 +1196,7 @@ impl Lightbox {
         self.key_navigation_ready.set(true);
         self.wheel_navigation.borrow_mut().cancel();
         self.native_texture.borrow_mut().take();
+        self.native_quality_pending.set(false);
         reset_viewport(&self.picture_viewport);
         notify_photo_changed(&self.photo_changed, &self.photos.borrow(), self.index.get());
         self.last_width.set(0);
@@ -1495,6 +1503,7 @@ impl Lightbox {
         self.set_zoom(0.0);
         self.one_to_one_active.set(false);
         self.native_texture.borrow_mut().take();
+        self.native_quality_pending.set(false);
         reset_viewport(&self.picture_viewport);
 
         let (fit_geometry_fixed, cache_hit) = prepare_navigation_photo(
@@ -1581,6 +1590,7 @@ impl Lightbox {
         self.picture.set_can_shrink(true);
         self.picture_viewport.set_cursor_from_name(None);
         self.native_texture.borrow_mut().take();
+        self.native_quality_pending.set(false);
         reset_viewport(&self.picture_viewport);
 
         let (fit_geometry_fixed, cache_hit) = prepare_navigation_photo(
@@ -1634,6 +1644,7 @@ impl Lightbox {
             active.cancel();
         }
         self.one_to_one_active.set(false);
+        self.native_quality_pending.set(false);
         self.key_navigation_ready.set(true);
         self.wheel_navigation.borrow_mut().cancel();
         self.set_zoom(0.0);

@@ -1254,7 +1254,7 @@ impl SectionedFolderView {
         snapshot: SectionedReflowSnapshot,
         anchor: Option<(i64, f64)>,
     ) {
-        const DURATION_MS: f64 = 175.0;
+        const DURATION_MS: f64 = 190.0;
 
         let old_columns = snapshot.old_columns.max(1);
         let old_width = snapshot.old_width.max(1);
@@ -1358,7 +1358,22 @@ impl SectionedFolderView {
             }
         }
 
-        if motion.is_empty() && header_motion.is_empty() {
+        // Soften the instant rewrap without turning the gallery into a blink:
+        // every realized tile gently resolves from 88% to fully opaque using
+        // the same timing/easing as the column motion. This mirrors the calm
+        // cadence of the existing vertical scroll animation while keeping
+        // geometry completely rigid.
+        let fade_tiles = self
+            .live_tiles
+            .borrow()
+            .values()
+            .map(|entry| entry.tile.clone())
+            .collect::<Vec<_>>();
+        for tile in &fade_tiles {
+            tile.set_opacity(0.88);
+        }
+
+        if motion.is_empty() && header_motion.is_empty() && fade_tiles.is_empty() {
             return;
         }
 
@@ -1397,6 +1412,10 @@ impl SectionedFolderView {
             for (tile, dx) in &motion {
                 tile.set_presentation_offset(dx * remaining, 0.0);
             }
+            let opacity = 0.88 + 0.12 * eased;
+            for tile in &fade_tiles {
+                tile.set_opacity(opacity);
+            }
             for (header, target_x, y) in &header_motion {
                 view.root.move_(
                     header,
@@ -1408,6 +1427,9 @@ impl SectionedFolderView {
             if t >= 1.0 {
                 for (tile, _) in &motion {
                     tile.set_presentation_offset(0.0, 0.0);
+                }
+                for tile in &fade_tiles {
+                    tile.set_opacity(1.0);
                 }
                 for (header, target_x, y) in &header_motion {
                     view.root.move_(header, *target_x, *y);

@@ -106,7 +106,7 @@ impl ZoomSurface {
     pub fn frame(&self, post: bool, direction: f64, progress: f64) {
         self.imp()
             .phase
-            .set(Some((post, direction, ease_out_cubic(progress))));
+            .set(Some((post, direction, ease_in_out_cubic(progress))));
         self.queue_draw();
     }
 
@@ -121,8 +121,13 @@ impl ZoomSurface {
     }
 }
 
-fn ease_out_cubic(t: f64) -> f64 {
-    1.0 - (1.0 - t.clamp(0.0, 1.0)).powi(3)
+fn ease_in_out_cubic(t: f64) -> f64 {
+    let t = t.clamp(0.0, 1.0);
+    if t < 0.5 {
+        4.0 * t.powi(3)
+    } else {
+        1.0 - (-2.0 * t + 2.0).powi(3) / 2.0
+    }
 }
 
 #[cfg(test)]
@@ -130,11 +135,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn zoom_transition_curve_is_bounded_ease_out() {
-        assert_eq!(ease_out_cubic(0.0), 0.0);
-        assert_eq!(ease_out_cubic(0.5), 0.875);
-        assert_eq!(ease_out_cubic(1.0), 1.0);
-        assert_eq!(ease_out_cubic(2.0), 1.0);
+    fn zoom_transition_curve_is_bounded_ease_in_out() {
+        assert_eq!(ease_in_out_cubic(0.0), 0.0);
+        assert_eq!(ease_in_out_cubic(0.25), 0.0625);
+        assert_eq!(ease_in_out_cubic(0.5), 0.5);
+        assert_eq!(ease_in_out_cubic(0.75), 0.9375);
+        assert_eq!(ease_in_out_cubic(1.0), 1.0);
+        assert_eq!(ease_in_out_cubic(2.0), 1.0);
     }
 
     #[test]

@@ -431,7 +431,11 @@ impl Gallery {
                 return;
             }
         }
-        self.selection.select_all();
+        self.selection.unselect_all();
+        let item_count = self.selection.n_items();
+        if item_count > 0 {
+            self.selection.select_range(0, item_count, false);
+        }
     }
 
     /// Keyboard Ctrl+D. Clear the real photo selection rather than relying on
@@ -602,7 +606,11 @@ impl Gallery {
         keyboard.connect_key_pressed(move |_, key, _, modifiers| {
             let control = modifiers.contains(gtk::gdk::ModifierType::CONTROL_MASK);
             if control && matches!(key, gtk::gdk::Key::a | gtk::gdk::Key::A) {
-                selection.select_all();
+                selection.unselect_all();
+                let item_count = selection.n_items();
+                if item_count > 0 {
+                    selection.select_range(0, item_count, false);
+                }
                 return glib::Propagation::Stop;
             }
             if control || modifiers.contains(gtk::gdk::ModifierType::ALT_MASK) {

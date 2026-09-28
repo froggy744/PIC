@@ -866,6 +866,15 @@ fn centered_scroll_value(upper: f64, page_size: f64, lower: f64) -> f64 {
 /// child at `-value` afterwards in the same pass.
 fn install_viewport_anchor(adjustment: &gtk::Adjustment) {
     adjustment.connect_changed(move |adjustment| {
+        zoom_trace(format!(
+            "adjustment_changed before value={:.1} lower={:.1} upper={:.1} page={:.1} step={:.1} page_inc={:.1}",
+            adjustment.value(),
+            adjustment.lower(),
+            adjustment.upper(),
+            adjustment.page_size(),
+            adjustment.step_increment(),
+            adjustment.page_increment(),
+        ));
         let value = centered_scroll_value(
             adjustment.upper(),
             adjustment.page_size(),
@@ -980,6 +989,16 @@ fn fit_picture(
     // every single pixel of motion, which otherwise makes the texture
     // repeatedly re-rasterise and visibly flicker.
     if zoom == 0.0 {
+        zoom_trace(format!(
+            "fit_mode source={source} viewport={}x{} picture_req={:?} alloc={}x{} intrinsic={}x{}",
+            viewport_width,
+            viewport_height,
+            picture.size_request(),
+            picture.width(),
+            picture.height(),
+            intrinsic_width,
+            intrinsic_height,
+        ));
         picture.set_can_shrink(true);
         picture.set_hexpand(true);
         picture.set_vexpand(true);
@@ -1034,7 +1053,22 @@ fn fit_picture(
         ));
     }
     if !already_applied {
+        zoom_trace(format!(
+            "size_request_write source={source} from={:?} to={}x{} alloc={}x{}",
+            picture.size_request(),
+            fitted_width,
+            fitted_height,
+            picture.width(),
+            picture.height(),
+        ));
         picture.set_size_request(fitted_width, fitted_height);
+    } else {
+        zoom_trace(format!(
+            "size_request_skip source={source} request={:?} alloc={}x{}",
+            picture.size_request(),
+            picture.width(),
+            picture.height(),
+        ));
     }
 }
 

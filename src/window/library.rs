@@ -70,6 +70,8 @@ fn refresh_grid_inner(
     gallery: &Rc<grid::Gallery>,
     folder_target: Option<(i64, String, bool)>,
 ) {
+    // Cached Folder membership belongs to the previous query/filter.
+    gallery.invalidate_folder_cache();
     let rating_filter = RatingFilter::from_key(
         &db::setting(&connection.borrow(), RATING_FILTER_SETTING_KEY)
             .ok()
@@ -657,30 +659,94 @@ mod photo_action_tests {
 
     #[test]
     fn rating_filter_is_exact_and_all_keeps_every_photo() {
-        let mut photos = vec![
-            photo("/photos/unrated.jpg", None, None, None, None),
-            photo("/photos/one.jpg", None, None, None, None),
-            photo("/photos/three.jpg", None, None, None, None),
-        ];
-        photos[1].rating = 1;
-        photos[2].rating = 3;
-
-        let original = photos.clone();
-        apply_rating_filter(&mut photos, RatingFilter::One);
-        assert_eq!(
-            photos.iter().map(|photo| photo.path.as_str()).collect::<Vec<_>>(),
-            vec!["/photos/one.jpg"]
-        );
-
-        let mut unrated = original.clone();
-        apply_rating_filter(&mut unrated, RatingFilter::Unrated);
-        assert_eq!(
-            unrated.iter().map(|photo| photo.path.as_str()).collect::<Vec<_>>(),
-            vec!["/photos/unrated.jpg"]
-        );
-
-        let mut all = original;
-        apply_rating_filter(&mut all, RatingFilter::All);
-        assert_eq!(all.len(), 3);
+        let original = [0, 0, 1, 2, 5].map(|rating| {
+            let mut photo = photo("/photos/test.jpg", None, None, None, None);
+            photo.rating = rating;
+            photo
+        });
+        for (filter, expected) in [
+            (RatingFilter::Unrated, vec![0, 0]),
+            (RatingFilter::One, vec![1]),
+            (RatingFilter::Two, vec![2]),
+            (RatingFilter::Three, vec![]),
+            (RatingFilter::Four, vec![]),
+            (RatingFilter::Five, vec![5]),
+            (RatingFilter::All, vec![0, 0, 1, 2, 5]),
+        ] {
+            let mut photos = original.to_vec();
+            apply_rating_filter(&mut photos, filter);
+            assert_eq!(photos.iter().map(|p| p.rating).collect::<Vec<_>>(), expected);
+            assert_eq!(RatingFilter::from_key(filter.key()), filter);
+        }
+        assert_eq!(RatingFilter::from_key("0"), RatingFilter::Unrated);
     }
+
+    #[test]
+    #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+    fn rating_filter_refresh_invalidates_previous_folder_membership() {
+        use super::*;
+        gtk::init().unwrap();
+        let connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch(db::SCHEMA).unwrap();
+        let connection = Rc::new(RefCell::new(connection));
+        let mut photos = vec![photo("/photos/unrated.jpg", None, None, None, None),
+                              photo("/photos/rated.jpg", None, None, None, None)];
+        photos[0].id = 1;
+        photos[1].id = 2;
+        photos[1].rating = 2;
+        let gallery = Rc::new(grid::Gallery::new(&[], 180, |_| {}, |_, _, _| {},
+            |_, _, _, _| {}, |_, _| {}, |_| {}));
+        gallery.set_grouping(grid::GroupMode::Folder, grid::GroupDate::Taken);
+        gallery.replace(&photos);
+        gallery.set_grouping(grid::GroupMode::None, grid::GroupDate::Taken);
+        assert!(gallery.can_restore_folder_cache());
+        db::set_setting(&connection.borrow(), RATING_FILTER_SETTING_KEY, "unrated").unwrap();
+        // Changing the filter on a non-photo page must invalidate the hidden cache too.
+        refresh_grid(&connection, sidebar::SidebarFilter::Albums, "",
+            PhotoSort { field: SortField::Name, direction: SortDirection::Ascending }, &gallery);
+        assert!(!gallery.can_restore_folder_cache());
+        apply_rating_filter(&mut photos, RatingFilter::Unrated);
+        gallery.set_grouping(grid::GroupMode::Folder, grid::GroupDate::Taken);
+        gallery.replace(&photos);
+        assert_eq!(gallery.photo_objects().iter().map(|p| p.id()).collect::<Vec<_>>(), [1]);
+    }
+
+    #[test]
+    fn rating_filter_refresh_uses_persisted_edits_and_preserves_query_scope() {
+        use crate::db;
+        let connection = rusqlite::Connection::open_in_memory().unwrap();
+        connection.execute_batch(db::SCHEMA).unwrap();
+        connection.execute_batch(
+            "INSERT INTO folders(id,path,name) VALUES (1,'/photos','photos');
+             INSERT INTO photos(id,path,folder_id,favorite,rating) VALUES
+                (1,'/photos/keep.jpg',1,1,0),
+                (2,'/photos/keep-rated.jpg',1,1,2),
+                (3,'/photos/keep-other-folder.jpg',2,1,0),
+                (4,'/photos/keep-not-favorite.jpg',1,0,0),
+                (5,'/photos/different.jpg',1,1,0);
+             INSERT INTO albums(id,name) VALUES (1,'album');
+             INSERT INTO album_photos(album_id,photo_id) VALUES (1,1),(1,2);"
+        ).unwrap();
+        let refresh = || {
+            let mut photos = db::photos(&connection, Some(1), true, Some("keep")).unwrap();
+            apply_rating_filter(&mut photos, RatingFilter::Unrated);
+            photos.iter().map(|p| p.id).collect::<Vec<_>>()
+        };
+        assert_eq!(refresh(), [1]);
+        for rating in 1..=5 {
+            db::set_rating_for_photos(&connection, &[1], rating).unwrap();
+            assert!(refresh().is_empty());
+            db::set_rating_for_photos(&connection, &[1], 0).unwrap();
+            assert_eq!(refresh(), [1]);
+        }
+        db::set_rating_for_photos(&connection, &[2], 0).unwrap();
+        let mut ids = refresh();
+        ids.sort_unstable();
+        assert_eq!(ids, [1, 2]);
+        db::set_rating_for_photos(&connection, &[1], 3).unwrap();
+        let mut album = db::photos_in_album(&connection, 1, None).unwrap();
+        apply_rating_filter(&mut album, RatingFilter::Unrated);
+        assert_eq!(album.iter().map(|p| p.id).collect::<Vec<_>>(), [2]);
+    }
+
 }

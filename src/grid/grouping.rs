@@ -233,6 +233,11 @@ impl Gallery {
         );
     }
 
+    /// Discard membership from a previous query before refreshing the grid.
+    pub fn invalidate_folder_cache(&self) {
+        self.folder_cache.replace(None);
+    }
+
     /// Restore a previously built Folder stream when re-entering Folder mode.
     ///
     /// Returns true when the cached rows can be reused as-is (tile geometry and

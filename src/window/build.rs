@@ -870,6 +870,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let filter_for_collection_nav = filter.clone();
     let search_for_collection_nav = search_text.clone();
     let sort_for_collection_nav = sort.clone();
+    let rating_filter_for_collection_nav = rating_filter.clone();
     let group_mode_for_collection_nav = group_mode.clone();
     let gallery_for_collection_nav = gallery.clone();
     let lightbox_for_collection_nav = lightbox.clone();
@@ -924,6 +925,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                     )
                     .unwrap_or_default();
                     retain_enabled_formats(&connection_for_collection_nav.borrow(), &mut photos);
+                    apply_rating_filter(&mut photos, rating_filter_for_collection_nav.get());
                     sort_photos(&mut photos, sort_for_collection_nav.get());
 
                     if !photos.is_empty() {
@@ -975,6 +977,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                     )
                     .unwrap_or_default();
                     retain_enabled_formats(&connection_for_collection_nav.borrow(), &mut photos);
+                    apply_rating_filter(&mut photos, rating_filter_for_collection_nav.get());
                     !photos.is_empty()
                 });
                 let last_available_album = albums.iter().rposition(|album| {
@@ -985,6 +988,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                     )
                     .unwrap_or_default();
                     retain_enabled_formats(&connection_for_collection_nav.borrow(), &mut photos);
+                    apply_rating_filter(&mut photos, rating_filter_for_collection_nav.get());
                     !photos.is_empty()
                 });
 
@@ -1006,6 +1010,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                         sidebar::SidebarFilter::RecentlyAdded,
                         &mut photos,
                     );
+                    apply_rating_filter(&mut photos, rating_filter_for_collection_nav.get());
                     sort_photos(&mut photos, sort_for_collection_nav.get());
                     if !photos.is_empty() {
                         let new_filter = sidebar::SidebarFilter::RecentlyAdded;
@@ -1046,6 +1051,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                         )
                         .unwrap_or_default();
                         retain_enabled_formats(&connection_for_collection_nav.borrow(), &mut photos);
+                        apply_rating_filter(&mut photos, rating_filter_for_collection_nav.get());
                         sort_photos(&mut photos, sort_for_collection_nav.get());
                         if photos.is_empty() {
                             continue;
@@ -1090,6 +1096,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                     )
                     .unwrap_or_default();
                     retain_enabled_formats(&connection_for_collection_nav.borrow(), &mut photos);
+                    apply_rating_filter(&mut photos, rating_filter_for_collection_nav.get());
                     sort_photos(&mut photos, sort_for_collection_nav.get());
 
                     if !photos.is_empty() {
@@ -1132,6 +1139,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                     )
                     .unwrap_or_default();
                     retain_enabled_formats(&connection_for_collection_nav.borrow(), &mut photos);
+                    apply_rating_filter(&mut photos, rating_filter_for_collection_nav.get());
                     sort_photos(&mut photos, sort_for_collection_nav.get());
                     if !photos.is_empty() {
                         let new_filter = sidebar::SidebarFilter::Favorites;
@@ -1172,6 +1180,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                     )
                     .unwrap_or_default();
                     retain_enabled_formats(&connection_for_collection_nav.borrow(), &mut photos);
+                    apply_rating_filter(&mut photos, rating_filter_for_collection_nav.get());
                     sort_photos(&mut photos, sort_for_collection_nav.get());
                     if !photos.is_empty() {
                         let new_filter = sidebar::SidebarFilter::All;
@@ -1215,6 +1224,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                         sidebar::SidebarFilter::RecentlyAdded,
                         &mut photos,
                     );
+                    apply_rating_filter(&mut photos, rating_filter_for_collection_nav.get());
                     sort_photos(&mut photos, sort_for_collection_nav.get());
                     if !photos.is_empty() {
                         let new_filter = sidebar::SidebarFilter::RecentlyAdded;
@@ -1252,6 +1262,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                     )
                     .unwrap_or_default();
                     retain_enabled_formats(&connection_for_collection_nav.borrow(), &mut photos);
+                    apply_rating_filter(&mut photos, rating_filter_for_collection_nav.get());
                     sort_photos(&mut photos, sort_for_collection_nav.get());
                     if !photos.is_empty() {
                         let new_filter = sidebar::SidebarFilter::Favorites;
@@ -1293,6 +1304,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                         )
                         .unwrap_or_default();
                         retain_enabled_formats(&connection_for_collection_nav.borrow(), &mut photos);
+                        apply_rating_filter(&mut photos, rating_filter_for_collection_nav.get());
                         sort_photos(&mut photos, sort_for_collection_nav.get());
                         if photos.is_empty() {
                             continue;
@@ -1358,6 +1370,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                         current_filter,
                         &mut photos,
                     );
+                    apply_rating_filter(&mut photos, rating_filter_for_collection_nav.get());
                     sort_photos(&mut photos, sort_for_collection_nav.get());
 
                     if !photos.is_empty() {
@@ -3602,8 +3615,13 @@ fn start_photo_export_single(
             }
         })
     };
+    let startup_generation = REFRESH_GENERATION.load(std::sync::atomic::Ordering::Relaxed);
     const STARTUP_BATCH_SIZE: usize = 500;
     glib::idle_add_local(move || {
+        // A newer filter/navigation owns the grid, including while its query runs.
+        if REFRESH_GENERATION.load(std::sync::atomic::Ordering::Relaxed) != startup_generation {
+            return glib::ControlFlow::Break;
+        }
         if startup_offset >= startup_total {
             restore_startup_view();
             return glib::ControlFlow::Break;

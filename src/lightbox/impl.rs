@@ -389,6 +389,15 @@ impl Lightbox {
                 last_width_for_fit.set(width);
                 last_height_for_fit.set(height);
 
+                zoom_trace(format!(
+                    "resize_tick old={}x{} new={}x{} zoom={resize_zoom:.6} applied_native={:.6} picture_req={:?}",
+                    old_width,
+                    old_height,
+                    width,
+                    height,
+                    applied_native_scale_for_fit.get(),
+                    picture_for_fit.size_request(),
+                ));
                 fit_picture(
                     &picture_for_fit,
                     &photos_for_fit.borrow(),
@@ -878,6 +887,22 @@ impl Lightbox {
     /// range-change anchor keeps the visual centre fixed while that geometry
     /// is laid out, in the same frame the geometry changes.
     pub fn request_slider_zoom(&self, native_scale: f64) {
+        zoom_trace(format!(
+            "request_slider native_req={native_scale:.6} applied_native={:.6} zoom={:.6} root={}x{} picture_req={:?} picture_alloc={}x{} hadj={:.1}/{:.1}/{:.1} vadj={:.1}/{:.1}/{:.1}",
+            self.applied_native_scale.get(),
+            self.zoom.get(),
+            self.root.width(),
+            self.root.height(),
+            self.picture.size_request(),
+            self.picture.width(),
+            self.picture.height(),
+            self.picture_viewport.hadjustment().value(),
+            self.picture_viewport.hadjustment().upper(),
+            self.picture_viewport.hadjustment().page_size(),
+            self.picture_viewport.vadjustment().value(),
+            self.picture_viewport.vadjustment().upper(),
+            self.picture_viewport.vadjustment().page_size(),
+        ));
         // A GtkScale keeps reporting its value while the pointer is held still
         // on the trough, and each report would otherwise redo the metadata
         // lookup, the fit maths and the size write for a scale that is already
@@ -920,6 +945,15 @@ impl Lightbox {
             intrinsic_width,
             intrinsic_height,
         );
+        zoom_trace(format!(
+            "apply_manual source={source} native_req={native_scale:.6} fit={fit_scale:.6} intrinsic={}x{} root={}x{} current_zoom={:.6} applied_native={:.6}",
+            intrinsic_width,
+            intrinsic_height,
+            self.root.width(),
+            self.root.height(),
+            self.zoom.get(),
+            self.applied_native_scale.get(),
+        ));
 
         if native_scale <= 0.0 || native_scale <= fit_scale * 1.001 {
             self.set_zoom(0.0);

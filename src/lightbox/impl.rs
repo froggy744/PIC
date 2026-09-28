@@ -1132,6 +1132,21 @@ impl Lightbox {
             self.zoom.get(),
             source,
         );
+
+        // A slider can issue a new picture size every frame. Publish the
+        // matching scroll ranges now, before GTK's queued layout, so the
+        // rendered frame never mixes the old adjustment range with the new
+        // picture allocation. Ctrl+wheel already feels stable and keeps its
+        // established path unchanged.
+        if source == "slider" {
+            let (picture_width, picture_height) = self.picture.size_request();
+            prime_viewport_for_picture_size(
+                &self.picture_viewport,
+                picture_width,
+                picture_height,
+            );
+        }
+
         self.ensure_native_zoom_texture(&photo);
         zoom_trace(format!(
             "slider_geometry source={source} native={native_scale:.5} fit={fit_scale:.5} zoom={:.5} commit_us={}",

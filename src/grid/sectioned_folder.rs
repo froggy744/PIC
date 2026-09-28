@@ -15,7 +15,6 @@ struct SectionedFolderGeometry {
 struct SectionedReflowSnapshot {
     tile_positions: HashMap<u32, (f64, f64)>,
     header_positions: HashMap<usize, (f64, f64)>,
-    header_photos: HashMap<usize, StripPhoto>,
     old_columns: u32,
     old_geometry: Vec<SectionedFolderGeometry>,
     tile_width: i32,
@@ -1091,27 +1090,6 @@ impl SectionedFolderView {
                 .iter()
                 .map(|(index, header)| (*index, self.root.child_position(header)))
                 .collect(),
-            header_photos: self
-                .live_headers
-                .borrow()
-                .iter()
-                .filter_map(|(index, header)| {
-                    let width = header.width().max(1) as f64;
-                    let height = header.height().max(1) as f64;
-                    let snapshot = gtk::Snapshot::new();
-                    gtk::WidgetPaintable::new(Some(header)).snapshot(&snapshot, width, height);
-                    snapshot.to_node().map(|node| {
-                        (
-                            *index,
-                            StripPhoto {
-                                node,
-                                width: width as f32,
-                                height: height as f32,
-                            },
-                        )
-                    })
-                })
-                .collect(),
             old_columns: self.current_columns.get().max(1),
             old_geometry: self.geometry.borrow().clone(),
             tile_width: self.tile_width.get(),
@@ -1328,27 +1306,7 @@ impl SectionedFolderView {
                 photo,
             ));
         }
-        for (index, (x, y)) in &snapshot.header_positions {
-            let Some(photo) = snapshot.header_photos.get(index).cloned() else {
-                continue;
-            };
-            let y = *y + scroll_shift;
-            let width = f64::from(photo.width);
-            let height = f64::from(photo.height);
-            draws.push((
-                StripSlice {
-                    index: u32::MAX,
-                    row: 0,
-                    x: *x,
-                    y,
-                    clip_x: *x,
-                    clip_y: y,
-                    clip_width: width,
-                    clip_height: height,
-                },
-                photo,
-            ));
-        }
+
 
         if draws.is_empty() {
             return;
@@ -1357,7 +1315,10 @@ impl SectionedFolderView {
         let layer: SectionedStripLayer = glib::Object::new();
         layer.set_can_target(false);
         layer.imp().draws.replace(draws);
-        layer.imp().size.set((1.0, 1.0));
+        layer
+            .imp()
+            .size
+            .set((f64::from(snapshot.tile_width.max(1)), f64::from(snapshot.tile_height.max(1))));
         layer.imp().top.set(top);
         layer.set_size_request(scroll.width().max(1), height.ceil() as i32);
         self.root.put(&layer, 0.0, top);
@@ -1374,18 +1335,9 @@ impl SectionedFolderView {
             .values()
             .map(|entry| entry.tile.clone())
             .collect::<Vec<_>>();
-        let fade_headers = self
-            .live_headers
-            .borrow()
-            .values()
-            .cloned()
-            .collect::<Vec<_>>();
         for tile in &fade_tiles {
             tile.set_presentation_offset(0.0, 0.0);
             tile.set_opacity(0.0);
-        }
-        for header in &fade_headers {
-            header.set_opacity(0.0);
         }
 
         self.reflow_active.set(true);
@@ -1396,11 +1348,10 @@ impl SectionedFolderView {
 
         if std::env::var_os("PICASA_TRACE").is_some() {
             eprintln!(
-                "PIC_SECTIONED_ANIM snapshot_crossfade_begin old_columns={} new_columns={} tiles={} headers={} duration_ms={}",
+                "PIC_SECTIONED_ANIM snapshot_crossfade_begin old_columns={} new_columns={} tiles={} duration_ms={}",
                 old_columns,
                 new_columns,
                 fade_tiles.len(),
-                fade_headers.len(),
                 DURATION_MS as u32,
             );
         }
@@ -1423,17 +1374,11 @@ impl SectionedFolderView {
             for tile in &fade_tiles {
                 tile.set_opacity(eased);
             }
-            for header in &fade_headers {
-                header.set_opacity(eased);
-            }
 
             if t >= 1.0 {
                 for tile in &fade_tiles {
                     tile.set_opacity(1.0);
                     tile.set_presentation_offset(0.0, 0.0);
-                }
-                for header in &fade_headers {
-                    header.set_opacity(1.0);
                 }
                 if let Some(active) = view.strip_layer.borrow_mut().take() {
                     view.root.remove(&active);

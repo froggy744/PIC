@@ -100,6 +100,12 @@ impl SettingsWindow {
         let stack = gtk::Stack::new();
         stack.set_hexpand(true);
         stack.set_vexpand(true);
+        // GtkStack is homogeneous by default, which makes the widest/tallest
+        // hidden page participate in the initial window and Paned allocation.
+        // The Database page is wider than the rc7 pages, so that first
+        // allocation was clipped until a manual resize triggered another one.
+        stack.set_hhomogeneous(false);
+        stack.set_vhomogeneous(false);
         stack.set_transition_type(gtk::StackTransitionType::None);
 
         stack.add_titled(

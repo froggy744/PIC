@@ -2,6 +2,21 @@ const LIBRARY_REGISTRY_VERSION: u32 = 1;
 const AUTO_BACKUP_DAYS: i64 = 5;
 const BACKUP_HISTORY: usize = 5;
 
+#[derive(Clone, Copy)]
+enum BackupKind {
+    Automatic,
+    Manual,
+}
+
+impl BackupKind {
+    fn prefix(self) -> &'static str {
+        match self {
+            Self::Automatic => "auto",
+            Self::Manual => "manual",
+        }
+    }
+}
+
 static ACTIVE_DATABASE: std::sync::OnceLock<std::sync::RwLock<PathBuf>> =
     std::sync::OnceLock::new();
 static REGISTRY_LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
@@ -190,22 +205,30 @@ pub fn suggested_library_path(name: &str) -> Result<PathBuf> {
 /// Create a consistent SQLite snapshot. This deliberately uses SQLite's
 /// online backup API rather than copying a WAL-backed database file.
 pub fn backup_library(library: &LibraryEntry) -> Result<PathBuf> {
+    backup_library_with_kind(library, BackupKind::Manual)
+}
+
+fn backup_library_with_kind(library: &LibraryEntry, kind: BackupKind) -> Result<PathBuf> {
     let _guard = BACKUP_LOCK
         .get_or_init(|| std::sync::Mutex::new(()))
         .lock()
         .expect("backup lock poisoned");
     let directory = backup_directory()?.join(&library.id);
-    backup_library_to(library, &directory)
+    backup_library_to(library, &directory, kind)
 }
 
-fn backup_library_to(library: &LibraryEntry, directory: &Path) -> Result<PathBuf> {
+fn backup_library_to(
+    library: &LibraryEntry,
+    directory: &Path,
+    kind: BackupKind,
+) -> Result<PathBuf> {
     std::fs::create_dir_all(&directory)?;
     let timestamp = chrono::Local::now().format("%Y-%m-%d-%H%M%S");
-    let base = safe_file_stem(&library.name);
-    let mut destination = directory.join(format!("{base}-{timestamp}.db"));
+    let prefix = kind.prefix();
+    let mut destination = directory.join(format!("{prefix}-{timestamp}.db"));
     let mut suffix = 2;
     while destination.exists() {
-        destination = directory.join(format!("{base}-{timestamp}-{suffix}.db"));
+        destination = directory.join(format!("{prefix}-{timestamp}-{suffix}.db"));
         suffix += 1;
     }
     let temporary = destination.with_extension("db.partial");
@@ -223,7 +246,9 @@ fn backup_library_to(library: &LibraryEntry, directory: &Path) -> Result<PathBuf
     }
     drop(target);
     std::fs::rename(&temporary, &destination)?;
-    prune_backups(&directory)?;
+    if matches!(kind, BackupKind::Automatic) {
+        prune_automatic_backups(&directory)?;
+    }
     Ok(destination)
 }
 
@@ -242,7 +267,7 @@ pub fn automatic_backup_if_due(library: &LibraryEntry) -> Result<Option<PathBuf>
         record_automatic_backup(&library.id, now, Some(signature))?;
         return Ok(None);
     }
-    let destination = backup_library(library)?;
+    let destination = backup_library_with_kind(library, BackupKind::Automatic)?;
     record_automatic_backup(&library.id, now, Some(signature))?;
     Ok(Some(destination))
 }
@@ -321,17 +346,19 @@ fn database_signature(path: &Path) -> Result<String> {
     Ok(hasher.finalize().to_hex().to_string())
 }
 
-fn prune_backups(directory: &Path) -> Result<()> {
+fn prune_automatic_backups(directory: &Path) -> Result<()> {
     let mut backups = std::fs::read_dir(directory)?
         .filter_map(|entry| entry.ok())
         .map(|entry| entry.path())
-        .filter(|path| path.extension().is_some_and(|extension| extension == "db"))
+        .filter(|path| {
+            path.extension().is_some_and(|extension| extension == "db")
+                && path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with("auto-"))
+        })
         .collect::<Vec<_>>();
-    backups.sort_by_key(|path| {
-        std::fs::metadata(path)
-            .and_then(|metadata| metadata.modified())
-            .ok()
-    });
+    backups.sort();
     let remove_count = backups.len().saturating_sub(BACKUP_HISTORY);
     for path in backups.into_iter().take(remove_count) {
         std::fs::remove_file(path)?;
@@ -474,7 +501,16 @@ mod library_tests {
             last_backup_signature: None,
         };
 
-        let backup = backup_library_to(&library, &directory.join("backups")).unwrap();
+        let backup = backup_library_to(
+            &library,
+            &directory.join("backups"),
+            BackupKind::Manual,
+        )
+        .unwrap();
+        assert!(backup
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with("manual-")));
         let snapshot = Connection::open(&backup).unwrap();
         let value: String = snapshot
             .query_row(
@@ -507,6 +543,66 @@ mod library_tests {
     fn backup_names_are_readable_and_catalog_names_are_sanitized() {
         assert_eq!(safe_file_stem("Work / 2026"), "Work---2026");
         assert_eq!(safe_file_stem("***"), "PIC-Library");
+    }
+
+    #[test]
+    fn automatic_backup_retention_keeps_only_configured_history() {
+        let directory = temporary_directory("automatic-backup-retention");
+        for day in 1..=BACKUP_HISTORY + 2 {
+            std::fs::write(
+                directory.join(format!("auto-2026-09-{day:02}-120000.db")),
+                [],
+            )
+            .unwrap();
+        }
+
+        prune_automatic_backups(&directory).unwrap();
+
+        let mut automatic = std::fs::read_dir(&directory)
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.starts_with("auto-"))
+            .collect::<Vec<_>>();
+        automatic.sort();
+        assert_eq!(automatic.len(), BACKUP_HISTORY);
+        assert_eq!(automatic.first().unwrap(), "auto-2026-09-03-120000.db");
+        assert_eq!(automatic.last().unwrap(), "auto-2026-09-07-120000.db");
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn automatic_backup_retention_never_removes_manual_backups() {
+        let directory = temporary_directory("manual-backup-retention");
+        for day in 1..=BACKUP_HISTORY + 2 {
+            std::fs::write(
+                directory.join(format!("auto-2026-09-{day:02}-120000.db")),
+                [],
+            )
+            .unwrap();
+        }
+        let manual = [
+            "manual-2026-08-01-090000.db",
+            "manual-2026-08-02-090000.db",
+            "Work-legacy-manual-backup.db",
+        ];
+        for name in manual {
+            std::fs::write(directory.join(name), []).unwrap();
+        }
+
+        prune_automatic_backups(&directory).unwrap();
+
+        for name in manual {
+            assert!(directory.join(name).is_file(), "manual backup {name} was removed");
+        }
+        let automatic_count = std::fs::read_dir(&directory)
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.starts_with("auto-"))
+            .count();
+        assert_eq!(automatic_count, BACKUP_HISTORY);
+        std::fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]

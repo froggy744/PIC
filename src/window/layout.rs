@@ -1217,8 +1217,30 @@
     }
     {
         let info = info.clone();
+        let gallery = gallery.clone();
+        let grid_zoom_syncing = grid_zoom_syncing.clone();
         main_stack.connect_visible_child_notify(move |stack| {
-            info.set_collage_active(stack.visible_child_name().as_deref() == Some("collage"));
+            let visible = stack.visible_child_name();
+            let collage_active = visible.as_deref() == Some("collage");
+            info.set_collage_active(collage_active);
+
+            // A collage -> photos transition may follow an Edit detour, where
+            // the shared slider was in the 0..100 photo-zoom range. Restore
+            // the ordinary discrete Gallery range before re-enabling it.
+            if matches!(visible.as_deref(), Some("photos" | "library")) {
+                grid_zoom_syncing.set(true);
+                info.grid_zoom.set_range(0.0, 7.0);
+                info.grid_zoom.set_increments(1.0, 1.0);
+                info.grid_zoom.set_round_digits(0);
+                info.grid_zoom.clear_marks();
+                info.grid_zoom.add_mark(3.5, gtk::PositionType::Top, None);
+                info.grid_zoom.add_mark(3.5, gtk::PositionType::Bottom, None);
+                info.grid_zoom
+                    .set_value(grid_zoom_slider_value(gallery.current_zoom_width()));
+                info.grid_zoom
+                    .set_tooltip_text(Some("Thumbnail size (Ctrl + wheel)"));
+                grid_zoom_syncing.set(false);
+            }
         });
     }
     {

@@ -407,21 +407,14 @@ impl Gallery {
     }
 
     /// Keyboard Ctrl+A. In the continuous Folder stream, scope selection to
-    /// the active folder (including descendant folders); everywhere else
-    /// select the complete current gallery model.
+    /// the exact active folder only; everywhere else select the complete
+    /// current gallery model.
     pub fn select_all_keyboard_scope(&self, folder_id: Option<i64>) {
         if self.group_mode.get() == GroupMode::Folder {
             if let Some(folder_id) = folder_id {
-                let scope = folder_navigation_scope(
-                    self.folder_catalog
-                        .borrow()
-                        .iter()
-                        .map(|folder| (folder.folder_id, folder.parent_id)),
-                    folder_id,
-                );
                 let ranges = self.group_ranges.borrow();
                 self.selection.unselect_all();
-                for range in ranges.iter().filter(|range| scope.contains(&range.folder_id)) {
+                for range in ranges.iter().filter(|range| range.folder_id == folder_id) {
                     let len = range.end.saturating_sub(range.start);
                     if len > 0 {
                         self.selection

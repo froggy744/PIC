@@ -587,25 +587,28 @@ impl Gallery {
         let width = nearest_zoom_level(width).clamp(MIN_TILE_WIDTH, MAX_TILE_WIDTH);
         self.auto_default_zoom.set(false);
 
-        let base = self
-            .pending_zoom_width
-            .get()
-            .unwrap_or_else(|| self.tile_width.get());
-        if width == base {
+        if width == self.tile_width.get() {
             return;
         }
 
-        // A slider drag can cross several ladder levels in a few frames.
-        // Treat that burst exactly like Ctrl+wheel: keep one stable centre
-        // anchor, remember only the latest requested level, and perform one
-        // real tile/layout reflow after input settles. Reflowing on every
-        // value_changed signal makes GridView repeatedly change column count
-        // while the thumb is moving, which is the source of the visible
-        // shaking/flying tiles and temporary scaled-blurry thumbnails.
-        if self.pending_zoom_width.get().is_none() {
-            self.begin_center_zoom_anchor();
+        self.begin_center_zoom_anchor();
+
+        // Slider input is already discrete (the existing 8-level ladder).
+        // Cancel wheel/click debounce and any in-flight animation, then apply
+        // exactly one reflow for the newly selected level. This prevents an
+        // old trailing timeout/animation from pulling the grid back after the
+        // thumb has moved on.
+        if let Some(source) = self.zoom_reflow_source.borrow_mut().take() {
+            source.remove();
         }
-        self.request_wheel_zoom(width);
+        self.pending_zoom_width.set(None);
+        self.zoom_animation_generation
+            .set(self.zoom_animation_generation.get().wrapping_add(1));
+        self.zoom_animation_layout_width.set(None);
+        set_grid_zoom_animation_active(false);
+        let generation = self.zoom_animation_generation.get();
+        self.apply_tile_size(width, true);
+        self.schedule_grid_zoom_anchor_restore(generation, true);
     }
 
     pub fn zoom_in(self: &Rc<Self>) {

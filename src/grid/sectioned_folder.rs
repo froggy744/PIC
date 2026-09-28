@@ -401,7 +401,10 @@ impl SectionedFolderView {
             };
             view.selection.select_item(next, true);
             view.selection_anchor.set(Some(next));
-            view.scroll_to_index(next, false);
+            // Arrow navigation must move the selection, not reposition the
+            // whole Folder section at the top of the viewport. Only adjust
+            // the scroll value when the destination actually leaves view.
+            view.reveal_index_if_needed(next);
             if let Some(photo) = view.current_photos.borrow().get(next as usize) {
                 view.focus_photo(photo.id());
             }
@@ -1266,6 +1269,54 @@ impl SectionedFolderView {
         let geom = geometry.get(section_index)?;
         let local = index as usize - range.start;
         Some(geom.first_photo_y + (local as u32 / columns) as f64 * row_height)
+    }
+
+    fn reveal_index_if_needed(&self, index: u32) -> bool {
+        self.refresh();
+        let section_index = self.section_index_for_photo(index);
+        let ranges = self.group_ranges.borrow();
+        let geometry = self.geometry.borrow();
+        let row_height = f64::from(folder_line_height(
+            self.tile_height.get(),
+            self.show_file_names.get(),
+        ));
+        let row_top = section_index.and_then(|section_index| {
+            let range = ranges.get(section_index)?;
+            let geom = geometry.get(section_index)?;
+            let local = index as usize - range.start;
+            let row = local as u32 / self.current_columns.get().max(1);
+            Some(geom.first_photo_y + f64::from(row) * row_height)
+        });
+        drop(geometry);
+        drop(ranges);
+
+        let Some(row_top) = row_top else {
+            return false;
+        };
+        let Some(scrolled) = self.scroll.borrow().as_ref().cloned() else {
+            return false;
+        };
+        let adjustment = scrolled.vadjustment();
+        let page = adjustment.page_size().max(1.0);
+        let current_top = adjustment.value();
+        let current_bottom = current_top + page;
+        let row_bottom = row_top + row_height;
+
+        let target = if row_top < current_top {
+            Some(row_top)
+        } else if row_bottom > current_bottom {
+            Some(row_bottom - page)
+        } else {
+            None
+        };
+
+        if let Some(target) = target {
+            let lower = adjustment.lower();
+            let upper = (adjustment.upper() - page).max(lower);
+            adjustment.set_value(target.clamp(lower, upper));
+            self.refresh();
+        }
+        true
     }
 
     fn scroll_to_index(self: &Rc<Self>, index: u32, header: bool) -> bool {

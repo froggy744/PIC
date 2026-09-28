@@ -15,6 +15,7 @@ struct SectionedFolderGeometry {
 struct SectionedReflowSnapshot {
     tile_positions: HashMap<u32, (f64, f64)>,
     header_positions: HashMap<usize, (f64, f64)>,
+    header_photos: HashMap<usize, StripPhoto>,
     old_columns: u32,
     old_geometry: Vec<SectionedFolderGeometry>,
     tile_width: i32,
@@ -1090,6 +1091,27 @@ impl SectionedFolderView {
                 .iter()
                 .map(|(index, header)| (*index, self.root.child_position(header)))
                 .collect(),
+            header_photos: self
+                .live_headers
+                .borrow()
+                .iter()
+                .filter_map(|(index, header)| {
+                    let width = header.width().max(1) as f64;
+                    let height = header.height().max(1) as f64;
+                    let snapshot = gtk::Snapshot::new();
+                    gtk::WidgetPaintable::new(Some(header)).snapshot(&snapshot, width, height);
+                    snapshot.to_node().map(|node| {
+                        (
+                            *index,
+                            StripPhoto {
+                                node,
+                                width: width as f32,
+                                height: height as f32,
+                            },
+                        )
+                    })
+                })
+                .collect(),
             old_columns: self.current_columns.get().max(1),
             old_geometry: self.geometry.borrow().clone(),
             tile_width: self.tile_width.get(),
@@ -1254,127 +1276,116 @@ impl SectionedFolderView {
         snapshot: SectionedReflowSnapshot,
         anchor: Option<(i64, f64)>,
     ) {
-        const DURATION_MS: f64 = 220.0;
+        const DURATION_MS: f64 = 210.0;
 
         let old_columns = snapshot.old_columns.max(1);
-        let old_width = snapshot.old_width.max(1);
-        let old_tile_width = snapshot.tile_width.max(1);
+        let old_scroll = snapshot.old_scroll_y;
 
-        // If a previous column transition is still active, remember the
-        // current visual X offset per old column. That lets a rapid resize
-        // continue from what is actually on screen instead of snapping back.
-        let mut interrupted_column_offsets = HashMap::<u32, f32>::new();
-        {
-            let live = self.live_tiles.borrow();
-            for (index, entry) in live.iter() {
-                let Some(column) = self.column_for_index(*index) else {
-                    continue;
-                };
-                let (dx, _) = entry.tile.presentation_offset();
-                interrupted_column_offsets.entry(column).or_insert(dx);
-            }
-        }
-
-        // Publish the destination layout once. Rewrapping happens
-        // immediately inside the new columns; the animation below moves only
-        // the column lanes horizontally. No tile ever animates its Y position
-        // or its size.
-        self.apply_reflow_without_animation(snapshot, anchor);
+        // Commit the destination layout exactly once. The live GTK tiles are
+        // never animated between row/column slots; they only exist at their
+        // final positions underneath the frozen old presentation.
+        self.apply_reflow_without_animation(snapshot.clone(), anchor);
 
         let new_columns = self.current_columns.get().max(1);
         if old_columns == new_columns {
             return;
         }
 
-        let new_width = self.geometry_width.get().max(1);
-        let (old_start_x, old_gap) =
-            Self::grid_metrics_for(old_width, old_columns, old_tile_width);
-        let (new_start_x, new_gap) = self.horizontal_grid_metrics(new_width);
-        let old_pitch = f64::from(old_tile_width) + old_gap;
-        let new_pitch = f64::from(self.tile_width.get().max(1)) + new_gap;
+        let Some(scroll) = self.scroll.borrow().as_ref().cloned() else {
+            return;
+        };
+        let adjustment = scroll.vadjustment();
+        let final_scroll = adjustment.value();
+        let top = (final_scroll - SECTIONED_OVERSCAN_PX).max(0.0);
+        let page = adjustment.page_size().max(1.0);
+        let height = (page + SECTIONED_OVERSCAN_PX * 2.0)
+            .min((self.total_height.get().max(page) - top).max(1.0));
+        let scroll_shift = final_scroll - old_scroll;
 
-        // One X delta per destination column. Every tile in a column receives
-        // exactly the same horizontal offset, so the column behaves like one
-        // rigid vertical strip instead of individual photos flying between
-        // row slots.
-        let mut column_dx = HashMap::<u32, f32>::new();
-        for new_column in 0..new_columns {
-            let source_column = if new_columns <= 1 || old_columns <= 1 {
-                0
-            } else {
-                ((f64::from(new_column) * f64::from(old_columns - 1)
-                    / f64::from(new_columns - 1))
-                    .round() as u32)
-                    .min(old_columns - 1)
+        // Build one frozen overlay from the exact old visible widgets. This is
+        // intentionally not a reflow simulation: old photos and headings stay
+        // perfectly still relative to one another while the new final layout
+        // fades in underneath them.
+        let mut draws = Vec::<(StripSlice, StripPhoto)>::new();
+        for (index, (x, y)) in &snapshot.tile_positions {
+            let Some(photo) = snapshot.photos.get(index).cloned() else {
+                continue;
             };
-            let old_x = old_start_x
-                + f64::from(source_column) * old_pitch
-                + f64::from(
-                    interrupted_column_offsets
-                        .get(&source_column)
-                        .copied()
-                        .unwrap_or(0.0),
-                );
-            let new_x = new_start_x + f64::from(new_column) * new_pitch;
-            column_dx.insert(new_column, (old_x - new_x) as f32);
+            let y = *y + scroll_shift;
+            let width = f64::from(photo.width);
+            let height = f64::from(photo.height);
+            draws.push((
+                StripSlice {
+                    index: *index,
+                    row: 0,
+                    x: *x,
+                    y,
+                    clip_x: *x,
+                    clip_y: y,
+                    clip_width: width,
+                    clip_height: height,
+                },
+                photo,
+            ));
+        }
+        for (index, (x, y)) in &snapshot.header_positions {
+            let Some(photo) = snapshot.header_photos.get(index).cloned() else {
+                continue;
+            };
+            let y = *y + scroll_shift;
+            let width = f64::from(photo.width);
+            let height = f64::from(photo.height);
+            draws.push((
+                StripSlice {
+                    index: u32::MAX,
+                    row: 0,
+                    x: *x,
+                    y,
+                    clip_x: *x,
+                    clip_y: y,
+                    clip_width: width,
+                    clip_height: height,
+                },
+                photo,
+            ));
         }
 
-        let mut motion = Vec::<(SquareTile, f32)>::new();
-        {
-            let live = self.live_tiles.borrow();
-            for (index, entry) in live.iter() {
-                let Some(column) = self.column_for_index(*index) else {
-                    continue;
-                };
-                let dx = column_dx.get(&column).copied().unwrap_or(0.0);
-                if dx.abs() < 0.5 {
-                    entry.tile.set_presentation_offset(0.0, 0.0);
-                    continue;
-                }
-                entry.tile.set_presentation_offset(dx, 0.0);
-                motion.push((entry.tile.clone(), dx));
-            }
+        if draws.is_empty() {
+            return;
         }
 
-        // Folder headings belong to the same horizontal grid presentation.
-        // Their vertical position is already final; only slide the heading X
-        // with the first column.
-        let header_dx = (old_start_x
-            + f64::from(
-                interrupted_column_offsets
-                    .get(&0)
-                    .copied()
-                    .unwrap_or(0.0),
-            )
-            - new_start_x) as f32;
-        let mut header_motion = Vec::<(gtk::Label, f64, f64)>::new();
-        if header_dx.abs() >= 0.5 {
-            let headers = self.live_headers.borrow();
-            for header in headers.values() {
-                let (_, y) = self.root.child_position(header);
-                self.root
-                    .move_(header, new_start_x + f64::from(header_dx), y);
-                header_motion.push((header.clone(), new_start_x, y));
-            }
-        }
+        let layer: SectionedStripLayer = glib::Object::new();
+        layer.set_can_target(false);
+        layer.imp().draws.replace(draws);
+        layer.imp().size.set((1.0, 1.0));
+        layer.imp().top.set(top);
+        layer.set_size_request(scroll.width().max(1), height.ceil() as i32);
+        self.root.put(&layer, 0.0, top);
+        layer.set_opacity(1.0);
+        layer.queue_draw();
+        self.strip_layer.replace(Some(layer.clone()));
 
-        // Soften the instant rewrap without turning the gallery into a blink:
-        // every realized tile gently resolves from 88% to fully opaque using
-        // the same timing/easing as the column motion. This mirrors the calm
-        // cadence of the existing vertical scroll animation while keeping
-        // geometry completely rigid.
+        // The destination is already laid out. Reveal it as one calm visual
+        // state instead of moving individual tiles. The old frozen state
+        // dissolves away at the same time.
         let fade_tiles = self
             .live_tiles
             .borrow()
             .values()
             .map(|entry| entry.tile.clone())
             .collect::<Vec<_>>();
+        let fade_headers = self
+            .live_headers
+            .borrow()
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
         for tile in &fade_tiles {
-            tile.set_opacity(0.94);
+            tile.set_presentation_offset(0.0, 0.0);
+            tile.set_opacity(0.0);
         }
-
-        if motion.is_empty() && header_motion.is_empty() && fade_tiles.is_empty() {
-            return;
+        for header in &fade_headers {
+            header.set_opacity(0.0);
         }
 
         self.reflow_active.set(true);
@@ -1385,11 +1396,11 @@ impl SectionedFolderView {
 
         if std::env::var_os("PICASA_TRACE").is_some() {
             eprintln!(
-                "PIC_SECTIONED_ANIM column_reflow_begin old_columns={} new_columns={} tiles={} headers={} duration_ms={}",
+                "PIC_SECTIONED_ANIM snapshot_crossfade_begin old_columns={} new_columns={} tiles={} headers={} duration_ms={}",
                 old_columns,
                 new_columns,
-                motion.len(),
-                header_motion.len(),
+                fade_tiles.len(),
+                fade_headers.len(),
                 DURATION_MS as u32,
             );
         }
@@ -1407,40 +1418,34 @@ impl SectionedFolderView {
             let t = (started.elapsed().as_secs_f64() * 1000.0 / DURATION_MS)
                 .clamp(0.0, 1.0);
             let eased = crate::grid::zoom_transition::ease_in_out_cubic(t);
-            let remaining = (1.0 - eased) as f32;
 
-            for (tile, dx) in &motion {
-                tile.set_presentation_offset(dx * remaining, 0.0);
-            }
-            let opacity = 0.94 + 0.06 * eased;
+            layer.set_opacity((1.0 - eased) as f64);
             for tile in &fade_tiles {
-                tile.set_opacity(opacity);
+                tile.set_opacity(eased);
             }
-            for (header, target_x, y) in &header_motion {
-                view.root.move_(
-                    header,
-                    *target_x + f64::from(header_dx * remaining),
-                    *y,
-                );
+            for header in &fade_headers {
+                header.set_opacity(eased);
             }
 
             if t >= 1.0 {
-                for (tile, _) in &motion {
-                    tile.set_presentation_offset(0.0, 0.0);
-                }
                 for tile in &fade_tiles {
                     tile.set_opacity(1.0);
+                    tile.set_presentation_offset(0.0, 0.0);
                 }
-                for (header, target_x, y) in &header_motion {
-                    view.root.move_(header, *target_x, *y);
+                for header in &fade_headers {
+                    header.set_opacity(1.0);
                 }
+                if let Some(active) = view.strip_layer.borrow_mut().take() {
+                    view.root.remove(&active);
+                }
+                view.strip_presentation.borrow_mut().take();
                 view.reflow_active.set(false);
                 view.preserve_headers_during_reflow.set(false);
                 view.refresh();
 
                 if std::env::var_os("PICASA_TRACE").is_some() {
                     eprintln!(
-                        "PIC_SECTIONED_ANIM column_reflow_end elapsed_ms={}",
+                        "PIC_SECTIONED_ANIM snapshot_crossfade_end elapsed_ms={}",
                         started.elapsed().as_millis()
                     );
                 }
@@ -1463,6 +1468,7 @@ impl SectionedFolderView {
         if let Some(layer) = self.strip_layer.borrow_mut().take() { self.root.remove(&layer); }
         self.strip_presentation.borrow_mut().take();
         for entry in self.live_tiles.borrow().values() { entry.tile.set_opacity(1.0); }
+        for header in self.live_headers.borrow().values() { header.set_opacity(1.0); }
     }
 
     fn paint_strip(&self, mut presentation: StripPresentation, ranges: &[GroupRange]) {

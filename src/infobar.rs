@@ -248,22 +248,30 @@ impl InfoBar {
         let text_for_resize = text.clone();
         let preview_for_resize = preview.clone();
         let other_metrics_for_resize = other_metrics;
+        let camera_metric_for_resize = other_metrics_for_resize[0].clone();
+        let dimensions_metric_for_resize = other_metrics_for_resize[1].clone();
+        let size_metric_for_resize = other_metrics_for_resize[2].clone();
         let aperture_metric_for_resize = aperture_metric.clone().expect("aperture metric exists");
         let has_aperture_for_resize = has_aperture.clone();
         root.add_tick_callback(move |bar, _| {
             let width = bar.width();
             if width > 0 {
-                // Priority when space is tight: the taken date stays visible
-                // first, then the filename block, then the remaining metrics.
-                details_for_resize.set_visible(has_photo_for_resize.get() && width >= 640);
-                let full_details = width >= 1030;
-                for metric in &other_metrics_for_resize {
-                    metric.set_visible(full_details);
-                }
+                // Reclaim horizontal space progressively as the window narrows.
+                // Keep the filename and action controls as the final compact state.
+                camera_metric_for_resize.set_visible(width >= 1280);
+                dimensions_metric_for_resize.set_visible(width >= 1180);
+                size_metric_for_resize.set_visible(width >= 1080);
                 aperture_metric_for_resize
-                    .set_visible(full_details && has_aperture_for_resize.get());
-                text_for_resize.set_visible(width >= 790);
-                preview_for_resize.set_visible(width >= 520);
+                    .set_visible(width >= 980 && has_aperture_for_resize.get());
+
+                let show_taken = has_photo_for_resize.get() && width >= 880;
+                details_for_resize.set_visible(show_taken);
+                if let Some(taken_metric) = details_for_resize.first_child() {
+                    taken_metric.set_visible(show_taken);
+                }
+
+                text_for_resize.set_visible(true);
+                preview_for_resize.set_visible(width >= 880);
             }
             glib::ControlFlow::Continue
         });
@@ -363,7 +371,7 @@ impl InfoBar {
             self.preview.set_icon_name(Some("image-x-generic-symbolic"));
         }
 
-        self.details.set_visible(self.root.width() >= 640);
+        self.details.set_visible(self.root.width() >= 880);
         let dimensions = if photo.width() > 0 && photo.height() > 0 {
             format!("{} × {}", photo.width(), photo.height())
         } else {
@@ -381,7 +389,7 @@ impl InfoBar {
         let has_aperture = aperture.is_finite() && aperture > 0.0;
         self.has_aperture.set(has_aperture);
         self.aperture_metric
-            .set_visible(has_aperture && self.root.width() >= 1030);
+            .set_visible(has_aperture && self.root.width() >= 980);
 
         // The camera stays a metric beside Taken; the filename subtitle slot
         // that previously duplicated it now holds the actual file name.

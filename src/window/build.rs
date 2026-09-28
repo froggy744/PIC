@@ -2859,6 +2859,46 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         grid_zoom_syncing_for_visibility.set(false);
     });
 
+    let zoom_scale_scroll =
+        gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::VERTICAL);
+    zoom_scale_scroll.set_propagation_phase(gtk::PropagationPhase::Capture);
+    let zoom_scale_for_scroll = info.grid_zoom.clone();
+    let lightbox_for_scale_scroll = lightbox.clone();
+    let main_stack_for_scale_scroll = main_stack.clone();
+    zoom_scale_scroll.connect_scroll(move |controller, _, dy| {
+        if controller
+            .current_event_state()
+            .contains(gtk::gdk::ModifierType::CONTROL_MASK)
+        {
+            return glib::Propagation::Proceed;
+        }
+        if dy == 0.0 {
+            return glib::Propagation::Stop;
+        }
+
+        let step = if lightbox_for_scale_scroll.root.is_visible() {
+            2.0
+        } else if main_stack_for_scale_scroll.visible_child_name().as_deref() == Some("edit") {
+            1.0
+        } else {
+            1.0
+        };
+        let direction = if dy > 0.0 { -1.0 } else { 1.0 };
+        let adjustment = zoom_scale_for_scroll.adjustment();
+        let next = (zoom_scale_for_scroll.value() + direction * step)
+            .clamp(adjustment.lower(), adjustment.upper());
+        zoom_scale_for_scroll.set_value(next);
+
+        if std::env::var_os("PICASA_TRACE").is_some() {
+            eprintln!(
+                "PIC_ZOOM_UI wheel_over_slider dy={dy:.3} unit={:?} step={step:.3} next={next:.3}",
+                controller.unit()
+            );
+        }
+        glib::Propagation::Stop
+    });
+    info.grid_zoom.add_controller(zoom_scale_scroll);
+
     let grid_zoom_reset_press_x = Rc::new(Cell::new(f64::NAN));
     let grid_zoom_reset_press_x_for_press = grid_zoom_reset_press_x.clone();
     info.grid_zoom_reset.connect_pressed(move |_, _, x, _| {

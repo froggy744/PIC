@@ -163,6 +163,7 @@ pub struct SidebarCounts {
 }
 
 include!("db/core.rs");
+include!("db/libraries.rs");
 include!("db/albums.rs");
 include!("db/photos.rs");
 include!("db/history.rs");

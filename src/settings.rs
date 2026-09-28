@@ -6,6 +6,8 @@ use libadwaita as adw;
 use libadwaita::prelude::*;
 use rusqlite::Connection;
 
+mod database;
+
 /// Destructive library maintenance actions. The settings window only owns the
 /// buttons and their confirmation dialogs; the behaviour lives in the main
 /// window (build.rs) where the gallery, filter, and refresh context exist.
@@ -14,6 +16,11 @@ pub struct LibraryMaintenance {
     pub clear_thumbnails: Rc<dyn Fn()>,
     pub clear_database: Rc<dyn Fn()>,
     pub clear_all: Rc<dyn Fn()>,
+}
+
+#[derive(Clone)]
+pub struct DatabaseManagement {
+    pub switch_library: Rc<dyn Fn(&str) -> Result<(), String>>,
 }
 
 #[derive(Clone, Default)]
@@ -27,6 +34,18 @@ pub struct SettingsWindow {
 }
 
 impl SettingsWindow {
+    /// Drop cached pages after a catalog switch so every control is rebuilt
+    /// from the newly selected library the next time Settings opens.
+    pub fn reset(&self) {
+        if let Some(window) = self.window.borrow().upgrade() {
+            window.hide();
+            window.set_content(None::<&gtk::Widget>);
+        }
+        self.window.borrow_mut().set(None::<&adw::Window>);
+        self.stack.borrow_mut().set(None::<&gtk::Stack>);
+        self.refresh_appearance.borrow_mut().take();
+    }
+
     pub fn present(
         &self,
         parent: &adw::ApplicationWindow,
@@ -37,6 +56,7 @@ impl SettingsWindow {
         sidebar_changed: Rc<dyn Fn()>,
         folder_watch_changed: Rc<dyn Fn()>,
         maintenance: LibraryMaintenance,
+        database_management: DatabaseManagement,
         theme_engine: Rc<crate::window::theme::ThemeEngine>,
         initial_page: Option<&str>,
     ) {
@@ -106,6 +126,11 @@ impl SettingsWindow {
             &folders_page(connection.clone(), folder_watch_changed),
             Some("folders"),
             "Folders",
+        );
+        stack.add_titled(
+            &database::page(&window, database_management),
+            Some("database"),
+            "Database",
         );
         stack.add_titled(&albums_page(&connection.borrow()), Some("albums"), "Albums");
         stack.add_titled(
@@ -843,9 +868,13 @@ fn schedule_availability_stats(
 /// a worker thread; doing even paginated existence checks on GTK can hang when
 /// removable or network sources are slow.
 pub fn refresh_library_availability_stats(_connection: Rc<RefCell<Connection>>) {
+    let database = crate::db::connection_path(&_connection.borrow()).ok();
     std::thread::spawn(move || {
         const PAGE_SIZE: usize = 512;
-        let connection = match crate::db::open_default() {
+        let connection = match database
+            .ok_or_else(|| anyhow::anyhow!("active library has no database path"))
+            .and_then(|database| crate::db::open_existing(&database))
+        {
             Ok(connection) => connection,
             Err(error) => {
                 eprintln!("Could not open database for library availability stats: {error}");

@@ -592,7 +592,8 @@ fn run_print_operation(
 /// connection is intentionally not captured by the main-loop callbacks, so a
 /// fresh open keeps non-Send handles out of the worker -> main handoff.
 fn persist_print_state(config_key_file: Option<&glib::KeyFile>, extras: &PrintExtras) {
-    let Ok(connection) = db::open_default() else {
+    let connection = db::active_database_path().and_then(|path| db::open_existing(&path));
+    let Ok(connection) = connection else {
         eprintln!("Could not open the photo library to save print options");
         return;
     };

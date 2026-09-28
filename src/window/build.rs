@@ -724,7 +724,10 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         },
     };
 
+    let switch_library_slot: Rc<RefCell<Option<Rc<dyn Fn(&str) -> Result<(), String>>>>> =
+        Rc::new(RefCell::new(None));
     let settings_window = crate::settings::SettingsWindow::default();
+    let settings_window_for_switch = settings_window.clone();
     let settings_parent = window.clone();
     let settings_surface = window.clone();
     let settings_gallery_for_thumbs = gallery.clone();
@@ -739,6 +742,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let settings_albums_refresh = albums_home_refresh_slot.clone();
     let settings_rebuild_folder_watches = rebuild_folder_watches.clone();
     let settings_theme_engine = theme_engine.clone();
+    let settings_switch_library_slot = switch_library_slot.clone();
     let present_settings: Rc<dyn Fn(Option<&'static str>)> = Rc::new(move |initial_page| {
         let connection = settings_connection.clone();
         let gallery = settings_gallery.clone();
@@ -759,6 +763,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         let thumbs_connection = settings_connection.clone();
         let visibility_connection = settings_connection.clone();
         let visibility_sidebar = settings_sidebar.clone();
+        let switch_library_slot = settings_switch_library_slot.clone();
         settings_window.present(
             &settings_parent,
             settings_connection.clone(),
@@ -849,6 +854,14 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 })
             },
             maintenance,
+            crate::settings::DatabaseManagement {
+                switch_library: Rc::new(move |id| {
+                    switch_library_slot
+                        .borrow()
+                        .as_ref()
+                        .ok_or_else(|| "library switcher is not ready".to_owned())?(id)
+                }),
+            },
             settings_theme_engine.clone(),
             initial_page,
         );
@@ -2174,7 +2187,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     edit_page.set_vexpand(true);
     main_stack.add_named(&edit_page, Some("edit"));
     let library_home = crate::library_home::LibraryHome::new(
-        db::database_path().expect("The library database is already open"),
+        db::active_database_path().expect("The library database is already open"),
         {
             let slot = library_navigation_slot.clone();
             Rc::new(move |destination| {
@@ -3589,6 +3602,7 @@ fn start_photo_export_single(
     let startup_total = startup_photos_for_idle.len();
     let mut startup_offset = 0usize;
     let startup_view_restored = Rc::new(Cell::new(false));
+    let last_activated_for_restore = last_activated_photo_id.clone();
     let restore_startup_view: Rc<dyn Fn()> = {
         let restored = startup_view_restored.clone();
         let gallery = gallery.clone();
@@ -3605,7 +3619,7 @@ fn start_photo_export_single(
                     adjustment
                         .set_value(saved_albums_scroll.clamp(adjustment.lower(), upper));
                 });
-            } else if !last_activated_photo_id
+            } else if !last_activated_for_restore
                 .get()
                 .is_some_and(|photo_id| gallery.restore_activated_photo(photo_id))
             {
@@ -3782,7 +3796,11 @@ fn start_photo_export_single(
                 return;
             };
             
-            let control = spawn_tagged_scan(root, generation, scan_sender.clone());
+            let Ok(database) = db::active_database_path() else {
+                scan_job.borrow_mut().kind = None;
+                return;
+            };
+            let control = spawn_tagged_scan(root, database, generation, scan_sender.clone());
             scan_job.borrow_mut().active = Some(control);
         })
     };
@@ -3824,8 +3842,10 @@ fn start_photo_export_single(
                     .expect("folder refresh reason was authorized")
             };
             let sender = refresh_prepare_sender.clone();
+            let database = db::active_database_path();
             std::thread::spawn(move || {
-                let imported_root = db::open_default()
+                let imported_root = database
+                    .and_then(|database| db::open_existing(&database))
                     .and_then(|connection| db::folders(&connection))
                     .map(|folders| {
                         folders
@@ -4081,9 +4101,11 @@ fn start_photo_export_single(
         };
 
         let sender = refresh_prepare_sender_for_click.clone();
+        let database = db::active_database_path();
         std::thread::spawn(move || {
             
-            let roots = db::open_default()
+            let roots = database
+                .and_then(|database| db::open_existing(&database))
                 .and_then(|connection| db::imported_root_paths(&connection))
                 .map_err(|error| error.to_string());
             let count = roots.as_ref().map(|roots| roots.len()).unwrap_or(0);
@@ -4585,6 +4607,14 @@ fn start_photo_export_single(
         
 
         const PHOTO_APPEND_BATCH: usize = 192;
+        if displayed_generation.is_some()
+            && displayed_generation != Some(scan_job_for_events.borrow().generation)
+        {
+            // A library switch or scan preemption invalidates already-drained
+            // photo events as well as events still waiting in the channel.
+            pending_photos.clear();
+            displayed_generation = None;
+        }
         if !search_for_events.borrow().is_empty() {
             // Search results supersede progressive scan appends. The next
             // debounced refresh will replace the model from the DB.
@@ -4653,6 +4683,201 @@ fn start_photo_export_single(
         }
         glib::ControlFlow::Continue
     });
+
+    switch_library_slot.replace(Some({
+        let connection = connection.clone();
+        let scan_job = scan_job.clone();
+        let lightbox = lightbox.clone();
+        let selected_photo = selected_photo.clone();
+        let info = info.clone();
+        let folder_cache = folder_cache.clone();
+        let gallery = gallery.clone();
+        let sidebar_slot = sidebar_for_unavailable.clone();
+        let create_album = create_album.clone();
+        let import_folder = import_folder.clone();
+        let delete_album = delete_album.clone();
+        let on_unavailable = availability_refresh.clone();
+        let albums_refresh = albums_home_refresh_slot.clone();
+        let filter = filter.clone();
+        let search_text = search_text.clone();
+        let search_entry = search_entry_slot.clone();
+        let sort = sort.clone();
+        let group_mode = group_mode.clone();
+        let last_activated_photo_id = last_activated_photo_id.clone();
+        let main_stack = main_stack.clone();
+        let library_home = library_home;
+        let rebuild_folder_watches = rebuild_folder_watches.clone();
+        let theme_engine = theme_engine.clone();
+        let window = window.clone();
+        let refresh_status_box = refresh_status_box.clone();
+        let refresh_status_spinner = refresh_status_spinner.clone();
+        let stop_scan = stop_scan.clone();
+        let settings_window = settings_window_for_switch.clone();
+        Rc::new(move |id: &str| -> Result<(), String> {
+            {
+                let mut job = scan_job.borrow_mut();
+                if let Some(active) = job.active.take() {
+                    active.cancel();
+                }
+                job.generation = job.generation.wrapping_add(1);
+                job.kind = None;
+                job.pending.clear();
+                job.stop_requested = true;
+            }
+            invalidate_pending_grid_navigation();
+            invalidate_availability_refreshes();
+            refresh_status_spinner.set_spinning(false);
+            refresh_status_box.set_visible(false);
+            stop_scan.set_visible(false);
+            lightbox.close();
+
+            let (library, new_connection) = db::select_library(id)
+                .map_err(|error| format!("{error:#}"))?;
+            let folders = db::folders(&new_connection).map_err(|error| error.to_string())?;
+            let albums = db::albums(&new_connection).map_err(|error| error.to_string())?;
+            let counts = db::sidebar_counts(&new_connection).unwrap_or_default();
+            let new_filter = sidebar_filter_from_setting(
+                db::setting(&new_connection, LAST_VIEW_SETTING_KEY)
+                    .ok()
+                    .flatten()
+                    .as_deref(),
+                &folders,
+                &albums,
+            );
+            let new_sort = PhotoSort {
+                field: SortField::from_key(
+                    &db::setting(&new_connection, SORT_FIELD_SETTING_KEY)
+                        .ok()
+                        .flatten()
+                        .unwrap_or_default(),
+                ),
+                direction: SortDirection::from_key(
+                    &db::setting(&new_connection, SORT_DIRECTION_SETTING_KEY)
+                        .ok()
+                        .flatten()
+                        .unwrap_or_default(),
+                ),
+            };
+            let new_group = group_mode_from_key(
+                &db::setting(&new_connection, GROUP_MODE_SETTING_KEY)
+                    .ok()
+                    .flatten()
+                    .unwrap_or_default(),
+            );
+            let mut photos = match new_filter {
+                sidebar::SidebarFilter::Library | sidebar::SidebarFilter::Albums => Vec::new(),
+                sidebar::SidebarFilter::Album(album_id) => {
+                    db::photos_in_album(&new_connection, album_id, None).unwrap_or_default()
+                }
+                sidebar::SidebarFilter::Favorites => {
+                    db::photos(&new_connection, None, true, None).unwrap_or_default()
+                }
+                sidebar::SidebarFilter::History => {
+                    db::history_photos(&new_connection).unwrap_or_default()
+                }
+                _ => db::photos(&new_connection, None, false, None).unwrap_or_default(),
+            };
+            retain_enabled_formats(&new_connection, &mut photos);
+            limit_recently_added(&new_connection, new_filter, &mut photos);
+            if matches!(new_filter, sidebar::SidebarFilter::Folder(_)) {
+                let display_mode = sidebar::FolderDisplayMode::from_setting(
+                    db::setting(&new_connection, sidebar::FOLDER_DISPLAY_MODE_SETTING_KEY)
+                        .ok()
+                        .flatten()
+                        .as_deref(),
+                );
+                sort_folder_stream(&mut photos, &folders, new_sort, display_mode);
+            } else if new_filter != sidebar::SidebarFilter::History {
+                sort_photos(&mut photos, new_sort);
+            }
+
+            connection.replace(new_connection);
+            folder_cache.replace(folders.clone());
+            selected_photo.replace(None);
+            info.set_photo(None);
+            filter.set(new_filter);
+            sort.set(new_sort);
+            group_mode.set(new_group);
+            last_activated_photo_id.set(numeric_setting::<i64>(
+                &connection.borrow(),
+                LAST_ACTIVATED_PHOTO_ID_SETTING_KEY,
+            ));
+            search_text.replace(String::new());
+            if let Some(entry) = search_entry.borrow().as_ref() {
+                entry.set_text("");
+            }
+            let display_mode = sidebar::FolderDisplayMode::from_setting(
+                db::setting(&connection.borrow(), sidebar::FOLDER_DISPLAY_MODE_SETTING_KEY)
+                    .ok()
+                    .flatten()
+                    .as_deref(),
+            );
+            gallery.set_folder_catalog(&folders, &folder_stream_order(&folders, display_mode));
+            let square = crate::settings::saved_bool(
+                &connection.borrow(),
+                crate::db::THUMBNAIL_SQUARE_CORNERS_SETTING_KEY,
+            )
+            .unwrap_or(false);
+            if square {
+                window.add_css_class("square-corners");
+            } else {
+                window.remove_css_class("square-corners");
+            }
+            gallery.set_fit_whole_photo(
+                crate::settings::saved_bool(
+                    &connection.borrow(),
+                    crate::db::THUMBNAIL_FIT_WHOLE_PHOTO_SETTING_KEY,
+                )
+                .unwrap_or(false),
+            );
+            gallery.set_show_file_names(
+                crate::settings::saved_bool(
+                    &connection.borrow(),
+                    crate::db::THUMBNAIL_FILE_NAMES_SETTING_KEY,
+                )
+                .unwrap_or(false),
+            );
+            if let Some(width) = grid_thumbnail_size_from_setting(&connection.borrow()) {
+                gallery.request_slider_zoom(width);
+                info.grid_zoom.set_value(grid_zoom_slider_value(width));
+            }
+            apply_gallery_grouping(&gallery, new_filter, new_sort, new_group, true);
+            gallery.replace(&photos);
+            if let Some(sidebar) = sidebar_slot.borrow().as_ref() {
+                sidebar::refresh(
+                    sidebar,
+                    &folders,
+                    &albums,
+                    counts,
+                    create_album.clone(),
+                    import_folder.clone(),
+                    delete_album.clone(),
+                    on_unavailable.clone(),
+                );
+                sidebar::set_active_filter(sidebar, new_filter);
+                sidebar::apply_visibility(
+                    sidebar,
+                    sidebar::SidebarVisibility::from_connection(&connection.borrow()),
+                );
+            }
+            if let Some(refresh) = albums_refresh.borrow().as_ref() {
+                refresh(&albums);
+            }
+            library_home.reload(library.path.clone());
+            main_stack.set_visible_child_name(if new_filter == sidebar::SidebarFilter::Library {
+                "library"
+            } else if new_filter == sidebar::SidebarFilter::Albums {
+                "albums"
+            } else {
+                "photos"
+            });
+            theme_engine.reload_from_connection();
+            rebuild_folder_watches();
+            window.set_title(Some(&format!("PIC — {}", library.name)));
+            settings_window.reset();
+            Ok(())
+        })
+    }));
 
     // Persist the browsing destination and its viewport only after the user
     // confirms Exit. Destination changes are also written immediately in

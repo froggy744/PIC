@@ -175,6 +175,22 @@ impl ThemeEngine {
         }
     }
 
+    /// Re-read the library-specific theme after changing catalogs without
+    /// installing a second base provider.
+    pub(crate) fn reload_from_connection(&self) {
+        let themes = self.themes();
+        let saved = crate::db::setting(&self.connection.borrow(), THEME_SETTING_KEY)
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| DEFAULT_THEME_ID.to_string());
+        if let Some(theme) = theme_discovery::resolve_active(&themes, &saved, DEFAULT_THEME_ID) {
+            self.activate(&theme);
+            if let Some(hook) = self.post_apply.borrow().as_ref() {
+                hook();
+            }
+        }
+    }
+
     /// Switch to a theme the user picked: swap the overlay, persist the
     /// choice, and refresh theme-dependent views. Skipped when the theme is
     /// already active so rebuilding the picker cannot cause redundant work.

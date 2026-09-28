@@ -18,12 +18,17 @@ fn home_worker_refreshes_favorites_from_another_connection() {
     let (path, connection) = fixture();
     let (requests, receiver) = mpsc::sync_channel(1);
     let (sender, snapshots) = mpsc::channel();
-    let worker_path = path.clone();
-    let thread = std::thread::spawn(move || worker(worker_path, receiver, sender));
-    requests.send(true).unwrap();
+    let thread = std::thread::spawn(move || worker(receiver, sender));
+    requests
+        .send(HomeRequest {
+            database: path.clone(),
+            force: true,
+        })
+        .unwrap();
     let initial = snapshots
         .recv_timeout(Duration::from_secs(5))
         .unwrap()
+        .1
         .unwrap()
         .unwrap();
     assert_eq!(
@@ -41,10 +46,16 @@ fn home_worker_refreshes_favorites_from_another_connection() {
     assert!(initial.images.is_empty());
     db::set_favorite(&connection, 1, false).unwrap();
     db::set_favorite(&connection, 2, true).unwrap();
-    requests.send(false).unwrap();
+    requests
+        .send(HomeRequest {
+            database: path.clone(),
+            force: false,
+        })
+        .unwrap();
     let refreshed = snapshots
         .recv_timeout(Duration::from_secs(5))
         .unwrap()
+        .1
         .unwrap()
         .unwrap();
     assert_eq!(
@@ -57,10 +68,16 @@ fn home_worker_refreshes_favorites_from_another_connection() {
         vec![2]
     );
     assert_eq!(db::history_photos(&connection).unwrap().len(), 1);
-    requests.send(false).unwrap();
+    requests
+        .send(HomeRequest {
+            database: path.clone(),
+            force: false,
+        })
+        .unwrap();
     assert!(snapshots
         .recv_timeout(Duration::from_secs(5))
         .unwrap()
+        .1
         .unwrap()
         .is_none());
     drop(requests);

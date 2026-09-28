@@ -86,9 +86,14 @@ fn refresh_grid_inner(
     let generation = REFRESH_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
     let search = search.to_owned();
     let (sender, receiver) = std::sync::mpsc::channel();
+    let database = db::connection_path(&connection.borrow()).ok();
 
     std::thread::spawn(move || {
-        let Ok(connection) = db::open_default() else {
+        let Some(database) = database else {
+            let _ = sender.send(None);
+            return;
+        };
+        let Ok(connection) = db::open_existing(&database) else {
             let _ = sender.send(None);
             return;
         };

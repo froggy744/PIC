@@ -1503,9 +1503,10 @@ fn choose_export_destination(
         progress.set_can_close(false);
         progress.present(Some(&window));
         let (sender, receiver) = std::sync::mpsc::channel();
+        let database = crate::db::active_database_path();
         std::thread::spawn(move || {
             let result = (|| -> anyhow::Result<i64> {
-                let connection = crate::db::open_default()?;
+                let connection = crate::db::open_existing(&database?)?;
                 let id = super::persistence::export_project(&connection, &project, photo_id, &path, &options)?;
                 if let Some(photo) = crate::db::photo(&connection, id)? {
                     if let Err(error) = crate::thumbnail::create(&photo.path,photo.mtime,photo.size_bytes) {

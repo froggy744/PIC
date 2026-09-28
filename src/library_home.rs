@@ -4,6 +4,7 @@ use std::rc::Rc;
 use std::sync::{mpsc, Arc};
 use std::time::Duration;
 
+use anyhow::Context;
 use gtk::prelude::*;
 use gtk4 as gtk;
 
@@ -73,6 +74,14 @@ struct HomeSection {
 
 pub struct LibraryHome {
     pub root: gtk::ScrolledWindow,
+    database: Rc<std::cell::RefCell<std::path::PathBuf>>,
+    requests: mpsc::SyncSender<HomeRequest>,
+    pending: Rc<Cell<bool>>,
+}
+
+struct HomeRequest {
+    database: std::path::PathBuf,
+    force: bool,
 }
 
 #[cfg(test)]
@@ -161,27 +170,39 @@ impl LibraryHome {
         content.append(&status);
         root.set_child(Some(&content));
 
-        let (requests, receiver) = mpsc::sync_channel::<bool>(1);
+        let database = Rc::new(std::cell::RefCell::new(database));
+        let (requests, receiver) = mpsc::sync_channel::<HomeRequest>(1);
         let (sender, snapshots) = mpsc::channel();
-        std::thread::spawn(move || worker(database, receiver, sender));
+        std::thread::spawn(move || worker(receiver, sender));
         let pending = Rc::new(Cell::new(false));
         {
             let pending = pending.clone();
             let requests = requests.clone();
+            let database = database.clone();
             root.connect_map(move |_| {
-                if !pending.replace(true) && requests.try_send(true).is_err() {
+                let request = HomeRequest {
+                    database: database.borrow().clone(),
+                    force: true,
+                };
+                if !pending.replace(true) && requests.try_send(request).is_err() {
                     pending.set(false);
                 }
             });
         }
         let weak_root = root.downgrade();
+        let database_for_tick = database.clone();
+        let requests_for_tick = requests.clone();
+        let pending_for_tick = pending.clone();
         let mut ticks = 0;
         glib::timeout_add_local(Duration::from_millis(100), move || {
             let Some(root) = weak_root.upgrade() else {
                 return glib::ControlFlow::Break;
             };
-            if let Ok(result) = snapshots.try_recv() {
-                pending.set(false);
+            if let Ok((snapshot_database, result)) = snapshots.try_recv() {
+                pending_for_tick.set(false);
+                if snapshot_database != *database_for_tick.borrow() {
+                    return glib::ControlFlow::Continue;
+                }
                 match result {
                     Ok(Some(snapshot)) => {
                         populate(&sections, &snapshot, &navigate, &open);
@@ -197,13 +218,34 @@ impl LibraryHome {
             ticks += 1;
             if ticks >= 20 {
                 ticks = 0;
-                if root.is_mapped() && !pending.replace(true) && requests.try_send(false).is_err() {
-                    pending.set(false);
+                let request = HomeRequest {
+                    database: database_for_tick.borrow().clone(),
+                    force: false,
+                };
+                if root.is_mapped()
+                    && !pending_for_tick.replace(true)
+                    && requests_for_tick.try_send(request).is_err()
+                {
+                    pending_for_tick.set(false);
                 }
             }
             glib::ControlFlow::Continue
         });
-        Self { root }
+        Self {
+            root,
+            database,
+            requests,
+            pending,
+        }
+    }
+
+    pub fn reload(&self, database: std::path::PathBuf) {
+        self.database.replace(database.clone());
+        let request = HomeRequest { database, force: true };
+        self.pending.set(true);
+        if self.requests.try_send(request).is_err() {
+            self.pending.set(false);
+        }
     }
 }
 
@@ -260,23 +302,35 @@ fn wire_scroll_buttons(scroller: &gtk::ScrolledWindow, prev: &gtk::Button, next:
 }
 
 fn worker(
-    database: std::path::PathBuf,
-    requests: mpsc::Receiver<bool>,
-    sender: mpsc::Sender<Result<Option<Snapshot>, String>>,
+    requests: mpsc::Receiver<HomeRequest>,
+    sender: mpsc::Sender<(std::path::PathBuf, Result<Option<Snapshot>, String>)>,
 ) {
-    // Open read-only: no schema migration, folder probing or startup scans.
-    let connection =
-        rusqlite::Connection::open_with_flags(database, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY);
+    let mut connection = None;
+    let mut active_database = None;
     let mut version = None;
     let mut cache = HashMap::<String, Arc<PreviewImage>>::new();
     let mut missing = false;
-    while let Ok(force) = requests.recv() {
+    while let Ok(request) = requests.recv() {
+        let request_database = request.database.clone();
         let result = (|| -> anyhow::Result<Option<Snapshot>> {
+            if active_database.as_ref() != Some(&request.database) {
+                connection = Some(rusqlite::Connection::open_with_flags(
+                    &request.database,
+                    rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+                ));
+                active_database = Some(request.database.clone());
+                version = None;
+                cache.clear();
+                missing = false;
+            }
             let connection = connection
                 .as_ref()
+                .context("library home connection is not initialized")?
+                .as_ref()
                 .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+            connection.busy_timeout(Duration::from_millis(750))?;
             let current: i64 = connection.query_row("PRAGMA data_version", [], |row| row.get(0))?;
-            if !force && version == Some(current) && !missing {
+            if !request.force && version == Some(current) && !missing {
                 return Ok(None);
             }
             let data = db::library_home_data(connection)?;
@@ -330,12 +384,12 @@ fn worker(
                 }
             }
             cache.retain(|key, _| used.contains(key));
-            let changed = force || version != Some(current) || loaded;
+            let changed = request.force || version != Some(current) || loaded;
             version = Some(current);
             Ok(changed.then_some(Snapshot { data, images }))
         })()
         .map_err(|error| error.to_string());
-        if sender.send(result).is_err() {
+        if sender.send((request_database, result)).is_err() {
             break;
         }
     }

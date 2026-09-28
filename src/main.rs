@@ -69,17 +69,75 @@ fn main() {
         }
         // Startup loads indexed rows and recovers missing cached previews.
         // Folder discovery runs only through explicit import/refresh actions.
-        match db::open_default() {
+        let selected = db::initialize_library_manager();
+        match selected.and_then(|library| {
+            let existed = library.path.is_file();
+            let connection = db::open(&library.path)?;
+            if existed {
+                std::thread::spawn(move || {
+                    if let Err(error) = db::automatic_backup_if_due(&library) {
+                        eprintln!("Could not create automatic library backup: {error:#}");
+                    }
+                });
+            }
+            Ok(connection)
+        }) {
             Ok(connection) => window::build(application, connection).present(),
             Err(error) => {
                 eprintln!("Could not open photo library: {error:#}");
                 let dialog = gtk::MessageDialog::builder()
                     .message_type(gtk::MessageType::Error)
-                    .buttons(gtk::ButtonsType::Close)
+                    .buttons(gtk::ButtonsType::None)
                     .text("Could not open the photo library")
-                    .secondary_text(error.to_string())
+                    .secondary_text(format!("{error:#}\n\nChoose another PIC database or close the app."))
                     .build();
-                dialog.connect_response(|dialog, _| dialog.close());
+                dialog.add_button("Close", gtk::ResponseType::Close);
+                dialog.add_button("Choose Database…", gtk::ResponseType::Accept);
+                let application = application.clone();
+                dialog.connect_response(move |dialog, response| {
+                    dialog.close();
+                    if response != gtk::ResponseType::Accept {
+                        return;
+                    }
+                    let chooser = gtk::FileChooserNative::new(
+                        Some("Open PIC Database"),
+                        None::<&gtk::Window>,
+                        gtk::FileChooserAction::Open,
+                        Some("Open"),
+                        Some("Cancel"),
+                    );
+                    let filter = gtk::FileFilter::new();
+                    filter.set_name(Some("SQLite databases"));
+                    filter.add_pattern("*.db");
+                    chooser.add_filter(&filter);
+                    let application = application.clone();
+                    chooser.connect_response(move |chooser, response| {
+                        if response == gtk::ResponseType::Accept {
+                            if let Some(path) = chooser.file().and_then(|file| file.path()) {
+                                let known = db::known_libraries()
+                                    .ok()
+                                    .and_then(|libraries| {
+                                        libraries.into_iter().find(|library| library.path == path)
+                                    });
+                                let selected = known.map(Ok).unwrap_or_else(|| {
+                                    let name = path
+                                        .file_stem()
+                                        .and_then(|stem| stem.to_str())
+                                        .unwrap_or("PIC Library");
+                                    db::add_existing_library(&path, name, "")
+                                });
+                                match selected.and_then(|library| db::select_library(&library.id)) {
+                                    Ok((_library, connection)) => {
+                                        window::build(&application, connection).present();
+                                    }
+                                    Err(error) => eprintln!("Could not open selected library: {error:#}"),
+                                }
+                            }
+                        }
+                        chooser.destroy();
+                    });
+                    chooser.show();
+                });
                 dialog.present();
             }
         }

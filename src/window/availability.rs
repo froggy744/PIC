@@ -266,9 +266,13 @@ fn refresh_availability_ui(
         .map(|folder| (folder.id, folder.available))
         .collect::<std::collections::HashMap<_, _>>();
     let (sender, receiver) = std::sync::mpsc::channel();
+    let database = db::connection_path(&connection.borrow()).ok();
     std::thread::spawn(move || {
         crate::source::refresh_availability();
-        let sidebar_data = db::open_default().and_then(|connection| {
+        let sidebar_data = database
+            .ok_or_else(|| anyhow::anyhow!("active library has no database path"))
+            .and_then(|database| db::open_existing(&database))
+            .and_then(|connection| {
             #[cfg(target_os="linux")]
             crate::source::probe_network_roots(&db::imported_root_paths(&connection)?);
             let folders = db::folders(&connection)?;

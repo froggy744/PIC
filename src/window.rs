@@ -511,11 +511,12 @@ impl ScanJobState {
 
 fn spawn_tagged_scan(
     root: String,
+    database: std::path::PathBuf,
     generation: u64,
     ui_sender: std::sync::mpsc::Sender<ScanUiEvent>,
 ) -> scanner::ScanControl {
     let (scan_sender, scan_receiver) = std::sync::mpsc::channel();
-    let control = scanner::spawn_scan(root, scan_sender);
+    let control = scanner::spawn_scan(root, database, scan_sender);
     std::thread::spawn(move || {
         let mut terminal_seen = false;
         let mut indexed = 0usize;

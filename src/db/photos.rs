@@ -474,11 +474,16 @@ pub fn remove_missing_photos(
     if stale_ids.is_empty() {
         return Ok(0);
     }
-    let transaction = connection.unchecked_transaction()?;
-    for id in &stale_ids {
-        transaction.execute("DELETE FROM photos WHERE id = ?1", [id])?;
+    // Keep refresh deletion commits bounded so interactive settings/state
+    // writes are never queued behind one transaction containing thousands of
+    // stale rows.
+    for chunk in stale_ids.chunks(128) {
+        let transaction = connection.unchecked_transaction()?;
+        for id in chunk {
+            transaction.execute("DELETE FROM photos WHERE id = ?1", [id])?;
+        }
+        transaction.commit()?;
     }
-    transaction.commit()?;
     Ok(stale_ids.len())
 }
 

@@ -10,6 +10,7 @@ use anyhow::{Context, Result};
 use chrono::{Local, TimeZone};
 use exif::{In, Reader as ExifReader, Tag, Value};
 use gio::prelude::*;
+use rusqlite::Connection;
 
 use crate::db::{self, PhotoMetadata};
 use crate::thumbnail;
@@ -77,18 +78,20 @@ pub fn supported(path: &Path) -> bool {
 }
 
 pub fn scan(root: &str, events: Option<&Sender<ScanEvent>>) -> Result<usize> {
-    scan_with_control(root, events, &ScanControl::default())
+    let database = db::active_database_path()?;
+    scan_with_control(root, &database, events, &ScanControl::default())
 }
 
 fn scan_with_control(
     root: &str,
+    database: &Path,
     events: Option<&Sender<ScanEvent>>,
     control: &ScanControl,
 ) -> Result<usize> {
     if !root_is_available(root) {
         anyhow::bail!("scan root is unavailable: {root}");
     }
-    let connection = db::open_default()?;
+    let connection = db::open_existing(database)?;
     let folder_id = db::insert_folder(&connection, root)?;
     let folder = db::folders(&connection)?
         .into_iter()
@@ -122,20 +125,27 @@ fn scan_with_control(
     let mut thumbnails = Vec::new();
     let mut indexed_events = Vec::new();
     let mut folder_ids = HashMap::from([(root.to_string(), folder_id)]);
-    let mut transaction = Some(connection.unchecked_transaction()?);
-    for (path, parent_path) in discovered_folders {
-        if path == root {
-            continue;
+    // Folder reconciliation is SQL-only and committed in bounded batches.
+    // In particular, no network enumeration or metadata read occurs while a
+    // write transaction is active.
+    for chunk in discovered_folders.chunks(128) {
+        let transaction = connection.unchecked_transaction()?;
+        for (path, parent_path) in chunk {
+            if path == root {
+                continue;
+            }
+            let parent_id = parent_path
+                .as_ref()
+                .and_then(|parent| folder_ids.get(parent))
+                .copied()
+                .unwrap_or(folder_id);
+            let id = db::insert_discovered_folder(&transaction, path, parent_id)?;
+            folder_ids.insert(path.clone(), id);
         }
-        let parent_id = parent_path
-            .as_ref()
-            .and_then(|parent| folder_ids.get(parent))
-            .copied()
-            .unwrap_or(folder_id);
-        let id = db::insert_discovered_folder(transaction.as_ref().unwrap(), &path, parent_id)?;
-
-        folder_ids.insert(path, id);
+        transaction.commit()?;
     }
+
+    let mut prepared = Vec::with_capacity(32);
     for (file, info, folder_path) in files {
         if control.is_cancelled() {
             break;
@@ -152,11 +162,9 @@ fn scan_with_control(
                 .and_then(|parent| folder_ids.get(parent))
                 .copied()
                 .unwrap_or(folder_id);
-            let folder_id = db::insert_discovered_folder(
-                transaction.as_ref().unwrap(),
-                &folder_path,
-                parent_id,
-            )?;
+            // Defensive fallback for a source enumerator that omitted a
+            // folder record. This is one short statement, never source I/O.
+            let folder_id = db::insert_discovered_folder(&connection, &folder_path, parent_id)?;
             folder_ids.insert(folder_path.clone(), folder_id);
             folder_id
         };
@@ -195,64 +203,55 @@ fn scan_with_control(
             && !missing_heif_thumbnail
             && !missing_raw_thumbnail
         {
-            db::set_photo_folder(transaction.as_ref().unwrap(), &path, folder_id)?;
-            continue;
-        }
-        let newly_discovered = existing.is_none();
-        let result = read_metadata(&path, &info);
-        match result {
-            Ok(photo_metadata) => {
-                let id = db::upsert_photo(
-                    transaction.as_ref().unwrap(),
-                    Path::new(&path),
-                    Some(folder_id),
-                    &photo_metadata,
-                )?;
-                let photo = db::photo(transaction.as_ref().unwrap(), id)?
-                    .context("indexed photo disappeared")?;
-                imported += 1;
-                // A metadata-only repair does not invalidate the thumbnail.
-                if (!fingerprint_matches || missing_heif_thumbnail || missing_raw_thumbnail)
-                    && !remote_raw_thumbnail_unsupported(&path) {
-                    if std::env::var_os("PICASA_TRACE").is_some() {
-                        eprintln!("PIC_THUMBNAIL schedule source=scan raw={} uri={path}",is_raw(&path));
-                    }
-                    thumbnails.push((
-                        path.clone(),
-                        photo_metadata.mtime,
-                        photo_metadata.size_bytes,
-                    ));
-                }
-                indexed_events.push(ScanEvent::PhotoIndexed {
-                    path: PathBuf::from(path),
-                    id,
-                    photo,
+            prepared.push(PreparedPhoto::Existing { path, folder_id });
+        } else {
+            let newly_discovered = existing.is_none();
+            let create_thumbnail = (!fingerprint_matches
+                || missing_heif_thumbnail
+                || missing_raw_thumbnail)
+                && !remote_raw_thumbnail_unsupported(&path);
+            // This may read a remote original and decode EXIF/RAW metadata.
+            // It must remain outside the transaction below.
+            match read_metadata(&path, &info) {
+                Ok(metadata) => prepared.push(PreparedPhoto::Upsert {
+                    path,
+                    folder_id,
+                    metadata,
                     newly_discovered,
-                });
-            }
-            Err(error) => {
-                failed += 1;
-                send(
-                    events,
-                    ScanEvent::Failed {
-                        path: PathBuf::from(path),
-                        error: error.to_string(),
-                    },
-                );
+                    create_thumbnail,
+                }),
+                Err(error) => {
+                    failed += 1;
+                    send(
+                        events,
+                        ScanEvent::Failed {
+                            path: PathBuf::from(path),
+                            error: error.to_string(),
+                        },
+                    );
+                }
             }
         }
-        if imported > 0 && imported % 64 == 0 {
-            transaction.take().unwrap().commit()?;
+        if prepared.len() == 32 {
+            commit_prepared(
+                &connection,
+                &mut prepared,
+                &mut imported,
+                &mut thumbnails,
+                &mut indexed_events,
+            )?;
             for event in indexed_events.drain(..) {
                 send(events, event);
             }
-
-            transaction = Some(connection.unchecked_transaction()?);
         }
     }
-    if let Some(transaction) = transaction {
-        transaction.commit()?;
-    }
+    commit_prepared(
+        &connection,
+        &mut prepared,
+        &mut imported,
+        &mut thumbnails,
+        &mut indexed_events,
+    )?;
     for event in indexed_events.drain(..) {
         send(events, event);
     }
@@ -309,6 +308,75 @@ fn scan_with_control(
     Ok(imported)
 }
 
+enum PreparedPhoto {
+    Existing {
+        path: String,
+        folder_id: i64,
+    },
+    Upsert {
+        path: String,
+        folder_id: i64,
+        metadata: PhotoMetadata,
+        newly_discovered: bool,
+        create_thumbnail: bool,
+    },
+}
+
+/// Commit already-prepared rows. This function intentionally performs no
+/// filesystem access or image decoding while the write lock is held.
+fn commit_prepared(
+    connection: &Connection,
+    prepared: &mut Vec<PreparedPhoto>,
+    imported: &mut usize,
+    thumbnails: &mut Vec<(String, Option<i64>, Option<i64>)>,
+    indexed_events: &mut Vec<ScanEvent>,
+) -> Result<()> {
+    if prepared.is_empty() {
+        return Ok(());
+    }
+    let transaction = connection.unchecked_transaction()?;
+    for item in prepared.drain(..) {
+        match item {
+            PreparedPhoto::Existing { path, folder_id } => {
+                db::set_photo_folder(&transaction, &path, folder_id)?;
+            }
+            PreparedPhoto::Upsert {
+                path,
+                folder_id,
+                metadata,
+                newly_discovered,
+                create_thumbnail,
+            } => {
+                let id = db::upsert_photo(
+                    &transaction,
+                    Path::new(&path),
+                    Some(folder_id),
+                    &metadata,
+                )?;
+                let photo = db::photo(&transaction, id)?.context("indexed photo disappeared")?;
+                *imported += 1;
+                if create_thumbnail {
+                    if std::env::var_os("PICASA_TRACE").is_some() {
+                        eprintln!(
+                            "PIC_THUMBNAIL schedule source=scan raw={} uri={path}",
+                            is_raw(&path)
+                        );
+                    }
+                    thumbnails.push((path.clone(), metadata.mtime, metadata.size_bytes));
+                }
+                indexed_events.push(ScanEvent::PhotoIndexed {
+                    path: PathBuf::from(path),
+                    id,
+                    photo,
+                    newly_discovered,
+                });
+            }
+        }
+    }
+    transaction.commit()?;
+    Ok(())
+}
+
 fn root_is_available(root: &str) -> bool {
     #[cfg(target_os = "linux")]
     if crate::network_shares::private(root) {
@@ -321,7 +389,7 @@ fn root_is_available(root: &str) -> bool {
     }
 }
 
-pub fn spawn_scan(root: String, events: Sender<ScanEvent>) -> ScanControl {
+pub fn spawn_scan(root: String, database: PathBuf, events: Sender<ScanEvent>) -> ScanControl {
     let control = ScanControl::default();
     let worker_control = control.clone();
     std::thread::spawn(move || {
@@ -333,7 +401,7 @@ pub fn spawn_scan(root: String, events: Sender<ScanEvent>) -> ScanControl {
                 root: PathBuf::from(&root),
             },
         );
-        if let Err(error) = scan_with_control(&root, Some(&events), &worker_control) {
+        if let Err(error) = scan_with_control(&root, &database, Some(&events), &worker_control) {
             send(
                 Some(&events),
                 ScanEvent::Failed {

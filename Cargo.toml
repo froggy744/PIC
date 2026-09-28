@@ -8,7 +8,7 @@ license = "MIT"
 [dependencies]
 anyhow = "1"
 blake3 = "1"
-chrono = { version = "0.4", features = ["clock"] }
+chrono = { version = "0.4", features = ["clock", "serde"] }
 dirs = "4"
 fast_image_resize = "5"
 gio = "0.21"
@@ -22,7 +22,7 @@ libadwaita = { version = "0.8", features = ["v1_5"] }
 pangocairo = "0.21"
 rayon = "1"
 rawler = "0.8"
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.32", features = ["backup", "bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 turbojpeg = { version = "1.5.1", default-features = false, features = ["cmake"] }

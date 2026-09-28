@@ -8,7 +8,7 @@ fn dirs_path() -> Option<PathBuf> {
 }
 
 pub fn open_default() -> Result<Connection> {
-    let path = database_path()?;
+    let path = active_database_path()?;
     open(&path)
 }
 
@@ -19,13 +19,45 @@ pub fn open(path: &Path) -> Result<Connection> {
     }
     let connection = Connection::open(path)
         .with_context(|| format!("could not open database {}", path.display()))?;
-    connection.pragma_update(None, "foreign_keys", "ON")?;
+    configure_connection(&connection)?;
     connection.pragma_update(None, "journal_mode", "WAL")?;
     connection.execute_batch(SCHEMA)?;
     migrate_photo_schema(&connection)?;
     migrate_folder_schema(&connection)?;
     migrate_album_schema(&connection)?;
     Ok(connection)
+}
+
+/// Open a catalog that was already initialized by `open`. Background query
+/// workers use this path so merely navigating never runs schema DDL or tries
+/// to change journal mode while the scanner is committing.
+pub fn open_existing(path: &Path) -> Result<Connection> {
+    let connection = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE)
+        .with_context(|| format!("could not open database {}", path.display()))?;
+    configure_connection(&connection)?;
+    Ok(connection)
+}
+
+fn configure_connection(connection: &Connection) -> Result<()> {
+    // Every application connection participates in the same WAL database.
+    // A bounded busy handler absorbs the tiny overlap between short writers;
+    // expensive filesystem/image work is kept outside write transactions.
+    connection.busy_timeout(std::time::Duration::from_millis(750))?;
+    connection.pragma_update(None, "foreign_keys", "ON")?;
+    connection.pragma_update(None, "synchronous", "NORMAL")?;
+    Ok(())
+}
+
+pub fn connection_path(connection: &Connection) -> Result<PathBuf> {
+    let path: String = connection.query_row(
+        "SELECT file FROM pragma_database_list WHERE name = 'main'",
+        [],
+        |row| row.get(0),
+    )?;
+    if path.is_empty() {
+        anyhow::bail!("connection does not have a file-backed main database");
+    }
+    Ok(PathBuf::from(path))
 }
 
 fn migrate_photo_schema(connection: &Connection) -> Result<()> {

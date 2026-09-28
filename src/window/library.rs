@@ -278,6 +278,10 @@ fn retain_enabled_formats(connection: &Connection, photos: &mut Vec<db::Photo>) 
 }
 
 fn apply_rating_filter(photos: &mut Vec<db::Photo>, filter: RatingFilter) {
+    if filter == RatingFilter::AllStars {
+        photos.retain(|photo| (1..=5).contains(&photo.rating));
+        return;
+    }
     if let Some(rating) = filter.rating() {
         photos.retain(|photo| photo.rating == rating);
     }
@@ -663,7 +667,7 @@ mod photo_action_tests {
     }
 
     #[test]
-    fn rating_filter_is_exact_and_all_keeps_every_photo() {
+    fn rating_filter_supports_all_stars_and_clear() {
         let original = [0, 0, 1, 2, 5].map(|rating| {
             let mut photo = photo("/photos/test.jpg", None, None, None, None);
             photo.rating = rating;
@@ -676,11 +680,15 @@ mod photo_action_tests {
             (RatingFilter::Three, vec![]),
             (RatingFilter::Four, vec![]),
             (RatingFilter::Five, vec![5]),
+            (RatingFilter::AllStars, vec![1, 2, 5]),
             (RatingFilter::All, vec![0, 0, 1, 2, 5]),
         ] {
             let mut photos = original.to_vec();
             apply_rating_filter(&mut photos, filter);
-            assert_eq!(photos.iter().map(|p| p.rating).collect::<Vec<_>>(), expected);
+            assert_eq!(
+                photos.iter().map(|p| p.rating).collect::<Vec<_>>(),
+                expected
+            );
             assert_eq!(RatingFilter::from_key(filter.key()), filter);
         }
         assert_eq!(RatingFilter::from_key("0"), RatingFilter::Unrated);

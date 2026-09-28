@@ -85,11 +85,13 @@ fn folder_suggestion_popup(search: &gtk::SearchEntry) -> (gtk::Popover, gtk::Lis
     let popup_weak = popover.downgrade();
     let list_weak = list.downgrade();
     let scroll_weak = scroll.downgrade();
+    let search_weak = search.downgrade();
     keys.connect_key_pressed(move |_, key, _, modifiers| {
-        let (Some(popup), Some(list), Some(scroll)) = (
+        let (Some(popup), Some(list), Some(scroll), Some(search)) = (
             popup_weak.upgrade(),
             list_weak.upgrade(),
             scroll_weak.upgrade(),
+            search_weak.upgrade(),
         ) else {
             return glib::Propagation::Proceed;
         };
@@ -140,6 +142,7 @@ fn folder_suggestion_popup(search: &gtk::SearchEntry) -> (gtk::Popover, gtk::Lis
             }
             gtk::gdk::Key::Escape => {
                 popup.popdown();
+                search.set_text("");
                 glib::Propagation::Stop
             }
             _ => glib::Propagation::Proceed,
@@ -213,12 +216,9 @@ fn connect_search_popup_dismissal(
     let popup_weak = popup.downgrade();
     search.connect_stop_search(move |search| {
         if let Some(popup) = popup_weak.upgrade() {
-            if popup.is_visible() {
-                popup.popdown();
-            } else {
-                search.set_text("");
-            }
+            popup.popdown();
         }
+        search.set_text("");
     });
     let popup_weak = popup.downgrade();
     search.connect_unmap(move |_| {

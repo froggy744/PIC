@@ -914,6 +914,47 @@ fn centered_scroll_value(upper: f64, page_size: f64, lower: f64) -> f64 {
 /// `changed` signal is needed: `GtkAdjustment::configure` clamps the stored
 /// value into the new range before emitting it, and the viewport allocates the
 /// child at `-value` afterwards in the same pass.
+/// Pre-publish the scroll ranges for a slider-driven picture size before
+/// GTK runs the queued layout. Without this, the picture request changes in
+/// one phase and GtkScrolledWindow updates its adjustment ranges in the next;
+/// a live slider then renders alternating old-range/new-size states that look
+/// like the whole photo is jiggling. Both axes are configured while still in
+/// the slider callback, so the next frame starts with one coherent geometry.
+fn prime_viewport_for_picture_size(
+    viewport: &gtk::ScrolledWindow,
+    picture_width: i32,
+    picture_height: i32,
+) {
+    fn prime_axis(adjustment: &gtk::Adjustment, content_size: i32) {
+        let page_size = adjustment.page_size();
+        if page_size <= 0.0 {
+            return;
+        }
+
+        let lower = adjustment.lower();
+        let upper = f64::from(content_size.max(1)).max(page_size + lower);
+        let value = centered_scroll_value(upper, page_size, lower);
+
+        let range_changed = (adjustment.upper() - upper).abs() > 0.5
+            || (adjustment.page_size() - page_size).abs() > f64::EPSILON;
+        if range_changed {
+            adjustment.configure(
+                value,
+                lower,
+                upper,
+                adjustment.step_increment(),
+                adjustment.page_increment(),
+                page_size,
+            );
+        } else if (adjustment.value() - value).abs() > 0.5 {
+            adjustment.set_value(value);
+        }
+    }
+
+    prime_axis(&viewport.hadjustment(), picture_width);
+    prime_axis(&viewport.vadjustment(), picture_height);
+}
+
 fn install_viewport_anchor(adjustment: &gtk::Adjustment) {
     adjustment.connect_changed(move |adjustment| {
         zoom_trace(format!(

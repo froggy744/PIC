@@ -811,26 +811,64 @@ fn presentation_fit_scale(
     )
 }
 
-fn presentation_native_dimensions(photo: &PhotoObject) -> (i64, i64) {
+fn presentation_native_dimensions_from_values(
+    raw_width: i64,
+    raw_height: i64,
+    rotation: i32,
+    edit_recipe: &str,
+) -> (i64, i64) {
     // Preserve "unknown" catalogue dimensions as unknown. The previous
     // max(1) coercion turned a missing 0x0 metadata record into a seemingly
     // valid 1x1 native image. presentation_source_dimensions() would then
     // prefer that bogus 1x1 value over the decoded paintable (for example
     // 4000x3000), collapsing slider geometry to 1x1/2x2 and making the
     // Lightbox jump while zooming.
-    let raw_width = photo.width();
-    let raw_height = photo.height();
     if raw_width <= 1 || raw_height <= 1 {
         return (0, 0);
     }
 
     let (mut width, mut height) = (raw_width as u32, raw_height as u32);
-    if matches!(photo.rotation().rem_euclid(360), 90 | 270) {
+    if matches!(rotation.rem_euclid(360), 90 | 270) {
         std::mem::swap(&mut width, &mut height);
     }
-    let recipe = crate::edit::EditRecipe::decode(&photo.edit_recipe());
+    let recipe = crate::edit::EditRecipe::decode(edit_recipe);
     let (width, height) = crate::edit::render::estimated_output_dimensions(width, height, &recipe);
     (i64::from(width), i64::from(height))
+}
+
+fn presentation_native_dimensions(photo: &PhotoObject) -> (i64, i64) {
+    presentation_native_dimensions_from_values(
+        photo.width(),
+        photo.height(),
+        photo.rotation(),
+        &photo.edit_recipe(),
+    )
+}
+
+#[cfg(test)]
+mod presentation_dimension_tests {
+    use super::{
+        presentation_native_dimensions_from_values, presentation_source_dimensions,
+    };
+
+    #[test]
+    fn missing_catalog_dimensions_fall_back_to_decoded_texture() {
+        let (native_width, native_height) =
+            presentation_native_dimensions_from_values(0, 0, 0, "");
+        assert_eq!((native_width, native_height), (0, 0));
+
+        let (source_width, source_height, native_valid) =
+            presentation_source_dimensions(native_width, native_height, 4000, 3000, false);
+        assert!(!native_valid);
+        assert_eq!((source_width, source_height), (4000.0, 3000.0));
+    }
+
+    #[test]
+    fn one_by_one_sentinel_is_not_treated_as_real_photo_size() {
+        let (native_width, native_height) =
+            presentation_native_dimensions_from_values(1, 1, 0, "");
+        assert_eq!((native_width, native_height), (0, 0));
+    }
 }
 
 fn reset_viewport(viewport: &gtk::ScrolledWindow) {

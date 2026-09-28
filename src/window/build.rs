@@ -2048,8 +2048,8 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             let width = surface.width();
             if width > 100 {
                 if gallery_for_resize.using_sectioned_folder_view() {
-                    // Sectioned Folder mode only recomputes lightweight geometry;
-                    // it never rebuilds photo membership or row objects.
+                    // Sectioned Folder moves its realized tiles within the
+                    // same model after one geometry update.
                     gallery_for_resize.update_width(width);
                 } else if crate::grid::folder_gridview_experiment_enabled() {
                     // Gallery v2 has no column-sized Folder row model to
@@ -2058,7 +2058,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                     // GridView's previous min-column request active while the
                     // window is dragged smaller, causing repeated
                     // GtkOverlay/Adwaita minimum-width negotiation.
-                    gallery_for_resize.update_width(width);
+                    gallery_for_resize.update_width_with_reflow(width);
                 } else if sidebar_layout_settle_for_tick
                     .borrow_mut()
                     .observe(width)

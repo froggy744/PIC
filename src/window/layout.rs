@@ -934,7 +934,7 @@
         glib::idle_add_local_once(move || {
             let width = surface.width();
             if width > 100 {
-                gallery.update_width(width);
+                gallery.update_width_with_reflow(width);
             }
         });
     });

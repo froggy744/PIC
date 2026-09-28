@@ -121,7 +121,7 @@ impl ZoomSurface {
     }
 }
 
-fn ease_in_out_cubic(t: f64) -> f64 {
+pub(super) fn ease_in_out_cubic(t: f64) -> f64 {
     let t = t.clamp(0.0, 1.0);
     if t < 0.5 {
         4.0 * t.powi(3)

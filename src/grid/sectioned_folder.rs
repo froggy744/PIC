@@ -13,6 +13,8 @@ struct SectionedFolderGeometry {
 
 #[derive(Clone)]
 struct SectionedReflowSnapshot {
+    tile_positions: HashMap<u32, (f64, f64)>,
+    header_positions: HashMap<usize, (f64, f64)>,
     old_columns: u32,
     old_geometry: Vec<SectionedFolderGeometry>,
     tile_width: i32,
@@ -1035,6 +1037,7 @@ impl SectionedFolderView {
         for (_, tile) in live {
             self.root.remove(&tile.tile);
             tile.tile.set_opacity(1.0);
+            tile.tile.set_presentation_offset(0.0, 0.0);
             tile.index.set(None);
             let mut pool = self.tile_pool.borrow_mut();
             if pool.len() < SECTIONED_TILE_POOL_CAP {
@@ -1062,6 +1065,31 @@ impl SectionedFolderView {
             }
         }
         SectionedReflowSnapshot {
+            tile_positions: self
+                .live_tiles
+                .borrow()
+                .iter()
+                .filter_map(|(index, entry)| {
+                    let (x, y) = self.root.child_position(&entry.tile);
+                    let top = self.scroll_position();
+                    let bottom = top
+                        + self
+                            .scroll
+                            .borrow()
+                            .as_ref()
+                            .map(|scroll| scroll.vadjustment().page_size())
+                            .unwrap_or(f64::MAX);
+                    let (dx, dy) = entry.tile.presentation_offset();
+                    (y + f64::from(entry.tile.height()) >= top && y <= bottom)
+                        .then_some((*index, (x + f64::from(dx), y + f64::from(dy))))
+                })
+                .collect(),
+            header_positions: self
+                .live_headers
+                .borrow()
+                .iter()
+                .map(|(index, header)| (*index, self.root.child_position(header)))
+                .collect(),
             old_columns: self.current_columns.get().max(1),
             old_geometry: self.geometry.borrow().clone(),
             tile_width: self.tile_width.get(),
@@ -1117,6 +1145,9 @@ impl SectionedFolderView {
         self.reflow_animation_generation
             .set(self.reflow_animation_generation.get().wrapping_add(1));
         self.clear_strip_layer();
+        for entry in self.live_tiles.borrow().values() {
+            entry.tile.set_presentation_offset(0.0, 0.0);
+        }
         self.reflow_active.set(false);
         self.preserve_headers_during_reflow.set(false);
 
@@ -1223,7 +1254,79 @@ impl SectionedFolderView {
         snapshot: SectionedReflowSnapshot,
         anchor: Option<(i64, f64)>,
     ) {
-        self.apply_reflow_without_animation(snapshot, anchor);
+        const DURATION_MS: f64 = 170.0;
+        self.apply_reflow_without_animation(snapshot.clone(), anchor);
+
+        let mut motion = Vec::new();
+        for (index, (old_x, old_y)) in snapshot.tile_positions {
+            let Some(entry) = self.live_tiles.borrow().get(&index).cloned() else {
+                continue;
+            };
+            let (x, y) = self.root.child_position(&entry.tile);
+            let dx = (old_x - x) as f32;
+            let dy = (old_y - y) as f32;
+            if dx.abs() < 0.5 && dy.abs() < 0.5 {
+                continue;
+            }
+            entry.tile.set_presentation_offset(dx, dy);
+            motion.push((entry.tile, dx, dy));
+        }
+
+        let mut header_motion = Vec::new();
+        for (index, (old_x, old_y)) in snapshot.header_positions {
+            let Some(header) = self.live_headers.borrow().get(&index).cloned() else {
+                continue;
+            };
+            let target = self.root.child_position(&header);
+            if (old_x - target.0).abs() < 0.5 && (old_y - target.1).abs() < 0.5 {
+                continue;
+            }
+            self.root.move_(&header, old_x, old_y);
+            header_motion.push((header, (old_x, old_y), target));
+        }
+
+        if motion.is_empty() && header_motion.is_empty() {
+            return;
+        }
+        self.reflow_active.set(true);
+        self.preserve_headers_during_reflow.set(true);
+        self.reflow_animation_generation
+            .set(self.reflow_animation_generation.get().wrapping_add(1));
+        let generation = self.reflow_animation_generation.get();
+        let weak = Rc::downgrade(self);
+        let started = Instant::now();
+        self.root.add_tick_callback(move |_, _| {
+            let Some(view) = weak.upgrade() else {
+                return glib::ControlFlow::Break;
+            };
+            if view.reflow_animation_generation.get() != generation {
+                return glib::ControlFlow::Break;
+            }
+            let t = (started.elapsed().as_secs_f64() * 1000.0 / DURATION_MS).clamp(0.0, 1.0);
+            let eased = crate::grid::zoom_transition::ease_in_out_cubic(t);
+            let remaining = (1.0 - eased) as f32;
+            for (tile, dx, dy) in &motion {
+                tile.set_presentation_offset(dx * remaining, dy * remaining);
+            }
+            for (header, (old_x, old_y), (new_x, new_y)) in &header_motion {
+                view.root.move_(
+                    header,
+                    new_x + (old_x - new_x) * remaining as f64,
+                    new_y + (old_y - new_y) * remaining as f64,
+                );
+            }
+            if t >= 1.0 {
+                for (tile, _, _) in &motion {
+                    tile.set_presentation_offset(0.0, 0.0);
+                }
+                view.reflow_active.set(false);
+                view.preserve_headers_during_reflow.set(false);
+                view.refresh();
+                glib::ControlFlow::Break
+            } else {
+                glib::ControlFlow::Continue
+            }
+        });
     }
 
     fn animate_zoom_reflow(

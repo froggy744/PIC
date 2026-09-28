@@ -774,6 +774,7 @@ impl Gallery {
     }
 
     pub fn request_zoom(self: &Rc<Self>, width: i32) {
+        self.cancel_resize_reflow();
         let width = width.clamp(MIN_TILE_WIDTH, MAX_TILE_WIDTH);
         self.auto_default_zoom.set(false);
         if width == self.current_zoom_width() {
@@ -2124,6 +2125,7 @@ impl Gallery {
 
     pub fn replace(&self, photos: &[Photo]) {
         self.cancel_zoom_transition();
+        self.cancel_resize_reflow();
         if std::env::var_os("PICASA_TRACE").is_some() { eprintln!("PIC_NAV gallery_replace photos={}", photos.len()); }
         self.stable_zoom_anchor.set(None);
         self.zoom_anchor_restore_generation

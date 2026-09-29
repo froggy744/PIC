@@ -124,6 +124,15 @@ fn migrate_folder_schema(connection: &Connection) -> Result<()> {
     if !columns.iter().any(|column| column == "watched") {
         connection.execute("ALTER TABLE folders ADD COLUMN watched BOOLEAN NOT NULL DEFAULT 0", [])?;
     }
+    if !columns
+        .iter()
+        .any(|column| column == "raw_jpeg_pair_count")
+    {
+        connection.execute(
+            "ALTER TABLE folders ADD COLUMN raw_jpeg_pair_count INTEGER NOT NULL DEFAULT 0",
+            [],
+        )?;
+    }
     if !needs_inference {
         repair_folder_parent_links(connection)?;
         repair_legacy_root_state(connection)?;

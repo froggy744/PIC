@@ -223,6 +223,18 @@ fn strip_slices(layout: &StripLayout, ranges: &[GroupRange], top: f64, bottom: f
     slices
 }
 
+fn viewport_intersects_row(
+    row_top: f64,
+    row_height: f64,
+    viewport_top: f64,
+    viewport_height: f64,
+) -> bool {
+    viewport_height > 0.0
+        && row_height > 0.0
+        && row_top < viewport_top + viewport_height
+        && row_top + row_height > viewport_top
+}
+
 mod sectioned_strip_imp {
     use super::*;
     use gtk::subclass::prelude::*;
@@ -1640,31 +1652,57 @@ impl SectionedFolderView {
         let section_index = self.section_index_for_photo(index);
         let ranges = self.group_ranges.borrow();
         let geometry = self.geometry.borrow();
-        let target = section_index.and_then(|section_index| {
+        let row = section_index.and_then(|section_index| {
             let range = ranges.get(section_index)?;
             let geom = geometry.get(section_index)?;
             Some(if header {
-                geom.header_y
+                (geom.header_y, SECTIONED_HEADER_HEIGHT)
             } else {
                 let local = index as usize - range.start;
-                let row = local as u32 / self.current_columns.get().max(1);
-                geom.first_photo_y
-                    + f64::from(row) * f64::from(folder_line_height(self.tile_height.get(), self.show_file_names.get()))
+                let row_index = local as u32 / self.current_columns.get().max(1);
+                let row_height = f64::from(folder_line_height(
+                    self.tile_height.get(),
+                    self.show_file_names.get(),
+                ));
+                (
+                    geom.first_photo_y + f64::from(row_index) * row_height,
+                    row_height,
+                )
             })
         });
         drop(geometry);
         drop(ranges);
-        let Some(target) = target else {
+        let Some((row_top, row_height)) = row else {
             return false;
         };
         let Some(scrolled) = self.scroll.borrow().as_ref().cloned() else {
             return false;
         };
+        // Folder navigation can switch the Stack page and replace the model in
+        // the same main-loop turn. At that point the ScrolledWindow may still
+        // have its old (often zero) adjustment bounds. A clamped set_value()
+        // used to look like success and stop Open in Folder's retry loop even
+        // though the requested row remained thousands of pixels away.
+        if !self.root.is_mapped() || !scrolled.is_mapped() {
+            return false;
+        }
         let adjustment = scrolled.vadjustment();
-        let upper = (adjustment.upper() - adjustment.page_size()).max(adjustment.lower());
-        adjustment.set_value(target.clamp(adjustment.lower(), upper));
+        let page = adjustment.page_size();
+        if page <= 0.0 {
+            return false;
+        }
+        let upper = (adjustment.upper() - page).max(adjustment.lower());
+        adjustment.set_value(row_top.clamp(adjustment.lower(), upper));
         self.refresh();
-        true
+        // The adjustment's upper bound can lag one allocation behind the new
+        // section geometry. Report success only after the row is actually in
+        // the viewport so the caller retries after GTK updates its bounds.
+        viewport_intersects_row(
+            row_top,
+            row_height,
+            adjustment.value(),
+            adjustment.page_size(),
+        )
     }
 
     fn scroll_to_index_smooth(self: &Rc<Self>, index: u32, header: bool) -> bool {
@@ -1755,6 +1793,63 @@ impl SectionedFolderView {
             );
         }
         true
+    }
+
+    fn scroll_to_index_centered_now(self: &Rc<Self>, index: u32) -> bool {
+        self.refresh();
+        let target_photo = self
+            .current_photos
+            .borrow()
+            .get(index as usize)
+            .map(|photo| (photo.id(), photo.folder_id(), photo.path()));
+        let Some(row_top) = self.y_for_index(index) else {
+            return false;
+        };
+        let Some(scrolled) = self.scroll.borrow().as_ref().cloned() else {
+            return false;
+        };
+        if !self.root.is_mapped() || !scrolled.is_mapped() {
+            return false;
+        }
+
+        let adjustment = scrolled.vadjustment();
+        let page = adjustment.page_size();
+        if page <= 0.0 {
+            return false;
+        }
+        let content_height = self.total_height.get();
+        // Wait for GTK to allocate the new Folder content. Otherwise its old
+        // Photos-page upper bound can clamp a deep target to the top and make
+        // the caller believe a centered reveal succeeded.
+        if content_height > page + 1.0 && adjustment.upper() + 1.0 < content_height {
+            return false;
+        }
+
+        let row_height = f64::from(folder_line_height(
+            self.tile_height.get(),
+            self.show_file_names.get(),
+        ));
+        let row_center = row_top + row_height * 0.5;
+        let lower = adjustment.lower();
+        let upper = (adjustment.upper() - page).max(lower);
+        let target = (row_center - page * 0.5).clamp(lower, upper);
+        self.cancel_scroll_animation();
+        adjustment.set_value(target);
+        self.refresh();
+        let centered = (adjustment.value() - target).abs() <= 1.0;
+        if std::env::var_os("PICASA_TRACE").is_some() {
+            eprintln!(
+                "PIC_SECTIONED_CENTER source=open_in_folder index={} photo={:?} target_y={:.1} applied_y={:.1} page={:.1} centered={}",
+                index,
+                target_photo,
+                target,
+                adjustment.value(),
+                page,
+                centered
+            );
+        }
+        centered
+            && viewport_intersects_row(row_top, row_height, adjustment.value(), page)
     }
 
     fn scroll_position(&self) -> f64 {
@@ -1908,6 +2003,98 @@ mod section_lookup_tests {
         assert_eq!(visible_section_span(&geometry, 370.0, 740.0), 0..3);
         assert_eq!(visible_section_span(&geometry, 371.0, 739.0), 1..2);
         assert_eq!(visible_section_span(&geometry, 1200.0, 1300.0), 3..3);
+    }
+
+    #[test]
+    fn sectioned_reveal_rejects_a_stale_viewport_that_cannot_reach_the_row() {
+        assert!(!viewport_intersects_row(20_000.0, 100.0, 0.0, 0.0));
+        assert!(!viewport_intersects_row(20_000.0, 100.0, 0.0, 700.0));
+        assert!(viewport_intersects_row(20_000.0, 100.0, 19_950.0, 700.0));
+        assert!(viewport_intersects_row(20_000.0, 100.0, 20_099.0, 700.0));
+        assert!(!viewport_intersects_row(20_000.0, 100.0, 20_100.0, 700.0));
+    }
+
+    #[test]
+    #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+    fn sectioned_reveal_retries_after_the_folder_scroller_is_mapped() {
+        fn settle(milliseconds: u64) {
+            let context = glib::MainContext::default();
+            let until = Instant::now() + std::time::Duration::from_millis(milliseconds);
+            while Instant::now() < until {
+                while context.pending() {
+                    context.iteration(false);
+                }
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+        }
+
+        gtk::init().unwrap();
+        let gallery = Rc::new(Gallery::new(
+            &[],
+            120,
+            |_| {},
+            |_, _, _| {},
+            |_, _, _, _| {},
+            |_, _| {},
+            |_| {},
+        ));
+        gallery.group_mode.set(GroupMode::Folder);
+        gallery.current_photos.replace((0..4_000_i64).map(|id| {
+            glib::Object::builder::<PhotoObject>()
+                .property("id", id + 1)
+                .property("path", format!("/reveal-test/parent/child/photo-{id}.jpg"))
+                .property("filename", format!("photo-{id:04}.jpg"))
+                .property("folder-id", 7_i64)
+                .property("folder-path", "/reveal-test/parent/child")
+                .property("original-available", true)
+                .build()
+        }).collect());
+        gallery.rebuild_group_ranges();
+        gallery.sectioned_folder.refresh_model();
+
+        let scroll = gtk::ScrolledWindow::builder()
+            .child(&gallery.folder_sectioned_root)
+            .build();
+        gallery.attach_sectioned_folder_scroll(&scroll);
+        let window = gtk::Window::builder()
+            .title("open-in-folder-allocation-regression")
+            .default_width(900)
+            .default_height(650)
+            .child(&scroll)
+            .build();
+
+        // A navigation attempt made before the new Stack page is mapped must
+        // remain retryable instead of treating a clamped adjustment as success.
+        assert!(!gallery.sectioned_folder.scroll_to_index_centered_now(3_500));
+        window.present();
+        settle(200);
+        assert!(gallery
+            .sectioned_folder
+            .scroll_to_index_centered_now(3_500));
+
+        let section = gallery.sectioned_folder.section_index_for_photo(3_500).unwrap();
+        let range = gallery.sectioned_folder.group_ranges.borrow()[section].clone();
+        let geom = gallery.sectioned_folder.geometry.borrow()[section].clone();
+        let row_index = (3_500 - range.start) as u32 / gallery.current_columns.get().max(1);
+        let row_height = f64::from(folder_line_height(
+            gallery.tile_height.get(),
+            gallery.show_file_names.get(),
+        ));
+        let row_top = geom.first_photo_y + f64::from(row_index) * row_height;
+        let adjustment = scroll.vadjustment();
+        assert!(viewport_intersects_row(
+            row_top,
+            row_height,
+            adjustment.value(),
+            adjustment.page_size(),
+        ));
+        let actual_center = adjustment.value() + adjustment.page_size() * 0.5;
+        let expected_center = (row_top + row_height * 0.5)
+            .clamp(adjustment.lower() + adjustment.page_size() * 0.5,
+                (adjustment.upper() - adjustment.page_size()).max(adjustment.lower())
+                    + adjustment.page_size() * 0.5);
+        assert!((actual_center - expected_center).abs() <= 1.0);
+        window.close();
     }
 
     #[test]

@@ -699,6 +699,7 @@ mod open_in_folder_retry_tests {
         assert!(!should_ignore_cleared_search_event(false, Some("marianne"), "maria"));
     }
 
+    #[test]
     fn exact_photo_navigation_never_schedules_generic_folder_scroll() {
         assert_eq!(
             folder_destination_plan(true, true),

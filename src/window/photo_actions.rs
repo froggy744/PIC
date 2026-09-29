@@ -748,8 +748,19 @@ fn show_photo_context_menu(
         let current_search = context.search.clone();
         let gallery_for_folder = context.gallery.clone();
         let sidebar_for_folder = context.sidebar.clone();
+        let photo_path_for_folder = photo.path();
         open_in_folder.connect_clicked(move |_| {
             if folder_id != 0 {
+                if std::env::var_os("PICASA_TRACE").is_some() {
+                    eprintln!(
+                        "PIC_OPEN_IN_FOLDER request photo_id={} folder_id={} path={:?} filter={:?} searching={}",
+                        photo_id,
+                        folder_id,
+                        photo_path_for_folder,
+                        current_filter.get(),
+                        !current_search.borrow().is_empty()
+                    );
+                }
                 // If we are already in the continuous Folder tree/stream and no
                 // search filter is active, do not route through destination
                 // navigation again. That path can first scroll to the folder

@@ -703,7 +703,7 @@ impl Gallery {
                 && crate::grid::sectioned_folder_view_enabled()
             {
                 self.selection.select_item(position, true);
-                let revealed = self.sectioned_folder.scroll_to_index(position, false);
+                let revealed = self.sectioned_folder.scroll_to_index_centered_now(position);
                 if revealed {
                     self.sectioned_folder.focus_photo(photo_id);
                 }

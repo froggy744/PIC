@@ -8,33 +8,49 @@
 # -----------------------------------------------------------------------------
 
 # Thumbnail movement when the window resizes the grid.
-grid_resize_ms = 180
+grid_resize_ms = 140
 
-# Grid zoom runs in two stages around its layout change: the old grid first
-# scales and dims, then its snapshot crossfades into the newly sized grid.
-grid_zoom_cutoff_ms = 120
+# Library / All Photos resize style and settle duration. The legacy
+# grid_resize_ms above remains supported when this duration is omitted.
+library_resize_style = "tile_motion"
+library_resize_ms = 140
+
+# Grid zoom presentation style:
+# "tile_motion": animate each tile's position and size to its new layout.
+# "old_fades_over_new": keep the new grid fully visible; fade only old snapshot.
+# "crossfade": use the current scale/dim cutoff followed by a snapshot crossfade.
+grid_zoom_style = "tile_motion"
+
+# Timing for the snapshot styles above. "tile_motion" uses grid_zoom_reflow_ms.
+grid_zoom_cutoff_ms = 100
 grid_zoom_crossfade_ms = 180
 
 # Thumbnail position settling after the grid zoom changes tile sizes.
 grid_zoom_reflow_ms = 180
 
 # Regular Library / All Photos mouse-wheel scrolling.
-gallery_wheel_scroll_ms = 180
+gallery_wheel_scroll_ms = 120
 
 # -----------------------------------------------------------------------------
 # FOLDERS — folder contents and column reflow, separate from the regular grid
 # -----------------------------------------------------------------------------
 
-# Duration of the folder photo stream column-count transition.
-folder_column_reflow_ms = 0
+# Folder column-count transition duration. Kept as a fallback for older configs.
+folder_column_reflow_ms = 180
 
-# Transition style for folder column changes:
-# "old_fades_over_new": new layout stays fully visible; only old snapshot fades.
-# "crossfade": old snapshot fades out while new tiles fade in at the same time.
-folder_column_reflow_style = "old_fades_over_new"
+# Folder resize transition style and duration. Only tiles that change cells
+# move; their dimensions and opacity stay fixed.
+folder_column_reflow_style = "tile_motion"
+folder_resize_style = "tile_motion"
+folder_resize_ms = 140
+
+# Folder zoom style and duration. Tile positions move to their new cells;
+# thumbnail size updates once with the layout and is not stretched mid-flight.
+folder_zoom_style = "tile_motion"
+folder_zoom_ms = 180
 
 # Mouse-wheel scrolling while viewing folder contents.
-folder_scroll_ms = 180
+folder_scroll_ms = 120
 
 # Layout-settle wait before navigating to a folder after changing display mode.
 folder_mode_settle_ms = 100
@@ -44,11 +60,11 @@ folder_mode_settle_ms = 100
 # -----------------------------------------------------------------------------
 
 # Sidebar pane expand/collapse and paired divider movement.
-sidebar_slide_ms = 250
+sidebar_slide_ms = 220
 
 # -----------------------------------------------------------------------------
 # PHOTO VIEWER
 # -----------------------------------------------------------------------------
 
 # Selected thumbnail expanding into the full photo viewer.
-lightbox_open_ms = 250
+lightbox_open_ms = 240

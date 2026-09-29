@@ -7,7 +7,7 @@ mod imp {
 
     #[derive(Default)]
     pub struct ZoomSurface {
-        pub phase: Cell<Option<(bool, f64, f64)>>,
+        pub phase: Cell<Option<(bool, f64, f64, bool)>>,
         pub last: RefCell<Option<gtk::gsk::RenderNode>>,
         pub old: RefCell<Option<gtk::gsk::RenderNode>>,
     }
@@ -60,12 +60,20 @@ mod imp {
                 snapshot.restore();
             };
             match self.phase.get() {
-                Some((false, direction, t)) => {
+                Some((false, direction, t, _)) => {
                     if let Some(node) = node.as_ref() {
                         draw(node, 1.0 + direction * 0.04 * t, 1.0 - 0.25 * t);
                     }
                 }
-                Some((true, direction, t)) => {
+                Some((true, _direction, t, true)) => {
+                    if let Some(node) = node.as_ref() {
+                        snapshot.append_node(node);
+                    }
+                    if let Some(old) = self.old.borrow().as_ref() {
+                        draw(old, 1.0, 1.0 - t);
+                    }
+                }
+                Some((true, direction, t, false)) => {
                     // A GSK crossfade blends both nodes as a single image; it
                     // avoids the brightness dip of two source-over fades.
                     snapshot.push_cross_fade(t);
@@ -103,10 +111,10 @@ impl ZoomSurface {
         surface
     }
 
-    pub fn frame(&self, post: bool, direction: f64, progress: f64) {
+    pub fn frame(&self, post: bool, direction: f64, progress: f64, old_fades_over_new: bool) {
         self.imp()
             .phase
-            .set(Some((post, direction, ease_in_out_cubic(progress))));
+            .set(Some((post, direction, ease_in_out_cubic(progress), old_fades_over_new)));
         self.queue_draw();
     }
 

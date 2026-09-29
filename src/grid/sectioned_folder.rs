@@ -13,16 +13,12 @@ struct SectionedFolderGeometry {
 
 #[derive(Clone)]
 struct SectionedReflowSnapshot {
-    tile_positions: HashMap<u32, (f64, f64)>,
-    header_positions: HashMap<usize, (f64, f64)>,
+    tile_rects: HashMap<u32, (f64, f64, f64, f64)>,
     old_columns: u32,
     old_geometry: Vec<SectionedFolderGeometry>,
     tile_width: i32,
     tile_height: i32,
     old_scroll_y: f64,
-    old_width: i32,
-    presentation: Option<StripPresentation>,
-    photos: HashMap<u32, StripPhoto>,
 }
 
 #[derive(Clone)]
@@ -1091,25 +1087,17 @@ impl SectionedFolderView {
     }
 
     fn capture_reflow_snapshot(&self) -> SectionedReflowSnapshot {
-        let presentation = self.strip_presentation.borrow().clone();
-        let mut photos = presentation
-            .as_ref()
-            .map(|p| p.photos.clone())
-            .unwrap_or_default();
-        for (index, entry) in self.live_tiles.borrow().iter() {
-            if !photos.contains_key(index) {
-                if let Some(photo) = freeze_strip_photo(&entry.tile) {
-                    photos.insert(*index, photo);
-                }
-            }
-        }
         SectionedReflowSnapshot {
-            tile_positions: self
+            tile_rects: self
                 .live_tiles
                 .borrow()
                 .iter()
                 .filter_map(|(index, entry)| {
                     let (x, y) = self.root.child_position(&entry.tile);
+                    let (dx, dy) = entry.tile.presentation_offset();
+                    let (sx, sy) = entry.tile.presentation_scale();
+                    let width = f64::from(entry.tile.width()).max(1.0);
+                    let height = f64::from(entry.tile.height()).max(1.0);
                     let top = self.scroll_position();
                     let bottom = top
                         + self
@@ -1118,25 +1106,24 @@ impl SectionedFolderView {
                             .as_ref()
                             .map(|scroll| scroll.vadjustment().page_size())
                             .unwrap_or(f64::MAX);
-                    let (dx, dy) = entry.tile.presentation_offset();
-                    (y + f64::from(entry.tile.height()) >= top && y <= bottom)
-                        .then_some((*index, (x + f64::from(dx), y + f64::from(dy))))
+                    let visual_x = x + f64::from(dx) + width * (1.0 - f64::from(sx)) * 0.5;
+                    let visual_y = y + f64::from(dy) + height * (1.0 - f64::from(sy)) * 0.5;
+                    (visual_y + height * f64::from(sy) >= top && visual_y <= bottom).then_some((
+                        *index,
+                        (
+                            visual_x,
+                            visual_y,
+                            width * f64::from(sx),
+                            height * f64::from(sy),
+                        ),
+                    ))
                 })
-                .collect(),
-            header_positions: self
-                .live_headers
-                .borrow()
-                .iter()
-                .map(|(index, header)| (*index, self.root.child_position(header)))
                 .collect(),
             old_columns: self.current_columns.get().max(1),
             old_geometry: self.geometry.borrow().clone(),
             tile_width: self.tile_width.get(),
             tile_height: self.tile_height.get(),
             old_scroll_y: self.scroll_position(),
-            old_width: self.geometry_width.get().max(1),
-            presentation,
-            photos,
         }
     }
 
@@ -1285,114 +1272,71 @@ impl SectionedFolderView {
         snapshot: SectionedReflowSnapshot,
         anchor: Option<(i64, f64)>,
     ) {
-        let duration_ms = crate::animation_settings::folder_column_reflow_ms();
+        self.animate_tile_position_reflow(
+            snapshot,
+            anchor,
+            crate::animation_settings::folder_resize_ms(),
+            crate::animation_settings::folder_resize_enabled(),
+        );
+    }
 
-        let old_columns = snapshot.old_columns.max(1);
+    fn animate_zoom_reflow(
+        self: &Rc<Self>,
+        snapshot: SectionedReflowSnapshot,
+        anchor: Option<(i64, f64)>,
+    ) {
+        self.animate_tile_position_reflow(
+            snapshot,
+            anchor,
+            crate::animation_settings::folder_zoom_ms(),
+            crate::animation_settings::folder_zoom_style() == "tile_motion",
+        );
+    }
+
+    fn animate_tile_position_reflow(
+        self: &Rc<Self>,
+        snapshot: SectionedReflowSnapshot,
+        anchor: Option<(i64, f64)>,
+        duration_ms: f64,
+        animate: bool,
+    ) {
+        let old_columns = snapshot.old_columns;
         let old_scroll = snapshot.old_scroll_y;
-
-        // Commit the destination layout exactly once. The live GTK tiles are
-        // never animated between row/column slots; they only exist at their
-        // final positions underneath the frozen old presentation.
         self.apply_reflow_without_animation(snapshot.clone(), anchor);
-
-        let new_columns = self.current_columns.get().max(1);
-        if old_columns == new_columns {
+        if !animate || !self.root.is_mapped() || !self.root.settings().is_gtk_enable_animations() {
             return;
         }
 
-        let Some(scroll) = self.scroll.borrow().as_ref().cloned() else {
-            return;
-        };
-        let adjustment = scroll.vadjustment();
-        let final_scroll = adjustment.value();
-        let top = (final_scroll - SECTIONED_OVERSCAN_PX).max(0.0);
-        let page = adjustment.page_size().max(1.0);
-        let height = (page + SECTIONED_OVERSCAN_PX * 2.0)
-            .min((self.total_height.get().max(page) - top).max(1.0));
-        let scroll_shift = final_scroll - old_scroll;
-
-        // Build one frozen overlay from the exact old visible widgets. The
-        // destination layout remains fully opaque underneath; only this old
-        // snapshot fades out, avoiding a transparency dip through the background.
-        let mut draws = Vec::<(StripSlice, StripPhoto)>::new();
-        for (index, (x, y)) in &snapshot.tile_positions {
-            let Some(photo) = snapshot.photos.get(index).cloned() else {
+        let new_scroll = self.scroll_position();
+        let scroll_shift = new_scroll - old_scroll;
+        let mut motion = Vec::<(SquareTile, f32, f32)>::new();
+        for (index, entry) in self.live_tiles.borrow().iter() {
+            let Some((old_x, old_y, _old_width, _old_height)) =
+                snapshot.tile_rects.get(index).copied()
+            else {
                 continue;
             };
-            let y = *y + scroll_shift;
-            let width = f64::from(photo.width);
-            let height = f64::from(photo.height);
-            draws.push((
-                StripSlice {
-                    index: *index,
-                    row: 0,
-                    x: *x,
-                    y,
-                    clip_x: *x,
-                    clip_y: y,
-                    clip_width: width,
-                    clip_height: height,
-                },
-                photo,
-            ));
+            let (new_x, new_y) = self.root.child_position(&entry.tile);
+            let dx = (old_x - new_x) as f32;
+            let dy = (old_y + scroll_shift - new_y) as f32;
+            // Tiles that stayed in the same cell are left entirely alone.
+            if dx.abs() < 0.5 && dy.abs() < 0.5 {
+                continue;
+            }
+            entry.tile.set_presentation_offset(dx, dy);
+            entry.tile.set_opacity(1.0);
+            motion.push((entry.tile.clone(), dx, dy));
         }
-
-        if draws.is_empty() {
+        if motion.is_empty() {
             return;
         }
-
-        let layer: SectionedStripLayer = glib::Object::new();
-        layer.set_can_target(false);
-        layer.imp().draws.replace(draws);
-        layer.imp().size.set((
-            f64::from(snapshot.tile_width.max(1)),
-            f64::from(snapshot.tile_height.max(1)),
-        ));
-        layer.imp().top.set(top);
-        layer.set_size_request(scroll.width().max(1), height.ceil() as i32);
-        self.root.put(&layer, 0.0, top);
-        layer.set_opacity(1.0);
-        layer.queue_draw();
-        self.strip_layer.replace(Some(layer.clone()));
-
-        // The destination is already laid out underneath at full opacity.
-        // Keep it visible and dissolve only the old frozen snapshot above it.
-        let fade_tiles = self
-            .live_tiles
-            .borrow()
-            .values()
-            .map(|entry| entry.tile.clone())
-            .collect::<Vec<_>>();
-        for tile in &fade_tiles {
-            tile.set_presentation_offset(0.0, 0.0);
-            tile.set_opacity(if crate::animation_settings::folder_column_reflow_uses_overlap() {
-                1.0
-            } else {
-                0.0
-            });
-        }
+        let moved_tiles = motion.len();
 
         self.reflow_active.set(true);
         self.preserve_headers_during_reflow.set(true);
         self.reflow_animation_generation
             .set(self.reflow_animation_generation.get().wrapping_add(1));
         let generation = self.reflow_animation_generation.get();
-
-        if std::env::var_os("PICASA_TRACE").is_some() {
-            eprintln!(
-                "PIC_SECTIONED_ANIM column_reflow_begin old_columns={} new_columns={} tiles={} duration_ms={} style={}",
-                old_columns,
-                new_columns,
-                fade_tiles.len(),
-                duration_ms as u32,
-                if crate::animation_settings::folder_column_reflow_uses_overlap() {
-                    "old_fades_over_new"
-                } else {
-                    "crossfade"
-                },
-            );
-        }
-
         let weak = Rc::downgrade(self);
         let started = Instant::now();
         self.root.add_tick_callback(move |_, _| {
@@ -1402,49 +1346,34 @@ impl SectionedFolderView {
             if view.reflow_animation_generation.get() != generation {
                 return glib::ControlFlow::Break;
             }
-
             let t = (started.elapsed().as_secs_f64() * 1000.0 / duration_ms).clamp(0.0, 1.0);
-            let eased = crate::grid::zoom_transition::ease_in_out_cubic(t);
-
-            layer.set_opacity((1.0 - eased) as f64);
-            if !crate::animation_settings::folder_column_reflow_uses_overlap() {
-                for tile in &fade_tiles {
-                    tile.set_opacity(eased);
-                }
+            // Ease out without overshoot; don't animate tile dimensions.
+            let remaining = (1.0 - t).powi(3) as f32;
+            for (tile, dx, dy) in &motion {
+                tile.set_presentation_offset(dx * remaining, dy * remaining);
             }
-
             if t >= 1.0 {
-                for tile in &fade_tiles {
-                    tile.set_opacity(1.0);
+                for (tile, _, _) in &motion {
                     tile.set_presentation_offset(0.0, 0.0);
                 }
-                if let Some(active) = view.strip_layer.borrow_mut().take() {
-                    view.root.remove(&active);
-                }
-                view.strip_presentation.borrow_mut().take();
                 view.reflow_active.set(false);
                 view.preserve_headers_during_reflow.set(false);
                 view.refresh();
-
-                if std::env::var_os("PICASA_TRACE").is_some() {
-                    eprintln!(
-                        "PIC_SECTIONED_ANIM column_reflow_end elapsed_ms={}",
-                        started.elapsed().as_millis()
-                    );
-                }
                 glib::ControlFlow::Break
             } else {
                 glib::ControlFlow::Continue
             }
         });
-    }
 
-    fn animate_zoom_reflow(
-        self: &Rc<Self>,
-        snapshot: SectionedReflowSnapshot,
-        anchor: Option<(i64, f64)>,
-    ) {
-        self.apply_reflow_without_animation(snapshot, anchor);
+        if std::env::var_os("PICASA_TRACE").is_some() {
+            eprintln!(
+                "PIC_SECTIONED_ANIM tile_motion_begin old_columns={} new_columns={} moved_tiles={} duration_ms={}",
+                old_columns,
+                self.current_columns.get(),
+                moved_tiles,
+                duration_ms as u32,
+            );
+        }
     }
 
     fn clear_strip_layer(&self) {

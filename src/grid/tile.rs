@@ -230,6 +230,8 @@ mod square_tile {
         // visual position while a resize reflow animates.
         pub presentation_offset_x: Cell<f32>,
         pub presentation_offset_y: Cell<f32>,
+        pub presentation_scale_x: Cell<f32>,
+        pub presentation_scale_y: Cell<f32>,
         pub filename_visible: Cell<bool>,
         pub filename_label: RefCell<Option<gtk::Label>>,
         pub favorite_indicators_visible: Cell<bool>,
@@ -331,10 +333,24 @@ mod square_tile {
         fn snapshot(&self, snapshot: &gtk::Snapshot) {
             let dx = self.presentation_offset_x.get();
             let dy = self.presentation_offset_y.get();
-            let translated = dx.abs() > 0.01 || dy.abs() > 0.01;
-            if translated {
+            let sx = self.presentation_scale_x.get();
+            let sy = self.presentation_scale_y.get();
+            let sx = if sx <= 0.0 { 1.0 } else { sx };
+            let sy = if sy <= 0.0 { 1.0 } else { sy };
+            let transformed = dx.abs() > 0.01
+                || dy.abs() > 0.01
+                || (sx - 1.0).abs() > 0.001
+                || (sy - 1.0).abs() > 0.001;
+            if transformed {
                 snapshot.save();
                 snapshot.translate(&gtk::graphene::Point::new(dx, dy));
+                let center = gtk::graphene::Point::new(
+                    self.obj().width() as f32 * 0.5,
+                    self.obj().height() as f32 * 0.5,
+                );
+                snapshot.translate(&center);
+                snapshot.scale(sx, sy);
+                snapshot.translate(&gtk::graphene::Point::new(-center.x(), -center.y()));
             }
 
             let mut child = self.obj().first_child();
@@ -346,7 +362,7 @@ mod square_tile {
                 child = next;
             }
 
-            if translated {
+            if transformed {
                 snapshot.restore();
             }
         }
@@ -493,6 +509,15 @@ impl SquareTile {
         )
     }
 
+    pub(crate) fn presentation_scale(&self) -> (f32, f32) {
+        let x = self.imp().presentation_scale_x.get();
+        let y = self.imp().presentation_scale_y.get();
+        (
+            if x <= 0.0 { 1.0 } else { x },
+            if y <= 0.0 { 1.0 } else { y },
+        )
+    }
+
     pub(crate) fn set_presentation_offset(&self, x: f32, y: f32) {
         if (self.imp().presentation_offset_x.get() - x).abs() < 0.01
             && (self.imp().presentation_offset_y.get() - y).abs() < 0.01
@@ -502,6 +527,24 @@ impl SquareTile {
         self.imp().presentation_offset_x.set(x);
         self.imp().presentation_offset_y.set(y);
         self.queue_draw();
+    }
+
+    pub(crate) fn set_presentation_scale(&self, x: f32, y: f32) {
+        let x = x.clamp(0.1, 10.0);
+        let y = y.clamp(0.1, 10.0);
+        if (self.presentation_scale().0 - x).abs() < 0.001
+            && (self.presentation_scale().1 - y).abs() < 0.001
+        {
+            return;
+        }
+        self.imp().presentation_scale_x.set(x);
+        self.imp().presentation_scale_y.set(y);
+        self.queue_draw();
+    }
+
+    pub(crate) fn reset_presentation_transform(&self) {
+        self.set_presentation_offset(0.0, 0.0);
+        self.set_presentation_scale(1.0, 1.0);
     }
 
     fn set_tile_size(&self, width: i32, height: i32) {

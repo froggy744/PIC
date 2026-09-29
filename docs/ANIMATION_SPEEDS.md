@@ -8,13 +8,20 @@ malformed file falls back to built-in defaults and is reported to stderr.
 
 | Key | Controls | Default |
 | --- | --- | ---: |
-| `grid_resize_ms` | Regular Library / All Photos grid thumbnail movement on window resize | 170 ms |
-| `grid_zoom_cutoff_ms` | Grid zoom scale and opacity fade before layout commit | 120 ms |
-| `grid_zoom_crossfade_ms` | Grid zoom snapshot crossfade after layout commit | 180 ms |
-| `grid_zoom_reflow_ms` | Thumbnail position settling after grid zoom | 170 ms |
+| `grid_resize_ms` | Legacy Library resize duration, used when `library_resize_ms` is omitted | 170 ms |
+| `library_resize_style` | Library resize animation style: `tile_motion` or `none` | `tile_motion` |
+| `library_resize_ms` | Library resize settle movement duration | 170 ms |
+| `grid_zoom_style` | `tile_motion`, `old_fades_over_new`, or `crossfade` zoom presentation | `tile_motion` |
+| `grid_zoom_cutoff_ms` | Crossfade style only: scale/dim phase before layout commit | 120 ms |
+| `grid_zoom_crossfade_ms` | Snapshot fade/crossfade phase for snapshot styles | 180 ms |
+| `grid_zoom_reflow_ms` | Tile motion duration for `tile_motion` style | 170 ms |
 | `gallery_wheel_scroll_ms` | Regular Library / All Photos grid wheel scrolling | 180 ms |
-| `folder_column_reflow_ms` | Folder photo stream column-change crossfade | 220 ms |
-| `folder_column_reflow_style` | `old_fades_over_new` keeps new layout fully visible; `crossfade` fades both layers | `old_fades_over_new` |
+| `folder_column_reflow_ms` | Legacy duration fallback for folder resize | 140 ms |
+| `folder_column_reflow_style` | Folder column-change style: `tile_motion` or `none` | `tile_motion` |
+| `folder_resize_style` | Folder resize animation style: `tile_motion` or `none` | `tile_motion` |
+| `folder_resize_ms` | Folder resize movement duration | 140 ms |
+| `folder_zoom_style` | Folder zoom style: `tile_motion` or `crossfade` | `tile_motion` |
+| `folder_zoom_ms` | Folder zoom tile movement duration | 170 ms |
 | `folder_scroll_ms` | Folder contents wheel scrolling | 180 ms |
 | `folder_mode_settle_ms` | Delay before folder navigation after switching folder display mode | 100 ms |
 | `sidebar_slide_ms` | Sidebar pane reveal and paired pane movement | 250 ms |

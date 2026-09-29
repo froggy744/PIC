@@ -220,6 +220,40 @@ fn formats_page(
             Some(toggle.upcast_ref()),
         );
     }
+
+    let pair_mode = gtk::ComboBoxText::new();
+    pair_mode.append(Some("both"), "Show both");
+    pair_mode.append(Some("jpeg"), "Prefer JPEG");
+    pair_mode.append(Some("raw"), "Prefer RAW");
+    pair_mode.set_active_id(Some(
+        crate::image_format::raw_jpeg_pair_mode(&connection.borrow()).key(),
+    ));
+    pair_mode.set_valign(gtk::Align::Center);
+    {
+        let connection = connection.clone();
+        let formats_changed = formats_changed.clone();
+        pair_mode.connect_changed(move |combo| {
+            let mode = combo
+                .active_id()
+                .as_deref()
+                .map(crate::image_format::RawJpegPairMode::from_key)
+                .unwrap_or(crate::image_format::RawJpegPairMode::Both);
+            if let Err(error) =
+                crate::image_format::set_raw_jpeg_pair_mode(&connection.borrow(), mode)
+            {
+                eprintln!("Could not save RAW + JPEG pair preference: {error}");
+                return;
+            }
+            formats_changed();
+        });
+    }
+    append_row(
+        &list,
+        "RAW + JPEG pairs",
+        Some("When both files share the same folder and filename stem."),
+        Some(pair_mode.upcast_ref()),
+    );
+
     content.append(&list);
     scroll_page(content)
 }

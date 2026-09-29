@@ -904,15 +904,35 @@ impl Gallery {
         from_width: i32,
         to_width: i32,
         visual_px: std::collections::HashMap<i64, f32>,
+        from_columns: u32,
+        to_columns: u32,
     ) -> u64 {
-        const ZOOM_IN_US: i64 = 500_000;
-        const ZOOM_OUT_US: i64 = 500_000;
+        const ZOOM_IN_US: i64 = 180_000;
+        const ZOOM_OUT_US: i64 = 180_000;
+        // The normal in-cell thumbnail ease stays exactly as before. When a
+        // column boundary is crossed, tiles that did not exist in the old
+        // realized set get a much shorter presentation-only settle. This is
+        // deliberately scale-only: GTK owns the destination cell positions,
+        // so there is still no X/Y interpolation and therefore no flying.
+        const COLUMN_SETTLE_US: i64 = 220_000;
+        const COLUMN_GROW_START: f32 = 0.88;
+        const COLUMN_SHRINK_START: f32 = 1.12;
+
         // Zoom-out starts above 1.0 and is clipped to the cell, so the same
         // duration reads faster than zoom-in; give it more time.
         let duration_us: i64 = if to_width < from_width {
             ZOOM_OUT_US
         } else {
             ZOOM_IN_US
+        };
+        let columns_changed = from_columns != to_columns;
+        let column_start_scale = if to_columns > from_columns {
+            // A newly exposed column grows into its already-final cell.
+            COLUMN_GROW_START
+        } else {
+            // When a column disappears, destination-only tiles settle down
+            // into their already-final cells instead of popping at full size.
+            COLUMN_SHRINK_START
         };
 
         let generation = self.zoom_animation_generation.get().wrapping_add(1);
@@ -931,50 +951,81 @@ impl Gallery {
         collect_tiles(&root_widget, &mut widgets);
 
         let mut entries = Vec::new();
+        let column_entries: Rc<RefCell<Vec<(SquareTile, i64)>>> = Rc::new(RefCell::new(Vec::new()));
+        let known_ids: Rc<RefCell<HashSet<i64>>> = Rc::new(RefCell::new(HashSet::new()));
         for tile in widgets {
             if !tile.is_mapped() {
                 continue;
             }
             let Some(photo) = tile.photo() else { continue };
-            let start = (visual_px
-                .get(&photo.id())
-                .copied()
-                .unwrap_or(from_width)
-                / to_width)
-                .clamp(0.25, 4.0);
-            if (start - 1.0).abs() < 0.001 {
-                tile.set_presentation_scale(1.0);
-                continue;
+            let photo_id = photo.id();
+            known_ids.borrow_mut().insert(photo_id);
+
+            if let Some(old_visual_px) = visual_px.get(&photo_id).copied() {
+                let start = (old_visual_px / to_width).clamp(0.25, 4.0);
+                if (start - 1.0).abs() < 0.001 {
+                    tile.set_presentation_scale(1.0);
+                    continue;
+                }
+                tile.set_presentation_scale(start);
+                entries.push((tile, photo_id, start));
+            } else if columns_changed {
+                // This tile belongs to destination geometry but was not part
+                // of the pre-reflow realized set. Give it the short column
+                // grow/shrink settle instead of letting it pop in at 1.0.
+                tile.set_presentation_scale(column_start_scale);
+                column_entries.borrow_mut().push((tile, photo_id));
+            } else {
+                let start = identity_start.clamp(0.25, 4.0);
+                if (start - 1.0).abs() < 0.001 {
+                    tile.set_presentation_scale(1.0);
+                    continue;
+                }
+                tile.set_presentation_scale(start);
+                entries.push((tile, photo_id, start));
             }
-            tile.set_presentation_scale(start);
-            entries.push((tile, photo.id(), start));
         }
+
         self.zoom_scale_tiles.replace(
             entries
                 .iter()
                 .map(|(tile, id, _)| (tile.clone(), *id))
+                .chain(
+                    column_entries
+                        .borrow()
+                        .iter()
+                        .map(|(tile, id)| (tile.clone(), *id)),
+                )
                 .collect(),
         );
 
-        if entries.is_empty() {
+        if entries.is_empty() && column_entries.borrow().is_empty() {
             set_grid_zoom_animation_active(false);
             return generation;
         }
         set_grid_zoom_animation_active(true);
         if std::env::var_os("PICASA_TRACE").is_some() {
             eprintln!(
-                "PIC_ZOOM_CELL start generation={} tiles={} duration_ms={} from={} to={} scale_from={:.3}",
+                "PIC_ZOOM_CELL start generation={} tiles={} column_tiles={} duration_ms={} column_duration_ms={} from={} to={} columns={}=>{} scale_from={:.3} column_scale_from={:.3}",
                 generation,
                 entries.len(),
+                column_entries.borrow().len(),
                 duration_us / 1000,
+                COLUMN_SETTLE_US / 1000,
                 from_width,
                 to_width,
+                from_columns,
+                to_columns,
                 identity_start,
+                column_start_scale,
             );
         }
 
         let active_tiles = self.zoom_scale_tiles.clone();
         let generation_cell = self.zoom_animation_generation.clone();
+        let root_for_late_tiles = self.root.clone();
+        let column_entries_for_tick = column_entries.clone();
+        let known_ids_for_tick = known_ids.clone();
         let started_at = Cell::new(None);
         self.root.add_tick_callback(move |_, clock| {
             if generation_cell.get() != generation {
@@ -997,8 +1048,50 @@ impl Gallery {
                     tile.set_presentation_scale(scale);
                 }
             }
+
+            if columns_changed {
+                let column_t =
+                    (elapsed as f64 / COLUMN_SETTLE_US as f64).clamp(0.0, 1.0);
+                let column_eased = ease_in_out_cubic(column_t) as f32;
+                let column_scale =
+                    column_start_scale + (1.0 - column_start_scale) * column_eased;
+
+                // GtkGridView may realize the new edge column one frame after
+                // the destination column count is committed. Pick those tiles
+                // up while the short settle is active so they never get a
+                // one-frame full-size pop before joining the transition.
+                if column_t < 1.0 {
+                    let mut late_widgets = Vec::new();
+                    let root_widget: gtk::Widget = root_for_late_tiles.clone().upcast();
+                    collect_tiles(&root_widget, &mut late_widgets);
+                    for tile in late_widgets {
+                        if !tile.is_mapped() {
+                            continue;
+                        }
+                        let Some(photo) = tile.photo() else { continue };
+                        let photo_id = photo.id();
+                        if known_ids_for_tick.borrow_mut().insert(photo_id) {
+                            tile.set_presentation_scale(column_scale);
+                            active_tiles.borrow_mut().push((tile.clone(), photo_id));
+                            column_entries_for_tick.borrow_mut().push((tile, photo_id));
+                        }
+                    }
+                }
+
+                for (tile, id) in column_entries_for_tick.borrow().iter() {
+                    if tile.photo().is_some_and(|photo| photo.id() == *id) {
+                        tile.set_presentation_scale(column_scale);
+                    }
+                }
+            }
+
             if t >= 1.0 {
                 for (tile, id, _) in &entries {
+                    if tile.photo().is_some_and(|photo| photo.id() == *id) {
+                        tile.set_presentation_scale(1.0);
+                    }
+                }
+                for (tile, id) in column_entries_for_tick.borrow().iter() {
                     if tile.photo().is_some_and(|photo| photo.id() == *id) {
                         tile.set_presentation_scale(1.0);
                     }

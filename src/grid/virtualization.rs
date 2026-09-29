@@ -962,8 +962,16 @@ impl Gallery {
                 self.root.width(), self.root.height(),
             );
         }
+        let columns_before = self.current_columns.get();
         self.apply_tile_geometry(target_width, target_height, true);
-        let generation = self.start_grid_zoom_settle(start_width, target_width, visual_px);
+        let columns_after = self.current_columns.get();
+        let generation = self.start_grid_zoom_settle(
+            start_width,
+            target_width,
+            visual_px,
+            columns_before,
+            columns_after,
+        );
         if std::env::var_os("PICASA_TRACE").is_some() {
             let root_widget: gtk::Widget = self.root.clone().upcast();
             let scroll = scrolled_ancestor(&root_widget)

@@ -373,7 +373,7 @@ pub fn filename(reference: &str) -> String {
 /// is prohibited.  Local files retain their original paths.
 pub fn materialize(reference: &str) -> Result<PathBuf> {
     #[cfg(test)]
-    ORIGINAL_READ_PROBE.with(|count| count.set(count.get()+1));
+    ORIGINAL_READ_PROBE.with(|count| count.set(count.get() + 1));
     if !reference.contains("://") {
         return Ok(PathBuf::from(reference));
     }
@@ -385,7 +385,7 @@ pub fn materialize(reference: &str) -> Result<PathBuf> {
 
 pub fn read(reference: &str) -> Result<Vec<u8>> {
     #[cfg(test)]
-    ORIGINAL_READ_PROBE.with(|count| count.set(count.get()+1));
+    ORIGINAL_READ_PROBE.with(|count| count.set(count.get() + 1));
     #[cfg(target_os = "linux")]
     if crate::network_shares::private(reference) {
         return crate::network_shares::read(reference);

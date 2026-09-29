@@ -89,7 +89,7 @@ impl SectionedFolderView {
             .map(|item| item.photo_index as u32)
     }
 
-    fn wall_photo_for_y(&self, y: f64) -> Option<PhotoObject> {
+    fn wall_index_for_y(&self, y: f64) -> Option<usize> {
         let state = self.wall_state.borrow();
         let row = state
             .layout
@@ -100,8 +100,36 @@ impl SectionedFolderView {
             .rows
             .get(row)
             .or_else(|| state.layout.rows.last())?;
-        let index = state.layout.items.get(row.item_range.start)?.photo_index;
-        self.current_photos.borrow().get(index).cloned()
+        Some(state.layout.items.get(row.item_range.start)?.photo_index)
+    }
+
+    fn wall_photo_for_y(&self, y: f64) -> Option<PhotoObject> {
+        self.current_photos
+            .borrow()
+            .get(self.wall_index_for_y(y)?)
+            .cloned()
+    }
+
+    fn defer_restore_anchor(self: &Rc<Self>, anchor: ViewAnchor) {
+        let generation = self.wall_state.borrow().generation;
+        let weak = Rc::downgrade(self);
+        let attempts = Cell::new(0);
+        self.root.add_tick_callback(move |_, _| {
+            let Some(surface) = weak.upgrade() else {
+                return glib::ControlFlow::Break;
+            };
+            if surface.wall_state.borrow().generation != generation {
+                return glib::ControlFlow::Break;
+            }
+            attempts.set(attempts.get() + 1);
+            if surface.restore_anchor(anchor.photo_id, anchor.viewport_y_offset)
+                || attempts.get() >= 12
+            {
+                glib::ControlFlow::Break
+            } else {
+                glib::ControlFlow::Continue
+            }
+        });
     }
 
     fn wall_center_anchor(&self) -> Option<(i64, f64)> {
@@ -188,6 +216,11 @@ impl Gallery {
         self.sectioned_folder.layout_mode.set(layout);
         self.sectioned_folder.refresh_model();
         if layout == PhotoLayout::Grid {
+            let mut tiles = Vec::new();
+            collect_tiles(self.root.upcast_ref(), &mut tiles);
+            for tile in tiles {
+                tile.set_tile_size(self.tile_width.get(), self.tile_height.get());
+            }
             self.last_layout_width.set(0);
             self.update_width(
                 self.last_layout_width
@@ -200,7 +233,28 @@ impl Gallery {
             changed(self.group_mode.get() == GroupMode::Folder);
         }
         if let Some(anchor) = anchor {
-            self.restore_view_anchor(anchor);
+            // The destination can still be unallocated when the mode changes.
+            // Prepare geometry first, then capture its generation for restoration.
+            let model_generation = self.sectioned_folder.model_generation.get();
+            let weak = Rc::downgrade(self);
+            self.visible_root().add_tick_callback(move |root, _| {
+                let Some(gallery) = weak.upgrade() else {
+                    return glib::ControlFlow::Break;
+                };
+                if gallery.layout() != layout
+                    || gallery.sectioned_folder.model_generation.get() != model_generation
+                {
+                    return glib::ControlFlow::Break;
+                }
+                if !root.is_mapped() || root.width() <= 1 {
+                    return glib::ControlFlow::Continue;
+                }
+                if gallery.using_virtual_photo_surface() {
+                    gallery.sectioned_folder.refresh();
+                }
+                gallery.restore_view_anchor(anchor);
+                glib::ControlFlow::Break
+            });
         }
     }
 }
@@ -237,6 +291,10 @@ impl Gallery {
     }
 
     fn restore_view_anchor(self: &Rc<Self>, anchor: ViewAnchor) {
+        if self.using_virtual_photo_surface() {
+            self.sectioned_folder.defer_restore_anchor(anchor);
+            return;
+        }
         let generation = self.sectioned_folder.wall_state.borrow().generation;
         let weak = Rc::downgrade(self);
         let attempts = Cell::new(0);

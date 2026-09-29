@@ -90,7 +90,9 @@ impl PhotoObject {
     /// Catalog axes already include EXIF orientation; only PIC rotation is applied here.
     pub fn photo_wall_aspect_ratio(&self) -> f64 {
         let (width, height) = (self.width(), self.height());
-        if width <= 0 || height <= 0 { return 1.0; }
+        if width <= 0 || height <= 0 {
+            return 1.0;
+        }
         if matches!(self.rotation().rem_euclid(360), 90 | 270) {
             height as f64 / width as f64
         } else {
@@ -171,8 +173,10 @@ mod photo_wall_tests {
             (-1, 4000, 90, 1.0),
         ] {
             let photo: PhotoObject = glib::Object::builder()
-                .property("width", width).property("height", height)
-                .property("rotation", rotation).build();
+                .property("width", width)
+                .property("height", height)
+                .property("rotation", rotation)
+                .build();
             assert!((photo.photo_wall_aspect_ratio() - expected).abs() < 1e-9);
         }
     }

@@ -702,7 +702,9 @@ fn read_metadata(path: &str, attributes: &gio::FileInfo) -> Result<PhotoMetadata
     // so the shared-element destination has the same aspect ratio before and
     // after a RAW/JPEG decode completes.
     let (width, height) = display_oriented_dimensions(
-        width, height, exif.as_ref().and_then(exif_orientation_value),
+        width,
+        height,
+        exif.as_ref().and_then(exif_orientation_value),
     );
     Ok(PhotoMetadata {
         taken_at,
@@ -1016,13 +1018,31 @@ mod photo_wall_orientation_tests {
     #[test]
     fn catalog_dimensions_apply_exif_axes_before_pic_rotation() {
         for orientation in 1..=8 {
-            let expected = if orientation >= 5 { (Some(4000), Some(6000)) } else { (Some(6000), Some(4000)) };
-            assert_eq!(super::display_oriented_dimensions(Some(6000), Some(4000), Some(orientation)), expected);
+            let expected = if orientation >= 5 {
+                (Some(4000), Some(6000))
+            } else {
+                (Some(6000), Some(4000))
+            };
+            assert_eq!(
+                super::display_oriented_dimensions(Some(6000), Some(4000), Some(orientation)),
+                expected
+            );
         }
-        assert_eq!(super::display_oriented_dimensions(None, None, None), (None, None));
+        assert_eq!(
+            super::display_oriented_dimensions(None, None, None),
+            (None, None)
+        );
     }
 }
 
-fn display_oriented_dimensions(width: Option<u32>, height: Option<u32>, orientation: Option<u16>) -> (Option<u32>, Option<u32>) {
-    if orientation.is_some_and(|value| matches!(value, 5..=8)) { (height, width) } else { (width, height) }
+fn display_oriented_dimensions(
+    width: Option<u32>,
+    height: Option<u32>,
+    orientation: Option<u16>,
+) -> (Option<u32>, Option<u32>) {
+    if orientation.is_some_and(|value| matches!(value, 5..=8)) {
+        (height, width)
+    } else {
+        (width, height)
+    }
 }

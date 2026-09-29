@@ -308,6 +308,7 @@ struct SectionedFolderView {
     layout_mode: Cell<PhotoLayout>,
     group_mode: Rc<Cell<GroupMode>>,
     wall_state: RefCell<PhotoWallState>,
+    model_generation: Cell<u64>,
     root: gtk::Fixed,
     spacer: gtk::Box,
     current_photos: Rc<RefCell<Vec<PhotoObject>>>,
@@ -400,6 +401,7 @@ impl SectionedFolderView {
             layout_mode: Cell::new(PhotoLayout::Grid),
             group_mode,
             wall_state: RefCell::new(PhotoWallState::default()),
+            model_generation: Cell::new(0),
             root,
             spacer,
             current_photos,
@@ -500,13 +502,17 @@ impl SectionedFolderView {
                         .unwrap_or(0);
                     view.keyboard_preferred_column.set(Some(preferred));
                     let direction = if key == gtk::gdk::Key::Up { -1 } else { 1 };
-                    if view.is_wall() { view.wall_vertical_neighbor(current, direction) } else { vertical_navigation_target(
-                        &view.group_ranges.borrow(),
-                        current,
-                        columns,
-                        preferred,
-                        direction,
-                    ) }
+                    if view.is_wall() {
+                        view.wall_vertical_neighbor(current, direction)
+                    } else {
+                        vertical_navigation_target(
+                            &view.group_ranges.borrow(),
+                            current,
+                            columns,
+                            preferred,
+                            direction,
+                        )
+                    }
                 }
                 _ => return glib::Propagation::Proceed,
             };
@@ -671,21 +677,25 @@ impl SectionedFolderView {
                 // Width-only motion with the same column count does not change
                 // vertical section geometry. Refresh only to stretch headers;
                 // update_layout invalidates geometry when columns actually change.
-                let anchor=if this.is_wall() {this.capture_center_anchor()} else {None};
+                let anchor = if this.is_wall()
+                    && this.geometry_width.get() > 1
+                    && last_width_for_tick.get() > 0
+                {
+                    this.capture_center_anchor()
+                } else {
+                    None
+                };
                 this.refresh();
-                if let Some((photo_id,offset))=anchor {
-                    let generation=this.wall_state.borrow().generation;
-                    let weak=Rc::downgrade(&this);
-                    let attempts=Cell::new(0);
-                    this.root.add_tick_callback(move |_,_| {
-                        let Some(surface)=weak.upgrade() else {return glib::ControlFlow::Break};
-                        if surface.wall_state.borrow().generation!=generation {return glib::ControlFlow::Break;}
-                        attempts.set(attempts.get()+1);
-                        if surface.restore_anchor(photo_id,offset) || attempts.get()>=12 {glib::ControlFlow::Break} else {glib::ControlFlow::Continue}
+                if let Some((photo_id, offset)) = anchor {
+                    this.defer_restore_anchor(ViewAnchor {
+                        photo_id,
+                        viewport_y_offset: offset,
                     });
                 }
             }
-            if this.is_wall() && this.geometry_width.get()==0 {this.refresh();}
+            if this.is_wall() && this.geometry_width.get() == 0 {
+                this.refresh();
+            }
             glib::ControlFlow::Continue
         });
 
@@ -701,7 +711,10 @@ impl SectionedFolderView {
     }
 
     fn geometry_for_current_layout(&self, width: i32) {
-        if self.is_wall() { self.calculate_wall_geometry(width); return; }
+        if self.is_wall() {
+            self.calculate_wall_geometry(width);
+            return;
+        }
         let columns = self.current_columns.get().max(1);
         let tile_height = self.tile_height.get();
         let range_count = self.group_ranges.borrow().len();
@@ -909,7 +922,7 @@ impl SectionedFolderView {
                 }
             }
             if self.group_mode.get() == GroupMode::Folder {
-                wanted_headers.extend(visible_section_span(&geometry,top,bottom));
+                wanted_headers.extend(visible_section_span(&geometry, top, bottom));
             }
         }
 
@@ -918,7 +931,9 @@ impl SectionedFolderView {
         // of copying and scanning the complete folder catalog on every scroll.
         let section_span = visible_section_span(&geometry, top, bottom);
         for section_index in section_span {
-            if self.is_wall() { break; }
+            if self.is_wall() {
+                break;
+            }
             let range = &ranges[section_index];
             let geom = &geometry[section_index];
             wanted_headers.push(section_index);
@@ -998,11 +1013,12 @@ impl SectionedFolderView {
                 tile.tile
                     .set_tile_size(self.tile_width.get(), self.tile_height.get());
                 tile.tile.set_filename_visible(self.show_file_names.get());
-                tile.tile.set_content_fit(if self.is_wall() || self.fit_whole_photo.get() {
-                    gtk::ContentFit::Contain
-                } else {
-                    gtk::ContentFit::Cover
-                });
+                tile.tile
+                    .set_content_fit(if self.is_wall() || self.fit_whole_photo.get() {
+                        gtk::ContentFit::Contain
+                    } else {
+                        gtk::ContentFit::Cover
+                    });
                 tile.tile.bind_photo_folder_fast(photo, index as usize);
                 if self.strip_layer.borrow().is_some() { tile.tile.set_opacity(0.0); }
                 tile.tile.set_manual_selected(self.selection.is_selected(index));
@@ -1020,12 +1036,25 @@ impl SectionedFolderView {
             if !self.reflow_active.get() || !was_existing {
                 if self.is_wall() {
                     if let Some(item) = self.wall_state.borrow().layout.item(index as usize) {
-                        for side in [gtk::PositionType::Left, gtk::PositionType::Right, gtk::PositionType::Top, gtk::PositionType::Bottom] {
-                            match side { gtk::PositionType::Left=>tile.tile.set_margin_start(0),gtk::PositionType::Right=>tile.tile.set_margin_end(0),gtk::PositionType::Top=>tile.tile.set_margin_top(0),_=>tile.tile.set_margin_bottom(0) }
+                        for side in [
+                            gtk::PositionType::Left,
+                            gtk::PositionType::Right,
+                            gtk::PositionType::Top,
+                            gtk::PositionType::Bottom,
+                        ] {
+                            match side {
+                                gtk::PositionType::Left => tile.tile.set_margin_start(0),
+                                gtk::PositionType::Right => tile.tile.set_margin_end(0),
+                                gtk::PositionType::Top => tile.tile.set_margin_top(0),
+                                _ => tile.tile.set_margin_bottom(0),
+                            }
                         }
-                        tile.tile.set_tile_size(((item.x+item.width).round()-item.x.round()).max(1.0) as i32,item.height.round().max(1.0) as i32);
+                        tile.tile.set_tile_size(
+                            ((item.x + item.width).round() - item.x.round()).max(1.0) as i32,
+                            item.height.round().max(1.0) as i32,
+                        );
                         tile.tile.set_content_fit(gtk::ContentFit::Contain);
-                        self.root.move_(&tile.tile,item.x.round(),item.y.round());
+                        self.root.move_(&tile.tile, item.x.round(), item.y.round());
                     }
                     continue;
                 }
@@ -1078,12 +1107,14 @@ impl SectionedFolderView {
         // (the smallest zoom levels clamp the column count, so a lot of width
         // is left over in fullscreen), and a margin-pinned title slid away
         // from its own row as the window or zoom level changed (issue #104).
-        let (heading_x, _) = if self.is_wall() { (SECTIONED_SIDE_MARGIN, 4.0) } else { self.horizontal_grid_metrics(width) };
-        let heading_width = (width
-            - heading_x.ceil() as i32
-            - FOLDER_ITEM_MARGIN
-            - SECTIONED_SIDE_MARGIN as i32)
-            .max(1);
+        let (heading_x, _) = if self.is_wall() {
+            (SECTIONED_SIDE_MARGIN, 4.0)
+        } else {
+            self.horizontal_grid_metrics(width)
+        };
+        let heading_width =
+            (width - heading_x.ceil() as i32 - FOLDER_ITEM_MARGIN - SECTIONED_SIDE_MARGIN as i32)
+                .max(1);
         for section_index in wanted_headers {
             let existing = {
                 let live = self.live_headers.borrow();
@@ -1293,7 +1324,14 @@ impl SectionedFolderView {
     }
 
     fn section_index_for_photo(&self, index: u32) -> Option<usize> {
-        if self.is_wall() { return self.wall_state.borrow().layout.item(index as usize).map(|item|item.section); }
+        if self.is_wall() {
+            return self
+                .wall_state
+                .borrow()
+                .layout
+                .item(index as usize)
+                .map(|item| item.section);
+        }
         let ranges = self.group_ranges.borrow();
         section_index_for_photo(&ranges, index as usize)
     }
@@ -1583,7 +1621,9 @@ impl SectionedFolderView {
 
 
     fn capture_center_anchor(&self) -> Option<(i64, f64)> {
-        if self.is_wall() { return self.wall_center_anchor(); }
+        if self.is_wall() {
+            return self.wall_center_anchor();
+        }
         let scrolled = self.scroll.borrow().as_ref()?.clone();
         let adjustment = scrolled.vadjustment();
         let scroll_y = adjustment.value();
@@ -1749,7 +1789,14 @@ impl SectionedFolderView {
     }
 
     fn y_for_index(&self, index: u32) -> Option<f64> {
-        if self.is_wall() { return self.wall_state.borrow().layout.item(index as usize).map(|item|item.y); }
+        if self.is_wall() {
+            return self
+                .wall_state
+                .borrow()
+                .layout
+                .item(index as usize)
+                .map(|item| item.y);
+        }
         let columns = self.current_columns.get().max(1);
         let row_height = f64::from(folder_line_height(self.tile_height.get(), self.show_file_names.get()));
         let section_index = self.section_index_for_photo(index)?;
@@ -1762,7 +1809,14 @@ impl SectionedFolderView {
     }
 
     fn column_for_index(&self, index: u32) -> Option<u32> {
-        if self.is_wall() { return self.wall_state.borrow().layout.item(index as usize).map(|item|item.x.round() as u32); }
+        if self.is_wall() {
+            return self
+                .wall_state
+                .borrow()
+                .layout
+                .item(index as usize)
+                .map(|item| item.x.round() as u32);
+        }
         let columns = self.current_columns.get().max(1);
         let ranges = self.group_ranges.borrow();
         let section = section_index_for_photo(&ranges, index as usize)?;
@@ -1777,7 +1831,9 @@ impl SectionedFolderView {
     }
 
     fn smooth_keep_index_in_center_zone(self: &Rc<Self>, index: u32) -> bool {
-        if self.is_wall() { return self.wall_scroll_to(index,false,false); }
+        if self.is_wall() {
+            return self.wall_scroll_to(index, false, false);
+        }
         self.refresh();
         let Some(row_top) = self.y_for_index(index) else {
             return false;
@@ -1870,7 +1926,9 @@ impl SectionedFolderView {
     }
 
     fn reveal_index_if_needed(self: &Rc<Self>, index: u32) -> bool {
-        if self.is_wall() { return self.wall_scroll_to(index,false,false); }
+        if self.is_wall() {
+            return self.wall_scroll_to(index, false, false);
+        }
         self.refresh();
         let section_index = self.section_index_for_photo(index);
         let ranges = self.group_ranges.borrow();
@@ -1919,7 +1977,9 @@ impl SectionedFolderView {
     }
 
     fn scroll_to_index(self: &Rc<Self>, index: u32, header: bool) -> bool {
-        if self.is_wall() { return self.wall_scroll_to(index,header,false); }
+        if self.is_wall() {
+            return self.wall_scroll_to(index, header, false);
+        }
         self.refresh();
         let section_index = self.section_index_for_photo(index);
         let ranges = self.group_ranges.borrow();
@@ -1978,7 +2038,9 @@ impl SectionedFolderView {
     }
 
     fn scroll_to_index_smooth(self: &Rc<Self>, index: u32, header: bool) -> bool {
-        if self.is_wall() { return self.wall_scroll_to(index,header,false); }
+        if self.is_wall() {
+            return self.wall_scroll_to(index, header, false);
+        }
         self.scroll_animation_generation
             .set(self.scroll_animation_generation.get().wrapping_add(1));
         self.refresh();
@@ -2034,7 +2096,9 @@ impl SectionedFolderView {
     }
 
     fn scroll_to_index_centered(self: &Rc<Self>, index: u32) -> bool {
-        if self.is_wall() { return self.wall_scroll_to(index,false,true); }
+        if self.is_wall() {
+            return self.wall_scroll_to(index, false, true);
+        }
         self.refresh();
         let Some(row_top) = self.y_for_index(index) else {
             return false;
@@ -2073,7 +2137,9 @@ impl SectionedFolderView {
     }
 
     fn scroll_to_index_centered_now(self: &Rc<Self>, index: u32) -> bool {
-        if self.is_wall() { return self.wall_scroll_to(index,false,true); }
+        if self.is_wall() {
+            return self.wall_scroll_to(index, false, true);
+        }
         self.refresh();
         let target_photo = self
             .current_photos
@@ -2139,7 +2205,9 @@ impl SectionedFolderView {
     }
 
     fn photo_for_scroll_position(&self, scroll_y: f64) -> Option<PhotoObject> {
-        if self.is_wall() { return self.wall_photo_for_y(scroll_y); }
+        if self.is_wall() {
+            return self.wall_photo_for_y(scroll_y);
+        }
         let columns = self.current_columns.get().max(1);
         let row_height = f64::from(folder_line_height(self.tile_height.get(), self.show_file_names.get()));
         let ranges = self.group_ranges.borrow();
@@ -2221,7 +2289,10 @@ impl Gallery {
     }
 
     pub fn refresh_sectioned_folder(self: &Rc<Self>) {
-        if self.layout()==PhotoLayout::PhotoWall {self.sectioned_folder.refresh();return;}
+        if self.layout() == PhotoLayout::PhotoWall {
+            self.sectioned_folder.refresh();
+            return;
+        }
         self.sectioned_folder.refresh_model();
     }
 

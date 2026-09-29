@@ -411,7 +411,10 @@ mod filename_caption_tests {
             for captions in [false, true] {
                 let caption = if captions { 24 } else { 0 };
                 let geometry = tile_layout(width, height, width, height + caption, captions);
-                assert_eq!((geometry.frame_width, geometry.frame_height), (width, height));
+                assert_eq!(
+                    (geometry.frame_width, geometry.frame_height),
+                    (width, height)
+                );
                 assert_eq!(geometry.caption_y, height);
                 assert_eq!(geometry.block_height, height + caption);
             }

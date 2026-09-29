@@ -1597,26 +1597,31 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     {
         let gallery_scroll_stack = gallery_scroll_stack.clone();
         let gallery_for_folder_view = gallery.clone();
-        let folder_scroll_for_layout=folder_scroll.clone();
+        let folder_scroll_for_layout = folder_scroll.clone();
         gallery.set_folder_view_changed_handler(move |folder_mode| {
-            let wall=gallery_for_folder_view.layout()==grid::PhotoLayout::PhotoWall;
-            let folder_sectioned = wall || (crate::grid::sectioned_folder_view_enabled() && folder_mode);
+            let wall = gallery_for_folder_view.layout() == grid::PhotoLayout::PhotoWall;
+            let folder_sectioned =
+                wall || (crate::grid::sectioned_folder_view_enabled() && folder_mode);
             if folder_sectioned {
-                if folder_scroll_for_layout.child().as_ref()!=Some(gallery_for_folder_view.folder_sectioned_root.upcast_ref()) {
-                    folder_scroll_for_layout.set_child(Some(&gallery_for_folder_view.folder_sectioned_root));
+                if folder_scroll_for_layout.child().as_ref()
+                    != Some(gallery_for_folder_view.folder_sectioned_root.upcast_ref())
+                {
+                    folder_scroll_for_layout
+                        .set_child(Some(&gallery_for_folder_view.folder_sectioned_root));
                 }
             } else if !crate::grid::sectioned_folder_view_enabled() {
                 folder_scroll_for_layout.set_child(Some(&gallery_for_folder_view.folder_root));
             }
-            let folder_grid_experiment =
-                crate::grid::folder_gridview_experiment_enabled()
-                    && folder_mode
-                    && !folder_sectioned;
-            gallery_scroll_stack.set_visible_child_name(if wall || (folder_mode && !folder_grid_experiment) {
-                "folders"
-            } else {
-                "grid"
-            });
+            let folder_grid_experiment = crate::grid::folder_gridview_experiment_enabled()
+                && folder_mode
+                && !folder_sectioned;
+            gallery_scroll_stack.set_visible_child_name(
+                if wall || (folder_mode && !folder_grid_experiment) {
+                    "folders"
+                } else {
+                    "grid"
+                },
+            );
             if folder_mode || wall {
                 if folder_sectioned {
                     if std::env::var_os("PICASA_TRACE").is_some() {
@@ -2128,6 +2133,26 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         }
         glib::ControlFlow::Continue
     });
+
+    {
+        let gallery_for_mode = gallery.clone();
+        let connection_for_mode = connection.clone();
+        info.connect_photo_layout(move |mode| {
+            gallery_for_mode.set_layout(mode);
+            let value = if mode == grid::PhotoLayout::PhotoWall {
+                "photo_wall"
+            } else {
+                "grid"
+            };
+            let _ = db::set_setting(&connection_for_mode.borrow(), "photo_layout", value);
+        });
+        let saved = db::setting(&connection.borrow(), "photo_layout")
+            .ok()
+            .flatten();
+        if saved.as_deref() == Some("photo_wall") {
+            info.view_wall.set_active(true);
+        }
+    }
 
     let grid_surface = gtk::Box::new(gtk::Orientation::Vertical, 0);
     grid_surface.set_hexpand(true);

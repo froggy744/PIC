@@ -211,12 +211,21 @@ impl Gallery {
             zoom_animations_enabled.clone(),
         );
         let folder_sectioned_root = sectioned_folder.root().clone();
-        let weak_surface=Rc::downgrade(&sectioned_folder);
-        store.connect_items_changed(move |_,_,_,_| {
-            if let Some(surface)=weak_surface.upgrade() {
+        let weak_surface = Rc::downgrade(&sectioned_folder);
+        store.connect_items_changed(move |_, _, _, _| {
+            if let Some(surface) = weak_surface.upgrade() {
+                surface
+                    .model_generation
+                    .set(surface.model_generation.get().wrapping_add(1));
                 surface.invalidate_geometry();
-                let weak=Rc::downgrade(&surface);
-                glib::idle_add_local_once(move || {if let Some(surface)=weak.upgrade() {if surface.is_wall() {surface.refresh_model();}}});
+                let weak = Rc::downgrade(&surface);
+                glib::idle_add_local_once(move || {
+                    if let Some(surface) = weak.upgrade() {
+                        if surface.is_wall() {
+                            surface.refresh_model();
+                        }
+                    }
+                });
             }
         });
 
@@ -909,8 +918,8 @@ impl Gallery {
     }
 
     pub fn update_width(&self, width: i32) {
-        if self.layout()==PhotoLayout::PhotoWall {
-            if width!=self.last_layout_width.get() {
+        if self.layout() == PhotoLayout::PhotoWall {
+            if width != self.last_layout_width.get() {
                 self.last_layout_width.set(width);
                 self.sectioned_folder.refresh();
             }

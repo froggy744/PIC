@@ -166,3 +166,123 @@ fn photo_wall_anchor_generation_and_ultrawide_viewport() {
     );
     window.close();
 }
+
+#[test]
+#[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+fn photo_wall_view_menu_keeps_selection_and_grid_scroll_context() {
+    gtk::init().unwrap();
+    let gallery = Rc::new(Gallery::new(
+        &[],
+        160,
+        |_| {},
+        |_, _, _| {},
+        |_, _, _, _| {},
+        |_, _| {},
+        |_| {},
+    ));
+    let objects = (0..2000)
+        .map(|i| {
+            glib::Object::builder::<PhotoObject>()
+                .property("id", i as i64 + 1)
+                .property("width", 6000_i64)
+                .property("height", 4000_i64)
+                .build()
+        })
+        .collect::<Vec<_>>();
+    gallery.current_photos.replace(objects.clone());
+    gallery.store.splice(0, 0, &objects);
+    let grid_scroll = gtk::ScrolledWindow::builder().child(&gallery.root).build();
+    let wall_scroll = gtk::ScrolledWindow::builder()
+        .child(&gallery.folder_sectioned_root)
+        .build();
+    gallery.attach_sectioned_folder_scroll(&wall_scroll);
+    let stack = gtk::Stack::new();
+    stack.add_named(&grid_scroll, Some("grid"));
+    stack.add_named(&wall_scroll, Some("wall"));
+    let stack_for_mode = stack.clone();
+    let gallery_for_mode = gallery.clone();
+    gallery.set_folder_view_changed_handler(move |_| {
+        stack_for_mode.set_visible_child_name(if gallery_for_mode.using_virtual_photo_surface() {
+            "wall"
+        } else {
+            "grid"
+        })
+    });
+    let info = crate::infobar::InfoBar::new();
+    let gallery_for_menu = gallery.clone();
+    info.connect_photo_layout(move |mode| gallery_for_menu.set_layout(mode));
+    let collage_calls = Rc::new(Cell::new(0));
+    let calls = collage_calls.clone();
+    info.collage
+        .connect_clicked(move |_| calls.set(calls.get() + 1));
+    let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    root.append(&stack);
+    root.append(&info.root);
+    let window = gtk::Window::builder()
+        .default_width(1000)
+        .default_height(700)
+        .child(&root)
+        .build();
+    window.present();
+    settle();
+    gallery.update_width(1000);
+    grid_scroll.vadjustment().set_value(3000.0);
+    settle();
+    gallery.selection.unselect_all();
+    gallery.selection.select_item(42, false);
+    gallery.selection.select_item(73, false);
+    let anchor = gallery.capture_view_anchor().unwrap();
+    let reads = crate::source::original_read_count();
+    info.view_wall.set_active(true);
+    settle();
+    assert_eq!(gallery.layout(), PhotoLayout::PhotoWall);
+    assert_eq!(stack.visible_child_name().as_deref(), Some("wall"));
+    let index = objects
+        .iter()
+        .position(|p| p.id() == anchor.photo_id)
+        .unwrap();
+    let offset = gallery.sectioned_folder.y_for_index(index as u32).unwrap()
+        - wall_scroll.vadjustment().value();
+    assert!(
+        (offset - anchor.viewport_y_offset).abs() < 3.0,
+        "Grid to Wall lost anchor: {offset} vs {}",
+        anchor.viewport_y_offset
+    );
+    let first_row = gallery
+        .sectioned_folder
+        .wall_state
+        .borrow()
+        .layout
+        .visible_rows(
+            wall_scroll.vadjustment().value(),
+            wall_scroll.vadjustment().value() + 1.0,
+        )
+        .start;
+    let first_index = {
+        let state = gallery.sectioned_folder.wall_state.borrow();
+        state.layout.items[state.layout.rows[first_row].item_range.start].photo_index
+    };
+    assert_eq!(
+        gallery.index_for_scroll_position(wall_scroll.vadjustment().value()),
+        first_index,
+        "date heading used Grid column arithmetic"
+    );
+    gallery.wheel_zoom_in();
+    settle();
+    assert_eq!(gallery.current_zoom_width(), 187);
+    window.set_default_size(700, 700);
+    settle();
+    info.view_grid.set_active(true);
+    settle();
+    assert_eq!(gallery.layout(), PhotoLayout::Grid);
+    assert_eq!(stack.visible_child_name().as_deref(), Some("grid"));
+    assert!(gallery.selection.is_selected(42) && gallery.selection.is_selected(73));
+    assert_eq!(
+        gallery.store.item(73).unwrap(),
+        objects[73].clone().upcast::<glib::Object>()
+    );
+    assert_eq!(crate::source::original_read_count(), reads);
+    info.collage.emit_clicked();
+    assert_eq!(collage_calls.get(), 1);
+    window.close();
+}

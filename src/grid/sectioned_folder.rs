@@ -1311,10 +1311,9 @@ impl SectionedFolderView {
             .min((self.total_height.get().max(page) - top).max(1.0));
         let scroll_shift = final_scroll - old_scroll;
 
-        // Build one frozen overlay from the exact old visible widgets. This is
-        // intentionally not a reflow simulation: old photos and headings stay
-        // perfectly still relative to one another while the new final layout
-        // fades in underneath them.
+        // Build one frozen overlay from the exact old visible widgets. The
+        // destination layout remains fully opaque underneath; only this old
+        // snapshot fades out, avoiding a transparency dip through the background.
         let mut draws = Vec::<(StripSlice, StripPhoto)>::new();
         for (index, (x, y)) in &snapshot.tile_positions {
             let Some(photo) = snapshot.photos.get(index).cloned() else {
@@ -1356,9 +1355,8 @@ impl SectionedFolderView {
         layer.queue_draw();
         self.strip_layer.replace(Some(layer.clone()));
 
-        // The destination is already laid out. Reveal it as one calm visual
-        // state instead of moving individual tiles. The old frozen state
-        // dissolves away at the same time.
+        // The destination is already laid out underneath at full opacity.
+        // Keep it visible and dissolve only the old frozen snapshot above it.
         let fade_tiles = self
             .live_tiles
             .borrow()
@@ -1367,7 +1365,11 @@ impl SectionedFolderView {
             .collect::<Vec<_>>();
         for tile in &fade_tiles {
             tile.set_presentation_offset(0.0, 0.0);
-            tile.set_opacity(0.0);
+            tile.set_opacity(if crate::animation_settings::folder_column_reflow_uses_overlap() {
+                1.0
+            } else {
+                0.0
+            });
         }
 
         self.reflow_active.set(true);
@@ -1378,11 +1380,16 @@ impl SectionedFolderView {
 
         if std::env::var_os("PICASA_TRACE").is_some() {
             eprintln!(
-                "PIC_SECTIONED_ANIM snapshot_crossfade_begin old_columns={} new_columns={} tiles={} duration_ms={}",
+                "PIC_SECTIONED_ANIM column_reflow_begin old_columns={} new_columns={} tiles={} duration_ms={} style={}",
                 old_columns,
                 new_columns,
                 fade_tiles.len(),
                 duration_ms as u32,
+                if crate::animation_settings::folder_column_reflow_uses_overlap() {
+                    "old_fades_over_new"
+                } else {
+                    "crossfade"
+                },
             );
         }
 
@@ -1400,8 +1407,10 @@ impl SectionedFolderView {
             let eased = crate::grid::zoom_transition::ease_in_out_cubic(t);
 
             layer.set_opacity((1.0 - eased) as f64);
-            for tile in &fade_tiles {
-                tile.set_opacity(eased);
+            if !crate::animation_settings::folder_column_reflow_uses_overlap() {
+                for tile in &fade_tiles {
+                    tile.set_opacity(eased);
+                }
             }
 
             if t >= 1.0 {
@@ -1419,7 +1428,7 @@ impl SectionedFolderView {
 
                 if std::env::var_os("PICASA_TRACE").is_some() {
                     eprintln!(
-                        "PIC_SECTIONED_ANIM snapshot_crossfade_end elapsed_ms={}",
+                        "PIC_SECTIONED_ANIM column_reflow_end elapsed_ms={}",
                         started.elapsed().as_millis()
                     );
                 }

@@ -1,13 +1,54 @@
-# This file is read directly from the app's working directory.
-# Durations are milliseconds. Restart the app after editing.
-# Values are clamped to 16..10000 ms; 0 uses the built-in default.
+# ANIMATION SPEEDS
+# The app reads this file from its working directory. Restart after editing.
+# All values are milliseconds: smaller numbers are faster; larger are slower.
+# Allowed range is 16–10000 ms. Set a duration to 0 for its built-in default.
 
-grid_resize_ms = 170
-grid_zoom_cutoff_ms = 85
-grid_zoom_crossfade_ms = 115
-folder_column_reflow_ms = 210
-folder_scroll_ms = 190
-gallery_wheel_scroll_ms = 250
-lightbox_open_ms = 200
-sidebar_slide_ms = 250
+# -----------------------------------------------------------------------------
+# GRID — regular Library / All Photos thumbnail grid
+# -----------------------------------------------------------------------------
+
+# Thumbnail movement when the window resizes the grid.
+grid_resize_ms = 180
+
+# Grid zoom runs in two stages around its layout change: the old grid first
+# scales and dims, then its snapshot crossfades into the newly sized grid.
+grid_zoom_cutoff_ms = 120
+grid_zoom_crossfade_ms = 180
+
+# Thumbnail position settling after the grid zoom changes tile sizes.
+grid_zoom_reflow_ms = 180
+
+# Regular Library / All Photos mouse-wheel scrolling.
+gallery_wheel_scroll_ms = 180
+
+# -----------------------------------------------------------------------------
+# FOLDERS — folder contents and column reflow, separate from the regular grid
+# -----------------------------------------------------------------------------
+
+# Duration of the folder photo stream column-count transition.
+folder_column_reflow_ms = 0
+
+# Transition style for folder column changes:
+# "old_fades_over_new": new layout stays fully visible; only old snapshot fades.
+# "crossfade": old snapshot fades out while new tiles fade in at the same time.
+folder_column_reflow_style = "old_fades_over_new"
+
+# Mouse-wheel scrolling while viewing folder contents.
+folder_scroll_ms = 180
+
+# Layout-settle wait before navigating to a folder after changing display mode.
 folder_mode_settle_ms = 100
+
+# -----------------------------------------------------------------------------
+# SIDEBAR
+# -----------------------------------------------------------------------------
+
+# Sidebar pane expand/collapse and paired divider movement.
+sidebar_slide_ms = 250
+
+# -----------------------------------------------------------------------------
+# PHOTO VIEWER
+# -----------------------------------------------------------------------------
+
+# Selected thumbnail expanding into the full photo viewer.
+lightbox_open_ms = 250

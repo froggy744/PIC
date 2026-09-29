@@ -12,7 +12,9 @@ struct AnimationSettings {
     grid_resize_ms: u64,
     grid_zoom_cutoff_ms: u64,
     grid_zoom_crossfade_ms: u64,
+    grid_zoom_reflow_ms: u64,
     folder_column_reflow_ms: u64,
+    folder_column_reflow_style: String,
     folder_scroll_ms: u64,
     gallery_wheel_scroll_ms: u64,
     lightbox_open_ms: u64,
@@ -24,12 +26,14 @@ impl Default for AnimationSettings {
     fn default() -> Self {
         Self {
             grid_resize_ms: 170,
-            grid_zoom_cutoff_ms: 85,
-            grid_zoom_crossfade_ms: 115,
-            folder_column_reflow_ms: 210,
-            folder_scroll_ms: 190,
-            gallery_wheel_scroll_ms: 250,
-            lightbox_open_ms: 200,
+            grid_zoom_cutoff_ms: 120,
+            grid_zoom_crossfade_ms: 180,
+            grid_zoom_reflow_ms: 170,
+            folder_column_reflow_ms: 220,
+            folder_column_reflow_style: "old_fades_over_new".to_string(),
+            folder_scroll_ms: 180,
+            gallery_wheel_scroll_ms: 180,
+            lightbox_open_ms: 250,
             sidebar_slide_ms: 250,
             folder_mode_settle_ms: 100,
         }
@@ -57,10 +61,18 @@ fn settings() -> &'static AnimationSettings {
                     parsed.grid_zoom_crossfade_ms,
                     defaults.grid_zoom_crossfade_ms,
                 ),
+                grid_zoom_reflow_ms: clamp(
+                    parsed.grid_zoom_reflow_ms,
+                    defaults.grid_zoom_reflow_ms,
+                ),
                 folder_column_reflow_ms: clamp(
                     parsed.folder_column_reflow_ms,
                     defaults.folder_column_reflow_ms,
                 ),
+                folder_column_reflow_style: match parsed.folder_column_reflow_style.as_str() {
+                    "crossfade" => "crossfade".to_string(),
+                    _ => "old_fades_over_new".to_string(),
+                },
                 folder_scroll_ms: clamp(parsed.folder_scroll_ms, defaults.folder_scroll_ms),
                 gallery_wheel_scroll_ms: clamp(
                     parsed.gallery_wheel_scroll_ms,
@@ -101,8 +113,14 @@ pub(crate) fn grid_zoom_cutoff_ms() -> i64 {
 pub(crate) fn grid_zoom_crossfade_ms() -> i64 {
     (settings().grid_zoom_crossfade_ms * 1_000) as i64
 }
+pub(crate) fn grid_zoom_reflow_ms() -> f64 {
+    settings().grid_zoom_reflow_ms as f64
+}
 pub(crate) fn folder_column_reflow_ms() -> f64 {
     settings().folder_column_reflow_ms as f64
+}
+pub(crate) fn folder_column_reflow_uses_overlap() -> bool {
+    settings().folder_column_reflow_style == "old_fades_over_new"
 }
 pub(crate) fn folder_scroll_ms() -> f64 {
     settings().folder_scroll_ms as f64

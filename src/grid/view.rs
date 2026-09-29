@@ -934,7 +934,11 @@ impl Gallery {
             return;
         }
 
-        let duration_ms = crate::animation_settings::grid_resize_ms();
+        let duration_ms = if self.zoom_committed.get() {
+            crate::animation_settings::grid_zoom_reflow_ms()
+        } else {
+            crate::animation_settings::grid_resize_ms()
+        };
         let generation = self.resize_reflow_generation.get();
         let old_positions = Rc::new(old_positions);
         let transitions = Rc::new(RefCell::new(None::<Vec<(SquareTile, f32, f32)>>));

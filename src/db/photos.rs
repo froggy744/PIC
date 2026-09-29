@@ -272,6 +272,31 @@ pub fn folder_path_by_id(connection: &Connection, folder_id: i64) -> Result<Opti
         .optional()?)
 }
 
+pub fn set_raw_jpeg_pair_counts(
+    connection: &Connection,
+    counts_by_path: &HashMap<String, i64>,
+) -> Result<()> {
+    if counts_by_path.is_empty() {
+        return Ok(());
+    }
+    let transaction = connection.unchecked_transaction()?;
+    for (path, count) in counts_by_path {
+        transaction.execute(
+            "UPDATE folders SET raw_jpeg_pair_count = ?1 WHERE path = ?2",
+            params![count, path],
+        )?;
+    }
+    transaction.commit()?;
+    Ok(())
+}
+
+pub fn raw_jpeg_pair_folder_ids(connection: &Connection) -> Result<HashSet<i64>> {
+    let mut statement =
+        connection.prepare("SELECT id FROM folders WHERE raw_jpeg_pair_count > 0")?;
+    let rows = statement.query_map([], |row| row.get::<_, i64>(0))?;
+    Ok(rows.collect::<rusqlite::Result<HashSet<_>>>()?)
+}
+
 pub fn folders(connection: &Connection) -> Result<Vec<Folder>> {
     let mut statement = connection.prepare(
         "SELECT f.id, f.path, COALESCE(f.name, f.path), f.parent_id, f.imported_root, f.watched,

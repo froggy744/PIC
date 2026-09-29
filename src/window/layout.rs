@@ -122,6 +122,7 @@
                         sort.get(),
                         &gallery,
                         None,
+                        None,
                     );
                 }
                 FolderDestinationPlan::Normal => {

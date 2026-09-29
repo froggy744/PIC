@@ -97,6 +97,29 @@ fn migrate_photo_schema(connection: &Connection) -> Result<()> {
             [],
         )?;
     }
+    // Older direct SMB/NFS rows have ISO=0 because their scan read only stat
+    // data. Clear that examined marker once so refresh indexes a bounded EXIF
+    // header, then keep zero for sources with no readable EXIF.
+    let remote_exif_backfilled: Option<i64> = connection
+        .query_row(
+            "SELECT 1 FROM settings WHERE key = 'remote-exif-header-v1'",
+            [],
+            |row| row.get(0),
+        )
+        .optional()?;
+    if remote_exif_backfilled.is_none() {
+        let transaction = connection.unchecked_transaction()?;
+        transaction.execute(
+            "UPDATE photos SET iso = NULL WHERE iso = 0
+             AND (path LIKE 'smb://%' OR path LIKE 'nfs://%')",
+            [],
+        )?;
+        transaction.execute(
+            "INSERT INTO settings(key, value) VALUES ('remote-exif-header-v1', 'complete')",
+            [],
+        )?;
+        transaction.commit()?;
+    }
     // Existing records have no import timestamp. Their stable row IDs retain
     // the database's historical insertion order until they are refreshed.
     connection.execute("UPDATE photos SET added_at = id WHERE added_at = 0", [])?;
@@ -123,6 +146,15 @@ fn migrate_folder_schema(connection: &Connection) -> Result<()> {
     // Keep the per-root watch preference when upgrading older libraries.
     if !columns.iter().any(|column| column == "watched") {
         connection.execute("ALTER TABLE folders ADD COLUMN watched BOOLEAN NOT NULL DEFAULT 0", [])?;
+    }
+    if !columns
+        .iter()
+        .any(|column| column == "raw_jpeg_pair_count")
+    {
+        connection.execute(
+            "ALTER TABLE folders ADD COLUMN raw_jpeg_pair_count INTEGER NOT NULL DEFAULT 0",
+            [],
+        )?;
     }
     if !needs_inference {
         repair_folder_parent_links(connection)?;

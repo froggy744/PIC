@@ -4,3 +4,7 @@ dist/
 build-logs/
 .flatpak-builder/
 logs/
+
+database-chat-session.json
+pic-trace.log
+.log

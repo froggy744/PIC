@@ -809,7 +809,7 @@ impl Gallery {
             self.selection.select_item(photo_position as u32, true);
             return self
                 .sectioned_folder
-                .scroll_to_index_centered(photo_position as u32);
+                .scroll_to_index_centered_now(photo_position as u32);
         }
 
         self.scroll_to_folder(folder_id, folder_path)

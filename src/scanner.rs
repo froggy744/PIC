@@ -112,6 +112,7 @@ fn scan_with_control(
     let indexed = db::photo_fingerprints(&connection)?;
     let root_file = crate::source::file(root);
     let (files, discovered_folders) = collect_files(&root_file, events, control)?;
+    let raw_jpeg_pair_counts = raw_jpeg_pair_counts(&files, &discovered_folders);
     if control.is_cancelled() {
         send(events, ScanEvent::Cancelled { imported: 0 });
         return Ok(0);
@@ -156,6 +157,9 @@ fn scan_with_control(
         }
         transaction.commit()?;
     }
+    // Pair detection reuses the discovery result that is already in memory.
+    // Header visibility therefore never triggers a filesystem/network rescan.
+    db::set_raw_jpeg_pair_counts(&connection, &raw_jpeg_pair_counts)?;
 
     let mut prepared = Vec::with_capacity(32);
     for (file, info, folder_path) in files {
@@ -551,6 +555,55 @@ fn collect_files(
     Ok((files, folders))
 }
 
+fn raw_jpeg_pair_counts(
+    files: &[(gio::File, gio::FileInfo, String)],
+    discovered_folders: &[(String, Option<String>)],
+) -> HashMap<String, i64> {
+    #[derive(Default)]
+    struct PairState {
+        raw: bool,
+        jpeg: bool,
+    }
+
+    let mut counts = discovered_folders
+        .iter()
+        .map(|(path, _)| (path.clone(), 0_i64))
+        .collect::<HashMap<_, _>>();
+    let mut pairs = HashMap::<(String, String), PairState>::new();
+
+    for (_, info, folder_path) in files {
+        let name = info.name();
+        let path = Path::new(&name);
+        let Some(format) = crate::image_format::for_path(path) else {
+            continue;
+        };
+        if format.decoder != crate::image_format::DecoderKind::Raw && format.id != "jpeg" {
+            continue;
+        }
+        let stem = path
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        if stem.is_empty() {
+            continue;
+        }
+        let state = pairs.entry((folder_path.clone(), stem)).or_default();
+        if format.decoder == crate::image_format::DecoderKind::Raw {
+            state.raw = true;
+        } else if format.id == "jpeg" {
+            state.jpeg = true;
+        }
+    }
+
+    for ((folder_path, _), state) in pairs {
+        if state.raw && state.jpeg {
+            *counts.entry(folder_path).or_insert(0) += 1;
+        }
+    }
+    counts
+}
+
 fn report_discovery_progress(
     events: Option<&Sender<ScanEvent>>,
     found: usize,
@@ -570,26 +623,9 @@ fn read_metadata(path: &str, attributes: &gio::FileInfo) -> Result<PhotoMetadata
     let mtime = attributes
         .modification_date_time()
         .map(|time| time.to_unix());
-    // Index network originals using directory/stat metadata only, without
-    // eager full-size photo reads. Their thumbnails fetch bytes separately
-    // using the bounded background queue. RAW stays metadata-only for now:
-    // its path-only decoder must never trigger persistent original copying.
-    #[cfg(target_os = "linux")]
-    if crate::network_shares::private(path) {
-        let taken_at = mtime.and_then(|seconds| {
-            Local
-                .timestamp_opt(seconds, 0)
-                .single()
-                .map(|date| date.to_rfc3339())
-        });
-        return Ok(PhotoMetadata {
-            taken_at,
-            size_bytes: Some(attributes.size()),
-            mtime,
-            ..Default::default()
-        });
-    }
-    let (width, height, exif) = if is_raw(path) {
+    let (width, height, exif) = if let Some(metadata) = network_exif(path)? {
+        metadata
+    } else if is_raw(path) {
         // Prefer the cheap EXIF dimensions, then ask the RAW decoder for its
         // metadata-only image geometry. PixelX/YDimension are missing from
         // many DNG and NEF containers.
@@ -619,9 +655,7 @@ fn read_metadata(path: &str, attributes: &gio::FileInfo) -> Result<PhotoMetadata
         // dimensions are unavailable; thumbnail generation will report a
         // per-file failure without aborting the rest of the scan.
         let dimensions = crate::thumbnail::dimensions(path, &bytes).ok();
-        let exif = ExifReader::new()
-            .read_from_container(&mut Cursor::new(&bytes))
-            .ok();
+        let exif = exif_from_bytes(&bytes);
         (
             dimensions.map(|(width, _)| width),
             dimensions.map(|(_, height)| height),
@@ -692,6 +726,37 @@ fn read_metadata(path: &str, attributes: &gio::FileInfo) -> Result<PhotoMetadata
     })
 }
 
+/// A bounded header fetch keeps direct SMB/NFS scans from copying originals.
+/// EXIF in JPEG and many RAW containers lives near the start of the file.
+fn network_exif(path: &str) -> Result<Option<(Option<u32>, Option<u32>, Option<exif::Exif>)>> {
+    #[cfg(target_os = "linux")]
+    {
+        if !crate::network_shares::private(path) {
+            return Ok(None);
+        }
+        let bytes = crate::network_shares::read_range(path, 0, 512 * 1024)?;
+        let exif = exif_from_bytes(&bytes);
+        let width = exif
+            .as_ref()
+            .and_then(|data| exif_u32(data, Tag::PixelXDimension));
+        let height = exif
+            .as_ref()
+            .and_then(|data| exif_u32(data, Tag::PixelYDimension));
+        Ok(Some((width, height, exif)))
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = path;
+        Ok(None)
+    }
+}
+
+fn exif_from_bytes(bytes: &[u8]) -> Option<exif::Exif> {
+    ExifReader::new()
+        .read_from_container(&mut Cursor::new(bytes))
+        .ok()
+}
+
 fn exif_aperture(exif: &exif::Exif) -> Option<f64> {
     // RAW cameras often store FNumber outside the primary IFD. Search all
     // parsed fields, then fall back to the equivalent APEX aperture value.
@@ -737,10 +802,15 @@ fn exif_text(exif: &exif::Exif, tag: Tag) -> Option<String> {
 
 fn exif_iso(exif: &exif::Exif) -> Option<i64> {
     // PhotographicSensitivity is the EXIF tag historically named ISOSpeedRatings.
-    [Tag::PhotographicSensitivity, Tag::ISOSpeed]
+    // Prefer the 32-bit ISO speed: older 16-bit sensitivity values may be
+    // saturated, while either tag may be malformed in some camera files.
+    [Tag::ISOSpeed, Tag::PhotographicSensitivity]
         .into_iter()
-        .find_map(|tag| exif.fields().find(|field| field.tag == tag))
-        .and_then(|field| iso_value(&field.value))
+        .find_map(|tag| {
+            exif.fields()
+                .find(|field| field.tag == tag)
+                .and_then(|field| iso_value(&field.value))
+        })
 }
 
 fn iso_value(value: &Value) -> Option<i64> {
@@ -821,6 +891,26 @@ fn is_heif(path: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn exif_parses_from_a_bounded_jpeg_header() {
+        let tiff = [
+            b'I', b'I', 0x2a, 0, 8, 0, 0, 0, // little-endian TIFF header
+            1, 0, // one IFD entry
+            0x0f, 0x01, 2, 0, 6, 0, 0, 0, 26, 0, 0, 0, // Make = ASCII at offset 26
+            0, 0, 0, 0, // no next IFD
+            b'C', b'a', b'n', b'o', b'n', 0,
+        ];
+        let mut payload = b"Exif\0\0".to_vec();
+        payload.extend_from_slice(&tiff);
+        let mut jpeg = vec![0xff, 0xd8, 0xff, 0xe1];
+        jpeg.extend_from_slice(&((payload.len() + 2) as u16).to_be_bytes());
+        jpeg.extend_from_slice(&payload);
+        jpeg.extend_from_slice(&[0xff, 0xd9]);
+
+        let parsed = exif_from_bytes(&jpeg).expect("EXIF should be readable without image pixels");
+        assert_eq!(exif_text(&parsed, Tag::Make).as_deref(), Some("Canon"));
+    }
 
     #[test]
     fn exif_numeric_values_handle_unsigned_signed_and_missing() {

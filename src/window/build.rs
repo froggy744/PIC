@@ -566,6 +566,31 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     if saved_grid_thumbnail_size.is_none() {
         gallery.enable_auto_default_zoom();
     }
+
+    {
+        let connection = connection.clone();
+        let filter = filter.clone();
+        let search_text = search_text.clone();
+        let sort = sort.clone();
+        let gallery_for_pairs = gallery.clone();
+        gallery.set_raw_jpeg_mode_changed_handler(move |mode| {
+            if let Err(error) =
+                crate::image_format::set_raw_jpeg_pair_mode(&connection.borrow(), mode)
+            {
+                eprintln!("Could not save RAW + JPEG pair view: {error}");
+                return;
+            }
+            let search = search_text.borrow().clone();
+            refresh_grid_preserving_folder_viewport(
+                &connection,
+                filter.get(),
+                &search,
+                sort.get(),
+                &gallery_for_pairs,
+            );
+        });
+    }
+
     // Resolved size for views that only need a number (album covers).
     let grid_thumbnail_size = saved_grid_thumbnail_size.unwrap_or(DEFAULT_GRID_THUMBNAIL_SIZE);
 

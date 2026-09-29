@@ -41,7 +41,8 @@ mod tests {
             taken_at TEXT, camera TEXT, aperture REAL, width INTEGER, height INTEGER,
             size_bytes INTEGER, mtime INTEGER, rotation INTEGER DEFAULT 0,
             favorite BOOLEAN DEFAULT 0, trashed BOOLEAN DEFAULT 0
-        );").unwrap();
+        );
+        CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);").unwrap();
         c.execute("INSERT INTO photos(path, aperture) VALUES ('/old.jpg', 4.0)", []).unwrap();
         migrate_photo_schema(&c).unwrap();
         migrate_photo_schema(&c).unwrap();
@@ -65,6 +66,33 @@ mod tests {
         assert_eq!(loaded.iso, Some(3200));
         assert_eq!(loaded.focal_length, Some(85.0));
         assert_eq!(loaded.exposure_bias, Some(0.7));
+    }
+
+    #[test]
+    fn direct_share_exif_backfill_runs_once() {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(SCHEMA).unwrap();
+        c.execute(
+            "INSERT INTO photos(path, iso) VALUES ('smb://server/share/a.jpg', 0),
+             ('nfs://server/photos/b.jpg', 0), ('/local/c.jpg', 0)",
+            [],
+        )
+        .unwrap();
+        migrate_photo_schema(&c).unwrap();
+        let iso_for = |path: &str| -> Option<i64> {
+            c.query_row("SELECT iso FROM photos WHERE path = ?1", [path], |row| row.get(0))
+                .unwrap()
+        };
+        assert_eq!(iso_for("smb://server/share/a.jpg"), None);
+        assert_eq!(iso_for("nfs://server/photos/b.jpg"), None);
+        assert_eq!(iso_for("/local/c.jpg"), Some(0));
+        c.execute(
+            "UPDATE photos SET iso = 0 WHERE path = 'smb://server/share/a.jpg'",
+            [],
+        )
+        .unwrap();
+        migrate_photo_schema(&c).unwrap();
+        assert_eq!(iso_for("smb://server/share/a.jpg"), Some(0));
     }
 
     #[test]

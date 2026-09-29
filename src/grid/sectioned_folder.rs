@@ -21,6 +21,7 @@ struct SectionedReflowSnapshot {
     old_width: i32,
     presentation: Option<StripPresentation>,
     photos: HashMap<u32, StripPhoto>,
+    visual_px: HashMap<u32, f32>,
 }
 
 #[derive(Clone)]
@@ -298,6 +299,7 @@ struct SectionedFolderView {
     tile_height: Rc<Cell<i32>>,
     fit_whole_photo: Rc<Cell<bool>>,
     show_file_names: Rc<Cell<bool>>,
+    zoom_animations_enabled: Rc<Cell<bool>>,
     activate: Rc<dyn Fn(Vec<PhotoObject>, usize, Option<(gtk::Widget, gtk::gdk::Paintable)>)>,
     context_menu: Rc<dyn Fn(PhotoObject, gtk::Widget, f64, f64)>,
     unavailable: Rc<dyn Fn(PhotoObject, gtk::Widget)>,
@@ -339,6 +341,7 @@ impl SectionedFolderView {
         unavailable: Rc<dyn Fn(PhotoObject, gtk::Widget)>,
         collage_mode: Rc<Cell<bool>>,
         collage_ids: Rc<RefCell<HashSet<i64>>>,
+        zoom_animations_enabled: Rc<Cell<bool>>,
     ) -> Rc<Self> {
         let root = gtk::Fixed::new();
         root.set_hexpand(true);
@@ -374,6 +377,7 @@ impl SectionedFolderView {
             tile_height,
             fit_whole_photo,
             show_file_names,
+            zoom_animations_enabled,
             activate,
             context_menu,
             unavailable,
@@ -874,6 +878,7 @@ impl SectionedFolderView {
                 if let Some(tile) = self.live_tiles.borrow_mut().remove(&index) {
                     self.root.remove(&tile.tile);
                     tile.tile.set_opacity(1.0);
+                    tile.tile.set_presentation_scale(1.0);
                     tile.index.set(None);
                     let mut pool = self.tile_pool.borrow_mut();
                     if pool.len() < SECTIONED_TILE_POOL_CAP {
@@ -901,6 +906,7 @@ impl SectionedFolderView {
                 let Some(photo) = photos.get(index as usize) else {
                     continue;
                 };
+                tile.tile.set_presentation_scale(1.0);
                 tile.index.set(Some(index));
                 tile.tile.set_opacity(1.0);
                 tile.tile
@@ -1026,6 +1032,7 @@ impl SectionedFolderView {
         self.clear_strip_layer();
         self.reflow_animation_generation
             .set(self.reflow_animation_generation.get().wrapping_add(1));
+        set_grid_zoom_animation_active(false);
         self.reflow_active.set(false);
         self.preserve_headers_during_reflow.set(false);
         // A replacement can keep the same numeric positions while changing
@@ -1035,6 +1042,7 @@ impl SectionedFolderView {
         for (_, tile) in live {
             self.root.remove(&tile.tile);
             tile.tile.set_opacity(1.0);
+            tile.tile.set_presentation_scale(1.0);
             tile.index.set(None);
             let mut pool = self.tile_pool.borrow_mut();
             if pool.len() < SECTIONED_TILE_POOL_CAP {
@@ -1056,7 +1064,12 @@ impl SectionedFolderView {
     fn capture_reflow_snapshot(&self) -> SectionedReflowSnapshot {
         let presentation = self.strip_presentation.borrow().clone();
         let mut photos = presentation.as_ref().map(|p| p.photos.clone()).unwrap_or_default();
+        let mut visual_px = HashMap::new();
         for (index, entry) in self.live_tiles.borrow().iter() {
+            visual_px.insert(
+                *index,
+                entry.tile.presentation_scale() * self.tile_width.get().max(1) as f32,
+            );
             if !photos.contains_key(index) {
                 if let Some(photo) = freeze_strip_photo(&entry.tile) { photos.insert(*index, photo); }
             }
@@ -1070,6 +1083,7 @@ impl SectionedFolderView {
             old_width: self.geometry_width.get().max(1),
             presentation,
             photos,
+            visual_px,
         }
     }
 
@@ -1116,6 +1130,7 @@ impl SectionedFolderView {
     ) {
         self.reflow_animation_generation
             .set(self.reflow_animation_generation.get().wrapping_add(1));
+        set_grid_zoom_animation_active(false);
         self.clear_strip_layer();
         self.reflow_active.set(false);
         self.preserve_headers_during_reflow.set(false);
@@ -1231,7 +1246,117 @@ impl SectionedFolderView {
         snapshot: SectionedReflowSnapshot,
         anchor: Option<(i64, f64)>,
     ) {
+        const ZOOM_SETTLE_US: i64 = 180_000;
+        const COLUMN_SETTLE_US: i64 = 220_000;
+        const COLUMN_GROW_START: f32 = 0.88;
+        const COLUMN_SHRINK_START: f32 = 1.12;
+
+        let old_columns = snapshot.old_columns;
+        let old_width = snapshot.tile_width.max(1) as f32;
+        let old_visual_px = snapshot.visual_px.clone();
         self.apply_reflow_without_animation(snapshot, anchor);
+
+        self.reflow_animation_generation
+            .set(self.reflow_animation_generation.get().wrapping_add(1));
+        let generation = self.reflow_animation_generation.get();
+        for entry in self.live_tiles.borrow().values() {
+            entry.tile.set_presentation_scale(1.0);
+        }
+        if !self.zoom_animations_enabled.get()
+            || !self.root.is_mapped()
+            || !self.root.settings().is_gtk_enable_animations()
+        {
+            return;
+        }
+
+        let new_columns = self.current_columns.get().max(1);
+        let columns_changed = old_columns != new_columns;
+        let new_width = self.tile_width.get().max(1) as f32;
+        let normal_start = (old_width / new_width).clamp(0.25, 4.0);
+        let column_start = if new_columns > old_columns {
+            COLUMN_GROW_START
+        } else {
+            COLUMN_SHRINK_START
+        };
+        let known = Rc::new(RefCell::new(HashSet::<u32>::new()));
+        for (index, entry) in self.live_tiles.borrow().iter() {
+            known.borrow_mut().insert(*index);
+            entry.tile.set_presentation_scale(if let Some(visual_px) = old_visual_px.get(index) {
+                (*visual_px / new_width).clamp(0.25, 4.0)
+            } else if columns_changed {
+                column_start
+            } else {
+                normal_start
+            });
+        }
+        set_grid_zoom_animation_active(true);
+
+        let weak = Rc::downgrade(self);
+        let started_at = Cell::new(None);
+        self.root.add_tick_callback(move |_, clock| {
+            let Some(view) = weak.upgrade() else {
+                return glib::ControlFlow::Break;
+            };
+            if view.reflow_animation_generation.get() != generation
+                || !view.zoom_animations_enabled.get()
+            {
+                return glib::ControlFlow::Break;
+            }
+            let start_time = started_at.get().unwrap_or_else(|| {
+                let now = clock.frame_time();
+                started_at.set(Some(now));
+                now
+            });
+            let elapsed = clock.frame_time().saturating_sub(start_time);
+            let normal_t = (elapsed as f64 / ZOOM_SETTLE_US as f64).clamp(0.0, 1.0);
+            let normal_scale = normal_start
+                + (1.0 - normal_start) * ease_in_out_cubic(normal_t) as f32;
+            let column_t = (elapsed as f64 / COLUMN_SETTLE_US as f64).clamp(0.0, 1.0);
+            let column_scale = column_start
+                + (1.0 - column_start) * ease_in_out_cubic(column_t) as f32;
+
+            // Folder virtualization can realize the new edge column after the
+            // destination reflow. Enrol those tiles at the current animation
+            // scale so they do not pop into view at full size.
+            for (index, entry) in view.live_tiles.borrow().iter() {
+                let is_new = known.borrow_mut().insert(*index);
+                let scale = if let Some(visual_px) = old_visual_px.get(index) {
+                    let start = (*visual_px / new_width).clamp(0.25, 4.0);
+                    start + (1.0 - start) * ease_in_out_cubic(normal_t) as f32
+                } else if columns_changed {
+                    column_scale
+                } else {
+                    normal_scale
+                };
+                if is_new || (entry.tile.presentation_scale() - 1.0).abs() > 0.001 {
+                    entry.tile.set_presentation_scale(scale);
+                }
+            }
+
+            let duration = if columns_changed {
+                ZOOM_SETTLE_US.max(COLUMN_SETTLE_US)
+            } else {
+                ZOOM_SETTLE_US
+            };
+            if elapsed >= duration {
+                for entry in view.live_tiles.borrow().values() {
+                    entry.tile.set_presentation_scale(1.0);
+                }
+                set_grid_zoom_animation_active(false);
+                glib::ControlFlow::Break
+            } else {
+                glib::ControlFlow::Continue
+            }
+        });
+    }
+
+    fn cancel_zoom_settle(&self) {
+        self.reflow_animation_generation
+            .set(self.reflow_animation_generation.get().wrapping_add(1));
+        for entry in self.live_tiles.borrow().values() {
+            entry.tile.set_presentation_scale(1.0);
+        }
+        set_grid_zoom_animation_active(false);
     }
 
     fn clear_strip_layer(&self) {

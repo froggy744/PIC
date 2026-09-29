@@ -93,6 +93,9 @@ pub struct Gallery {
     // report two competing allocations while GridView reflows; using one
     // width for the whole animation prevents column-count ping-pong.
     zoom_animation_layout_width: Rc<Cell<Option<i32>>>,
+    // User preference for presentation-only thumbnail zoom transitions.
+    // Geometry and anchor restoration still happen when this is disabled.
+    zoom_animations_enabled: Rc<Cell<bool>>,
     // Invalidates/retargets presentation-only FLIP animations when live
     // window resizing crosses another column boundary mid-transition.
     resize_flip_generation: Rc<Cell<u64>>,
@@ -172,6 +175,7 @@ impl Gallery {
         let fit_whole_photo_for_setup = fit_whole_photo.clone();
         let show_file_names = Rc::new(Cell::new(false));
         let show_file_names_for_setup = show_file_names.clone();
+        let zoom_animations_enabled = Rc::new(Cell::new(true));
 
         // Folder mode keeps the same flat PhotoObject model as the main GridView,
         // but renders it through a section-aware virtualized surface so folder
@@ -195,6 +199,7 @@ impl Gallery {
             unavailable.clone(),
             collage_selection_mode.clone(),
             collage_selected_ids.clone(),
+            zoom_animations_enabled.clone(),
         );
         let folder_sectioned_root = sectioned_folder.root().clone();
         factory.connect_setup(move |_, object| {
@@ -833,6 +838,7 @@ impl Gallery {
             zoom_animation_generation: Rc::new(Cell::new(0)),
             zoom_scale_tiles: Rc::new(RefCell::new(Vec::new())),
             zoom_animation_layout_width: Rc::new(Cell::new(None)),
+            zoom_animations_enabled,
             resize_flip_generation: Rc::new(Cell::new(0)),
             auto_default_zoom: Cell::new(false),
             fit_whole_photo,
@@ -842,6 +848,19 @@ impl Gallery {
         };
         gallery.replace(photos);
         gallery
+    }
+
+    pub fn set_zoom_animations_enabled(&self, enabled: bool) {
+        self.zoom_animations_enabled.set(enabled);
+        if !enabled {
+            self.zoom_animation_generation
+                .set(self.zoom_animation_generation.get().wrapping_add(1));
+            for (tile, _) in self.zoom_scale_tiles.borrow_mut().drain(..) {
+                tile.set_presentation_scale(1.0);
+            }
+            self.sectioned_folder.cancel_zoom_settle();
+            set_grid_zoom_animation_active(false);
+        }
     }
 
     /// Column count a content width produces for the current tile size.
@@ -944,6 +963,11 @@ impl Gallery {
 
         for (tile, _) in self.zoom_scale_tiles.borrow_mut().drain(..) {
             tile.set_presentation_scale(1.0);
+        }
+
+        if !self.zoom_animations_enabled.get() || !self.root.settings().is_gtk_enable_animations() {
+            set_grid_zoom_animation_active(false);
+            return generation;
         }
 
         let mut widgets = Vec::new();
@@ -1085,7 +1109,12 @@ impl Gallery {
                 }
             }
 
-            if t >= 1.0 {
+            let finished = elapsed >= if columns_changed {
+                duration_us.max(COLUMN_SETTLE_US)
+            } else {
+                duration_us
+            };
+            if finished {
                 for (tile, id, _) in &entries {
                     if tile.photo().is_some_and(|photo| photo.id() == *id) {
                         tile.set_presentation_scale(1.0);

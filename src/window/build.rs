@@ -594,6 +594,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         )
         .unwrap_or(false),
     );
+    gallery.set_zoom_animations_enabled(db::zoom_animations_enabled(&connection.borrow()));
     gallery_for_actions.replace(Rc::downgrade(&gallery));
     apply_gallery_grouping(&gallery, filter.get(), sort.get(), group_mode.get(), true);
 
@@ -830,6 +831,15 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 });
                 crate::window::debug_log("THUMB SETTINGS: apply callback exit");
             }),
+            {
+                let gallery = settings_gallery.clone();
+                let connection = settings_connection.clone();
+                Rc::new(move || {
+                    gallery.set_zoom_animations_enabled(db::zoom_animations_enabled(
+                        &connection.borrow(),
+                    ));
+                })
+            },
             Rc::new(move || {
                 if let Some(sidebar) = visibility_sidebar.borrow().as_ref().cloned() {
                     let visibility = sidebar::SidebarVisibility::from_connection(
@@ -4865,6 +4875,7 @@ fn start_photo_export_single(
                 )
                 .unwrap_or(false),
             );
+            gallery.set_zoom_animations_enabled(db::zoom_animations_enabled(&connection.borrow()));
             if let Some(width) = grid_thumbnail_size_from_setting(&connection.borrow()) {
                 gallery.request_slider_zoom(width);
                 info.grid_zoom.set_value(grid_zoom_slider_value(width));

@@ -53,6 +53,7 @@ impl SettingsWindow {
         formats_changed: Rc<dyn Fn()>,
         theme_changed: Rc<dyn Fn()>,
         thumbnail_changed: Rc<dyn Fn()>,
+        zoom_animations_changed: Rc<dyn Fn()>,
         sidebar_changed: Rc<dyn Fn()>,
         folder_watch_changed: Rc<dyn Fn()>,
         maintenance: LibraryMaintenance,
@@ -119,7 +120,12 @@ impl SettingsWindow {
             .replace(refresh_appearance);
         stack.add_titled(&themes_page, Some("themes"), "Themes");
         stack.add_titled(
-            &interface_page(connection.clone(), theme_changed, thumbnail_changed),
+            &interface_page(
+                connection.clone(),
+                theme_changed,
+                thumbnail_changed,
+                zoom_animations_changed,
+            ),
             Some("interface"),
             "Interface",
         );
@@ -1171,6 +1177,7 @@ fn interface_page(
     connection: Rc<RefCell<Connection>>,
     theme_changed: Rc<dyn Fn()>,
     thumbnail_changed: Rc<dyn Fn()>,
+    zoom_animations_changed: Rc<dyn Fn()>,
 ) -> gtk::ScrolledWindow {
     let content = page_content("Interface", "Customize albums and thumbnail appearance.");
 
@@ -1279,6 +1286,40 @@ fn interface_page(
         Some(show_file_names.upcast_ref()),
     );
     content.append(&thumbnail_list);
+
+    let effects_heading = gtk::Label::new(Some("Effects"));
+    effects_heading.set_halign(gtk::Align::Start);
+    effects_heading.set_hexpand(true);
+    effects_heading.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    effects_heading.add_css_class("heading");
+    content.append(&effects_heading);
+
+    let effects_list = settings_list();
+    let zoom_animations = gtk::Switch::new();
+    zoom_animations.set_valign(gtk::Align::Center);
+    zoom_animations.set_active(crate::db::zoom_animations_enabled(&connection.borrow()));
+    {
+        let connection = connection.clone();
+        zoom_animations.connect_active_notify(move |toggle| {
+            let enabled = toggle.is_active();
+            if let Err(error) = crate::db::set_setting(
+                &connection.borrow(),
+                crate::db::ZOOM_ANIMATIONS_ENABLED_SETTING_KEY,
+                &enabled.to_string(),
+            ) {
+                eprintln!("Could not save zoom animation setting: {error}");
+                return;
+            }
+            zoom_animations_changed();
+        });
+    }
+    append_row(
+        &effects_list,
+        "Zoom transition animations",
+        Some("Animate thumbnails when zooming in or out."),
+        Some(zoom_animations.upcast_ref()),
+    );
+    content.append(&effects_list);
 
     let heading = gtk::Label::new(Some("Albums"));
     heading.set_halign(gtk::Align::Start);
@@ -1906,10 +1947,16 @@ mod tests {
             .unwrap();
         let notified = Rc::new(Cell::new(0));
         let notified_for_callback = notified.clone();
+        let animation_notified = Rc::new(Cell::new(0));
+        let animation_notified_for_callback = animation_notified.clone();
         let page = interface_page(
             connection.clone(),
             Rc::new(move || notified_for_callback.set(notified_for_callback.get() + 1)),
             Rc::new(|| {}),
+            Rc::new(move || {
+                animation_notified_for_callback
+                    .set(animation_notified_for_callback.get() + 1)
+            }),
         );
         let mut switches = Vec::new();
         let mut buttons = Vec::new();
@@ -1926,8 +1973,13 @@ mod tests {
                 "Reset All Theme Settings",
             ],
         );
-        // Switch order: the thumbnail toggles, then bookshelf and album
-        // covers at the end.
+        // Switch order: three thumbnail toggles, zoom animations, then
+        // bookshelf and album covers at the end.
+        assert_eq!(switches.len(), 6);
+        assert!(switches[3].is_active());
+        switches[3].set_active(false);
+        assert_eq!(animation_notified.get(), 1);
+        assert!(!crate::db::zoom_animations_enabled(&connection.borrow()));
         let album_switches = &switches[switches.len() - 2..];
         assert_eq!(album_switches.len(), 2);
         assert!(!album_switches[0].is_active());

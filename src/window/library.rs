@@ -3,6 +3,23 @@ use std::sync::mpsc::TryRecvError;
 static REFRESH_GENERATION: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(0);
 
+#[derive(Clone)]
+struct FolderViewportAnchor {
+    header: Option<(i64, f64)>,
+    photos: Vec<(i64, f64)>,
+    scroll_y: f64,
+}
+
+fn surviving_viewport_anchor(
+    anchors: &[(i64, f64)],
+    photo_ids: &[i64],
+) -> Option<(i64, f64)> {
+    anchors
+        .iter()
+        .find(|(id, _)| photo_ids.contains(id))
+        .copied()
+}
+
 /// Invalidate any asynchronous grid result or delayed folder destination from
 /// an older navigation. Folder-to-folder reuse does not start a new database
 /// refresh, so it must still advance this generation to prevent an older
@@ -39,7 +56,31 @@ fn refresh_grid(
             prepare_started.elapsed().as_millis()
         );
     }
-    refresh_grid_inner(connection, filter, search, sort, gallery, folder_target);
+    refresh_grid_inner(connection, filter, search, sort, gallery, folder_target, None);
+}
+
+fn refresh_grid_preserving_folder_viewport(
+    connection: &Rc<RefCell<Connection>>,
+    filter: sidebar::SidebarFilter,
+    search: &str,
+    sort: PhotoSort,
+    gallery: &Rc<grid::Gallery>,
+) {
+    let mode = crate::image_format::raw_jpeg_pair_mode(&connection.borrow());
+    let anchor = gallery.using_sectioned_folder_view().then(|| FolderViewportAnchor {
+        header: gallery.capture_sectioned_folder_header_anchor(),
+        photos: gallery.capture_sectioned_folder_anchors(),
+        scroll_y: gallery.sectioned_folder_scroll_position(),
+    });
+    if std::env::var_os("PICASA_TRACE").is_some() {
+        eprintln!(
+            "PIC_NAV raw_jpeg_refresh mode={} visible_anchors={} scroll_y={:.1}",
+            mode.key(),
+            anchor.as_ref().map_or(0, |anchor| anchor.photos.len()),
+            anchor.as_ref().map_or(0.0, |anchor| anchor.scroll_y),
+        );
+    }
+    refresh_grid_inner(connection, filter, search, sort, gallery, None, anchor);
 }
 
 fn refresh_grid_to_folder(
@@ -59,6 +100,7 @@ fn refresh_grid_to_folder(
         sort,
         gallery,
         Some((folder_id, folder_path, center_folder)),
+        None,
     );
 }
 
@@ -69,6 +111,7 @@ fn refresh_grid_inner(
     sort: PhotoSort,
     gallery: &Rc<grid::Gallery>,
     folder_target: Option<(i64, String, bool)>,
+    viewport_anchor: Option<FolderViewportAnchor>,
 ) {
     // Cached Folder membership belongs to the previous query/filter.
     gallery.invalidate_folder_cache();
@@ -170,6 +213,10 @@ fn refresh_grid_inner(
                 if REFRESH_GENERATION.load(std::sync::atomic::Ordering::Relaxed) == generation {
                     let replace_started = std::time::Instant::now();
                     let count = photos.len();
+                    let visible_photo_ids = photos.iter().map(|photo| photo.id).collect::<Vec<_>>();
+                    let restore_photo_anchor = viewport_anchor.as_ref().and_then(|anchor| {
+                        surviving_viewport_anchor(&anchor.photos, &visible_photo_ids)
+                    });
                     gallery.replace(&photos);
                     if std::env::var_os("PICASA_TRACE").is_some()
                         && replace_started.elapsed() >= std::time::Duration::from_millis(20)
@@ -180,6 +227,12 @@ fn refresh_grid_inner(
                         );
                     }
                     if let Some((folder_id, folder_path, center_folder)) = folder_target.clone() {
+                        if std::env::var_os("PICASA_TRACE").is_some() {
+                            eprintln!(
+                                "PIC_NAV folder_target_schedule folder_id={} center={} generation={}",
+                                folder_id, center_folder, generation
+                            );
+                        }
                         let gallery = gallery.clone();
                         // replace() may schedule a progressive model build.
                         // Start the scroll helper on the next main-loop turn so
@@ -192,6 +245,47 @@ fn refresh_grid_inner(
                                 generation,
                                 center_folder,
                             );
+                        });
+                    }
+                    if let Some(anchor) = viewport_anchor.clone() {
+                        if std::env::var_os("PICASA_TRACE").is_some() {
+                            eprintln!(
+                "PIC_NAV folder_viewport_restore header={:?} photo_id={} fallback_scroll_y={:.1}",
+                anchor.header,
+                                restore_photo_anchor.map_or(0, |(photo_id, _)| photo_id),
+                                anchor.scroll_y
+                            );
+                        }
+                        let gallery = gallery.clone();
+                        let attempts = Rc::new(Cell::new(0_u32));
+                        let attempts_for_timer = attempts.clone();
+                        glib::timeout_add_local(std::time::Duration::from_millis(25), move || {
+                            if REFRESH_GENERATION.load(std::sync::atomic::Ordering::Relaxed)
+                                != generation
+                            {
+                                return glib::ControlFlow::Break;
+                            }
+                            let attempt = attempts_for_timer.get() + 1;
+                            attempts_for_timer.set(attempt);
+                            if gallery.stream_building() {
+                                return if attempt < 1200 {
+                                    glib::ControlFlow::Continue
+                                } else {
+                                    glib::ControlFlow::Break
+                                };
+                            }
+                            let restored = if let Some(header_anchor) = anchor.header {
+                                gallery.restore_sectioned_folder_header_anchor(header_anchor)
+                            } else if let Some(photo_anchor) = restore_photo_anchor {
+                                gallery.restore_sectioned_folder_anchor(Some(photo_anchor))
+                            } else {
+                                gallery.set_sectioned_folder_scroll_position(anchor.scroll_y)
+                            };
+                            if restored || attempt >= 240 {
+                                glib::ControlFlow::Break
+                            } else {
+                                glib::ControlFlow::Continue
+                            }
                         });
                     }
                 }
@@ -473,6 +567,123 @@ mod photo_action_tests {
         WallpaperLayout,
     };
     use crate::db::{Folder, Photo};
+
+    #[test]
+    fn viewport_restore_prefers_the_photo_nearest_the_viewport_center() {
+        let anchors = [(42, 236.0), (43, 116.0), (44, -4.0)];
+        assert_eq!(
+            super::surviving_viewport_anchor(&anchors, &[10, 43, 44]),
+            Some((43, 116.0))
+        );
+        assert_eq!(super::surviving_viewport_anchor(&anchors, &[10, 90]), None);
+    }
+
+    #[test]
+    #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+    fn raw_jpeg_header_stays_in_place_after_search_reveal() {
+        use super::*;
+        fn settle(milliseconds: u64) {
+            let context = glib::MainContext::default();
+            let until = Instant::now() + Duration::from_millis(milliseconds);
+            while Instant::now() < until {
+                while context.pending() { context.iteration(false); }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        }
+        fn header(gallery: &grid::Gallery) -> Option<gtk::Label> {
+            let mut child = gallery.folder_sectioned_root.first_child();
+            while let Some(widget) = child {
+                if let Ok(label) = widget.clone().downcast::<gtk::Label>() {
+                    if label.text().contains("DCIM") { return Some(label); }
+                }
+                child = widget.next_sibling();
+            }
+            None
+        }
+        gtk::init().unwrap();
+        let test_dir = std::env::temp_dir().join(format!("pic-pair-viewport-{}", std::process::id()));
+        std::fs::create_dir_all(&test_dir).unwrap();
+        let connection = db::open(&test_dir.join("test.db")).unwrap();
+        connection.execute_batch(
+            "INSERT INTO folders(id,path,name,parent_id,imported_root,raw_jpeg_pair_count) VALUES
+             (1,'/pair-test/Before','Before',NULL,1,0),
+             (2,'/pair-test/Wickus','Wickus',NULL,1,0),
+             (3,'/pair-test/Wickus/DCIM','DCIM',2,0,53),
+             (4,'/pair-test/ZAfter','ZAfter',NULL,1,0);
+             WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<1000)
+             INSERT INTO photos(path,folder_id) SELECT printf('/pair-test/Before/%04d.jpg',x),1 FROM n;
+             WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<53)
+             INSERT INTO photos(path,folder_id) SELECT printf('/pair-test/Wickus/DCIM/%04d.jpg',x),3 FROM n;
+             WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<53)
+             INSERT INTO photos(path,folder_id) SELECT printf('/pair-test/Wickus/DCIM/%04d.nef',x),3 FROM n;
+             WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<1000)
+             INSERT INTO photos(path,folder_id) SELECT printf('/pair-test/ZAfter/%04d.jpg',x),4 FROM n;"
+        ).unwrap();
+        let connection = Rc::new(RefCell::new(connection));
+        let gallery = Rc::new(grid::Gallery::new(&[], 180, |_| {}, |_, _, _| {},
+            |_, _, _, _| {}, |_, _| {}, |_| {}));
+        let folders = db::folders(&connection.borrow()).unwrap();
+        gallery.set_folder_catalog(&folders, &[1,2,3,4]);
+        gallery.set_grouping(grid::GroupMode::Folder, grid::GroupDate::Taken);
+        let scroll = gtk::ScrolledWindow::builder().child(&gallery.folder_sectioned_root).build();
+        gallery.attach_sectioned_folder_scroll(&scroll);
+        let window = gtk::Window::builder().default_width(900).default_height(650).child(&scroll).build();
+        window.present();
+        let sort = PhotoSort { field: SortField::Name, direction: SortDirection::Ascending };
+        crate::image_format::set_raw_jpeg_pair_mode(&connection.borrow(), crate::image_format::RawJpegPairMode::Both).unwrap();
+        refresh_grid_to_folder(&connection, sidebar::SidebarFilter::Folder(2), "", sort,
+            &gallery, 2, "/pair-test/Wickus".into(), true);
+        let ready_deadline = Instant::now() + Duration::from_secs(5);
+        while (gallery.stream_building() || header(&gallery).is_none()
+            || scroll.vadjustment().value() == 0.0) && Instant::now() < ready_deadline {
+            settle(25);
+        }
+        settle(100);
+        let before = gallery.folder_sectioned_root.child_position(&header(&gallery).expect("search destination header")).1 - scroll.vadjustment().value();
+        let observed = Rc::new(RefCell::new(Vec::new()));
+        let observed_for_tick = observed.clone();
+        let gallery_for_tick = gallery.clone();
+        scroll.add_tick_callback(move |scrolled, _| {
+            if let Some(label) = header(&gallery_for_tick) {
+                observed_for_tick.borrow_mut().push(
+                    gallery_for_tick.folder_sectioned_root.child_position(&label).1
+                        - scrolled.vadjustment().value());
+            }
+            glib::ControlFlow::Continue
+        });
+        let connection_for_click = connection.clone();
+        let gallery_for_click = gallery.clone();
+        gallery.set_raw_jpeg_mode_changed_handler(move |mode| {
+            crate::image_format::set_raw_jpeg_pair_mode(&connection_for_click.borrow(), mode).unwrap();
+            refresh_grid_preserving_folder_viewport(&connection_for_click,
+                sidebar::SidebarFilter::Folder(2), "", sort, &gallery_for_click);
+        });
+        for expected in ["JPG", "RAW", "BOTH"] {
+            observed.borrow_mut().clear();
+            let mut child = gallery.folder_sectioned_root.first_child();
+            let mut clicked = false;
+            while let Some(widget) = child {
+                if let Ok(button) = widget.clone().downcast::<gtk::Button>() {
+                    if button.is_visible() {
+                        button.grab_focus();
+                        button.emit_clicked();
+                        clicked = true;
+                        break;
+                    }
+                }
+                child = widget.next_sibling();
+            }
+            assert!(clicked);
+            settle(500);
+            let after = gallery.folder_sectioned_root.child_position(&header(&gallery).expect("header after toggle")).1 - scroll.vadjustment().value();
+            assert!((after-before).abs() <= 1.0, "{expected} moved the header: {before} -> {after}");
+            assert!(observed.borrow().iter().all(|position| (position-before).abs() <= 1.0),
+                "{expected} visibly jumped during refresh: {:?}", observed.borrow());
+        }
+        window.close();
+        drop(connection);
+        std::fs::remove_dir_all(test_dir).unwrap();
+    }
 
     #[test]
     fn rename_rejects_paths_and_accepts_a_file_name() {

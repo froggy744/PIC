@@ -581,7 +581,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 return;
             }
             let search = search_text.borrow().clone();
-            refresh_grid(
+            refresh_grid_preserving_folder_viewport(
                 &connection,
                 filter.get(),
                 &search,

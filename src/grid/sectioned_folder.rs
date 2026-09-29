@@ -30,6 +30,10 @@ struct SectionedFolderTile {
     index: Rc<Cell<Option<u32>>>,
 }
 
+fn sectioned_scroll_extent_is_ready(content_height: f64, page_height: f64, upper: f64) -> bool {
+    content_height <= page_height + 1.0 || upper + 1.0 >= content_height
+}
+
 fn visible_section_span(
     geometry: &[SectionedFolderGeometry],
     top: f64,
@@ -1066,6 +1070,14 @@ impl SectionedFolderView {
                     .insert(section_index, label.clone());
                 label
             };
+            // Headers survive a photo-model refresh so a focused pair toggle
+            // keeps its allocation and focus. Refresh its count in place.
+            let range = &ranges[section_index];
+            label.set_text(&format!(
+                "{}   ·   {} photos",
+                range.label,
+                range.end.saturating_sub(range.start)
+            ));
             label.set_size_request(heading_width, SECTIONED_HEADER_HEIGHT as i32);
             if !self.reflow_active.get() || !header_was_existing {
                 self.root
@@ -1173,22 +1185,9 @@ impl SectionedFolderView {
                 pool.push_back(tile);
             }
         }
-        let headers = std::mem::take(&mut *self.live_headers.borrow_mut());
-        for (_, label) in headers {
-            self.root.remove(&label);
-            let mut pool = self.header_pool.borrow_mut();
-            if pool.len() < SECTIONED_HEADER_POOL_CAP {
-                pool.push_back(label);
-            }
-        }
-        let pair_buttons = std::mem::take(&mut *self.live_pair_buttons.borrow_mut());
-        for (_, button) in pair_buttons {
-            self.root.remove(&button);
-            let mut pool = self.pair_button_pool.borrow_mut();
-            if pool.len() < SECTIONED_HEADER_POOL_CAP {
-                pool.push_back(button);
-            }
-        }
+        // Keep the bounded header/button set alive. Removing the focused
+        // RAW/JPEG button makes GTK move focus and scroll while the model is
+        // rebuilt. refresh() updates labels and recycles only offscreen rows.
         self.invalidate_geometry();
         self.refresh();
     }
@@ -1578,6 +1577,82 @@ impl SectionedFolderView {
         }        None
     }
 
+    fn capture_visible_anchors(&self) -> Vec<(i64, f64)> {
+        let Some(scrolled) = self.scroll.borrow().as_ref().cloned() else {
+            return Vec::new();
+        };
+        let adjustment = scrolled.vadjustment();
+        let scroll_y = adjustment.value();
+        let viewport_bottom = scroll_y + adjustment.page_size();
+        let row_height = f64::from(folder_line_height(
+            self.tile_height.get(),
+            self.show_file_names.get(),
+        ));
+        let mut anchors = self
+            .live_tiles
+            .borrow()
+            .keys()
+            .filter_map(|index| {
+                let row_y = self.y_for_index(*index)?;
+                if row_y + row_height < scroll_y || row_y > viewport_bottom {
+                    return None;
+                }
+                let photo_id = self.current_photos.borrow().get(*index as usize)?.id();
+                Some((photo_id, row_y - scroll_y))
+            })
+            .collect::<Vec<_>>();
+        // Keep the photo nearest the viewport center first. If filtering removes
+        // every photo in the partially visible top row, restoring the first
+        // survivor can otherwise move the viewport by several rows.
+        let viewport_center = adjustment.page_size() * 0.5;
+        anchors.sort_by(|left, right| {
+            (left.1 - viewport_center)
+                .abs()
+                .total_cmp(&(right.1 - viewport_center).abs())
+        });
+        anchors
+    }
+
+    fn capture_visible_header_anchor(&self) -> Option<(i64, f64)> {
+        let scrolled = self.scroll.borrow().as_ref()?.clone();
+        let adjustment = scrolled.vadjustment();
+        let scroll_y = adjustment.value();
+        let page = adjustment.page_size();
+        let ranges = self.group_ranges.borrow();
+        let geometry = self.geometry.borrow();
+        let focused_section = self.live_pair_buttons.borrow().iter()
+            .find_map(|(section, button)| button.has_focus().then_some(*section));
+        ranges.iter().zip(geometry.iter()).enumerate()
+            .filter_map(|(section, (range, geom))| {
+                let offset = geom.header_y - scroll_y;
+                (offset + SECTIONED_HEADER_HEIGHT > 0.0 && offset < page)
+                    .then_some((section, range.folder_id, offset))
+            })
+            .min_by(|left, right| {
+                (focused_section != Some(left.0)).cmp(&(focused_section != Some(right.0)))
+                    .then_with(|| (left.2 - page * 0.5).abs()
+                        .total_cmp(&(right.2 - page * 0.5).abs()))
+            })
+            .map(|(_, folder_id, offset)| (folder_id, offset))
+    }
+
+    fn restore_header_anchor(self: &Rc<Self>, folder_id: i64, offset: f64) -> bool {
+        self.refresh();
+        let Some(section) = self.group_ranges.borrow().iter()
+            .position(|range| range.folder_id == folder_id) else {
+            return false;
+        };
+        let Some(header_y) = self.geometry.borrow().get(section).map(|geom| geom.header_y) else {
+            return false;
+        };
+        let restored = self.set_scroll_y(header_y - offset);
+        if restored && std::env::var_os("PICASA_TRACE").is_some() {
+            eprintln!("PIC_NAV viewport_header_restored folder_id={} offset={:.1} scroll_y={:.1}",
+                folder_id, offset, self.scroll_position());
+        }
+        restored
+    }
+
     fn restore_anchor(self: &Rc<Self>, photo_id: i64, offset: f64) -> bool {
         let Some(index) = self
             .current_photos
@@ -1595,9 +1670,29 @@ impl SectionedFolderView {
             return false;
         };
         let adjustment = scrolled.vadjustment();
+        if !sectioned_scroll_extent_is_ready(
+            self.total_height.get(),
+            adjustment.page_size(),
+            adjustment.upper(),
+        ) {
+            return false;
+        }
         let upper = (adjustment.upper() - adjustment.page_size()).max(adjustment.lower());
-        adjustment.set_value((y - offset).clamp(adjustment.lower(), upper));
+        let previous = adjustment.value();
+        let target = (y - offset).clamp(adjustment.lower(), upper);
+        adjustment.set_value(target);
         self.refresh();
+        if std::env::var_os("PICASA_TRACE").is_some() {
+            eprintln!(
+                "PIC_NAV viewport_anchor_restored photo_id={} index={} offset={:.1} before={:.1} target={:.1} applied={:.1}",
+                photo_id,
+                index,
+                offset,
+                previous,
+                target,
+                adjustment.value(),
+            );
+        }
         true
     }
 
@@ -1892,6 +1987,9 @@ impl SectionedFolderView {
         let adjustment = scrolled.vadjustment();
         let lower = adjustment.lower();
         let page = adjustment.page_size().max(1.0);
+        if !sectioned_scroll_extent_is_ready(self.total_height.get(), page, adjustment.upper()) {
+            return false;
+        }
         let upper = (adjustment.upper() - page).max(lower);
         let row_height = f64::from(folder_line_height(
             self.tile_height.get(),
@@ -1941,7 +2039,7 @@ impl SectionedFolderView {
         // Wait for GTK to allocate the new Folder content. Otherwise its old
         // Photos-page upper bound can clamp a deep target to the top and make
         // the caller believe a centered reveal succeeded.
-        if content_height > page + 1.0 && adjustment.upper() + 1.0 < content_height {
+        if !sectioned_scroll_extent_is_ready(content_height, page, adjustment.upper()) {
             return false;
         }
 
@@ -2013,17 +2111,25 @@ impl SectionedFolderView {
     }
 
 
-    fn set_scroll_y(self: &Rc<Self>, scroll_y: f64) {
+    fn set_scroll_y(self: &Rc<Self>, scroll_y: f64) -> bool {
         self.scroll_animation_generation
             .set(self.scroll_animation_generation.get().wrapping_add(1));
         let Some(scrolled) = self.scroll.borrow().as_ref().cloned() else {
-            return;
+            return false;
         };
         self.refresh();
         let adjustment = scrolled.vadjustment();
+        if !sectioned_scroll_extent_is_ready(
+            self.total_height.get(),
+            adjustment.page_size(),
+            adjustment.upper(),
+        ) {
+            return false;
+        }
         let upper = (adjustment.upper() - adjustment.page_size()).max(adjustment.lower());
         adjustment.set_value(scroll_y.clamp(adjustment.lower(), upper));
         self.refresh();
+        true
     }
     fn focus_photo(&self, photo_id: i64) {
         if let Some(tile) = self.live_tiles.borrow().values().find(|entry| {
@@ -2061,16 +2167,36 @@ impl Gallery {
         self.group_mode.get() == GroupMode::Folder && crate::grid::sectioned_folder_view_enabled()
     }
 
-    fn sectioned_capture_anchor(&self) -> Option<(i64, f64)> {
-        self.sectioned_folder.capture_center_anchor()
+    pub fn capture_sectioned_folder_anchors(&self) -> Vec<(i64, f64)> {
+        self.sectioned_folder.capture_visible_anchors()
     }
 
-    fn sectioned_restore_anchor(self: &Rc<Self>, anchor: Option<(i64, f64)>) {
+    pub fn capture_sectioned_folder_header_anchor(&self) -> Option<(i64, f64)> {
+        self.sectioned_folder.capture_visible_header_anchor()
+    }
+
+    pub fn restore_sectioned_folder_header_anchor(self: &Rc<Self>, anchor: (i64, f64)) -> bool {
+        self.sectioned_folder.restore_header_anchor(anchor.0, anchor.1)
+    }
+
+    pub fn restore_sectioned_folder_anchor(
+        self: &Rc<Self>,
+        anchor: Option<(i64, f64)>,
+    ) -> bool {
         self.sectioned_folder.invalidate_geometry();
         self.sectioned_folder.refresh();
         if let Some((photo_id, offset)) = anchor {
-            self.sectioned_folder.restore_anchor(photo_id, offset);
+            return self.sectioned_folder.restore_anchor(photo_id, offset);
         }
+        false
+    }
+
+    pub fn sectioned_folder_scroll_position(&self) -> f64 {
+        self.sectioned_folder.scroll_position()
+    }
+
+    pub fn set_sectioned_folder_scroll_position(self: &Rc<Self>, y: f64) -> bool {
+        self.sectioned_folder.set_scroll_y(y)
     }
 
     fn sectioned_sync_selection(&self) {
@@ -2081,6 +2207,13 @@ impl Gallery {
 #[cfg(test)]
 mod section_lookup_tests {
     use super::*;
+
+    #[test]
+    fn deep_folder_jump_waits_for_the_new_scroll_extent() {
+        assert!(!sectioned_scroll_extent_is_ready(387_058.0, 700.0, 1_400.0));
+        assert!(sectioned_scroll_extent_is_ready(387_058.0, 700.0, 387_058.0));
+        assert!(sectioned_scroll_extent_is_ready(500.0, 700.0, 500.0));
+    }
 
     fn range(start: usize, end: usize) -> GroupRange {
         GroupRange {

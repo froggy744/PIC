@@ -311,6 +311,10 @@ struct SectionedFolderView {
     tile_height: Rc<Cell<i32>>,
     fit_whole_photo: Rc<Cell<bool>>,
     show_file_names: Rc<Cell<bool>>,
+    raw_jpeg_pair_folders: Rc<RefCell<HashSet<i64>>>,
+    raw_jpeg_mode: Rc<Cell<crate::image_format::RawJpegPairMode>>,
+    raw_jpeg_mode_changed:
+        Rc<RefCell<Option<Rc<dyn Fn(crate::image_format::RawJpegPairMode)>>>>,
     zoom_animations_enabled: Rc<Cell<bool>>,
     activate: Rc<dyn Fn(Vec<PhotoObject>, usize, Option<(gtk::Widget, gtk::gdk::Paintable)>)>,
     context_menu: Rc<dyn Fn(PhotoObject, gtk::Widget, f64, f64)>,
@@ -328,6 +332,8 @@ struct SectionedFolderView {
     tile_pool: RefCell<VecDeque<SectionedFolderTile>>,
     live_headers: RefCell<HashMap<usize, gtk::Label>>,
     header_pool: RefCell<VecDeque<gtk::Label>>,
+    live_pair_buttons: RefCell<HashMap<usize, gtk::Button>>,
+    pair_button_pool: RefCell<VecDeque<gtk::Button>>,
     selection_anchor: Rc<Cell<Option<u32>>>,
     keyboard_preferred_column: Rc<Cell<Option<u32>>>,
     scroll_animation_generation: Cell<u64>,
@@ -348,6 +354,10 @@ impl SectionedFolderView {
         tile_height: Rc<Cell<i32>>,
         fit_whole_photo: Rc<Cell<bool>>,
         show_file_names: Rc<Cell<bool>>,
+        raw_jpeg_pair_folders: Rc<RefCell<HashSet<i64>>>,
+        raw_jpeg_mode: Rc<Cell<crate::image_format::RawJpegPairMode>>,
+        raw_jpeg_mode_changed:
+            Rc<RefCell<Option<Rc<dyn Fn(crate::image_format::RawJpegPairMode)>>>>,
         activate: Rc<dyn Fn(Vec<PhotoObject>, usize, Option<(gtk::Widget, gtk::gdk::Paintable)>)>,
         context_menu: Rc<dyn Fn(PhotoObject, gtk::Widget, f64, f64)>,
         unavailable: Rc<dyn Fn(PhotoObject, gtk::Widget)>,
@@ -389,6 +399,9 @@ impl SectionedFolderView {
             tile_height,
             fit_whole_photo,
             show_file_names,
+            raw_jpeg_pair_folders,
+            raw_jpeg_mode,
+            raw_jpeg_mode_changed,
             zoom_animations_enabled,
             activate,
             context_menu,
@@ -406,6 +419,8 @@ impl SectionedFolderView {
             tile_pool: RefCell::new(VecDeque::new()),
             live_headers: RefCell::new(HashMap::new()),
             header_pool: RefCell::new(VecDeque::new()),
+            live_pair_buttons: RefCell::new(HashMap::new()),
+            pair_button_pool: RefCell::new(VecDeque::new()),
             selection_anchor: Rc::new(Cell::new(None)),
             keyboard_preferred_column: Rc::new(Cell::new(None)),
             scroll_animation_generation: Cell::new(0),
@@ -604,6 +619,26 @@ impl SectionedFolderView {
 
     fn root(&self) -> &gtk::Fixed {
         &self.root
+    }
+
+    fn set_raw_jpeg_pair_folders(self: &Rc<Self>, folder_ids: HashSet<i64>) {
+        self.raw_jpeg_pair_folders.replace(folder_ids);
+        self.refresh();
+    }
+
+    fn set_raw_jpeg_mode(
+        self: &Rc<Self>,
+        mode: crate::image_format::RawJpegPairMode,
+    ) {
+        self.raw_jpeg_mode.set(mode);
+        self.refresh();
+    }
+
+    fn set_raw_jpeg_mode_changed_handler(
+        &self,
+        handler: Rc<dyn Fn(crate::image_format::RawJpegPairMode)>,
+    ) {
+        self.raw_jpeg_mode_changed.replace(Some(handler));
     }
 
     fn attach_scroll(self: &Rc<Self>, scrolled: &gtk::ScrolledWindow) {
@@ -974,6 +1009,13 @@ impl SectionedFolderView {
                         pool.push_back(label);
                     }
                 }
+                if let Some(button) = self.live_pair_buttons.borrow_mut().remove(&index) {
+                    self.root.remove(&button);
+                    let mut pool = self.pair_button_pool.borrow_mut();
+                    if pool.len() < SECTIONED_HEADER_POOL_CAP {
+                        pool.push_back(button);
+                    }
+                }
             }
         }
 
@@ -1029,6 +1071,76 @@ impl SectionedFolderView {
                 self.root
                     .move_(&label, heading_x, geometry[section_index].header_y);
             }
+
+            let range = &ranges[section_index];
+            let show_pair_toggle = self
+                .raw_jpeg_pair_folders
+                .borrow()
+                .contains(&range.folder_id);
+            let existing_button = {
+                let live = self.live_pair_buttons.borrow();
+                live.get(&section_index).cloned()
+            };
+            let button = if let Some(button) = existing_button {
+                button
+            } else {
+                let button = self
+                    .pair_button_pool
+                    .borrow_mut()
+                    .pop_front()
+                    .unwrap_or_else(|| {
+                        let button = gtk::Button::new();
+                        button.add_css_class("flat");
+                        button.add_css_class("raw-jpeg-pair-toggle");
+                        button.set_tooltip_text(Some(
+                            "RAW + JPEG pair view: click to cycle Both / JPEG / RAW",
+                        ));
+                        let mode = self.raw_jpeg_mode.clone();
+                        let changed = self.raw_jpeg_mode_changed.clone();
+                        button.connect_clicked(move |button| {
+                            let next = match mode.get() {
+                                crate::image_format::RawJpegPairMode::Both => {
+                                    crate::image_format::RawJpegPairMode::PreferJpeg
+                                }
+                                crate::image_format::RawJpegPairMode::PreferJpeg => {
+                                    crate::image_format::RawJpegPairMode::PreferRaw
+                                }
+                                crate::image_format::RawJpegPairMode::PreferRaw => {
+                                    crate::image_format::RawJpegPairMode::Both
+                                }
+                            };
+                            mode.set(next);
+                            button.set_label(match next {
+                                crate::image_format::RawJpegPairMode::Both => "BOTH",
+                                crate::image_format::RawJpegPairMode::PreferJpeg => "JPG",
+                                crate::image_format::RawJpegPairMode::PreferRaw => "RAW",
+                            });
+                            if let Some(handler) = changed.borrow().as_ref() {
+                                handler(next);
+                            }
+                        });
+                        button
+                    });
+                self.root.put(&button, 0.0, 0.0);
+                self.live_pair_buttons
+                    .borrow_mut()
+                    .insert(section_index, button.clone());
+                button
+            };
+            button.set_label(match self.raw_jpeg_mode.get() {
+                crate::image_format::RawJpegPairMode::Both => "BOTH",
+                crate::image_format::RawJpegPairMode::PreferJpeg => "JPG",
+                crate::image_format::RawJpegPairMode::PreferRaw => "RAW",
+            });
+            button.set_visible(show_pair_toggle);
+            button.set_size_request(64, 30);
+            if show_pair_toggle && (!self.reflow_active.get() || !header_was_existing) {
+                self.root.move_(
+                    &button,
+                    heading_x + f64::from((heading_width - 68).max(0)),
+                    geometry[section_index].header_y + 20.0,
+                );
+            }
         }
         drop(geometry);
         drop(ranges);
@@ -1067,6 +1179,14 @@ impl SectionedFolderView {
             let mut pool = self.header_pool.borrow_mut();
             if pool.len() < SECTIONED_HEADER_POOL_CAP {
                 pool.push_back(label);
+            }
+        }
+        let pair_buttons = std::mem::take(&mut *self.live_pair_buttons.borrow_mut());
+        for (_, button) in pair_buttons {
+            self.root.remove(&button);
+            let mut pool = self.pair_button_pool.borrow_mut();
+            if pool.len() < SECTIONED_HEADER_POOL_CAP {
+                pool.push_back(button);
             }
         }
         self.invalidate_geometry();

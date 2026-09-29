@@ -225,13 +225,10 @@ mod square_tile {
     pub struct SquareTile {
         pub width: Cell<i32>,
         pub height: Cell<i32>,
-        // Presentation-only FLIP offset. GTK allocation remains at the real
-        // destination; snapshotting is temporarily translated from the old
-        // visual position while a resize reflow animates.
-        pub presentation_offset_x: Cell<f32>,
-        pub presentation_offset_y: Cell<f32>,
+        // Presentation effects stay within the allocated destination cell.
         pub presentation_scale_x: Cell<f32>,
         pub presentation_scale_y: Cell<f32>,
+        pub presentation_opacity: Cell<f32>,
         pub filename_visible: Cell<bool>,
         pub filename_label: RefCell<Option<gtk::Label>>,
         pub favorite_indicators_visible: Cell<bool>,
@@ -282,7 +279,8 @@ mod square_tile {
                 // filename row underneath it, so a caption can never squeeze
                 // the image out of its TILE_SIZE x TILE_SIZE allocation.
                 gtk::Orientation::Vertical => {
-                    self.height.get().max(1) + super::filename_caption_height(self.caption_visible())
+                    self.height.get().max(1)
+                        + super::filename_caption_height(self.caption_visible())
                 }
                 _ => self.width.get().max(1),
             };
@@ -313,12 +311,11 @@ mod square_tile {
                 );
                 if layout.caption_height > 0 {
                     if let Some(label) = self.filename_label.borrow().as_ref() {
-                        let label_transform = gtk::gsk::Transform::new().translate(
-                            &gtk::graphene::Point::new(
+                        let label_transform =
+                            gtk::gsk::Transform::new().translate(&gtk::graphene::Point::new(
                                 layout.frame_x as f32,
                                 layout.caption_y as f32,
-                            ),
-                        );
+                            ));
                         label.allocate(
                             layout.frame_width,
                             layout.caption_height,
@@ -331,19 +328,18 @@ mod square_tile {
         }
 
         fn snapshot(&self, snapshot: &gtk::Snapshot) {
-            let dx = self.presentation_offset_x.get();
-            let dy = self.presentation_offset_y.get();
             let sx = self.presentation_scale_x.get();
             let sy = self.presentation_scale_y.get();
             let sx = if sx <= 0.0 { 1.0 } else { sx };
             let sy = if sy <= 0.0 { 1.0 } else { sy };
-            let transformed = dx.abs() > 0.01
-                || dy.abs() > 0.01
-                || (sx - 1.0).abs() > 0.001
-                || (sy - 1.0).abs() > 0.001;
+            let opacity = self.obj().presentation_opacity();
+            let transformed =
+                (sx - 1.0).abs() > 0.001 || (sy - 1.0).abs() > 0.001 || opacity < 0.999;
             if transformed {
                 snapshot.save();
-                snapshot.translate(&gtk::graphene::Point::new(dx, dy));
+                if opacity < 0.999 {
+                    snapshot.push_opacity(f64::from(opacity));
+                }
                 let center = gtk::graphene::Point::new(
                     self.obj().width() as f32 * 0.5,
                     self.obj().height() as f32 * 0.5,
@@ -363,6 +359,9 @@ mod square_tile {
             }
 
             if transformed {
+                if opacity < 0.999 {
+                    snapshot.pop();
+                }
                 snapshot.restore();
             }
         }
@@ -383,7 +382,10 @@ mod filename_caption_tests {
             for caption_visible in [false, true] {
                 let caption = filename_caption_height(caption_visible);
                 assert_eq!(caption, if caption_visible { 24 } else { 0 });
-                assert_eq!(tile_block_height(tile_size, caption_visible), tile_size + caption);
+                assert_eq!(
+                    tile_block_height(tile_size, caption_visible),
+                    tile_size + caption
+                );
 
                 // A parent that allocates exactly the measured block height
                 // must still hand the image its whole square.
@@ -413,7 +415,10 @@ mod filename_caption_tests {
             assert_eq!(with.frame_width, without.frame_width);
             assert_eq!(with.frame_height, without.frame_height);
             assert_eq!(with.frame_height, tile_size);
-            assert_eq!(with.frame_width, with.frame_height, "frame must stay square");
+            assert_eq!(
+                with.frame_width, with.frame_height,
+                "frame must stay square"
+            );
         }
     }
 
@@ -502,13 +507,6 @@ impl SquareTile {
         picture.paintable()
     }
 
-    pub(crate) fn presentation_offset(&self) -> (f32, f32) {
-        (
-            self.imp().presentation_offset_x.get(),
-            self.imp().presentation_offset_y.get(),
-        )
-    }
-
     pub(crate) fn presentation_scale(&self) -> (f32, f32) {
         let x = self.imp().presentation_scale_x.get();
         let y = self.imp().presentation_scale_y.get();
@@ -518,23 +516,19 @@ impl SquareTile {
         )
     }
 
-    pub(crate) fn set_presentation_offset(&self, x: f32, y: f32) {
-        if (self.imp().presentation_offset_x.get() - x).abs() < 0.01
-            && (self.imp().presentation_offset_y.get() - y).abs() < 0.01
-        {
-            return;
+    pub(crate) fn presentation_opacity(&self) -> f32 {
+        let opacity = self.imp().presentation_opacity.get();
+        if opacity <= 0.0 {
+            1.0
+        } else {
+            opacity
         }
-        self.imp().presentation_offset_x.set(x);
-        self.imp().presentation_offset_y.set(y);
-        self.queue_draw();
     }
 
     pub(crate) fn set_presentation_scale(&self, x: f32, y: f32) {
-        let x = x.clamp(0.1, 10.0);
-        let y = y.clamp(0.1, 10.0);
-        if (self.presentation_scale().0 - x).abs() < 0.001
-            && (self.presentation_scale().1 - y).abs() < 0.001
-        {
+        let x = x.clamp(0.96, 1.0);
+        let y = y.clamp(0.96, 1.0);
+        if self.presentation_scale() == (x, y) {
             return;
         }
         self.imp().presentation_scale_x.set(x);
@@ -542,9 +536,18 @@ impl SquareTile {
         self.queue_draw();
     }
 
+    pub(crate) fn set_presentation_opacity(&self, opacity: f32) {
+        let opacity = opacity.clamp(0.85, 1.0);
+        if self.presentation_opacity() == opacity {
+            return;
+        }
+        self.imp().presentation_opacity.set(opacity);
+        self.queue_draw();
+    }
+
     pub(crate) fn reset_presentation_transform(&self) {
-        self.set_presentation_offset(0.0, 0.0);
         self.set_presentation_scale(1.0, 1.0);
+        self.set_presentation_opacity(1.0);
     }
 
     fn set_tile_size(&self, width: i32, height: i32) {
@@ -679,8 +682,7 @@ impl SquareTile {
             return;
         }
 
-        let favorite_visible =
-            self.imp().favorite_indicators_visible.get() && photo.favorite();
+        let favorite_visible = self.imp().favorite_indicators_visible.get() && photo.favorite();
         let badge = ensure_rating_badge(&frame);
         badge.set_text(&format!("★ {rating}"));
         badge.set_tooltip_text(Some(&format!("Rating: {rating} of 5")));
@@ -698,8 +700,8 @@ impl SquareTile {
             .borrow()
             .as_ref()
             .is_some_and(|current| current.id() == photo.id());
-        let same_visual = same_photo
-            && *self.imp().applied_visual_key.borrow() == photo_presentation_key(photo);
+        let same_visual =
+            same_photo && *self.imp().applied_visual_key.borrow() == photo_presentation_key(photo);
         if !same_visual {
             self.unload_visual();
         }
@@ -741,7 +743,12 @@ impl SquareTile {
         photo.set_thumbnail_available(true);
         self.imp().visual_loaded.set(true);
         *self.imp().applied_visual_key.borrow_mut() = Some(expected_key.to_owned());
-        if std::env::var_os("PICASA_TRACE").is_some() { eprintln!("PIC_THUMBNAIL paintable_assign elapsed_us={}", started.elapsed().as_micros()); }
+        if std::env::var_os("PICASA_TRACE").is_some() {
+            eprintln!(
+                "PIC_THUMBNAIL paintable_assign elapsed_us={}",
+                started.elapsed().as_micros()
+            );
+        }
         true
     }
 
@@ -919,7 +926,13 @@ impl SquareTile {
         let started = std::time::Instant::now();
         self.set_photo_deferred(photo);
         self.load_visual();
-        if std::env::var_os("PICASA_TRACE").is_some() { eprintln!("PIC_THUMBNAIL gtk_bind elapsed_us={} id={}", started.elapsed().as_micros(), photo.id()); }
+        if std::env::var_os("PICASA_TRACE").is_some() {
+            eprintln!(
+                "PIC_THUMBNAIL gtk_bind elapsed_us={} id={}",
+                started.elapsed().as_micros(),
+                photo.id()
+            );
+        }
     }
 
     /// Folder ListView bind must stay strictly presentation-only.

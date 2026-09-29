@@ -1,6 +1,8 @@
 # ANIMATION SPEEDS
 # The app reads this file from its working directory. Restart after editing.
 # All values are milliseconds: smaller numbers are faster; larger are slower.
+# In-place effects use 96%→100% scale and 85%→100% opacity inside final cells.
+# New tiles appear immediately; rapid changes restart the effect.
 # Allowed range is 16–10000 ms. Set a duration to 0 for its built-in default.
 
 # -----------------------------------------------------------------------------
@@ -18,11 +20,6 @@ library_resize_ms = 120
 # Grid zoom presentation style: "in_place" eases changed tiles from 96% to full
 # size in their final cells; "none" commits the new layout without an effect.
 grid_zoom_style = "in_place"
-
-# Legacy snapshot transition timings, retained for compatibility with older
-# animation settings. The in-place style uses grid_zoom_reflow_ms below.
-grid_zoom_cutoff_ms = 100
-grid_zoom_crossfade_ms = 180
 
 # Duration for the grid zoom in-place effect.
 grid_zoom_reflow_ms = 120

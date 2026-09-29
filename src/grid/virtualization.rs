@@ -277,7 +277,7 @@ impl Gallery {
                 "PIC_ZOOM_TRACE anchor_capture_begin kind={:?} pointer_x={:.1} pointer_y={:.1} root_width={} root_height={} realized_tiles={} current_tile={}x{} columns={} pending_width={:?}",
                 kind, x, y, root.width(), root.height(), tiles.len(),
                 self.tile_width.get(), self.tile_height.get(),
-                self.current_columns.get(), self.pending_zoom_width.get(),
+                self.current_columns.get(), self.tile_width.get(),
             );
         }
 
@@ -292,9 +292,8 @@ impl Gallery {
             let Some(bounds) = tile.compute_bounds(viewport) else {
                 continue;
             };
-            let (presentation_x, presentation_y) = tile.presentation_offset();
-            let left = f64::from(bounds.x() + presentation_x);
-            let top = f64::from(bounds.y() + presentation_y);
+            let left = f64::from(bounds.x());
+            let top = f64::from(bounds.y());
             let width = f64::from(bounds.width());
             let height = f64::from(bounds.height());
             if width <= 0.0 || height <= 0.0 {
@@ -406,8 +405,7 @@ impl Gallery {
                     .is_some_and(|photo| photo.id() == anchor.photo_id)
         })?;
         let bounds = tile.compute_bounds(&viewport)?;
-        let (_, presentation_y) = tile.presentation_offset();
-        let actual_y = f64::from(bounds.y() + presentation_y);
+        let actual_y = f64::from(bounds.y());
         let error = zoom_anchor_correction(actual_y, anchor.desired_y);
         if error.abs() <= 1.0 {
             return Some((error, actual_y, false));
@@ -574,9 +572,7 @@ impl Gallery {
     }
 
     pub fn current_zoom_width(&self) -> i32 {
-        self.pending_zoom_width
-            .get()
-            .unwrap_or_else(|| self.tile_width.get())
+        self.tile_width.get()
     }
 
     pub fn request_slider_zoom(self: &Rc<Self>, width: i32) {
@@ -584,18 +580,12 @@ impl Gallery {
     }
 
     pub fn zoom_in(self: &Rc<Self>) {
-        let base = self
-            .pending_zoom_width
-            .get()
-            .unwrap_or_else(|| self.tile_width.get());
+        let base = self.tile_width.get();
         self.request_zoom(next_zoom_level(base));
     }
 
     pub fn zoom_out(self: &Rc<Self>) {
-        let base = self
-            .pending_zoom_width
-            .get()
-            .unwrap_or_else(|| self.tile_width.get());
+        let base = self.tile_width.get();
         self.request_zoom(prev_zoom_level(base));
     }
 
@@ -688,71 +678,32 @@ impl Gallery {
     }
 
     pub fn wheel_zoom_in(self: &Rc<Self>) {
-        if self.pending_zoom_width.get().is_none() {
-            self.begin_center_zoom_anchor();
-        }
-        let base = self
-            .pending_zoom_width
-            .get()
-            .unwrap_or_else(|| self.tile_width.get());
+        self.begin_center_zoom_anchor();
+        let base = self.tile_width.get();
         self.request_wheel_zoom(next_zoom_level(base));
     }
 
     pub fn wheel_zoom_out(self: &Rc<Self>) {
-        if self.pending_zoom_width.get().is_none() {
-            self.begin_center_zoom_anchor();
-        }
-        let base = self
-            .pending_zoom_width
-            .get()
-            .unwrap_or_else(|| self.tile_width.get());
+        self.begin_center_zoom_anchor();
+        let base = self.tile_width.get();
         self.request_wheel_zoom(prev_zoom_level(base));
     }
 
     pub fn wheel_zoom_in_at(self: &Rc<Self>, viewport: &gtk::Widget, x: f64, y: f64) {
-        if self.pending_zoom_width.get().is_none() {
-            self.begin_pointer_zoom_anchor(viewport, x, y);
-        }
-        let base = self
-            .pending_zoom_width
-            .get()
-            .unwrap_or_else(|| self.tile_width.get());
+        self.begin_pointer_zoom_anchor(viewport, x, y);
+        let base = self.tile_width.get();
         self.request_wheel_zoom(next_zoom_level(base));
     }
 
     pub fn wheel_zoom_out_at(self: &Rc<Self>, viewport: &gtk::Widget, x: f64, y: f64) {
-        if self.pending_zoom_width.get().is_none() {
-            self.begin_pointer_zoom_anchor(viewport, x, y);
-        }
-        let base = self
-            .pending_zoom_width
-            .get()
-            .unwrap_or_else(|| self.tile_width.get());
+        self.begin_pointer_zoom_anchor(viewport, x, y);
+        let base = self.tile_width.get();
         self.request_wheel_zoom(prev_zoom_level(base));
     }
 
-    pub fn wrap_zoom_surface(self: &Rc<Self>, child: &impl IsA<gtk::Widget>) -> ZoomSurface {
-        let surface = ZoomSurface::new(child);
-        let weak = Rc::downgrade(self);
-        surface.connect_unmap(move |_| {
-            if let Some(gallery) = weak.upgrade() {
-                gallery.cancel_zoom_transition();
-            }
-        });
-        self.zoom_surface.replace(Some(surface.clone()));
-        surface
-    }
-
     pub(crate) fn cancel_zoom_transition(&self) {
-        if let Some(tick) = self.zoom_tick.borrow_mut().take() {
-            tick.remove();
-        }
-        self.pending_zoom_width.set(None);
-        self.zoom_committed.set(false);
+        self.cancel_resize_reflow();
         self.zoom_animation_layout_width.set(None);
-        if let Some(surface) = self.zoom_surface.borrow().as_ref() {
-            surface.reset();
-        }
     }
 
     fn request_wheel_zoom(self: &Rc<Self>, width: i32) {
@@ -764,9 +715,6 @@ impl Gallery {
         let folder_mode = self.group_mode.get() == GroupMode::Folder;
         let grid_zoom_style = crate::animation_settings::grid_zoom_style();
         let use_grid_in_place = !folder_mode && grid_zoom_style == "in_place";
-        let use_folder_in_place = folder_mode
-            && crate::grid::sectioned_folder_view_enabled()
-            && crate::animation_settings::folder_zoom_style() == "in_place";
         let old_visual_bounds = if use_grid_in_place {
             let root: gtk::Widget = self.root.clone().upcast();
             let mut tiles = Vec::new();
@@ -777,16 +725,11 @@ impl Gallery {
                 .filter_map(|tile| {
                     let photo = tile.photo()?;
                     let bounds = tile.compute_bounds(&root)?;
-                    let (dx, dy) = tile.presentation_offset();
-                    let (sx, sy) = tile.presentation_scale();
                     let w = f64::from(bounds.width()).max(1.0);
                     let h = f64::from(bounds.height()).max(1.0);
-                    let x = f64::from(bounds.x()) + f64::from(dx) + w * (1.0 - f64::from(sx)) * 0.5;
-                    let y = f64::from(bounds.y()) + f64::from(dy) + h * (1.0 - f64::from(sy)) * 0.5;
-                    Some((
-                        photo.id(),
-                        (x, y, w * f64::from(sx), h * f64::from(sy), sx, sy),
-                    ))
+                    let x = f64::from(bounds.x());
+                    let y = f64::from(bounds.y());
+                    Some((photo.id(), (x, y, w, h)))
                 })
                 .collect::<ZoomVisualBounds>()
         } else {
@@ -797,127 +740,19 @@ impl Gallery {
         if width == self.current_zoom_width() {
             return;
         }
-        // Legacy snapshot styles still use a single latest-target transition.
-        if self.zoom_tick.borrow().is_some() && !self.zoom_committed.get() {
-            self.pending_zoom_width.set(Some(width));
-            return;
-        }
-        self.cancel_zoom_transition();
-        if width == self.tile_width.get() {
-            return;
-        }
         if self.stable_zoom_anchor.get().is_none() {
             self.begin_center_zoom_anchor();
         }
-        if (!folder_mode && grid_zoom_style == "none")
-            || (folder_mode && crate::animation_settings::folder_zoom_style() == "none")
-        {
-            self.apply_zoom(width);
-            return;
-        }
-        if use_grid_in_place {
-            self.cancel_zoom_transition();
-            self.pending_zoom_width.set(Some(width));
-            self.zoom_animation_layout_width
-                .set(Some(self.last_layout_width.get()));
-            self.apply_zoom(width);
-            self.pending_zoom_width.set(None);
-            self.zoom_animation_layout_width.set(None);
-            self.animate_grid_zoom_in_place(old_visual_bounds);
-            return;
-        }
-        if use_folder_in_place {
-            self.cancel_zoom_transition();
-            self.pending_zoom_width.set(Some(width));
-            self.zoom_animation_layout_width
-                .set(Some(self.last_layout_width.get()));
-            self.apply_zoom(width);
-            self.pending_zoom_width.set(None);
-            self.zoom_animation_layout_width.set(None);
-            return;
-        }
-        let surface = self.zoom_surface.borrow().clone();
-        let Some(surface) =
-            surface.filter(|s| s.is_mapped() && s.settings().is_gtk_enable_animations())
-        else {
-            self.apply_zoom(width);
-            return;
-        };
-        self.pending_zoom_width.set(Some(width));
         self.zoom_animation_layout_width
             .set(Some(self.last_layout_width.get()));
-        let start_width = self.tile_width.get();
-        let generation = self.replace_generation.get();
-        let mode = self.group_mode.get();
-        let started = Cell::new(None);
-        let post_started = Cell::new(None);
-        let direction = Cell::new(if width > start_width { 1.0 } else { -1.0 });
-        // The grid-specific style selector does not alter Folder zoom.
-        let zoom_style = if mode == GroupMode::Folder {
-            "crossfade"
-        } else {
-            crate::animation_settings::grid_zoom_style()
-        };
-        let old_fades_over_new = zoom_style == "old_fades_over_new";
-        let cutoff_stage = zoom_style == "crossfade";
-        if cutoff_stage {
-            surface.frame(false, direction.get(), 0.0, false);
+        self.apply_zoom(width);
+        self.zoom_animation_layout_width.set(None);
+        if use_grid_in_place {
+            self.animate_grid_in_place(
+                old_visual_bounds,
+                crate::animation_settings::grid_zoom_reflow_ms(),
+            );
         }
-        let weak = Rc::downgrade(self);
-        let tick = surface.add_tick_callback(move |surface, clock| {
-            let Some(gallery) = weak.upgrade() else {
-                surface.reset();
-                return glib::ControlFlow::Break;
-            };
-            if gallery.replace_generation.get() != generation || gallery.group_mode.get() != mode {
-                gallery.zoom_tick.borrow_mut().take();
-                gallery.pending_zoom_width.set(None);
-                gallery.zoom_animation_layout_width.set(None);
-                gallery.zoom_committed.set(false);
-                surface.reset();
-                return glib::ControlFlow::Break;
-            }
-            let now = clock.frame_time();
-            let start = started.get().unwrap_or_else(|| {
-                started.set(Some(now));
-                now
-            });
-            if let Some(post_start) = post_started.get() {
-                let t = (now - post_start) as f64
-                    / crate::animation_settings::grid_zoom_crossfade_ms() as f64;
-                surface.frame(true, direction.get(), t, old_fades_over_new);
-                if t >= 1.0 {
-                    gallery.zoom_tick.borrow_mut().take();
-                    gallery.zoom_animation_layout_width.set(None);
-                    gallery.zoom_committed.set(false);
-                    surface.reset();
-                    return glib::ControlFlow::Break;
-                }
-            } else {
-                let target = gallery.pending_zoom_width.get().unwrap_or(start_width);
-                direction.set(if target > start_width { 1.0 } else { -1.0 });
-                let t = if cutoff_stage {
-                    (now - start) as f64
-                        / crate::animation_settings::grid_zoom_cutoff_ms() as f64
-                } else {
-                    1.0
-                };
-                if cutoff_stage {
-                    surface.frame(false, direction.get(), t, false);
-                }
-                if t >= 1.0 {
-                    surface.freeze();
-                    gallery.pending_zoom_width.set(None);
-                    gallery.zoom_committed.set(true);
-                    // The only tile-size/column mutation in the entire transition.
-                    gallery.apply_zoom(target);
-                    post_started.set(Some(now));
-                    surface.frame(true, direction.get(), 0.0, old_fades_over_new);
-                }
-            }
-            glib::ControlFlow::Continue
-        });
-        self.zoom_tick.replace(Some(tick));
     }
 
     /// Zoom is driven by width. Height scales by the same factor, preserving
@@ -971,7 +806,7 @@ impl Gallery {
                 .or_else(|| self.sectioned_folder.capture_center_anchor());
 
             // Publish the destination once and restore the existing header/photo
-            // anchor. The outer snapshot wrapper owns the visual transition.
+            // anchor before starting the tile presentation tween.
             self.tile_width.set(target_width);
             self.tile_height.set(target_height);
             (self.on_zoom_changed)(target_width);
@@ -1020,7 +855,7 @@ impl Gallery {
         //
         // Move to the canonical destination geometry exactly once. GTK performs
         // one deterministic reflow, then the stable anchor restoration runs on
-        // the final allocations under the wrapper's retained old snapshot.
+        // the final allocations before the presentation tween.
         self.zoom_animation_generation
             .set(self.zoom_animation_generation.get().wrapping_add(1));
         let generation = self.zoom_animation_generation.get();

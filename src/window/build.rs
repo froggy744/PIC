@@ -2079,7 +2079,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     // Date grouping keeps its existing heading. Folder grouping hides this
     // widget and renders its headers inside the folder scroller instead.
     grid_surface.append(&gallery.group_header);
-    grid_surface.append(&gallery.wrap_zoom_surface(&gallery_scroll_stack));
+    grid_surface.append(&gallery_scroll_stack);
 
     let grid_overlay = gtk::Overlay::new();
     grid_overlay.set_hexpand(true);

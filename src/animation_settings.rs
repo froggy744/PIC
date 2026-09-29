@@ -12,8 +12,6 @@ struct AnimationSettings {
     grid_resize_ms: u64,
     library_resize_ms: Option<u64>,
     library_resize_style: String,
-    grid_zoom_cutoff_ms: u64,
-    grid_zoom_crossfade_ms: u64,
     grid_zoom_reflow_ms: u64,
     grid_zoom_style: String,
     folder_column_reflow_ms: u64,
@@ -35,8 +33,6 @@ impl Default for AnimationSettings {
             grid_resize_ms: 120,
             library_resize_ms: None,
             library_resize_style: "in_place".to_string(),
-            grid_zoom_cutoff_ms: 120,
-            grid_zoom_crossfade_ms: 180,
             grid_zoom_reflow_ms: 120,
             grid_zoom_style: "in_place".to_string(),
             folder_column_reflow_ms: 120,
@@ -61,7 +57,10 @@ fn settings() -> &'static AnimationSettings {
         let defaults = AnimationSettings::default();
         let path = std::path::PathBuf::from("ANIMATION_SPEEDS.toml");
         let Ok(contents) = std::fs::read_to_string(&path) else {
-            eprintln!("Could not read {}. Using built-in animation defaults.", path.display());
+            eprintln!(
+                "Could not read {}. Using built-in animation defaults.",
+                path.display()
+            );
             return defaults;
         };
         match toml::from_str::<AnimationSettings>(&contents) {
@@ -74,14 +73,6 @@ fn settings() -> &'static AnimationSettings {
                     "none" => "none".to_string(),
                     _ => "in_place".to_string(),
                 },
-                grid_zoom_cutoff_ms: clamp(
-                    parsed.grid_zoom_cutoff_ms,
-                    defaults.grid_zoom_cutoff_ms,
-                ),
-                grid_zoom_crossfade_ms: clamp(
-                    parsed.grid_zoom_crossfade_ms,
-                    defaults.grid_zoom_crossfade_ms,
-                ),
                 grid_zoom_reflow_ms: clamp(
                     parsed.grid_zoom_reflow_ms,
                     defaults.grid_zoom_reflow_ms,
@@ -150,12 +141,6 @@ pub(crate) fn library_resize_ms() -> f64 {
 }
 pub(crate) fn library_resize_enabled() -> bool {
     settings().library_resize_style == "in_place"
-}
-pub(crate) fn grid_zoom_cutoff_ms() -> i64 {
-    (settings().grid_zoom_cutoff_ms * 1_000) as i64
-}
-pub(crate) fn grid_zoom_crossfade_ms() -> i64 {
-    (settings().grid_zoom_crossfade_ms * 1_000) as i64
 }
 pub(crate) fn grid_zoom_reflow_ms() -> f64 {
     settings().grid_zoom_reflow_ms as f64
@@ -233,9 +218,9 @@ mod tests {
 
     #[test]
     fn partial_config_uses_defaults_for_omitted_durations() {
-        let parsed: AnimationSettings = toml::from_str("grid_zoom_cutoff_ms = 300").unwrap();
-        assert_eq!(parsed.grid_zoom_cutoff_ms, 300);
-        assert_eq!(parsed.grid_resize_ms, 170);
+        let parsed: AnimationSettings = toml::from_str("grid_zoom_reflow_ms = 300").unwrap();
+        assert_eq!(parsed.grid_zoom_reflow_ms, 300);
+        assert_eq!(parsed.grid_resize_ms, 120);
         assert_eq!(parsed.sidebar_slide_ms, 250);
     }
 }

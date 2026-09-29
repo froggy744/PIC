@@ -99,8 +99,8 @@ thread_local! {
 
 // The grid stays one Rust module for private-state compatibility, while its
 // implementation is split into focused source files for maintenance.
-mod zoom_transition;
-use zoom_transition::ZoomSurface;
+mod in_place;
+use in_place::InPlaceTween;
 
 include!("grid/tile.rs");
 include!("grid/grouping.rs");
@@ -789,3 +789,7 @@ mod folder_stream_tests {
         ));
     }
 }
+
+#[cfg(test)]
+#[path = "grid/in_place_tests.rs"]
+mod in_place_tests;

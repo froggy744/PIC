@@ -4,8 +4,7 @@ enum ZoomAnchorKind {
     ViewportCenter,
 }
 
-pub(super) type ZoomVisualBounds =
-    std::collections::HashMap<i64, (f64, f64, f64, f64, f32, f32)>;
+pub(super) type ZoomVisualBounds = std::collections::HashMap<i64, (f64, f64, f64, f64)>;
 
 #[derive(Debug, Clone, Copy)]
 struct ZoomAnchor {
@@ -81,23 +80,16 @@ pub struct Gallery {
     // reading GTK's transient (often zeroed) adjustment.
     folder_pending_reframe: Rc<Cell<bool>>,
     folder_reframe_photo: Rc<Cell<Option<i64>>>,
-    // Latest requested target, coalesced until the visual transition commits.
-    pending_zoom_width: Rc<Cell<Option<i32>>>,
-    zoom_surface: RefCell<Option<ZoomSurface>>,
-    zoom_tick: RefCell<Option<gtk::TickCallbackId>>,
-    zoom_committed: Cell<bool>,
     // Invalidates anchor restoration callbacks when a newer zoom commits.
     zoom_animation_generation: Rc<Cell<u64>>,
     // Stable content width captured at zoom-animation start. GTK can briefly
     // report two competing allocations while GridView reflows; using one
     // width for the whole animation prevents column-count ping-pong.
     zoom_animation_layout_width: Rc<Cell<Option<i32>>>,
-    // Cancels a position-only window-resize transition when another layout
-    // operation retargets the visible GridView tiles.
+    // Invalidates pending resize-settle timers. Tween cancellation is shared
+    // with folders through InPlaceTween.
     resize_reflow_generation: Rc<Cell<u64>>,
-    resize_pending_origin:
-        RefCell<Option<std::collections::HashMap<i64, (f64, f64, f64, f64, f32, f32)>>>,
-    resize_motion_active: Cell<bool>,
+    resize_pending_origin: RefCell<Option<std::collections::HashMap<i64, (f64, f64, f64, f64)>>>,
     // Set when no user-chosen thumbnail size exists: the first real layout
     // adopts the ~4-thumbnails-per-row default instead of a fixed pixel size.
     auto_default_zoom: Cell<bool>,
@@ -308,6 +300,7 @@ impl Gallery {
             tile.imp()
                 .photo_index
                 .set(Some(list_item.position() as usize));
+            tile.reset_presentation_transform();
             tile.bind_photo(&photo);
         });
 
@@ -798,6 +791,18 @@ impl Gallery {
 
         Gallery::install_folder_keyboard(&folder_root, &selection, &current_photos, &activate);
 
+        for widget in [
+            root.clone().upcast::<gtk::Widget>(),
+            sectioned_folder.root.clone().upcast(),
+        ] {
+            let weak = Rc::downgrade(&sectioned_folder.tween);
+            widget.connect_unmap(move |_| {
+                if let Some(tween) = weak.upgrade() {
+                    tween.cancel();
+                }
+            });
+        }
+
         let gallery = Self {
             root,
             folder_root,
@@ -835,15 +840,10 @@ impl Gallery {
             folder_anchor_photo: Cell::new(None),
             folder_pending_reframe: Rc::new(Cell::new(false)),
             folder_reframe_photo: Rc::new(Cell::new(None)),
-            zoom_surface: RefCell::new(None),
-            zoom_tick: RefCell::new(None),
-            zoom_committed: Cell::new(false),
-            pending_zoom_width: Rc::new(Cell::new(None)),
             zoom_animation_generation: Rc::new(Cell::new(0)),
             zoom_animation_layout_width: Rc::new(Cell::new(None)),
             resize_reflow_generation: Rc::new(Cell::new(0)),
             resize_pending_origin: RefCell::new(None),
-            resize_motion_active: Cell::new(false),
             auto_default_zoom: Cell::new(false),
             fit_whole_photo,
             show_file_names,
@@ -866,11 +866,6 @@ impl Gallery {
     }
 
     pub fn update_width(&self, width: i32) {
-        // The zoom transition owns its single layout commit. Resume ordinary
-        // window-width updates when the presentation animation has finished.
-        if self.zoom_tick.borrow().is_some() {
-            return;
-        }
         self.update_layout(width, false);
     }
 
@@ -882,14 +877,14 @@ impl Gallery {
             self.update_width(width);
             return;
         }
-        if width <= 100 || self.zoom_tick.borrow().is_some() {
+        if width <= 100 {
             self.cancel_resize_reflow();
             self.update_width(width);
             return;
         }
         let target_columns = self.columns_for_width(width);
         let resize_is_settling = self.resize_pending_origin.borrow().is_some()
-            || self.resize_motion_active.get();
+            || self.sectioned_folder.tween.is_active();
         if target_columns == self.current_columns.get() && !resize_is_settling {
             self.update_width(width);
             return;
@@ -928,20 +923,11 @@ impl Gallery {
                         return None;
                     }
                 }
-                let (dx, dy) = tile.presentation_offset();
-                let (sx, sy) = tile.presentation_scale();
                 let w = f64::from(bounds.width());
                 let h = f64::from(bounds.height());
                 Some((
                     photo.id(),
-                    (
-                        f64::from(bounds.x()) + f64::from(dx) + w * (1.0 - f64::from(sx)) * 0.5,
-                        f64::from(bounds.y()) + f64::from(dy) + h * (1.0 - f64::from(sy)) * 0.5,
-                        w * f64::from(sx),
-                        h * f64::from(sy),
-                        sx,
-                        sy,
-                    ),
+                    (f64::from(bounds.x()), f64::from(bounds.y()), w, h),
                 ))
             })
             .collect::<std::collections::HashMap<_, _>>();
@@ -964,243 +950,54 @@ impl Gallery {
         }
         let generation = self.resize_reflow_generation.get();
         let weak = Rc::downgrade(self);
-        glib::timeout_add_local_once(
-            std::time::Duration::from_millis(110),
-            move || {
-                let Some(gallery) = weak.upgrade() else { return };
-                if gallery.resize_reflow_generation.get() != generation {
-                    return;
-                }
-                let origin = gallery.resize_pending_origin.borrow_mut().take();
-                if let Some(origin) = origin {
-                    gallery.start_grid_resize_motion(origin, generation);
-                }
-            },
-        );
-    }
-
-    fn start_grid_resize_motion(
-        self: &Rc<Self>,
-        old_positions: std::collections::HashMap<i64, (f64, f64, f64, f64, f32, f32)>,
-        generation: u64,
-    ) {
-        let duration_ms = crate::animation_settings::library_resize_ms();
-        self.resize_motion_active.set(true);
-        let old_positions = Rc::new(old_positions);
-        let transitions = Rc::new(RefCell::new(None::<Vec<(SquareTile, f32, f32)>>));
-        let started = Rc::new(Cell::new(None::<std::time::Instant>));
-        let generation_cell = self.resize_reflow_generation.clone();
-        let weak = Rc::downgrade(self);
-        // The root owns the tick; the callback does not own Gallery so dispose
-        // or navigation can cancel without retaining the whole window.
-        let weak_root = self.root.downgrade();
-        set_grid_zoom_animation_active(true);
-        self.root.add_tick_callback(move |_, _| {
-            let Some(root) = weak_root.upgrade() else {
-                set_grid_zoom_animation_active(false);
-                return glib::ControlFlow::Break;
+        glib::timeout_add_local_once(std::time::Duration::from_millis(110), move || {
+            let Some(gallery) = weak.upgrade() else {
+                return;
             };
-            if !root.is_mapped() {
-                if let Some(motion) = transitions.borrow().as_ref() {
-                    for (tile, _, _) in motion {
-                        tile.reset_presentation_transform();
-                    }
-                }
-                if let Some(gallery) = weak.upgrade() {
-                    gallery.resize_motion_active.set(false);
-                }
-                set_grid_zoom_animation_active(false);
-                return glib::ControlFlow::Break;
+            if gallery.resize_reflow_generation.get() != generation {
+                return;
             }
-            if generation_cell.get() != generation {
-                return glib::ControlFlow::Break;
-            }
-            if transitions.borrow().is_none() {
-                let mut tiles = Vec::new();
-                collect_tiles(root.upcast_ref(), &mut tiles);
-                let mut motion = Vec::new();
-                for tile in tiles {
-                    if !tile.is_mapped() || !tile.is_visible() {
-                        continue;
-                    }
-                    let Some(photo) = tile.photo() else {
-                        continue;
-                    };
-                    let Some((old_x, old_y, old_width, old_height, old_scale_x, old_scale_y)) =
-                        old_positions.get(&photo.id()).copied()
-                    else {
-                        continue;
-                    };
-                    let Some(bounds) = tile.compute_bounds(&root) else {
-                        continue;
-                    };
-                    let new_x = f64::from(bounds.x());
-                    let new_y = f64::from(bounds.y());
-                    let new_width = f64::from(bounds.width());
-                    let new_height = f64::from(bounds.height());
-                    if (old_x - new_x).abs() < 0.5
-                        && (old_y - new_y).abs() < 0.5
-                        && (old_width - new_width).abs() < 0.5
-                        && (old_height - new_height).abs() < 0.5
-                    {
-                        continue;
-                    }
-                    let start_x = if old_scale_x < 0.999 { old_scale_x } else { 0.96 };
-                    let start_y = if old_scale_y < 0.999 { old_scale_y } else { 0.96 };
-                    tile.set_presentation_scale(start_x, start_y);
-                    motion.push((tile, start_x, start_y));
-                }
-                if motion.is_empty() {
-                    if let Some(gallery) = weak.upgrade() {
-                        gallery.resize_motion_active.set(false);
-                    }
-                    set_grid_zoom_animation_active(false);
-                    return glib::ControlFlow::Break;
-                }
-                transitions.replace(Some(motion));
-                started.set(Some(std::time::Instant::now()));
-                return glib::ControlFlow::Continue;
-            }
-
-            let elapsed = started
-                .get()
-                .map(|time| time.elapsed().as_secs_f64() * 1000.0)
-                .unwrap_or(duration_ms);
-            let t = (elapsed / duration_ms).clamp(0.0, 1.0);
-            let remaining = (1.0 - t).powi(3) as f32;
-            if let Some(motion) = transitions.borrow().as_ref() {
-                for (tile, scale_x, scale_y) in motion {
-                    tile.set_presentation_scale(
-                        1.0 + (scale_x - 1.0) * remaining,
-                        1.0 + (scale_y - 1.0) * remaining,
-                    );
-                }
-            }
-            if t >= 1.0 {
-                if let Some(motion) = transitions.borrow().as_ref() {
-                    for (tile, _, _) in motion {
-                        tile.reset_presentation_transform();
-                    }
-                }
-                if let Some(gallery) = weak.upgrade() {
-                    gallery.resize_motion_active.set(false);
-                }
-                set_grid_zoom_animation_active(false);
-                glib::ControlFlow::Break
-            } else {
-                glib::ControlFlow::Continue
+            let origin = gallery.resize_pending_origin.borrow_mut().take();
+            if let Some(origin) = origin {
+                gallery
+                    .animate_grid_in_place(origin, crate::animation_settings::library_resize_ms());
             }
         });
     }
 
-    pub(crate) fn animate_grid_zoom_in_place(
-        self: &Rc<Self>,
-        old_bounds: ZoomVisualBounds,
-    ) {
-        self.cancel_resize_reflow();
-        if old_bounds.is_empty()
-            || !self.root.is_mapped()
-            || !self.root.settings().is_gtk_enable_animations()
-        {
-            return;
-        }
-
-        let duration_ms = crate::animation_settings::grid_zoom_reflow_ms();
-        let generation = self.resize_reflow_generation.get();
-        let old_bounds = Rc::new(old_bounds);
-        let transitions = Rc::new(RefCell::new(None::<Vec<(SquareTile, f32, f32)>>));
-        let started = Rc::new(Cell::new(None::<std::time::Instant>));
-        let generation_cell = self.resize_reflow_generation.clone();
+    fn animate_grid_in_place(self: &Rc<Self>, old_bounds: ZoomVisualBounds, duration_ms: f64) {
         let weak_root = self.root.downgrade();
-        set_grid_zoom_animation_active(true);
-        self.root.add_tick_callback(move |_, _| {
-            let Some(root) = weak_root.upgrade() else {
-                set_grid_zoom_animation_active(false);
-                return glib::ControlFlow::Break;
-            };
-            if generation_cell.get() != generation {
-                set_grid_zoom_animation_active(false);
-                return glib::ControlFlow::Break;
-            }
-            if !root.is_mapped() {
-                if let Some(motion) = transitions.borrow().as_ref() {
-                    for (tile, ..) in motion {
-                        tile.reset_presentation_transform();
-                    }
-                }
-                set_grid_zoom_animation_active(false);
-                return glib::ControlFlow::Break;
-            }
-
-            if transitions.borrow().is_none() {
+        self.sectioned_folder
+            .tween
+            .animate_tile_in_place(&self.root, duration_ms, move || {
+                let Some(root) = weak_root.upgrade() else {
+                    return Vec::new();
+                };
                 let mut tiles = Vec::new();
                 collect_tiles(root.upcast_ref(), &mut tiles);
-                let mut motion = Vec::new();
-                for tile in tiles {
-                    if !tile.is_mapped() || !tile.is_visible() {
-                        continue;
-                    }
-                    let Some(photo) = tile.photo() else { continue };
-                    let Some((old_x, old_y, old_width, old_height, old_scale_x, old_scale_y)) =
-                        old_bounds.get(&photo.id()).copied()
-                    else {
-                        continue;
-                    };
-                    let Some(bounds) = tile.compute_bounds(&root) else {
-                        continue;
-                    };
-                    let new_width = f64::from(bounds.width()).max(1.0);
-                    let new_height = f64::from(bounds.height()).max(1.0);
-                    if (old_x - f64::from(bounds.x())).abs() < 0.5
-                        && (old_y - f64::from(bounds.y())).abs() < 0.5
-                        && (old_width - new_width).abs() < 0.5
-                        && (old_height - new_height).abs() < 0.5
-                    {
-                        continue;
-                    }
-                    let start_x = if old_scale_x < 0.999 { old_scale_x } else { 0.96 };
-                    let start_y = if old_scale_y < 0.999 { old_scale_y } else { 0.96 };
-                    tile.set_presentation_scale(start_x, start_y);
-                    motion.push((tile, start_x, start_y));
-                }
-                if motion.is_empty() {
-                    set_grid_zoom_animation_active(false);
-                    return glib::ControlFlow::Break;
-                }
-                transitions.replace(Some(motion));
-                started.set(Some(std::time::Instant::now()));
-                return glib::ControlFlow::Continue;
-            }
-
-            let elapsed_ms = started
-                .get()
-                .map(|time| time.elapsed().as_secs_f64() * 1000.0)
-                .unwrap_or(duration_ms);
-            let t = (elapsed_ms / duration_ms).clamp(0.0, 1.0);
-            let remaining = (1.0 - t).powi(3) as f32;
-            if let Some(motion) = transitions.borrow().as_ref() {
-                for (tile, scale_x, scale_y) in motion {
-                    tile.set_presentation_scale(
-                        1.0 + (scale_x - 1.0) * remaining,
-                        1.0 + (scale_y - 1.0) * remaining,
-                    );
-                }
-            }
-            if t >= 1.0 {
-                if let Some(motion) = transitions.borrow().as_ref() {
-                    for (tile, ..) in motion {
-                        tile.reset_presentation_transform();
-                    }
-                }
-                set_grid_zoom_animation_active(false);
-                glib::ControlFlow::Break
-            } else {
-                glib::ControlFlow::Continue
-            }
-        });
+                tiles
+                    .into_iter()
+                    .filter(|tile| {
+                        let Some(photo) = tile.photo() else {
+                            return false;
+                        };
+                        let Some(&(x, y, width, height, ..)) = old_bounds.get(&photo.id()) else {
+                            return false;
+                        };
+                        let Some(bounds) = tile.compute_bounds(&root) else {
+                            return false;
+                        };
+                        (x - f64::from(bounds.x())).abs() >= 0.5
+                            || (y - f64::from(bounds.y())).abs() >= 0.5
+                            || (width - f64::from(bounds.width())).abs() >= 0.5
+                            || (height - f64::from(bounds.height())).abs() >= 0.5
+                    })
+                    .collect()
+            });
     }
 
     pub fn cancel_resize_reflow(&self) {
+        self.sectioned_folder.tween.cancel();
         self.resize_reflow_generation
             .set(self.resize_reflow_generation.get().wrapping_add(1));
         let root: gtk::Widget = self.root.clone().upcast();
@@ -1210,7 +1007,6 @@ impl Gallery {
             tile.reset_presentation_transform();
         }
         self.resize_pending_origin.borrow_mut().take();
-        self.resize_motion_active.set(false);
         set_grid_zoom_animation_active(false);
     }
 
@@ -1326,7 +1122,7 @@ impl Gallery {
             if !tile_size_changed {
                 if let Some(snapshot) = sectioned_reflow_snapshot {
                     self.sectioned_folder
-                        .animate_reflow(snapshot, sectioned_resize_anchor);
+                        .settle_resize(snapshot, sectioned_resize_anchor);
                 } else {
                     self.sectioned_folder.invalidate_geometry();
                     self.sectioned_folder.refresh();

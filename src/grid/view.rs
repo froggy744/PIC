@@ -4,7 +4,7 @@ enum ZoomAnchorKind {
     ViewportCenter,
 }
 
-pub(super) type ZoomVisualBounds = std::collections::HashMap<i64, (f64, f64, f64, f64)>;
+pub(super) type ZoomVisualBounds = std::collections::HashMap<i64, TileRect>;
 
 #[derive(Debug, Clone, Copy)]
 struct ZoomAnchor {
@@ -89,7 +89,7 @@ pub struct Gallery {
     // Invalidates pending resize-settle timers. Tween cancellation is shared
     // with folders through InPlaceTween.
     resize_reflow_generation: Rc<Cell<u64>>,
-    resize_pending_origin: RefCell<Option<std::collections::HashMap<i64, (f64, f64, f64, f64)>>>,
+    resize_pending_origin: RefCell<Option<std::collections::HashMap<i64, TileRect>>>,
     // Set when no user-chosen thumbnail size exists: the first real layout
     // adopts the ~4-thumbnails-per-row default instead of a fixed pixel size.
     auto_default_zoom: Cell<bool>,
@@ -798,7 +798,7 @@ impl Gallery {
             let weak = Rc::downgrade(&sectioned_folder.tween);
             widget.connect_unmap(move |_| {
                 if let Some(tween) = weak.upgrade() {
-                    tween.cancel();
+                    tween.cancel(false);
                 }
             });
         }
@@ -869,12 +869,21 @@ impl Gallery {
         self.update_layout(width, false);
     }
 
-    /// Commit the grid layout immediately, then briefly scale only changed
-    /// tiles in place after the window resize settles.
+    /// Commit the grid layout immediately, then move changed tiles from their
+    /// prior visual bounds after the resize settles.
     pub fn update_width_with_reflow(self: &Rc<Self>, width: i32) {
         if self.using_sectioned_folder_view() {
+            let columns_before = self.current_columns.get();
+            let snapshot = (self.columns_for_width(width) == columns_before)
+                .then(|| self.sectioned_folder.capture_reflow_snapshot());
+            let anchor = snapshot
+                .as_ref()
+                .and_then(|_| self.sectioned_folder.capture_center_anchor());
             self.sectioned_folder.on_resize_frame();
             self.update_width(width);
+            if let Some(snapshot) = snapshot {
+                self.sectioned_folder.settle_resize(snapshot, anchor);
+            }
             return;
         }
         if width <= 100 {
@@ -882,14 +891,6 @@ impl Gallery {
             self.update_width(width);
             return;
         }
-        let target_columns = self.columns_for_width(width);
-        let resize_is_settling = self.resize_pending_origin.borrow().is_some()
-            || self.sectioned_folder.tween.is_active();
-        if target_columns == self.current_columns.get() && !resize_is_settling {
-            self.update_width(width);
-            return;
-        }
-
         let folder_list_mode = self.group_mode.get() == GroupMode::Folder
             && !crate::grid::sectioned_folder_view_enabled()
             && !crate::grid::folder_gridview_experiment_enabled();
@@ -923,12 +924,7 @@ impl Gallery {
                         return None;
                     }
                 }
-                let w = f64::from(bounds.width());
-                let h = f64::from(bounds.height());
-                Some((
-                    photo.id(),
-                    (f64::from(bounds.x()), f64::from(bounds.y()), w, h),
-                ))
+                Some((photo.id(), in_place::visual_rect(tile, &bounds)))
             })
             .collect::<std::collections::HashMap<_, _>>();
 
@@ -959,17 +955,27 @@ impl Gallery {
             }
             let origin = gallery.resize_pending_origin.borrow_mut().take();
             if let Some(origin) = origin {
-                gallery
-                    .animate_grid_in_place(origin, crate::animation_settings::library_resize_ms());
+                gallery.animate_grid_in_place(
+                    origin,
+                    crate::animation_settings::library_resize_ms(),
+                    false,
+                );
             }
         });
     }
 
-    fn animate_grid_in_place(self: &Rc<Self>, old_bounds: ZoomVisualBounds, duration_ms: f64) {
+    fn animate_grid_in_place(
+        self: &Rc<Self>,
+        old_bounds: ZoomVisualBounds,
+        duration_ms: f64,
+        preserve_tiles: bool,
+    ) {
         let weak_root = self.root.downgrade();
-        self.sectioned_folder
-            .tween
-            .animate_tile_in_place(&self.root, duration_ms, move || {
+        self.sectioned_folder.tween.animate_tile_in_place(
+            &self.root,
+            duration_ms,
+            preserve_tiles,
+            move || {
                 let Some(root) = weak_root.upgrade() else {
                     return Vec::new();
                 };
@@ -977,27 +983,35 @@ impl Gallery {
                 collect_tiles(root.upcast_ref(), &mut tiles);
                 tiles
                     .into_iter()
-                    .filter(|tile| {
+                    .filter_map(|tile| {
                         let Some(photo) = tile.photo() else {
-                            return false;
+                            return None;
                         };
-                        let Some(&(x, y, width, height, ..)) = old_bounds.get(&photo.id()) else {
-                            return false;
+                        let Some(&old) = old_bounds.get(&photo.id()) else {
+                            return None;
                         };
                         let Some(bounds) = tile.compute_bounds(&root) else {
-                            return false;
+                            return None;
                         };
-                        (x - f64::from(bounds.x())).abs() >= 0.5
-                            || (y - f64::from(bounds.y())).abs() >= 0.5
-                            || (width - f64::from(bounds.width())).abs() >= 0.5
-                            || (height - f64::from(bounds.height())).abs() >= 0.5
+                        let new = (
+                            f64::from(bounds.x()),
+                            f64::from(bounds.y()),
+                            f64::from(bounds.width()),
+                            f64::from(bounds.height()),
+                        );
+                        let changed = (old.0 - new.0).abs() >= 0.5
+                            || (old.1 - new.1).abs() >= 0.5
+                            || (old.2 - new.2).abs() >= 0.5
+                            || (old.3 - new.3).abs() >= 0.5;
+                        changed.then_some((tile, old, new))
                     })
                     .collect()
-            });
+            },
+        );
     }
 
     pub fn cancel_resize_reflow(&self) {
-        self.sectioned_folder.tween.cancel();
+        self.sectioned_folder.tween.cancel(false);
         self.resize_reflow_generation
             .set(self.resize_reflow_generation.get().wrapping_add(1));
         let root: gtk::Widget = self.root.clone().upcast();
@@ -1006,6 +1020,14 @@ impl Gallery {
         for tile in tiles {
             tile.reset_presentation_transform();
         }
+        self.resize_pending_origin.borrow_mut().take();
+        set_grid_zoom_animation_active(false);
+    }
+
+    pub(crate) fn cancel_resize_reflow_preserving_tiles(&self) {
+        self.resize_reflow_generation
+            .set(self.resize_reflow_generation.get().wrapping_add(1));
+        self.sectioned_folder.tween.cancel(true);
         self.resize_pending_origin.borrow_mut().take();
         set_grid_zoom_animation_active(false);
     }

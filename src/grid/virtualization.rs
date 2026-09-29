@@ -712,9 +712,15 @@ impl Gallery {
 
     pub fn request_zoom(self: &Rc<Self>, width: i32) {
         let width = width.clamp(MIN_TILE_WIDTH, MAX_TILE_WIDTH);
+        if width == self.current_zoom_width() {
+            return;
+        }
         let folder_mode = self.group_mode.get() == GroupMode::Folder;
         let grid_zoom_style = crate::animation_settings::grid_zoom_style();
         let use_grid_in_place = !folder_mode && grid_zoom_style == "in_place";
+        let use_folder_in_place = folder_mode
+            && crate::grid::sectioned_folder_view_enabled()
+            && crate::animation_settings::folder_zoom_style() == "in_place";
         let old_visual_bounds = if use_grid_in_place {
             let root: gtk::Widget = self.root.clone().upcast();
             let mut tiles = Vec::new();
@@ -725,21 +731,18 @@ impl Gallery {
                 .filter_map(|tile| {
                     let photo = tile.photo()?;
                     let bounds = tile.compute_bounds(&root)?;
-                    let w = f64::from(bounds.width()).max(1.0);
-                    let h = f64::from(bounds.height()).max(1.0);
-                    let x = f64::from(bounds.x());
-                    let y = f64::from(bounds.y());
-                    Some((photo.id(), (x, y, w, h)))
+                    Some((photo.id(), in_place::visual_rect(&tile, &bounds)))
                 })
                 .collect::<ZoomVisualBounds>()
         } else {
             ZoomVisualBounds::new()
         };
-        self.cancel_resize_reflow();
-        self.auto_default_zoom.set(false);
-        if width == self.current_zoom_width() {
-            return;
+        if use_grid_in_place || use_folder_in_place {
+            self.cancel_resize_reflow_preserving_tiles();
+        } else {
+            self.cancel_resize_reflow();
         }
+        self.auto_default_zoom.set(false);
         if self.stable_zoom_anchor.get().is_none() {
             self.begin_center_zoom_anchor();
         }
@@ -751,6 +754,7 @@ impl Gallery {
             self.animate_grid_in_place(
                 old_visual_bounds,
                 crate::animation_settings::grid_zoom_reflow_ms(),
+                true,
             );
         }
     }

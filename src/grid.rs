@@ -100,7 +100,7 @@ thread_local! {
 // The grid stays one Rust module for private-state compatibility, while its
 // implementation is split into focused source files for maintenance.
 mod in_place;
-use in_place::InPlaceTween;
+use in_place::{InPlaceTween, TileRect};
 
 include!("grid/tile.rs");
 include!("grid/grouping.rs");

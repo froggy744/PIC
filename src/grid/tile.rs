@@ -228,7 +228,8 @@ mod square_tile {
         // Presentation effects stay within the allocated destination cell.
         pub presentation_scale_x: Cell<f32>,
         pub presentation_scale_y: Cell<f32>,
-        pub presentation_opacity: Cell<f32>,
+        pub presentation_translate_x: Cell<f32>,
+        pub presentation_translate_y: Cell<f32>,
         pub filename_visible: Cell<bool>,
         pub filename_label: RefCell<Option<gtk::Label>>,
         pub favorite_indicators_visible: Cell<bool>,
@@ -328,18 +329,19 @@ mod square_tile {
         }
 
         fn snapshot(&self, snapshot: &gtk::Snapshot) {
+            let dx = self.presentation_translate_x.get();
+            let dy = self.presentation_translate_y.get();
             let sx = self.presentation_scale_x.get();
             let sy = self.presentation_scale_y.get();
             let sx = if sx <= 0.0 { 1.0 } else { sx };
             let sy = if sy <= 0.0 { 1.0 } else { sy };
-            let opacity = self.obj().presentation_opacity();
-            let transformed =
-                (sx - 1.0).abs() > 0.001 || (sy - 1.0).abs() > 0.001 || opacity < 0.999;
+            let transformed = dx.abs() > 0.01
+                || dy.abs() > 0.01
+                || (sx - 1.0).abs() > 0.001
+                || (sy - 1.0).abs() > 0.001;
             if transformed {
                 snapshot.save();
-                if opacity < 0.999 {
-                    snapshot.push_opacity(f64::from(opacity));
-                }
+                snapshot.translate(&gtk::graphene::Point::new(dx, dy));
                 let center = gtk::graphene::Point::new(
                     self.obj().width() as f32 * 0.5,
                     self.obj().height() as f32 * 0.5,
@@ -359,9 +361,6 @@ mod square_tile {
             }
 
             if transformed {
-                if opacity < 0.999 {
-                    snapshot.pop();
-                }
                 snapshot.restore();
             }
         }
@@ -516,18 +515,16 @@ impl SquareTile {
         )
     }
 
-    pub(crate) fn presentation_opacity(&self) -> f32 {
-        let opacity = self.imp().presentation_opacity.get();
-        if opacity <= 0.0 {
-            1.0
-        } else {
-            opacity
-        }
+    pub(crate) fn presentation_translate(&self) -> (f32, f32) {
+        (
+            self.imp().presentation_translate_x.get(),
+            self.imp().presentation_translate_y.get(),
+        )
     }
 
     pub(crate) fn set_presentation_scale(&self, x: f32, y: f32) {
-        let x = x.clamp(0.96, 1.0);
-        let y = y.clamp(0.96, 1.0);
+        let x = x.clamp(0.05, 20.0);
+        let y = y.clamp(0.05, 20.0);
         if self.presentation_scale() == (x, y) {
             return;
         }
@@ -536,18 +533,18 @@ impl SquareTile {
         self.queue_draw();
     }
 
-    pub(crate) fn set_presentation_opacity(&self, opacity: f32) {
-        let opacity = opacity.clamp(0.85, 1.0);
-        if self.presentation_opacity() == opacity {
+    pub(crate) fn set_presentation_translate(&self, x: f32, y: f32) {
+        if self.presentation_translate() == (x, y) {
             return;
         }
-        self.imp().presentation_opacity.set(opacity);
+        self.imp().presentation_translate_x.set(x);
+        self.imp().presentation_translate_y.set(y);
         self.queue_draw();
     }
 
     pub(crate) fn reset_presentation_transform(&self) {
         self.set_presentation_scale(1.0, 1.0);
-        self.set_presentation_opacity(1.0);
+        self.set_presentation_translate(0.0, 0.0);
     }
 
     fn set_tile_size(&self, width: i32, height: i32) {

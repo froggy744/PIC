@@ -113,7 +113,6 @@ fn in_place_transitions_remain_visible_and_stationary() {
             {
                 assert!(tile.is_visible(), "{case} frame {frame}: hidden tile");
                 assert_eq!(tile.opacity(), 1.0, "{case}: widget opacity changed");
-                assert!(tile.presentation_opacity() >= 0.85);
                 assert!(
                     tile.transition_paintable().is_some(),
                     "{case} frame {frame}: missing photo pixels"
@@ -133,7 +132,13 @@ fn in_place_transitions_remain_visible_and_stationary() {
                 if viewport.y() + viewport.height() > 0.0 && viewport.y() < scroll.height() as f32 {
                     visible += 1;
                 }
-                if tile.presentation_opacity() < 0.999 {
+                let (scale_x, scale_y) = tile.presentation_scale();
+                let (translate_x, translate_y) = tile.presentation_translate();
+                if (scale_x - 1.0).abs() > 0.001
+                    || (scale_y - 1.0).abs() > 0.001
+                    || translate_x.abs() > 0.1
+                    || translate_y.abs() > 0.1
+                {
                     effect_frames += 1;
                 }
                 cells.insert(id, cell);
@@ -141,13 +146,22 @@ fn in_place_transitions_remain_visible_and_stationary() {
             assert!(visible > 0, "{case} frame {frame}: empty viewport");
             previous = cells;
             if let Some(dir) = &directory {
-                let snapshot = gtk::Snapshot::new();
-                gtk::WidgetPaintable::new(Some(&scroll)).snapshot(
-                    &snapshot,
-                    scroll.width() as f64,
-                    scroll.height() as f64,
-                );
-                let node = snapshot.to_node().expect("nonblank render node");
+                let paintable = gtk::WidgetPaintable::new(Some(&window));
+                let mut node = None;
+                for _ in 0..5 {
+                    let snapshot = gtk::Snapshot::new();
+                    paintable.snapshot(
+                        &snapshot,
+                        window.width().max(1) as f64,
+                        window.height().max(1) as f64,
+                    );
+                    node = snapshot.to_node();
+                    if node.is_some() {
+                        break;
+                    }
+                    pump(17);
+                }
+                let node = node.expect("nonblank render node after paint retry");
                 window
                     .renderer()
                     .unwrap()
@@ -156,8 +170,8 @@ fn in_place_transitions_remain_visible_and_stationary() {
                         Some(&gtk::graphene::Rect::new(
                             0.0,
                             0.0,
-                            scroll.width() as f32,
-                            scroll.height() as f32,
+                            window.width().max(1) as f32,
+                            window.height().max(1) as f32,
                         )),
                     )
                     .save_to_png(dir.join(format!("{frame:04}.png")))
@@ -212,9 +226,9 @@ fn in_place_transitions_remain_visible_and_stationary() {
         collect_tiles(&root, &mut tiles);
         for tile in tiles {
             assert_eq!(tile.presentation_scale(), (1.0, 1.0));
-            assert_eq!(tile.presentation_opacity(), 1.0);
+            assert_eq!(tile.presentation_translate(), (0.0, 0.0));
         }
-        eprintln!("{case}: checked {frame} frames; {effect_frames} tile effect samples; no blank viewport or moving cells during tween");
+        eprintln!("{case}: checked {frame} frames; {effect_frames} tile effect samples; no blank viewport; FLIP transforms ran while destination allocations stayed stable");
         assert_eq!(gallery.photo_objects(), original_objects);
         assert_eq!(gallery.selected_photo_ids(None), original_selection);
         window.settings().set_gtk_enable_animations(false);

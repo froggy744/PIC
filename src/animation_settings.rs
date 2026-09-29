@@ -30,12 +30,12 @@ struct AnimationSettings {
 impl Default for AnimationSettings {
     fn default() -> Self {
         Self {
-            grid_resize_ms: 120,
+            grid_resize_ms: 220,
             library_resize_ms: None,
             library_resize_style: "in_place".to_string(),
-            grid_zoom_reflow_ms: 120,
+            grid_zoom_reflow_ms: 160,
             grid_zoom_style: "in_place".to_string(),
-            folder_column_reflow_ms: 120,
+            folder_column_reflow_ms: 220,
             folder_column_reflow_style: "in_place".to_string(),
             folder_resize_ms: None,
             folder_resize_style: "in_place".to_string(),
@@ -220,7 +220,7 @@ mod tests {
     fn partial_config_uses_defaults_for_omitted_durations() {
         let parsed: AnimationSettings = toml::from_str("grid_zoom_reflow_ms = 300").unwrap();
         assert_eq!(parsed.grid_zoom_reflow_ms, 300);
-        assert_eq!(parsed.grid_resize_ms, 120);
+        assert_eq!(parsed.grid_resize_ms, 220);
         assert_eq!(parsed.sidebar_slide_ms, 250);
     }
 }

@@ -842,7 +842,7 @@ impl SectionedFolderView {
     }
 
     fn refresh_model(self: &Rc<Self>) {
-        self.tween.cancel();
+        self.tween.cancel(false);
         self.resize_settle_generation
             .set(self.resize_settle_generation.get().wrapping_add(1));
         self.resize_settle_origin.borrow_mut().take();
@@ -880,9 +880,8 @@ impl SectionedFolderView {
                 .borrow()
                 .iter()
                 .filter_map(|(index, entry)| {
-                    let (x, y) = self.root.child_position(&entry.tile);
-                    let width = f64::from(entry.tile.width()).max(1.0);
-                    let height = f64::from(entry.tile.height()).max(1.0);
+                    let bounds = entry.tile.compute_bounds(&self.root)?;
+                    let rect = in_place::visual_rect(&entry.tile, &bounds);
                     let top = self.scroll_position();
                     let bottom = top
                         + self
@@ -891,7 +890,7 @@ impl SectionedFolderView {
                             .as_ref()
                             .map(|scroll| scroll.vadjustment().page_size())
                             .unwrap_or(f64::MAX);
-                    (y + height >= top && y <= bottom).then_some((*index, (x, y, width, height)))
+                    (rect.1 + rect.3 >= top && rect.1 <= bottom).then_some((*index, rect))
                 })
                 .collect(),
             old_columns: self.current_columns.get().max(1),
@@ -940,8 +939,9 @@ impl SectionedFolderView {
         self: &Rc<Self>,
         snapshot: SectionedReflowSnapshot,
         anchor: Option<(i64, f64)>,
+        preserve_tiles: bool,
     ) {
-        self.tween.cancel();
+        self.tween.cancel(preserve_tiles);
 
         let header_anchor = self.scroll.borrow().as_ref().and_then(|scroll| {
             let page = scroll.vadjustment().page_size();
@@ -1059,7 +1059,7 @@ impl SectionedFolderView {
                 *self.resize_settle_anchor.borrow(),
             )
         };
-        self.apply_reflow_without_animation(origin.clone(), stable_anchor);
+        self.apply_reflow_without_animation(origin.clone(), stable_anchor, false);
         if !crate::animation_settings::folder_resize_enabled()
             || !self.root.is_mapped()
             || !self.root.settings().is_gtk_enable_animations()
@@ -1074,7 +1074,7 @@ impl SectionedFolderView {
     }
 
     fn on_resize_frame(self: &Rc<Self>) {
-        self.tween.cancel();
+        self.tween.cancel(false);
         for entry in self.live_tiles.borrow().values() {
             entry.tile.reset_presentation_transform();
         }
@@ -1113,8 +1113,9 @@ impl SectionedFolderView {
             .set(self.resize_settle_generation.get().wrapping_add(1));
         self.resize_settle_origin.borrow_mut().take();
         self.resize_settle_anchor.borrow_mut().take();
-        self.apply_reflow_without_animation(snapshot.clone(), anchor);
-        if crate::animation_settings::folder_zoom_style() == "in_place" {
+        let preserve_tiles = crate::animation_settings::folder_zoom_style() == "in_place";
+        self.apply_reflow_without_animation(snapshot.clone(), anchor, preserve_tiles);
+        if preserve_tiles {
             self.animate_tile_in_place(snapshot, crate::animation_settings::folder_zoom_ms());
         }
     }
@@ -1122,7 +1123,7 @@ impl SectionedFolderView {
     fn animate_tile_in_place(self: &Rc<Self>, snapshot: SectionedReflowSnapshot, duration_ms: f64) {
         let weak = Rc::downgrade(self);
         self.tween
-            .animate_tile_in_place(&self.root, duration_ms, move || {
+            .animate_tile_in_place(&self.root, duration_ms, true, move || {
                 let Some(view) = weak.upgrade() else {
                     return Vec::new();
                 };
@@ -1132,13 +1133,20 @@ impl SectionedFolderView {
                     .borrow()
                     .iter()
                     .filter_map(|(index, entry)| {
-                        let &(x, y, width, height) = snapshot.tile_rects.get(index)?;
-                        let (new_x, new_y) = view.root.child_position(&entry.tile);
-                        let changed = (x - new_x).abs() >= 0.5
-                            || (y + scroll_shift - new_y).abs() >= 0.5
-                            || (width - f64::from(entry.tile.width())).abs() >= 0.5
-                            || (height - f64::from(entry.tile.height())).abs() >= 0.5;
-                        changed.then(|| entry.tile.clone())
+                        let mut old = *snapshot.tile_rects.get(index)?;
+                        old.1 += scroll_shift;
+                        let bounds = entry.tile.compute_bounds(&view.root)?;
+                        let new = (
+                            f64::from(bounds.x()),
+                            f64::from(bounds.y()),
+                            f64::from(bounds.width()),
+                            f64::from(bounds.height()),
+                        );
+                        let changed = (old.0 - new.0).abs() >= 0.5
+                            || (old.1 - new.1).abs() >= 0.5
+                            || (old.2 - new.2).abs() >= 0.5
+                            || (old.3 - new.3).abs() >= 0.5;
+                        changed.then(|| (entry.tile.clone(), old, new))
                     })
                     .collect();
                 tiles

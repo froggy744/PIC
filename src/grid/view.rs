@@ -1022,7 +1022,22 @@ impl Gallery {
                             || (old.1 - new.1).abs() >= 0.5
                             || (old.2 - new.2).abs() >= 0.5
                             || (old.3 - new.3).abs() >= 0.5;
-                        changed.then_some((tile, old, new))
+                        if !changed {
+                            return None;
+                        }
+                        // Zooming can change the column count, moving a
+                        // row-major item from one side of the viewport to the
+                        // other. Interpolating those positions sends tiles
+                        // across unrelated photos and creates a visibly
+                        // tangled grid. Keep zoom tiles inside their committed
+                        // cells and give them a small settle scale. Resize
+                        // reflows retain their ordinary old-to-new motion.
+                        let animation_old = if preserve_tiles {
+                            (new.0, new.1, new.2 * 0.96, new.3 * 0.96)
+                        } else {
+                            old
+                        };
+                        Some((tile, animation_old, new))
                     })
                     .collect::<Vec<_>>();
                 if std::env::var_os("PICASA_TRACE").is_some() {
@@ -1042,8 +1057,9 @@ impl Gallery {
                         )
                     }).unwrap_or_else(|| "first_id=none".to_string());
                     eprintln!(
-                        "PIC_GRID_FLIP phase=prepare captured_tiles={captured_tiles} realized_tiles={realized_tiles} matched_changed={} max_dx={max_dx:.1} max_dy={max_dy:.1} {first}",
+                        "PIC_GRID_FLIP phase=prepare captured_tiles={captured_tiles} realized_tiles={realized_tiles} matched_changed={} max_applied_dx={max_dx:.1} max_applied_dy={max_dy:.1} position_motion={} {first}",
                         changes.len(),
+                        !preserve_tiles,
                     );
                 }
                 changes

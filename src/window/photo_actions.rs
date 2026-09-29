@@ -1423,18 +1423,22 @@ fn show_properties_dialog(
     let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
     let header = adw::HeaderBar::new();
     content.append(&header);
+    let scroll = gtk::ScrolledWindow::new();
+    scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+    scroll.set_vexpand(true);
+    content.append(&scroll);
     let sections = gtk::Box::new(gtk::Orientation::Vertical, 6);
     sections.set_margin_start(16);
     sections.set_margin_end(16);
     sections.set_margin_top(4);
     sections.set_margin_bottom(8);
     sections.set_valign(gtk::Align::Start);
-    content.append(&sections);
+    scroll.set_child(Some(&sections));
 
-    let top = gtk::Box::new(gtk::Orientation::Horizontal, 16);
-    top.set_size_request(-1, 176);
+    let top = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    top.set_size_request(-1, 156);
     let preview_frame = gtk::Frame::new(None);
-    preview_frame.set_size_request(188, 170);
+    preview_frame.set_size_request(150, 150);
     preview_frame.set_overflow(gtk::Overflow::Hidden);
     if let Some(cache_path) = photo
         .cached_thumbnail_path()
@@ -1444,12 +1448,12 @@ fn show_properties_dialog(
         preview.set_filename(Some(&cache_path));
         preview.set_content_fit(gtk::ContentFit::Contain);
         preview.set_can_shrink(true);
-        preview.set_size_request(188, 170);
+        preview.set_size_request(150, 150);
         preview_frame.set_child(Some(&preview));
     } else {
         let preview = gtk::Image::from_icon_name("image-x-generic-symbolic");
         preview.set_pixel_size(48);
-        preview.set_size_request(188, 170);
+        preview.set_size_request(150, 150);
         preview_frame.set_child(Some(&preview));
     }
     top.append(&preview_frame);
@@ -1463,6 +1467,7 @@ fn show_properties_dialog(
         .and_then(|item| item.camera.clone())
         .or_else(|| photo.camera());
     let lens_name = record.as_ref().and_then(|item| item.lens.clone());
+    let has_camera_text = camera_name.is_some() || lens_name.is_some();
     if let Some(name) = camera_name {
         camera_details.append(&prominent_property("Camera", &name));
     }
@@ -1479,7 +1484,7 @@ fn show_properties_dialog(
                 .and_then(format_aperture),
         ),
         (
-            "Shutter",
+            "Shutter Speed",
             record
                 .as_ref()
                 .and_then(|item| item.shutter_speed)
@@ -1501,7 +1506,7 @@ fn show_properties_dialog(
                 .and_then(format_focal_length),
         ),
         (
-            "EV",
+            "Exposure Compensation",
             record
                 .as_ref()
                 .and_then(|item| item.exposure_bias)
@@ -1512,16 +1517,20 @@ fn show_properties_dialog(
         .iter()
         .filter_map(|(label, value)| value.as_ref().map(|value| (*label, value.as_str())))
         .collect::<Vec<_>>();
-    camera_details.append(&metric_grid(&available, 3));
-    camera_group.add(&camera_details);
-    top.append(&camera_group);
+    if !available.is_empty() {
+        camera_details.append(&metric_grid(&available, 2));
+    }
+    if has_camera_text || !available.is_empty() {
+        add_boxed_properties(&camera_group, &camera_details);
+        top.append(&camera_group);
+    }
     sections.append(&top);
 
     let image_group = adw::PreferencesGroup::new();
     image_group.set_title("Image");
     let image_values = [
         ("Dimensions", dimensions),
-        ("Format", file_type(&path)),
+        ("File Type", file_type(&path)),
         ("File Size", crate::infobar::format_size(size)),
         ("Rotation", format!("{rotation}°")),
         ("Favourite", if favorite { "Yes" } else { "No" }.into()),
@@ -1530,7 +1539,7 @@ fn show_properties_dialog(
         .iter()
         .map(|(label, value)| (*label, value.as_str()))
         .collect::<Vec<_>>();
-    image_group.add(&metric_grid(&image_values, 5));
+    add_boxed_properties(&image_group, &metric_grid(&image_values, 3));
     sections.append(&image_group);
 
     let file_group = adw::PreferencesGroup::new();
@@ -1541,30 +1550,49 @@ fn show_properties_dialog(
     file_grid.attach(&metric_block("Date Taken", &date), 0, 0, 1, 1);
     let location = metric_block("Location", &path);
     location.set_hexpand(true);
-    if let Some(value) = location.last_child().and_then(|widget| widget.downcast::<gtk::Label>().ok()) {
+    if let Some(value) = location
+        .last_child()
+        .and_then(|widget| widget.downcast::<gtk::Label>().ok())
+    {
         value.set_selectable(true);
         value.set_wrap(true);
         value.set_wrap_mode(gtk::pango::WrapMode::Char);
+        value.set_ellipsize(gtk::pango::EllipsizeMode::None);
         value.set_width_chars(1);
-        value.set_max_width_chars(72);
+        value.set_max_width_chars(40);
     }
     file_grid.attach(&location, 1, 0, 1, 1);
-    file_group.add(&file_grid);
+    add_boxed_properties(&file_group, &file_grid);
     sections.append(&file_group);
 
     let dialog = adw::Dialog::builder()
         .title(photo.filename())
-        .content_width(620)
-        .content_height(430)
+        .content_width(550)
+        .content_height(440)
         .child(&content)
         .build();
     dialog.present(Some(parent));
+}
+
+fn add_boxed_properties(group: &adw::PreferencesGroup, child: &impl IsA<gtk::Widget>) {
+    let row = adw::PreferencesRow::new();
+    row.set_activatable(false);
+    row.set_selectable(false);
+    let inset = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    inset.set_margin_start(12);
+    inset.set_margin_end(12);
+    inset.set_margin_top(8);
+    inset.set_margin_bottom(8);
+    inset.append(child);
+    row.set_child(Some(&inset));
+    group.add(&row);
 }
 
 fn metric_grid(values: &[(&str, &str)], columns: usize) -> gtk::Grid {
     let grid = gtk::Grid::new();
     grid.set_column_spacing(12);
     grid.set_row_spacing(3);
+    grid.set_column_homogeneous(true);
     for (index, (name, value)) in values.iter().enumerate() {
         let column = (index % columns) as i32;
         let row = (index / columns) as i32;
@@ -1578,12 +1606,15 @@ fn metric_block(title: &str, value: &str) -> gtk::Box {
     cell.set_hexpand(true);
     let title = gtk::Label::new(Some(title));
     title.set_xalign(0.0);
+    title.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    title.set_max_width_chars(22);
     title.add_css_class("dim-label");
     title.add_css_class("metric-key");
     cell.append(&title);
     let value = gtk::Label::new(Some(value));
     value.set_xalign(0.0);
     value.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    value.set_max_width_chars(12);
     value.add_css_class("metric-val");
     value.add_css_class("title-4");
     cell.append(&value);
@@ -1592,9 +1623,12 @@ fn metric_block(title: &str, value: &str) -> gtk::Box {
 
 fn prominent_property(title: &str, value: &str) -> gtk::Box {
     let cell = metric_block(title, value);
-    if let Some(value) = cell.last_child().and_then(|widget| widget.downcast::<gtk::Label>().ok()) {
+    if let Some(value) = cell
+        .last_child()
+        .and_then(|widget| widget.downcast::<gtk::Label>().ok())
+    {
         value.add_css_class("info-title");
-        value.set_max_width_chars(48);
+        value.set_max_width_chars(36);
     }
     cell
 }

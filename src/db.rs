@@ -33,7 +33,8 @@ CREATE TABLE IF NOT EXISTS folders (
   name TEXT,
   parent_id INTEGER REFERENCES folders(id),
   imported_root BOOLEAN NOT NULL DEFAULT 0,
-  watched BOOLEAN NOT NULL DEFAULT 0
+  watched BOOLEAN NOT NULL DEFAULT 0,
+  raw_jpeg_pair_count INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS albums (
   id INTEGER PRIMARY KEY,

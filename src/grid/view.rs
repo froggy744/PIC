@@ -193,6 +193,7 @@ impl Gallery {
         let sectioned_folder = SectionedFolderView::new(
             current_photos.clone(),
             group_ranges.clone(),
+            group_mode.clone(),
             selection.clone(),
             current_columns.clone(),
             tile_width.clone(),

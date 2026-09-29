@@ -3,3 +3,4 @@ target/
 dist/
 build-logs/
 .flatpak-builder/
+logs/

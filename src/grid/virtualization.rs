@@ -846,9 +846,13 @@ impl Gallery {
             self.begin_center_zoom_anchor();
         }
         self.pending_zoom_width.set(Some(width));
+        let layout_generation = self.sectioned_folder.layout_switch_generation.get();
         if leading {
             let this = self.clone();
             glib::idle_add_local_once(move || {
+                if this.sectioned_folder.layout_switch_generation.get() != layout_generation {
+                    return;
+                }
                 if let Some(width) = this.pending_zoom_width.take() {
                     this.apply_zoom(width);
                 }
@@ -859,6 +863,9 @@ impl Gallery {
         }
         let this = self.clone();
         let source = glib::timeout_add_local(std::time::Duration::from_millis(150), move || {
+            if this.sectioned_folder.layout_switch_generation.get() != layout_generation {
+                return glib::ControlFlow::Break;
+            }
             this.zoom_reflow_source.borrow_mut().take();
             if let Some(width) = this.pending_zoom_width.take() {
                 this.apply_zoom(width);
@@ -2252,6 +2259,9 @@ impl Gallery {
                 (self.selected)(None);
             }
             self.current_photos.replace(reordered.clone());
+            if self.sectioned_folder.is_wall() {
+                self.rebuild_group_ranges();
+            }
             self.store.splice(0, self.store.n_items(), &reordered);
             if self.collage_selection_mode.get() {
                 self.restore_collage_selection();
@@ -2289,6 +2299,9 @@ impl Gallery {
         }
         let objects: Vec<PhotoObject> = photos.iter().map(PhotoObject::from_photo).collect();
         self.current_photos.replace(objects.clone());
+        if self.sectioned_folder.is_wall() {
+            self.rebuild_group_ranges();
+        }
         self.store.splice(0, self.store.n_items(), &objects);
         if self.collage_selection_mode.get() {
             self.restore_collage_selection();
@@ -2361,14 +2374,22 @@ impl Gallery {
                 .collect();
             offset.set(end);
 
-            if !initialized.replace(true) {
+            let first_batch = !initialized.replace(true);
+            if first_batch {
                 if !collage_selection_mode.get() {
                     selected(None);
                 }
                 current_photos.replace(objects.clone());
-                store.splice(0, store.n_items(), &objects);
             } else {
                 current_photos.borrow_mut().extend(objects.iter().cloned());
+            }
+            // Publish matching ranges before ListStore notifies viewport listeners.
+            if sectioned_folder.is_wall() {
+                rebuild_group_ranges_for(&current_photos, &group_mode, &group_date, &group_ranges);
+            }
+            if first_batch {
+                store.splice(0, store.n_items(), &objects);
+            } else {
                 store.splice(store.n_items(), 0, &objects);
             }
 
@@ -2473,6 +2494,9 @@ impl Gallery {
         self.current_photos
             .borrow_mut()
             .extend(objects.iter().cloned());
+        if self.sectioned_folder.is_wall() {
+            self.rebuild_group_ranges();
+        }
         self.store.splice(self.store.n_items(), 0, &objects);
         if self.group_mode.get() != GroupMode::None {
             self.rebuild_group_ranges();

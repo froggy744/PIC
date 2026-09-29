@@ -210,6 +210,36 @@ impl Gallery {
             return;
         }
         let anchor = self.capture_view_anchor();
+        let chosen_width = self.current_zoom_width();
+        self.sectioned_folder.layout_switch_generation.set(
+            self.sectioned_folder
+                .layout_switch_generation
+                .get()
+                .wrapping_add(1),
+        );
+        if let Some(source) = self.zoom_reflow_source.borrow_mut().take() {
+            source.remove();
+        }
+        self.pending_zoom_width.set(None);
+        self.zoom_animation_generation
+            .set(self.zoom_animation_generation.get().wrapping_add(1));
+        self.zoom_anchor_restore_generation
+            .set(self.zoom_anchor_restore_generation.get().wrapping_add(1));
+        self.stable_zoom_anchor.set(None);
+        self.zoom_anchor.set(None);
+        self.zoom_animation_layout_width.set(None);
+        for (tile, _) in self.zoom_scale_tiles.borrow_mut().drain(..) {
+            tile.set_presentation_scale(1.0);
+        }
+        set_grid_zoom_animation_active(false);
+        if chosen_width != self.tile_width.get() {
+            self.tile_width.set(chosen_width);
+            self.tile_height.set(
+                (DEFAULT_TILE_HEIGHT as f64 * chosen_width as f64 / DEFAULT_TILE_WIDTH as f64)
+                    .round() as i32,
+            );
+            (self.on_zoom_changed)(chosen_width);
+        }
         self.cancel_resize_flip();
         self.sectioned_folder.cancel_zoom_settle();
         self.sectioned_folder.cancel_scroll_animation();

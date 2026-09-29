@@ -309,6 +309,7 @@ struct SectionedFolderView {
     group_mode: Rc<Cell<GroupMode>>,
     wall_state: RefCell<PhotoWallState>,
     model_generation: Cell<u64>,
+    layout_switch_generation: Cell<u64>,
     root: gtk::Fixed,
     spacer: gtk::Box,
     current_photos: Rc<RefCell<Vec<PhotoObject>>>,
@@ -402,6 +403,7 @@ impl SectionedFolderView {
             group_mode,
             wall_state: RefCell::new(PhotoWallState::default()),
             model_generation: Cell::new(0),
+            layout_switch_generation: Cell::new(0),
             root,
             spacer,
             current_photos,
@@ -679,7 +681,7 @@ impl SectionedFolderView {
                 // update_layout invalidates geometry when columns actually change.
                 let anchor = if this.is_wall()
                     && this.geometry_width.get() > 1
-                    && last_width_for_tick.get() > 0
+                    && this.geometry_width.get() != width
                 {
                     this.capture_center_anchor()
                 } else {

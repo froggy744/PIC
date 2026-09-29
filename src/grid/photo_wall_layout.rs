@@ -99,6 +99,10 @@ impl PhotoWallLayout {
                 // Stop on reaching the target width. A single wide image still
                 // produces a row, and tiny viewports never gain negative space.
                 while end < section_end {
+                    // Leave positive image space before adding another gap.
+                    if end > start && WALL_GAP * (end - start) as f64 >= usable {
+                        break;
+                    }
                     sum += ratio(aspect_ratios[end]);
                     end += 1;
                     if sum * target + WALL_GAP * (end - start - 1) as f64 >= usable {
@@ -271,6 +275,20 @@ mod tests {
             }
         }
     }
+    #[test]
+    fn gaps_never_overflow_a_narrow_viewport() {
+        for width in [1.0, 43.0, 50.0] {
+            let layout = layout(&[0.001; 20], width, 100.0);
+            assert_eq!(layout.items.len(), 20);
+            for item in &layout.items {
+                assert!(
+                    item.x + item.width <= width + 1e-9,
+                    "gap placed item past edge: {item:?}"
+                );
+            }
+        }
+    }
+
     #[test]
     fn invalid_ratios_are_finite() {
         let l = layout(&[0.0, -1.0, f64::NAN, f64::INFINITY], 800.0, 100.0);

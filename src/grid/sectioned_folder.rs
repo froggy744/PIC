@@ -1309,7 +1309,7 @@ impl SectionedFolderView {
 
         let new_scroll = self.scroll_position();
         let scroll_shift = new_scroll - old_scroll;
-        let mut motion = Vec::<(SquareTile, f32, f32)>::new();
+        let mut motion = Vec::<(SquareTile, f64, f64, f64, f64)>::new();
         for (index, entry) in self.live_tiles.borrow().iter() {
             let Some((old_x, old_y, _old_width, _old_height)) =
                 snapshot.tile_rects.get(index).copied()
@@ -1317,15 +1317,24 @@ impl SectionedFolderView {
                 continue;
             };
             let (new_x, new_y) = self.root.child_position(&entry.tile);
-            let dx = (old_x - new_x) as f32;
-            let dy = (old_y + scroll_shift - new_y) as f32;
+            let start_x = old_x;
+            let start_y = old_y + scroll_shift;
             // Tiles that stayed in the same cell are left entirely alone.
-            if dx.abs() < 0.5 && dy.abs() < 0.5 {
+            if (start_x - new_x).abs() < 0.5 && (start_y - new_y).abs() < 0.5 {
                 continue;
             }
-            entry.tile.set_presentation_offset(dx, dy);
+            // Animate the GtkFixed child position instead of translating the
+            // tile's internal snapshot. A widget clips its own snapshot bounds,
+            // so large FLIP offsets could clip the whole photo for several
+            // frames while its contents were translated outside those bounds.
             entry.tile.set_opacity(1.0);
-            motion.push((entry.tile.clone(), dx, dy));
+            self.root.move_(&entry.tile, start_x, start_y);
+            motion.push((entry.tile.clone(), start_x, start_y, new_x, new_y));
+        }
+        // Tiles without a captured prior rectangle (newly virtualized cells)
+        // are already at their destination. Keep them visible immediately.
+        for entry in self.live_tiles.borrow().values() {
+            entry.tile.set_opacity(1.0);
         }
         if motion.is_empty() {
             return;
@@ -1349,11 +1358,14 @@ impl SectionedFolderView {
             let t = (started.elapsed().as_secs_f64() * 1000.0 / duration_ms).clamp(0.0, 1.0);
             // Ease out without overshoot; don't animate tile dimensions.
             let remaining = (1.0 - t).powi(3) as f32;
-            for (tile, dx, dy) in &motion {
-                tile.set_presentation_offset(dx * remaining, dy * remaining);
+            for (tile, start_x, start_y, end_x, end_y) in &motion {
+                let x = end_x + (start_x - end_x) * f64::from(remaining);
+                let y = end_y + (start_y - end_y) * f64::from(remaining);
+                view.root.move_(tile, x, y);
             }
             if t >= 1.0 {
-                for (tile, _, _) in &motion {
+                for (tile, _, _, end_x, end_y) in &motion {
+                    view.root.move_(tile, *end_x, *end_y);
                     tile.set_presentation_offset(0.0, 0.0);
                 }
                 view.reflow_active.set(false);

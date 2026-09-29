@@ -497,6 +497,9 @@ fn configure_action_button<W: IsA<gtk::Widget>>(button: &W) {
     widget.set_vexpand(false);
     widget.set_halign(gtk::Align::Center);
     widget.set_valign(gtk::Align::Center);
+    // Keep toolbar actions visually quiet until hover/focus, while retaining
+    // GTK's theme-provided hover, focus and insensitive states.
+    widget.add_css_class("flat");
     widget.add_css_class("photo-action-button");
 }
 

@@ -165,6 +165,11 @@ impl InfoBar {
         rating_popover.set_child(Some(&rating_box));
         rating.set_popover(Some(&rating_popover));
 
+        let rating_hover = gtk::EventControllerMotion::new();
+        let rating_for_hover = rating.clone();
+        rating_hover.connect_enter(move |_, _, _| rating_for_hover.popup());
+        rating.add_controller(rating_hover);
+
         let edit = gtk::Button::from_icon_name("document-edit-symbolic");
         configure_action_button(&edit);
         edit.set_tooltip_text(Some("Open or close photo editor"));
@@ -494,12 +499,12 @@ fn configure_action_button<W: IsA<gtk::Widget>>(button: &W) {
     widget.set_vexpand(false);
     widget.set_halign(gtk::Align::Center);
     widget.set_valign(gtk::Align::Center);
-    // Keep toolbar actions visually quiet until hover/focus, while retaining
-    // GTK's theme-provided hover, focus and insensitive states.
+    // MenuButton draws its own inner button. Giving its outer widget the
+    // theme's action-button surface paints a second badge on hover.
     if !widget.is::<gtk::MenuButton>() {
         widget.add_css_class("flat");
+        widget.add_css_class("photo-action-button");
     }
-    widget.add_css_class("photo-action-button");
 }
 
 fn set_metric_values<const N: usize>(details: &gtk::Box, values: [impl AsRef<str>; N]) {

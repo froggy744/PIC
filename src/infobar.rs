@@ -165,11 +165,6 @@ impl InfoBar {
         rating_popover.set_child(Some(&rating_box));
         rating.set_popover(Some(&rating_popover));
 
-        let rating_hover = gtk::EventControllerMotion::new();
-        let rating_for_hover = rating.clone();
-        rating_hover.connect_enter(move |_, _, _| rating_for_hover.popup());
-        rating.add_controller(rating_hover);
-
         let edit = gtk::Button::from_icon_name("document-edit-symbolic");
         configure_action_button(&edit);
         edit.set_tooltip_text(Some("Open or close photo editor"));

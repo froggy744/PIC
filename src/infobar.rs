@@ -136,6 +136,7 @@ impl InfoBar {
 
         let rating = gtk::MenuButton::new();
         rating.set_icon_name("non-starred-symbolic");
+        rating.set_has_frame(false);
         configure_action_button(&rating);
         rating.add_css_class("rating-btn");
         rating.set_tooltip_text(Some("Rate photo"));
@@ -179,6 +180,7 @@ impl InfoBar {
 
         let add_to_album = gtk::MenuButton::new();
         add_to_album.set_icon_name("folder-new-symbolic");
+        add_to_album.set_has_frame(false);
         configure_action_button(&add_to_album);
         add_to_album.set_tooltip_text(Some("Add to Album"));
 

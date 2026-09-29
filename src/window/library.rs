@@ -83,6 +83,18 @@ fn refresh_grid_inner(
     {
         return;
     }
+
+    let pair_mode = crate::image_format::raw_jpeg_pair_mode(&connection.borrow());
+    gallery.set_raw_jpeg_mode(pair_mode);
+    let pair_folders = if search.is_empty()
+        && matches!(filter, sidebar::SidebarFilter::Folder(_))
+    {
+        db::raw_jpeg_pair_folder_ids(&connection.borrow()).unwrap_or_default()
+    } else {
+        std::collections::HashSet::new()
+    };
+    gallery.set_raw_jpeg_pair_folders(pair_folders);
+
     let generation = REFRESH_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
     let search = search.to_owned();
     let (sender, receiver) = std::sync::mpsc::channel();

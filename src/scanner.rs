@@ -112,6 +112,7 @@ fn scan_with_control(
     let indexed = db::photo_fingerprints(&connection)?;
     let root_file = crate::source::file(root);
     let (files, discovered_folders) = collect_files(&root_file, events, control)?;
+    let raw_jpeg_pair_counts = raw_jpeg_pair_counts(&files, &discovered_folders);
     if control.is_cancelled() {
         send(events, ScanEvent::Cancelled { imported: 0 });
         return Ok(0);
@@ -156,6 +157,9 @@ fn scan_with_control(
         }
         transaction.commit()?;
     }
+    // Pair detection reuses the discovery result that is already in memory.
+    // Header visibility therefore never triggers a filesystem/network rescan.
+    db::set_raw_jpeg_pair_counts(&connection, &raw_jpeg_pair_counts)?;
 
     let mut prepared = Vec::with_capacity(32);
     for (file, info, folder_path) in files {
@@ -549,6 +553,55 @@ fn collect_files(
         send(events, ScanEvent::DiscoveryProgress { found: files.len() });
     }
     Ok((files, folders))
+}
+
+fn raw_jpeg_pair_counts(
+    files: &[(gio::File, gio::FileInfo, String)],
+    discovered_folders: &[(String, Option<String>)],
+) -> HashMap<String, i64> {
+    #[derive(Default)]
+    struct PairState {
+        raw: bool,
+        jpeg: bool,
+    }
+
+    let mut counts = discovered_folders
+        .iter()
+        .map(|(path, _)| (path.clone(), 0_i64))
+        .collect::<HashMap<_, _>>();
+    let mut pairs = HashMap::<(String, String), PairState>::new();
+
+    for (_, info, folder_path) in files {
+        let name = info.name();
+        let path = Path::new(&name);
+        let Some(format) = crate::image_format::for_path(path) else {
+            continue;
+        };
+        if format.decoder != crate::image_format::DecoderKind::Raw && format.id != "jpeg" {
+            continue;
+        }
+        let stem = path
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        if stem.is_empty() {
+            continue;
+        }
+        let state = pairs.entry((folder_path.clone(), stem)).or_default();
+        if format.decoder == crate::image_format::DecoderKind::Raw {
+            state.raw = true;
+        } else if format.id == "jpeg" {
+            state.jpeg = true;
+        }
+    }
+
+    for ((folder_path, _), state) in pairs {
+        if state.raw && state.jpeg {
+            *counts.entry(folder_path).or_insert(0) += 1;
+        }
+    }
+    counts
 }
 
 fn report_discovery_progress(

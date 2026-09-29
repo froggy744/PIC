@@ -132,6 +132,8 @@ fn refresh_grid_inner(
         };
 
         retain_enabled_formats(&connection, &mut photos);
+        let raw_jpeg_mode = crate::image_format::raw_jpeg_pair_mode(&connection);
+        crate::image_format::retain_raw_jpeg_pair_mode(&mut photos, raw_jpeg_mode);
         limit_recently_added(&connection, filter, &mut photos);
         apply_rating_filter(&mut photos, rating_filter);
         if folder_stream {

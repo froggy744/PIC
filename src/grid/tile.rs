@@ -405,6 +405,19 @@ mod square_tile {
 mod filename_caption_tests {
     use super::*;
 
+    #[test]
+    fn rectangular_images_keep_axes_with_and_without_captions() {
+        for (width, height) in [(240, 100), (80, 160)] {
+            for captions in [false, true] {
+                let caption = if captions { 24 } else { 0 };
+                let geometry = tile_layout(width, height, width, height + caption, captions);
+                assert_eq!((geometry.frame_width, geometry.frame_height), (width, height));
+                assert_eq!(geometry.caption_y, height);
+                assert_eq!(geometry.block_height, height + caption);
+            }
+        }
+    }
+
     /// The four smallest zoom-ladder levels that were reported to render the
     /// thumbnail visibly non-square once the filename row was present.
     const VERIFY_SIZES: [i32; 4] = [100, 117, 137, 160];

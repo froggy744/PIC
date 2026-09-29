@@ -176,6 +176,11 @@ impl Gallery {
         let show_file_names = Rc::new(Cell::new(false));
         let show_file_names_for_setup = show_file_names.clone();
         let zoom_animations_enabled = Rc::new(Cell::new(true));
+        let raw_jpeg_pair_folders = Rc::new(RefCell::new(HashSet::<i64>::new()));
+        let raw_jpeg_mode = Rc::new(Cell::new(crate::image_format::RawJpegPairMode::Both));
+        let raw_jpeg_mode_changed: Rc<
+            RefCell<Option<Rc<dyn Fn(crate::image_format::RawJpegPairMode)>>>,
+        > = Rc::new(RefCell::new(None));
 
         // Folder mode keeps the same flat PhotoObject model as the main GridView,
         // but renders it through a section-aware virtualized surface so folder
@@ -194,6 +199,9 @@ impl Gallery {
             tile_height.clone(),
             fit_whole_photo.clone(),
             show_file_names.clone(),
+            raw_jpeg_pair_folders,
+            raw_jpeg_mode,
+            raw_jpeg_mode_changed,
             activate.clone(),
             context_menu.clone(),
             unavailable.clone(),
@@ -848,6 +856,22 @@ impl Gallery {
         };
         gallery.replace(photos);
         gallery
+    }
+
+    pub fn set_raw_jpeg_pair_folders(&self, folder_ids: HashSet<i64>) {
+        self.sectioned_folder.set_raw_jpeg_pair_folders(folder_ids);
+    }
+
+    pub fn set_raw_jpeg_mode(&self, mode: crate::image_format::RawJpegPairMode) {
+        self.sectioned_folder.set_raw_jpeg_mode(mode);
+    }
+
+    pub fn set_raw_jpeg_mode_changed_handler(
+        &self,
+        handler: impl Fn(crate::image_format::RawJpegPairMode) + 'static,
+    ) {
+        self.sectioned_folder
+            .set_raw_jpeg_mode_changed_handler(Rc::new(handler));
     }
 
     pub fn set_zoom_animations_enabled(&self, enabled: bool) {

@@ -671,8 +671,21 @@ impl SectionedFolderView {
                 // Width-only motion with the same column count does not change
                 // vertical section geometry. Refresh only to stretch headers;
                 // update_layout invalidates geometry when columns actually change.
+                let anchor=if this.is_wall() {this.capture_center_anchor()} else {None};
                 this.refresh();
+                if let Some((photo_id,offset))=anchor {
+                    let generation=this.wall_state.borrow().generation;
+                    let weak=Rc::downgrade(&this);
+                    let attempts=Cell::new(0);
+                    this.root.add_tick_callback(move |_,_| {
+                        let Some(surface)=weak.upgrade() else {return glib::ControlFlow::Break};
+                        if surface.wall_state.borrow().generation!=generation {return glib::ControlFlow::Break;}
+                        attempts.set(attempts.get()+1);
+                        if surface.restore_anchor(photo_id,offset) || attempts.get()>=12 {glib::ControlFlow::Break} else {glib::ControlFlow::Continue}
+                    });
+                }
             }
+            if this.is_wall() && this.geometry_width.get()==0 {this.refresh();}
             glib::ControlFlow::Continue
         });
 
@@ -2208,6 +2221,7 @@ impl Gallery {
     }
 
     pub fn refresh_sectioned_folder(self: &Rc<Self>) {
+        if self.layout()==PhotoLayout::PhotoWall {self.sectioned_folder.refresh();return;}
         self.sectioned_folder.refresh_model();
     }
 

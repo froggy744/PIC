@@ -246,7 +246,7 @@ fn scrolled_ancestor(widget: &gtk::Widget) -> Option<gtk::ScrolledWindow> {
 impl Gallery {
     fn active_zoom_root(&self) -> gtk::Widget {
         let folder_mode = self.group_mode.get() == GroupMode::Folder;
-        if folder_mode && crate::grid::sectioned_folder_view_enabled() {
+        if self.using_virtual_photo_surface() {
             self.folder_sectioned_root.clone().upcast()
         } else if folder_mode && !crate::grid::folder_gridview_experiment_enabled() {
             self.folder_root.clone().upcast()
@@ -343,7 +343,7 @@ impl Gallery {
 
     fn capture_center_zoom_anchor(&self) -> Option<ZoomAnchor> {
         let folder_mode = self.group_mode.get() == GroupMode::Folder;
-        if folder_mode && crate::grid::sectioned_folder_view_enabled() {
+        if self.using_virtual_photo_surface() {
             return self
                 .sectioned_folder
                 .capture_center_anchor()
@@ -584,6 +584,7 @@ impl Gallery {
     }
 
     pub fn request_slider_zoom(self: &Rc<Self>, width: i32) {
+        if self.layout()==PhotoLayout::PhotoWall {self.apply_wall_zoom(width);return;}
         let width = nearest_zoom_level(width).clamp(MIN_TILE_WIDTH, MAX_TILE_WIDTH);
         self.auto_default_zoom.set(false);
 
@@ -632,8 +633,7 @@ impl Gallery {
     /// size. Falls back to the ladder level nearest the legacy fixed default
     /// before the first real layout is known.
     pub fn reset_zoom(self: &Rc<Self>) {
-        let folder_sectioned_mode = self.group_mode.get() == GroupMode::Folder
-            && crate::grid::sectioned_folder_view_enabled();
+        let folder_sectioned_mode = self.using_virtual_photo_surface();
         let folder_list_mode = self.group_mode.get() == GroupMode::Folder
             && !folder_sectioned_mode
             && !crate::grid::folder_gridview_experiment_enabled();
@@ -806,6 +806,7 @@ impl Gallery {
     /// crossing several column boundaries does not rebuild the Folder rows per
     /// notch.
     pub fn request_zoom(self: &Rc<Self>, width: i32) {
+        if self.layout()==PhotoLayout::PhotoWall {self.apply_wall_zoom(width);return;}
         // Snap every request onto the canonical ladder so +/-, Ctrl+wheel and
         // Reset converge on the same sizes no matter where they start.
         let width = nearest_zoom_level(width).clamp(MIN_TILE_WIDTH, MAX_TILE_WIDTH);
@@ -853,8 +854,7 @@ impl Gallery {
         let target_width = width.clamp(MIN_TILE_WIDTH, MAX_TILE_WIDTH);
         let start_width = self.tile_width.get().max(1);
         if std::env::var_os("PICASA_TRACE").is_some() {
-            let folder_sectioned = self.group_mode.get() == GroupMode::Folder
-                && crate::grid::sectioned_folder_view_enabled();
+            let folder_sectioned = self.using_virtual_photo_surface();
             let (grid_width, grid_height, scroll) = if folder_sectioned {
                 (
                     self.folder_sectioned_root.width(),
@@ -884,7 +884,7 @@ impl Gallery {
         }
 
         let folder_mode = self.group_mode.get() == GroupMode::Folder;
-        if folder_mode && crate::grid::sectioned_folder_view_enabled() {
+        if self.using_virtual_photo_surface() {
             let start_height = self.tile_height.get().max(1);
             let target_height = ((start_height as f64)
                 * target_width as f64
@@ -1172,6 +1172,7 @@ impl Gallery {
     /// Folder motion pump and prevents fast scrollbar movement from filling the
     /// worker queue with viewports the user has already passed.
     pub fn queue_visible_grid_cached_tiles_async(&self, budget: usize) -> usize {
+        if self.layout()==PhotoLayout::PhotoWall {return 0;}
         if budget == 0
             || (self.group_mode.get() == GroupMode::Folder
                 && (crate::grid::sectioned_folder_view_enabled()
@@ -1230,6 +1231,7 @@ impl Gallery {
     /// visible tiles against the RAM cache every frame paints exactly those
     /// finished thumbnails while the scrub is still moving.
     pub fn apply_visible_grid_cached_paintables(&self) -> usize {
+        if self.layout()==PhotoLayout::PhotoWall {return 0;}
         if (self.group_mode.get() == GroupMode::Folder
             && (crate::grid::sectioned_folder_view_enabled()
                 || !crate::grid::folder_gridview_experiment_enabled()))
@@ -1281,6 +1283,7 @@ impl Gallery {
         viewport_height: f64,
         budget: usize,
     ) -> usize {
+        if self.layout()==PhotoLayout::PhotoWall {return 0;}
         if budget == 0
             || (self.group_mode.get() == GroupMode::Folder
                 && (crate::grid::sectioned_folder_view_enabled()
@@ -1341,6 +1344,7 @@ impl Gallery {
     }
 
     fn visible_grid_photo_index_span(&self) -> Option<(usize, usize)> {
+        if self.layout()==PhotoLayout::PhotoWall {return None;}
         if (self.group_mode.get() == GroupMode::Folder
             && (crate::grid::sectioned_folder_view_enabled()
                 || !crate::grid::folder_gridview_experiment_enabled()))
@@ -1380,6 +1384,7 @@ impl Gallery {
     /// the correct RAM-cached thumbnail or restores the normal placeholder and
     /// queues the correct visible thumbnail.
     pub fn refresh_visible_grid_tiles(&self) -> usize {
+        if self.layout()==PhotoLayout::PhotoWall {return 0;}
         if (self.group_mode.get() == GroupMode::Folder
             && (crate::grid::sectioned_folder_view_enabled()
                 || !crate::grid::folder_gridview_experiment_enabled()))
@@ -1413,6 +1418,7 @@ impl Gallery {
     /// Library/Favourites/Albums/Search can scroll into already-decoded RAM
     /// paintables just like Folder mode.
     pub fn prefetch_grid_cached_tiles(&self, budget: usize, direction: f64) -> usize {
+        if self.layout()==PhotoLayout::PhotoWall {return 0;}
         if budget == 0
             || (self.group_mode.get() == GroupMode::Folder
                 && (crate::grid::sectioned_folder_view_enabled()
@@ -1470,6 +1476,7 @@ impl Gallery {
     /// occupies its smaller quota, so a scrollbar jump cannot be blocked by
     /// thumbnails for rows the user has already passed.
     pub fn queue_visible_folder_cached_tiles_async(&self, budget: usize) -> usize {
+        if self.layout()==PhotoLayout::PhotoWall {if let Some(scroll)=self.sectioned_folder.scroll.borrow().as_ref() {let a=scroll.vadjustment(); return self.wall_target_requests(a.value(),a.page_size(),budget);} return 0;}
         if budget == 0 || self.group_mode.get() != GroupMode::Folder {
             return 0;
         }
@@ -1516,6 +1523,7 @@ impl Gallery {
     /// thumbnails onto currently visible rows during a direct scrub without
     /// replacing the model-derived decode target.
     pub fn apply_visible_folder_cached_paintables(&self) -> usize {
+        if self.layout()==PhotoLayout::PhotoWall {return self.wall_apply_cached();}
         if self.group_mode.get() != GroupMode::Folder {
             return 0;
         }
@@ -1571,6 +1579,7 @@ impl Gallery {
         viewport_height: f64,
         budget: usize,
     ) -> usize {
+        if self.layout()==PhotoLayout::PhotoWall {return self.wall_target_requests(scroll_y,viewport_height,budget);}
         if budget == 0 || self.group_mode.get() != GroupMode::Folder {
             return 0;
         }
@@ -1735,6 +1744,7 @@ impl Gallery {
     /// GTK's realized row pool. That gives a scrollbar jump several screens of
     /// cache runway even before GtkListView has created/rebound those widgets.
     pub fn prefetch_folder_cached_tiles(&self, budget: usize, direction: f64) -> usize {
+        if self.layout()==PhotoLayout::PhotoWall {return self.wall_prefetch(budget,direction);}
         if budget == 0 || self.group_mode.get() != GroupMode::Folder {
             return 0;
         }
@@ -1851,6 +1861,7 @@ impl Gallery {
     }
 
     pub fn refresh_thumbnails(&self) {
+        if self.layout()==PhotoLayout::PhotoWall {self.sectioned_folder.invalidate_geometry();}
         let mut tiles = Vec::new();
         collect_tiles(self.root.upcast_ref(), &mut tiles);
         collect_tiles(self.folder_root.upcast_ref(), &mut tiles);
@@ -1969,7 +1980,7 @@ impl Gallery {
         let generation = self.replace_generation.get().wrapping_add(1);
         self.replace_generation.set(generation);
         let folder_mode = self.group_mode.get() == GroupMode::Folder;
-        if folder_mode && crate::grid::sectioned_folder_view_enabled() {
+        if self.using_virtual_photo_surface() {
             self.sectioned_folder.set_scroll_y(scroll_y);
             self.folder_sectioned_root.grab_focus();
         } else {
@@ -2143,6 +2154,9 @@ impl Gallery {
                             && object.path() == photo.path
                             && object.mtime() == photo.mtime.unwrap_or_default()
                             && object.size_bytes() == photo.size_bytes.unwrap_or_default()
+                            && object.width() == photo.width.unwrap_or_default()
+                            && object.height() == photo.height.unwrap_or_default()
+                            && object.rotation() == photo.rotation
                     })
         };
         if unchanged {

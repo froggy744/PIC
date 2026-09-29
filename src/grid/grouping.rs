@@ -88,6 +88,7 @@ impl Gallery {
             self.update_group_header_for_scroll(self.last_scroll_y.get());
         }
 
+        if self.layout()==PhotoLayout::PhotoWall {self.sectioned_folder.refresh_model();}
         if let Some(handler) = self.folder_view_changed.borrow().as_ref() {
             handler(mode == GroupMode::Folder);
         }
@@ -119,8 +120,7 @@ impl Gallery {
     /// mode reads the virtualized ListView row at the viewport edge; other
     /// modes keep the existing GridView geometry.
     pub fn photo_for_scroll_position(&self, scroll_y: f64) -> Option<PhotoObject> {
-        if self.group_mode.get() == GroupMode::Folder
-            && crate::grid::sectioned_folder_view_enabled()
+        if self.using_virtual_photo_surface()
         {
             return self.sectioned_folder.photo_for_scroll_position(scroll_y);
         }
@@ -290,7 +290,7 @@ impl Gallery {
             return false;
         }
         self.pending_folder_target.replace(None);
-        
+
         true
     }
 

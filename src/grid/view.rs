@@ -211,6 +211,15 @@ impl Gallery {
             zoom_animations_enabled.clone(),
         );
         let folder_sectioned_root = sectioned_folder.root().clone();
+        let weak_surface=Rc::downgrade(&sectioned_folder);
+        store.connect_items_changed(move |_,_,_,_| {
+            if let Some(surface)=weak_surface.upgrade() {
+                surface.invalidate_geometry();
+                let weak=Rc::downgrade(&surface);
+                glib::idle_add_local_once(move || {if let Some(surface)=weak.upgrade() {if surface.is_wall() {surface.refresh_model();}}});
+            }
+        });
+
         factory.connect_setup(move |_, object| {
             let Some(list_item) = object.downcast_ref::<gtk::ListItem>() else {
                 return;
@@ -900,6 +909,13 @@ impl Gallery {
     }
 
     pub fn update_width(&self, width: i32) {
+        if self.layout()==PhotoLayout::PhotoWall {
+            if width!=self.last_layout_width.get() {
+                self.last_layout_width.set(width);
+                self.sectioned_folder.refresh();
+            }
+            return;
+        }
         // While a zoom animation is active, ignore transient width feedback
         // from GridView/ScrolledWindow reflow and keep using the outer gallery
         // width captured before the animation began. This prevents the column

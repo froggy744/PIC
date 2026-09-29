@@ -33,8 +33,7 @@ impl Gallery {
     }
 
     pub fn scroll_position(&self) -> f64 {
-        if self.group_mode.get() == GroupMode::Folder
-            && crate::grid::sectioned_folder_view_enabled()
+        if self.using_virtual_photo_surface()
         {
             return self.sectioned_folder.scroll_position();
         }
@@ -55,8 +54,7 @@ impl Gallery {
     /// value restores the exact view, while this id restores keyboard focus to
     /// the middle of what the user was looking at.
     pub fn viewport_center_photo(&self) -> Option<PhotoObject> {
-        if self.group_mode.get() == GroupMode::Folder
-            && crate::grid::sectioned_folder_view_enabled()
+        if self.using_virtual_photo_surface()
         {
             return self.sectioned_folder.viewport_center_photo();
         }
@@ -108,8 +106,7 @@ impl Gallery {
         else {
             return false;
         };
-        if self.group_mode.get() == GroupMode::Folder
-            && crate::grid::sectioned_folder_view_enabled()
+        if self.using_virtual_photo_surface()
         {
             self.selection.select_item(position as u32, true);
             let revealed = self
@@ -244,8 +241,7 @@ impl Gallery {
         else {
             return;
         };
-        if self.group_mode.get() == GroupMode::Folder
-            && crate::grid::sectioned_folder_view_enabled()
+        if self.using_virtual_photo_surface()
         {
             self.selection.select_item(position as u32, true);
             self.sectioned_folder.set_scroll_y(scroll_y);
@@ -301,8 +297,7 @@ impl Gallery {
         else {
             return;
         };
-        if self.group_mode.get() == GroupMode::Folder
-            && crate::grid::sectioned_folder_view_enabled()
+        if self.using_virtual_photo_surface()
         {
             self.sectioned_folder.set_scroll_y(scroll_y);
             return;
@@ -378,6 +373,7 @@ impl Gallery {
         let mut tiles = Vec::new();
         collect_tiles(self.root.upcast_ref(), &mut tiles);
         collect_tiles(self.folder_root.upcast_ref(), &mut tiles);
+        collect_tiles(self.folder_sectioned_root.upcast_ref(), &mut tiles);
         for tile in tiles {
             let matches = tile
                 .imp()
@@ -398,6 +394,7 @@ impl Gallery {
     /// aperture). Updating only width/height leaves both the selected object
     /// and its infobar stale until the entire view is rebuilt.
     pub fn update_photo(&self, updated: &Photo) {
+        if self.layout()==PhotoLayout::PhotoWall {self.sectioned_folder.invalidate_geometry();}
         if let Some(photo) = self
             .current_photos
             .borrow()
@@ -566,8 +563,7 @@ impl Gallery {
     }
 
     pub fn grab_focus(&self) {
-        if self.group_mode.get() == GroupMode::Folder
-            && crate::grid::sectioned_folder_view_enabled()
+        if self.using_virtual_photo_surface()
         {
             self.folder_sectioned_root.grab_focus();
         } else if self.group_mode.get() == GroupMode::Folder
@@ -583,8 +579,7 @@ impl Gallery {
     /// shows `folder_root` and hides `gallery.root`, so focus helpers must not
     /// hardcode the GridView.
     pub fn visible_root(&self) -> gtk::Widget {
-        if self.group_mode.get() == GroupMode::Folder
-            && crate::grid::sectioned_folder_view_enabled()
+        if self.using_virtual_photo_surface()
         {
             self.folder_sectioned_root.clone().upcast()
         } else if self.group_mode.get() == GroupMode::Folder
@@ -699,8 +694,7 @@ impl Gallery {
             if !matches {
                 continue;
             }
-            if self.group_mode.get() == GroupMode::Folder
-                && crate::grid::sectioned_folder_view_enabled()
+            if self.using_virtual_photo_surface()
             {
                 self.selection.select_item(position, true);
                 let revealed = self.sectioned_folder.scroll_to_index_centered_now(position);
@@ -758,8 +752,7 @@ impl Gallery {
         };
 
         self.selection.select_item(photo_position as u32, true);
-        if self.group_mode.get() == GroupMode::Folder
-            && crate::grid::sectioned_folder_view_enabled()
+        if self.using_virtual_photo_surface()
         {
             return self
                 .sectioned_folder
@@ -787,8 +780,7 @@ impl Gallery {
     /// Search-only Folder reveal: center the folder header in the viewport so
     /// the destination name remains visible instead of sitting against the top edge.
     pub fn scroll_to_folder_centered(&self, folder_id: i64, folder_path: &str) -> bool {
-        if self.group_mode.get() == GroupMode::Folder
-            && crate::grid::sectioned_folder_view_enabled()
+        if self.using_virtual_photo_surface()
         {
             let scope = folder_navigation_scope(
                 self.folder_catalog
@@ -822,8 +814,7 @@ impl Gallery {
         }
         let position = count - 1;
         self.selection.select_item(position, true);
-        if self.group_mode.get() == GroupMode::Folder
-            && crate::grid::sectioned_folder_view_enabled()
+        if self.using_virtual_photo_surface()
         {
             self.sectioned_folder.scroll_to_index(position, false);
             if let Some(photo) = self.store.item(position).and_downcast::<PhotoObject>() {

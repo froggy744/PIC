@@ -181,13 +181,236 @@ impl Gallery {
         if self.layout() == layout {
             return;
         }
+        let anchor = self.capture_view_anchor();
         self.cancel_resize_flip();
         self.sectioned_folder.cancel_zoom_settle();
         self.sectioned_folder.cancel_scroll_animation();
         self.sectioned_folder.layout_mode.set(layout);
         self.sectioned_folder.refresh_model();
+        if layout == PhotoLayout::Grid {
+            self.last_layout_width.set(0);
+            self.update_width(
+                self.last_layout_width
+                    .get()
+                    .max(self.folder_sectioned_root.width())
+                    .max(self.root.width()),
+            );
+        }
         if let Some(changed) = self.folder_view_changed.borrow().as_ref() {
             changed(self.group_mode.get() == GroupMode::Folder);
         }
+        if let Some(anchor) = anchor {
+            self.restore_view_anchor(anchor);
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ViewAnchor {
+    photo_id: i64,
+    viewport_y_offset: f64,
+}
+
+impl Gallery {
+    fn capture_view_anchor(&self) -> Option<ViewAnchor> {
+        if self.using_virtual_photo_surface() {
+            return self.sectioned_folder.capture_center_anchor().map(
+                |(photo_id, viewport_y_offset)| ViewAnchor {
+                    photo_id,
+                    viewport_y_offset,
+                },
+            );
+        }
+        let photo = self.viewport_center_photo()?;
+        let mut tiles = Vec::new();
+        collect_tiles(self.root.upcast_ref(), &mut tiles);
+        let viewport_y_offset = tiles
+            .iter()
+            .find(|tile| tile.photo().is_some_and(|p| p.id() == photo.id()))
+            .and_then(|tile| tile.compute_bounds(&self.root))
+            .map(|bounds| bounds.y() as f64)
+            .unwrap_or(0.0);
+        Some(ViewAnchor {
+            photo_id: photo.id(),
+            viewport_y_offset,
+        })
+    }
+
+    fn restore_view_anchor(self: &Rc<Self>, anchor: ViewAnchor) {
+        let generation = self.sectioned_folder.wall_state.borrow().generation;
+        let weak = Rc::downgrade(self);
+        let attempts = Cell::new(0);
+        let root = self.visible_root();
+        root.add_tick_callback(move |_, _| {
+            let Some(gallery) = weak.upgrade() else {
+                return glib::ControlFlow::Break;
+            };
+            if gallery.sectioned_folder.wall_state.borrow().generation != generation {
+                return glib::ControlFlow::Break;
+            }
+            attempts.set(attempts.get() + 1);
+            let index = gallery
+                .current_photos
+                .borrow()
+                .iter()
+                .position(|photo| photo.id() == anchor.photo_id)
+                .or_else(|| {
+                    selected_positions(&gallery.selection)
+                        .first()
+                        .copied()
+                        .map(|i| i as usize)
+                });
+            let Some(index) = index else {
+                return glib::ControlFlow::Break;
+            };
+            let id = gallery.current_photos.borrow()[index].id();
+            if gallery.using_virtual_photo_surface() {
+                if gallery
+                    .sectioned_folder
+                    .restore_anchor(id, anchor.viewport_y_offset)
+                {
+                    return glib::ControlFlow::Break;
+                }
+            } else {
+                let mut tiles = Vec::new();
+                collect_tiles(gallery.root.upcast_ref(), &mut tiles);
+                if let Some(bounds) = tiles
+                    .iter()
+                    .find(|tile| tile.photo().is_some_and(|p| p.id() == id))
+                    .and_then(|tile| tile.compute_bounds(&gallery.root))
+                {
+                    if let Some(adjustment) = gallery.root.vadjustment() {
+                        let target =
+                            adjustment.value() + bounds.y() as f64 - anchor.viewport_y_offset;
+                        adjustment.set_value(target.clamp(
+                            adjustment.lower(),
+                            (adjustment.upper() - adjustment.page_size()).max(adjustment.lower()),
+                        ));
+                        return glib::ControlFlow::Break;
+                    }
+                } else {
+                    gallery
+                        .root
+                        .scroll_to(index as u32, gtk::ListScrollFlags::NONE, None);
+                }
+            }
+            if attempts.get() >= 12 {
+                glib::ControlFlow::Break
+            } else {
+                glib::ControlFlow::Continue
+            }
+        });
+    }
+
+    fn apply_wall_zoom(self: &Rc<Self>, width: i32) {
+        let width = nearest_zoom_level(width);
+        if width == self.tile_width.get() {
+            return;
+        }
+        let anchor = self.capture_view_anchor();
+        self.auto_default_zoom.set(false);
+        if let Some(source) = self.zoom_reflow_source.borrow_mut().take() {
+            source.remove();
+        }
+        self.pending_zoom_width.set(None);
+        self.tile_width.set(width);
+        self.tile_height.set(
+            (DEFAULT_TILE_HEIGHT as f64 * width as f64 / DEFAULT_TILE_WIDTH as f64).round() as i32,
+        );
+        (self.on_zoom_changed)(width);
+        self.sectioned_folder.invalidate_geometry();
+        self.sectioned_folder.refresh();
+        if let Some(anchor) = anchor {
+            self.restore_view_anchor(anchor);
+        }
+    }
+
+    fn wall_target_requests(&self, scroll_y: f64, viewport_height: f64, budget: usize) -> usize {
+        if budget == 0 {
+            return 0;
+        }
+        let state = self.sectioned_folder.wall_state.borrow();
+        let photos = self.current_photos.borrow();
+        let mut requests = Vec::new();
+        for row in state
+            .layout
+            .visible_rows(scroll_y, scroll_y + viewport_height)
+        {
+            for item in &state.layout.items[state.layout.rows[row].item_range.clone()] {
+                if requests.len() >= budget {
+                    break;
+                }
+                if let Some(photo) = photos.get(item.photo_index) {
+                    if let Some(request) = photo_presentation_request(photo, true) {
+                        if folder_thumbnail_cache_get(&request.key).is_none() {
+                            requests.push(request);
+                        }
+                    }
+                }
+            }
+        }
+        crate::thumbnail_display::replace_visible_requests(requests)
+    }
+
+    fn wall_apply_cached(&self) -> usize {
+        let surface = &self.sectioned_folder;
+        let Some(scroll) = surface.scroll.borrow().as_ref().cloned() else {
+            return 0;
+        };
+        let adjustment = scroll.vadjustment();
+        let state = surface.wall_state.borrow();
+        let tiles = surface.live_tiles.borrow();
+        let mut applied = 0;
+        for row in state.layout.visible_rows(
+            adjustment.value(),
+            adjustment.value() + adjustment.page_size(),
+        ) {
+            for item in &state.layout.items[state.layout.rows[row].item_range.clone()] {
+                if let Some(tile) = tiles.get(&(item.photo_index as u32)) {
+                    if let Some(photo) = tile.tile.photo() {
+                        if let Some(key) = photo_presentation_key(&photo) {
+                            if let Some(paintable) = folder_thumbnail_cache_get(&key) {
+                                tile.tile.apply_presentation_paintable(&key, &paintable);
+                                applied += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        applied
+    }
+
+    fn wall_prefetch(&self, budget: usize, direction: f64) -> usize {
+        let Some(scroll) = self.sectioned_folder.scroll.borrow().as_ref().cloned() else {
+            return 0;
+        };
+        let adjustment = scroll.vadjustment();
+        let state = self.sectioned_folder.wall_state.borrow();
+        let visible = state.layout.visible_rows(
+            adjustment.value(),
+            adjustment.value() + adjustment.page_size(),
+        );
+        let ahead = visible.len().max(1) * 3;
+        let band = if direction < 0.0 {
+            visible.start.saturating_sub(ahead)..visible.start
+        } else {
+            visible.end..(visible.end + ahead).min(state.layout.rows.len())
+        };
+        let photos = self.current_photos.borrow();
+        let mut queued = 0;
+        for row in band {
+            for item in &state.layout.items[state.layout.rows[row].item_range.clone()] {
+                if queued >= budget {
+                    return queued;
+                }
+                if let Some(photo) = photos.get(item.photo_index) {
+                    if queue_photo_presentation_async(photo, false) {
+                        queued += 1;
+                    }
+                }
+            }
+        }
+        queued
     }
 }

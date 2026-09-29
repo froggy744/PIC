@@ -702,7 +702,7 @@ impl Gallery {
     }
 
     pub(crate) fn cancel_zoom_transition(&self) {
-        self.cancel_resize_reflow();
+        self.cancel_resize_reflow_with_reason("cancel_zoom_transition");
         self.zoom_animation_layout_width.set(None);
     }
 
@@ -721,6 +721,17 @@ impl Gallery {
         let use_folder_in_place = folder_mode
             && crate::grid::sectioned_folder_view_enabled()
             && crate::animation_settings::folder_zoom_style() == "in_place";
+        if std::env::var_os("PICASA_TRACE").is_some() {
+            eprintln!(
+                "PIC_GRID_FLIP phase=request style={} folder_mode={} use_grid_in_place={} use_folder_in_place={} mapped={} gtk_animations_enabled={}",
+                grid_zoom_style,
+                folder_mode,
+                use_grid_in_place,
+                use_folder_in_place,
+                self.root.is_mapped(),
+                self.root.settings().is_gtk_enable_animations(),
+            );
+        }
         let old_visual_bounds = if use_grid_in_place {
             let root: gtk::Widget = self.root.clone().upcast();
             let mut tiles = Vec::new();
@@ -737,10 +748,16 @@ impl Gallery {
         } else {
             ZoomVisualBounds::new()
         };
+        if std::env::var_os("PICASA_TRACE").is_some() && use_grid_in_place {
+            eprintln!(
+                "PIC_GRID_FLIP phase=captured old_visible_tiles={}",
+                old_visual_bounds.len(),
+            );
+        }
         if use_grid_in_place || use_folder_in_place {
             self.cancel_resize_reflow_preserving_tiles();
         } else {
-            self.cancel_resize_reflow();
+            self.cancel_resize_reflow_with_reason("new zoom without in-place style");
         }
         self.auto_default_zoom.set(false);
         if self.stable_zoom_anchor.get().is_none() {
@@ -2026,7 +2043,7 @@ impl Gallery {
 
     pub fn replace(&self, photos: &[Photo]) {
         self.cancel_zoom_transition();
-        self.cancel_resize_reflow();
+        self.cancel_resize_reflow_with_reason("gallery photo replacement");
         if std::env::var_os("PICASA_TRACE").is_some() {
             eprintln!("PIC_NAV gallery_replace photos={}", photos.len());
         }

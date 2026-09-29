@@ -1123,7 +1123,7 @@ impl SectionedFolderView {
     fn animate_tile_in_place(self: &Rc<Self>, snapshot: SectionedReflowSnapshot, duration_ms: f64) {
         let weak = Rc::downgrade(self);
         self.tween
-            .animate_tile_in_place(&self.root, duration_ms, true, move || {
+            .animate_tile_in_place(&self.root, duration_ms, true, true, move || {
                 let Some(view) = weak.upgrade() else {
                     return Vec::new();
                 };

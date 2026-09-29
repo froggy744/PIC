@@ -886,8 +886,21 @@ impl Gallery {
             }
             return;
         }
+        // Zooming changes the grid's requested column count and can prompt a
+        // redundant responsive-width notification even though the viewport
+        // itself did not resize. Treating that notification as a resize
+        // cancels the newly installed zoom tween before its first frame.
+        if width > 100 && width == self.last_layout_width.get() {
+            if std::env::var_os("PICASA_TRACE").is_some() {
+                eprintln!(
+                    "PIC_TILE_TWEEN phase=resize_ignored_same_width width={width} active={}",
+                    self.sectioned_folder.tween.is_active(),
+                );
+            }
+            return;
+        }
         if width <= 100 {
-            self.cancel_resize_reflow();
+            self.cancel_resize_reflow_with_reason("resize width <= 100");
             self.update_width(width);
             return;
         }
@@ -895,7 +908,7 @@ impl Gallery {
             && !crate::grid::sectioned_folder_view_enabled()
             && !crate::grid::folder_gridview_experiment_enabled();
         if folder_list_mode {
-            self.cancel_resize_reflow();
+            self.cancel_resize_reflow_with_reason("folder list width update");
             self.update_width(width);
             return;
         }
@@ -931,7 +944,7 @@ impl Gallery {
         // Apply each drag allocation immediately. The origin is retained only
         // for the final short settle animation after the resize pauses.
         let pending_origin = self.resize_pending_origin.borrow().clone();
-        self.cancel_resize_reflow();
+        self.cancel_resize_reflow_with_reason("library responsive width reflow");
         if crate::animation_settings::library_resize_enabled()
             && !old_positions.is_empty()
             && self.root.is_mapped()
@@ -971,17 +984,23 @@ impl Gallery {
         preserve_tiles: bool,
     ) {
         let weak_root = self.root.downgrade();
+        let captured_tiles = old_bounds.len();
         self.sectioned_folder.tween.animate_tile_in_place(
             &self.root,
             duration_ms,
             preserve_tiles,
+            false,
             move || {
                 let Some(root) = weak_root.upgrade() else {
+                    if std::env::var_os("PICASA_TRACE").is_some() {
+                        eprintln!("PIC_GRID_FLIP phase=prepare root_gone=true captured_tiles={captured_tiles}");
+                    }
                     return Vec::new();
                 };
                 let mut tiles = Vec::new();
                 collect_tiles(root.upcast_ref(), &mut tiles);
-                tiles
+                let realized_tiles = tiles.len();
+                let changes = tiles
                     .into_iter()
                     .filter_map(|tile| {
                         let Some(photo) = tile.photo() else {
@@ -1005,12 +1024,47 @@ impl Gallery {
                             || (old.3 - new.3).abs() >= 0.5;
                         changed.then_some((tile, old, new))
                     })
-                    .collect()
+                    .collect::<Vec<_>>();
+                if std::env::var_os("PICASA_TRACE").is_some() {
+                    let max_dx = changes
+                        .iter()
+                        .map(|(_, old, new)| (old.0 - new.0).abs())
+                        .fold(0.0_f64, f64::max);
+                    let max_dy = changes
+                        .iter()
+                        .map(|(_, old, new)| (old.1 - new.1).abs())
+                        .fold(0.0_f64, f64::max);
+                    let first = changes.first().map(|(tile, old, new)| {
+                        let id = tile.photo().map(|photo| photo.id()).unwrap_or_default();
+                        format!(
+                            "first_id={id} old={:.1},{:.1},{:.1},{:.1} new={:.1},{:.1},{:.1},{:.1}",
+                            old.0, old.1, old.2, old.3, new.0, new.1, new.2, new.3,
+                        )
+                    }).unwrap_or_else(|| "first_id=none".to_string());
+                    eprintln!(
+                        "PIC_GRID_FLIP phase=prepare captured_tiles={captured_tiles} realized_tiles={realized_tiles} matched_changed={} max_dx={max_dx:.1} max_dy={max_dy:.1} {first}",
+                        changes.len(),
+                    );
+                }
+                changes
             },
         );
     }
 
     pub fn cancel_resize_reflow(&self) {
+        self.cancel_resize_reflow_with_reason("unspecified caller");
+    }
+
+    pub(crate) fn cancel_resize_reflow_with_reason(&self, reason: &str) {
+        if std::env::var_os("PICASA_TRACE").is_some() && self.sectioned_folder.tween.is_active() {
+            eprintln!(
+                "PIC_TILE_TWEEN phase=cancel_requested reason={reason} pending_resize_origin={} root={}x{} layout_width={}",
+                self.resize_pending_origin.borrow().is_some(),
+                self.root.width(),
+                self.root.height(),
+                self.last_layout_width.get(),
+            );
+        }
         self.sectioned_folder.tween.cancel(false);
         self.resize_reflow_generation
             .set(self.resize_reflow_generation.get().wrapping_add(1));

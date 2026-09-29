@@ -13,6 +13,8 @@ use gtk4 as gtk;
 use crate::db::{Folder, Photo};
 use crate::photo_object::PhotoObject;
 
+mod photo_wall_layout;
+
 #[cfg(test)]
 #[path = "grid/history_tests.rs"]
 mod history_tests;

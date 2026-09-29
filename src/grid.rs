@@ -250,6 +250,11 @@ mod folder_stream_tests {
                 taken_at: None,
                 camera: None,
                 aperture: None,
+                lens: None,
+                shutter_speed: None,
+                iso: None,
+                focal_length: None,
+                exposure_bias: None,
                 width: Some(16),
                 height: Some(16),
                 size_bytes: Some(1),
@@ -442,16 +447,10 @@ mod folder_stream_tests {
 
         // At tile height 88 photo rows are 100 px while headers stay at 70 px.
         // Before row 4 there are two headers and two photo rows: 70+100+100+70.
-        assert_eq!(
-            super::folder_row_offset(&rows, 4, 88, false),
-            340.0
-        );
+        assert_eq!(super::folder_row_offset(&rows, 4, 88, false), 340.0);
         // With the filename row visible every photo line is 24 px taller, so
         // the same rows land 48 px lower.
-        assert_eq!(
-            super::folder_row_offset(&rows, 4, 88, true),
-            388.0
-        );
+        assert_eq!(super::folder_row_offset(&rows, 4, 88, true), 388.0);
     }
 
     #[test]

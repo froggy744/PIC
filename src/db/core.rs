@@ -80,6 +80,17 @@ fn migrate_photo_schema(connection: &Connection) -> Result<()> {
     if !columns.iter().any(|column| column == "aperture") {
         connection.execute("ALTER TABLE photos ADD COLUMN aperture REAL", [])?;
     }
+    for (name, kind) in [
+        ("lens", "TEXT"),
+        ("shutter_speed", "REAL"),
+        ("iso", "INTEGER"),
+        ("focal_length", "REAL"),
+        ("exposure_bias", "REAL"),
+    ] {
+        if !columns.iter().any(|column| column == name) {
+            connection.execute(&format!("ALTER TABLE photos ADD COLUMN {name} {kind}"), [])?;
+        }
+    }
     if !columns.iter().any(|column| column == "rating") {
         connection.execute(
             "ALTER TABLE photos ADD COLUMN rating INTEGER NOT NULL DEFAULT 0",

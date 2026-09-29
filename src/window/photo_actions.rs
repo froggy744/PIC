@@ -31,7 +31,7 @@ fn dismiss_active_photo_context_menu() -> bool {
         if menu.parent().is_some() {
             menu.unparent();
         }
-        
+
         true
     })
 }
@@ -290,7 +290,10 @@ fn finish_bulk_recipe(work: BulkRecipeState, name: &'static str, total: usize) {
             _ => format!("Edits applied to {total} photos"),
         }
     } else {
-        format!("{succeeded} / {total} photos updated · {} failed", work.failed)
+        format!(
+            "{succeeded} / {total} photos updated · {} failed",
+            work.failed
+        )
     };
     // Small selections skip the bar entirely, but failures still surface so
     // a broken paste never fails silently.
@@ -323,10 +326,9 @@ fn show_photo_context_menu(
     let click_point = if anchor == host_widget {
         gtk::graphene::Point::new(x as f32, y as f32)
     } else {
-        let Some(point) = anchor.compute_point(
-            &host_widget,
-            &gtk::graphene::Point::new(x as f32, y as f32),
-        ) else {
+        let Some(point) =
+            anchor.compute_point(&host_widget, &gtk::graphene::Point::new(x as f32, y as f32))
+        else {
             return;
         };
         point
@@ -381,11 +383,8 @@ fn show_photo_context_menu(
     let open = add_action("Open");
     let edit = add_action("Edit Photo…");
     let open_with = add_action("Open With…");
-    let open_in_folder = (!matches!(
-        context.filter.get(),
-        sidebar::SidebarFilter::Albums
-    ))
-    .then(|| add_action("Open in Folder"));
+    let open_in_folder = (!matches!(context.filter.get(), sidebar::SidebarFilter::Albums))
+        .then(|| add_action("Open in Folder"));
     {
         let separator = gtk::Separator::new(gtk::Orientation::Horizontal);
         separator.add_css_class("photo-context-separator");
@@ -393,7 +392,7 @@ fn show_photo_context_menu(
     }
 
     let selection_ids = selected_photo_ids(&context, Some(photo.id()));
-    
+
     let selection_for_provider = selection_ids.clone();
     let selection_provider: Rc<dyn Fn() -> Vec<i64>> =
         Rc::new(move || selection_for_provider.clone());
@@ -414,9 +413,7 @@ fn show_photo_context_menu(
     let album_popover = build_album_popover(
         context.clone(),
         selection_provider.clone(),
-        {
-            dismiss_menu.clone()
-        },
+        { dismiss_menu.clone() },
         restore_album_view.clone(),
     );
     unfocus_submenu(&album_popover);
@@ -430,7 +427,7 @@ fn show_photo_context_menu(
     let dismiss_menu_for_collage = dismiss_menu.clone();
     collage.connect_clicked(move |_| {
         dismiss_menu_for_collage();
-        
+
         (collage_context.open_collage)(collage_ids.clone());
     });
 
@@ -448,19 +445,17 @@ fn show_photo_context_menu(
     copy_edits.set_sensitive(clicked_is_edited);
     paste_edits.set_sensitive(context.edit_clipboard.borrow().is_some());
     // Only enable when the clipboard carries at least one overlay or text layer.
-    paste_overlays.set_sensitive(
-        context
-            .edit_clipboard
-            .borrow()
-            .as_deref()
-            .is_some_and(|recipe| {
-                let decoded = crate::edit::EditRecipe::decode(recipe);
-                !decoded.overlays.is_empty() || !decoded.text_layers.is_empty()
-            }),
+    paste_overlays.set_sensitive(context.edit_clipboard.borrow().as_deref().is_some_and(
+        |recipe| {
+            let decoded = crate::edit::EditRecipe::decode(recipe);
+            !decoded.overlays.is_empty() || !decoded.text_layers.is_empty()
+        },
+    ));
+    reset_edits.set_sensitive(
+        clicked_is_edited || {
+            db::any_edited(&context.connection.borrow(), &selection_ids).unwrap_or(false)
+        },
     );
-    reset_edits.set_sensitive(clicked_is_edited || {
-        db::any_edited(&context.connection.borrow(), &selection_ids).unwrap_or(false)
-    });
 
     {
         let clipboard = context.edit_clipboard.clone();
@@ -534,11 +529,8 @@ fn show_photo_context_menu(
         let target = !favorite_photo.favorite();
         let ids = favorite_selection();
         for id in &ids {
-            if let Err(error) = db::set_favorite(
-                &favorite_context.connection.borrow(),
-                *id,
-                target,
-            ) {
+            if let Err(error) = db::set_favorite(&favorite_context.connection.borrow(), *id, target)
+            {
                 show_error(
                     button.upcast_ref(),
                     "Could not update favourite",
@@ -616,11 +608,9 @@ fn show_photo_context_menu(
         remove.connect_clicked(move |button| {
             dismiss_menu_for_remove();
             let ids = remove_selection();
-            if let Err(error) = db::remove_photos_from_album(
-                &remove_context.connection.borrow(),
-                album_id,
-                &ids,
-            ) {
+            if let Err(error) =
+                db::remove_photos_from_album(&remove_context.connection.borrow(), album_id, &ids)
+            {
                 show_error(
                     button.upcast_ref(),
                     "Could not remove from album",
@@ -678,9 +668,9 @@ fn show_photo_context_menu(
     }
     let delete = add_action("Delete");
     delete.add_css_class("destructive-action");
-    #[cfg(target_os="linux")]
+    #[cfg(target_os = "linux")]
     if crate::network_shares::private(&photo.path()) {
-        for action in [&move_file,&rename,&file_manager,&delete] {
+        for action in [&move_file, &rename, &file_manager, &delete] {
             action.set_sensitive(false);
             action.set_tooltip_text(Some("Direct network shares are read-only inside PIC; no desktop mount or remote write is attempted"));
         }
@@ -720,7 +710,7 @@ fn show_photo_context_menu(
         }
     });
 
-    #[cfg(target_os="linux")]
+    #[cfg(target_os = "linux")]
     if crate::network_shares::private(&photo.path()) {
         open_with.set_sensitive(false);
         open_with.set_tooltip_text(Some("Network originals stay in PIC's private SMB/NFS transport; desktop file-manager mounts are disabled"));
@@ -846,29 +836,29 @@ fn show_photo_context_menu(
         });
 
         let window = wallpaper_window.clone();
-        glib::timeout_add_local(std::time::Duration::from_millis(50), move || {
-            match receiver.try_recv() {
-                Ok(Ok(path)) => {
-                    if let Err(error) = apply_wallpaper(&path) {
-                        if let Some(window) = window.upgrade() {
-                            show_error(
-                                window.upcast_ref(),
-                                "Could not set wallpaper",
-                                &error.to_string(),
-                            );
-                        }
-                    }
-                    glib::ControlFlow::Break
-                }
-                Ok(Err(error)) => {
+        glib::timeout_add_local(std::time::Duration::from_millis(50), move || match receiver
+            .try_recv()
+        {
+            Ok(Ok(path)) => {
+                if let Err(error) = apply_wallpaper(&path) {
                     if let Some(window) = window.upgrade() {
-                        show_error(window.upcast_ref(), "Could not set wallpaper", &error);
+                        show_error(
+                            window.upcast_ref(),
+                            "Could not set wallpaper",
+                            &error.to_string(),
+                        );
                     }
-                    glib::ControlFlow::Break
                 }
-                Err(std::sync::mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
-                Err(std::sync::mpsc::TryRecvError::Disconnected) => glib::ControlFlow::Break,
+                glib::ControlFlow::Break
             }
+            Ok(Err(error)) => {
+                if let Some(window) = window.upgrade() {
+                    show_error(window.upcast_ref(), "Could not set wallpaper", &error);
+                }
+                glib::ControlFlow::Break
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => glib::ControlFlow::Break,
         });
     });
 
@@ -941,8 +931,7 @@ fn show_photo_context_menu(
     // so the centring also follows dynamic items such as album actions.
     let (_, natural_width, _, _) = menu_host.measure(gtk::Orientation::Horizontal, -1);
     let measured_width = natural_width.max(1).min(host.width().max(1));
-    let (_, natural_height, _, _) =
-        menu_host.measure(gtk::Orientation::Vertical, measured_width);
+    let (_, natural_height, _, _) = menu_host.measure(gtk::Orientation::Vertical, measured_width);
     let measured_height = natural_height
         .max(1)
         .min(menu_host.max_content_height().max(1));
@@ -950,10 +939,10 @@ fn show_photo_context_menu(
     const MENU_EDGE_INSET: i32 = 4;
     let max_x = (host.width() - measured_width - MENU_EDGE_INSET).max(MENU_EDGE_INSET);
     let max_y = (host.height() - measured_height - MENU_EDGE_INSET).max(MENU_EDGE_INSET);
-    let menu_x = (click_point.x().round() as i32 - measured_width / 2)
-        .clamp(MENU_EDGE_INSET, max_x);
-    let menu_y = (click_point.y().round() as i32 - measured_height / 2)
-        .clamp(MENU_EDGE_INSET, max_y);
+    let menu_x =
+        (click_point.x().round() as i32 - measured_width / 2).clamp(MENU_EDGE_INSET, max_x);
+    let menu_y =
+        (click_point.y().round() as i32 - measured_height / 2).clamp(MENU_EDGE_INSET, max_y);
     menu_host.set_margin_start(menu_x);
     menu_host.set_margin_top(menu_y);
 
@@ -962,8 +951,6 @@ fn show_photo_context_menu(
     ACTIVE_PHOTO_MENU.with(|active| {
         active.borrow_mut().replace(menu_widget);
     });
-
-    
 
     host.add_overlay(&menu_host);
     menu_host.set_visible(true);
@@ -1055,12 +1042,7 @@ fn compose_wallpaper(
 ) -> image::RgbaImage {
     let target_width = target_width.max(1);
     let target_height = target_height.max(1);
-    let layout = wallpaper_layout(
-        source.width(),
-        source.height(),
-        target_width,
-        target_height,
-    );
+    let layout = wallpaper_layout(source.width(), source.height(), target_width, target_height);
     let source = image::DynamicImage::ImageRgba8(source);
     if layout == WallpaperLayout::Cover {
         return source
@@ -1121,16 +1103,14 @@ fn apply_wallpaper(path: &std::path::Path) -> anyhow::Result<()> {
         .ok_or_else(|| anyhow::anyhow!("Desktop wallpaper settings are unavailable."))?;
     let schema = schema_source
         .lookup("org.gnome.desktop.background", true)
-        .ok_or_else(|| anyhow::anyhow!("This desktop does not support setting the wallpaper here."))?;
+        .ok_or_else(|| {
+            anyhow::anyhow!("This desktop does not support setting the wallpaper here.")
+        })?;
     if !schema.has_key("picture-uri") {
         anyhow::bail!("This desktop does not expose a wallpaper setting.");
     }
 
-    let settings = gio::Settings::new_full(
-        &schema,
-        None::<&gio::SettingsBackend>,
-        None,
-    );
+    let settings = gio::Settings::new_full(&schema, None::<&gio::SettingsBackend>, None);
     settings.set_string("picture-uri", uri.as_str())?;
     if schema.has_key("picture-uri-dark") {
         settings.set_string("picture-uri-dark", uri.as_str())?;
@@ -1426,10 +1406,6 @@ fn show_properties_dialog(
         .as_ref()
         .and_then(|photo| photo.size_bytes)
         .unwrap_or_else(|| photo.size_bytes());
-    let camera = record
-        .as_ref()
-        .and_then(|photo| photo.camera.as_deref())
-        .unwrap_or("Unknown camera");
     let date = record
         .as_ref()
         .and_then(|photo| photo.taken_at.as_deref())
@@ -1444,18 +1420,226 @@ fn show_properties_dialog(
         .map(|photo| photo.favorite)
         .unwrap_or_else(|| photo.favorite());
 
-    let body = format!(
-        "Location: {path}\nDimensions: {dimensions}\nSize: {}\nCamera: {camera}\nDate: {date}\nRotation: {rotation}°\nFavourite: {}",
-        crate::infobar::format_size(size),
-        if favorite { "Yes" } else { "No" }
-    );
-    let dialog = adw::AlertDialog::builder()
-        .heading(photo.filename())
-        .body(body)
-        .close_response("close")
+    let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    let header = adw::HeaderBar::new();
+    content.append(&header);
+    let sections = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    sections.set_margin_start(16);
+    sections.set_margin_end(16);
+    sections.set_margin_top(4);
+    sections.set_margin_bottom(8);
+    sections.set_valign(gtk::Align::Start);
+    content.append(&sections);
+
+    let top = gtk::Box::new(gtk::Orientation::Horizontal, 16);
+    top.set_size_request(-1, 176);
+    let preview_frame = gtk::Frame::new(None);
+    preview_frame.set_size_request(188, 170);
+    preview_frame.set_overflow(gtk::Overflow::Hidden);
+    if let Some(cache_path) = photo
+        .cached_thumbnail_path()
+        .filter(|path| std::path::Path::new(path).is_file())
+    {
+        let preview = gtk::Picture::new();
+        preview.set_filename(Some(&cache_path));
+        preview.set_content_fit(gtk::ContentFit::Contain);
+        preview.set_can_shrink(true);
+        preview.set_size_request(188, 170);
+        preview_frame.set_child(Some(&preview));
+    } else {
+        let preview = gtk::Image::from_icon_name("image-x-generic-symbolic");
+        preview.set_pixel_size(48);
+        preview.set_size_request(188, 170);
+        preview_frame.set_child(Some(&preview));
+    }
+    top.append(&preview_frame);
+
+    let camera_group = adw::PreferencesGroup::new();
+    camera_group.set_title("Camera");
+    camera_group.set_hexpand(true);
+    let camera_details = gtk::Box::new(gtk::Orientation::Vertical, 5);
+    let camera_name = record
+        .as_ref()
+        .and_then(|item| item.camera.clone())
+        .or_else(|| photo.camera());
+    let lens_name = record.as_ref().and_then(|item| item.lens.clone());
+    if let Some(name) = camera_name {
+        camera_details.append(&prominent_property("Camera", &name));
+    }
+    if let Some(name) = lens_name {
+        camera_details.append(&prominent_property("Lens", &name));
+    }
+    let camera_values = [
+        (
+            "Aperture",
+            record
+                .as_ref()
+                .and_then(|item| item.aperture)
+                .or_else(|| Some(photo.aperture()))
+                .and_then(format_aperture),
+        ),
+        (
+            "Shutter",
+            record
+                .as_ref()
+                .and_then(|item| item.shutter_speed)
+                .and_then(format_shutter_speed),
+        ),
+        (
+            "ISO",
+            record
+                .as_ref()
+                .and_then(|item| item.iso)
+                .filter(|value| *value > 0)
+                .map(|value| format!("{value}")),
+        ),
+        (
+            "Focal Length",
+            record
+                .as_ref()
+                .and_then(|item| item.focal_length)
+                .and_then(format_focal_length),
+        ),
+        (
+            "EV",
+            record
+                .as_ref()
+                .and_then(|item| item.exposure_bias)
+                .and_then(format_exposure_bias),
+        ),
+    ];
+    let available = camera_values
+        .iter()
+        .filter_map(|(label, value)| value.as_ref().map(|value| (*label, value.as_str())))
+        .collect::<Vec<_>>();
+    camera_details.append(&metric_grid(&available, 3));
+    camera_group.add(&camera_details);
+    top.append(&camera_group);
+    sections.append(&top);
+
+    let image_group = adw::PreferencesGroup::new();
+    image_group.set_title("Image");
+    let image_values = [
+        ("Dimensions", dimensions),
+        ("Format", file_type(&path)),
+        ("File Size", crate::infobar::format_size(size)),
+        ("Rotation", format!("{rotation}°")),
+        ("Favourite", if favorite { "Yes" } else { "No" }.into()),
+    ];
+    let image_values = image_values
+        .iter()
+        .map(|(label, value)| (*label, value.as_str()))
+        .collect::<Vec<_>>();
+    image_group.add(&metric_grid(&image_values, 5));
+    sections.append(&image_group);
+
+    let file_group = adw::PreferencesGroup::new();
+    file_group.set_title("File");
+    let file_grid = gtk::Grid::new();
+    file_grid.set_column_spacing(18);
+    file_grid.set_column_homogeneous(false);
+    file_grid.attach(&metric_block("Date Taken", &date), 0, 0, 1, 1);
+    let location = metric_block("Location", &path);
+    location.set_hexpand(true);
+    if let Some(value) = location.last_child().and_then(|widget| widget.downcast::<gtk::Label>().ok()) {
+        value.set_selectable(true);
+        value.set_wrap(true);
+        value.set_wrap_mode(gtk::pango::WrapMode::Char);
+        value.set_width_chars(1);
+        value.set_max_width_chars(72);
+    }
+    file_grid.attach(&location, 1, 0, 1, 1);
+    file_group.add(&file_grid);
+    sections.append(&file_group);
+
+    let dialog = adw::Dialog::builder()
+        .title(photo.filename())
+        .content_width(620)
+        .content_height(430)
+        .child(&content)
         .build();
-    dialog.add_response("close", "Close");
     dialog.present(Some(parent));
+}
+
+fn metric_grid(values: &[(&str, &str)], columns: usize) -> gtk::Grid {
+    let grid = gtk::Grid::new();
+    grid.set_column_spacing(12);
+    grid.set_row_spacing(3);
+    for (index, (name, value)) in values.iter().enumerate() {
+        let column = (index % columns) as i32;
+        let row = (index / columns) as i32;
+        grid.attach(&metric_block(name, value), column, row, 1, 1);
+    }
+    grid
+}
+
+fn metric_block(title: &str, value: &str) -> gtk::Box {
+    let cell = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    cell.set_hexpand(true);
+    let title = gtk::Label::new(Some(title));
+    title.set_xalign(0.0);
+    title.add_css_class("dim-label");
+    title.add_css_class("metric-key");
+    cell.append(&title);
+    let value = gtk::Label::new(Some(value));
+    value.set_xalign(0.0);
+    value.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    value.add_css_class("metric-val");
+    value.add_css_class("title-4");
+    cell.append(&value);
+    cell
+}
+
+fn prominent_property(title: &str, value: &str) -> gtk::Box {
+    let cell = metric_block(title, value);
+    if let Some(value) = cell.last_child().and_then(|widget| widget.downcast::<gtk::Label>().ok()) {
+        value.add_css_class("info-title");
+        value.set_max_width_chars(48);
+    }
+    cell
+}
+
+fn format_aperture(value: f64) -> Option<String> {
+    (value.is_finite() && value > 0.0).then(|| {
+        format!("f/{value:.1}")
+            .trim_end_matches('0')
+            .trim_end_matches('.')
+            .to_string()
+    })
+}
+
+fn format_shutter_speed(value: f64) -> Option<String> {
+    if !value.is_finite() || value <= 0.0 {
+        return None;
+    }
+    Some(if value < 0.5 {
+        format!("1/{} s", (1.0 / value).round() as u64)
+    } else {
+        format!("{} s", format_decimal(value))
+    })
+}
+
+fn format_decimal(value: f64) -> String {
+    format!("{value:.1}")
+        .trim_end_matches('0')
+        .trim_end_matches('.')
+        .to_string()
+}
+
+fn format_focal_length(value: f64) -> Option<String> {
+    (value.is_finite() && value > 0.0).then(|| format!("{} mm", format_decimal(value)))
+}
+
+fn format_exposure_bias(value: f64) -> Option<String> {
+    value.is_finite().then(|| format!("{value:+.1} EV"))
+}
+
+fn file_type(path: &str) -> String {
+    std::path::Path::new(path)
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|value| value.to_ascii_uppercase())
+        .unwrap_or_else(|| "Unknown".to_string())
 }
 
 fn show_error(parent: &gtk::Widget, heading: &str, message: &str) {
@@ -1471,6 +1655,19 @@ fn show_error(parent: &gtk::Widget, heading: &str, message: &str) {
 #[cfg(test)]
 mod photo_actions_tests {
     use super::*;
+
+    #[test]
+    fn photographic_properties_values() {
+        assert_eq!(format_aperture(4.0).as_deref(), Some("f/4"));
+        assert_eq!(format_shutter_speed(0.001).as_deref(), Some("1/1000 s"));
+        assert_eq!(format_shutter_speed(1.5).as_deref(), Some("1.5 s"));
+        assert_eq!(format_shutter_speed(0.7).as_deref(), Some("0.7 s"));
+        assert_eq!(format_focal_length(85.0).as_deref(), Some("85 mm"));
+        assert_eq!(format_exposure_bias(0.7).as_deref(), Some("+0.7 EV"));
+        assert_eq!(format_exposure_bias(0.0).as_deref(), Some("+0.0 EV"));
+        assert_eq!(format_aperture(0.0), None);
+        assert_eq!(format_shutter_speed(f64::NAN), None);
+    }
 
     fn settle_gtk_layout() {
         let main_loop = gtk::glib::MainLoop::new(None, false);
@@ -1556,12 +1753,8 @@ mod photo_actions_tests {
             operation_progress: OperationProgressUi::new(),
         };
 
-        let popover = build_album_popover(
-            context,
-            Rc::new(Vec::new),
-            Rc::new(|| {}),
-            Rc::new(|| {}),
-        );
+        let popover =
+            build_album_popover(context, Rc::new(Vec::new), Rc::new(|| {}), Rc::new(|| {}));
         let scroll = popover
             .child()
             .and_then(|child| child.downcast::<gtk::ScrolledWindow>().ok())
@@ -1597,9 +1790,7 @@ mod photo_actions_tests {
         ));
         connection
             .borrow()
-            .execute_batch(
-                "INSERT INTO photos (id, path) VALUES (1, 'samples/01-Start Up.jpg');",
-            )
+            .execute_batch("INSERT INTO photos (id, path) VALUES (1, 'samples/01-Start Up.jpg');")
             .unwrap();
         let album = db::create_album(&connection.borrow(), "Holiday").unwrap();
         db::add_photos_to_album(&connection.borrow(), album.id, &[1]).unwrap();
@@ -1661,7 +1852,10 @@ mod photo_actions_tests {
             .unwrap()
             .emit_clicked();
         assert_eq!(
-            db::albums(&connection.borrow()).unwrap().remove(0).cover_photo_id,
+            db::albums(&connection.borrow())
+                .unwrap()
+                .remove(0)
+                .cover_photo_id,
             Some(1)
         );
 
@@ -1673,11 +1867,9 @@ mod photo_actions_tests {
             10.0,
             10.0,
         );
-        assert!(
-            !find_action(&menu(), "Set as Album Cover")
-                .unwrap()
-                .is_sensitive()
-        );
+        assert!(!find_action(&menu(), "Set as Album Cover")
+            .unwrap()
+            .is_sensitive());
         dismiss_active_photo_context_menu();
 
         // Outside an album the cover action is not offered at all.

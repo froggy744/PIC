@@ -6,6 +6,11 @@ fn photo_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Photo> {
         taken_at: row.get(3)?,
         camera: row.get(4)?,
         aperture: row.get(5)?,
+        lens: row.get(17)?,
+        shutter_speed: row.get(18)?,
+        iso: row.get(19)?,
+        focal_length: row.get(20)?,
+        exposure_bias: row.get(21)?,
         width: row.get(6)?,
         height: row.get(7)?,
         size_bytes: row.get(8)?,
@@ -27,6 +32,40 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::*;
+
+    #[test]
+    fn expanded_exif_columns_migrate_and_round_trip() {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch("CREATE TABLE photos (
+            id INTEGER PRIMARY KEY, path TEXT UNIQUE NOT NULL, folder_id INTEGER,
+            taken_at TEXT, camera TEXT, aperture REAL, width INTEGER, height INTEGER,
+            size_bytes INTEGER, mtime INTEGER, rotation INTEGER DEFAULT 0,
+            favorite BOOLEAN DEFAULT 0, trashed BOOLEAN DEFAULT 0
+        );").unwrap();
+        c.execute("INSERT INTO photos(path, aperture) VALUES ('/old.jpg', 4.0)", []).unwrap();
+        migrate_photo_schema(&c).unwrap();
+        migrate_photo_schema(&c).unwrap();
+        let marker: Option<i64> = c.query_row("SELECT iso FROM photos WHERE path='/old.jpg'", [], |row| row.get(0)).unwrap();
+        assert_eq!(marker, None);
+
+        let metadata = PhotoMetadata {
+            lens: Some("85mm prime".into()),
+            shutter_speed: Some(0.001),
+            iso: Some(3200),
+            focal_length: Some(85.0),
+            exposure_bias: Some(0.7),
+            ..Default::default()
+        };
+        // Create the other tables while preserving the migrated photos table.
+        c.execute_batch(SCHEMA).unwrap();
+        upsert_photo(&c, Path::new("/old.jpg"), None, &metadata).unwrap();
+        let loaded = photo(&c, 1).unwrap().unwrap();
+        assert_eq!(loaded.lens.as_deref(), Some("85mm prime"));
+        assert_eq!(loaded.shutter_speed, Some(0.001));
+        assert_eq!(loaded.iso, Some(3200));
+        assert_eq!(loaded.focal_length, Some(85.0));
+        assert_eq!(loaded.exposure_bias, Some(0.7));
+    }
 
     #[test]
     fn rating_round_trips_and_rejects_out_of_range_values() {

@@ -186,16 +186,20 @@ fn scan_with_control(
         );
         let existing = indexed.get(&path);
         let fingerprint_matches =
-            existing.is_some_and(|(mtime, size, _, _, _)| (*mtime, *size) == fingerprint);
+            existing.is_some_and(|(mtime, size, _, _, _, _)| (*mtime, *size) == fingerprint);
         let missing_raw_dimensions = is_raw(&path)
             && !remote_raw_thumbnail_unsupported(&path)
-            && existing.is_some_and(|(_, _, width, height, _)| {
+            && existing.is_some_and(|(_, _, width, height, _, _)| {
                 width.unwrap_or_default() <= 0 || height.unwrap_or_default() <= 0
             });
         // NULL means the row predates aperture indexing. A zero is the stored
         // "metadata examined but absent" sentinel and must not re-trigger a
         // source read on every refresh.
-        let missing_aperture_metadata = existing.is_some_and(|(_, _, _, _, aperture)| aperture.is_none());
+        let missing_aperture_metadata =
+            existing.is_some_and(|(_, _, _, _, aperture, _)| aperture.is_none());
+        // NULL ISO marks rows that predate the expanded EXIF index. Zero means
+        // the source was examined and did not contain an ISO value.
+        let missing_exif_metadata = existing.is_some_and(|(_, _, _, _, _, iso)| iso.is_none());
         let missing_heif_thumbnail = is_heif(&path)
             && existing.is_some()
             && thumbnail::existing_cache_path(&path, fingerprint.0, fingerprint.1)
@@ -212,16 +216,16 @@ fn scan_with_control(
         if fingerprint_matches
             && !missing_raw_dimensions
             && !missing_aperture_metadata
+            && !missing_exif_metadata
             && !missing_heif_thumbnail
             && !missing_raw_thumbnail
         {
             prepared.push(PreparedPhoto::Existing { path, folder_id });
         } else {
             let newly_discovered = existing.is_none();
-            let create_thumbnail = (!fingerprint_matches
-                || missing_heif_thumbnail
-                || missing_raw_thumbnail)
-                && !remote_raw_thumbnail_unsupported(&path);
+            let create_thumbnail =
+                (!fingerprint_matches || missing_heif_thumbnail || missing_raw_thumbnail)
+                    && !remote_raw_thumbnail_unsupported(&path);
             // This may read a remote original and decode EXIF/RAW metadata.
             // It must remain outside the transaction below.
             match read_metadata(&path, &info) {
@@ -372,12 +376,8 @@ fn commit_prepared(
                 newly_discovered,
                 create_thumbnail,
             } => {
-                let id = db::upsert_photo(
-                    &transaction,
-                    Path::new(&path),
-                    Some(folder_id),
-                    &metadata,
-                )?;
+                let id =
+                    db::upsert_photo(&transaction, Path::new(&path), Some(folder_id), &metadata)?;
                 let photo = db::photo(&transaction, id)?.context("indexed photo disappeared")?;
                 *imported += 1;
                 if create_thumbnail {
@@ -406,7 +406,9 @@ fn commit_prepared(
 fn root_is_available(root: &str) -> bool {
     #[cfg(target_os = "linux")]
     if crate::network_shares::private(root) {
-        return crate::network_shares::stat(root).map(|m|m.is_dir).unwrap_or(false);
+        return crate::network_shares::stat(root)
+            .map(|m| m.is_dir)
+            .unwrap_or(false);
     }
     if root.contains("://") {
         crate::source::file(root).query_exists(gio::Cancellable::NONE)
@@ -475,21 +477,24 @@ fn collect_files(
         #[cfg(target_os = "linux")]
         if crate::network_shares::private(&folder_path) {
             for item in crate::network_shares::list(&folder_path)
-                .with_context(|| format!("could not list {folder_path}"))? {
-                if control.is_cancelled() {break;}
+                .with_context(|| format!("could not list {folder_path}"))?
+            {
+                if control.is_cancelled() {
+                    break;
+                }
                 if item.is_dir {
-                    let name=item.name.to_ascii_lowercase();
-                    if !name.ends_with(".lrdata") && name!="previews" && name!="cache" {
-                        let child=crate::source::file(&item.uri);
-                        pending.push((child,item.uri,Some(folder_path.clone())));
+                    let name = item.name.to_ascii_lowercase();
+                    if !name.ends_with(".lrdata") && name != "previews" && name != "cache" {
+                        let child = crate::source::file(&item.uri);
+                        pending.push((child, item.uri, Some(folder_path.clone())));
                     }
                 } else if supported(Path::new(&item.name)) {
-                    let child=crate::source::file(&item.uri);
+                    let child = crate::source::file(&item.uri);
                     // Metadata is requested explicitly in the scanner; no originals
                     // are ever written to cache/source by a network scan.
-                    let info=crate::network_shares::info(&item.uri)
-                        .with_context(|| format!("could not stat {}",item.uri))?;
-                    files.push((child,info,folder_path.clone()));
+                    let info = crate::network_shares::info(&item.uri)
+                        .with_context(|| format!("could not stat {}", item.uri))?;
+                    files.push((child, info, folder_path.clone()));
                     report_discovery_progress(
                         events,
                         files.len(),
@@ -571,10 +576,18 @@ fn read_metadata(path: &str, attributes: &gio::FileInfo) -> Result<PhotoMetadata
     // its path-only decoder must never trigger persistent original copying.
     #[cfg(target_os = "linux")]
     if crate::network_shares::private(path) {
-        let taken_at=mtime.and_then(|seconds|Local.timestamp_opt(seconds,0).single()
-            .map(|date|date.to_rfc3339()));
-        return Ok(PhotoMetadata{taken_at,camera:None,aperture:None,width:None,height:None,
-            size_bytes:Some(attributes.size()),mtime});
+        let taken_at = mtime.and_then(|seconds| {
+            Local
+                .timestamp_opt(seconds, 0)
+                .single()
+                .map(|date| date.to_rfc3339())
+        });
+        return Ok(PhotoMetadata {
+            taken_at,
+            size_bytes: Some(attributes.size()),
+            mtime,
+            ..Default::default()
+        });
     }
     let (width, height, exif) = if is_raw(path) {
         // Prefer the cheap EXIF dimensions, then ask the RAW decoder for its
@@ -635,6 +648,21 @@ fn read_metadata(path: &str, attributes: &gio::FileInfo) -> Result<PhotoMetadata
         }
     });
     let aperture = exif.as_ref().and_then(exif_aperture);
+    let lens = exif
+        .as_ref()
+        .and_then(|data| exif_text(data, Tag::LensModel));
+    let shutter_speed = exif
+        .as_ref()
+        .and_then(|data| exif_rational(data, Tag::ExposureTime))
+        .filter(|value| *value > 0.0);
+    let iso = exif.as_ref().and_then(exif_iso);
+    let focal_length = exif
+        .as_ref()
+        .and_then(|data| exif_rational(data, Tag::FocalLength))
+        .filter(|value| *value > 0.0);
+    let exposure_bias = exif
+        .as_ref()
+        .and_then(|data| exif_rational(data, Tag::ExposureBiasValue));
     // image-rs/rawler report stored sensor axes, while the viewer applies the
     // EXIF orientation to decoded pixels. Persist display-oriented dimensions
     // so the shared-element destination has the same aspect ratio before and
@@ -652,6 +680,11 @@ fn read_metadata(path: &str, attributes: &gio::FileInfo) -> Result<PhotoMetadata
         taken_at,
         camera,
         aperture,
+        lens,
+        shutter_speed,
+        iso,
+        focal_length,
+        exposure_bias,
         width: width.map(i64::from),
         height: height.map(i64::from),
         size_bytes: Some(attributes.size()),
@@ -663,16 +696,60 @@ fn exif_aperture(exif: &exif::Exif) -> Option<f64> {
     // RAW cameras often store FNumber outside the primary IFD. Search all
     // parsed fields, then fall back to the equivalent APEX aperture value.
     let rational = |tag| {
-        exif.fields().find(|field| field.tag == tag).and_then(|field| match &field.value {
-            Value::Rational(values) => values.first().and_then(|value| {
-                (value.denom != 0).then_some(value.num as f64 / value.denom as f64)
-            }),
-            _ => None,
-        })
+        exif.fields()
+            .find(|field| field.tag == tag)
+            .and_then(|field| match &field.value {
+                Value::Rational(values) => values.first().and_then(|value| {
+                    (value.denom != 0).then_some(value.num as f64 / value.denom as f64)
+                }),
+                _ => None,
+            })
     };
     rational(Tag::FNumber)
         .or_else(|| rational(Tag::ApertureValue).map(|value| 2_f64.powf(value / 2.0)))
         .filter(|value| value.is_finite() && *value > 0.0)
+}
+
+fn exif_rational(exif: &exif::Exif, tag: Tag) -> Option<f64> {
+    exif.fields()
+        .find(|field| field.tag == tag)
+        .and_then(|field| rational_value(&field.value))
+}
+
+fn rational_value(value: &Value) -> Option<f64> {
+    match value {
+        Value::Rational(values) => values
+            .first()
+            .and_then(|value| (value.denom != 0).then_some(value.num as f64 / value.denom as f64)),
+        Value::SRational(values) => values
+            .first()
+            .and_then(|value| (value.denom != 0).then_some(value.num as f64 / value.denom as f64)),
+        _ => None,
+    }
+    .filter(|value| value.is_finite())
+}
+
+fn exif_text(exif: &exif::Exif, tag: Tag) -> Option<String> {
+    exif.fields()
+        .find(|field| field.tag == tag)
+        .and_then(field_text)
+}
+
+fn exif_iso(exif: &exif::Exif) -> Option<i64> {
+    // PhotographicSensitivity is the EXIF tag historically named ISOSpeedRatings.
+    [Tag::PhotographicSensitivity, Tag::ISOSpeed]
+        .into_iter()
+        .find_map(|tag| exif.fields().find(|field| field.tag == tag))
+        .and_then(|field| iso_value(&field.value))
+}
+
+fn iso_value(value: &Value) -> Option<i64> {
+    match value {
+        Value::Short(values) => values.first().map(|value| i64::from(*value)),
+        Value::Long(values) => values.first().map(|value| i64::from(*value)),
+        _ => None,
+    }
+    .filter(|value| *value > 0)
 }
 
 fn exif_orientation_value(exif: &exif::Exif) -> Option<u16> {
@@ -700,7 +777,11 @@ fn field_text(field: &exif::Field) -> Option<String> {
     match &field.value {
         Value::Ascii(values) => values
             .first()
-            .map(|value| String::from_utf8_lossy(value).trim().to_string())
+            .map(|value| {
+                String::from_utf8_lossy(value)
+                    .trim_matches(|character: char| character == '\0' || character.is_whitespace())
+                    .to_string()
+            })
             .filter(|value| !value.is_empty()),
         _ => Some(field.display_value().to_string()),
     }
@@ -717,9 +798,16 @@ fn exif_u32(exif: &exif::Exif, tag: Tag) -> Option<u32> {
 
 fn remote_raw_thumbnail_unsupported(path: &str) -> bool {
     #[cfg(target_os = "linux")]
-    {return is_raw(path) && crate::network_shares::private(path) && !crate::image_format::for_path(path).is_some_and(|format|format.id=="nikon_raw");}
+    {
+        return is_raw(path)
+            && crate::network_shares::private(path)
+            && !crate::image_format::for_path(path).is_some_and(|format| format.id == "nikon_raw");
+    }
     #[cfg(not(target_os = "linux"))]
-    {let _=path;false}
+    {
+        let _ = path;
+        false
+    }
 }
 
 fn is_raw(path: &str) -> bool {
@@ -733,6 +821,31 @@ fn is_heif(path: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn exif_numeric_values_handle_unsigned_signed_and_missing() {
+        assert_eq!(
+            rational_value(&Value::Rational(vec![exif::Rational {
+                num: 1,
+                denom: 1000
+            }])),
+            Some(0.001)
+        );
+        assert_eq!(
+            rational_value(&Value::SRational(vec![exif::SRational {
+                num: -2,
+                denom: 3
+            }])),
+            Some(-2.0 / 3.0)
+        );
+        assert_eq!(
+            rational_value(&Value::Rational(vec![exif::Rational { num: 1, denom: 0 }])),
+            None
+        );
+        assert_eq!(iso_value(&Value::Short(vec![3200])), Some(3200));
+        assert_eq!(iso_value(&Value::Long(vec![12800])), Some(12800));
+        assert_eq!(iso_value(&Value::Short(vec![0])), None);
+    }
     use std::io::BufReader;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -752,12 +865,7 @@ mod tests {
         fs::write(&photo, []).unwrap();
 
         let (files, folders) =
-            collect_files(
-                &gio::File::for_path(&root),
-                None,
-                &ScanControl::default(),
-            )
-            .unwrap();
+            collect_files(&gio::File::for_path(&root), None, &ScanControl::default()).unwrap();
         assert!(files
             .iter()
             .any(|(_, _, folder)| folder.ends_with("FB-Marianne")));

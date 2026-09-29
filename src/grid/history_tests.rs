@@ -101,6 +101,11 @@ fn history_group_ranges_merge_contiguous_edit_buckets() {
             taken_at: None,
             camera: None,
             aperture: None,
+            lens: None,
+            shutter_speed: None,
+            iso: None,
+            focal_length: None,
+            exposure_bias: None,
             width: None,
             height: None,
             size_bytes: None,
@@ -198,7 +203,10 @@ fn history_grid_reuses_items_without_leaking_captions_into_other_views() {
         "filename row must be added below the square, not carved out of it"
     );
     assert_eq!(natural_after - natural_before, FILENAME_CAPTION_HEIGHT);
-    assert_eq!(width_after, width_before, "caption must not change tile width");
+    assert_eq!(
+        width_after, width_before,
+        "caption must not change tile width"
+    );
     assert_eq!(width_natural_after, width_natural_before);
     let filename = tile
         .last_child()

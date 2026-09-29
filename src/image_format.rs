@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use anyhow::Result;
@@ -186,6 +186,121 @@ pub fn enabled_ids(connection: &Connection) -> Result<HashSet<&'static str>> {
 
 pub fn path_is_enabled_in(enabled: &HashSet<&str>, path: &str) -> bool {
     for_path(path).is_some_and(|format| enabled.contains(format.id))
+}
+
+pub const RAW_JPEG_PAIR_MODE_SETTING_KEY: &str = "raw-jpeg-pair-mode";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RawJpegPairMode {
+    Both,
+    PreferJpeg,
+    PreferRaw,
+}
+
+impl RawJpegPairMode {
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Both => "both",
+            Self::PreferJpeg => "jpeg",
+            Self::PreferRaw => "raw",
+        }
+    }
+
+    pub fn from_key(value: &str) -> Self {
+        match value {
+            "jpeg" => Self::PreferJpeg,
+            "raw" => Self::PreferRaw,
+            _ => Self::Both,
+        }
+    }
+}
+
+pub fn raw_jpeg_pair_mode(connection: &Connection) -> RawJpegPairMode {
+    crate::db::setting(connection, RAW_JPEG_PAIR_MODE_SETTING_KEY)
+        .ok()
+        .flatten()
+        .as_deref()
+        .map(RawJpegPairMode::from_key)
+        .unwrap_or(RawJpegPairMode::Both)
+}
+
+pub fn set_raw_jpeg_pair_mode(connection: &Connection, mode: RawJpegPairMode) -> Result<()> {
+    crate::db::set_setting(connection, RAW_JPEG_PAIR_MODE_SETTING_KEY, mode.key())
+}
+
+/// Collapse only true RAW+JPEG capture pairs. JPEG-only and RAW-only photos
+/// remain visible in every mode.
+pub fn retain_raw_jpeg_pair_mode(
+    photos: &mut Vec<crate::db::Photo>,
+    mode: RawJpegPairMode,
+) {
+    if mode == RawJpegPairMode::Both {
+        return;
+    }
+
+    #[derive(Default, Clone, Copy)]
+    struct PairState {
+        raw: bool,
+        jpeg: bool,
+    }
+
+    let mut states = HashMap::<(String, String), PairState>::new();
+    for photo in photos.iter() {
+        let Some(format) = for_path(&photo.path) else {
+            continue;
+        };
+        if format.decoder != DecoderKind::Raw && format.id != "jpeg" {
+            continue;
+        }
+        let filename = crate::source::filename(&photo.path);
+        let stem = Path::new(&filename)
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .unwrap_or(&filename)
+            .to_ascii_lowercase();
+        let folder = photo
+            .folder_id
+            .map(|id| format!("id:{id}"))
+            .or_else(|| photo.folder_path.clone())
+            .unwrap_or_default();
+        let state = states.entry((folder, stem)).or_default();
+        if format.decoder == DecoderKind::Raw {
+            state.raw = true;
+        } else if format.id == "jpeg" {
+            state.jpeg = true;
+        }
+    }
+
+    photos.retain(|photo| {
+        let Some(format) = for_path(&photo.path) else {
+            return true;
+        };
+        if format.decoder != DecoderKind::Raw && format.id != "jpeg" {
+            return true;
+        }
+        let filename = crate::source::filename(&photo.path);
+        let stem = Path::new(&filename)
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .unwrap_or(&filename)
+            .to_ascii_lowercase();
+        let folder = photo
+            .folder_id
+            .map(|id| format!("id:{id}"))
+            .or_else(|| photo.folder_path.clone())
+            .unwrap_or_default();
+        let paired = states
+            .get(&(folder, stem))
+            .is_some_and(|state| state.raw && state.jpeg);
+        if !paired {
+            return true;
+        }
+        match mode {
+            RawJpegPairMode::Both => true,
+            RawJpegPairMode::PreferJpeg => format.id == "jpeg",
+            RawJpegPairMode::PreferRaw => format.decoder == DecoderKind::Raw,
+        }
+    });
 }
 
 #[cfg(test)]

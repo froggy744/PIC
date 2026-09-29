@@ -33,8 +33,13 @@ lto = "thin"
 codegen-units = 1
 
 [profile.dev]
-opt-level = 2
+opt-level = 1                  # your crate: was 2
+debug = "line-tables-only"     # much less debug info to generate and link
+incremental = true             # already the default in dev, stated for clarity
 
+# All dependencies: optimized once, then cached
+[profile.dev.package."*"]
+opt-level = 3
 [profile.dev.package.fast_image_resize]
 opt-level = 3
 

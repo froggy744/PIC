@@ -91,6 +91,25 @@ pub(crate) fn zoom_level_for_four_columns(surface_width: i32) -> i32 {
         .unwrap_or(MIN_TILE_WIDTH)
 }
 
+/// Cubic ease-in-out in `t ∈ [0, 1]`. Symmetric, no overshoot.
+fn ease_in_out_cubic(t: f64) -> f64 {
+    let t = t.clamp(0.0, 1.0);
+    if t < 0.5 {
+        4.0 * t * t * t
+    } else {
+        1.0 - (-2.0 * t + 2.0).powi(3) / 2.0
+    }
+}
+
+/// In-cell start scale after GTK has already committed `to_width`.
+///
+/// `from_width / to_width` keeps the thumbnail's on-screen size equal to the
+/// previous ladder step, so zoom-in grows in place and zoom-out shrinks in
+/// place. No position interpolation — that is what makes tiles fly.
+fn in_cell_zoom_start_scale(from_width: i32, to_width: i32) -> f32 {
+    from_width.max(1) as f32 / to_width.max(1) as f32
+}
+
 // Pointer travel (px) required before a folder press becomes a rubberband drag
 // instead of a click. Keeps double-click detection intact.
 const DRAG_CLAIM_THRESHOLD: f64 = 6.0;
@@ -124,8 +143,8 @@ include!("grid/selection.rs");
 #[cfg(test)]
 mod zoom_ladder_tests {
     use super::{
-        nearest_zoom_level, next_zoom_level, prev_zoom_level, zoom_level_for_four_columns,
-        ZOOM_LEVELS,
+        ease_in_out_cubic, in_cell_zoom_start_scale, nearest_zoom_level, next_zoom_level,
+        prev_zoom_level, zoom_level_for_four_columns, ZOOM_LEVELS,
     };
 
     #[test]
@@ -165,6 +184,33 @@ mod zoom_ladder_tests {
         assert_eq!(zoom_level_for_four_columns(2560), 300);
         // Tiny surfaces clamp to the minimum.
         assert_eq!(zoom_level_for_four_columns(320), 100);
+    }
+
+    #[test]
+    fn ease_in_out_cubic_is_symmetric_and_bounded() {
+        assert!((ease_in_out_cubic(0.0) - 0.0).abs() < 1e-9);
+        assert!((ease_in_out_cubic(1.0) - 1.0).abs() < 1e-9);
+        assert!((ease_in_out_cubic(0.5) - 0.5).abs() < 1e-9);
+        let early = ease_in_out_cubic(0.25);
+        let late = ease_in_out_cubic(0.75);
+        assert!(early < 0.5 && late > 0.5);
+        assert!((early + late - 1.0).abs() < 1e-9);
+        assert!(early < 0.25, "ease-in should lag the linear ramp");
+        assert!(late > 0.75, "ease-out should lead the linear ramp");
+    }
+
+    #[test]
+    fn in_cell_start_scale_preserves_old_visual_size() {
+        // Zoom in: old 160 in a 187 cell starts smaller, then grows to 1.
+        let zoom_in = in_cell_zoom_start_scale(160, 187);
+        assert!((zoom_in - 160.0 / 187.0).abs() < 1e-5);
+        assert!(zoom_in < 1.0);
+        // Zoom out: old 187 in a 160 cell starts larger (clipped), then shrinks.
+        let zoom_out = in_cell_zoom_start_scale(187, 160);
+        assert!((zoom_out - 187.0 / 160.0).abs() < 1e-5);
+        assert!(zoom_out > 1.0);
+        // One ladder step either way is ~17%, not a FLIP translation.
+        assert!(zoom_in > 0.80 && zoom_out < 1.25);
     }
 }
 

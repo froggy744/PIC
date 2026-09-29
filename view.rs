@@ -905,15 +905,7 @@ impl Gallery {
         to_width: i32,
         visual_px: std::collections::HashMap<i64, f32>,
     ) -> u64 {
-        const ZOOM_IN_US: i64 = 500_000;
-        const ZOOM_OUT_US: i64 = 500_000;
-        // Zoom-out starts above 1.0 and is clipped to the cell, so the same
-        // duration reads faster than zoom-in; give it more time.
-        let duration_us: i64 = if to_width < from_width {
-            ZOOM_OUT_US
-        } else {
-            ZOOM_IN_US
-        };
+        const DURATION_US: i64 = 140_000;
 
         let generation = self.zoom_animation_generation.get().wrapping_add(1);
         self.zoom_animation_generation.set(generation);
@@ -963,10 +955,9 @@ impl Gallery {
         set_grid_zoom_animation_active(true);
         if std::env::var_os("PICASA_TRACE").is_some() {
             eprintln!(
-                "PIC_ZOOM_CELL start generation={} tiles={} duration_ms={} from={} to={} scale_from={:.3}",
+                "PIC_ZOOM_CELL start generation={} tiles={} duration_ms=140 from={} to={} scale_from={:.3}",
                 generation,
                 entries.len(),
-                duration_us / 1000,
                 from_width,
                 to_width,
                 identity_start,
@@ -989,7 +980,7 @@ impl Gallery {
                 }
             };
             let elapsed = clock.frame_time().saturating_sub(start_time);
-            let t = (elapsed as f64 / duration_us as f64).clamp(0.0, 1.0);
+            let t = (elapsed as f64 / DURATION_US as f64).clamp(0.0, 1.0);
             let eased = ease_in_out_cubic(t);
             for (tile, id, start) in &entries {
                 if tile.photo().is_some_and(|photo| photo.id() == *id) {

@@ -230,6 +230,10 @@ mod square_tile {
         // visual position while a resize reflow animates.
         pub presentation_offset_x: Cell<f32>,
         pub presentation_offset_y: Cell<f32>,
+        // In-cell zoom scale. GTK allocation stays at the destination tile
+        // size; snapshotting scales the image frame around its centre.
+        // Zero means identity so the derived Default stays safe.
+        pub presentation_scale: Cell<f32>,
         pub filename_visible: Cell<bool>,
         pub filename_label: RefCell<Option<gtk::Label>>,
         pub favorite_indicators_visible: Cell<bool>,
@@ -331,23 +335,67 @@ mod square_tile {
         fn snapshot(&self, snapshot: &gtk::Snapshot) {
             let dx = self.presentation_offset_x.get();
             let dy = self.presentation_offset_y.get();
+            let stored_scale = self.presentation_scale.get();
+            let scale = if stored_scale > 0.001 { stored_scale } else { 1.0 };
+            let scaled = (scale - 1.0).abs() > 0.001;
             let translated = dx.abs() > 0.01 || dy.abs() > 0.01;
-            if translated {
-                snapshot.save();
-                snapshot.translate(&gtk::graphene::Point::new(dx, dy));
+            let width = self.obj().width() as f32;
+            let height = self.obj().height() as f32;
+
+            // Clip the thumbnail to the cell while it is scaled. Zoom-out
+            // starts above 1.0; without a clip it paints over neighbours and
+            // reads as tiles sliding around.
+            if scaled {
+                snapshot.push_clip(&gtk::graphene::Rect::new(
+                    0.0,
+                    0.0,
+                    width.max(1.0),
+                    height.max(1.0),
+                ));
             }
 
             let mut child = self.obj().first_child();
+            let mut is_frame = true;
             while let Some(widget) = child {
                 let next = widget.next_sibling();
                 if widget.is_visible() {
-                    self.obj().snapshot_child(&widget, snapshot);
+                    // Scale only the image frame, around its own centre. The
+                    // filename caption stays put so zoom is a thumbnail
+                    // transform, not a whole-tile FLIP.
+                    if scaled && is_frame {
+                        snapshot.save();
+                        let layout = super::tile_layout(
+                            self.width.get(),
+                            self.height.get(),
+                            width.round() as i32,
+                            height.round() as i32,
+                            self.caption_visible(),
+                        );
+                        let cx = (layout.frame_x + layout.frame_width / 2) as f32;
+                        let cy = (layout.frame_y + layout.frame_height / 2) as f32;
+                        snapshot.translate(&gtk::graphene::Point::new(cx, cy));
+                        snapshot.scale(scale, scale);
+                        snapshot.translate(&gtk::graphene::Point::new(-cx, -cy));
+                        if translated {
+                            snapshot.translate(&gtk::graphene::Point::new(dx, dy));
+                        }
+                        self.obj().snapshot_child(&widget, snapshot);
+                        snapshot.restore();
+                    } else if translated && is_frame {
+                        snapshot.save();
+                        snapshot.translate(&gtk::graphene::Point::new(dx, dy));
+                        self.obj().snapshot_child(&widget, snapshot);
+                        snapshot.restore();
+                    } else {
+                        self.obj().snapshot_child(&widget, snapshot);
+                    }
                 }
+                is_frame = false;
                 child = next;
             }
 
-            if translated {
-                snapshot.restore();
+            if scaled {
+                snapshot.pop();
             }
         }
     }
@@ -501,6 +549,20 @@ impl SquareTile {
         }
         self.imp().presentation_offset_x.set(x);
         self.imp().presentation_offset_y.set(y);
+        self.queue_draw();
+    }
+
+    pub(crate) fn presentation_scale(&self) -> f32 {
+        let scale = self.imp().presentation_scale.get();
+        if scale > 0.001 { scale } else { 1.0 }
+    }
+
+    pub(crate) fn set_presentation_scale(&self, scale: f32) {
+        let scale = scale.clamp(0.01, 4.0);
+        if (self.presentation_scale() - scale).abs() < 0.001 {
+            return;
+        }
+        self.imp().presentation_scale.set(scale);
         self.queue_draw();
     }
 

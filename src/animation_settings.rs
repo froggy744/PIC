@@ -32,19 +32,19 @@ struct AnimationSettings {
 impl Default for AnimationSettings {
     fn default() -> Self {
         Self {
-            grid_resize_ms: 170,
+            grid_resize_ms: 120,
             library_resize_ms: None,
-            library_resize_style: "tile_motion".to_string(),
+            library_resize_style: "in_place".to_string(),
             grid_zoom_cutoff_ms: 120,
             grid_zoom_crossfade_ms: 180,
-            grid_zoom_reflow_ms: 170,
-            grid_zoom_style: "tile_motion".to_string(),
-            folder_column_reflow_ms: 140,
-            folder_column_reflow_style: "tile_motion".to_string(),
+            grid_zoom_reflow_ms: 120,
+            grid_zoom_style: "in_place".to_string(),
+            folder_column_reflow_ms: 120,
+            folder_column_reflow_style: "in_place".to_string(),
             folder_resize_ms: None,
-            folder_resize_style: "tile_motion".to_string(),
+            folder_resize_style: "in_place".to_string(),
             folder_zoom_ms: None,
-            folder_zoom_style: "tile_motion".to_string(),
+            folder_zoom_style: "in_place".to_string(),
             folder_scroll_ms: 180,
             gallery_wheel_scroll_ms: 180,
             lightbox_open_ms: 250,
@@ -72,7 +72,7 @@ fn settings() -> &'static AnimationSettings {
                     .map(|value| clamp(value, defaults.grid_resize_ms)),
                 library_resize_style: match parsed.library_resize_style.as_str() {
                     "none" => "none".to_string(),
-                    _ => "tile_motion".to_string(),
+                    _ => "in_place".to_string(),
                 },
                 grid_zoom_cutoff_ms: clamp(
                     parsed.grid_zoom_cutoff_ms,
@@ -87,9 +87,8 @@ fn settings() -> &'static AnimationSettings {
                     defaults.grid_zoom_reflow_ms,
                 ),
                 grid_zoom_style: match parsed.grid_zoom_style.as_str() {
-                    "crossfade" => "crossfade".to_string(),
-                    "old_fades_over_new" => "old_fades_over_new".to_string(),
-                    _ => "tile_motion".to_string(),
+                    "none" => "none".to_string(),
+                    _ => "in_place".to_string(),
                 },
                 folder_column_reflow_ms: clamp(
                     parsed.folder_column_reflow_ms,
@@ -97,21 +96,21 @@ fn settings() -> &'static AnimationSettings {
                 ),
                 folder_column_reflow_style: match parsed.folder_column_reflow_style.as_str() {
                     "none" => "none".to_string(),
-                    _ => "tile_motion".to_string(),
+                    _ => "in_place".to_string(),
                 },
                 folder_resize_ms: parsed
                     .folder_resize_ms
                     .map(|value| clamp(value, defaults.folder_column_reflow_ms)),
                 folder_resize_style: match parsed.folder_resize_style.as_str() {
                     "none" => "none".to_string(),
-                    _ => "tile_motion".to_string(),
+                    _ => "in_place".to_string(),
                 },
                 folder_zoom_ms: parsed
                     .folder_zoom_ms
                     .map(|value| clamp(value, defaults.grid_zoom_reflow_ms)),
                 folder_zoom_style: match parsed.folder_zoom_style.as_str() {
-                    "crossfade" => "crossfade".to_string(),
-                    _ => "tile_motion".to_string(),
+                    "none" => "none".to_string(),
+                    _ => "in_place".to_string(),
                 },
                 folder_scroll_ms: clamp(parsed.folder_scroll_ms, defaults.folder_scroll_ms),
                 gallery_wheel_scroll_ms: clamp(
@@ -150,7 +149,7 @@ pub(crate) fn library_resize_ms() -> f64 {
         .unwrap_or(settings().grid_resize_ms) as f64
 }
 pub(crate) fn library_resize_enabled() -> bool {
-    settings().library_resize_style == "tile_motion"
+    settings().library_resize_style == "in_place"
 }
 pub(crate) fn grid_zoom_cutoff_ms() -> i64 {
     (settings().grid_zoom_cutoff_ms * 1_000) as i64
@@ -162,10 +161,10 @@ pub(crate) fn grid_zoom_reflow_ms() -> f64 {
     settings().grid_zoom_reflow_ms as f64
 }
 pub(crate) fn grid_zoom_style() -> &'static str {
-    match settings().grid_zoom_style.as_str() {
-        "crossfade" => "crossfade",
-        "old_fades_over_new" => "old_fades_over_new",
-        _ => "tile_motion",
+    if settings().grid_zoom_style == "none" {
+        "none"
+    } else {
+        "in_place"
     }
 }
 pub(crate) fn folder_column_reflow_ms() -> f64 {
@@ -177,8 +176,8 @@ pub(crate) fn folder_resize_ms() -> f64 {
         .unwrap_or(settings().folder_column_reflow_ms) as f64
 }
 pub(crate) fn folder_resize_enabled() -> bool {
-    settings().folder_resize_style == "tile_motion"
-        && settings().folder_column_reflow_style == "tile_motion"
+    settings().folder_resize_style == "in_place"
+        && settings().folder_column_reflow_style == "in_place"
 }
 pub(crate) fn folder_zoom_ms() -> f64 {
     settings()
@@ -186,9 +185,10 @@ pub(crate) fn folder_zoom_ms() -> f64 {
         .unwrap_or(settings().grid_zoom_reflow_ms) as f64
 }
 pub(crate) fn folder_zoom_style() -> &'static str {
-    match settings().folder_zoom_style.as_str() {
-        "crossfade" => "crossfade",
-        _ => "tile_motion",
+    if settings().folder_zoom_style == "none" {
+        "none"
+    } else {
+        "in_place"
     }
 }
 pub(crate) fn folder_scroll_ms() -> f64 {

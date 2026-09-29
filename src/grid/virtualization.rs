@@ -762,12 +762,12 @@ impl Gallery {
     pub fn request_zoom(self: &Rc<Self>, width: i32) {
         let width = width.clamp(MIN_TILE_WIDTH, MAX_TILE_WIDTH);
         let folder_mode = self.group_mode.get() == GroupMode::Folder;
-        let use_tile_motion = !folder_mode
-            && crate::animation_settings::grid_zoom_style() == "tile_motion";
-        let use_folder_tile_motion = folder_mode
+        let grid_zoom_style = crate::animation_settings::grid_zoom_style();
+        let use_grid_in_place = !folder_mode && grid_zoom_style == "in_place";
+        let use_folder_in_place = folder_mode
             && crate::grid::sectioned_folder_view_enabled()
-            && crate::animation_settings::folder_zoom_style() == "tile_motion";
-        let old_visual_bounds = if use_tile_motion {
+            && crate::animation_settings::folder_zoom_style() == "in_place";
+        let old_visual_bounds = if use_grid_in_place {
             let root: gtk::Widget = self.root.clone().upcast();
             let mut tiles = Vec::new();
             collect_tiles(&root, &mut tiles);
@@ -783,7 +783,10 @@ impl Gallery {
                     let h = f64::from(bounds.height()).max(1.0);
                     let x = f64::from(bounds.x()) + f64::from(dx) + w * (1.0 - f64::from(sx)) * 0.5;
                     let y = f64::from(bounds.y()) + f64::from(dy) + h * (1.0 - f64::from(sy)) * 0.5;
-                    Some((photo.id(), (x, y, w * f64::from(sx), h * f64::from(sy))))
+                    Some((
+                        photo.id(),
+                        (x, y, w * f64::from(sx), h * f64::from(sy), sx, sy),
+                    ))
                 })
                 .collect::<ZoomVisualBounds>()
         } else {
@@ -794,8 +797,7 @@ impl Gallery {
         if width == self.current_zoom_width() {
             return;
         }
-        // All input before the midpoint is one latest-target commit. Input
-        // after it starts a new transition; there is never an animation queue.
+        // Legacy snapshot styles still use a single latest-target transition.
         if self.zoom_tick.borrow().is_some() && !self.zoom_committed.get() {
             self.pending_zoom_width.set(Some(width));
             return;
@@ -807,7 +809,13 @@ impl Gallery {
         if self.stable_zoom_anchor.get().is_none() {
             self.begin_center_zoom_anchor();
         }
-        if use_tile_motion {
+        if (!folder_mode && grid_zoom_style == "none")
+            || (folder_mode && crate::animation_settings::folder_zoom_style() == "none")
+        {
+            self.apply_zoom(width);
+            return;
+        }
+        if use_grid_in_place {
             self.cancel_zoom_transition();
             self.pending_zoom_width.set(Some(width));
             self.zoom_animation_layout_width
@@ -815,10 +823,10 @@ impl Gallery {
             self.apply_zoom(width);
             self.pending_zoom_width.set(None);
             self.zoom_animation_layout_width.set(None);
-            self.animate_grid_zoom_tile_motion(old_visual_bounds);
+            self.animate_grid_zoom_in_place(old_visual_bounds);
             return;
         }
-        if use_folder_tile_motion {
+        if use_folder_in_place {
             self.cancel_zoom_transition();
             self.pending_zoom_width.set(Some(width));
             self.zoom_animation_layout_width

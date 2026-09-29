@@ -7,26 +7,25 @@
 # GRID — regular Library / All Photos thumbnail grid
 # -----------------------------------------------------------------------------
 
-# Thumbnail movement when the window resizes the grid.
-grid_resize_ms = 140
+# Legacy Library resize duration. Used if library_resize_ms is omitted.
+grid_resize_ms = 120
 
-# Library / All Photos resize style and settle duration. The legacy
-# grid_resize_ms above remains supported when this duration is omitted.
-library_resize_style = "tile_motion"
-library_resize_ms = 140
+# Library / All Photos resize style and settle duration. The grid commits
+# immediately; changed tiles ease out from 96% to full size after a 110 ms pause.
+library_resize_style = "in_place"
+library_resize_ms = 120
 
-# Grid zoom presentation style:
-# "tile_motion": animate each tile's position and size to its new layout.
-# "old_fades_over_new": keep the new grid fully visible; fade only old snapshot.
-# "crossfade": use the current scale/dim cutoff followed by a snapshot crossfade.
-grid_zoom_style = "tile_motion"
+# Grid zoom presentation style: "in_place" eases changed tiles from 96% to full
+# size in their final cells; "none" commits the new layout without an effect.
+grid_zoom_style = "in_place"
 
-# Timing for the snapshot styles above. "tile_motion" uses grid_zoom_reflow_ms.
+# Legacy snapshot transition timings, retained for compatibility with older
+# animation settings. The in-place style uses grid_zoom_reflow_ms below.
 grid_zoom_cutoff_ms = 100
 grid_zoom_crossfade_ms = 180
 
-# Thumbnail position settling after the grid zoom changes tile sizes.
-grid_zoom_reflow_ms = 180
+# Duration for the grid zoom in-place effect.
+grid_zoom_reflow_ms = 120
 
 # Regular Library / All Photos mouse-wheel scrolling.
 gallery_wheel_scroll_ms = 120
@@ -36,18 +35,18 @@ gallery_wheel_scroll_ms = 120
 # -----------------------------------------------------------------------------
 
 # Folder column-count transition duration. Kept as a fallback for older configs.
-folder_column_reflow_ms = 180
+folder_column_reflow_ms = 120
 
-# Folder resize transition style and duration. Only tiles that change cells
-# move; their dimensions and opacity stay fixed.
-folder_column_reflow_style = "tile_motion"
-folder_resize_style = "tile_motion"
-folder_resize_ms = 140
+# Folder resize transition style and duration. The layout commits immediately;
+# changed tiles ease out from 96% to full size after a 110 ms pause.
+folder_column_reflow_style = "in_place"
+folder_resize_style = "in_place"
+folder_resize_ms = 120
 
-# Folder zoom style and duration. Tile positions move to their new cells;
-# thumbnail size updates once with the layout and is not stretched mid-flight.
-folder_zoom_style = "tile_motion"
-folder_zoom_ms = 180
+# Folder zoom style: "in_place" eases changed tiles from 96% to full size in
+# their final cells; "none" commits the new layout without an effect.
+folder_zoom_style = "in_place"
+folder_zoom_ms = 120
 
 # Mouse-wheel scrolling while viewing folder contents.
 folder_scroll_ms = 120

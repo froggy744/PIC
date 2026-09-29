@@ -349,6 +349,9 @@ struct SectionedFolderView {
     keyboard_preferred_column: Rc<Cell<Option<u32>>>,
     scroll_animation_generation: Cell<u64>,
     reflow_animation_generation: Cell<u64>,
+    resize_settle_generation: Cell<u64>,
+    resize_settle_origin: RefCell<Option<SectionedReflowSnapshot>>,
+    resize_settle_anchor: RefCell<Option<(i64, f64)>>,
     reflow_active: Cell<bool>,
     preserve_headers_during_reflow: Cell<bool>,
     strip_layer: RefCell<Option<SectionedStripLayer>>,
@@ -425,6 +428,9 @@ impl SectionedFolderView {
             keyboard_preferred_column: Rc::new(Cell::new(None)),
             scroll_animation_generation: Cell::new(0),
             reflow_animation_generation: Cell::new(0),
+            resize_settle_generation: Cell::new(0),
+            resize_settle_origin: RefCell::new(None),
+            resize_settle_anchor: RefCell::new(None),
             reflow_active: Cell::new(false),
             preserve_headers_during_reflow: Cell::new(false),
             strip_layer: RefCell::new(None),
@@ -1058,6 +1064,10 @@ impl SectionedFolderView {
         self.clear_strip_layer();
         self.reflow_animation_generation
             .set(self.reflow_animation_generation.get().wrapping_add(1));
+        self.resize_settle_generation
+            .set(self.resize_settle_generation.get().wrapping_add(1));
+        self.resize_settle_origin.borrow_mut().take();
+        self.resize_settle_anchor.borrow_mut().take();
         self.reflow_active.set(false);
         self.preserve_headers_during_reflow.set(false);
         // A replacement can keep the same numeric positions while changing
@@ -1067,7 +1077,7 @@ impl SectionedFolderView {
         for (_, tile) in live {
             self.root.remove(&tile.tile);
             tile.tile.set_opacity(1.0);
-            tile.tile.set_presentation_offset(0.0, 0.0);
+            tile.tile.reset_presentation_transform();
             tile.index.set(None);
             let mut pool = self.tile_pool.borrow_mut();
             if pool.len() < SECTIONED_TILE_POOL_CAP {
@@ -1094,8 +1104,6 @@ impl SectionedFolderView {
                 .iter()
                 .filter_map(|(index, entry)| {
                     let (x, y) = self.root.child_position(&entry.tile);
-                    let (dx, dy) = entry.tile.presentation_offset();
-                    let (sx, sy) = entry.tile.presentation_scale();
                     let width = f64::from(entry.tile.width()).max(1.0);
                     let height = f64::from(entry.tile.height()).max(1.0);
                     let top = self.scroll_position();
@@ -1106,17 +1114,8 @@ impl SectionedFolderView {
                             .as_ref()
                             .map(|scroll| scroll.vadjustment().page_size())
                             .unwrap_or(f64::MAX);
-                    let visual_x = x + f64::from(dx) + width * (1.0 - f64::from(sx)) * 0.5;
-                    let visual_y = y + f64::from(dy) + height * (1.0 - f64::from(sy)) * 0.5;
-                    (visual_y + height * f64::from(sy) >= top && visual_y <= bottom).then_some((
-                        *index,
-                        (
-                            visual_x,
-                            visual_y,
-                            width * f64::from(sx),
-                            height * f64::from(sy),
-                        ),
-                    ))
+                    (y + height >= top && y <= bottom)
+                        .then_some((*index, (x, y, width, height)))
                 })
                 .collect(),
             old_columns: self.current_columns.get().max(1),
@@ -1272,12 +1271,69 @@ impl SectionedFolderView {
         snapshot: SectionedReflowSnapshot,
         anchor: Option<(i64, f64)>,
     ) {
-        self.animate_tile_position_reflow(
-            snapshot,
-            anchor,
-            crate::animation_settings::folder_resize_ms(),
-            crate::animation_settings::folder_resize_enabled(),
-        );
+        // Stop any zoom effect as soon as a window resize starts. Resize stays
+        // visually steady during the drag and receives its own settle effect.
+        for entry in self.live_tiles.borrow().values() {
+            entry.tile.reset_presentation_transform();
+        }
+        // Keep the first visible title/viewport anchor for the full resize
+        // burst. Recomputing it from each intermediate layout makes headings
+        // drift past sections when several column counts change quickly.
+        let (origin, stable_anchor) = {
+            let mut origin = self.resize_settle_origin.borrow_mut();
+            if origin.is_none() {
+                *origin = Some(snapshot.clone());
+                *self.resize_settle_anchor.borrow_mut() = anchor;
+            }
+            (
+                origin.as_ref().expect("resize origin set above").clone(),
+                *self.resize_settle_anchor.borrow(),
+            )
+        };
+        self.apply_reflow_without_animation(origin.clone(), stable_anchor);
+        if !crate::animation_settings::folder_resize_enabled()
+            || !self.root.is_mapped()
+            || !self.root.settings().is_gtk_enable_animations()
+        {
+            self.resize_settle_origin.borrow_mut().take();
+            self.resize_settle_anchor.borrow_mut().take();
+            self.resize_settle_generation
+                .set(self.resize_settle_generation.get().wrapping_add(1));
+            return;
+        }
+        self.schedule_resize_settle();
+    }
+
+    fn on_resize_frame(self: &Rc<Self>) {
+        self.reflow_animation_generation
+            .set(self.reflow_animation_generation.get().wrapping_add(1));
+        for entry in self.live_tiles.borrow().values() {
+            entry.tile.reset_presentation_transform();
+        }
+        if self.resize_settle_origin.borrow().is_some() {
+            self.schedule_resize_settle();
+        } else {
+            self.resize_settle_generation
+                .set(self.resize_settle_generation.get().wrapping_add(1));
+        }
+    }
+
+    fn schedule_resize_settle(self: &Rc<Self>) {
+        self.resize_settle_generation
+            .set(self.resize_settle_generation.get().wrapping_add(1));
+        let generation = self.resize_settle_generation.get();
+        let weak = Rc::downgrade(self);
+        glib::timeout_add_local_once(std::time::Duration::from_millis(110), move || {
+            let Some(view) = weak.upgrade() else { return };
+            if view.resize_settle_generation.get() != generation {
+                return;
+            }
+            let origin = view.resize_settle_origin.borrow_mut().take();
+            view.resize_settle_anchor.borrow_mut().take();
+            if let Some(origin) = origin {
+                view.animate_tile_in_place(origin, crate::animation_settings::folder_resize_ms());
+            }
+        });
     }
 
     fn animate_zoom_reflow(
@@ -1285,64 +1341,52 @@ impl SectionedFolderView {
         snapshot: SectionedReflowSnapshot,
         anchor: Option<(i64, f64)>,
     ) {
-        self.animate_tile_position_reflow(
-            snapshot,
-            anchor,
-            crate::animation_settings::folder_zoom_ms(),
-            crate::animation_settings::folder_zoom_style() == "tile_motion",
-        );
+        self.resize_settle_generation
+            .set(self.resize_settle_generation.get().wrapping_add(1));
+        self.resize_settle_origin.borrow_mut().take();
+        self.resize_settle_anchor.borrow_mut().take();
+        self.apply_reflow_without_animation(snapshot.clone(), anchor);
+        if crate::animation_settings::folder_zoom_style() == "in_place" {
+            self.animate_tile_in_place(snapshot, crate::animation_settings::folder_zoom_ms());
+        }
     }
 
-    fn animate_tile_position_reflow(
+    fn animate_tile_in_place(
         self: &Rc<Self>,
         snapshot: SectionedReflowSnapshot,
-        anchor: Option<(i64, f64)>,
         duration_ms: f64,
-        animate: bool,
     ) {
-        let old_columns = snapshot.old_columns;
-        let old_scroll = snapshot.old_scroll_y;
-        self.apply_reflow_without_animation(snapshot.clone(), anchor);
-        if !animate || !self.root.is_mapped() || !self.root.settings().is_gtk_enable_animations() {
+        if !self.root.is_mapped() || !self.root.settings().is_gtk_enable_animations() {
             return;
         }
 
-        let new_scroll = self.scroll_position();
-        let scroll_shift = new_scroll - old_scroll;
-        let mut motion = Vec::<(SquareTile, f64, f64, f64, f64)>::new();
+        let scroll_shift = self.scroll_position() - snapshot.old_scroll_y;
+        let mut motion = Vec::<(SquareTile, f32, f32)>::new();
         for (index, entry) in self.live_tiles.borrow().iter() {
-            let Some((old_x, old_y, _old_width, _old_height)) =
+            let Some((old_x, old_y, old_width, old_height)) =
                 snapshot.tile_rects.get(index).copied()
             else {
                 continue;
             };
             let (new_x, new_y) = self.root.child_position(&entry.tile);
-            let start_x = old_x;
-            let start_y = old_y + scroll_shift;
-            // Tiles that stayed in the same cell are left entirely alone.
-            if (start_x - new_x).abs() < 0.5 && (start_y - new_y).abs() < 0.5 {
+            let new_width = f64::from(entry.tile.width()).max(1.0);
+            let new_height = f64::from(entry.tile.height()).max(1.0);
+            if (old_x - new_x).abs() < 0.5
+                && (old_y + scroll_shift - new_y).abs() < 0.5
+                && (old_width - new_width).abs() < 0.5
+                && (old_height - new_height).abs() < 0.5
+            {
                 continue;
             }
-            // Animate the GtkFixed child position instead of translating the
-            // tile's internal snapshot. A widget clips its own snapshot bounds,
-            // so large FLIP offsets could clip the whole photo for several
-            // frames while its contents were translated outside those bounds.
-            entry.tile.set_opacity(1.0);
-            self.root.move_(&entry.tile, start_x, start_y);
-            motion.push((entry.tile.clone(), start_x, start_y, new_x, new_y));
-        }
-        // Tiles without a captured prior rectangle (newly virtualized cells)
-        // are already at their destination. Keep them visible immediately.
-        for entry in self.live_tiles.borrow().values() {
-            entry.tile.set_opacity(1.0);
+            let (current_x, current_y) = entry.tile.presentation_scale();
+            let start_x = if current_x < 0.999 { current_x } else { 0.96 };
+            let start_y = if current_y < 0.999 { current_y } else { 0.96 };
+            entry.tile.set_presentation_scale(start_x, start_y);
+            motion.push((entry.tile.clone(), start_x, start_y));
         }
         if motion.is_empty() {
             return;
         }
-        let moved_tiles = motion.len();
-
-        self.reflow_active.set(true);
-        self.preserve_headers_during_reflow.set(true);
         self.reflow_animation_generation
             .set(self.reflow_animation_generation.get().wrapping_add(1));
         let generation = self.reflow_animation_generation.get();
@@ -1356,21 +1400,17 @@ impl SectionedFolderView {
                 return glib::ControlFlow::Break;
             }
             let t = (started.elapsed().as_secs_f64() * 1000.0 / duration_ms).clamp(0.0, 1.0);
-            // Ease out without overshoot; don't animate tile dimensions.
             let remaining = (1.0 - t).powi(3) as f32;
-            for (tile, start_x, start_y, end_x, end_y) in &motion {
-                let x = end_x + (start_x - end_x) * f64::from(remaining);
-                let y = end_y + (start_y - end_y) * f64::from(remaining);
-                view.root.move_(tile, x, y);
+            for (tile, start_x, start_y) in &motion {
+                tile.set_presentation_scale(
+                    1.0 + (start_x - 1.0) * remaining,
+                    1.0 + (start_y - 1.0) * remaining,
+                );
             }
             if t >= 1.0 {
-                for (tile, _, _, end_x, end_y) in &motion {
-                    view.root.move_(tile, *end_x, *end_y);
-                    tile.set_presentation_offset(0.0, 0.0);
+                for (tile, _, _) in &motion {
+                    tile.set_presentation_scale(1.0, 1.0);
                 }
-                view.reflow_active.set(false);
-                view.preserve_headers_during_reflow.set(false);
-                view.refresh();
                 glib::ControlFlow::Break
             } else {
                 glib::ControlFlow::Continue
@@ -1379,10 +1419,7 @@ impl SectionedFolderView {
 
         if std::env::var_os("PICASA_TRACE").is_some() {
             eprintln!(
-                "PIC_SECTIONED_ANIM tile_motion_begin old_columns={} new_columns={} moved_tiles={} duration_ms={}",
-                old_columns,
-                self.current_columns.get(),
-                moved_tiles,
+                "PIC_SECTIONED_ANIM in_place_begin duration_ms={}",
                 duration_ms as u32,
             );
         }

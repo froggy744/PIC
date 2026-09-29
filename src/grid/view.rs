@@ -114,8 +114,9 @@ impl Gallery {
         on_zoom_changed: impl Fn(i32) + 'static,
     ) -> Self {
         let selected: Rc<dyn Fn(Option<PhotoObject>)> = Rc::new(selected);
-        let activate: Rc<dyn Fn(Vec<PhotoObject>, usize, Option<(gtk::Widget, gtk::gdk::Paintable)>)> =
-            Rc::new(activate);
+        let activate: Rc<
+            dyn Fn(Vec<PhotoObject>, usize, Option<(gtk::Widget, gtk::gdk::Paintable)>),
+        > = Rc::new(activate);
         let context_menu: Rc<dyn Fn(PhotoObject, gtk::Widget, f64, f64)> = Rc::new(context_menu);
         let unavailable: Rc<dyn Fn(PhotoObject, gtk::Widget)> = Rc::new(unavailable);
         let on_zoom_changed: Rc<dyn Fn(i32)> = Rc::new(on_zoom_changed);
@@ -606,7 +607,9 @@ impl Gallery {
                             tile.set_visible(false);
                         }
                     }
-                    if let Some(title) = find_named_label(header.upcast_ref(), "picasa-folder-section-title") {
+                    if let Some(title) =
+                        find_named_label(header.upcast_ref(), "picasa-folder-section-title")
+                    {
                         if title.text().as_str() != data.label {
                             title.set_text(&data.label);
                         }
@@ -614,7 +617,9 @@ impl Gallery {
                             title.set_tooltip_text(Some(&data.folder_path));
                         }
                     }
-                    if let Some(count) = find_named_label(header.upcast_ref(), "picasa-folder-section-count") {
+                    if let Some(count) =
+                        find_named_label(header.upcast_ref(), "picasa-folder-section-count")
+                    {
                         let count_text = format!(
                             "{} {}",
                             format_count(data.count),
@@ -929,7 +934,7 @@ impl Gallery {
             return;
         }
 
-        const DURATION_MS: f64 = 170.0;
+        let duration_ms = crate::animation_settings::grid_resize_ms();
         let generation = self.resize_reflow_generation.get();
         let old_positions = Rc::new(old_positions);
         let transitions = Rc::new(RefCell::new(None::<Vec<(SquareTile, f32, f32)>>));
@@ -961,11 +966,15 @@ impl Gallery {
                     if !tile.is_mapped() || !tile.is_visible() {
                         continue;
                     }
-                    let Some(photo) = tile.photo() else { continue; };
+                    let Some(photo) = tile.photo() else {
+                        continue;
+                    };
                     let Some((old_x, old_y)) = old_positions.get(&photo.id()).copied() else {
                         continue;
                     };
-                    let Some(bounds) = tile.compute_bounds(&root) else { continue; };
+                    let Some(bounds) = tile.compute_bounds(&root) else {
+                        continue;
+                    };
                     let dx = old_x - bounds.x();
                     let dy = old_y - bounds.y();
                     if dx.abs() < 0.5 && dy.abs() < 0.5 {
@@ -989,8 +998,8 @@ impl Gallery {
             let elapsed = started
                 .get()
                 .map(|time| time.elapsed().as_secs_f64() * 1000.0)
-                .unwrap_or(DURATION_MS);
-            let t = (elapsed / DURATION_MS).clamp(0.0, 1.0);
+                .unwrap_or(duration_ms);
+            let t = (elapsed / duration_ms).clamp(0.0, 1.0);
             let eased = crate::grid::zoom_transition::ease_in_out_cubic(t);
             let remaining = (1.0 - eased) as f32;
             if let Some(motion) = transitions.borrow().as_ref() {
@@ -1025,7 +1034,9 @@ impl Gallery {
     }
 
     fn update_layout(&self, width: i32, tile_size_changed: bool) {
-        let trace_started = std::env::var_os("PICASA_TRACE").is_some().then(std::time::Instant::now);
+        let trace_started = std::env::var_os("PICASA_TRACE")
+            .is_some()
+            .then(std::time::Instant::now);
         // First real allocation with no stored thumbnail preference: adopt
         // the ~4-thumbnails-per-row default for this surface width. Session
         // only - it becomes a preference if the user zooms manually.
@@ -1045,10 +1056,10 @@ impl Gallery {
         }
         self.last_layout_width.set(width);
         let folder_mode = self.group_mode.get() == GroupMode::Folder;
-        let sectioned_folder_mode =
-            folder_mode && crate::grid::sectioned_folder_view_enabled();
-        let folder_list_mode =
-            folder_mode && !sectioned_folder_mode && !crate::grid::folder_gridview_experiment_enabled();
+        let sectioned_folder_mode = folder_mode && crate::grid::sectioned_folder_view_enabled();
+        let folder_list_mode = folder_mode
+            && !sectioned_folder_mode
+            && !crate::grid::folder_gridview_experiment_enabled();
         let sectioned_resize_anchor = if sectioned_folder_mode && !tile_size_changed {
             self.sectioned_folder.capture_center_anchor()
         } else {
@@ -1121,7 +1132,12 @@ impl Gallery {
         }
 
         let previous_columns = self.current_columns.replace(columns);
-        if std::env::var_os("PICASA_TRACE").is_some() && previous_columns != columns { eprintln!("PIC_NAV current_columns_changed old={} new={}", previous_columns, columns); }
+        if std::env::var_os("PICASA_TRACE").is_some() && previous_columns != columns {
+            eprintln!(
+                "PIC_NAV current_columns_changed old={} new={}",
+                previous_columns, columns
+            );
+        }
         self.root.set_min_columns(columns);
         self.root.set_max_columns(columns);
         self.root.queue_resize();
@@ -1165,5 +1181,4 @@ impl Gallery {
             }
         }
     }
-
 }

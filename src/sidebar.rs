@@ -146,7 +146,6 @@ const SHARE_SECTION_KEY: &str = "picasa-sidebar-share-section";
 const FILTER_SYNCING_KEY: &str = "picasa-sidebar-filter-syncing";
 const FOLDER_REFRESH_KEY: &str = "picasa-sidebar-folder-refresh";
 const REFRESH_GATE_KEY: &str = "picasa-sidebar-refresh-gate";
-const ALBUM_PANE_ANIMATION_MS: u32 = 250;
 const STARTUP_VISIBLE_ALBUM_ROWS: usize = 5;
 
 /// Share the window's refresh sensitivity with existing and future menus.
@@ -502,7 +501,7 @@ pub fn build(
             }
         });
     }
-    folder_revealer.set_transition_duration(ALBUM_PANE_ANIMATION_MS);
+    folder_revealer.set_transition_duration(crate::animation_settings::sidebar_slide_ms());
 
     let section_paned = gtk::Paned::new(gtk::Orientation::Vertical);
     section_paned.add_css_class("sidebar-section-paned");
@@ -549,7 +548,7 @@ pub fn build(
     // then detach the Albums pane only after collapse completes. This keeps the
     // native divider future-proof while giving Albums the same smooth motion as
     // the other sidebar sections.
-    album_revealer.set_transition_duration(ALBUM_PANE_ANIMATION_MS);
+    album_revealer.set_transition_duration(crate::animation_settings::sidebar_slide_ms());
 
     let set_albums_expanded: Rc<dyn Fn(bool)> = {
         let state = state.clone();
@@ -1109,8 +1108,7 @@ fn handle_keyboard_navigation(
     });
 
     let shift_tab = key == gtk::gdk::Key::ISO_Left_Tab
-        || (key == gtk::gdk::Key::Tab
-            && modifiers.contains(gtk::gdk::ModifierType::SHIFT_MASK));
+        || (key == gtk::gdk::Key::Tab && modifiers.contains(gtk::gdk::ModifierType::SHIFT_MASK));
     if key == gtk::gdk::Key::Tab || shift_tab {
         if sections.is_empty() {
             return glib::Propagation::Proceed;
@@ -1332,7 +1330,6 @@ fn select_navigation_row(sections: &[(gtk::ListBox, Vec<gtk::ListBoxRow>)], row:
         }
     }
 }
-
 
 pub fn refresh(
     scrolled: &gtk::ScrolledWindow,
@@ -1850,9 +1847,12 @@ pub fn scroll_to_folder(scrolled: &gtk::ScrolledWindow, folder_id: i64) {
     // after the rebuilt rows have been allocated.
     if set_folder_display_mode(scrolled, FolderDisplayMode::Tree) {
         let scrolled = scrolled.clone();
-        glib::timeout_add_local_once(std::time::Duration::from_millis(100), move || {
-            scroll_to_folder(&scrolled, folder_id);
-        });
+        glib::timeout_add_local_once(
+            std::time::Duration::from_millis(crate::animation_settings::folder_mode_settle_ms()),
+            move || {
+                scroll_to_folder(&scrolled, folder_id);
+            },
+        );
         return;
     }
 
@@ -1914,9 +1914,12 @@ pub fn scroll_to_folder(scrolled: &gtk::ScrolledWindow, folder_id: i64) {
         // both have had a main-loop turn so the target can be placed at the
         // top reliably.
         let scrolled = scrolled.clone();
-        glib::timeout_add_local_once(std::time::Duration::from_millis(100), move || {
-            scroll_to_folder(&scrolled, folder_id);
-        });
+        glib::timeout_add_local_once(
+            std::time::Duration::from_millis(crate::animation_settings::folder_mode_settle_ms()),
+            move || {
+                scroll_to_folder(&scrolled, folder_id);
+            },
+        );
         return;
     }
 
@@ -3013,7 +3016,8 @@ fn animate_sidebar_pane_position(
         }
 
         let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
-        let progress = (elapsed_ms / f64::from(ALBUM_PANE_ANIMATION_MS)).clamp(0.0, 1.0);
+        let progress =
+            (elapsed_ms / f64::from(crate::animation_settings::sidebar_slide_ms())).clamp(0.0, 1.0);
         let eased = sidebar_pane_ease(progress);
         let position = f64::from(from) + f64::from(to - from) * eased;
         paned.set_position(position.round() as i32);

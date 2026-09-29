@@ -1,0 +1,13 @@
+# This file is read directly from the app's working directory.
+# Durations are milliseconds. Restart the app after editing.
+# Values are clamped to 16..10000 ms; 0 uses the built-in default.
+
+grid_resize_ms = 170
+grid_zoom_cutoff_ms = 85
+grid_zoom_crossfade_ms = 115
+folder_column_reflow_ms = 210
+folder_scroll_ms = 190
+gallery_wheel_scroll_ms = 250
+lightbox_open_ms = 200
+sidebar_slide_ms = 250
+folder_mode_settle_ms = 100

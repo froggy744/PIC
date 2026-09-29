@@ -8,8 +8,7 @@ fn install_smooth_gallery_scroll(
     // touchpad/surface-pixel scrolling, but turn discrete wheel clicks into a
     // short critically-damped animation of the vertical adjustment.
     const WHEEL_STEP_PX: f64 = 120.0;
-    const SPRING: f64 = 240.0;
-    const DAMPING: f64 = 31.0;
+    // The natural frequency follows the configurable animation time.
     const STOP_DISTANCE_PX: f64 = 0.35;
     const STOP_SPEED_PX_S: f64 = 4.0;
 
@@ -174,7 +173,10 @@ fn install_smooth_gallery_scroll(
             // GtkListView can quantize/anchor-correct folder scrolling, and a
             // tiny spring overshoot around the destination can otherwise look
             // like the view is stuck bouncing up/down until the next click.
-            let acceleration = SPRING * error - DAMPING * speed;
+            let time_constant_s = crate::animation_settings::gallery_wheel_scroll_ms() / 1_000.0;
+            let spring = 4.0 / (time_constant_s * time_constant_s);
+            let damping = 4.0 / time_constant_s;
+            let acceleration = spring * error - damping * speed;
             speed += acceleration * dt;
             let proposed = (current + speed * dt).clamp(lower, upper);
             let current_dist = (destination - current).abs();
@@ -186,8 +188,7 @@ fn install_smooth_gallery_scroll(
             // spring keeps accelerating away and the stall guard later snaps a
             // large distance (measured 563 px).
             let sign_flip = current_dist > f64::EPSILON
-                && (destination - proposed).signum()
-                    != (destination - current).signum();
+                && (destination - proposed).signum() != (destination - current).signum();
             let diverging = proposed_dist > current_dist;
             if sign_flip || diverging {
                 last_animation_value.set(destination);
@@ -405,8 +406,6 @@ fn install_smooth_gallery_scroll(
     scrolled.add_controller(controller);
 }
 
-
-
 fn install_folder_smooth_gallery_scroll(
     scrolled: &gtk::ScrolledWindow,
     gallery: Rc<grid::Gallery>,
@@ -418,7 +417,6 @@ fn install_folder_smooth_gallery_scroll(
     // adjustment value, so an anchor correction never leaves a stale target to
     // pull the viewport backwards.
     const WHEEL_STEP_PX: f64 = 120.0;
-    const TIME_CONSTANT_S: f64 = 0.085;
     const STOP_REMAINING_PX: f64 = 0.35;
 
     let adjustment = scrolled.vadjustment();
@@ -471,7 +469,8 @@ fn install_folder_smooth_gallery_scroll(
             // Exponential ease-out. Crucially this is relative to GTK's current
             // value, not an absolute destination. If ListView re-anchors after
             // this write, the next frame simply continues from that new value.
-            let fraction = 1.0 - (-dt / TIME_CONSTANT_S).exp();
+            let time_constant_s = crate::animation_settings::folder_scroll_ms() / 1_000.0;
+            let fraction = 1.0 - (-dt / time_constant_s).exp();
             let mut step = left * fraction;
             if step.abs() < 0.75 {
                 step = 0.75 * step.signum();
@@ -522,8 +521,8 @@ fn install_folder_smooth_gallery_scroll(
         match controller.unit() {
             gtk::gdk::ScrollUnit::Wheel => {
                 let lower = adjustment_for_scroll.lower();
-                let upper = (adjustment_for_scroll.upper() - adjustment_for_scroll.page_size())
-                    .max(lower);
+                let upper =
+                    (adjustment_for_scroll.upper() - adjustment_for_scroll.page_size()).max(lower);
                 let current = adjustment_for_scroll.value().clamp(lower, upper);
                 if (dy < 0.0 && current <= lower) || (dy > 0.0 && current >= upper) {
                     remaining_for_scroll.set(0.0);
@@ -646,8 +645,8 @@ fn should_ignore_cleared_search_event(
 mod open_in_folder_retry_tests {
     use super::{
         can_reuse_folder_stream_for_destination, folder_destination_plan,
-        open_in_folder_should_stop, search_folder_focus_should_stop, FolderDestinationPlan,
-        should_ignore_cleared_search_event, SEARCH_DEBOUNCE_MS,
+        open_in_folder_should_stop, search_folder_focus_should_stop,
+        should_ignore_cleared_search_event, FolderDestinationPlan, SEARCH_DEBOUNCE_MS,
     };
 
     #[test]
@@ -680,23 +679,43 @@ mod open_in_folder_retry_tests {
 
     #[test]
     fn search_folder_focus_waits_until_the_pending_target_is_consumed() {
-        assert!(!search_folder_focus_should_stop(true, true, true, true, false, 1));
-        assert!(!search_folder_focus_should_stop(true, true, false, true, false, 1));
-        assert!(search_folder_focus_should_stop(true, true, false, false, false, 2));
-        assert!(search_folder_focus_should_stop(true, true, false, true, true, 2));
+        assert!(!search_folder_focus_should_stop(
+            true, true, true, true, false, 1
+        ));
+        assert!(!search_folder_focus_should_stop(
+            true, true, false, true, false, 1
+        ));
+        assert!(search_folder_focus_should_stop(
+            true, true, false, false, false, 2
+        ));
+        assert!(search_folder_focus_should_stop(
+            true, true, false, true, true, 2
+        ));
     }
 
     #[test]
     fn search_folder_focus_stops_if_user_moves_on() {
-        assert!(search_folder_focus_should_stop(false, true, true, true, false, 1));
-        assert!(search_folder_focus_should_stop(true, false, true, true, false, 1));
+        assert!(search_folder_focus_should_stop(
+            false, true, true, true, false, 1
+        ));
+        assert!(search_folder_focus_should_stop(
+            true, false, true, true, false, 1
+        ));
     }
 
     #[test]
     fn stale_event_for_the_query_just_cleared_is_ignored_once() {
         assert!(should_ignore_cleared_search_event(true, None, "marianne"));
-        assert!(should_ignore_cleared_search_event(false, Some("marianne"), "marianne"));
-        assert!(!should_ignore_cleared_search_event(false, Some("marianne"), "maria"));
+        assert!(should_ignore_cleared_search_event(
+            false,
+            Some("marianne"),
+            "marianne"
+        ));
+        assert!(!should_ignore_cleared_search_event(
+            false,
+            Some("marianne"),
+            "maria"
+        ));
     }
 
     fn exact_photo_navigation_never_schedules_generic_folder_scroll() {

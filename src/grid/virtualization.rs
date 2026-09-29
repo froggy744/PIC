@@ -46,11 +46,7 @@ const FOLDER_HEADER_HEIGHT: i32 = 70;
 ///
 /// Photo lines are sized from `tile_block_height`, so the filename caption row
 /// is part of the row instead of eating into the square thumbnail.
-fn folder_model_row_height(
-    kind: FolderRowKind,
-    tile_height: i32,
-    filename_visible: bool,
-) -> i32 {
+fn folder_model_row_height(kind: FolderRowKind, tile_height: i32, filename_visible: bool) -> i32 {
     match kind {
         FolderRowKind::Header => FOLDER_HEADER_HEIGHT,
         FolderRowKind::Photos => folder_line_height(tile_height, filename_visible),
@@ -713,12 +709,7 @@ impl Gallery {
         self.request_wheel_zoom(prev_zoom_level(base));
     }
 
-    pub fn wheel_zoom_in_at(
-        self: &Rc<Self>,
-        viewport: &gtk::Widget,
-        x: f64,
-        y: f64,
-    ) {
+    pub fn wheel_zoom_in_at(self: &Rc<Self>, viewport: &gtk::Widget, x: f64, y: f64) {
         if self.pending_zoom_width.get().is_none() {
             self.begin_pointer_zoom_anchor(viewport, x, y);
         }
@@ -729,12 +720,7 @@ impl Gallery {
         self.request_wheel_zoom(next_zoom_level(base));
     }
 
-    pub fn wheel_zoom_out_at(
-        self: &Rc<Self>,
-        viewport: &gtk::Widget,
-        x: f64,
-        y: f64,
-    ) {
+    pub fn wheel_zoom_out_at(self: &Rc<Self>, viewport: &gtk::Widget, x: f64, y: f64) {
         if self.pending_zoom_width.get().is_none() {
             self.begin_pointer_zoom_anchor(viewport, x, y);
         }
@@ -830,7 +816,8 @@ impl Gallery {
                 now
             });
             if let Some(post_start) = post_started.get() {
-                let t = (now - post_start) as f64 / 115_000.0;
+                let t = (now - post_start) as f64
+                    / crate::animation_settings::grid_zoom_crossfade_ms() as f64;
                 surface.frame(true, direction.get(), t);
                 if t >= 1.0 {
                     gallery.zoom_tick.borrow_mut().take();
@@ -842,7 +829,8 @@ impl Gallery {
             } else {
                 let target = gallery.pending_zoom_width.get().unwrap_or(start_width);
                 direction.set(if target > start_width { 1.0 } else { -1.0 });
-                let t = (now - start) as f64 / 85_000.0;
+                let t =
+                    (now - start) as f64 / crate::animation_settings::grid_zoom_cutoff_ms() as f64;
                 surface.frame(false, direction.get(), t);
                 if t >= 1.0 {
                     surface.freeze();
@@ -899,9 +887,7 @@ impl Gallery {
         let folder_mode = self.group_mode.get() == GroupMode::Folder;
         if folder_mode && crate::grid::sectioned_folder_view_enabled() {
             let start_height = self.tile_height.get().max(1);
-            let target_height = ((start_height as f64)
-                * target_width as f64
-                / start_width as f64)
+            let target_height = ((start_height as f64) * target_width as f64 / start_width as f64)
                 .round()
                 .max(1.0) as i32;
             let snapshot = self.sectioned_folder.capture_reflow_snapshot();
@@ -946,9 +932,7 @@ impl Gallery {
         }
 
         let start_height = self.tile_height.get().max(1);
-        let target_height = ((start_height as f64)
-            * target_width as f64
-            / start_width as f64)
+        let target_height = ((start_height as f64) * target_width as f64 / start_width as f64)
             .round()
             .max(1.0) as i32;
 
@@ -972,8 +956,11 @@ impl Gallery {
         if std::env::var_os("PICASA_TRACE").is_some() {
             eprintln!(
                 "PIC_ZOOM_TRACE geometry_before target={}x{} columns={} grid={}x{}",
-                target_width, target_height, self.current_columns.get(),
-                self.root.width(), self.root.height(),
+                target_width,
+                target_height,
+                self.current_columns.get(),
+                self.root.width(),
+                self.root.height(),
             );
         }
         self.apply_tile_geometry(target_width, target_height, true);
@@ -984,8 +971,12 @@ impl Gallery {
                 .unwrap_or(-1.0);
             eprintln!(
                 "PIC_ZOOM_TRACE geometry_after tile={}x{} columns={} grid={}x{} scroll_y={:.1}",
-                self.tile_width.get(), self.tile_height.get(),
-                self.current_columns.get(), self.root.width(), self.root.height(), scroll,
+                self.tile_width.get(),
+                self.tile_height.get(),
+                self.current_columns.get(),
+                self.root.width(),
+                self.root.height(),
+                scroll,
             );
         }
         self.schedule_grid_zoom_anchor_restore(generation, true);
@@ -1031,10 +1022,10 @@ impl Gallery {
         }
         // Capture the visible photo before the tile resize disturbs the layout.
         let folder_mode = self.group_mode.get() == GroupMode::Folder;
-        let sectioned_folder_mode =
-            folder_mode && crate::grid::sectioned_folder_view_enabled();
-        let folder_list_mode =
-            folder_mode && !sectioned_folder_mode && !crate::grid::folder_gridview_experiment_enabled();
+        let sectioned_folder_mode = folder_mode && crate::grid::sectioned_folder_view_enabled();
+        let folder_list_mode = folder_mode
+            && !sectioned_folder_mode
+            && !crate::grid::folder_gridview_experiment_enabled();
         let sectioned_anchor = if sectioned_folder_mode {
             self.stable_zoom_anchor
                 .get()
@@ -1060,7 +1051,6 @@ impl Gallery {
             (self.on_zoom_changed)(width);
         }
 
-
         let mut tiles = Vec::new();
         if sectioned_folder_mode {
             collect_tiles(self.folder_sectioned_root.upcast_ref(), &mut tiles);
@@ -1076,7 +1066,6 @@ impl Gallery {
             tile.set_tile_size(width, height);
         }
         let resize_us = resize_started.map_or(0, |started| started.elapsed().as_micros());
-
 
         let root_width = if sectioned_folder_mode {
             self.folder_sectioned_root.width()
@@ -1127,7 +1116,6 @@ impl Gallery {
                 started.elapsed().as_micros()
             );
         }
-
     }
 
     /// After Folder scrolling settles, load only cached thumbnails for tiles
@@ -1167,7 +1155,6 @@ impl Gallery {
                 tile.unload_visual();
             }
         }
-
 
         loaded
     }
@@ -1296,7 +1283,8 @@ impl Gallery {
 
         const ITEM_PADDING: f64 = 6.0;
         let columns = self.current_columns.get().max(1) as usize;
-        let row_pitch = tile_block_height(self.tile_height.get(), self.show_file_names.get()) as f64
+        let row_pitch = tile_block_height(self.tile_height.get(), self.show_file_names.get())
+            as f64
             + ITEM_PADDING * 2.0;
         let first = self.index_for_scroll_position(scroll_y);
         let visible_rows =
@@ -1863,7 +1851,6 @@ impl Gallery {
         for tile in tiles {
             tile.refresh_thumbnail();
         }
-
     }
 
     pub fn set_favorite_indicators_visible(&self, visible: bool) {
@@ -2005,7 +1992,9 @@ impl Gallery {
             .iter()
             .map(|path| path.to_string_lossy().into_owned())
             .collect::<HashSet<_>>();
-        if std::env::var_os("PICASA_TRACE").is_some() { eprintln!("PIC_NAV thumbnail_refresh_paths count={}", paths.len()); }
+        if std::env::var_os("PICASA_TRACE").is_some() {
+            eprintln!("PIC_NAV thumbnail_refresh_paths count={}", paths.len());
+        }
         let mut tiles = Vec::new();
         collect_tiles(self.root.upcast_ref(), &mut tiles);
         collect_tiles(self.folder_root.upcast_ref(), &mut tiles);
@@ -2126,7 +2115,9 @@ impl Gallery {
     pub fn replace(&self, photos: &[Photo]) {
         self.cancel_zoom_transition();
         self.cancel_resize_reflow();
-        if std::env::var_os("PICASA_TRACE").is_some() { eprintln!("PIC_NAV gallery_replace photos={}", photos.len()); }
+        if std::env::var_os("PICASA_TRACE").is_some() {
+            eprintln!("PIC_NAV gallery_replace photos={}", photos.len());
+        }
         self.stable_zoom_anchor.set(None);
         self.zoom_anchor_restore_generation
             .set(self.zoom_anchor_restore_generation.get().wrapping_add(1));
@@ -2139,18 +2130,15 @@ impl Gallery {
         let unchanged = {
             let current = self.current_photos.borrow();
             current.len() == photos.len()
-                && current
-                    .iter()
-                    .zip(photos)
-                    .all(|(object, photo)| {
-                        object.id() == photo.id
-                            && object.history_caption() == photo.history_caption
-                            && object.edited_at() == photo.edited_at
-                            && object.edit_recipe() == photo.edit_recipe
-                            && object.path() == photo.path
-                            && object.mtime() == photo.mtime.unwrap_or_default()
-                            && object.size_bytes() == photo.size_bytes.unwrap_or_default()
-                    })
+                && current.iter().zip(photos).all(|(object, photo)| {
+                    object.id() == photo.id
+                        && object.history_caption() == photo.history_caption
+                        && object.edited_at() == photo.edited_at
+                        && object.edit_recipe() == photo.edit_recipe
+                        && object.path() == photo.path
+                        && object.mtime() == photo.mtime.unwrap_or_default()
+                        && object.size_bytes() == photo.size_bytes.unwrap_or_default()
+                })
         };
         if unchanged {
             // Entering Folder mode can intentionally clear the transient
@@ -2225,7 +2213,6 @@ impl Gallery {
         // batches for library-sized replacements.
         const PROGRESSIVE_REPLACE_THRESHOLD: usize = 1_000;
         if photos.len() > PROGRESSIVE_REPLACE_THRESHOLD {
-
             self.replace_progressive(photos.to_vec(), generation);
             return;
         }
@@ -2255,11 +2242,7 @@ impl Gallery {
         self.stream_building.set(false);
     }
 
-    fn replace_progressive(
-        &self,
-        photos: Vec<Photo>,
-        generation: u64,
-    ) {
+    fn replace_progressive(&self, photos: Vec<Photo>, generation: u64) {
         // Larger batches finish the model build in far fewer main-loop hops.
         // Each hop is scheduled at idle priority, so with 500-photo batches a
         // 66k stream needed 133 hops and could take >20 s of wall time even
@@ -2318,7 +2301,6 @@ impl Gallery {
                 store.splice(store.n_items(), 0, &objects);
             }
 
-
             if end >= photos.len() {
                 rebuild_group_ranges_for(&current_photos, &group_mode, &group_date, &group_ranges);
                 if group_mode.get() == GroupMode::Folder {
@@ -2359,7 +2341,7 @@ impl Gallery {
                                     tile_block_height(tile_height.get(), show_file_names.get())
                                         + TILE_ROW_SPACING,
                                 ))
-                                .floor() as usize)
+                            .floor() as usize)
                                 * current_columns.get().max(1) as usize,
                         );
                     } else {
@@ -2379,7 +2361,7 @@ impl Gallery {
                                 tile_block_height(tile_height.get(), show_file_names.get())
                                     + TILE_ROW_SPACING,
                             ))
-                            .floor() as usize)
+                        .floor() as usize)
                             * current_columns.get().max(1) as usize,
                     );
                 }
@@ -2402,7 +2384,6 @@ impl Gallery {
             if end < photos.len() {
                 glib::ControlFlow::Continue
             } else {
-
                 // Folder rows (and therefore folder navigation targets) only
                 // exist once every batch has been applied.
                 stream_building.set(false);
@@ -2428,7 +2409,6 @@ impl Gallery {
                 self.update_group_header_for_scroll(self.last_scroll_y.get());
             }
         }
-
     }
 
     /// Stop a progressive replacement that is no longer the active view.
@@ -2444,7 +2424,6 @@ impl Gallery {
             .set(self.zoom_anchor_restore_generation.get().wrapping_add(1));
         self.stream_building.set(false);
     }
-
 }
 fn folder_section_plan(
     ranges: &[GroupRange],
@@ -2601,7 +2580,6 @@ fn rebuild_folder_rows_for(
     let order = folder_order.borrow();
     let new_rows = build_folder_virtual_objects(&ranges, &photos, line_size, &catalog, &order);
 
-
     let old_len = old_rows as usize;
     let new_len = new_rows.len();
     let mut prefix = 0usize;
@@ -2647,9 +2625,7 @@ fn rebuild_folder_rows_for(
         suffix += 1;
     }
 
-
     if prefix == old_len && prefix == new_len {
-
         return;
     }
 
@@ -2668,9 +2644,7 @@ fn rebuild_folder_rows_for(
     // therefore requires reusing an already-populated folder model instead of
     // rebuilding it.
     folder_store.splice(prefix as u32, removed, inserted);
-
 }
-
 
 #[cfg(test)]
 mod zoom_anchor_unit_tests {

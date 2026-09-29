@@ -7,20 +7,21 @@ mod edit;
 mod grid;
 mod image_format;
 mod infobar;
-mod lightbox;
 mod library_home;
-#[cfg(target_os="linux")]
-mod private_smb;
-#[cfg(target_os="linux")]
-mod private_nfs;
-#[cfg(target_os="linux")]
-mod network_shares;
-#[cfg(target_os="linux")]
+mod lightbox;
+#[cfg(target_os = "linux")]
 mod network_picker;
+#[cfg(target_os = "linux")]
+mod network_shares;
 mod photo_object;
 mod photo_texture;
 mod platform;
+#[cfg(target_os = "linux")]
+mod private_nfs;
+#[cfg(target_os = "linux")]
+mod private_smb;
 mod scanner;
+mod animation_settings;
 mod settings;
 mod sidebar;
 mod smooth_scroll;

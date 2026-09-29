@@ -938,9 +938,7 @@ impl Lightbox {
         let edit_recipe = photo.edit_recipe();
 
         if let Some(cache) = self.native_texture.borrow().as_ref() {
-            if cache.path == path
-                && cache.rotation == rotation
-                && cache.edit_recipe == edit_recipe
+            if cache.path == path && cache.rotation == rotation && cache.edit_recipe == edit_recipe
             {
                 let request = self.picture.size_request();
                 self.picture.set_paintable(Some(&cache.texture));
@@ -1004,14 +1002,11 @@ impl Lightbox {
                 return;
             }
 
-            let still_current = photos
-                .borrow()
-                .get(index.get())
-                .is_some_and(|current| {
-                    current.path() == expected_path
-                        && current.rotation() == expected_rotation
-                        && current.edit_recipe() == expected_recipe
-                });
+            let still_current = photos.borrow().get(index.get()).is_some_and(|current| {
+                current.path() == expected_path
+                    && current.rotation() == expected_rotation
+                    && current.edit_recipe() == expected_recipe
+            });
             if !still_current {
                 lease.release();
                 return;
@@ -1140,11 +1135,7 @@ impl Lightbox {
         // established path unchanged.
         if source == "slider" {
             let (picture_width, picture_height) = self.picture.size_request();
-            prime_viewport_for_picture_size(
-                &self.picture_viewport,
-                picture_width,
-                picture_height,
-            );
+            prime_viewport_for_picture_size(&self.picture_viewport, picture_width, picture_height);
         }
 
         self.ensure_native_zoom_texture(&photo);
@@ -1540,9 +1531,8 @@ impl Lightbox {
                         let generation_for_transition = current_generation.clone();
 
                         transition.add_tick_callback(move |transition, _| {
-                            const OPEN_TRANSITION_MS: f64 = 200.0;
                             let linear = (started.elapsed().as_secs_f64() * 1000.0
-                                / OPEN_TRANSITION_MS)
+                                / crate::animation_settings::lightbox_open_ms())
                                 .clamp(0.0, 1.0);
                             let eased = 1.0 - (1.0 - linear).powi(3);
 

@@ -6,15 +6,18 @@ pub fn dimensions(reference: &str, bytes: &[u8]) -> Result<(u32, u32)> {
         Ok((width, height))
     } else if is_raw(reference) {
         let local = crate::source::materialize(reference)?;
-        let rawfile = rawler::rawsource::RawSource::new(&local)?;
-        let decoder = rawler::get_decoder(&rawfile)?;
-        // `dummy = true` reads the RAW geometry without unpacking the sensor
-        // pixels. Prefer the recommended crop shown by photo applications.
-        let raw = decoder.raw_image(
-            &rawfile,
-            &rawler::decoders::RawDecodeParams::default(),
-            true,
-        )?;
+        let raw = rawler_decode(reference, "dimensions", || {
+            let rawfile = rawler::rawsource::RawSource::new(&local)?;
+            let decoder = rawler::get_decoder(&rawfile)?;
+            // `dummy = true` reads the RAW geometry without unpacking the sensor
+            // pixels. Prefer the recommended crop shown by photo applications.
+            let raw = decoder.raw_image(
+                &rawfile,
+                &rawler::decoders::RawDecodeParams::default(),
+                true,
+            )?;
+            Ok(raw)
+        })?;
         let (width, height) = raw
             .crop_area
             .or(raw.active_area)
@@ -279,3 +282,74 @@ mod svg_decoder_tests {
         assert!(decoded.image.height() > 0);
     }
 }
+
+fn rawler_decode<T>(
+    reference: &str,
+    operation: &str,
+    decode: impl FnOnce() -> Result<T> + std::panic::UnwindSafe,
+) -> Result<T> {
+    let trace = std::env::var_os("PICASA_TRACE").is_some();
+    if trace {
+        eprintln!("RAW TRACE decode_start operation={operation} path={reference}");
+    }
+    std::panic::catch_unwind(decode).unwrap_or_else(|_| {
+        if trace {
+            eprintln!("RAW TRACE panic_caught operation={operation} path={reference}");
+        }
+        Err(RawlerPanic(reference.to_owned()).into())
+    })
+}
+
+#[cfg(test)]
+mod rawler_panic_tests {
+    use super::*;
+
+    #[test]
+    fn rawler_panic_becomes_error_without_poisoning_scan_guard() {
+        let lock = Mutex::new(());
+        let _guard = lock.lock().unwrap();
+        let result = rawler_decode::<()>("/photos/broken.nef", "thumbnail", || {
+            panic!("simulated rawler panic")
+        });
+        let error = result.unwrap_err().to_string();
+        assert!(error.contains("RAW decoder panicked"), "{error}");
+        assert!(error.contains("/photos/broken.nef"), "{error}");
+        drop(_guard);
+        assert!(!lock.is_poisoned());
+        let _next_scan = lock.lock().unwrap();
+        assert_eq!(
+            rawler_decode("/photos/next.nef", "thumbnail", || Ok(7)).unwrap(),
+            7
+        );
+    }
+
+    #[test]
+    fn rawler_wrapper_preserves_success() {
+        assert_eq!(
+            rawler_decode("/photos/good.nef", "preview", || Ok(42)).unwrap(),
+            42
+        );
+    }
+
+    #[test]
+    fn rawler_wrapper_preserves_decode_error() {
+        let error = rawler_decode::<()>("/photos/bad.nef", "preview", || {
+            Err(anyhow::anyhow!("unsupported RAW"))
+        })
+        .unwrap_err();
+        assert_eq!(error.to_string(), "unsupported RAW");
+    }
+}
+
+// A distinct error lets metadata probing retain its ordinary optional-dimension
+// behavior while routing decoder panics through the scanner's per-file failure.
+#[derive(Debug)]
+pub(crate) struct RawlerPanic(String);
+
+impl std::fmt::Display for RawlerPanic {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "RAW decoder panicked while reading {}", self.0)
+    }
+}
+
+impl std::error::Error for RawlerPanic {}

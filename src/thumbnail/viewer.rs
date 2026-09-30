@@ -51,8 +51,7 @@ fn decode_raw_thumbnail(reference: &str) -> Result<DecodedThumbnailSource> {
 }
 
 fn decode_raw_thumbnail_with_max(reference: &str, max_edge: u32) -> Result<DecodedThumbnailSource> {
-    std::panic::catch_unwind(|| decode_raw_thumbnail_inner(reference, max_edge))
-        .map_err(|_| anyhow::anyhow!("RAW thumbnail decoder panicked"))?
+    decode_raw_thumbnail_inner(reference, max_edge)
 }
 
 fn decode_raw_thumbnail_inner(reference: &str, max_edge: u32) -> Result<DecodedThumbnailSource> {
@@ -74,10 +73,12 @@ fn decode_raw_thumbnail_inner(reference: &str, max_edge: u32) -> Result<DecodedT
 
     // Prefer rawler's larger decoded preview for the cached thumbnail. This is
     // the generic path used by DNG and every other supported RAW format.
-    match rawler::analyze::extract_preview_pixels(
-        local_path.clone(),
-        &rawler::decoders::RawDecodeParams::default(),
-    ) {
+    match rawler_decode(reference, "thumbnail_preview", || {
+        Ok(rawler::analyze::extract_preview_pixels(
+            local_path.clone(),
+            &rawler::decoders::RawDecodeParams::default(),
+        )?)
+    }) {
         Ok(image) => {
             let source_width = image.width();
             let source_height = image.height();
@@ -118,10 +119,12 @@ fn decode_raw_thumbnail_inner(reference: &str, max_edge: u32) -> Result<DecodedT
         }
     }
 
-    match rawler::analyze::extract_thumbnail_pixels(
-        &local_path,
-        &rawler::decoders::RawDecodeParams::default(),
-    ) {
+    match rawler_decode(reference, "thumbnail", || {
+        Ok(rawler::analyze::extract_thumbnail_pixels(
+            &local_path,
+            &rawler::decoders::RawDecodeParams::default(),
+        )?)
+    }) {
         Ok(image) => {
             let source_width = image.width();
             let source_height = image.height();
@@ -179,11 +182,13 @@ fn decode_dng_sensor_thumbnail_with_max(
     let path = path.to_owned();
     let (send, receive) = std::sync::mpsc::sync_channel(1);
     pool.spawn(move || {
-        let result = std::panic::catch_unwind(|| -> Result<DecodedThumbnailSource> {
-            let image = rawler::analyze::extract_full_pixels(
-                &path,
-                &rawler::decoders::RawDecodeParams::default(),
-            )?;
+        let result = (|| -> Result<DecodedThumbnailSource> {
+            let image = rawler_decode(&path.to_string_lossy(), "thumbnail_full", || {
+                Ok(rawler::analyze::extract_full_pixels(
+                    &path,
+                    &rawler::decoders::RawDecodeParams::default(),
+                )?)
+            })?;
             let (source_width, source_height) = (image.width(), image.height());
             Ok(DecodedThumbnailSource {
                 image: resize_with_max(image.into_rgb8(), max_edge)?,
@@ -191,8 +196,7 @@ fn decode_dng_sensor_thumbnail_with_max(
                 source_height,
                 scale: "full RAW recovery",
             })
-        })
-        .unwrap_or_else(|_| Err(anyhow::anyhow!("DNG full RAW decoder panicked")));
+        })();
         let _ = send.send(result);
     });
     // Blocking receive deliberately avoids install(): a caller in a Rayon
@@ -255,7 +259,12 @@ where
 
     check_viewer_cancelled(cancelled, "before_raw_preview_decode")?;
     let raw_params = rawler::decoders::RawDecodeParams::default();
-    let image = match rawler::analyze::extract_preview_pixels(&local_path, &raw_params) {
+    let image = match rawler_decode(reference, "viewer_preview", || {
+        Ok(rawler::analyze::extract_preview_pixels(
+            &local_path,
+            &raw_params,
+        )?)
+    }) {
         Ok(image) => image,
         Err(preview_error) => {
             // Some DNG files have a truncated embedded preview while
@@ -263,7 +272,9 @@ where
             // image as a viewer fallback. DNG thumbnails have a
             // separate bounded recovery path after preview failure.
             check_viewer_cancelled(cancelled, "before_full_raw_decode")?;
-            let full = rawler::analyze::extract_full_pixels(&local_path, &raw_params).map_err(
+            let full = rawler_decode(reference, "viewer_full", || {
+                Ok(rawler::analyze::extract_full_pixels(&local_path, &raw_params)?)
+            }).map_err(
                 |full_error| {
                     anyhow::anyhow!(
                         "RAW viewer strategies failed: preview: {preview_error}; full RAW: {full_error}"
@@ -773,8 +784,14 @@ mod raw_thumbnail_tests {
         let path = std::env::var("PICASA_TEST_DNG").expect("PICASA_TEST_DNG must name a fixture");
         let before = fs::metadata(&path).unwrap();
         let params = rawler::decoders::RawDecodeParams::default();
-        assert!(rawler::analyze::extract_preview_pixels(&path, &params).is_err());
-        assert!(rawler::analyze::extract_thumbnail_pixels(&path, &params).is_err());
+        assert!(rawler_decode(&path, "test_preview", || Ok(
+            rawler::analyze::extract_preview_pixels(&path, &params)?
+        ))
+        .is_err());
+        assert!(rawler_decode(&path, "test_thumbnail", || Ok(
+            rawler::analyze::extract_thumbnail_pixels(&path, &params)?
+        ))
+        .is_err());
         let decoded = decode_raw_thumbnail(&path).unwrap();
         assert_eq!(decoded.scale, "full RAW recovery");
         assert!(decoded.source_width > THUMBNAIL_SIZE);

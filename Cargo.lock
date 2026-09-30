@@ -1766,6 +1766,7 @@ dependencies = [
  "chrono",
  "dirs",
  "fast_image_resize",
+ "gdk-pixbuf",
  "gio",
  "glib",
  "gtk4",

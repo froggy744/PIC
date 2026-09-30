@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::io::{BufReader, Cursor, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 
 use anyhow::{Context, Result};
@@ -46,6 +46,18 @@ static WALL_WAITERS: OnceLock<
 static WALL_WANTED: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 static WALL_ACTIVE: AtomicUsize = AtomicUsize::new(0);
 static PRIORITY_DISPATCHES: AtomicUsize = AtomicUsize::new(0);
+// The normal gallery always uses the canonical 320 px cache.  Optional
+// 640 px Photo Wall quality is opt-in (Settings > Interface) so ordinary
+// browsing never reads originals just to sharpen thumbnails.
+static WALL_QUALITY_ENABLED: AtomicBool = AtomicBool::new(false);
+
+pub fn set_wall_quality_enabled(enabled: bool) {
+    WALL_QUALITY_ENABLED.store(enabled, Ordering::Relaxed);
+}
+
+pub fn wall_quality_enabled() -> bool {
+    WALL_QUALITY_ENABLED.load(Ordering::Relaxed)
+}
 
 const PRIORITY_QUEUE_CAPACITY: usize = 512;
 // Visible requests must not queue behind the single bulk RAW worker. Keep a

@@ -2182,6 +2182,11 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             }
 
             if photo_wall_window_resize_active_for_tick.get() {
+                // Keep one frame pending while the compositor owns the native
+                // resize gesture. Without this, the frame clock can go idle on
+                // mouse release; the button-up is then only noticed on the next
+                // unrelated redraw (for example clicking a thumbnail).
+                surface.queue_draw();
                 return glib::ControlFlow::Continue;
             }
         } else if photo_wall_window_resize_active_for_tick.replace(false) {

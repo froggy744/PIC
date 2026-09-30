@@ -258,7 +258,7 @@ fn decode_svg_thumbnail_with_max(bytes: &[u8], max_edge: u32) -> Result<DecodedT
 mod svg_decoder_tests {
     use super::*;
 
-    const SVG: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" width="120" height="80" viewBox="0 0 120 80"><rect width="120" height="80" fill="#336699"/></svg>"#;
+    const SVG: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" width="120" height="80" viewBox="0 0 120 80"><rect width="120" height="80" fill="#336699"/></svg>"##;
     const RESOURCE_SVG: &[u8] =
         include_bytes!("../../resources/custom-icons/collage-grid-symbolic.svg");
 

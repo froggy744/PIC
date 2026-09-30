@@ -1031,3 +1031,123 @@ fn photo_wall_width_freeze_ignores_intermediate_sidebar_allocations() {
     window.close();
     settle();
 }
+
+#[test]
+#[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+fn photo_wall_width_only_geometry_keeps_rows_and_structural_changes_repartition() {
+    gtk::init().unwrap();
+    let gallery = Rc::new(Gallery::new(
+        &[],
+        180,
+        |_| {},
+        |_, _, _| {},
+        |_, _, _, _| {},
+        |_, _| {},
+        |_| {},
+    ));
+    let objects = (0..120)
+        .map(|i| {
+            glib::Object::builder::<PhotoObject>()
+                .property("id", i as i64 + 1)
+                .property("width", [2000_i64, 4000, 6000, 8000][i % 4])
+                .property("height", 4000_i64)
+                .build()
+        })
+        .collect::<Vec<_>>();
+    gallery.store.splice(0, 0, &objects);
+    gallery.current_photos.replace(objects);
+    gallery.set_layout(PhotoLayout::PhotoWall);
+    let surface = &gallery.sectioned_folder;
+    // Before GTK's first allocation the scroller reports zero, clamped to 1.
+    // That provisional geometry must not become the permanent partition.
+    surface.geometry_for_current_layout(1);
+    surface.geometry_for_current_layout(1400);
+    assert!(
+        surface.wall_state.borrow().layout.rows.len() < 120,
+        "first real allocation retained one-photo placeholder rows"
+    );
+    let memberships = || {
+        surface
+            .wall_state
+            .borrow()
+            .layout
+            .rows
+            .iter()
+            .map(|row| row.item_range.clone())
+            .collect::<Vec<_>>()
+    };
+    let original = memberships();
+    let reads_before = crate::source::original_read_count();
+    for width in [1400, 1395, 1380, 1300, 1000, 1200, 1400, 1, 1400] {
+        surface.geometry_for_current_layout(width);
+        assert_eq!(
+            memberships(),
+            original,
+            "width {width} repartitioned Photo Wall"
+        );
+        assert_eq!(surface.geometry_width.get(), width);
+        let generation = surface.wall_state.borrow().generation;
+        surface.geometry_for_current_layout(width);
+        assert_eq!(
+            surface.wall_state.borrow().generation,
+            generation,
+            "unchanged width rebuilt geometry"
+        );
+    }
+    assert_eq!(crate::source::original_read_count(), reads_before);
+
+    // A genuine model/order change discards the partition and uses the current
+    // width, even if the number of photos and target height remain unchanged.
+    surface.geometry_for_current_layout(1000);
+    gallery.current_photos.borrow_mut().reverse();
+    surface.refresh_model();
+    surface.geometry_for_current_layout(1000);
+    assert_ne!(
+        memberships(),
+        original,
+        "model invalidation retained the old partition"
+    );
+    for item in &surface.wall_state.borrow().layout.items {
+        let expected_ratio = [2.0, 1.5, 1.0, 0.5][item.photo_index % 4];
+        assert!(
+            (item.width / item.height - expected_ratio).abs() < 1e-10,
+            "source change retained a stale aspect ratio"
+        );
+    }
+    let fresh = memberships();
+    gallery.apply_wall_zoom(240);
+    surface.geometry_for_current_layout(1000);
+    assert_ne!(memberships(), fresh, "zoom did not repartition rows");
+
+    // Exercise the real scrolled-window allocation callback as well as the
+    // direct geometry calls above. Width changes need no release interaction.
+    let scroll = gtk::ScrolledWindow::builder()
+        .child(&gallery.folder_sectioned_root)
+        .build();
+    gallery.attach_sectioned_folder_scroll(&scroll);
+    let window = gtk::Window::builder()
+        .default_width(1400)
+        .default_height(600)
+        .child(&scroll)
+        .build();
+    window.present();
+    settle();
+    let rows = memberships();
+    for width in [1395, 1380, 1300, 1000, 1200, 1400] {
+        window.set_default_size(width, 600);
+        settle();
+        assert_eq!(scroll.width(), width, "requested resize was not allocated");
+        assert_eq!(surface.geometry_width.get(), scroll.width());
+        assert_eq!(memberships(), rows, "allocation changed row membership");
+    }
+    let generation = surface.wall_state.borrow().generation;
+    window.set_default_size(1400, 700);
+    settle();
+    assert_eq!(
+        surface.wall_state.borrow().generation,
+        generation,
+        "height-only allocation rebuilt justified rows"
+    );
+    window.close();
+    settle();
+}

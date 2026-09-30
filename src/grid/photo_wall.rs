@@ -9,6 +9,8 @@ pub enum PhotoLayout {
 struct PhotoWallState {
     generation: u64,
     layout: photo_wall_layout::PhotoWallLayout,
+    quality_gate: WallQualityGate,
+    quality_attempted: HashSet<String>,
 }
 
 impl SectionedFolderView {
@@ -243,6 +245,12 @@ impl Gallery {
         self.cancel_resize_flip();
         self.sectioned_folder.cancel_zoom_settle();
         self.sectioned_folder.cancel_scroll_animation();
+        if layout == PhotoLayout::Grid {
+            crate::thumbnail_display::retain_wall_requests(&HashSet::new());
+            for tile in self.sectioned_folder.live_tiles.borrow().values() {
+                tile.tile.clear_wall_quality();
+            }
+        }
         self.sectioned_folder.layout_mode.set(layout);
         self.sectioned_folder.refresh_model();
         if layout == PhotoLayout::Grid {
@@ -500,5 +508,144 @@ impl Gallery {
             }
         }
         queued
+    }
+}
+
+#[derive(Default)]
+struct WallQualityGate {
+    signature: Option<(u64, u64, u64, i32)>,
+    stationary_since: Option<Instant>,
+}
+
+impl WallQualityGate {
+    fn ready(&mut self, signature: (u64, u64, u64, i32), now: Instant) -> bool {
+        if self.signature != Some(signature) {
+            self.signature = Some(signature);
+            self.stationary_since = Some(now);
+            return false;
+        }
+        self.stationary_since.is_some_and(|since| {
+            now.saturating_duration_since(since) >= std::time::Duration::from_millis(500)
+        })
+    }
+}
+
+fn wall_quality_needed(width: i32, height: i32, scale: i32) -> bool {
+    width.max(height).max(0).saturating_mul(scale.max(1)) > 320
+}
+
+impl SectionedFolderView {
+    fn clear_wall_quality_state(&self) {
+        crate::thumbnail_display::retain_wall_requests(&HashSet::new());
+        for tile in self.live_tiles.borrow().values() {
+            tile.tile.clear_wall_quality();
+        }
+        for tile in self.tile_pool.borrow().iter() {
+            tile.tile.clear_wall_quality();
+        }
+        let mut state = self.wall_state.borrow_mut();
+        state.quality_gate = WallQualityGate::default();
+        state.quality_attempted.clear();
+    }
+
+    fn poll_wall_quality(&self) {
+        if !self.is_wall() || !self.root.is_mapped() {
+            self.clear_wall_quality_state();
+            return;
+        }
+        let Some(scroll) = self.scroll.borrow().as_ref().cloned() else {
+            return;
+        };
+        let adjustment = scroll.vadjustment();
+        let mut state = self.wall_state.borrow_mut();
+        let signature = (
+            state.generation,
+            adjustment.value().to_bits(),
+            adjustment.page_size().to_bits(),
+            self.root.scale_factor(),
+        );
+        if state.quality_gate.signature != Some(signature) {
+            state.quality_attempted.clear();
+        }
+        let retries = crate::thumbnail_display::take_wall_retry_keys();
+        if retries
+            .iter()
+            .any(|key| state.quality_attempted.contains(key))
+        {
+            for key in retries {
+                state.quality_attempted.remove(&key);
+            }
+            state.quality_gate.stationary_since = Some(Instant::now());
+        }
+        let ready = state.quality_gate.ready(signature, Instant::now());
+        let tiles = self.live_tiles.borrow();
+        let mut requests = Vec::new();
+        // Limit quality presentations independently of normal virtualization.
+        for row in state.layout.visible_rows(
+            adjustment.value(),
+            adjustment.value() + adjustment.page_size(),
+        ) {
+            for item in &state.layout.items[state.layout.rows[row].item_range.clone()] {
+                let Some(tile) = tiles.get(&(item.photo_index as u32)) else {
+                    continue;
+                };
+                if requests.len() >= 32
+                    || !wall_quality_needed(
+                        tile.tile.width(),
+                        tile.tile.height(),
+                        self.root.scale_factor(),
+                    )
+                    || !tile.tile.imp().visual_loaded.get()
+                {
+                    continue;
+                }
+                let Some(photo) = tile.tile.photo() else {
+                    continue;
+                };
+                if let Some(request) = photo_presentation_request(&photo, false) {
+                    requests.push((
+                        tile.tile.clone(),
+                        crate::thumbnail_display::wall_request(request),
+                    ));
+                }
+            }
+        }
+        let wanted = requests
+            .iter()
+            .map(|(_, r)| r.key.clone())
+            .collect::<HashSet<_>>();
+        crate::thumbnail_display::retain_wall_requests(&wanted);
+        for tile in tiles.values() {
+            if tile
+                .tile
+                .imp()
+                .wall_quality_key
+                .borrow()
+                .as_ref()
+                .is_some_and(|key| !wanted.contains(key))
+            {
+                tile.tile.clear_wall_quality();
+            }
+        }
+        for (tile, request) in requests {
+            if tile.imp().wall_quality_key.borrow().as_deref() != Some(&request.key) {
+                tile.clear_wall_quality();
+            }
+            *tile.imp().wall_quality_key.borrow_mut() = Some(request.key.clone());
+            if let Some(paintable) = folder_thumbnail_cache_get(&request.key) {
+                tile.apply_wall_quality(&request.key, &paintable);
+            } else {
+                if tile.imp().applied_visual_key.borrow().as_deref() == Some(&request.key) {
+                    tile.clear_wall_quality();
+                    *tile.imp().wall_quality_key.borrow_mut() = Some(request.key.clone());
+                }
+                if ready
+                    && !state.quality_attempted.contains(&request.key)
+                    && crate::thumbnail_display::submit(request.clone())
+                {
+                    state.quality_attempted.insert(request.key);
+                }
+            }
+        }
     }
 }

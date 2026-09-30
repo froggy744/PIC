@@ -16,6 +16,7 @@ type Queue = (Mutex<VecDeque<DisplayRequest>>, Condvar);
 
 static DISPLAY_QUEUE: OnceLock<Arc<Queue>> = OnceLock::new();
 static DISPLAY_PENDING: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+static WALL_RETRIES: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
 static DISPLAY_COMPLETIONS: OnceLock<Mutex<Vec<DisplayCompletion>>> = OnceLock::new();
 
 #[derive(Debug, Clone)]
@@ -201,6 +202,9 @@ fn submit_with_policy(request: DisplayRequest, newest_visible_first: bool) -> bo
     drop(jobs);
 
     if let Some(evicted_key) = evicted_key {
+        if is_wall_key(&evicted_key) {
+            retry_wall_request(evicted_key.clone());
+        }
         if let Ok(mut pending) = DISPLAY_PENDING
             .get_or_init(|| Mutex::new(HashSet::new()))
             .lock()
@@ -288,6 +292,9 @@ pub fn replace_visible_requests(mut requests: Vec<DisplayRequest>) -> usize {
                 break;
             };
             if let Some(evicted) = jobs.remove(index) {
+                if is_wall_key(&evicted.key) {
+                    retry_wall_request(evicted.key.clone());
+                }
                 pending.remove(&evicted.key);
             }
         }
@@ -373,9 +380,19 @@ fn load_thumbnail_with_policy(request: &DisplayRequest, regenerate: bool) -> Dis
     // The request already carries the deterministic sharded path.  Probe it
     // first; only fall back to the legacy flat-layout search when absent.
     // This avoids repeating compatibility lookups for every frame refresh.
+    let quality = is_wall_key(&request.key);
     let canonical = Path::new(&request.cached_path).to_path_buf();
     let path = if canonical.is_file() {
         canonical
+    } else if quality {
+        crate::thumbnail::existing_wall_cache_path(
+            &request.source_path,
+            Some(request.mtime),
+            Some(request.size_bytes),
+        )
+        .ok()
+        .flatten()
+        .unwrap_or(canonical)
     } else {
         crate::thumbnail::existing_cache_path(
             &request.source_path,
@@ -387,6 +404,12 @@ fn load_thumbnail_with_policy(request: &DisplayRequest, regenerate: bool) -> Dis
         .unwrap_or(canonical)
     };
     if !path.is_file() {
+        if quality {
+            if regenerate && !crate::thumbnail::request_wall_quality(request.clone()) {
+                retry_wall_request(request.key.clone());
+            }
+            return DisplayOutcome::Missing;
+        }
         if !regenerate {
             return DisplayOutcome::Missing;
         }
@@ -401,6 +424,9 @@ fn load_thumbnail_with_policy(request: &DisplayRequest, regenerate: bool) -> Dis
     let mut image = match image::open(&path) {
         Ok(image) => image.to_rgba8(),
         Err(error) => {
+            if quality {
+                return DisplayOutcome::Failed;
+            }
             if !regenerate {
                 return DisplayOutcome::Failed;
             }
@@ -500,5 +526,105 @@ mod tests {
         let image = image::RgbaImage::new(200, 300);
         let cropped = crop_raw_cached_preview(image, 6000, 4000);
         assert_eq!(cropped.dimensions(), (200, 300));
+    }
+}
+
+#[cfg(test)]
+mod wall_display_tests {
+    use super::*;
+    #[test]
+    fn wall_quality_identity_is_separate_and_memory_budget_is_bounded() {
+        let base = request_for(
+            "/cache/a.jpg".into(),
+            "/photo/a.jpg".into(),
+            0,
+            0,
+            0,
+            "".into(),
+            1000,
+            800,
+            false,
+        );
+        let quality = wall_request(base.clone());
+        assert_ne!(base.key, quality.key);
+        assert!(is_wall_key(&quality.key));
+        assert!(!is_wall_key(&base.key));
+        assert!(wall_cache_over_budget(33, 1));
+        assert!(wall_cache_over_budget(1, 64 * 1024 * 1024 + 1));
+        assert!(!wall_cache_over_budget(32, 64 * 1024 * 1024));
+    }
+}
+
+pub fn is_wall_key(key: &str) -> bool {
+    key.split('\0')
+        .next()
+        .is_some_and(|path| path.ends_with("-wall640.jpg"))
+}
+
+pub fn wall_cache_over_budget(entries: usize, bytes: usize) -> bool {
+    entries > 32 || bytes > 64 * 1024 * 1024
+}
+
+pub fn wall_request(mut request: DisplayRequest) -> DisplayRequest {
+    request.cached_path = crate::thumbnail::wall_cache_path(Path::new(&request.cached_path))
+        .to_string_lossy()
+        .into_owned();
+    request.key = presentation_key(
+        &request.cached_path,
+        &request.source_path,
+        request.rotation,
+        &request.edit_recipe,
+        request.source_width,
+        request.source_height,
+    );
+    request.visible_priority = false;
+    request
+}
+
+pub fn complete_wall_request(request: DisplayRequest) {
+    let outcome = load_thumbnail_with_policy(&request, false);
+    if let Ok(mut completions) = DISPLAY_COMPLETIONS
+        .get_or_init(|| Mutex::new(Vec::new()))
+        .lock()
+    {
+        completions.push(DisplayCompletion {
+            key: request.key,
+            outcome,
+        });
+    }
+}
+
+pub fn retain_wall_requests(wanted: &HashSet<String>) {
+    crate::thumbnail::retain_wall_quality_requests(wanted);
+    let Some(queue) = DISPLAY_QUEUE.get() else {
+        return;
+    };
+    let mut pending = DISPLAY_PENDING
+        .get_or_init(|| Mutex::new(HashSet::new()))
+        .lock()
+        .expect("display pending lock");
+    let mut jobs = queue.0.lock().expect("display queue lock");
+    jobs.retain(|job| {
+        let retain = !is_wall_key(&job.key) || wanted.contains(&job.key);
+        if !retain {
+            pending.remove(&job.key);
+        }
+        retain
+    });
+}
+
+pub fn take_wall_retry_keys() -> Vec<String> {
+    WALL_RETRIES
+        .get_or_init(|| Mutex::new(Vec::new()))
+        .lock()
+        .map(|mut keys| std::mem::take(&mut *keys))
+        .unwrap_or_default()
+}
+
+pub fn retry_wall_request(key: String) {
+    if let Ok(mut retries) = WALL_RETRIES.get_or_init(|| Mutex::new(Vec::new())).lock() {
+        if !retries.contains(&key) {
+            retries.push(key);
+        }
     }
 }

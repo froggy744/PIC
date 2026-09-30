@@ -1893,6 +1893,11 @@ impl Gallery {
         collect_tiles(self.folder_root.upcast_ref(), &mut tiles);
         collect_tiles(self.folder_sectioned_root.upcast_ref(), &mut tiles);
         for tile in tiles {
+            if let Some(key) = tile.imp().wall_quality_key.borrow().as_ref() {
+                if let Some(paintable) = loaded.get(key) {
+                    tile.apply_wall_quality(key, paintable);
+                }
+            }
             let Some(photo) = tile.imp().photo.borrow().as_ref().cloned() else {
                 continue;
             };

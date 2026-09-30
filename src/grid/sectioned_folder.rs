@@ -662,6 +662,12 @@ impl SectionedFolderView {
 
     fn attach_scroll(self: &Rc<Self>, scrolled: &gtk::ScrolledWindow) {
         self.scroll.replace(Some(scrolled.clone()));
+        let weak = Rc::downgrade(self);
+        self.root.connect_unmap(move |_| {
+            if let Some(surface) = weak.upgrade() {
+                surface.clear_wall_quality_state();
+            }
+        });
 
         let this = self.clone();
         scrolled
@@ -698,6 +704,7 @@ impl SectionedFolderView {
             if this.is_wall() && this.geometry_width.get() == 0 {
                 this.refresh();
             }
+            this.poll_wall_quality();
             glib::ControlFlow::Continue
         });
 
@@ -910,7 +917,10 @@ impl SectionedFolderView {
         let top = (adjustment.value() - SECTIONED_OVERSCAN_PX).max(0.0);
         let bottom = adjustment.value() + adjustment.page_size() + SECTIONED_OVERSCAN_PX;
         let columns = self.current_columns.get().max(1);
-        let row_height = f64::from(folder_line_height(self.tile_height.get(), self.show_file_names.get()));
+        let row_height = f64::from(folder_line_height(
+            self.tile_height.get(),
+            self.show_file_names.get(),
+        ));
         let ranges = self.group_ranges.borrow();
         let geometry = self.geometry.borrow();
 
@@ -948,9 +958,7 @@ impl SectionedFolderView {
             } else {
                 ((top - geom.first_photo_y) / row_height).floor().max(0.0) as u32
             };
-            let end_row = (((bottom - geom.first_photo_y) / row_height)
-                .ceil()
-                .max(0.0) as u32)
+            let end_row = (((bottom - geom.first_photo_y) / row_height).ceil().max(0.0) as u32)
                 .min(count.div_ceil(columns));
 
             for row in start_row..end_row {
@@ -979,6 +987,7 @@ impl SectionedFolderView {
         if !self.reflow_active.get() {
             for index in stale {
                 if let Some(tile) = self.live_tiles.borrow_mut().remove(&index) {
+                    tile.tile.clear_wall_quality();
                     self.root.remove(&tile.tile);
                     tile.tile.set_opacity(1.0);
                     tile.tile.set_presentation_scale(1.0);
@@ -1023,8 +1032,11 @@ impl SectionedFolderView {
                         gtk::ContentFit::Cover
                     });
                 tile.tile.bind_photo_folder_fast(photo, index as usize);
-                if self.strip_layer.borrow().is_some() { tile.tile.set_opacity(0.0); }
-                tile.tile.set_manual_selected(self.selection.is_selected(index));
+                if self.strip_layer.borrow().is_some() {
+                    tile.tile.set_opacity(0.0);
+                }
+                tile.tile
+                    .set_manual_selected(self.selection.is_selected(index));
                 self.root.put(&tile.tile, 0.0, 0.0);
                 self.live_tiles.borrow_mut().insert(index, tile.clone());
                 tile
@@ -1039,7 +1051,8 @@ impl SectionedFolderView {
             }
             tile.tile
                 .set_filename_visible(self.show_file_names.get() && !self.is_wall());
-            tile.tile.set_manual_selected(self.selection.is_selected(index));
+            tile.tile
+                .set_manual_selected(self.selection.is_selected(index));
 
             // While a reflow is active, the frame-clock callback owns position
             // and size for already-realized tiles. A normal allocation/scroll
@@ -1076,12 +1089,9 @@ impl SectionedFolderView {
                 tile.tile.set_margin_bottom(FOLDER_ITEM_MARGIN);
                 tile.tile
                     .set_tile_size(self.tile_width.get(), self.tile_height.get());
-                let (start_x, gap) =
-                    self.horizontal_grid_metrics(self.geometry_width.get());
-                let x = start_x
-                    + f64::from(col) * (f64::from(self.tile_width.get()) + gap);
-                let y =
-                    geometry[section_index].first_photo_y + f64::from(row) * row_height;
+                let (start_x, gap) = self.horizontal_grid_metrics(self.geometry_width.get());
+                let x = start_x + f64::from(col) * (f64::from(self.tile_width.get()) + gap);
+                let y = geometry[section_index].first_photo_y + f64::from(row) * row_height;
                 self.root.move_(&tile.tile, x, y);
             }
         }
@@ -1269,6 +1279,7 @@ impl SectionedFolderView {
         // visible tile is rebound exactly once to the current model.
         let live = std::mem::take(&mut *self.live_tiles.borrow_mut());
         for (_, tile) in live {
+            tile.tile.clear_wall_quality();
             self.root.remove(&tile.tile);
             tile.tile.set_opacity(1.0);
             tile.tile.set_presentation_scale(1.0);

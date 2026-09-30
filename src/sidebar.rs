@@ -411,26 +411,10 @@ pub fn build(
             set_expanded(!expanded.get());
         });
     }
-    // Right-click the Network Shares heading: Reveal All when collapsed,
-    // Collapse All when expanded.
+    // Right-click the Network Shares heading: Reveal All.
     {
         let set_expanded = set_shares_expanded.clone();
-        attach_section_context_menu(
-            &share_heading,
-            Rc::new({
-                let expanded = shares_expanded.clone();
-                move || !expanded.get()
-            }),
-            Rc::new({
-                let expanded = shares_expanded.clone();
-                move || expanded.get()
-            }),
-            Rc::new({
-                let set_expanded = set_expanded.clone();
-                move || set_expanded(true)
-            }),
-            Rc::new(move || set_expanded(false)),
-        );
+        attach_section_context_menu(&share_heading, Rc::new(move || set_expanded(true)));
     }
     {
         let toggle = share_mode_toggle.clone();
@@ -660,20 +644,16 @@ pub fn build(
         album_heading.add_controller(double_click);
     }
 
-    // Right-click the Albums heading: Reveal All when collapsed, Collapse All
-    // when expanded. Albums has no nested branches, so the section is the
-    // whole scope. Reveal All ignores the divider position: the pane grows to
+    // Right-click the Albums heading: Reveal All. Albums has no nested
+    // branches, so the section is the whole scope. Reveal All ignores the
+    // divider position: the pane grows to
     // fit every album row instead of returning to the saved bar position.
     {
-        let state_for_reveal = state.clone();
-        let state_for_collapse = state.clone();
         let set_expanded = set_albums_expanded.clone();
         let album_list_for_reveal = album_list.clone();
         let saved_album_position_for_reveal = saved_album_pane_position.clone();
         attach_section_context_menu(
             &album_heading,
-            Rc::new(move || !state_for_reveal.borrow().albums_expanded),
-            Rc::new(move || state_for_collapse.borrow().albums_expanded),
             Rc::new({
                 let set_expanded = set_expanded.clone();
                 move || {
@@ -686,7 +666,6 @@ pub fn build(
                     set_expanded(true);
                 }
             }),
-            Rc::new(move || set_expanded(false)),
         );
     }
 
@@ -802,55 +781,16 @@ pub fn build(
 
     // Right-click the Folders heading: Reveal All expands the section and
     // every nested branch (so all contents are visible without fighting the
-    // divider), Collapse All collapses all nested branches. The section itself
-    // stays expanded for Collapse All, matching "collapses all nested items".
+    // divider).
     {
-        let state_for_reveal = state.clone();
-        let state_for_collapse = state.clone();
         let state_for_reveal_action = state.clone();
-        let state_for_collapse_action = state.clone();
-        let list_for_action = folder_list.clone();
         let list_for_reveal_action = folder_list.clone();
-        let list_for_visibility = folder_list.clone();
-        let list_for_collapse_visibility = folder_list.clone();
         let folder_heading_for_reveal = folder_heading.clone();
         let folder_share_paned_for_reveal = folder_share_paned.clone();
         let saved_folder_pane_position_for_reveal = saved_folder_pane_position.clone();
         let set_expanded = set_folders_expanded.clone();
-        let any_collapsed_nested = move |state: &Rc<RefCell<SidebarState>>, list: &gtk::ListBox| {
-            let folders = unsafe {
-                list.data::<Vec<Folder>>("picasa-folder-cache")
-                    .map(|data| data.as_ref().clone())
-                    .unwrap_or_default()
-            };
-            let state = state.borrow();
-            folder_ids_with_children(&folders)
-                .iter()
-                .any(|id| !state.expanded_folders.contains(id))
-        };
-        let any_expanded_nested = move |state: &Rc<RefCell<SidebarState>>, list: &gtk::ListBox| {
-            let folders = unsafe {
-                list.data::<Vec<Folder>>("picasa-folder-cache")
-                    .map(|data| data.as_ref().clone())
-                    .unwrap_or_default()
-            };
-            let state = state.borrow();
-            folder_ids_with_children(&folders)
-                .iter()
-                .any(|id| state.expanded_folders.contains(id))
-        };
         attach_section_context_menu(
             &folder_heading,
-            Rc::new(move || {
-                let state = state_for_reveal.borrow();
-                !state.folders_expanded
-                    || any_collapsed_nested(&state_for_reveal, &list_for_visibility)
-            }),
-            Rc::new(move || {
-                let state = state_for_collapse.borrow();
-                state.folders_expanded
-                    && any_expanded_nested(&state_for_collapse, &list_for_collapse_visibility)
-            }),
             Rc::new(move || {
                 set_folders_expanded(true);
                 {
@@ -875,13 +815,6 @@ pub fn build(
                     saved_folder_pane_position_for_reveal.set(desired);
                     folder_share_paned_for_reveal.set_position(desired);
                 }
-            }),
-            Rc::new(move || {
-                state_for_collapse_action
-                    .borrow_mut()
-                    .expanded_folders
-                    .clear();
-                rebuild_folder_list_from_rows(&list_for_action, &state_for_collapse_action);
             }),
         );
     }
@@ -3078,7 +3011,7 @@ fn collapsible_heading(
     if let Some(title_action) = title_action {
         let click = gtk::GestureClick::new();
         // Left button only: the section heading itself carries a right-click
-        // Reveal All / Collapse All menu, which must not be swallowed here.
+        // Reveal All menu, which must not be swallowed here.
         click.set_button(1);
         click.connect_pressed(move |gesture, _, _, _| {
             title_action();
@@ -3113,69 +3046,32 @@ fn collapsible_heading(
     (content, indicator)
 }
 
-/// Right-click context menu on a section heading: Reveal All / Collapse All.
-/// Items appear only when they have something to do: Reveal All while the
-/// section (or any nested branch) is hidden, Collapse All while anything is
-/// expanded. Uses the same Popover + flat-button construction as the folder
-/// context menu, so styling matches the rest of the sidebar. Closes on item
-/// activation or on any click outside; left-click behaviour is untouched.
-fn attach_section_context_menu(
-    heading: &gtk::Box,
-    show_reveal: Rc<dyn Fn() -> bool>,
-    show_collapse: Rc<dyn Fn() -> bool>,
-    on_reveal: Rc<dyn Fn()>,
-    on_collapse: Rc<dyn Fn()>,
-) {
+/// Right-click context menu on a section heading: always offer Reveal All.
+/// Uses the same Popover + flat-button construction as the folder context menu.
+/// Closes on item activation or on any click outside; left-click behaviour is untouched.
+fn attach_section_context_menu(heading: &gtk::Box, on_reveal: Rc<dyn Fn()>) {
     let heading = heading.clone();
     let heading_for_controller = heading.clone();
     let right_click = gtk::GestureClick::new();
     right_click.set_button(3);
     right_click.connect_pressed(move |gesture, _, x, y| {
-        let reveal_visible = show_reveal();
-        let collapse_visible = show_collapse();
-        if !reveal_visible && !collapse_visible {
-            gesture.set_state(gtk::EventSequenceState::Claimed);
-            return;
-        }
-
         let popover = gtk::Popover::new();
         popover.set_has_arrow(false);
-        // This menu is the right-click companion to the disclosure button's
-        // Collapse/Expand tooltip. Keep the same compact tooltip presentation
-        // for both Reveal All and Collapse All instead of inheriting a large
-        // theme-specific popover surface.
+        // Keep the same compact presentation as the disclosure button's tooltip.
         popover.add_css_class("sidebar-section-tooltip-menu");
         popover.set_parent(&heading);
-        // Match GTK's tooltip child spacing. The tooltip-style popover surface
-        // owns the padding, so a second set of menu margins would make this
-        // visibly larger than the disclosure button's native tooltip.
         let menu = gtk::Box::new(gtk::Orientation::Vertical, 6);
 
-        if reveal_visible {
-            let item = gtk::Button::with_label("Reveal All");
-            item.add_css_class("flat");
-            item.add_css_class("sidebar-section-tooltip-item");
-            let popover_for_reveal = popover.clone();
-            let reveal = on_reveal.clone();
-            item.connect_clicked(move |_| {
-                popover_for_reveal.popdown();
-                reveal();
-            });
-            menu.append(&item);
-        }
-
-        if collapse_visible {
-            let item = gtk::Button::with_label("Collapse All");
-            item.add_css_class("flat");
-            item.add_css_class("sidebar-section-tooltip-item");
-            let popover_for_collapse = popover.clone();
-            let collapse = on_collapse.clone();
-            item.connect_clicked(move |_| {
-                popover_for_collapse.popdown();
-                collapse();
-            });
-            menu.append(&item);
-        }
+        let item = gtk::Button::with_label("Reveal All");
+        item.add_css_class("flat");
+        item.add_css_class("sidebar-section-tooltip-item");
+        let popover_for_reveal = popover.clone();
+        let reveal = on_reveal.clone();
+        item.connect_clicked(move |_| {
+            popover_for_reveal.popdown();
+            reveal();
+        });
+        menu.append(&item);
 
         popover.set_child(Some(&menu));
         popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
@@ -3186,7 +3082,7 @@ fn attach_section_context_menu(
 }
 
 /// Folder ids that have at least one child, computed from the cached folder
-/// list; these are the nested branches the Reveal/Collapse All actions act on.
+/// list; these are the nested branches the Reveal All action acts on.
 fn folder_ids_with_children(folders: &[Folder]) -> Vec<i64> {
     let mut parents: Vec<i64> = folders
         .iter()

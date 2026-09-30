@@ -984,8 +984,17 @@ mod tests {
         let photo = nested.join("photo.jpg");
         fs::write(&photo, []).unwrap();
 
-        let (files, folders) =
-            collect_files(&gio::File::for_path(&root), None, &ScanControl::default()).unwrap();
+        let enabled = crate::image_format::all()
+            .iter()
+            .map(|format| format.id)
+            .collect::<HashSet<_>>();
+        let (files, folders) = collect_files(
+            &gio::File::for_path(&root),
+            None,
+            &ScanControl::default(),
+            &enabled,
+        )
+        .unwrap();
         assert!(files
             .iter()
             .any(|(_, _, folder)| folder.ends_with("FB-Marianne")));

@@ -11,7 +11,7 @@ Primary checkout /home/peet/picasa-iphoto-clone remains on rc8.
 
 Expanding local folders with double-click, disclosure arrow, or Reveal All should grow the folder pane into available vertical space. Keep Network Shares heading reachable; reserve up to three share rows when populated and expanded. Empty/collapsed/hidden shares release space. Overflow scrolls the expanded parent and first child into view. Preserve selection, counts, navigation, passive location marker, network behavior. No Photo Wall implementation changes.
 
-## Implemented; intermittent GTK verification remains open
+## Implemented; verification completed after fixing the GTK test wait
 
 Only src/sidebar.rs product code changed:
 - folder_expansion_target measures the entire list (including theme spacing), avoids double-counting the heading outside the Paned, bounds growth using max_position and reserved share viewport.
@@ -52,11 +52,37 @@ Implementation checkpoint: efce336. No product code changed since that commit.
 - The differing results suggest a display/frame timing issue but DO NOT establish its cause. Intermittent failure is unresolved; do not claim all verification is complete merely because X11 passed.
 - Primary checkout rc8 clean and synchronized with origin/rc8. Feature branch remains local, unmerged and unpushed.
 
+## Latest verification — completed
+
+- The product layout code is unchanged from efce336. Current src/sidebar.rs edits are confined to cfg(test).
+- The GTK regression previously assumed 400 milliseconds implied completed allocation. Test-only settle_sidebar_layout now waits for completed paints after both section animations, with a five-second timeout. It reports display/frame readiness separately from sizing assertions.
+- Frame diagnostics showed successful Wayland growth across two layout frames. Three diagnostic runs passed. The original failing run did not record frame counts, so its exact compositor timing cannot be retrospectively proven.
+- Updated GTK regression passed on default Wayland: 1 passed, zero failures, 4.19s. /tmp/sidebar-frame-barrier-wayland-final.log
+- Updated GTK regression passed on X11: 1 passed, zero failures, 4.09s. /tmp/sidebar-frame-barrier-x11-final.log
+- Verified the revised test still detects a real bug: temporarily omitting automatic pane growth caused failure (old=70, new=70, desired target=220). /tmp/sidebar-frame-barrier-mutation.log. Temporary mutation removed before final passing runs.
+- Final full suite passed: 442 passed, zero failures, 44 ignored. /tmp/sidebar-verified-suite.log
+- Existing network-share GTK test and cargo check passed earlier; no product code changed afterward. Diff whitespace check passed.
+- User said the amount of testing was excessive. Stop further testing: essential verification is complete, no further diagnostics scheduled.
+
+## Search-result sidebar focus follow-up
+
+User manually confirmed automatic expansion works but reported that search navigates the grid correctly without focusing the sidebar's target folder.
+
+- Reproduced with collapsed Folders and a nested destination: selected target row was y=1099, height=36, viewport=389 after expansion; the target remained outside the visible sidebar. /tmp/sidebar-search-red.log
+- Root cause: scroll_to_folder used immediate focus/scroll plus fixed 100 ms recursive retries, which ran before pane animation/allocation and could be overwritten by scroll restoration. It also read FOLDER_PANE_SAVED_KEY from the paned instead of the outer sidebar.
+- Fixed only src/sidebar.rs: expand/switch Tree mode synchronously, restore saved height from sidebar, then schedule a Destination reveal through the same generation-protected frame-completion path used for automatic growth. focus_folder_destination selects/focuses and scrolls the allocated row without navigation callbacks. Removed fixed retry timers. Newer search requests supersede old pending reveals.
+- New GTK regression search_folder_reveal_waits_for_layout_and_expands_collapsed_section passed; covers collapsed section, nested target visibility/focus, imported-only to Tree mode, and successive destinations. /tmp/sidebar-search-final.log
+- Existing growth regression passed after fix. /tmp/sidebar-growth-after-search.log
+- Full suite passed: 442 passed, zero failures, 45 ignored. /tmp/sidebar-search-suite.log
+- No Photo Wall, grid, or window/search code changed. No further automated testing needed absent a new failure.
+- These search fix/test changes remain uncommitted in sidebar-auto-expand. User should restart the sidebar build to verify search-result focus manually before integration.
+
 ## Resume next
 
-1. Investigate the intermittent default-backend GTK failure. Compare mapping, frame callbacks and allocation readiness against X11; determine whether the test waits too briefly or production scheduling needs correction. Do not hide the failure or blindly rerun until green.
-2. If changing code/tests, follow regression-first debugging and rerun affected GTK test, existing network-share test, full suite, and cargo check. Use CARGO_TARGET_DIR=/home/peet/picasa-iphoto-clone/target. GTK tests should run in separate processes to avoid thread affinity.
-3. Update plan results once the timing issue is understood/resolved. The independent review's two material findings already have passing regression coverage; no further review has been requested.
-4. Report ready only with verified evidence. Preserve the separate sidebar worktree and rc8. No automatic merge or push without user instruction.
+No required implementation or automated testing remains. Test synchronization improvement, search-result focus fix, and these notes are saved in the worktree but not committed. Product implementation checkpoint is efce336; prior progress commit is 78377b2. User can request a final commit/push or integration later. Keep sidebar-auto-expand separate; do not automatically merge into rc8 or push.
 
-User asked to save progress, not discard the work. No remote feature branch published.
+User manually tested and reported it seems to work. Database identity remains unverified. Do not disturb the running app or reindexing. Primary rc8 checkout remains unchanged.
+
+## Integration authorized by user
+
+User reports search focus still does not always work and explicitly requested pushing to rc8, with further fixes to continue on rc8. Treat intermittent search focus as OPEN despite passing synthetic tests. Automatic expansion was manually confirmed working. No more tests for this integration step. Commit remaining changes, merge sidebar-auto-expand into rc8, and push origin/rc8. Preserve the sidebar worktree.

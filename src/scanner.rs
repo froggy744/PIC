@@ -730,6 +730,9 @@ fn network_exif(path: &str) -> Result<Option<(Option<u32>, Option<u32>, Option<e
         if !crate::network_shares::private(path) {
             return Ok(None);
         }
+        if crate::image_format::uses(path, crate::image_format::DecoderKind::Svg) {
+            return Ok(None);
+        }
         let bytes = crate::network_shares::read_range(path, 0, 512 * 1024)?;
         let exif = exif_from_bytes(&bytes);
         let width = exif

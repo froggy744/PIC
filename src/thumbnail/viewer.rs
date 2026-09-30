@@ -22,6 +22,10 @@ fn is_raw(path: &str) -> bool {
     crate::image_format::uses(path, crate::image_format::DecoderKind::Raw)
 }
 
+fn is_svg(path: &str) -> bool {
+    crate::image_format::uses(path, crate::image_format::DecoderKind::Svg)
+}
+
 fn decode_heif(bytes: &[u8]) -> Result<DecodedThumbnailSource> {
     let decoded = heif_oxide::decode_bytes(bytes).context("HEIC/HEIF decode failed")?;
     let image = image::RgbaImage::from_raw(decoded.width, decoded.height, decoded.to_rgba8())
@@ -284,7 +288,7 @@ where
     let mut source_read_ms = 0;
     check_viewer_cancelled(&cancelled, "before_orientation_metadata")?;
     // HEIF container transforms are applied by heif-oxide during decode.
-    let orientation = if is_heif(reference) {
+    let orientation = if is_heif(reference) || is_svg(reference) {
         1
     } else {
         exif_orientation(reference)
@@ -362,6 +366,21 @@ where
         check_viewer_cancelled(&cancelled, "after_jpeg_decode")?;
         (
             DynamicImage::ImageRgb8(decoded.image),
+            target_width,
+            target_height,
+        )
+    } else if is_svg(reference) {
+        check_viewer_cancelled(&cancelled, "before_source_read")?;
+        let source_started = std::time::Instant::now();
+        let bytes = read_viewer_source(reference, read_context)?;
+        source_read_ms += source_started.elapsed().as_millis();
+        check_viewer_cancelled(&cancelled, "before_svg_decode")?;
+        let (image, _, _) = decode_svg_rgba(&bytes, viewport_width, viewport_height)?;
+        check_viewer_cancelled(&cancelled, "after_svg_decode")?;
+        let target_width = image.width();
+        let target_height = image.height();
+        (
+            DynamicImage::ImageRgba8(image),
             target_width,
             target_height,
         )

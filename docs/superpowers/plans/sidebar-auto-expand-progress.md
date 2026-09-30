@@ -11,7 +11,7 @@ Primary checkout /home/peet/picasa-iphoto-clone remains on rc8.
 
 Expanding local folders with double-click, disclosure arrow, or Reveal All should grow the folder pane into available vertical space. Keep Network Shares heading reachable; reserve up to three share rows when populated and expanded. Empty/collapsed/hidden shares release space. Overflow scrolls the expanded parent and first child into view. Preserve selection, counts, navigation, passive location marker, network behavior. No Photo Wall implementation changes.
 
-## Implemented, verification still in progress
+## Implemented; intermittent GTK verification remains open
 
 Only src/sidebar.rs product code changed:
 - folder_expansion_target measures the entire list (including theme spacing), avoids double-counting the heading outside the Paned, bounds growth using max_position and reserved share viewport.
@@ -32,17 +32,31 @@ Build cache shared through CARGO_TARGET_DIR=/home/peet/picasa-iphoto-clone/targe
 - Marker regression reproduced failure; fixed by separating selection sync. /tmp/sidebar-review-red.log
 - Animation race reproduced with an instant revealer and interrupted native collapse/reopen: folder height reset to 70. /tmp/sidebar-animation-red.log
 - Fixed animation race by storing FOLDER_PANE_ANIMATING_KEY and waiting for it to clear.
-- Final expanded GTK regression PASSED: 1 passed, zero failures, 485 filtered out; includes both review-fix regressions. /tmp/sidebar-final-gtk.log. Compilation succeeded with warnings. Full suite on final code remains pending.
+- Final expanded GTK regression PASSED: 1 passed, zero failures, 485 filtered out; includes both review-fix regressions. /tmp/sidebar-final-gtk.log. Compilation succeeded with warnings. Subsequent final full suite passed; see latest checkpoint below.
 - git diff --check passed.
 - Formatted changed code; preserved two pre-existing formatting discrepancies (shift_tab wrapping and extra blank before refresh).
 
+## Latest checkpoint — user requested saving again
+
+Implementation checkpoint: efce336. No product code changed since that commit.
+
+- User ran the separate sidebar worktree and reported: "it seems to work". This is positive manual feedback, not proof that every scenario was tested.
+- User saw offline photos and reindexing and suggested the temporary/cache database may explain it. Database identity was not verified; do not record this as confirmed. Sidebar code does not change source availability or database selection. Avoid interrupting the user's scan/app.
+- Final full suite: 442 passed, zero failures, 44 ignored. /tmp/sidebar-final-suite.log
+- Existing GTK network-share test: 1 passed, zero failures. /tmp/sidebar-final-network.log
+- cargo check --offline: exit 0, warnings. /tmp/sidebar-final-check.log
+- Final diff whitespace check passed; product scope remains src/sidebar.rs only.
+- rustfmt check reports only the two pre-existing discrepancies intentionally preserved.
+- New GTK regression passed previously, but the default-display rerun FAILED intermittently: shares=true old viewport height=94, new=94, requested pane position=70, max=479, actual paned height=572, calculated target=220, rows=5, revealer=true. Assertion: expansion must grow into spare space. /tmp/sidebar-final-gtk.log
+- Diagnostic rerun with GDK_BACKEND=x11 PASSED: 1 passed, zero failures, 18.41s. /tmp/sidebar-final-gtk-x11.log
+- The differing results suggest a display/frame timing issue but DO NOT establish its cause. Intermittent failure is unresolved; do not claim all verification is complete merely because X11 passed.
+- Primary checkout rc8 clean and synchronized with origin/rc8. Feature branch remains local, unmerged and unpushed.
+
 ## Resume next
 
-1. Read final GTK log and confirm test result. If needed rerun:
-   CARGO_TARGET_DIR=/home/peet/picasa-iphoto-clone/target cargo test --offline folder_expansion_grows_without_hiding_shares_and_scrolls_overflow -- --ignored --test-threads=1
-2. Run full cargo test --offline on final code. Run existing ignored saved_network_shares_populate_at_startup_and_use_the_remaining_height separately (GTK tests in separate processes avoid GTK thread affinity).
-3. Run cargo check --offline and git diff --check; inspect diff vs 2b4505c.
-4. Update plan checkboxes/results. Independent review completed; its two material findings now have regression coverage and fixes, awaiting final green.
-5. Report feature ready on isolated branch; leave rc8 untouched. Do not automatically merge/push.
+1. Investigate the intermittent default-backend GTK failure. Compare mapping, frame callbacks and allocation readiness against X11; determine whether the test waits too briefly or production scheduling needs correction. Do not hide the failure or blindly rerun until green.
+2. If changing code/tests, follow regression-first debugging and rerun affected GTK test, existing network-share test, full suite, and cargo check. Use CARGO_TARGET_DIR=/home/peet/picasa-iphoto-clone/target. GTK tests should run in separate processes to avoid thread affinity.
+3. Update plan results once the timing issue is understood/resolved. The independent review's two material findings already have passing regression coverage; no further review has been requested.
+4. Report ready only with verified evidence. Preserve the separate sidebar worktree and rc8. No automatic merge or push without user instruction.
 
-User asked to save progress, not abandon or discard the work. No remote feature branch published.
+User asked to save progress, not discard the work. No remote feature branch published.

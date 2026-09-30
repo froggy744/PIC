@@ -2115,8 +2115,60 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let sidebar_resize_active_for_tick = sidebar_resize_active.clone();
     let sidebar_hover_layout_freeze_for_tick = sidebar_hover_layout_freeze.clone();
     let sidebar_layout_settle_for_tick = sidebar_layout_settle.clone();
+    // Photo Wall uses the exact viewport width for justified rows. A live
+    // toplevel resize therefore must not feed every intermediate width into
+    // its geometry. Freeze on the first changing frame and release only after
+    // the allocation has remained stable for three frames.
+    let photo_wall_resize_last_width = Rc::new(Cell::new(0i32));
+    let photo_wall_resize_stable_frames = Rc::new(Cell::new(0u8));
+    let photo_wall_resize_frozen = Rc::new(Cell::new(false));
+    let photo_wall_resize_last_width_for_tick = photo_wall_resize_last_width.clone();
+    let photo_wall_resize_stable_frames_for_tick = photo_wall_resize_stable_frames.clone();
+    let photo_wall_resize_frozen_for_tick = photo_wall_resize_frozen.clone();
     gallery_scroll_stack.add_tick_callback(move |surface, _clock| {
         gallery_for_resize.drain_thumbnail_display_completions();
+
+        let width = surface.width();
+        if width > 100
+            && gallery_for_resize.layout() == crate::grid::PhotoLayout::PhotoWall
+            && !sidebar_resize_active_for_tick.get()
+            && !sidebar_hover_layout_freeze_for_tick.get()
+        {
+            let last = photo_wall_resize_last_width_for_tick.get();
+            if last == 0 {
+                photo_wall_resize_last_width_for_tick.set(width);
+                gallery_for_resize.update_width(width);
+            } else if width != last {
+                photo_wall_resize_last_width_for_tick.set(width);
+                photo_wall_resize_stable_frames_for_tick.set(0);
+                if !photo_wall_resize_frozen_for_tick.replace(true) {
+                    gallery_for_resize.set_photo_wall_width_frozen(true);
+                }
+            } else if photo_wall_resize_frozen_for_tick.get() {
+                let stable = photo_wall_resize_stable_frames_for_tick
+                    .get()
+                    .saturating_add(1);
+                photo_wall_resize_stable_frames_for_tick.set(stable);
+                if stable >= 3 {
+                    photo_wall_resize_stable_frames_for_tick.set(0);
+                    photo_wall_resize_frozen_for_tick.set(false);
+                    gallery_for_resize.set_photo_wall_width_frozen(false);
+                }
+            } else {
+                // Normal steady-state Photo Wall width observation.
+                gallery_for_resize.update_width(width);
+            }
+            return glib::ControlFlow::Continue;
+        }
+
+        // Leaving Photo Wall or entering a sidebar-owned transition must not
+        // strand a live-window-resize freeze.
+        if photo_wall_resize_frozen_for_tick.replace(false) {
+            photo_wall_resize_stable_frames_for_tick.set(0);
+            gallery_for_resize.set_photo_wall_width_frozen(false);
+        }
+        photo_wall_resize_last_width_for_tick.set(width.max(0));
+
         let sectioned_live_resize = gallery_for_resize.using_sectioned_folder_view()
             && sidebar_resize_active_for_tick.get()
             && !sidebar_hover_layout_freeze_for_tick.get();
@@ -2126,7 +2178,6 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 sidebar_hover_layout_freeze_for_tick.get(),
             )
         {
-            let width = surface.width();
             if width > 100 {
                 if gallery_for_resize.using_sectioned_folder_view() {
                     // Sectioned Folder mode only recomputes lightweight geometry;

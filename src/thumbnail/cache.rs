@@ -223,7 +223,7 @@ pub fn wall_cache_path(base: &Path) -> PathBuf {
 }
 
 fn create_uncached(path: &str, destination: &PathBuf) -> Result<PathBuf> {
-    create_uncached_with_max(path, destination, THUMBNAIL_SIZE)
+    create_uncached_with_max(path, destination, thumbnail_size())
 }
 
 fn create_uncached_with_max(path: &str, destination: &PathBuf, max_edge: u32) -> Result<PathBuf> {

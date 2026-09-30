@@ -10,7 +10,15 @@
   outline: none;
   background: transparent;
 }
-.photo-wall-tile .photo-frame.photo-tile.folder-photo-selected {
-  outline: 2px solid @accent_bg_color;
+/* Hover is an inset highlight: it consumes no layout space. */
+.photo-wall-tile:hover .photo-frame.photo-tile {
+  outline: 2px solid alpha(@accent_bg_color, 0.65);
   outline-offset: -2px;
+}
+
+/* Selection wins over hover and remains visible on light/dark photographs. */
+.photo-wall-tile .photo-frame.photo-tile.folder-photo-selected,
+.photo-wall-tile:hover .photo-frame.photo-tile.folder-photo-selected {
+  outline: 3px solid @accent_bg_color;
+  outline-offset: -3px;
 }

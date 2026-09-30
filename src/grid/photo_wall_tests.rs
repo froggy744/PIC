@@ -122,6 +122,90 @@ fn photo_wall_reuses_models_and_virtualizes_headerless_and_folder_collections() 
         tile.transition_paintable().is_some(),
         "RAM cache thumbnail was not painted"
     );
+    // Simulate hover with a CSS class so the real mouse cannot clear PRELIGHT
+    // during the rendered-pixel checks. Use the production rules unchanged
+    // apart from their hover selector, and inspect settled style states.
+    let hover_css = gtk::CssProvider::new();
+    hover_css.load_from_data(&format!(
+        "{}\n.photo-wall-tile .photo-frame.photo-tile {{ transition: none; }}",
+        crate::css::PHOTO_WALL.replace(":hover", ".test-hover")
+    ));
+    gtk::style_context_add_provider_for_display(
+        &gtk::gdk::Display::default().unwrap(),
+        &hover_css,
+        gtk::STYLE_PROVIDER_PRIORITY_APPLICATION + 6,
+    );
+    // Render actual GTK hover/selection styling against light and dark photos.
+    // The highlight must alter edge pixels, never layout or image interiors.
+    let frame = tile.first_child().and_downcast::<gtk::Overlay>().unwrap();
+    let picture = frame.child().and_downcast::<gtk::Picture>().unwrap();
+    let original_paintable = picture.paintable();
+    let allocation = (tile.width(), tile.height());
+    let render =
+        || {
+            tile.queue_draw();
+            settle();
+            let snapshot = gtk::Snapshot::new();
+            surface.root.snapshot_child(&tile, &snapshot);
+            let node =
+                snapshot.to_node().unwrap_or_else(|| {
+                    panic!(
+            "empty tile snapshot: mapped={} size={}x{} flags={:?} selected={} scroll={}",
+            tile.is_mapped(), tile.width(), tile.height(), tile.state_flags(),
+            frame.has_css_class("folder-photo-selected"), scroll.vadjustment().value()
+        )
+                });
+            let texture = window.renderer().unwrap().render_texture(&node, None);
+            let mut pixels = vec![0; texture.width() as usize * texture.height() as usize * 4];
+            texture.download(&mut pixels, texture.width() as usize * 4);
+            let pixel = |x: usize, y: usize| {
+                let offset = (y * texture.width() as usize + x) * 4;
+                pixels[offset..offset + 4].to_vec()
+            };
+            (
+                pixel(1, texture.height() as usize / 2),
+                pixel(2, texture.height() as usize / 2),
+                pixel(texture.width() as usize / 2, texture.height() as usize / 2),
+            )
+        };
+    for shade in [0_u8, 255_u8] {
+        let mut pixels = vec![shade; 40 * 60 * 4];
+        for pixel in pixels.chunks_exact_mut(4) {
+            pixel[3] = 255;
+        }
+        let texture = gtk::gdk::MemoryTexture::new(
+            40,
+            60,
+            gtk::gdk::MemoryFormat::R8g8b8a8,
+            &glib::Bytes::from_owned(pixels),
+            40 * 4,
+        );
+        picture.set_paintable(Some(&texture));
+        tile.remove_css_class("test-hover");
+        tile.set_manual_selected(false);
+        let baseline = render();
+        tile.add_css_class("test-hover");
+        let hovered = render();
+        assert_ne!(hovered.0, baseline.0, "hover invisible on shade {shade}");
+        assert_eq!(hovered.2, baseline.2, "hover tinted the photo interior");
+        tile.set_manual_selected(true);
+        let selected_hovered = render();
+        assert_ne!(
+            selected_hovered.1, baseline.1,
+            "selection too thin on shade {shade}"
+        );
+        assert_eq!(selected_hovered.2, baseline.2);
+        tile.remove_css_class("test-hover");
+        assert_eq!(render(), selected_hovered, "hover overrode selection");
+        assert_eq!((tile.width(), tile.height()), allocation);
+        assert_eq!(frame.style_context().border(), gtk::Border::new());
+    }
+    gtk::style_context_remove_provider_for_display(
+        &gtk::gdk::Display::default().unwrap(),
+        &hover_css,
+    );
+    picture.set_paintable(original_paintable.as_ref());
+    tile.set_manual_selected(surface.selection.is_selected(first_index));
     let controllers = tile.observe_controllers();
     for i in 0..controllers.n_items() {
         if let Some(click) = controllers.item(i).and_downcast::<gtk::GestureClick>() {
@@ -139,8 +223,43 @@ fn photo_wall_reuses_models_and_virtualizes_headerless_and_folder_collections() 
     gallery.selection.select_item(73, false);
     assert_eq!(crate::source::original_read_count(), reads_before);
     let height = surface.wall_state.borrow().layout.total_height;
-    scroll.vadjustment().set_value(height * 0.5);
-    settle();
+    let generation = surface.wall_state.borrow().generation;
+    let frame_times = Rc::new(RefCell::new(Vec::new()));
+    let peak_tiles = Rc::new(Cell::new(surface.live_tiles.borrow().len()));
+    let times_for_probe = frame_times.clone();
+    let peak_for_probe = peak_tiles.clone();
+    let weak = Rc::downgrade(surface);
+    let probe = surface.root.add_tick_callback(move |_, clock| {
+        let Some(surface) = weak.upgrade() else {
+            return glib::ControlFlow::Break;
+        };
+        times_for_probe.borrow_mut().push(clock.frame_time());
+        peak_for_probe.set(peak_for_probe.get().max(surface.live_tiles.borrow().len()));
+        glib::ControlFlow::Continue
+    });
+    for fraction in [0.1, 0.3, 0.7, 0.9, 0.5] {
+        scroll.vadjustment().set_value(height * fraction);
+        settle();
+    }
+    probe.remove();
+    assert_eq!(
+        surface.wall_state.borrow().generation,
+        generation,
+        "scroll rebuilt geometry"
+    );
+    assert!(peak_tiles.get() < 300);
+    let mut intervals = frame_times
+        .borrow()
+        .windows(2)
+        .map(|pair| (pair[1] - pair[0]) as f64 / 1000.0)
+        .collect::<Vec<_>>();
+    intervals.sort_by(f64::total_cmp);
+    assert!(!intervals.is_empty());
+    eprintln!(
+        "Synthetic 14,361-photo Wall scroll: peak_tiles={} geometry_rebuilds=0 frame_intervals={} median_ms={:.2} p95_ms={:.2}",
+        peak_tiles.get(), intervals.len(), intervals[intervals.len() / 2],
+        intervals[(intervals.len() - 1) * 95 / 100]
+    );
     assert!(surface
         .live_tiles
         .borrow()

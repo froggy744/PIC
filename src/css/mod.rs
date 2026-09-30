@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use gtk4 as gtk;
 
 pub(crate) const BASE: &str = include_str!("base.css");
+pub(crate) const PHOTO_WALL: &str = include_str!("photo_wall.css");
 pub(crate) const SQUARE_CORNERS: &str = include_str!("square_corners.css");
 pub(crate) const ALBUMS: &str = include_str!("components/albums.css");
 pub(crate) const PHOTO_CONTEXT_MENU: &str = include_str!("components/photo_context_menu.css");
@@ -47,6 +48,16 @@ pub(crate) fn install_foundation(display: &gtk::gdk::Display) {
         display,
         &base,
         gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+    );
+
+    // Wall geometry must win over theme frames (+1) and corner settings (+4).
+    // These rules match Wall tiles only; Grid keeps the selected theme.
+    let photo_wall = gtk::CssProvider::new();
+    photo_wall.load_from_data(PHOTO_WALL);
+    gtk::style_context_add_provider_for_display(
+        display,
+        &photo_wall,
+        gtk::STYLE_PROVIDER_PRIORITY_APPLICATION + 5,
     );
 
     let platform = gtk::CssProvider::new();

@@ -767,7 +767,7 @@ impl SectionedFolderView {
             self.tile_height.get(),
             &self.unavailable,
         );
-        tile.set_filename_visible(self.show_file_names.get());
+        tile.set_filename_visible(self.show_file_names.get() && !self.is_wall());
         tile.set_content_fit(if self.is_wall() || self.fit_whole_photo.get() {
             gtk::ContentFit::Contain
         } else {
@@ -1014,7 +1014,8 @@ impl SectionedFolderView {
                 tile.tile.set_opacity(1.0);
                 tile.tile
                     .set_tile_size(self.tile_width.get(), self.tile_height.get());
-                tile.tile.set_filename_visible(self.show_file_names.get());
+                tile.tile
+                    .set_filename_visible(self.show_file_names.get() && !self.is_wall());
                 tile.tile
                     .set_content_fit(if self.is_wall() || self.fit_whole_photo.get() {
                         gtk::ContentFit::Contain
@@ -1029,6 +1030,15 @@ impl SectionedFolderView {
                 tile
             };
 
+            if self.is_wall() {
+                tile.tile.add_css_class("photo-wall-tile");
+                tile.tile.set_overflow(gtk::Overflow::Hidden);
+            } else {
+                tile.tile.remove_css_class("photo-wall-tile");
+                tile.tile.set_overflow(gtk::Overflow::Visible);
+            }
+            tile.tile
+                .set_filename_visible(self.show_file_names.get() && !self.is_wall());
             tile.tile.set_manual_selected(self.selection.is_selected(index));
 
             // While a reflow is active, the frame-clock callback owns position
@@ -1052,8 +1062,8 @@ impl SectionedFolderView {
                             }
                         }
                         tile.tile.set_tile_size(
-                            ((item.x + item.width).round() - item.x.round()).max(1.0) as i32,
-                            item.height.round().max(1.0) as i32,
+                            ((item.x + item.width).round() - item.x.round()) as i32,
+                            ((item.y + item.height).round() - item.y.round()) as i32,
                         );
                         tile.tile.set_content_fit(gtk::ContentFit::Contain);
                         self.root.move_(&tile.tile, item.x.round(), item.y.round());

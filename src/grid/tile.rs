@@ -289,6 +289,14 @@ mod square_tile {
                 _ => self.width.get().max(1),
             };
 
+            let requested = if self.obj().has_css_class("photo-wall-tile") {
+                match orientation {
+                    gtk::Orientation::Horizontal => self.width.get(),
+                    _ => self.height.get(),
+                }
+            } else {
+                requested
+            };
             (requested, requested, -1, -1)
         }
 
@@ -583,8 +591,15 @@ impl SquareTile {
     }
 
     fn set_tile_size(&self, width: i32, height: i32) {
-        let width = width.max(1);
-        let height = height.max(1);
+        // Subpixel Wall images may round to an empty allocation. Preserve
+        // shared edges instead of forcing a pixel that overlaps a neighbour.
+        let minimum = if self.has_css_class("photo-wall-tile") {
+            0
+        } else {
+            1
+        };
+        let width = width.max(minimum);
+        let height = height.max(minimum);
         if self.imp().width.get() == width && self.imp().height.get() == height {
             return;
         }

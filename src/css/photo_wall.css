@@ -1,0 +1,16 @@
+/* Only Photo Wall removes the shared Grid frame. Selection stays inside. */
+.photo-wall-tile,
+.photo-wall-tile .photo-frame.photo-tile,
+.photo-wall-tile .thumbnail {
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  outline: none;
+  background: transparent;
+}
+.photo-wall-tile .photo-frame.photo-tile.folder-photo-selected {
+  outline: 2px solid @accent_bg_color;
+  outline-offset: -2px;
+}

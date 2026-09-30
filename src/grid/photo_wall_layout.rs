@@ -1,7 +1,7 @@
 use std::ops::Range;
 
-pub(super) const WALL_GAP: f64 = 4.0;
-pub(super) const WALL_SIDE_MARGIN: f64 = 20.0;
+pub(super) const WALL_GAP: f64 = 0.0;
+pub(super) const WALL_SIDE_MARGIN: f64 = 0.0;
 
 #[derive(Clone, Debug)]
 pub(super) struct PhotoWallSection {
@@ -207,7 +207,7 @@ mod tests {
         let l = layout(&[1.5; 8], 800.0, 180.0);
         for row in &l.rows[..l.rows.len() - 1] {
             let last = &l.items[row.item_range.end - 1];
-            assert!((last.x + last.width - 780.0).abs() < 0.001);
+            assert!((last.x + last.width - 800.0).abs() < 0.001);
             for item in &l.items[row.item_range.clone()] {
                 assert!((item.width / item.height - 1.5).abs() < 0.001);
             }
@@ -217,9 +217,9 @@ mod tests {
     fn final_row_uses_target_height() {
         let l = layout(&[1.0, 1.0], 1000.0, 100.0);
         assert_eq!(l.rows.len(), 1);
-        assert_eq!(l.items[0].x, 20.0);
+        assert_eq!(l.items[0].x, 0.0);
         assert_eq!(l.items[0].height, 100.0);
-        assert_eq!(l.items[1].x, 124.0);
+        assert_eq!(l.items[1].x, 100.0);
     }
     #[test]
     fn rows_do_not_cross_sections() {
@@ -240,7 +240,7 @@ mod tests {
             24.0,
         );
         assert_eq!(l.items[0].y, 70.0);
-        assert_eq!(l.items[2].y, 268.0);
+        assert_eq!(l.items[2].y, 264.0);
         for row in &l.rows {
             let section = l.items[row.item_range.start].section;
             assert!(l.items[row.item_range.clone()]
@@ -329,10 +329,45 @@ mod tests {
         let l = layout(&ratios, 800.0, 100.0);
         for item in &l.items {
             assert!((item.width / item.height - ratios[item.photo_index]).abs() < 0.001);
-            assert!(item.x + item.width <= 780.001);
+            assert!(item.x + item.width <= 800.001);
         }
         assert!(l.rows.last().unwrap().image_height <= 100.0);
     }
+    #[test]
+    fn touching_edges_at_every_target_height_and_viewport() {
+        for width in [43.0, 101.0, 799.0, 1000.0, 1401.0] {
+            for target in [32.0, 100.0, 137.0, 240.0, 600.0] {
+                let ratios = (0..200)
+                    .map(|i| [0.5, 1.0, 1.5, 2.0][i % 4])
+                    .collect::<Vec<_>>();
+                let l = layout(&ratios, width, target);
+                for row in &l.rows {
+                    let items = &l.items[row.item_range.clone()];
+                    assert_eq!(items[0].x, 0.0);
+                    for pair in items.windows(2) {
+                        assert_eq!(pair[0].x + pair[0].width, pair[1].x);
+                        assert_eq!((pair[0].x + pair[0].width).round(), pair[1].x.round());
+                    }
+                    if row.item_range.end < l.items.len() {
+                        let last = items.last().unwrap();
+                        assert!((last.x + last.width - width).abs() < 1e-8);
+                        assert_eq!((last.x + last.width).round(), width);
+                    }
+                }
+                for pair in l.rows.windows(2) {
+                    assert_eq!(pair[0].y + pair[0].image_height, pair[1].y);
+                    assert_eq!(
+                        (pair[0].y + pair[0].image_height).round(),
+                        pair[1].y.round()
+                    );
+                }
+                let incomplete = layout(&[0.5, 1.0], 2000.0, target);
+                assert_eq!(incomplete.items[0].x, 0.0);
+                assert_eq!(incomplete.rows[0].image_height, target);
+            }
+        }
+    }
+
     #[test]
     fn large_collection_geometry_and_lookup() {
         for count in [14_361, 50_000] {

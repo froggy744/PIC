@@ -14,6 +14,15 @@ fn settle() {
 #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
 fn photo_wall_reuses_models_and_virtualizes_headerless_and_folder_collections() {
     gtk::init().unwrap();
+    // Match application ordering: foundation first, then a theme at +1.
+    crate::css::install_foundation(&gtk::gdk::Display::default().unwrap());
+    let css = gtk::CssProvider::new();
+    css.load_from_data(include_str!("../../themes/standard/theme.css"));
+    gtk::style_context_add_provider_for_display(
+        &gtk::gdk::Display::default().unwrap(),
+        &css,
+        gtk::STYLE_PROVIDER_PRIORITY_APPLICATION + 1,
+    );
     let activated = Rc::new(Cell::new(None::<i64>));
     let activated_for_open = activated.clone();
     let context_photo = Rc::new(Cell::new(None::<i64>));
@@ -81,6 +90,26 @@ fn photo_wall_reuses_models_and_virtualizes_headerless_and_folder_collections() 
     settle();
     let surface = &gallery.sectioned_folder;
     assert!(surface.live_headers.borrow().is_empty());
+    for (&index, realized) in surface.live_tiles.borrow().iter() {
+        let state = surface.wall_state.borrow();
+        let item = state.layout.item(index as usize).unwrap();
+        let tile = &realized.tile;
+        assert!(tile.has_css_class("photo-wall-tile"));
+        let frame = tile.first_child().unwrap();
+        assert_eq!(frame.width(), tile.width(), "frame inset at {index}");
+        assert_eq!(frame.height(), tile.height(), "frame inset at {index}");
+        assert_eq!(
+            tile.width(),
+            ((item.x + item.width).round() - item.x.round()) as i32
+        );
+        assert_eq!(
+            tile.height(),
+            ((item.y + item.height).round() - item.y.round()) as i32
+        );
+        let style = frame.style_context();
+        assert_eq!(style.border(), gtk::Border::new());
+        assert_eq!(style.padding(), gtk::Border::new());
+    }
     assert!(surface.live_tiles.borrow().len() > 10 && surface.live_tiles.borrow().len() < 300);
     assert_eq!(
         gallery.store.item(42).unwrap(),
@@ -148,6 +177,10 @@ fn photo_wall_reuses_models_and_virtualizes_headerless_and_folder_collections() 
     settle();
     assert!(gallery.selection.is_selected(42) && gallery.selection.is_selected(73));
     assert_eq!(gallery.store.n_items(), 14_361);
+    for tile in surface.live_tiles.borrow().values() {
+        assert!(!tile.tile.has_css_class("photo-wall-tile"));
+    }
+    gtk::style_context_remove_provider_for_display(&gtk::gdk::Display::default().unwrap(), &css);
     window.close();
 }
 

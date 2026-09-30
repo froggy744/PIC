@@ -18,7 +18,7 @@ impl SectionedFolderView {
 
     fn calculate_wall_geometry(&self, width: i32) {
         let target = self.tile_width.get();
-        let caption = filename_caption_height(self.show_file_names.get());
+        let caption = 0;
         if self.geometry_width.get() == width && self.geometry_row_height.get() == target + caption
         {
             return;

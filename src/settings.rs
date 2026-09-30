@@ -1329,7 +1329,7 @@ fn interface_page(
         high_quality.connect_active_notify(move |toggle| {
             let state = toggle.is_active();
             crate::window::debug_log(&format!(
-                "SETTINGS: high quality Photo Wall thumbnails -> {state}"
+                "SETTINGS: high quality thumbnails -> {state}"
             ));
             if let Err(error) = crate::db::set_setting(
                 &connection.borrow(),

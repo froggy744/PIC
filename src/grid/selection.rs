@@ -105,8 +105,23 @@ impl Gallery {
             return false;
         };
         if self.layout() == PhotoLayout::PhotoWall {
-            self.selection.select_item(position as u32, true);
             let surface = self.sectioned_folder.clone();
+            let viewport_offset = surface.scroll.borrow().as_ref().and_then(|scroll| {
+                let adjustment = scroll.vadjustment();
+                let top = adjustment.value();
+                let bottom = top + adjustment.page_size();
+                let state = surface.wall_state.borrow();
+                state
+                    .layout
+                    .item(position)
+                    .filter(|item| {
+                        adjustment.page_size() > 0.0
+                            && item.y < bottom
+                            && item.y + item.height > top
+                    })
+                    .map(|item| item.y - top)
+            });
+            self.selection.select_item(position as u32, true);
             surface.selection_anchor.set(Some(position as u32));
             surface.cancel_scroll_animation();
             let generation = Cell::new(surface.scroll_animation_generation.get());
@@ -137,11 +152,26 @@ impl Gallery {
                 // Lightbox close may precede the destination allocation.
                 // Restore after mapping/extent publication, then focus the
                 // actual tile rather than leaving focus on the container.
-                if surface.root.is_mapped() && surface.scroll_to_index_centered(index as u32) {
+                let restored = surface.root.is_mapped()
+                    && if let Some(offset) = viewport_offset {
+                        surface.restore_anchor(photo_id, offset)
+                    } else {
+                        surface.scroll_to_index_centered(index as u32)
+                    };
+                if restored {
                     generation.set(surface.scroll_animation_generation.get());
-                    if let Some(tile) = surface.live_tiles.borrow().get(&(index as u32)) {
-                        if tile.tile.is_mapped() && tile.tile.width() > 0 && tile.tile.grab_focus()
-                        {
+                    let tile = surface
+                        .live_tiles
+                        .borrow()
+                        .get(&(index as u32))
+                        .map(|live| live.tile.clone());
+                    if let Some(tile) = tile {
+                        if tile.is_mapped() && tile.width() > 0 && tile.grab_focus() {
+                            // GTK focus can reveal a clipped tile. Preserve the
+                            // original viewport even for a partially visible row.
+                            if let Some(offset) = viewport_offset {
+                                surface.restore_anchor(photo_id, offset);
+                            }
                             return glib::ControlFlow::Break;
                         }
                     }
@@ -228,7 +258,8 @@ impl Gallery {
                     return glib::ControlFlow::Continue;
                 };
                 if let Some(adjustment) = adjustment.as_ref() {
-                    let target = adjustment.value() + f64::from(bounds.y())
+                    let target = adjustment.value()
+                        + f64::from(bounds.y())
                         + f64::from(bounds.height()) * 0.5
                         - f64::from(root.height()) * 0.5;
                     let upper =

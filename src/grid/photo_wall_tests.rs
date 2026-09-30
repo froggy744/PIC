@@ -747,6 +747,50 @@ fn photo_wall_lightbox_return_waits_for_allocation_and_focuses_current_photo() {
     assert_eq!(focused.map(|photo| photo.id()), Some(objects[target].id()));
     assert_eq!(surface.selection_anchor.get(), Some(target as u32));
 
+    // Returning to an already visible photo must preserve its bottom-left
+    // viewport position, including when the row is partially visible.
+    for group in [GroupMode::Folder, GroupMode::None] {
+        gallery.group_mode.set(group);
+        gallery.rebuild_group_ranges();
+        surface.refresh_model();
+        settle();
+        let target = {
+            let state = surface.wall_state.borrow();
+            let row = &state.layout.rows[state.layout.item(600).unwrap().row];
+            state.layout.items[row.item_range.start].photo_index
+        };
+        let photo_y = surface.y_for_index(target as u32).unwrap();
+        let photo_height = surface
+            .wall_state
+            .borrow()
+            .layout
+            .item(target)
+            .unwrap()
+            .height;
+        let adjustment = scroll.vadjustment();
+        for offset in [
+            adjustment.page_size() - photo_height - 12.0,
+            adjustment.page_size() - photo_height * 0.5,
+        ] {
+            adjustment.set_value(photo_y - offset);
+            settle();
+            let before = adjustment.value();
+            gallery.restore_activated_photo(objects[target].id());
+            gallery.grab_focus();
+            settle();
+            assert!(
+                (adjustment.value() - before).abs() < 1.0,
+                "visible lightbox return shifted the viewport: before={before}, after={}",
+                adjustment.value()
+            );
+            let focused = gtk::prelude::RootExt::focus(&window)
+                .and_then(|widget| widget.downcast::<SquareTile>().ok())
+                .and_then(|tile| tile.photo());
+            assert_eq!(focused.map(|photo| photo.id()), Some(objects[target].id()));
+            assert_eq!(surface.selection_anchor.get(), Some(target as u32));
+        }
+    }
+
     // Reopening the viewer cancels a pending return even for headerless Wall.
     gallery.group_mode.set(GroupMode::None);
     gallery.rebuild_group_ranges();

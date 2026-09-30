@@ -2140,16 +2140,20 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         }
         let width = f64::from(window_for_resize_press.width().max(1));
         let height = f64::from(window_for_resize_press.height().max(1));
-        let near_edge = x <= WINDOW_RESIZE_EDGE_PX
-            || x >= width - WINDOW_RESIZE_EDGE_PX
-            || y <= WINDOW_RESIZE_EDGE_PX
-            || y >= height - WINDOW_RESIZE_EDGE_PX;
-        if near_edge {
+        let near_left = x <= WINDOW_RESIZE_EDGE_PX;
+        let near_right = x >= width - WINDOW_RESIZE_EDGE_PX;
+
+        // Photo Wall geometry depends on width, not viewport height. Freezing
+        // for a pure top/bottom resize caused an unnecessary full unfreeze
+        // reflow/anchor restore even though the width never changed, which is
+        // the large jump seen as soon as vertical resizing begins. Corners are
+        // still covered because they are also on the left/right edge.
+        if near_left || near_right {
             resize_active_for_press.set(true);
             gallery_for_resize_press.set_photo_wall_width_frozen(true);
             if std::env::var_os("PICASA_TRACE").is_some() {
                 eprintln!(
-                    "PIC_PHOTOWALL_RESIZE begin x={x:.1} y={y:.1} window={}x{}",
+                    "PIC_PHOTOWALL_RESIZE begin-horizontal x={x:.1} y={y:.1} window={}x{}",
                     width as i32,
                     height as i32
                 );

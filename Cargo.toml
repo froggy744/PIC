@@ -11,6 +11,7 @@ blake3 = "1"
 chrono = { version = "0.4", features = ["clock", "serde"] }
 dirs = "4"
 fast_image_resize = "5"
+gdk-pixbuf = "0.21"
 gio = "0.21"
 libc = "0.2"
 glib = "0.21"

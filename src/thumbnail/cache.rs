@@ -250,6 +250,8 @@ fn create_uncached_with_max(path: &str, destination: &PathBuf, max_edge: u32) ->
             }
         } else if is_heif(path) {
             decode_heif(&bytes)?.image
+        } else if is_svg(path) {
+            decode_svg_thumbnail_with_max(&bytes, max_edge)?.image
         } else {
             decode_with_image(&bytes)?.image
         }
@@ -259,7 +261,7 @@ fn create_uncached_with_max(path: &str, destination: &PathBuf, max_edge: u32) ->
     // part of decoding, so its pixels already have display orientation. Do
     // not apply an EXIF orientation a second time; some HEIC files contain
     // both forms of orientation metadata.
-    let orientation = if is_heif(path) {
+    let orientation = if is_heif(path) || is_svg(path) {
         1
     } else {
         remote_jpeg_orientation.unwrap_or_else(|| exif_orientation(path))

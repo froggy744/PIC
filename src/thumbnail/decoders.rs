@@ -1,5 +1,10 @@
+use gdk_pixbuf::prelude::*;
+
 pub fn dimensions(reference: &str, bytes: &[u8]) -> Result<(u32, u32)> {
-    if is_raw(reference) {
+    if is_svg(reference) {
+        let (_, width, height) = load_svg_pixbuf(bytes, 1, 1)?;
+        Ok((width, height))
+    } else if is_raw(reference) {
         let local = crate::source::materialize(reference)?;
         let rawfile = rawler::rawsource::RawSource::new(&local)?;
         let decoder = rawler::get_decoder(&rawfile)?;
@@ -157,3 +162,120 @@ fn native_scale_for(longest_dimension: usize, target: u32) -> (ScalingFactor, &'
     }
 }
 
+
+
+fn svg_fit_dimensions(
+    source_width: u32,
+    source_height: u32,
+    max_width: u32,
+    max_height: u32,
+) -> (u32, u32) {
+    let scale = (max_width.max(1) as f64 / source_width.max(1) as f64)
+        .min(max_height.max(1) as f64 / source_height.max(1) as f64);
+    (
+        ((source_width as f64 * scale).round() as u32).max(1),
+        ((source_height as f64 * scale).round() as u32).max(1),
+    )
+}
+
+fn load_svg_pixbuf(
+    bytes: &[u8],
+    max_width: u32,
+    max_height: u32,
+) -> Result<(gdk_pixbuf::Pixbuf, u32, u32)> {
+    let loader =
+        gdk_pixbuf::PixbufLoader::with_type("svg").context("SVG loader is unavailable")?;
+    let source_size = std::rc::Rc::new(std::cell::Cell::new((0_u32, 0_u32)));
+    let prepared_size = source_size.clone();
+    loader.connect_size_prepared(move |loader, width, height| {
+        let width = width.max(1) as u32;
+        let height = height.max(1) as u32;
+        prepared_size.set((width, height));
+        let (target_width, target_height) =
+            svg_fit_dimensions(width, height, max_width, max_height);
+        loader.set_size(target_width as i32, target_height as i32);
+    });
+    loader.write(bytes).context("could not parse SVG")?;
+    loader.close().context("could not finish SVG decode")?;
+    let pixbuf = loader.pixbuf().context("SVG decoder produced no pixels")?;
+    let (source_width, source_height) = source_size.get();
+    anyhow::ensure!(
+        source_width > 0 && source_height > 0,
+        "SVG decoder did not report intrinsic dimensions"
+    );
+    Ok((pixbuf, source_width, source_height))
+}
+
+fn pixbuf_to_rgba(pixbuf: &gdk_pixbuf::Pixbuf) -> Result<image::RgbaImage> {
+    let width = u32::try_from(pixbuf.width())?;
+    let height = u32::try_from(pixbuf.height())?;
+    let rowstride = usize::try_from(pixbuf.rowstride())?;
+    let channels = usize::try_from(pixbuf.n_channels())?;
+    anyhow::ensure!(channels == 3 || channels == 4, "unsupported SVG pixel layout");
+    let data = pixbuf.read_pixel_bytes();
+    let data = data.as_ref();
+    let mut output = vec![0_u8; width as usize * height as usize * 4];
+    for y in 0..height as usize {
+        let row = y * rowstride;
+        for x in 0..width as usize {
+            let source = row + x * channels;
+            let destination = (y * width as usize + x) * 4;
+            output[destination] = data[source];
+            output[destination + 1] = data[source + 1];
+            output[destination + 2] = data[source + 2];
+            output[destination + 3] = if channels == 4 { data[source + 3] } else { 255 };
+        }
+    }
+    image::RgbaImage::from_raw(width, height, output)
+        .context("SVG decoder returned an invalid pixel buffer")
+}
+
+fn decode_svg_rgba(
+    bytes: &[u8],
+    max_width: u32,
+    max_height: u32,
+) -> Result<(image::RgbaImage, u32, u32)> {
+    let (pixbuf, source_width, source_height) =
+        load_svg_pixbuf(bytes, max_width, max_height)?;
+    Ok((pixbuf_to_rgba(&pixbuf)?, source_width, source_height))
+}
+
+fn decode_svg_thumbnail(bytes: &[u8]) -> Result<DecodedThumbnailSource> {
+    decode_svg_thumbnail_with_max(bytes, THUMBNAIL_SIZE)
+}
+
+fn decode_svg_thumbnail_with_max(bytes: &[u8], max_edge: u32) -> Result<DecodedThumbnailSource> {
+    let (image, source_width, source_height) = decode_svg_rgba(bytes, max_edge, max_edge)?;
+    Ok(DecodedThumbnailSource {
+        image: DynamicImage::ImageRgba8(image).to_rgb8(),
+        source_width,
+        source_height,
+        scale: "vector",
+    })
+}
+
+#[cfg(test)]
+mod svg_decoder_tests {
+    use super::*;
+
+    const SVG: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" width="120" height="80" viewBox="0 0 120 80"><rect width="120" height="80" fill="#336699"/></svg>"#;
+    const RESOURCE_SVG: &[u8] =
+        include_bytes!("../../resources/custom-icons/collage-grid-symbolic.svg");
+
+    #[test]
+    fn svg_dimensions_and_thumbnail_render() {
+        assert_eq!(dimensions("fixture.svg", SVG).unwrap(), (120, 80));
+        let decoded = decode_svg_thumbnail(SVG).unwrap();
+        assert_eq!((decoded.source_width, decoded.source_height), (120, 80));
+        assert_eq!((decoded.image.width(), decoded.image.height()), (320, 213));
+    }
+
+    #[test]
+    fn bundled_resource_svg_renders() {
+        let decoded = decode_svg_thumbnail(RESOURCE_SVG).unwrap();
+        assert!(decoded.source_width > 0);
+        assert!(decoded.source_height > 0);
+        assert!(decoded.image.width() > 0);
+        assert!(decoded.image.height() > 0);
+    }
+}

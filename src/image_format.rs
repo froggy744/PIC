@@ -10,6 +10,7 @@ pub enum DecoderKind {
     Image,
     Heif,
     Raw,
+    Svg,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -122,6 +123,12 @@ pub const FORMATS: &[ImageFormat] = &[
         name: "Samsung RAW",
         extensions: &["srw"],
         decoder: DecoderKind::Raw,
+    },
+    ImageFormat {
+        id: "svg",
+        name: "SVG",
+        extensions: &["svg"],
+        decoder: DecoderKind::Svg,
     },
     ImageFormat {
         id: "generic_raw",

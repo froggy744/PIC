@@ -169,6 +169,8 @@ const SHARE_MODE_TOGGLE_KEY: &str = "picasa-sidebar-share-mode-toggle";
 const FOLDER_MODE_CHANGED_KEY: &str = "picasa-sidebar-folder-mode-changed";
 const FOLDER_SHARE_PANED_KEY: &str = "picasa-sidebar-folder-share-paned";
 const FOLDER_PANE_SAVED_KEY: &str = "picasa-sidebar-folder-pane-saved";
+const FOLDER_PANE_ANIMATING_KEY: &str = "picasa-sidebar-folder-pane-animating";
+const FOLDER_LAYOUT_GENERATION_KEY: &str = "picasa-sidebar-folder-layout-generation";
 const SHARE_LIST_KEY: &str = "picasa-sidebar-share-list";
 const KEYBOARD_GRID_TARGET_KEY: &str = "picasa-sidebar-keyboard-grid-target";
 const SCROLL_LOCATION_FOLDER_KEY: &str = "picasa-sidebar-scroll-location-folder";
@@ -785,14 +787,11 @@ pub fn build(
     {
         let state_for_reveal_action = state.clone();
         let list_for_reveal_action = folder_list.clone();
-        let folder_heading_for_reveal = folder_heading.clone();
-        let folder_share_paned_for_reveal = folder_share_paned.clone();
-        let saved_folder_pane_position_for_reveal = saved_folder_pane_position.clone();
+        let sidebar_for_reveal = outer.downgrade();
         let set_expanded = set_folders_expanded.clone();
         attach_section_context_menu(
             &folder_heading,
             Rc::new(move || {
-                set_folders_expanded(true);
                 {
                     let mut state = state_for_reveal_action.borrow_mut();
                     let folders = unsafe {
@@ -806,14 +805,19 @@ pub fn build(
                     }
                 }
                 rebuild_folder_list_from_rows(&list_for_reveal_action, &state_for_reveal_action);
-                // Reveal All ignores the divider position: grow the pane so
-                // every revealed row is visible instead of clipped under the
-                // saved (possibly dragged-up) bar position.
-                let desired = list_natural_height_for_rows(&list_for_reveal_action, usize::MAX)
-                    + folder_heading_for_reveal.height();
-                if desired > 0 {
-                    saved_folder_pane_position_for_reveal.set(desired);
-                    folder_share_paned_for_reveal.set_position(desired);
+                // Save the bounded target before starting an expansion animation.
+                if let Some(sidebar) = sidebar_for_reveal.upgrade() {
+                    if let Some(target) = folder_expansion_target(&sidebar, 0) {
+                        if let Some(saved) = unsafe {
+                            sidebar
+                                .data::<Rc<Cell<i32>>>(FOLDER_PANE_SAVED_KEY)
+                                .map(|saved| saved.as_ref().clone())
+                        } {
+                            saved.set(target);
+                        }
+                    }
+                    set_expanded(true);
+                    schedule_folder_expansion(&sidebar, None);
                 }
             }),
         );
@@ -903,44 +907,32 @@ pub fn build(
         });
     }
 
-    // On first presentation, place the Folders / Network Shares divider right
-    // below the Folders rows (Folders natural height). Without this the paned
-    // can push the divider to the bottom edge, hiding the separator line and
-    // making the Folders section look fixed while only Albums is resizable.
+    // Measure after mapping, using the same bounded split as tree expansion.
     {
-        let paned = folder_share_paned.clone();
-        let folder_list = folder_list.clone();
-        let folder_heading_for_map = folder_heading.clone();
-        let applied = Rc::new(Cell::new(false));
-        let applied_for_map = applied.clone();
+        let sidebar = outer.downgrade();
+        let applied = Cell::new(false);
         folder_share_paned.connect_map(move |_| {
-            if applied_for_map.replace(true) {
+            if applied.replace(true) {
                 return;
             }
-
-            let paned = paned.clone();
-            let folder_list = folder_list.clone();
-            let folder_heading = folder_heading_for_map.clone();
-            glib::idle_add_local_once(move || {
-                // Measure the actual row widgets; a GtkScrolledWindow reports
-                // a near-zero natural height unless propagate-natural-height
-                // is enabled, so the revealers cannot be measured directly.
-                let desired = list_natural_height_for_rows(&folder_list, usize::MAX)
-                    + folder_heading.height();
-                if desired <= 0 {
+            let sidebar = sidebar.clone();
+            if let Some(sidebar) = sidebar.upgrade() {
+                let Some(paned) = stored_widget::<gtk::Paned>(&sidebar, FOLDER_SHARE_PANED_KEY)
+                else {
                     return;
-                }
-
-                let max_position = paned.max_position();
-                let target = if max_position > 0 {
-                    desired.min(max_position)
-                } else {
-                    desired
                 };
-                if target > 0 {
+                let sidebar = sidebar.downgrade();
+                paned.add_tick_callback(move |paned, _| {
+                    let Some(sidebar) = sidebar.upgrade() else {
+                        return glib::ControlFlow::Break;
+                    };
+                    let Some(target) = folder_expansion_target(&sidebar, 0) else {
+                        return glib::ControlFlow::Continue;
+                    };
                     paned.set_position(target);
-                }
-            });
+                    glib::ControlFlow::Break
+                });
+            }
         });
     }
 
@@ -967,6 +959,8 @@ pub fn build(
         outer.set_data(FOLDER_MODE_CHANGED_KEY, on_folder_display_mode_changed);
         outer.set_data(FOLDER_SHARE_PANED_KEY, folder_share_paned);
         outer.set_data(FOLDER_PANE_SAVED_KEY, saved_folder_pane_position);
+        outer.set_data(FOLDER_PANE_ANIMATING_KEY, folder_pane_animating);
+        outer.set_data(FOLDER_LAYOUT_GENERATION_KEY, Rc::new(Cell::new(0_u64)));
         outer.set_data(SECTION_PANED_KEY, section_paned);
         outer.set_data(FOLDER_SECTION_KEY, folder_section);
         outer.set_data(SHARE_SECTION_KEY, share_section);
@@ -1719,6 +1713,16 @@ pub fn set_active_filter(scrolled: &gtk::ScrolledWindow, filter: SidebarFilter) 
     // newly selected row plus the stale scroll-location marker.
     set_scroll_location(scrolled, None);
 
+    let folder_scroll_value = matches!(filter, SidebarFilter::Folder(_))
+        .then(|| folder_scroll_value(scrolled))
+        .flatten();
+    sync_filter_selection(scrolled, filter);
+    restore_folder_scroll(scrolled, folder_scroll_value);
+}
+
+/// Rebuilding a tree restores selection without activating a destination or
+/// clearing the separate scroll-location marker.
+fn sync_filter_selection(scrolled: &gtk::ScrolledWindow, filter: SidebarFilter) {
     let syncing = unsafe {
         scrolled
             .data::<Rc<Cell<bool>>>(FILTER_SYNCING_KEY)
@@ -1727,10 +1731,6 @@ pub fn set_active_filter(scrolled: &gtk::ScrolledWindow, filter: SidebarFilter) 
     let Some(syncing) = syncing else {
         return;
     };
-
-    let folder_scroll_value = matches!(filter, SidebarFilter::Folder(_))
-        .then(|| folder_scroll_value(scrolled))
-        .flatten();
 
     syncing.set(true);
     if let Some(library_list) = stored_widget::<gtk::ListBox>(scrolled, LIBRARY_LIST_KEY) {
@@ -1765,7 +1765,6 @@ pub fn set_active_filter(scrolled: &gtk::ScrolledWindow, filter: SidebarFilter) 
         }
     }
     syncing.set(false);
-    restore_folder_scroll(scrolled, folder_scroll_value);
 }
 
 fn folder_scroll_value(scrolled: &gtk::ScrolledWindow) -> Option<f64> {
@@ -2489,18 +2488,7 @@ fn append_folder_row(
             let state_for_toggle = state.clone();
             let toggle = gtk::GestureClick::new();
             toggle.connect_pressed(move |gesture, _, _, _| {
-                {
-                    let mut state = state_for_toggle.borrow_mut();
-                    if !state.expanded_folders.remove(&folder_id) {
-                        state.expanded_folders.insert(folder_id);
-                    }
-                }
-                // Rebuilding just the folder section requires the complete folder
-                // data, which refresh() owns. Mark the row's requested state now;
-                // GTK will show the updated tree on the next sidebar refresh.
-                // To make expansion immediate, store a synthetic toggle marker and
-                // let rebuild_folder_list_from_rows() reconstruct from row data.
-                rebuild_folder_list_from_rows(&list_for_toggle, &state_for_toggle);
+                toggle_folder_branch(&list_for_toggle, &state_for_toggle, folder_id);
                 gesture.set_state(gtk::EventSequenceState::Claimed);
             });
             disclosure_slot.add_controller(toggle);
@@ -2573,12 +2561,7 @@ fn append_folder_row(
         double_click.set_button(1);
         double_click.connect_pressed(move |gesture, n_press, _, _| {
             if n_press == 2 {
-                let mut state = state_for_double_click.borrow_mut();
-                if !state.expanded_folders.remove(&folder_id) {
-                    state.expanded_folders.insert(folder_id);
-                }
-                drop(state);
-                rebuild_folder_list_from_rows(&list_for_double_click, &state_for_double_click);
+                toggle_folder_branch(&list_for_double_click, &state_for_double_click, folder_id);
                 gesture.set_state(gtk::EventSequenceState::Claimed);
             }
         });
@@ -2746,6 +2729,166 @@ fn add_folder_context_menu(list: &gtk::ListBox, row: &gtk::ListBoxRow, folder: &
     row.add_controller(right_click);
 }
 
+/// Bound Folders by the allocated split, keeping populated shares usable.
+/// The Folders heading is outside this paned and must not be counted here.
+fn folder_expansion_target(sidebar: &gtk::ScrolledWindow, current: i32) -> Option<i32> {
+    let paned = stored_widget::<gtk::Paned>(sidebar, FOLDER_SHARE_PANED_KEY)?;
+    let list = stored_widget::<gtk::ListBox>(sidebar, FOLDER_LIST_KEY)?;
+    if paned.height() <= 0 {
+        return None;
+    }
+    let shares = stored_widget::<gtk::Box>(sidebar, SHARE_SECTION_KEY)?;
+    let mut reserved = 0;
+    if shares.is_visible() {
+        let heading = shares.first_child()?;
+        reserved = heading.measure(gtk::Orientation::Vertical, paned.width()).1;
+        let share_list = stored_widget::<gtk::ListBox>(sidebar, SHARE_LIST_KEY)?;
+        let revealer = share_list
+            .ancestor(gtk::Revealer::static_type())?
+            .downcast::<gtk::Revealer>()
+            .ok()?;
+        if revealer.reveals_child() && !folder_rows(&share_list).is_empty() {
+            let natural = share_list
+                .measure(gtk::Orientation::Vertical, paned.width())
+                .1;
+            let row_sum = list_natural_height_for_rows(&share_list, usize::MAX);
+            // Include list/theme spacing as well as the first few row requests.
+            reserved += (list_natural_height_for_rows(&share_list, 3) + (natural - row_sum).max(0))
+                .min(natural);
+        }
+    }
+    // max-position already reserves the end child's GTK minimum and the handle.
+    let minimum = if shares.is_visible() {
+        shares.measure(gtk::Orientation::Vertical, paned.width()).0
+    } else {
+        0
+    };
+    let limit = (paned.max_position() - (reserved - minimum).max(0)).max(0);
+    let desired = list.measure(gtk::Orientation::Vertical, paned.width()).1;
+    Some(current.max(desired).min(limit))
+}
+
+fn cancel_folder_expansion(sidebar: &gtk::ScrolledWindow) -> Option<(Rc<Cell<u64>>, u64)> {
+    let generation = unsafe {
+        sidebar
+            .data::<Rc<Cell<u64>>>(FOLDER_LAYOUT_GENERATION_KEY)?
+            .as_ref()
+            .clone()
+    };
+    let next = generation.get().wrapping_add(1);
+    generation.set(next);
+    Some((generation, next))
+}
+
+/// Wait for GTK allocation and any section reveal animation before growing.
+/// A second frame places the branch using its new, allocated row bounds.
+fn schedule_folder_expansion(sidebar: &gtk::ScrolledWindow, branch: Option<i64>) {
+    let Some(paned) = stored_widget::<gtk::Paned>(sidebar, FOLDER_SHARE_PANED_KEY) else {
+        return;
+    };
+    let Some((generation, expected)) = cancel_folder_expansion(sidebar) else {
+        return;
+    };
+    let Some(animating) = (unsafe {
+        sidebar
+            .data::<Rc<Cell<bool>>>(FOLDER_PANE_ANIMATING_KEY)
+            .map(|flag| flag.as_ref().clone())
+    }) else {
+        return;
+    };
+    let sidebar = sidebar.downgrade();
+    let positioned = Cell::new(false);
+    paned.add_tick_callback(move |paned, _| {
+        let Some(sidebar) = sidebar.upgrade() else {
+            return glib::ControlFlow::Break;
+        };
+        if generation.get() != expected
+            || !paned.is_mapped()
+            || !sidebar_state(&sidebar).is_some_and(|s| s.borrow().folders_expanded)
+        {
+            return glib::ControlFlow::Break;
+        }
+        let Some(revealer) = stored_widget::<gtk::Revealer>(&sidebar, FOLDER_REVEALER_KEY) else {
+            return glib::ControlFlow::Break;
+        };
+        if animating.get() || !revealer.is_child_revealed() {
+            return glib::ControlFlow::Continue;
+        }
+        if !positioned.get() {
+            let Some(target) = folder_expansion_target(&sidebar, paned.position()) else {
+                return glib::ControlFlow::Continue;
+            };
+            paned.set_position(target);
+            positioned.set(true);
+            return glib::ControlFlow::Continue;
+        }
+        if let Some(id) = branch {
+            reveal_expanded_branch(&sidebar, id);
+        }
+        glib::ControlFlow::Break
+    });
+}
+
+fn reveal_expanded_branch(sidebar: &gtk::ScrolledWindow, id: i64) {
+    let Some(list) = stored_widget::<gtk::ListBox>(sidebar, FOLDER_LIST_KEY) else {
+        return;
+    };
+    let Some(scroll) = stored_widget::<gtk::ScrolledWindow>(sidebar, FOLDER_SCROLL_KEY) else {
+        return;
+    };
+    let Some(parent) = row_for_filter(&list, SidebarFilter::Folder(id)) else {
+        return;
+    };
+    let Some(bounds) = parent.compute_bounds(&scroll) else {
+        return;
+    };
+    let adjustment = scroll.vadjustment();
+    let top = adjustment.value() + f64::from(bounds.y());
+    let bottom = parent
+        .next_sibling()
+        .and_then(|child| child.compute_bounds(&scroll))
+        .map(|bounds| adjustment.value() + f64::from(bounds.y() + bounds.height()))
+        .unwrap_or(top + f64::from(bounds.height()));
+    let page = adjustment.page_size();
+    let value = if top < adjustment.value() {
+        top
+    } else if bottom > adjustment.value() + page {
+        (bottom - page).min(top)
+    } else {
+        adjustment.value()
+    };
+    let upper = (adjustment.upper() - page).max(adjustment.lower());
+    adjustment.set_value(value.clamp(adjustment.lower(), upper));
+}
+
+fn toggle_folder_branch(list: &gtk::ListBox, state: &Rc<RefCell<SidebarState>>, id: i64) {
+    let expanded = {
+        let mut state = state.borrow_mut();
+        if state.expanded_folders.remove(&id) {
+            false
+        } else {
+            state.expanded_folders.insert(id);
+            true
+        }
+    };
+    rebuild_folder_list_from_rows(list, state);
+    let local = unsafe {
+        !list
+            .data::<bool>("picasa-network-share-tree")
+            .is_some_and(|s| *s.as_ref())
+    };
+    if expanded && local {
+        if let Some(sidebar) = list
+            .ancestor(gtk::ScrolledWindow::static_type())
+            .and_then(|scroll| scroll.parent())
+            .and_then(|parent| parent.ancestor(gtk::ScrolledWindow::static_type()))
+            .and_then(|outer| outer.downcast::<gtk::ScrolledWindow>().ok())
+        {
+            schedule_folder_expansion(&sidebar, Some(id));
+        }
+    }
+}
+
 // Folder expansion must be immediate, but the public toggle callback does not
 // have the original &[Folder]. Every visible row therefore keeps its Folder
 // record. We collect the full currently-known set from visible rows plus hidden
@@ -2760,9 +2903,11 @@ fn rebuild_folder_list_from_rows(list: &gtk::ListBox, state: &Rc<RefCell<Sidebar
         .and_then(|widget| widget.downcast::<gtk::ScrolledWindow>().ok());
     let outer = folder_scroll.as_ref().and_then(|folder_scroll| {
         folder_scroll
-            .ancestor(gtk::ScrolledWindow::static_type())
+            .parent()
+            .and_then(|parent| parent.ancestor(gtk::ScrolledWindow::static_type()))
             .and_then(|widget| widget.downcast::<gtk::ScrolledWindow>().ok())
     });
+    let previous_rows = folder_rows(list).len();
     let list_scroll_value = folder_scroll
         .as_ref()
         .map(|scroll| scroll.vadjustment().value());
@@ -2789,8 +2934,14 @@ fn rebuild_folder_list_from_rows(list: &gtk::ListBox, state: &Rc<RefCell<Sidebar
         populate_folders(list, &folders, state, &callback);
     }
     if let Some(outer) = outer {
+        if !is_network_tree {
+            cancel_folder_expansion(&outer);
+            if folder_rows(list).len() > previous_rows {
+                schedule_folder_expansion(&outer, None);
+            }
+        }
         if let Some(filter) = current_filter(&outer) {
-            set_active_filter(&outer, filter);
+            sync_filter_selection(&outer, filter);
         }
         if is_network_tree {
             if let (Some(scroll), Some(value)) = (folder_scroll, list_scroll_value) {
@@ -3113,6 +3264,350 @@ fn format_count(value: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn settle_sidebar_layout() {
+        pump_sidebar_frames(400);
+    }
+
+    fn pump_sidebar_frames(milliseconds: u64) {
+        let until = std::time::Instant::now() + std::time::Duration::from_millis(milliseconds);
+        let context = glib::MainContext::default();
+        while std::time::Instant::now() < until {
+            while context.pending() {
+                context.iteration(false);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
+
+    fn expansion_test_sidebar(with_shares: bool) -> gtk::ScrolledWindow {
+        let folder = |id, parent_id, name: &str, path: &str| Folder {
+            id,
+            path: path.to_string(),
+            name: name.to_string(),
+            parent_id,
+            imported_root: parent_id.is_none(),
+            watched: false,
+            photo_count: 1,
+            subfolder_count: 0,
+            available: true,
+        };
+        let mut folders = vec![folder(1, None, "A", "/A"), folder(100, None, "B", "/B")];
+        for id in 2..=4 {
+            folders.push(folder(
+                id,
+                Some(1),
+                &format!("child{id}"),
+                &format!("/A/{id}"),
+            ));
+        }
+        for id in 101..=125 {
+            folders.push(folder(
+                id,
+                Some(100),
+                &format!("child{id}"),
+                &format!("/B/{id}"),
+            ));
+        }
+        if with_shares {
+            for id in 200..=205 {
+                folders.push(folder(
+                    id,
+                    None,
+                    &format!("share{id}"),
+                    &format!("smb://host/{id}"),
+                ));
+            }
+        }
+        let noop: Rc<dyn Fn()> = Rc::new(|| {});
+        build(
+            &folders,
+            &[],
+            SidebarCounts {
+                photos: 30,
+                favorites: 0,
+                recently_added: 0,
+            },
+            |_| {},
+            noop.clone(),
+            noop.clone(),
+            noop.clone(),
+            Rc::new(|_| {}),
+            noop,
+            Rc::new(|_| {}),
+            Rc::new(|_| {}),
+            Rc::new(|_| {}),
+            Rc::new(|_, _| {}),
+            Rc::new(|_, _| {}),
+            FolderDisplayMode::Tree,
+            Rc::new(|_| {}),
+            SidebarVisibility::default(),
+        )
+    }
+
+    fn double_click_folder(list: &gtk::ListBox, id: i64) {
+        let row = row_for_filter(list, SidebarFilter::Folder(id)).unwrap();
+        let controllers = row.observe_controllers();
+        let gesture = (0..controllers.n_items())
+            .filter_map(|i| controllers.item(i))
+            .filter_map(|c| c.downcast::<gtk::GestureClick>().ok())
+            .find(|g| g.button() == 1)
+            .unwrap();
+        gesture.emit_by_name::<()>("pressed", &[&2_i32, &0_f64, &0_f64]);
+    }
+
+    fn disclosure_click_folder(list: &gtk::ListBox, id: i64) {
+        fn find_disclosure(widget: &gtk::Widget) -> Option<gtk::GestureClick> {
+            let controllers = widget.observe_controllers();
+            for index in 0..controllers.n_items() {
+                if let Some(gesture) = controllers
+                    .item(index)
+                    .and_then(|c| c.downcast::<gtk::GestureClick>().ok())
+                    .filter(|_| widget.width_request() == 12)
+                {
+                    return Some(gesture);
+                }
+            }
+            let mut child = widget.first_child();
+            while let Some(widget) = child {
+                child = widget.next_sibling();
+                if let Some(gesture) = find_disclosure(&widget) {
+                    return Some(gesture);
+                }
+            }
+            None
+        }
+        let row = row_for_filter(list, SidebarFilter::Folder(id)).unwrap();
+        find_disclosure(row.upcast_ref())
+            .unwrap()
+            .emit_by_name::<()>("pressed", &[&1_i32, &0_f64, &0_f64]);
+    }
+
+    fn reveal_all_folders(sidebar: &gtk::ScrolledWindow) {
+        let heading = stored_widget::<gtk::Box>(sidebar, FOLDER_HEADING_KEY).unwrap();
+        let controllers = heading.observe_controllers();
+        let right_click = (0..controllers.n_items())
+            .filter_map(|i| controllers.item(i))
+            .filter_map(|c| c.downcast::<gtk::GestureClick>().ok())
+            .find(|g| g.button() == 3)
+            .unwrap();
+        right_click.emit_by_name::<()>("pressed", &[&1_i32, &0_f64, &0_f64]);
+        let popover = heading
+            .last_child()
+            .unwrap()
+            .downcast::<gtk::Popover>()
+            .unwrap();
+        let button = popover
+            .child()
+            .unwrap()
+            .first_child()
+            .unwrap()
+            .downcast::<gtk::Button>()
+            .unwrap();
+        button.emit_clicked();
+    }
+
+    #[test]
+    #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+    fn folder_expansion_grows_without_hiding_shares_and_scrolls_overflow() {
+        gtk::init().unwrap();
+        for with_shares in [false, true] {
+            let sidebar = expansion_test_sidebar(with_shares);
+            let window = gtk::Window::new();
+            window.set_default_size(340, 1000);
+            window.set_child(Some(&sidebar));
+            window.present();
+            settle_sidebar_layout();
+            let list = stored_widget::<gtk::ListBox>(&sidebar, FOLDER_LIST_KEY).unwrap();
+            let paned = stored_widget::<gtk::Paned>(&sidebar, FOLDER_SHARE_PANED_KEY).unwrap();
+            let scroll = stored_widget::<gtk::ScrolledWindow>(&sidebar, FOLDER_SCROLL_KEY).unwrap();
+            paned.set_position(70);
+            settle_sidebar_layout();
+            let old_height = scroll.height();
+            set_active_filter(&sidebar, SidebarFilter::Folder(1));
+            double_click_folder(&list, 1);
+            settle_sidebar_layout();
+            assert!(scroll.height() > old_height + 20, "expansion must grow into spare space: shares={with_shares} old={old_height} new={} pane={} max={} height={} target={:?} rows={} revealed={}", scroll.height(), paned.position(), paned.max_position(), paned.height(), folder_expansion_target(&sidebar, paned.position()), folder_rows(&list).len(), stored_widget::<gtk::Revealer>(&sidebar, FOLDER_REVEALER_KEY).unwrap().is_child_revealed());
+            assert_eq!(current_filter(&sidebar), Some(SidebarFilter::Folder(1)));
+            assert!(scroll.vadjustment().upper() <= scroll.vadjustment().page_size() + 1.0,
+                "a small expanded branch should fit without dragging: shares={with_shares} upper={} page={} height={} measured={:?} rowsum={}", scroll.vadjustment().upper(), scroll.vadjustment().page_size(), scroll.height(), list.measure(gtk::Orientation::Vertical, scroll.width()), list_natural_height_for_rows(&list, usize::MAX));
+            double_click_folder(&list, 100);
+            settle_sidebar_layout();
+            let adjustment = scroll.vadjustment();
+            assert!(
+                adjustment.upper() > adjustment.page_size(),
+                "large trees should scroll"
+            );
+            let parent = row_for_filter(&list, SidebarFilter::Folder(100)).unwrap();
+            let child = row_for_filter(&list, SidebarFilter::Folder(101)).unwrap();
+            let parent_bounds = parent.compute_bounds(&scroll).unwrap();
+            let child_bounds = child.compute_bounds(&scroll).unwrap();
+            assert!(
+                parent_bounds.y() >= -1.0,
+                "expanded parent must stay visible"
+            );
+            assert!(
+                child_bounds.y() + child_bounds.height() <= scroll.height() as f32 + 1.0,
+                "first revealed child must be brought into view"
+            );
+            let shares = stored_widget::<gtk::Box>(&sidebar, SHARE_SECTION_KEY).unwrap();
+            assert!(shares.height() > 0, "share heading remains reachable");
+            if with_shares {
+                let share_list = stored_widget::<gtk::ListBox>(&sidebar, SHARE_LIST_KEY).unwrap();
+                let share_scroll = share_list
+                    .ancestor(gtk::ScrolledWindow::static_type())
+                    .unwrap()
+                    .downcast::<gtk::ScrolledWindow>()
+                    .unwrap();
+                let first = share_list.first_child().unwrap();
+                let (_, row_height, _, _) = first.measure(gtk::Orientation::Vertical, -1);
+                assert!(
+                    share_scroll.height() >= row_height * 3 - 1,
+                    "populated Network Shares keeps a usable viewport"
+                );
+            }
+            let expanded_height = scroll.height();
+            disclosure_click_folder(&list, 100);
+            settle_sidebar_layout();
+            assert_eq!(
+                scroll.height(),
+                expanded_height,
+                "collapse must preserve the split"
+            );
+            paned.set_position(70);
+            settle_sidebar_layout();
+            disclosure_click_folder(&list, 100);
+            settle_sidebar_layout();
+            assert!(
+                scroll.height() > 70,
+                "the disclosure arrow must also grow the pane"
+            );
+
+            // A collapsed shares section should release its viewport to Folders.
+            let share_heading = shares.first_child().unwrap();
+            share_heading
+                .last_child()
+                .unwrap()
+                .downcast::<gtk::Button>()
+                .unwrap()
+                .emit_clicked();
+            settle_sidebar_layout();
+            double_click_folder(&list, 100);
+            double_click_folder(&list, 100);
+            settle_sidebar_layout();
+            assert!(
+                scroll.height() > expanded_height,
+                "collapsed shares release spare space"
+            );
+            let shares_bounds = share_heading.compute_bounds(&sidebar).unwrap();
+            assert!(shares_bounds.y() + shares_bounds.height() <= sidebar.height() as f32 + 1.0);
+
+            // Reveal All must reattach a collapsed pane and clamp its animation target.
+            stored_widget::<gtk::Button>(&sidebar, FOLDER_INDICATOR_KEY)
+                .unwrap()
+                .emit_clicked();
+            settle_sidebar_layout();
+            assert!(paned.start_child().is_none());
+            reveal_all_folders(&sidebar);
+            settle_sidebar_layout();
+            assert!(paned.start_child().is_some());
+            assert_eq!(folder_rows(&list).len(), 30);
+            assert!(scroll.height() > 70);
+            assert!(paned.position() <= paned.max_position());
+
+            apply_visibility(
+                &sidebar,
+                SidebarVisibility {
+                    network_shares: false,
+                    ..SidebarVisibility::default()
+                },
+            );
+            settle_sidebar_layout();
+            double_click_folder(&list, 100);
+            double_click_folder(&list, 100);
+            settle_sidebar_layout();
+            assert!(!shares.is_visible());
+            assert!(
+                paned.position() >= paned.max_position() - 1,
+                "hidden shares release all spare space"
+            );
+
+            // A rapid expand/collapse must cancel its pending growth and scroll request.
+            double_click_folder(&list, 100);
+            settle_sidebar_layout();
+            paned.set_position(70);
+            settle_sidebar_layout();
+            double_click_folder(&list, 100);
+            double_click_folder(&list, 100);
+            settle_sidebar_layout();
+            assert_eq!(paned.position(), 70);
+            set_active_filter(&sidebar, SidebarFilter::All);
+            set_scroll_location(&sidebar, Some(2));
+            settle_sidebar_layout();
+            assert!(row_for_filter(&list, SidebarFilter::Folder(2))
+                .unwrap()
+                .has_css_class("sidebar-scroll-location"));
+            double_click_folder(&list, 100);
+            settle_sidebar_layout();
+            assert_eq!(current_filter(&sidebar), Some(SidebarFilter::All));
+            assert!(
+                row_for_filter(&list, SidebarFilter::Folder(2))
+                    .unwrap()
+                    .has_css_class("sidebar-scroll-location"),
+                "tree expansion must preserve the passive location marker"
+            );
+            window.close();
+            settle_sidebar_layout();
+        }
+        let sidebar = expansion_test_sidebar(false);
+        let window = gtk::Window::new();
+        window.set_default_size(340, 1000);
+        window.set_child(Some(&sidebar));
+        window.present();
+        settle_sidebar_layout();
+        let paned = stored_widget::<gtk::Paned>(&sidebar, FOLDER_SHARE_PANED_KEY).unwrap();
+        paned.set_position(70);
+        settle_sidebar_layout();
+        // GTK can finish the revealer before the native pane animation (for
+        // example with animations disabled). Exercise that timing deterministically.
+        stored_widget::<gtk::Revealer>(&sidebar, FOLDER_REVEALER_KEY)
+            .unwrap()
+            .set_transition_duration(0);
+        let indicator = stored_widget::<gtk::Button>(&sidebar, FOLDER_INDICATOR_KEY).unwrap();
+        indicator.emit_clicked();
+        pump_sidebar_frames(80);
+        indicator.emit_clicked();
+        let list = stored_widget::<gtk::ListBox>(&sidebar, FOLDER_LIST_KEY).unwrap();
+        double_click_folder(&list, 1);
+        settle_sidebar_layout();
+        let scroll = stored_widget::<gtk::ScrolledWindow>(&sidebar, FOLDER_SCROLL_KEY).unwrap();
+        assert!(
+            scroll.height() > 100,
+            "an interrupted section animation must not overwrite branch growth: height={}",
+            scroll.height()
+        );
+        window.close();
+        settle_sidebar_layout();
+
+        let sidebar = expansion_test_sidebar(true);
+        let window = gtk::Window::new();
+        window.set_default_size(340, 520);
+        window.set_child(Some(&sidebar));
+        window.present();
+        settle_sidebar_layout();
+        let list = stored_widget::<gtk::ListBox>(&sidebar, FOLDER_LIST_KEY).unwrap();
+        double_click_folder(&list, 100);
+        settle_sidebar_layout();
+        let scroll = stored_widget::<gtk::ScrolledWindow>(&sidebar, FOLDER_SCROLL_KEY).unwrap();
+        let (_, row_height, _, _) = list
+            .first_child()
+            .unwrap()
+            .measure(gtk::Orientation::Vertical, -1);
+        assert!(scroll.height() >= row_height,
+            "a short window must still leave a usable folder viewport: height={} row={row_height} window={}", scroll.height(), window.height());
+        window.close();
+        settle_sidebar_layout();
+    }
 
     #[test]
     #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]

@@ -2116,89 +2116,76 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let sidebar_hover_layout_freeze_for_tick = sidebar_hover_layout_freeze.clone();
     let sidebar_layout_settle_for_tick = sidebar_layout_settle.clone();
     // Photo Wall uses the exact viewport width for justified rows. Native
-    // window resizing is a real pointer gesture, so tie the geometry freeze to
-    // that gesture instead of guessing completion from a timer. This lets the
-    // user pause indefinitely while deciding the final size without triggering
-    // an intermediate justified-row reflow.
+    // window-border resize events are owned by GDK/the compositor and are not
+    // reliably delivered to a GtkGestureClick on the window contents. Poll the
+    // actual pointer button state and surface position from GDK instead.
+    //
+    // Pressing the primary button at any toplevel edge freezes Photo Wall
+    // before intermediate allocations can reshuffle justified rows. The freeze
+    // lasts for the whole button hold, including long pauses while the user
+    // decides the final size, and is released exactly when the button is up.
+    const WINDOW_RESIZE_EDGE_PX: f64 = 24.0;
     let photo_wall_window_resize_active = Rc::new(Cell::new(false));
-
-    // GtkWindow's client-side resize border is still part of the toplevel
-    // event stream. Observe left-button presses near any window edge without
-    // claiming them; GTK/libadwaita remains responsible for the actual resize.
-    const WINDOW_RESIZE_EDGE_PX: f64 = 18.0;
-    let window_resize_click = gtk::GestureClick::new();
-    window_resize_click.set_button(1);
-    window_resize_click.set_propagation_phase(gtk::PropagationPhase::Capture);
-    let window_for_resize_press = window.clone();
-    let gallery_for_resize_press = gallery.clone();
-    let resize_active_for_press = photo_wall_window_resize_active.clone();
-    window_resize_click.connect_pressed(move |_, _, x, y| {
-        if gallery_for_resize_press.layout() != crate::grid::PhotoLayout::PhotoWall
-            || window_for_resize_press.is_maximized()
-        {
-            return;
-        }
-        let width = f64::from(window_for_resize_press.width().max(1));
-        let height = f64::from(window_for_resize_press.height().max(1));
-        let near_left = x <= WINDOW_RESIZE_EDGE_PX;
-        let near_right = x >= width - WINDOW_RESIZE_EDGE_PX;
-
-        // Photo Wall geometry depends on width, not viewport height. Freezing
-        // for a pure top/bottom resize caused an unnecessary full unfreeze
-        // reflow/anchor restore even though the width never changed, which is
-        // the large jump seen as soon as vertical resizing begins. Corners are
-        // still covered because they are also on the left/right edge.
-        if near_left || near_right {
-            resize_active_for_press.set(true);
-            gallery_for_resize_press.set_photo_wall_width_frozen(true);
-            if std::env::var_os("PICASA_TRACE").is_some() {
-                eprintln!(
-                    "PIC_PHOTOWALL_RESIZE begin-horizontal x={x:.1} y={y:.1} window={}x{}",
-                    width as i32,
-                    height as i32
-                );
-            }
-        }
-    });
-
-    // Release can arrive paired or unpaired if the compositor/resize gesture
-    // takes over the pointer sequence. Handle both and unfreeze exactly once.
-    let gallery_for_resize_release = gallery.clone();
-    let resize_active_for_release = photo_wall_window_resize_active.clone();
-    window_resize_click.connect_released(move |_, _, _, _| {
-        if resize_active_for_release.replace(false) {
-            gallery_for_resize_release.set_photo_wall_width_frozen(false);
-            if std::env::var_os("PICASA_TRACE").is_some() {
-                eprintln!("PIC_PHOTOWALL_RESIZE end paired");
-            }
-        }
-    });
-    let gallery_for_resize_unpaired = gallery.clone();
-    let resize_active_for_unpaired = photo_wall_window_resize_active.clone();
-    window_resize_click.connect_unpaired_release(move |_, _, _, _, _| {
-        if resize_active_for_unpaired.replace(false) {
-            gallery_for_resize_unpaired.set_photo_wall_width_frozen(false);
-            if std::env::var_os("PICASA_TRACE").is_some() {
-                eprintln!("PIC_PHOTOWALL_RESIZE end unpaired");
-            }
-        }
-    });
-    window.add_controller(window_resize_click);
-
+    let resize_pointer = display.default_seat().and_then(|seat| seat.pointer());
+    let window_for_resize_tick = window.clone();
     let photo_wall_window_resize_active_for_tick = photo_wall_window_resize_active.clone();
     gallery_scroll_stack.add_tick_callback(move |surface, _clock| {
         gallery_for_resize.drain_thumbnail_display_completions();
 
         let width = surface.width();
 
-        // While the native toplevel resize gesture is held, Photo Wall keeps
-        // its previously justified geometry. The actual GtkScrolledWindow can
-        // receive any number of intermediate allocations; none are published
-        // to the wall until button release.
-        if gallery_for_resize.layout() == crate::grid::PhotoLayout::PhotoWall
-            && photo_wall_window_resize_active_for_tick.get()
-        {
-            return glib::ControlFlow::Continue;
+        if gallery_for_resize.layout() == crate::grid::PhotoLayout::PhotoWall {
+            let button_down = resize_pointer.as_ref().is_some_and(|pointer| {
+                pointer
+                    .modifier_state()
+                    .contains(gtk::gdk::ModifierType::BUTTON1_MASK)
+            });
+
+            let near_window_edge = resize_pointer.as_ref().is_some_and(|pointer| {
+                window_for_resize_tick
+                    .surface()
+                    .and_then(|surface| surface.device_position(pointer))
+                    .is_some_and(|(x, y, _)| {
+                        let window_width = f64::from(window_for_resize_tick.width().max(1));
+                        let window_height = f64::from(window_for_resize_tick.height().max(1));
+                        x <= WINDOW_RESIZE_EDGE_PX
+                            || x >= window_width - WINDOW_RESIZE_EDGE_PX
+                            || y <= WINDOW_RESIZE_EDGE_PX
+                            || y >= window_height - WINDOW_RESIZE_EDGE_PX
+                    })
+            });
+
+            if !photo_wall_window_resize_active_for_tick.get()
+                && button_down
+                && near_window_edge
+                && !window_for_resize_tick.is_maximized()
+            {
+                photo_wall_window_resize_active_for_tick.set(true);
+                gallery_for_resize.set_photo_wall_width_frozen(true);
+                if std::env::var_os("PICASA_TRACE").is_some() {
+                    eprintln!(
+                        "PIC_PHOTOWALL_RESIZE begin-gdk window={}x{}",
+                        window_for_resize_tick.width(),
+                        window_for_resize_tick.height()
+                    );
+                }
+            } else if photo_wall_window_resize_active_for_tick.get() && !button_down {
+                photo_wall_window_resize_active_for_tick.set(false);
+                gallery_for_resize.set_photo_wall_width_frozen(false);
+                if std::env::var_os("PICASA_TRACE").is_some() {
+                    eprintln!(
+                        "PIC_PHOTOWALL_RESIZE end-gdk window={}x{}",
+                        window_for_resize_tick.width(),
+                        window_for_resize_tick.height()
+                    );
+                }
+            }
+
+            if photo_wall_window_resize_active_for_tick.get() {
+                return glib::ControlFlow::Continue;
+            }
+        } else if photo_wall_window_resize_active_for_tick.replace(false) {
+            gallery_for_resize.set_photo_wall_width_frozen(false);
         }
 
         let sectioned_live_resize = gallery_for_resize.using_sectioned_folder_view()

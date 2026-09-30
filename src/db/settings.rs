@@ -4,11 +4,20 @@ const MAX_RECENTLY_ADDED_LIMIT: usize = 1_000_000;
 pub const THUMBNAIL_SQUARE_CORNERS_SETTING_KEY: &str = "thumbnail-square-corners";
 pub const THUMBNAIL_FIT_WHOLE_PHOTO_SETTING_KEY: &str = "thumbnail-fit-whole-photo";
 pub const THUMBNAIL_FILE_NAMES_SETTING_KEY: &str = "thumbnail-file-names";
+pub const THUMBNAIL_HIGH_QUALITY_SETTING_KEY: &str = "thumbnail-high-quality";
 pub const ZOOM_ANIMATIONS_ENABLED_SETTING_KEY: &str = "zoom-animations-enabled";
 pub const LIBRARY_AVAILABLE_SETTING_KEY: &str = "library-stats-available";
 pub const LIBRARY_UNAVAILABLE_SETTING_KEY: &str = "library-stats-unavailable";
 pub const LIBRARY_STATS_UPDATED_SETTING_KEY: &str = "library-stats-updated";
 pub const FOLDER_WATCHING_ENABLED_SETTING_KEY: &str = "folder-watching-enabled";
+
+pub fn high_quality_thumbnails_enabled(connection: &Connection) -> bool {
+    setting(connection, THUMBNAIL_HIGH_QUALITY_SETTING_KEY)
+        .ok()
+        .flatten()
+        .as_deref()
+        == Some("true")
+}
 
 pub fn zoom_animations_enabled(connection: &Connection) -> bool {
     setting(connection, ZOOM_ANIMATIONS_ENABLED_SETTING_KEY)
@@ -142,6 +151,20 @@ pub fn clear_all(connection: &Connection) -> Result<()> {
 #[cfg(test)]
 mod zoom_animation_tests {
     use super::*;
+
+    #[test]
+    fn high_quality_thumbnails_default_off_and_can_be_enabled() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+            .unwrap();
+
+        assert!(!high_quality_thumbnails_enabled(&connection));
+        set_setting(&connection, THUMBNAIL_HIGH_QUALITY_SETTING_KEY, "true").unwrap();
+        assert!(high_quality_thumbnails_enabled(&connection));
+        set_setting(&connection, THUMBNAIL_HIGH_QUALITY_SETTING_KEY, "false").unwrap();
+        assert!(!high_quality_thumbnails_enabled(&connection));
+    }
 
     #[test]
     fn zoom_animations_default_on_and_can_be_disabled() {

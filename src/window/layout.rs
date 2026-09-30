@@ -729,6 +729,7 @@
     let sidebar_hover_motion = gtk::EventControllerMotion::new();
     let main_split_for_hover_reveal = main_split.clone();
     let sidebar_for_hover_reveal = sidebar.clone();
+    let gallery_for_hover_reveal = gallery.clone();
     let sidebar_hover_layout_freeze_for_reveal = sidebar_hover_layout_freeze.clone();
     let sidebar_hover_freeze_generation_for_reveal = sidebar_hover_freeze_generation.clone();
     sidebar_hover_motion.connect_enter(move |_, _, _| {
@@ -748,6 +749,7 @@
                     .wrapping_add(1),
             );
             sidebar_hover_layout_freeze_for_reveal.set(true);
+            gallery_for_hover_reveal.set_photo_wall_width_frozen(true);
             sidebar::set_hover_open(&sidebar_for_hover_reveal, true);
             main_split_for_hover_reveal.set_show_sidebar(true);
         }
@@ -805,9 +807,11 @@
             sidebar_hover_freeze_generation_for_state.set(generation);
             let freeze = sidebar_hover_layout_freeze_for_state.clone();
             let active_generation = sidebar_hover_freeze_generation_for_state.clone();
+            let gallery = gallery_for_sidebar_visibility.clone();
             glib::timeout_add_local_once(Duration::from_millis(400), move || {
                 if active_generation.get() == generation {
                     freeze.set(false);
+                    gallery.set_photo_wall_width_frozen(false);
                 }
             });
         }
@@ -946,6 +950,7 @@
     let sidebar_layout_settle_for_hide = sidebar_layout_settle.clone();
     let sidebar_hover_layout_freeze_for_unpin = sidebar_hover_layout_freeze.clone();
     let sidebar_hover_freeze_generation_for_unpin = sidebar_hover_freeze_generation.clone();
+    let gallery_for_unpin = gallery.clone();
     let pin_button_for_menu = update_pin_button.clone();
     menu.connect_clicked(move |_| {
         // A hover-revealed sidebar is temporary. This button must pin it so
@@ -962,6 +967,7 @@
                     .wrapping_add(1),
             );
             sidebar_hover_layout_freeze_for_unpin.set(false);
+            gallery_for_unpin.set_photo_wall_width_frozen(false);
             // set_pinned(true) also clears hover_open, so the shell's
             // mouse-leave handler no longer auto-hides the sidebar.
             sidebar::set_pinned(&sidebar_for_hide, true);

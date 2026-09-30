@@ -9,6 +9,7 @@ pub enum PhotoLayout {
 struct PhotoWallState {
     generation: u64,
     layout: photo_wall_layout::PhotoWallLayout,
+    partition_width_ready: bool,
     quality_gate: WallQualityGate,
     quality_attempted: HashSet<String>,
 }
@@ -25,33 +26,51 @@ impl SectionedFolderView {
         {
             return;
         }
-        let photos = self.current_photos.borrow();
-        let ratios = photos
-            .iter()
-            .map(PhotoObject::photo_wall_aspect_ratio)
-            .collect::<Vec<_>>();
-        let sections = if self.group_mode.get() == GroupMode::Folder {
-            self.group_ranges
-                .borrow()
-                .iter()
-                .map(|range| photo_wall_layout::PhotoWallSection {
-                    photo_range: range.start..range.end,
-                    header_height: SECTIONED_HEADER_HEIGHT,
-                })
-                .collect::<Vec<_>>()
+        let mut state = self.wall_state.borrow_mut();
+        if self.geometry_width.get() > 0
+            && self.geometry_row_height.get() == target + caption
+            && state.partition_width_ready
+        {
+            // Only viewport width changed. Keep the established row members
+            // and fit their rectangles; no model or thumbnail work is needed.
+            state.layout.refit(width as f64);
         } else {
-            vec![photo_wall_layout::PhotoWallSection {
-                photo_range: 0..photos.len(),
-                header_height: 0.0,
-            }]
-        };
-        let layout = photo_wall_layout::PhotoWallLayout::calculate(
-            &ratios,
-            &sections,
-            width as f64,
-            target as f64,
-            caption as f64,
-        );
+            // Explicit model/section/mode invalidation or a new zoom target
+            // needs a fresh partition. Sidebar unfreeze keeps its existing
+            // explicit invalidation behavior.
+            let photos = self.current_photos.borrow();
+            let ratios = photos
+                .iter()
+                .map(PhotoObject::photo_wall_aspect_ratio)
+                .collect::<Vec<_>>();
+            let sections = if self.group_mode.get() == GroupMode::Folder {
+                self.group_ranges
+                    .borrow()
+                    .iter()
+                    .map(|range| photo_wall_layout::PhotoWallSection {
+                        photo_range: range.start..range.end,
+                        header_height: SECTIONED_HEADER_HEIGHT,
+                    })
+                    .collect::<Vec<_>>()
+            } else {
+                vec![photo_wall_layout::PhotoWallSection {
+                    photo_range: 0..photos.len(),
+                    header_height: 0.0,
+                }]
+            };
+            state.layout = photo_wall_layout::PhotoWallLayout::calculate(
+                &ratios,
+                &sections,
+                width as f64,
+                target as f64,
+                caption as f64,
+            );
+            // refresh() may run before the first GTK allocation, with its
+            // zero width clamped to 1. Establish rows at the first real width.
+            // Once established, even a later tiny width must only refit them.
+            state.partition_width_ready = width > 1;
+        }
+        let layout = &state.layout;
         self.geometry.replace(
             layout
                 .sections
@@ -64,9 +83,7 @@ impl SectionedFolderView {
                 .collect(),
         );
         self.total_height.set(layout.total_height);
-        let mut state = self.wall_state.borrow_mut();
         state.generation = state.generation.wrapping_add(1);
-        state.layout = layout;
         self.geometry_width.set(width);
         self.geometry_row_height.set(target + caption);
     }

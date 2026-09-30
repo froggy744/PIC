@@ -18,6 +18,7 @@ pub(super) struct PhotoWallItem {
     pub y: f64,
     pub width: f64,
     pub height: f64,
+    aspect_ratio: f64,
 }
 
 #[derive(Clone, Debug)]
@@ -26,6 +27,7 @@ pub(super) struct PhotoWallRow {
     pub y: f64,
     pub image_height: f64,
     pub block_height: f64,
+    justified: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -42,6 +44,8 @@ pub(super) struct PhotoWallLayout {
     pub sections: Vec<PhotoWallSectionBounds>,
     pub total_height: f64,
     lookup: Vec<Option<usize>>,
+    target_height: f64,
+    caption_height: f64,
 }
 
 fn ratio(value: f64) -> f64 {
@@ -79,6 +83,8 @@ impl PhotoWallLayout {
         };
         let mut layout = Self {
             lookup: vec![None; aspect_ratios.len()],
+            target_height: target,
+            caption_height: caption,
             ..Self::default()
         };
         let mut y = 0.0;
@@ -135,7 +141,8 @@ impl PhotoWallLayout {
                 let item_start = layout.items.len();
                 let mut x = margin;
                 for photo_index in start..end {
-                    let width = height * ratio(aspect_ratios[photo_index]);
+                    let aspect_ratio = ratio(aspect_ratios[photo_index]);
+                    let width = height * aspect_ratio;
                     layout.lookup[photo_index] = Some(layout.items.len());
                     layout.items.push(PhotoWallItem {
                         photo_index,
@@ -145,6 +152,7 @@ impl PhotoWallLayout {
                         y,
                         width,
                         height,
+                        aspect_ratio,
                     });
                     x += width + WALL_GAP;
                 }
@@ -153,6 +161,7 @@ impl PhotoWallLayout {
                     y,
                     image_height: height,
                     block_height: height + caption,
+                    justified: crossed,
                 });
                 y += height + caption + WALL_GAP;
                 start = end;
@@ -165,6 +174,59 @@ impl PhotoWallLayout {
         }
         layout.total_height = y.max(1.0);
         layout
+    }
+
+    /// Fit the established row partition to a new viewport. Membership,
+    /// photo order, section boundaries and the final-row policy stay fixed.
+    /// Ratios are retained from partitioning, so repeated fits do not derive
+    /// new ratios from rounded or previously fitted rectangles.
+    pub fn refit(&mut self, viewport_width: f64) {
+        let viewport = if viewport_width.is_finite() {
+            viewport_width.max(1.0)
+        } else {
+            1.0
+        };
+        let margin = WALL_SIDE_MARGIN.min((viewport - 1.0) * 0.5);
+        let usable = viewport - 2.0 * margin;
+        let mut y = 0.0;
+        let mut row_index = 0;
+        for (section_index, section) in self.sections.iter_mut().enumerate() {
+            let header_height = section.first_photo_y - section.header_y;
+            section.header_y = y;
+            y += header_height;
+            section.first_photo_y = y;
+            while let Some(row) = self.rows.get_mut(row_index) {
+                let items = &mut self.items[row.item_range.clone()];
+                if items[0].section != section_index {
+                    break;
+                }
+                // An established row cannot shed members in a tiny viewport.
+                // Reduce gaps if necessary to retain positive image space.
+                let gap = WALL_GAP.min(usable / items.len() as f64);
+                let sum = items.iter().map(|item| item.aspect_ratio).sum::<f64>();
+                let fitted = (usable - gap * items.len().saturating_sub(1) as f64) / sum;
+                let height = if row.justified {
+                    fitted
+                } else {
+                    self.target_height.min(fitted)
+                };
+                let mut x = margin;
+                for item in items {
+                    item.x = x;
+                    item.y = y;
+                    item.width = height * item.aspect_ratio;
+                    item.height = height;
+                    x += item.width + gap;
+                }
+                row.y = y;
+                row.image_height = height;
+                row.block_height = height + self.caption_height;
+                y += row.block_height + WALL_GAP;
+                row_index += 1;
+            }
+            section.end_y = y;
+        }
+        self.total_height = y.max(1.0);
     }
 
     pub fn visible_rows(&self, top: f64, bottom: f64) -> Range<usize> {
@@ -220,6 +282,168 @@ mod tests {
         assert_eq!(l.items[0].x, 0.0);
         assert_eq!(l.items[0].height, 100.0);
         assert_eq!(l.items[1].x, 100.0);
+    }
+
+    #[test]
+    fn width_refit_keeps_row_membership_through_repeated_resizes() {
+        let ratios = (0..120)
+            .map(|i| [0.5, 1.0, 1.5, 2.0][i % 4])
+            .collect::<Vec<_>>();
+        let mut l = PhotoWallLayout::calculate(
+            &ratios,
+            &[
+                PhotoWallSection {
+                    photo_range: 0..53,
+                    header_height: 70.0,
+                },
+                PhotoWallSection {
+                    photo_range: 53..53,
+                    header_height: 35.0,
+                },
+                PhotoWallSection {
+                    photo_range: 53..120,
+                    header_height: 70.0,
+                },
+            ],
+            1400.0,
+            180.0,
+            24.0,
+        );
+        let original = l.clone();
+        let membership = l
+            .rows
+            .iter()
+            .map(|row| row.item_range.clone())
+            .collect::<Vec<_>>();
+        for width in [1400.0, 1395.0, 1380.0, 1300.0, 1000.0, 1200.0, 1400.0] {
+            l.refit(width);
+            assert_eq!(
+                l.rows
+                    .iter()
+                    .map(|row| row.item_range.clone())
+                    .collect::<Vec<_>>(),
+                membership
+            );
+            assert_eq!(l.items.len(), ratios.len());
+            for (item, before) in l.items.iter().zip(&original.items) {
+                assert_eq!(
+                    (item.photo_index, item.row, item.section),
+                    (before.photo_index, before.row, before.section)
+                );
+                assert!([item.x, item.y, item.width, item.height]
+                    .iter()
+                    .all(|v| v.is_finite()));
+                assert!(item.width > 0.0 && item.height > 0.0);
+                assert!(item.x >= 0.0 && item.x + item.width <= width + 1e-8);
+                assert!((item.width / item.height - ratios[item.photo_index]).abs() < 1e-10);
+                assert_eq!(l.item(item.photo_index).unwrap().row, item.row);
+            }
+            for (row, before) in l.rows.iter().zip(&original.rows) {
+                let items = &l.items[row.item_range.clone()];
+                assert!(items
+                    .iter()
+                    .all(|item| item.section == items[0].section && item.y == row.y));
+                assert_eq!(row.block_height, row.image_height + 24.0);
+                for pair in items.windows(2) {
+                    assert_eq!(pair[0].x + pair[0].width + WALL_GAP, pair[1].x);
+                }
+                let before_last = &original.items[before.item_range.end - 1];
+                if (before_last.x + before_last.width - 1400.0).abs() < 1e-8 {
+                    let last = items.last().unwrap();
+                    assert!((last.x + last.width - width).abs() < 1e-8);
+                }
+            }
+            let mut previous_end = 0.0;
+            for (section, header) in l.sections.iter().zip([70.0, 35.0, 70.0]) {
+                assert_eq!(section.header_y, previous_end);
+                assert!((section.first_photo_y - section.header_y - header).abs() < 1e-8);
+                assert!(section.end_y >= section.first_photo_y);
+                previous_end = section.end_y;
+            }
+            assert_eq!(l.total_height, previous_end);
+        }
+        for (item, before) in l.items.iter().zip(&original.items) {
+            for (actual, expected) in [
+                (item.x, before.x),
+                (item.y, before.y),
+                (item.width, before.width),
+                (item.height, before.height),
+            ] {
+                assert!(
+                    (actual - expected).abs() < 1e-8,
+                    "round trip changed geometry"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn width_refit_preserves_incomplete_and_completed_final_row_policies() {
+        let mut incomplete = layout(&[1.0, 1.0], 1000.0, 100.0);
+        for (width, height) in [(1200.0, 100.0), (100.0, 50.0), (1000.0, 100.0)] {
+            incomplete.refit(width);
+            assert_eq!(incomplete.rows[0].item_range, 0..2);
+            assert_eq!(incomplete.rows[0].image_height, height);
+        }
+        let mut completed = layout(&[1.0; 10], 1000.0, 100.0);
+        assert_eq!(completed.rows.len(), 1);
+        completed.refit(1400.0);
+        assert_eq!(completed.rows[0].item_range, 0..10);
+        assert!((completed.rows[0].image_height - 140.0).abs() < 1e-8);
+        let last = completed.items.last().unwrap();
+        assert!((last.x + last.width - 1400.0).abs() < 1e-8);
+    }
+
+    #[test]
+    fn width_refit_handles_narrow_invalid_widths_and_ratios() {
+        let ratios = [100.0, 0.01, 0.0, -1.0, f64::NAN, f64::INFINITY];
+        let expected_ratios = [100.0, 0.01, 1.0, 1.0, 1.0, 1.0];
+        let mut l = layout(&ratios, 1400.0, 180.0);
+        let membership = l
+            .rows
+            .iter()
+            .map(|row| row.item_range.clone())
+            .collect::<Vec<_>>();
+        for width in [1.0, 43.0, 50.0, 1400.0, 0.0, -1.0, f64::NAN, f64::INFINITY] {
+            l.refit(width);
+            let viewport = if width.is_finite() {
+                width.max(1.0)
+            } else {
+                1.0
+            };
+            assert_eq!(
+                l.rows
+                    .iter()
+                    .map(|row| row.item_range.clone())
+                    .collect::<Vec<_>>(),
+                membership
+            );
+            for item in &l.items {
+                assert!([item.x, item.y, item.width, item.height]
+                    .iter()
+                    .all(|v| v.is_finite()));
+                assert!(item.width > 0.0 && item.height > 0.0);
+                assert!(item.x + item.width <= viewport + 1e-8);
+                assert!(
+                    (item.width / item.height - expected_ratios[item.photo_index]).abs() < 1e-8
+                );
+            }
+        }
+        let mut empty = PhotoWallLayout::calculate(
+            &[],
+            &[PhotoWallSection {
+                photo_range: 0..0,
+                header_height: 70.0,
+            }],
+            800.0,
+            100.0,
+            0.0,
+        );
+        empty.refit(30.0);
+        assert!(empty.rows.is_empty() && empty.items.is_empty());
+        assert_eq!(empty.sections[0].first_photo_y, 70.0);
+        assert_eq!(empty.sections[0].end_y, 70.0);
+        assert_eq!(empty.total_height, 70.0);
     }
     #[test]
     fn rows_do_not_cross_sections() {

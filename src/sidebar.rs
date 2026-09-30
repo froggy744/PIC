@@ -1865,7 +1865,20 @@ fn focus_folder_destination(sidebar: &gtk::ScrolledWindow, folder_id: i64) {
         syncing.set(true);
     }
     list.select_row(Some(&row));
-    row.grab_focus();
+    // A delayed reveal may finish after the user has resumed typing. Keep
+    // the destination selected and visible without interrupting an editor.
+    let mut focus = sidebar.root().and_then(|root| root.focus());
+    let mut editing = false;
+    while let Some(widget) = focus {
+        if widget.is::<gtk::Editable>() || widget.is::<gtk::TextView>() {
+            editing = true;
+            break;
+        }
+        focus = widget.parent();
+    }
+    if !editing {
+        row.grab_focus();
+    }
     if let Some(syncing) = syncing {
         syncing.set(false);
     }
@@ -3639,7 +3652,11 @@ mod tests {
         let sidebar = expansion_test_sidebar(true);
         let window = gtk::Window::new();
         window.set_default_size(340, 1000);
-        window.set_child(Some(&sidebar));
+        let layout = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        let search = gtk::SearchEntry::new();
+        layout.append(&search);
+        layout.append(&sidebar);
+        window.set_child(Some(&layout));
         window.present();
         settle_sidebar_layout(&sidebar);
         let indicator = stored_widget::<gtk::Button>(&sidebar, FOLDER_INDICATOR_KEY).unwrap();
@@ -3648,6 +3665,7 @@ mod tests {
         let paned = stored_widget::<gtk::Paned>(&sidebar, FOLDER_SHARE_PANED_KEY).unwrap();
         assert!(paned.start_child().is_none());
 
+        gtk::prelude::RootExt::set_focus(&window, None::<&gtk::Widget>);
         // Search establishes the grid destination first, then reveals the sidebar row.
         set_active_filter(&sidebar, SidebarFilter::Folder(125));
         scroll_to_folder(&sidebar, 125);
@@ -3668,7 +3686,7 @@ mod tests {
             bounds.height(),
             scroll.height()
         );
-        assert!(row.has_focus(), "search target must receive sidebar focus");
+        assert_eq!(gtk::prelude::RootExt::focus(&window), Some(row.clone().upcast::<gtk::Widget>()), "search target must receive sidebar focus");
         // Imported-only mode and a superseded search must still focus the latest destination.
         set_folder_display_mode(&sidebar, FolderDisplayMode::ImportedOnly);
         settle_sidebar_layout(&sidebar);
@@ -3679,7 +3697,7 @@ mod tests {
         settle_sidebar_layout(&sidebar);
         let latest = row_for_filter(&list, SidebarFilter::Folder(125)).unwrap();
         assert_eq!(list.selected_row(), Some(latest.clone()));
-        assert!(latest.has_focus());
+        assert_eq!(gtk::prelude::RootExt::focus(&window), Some(latest.clone().upcast::<gtk::Widget>()));
         assert_eq!(
             sidebar_state(&sidebar)
                 .unwrap()
@@ -3689,6 +3707,15 @@ mod tests {
         );
         let bounds = latest.compute_bounds(&scroll).unwrap();
         assert!(bounds.y() >= -1.0 && bounds.y() + bounds.height() <= scroll.height() as f32 + 1.0);
+        // A queued destination must not interrupt a new query.
+        scroll_to_folder(&sidebar, 2);
+        search.grab_focus();
+        search.set_text("new query");
+        settle_sidebar_layout(&sidebar);
+        let focus = gtk::prelude::RootExt::focus(&window).unwrap();
+        assert!(focus == search.clone().upcast::<gtk::Widget>() || focus.is_ancestor(&search));
+        assert_eq!(search.text(), "new query");
+        assert_eq!(list.selected_row(), row_for_filter(&list, SidebarFilter::Folder(2)));
         window.close();
         settle_sidebar_layout(&sidebar);
     }

@@ -2117,14 +2117,17 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let sidebar_layout_settle_for_tick = sidebar_layout_settle.clone();
     // Photo Wall uses the exact viewport width for justified rows. A live
     // toplevel resize therefore must not feed every intermediate width into
-    // its geometry. Freeze on the first changing frame and release only after
-    // the allocation has remained stable for three frames.
+    // its geometry. Freeze on the first changing frame and debounce release:
+    // only unfreeze after the width has stayed unchanged for 400 ms. A short
+    // hesitation while the user decides the final window size must not cause
+    // an intermediate justified-row reflow.
+    const PHOTO_WALL_RESIZE_DEBOUNCE_MS: u64 = 400;
     let photo_wall_resize_last_width = Rc::new(Cell::new(0i32));
-    let photo_wall_resize_stable_frames = Rc::new(Cell::new(0u8));
     let photo_wall_resize_frozen = Rc::new(Cell::new(false));
+    let photo_wall_resize_release = Rc::new(RefCell::new(None::<glib::SourceId>));
     let photo_wall_resize_last_width_for_tick = photo_wall_resize_last_width.clone();
-    let photo_wall_resize_stable_frames_for_tick = photo_wall_resize_stable_frames.clone();
     let photo_wall_resize_frozen_for_tick = photo_wall_resize_frozen.clone();
+    let photo_wall_resize_release_for_tick = photo_wall_resize_release.clone();
     gallery_scroll_stack.add_tick_callback(move |surface, _clock| {
         gallery_for_resize.drain_thumbnail_display_completions();
 
@@ -2140,21 +2143,33 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 gallery_for_resize.update_width(width);
             } else if width != last {
                 photo_wall_resize_last_width_for_tick.set(width);
-                photo_wall_resize_stable_frames_for_tick.set(0);
                 if !photo_wall_resize_frozen_for_tick.replace(true) {
                     gallery_for_resize.set_photo_wall_width_frozen(true);
                 }
-            } else if photo_wall_resize_frozen_for_tick.get() {
-                let stable = photo_wall_resize_stable_frames_for_tick
-                    .get()
-                    .saturating_add(1);
-                photo_wall_resize_stable_frames_for_tick.set(stable);
-                if stable >= 3 {
-                    photo_wall_resize_stable_frames_for_tick.set(0);
-                    photo_wall_resize_frozen_for_tick.set(false);
-                    gallery_for_resize.set_photo_wall_width_frozen(false);
+
+                // Every width change restarts the quiet-period timer. This is
+                // intentionally time-based rather than frame-based: a user can
+                // pause the pointer for a few frames while still resizing.
+                if let Some(source) = photo_wall_resize_release_for_tick.borrow_mut().take() {
+                    source.remove();
                 }
-            } else {
+                let gallery = gallery_for_resize.clone();
+                let frozen = photo_wall_resize_frozen_for_tick.clone();
+                let last_width = photo_wall_resize_last_width_for_tick.clone();
+                let release = photo_wall_resize_release_for_tick.clone();
+                let expected_width = width;
+                let source = glib::timeout_add_local_once(
+                    Duration::from_millis(PHOTO_WALL_RESIZE_DEBOUNCE_MS),
+                    move || {
+                        release.borrow_mut().take();
+                        if frozen.get() && last_width.get() == expected_width {
+                            frozen.set(false);
+                            gallery.set_photo_wall_width_frozen(false);
+                        }
+                    },
+                );
+                photo_wall_resize_release_for_tick.replace(Some(source));
+            } else if !photo_wall_resize_frozen_for_tick.get() {
                 // Normal steady-state Photo Wall width observation.
                 gallery_for_resize.update_width(width);
             }
@@ -2163,8 +2178,10 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
 
         // Leaving Photo Wall or entering a sidebar-owned transition must not
         // strand a live-window-resize freeze.
+        if let Some(source) = photo_wall_resize_release_for_tick.borrow_mut().take() {
+            source.remove();
+        }
         if photo_wall_resize_frozen_for_tick.replace(false) {
-            photo_wall_resize_stable_frames_for_tick.set(0);
             gallery_for_resize.set_photo_wall_width_frozen(false);
         }
         photo_wall_resize_last_width_for_tick.set(width.max(0));

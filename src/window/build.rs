@@ -2150,7 +2150,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             .ok()
             .flatten();
         if saved.as_deref() == Some("photo_wall") {
-            info.view_wall.set_active(true);
+            info.view_toggle.emit_clicked();
         }
     }
 

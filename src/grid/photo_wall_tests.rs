@@ -268,7 +268,7 @@ fn photo_wall_anchor_generation_and_ultrawide_viewport() {
 
 #[test]
 #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
-fn photo_wall_view_menu_keeps_selection_and_grid_scroll_context() {
+fn photo_wall_view_toggle_keeps_selection_and_grid_scroll_context() {
     gtk::init().unwrap();
     let gallery = Rc::new(Gallery::new(
         &[],
@@ -314,6 +314,18 @@ fn photo_wall_view_menu_keeps_selection_and_grid_scroll_context() {
         })
     });
     let info = crate::infobar::InfoBar::new();
+    let view_toggle = info
+        .view_toggle
+        .clone()
+        .upcast::<gtk::Widget>()
+        .downcast::<gtk::Button>()
+        .expect("view control must toggle directly without a popup");
+    assert!(!view_toggle.is::<gtk::ToggleButton>());
+    assert!(!view_toggle.has_css_class("photo-action-button"));
+    assert_eq!(
+        view_toggle.tooltip_text().as_deref(),
+        Some("Switch to Photo Wall")
+    );
     let gallery_for_menu = gallery.clone();
     info.connect_photo_layout(move |mode| gallery_for_menu.set_layout(mode));
     let collage_calls = Rc::new(Cell::new(0));
@@ -338,7 +350,16 @@ fn photo_wall_view_menu_keeps_selection_and_grid_scroll_context() {
     gallery.selection.select_item(73, false);
     let anchor = gallery.capture_view_anchor().unwrap();
     let reads = crate::source::original_read_count();
-    info.view_wall.set_active(true);
+    view_toggle.emit_clicked();
+    assert!(!view_toggle.state_flags().contains(gtk::StateFlags::CHECKED));
+    assert_eq!(
+        view_toggle.icon_name().as_deref(),
+        Some("view-app-grid-symbolic")
+    );
+    assert_eq!(
+        view_toggle.tooltip_text().as_deref(),
+        Some("Switch to Grid")
+    );
     settle();
     assert_eq!(gallery.layout(), PhotoLayout::PhotoWall);
     assert_eq!(stack.visible_child_name().as_deref(), Some("wall"));
@@ -390,7 +411,16 @@ fn photo_wall_view_menu_keeps_selection_and_grid_scroll_context() {
         resize_anchor.viewport_y_offset
     );
 
-    info.view_grid.set_active(true);
+    view_toggle.emit_clicked();
+    assert!(!view_toggle.state_flags().contains(gtk::StateFlags::CHECKED));
+    assert_eq!(
+        view_toggle.icon_name().as_deref(),
+        Some("collage-smart-mosaic-symbolic")
+    );
+    assert_eq!(
+        view_toggle.tooltip_text().as_deref(),
+        Some("Switch to Photo Wall")
+    );
     settle();
     assert_eq!(gallery.layout(), PhotoLayout::Grid);
     assert_eq!(stack.visible_child_name().as_deref(), Some("grid"));

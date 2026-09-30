@@ -18,9 +18,8 @@ pub struct InfoBar {
     pub rating_buttons: Vec<gtk::Button>,
     pub edit: gtk::Button,
     pub collage: gtk::Button,
-    pub view_menu: gtk::MenuButton,
-    pub view_grid: gtk::CheckButton,
-    pub view_wall: gtk::CheckButton,
+    pub view_toggle: gtk::Button,
+    photo_layout: Rc<Cell<crate::grid::PhotoLayout>>,
     pub add_to_album: gtk::MenuButton,
     pub one_to_one: gtk::ToggleButton,
     pub rotate: gtk::Button,
@@ -177,40 +176,32 @@ impl InfoBar {
         configure_action_button(&edit);
         edit.set_tooltip_text(Some("Open or close photo editor"));
 
-        let collage = gtk::Button::with_label("Create Collage…");
-        collage.add_css_class("flat");
-        let view_menu = gtk::MenuButton::new();
-        view_menu.set_icon_name("view-grid-symbolic");
-        view_menu.set_tooltip_text(Some("View and Collage"));
-        view_menu.set_has_frame(false);
-        view_menu.set_direction(gtk::ArrowType::Up);
-        configure_action_button(&view_menu);
-        let view_popover = gtk::Popover::new();
-        let view_choices = gtk::Box::new(gtk::Orientation::Vertical, 6);
-        view_choices.set_margin_top(10);
-        view_choices.set_margin_bottom(10);
-        view_choices.set_margin_start(10);
-        view_choices.set_margin_end(10);
-        let view_grid = gtk::CheckButton::with_label("Grid");
-        let view_wall = gtk::CheckButton::with_label("Photo Wall");
-        view_wall.set_group(Some(&view_grid));
-        view_grid.set_active(true);
-        view_choices.append(&view_grid);
-        view_choices.append(&view_wall);
-        view_choices.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
-        view_choices.append(&collage);
-        view_popover.set_child(Some(&view_choices));
-        view_menu.set_popover(Some(&view_popover));
-        for button in [&view_grid, &view_wall] {
-            let popover = view_popover.clone();
-            button.connect_toggled(move |button| {
-                if button.is_active() {
-                    popover.popdown();
-                }
-            });
-        }
-        let popover = view_popover.clone();
-        collage.connect_clicked(move |_| popover.popdown());
+        let collage = gtk::Button::from_icon_name("view-grid-symbolic");
+        configure_action_button(&collage);
+        collage.set_tooltip_text(Some("Start a new blank collage"));
+        let photo_layout = Rc::new(Cell::new(crate::grid::PhotoLayout::Grid));
+        let view_toggle = gtk::Button::from_icon_name("collage-smart-mosaic-symbolic");
+        view_toggle.set_tooltip_text(Some("Switch to Photo Wall"));
+        let layout_for_toggle = photo_layout.clone();
+        view_toggle.connect_clicked(move |button| {
+            let (layout, icon, tooltip) =
+                if layout_for_toggle.get() == crate::grid::PhotoLayout::Grid {
+                    (
+                        crate::grid::PhotoLayout::PhotoWall,
+                        "view-app-grid-symbolic",
+                        "Switch to Grid",
+                    )
+                } else {
+                    (
+                        crate::grid::PhotoLayout::Grid,
+                        "collage-smart-mosaic-symbolic",
+                        "Switch to Photo Wall",
+                    )
+                };
+            layout_for_toggle.set(layout);
+            button.set_icon_name(icon);
+            button.set_tooltip_text(Some(tooltip));
+        });
 
         let add_to_album = gtk::MenuButton::new();
         add_to_album.set_icon_name("folder-new-symbolic");
@@ -271,7 +262,7 @@ impl InfoBar {
         actions.append(&favorite);
         actions.append(&rating);
         actions.append(&edit);
-        actions.append(&view_menu);
+        actions.append(&collage);
         actions.append(&add_to_album);
         actions.append(&one_to_one);
         actions.append(&rotate);
@@ -331,9 +322,8 @@ impl InfoBar {
             rating_buttons,
             edit,
             collage,
-            view_menu,
-            view_grid,
-            view_wall,
+            view_toggle,
+            photo_layout,
             add_to_album,
             one_to_one,
             rotate,
@@ -349,24 +339,13 @@ impl InfoBar {
     }
 
     pub fn connect_photo_layout(&self, changed: impl Fn(crate::grid::PhotoLayout) + 'static) {
-        let changed = Rc::new(changed);
-        let grid_changed = changed.clone();
-        self.view_grid.connect_toggled(move |button| {
-            if button.is_active() {
-                grid_changed(crate::grid::PhotoLayout::Grid);
-            }
-        });
-        self.view_wall.connect_toggled(move |button| {
-            if button.is_active() {
-                changed(crate::grid::PhotoLayout::PhotoWall);
-            }
-        });
+        let layout = self.photo_layout.clone();
+        self.view_toggle.connect_clicked(move |_| changed(layout.get()));
     }
 
     pub fn set_collage_active(&self, active: bool) {
         self.collage_active.set(active);
-        self.view_grid.set_sensitive(!active);
-        self.view_wall.set_sensitive(!active);
+        self.view_toggle.set_sensitive(!active);
         self.edit
             .set_sensitive(edit_button_sensitive(self.has_photo.get(), active));
         // Collage has no presentation zoom. Disable the shared zoom slider

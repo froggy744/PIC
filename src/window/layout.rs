@@ -976,19 +976,26 @@
             pin_button_for_menu(true);
             return;
         }
-        // Unpinning is a persistent layout change. Allow the animation to run
-        // without intermediate Folder rebuilds, then reflow once at its final
-        // width through WidthSettleGate.
-        sidebar_hover_freeze_generation_for_unpin.set(
-            sidebar_hover_freeze_generation_for_unpin
-                .get()
-                .wrapping_add(1),
-        );
+        // Enabling autohide starts a real slide-out. The ordinary Grid can
+        // keep using WidthSettleGate, but Photo Wall's justified rows depend
+        // on the exact width and must stay frozen for the animation.
+        let generation = sidebar_hover_freeze_generation_for_unpin
+            .get()
+            .wrapping_add(1);
+        sidebar_hover_freeze_generation_for_unpin.set(generation);
         sidebar_hover_layout_freeze_for_unpin.set(false);
+        gallery_for_unpin.set_photo_wall_width_frozen(true);
         sidebar_layout_settle_for_hide.borrow_mut().begin();
         sidebar::set_pinned(&sidebar_for_hide, false);
         sidebar::clear_hover_open(&sidebar_for_hide);
         main_split_for_hide.set_show_sidebar(false);
+        let gallery = gallery_for_unpin.clone();
+        let active_generation = sidebar_hover_freeze_generation_for_unpin.clone();
+        glib::timeout_add_local_once(Duration::from_millis(400), move || {
+            if active_generation.get() == generation {
+                gallery.set_photo_wall_width_frozen(false);
+            }
+        });
     });
 
     let right_header = adw::HeaderBar::new();

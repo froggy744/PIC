@@ -2292,7 +2292,7 @@ impl Gallery {
     }
 
     pub fn cancel_sectioned_folder_scroll_animation(&self) {
-        if self.using_sectioned_folder_view() {
+        if self.using_virtual_photo_surface() {
             self.sectioned_folder.cancel_scroll_animation();
             if std::env::var_os("PICASA_TRACE").is_some() {
                 eprintln!("PIC_SECTIONED_SCROLL_CANCEL source=lightbox_open");

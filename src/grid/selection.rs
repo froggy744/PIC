@@ -104,6 +104,56 @@ impl Gallery {
         else {
             return false;
         };
+        if self.layout() == PhotoLayout::PhotoWall {
+            self.selection.select_item(position as u32, true);
+            let surface = self.sectioned_folder.clone();
+            surface.selection_anchor.set(Some(position as u32));
+            surface.cancel_scroll_animation();
+            let generation = Cell::new(surface.scroll_animation_generation.get());
+            let layout_generation = surface.layout_switch_generation.get();
+            let weak = Rc::downgrade(&surface);
+            let attempts = Cell::new(0_u8);
+            surface.root.add_tick_callback(move |_, _| {
+                let Some(surface) = weak.upgrade() else {
+                    return glib::ControlFlow::Break;
+                };
+                if surface.layout_switch_generation.get() != layout_generation
+                    || surface.scroll_animation_generation.get() != generation.get()
+                {
+                    return glib::ControlFlow::Break;
+                }
+                let Some(index) = surface
+                    .current_photos
+                    .borrow()
+                    .iter()
+                    .position(|photo| photo.id() == photo_id)
+                else {
+                    return glib::ControlFlow::Break;
+                };
+                if !surface.selection.is_selected(index as u32) {
+                    return glib::ControlFlow::Break;
+                }
+                attempts.set(attempts.get().saturating_add(1));
+                // Lightbox close may precede the destination allocation.
+                // Restore after mapping/extent publication, then focus the
+                // actual tile rather than leaving focus on the container.
+                if surface.root.is_mapped() && surface.scroll_to_index_centered(index as u32) {
+                    generation.set(surface.scroll_animation_generation.get());
+                    if let Some(tile) = surface.live_tiles.borrow().get(&(index as u32)) {
+                        if tile.tile.is_mapped() && tile.tile.width() > 0 && tile.tile.grab_focus()
+                        {
+                            return glib::ControlFlow::Break;
+                        }
+                    }
+                }
+                if attempts.get() >= 60 {
+                    glib::ControlFlow::Break
+                } else {
+                    glib::ControlFlow::Continue
+                }
+            });
+            return true;
+        }
         if self.using_virtual_photo_surface() {
             self.selection.select_item(position as u32, true);
             let revealed = self

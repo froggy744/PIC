@@ -520,3 +520,100 @@ fn photo_wall_progressive_folder_batches_publish_matching_sections() {
     assert_eq!(gallery.group_ranges.borrow().len(), 2);
     assert_eq!(gallery.store.n_items(), 5001);
 }
+
+#[test]
+#[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+fn photo_wall_lightbox_return_waits_for_allocation_and_focuses_current_photo() {
+    gtk::init().unwrap();
+    let gallery = Rc::new(Gallery::new(
+        &[],
+        100,
+        |_| {},
+        |_, _, _| {},
+        |_, _, _, _| {},
+        |_, _| {},
+        |_| {},
+    ));
+    let objects = (0..2000)
+        .map(|i| {
+            glib::Object::builder::<PhotoObject>()
+                .property("id", i as i64 + 1)
+                .property("width", 4000_i64)
+                .property("height", 3000_i64)
+                .property("folder-id", if i < 1000 { 1_i64 } else { 2_i64 })
+                .build()
+        })
+        .collect::<Vec<_>>();
+    gallery.store.splice(0, 0, &objects);
+    gallery.current_photos.replace(objects.clone());
+    gallery.set_layout(PhotoLayout::PhotoWall);
+    let scroll = gtk::ScrolledWindow::builder()
+        .child(&gallery.folder_sectioned_root)
+        .build();
+    gallery.attach_sectioned_folder_scroll(&scroll);
+    let window = gtk::Window::builder()
+        .default_width(1000)
+        .default_height(600)
+        .child(&scroll)
+        .build();
+    // The lightbox close callback can run before the destination is mapped
+    // or has published its new viewport extent. Its current photo can be far
+    // from the photo originally opened after navigating inside the viewer.
+    let target = 1500;
+    gallery.restore_activated_photo(objects[target].id());
+    gallery.grab_focus();
+    window.present();
+    settle();
+    assert_eq!(selected_positions(&gallery.selection), vec![target as u32]);
+    let surface = &gallery.sectioned_folder;
+    let state = surface.wall_state.borrow();
+    let item = state.layout.item(target).unwrap();
+    let adjustment = scroll.vadjustment();
+    assert!(
+        (item.y + item.height * 0.5 - adjustment.value() - adjustment.page_size() * 0.5).abs()
+            < 2.0,
+        "returned photo was not centred: photo_y={} scroll_y={}",
+        item.y,
+        adjustment.value()
+    );
+    drop(state);
+    let focused = gtk::prelude::RootExt::focus(&window)
+        .and_then(|widget| widget.downcast::<SquareTile>().ok())
+        .and_then(|tile| tile.photo());
+    assert_eq!(focused.map(|photo| photo.id()), Some(objects[target].id()));
+
+    // Repeat a normal, already mapped return in folder-section mode.
+    gallery.group_mode.set(GroupMode::Folder);
+    gallery.rebuild_group_ranges();
+    surface.refresh_model();
+    settle();
+    let target = 1200;
+    gallery.restore_activated_photo(objects[target].id());
+    gallery.grab_focus();
+    settle();
+    assert_eq!(surface.wall_state.borrow().layout.sections.len(), 2);
+    let focused = gtk::prelude::RootExt::focus(&window)
+        .and_then(|widget| widget.downcast::<SquareTile>().ok())
+        .and_then(|tile| tile.photo());
+    assert_eq!(focused.map(|photo| photo.id()), Some(objects[target].id()));
+    assert_eq!(surface.selection_anchor.get(), Some(target as u32));
+
+    // Reopening the viewer cancels a pending return even for headerless Wall.
+    gallery.group_mode.set(GroupMode::None);
+    gallery.rebuild_group_ranges();
+    surface.refresh_model();
+    settle();
+    scroll.vadjustment().set_value(0.0);
+    gallery.restore_activated_photo(objects[1800].id());
+    gallery.cancel_sectioned_folder_scroll_animation();
+    settle();
+    assert_eq!(scroll.vadjustment().value(), 0.0);
+
+    // A new user selection must also prevent the old return stealing focus.
+    gallery.restore_activated_photo(objects[1700].id());
+    gallery.selection.select_item(0, true);
+    settle();
+    assert_eq!(scroll.vadjustment().value(), 0.0);
+    assert_eq!(selected_positions(&gallery.selection), vec![0]);
+    window.close();
+}

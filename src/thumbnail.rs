@@ -47,9 +47,9 @@ static WALL_WAITERS: OnceLock<
 static WALL_WANTED: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 static WALL_ACTIVE: AtomicUsize = AtomicUsize::new(0);
 static PRIORITY_DISPATCHES: AtomicUsize = AtomicUsize::new(0);
-// The normal gallery always uses the canonical 320 px cache.  Optional
-// 640 px Photo Wall quality is opt-in (Settings > Interface) so ordinary
-// browsing never reads originals just to sharpen thumbnails.
+// Grid and Photo Wall share one canonical cache. The setting only changes
+// that cache's generated longest edge (320 or 640); it never creates a
+// second view-specific thumbnail file.
 static HIGH_QUALITY_THUMBNAILS: AtomicBool = AtomicBool::new(false);
 
 pub fn set_high_quality_thumbnails_enabled(enabled: bool) {

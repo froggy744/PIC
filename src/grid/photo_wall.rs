@@ -226,13 +226,19 @@ impl Gallery {
             return;
         }
 
-        if !self.sectioned_folder.wall_width_frozen.replace(false)
-            || self.layout() != PhotoLayout::PhotoWall
-        {
+        if !self.sectioned_folder.wall_width_frozen.get() {
+            return;
+        }
+        if self.layout() != PhotoLayout::PhotoWall {
+            self.sectioned_folder.wall_width_frozen.set(false);
             return;
         }
 
+        // Capture against the still-frozen geometry. Releasing the flag first
+        // would let an incidental refresh observe the final width before the
+        // viewport anchor has been recorded.
         let anchor = self.sectioned_folder.wall_center_anchor();
+        self.sectioned_folder.wall_width_frozen.set(false);
         self.sectioned_folder.invalidate_geometry();
         self.sectioned_folder.refresh();
         if let Some((photo_id, viewport_y_offset)) = anchor {

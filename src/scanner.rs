@@ -426,7 +426,7 @@ pub fn spawn_scan(root: String, database: PathBuf, events: Sender<ScanEvent>) ->
     let worker_control = control.clone();
     std::thread::spawn(move || {
         let lock = SCAN_LOCK.get_or_init(|| Mutex::new(()));
-        let _guard = lock.lock().expect("scan lock poisoned");
+        let _guard = acquire_scan_lock(lock);
         send(
             Some(&events),
             ScanEvent::Started {
@@ -642,7 +642,11 @@ fn read_metadata(path: &str, attributes: &gio::FileInfo) -> Result<PhotoMetadata
             .as_ref()
             .and_then(|data| exif_u32(data, Tag::PixelYDimension));
         let raw_dimensions = if exif_width.is_none() || exif_height.is_none() {
-            crate::thumbnail::dimensions(path, &[]).ok()
+            match crate::thumbnail::dimensions(path, &[]) {
+                Ok(dimensions) => Some(dimensions),
+                Err(error) if error.is::<crate::thumbnail::RawlerPanic>() => return Err(error),
+                Err(_) => None,
+            }
         } else {
             None
         };
@@ -1085,5 +1089,32 @@ fn display_oriented_dimensions(
         (height, width)
     } else {
         (width, height)
+    }
+}
+
+fn acquire_scan_lock(lock: &Mutex<()>) -> std::sync::MutexGuard<'_, ()> {
+    match lock.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            eprintln!("WARNING: scan lock was poisoned; recovering");
+            poisoned.into_inner()
+        }
+    }
+}
+
+#[cfg(test)]
+mod scan_lock_tests {
+    use super::*;
+
+    #[test]
+    fn poisoned_scan_lock_remains_usable() {
+        let lock = Mutex::new(());
+        let _ = std::panic::catch_unwind(|| {
+            let _guard = lock.lock().unwrap();
+            panic!("simulated worker panic");
+        });
+        assert!(lock.is_poisoned());
+        drop(acquire_scan_lock(&lock));
+        drop(acquire_scan_lock(&lock));
     }
 }

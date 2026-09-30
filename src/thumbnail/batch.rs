@@ -117,13 +117,13 @@ pub fn clear_cache() -> Result<()> {
 }
 
 fn resize(source: image::RgbImage) -> Result<image::RgbImage> {
-    resize_with_max(source, THUMBNAIL_SIZE)
+    resize_with_max(source, thumbnail_size())
 }
 
 fn resize_with_max(source: image::RgbImage, max_edge: u32) -> Result<image::RgbImage> {
     let (width, height) = source.dimensions();
     let scale = max_edge as f64 / width.max(height) as f64;
-    let scale = if max_edge > THUMBNAIL_SIZE { scale.min(1.0) } else { scale };
+    let scale = if max_edge > NORMAL_THUMBNAIL_SIZE { scale.min(1.0) } else { scale };
     let destination_width = ((width as f64 * scale).round() as u32).max(1);
     let destination_height = ((height as f64 * scale).round() as u32).max(1);
     let source_image = Image::from_vec_u8(width, height, source.into_raw(), PixelType::U8x3)?;

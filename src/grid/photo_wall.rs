@@ -549,7 +549,7 @@ impl SectionedFolderView {
     }
 
     fn poll_wall_quality(&self) {
-        if !self.is_wall() || !self.root.is_mapped() {
+        if !crate::thumbnail::wall_quality_enabled() || !self.is_wall() || !self.root.is_mapped() {
             self.clear_wall_quality_state();
             return;
         }

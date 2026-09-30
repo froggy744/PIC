@@ -619,6 +619,9 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         )
         .unwrap_or(false),
     );
+    crate::thumbnail::set_wall_quality_enabled(
+        crate::db::high_quality_thumbnails_enabled(&connection.borrow()),
+    );
     gallery.set_zoom_animations_enabled(db::zoom_animations_enabled(&connection.borrow()));
     gallery_for_actions.replace(Rc::downgrade(&gallery));
     apply_gallery_grouping(&gallery, filter.get(), sort.get(), group_mode.get(), true);
@@ -834,13 +837,16 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                     crate::db::THUMBNAIL_FILE_NAMES_SETTING_KEY,
                 )
                 .unwrap_or(false);
+                let high_quality =
+                    crate::db::high_quality_thumbnails_enabled(&thumbs_connection.borrow());
+                crate::thumbnail::set_wall_quality_enabled(high_quality);
                 if square {
                     thumbs_window.add_css_class("square-corners");
                 } else {
                     thumbs_window.remove_css_class("square-corners");
                 }
                 crate::window::debug_log(&format!(
-                    "THUMB SETTINGS: css class applied (square={square}), deferring fit={fit} to idle"
+                    "THUMB SETTINGS: css class applied (square={square}), deferring fit={fit} to idle, high_quality={high_quality}"
                 ));
                 // Defer the tile walk out of the switch notification so the
                 // settings UI settles before the gallery relayouts.

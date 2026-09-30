@@ -9,7 +9,6 @@ pub enum PhotoLayout {
 struct PhotoWallState {
     generation: u64,
     layout: photo_wall_layout::PhotoWallLayout,
-    partition_width_ready: bool,
     quality_gate: WallQualityGate,
     quality_attempted: HashSet<String>,
 }
@@ -26,51 +25,45 @@ impl SectionedFolderView {
         {
             return;
         }
-        let mut state = self.wall_state.borrow_mut();
-        if self.geometry_width.get() > 0
+        // Width-only change with unchanged membership and tile size: do NOT
+        // refit. The wall behaves like a resized picture; rows, membership and
+        // viewport stay exactly as they were and only the scale changes.
+        let old_width = self.geometry_width.get();
+        if old_width > 1
+            && old_width != width
             && self.geometry_row_height.get() == target + caption
-            && state.partition_width_ready
+            && !self.wall_state.borrow().layout.rows.is_empty()
         {
-            // Only viewport width changed. Keep the established row members
-            // and fit their rectangles; no model or thumbnail work is needed.
-            state.layout.refit(width as f64);
-        } else {
-            // Explicit model/section/mode invalidation or a new zoom target
-            // needs a fresh partition. Sidebar unfreeze keeps its existing
-            // explicit invalidation behavior.
-            let photos = self.current_photos.borrow();
-            let ratios = photos
-                .iter()
-                .map(PhotoObject::photo_wall_aspect_ratio)
-                .collect::<Vec<_>>();
-            let sections = if self.group_mode.get() == GroupMode::Folder {
-                self.group_ranges
-                    .borrow()
-                    .iter()
-                    .map(|range| photo_wall_layout::PhotoWallSection {
-                        photo_range: range.start..range.end,
-                        header_height: SECTIONED_HEADER_HEIGHT,
-                    })
-                    .collect::<Vec<_>>()
-            } else {
-                vec![photo_wall_layout::PhotoWallSection {
-                    photo_range: 0..photos.len(),
-                    header_height: 0.0,
-                }]
-            };
-            state.layout = photo_wall_layout::PhotoWallLayout::calculate(
-                &ratios,
-                &sections,
-                width as f64,
-                target as f64,
-                caption as f64,
-            );
-            // refresh() may run before the first GTK allocation, with its
-            // zero width clamped to 1. Establish rows at the first real width.
-            // Once established, even a later tiny width must only refit them.
-            state.partition_width_ready = width > 1;
+            self.scale_wall_geometry(width);
+            return;
         }
-        let layout = &state.layout;
+        let photos = self.current_photos.borrow();
+        let ratios = photos
+            .iter()
+            .map(PhotoObject::photo_wall_aspect_ratio)
+            .collect::<Vec<_>>();
+        let sections = if self.group_mode.get() == GroupMode::Folder {
+            self.group_ranges
+                .borrow()
+                .iter()
+                .map(|range| photo_wall_layout::PhotoWallSection {
+                    photo_range: range.start..range.end,
+                    header_height: SECTIONED_HEADER_HEIGHT,
+                })
+                .collect::<Vec<_>>()
+        } else {
+            vec![photo_wall_layout::PhotoWallSection {
+                photo_range: 0..photos.len(),
+                header_height: 0.0,
+            }]
+        };
+        let layout = photo_wall_layout::PhotoWallLayout::calculate(
+            &ratios,
+            &sections,
+            width as f64,
+            target as f64,
+            caption as f64,
+        );
         self.geometry.replace(
             layout
                 .sections
@@ -83,9 +76,63 @@ impl SectionedFolderView {
                 .collect(),
         );
         self.total_height.set(layout.total_height);
+        let mut state = self.wall_state.borrow_mut();
         state.generation = state.generation.wrapping_add(1);
+        state.layout = layout;
         self.geometry_width.set(width);
         self.geometry_row_height.set(target + caption);
+    }
+
+    /// Scale the existing wall geometry to `width` and carry the scroll
+    /// position along with it, applied immediately so the very next frame is
+    /// already consistent (no dependence on a later GTK allocation).
+    fn scale_wall_geometry(&self, width: i32) {
+        let old_width = self.geometry_width.get().max(1);
+        let factor = f64::from(width.max(1)) / f64::from(old_width);
+        let adjustment = self.scroll.borrow().as_ref().map(|s| s.vadjustment());
+        let old_value = adjustment.as_ref().map_or(0.0, |a| a.value());
+        self.cancel_scroll_animation();
+        let new_value = {
+            let mut state = self.wall_state.borrow_mut();
+            let mapped = state.layout.scale_photo_area(factor, old_value);
+            state.generation = state.generation.wrapping_add(1);
+            self.geometry.replace(
+                state
+                    .layout
+                    .sections
+                    .iter()
+                    .map(|section| SectionedFolderGeometry {
+                        header_y: section.header_y,
+                        first_photo_y: section.first_photo_y,
+                        end_y: section.end_y,
+                    })
+                    .collect(),
+            );
+            self.total_height.set(state.layout.total_height);
+            mapped
+        };
+        self.geometry_width.set(width);
+        if let Some(adjustment) = adjustment {
+            // GTK only learns the new content height on the next allocation,
+            // so a plain set_value would be clamped against the old upper.
+            let page = adjustment.page_size();
+            let lower = adjustment.lower();
+            let upper = self.total_height.get().ceil().max(page);
+            if std::env::var_os("PICASA_TRACE").is_some() {
+                eprintln!(
+                    "PIC_WALL_SCROLL_MAP old_width={old_width} new_width={width} old_scroll={old_value:.3} mapped={new_value:.3} target={:.3} upper={upper:.3} page={page:.3}",
+                    new_value.clamp(lower, (upper - page).max(lower)),
+                );
+            }
+            adjustment.configure(
+                new_value.clamp(lower, (upper - page).max(lower)),
+                lower,
+                upper,
+                adjustment.step_increment(),
+                adjustment.page_increment(),
+                page,
+            );
+        }
     }
 
     fn wall_vertical_neighbor(&self, index: u32, direction: i32) -> Option<u32> {
@@ -251,19 +298,11 @@ impl Gallery {
             return;
         }
 
-        // Capture against the still-frozen geometry. Releasing the flag first
-        // would let an incidental refresh observe the final width before the
-        // viewport anchor has been recorded.
-        let anchor = self.sectioned_folder.wall_center_anchor();
+        // Releasing the freeze only lets the wall observe the final width.
+        // refresh() scales the existing rows to it (no refit), carrying the
+        // scroll position with the scale.
         self.sectioned_folder.wall_width_frozen.set(false);
-        self.sectioned_folder.invalidate_geometry();
         self.sectioned_folder.refresh();
-        if let Some((photo_id, viewport_y_offset)) = anchor {
-            self.sectioned_folder.defer_restore_anchor(ViewAnchor {
-                photo_id,
-                viewport_y_offset,
-            });
-        }
     }
 
     pub fn set_layout(self: &Rc<Self>, layout: PhotoLayout) {

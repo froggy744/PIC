@@ -677,7 +677,59 @@ impl SectionedFolderView {
         let this = self.clone();
         scrolled
             .vadjustment()
-            .connect_value_changed(move |_| this.refresh());
+            .connect_value_changed(move |adjustment| {
+                if this.is_wall() && std::env::var_os("PICASA_TRACE").is_some() {
+                    eprintln!(
+                        "PIC_WALL_SCROLL_WRITE value={:.3} upper={:.3} page={:.3} geometry_width={}",
+                        adjustment.value(),
+                        adjustment.upper(),
+                        adjustment.page_size(),
+                        this.geometry_width.get(),
+                    );
+                    if std::env::var_os("PICASA_TRACE_SCROLL_STACKS").is_some() {
+                        eprintln!("{}", std::backtrace::Backtrace::force_capture());
+                    }
+                }
+                this.refresh();
+            });
+
+        // The frame tick runs before GTK allocates the resized viewport.
+        // Its adjustment notification arrives after the viewport allocated
+        // its child. Update geometry and the mapped scroll, then apply that
+        // scroll to the viewport's child allocation before painting.
+        let weak = Rc::downgrade(self);
+        let weak_scroll = scrolled.downgrade();
+        scrolled.hadjustment().connect_changed(move |_| {
+            let (Some(surface), Some(scroll)) = (weak.upgrade(), weak_scroll.upgrade()) else {
+                return;
+            };
+            if surface.is_wall()
+                && !surface.wall_width_frozen.get()
+                && surface.geometry_width.get() > 1
+                && scroll.width() > 1
+                && surface.geometry_width.get() != scroll.width()
+                && surface.geometry_row_height.get() == surface.tile_width.get()
+            {
+                let old_width = surface.geometry_width.get();
+                let old_scroll = scroll.vadjustment().value();
+                surface.refresh();
+                if let Some(viewport) = surface.root.parent().and_downcast::<gtk::Viewport>() {
+                    // GtkViewport freezes adjustment notifications while
+                    // allocating, and thaws them after positioning its child.
+                    // Setting the mapped value here only queues allocation;
+                    // finish it synchronously to avoid painting the old shift.
+                    viewport.size_allocate(&viewport.allocation(), viewport.allocated_baseline());
+                }
+                if std::env::var_os("PICASA_TRACE").is_some() {
+                    eprintln!(
+                        "PIC_WALL_ALLOCATION old_width={old_width} allocated_width={} geometry_width={} old_scroll={old_scroll:.3} mapped_scroll={:.3}",
+                        scroll.width(),
+                        surface.geometry_width.get(),
+                        scroll.vadjustment().value(),
+                    );
+                }
+            }
+        });
 
         let this = self.clone();
         let scrolled_for_tick = scrolled.clone();
@@ -687,24 +739,9 @@ impl SectionedFolderView {
             let width = scrolled_for_tick.width();
             if width > 0 && width != last_width_for_tick.get() {
                 last_width_for_tick.set(width);
-                // Width-only motion with the same column count does not change
-                // vertical section geometry. Refresh only to stretch headers;
-                // update_layout invalidates geometry when columns actually change.
-                let anchor = if this.is_wall()
-                    && this.geometry_width.get() > 1
-                    && this.geometry_width.get() != width
-                {
-                    this.capture_center_anchor()
-                } else {
-                    None
-                };
+                // Photo Wall scales its existing geometry inside refresh();
+                // other layouts only stretch headers here.
                 this.refresh();
-                if let Some((photo_id, offset)) = anchor {
-                    this.defer_restore_anchor(ViewAnchor {
-                        photo_id,
-                        viewport_y_offset: offset,
-                    });
-                }
             }
             if this.is_wall() && this.geometry_width.get() == 0 {
                 this.refresh();

@@ -515,20 +515,25 @@ fn photo_wall_view_toggle_keeps_selection_and_grid_scroll_context() {
     gallery.wheel_zoom_in();
     settle();
     assert_eq!(gallery.current_zoom_width(), 187);
-    let resize_anchor = gallery.capture_view_anchor().unwrap();
+    // Width-only scaling preserves the logical viewport top, rather than
+    // keeping a center photo at a fixed pixel offset while tiles scale.
+    let (resize_row, resize_fraction, resize_membership) = {
+        let state = gallery.sectioned_folder.wall_state.borrow();
+        let top = wall_scroll.vadjustment().value();
+        let row_index = state.layout.visible_rows(top, top + 1.0).start;
+        let row = &state.layout.rows[row_index];
+        (row_index, (top - row.y) / row.block_height, row.item_range.clone())
+    };
     window.set_default_size(700, 700);
     settle();
-    let index = objects
-        .iter()
-        .position(|photo| photo.id() == resize_anchor.photo_id)
-        .unwrap();
-    let offset = gallery.sectioned_folder.y_for_index(index as u32).unwrap()
-        - wall_scroll.vadjustment().value();
-    assert!(
-        (offset - resize_anchor.viewport_y_offset).abs() < 3.0,
-        "resize lost anchor: {offset} vs {}",
-        resize_anchor.viewport_y_offset
-    );
+    {
+        let state = gallery.sectioned_folder.wall_state.borrow();
+        let row = &state.layout.rows[resize_row];
+        assert_eq!(row.item_range, resize_membership);
+        let expected = row.y + row.block_height * resize_fraction;
+        assert!((wall_scroll.vadjustment().value() - expected).abs() < 3.0,
+            "resize lost logical viewport position");
+    }
 
     view_toggle.emit_clicked();
     assert!(!view_toggle.state_flags().contains(gtk::StateFlags::CHECKED));
@@ -1034,7 +1039,7 @@ fn photo_wall_width_freeze_ignores_intermediate_sidebar_allocations() {
 
 #[test]
 #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
-fn photo_wall_width_only_geometry_keeps_rows_and_structural_changes_repartition() {
+fn photo_wall_width_change_scales_without_refit_or_scroll_jump() {
     gtk::init().unwrap();
     let gallery = Rc::new(Gallery::new(
         &[],
@@ -1045,82 +1050,19 @@ fn photo_wall_width_only_geometry_keeps_rows_and_structural_changes_repartition(
         |_, _| {},
         |_| {},
     ));
-    let objects = (0..120)
+    let objects = (0..200)
         .map(|i| {
             glib::Object::builder::<PhotoObject>()
                 .property("id", i as i64 + 1)
-                .property("width", [2000_i64, 4000, 6000, 8000][i % 4])
-                .property("height", 4000_i64)
+                .property("width", if i % 2 == 0 { 4000_i64 } else { 6000_i64 })
+                .property("height", if i % 2 == 0 { 6000_i64 } else { 4000_i64 })
                 .build()
         })
         .collect::<Vec<_>>();
     gallery.store.splice(0, 0, &objects);
     gallery.current_photos.replace(objects);
     gallery.set_layout(PhotoLayout::PhotoWall);
-    let surface = &gallery.sectioned_folder;
-    // Before GTK's first allocation the scroller reports zero, clamped to 1.
-    // That provisional geometry must not become the permanent partition.
-    surface.geometry_for_current_layout(1);
-    surface.geometry_for_current_layout(1400);
-    assert!(
-        surface.wall_state.borrow().layout.rows.len() < 120,
-        "first real allocation retained one-photo placeholder rows"
-    );
-    let memberships = || {
-        surface
-            .wall_state
-            .borrow()
-            .layout
-            .rows
-            .iter()
-            .map(|row| row.item_range.clone())
-            .collect::<Vec<_>>()
-    };
-    let original = memberships();
-    let reads_before = crate::source::original_read_count();
-    for width in [1400, 1395, 1380, 1300, 1000, 1200, 1400, 1, 1400] {
-        surface.geometry_for_current_layout(width);
-        assert_eq!(
-            memberships(),
-            original,
-            "width {width} repartitioned Photo Wall"
-        );
-        assert_eq!(surface.geometry_width.get(), width);
-        let generation = surface.wall_state.borrow().generation;
-        surface.geometry_for_current_layout(width);
-        assert_eq!(
-            surface.wall_state.borrow().generation,
-            generation,
-            "unchanged width rebuilt geometry"
-        );
-    }
-    assert_eq!(crate::source::original_read_count(), reads_before);
 
-    // A genuine model/order change discards the partition and uses the current
-    // width, even if the number of photos and target height remain unchanged.
-    surface.geometry_for_current_layout(1000);
-    gallery.current_photos.borrow_mut().reverse();
-    surface.refresh_model();
-    surface.geometry_for_current_layout(1000);
-    assert_ne!(
-        memberships(),
-        original,
-        "model invalidation retained the old partition"
-    );
-    for item in &surface.wall_state.borrow().layout.items {
-        let expected_ratio = [2.0, 1.5, 1.0, 0.5][item.photo_index % 4];
-        assert!(
-            (item.width / item.height - expected_ratio).abs() < 1e-10,
-            "source change retained a stale aspect ratio"
-        );
-    }
-    let fresh = memberships();
-    gallery.apply_wall_zoom(240);
-    surface.geometry_for_current_layout(1000);
-    assert_ne!(memberships(), fresh, "zoom did not repartition rows");
-
-    // Exercise the real scrolled-window allocation callback as well as the
-    // direct geometry calls above. Width changes need no release interaction.
     let scroll = gtk::ScrolledWindow::builder()
         .child(&gallery.folder_sectioned_root)
         .build();
@@ -1132,22 +1074,154 @@ fn photo_wall_width_only_geometry_keeps_rows_and_structural_changes_repartition(
         .build();
     window.present();
     settle();
-    let rows = memberships();
-    for width in [1395, 1380, 1300, 1000, 1200, 1400] {
-        window.set_default_size(width, 600);
-        settle();
-        assert_eq!(scroll.width(), width, "requested resize was not allocated");
-        assert_eq!(surface.geometry_width.get(), scroll.width());
-        assert_eq!(memberships(), rows, "allocation changed row membership");
-    }
-    let generation = surface.wall_state.borrow().generation;
-    window.set_default_size(1400, 700);
+
+    let surface = &gallery.sectioned_folder;
+    let adjustment = scroll.vadjustment();
+    adjustment.set_value((adjustment.upper() - adjustment.page_size()) * 0.4);
     settle();
-    assert_eq!(
-        surface.wall_state.borrow().generation,
-        generation,
-        "height-only allocation rebuilt justified rows"
+
+    let old_width = surface.geometry_width.get();
+    let old_value = adjustment.value();
+    let old_total = surface.total_height.get();
+    let old_rows = surface
+        .wall_state
+        .borrow()
+        .layout
+        .rows
+        .iter()
+        .map(|row| row.item_range.clone())
+        .collect::<Vec<_>>();
+
+    let new_width = old_width - 5;
+    // Match a real allocation: geometry updates read the allocated width,
+    // including synchronous refreshes caused by the vertical adjustment.
+    scroll.allocate(new_width, scroll.height(), -1, None);
+    surface.geometry_for_current_layout(new_width);
+
+    let factor = f64::from(new_width) / f64::from(old_width);
+    let new_rows = surface
+        .wall_state
+        .borrow()
+        .layout
+        .rows
+        .iter()
+        .map(|row| row.item_range.clone())
+        .collect::<Vec<_>>();
+    assert_eq!(old_rows, new_rows, "row membership changed on a width-only resize");
+    assert_eq!(surface.geometry_width.get(), new_width);
+    assert!((surface.total_height.get() - old_total * factor).abs() < 1.0);
+    assert!(
+        (adjustment.value() - old_value * factor).abs() < 2.0,
+        "scroll position did not scale with the wall: {} -> {}",
+        old_value,
+        adjustment.value()
     );
+
+    window.close();
+    settle();
+}
+
+#[test]
+#[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+fn pure_scaling_keeps_deep_section_row_visible_in_resize_frames() {
+    gtk::init().unwrap();
+    let gallery = Rc::new(Gallery::new(&[], 180, |_| {}, |_, _, _| {}, |_, _, _, _| {}, |_, _| {}, |_| {}));
+    gallery.group_mode.set(GroupMode::Folder);
+    let photos = (0..1000).map(|i| glib::Object::builder::<PhotoObject>()
+        .property("id", i as i64 + 1).property("folder-id", (i / 50) as i64 + 1)
+        .property("width", 4000_i64).property("height", 4000_i64).build()).collect::<Vec<_>>();
+    gallery.current_photos.replace(photos.clone());
+    gallery.store.splice(0, 0, &photos);
+    gallery.rebuild_group_ranges();
+    gallery.set_layout(PhotoLayout::PhotoWall);
+    let scroll = gtk::ScrolledWindow::builder().child(&gallery.folder_sectioned_root).build();
+    gallery.attach_sectioned_folder_scroll(&scroll);
+    let window = gtk::Window::builder().default_width(1400).default_height(600).child(&scroll).build();
+    window.present();
+    settle();
+    let surface = &gallery.sectioned_folder;
+    let adjustment = scroll.vadjustment();
+    let (index, y) = {
+        let state = surface.wall_state.borrow();
+        let index = state.layout.rows.iter().position(|row|
+            state.layout.items[row.item_range.start].section == 12).unwrap() + 2;
+        let row = &state.layout.rows[index];
+        (index, row.y + row.block_height * 0.5)
+    };
+    adjustment.set_value(y);
+    settle();
+    let (fraction, memberships) = {
+        let state = surface.wall_state.borrow();
+        let row = &state.layout.rows[index];
+        ((adjustment.value() - row.y) / row.block_height,
+            state.layout.rows.iter().map(|row| row.item_range.clone()).collect::<Vec<_>>())
+    };
+    let reads = crate::source::original_read_count();
+    let samples = Rc::new(RefCell::new(Vec::<(i32, i32, f64, bool, f64)>::new()));
+    let samples_for_frame = samples.clone();
+    let weak_surface = Rc::downgrade(surface);
+    let weak_scroll = scroll.downgrade();
+    let clock = window.frame_clock().unwrap();
+    let handler = clock.connect_after_paint(move |_| {
+        let (Some(surface), Some(scroll)) = (weak_surface.upgrade(), weak_scroll.upgrade()) else { return; };
+        let state = surface.wall_state.borrow();
+        let row = &state.layout.rows[index];
+        let wanted = row.y + row.block_height * fraction;
+        let bounds = surface.root.compute_bounds(&scroll).unwrap();
+        // Checking the adjustment alone misses a viewport that paints its
+        // child using an older translation. Measure the visible content too.
+        let error = (scroll.vadjustment().value() - wanted).abs()
+            .max((f64::from(bounds.y()) + wanted).abs());
+        if error > 2.0 {
+            eprintln!("PAINT_TRANSLATION width={} geometry={} wanted={wanted:.3} adjustment={:.3} painted_root_y={:.3} page={:.3}",
+                scroll.width(), surface.geometry_width.get(), scroll.vadjustment().value(),
+                bounds.y(), scroll.vadjustment().page_size());
+        }
+        let unchanged = state.layout.rows.iter().map(|row| row.item_range.clone()).collect::<Vec<_>>() == memberships;
+        let mut tile_error = 0.0_f64;
+        for (index, tile) in surface.live_tiles.borrow().iter() {
+            let item = state.layout.item(*index as usize).unwrap();
+            let bounds = tile.tile.compute_bounds(&surface.root).unwrap();
+            let width = (item.x + item.width).round() - item.x.round();
+            let height = (item.y + item.height).round() - item.y.round();
+            for delta in [
+                (f64::from(bounds.x()) - item.x.round()).abs(),
+                (f64::from(bounds.y()) - item.y.round()).abs(),
+                (f64::from(bounds.width()) - width).abs(),
+                (f64::from(bounds.height()) - height).abs(),
+            ] {
+                tile_error = tile_error.max(delta);
+            }
+        }
+        samples_for_frame.borrow_mut().push((scroll.width(), surface.geometry_width.get(), error, unchanged, tile_error));
+    });
+    let context = glib::MainContext::default();
+    // Native dragging also delivers long runs of tiny allocation changes.
+    // Exercise those, including a return to the starting width.
+    let widths = [1300, 1000, 1200, 1400].into_iter()
+        .chain((1300..1400).rev())
+        .chain(1301..=1400);
+    for width in widths {
+        let first_sample = samples.borrow().len();
+        window.set_default_size(width, (f64::from(width) * 0.55).round() as i32);
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while std::time::Instant::now() < until && !samples.borrow()[first_sample..].iter().any(|sample| sample.0 == width) {
+            while context.pending() { context.iteration(false); }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        assert_eq!(scroll.width(), width);
+    }
+    clock.disconnect(handler);
+    let painted = samples.borrow();
+    assert!(painted.windows(2).any(|pair| pair[1].0 < pair[0].0));
+    assert!(painted.windows(2).any(|pair| pair[1].0 > pair[0].0));
+    for &(allocated, geometry, error, unchanged, tile_error) in painted.iter() {
+        assert!(unchanged, "scaling changed row membership");
+        assert_eq!(allocated, geometry, "painted the new width before scaling old geometry");
+        assert!(error < 2.0, "deep section viewport moved before paint: {error}");
+        assert!(tile_error < 2.0, "painted tiles lagged geometry at width {allocated}: {tile_error}");
+    }
+    assert_eq!(crate::source::original_read_count(), reads);
     window.close();
     settle();
 }

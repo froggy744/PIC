@@ -920,15 +920,9 @@ impl Gallery {
     pub fn update_width(&self, width: i32) {
         if self.layout() == PhotoLayout::PhotoWall {
             if width != self.last_layout_width.get() {
-                let anchor = self.sectioned_folder.capture_center_anchor();
                 self.last_layout_width.set(width);
+                // Photo Wall scales its geometry and scroll position itself.
                 self.sectioned_folder.refresh();
-                if let Some((photo_id, viewport_y_offset)) = anchor {
-                    self.sectioned_folder.defer_restore_anchor(ViewAnchor {
-                        photo_id,
-                        viewport_y_offset,
-                    });
-                }
             }
             return;
         }

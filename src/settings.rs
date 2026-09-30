@@ -1319,6 +1319,37 @@ fn interface_page(
         Some("Display each photo's filename in a single clipped line."),
         Some(show_file_names.upcast_ref()),
     );
+
+    let high_quality = gtk::Switch::new();
+    high_quality.set_valign(gtk::Align::Center);
+    high_quality.set_active(crate::db::high_quality_thumbnails_enabled(&connection.borrow()));
+    {
+        let connection = connection.clone();
+        let thumbnail_changed = thumbnail_changed.clone();
+        high_quality.connect_active_notify(move |toggle| {
+            let state = toggle.is_active();
+            crate::window::debug_log(&format!(
+                "SETTINGS: high quality thumbnails -> {state}"
+            ));
+            if let Err(error) = crate::db::set_setting(
+                &connection.borrow(),
+                crate::db::THUMBNAIL_HIGH_QUALITY_SETTING_KEY,
+                &state.to_string(),
+            ) {
+                eprintln!("Could not save high quality thumbnail setting: {error}");
+                return;
+            }
+            thumbnail_changed();
+        });
+    }
+    append_row(
+        &thumbnail_list,
+        "High quality thumbnails (640 px)",
+        Some(
+            "Use optional 640 px Photo Wall previews for high-DPI and 4K displays.              Normal thumbnails remain 320 px.",
+        ),
+        Some(high_quality.upcast_ref()),
+    );
     content.append(&thumbnail_list);
 
     let effects_heading = gtk::Label::new(Some("Effects"));

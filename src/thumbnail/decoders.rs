@@ -69,7 +69,7 @@ fn decode_with_image(bytes: &[u8]) -> Result<DecodedThumbnailSource> {
 }
 
 fn decode_jpeg_turbo(bytes: &[u8]) -> Result<DecodedThumbnailSource> {
-    decode_jpeg_turbo_with_max(bytes, THUMBNAIL_SIZE)
+    decode_jpeg_turbo_with_max(bytes, thumbnail_size())
 }
 
 fn jpeg_dimensions(bytes: &[u8]) -> Result<(u32, u32)> {
@@ -250,7 +250,7 @@ fn decode_svg_rgba(
 }
 
 fn decode_svg_thumbnail(bytes: &[u8]) -> Result<DecodedThumbnailSource> {
-    decode_svg_thumbnail_with_max(bytes, THUMBNAIL_SIZE)
+    decode_svg_thumbnail_with_max(bytes, thumbnail_size())
 }
 
 fn decode_svg_thumbnail_with_max(bytes: &[u8], max_edge: u32) -> Result<DecodedThumbnailSource> {

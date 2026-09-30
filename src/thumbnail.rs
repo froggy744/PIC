@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::io::{BufReader, Cursor, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 
 use anyhow::{Context, Result};
@@ -14,7 +14,8 @@ use image::ImageEncoder;
 use image::{ColorType, DynamicImage, ImageReader};
 use turbojpeg::{Decompressor, Image as TurboImage, PixelFormat, ScalingFactor};
 
-const THUMBNAIL_SIZE: u32 = 320;
+const NORMAL_THUMBNAIL_SIZE: u32 = 320;
+const HIGH_QUALITY_THUMBNAIL_SIZE: u32 = 640;
 const THUMBNAIL_CACHE_VERSION: &[u8] = b"picasa-thumb-v4-heif-orientation";
 const RAW_THUMBNAIL_CACHE_VERSION: &[u8] = b"picasa-thumb-v6-generic-raw";
 const REMOTE_NEF_THUMBNAIL_CACHE_VERSION: &[u8] = b"picasa-thumb-v1-remote-nef-preview";
@@ -46,6 +47,26 @@ static WALL_WAITERS: OnceLock<
 static WALL_WANTED: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 static WALL_ACTIVE: AtomicUsize = AtomicUsize::new(0);
 static PRIORITY_DISPATCHES: AtomicUsize = AtomicUsize::new(0);
+// Grid and Photo Wall share one canonical cache. The setting only changes
+// that cache's generated longest edge (320 or 640); it never creates a
+// second view-specific thumbnail file.
+static HIGH_QUALITY_THUMBNAILS: AtomicBool = AtomicBool::new(false);
+
+pub fn set_high_quality_thumbnails_enabled(enabled: bool) {
+    HIGH_QUALITY_THUMBNAILS.store(enabled, Ordering::Relaxed);
+}
+
+pub fn high_quality_thumbnails_enabled() -> bool {
+    HIGH_QUALITY_THUMBNAILS.load(Ordering::Relaxed)
+}
+
+fn thumbnail_size() -> u32 {
+    if high_quality_thumbnails_enabled() {
+        HIGH_QUALITY_THUMBNAIL_SIZE
+    } else {
+        NORMAL_THUMBNAIL_SIZE
+    }
+}
 
 const PRIORITY_QUEUE_CAPACITY: usize = 512;
 // Visible requests must not queue behind the single bulk RAW worker. Keep a

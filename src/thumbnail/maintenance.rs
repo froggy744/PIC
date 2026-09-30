@@ -59,11 +59,9 @@ fn valid_cache_paths_in(directory: &Path, connection: &Connection) -> Result<Has
         let (path, mtime, size_bytes) = row?;
         let name = cache_file_name(&path, mtime, size_bytes);
         // A valid entry may remain in the RC4 flat layout while new entries
-        // use the recovered shard layout. Cleanup must preserve either.
-        valid.insert(wall_cache_path(&directory.join(&name)));
-        valid.insert(wall_cache_path(
-            &shard_dir_in(&directory.join("files"), &name).join(&name),
-        ));
+        // use the recovered shard layout. 320 and 640 share this same
+        // canonical path; legacy -wall640 siblings are intentionally omitted
+        // so cache cleanup removes those old duplicates.
         valid.insert(directory.join(&name));
         valid.insert(shard_dir_in(&directory.join("files"), &name).join(name));
     }

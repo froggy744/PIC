@@ -924,6 +924,7 @@ fn photo_wall_quality_preserves_fallback_and_rejects_stale_results() {
 #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
 fn photo_wall_quality_upgrades_visible_only_and_reuses_offline_cache() {
     gtk::init().unwrap();
+    crate::thumbnail::set_wall_quality_enabled(true);
     let directory = std::env::temp_dir().join(format!("pic-wall-quality-{}", std::process::id()));
     std::fs::create_dir_all(&directory).unwrap();
     let source = directory.join("original.jpg");
@@ -1077,5 +1078,6 @@ fn photo_wall_quality_upgrades_visible_only_and_reuses_offline_cache() {
         .is_none()));
     window.close();
     settle();
+    crate::thumbnail::set_wall_quality_enabled(false);
     std::fs::remove_dir_all(directory).unwrap();
 }

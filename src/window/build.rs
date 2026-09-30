@@ -619,7 +619,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         )
         .unwrap_or(false),
     );
-    crate::thumbnail::set_wall_quality_enabled(
+    crate::thumbnail::set_high_quality_thumbnails_enabled(
         crate::db::high_quality_thumbnails_enabled(&connection.borrow()),
     );
     gallery.set_zoom_animations_enabled(db::zoom_animations_enabled(&connection.borrow()));
@@ -839,7 +839,17 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 .unwrap_or(false);
                 let high_quality =
                     crate::db::high_quality_thumbnails_enabled(&thumbs_connection.borrow());
-                crate::thumbnail::set_wall_quality_enabled(high_quality);
+                let quality_changed =
+                    crate::thumbnail::high_quality_thumbnails_enabled() != high_quality;
+                crate::thumbnail::set_high_quality_thumbnails_enabled(high_quality);
+                if quality_changed {
+                    // 320 and 640 deliberately share one canonical cache path.
+                    // Rebuild in place instead of keeping a second Photo Wall cache.
+                    if let Err(error) = crate::thumbnail::clear_cache() {
+                        eprintln!("Could not rebuild thumbnail cache for quality change: {error}");
+                    }
+                    thumbs_gallery.refresh_thumbnails();
+                }
                 if square {
                     thumbs_window.add_css_class("square-corners");
                 } else {

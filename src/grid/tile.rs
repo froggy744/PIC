@@ -36,8 +36,35 @@ fn folder_thumbnail_cache_insert(path: String, paintable: gtk::gdk::Paintable) {
         let mut cache = cache.borrow_mut();
         cache.retain(|(cached_path, _)| cached_path != &path);
         cache.push_back((path, paintable));
-        while cache.len() > FOLDER_THUMBNAIL_CACHE_CAPACITY {
-            cache.pop_front();
+        loop {
+            let ordinary = cache
+                .iter()
+                .filter(|(key, _)| !crate::thumbnail_display::is_wall_key(key))
+                .count();
+            let (quality, bytes) = cache
+                .iter()
+                .filter(|(key, _)| crate::thumbnail_display::is_wall_key(key))
+                .fold((0usize, 0usize), |(count, bytes), (_, image)| {
+                    (
+                        count + 1,
+                        bytes
+                            + image.intrinsic_width().max(0) as usize
+                                * image.intrinsic_height().max(0) as usize
+                                * 4,
+                    )
+                });
+            let evict_quality = crate::thumbnail_display::wall_cache_over_budget(quality, bytes);
+            if ordinary <= FOLDER_THUMBNAIL_CACHE_CAPACITY && !evict_quality {
+                break;
+            }
+            if let Some(index) = cache
+                .iter()
+                .position(|(key, _)| crate::thumbnail_display::is_wall_key(key) == evict_quality)
+            {
+                cache.remove(index);
+            } else {
+                break;
+            }
         }
     });
 }
@@ -240,6 +267,8 @@ mod square_tile {
         pub photo: RefCell<Option<PhotoObject>>,
         pub visual_loaded: Cell<bool>,
         pub applied_visual_key: RefCell<Option<String>>,
+        pub wall_quality_key: RefCell<Option<String>>,
+        pub wall_quality_fallback: RefCell<Option<(String, gtk::gdk::Paintable)>>,
         // Folder mode stores the backing photo index on each realized tile so
         // prefetch can warm the photo model ahead of the viewport rather than
         // being limited to GTK's currently realized widget pool.
@@ -289,6 +318,14 @@ mod square_tile {
                 _ => self.width.get().max(1),
             };
 
+            let requested = if self.obj().has_css_class("photo-wall-tile") {
+                match orientation {
+                    gtk::Orientation::Horizontal => self.width.get(),
+                    _ => self.height.get(),
+                }
+            } else {
+                requested
+            };
             (requested, requested, -1, -1)
         }
 
@@ -404,6 +441,22 @@ mod square_tile {
 #[cfg(test)]
 mod filename_caption_tests {
     use super::*;
+
+    #[test]
+    fn rectangular_images_keep_axes_with_and_without_captions() {
+        for (width, height) in [(240, 100), (80, 160)] {
+            for captions in [false, true] {
+                let caption = if captions { 24 } else { 0 };
+                let geometry = tile_layout(width, height, width, height + caption, captions);
+                assert_eq!(
+                    (geometry.frame_width, geometry.frame_height),
+                    (width, height)
+                );
+                assert_eq!(geometry.caption_y, height);
+                assert_eq!(geometry.block_height, height + caption);
+            }
+        }
+    }
 
     /// The four smallest zoom-ladder levels that were reported to render the
     /// thumbnail visibly non-square once the filename row was present.
@@ -567,8 +620,15 @@ impl SquareTile {
     }
 
     fn set_tile_size(&self, width: i32, height: i32) {
-        let width = width.max(1);
-        let height = height.max(1);
+        // Subpixel Wall images may round to an empty allocation. Preserve
+        // shared edges instead of forcing a pixel that overlaps a neighbour.
+        let minimum = if self.has_css_class("photo-wall-tile") {
+            0
+        } else {
+            1
+        };
+        let width = width.max(minimum);
+        let height = height.max(minimum);
         if self.imp().width.get() == width && self.imp().height.get() == height {
             return;
         }
@@ -718,7 +778,12 @@ impl SquareTile {
             .as_ref()
             .is_some_and(|current| current.id() == photo.id());
         let same_visual = same_photo
-            && *self.imp().applied_visual_key.borrow() == photo_presentation_key(photo);
+            && (*self.imp().applied_visual_key.borrow() == photo_presentation_key(photo)
+                || self.imp().applied_visual_key.borrow().as_deref()
+                    == photo_presentation_request(photo, false)
+                        .map(crate::thumbnail_display::wall_request)
+                        .map(|r| r.key)
+                        .as_deref());
         if !same_visual {
             self.unload_visual();
         }
@@ -736,6 +801,20 @@ impl SquareTile {
         };
         if photo_presentation_key(&photo).as_deref() != Some(expected_key) {
             return false;
+        }
+        if self
+            .imp()
+            .wall_quality_key
+            .borrow()
+            .as_deref()
+            .is_some_and(|key| {
+                self.imp().applied_visual_key.borrow().as_deref() == Some(key)
+                    && photo_presentation_request(&photo, false)
+                        .map(crate::thumbnail_display::wall_request)
+                        .is_some_and(|request| request.key == key)
+            })
+        {
+            return true;
         }
         if self.imp().visual_loaded.get()
             && self.imp().applied_visual_key.borrow().as_deref() == Some(expected_key)
@@ -760,11 +839,25 @@ impl SquareTile {
         photo.set_thumbnail_available(true);
         self.imp().visual_loaded.set(true);
         *self.imp().applied_visual_key.borrow_mut() = Some(expected_key.to_owned());
-        if std::env::var_os("PICASA_TRACE").is_some() { eprintln!("PIC_THUMBNAIL paintable_assign elapsed_us={}", started.elapsed().as_micros()); }
+        if std::env::var_os("PICASA_TRACE").is_some() {
+            eprintln!(
+                "PIC_THUMBNAIL paintable_assign elapsed_us={}",
+                started.elapsed().as_micros()
+            );
+        }
         true
     }
 
     fn mark_presentation_missing(&self, expected_key: &str) -> bool {
+        if self
+            .imp()
+            .wall_quality_key
+            .borrow()
+            .as_deref()
+            .is_some_and(|key| self.imp().applied_visual_key.borrow().as_deref() == Some(key))
+        {
+            return false;
+        }
         let Some(photo) = self.imp().photo.borrow().as_ref().cloned() else {
             return false;
         };
@@ -923,6 +1016,8 @@ impl SquareTile {
     }
 
     fn unload_visual(&self) {
+        self.imp().wall_quality_key.borrow_mut().take();
+        self.imp().wall_quality_fallback.borrow_mut().take();
         self.imp().visual_loaded.set(false);
         self.imp().applied_visual_key.borrow_mut().take();
         if !preserve_grid_paintable_during_motion() {
@@ -959,6 +1054,16 @@ impl SquareTile {
             .borrow()
             .as_ref()
             .is_some_and(|current| current.id() == photo.id());
+        let quality_matches = same_photo
+            && self.imp().wall_quality_key.borrow().as_deref()
+                == photo_presentation_request(photo, false)
+                    .map(crate::thumbnail_display::wall_request)
+                    .map(|r| r.key)
+                    .as_deref();
+        if !quality_matches {
+            self.imp().wall_quality_key.borrow_mut().take();
+            self.imp().wall_quality_fallback.borrow_mut().take();
+        }
         if !same_photo {
             self.imp().photo.replace(Some(photo.clone()));
         }
@@ -984,9 +1089,30 @@ impl SquareTile {
         // but reuse a paintable that the settled-viewport loader has already
         // decoded. This keeps nearby thumbnails visible during wheel scrolling
         // without restoring the old per-bind I/O/RAW/edit work.
-        let memory_hit = photo_presentation_key(&bound)
-            .as_deref()
-            .and_then(folder_thumbnail_cache_get);
+        let memory_hit = if quality_matches
+            && self.imp().applied_visual_key.borrow().as_deref()
+                == self.imp().wall_quality_key.borrow().as_deref()
+        {
+            self.imp()
+                .wall_quality_key
+                .borrow()
+                .as_deref()
+                .and_then(folder_thumbnail_cache_get)
+                .or_else(|| {
+                    self.imp()
+                        .wall_quality_fallback
+                        .borrow()
+                        .as_ref()
+                        .and_then(|_| picture.paintable())
+                })
+        } else {
+            None
+        }
+        .or_else(|| {
+            photo_presentation_key(&bound)
+                .as_deref()
+                .and_then(folder_thumbnail_cache_get)
+        });
         if let Some(paintable) = memory_hit.as_ref() {
             picture.set_paintable(Some(paintable));
             if picture.has_css_class("missing-thumbnail") {
@@ -1121,6 +1247,8 @@ impl SquareTile {
     /// the photo identity and queues the correct presentation key; completion
     /// application validates that key before replacing this temporary backstop.
     fn clear_photo_folder_recycle(&self) {
+        self.imp().wall_quality_key.borrow_mut().take();
+        self.imp().wall_quality_fallback.borrow_mut().take();
         self.imp().visual_loaded.set(false);
         self.imp().applied_visual_key.borrow_mut().take();
         self.imp().photo.take();
@@ -1455,4 +1583,61 @@ fn raw_thumbnail_cache_insert(
             cache.pop_front();
         }
     });
+}
+
+impl SquareTile {
+    fn clear_wall_quality(&self) {
+        let quality = self.imp().wall_quality_key.borrow_mut().take();
+        let fallback = self.imp().wall_quality_fallback.borrow_mut().take();
+        if quality
+            .as_deref()
+            .is_some_and(|key| self.imp().applied_visual_key.borrow().as_deref() == Some(key))
+        {
+            self.imp().applied_visual_key.borrow_mut().take();
+            if let Some(photo) = self.photo() {
+                if let Some(key) = photo_presentation_key(&photo) {
+                    if let Some(paintable) = fallback
+                        .filter(|(fallback_key, _)| fallback_key == &key)
+                        .map(|(_, paintable)| paintable)
+                        .or_else(|| folder_thumbnail_cache_get(&key))
+                    {
+                        self.apply_presentation_paintable(&key, &paintable);
+                    } else {
+                        self.queue_presentation_visual_async(true);
+                    }
+                }
+            }
+        }
+    }
+
+    fn apply_wall_quality(&self, key: &str, paintable: &gtk::gdk::Paintable) -> bool {
+        if !self.has_css_class("photo-wall-tile")
+            || self.imp().wall_quality_key.borrow().as_deref() != Some(key)
+        {
+            return false;
+        }
+        let Some(photo) = self.photo() else {
+            return false;
+        };
+        if photo_presentation_request(&photo, false)
+            .map(crate::thumbnail_display::wall_request)
+            .is_none_or(|r| r.key != key)
+        {
+            return false;
+        }
+        let Some(frame) = self.first_child().and_downcast::<gtk::Overlay>() else {
+            return false;
+        };
+        let Some(picture) = frame.child().and_downcast::<gtk::Picture>() else {
+            return false;
+        };
+        if self.imp().wall_quality_fallback.borrow().is_none() {
+            *self.imp().wall_quality_fallback.borrow_mut() =
+                photo_presentation_key(&photo).zip(picture.paintable());
+        }
+        picture.set_paintable(Some(paintable));
+        self.imp().visual_loaded.set(true);
+        *self.imp().applied_visual_key.borrow_mut() = Some(key.to_owned());
+        true
+    }
 }

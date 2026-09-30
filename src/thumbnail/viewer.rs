@@ -43,11 +43,15 @@ fn is_dng(path: &str) -> bool {
 }
 
 fn decode_raw_thumbnail(reference: &str) -> Result<DecodedThumbnailSource> {
-    std::panic::catch_unwind(|| decode_raw_thumbnail_inner(reference))
+    decode_raw_thumbnail_with_max(reference, THUMBNAIL_SIZE)
+}
+
+fn decode_raw_thumbnail_with_max(reference: &str, max_edge: u32) -> Result<DecodedThumbnailSource> {
+    std::panic::catch_unwind(|| decode_raw_thumbnail_inner(reference, max_edge))
         .map_err(|_| anyhow::anyhow!("RAW thumbnail decoder panicked"))?
 }
 
-fn decode_raw_thumbnail_inner(reference: &str) -> Result<DecodedThumbnailSource> {
+fn decode_raw_thumbnail_inner(reference: &str, max_edge: u32) -> Result<DecodedThumbnailSource> {
     #[cfg(target_os = "linux")]
     if crate::network_shares::private(reference) {
         anyhow::ensure!(
@@ -59,7 +63,7 @@ fn decode_raw_thumbnail_inner(reference: &str) -> Result<DecodedThumbnailSource>
                 "Remote NEF has no embedded JPEG thumbnail; original was not downloaded"
             )
         })?;
-        return decode_jpeg_turbo(&bytes).or_else(|_| decode_with_image(&bytes));
+        return decode_jpeg_turbo_with_max(&bytes, max_edge).or_else(|_| decode_with_image(&bytes));
     }
     let local_path = crate::source::materialize(reference)?;
     let mut failures = Vec::new();
@@ -98,7 +102,9 @@ fn decode_raw_thumbnail_inner(reference: &str) -> Result<DecodedThumbnailSource>
             Ok(Some(bytes)) => {
                 // Nikon writes this tiny JPEG in IFD1. It is vastly faster
                 // than decoding the full-size camera preview for a tile.
-                match decode_jpeg_turbo(&bytes).or_else(|_| decode_with_image(&bytes)) {
+                match decode_jpeg_turbo_with_max(&bytes, max_edge)
+                    .or_else(|_| decode_with_image(&bytes))
+                {
                     Ok(decoded) => return Ok(decoded),
                     Err(error) => failures.push(format!("Nikon JPEG thumbnail decode: {error}")),
                 }
@@ -130,7 +136,7 @@ fn decode_raw_thumbnail_inner(reference: &str) -> Result<DecodedThumbnailSource>
     // Samsung DNGs can have an incomplete preview after intact sensor data.
     // Only try the expensive recovery after both embedded strategies fail.
     if is_dng(reference) {
-        match decode_dng_sensor_thumbnail(&local_path) {
+        match decode_dng_sensor_thumbnail_with_max(&local_path, max_edge) {
             Ok(decoded) => return Ok(decoded),
             Err(error) => failures.push(format!("full RAW recovery: {error:#}")),
         }
@@ -142,6 +148,13 @@ fn decode_raw_thumbnail_inner(reference: &str) -> Result<DecodedThumbnailSource>
 }
 
 fn decode_dng_sensor_thumbnail(path: &Path) -> Result<DecodedThumbnailSource> {
+    decode_dng_sensor_thumbnail_with_max(path, THUMBNAIL_SIZE)
+}
+
+fn decode_dng_sensor_thumbnail_with_max(
+    path: &Path,
+    max_edge: u32,
+) -> Result<DecodedThumbnailSource> {
     // Serialize full-sensor recovery across bulk and visible workers, and
     // keep rawler's internal Rayon work off the unbounded global pool.
     static POOL: OnceLock<
@@ -169,7 +182,7 @@ fn decode_dng_sensor_thumbnail(path: &Path) -> Result<DecodedThumbnailSource> {
             )?;
             let (source_width, source_height) = (image.width(), image.height());
             Ok(DecodedThumbnailSource {
-                image: resize(image.into_rgb8())?,
+                image: resize_with_max(image.into_rgb8(), max_edge)?,
                 source_width,
                 source_height,
                 scale: "full RAW recovery",

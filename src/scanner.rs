@@ -701,15 +701,11 @@ fn read_metadata(path: &str, attributes: &gio::FileInfo) -> Result<PhotoMetadata
     // EXIF orientation to decoded pixels. Persist display-oriented dimensions
     // so the shared-element destination has the same aspect ratio before and
     // after a RAW/JPEG decode completes.
-    let (width, height) = if exif
-        .as_ref()
-        .and_then(exif_orientation_value)
-        .is_some_and(|orientation| matches!(orientation, 5..=8))
-    {
-        (height, width)
-    } else {
-        (width, height)
-    };
+    let (width, height) = display_oriented_dimensions(
+        width,
+        height,
+        exif.as_ref().and_then(exif_orientation_value),
+    );
     Ok(PhotoMetadata {
         taken_at,
         camera,
@@ -1014,5 +1010,77 @@ mod tests {
             .unwrap();
         assert!(exif_aperture(&exif).is_some_and(|value| value > 0.0));
         assert!(exif_orientation_value(&exif).is_some());
+    }
+}
+
+#[cfg(test)]
+mod photo_wall_orientation_tests {
+    #[test]
+    #[ignore = "requires a rotated RAW fixture in PICASA_TEST_RAW_METADATA"]
+    fn configured_rotated_raw_fixture_has_display_oriented_wall_ratio() {
+        use gio::prelude::*;
+        let path = std::env::var("PICASA_TEST_RAW_METADATA")
+            .expect("set PICASA_TEST_RAW_METADATA to an EXIF-rotated RAW photo");
+        let exif = exif::Reader::new()
+            .read_from_container(&mut std::io::BufReader::new(
+                std::fs::File::open(&path).unwrap(),
+            ))
+            .unwrap();
+        let orientation = super::exif_orientation_value(&exif).unwrap();
+        assert!(
+            (5..=8).contains(&orientation),
+            "fixture must swap display axes"
+        );
+        let sensor = crate::thumbnail::dimensions(&path, &[]).unwrap();
+        let attributes = gio::File::for_path(&path)
+            .query_info(
+                "time::modified,standard::size",
+                gio::FileQueryInfoFlags::NONE,
+                gio::Cancellable::NONE,
+            )
+            .unwrap();
+        let metadata = super::read_metadata(&path, &attributes).unwrap();
+        let display = (metadata.width.unwrap(), metadata.height.unwrap());
+        assert_eq!(display, (i64::from(sensor.1), i64::from(sensor.0)));
+        let photo = glib::Object::builder::<crate::photo_object::PhotoObject>()
+            .property("width", display.0)
+            .property("height", display.1)
+            .build();
+        let expected = display.0 as f64 / display.1 as f64;
+        assert!((photo.photo_wall_aspect_ratio() - expected).abs() < 1e-9);
+        photo.set_rotation(90);
+        assert!((photo.photo_wall_aspect_ratio() - 1.0 / expected).abs() < 1e-9);
+        eprintln!("RAW Wall fixture: orientation={orientation} sensor={sensor:?} display={display:?} ratio={expected:.6}");
+    }
+
+    #[test]
+    fn catalog_dimensions_apply_exif_axes_before_pic_rotation() {
+        for orientation in 1..=8 {
+            let expected = if orientation >= 5 {
+                (Some(4000), Some(6000))
+            } else {
+                (Some(6000), Some(4000))
+            };
+            assert_eq!(
+                super::display_oriented_dimensions(Some(6000), Some(4000), Some(orientation)),
+                expected
+            );
+        }
+        assert_eq!(
+            super::display_oriented_dimensions(None, None, None),
+            (None, None)
+        );
+    }
+}
+
+fn display_oriented_dimensions(
+    width: Option<u32>,
+    height: Option<u32>,
+    orientation: Option<u16>,
+) -> (Option<u32>, Option<u32>) {
+    if orientation.is_some_and(|value| matches!(value, 5..=8)) {
+        (height, width)
+    } else {
+        (width, height)
     }
 }

@@ -33,9 +33,7 @@ impl Gallery {
     }
 
     pub fn scroll_position(&self) -> f64 {
-        if self.group_mode.get() == GroupMode::Folder
-            && crate::grid::sectioned_folder_view_enabled()
-        {
+        if self.using_virtual_photo_surface() {
             return self.sectioned_folder.scroll_position();
         }
         let folder_list_mode = self.group_mode.get() == GroupMode::Folder
@@ -55,9 +53,7 @@ impl Gallery {
     /// value restores the exact view, while this id restores keyboard focus to
     /// the middle of what the user was looking at.
     pub fn viewport_center_photo(&self) -> Option<PhotoObject> {
-        if self.group_mode.get() == GroupMode::Folder
-            && crate::grid::sectioned_folder_view_enabled()
-        {
+        if self.using_virtual_photo_surface() {
             return self.sectioned_folder.viewport_center_photo();
         }
         let folder_list_mode = self.group_mode.get() == GroupMode::Folder
@@ -108,9 +104,87 @@ impl Gallery {
         else {
             return false;
         };
-        if self.group_mode.get() == GroupMode::Folder
-            && crate::grid::sectioned_folder_view_enabled()
-        {
+        if self.layout() == PhotoLayout::PhotoWall {
+            let surface = self.sectioned_folder.clone();
+            let viewport_offset = surface.scroll.borrow().as_ref().and_then(|scroll| {
+                let adjustment = scroll.vadjustment();
+                let top = adjustment.value();
+                let bottom = top + adjustment.page_size();
+                let state = surface.wall_state.borrow();
+                state
+                    .layout
+                    .item(position)
+                    .filter(|item| {
+                        adjustment.page_size() > 0.0
+                            && item.y < bottom
+                            && item.y + item.height > top
+                    })
+                    .map(|item| item.y - top)
+            });
+            self.selection.select_item(position as u32, true);
+            surface.selection_anchor.set(Some(position as u32));
+            surface.cancel_scroll_animation();
+            let generation = Cell::new(surface.scroll_animation_generation.get());
+            let layout_generation = surface.layout_switch_generation.get();
+            let weak = Rc::downgrade(&surface);
+            let attempts = Cell::new(0_u8);
+            surface.root.add_tick_callback(move |_, _| {
+                let Some(surface) = weak.upgrade() else {
+                    return glib::ControlFlow::Break;
+                };
+                if surface.layout_switch_generation.get() != layout_generation
+                    || surface.scroll_animation_generation.get() != generation.get()
+                {
+                    return glib::ControlFlow::Break;
+                }
+                let Some(index) = surface
+                    .current_photos
+                    .borrow()
+                    .iter()
+                    .position(|photo| photo.id() == photo_id)
+                else {
+                    return glib::ControlFlow::Break;
+                };
+                if !surface.selection.is_selected(index as u32) {
+                    return glib::ControlFlow::Break;
+                }
+                attempts.set(attempts.get().saturating_add(1));
+                // Lightbox close may precede the destination allocation.
+                // Restore after mapping/extent publication, then focus the
+                // actual tile rather than leaving focus on the container.
+                let restored = surface.root.is_mapped()
+                    && if let Some(offset) = viewport_offset {
+                        surface.restore_anchor(photo_id, offset)
+                    } else {
+                        surface.scroll_to_index_centered(index as u32)
+                    };
+                if restored {
+                    generation.set(surface.scroll_animation_generation.get());
+                    let tile = surface
+                        .live_tiles
+                        .borrow()
+                        .get(&(index as u32))
+                        .map(|live| live.tile.clone());
+                    if let Some(tile) = tile {
+                        if tile.is_mapped() && tile.width() > 0 && tile.grab_focus() {
+                            // GTK focus can reveal a clipped tile. Preserve the
+                            // original viewport even for a partially visible row.
+                            if let Some(offset) = viewport_offset {
+                                surface.restore_anchor(photo_id, offset);
+                            }
+                            return glib::ControlFlow::Break;
+                        }
+                    }
+                }
+                if attempts.get() >= 60 {
+                    glib::ControlFlow::Break
+                } else {
+                    glib::ControlFlow::Continue
+                }
+            });
+            return true;
+        }
+        if self.using_virtual_photo_surface() {
             self.selection.select_item(position as u32, true);
             let revealed = self
                 .sectioned_folder
@@ -184,7 +258,8 @@ impl Gallery {
                     return glib::ControlFlow::Continue;
                 };
                 if let Some(adjustment) = adjustment.as_ref() {
-                    let target = adjustment.value() + f64::from(bounds.y())
+                    let target = adjustment.value()
+                        + f64::from(bounds.y())
                         + f64::from(bounds.height()) * 0.5
                         - f64::from(root.height()) * 0.5;
                     let upper =
@@ -244,9 +319,7 @@ impl Gallery {
         else {
             return;
         };
-        if self.group_mode.get() == GroupMode::Folder
-            && crate::grid::sectioned_folder_view_enabled()
-        {
+        if self.using_virtual_photo_surface() {
             self.selection.select_item(position as u32, true);
             self.sectioned_folder.set_scroll_y(scroll_y);
             self.sectioned_folder.focus_photo(photo_id);
@@ -301,9 +374,7 @@ impl Gallery {
         else {
             return;
         };
-        if self.group_mode.get() == GroupMode::Folder
-            && crate::grid::sectioned_folder_view_enabled()
-        {
+        if self.using_virtual_photo_surface() {
             self.sectioned_folder.set_scroll_y(scroll_y);
             return;
         }
@@ -378,6 +449,7 @@ impl Gallery {
         let mut tiles = Vec::new();
         collect_tiles(self.root.upcast_ref(), &mut tiles);
         collect_tiles(self.folder_root.upcast_ref(), &mut tiles);
+        collect_tiles(self.folder_sectioned_root.upcast_ref(), &mut tiles);
         for tile in tiles {
             let matches = tile
                 .imp()
@@ -398,6 +470,9 @@ impl Gallery {
     /// aperture). Updating only width/height leaves both the selected object
     /// and its infobar stale until the entire view is rebuilt.
     pub fn update_photo(&self, updated: &Photo) {
+        if self.layout() == PhotoLayout::PhotoWall {
+            self.sectioned_folder.invalidate_geometry();
+        }
         if let Some(photo) = self
             .current_photos
             .borrow()
@@ -566,9 +641,7 @@ impl Gallery {
     }
 
     pub fn grab_focus(&self) {
-        if self.group_mode.get() == GroupMode::Folder
-            && crate::grid::sectioned_folder_view_enabled()
-        {
+        if self.using_virtual_photo_surface() {
             self.folder_sectioned_root.grab_focus();
         } else if self.group_mode.get() == GroupMode::Folder
             && !crate::grid::folder_gridview_experiment_enabled()
@@ -583,9 +656,7 @@ impl Gallery {
     /// shows `folder_root` and hides `gallery.root`, so focus helpers must not
     /// hardcode the GridView.
     pub fn visible_root(&self) -> gtk::Widget {
-        if self.group_mode.get() == GroupMode::Folder
-            && crate::grid::sectioned_folder_view_enabled()
-        {
+        if self.using_virtual_photo_surface() {
             self.folder_sectioned_root.clone().upcast()
         } else if self.group_mode.get() == GroupMode::Folder
             && !crate::grid::folder_gridview_experiment_enabled()
@@ -699,9 +770,7 @@ impl Gallery {
             if !matches {
                 continue;
             }
-            if self.group_mode.get() == GroupMode::Folder
-                && crate::grid::sectioned_folder_view_enabled()
-            {
+            if self.using_virtual_photo_surface() {
                 self.selection.select_item(position, true);
                 let revealed = self.sectioned_folder.scroll_to_index_centered_now(position);
                 if revealed {
@@ -758,9 +827,7 @@ impl Gallery {
         };
 
         self.selection.select_item(photo_position as u32, true);
-        if self.group_mode.get() == GroupMode::Folder
-            && crate::grid::sectioned_folder_view_enabled()
-        {
+        if self.using_virtual_photo_surface() {
             return self
                 .sectioned_folder
                 .scroll_to_index_smooth(photo_position as u32, true);
@@ -787,9 +854,7 @@ impl Gallery {
     /// Search-only Folder reveal: center the folder header in the viewport so
     /// the destination name remains visible instead of sitting against the top edge.
     pub fn scroll_to_folder_centered(&self, folder_id: i64, folder_path: &str) -> bool {
-        if self.group_mode.get() == GroupMode::Folder
-            && crate::grid::sectioned_folder_view_enabled()
-        {
+        if self.using_virtual_photo_surface() {
             let scope = folder_navigation_scope(
                 self.folder_catalog
                     .borrow()
@@ -822,9 +887,7 @@ impl Gallery {
         }
         let position = count - 1;
         self.selection.select_item(position, true);
-        if self.group_mode.get() == GroupMode::Folder
-            && crate::grid::sectioned_folder_view_enabled()
-        {
+        if self.using_virtual_photo_surface() {
             self.sectioned_folder.scroll_to_index(position, false);
             if let Some(photo) = self.store.item(position).and_downcast::<PhotoObject>() {
                 self.sectioned_folder.focus_photo(photo.id());

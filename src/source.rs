@@ -372,6 +372,8 @@ pub fn filename(reference: &str) -> String {
 /// temporary file; silently copying the entire source into `cache/source/`
 /// is prohibited.  Local files retain their original paths.
 pub fn materialize(reference: &str) -> Result<PathBuf> {
+    #[cfg(test)]
+    ORIGINAL_READ_PROBE.with(|count| count.set(count.get() + 1));
     if !reference.contains("://") {
         return Ok(PathBuf::from(reference));
     }
@@ -382,6 +384,8 @@ pub fn materialize(reference: &str) -> Result<PathBuf> {
 }
 
 pub fn read(reference: &str) -> Result<Vec<u8>> {
+    #[cfg(test)]
+    ORIGINAL_READ_PROBE.with(|count| count.set(count.get() + 1));
     #[cfg(target_os = "linux")]
     if crate::network_shares::private(reference) {
         return crate::network_shares::read(reference);
@@ -804,4 +808,15 @@ mod viewer_read_tests {
         assert!(cache.total_bytes <= 5);
         assert!(cache.entries.len() <= 2);
     }
+}
+
+#[cfg(test)]
+thread_local! {
+    static ORIGINAL_READ_PROBE: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Count original reads on the calling thread, isolating GTK layout from workers.
+#[cfg(test)]
+pub(crate) fn original_read_count() -> usize {
+    ORIGINAL_READ_PROBE.with(|count| count.get())
 }

@@ -87,6 +87,19 @@ glib::wrapper! {
 }
 
 impl PhotoObject {
+    /// Catalog axes already include EXIF orientation; only PIC rotation is applied here.
+    pub fn photo_wall_aspect_ratio(&self) -> f64 {
+        let (width, height) = (self.width(), self.height());
+        if width <= 0 || height <= 0 {
+            return 1.0;
+        }
+        if matches!(self.rotation().rem_euclid(360), 90 | 270) {
+            height as f64 / width as f64
+        } else {
+            width as f64 / height as f64
+        }
+    }
+
     /// When the original was last probed, if ever.
     pub fn original_checked_at(&self) -> Option<std::time::Instant> {
         self.imp().original_checked_at.get()
@@ -140,5 +153,31 @@ impl PhotoObject {
         // The visible tile performs this inexpensive cache check lazily.
         imp.thumbnail_available.set(false);
         imp.original_checked_at.set(None);
+    }
+}
+
+#[cfg(test)]
+mod photo_wall_tests {
+    use super::*;
+
+    #[test]
+    fn photo_wall_aspect_uses_catalog_axes_and_user_rotation_once() {
+        for (width, height, rotation, expected) in [
+            (6000_i64, 4000_i64, 0, 1.5),
+            (4000, 6000, 0, 2.0 / 3.0),
+            (4000, 6000, 90, 1.5),
+            (4000, 6000, 270, 1.5),
+            (6000, 4000, 180, 1.5),
+            (3000, 3000, 90, 1.0),
+            (0, 4000, 0, 1.0),
+            (-1, 4000, 90, 1.0),
+        ] {
+            let photo: PhotoObject = glib::Object::builder()
+                .property("width", width)
+                .property("height", height)
+                .property("rotation", rotation)
+                .build();
+            assert!((photo.photo_wall_aspect_ratio() - expected).abs() < 1e-9);
+        }
     }
 }

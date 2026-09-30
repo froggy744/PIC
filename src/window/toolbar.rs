@@ -358,6 +358,7 @@
     let header_tools = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     header_tools.append(&sort_button);
     header_tools.append(&rating_filter_button);
+    header_tools.append(&info.view_toggle);
     header_tools.append(&settings);
     right_header.pack_end(&header_tools);
 

@@ -13,6 +13,11 @@ use gtk4 as gtk;
 use crate::db::{Folder, Photo};
 use crate::photo_object::PhotoObject;
 
+mod photo_wall_layout;
+#[cfg(test)]
+#[path = "grid/photo_wall_tests.rs"]
+mod photo_wall_tests;
+
 #[cfg(test)]
 #[path = "grid/history_tests.rs"]
 mod history_tests;
@@ -135,6 +140,7 @@ thread_local! {
 include!("grid/tile.rs");
 include!("grid/grouping.rs");
 include!("grid/sectioned_folder.rs");
+include!("grid/photo_wall.rs");
 include!("grid/virtualization.rs");
 include!("grid/view.rs");
 include!("grid/navigation.rs");

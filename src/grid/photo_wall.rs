@@ -234,14 +234,12 @@ impl Gallery {
             return;
         }
 
-        // Capture against the still-frozen geometry. Releasing the flag first
-        // would let an incidental refresh observe the final width before the
-        // viewport anchor has been recorded.
-        let anchor = self.sectioned_folder.wall_center_anchor();
-        self.sectioned_folder.wall_width_frozen.set(false);
-        // Synchronize Gallery's width bookkeeping to the final settled
-        // allocation before refreshing, so the next frame does not perform a
-        // redundant second Photo Wall reflow.
+        // Read the final allocation while the old justified geometry is still
+        // frozen. A vertical-only resize can change viewport height without
+        // changing Photo Wall width at all; in that case simply release the
+        // freeze and refresh visible rows, with no geometry invalidation and no
+        // anchor restore.
+        let frozen_width = self.sectioned_folder.geometry_width.get().max(1);
         let final_width = self
             .sectioned_folder
             .scroll
@@ -249,6 +247,19 @@ impl Gallery {
             .as_ref()
             .map(|scroll| scroll.width().max(1))
             .unwrap_or_else(|| self.folder_sectioned_root.width().max(1));
+
+        if final_width == frozen_width {
+            self.sectioned_folder.wall_width_frozen.set(false);
+            self.last_layout_width.set(final_width);
+            self.sectioned_folder.refresh();
+            return;
+        }
+
+        // A real width change needs one justified-row rebuild. Capture the
+        // viewport anchor against the still-frozen geometry, then publish the
+        // final width and restore that anchor after the single reflow.
+        let anchor = self.sectioned_folder.wall_center_anchor();
+        self.sectioned_folder.wall_width_frozen.set(false);
         self.last_layout_width.set(final_width);
         self.sectioned_folder.invalidate_geometry();
         self.sectioned_folder.refresh();

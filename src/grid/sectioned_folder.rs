@@ -333,6 +333,10 @@ struct SectionedFolderView {
     rubberband: gtk::DrawingArea,
     scroll: RefCell<Option<gtk::ScrolledWindow>>,
     geometry: RefCell<Vec<SectionedFolderGeometry>>,
+    // During temporary sidebar hover/autohide, Photo Wall must keep using
+    // its last stable justified-row width instead of chasing every animated
+    // OverlaySplitView allocation.
+    wall_width_frozen: Cell<bool>,
     geometry_width: Cell<i32>,
     geometry_columns: Cell<u32>,
     geometry_row_height: Cell<i32>,
@@ -426,6 +430,7 @@ impl SectionedFolderView {
             rubberband,
             scroll: RefCell::new(None),
             geometry: RefCell::new(Vec::new()),
+            wall_width_frozen: Cell::new(false),
             geometry_width: Cell::new(0),
             geometry_columns: Cell::new(0),
             geometry_row_height: Cell::new(0),
@@ -721,6 +726,16 @@ impl SectionedFolderView {
 
     fn geometry_for_current_layout(&self, width: i32) {
         if self.is_wall() {
+            // Hover-autohide is a presentation-only sidebar animation. While
+            // it is active, retain the Photo Wall's last stable geometry width
+            // even though GtkScrolledWindow is allocated intermediate widths
+            // on every animation frame. This prevents justified rows from
+            // continuously reshuffling while the drawer moves.
+            let width = if self.wall_width_frozen.get() && self.geometry_width.get() > 0 {
+                self.geometry_width.get()
+            } else {
+                width
+            };
             self.calculate_wall_geometry(width);
             return;
         }

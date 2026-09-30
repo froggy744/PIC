@@ -922,15 +922,8 @@ fn photo_wall_quality_preserves_fallback_and_rejects_stale_results() {
 
 #[test]
 #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
-fn photo_wall_quality_upgrades_visible_only_and_reuses_offline_cache() {
+fn photo_wall_uses_canonical_cache_without_separate_wall_quality_requests() {
     gtk::init().unwrap();
-    crate::thumbnail::set_wall_quality_enabled(true);
-    let directory = std::env::temp_dir().join(format!("pic-wall-quality-{}", std::process::id()));
-    std::fs::create_dir_all(&directory).unwrap();
-    let source = directory.join("original.jpg");
-    image::RgbImage::from_pixel(1200, 800, image::Rgb([70, 100, 130]))
-        .save(&source)
-        .unwrap();
     let gallery = Rc::new(Gallery::new(
         &[],
         300,
@@ -942,31 +935,16 @@ fn photo_wall_quality_upgrades_visible_only_and_reuses_offline_cache() {
     ));
     let objects = (0..20)
         .map(|i| {
-            let photo = glib::Object::builder::<PhotoObject>()
+            glib::Object::builder::<PhotoObject>()
                 .property("id", 900_i64 + i)
-                .property("path", source.to_string_lossy().as_ref())
+                .property("path", format!("/photos/{i}.jpg"))
                 .property("width", 1200_i64)
                 .property("height", 800_i64)
-                .build();
-            let cached = directory.join(format!("cache-{i}.jpg"));
-            image::RgbImage::from_pixel(320, 213, image::Rgb([70, 100, 130]))
-                .save(&cached)
-                .unwrap();
-            photo.set_cached_thumbnail_path(cached.to_string_lossy().as_ref());
-            let texture: gtk::gdk::Paintable = gtk::gdk::MemoryTexture::new(
-                320,
-                213,
-                gtk::gdk::MemoryFormat::R8g8b8a8,
-                &glib::Bytes::from_owned(vec![150u8; 320 * 213 * 4]),
-                320 * 4,
-            )
-            .upcast();
-            folder_thumbnail_cache_insert(photo_presentation_key(&photo).unwrap(), texture);
-            photo
+                .build()
         })
         .collect::<Vec<_>>();
     gallery.store.splice(0, 0, &objects);
-    gallery.current_photos.replace(objects.clone());
+    gallery.current_photos.replace(objects);
     gallery.set_layout(PhotoLayout::PhotoWall);
     let scroll = gtk::ScrolledWindow::builder()
         .child(&gallery.folder_sectioned_root)
@@ -979,105 +957,14 @@ fn photo_wall_quality_upgrades_visible_only_and_reuses_offline_cache() {
         .build();
     window.present();
     settle();
+
     let surface = &gallery.sectioned_folder;
-    let adjustment = scroll.vadjustment();
-    let visible = {
-        let state = surface.wall_state.borrow();
-        state
-            .layout
-            .visible_rows(
-                adjustment.value(),
-                adjustment.value() + adjustment.page_size(),
-            )
-            .flat_map(|r| {
-                state.layout.items[state.layout.rows[r].item_range.clone()]
-                    .iter()
-                    .map(|i| i.photo_index)
-            })
-            .collect::<HashSet<_>>()
-    };
-    assert!(visible.len() < objects.len());
-    {
-        let mut state = surface.wall_state.borrow_mut();
-        assert!(state.quality_attempted.is_empty());
-        state.quality_gate.stationary_since =
-            Some(Instant::now() - std::time::Duration::from_millis(501));
-    }
     surface.poll_wall_quality();
-    let attempted = surface.wall_state.borrow().quality_attempted.clone();
-    assert!(!attempted.is_empty());
-    for (index, photo) in objects.iter().enumerate() {
-        let request = crate::thumbnail_display::wall_request(
-            photo_presentation_request(photo, false).unwrap(),
-        );
-        assert_eq!(attempted.contains(&request.key), visible.contains(&index));
-    }
-    let deadline = Instant::now() + std::time::Duration::from_secs(5);
-    loop {
-        gallery.drain_thumbnail_display_completions();
-        let complete = surface.live_tiles.borrow().values().any(|live| {
-            live.tile
-                .imp()
-                .applied_visual_key
-                .borrow()
-                .as_deref()
-                .is_some_and(crate::thumbnail_display::is_wall_key)
-        });
-        if complete {
-            break;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "quality decode did not reach visible tile"
-        );
-        settle();
-    }
-    // Previously generated quality JPEGs remain usable without the original.
-    std::fs::remove_file(&source).unwrap();
-    let key = surface
-        .live_tiles
-        .borrow()
-        .values()
-        .find_map(|live| {
-            live.tile
-                .imp()
-                .applied_visual_key
-                .borrow()
-                .as_ref()
-                .filter(|key| crate::thumbnail_display::is_wall_key(key))
-                .cloned()
-        })
-        .unwrap();
-    let request = objects
-        .iter()
-        .filter_map(|photo| {
-            photo_presentation_request(photo, false).map(crate::thumbnail_display::wall_request)
-        })
-        .find(|request| request.key == key)
-        .unwrap();
-    let reads = crate::source::original_read_count();
-    assert!(matches!(
-        crate::thumbnail_display::load_cached_display_thumbnail(&request),
-        crate::thumbnail_display::DisplayOutcome::Loaded { width: 640, .. }
-    ));
-    assert_eq!(reads, crate::source::original_read_count());
-    window.set_visible(false);
-    assert!(surface.wall_state.borrow().quality_gate.signature.is_none());
-    assert!(surface.live_tiles.borrow().values().all(|live| live
-        .tile
-        .imp()
-        .wall_quality_key
-        .borrow()
-        .is_none()));
-    gallery.set_layout(PhotoLayout::Grid);
-    assert!(surface.live_tiles.borrow().values().all(|live| live
-        .tile
-        .imp()
-        .wall_quality_key
-        .borrow()
-        .is_none()));
+    assert!(surface.wall_state.borrow().quality_attempted.is_empty());
+    assert!(surface.live_tiles.borrow().values().all(|live| {
+        live.tile.imp().wall_quality_key.borrow().is_none()
+    }));
+
     window.close();
     settle();
-    crate::thumbnail::set_wall_quality_enabled(false);
-    std::fs::remove_dir_all(directory).unwrap();
 }

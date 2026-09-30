@@ -1,5 +1,7 @@
 pub fn dimensions(reference: &str, bytes: &[u8]) -> Result<(u32, u32)> {
-    if is_raw(reference) {
+    if is_psd(reference) {
+        psd_dimensions(bytes)
+    } else if is_raw(reference) {
         let local = crate::source::materialize(reference)?;
         let rawfile = rawler::rawsource::RawSource::new(&local)?;
         let decoder = rawler::get_decoder(&rawfile)?;
@@ -157,3 +159,125 @@ fn native_scale_for(longest_dimension: usize, target: u32) -> (ScalingFactor, &'
     }
 }
 
+
+
+fn psd_dimensions(bytes: &[u8]) -> Result<(u32, u32)> {
+    anyhow::ensure!(bytes.len() >= 26, "PSD header is truncated");
+    anyhow::ensure!(&bytes[0..4] == b"8BPS", "invalid PSD signature");
+    anyhow::ensure!(u16::from_be_bytes([bytes[4], bytes[5]]) == 1, "unsupported PSD version");
+    let height = u32::from_be_bytes([bytes[14], bytes[15], bytes[16], bytes[17]]);
+    let width = u32::from_be_bytes([bytes[18], bytes[19], bytes[20], bytes[21]]);
+    anyhow::ensure!(width > 0 && height > 0, "PSD has invalid dimensions");
+    Ok((width, height))
+}
+
+fn decode_psd_rgba(bytes: &[u8]) -> Result<image::RgbaImage> {
+    let psd = psd::Psd::from_bytes(bytes)
+        .map_err(|error| anyhow::anyhow!("PSD decode failed: {error}"))?;
+    let width = psd.width();
+    let height = psd.height();
+    image::RgbaImage::from_raw(width, height, psd.rgba())
+        .context("PSD decoder returned an invalid composite image")
+}
+
+fn is_pdf_compatible_ai(bytes: &[u8]) -> bool {
+    bytes
+        .get(..bytes.len().min(4096))
+        .is_some_and(|prefix| prefix.windows(5).any(|window| window == b"%PDF-"))
+}
+
+fn decode_ai_rgba(bytes: &[u8], max_dimension: u32) -> Result<image::RgbaImage> {
+    anyhow::ensure!(
+        is_pdf_compatible_ai(bytes),
+        "Illustrator file is not PDF-compatible; save it with Create PDF Compatible File enabled"
+    );
+
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let base = std::env::temp_dir().join(format!("picasa-ai-{}-{stamp}", std::process::id()));
+    let input = base.with_extension("ai");
+    let output_prefix = base.with_extension("preview");
+    let output = std::path::PathBuf::from(format!("{}.png", output_prefix.display()));
+    fs::write(&input, bytes)?;
+
+    let result = std::process::Command::new("pdftoppm")
+        .arg("-f")
+        .arg("1")
+        .arg("-singlefile")
+        .arg("-png")
+        .arg("-scale-to")
+        .arg(max_dimension.max(1).to_string())
+        .arg(&input)
+        .arg(&output_prefix)
+        .output();
+
+    let decoded = match result {
+        Ok(result) if result.status.success() => image::open(&output)
+            .with_context(|| format!("could not read Illustrator preview {}", output.display()))?
+            .into_rgba8(),
+        Ok(result) => {
+            let error = String::from_utf8_lossy(&result.stderr);
+            let _ = fs::remove_file(&input);
+            let _ = fs::remove_file(&output);
+            anyhow::bail!("Illustrator PDF renderer failed: {}", error.trim());
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let _ = fs::remove_file(&input);
+            anyhow::bail!("Illustrator preview requires pdftoppm (Poppler utilities)");
+        }
+        Err(error) => {
+            let _ = fs::remove_file(&input);
+            return Err(error).context("could not start Illustrator PDF renderer");
+        }
+    };
+    let _ = fs::remove_file(&input);
+    let _ = fs::remove_file(&output);
+    Ok(decoded)
+}
+
+fn decode_psd_thumbnail(bytes: &[u8]) -> Result<DecodedThumbnailSource> {
+    let image = decode_psd_rgba(bytes)?;
+    let source_width = image.width();
+    let source_height = image.height();
+    Ok(DecodedThumbnailSource {
+        image: resize(DynamicImage::ImageRgba8(image).to_rgb8())?,
+        source_width,
+        source_height,
+        scale: "PSD composite",
+    })
+}
+
+fn decode_ai_thumbnail(bytes: &[u8]) -> Result<DecodedThumbnailSource> {
+    let image = decode_ai_rgba(bytes, THUMBNAIL_SIZE)?;
+    let source_width = image.width();
+    let source_height = image.height();
+    Ok(DecodedThumbnailSource {
+        image: image.to_rgb8(),
+        source_width,
+        source_height,
+        scale: "AI PDF preview",
+    })
+}
+
+#[cfg(test)]
+mod adobe_decoder_tests {
+    use super::*;
+
+    #[test]
+    fn psd_header_dimensions_are_read_without_decoding_layers() {
+        let mut header = vec![0_u8; 26];
+        header[0..4].copy_from_slice(b"8BPS");
+        header[4..6].copy_from_slice(&1_u16.to_be_bytes());
+        header[14..18].copy_from_slice(&1080_u32.to_be_bytes());
+        header[18..22].copy_from_slice(&1920_u32.to_be_bytes());
+        assert_eq!(psd_dimensions(&header).unwrap(), (1920, 1080));
+    }
+
+    #[test]
+    fn ai_requires_a_pdf_compatible_payload() {
+        assert!(is_pdf_compatible_ai(b"%PDF-1.7\n% Illustrator"));
+        assert!(!is_pdf_compatible_ai(b"%!PS-Adobe-3.0 EPSF-3.0"));
+    }
+}

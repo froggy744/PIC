@@ -111,7 +111,9 @@ fn scan_with_control(
     }
     let indexed = db::photo_fingerprints(&connection)?;
     let root_file = crate::source::file(root);
-    let (files, discovered_folders) = collect_files(&root_file, events, control)?;
+    let enabled_formats = crate::image_format::enabled_ids(&connection)?;
+    let (files, discovered_folders) =
+        collect_files(&root_file, events, control, &enabled_formats)?;
     let raw_jpeg_pair_counts = raw_jpeg_pair_counts(&files, &discovered_folders);
     if control.is_cancelled() {
         send(events, ScanEvent::Cancelled { imported: 0 });
@@ -462,6 +464,7 @@ fn collect_files(
     root: &gio::File,
     events: Option<&Sender<ScanEvent>>,
     control: &ScanControl,
+    enabled_formats: &HashSet<&str>,
 ) -> Result<(
     Vec<(gio::File, gio::FileInfo, String)>,
     Vec<(String, Option<String>)>,
@@ -492,7 +495,10 @@ fn collect_files(
                         let child = crate::source::file(&item.uri);
                         pending.push((child, item.uri, Some(folder_path.clone())));
                     }
-                } else if supported(Path::new(&item.name)) {
+                } else if crate::image_format::scanner_supports_in(
+                    enabled_formats,
+                    Path::new(&item.name),
+                ) {
                     let child = crate::source::file(&item.uri);
                     // Metadata is requested explicitly in the scanner; no originals
                     // are ever written to cache/source by a network scan.
@@ -536,7 +542,11 @@ fn collect_files(
                         ));
                     }
                 }
-                gio::FileType::Regular if supported(Path::new(&info.name())) => {
+                gio::FileType::Regular
+                    if crate::image_format::scanner_supports_in(
+                        enabled_formats,
+                        Path::new(&info.name()),
+                    ) => {
                     files.push((child, info, folder_path.clone()));
                     report_discovery_progress(
                         events,
@@ -649,6 +659,21 @@ fn read_metadata(path: &str, attributes: &gio::FileInfo) -> Result<PhotoMetadata
         let width = exif_width.or_else(|| raw_dimensions.map(|(width, _)| width));
         let height = exif_height.or_else(|| raw_dimensions.map(|(_, height)| height));
         (width, height, exif)
+    } else if is_adobe(path) {
+        // Adobe files are opt-in. Keep indexing cheap: PSD geometry lives in
+        // its fixed header, while AI dimensions are deferred to thumbnail/viewer
+        // rendering. Never decode layers or invoke a PDF renderer during scans.
+        let bytes = crate::source::read_range(path, 0, 64 * 1024)?;
+        let dimensions = if is_psd(path) {
+            crate::thumbnail::dimensions(path, &bytes).ok()
+        } else {
+            None
+        };
+        (
+            dimensions.map(|(width, _)| width),
+            dimensions.map(|(_, height)| height),
+            None,
+        )
     } else {
         let bytes = crate::source::read(path)?;
         // image-rs does not decode every HEIF variant. Keep the record when
@@ -884,6 +909,15 @@ fn is_heif(path: &str) -> bool {
     crate::image_format::uses(path, crate::image_format::DecoderKind::Heif)
 }
 
+fn is_psd(path: &str) -> bool {
+    crate::image_format::uses(path, crate::image_format::DecoderKind::Photoshop)
+}
+
+fn is_adobe(path: &str) -> bool {
+    is_psd(path)
+        || crate::image_format::uses(path, crate::image_format::DecoderKind::Illustrator)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -978,10 +1012,15 @@ mod tests {
         }
         let (sender, receiver) = std::sync::mpsc::channel();
 
+        let enabled = crate::image_format::all()
+            .iter()
+            .map(|format| format.id)
+            .collect::<HashSet<_>>();
         let (files, _) = collect_files(
             &gio::File::for_path(&root),
             Some(&sender),
             &ScanControl::default(),
+            &enabled,
         )
         .unwrap();
         drop(sender);

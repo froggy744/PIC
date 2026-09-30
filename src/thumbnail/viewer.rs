@@ -22,6 +22,14 @@ fn is_raw(path: &str) -> bool {
     crate::image_format::uses(path, crate::image_format::DecoderKind::Raw)
 }
 
+fn is_psd(path: &str) -> bool {
+    crate::image_format::uses(path, crate::image_format::DecoderKind::Photoshop)
+}
+
+fn is_ai(path: &str) -> bool {
+    crate::image_format::uses(path, crate::image_format::DecoderKind::Illustrator)
+}
+
 fn decode_heif(bytes: &[u8]) -> Result<DecodedThumbnailSource> {
     let decoded = heif_oxide::decode_bytes(bytes).context("HEIC/HEIF decode failed")?;
     let image = image::RgbaImage::from_raw(decoded.width, decoded.height, decoded.to_rgba8())
@@ -284,7 +292,7 @@ where
     let mut source_read_ms = 0;
     check_viewer_cancelled(&cancelled, "before_orientation_metadata")?;
     // HEIF container transforms are applied by heif-oxide during decode.
-    let orientation = if is_heif(reference) {
+    let orientation = if is_heif(reference) || is_psd(reference) || is_ai(reference) {
         1
     } else {
         exif_orientation(reference)
@@ -362,6 +370,43 @@ where
         check_viewer_cancelled(&cancelled, "after_jpeg_decode")?;
         (
             DynamicImage::ImageRgb8(decoded.image),
+            target_width,
+            target_height,
+        )
+    } else if is_psd(reference) {
+        check_viewer_cancelled(&cancelled, "before_source_read")?;
+        let source_started = std::time::Instant::now();
+        let bytes = read_viewer_source(reference, read_context)?;
+        source_read_ms += source_started.elapsed().as_millis();
+        check_viewer_cancelled(&cancelled, "before_psd_decode")?;
+        let image = decode_psd_rgba(&bytes)?;
+        check_viewer_cancelled(&cancelled, "after_psd_decode")?;
+        let source_width = image.width();
+        let source_height = image.height();
+        let (target_width, target_height) = viewer_target_dimensions(
+            source_width,
+            source_height,
+            1,
+            viewport_width,
+            viewport_height,
+        );
+        (
+            DynamicImage::ImageRgba8(image),
+            target_width,
+            target_height,
+        )
+    } else if is_ai(reference) {
+        check_viewer_cancelled(&cancelled, "before_source_read")?;
+        let source_started = std::time::Instant::now();
+        let bytes = read_viewer_source(reference, read_context)?;
+        source_read_ms += source_started.elapsed().as_millis();
+        check_viewer_cancelled(&cancelled, "before_ai_decode")?;
+        let image = decode_ai_rgba(&bytes, viewport_width.max(viewport_height))?;
+        check_viewer_cancelled(&cancelled, "after_ai_decode")?;
+        let target_width = image.width();
+        let target_height = image.height();
+        (
+            DynamicImage::ImageRgba8(image),
             target_width,
             target_height,
         )

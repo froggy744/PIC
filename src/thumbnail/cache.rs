@@ -239,6 +239,10 @@ fn create_uncached(path: &str, destination: &PathBuf) -> Result<PathBuf> {
             }
         } else if is_heif(path) {
             decode_heif(&bytes)?.image
+        } else if is_psd(path) {
+            decode_psd_thumbnail(&bytes)?.image
+        } else if is_ai(path) {
+            decode_ai_thumbnail(&bytes)?.image
         } else {
             decode_with_image(&bytes)?.image
         }
@@ -248,7 +252,7 @@ fn create_uncached(path: &str, destination: &PathBuf) -> Result<PathBuf> {
     // part of decoding, so its pixels already have display orientation. Do
     // not apply an EXIF orientation a second time; some HEIC files contain
     // both forms of orientation metadata.
-    let orientation = if is_heif(path) {
+    let orientation = if is_heif(path) || is_psd(path) || is_ai(path) {
         1
     } else {
         remote_jpeg_orientation.unwrap_or_else(|| exif_orientation(path))

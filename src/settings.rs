@@ -197,6 +197,11 @@ fn formats_page(
             .map(|extension| format!(".{extension}"))
             .collect::<Vec<_>>()
             .join(", ");
+        let subtitle = if crate::image_format::enabled_by_default(format) {
+            extensions
+        } else {
+            format!("{extensions} · Optional; disabled by default for performance")
+        };
         let toggle = gtk::Switch::new();
         toggle.set_valign(gtk::Align::Center);
         toggle.set_active(
@@ -216,7 +221,7 @@ fn formats_page(
         append_row(
             &list,
             format.name,
-            Some(&extensions),
+            Some(&subtitle),
             Some(toggle.upcast_ref()),
         );
     }

@@ -10,6 +10,8 @@ pub enum DecoderKind {
     Image,
     Heif,
     Raw,
+    Photoshop,
+    Illustrator,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -124,6 +126,18 @@ pub const FORMATS: &[ImageFormat] = &[
         decoder: DecoderKind::Raw,
     },
     ImageFormat {
+        id: "photoshop",
+        name: "Adobe Photoshop (PSD)",
+        extensions: &["psd"],
+        decoder: DecoderKind::Photoshop,
+    },
+    ImageFormat {
+        id: "illustrator",
+        name: "Adobe Illustrator (AI)",
+        extensions: &["ai"],
+        decoder: DecoderKind::Illustrator,
+    },
+    ImageFormat {
         id: "generic_raw",
         name: "Generic RAW",
         extensions: &["raw"],
@@ -157,8 +171,27 @@ pub fn setting_key(format: &ImageFormat) -> String {
     format!("format-enabled-{}", format.id)
 }
 
+pub fn enabled_by_default(format: &ImageFormat) -> bool {
+    !matches!(format.id, "photoshop" | "illustrator")
+}
+
 pub fn is_enabled(connection: &Connection, format: &ImageFormat) -> Result<bool> {
-    Ok(crate::db::setting(connection, &setting_key(format))?.as_deref() != Some("false"))
+    Ok(match crate::db::setting(connection, &setting_key(format))?.as_deref() {
+        Some("true") => true,
+        Some("false") => false,
+        _ => enabled_by_default(format),
+    })
+}
+
+pub fn scanner_supports_in(enabled: &HashSet<&str>, path: impl AsRef<Path>) -> bool {
+    let Some(format) = for_path(path) else {
+        return false;
+    };
+    if matches!(format.id, "photoshop" | "illustrator") {
+        enabled.contains(format.id)
+    } else {
+        true
+    }
 }
 
 pub fn set_enabled(connection: &Connection, format: &ImageFormat, enabled: bool) -> Result<()> {
@@ -333,6 +366,10 @@ mod tests {
             )
             .unwrap();
         let heif = for_path("photo.heic").unwrap();
+        let photoshop = for_path("photo.psd").unwrap();
+        let illustrator = for_path("drawing.ai").unwrap();
+        assert!(!is_enabled(&connection, photoshop).unwrap());
+        assert!(!is_enabled(&connection, illustrator).unwrap());
         assert!(is_enabled(&connection, heif).unwrap());
         set_enabled(&connection, heif, false).unwrap();
         assert!(!path_is_enabled(&connection, "photo.HEIF"));

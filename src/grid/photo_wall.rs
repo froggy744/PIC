@@ -239,6 +239,17 @@ impl Gallery {
         // viewport anchor has been recorded.
         let anchor = self.sectioned_folder.wall_center_anchor();
         self.sectioned_folder.wall_width_frozen.set(false);
+        // Synchronize Gallery's width bookkeeping to the final settled
+        // allocation before refreshing, so the next frame does not perform a
+        // redundant second Photo Wall reflow.
+        let final_width = self
+            .sectioned_folder
+            .scroll
+            .borrow()
+            .as_ref()
+            .map(|scroll| scroll.width().max(1))
+            .unwrap_or_else(|| self.folder_sectioned_root.width().max(1));
+        self.last_layout_width.set(final_width);
         self.sectioned_folder.invalidate_geometry();
         self.sectioned_folder.refresh();
         if let Some((photo_id, viewport_y_offset)) = anchor {

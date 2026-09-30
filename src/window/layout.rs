@@ -797,9 +797,11 @@
         if !split.shows_sidebar() && sidebar_hover_layout_freeze_for_state.get() {
             // A hover-open sidebar may be closed by mouse-leave, destination
             // selection, search, or another compact-layout action. Keep the
-            // gallery frozen through the slide-out, then release without a
-            // forced reflow. If another hover reveal starts first, generation
-            // matching prevents this old timeout from unfreezing the new one.
+            // gallery frozen through the slide-out. When the animation has
+            // settled, release the freeze; Photo Wall then consumes the final
+            // width through its normal geometry path. If another hover reveal
+            // starts first, generation matching prevents this old timeout from
+            // unfreezing the new one.
             sidebar::clear_hover_open(&sidebar_for_show_state);
             let generation = sidebar_hover_freeze_generation_for_state
                 .get()

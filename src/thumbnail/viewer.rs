@@ -47,7 +47,7 @@ fn is_dng(path: &str) -> bool {
 }
 
 fn decode_raw_thumbnail(reference: &str) -> Result<DecodedThumbnailSource> {
-    decode_raw_thumbnail_with_max(reference, THUMBNAIL_SIZE)
+    decode_raw_thumbnail_with_max(reference, thumbnail_size())
 }
 
 fn decode_raw_thumbnail_with_max(reference: &str, max_edge: u32) -> Result<DecodedThumbnailSource> {
@@ -155,7 +155,7 @@ fn decode_raw_thumbnail_inner(reference: &str, max_edge: u32) -> Result<DecodedT
 }
 
 fn decode_dng_sensor_thumbnail(path: &Path) -> Result<DecodedThumbnailSource> {
-    decode_dng_sensor_thumbnail_with_max(path, THUMBNAIL_SIZE)
+    decode_dng_sensor_thumbnail_with_max(path, thumbnail_size())
 }
 
 fn decode_dng_sensor_thumbnail_with_max(
@@ -794,18 +794,18 @@ mod raw_thumbnail_tests {
         .is_err());
         let decoded = decode_raw_thumbnail(&path).unwrap();
         assert_eq!(decoded.scale, "full RAW recovery");
-        assert!(decoded.source_width > THUMBNAIL_SIZE);
-        assert!(decoded.source_height > THUMBNAIL_SIZE);
+        assert!(decoded.source_width > thumbnail_size());
+        assert!(decoded.source_height > thumbnail_size());
         assert_eq!(
             decoded.image.width().max(decoded.image.height()),
-            THUMBNAIL_SIZE
+            thumbnail_size()
         );
 
         let destination =
             std::env::temp_dir().join(format!("picasa-dng-test-{}.jpg", std::process::id()));
         create_uncached(&path, &destination).unwrap();
         let cached = image::open(&destination).unwrap();
-        assert_eq!(cached.width().max(cached.height()), THUMBNAIL_SIZE);
+        assert_eq!(cached.width().max(cached.height()), thumbnail_size());
         fs::remove_file(destination).unwrap();
         let after = fs::metadata(&path).unwrap();
         assert_eq!(before.len(), after.len());

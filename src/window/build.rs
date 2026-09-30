@@ -1599,6 +1599,9 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         let gallery_for_folder_view = gallery.clone();
         let folder_scroll_for_layout = folder_scroll.clone();
         gallery.set_folder_view_changed_handler(move |folder_mode| {
+            // Capture before switching children: GTK may move focus when a
+            // focused renderer is hidden. Search and sidebar focus stay put.
+            let had_gallery_focus = gallery_owns_focus(&gallery_scroll_stack);
             let wall = gallery_for_folder_view.layout() == grid::PhotoLayout::PhotoWall;
             let folder_sectioned =
                 wall || (crate::grid::sectioned_folder_view_enabled() && folder_mode);
@@ -1627,7 +1630,10 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                     if std::env::var_os("PICASA_TRACE").is_some() {
                         eprintln!("PIC_FOLDER_SECTIONED enabled mode=flat_photo_virtualized");
                     }
-                    gallery_for_folder_view.folder_sectioned_root.grab_focus();
+                    transfer_gallery_focus(
+                        had_gallery_focus,
+                        &gallery_for_folder_view.folder_sectioned_root,
+                    );
                     let gallery = gallery_for_folder_view.clone();
                     glib::idle_add_local_once(move || {
                         gallery.refresh_sectioned_folder();
@@ -1638,7 +1644,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                     if std::env::var_os("PICASA_TRACE").is_some() {
                         eprintln!("PIC_FOLDER_GRIDVIEW enabled mode=photo_grid folder_indicator=sticky");
                     }
-                    gallery_for_folder_view.root.grab_focus();
+                    transfer_gallery_focus(had_gallery_focus, &gallery_for_folder_view.root);
                     gallery_for_folder_view
                         .update_group_header_for_scroll(gallery_for_folder_view.scroll_position());
                     let gallery = gallery_for_folder_view.clone();
@@ -1649,10 +1655,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 }
                 // Keep keyboard focus on the widget that is actually shown.
                 // Tab/search helpers used to target the hidden GridView.
-                let had_grid_focus = gallery_for_folder_view.root.has_focus();
-                if had_grid_focus {
-                    gallery_for_folder_view.folder_root.grab_focus();
-                }
+                transfer_gallery_focus(had_gallery_focus, &gallery_for_folder_view.folder_root);
                 // The Folder model rebuild is synchronous. This timeout runs
                 // after that work returns to GTK and paints only the final
                 // visible viewport instead of every intermediate bound row.
@@ -5049,4 +5052,54 @@ fn start_photo_export_single(
     });
 
     window
+}
+
+// Renderer updates should only move focus that already belongs to the gallery.
+fn gallery_owns_focus(container: &impl IsA<gtk::Widget>) -> bool {
+    let container = container.as_ref();
+    container.root().and_then(|root| root.focus()).is_some_and(|focus| {
+        focus == *container || focus.is_ancestor(container)
+    })
+}
+
+fn transfer_gallery_focus(had_gallery_focus: bool, target: &impl IsA<gtk::Widget>) {
+    if had_gallery_focus {
+        target.grab_focus();
+    }
+}
+
+#[cfg(test)]
+mod gallery_search_focus_tests {
+    use super::*;
+
+    #[test]
+    #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+    fn gallery_updates_preserve_search_focus() {
+        gtk::init().expect("GTK display");
+        let window = gtk::Window::new();
+        let layout = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        let search = gtk::SearchEntry::new();
+        let gallery = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        let photo = gtk::Button::with_label("Photo");
+        let next_photo = gtk::Button::with_label("Next photo");
+        gallery.append(&photo);
+        gallery.append(&next_photo);
+        layout.append(&search);
+        layout.append(&gallery);
+        window.set_child(Some(&layout));
+        window.present();
+        search.grab_focus();
+        for query in ["f", "fo", "folder"] {
+            search.set_text(query);
+            transfer_gallery_focus(gallery_owns_focus(&gallery), &photo);
+            let focus = gtk::prelude::RootExt::focus(&window).expect("focused widget");
+            assert!(focus == search.clone().upcast::<gtk::Widget>() || focus.is_ancestor(&search),
+                "gallery update stole focus while typing {query}");
+            assert_eq!(search.text(), query);
+        }
+        photo.grab_focus();
+        transfer_gallery_focus(gallery_owns_focus(&gallery), &next_photo);
+        assert!(gallery_owns_focus(&next_photo));
+        window.close();
+    }
 }

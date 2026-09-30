@@ -554,4 +554,4 @@ impl SectionedFolderView {
         // Photo Wall must never create a second -wall640 sibling.
         self.clear_wall_quality_state();
     }
-}}
+}

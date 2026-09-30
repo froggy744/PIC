@@ -968,3 +968,66 @@ fn photo_wall_uses_canonical_cache_without_separate_wall_quality_requests() {
     window.close();
     settle();
 }
+
+
+#[test]
+#[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+fn photo_wall_width_freeze_ignores_intermediate_sidebar_allocations() {
+    gtk::init().unwrap();
+    let gallery = Rc::new(Gallery::new(
+        &[],
+        180,
+        |_| {},
+        |_, _, _| {},
+        |_, _, _, _| {},
+        |_, _| {},
+        |_| {},
+    ));
+    let objects = (0..80)
+        .map(|i| {
+            glib::Object::builder::<PhotoObject>()
+                .property("id", i as i64 + 1)
+                .property("width", if i % 2 == 0 { 4000_i64 } else { 6000_i64 })
+                .property("height", if i % 2 == 0 { 6000_i64 } else { 4000_i64 })
+                .build()
+        })
+        .collect::<Vec<_>>();
+    gallery.store.splice(0, 0, &objects);
+    gallery.current_photos.replace(objects);
+    gallery.set_layout(PhotoLayout::PhotoWall);
+
+    let scroll = gtk::ScrolledWindow::builder()
+        .child(&gallery.folder_sectioned_root)
+        .build();
+    gallery.attach_sectioned_folder_scroll(&scroll);
+    let window = gtk::Window::builder()
+        .default_width(1000)
+        .default_height(600)
+        .child(&scroll)
+        .build();
+    window.present();
+    settle();
+
+    let surface = &gallery.sectioned_folder;
+    let stable_width = surface.geometry_width.get();
+    assert!(stable_width > 100);
+
+    gallery.set_photo_wall_width_frozen(true);
+    surface.geometry_for_current_layout(stable_width + 173);
+    assert_eq!(
+        surface.geometry_width.get(),
+        stable_width,
+        "Photo Wall followed an intermediate sidebar animation width"
+    );
+
+    gallery.set_photo_wall_width_frozen(false);
+    surface.geometry_for_current_layout(stable_width + 173);
+    assert_eq!(
+        surface.geometry_width.get(),
+        stable_width + 173,
+        "Photo Wall did not resume normal width observation after unfreeze"
+    );
+
+    window.close();
+    settle();
+}

@@ -207,6 +207,42 @@ impl Gallery {
         self.layout() == PhotoLayout::PhotoWall
             || (self.group_mode.get() == GroupMode::Folder && sectioned_folder_view_enabled())
     }
+
+    /// Freeze only Photo Wall's justified-row width while a temporary sidebar
+    /// hover/autohide transition is active. Grid remains untouched.
+    ///
+    /// Unfreezing invalidates the old geometry and lets the normal Photo Wall
+    /// path consume the final GtkScrolledWindow width exactly once. Preserve
+    /// the current viewport anchor so that one final reflow does not jump the
+    /// user to a different photo.
+    pub fn set_photo_wall_width_frozen(self: &Rc<Self>, frozen: bool) {
+        if frozen {
+            if self.layout() == PhotoLayout::PhotoWall
+                && self.sectioned_folder.geometry_width.get() == 0
+            {
+                self.sectioned_folder.refresh();
+            }
+            self.sectioned_folder.wall_width_frozen.set(true);
+            return;
+        }
+
+        if !self.sectioned_folder.wall_width_frozen.replace(false)
+            || self.layout() != PhotoLayout::PhotoWall
+        {
+            return;
+        }
+
+        let anchor = self.sectioned_folder.wall_center_anchor();
+        self.sectioned_folder.invalidate_geometry();
+        self.sectioned_folder.refresh();
+        if let Some((photo_id, viewport_y_offset)) = anchor {
+            self.sectioned_folder.defer_restore_anchor(ViewAnchor {
+                photo_id,
+                viewport_y_offset,
+            });
+        }
+    }
+
     pub fn set_layout(self: &Rc<Self>, layout: PhotoLayout) {
         if self.layout() == layout {
             return;

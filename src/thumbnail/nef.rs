@@ -208,6 +208,12 @@ fn remote_nef_embedded_jpeg(reference: &str, largest: bool) -> Result<Option<Vec
 #[cfg(target_os = "linux")]
 fn remote_nef_orientation(reference: &str) -> Option<u16> {
     let mut file = RemoteNefReader::open(reference).ok()?;
+    tiff_root_orientation(&mut file)
+}
+
+// Only the root IFD is needed: do not scan or preload RAW sensor strips.
+fn tiff_root_orientation(file: &mut (impl Read + Seek)) -> Option<u16> {
+    file.seek(SeekFrom::Start(0)).ok()?;
     let mut header = [0; 8];
     file.read_exact(&mut header).ok()?;
     let little = match &header[..2] {
@@ -220,7 +226,7 @@ fn remote_nef_orientation(reference: &str) -> Option<u16> {
     }
     file.seek(SeekFrom::Start(u64::from(tiff_u32(&header[4..8], little))))
         .ok()?;
-    let count = read_tiff_u16(&mut file, little).ok()? as usize;
+    let count = read_tiff_u16(file, little).ok()? as usize;
     if count > 1024 {
         return None;
     }
@@ -230,7 +236,7 @@ fn remote_nef_orientation(reference: &str) -> Option<u16> {
         if tiff_u16(&entry[..2], little) == 0x0112 && tiff_u32(&entry[4..8], little) == 1 {
             let value = match tiff_u16(&entry[2..4], little) {
                 3 => tiff_u16(&entry[8..10], little),
-                4 => tiff_u32(&entry[8..12], little) as u16,
+                4 => u16::try_from(tiff_u32(&entry[8..12], little)).ok()?,
                 _ => return None,
             };
             return (1..=8).contains(&value).then_some(value);
@@ -340,4 +346,86 @@ fn tiff_u32(bytes: &[u8], little_endian: bool) -> u32 {
     } else {
         u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
     }
+}
+
+#[cfg(test)]
+mod tiff_orientation_io_tests {
+    use super::*;
+    struct MetadataOnly(std::io::Cursor<Vec<u8>>);
+    impl Read for MetadataOnly {
+        fn read(&mut self, bytes: &mut [u8]) -> std::io::Result<usize> {
+            assert!(self.0.position() + bytes.len() as u64 <= 22, "orientation read sensor pixels");
+            self.0.read(bytes)
+        }
+    }
+    impl Seek for MetadataOnly {
+        fn seek(&mut self, position: SeekFrom) -> std::io::Result<u64> {
+            self.0.seek(position)
+        }
+    }
+    #[test]
+    fn malformed_tiff_orientation_defaults_without_reading_sensor_data() {
+        for value in [0u32, 9, 65537] {
+            let mut bytes = b"II\x2a\0\x08\0\0\0\x01\0\x12\x01\x04\0\x01\0\0\0".to_vec();
+            bytes.extend(value.to_le_bytes());
+            let mut file = MetadataOnly(std::io::Cursor::new(bytes));
+            assert_eq!(orientation_from_container(&mut file), 1);
+        }
+        let mut file = std::io::Cursor::new(b"II\x2a\0\xff\xff\xff\xff".to_vec());
+        assert_eq!(orientation_from_container(&mut file), 1);
+    }
+
+    #[test]
+    fn tiff_orientation_reads_only_root_metadata_in_both_byte_orders() {
+        for little in [true, false] {
+            for kind in [3u16, 4] {
+                for value in 1..=8u32 {
+                    let u16_bytes = |v: u16| if little { v.to_le_bytes() } else { v.to_be_bytes() };
+                    let u32_bytes = |v: u32| if little { v.to_le_bytes() } else { v.to_be_bytes() };
+                    let mut bytes = if little { b"II".to_vec() } else { b"MM".to_vec() };
+                    bytes.extend(u16_bytes(42));
+                    bytes.extend(u32_bytes(8));
+                    bytes.extend(u16_bytes(1));
+                    bytes.extend(u16_bytes(0x112));
+                    bytes.extend(u16_bytes(kind));
+                    bytes.extend(u32_bytes(1));
+                    if kind == 3 {
+                        bytes.extend(u16_bytes(value as u16));
+                        bytes.extend([0, 0]);
+                    } else {
+                        bytes.extend(u32_bytes(value));
+                    }
+                    let mut file = MetadataOnly(std::io::Cursor::new(bytes));
+                    assert_eq!(orientation_from_container(&mut file), value as u16);
+                }
+            }
+        }
+    }
+}
+
+fn orientation_from_container(file: &mut (impl Read + Seek)) -> u16 {
+    let mut header = [0; 8];
+    if file.read_exact(&mut header).is_err() {
+        return 1;
+    }
+    let classic_tiff = (&header[..2] == b"II" && header[2..4] == [42, 0])
+        || (&header[..2] == b"MM" && header[2..4] == [0, 42]);
+    if classic_tiff {
+        // Missing/invalid orientation in a TIFF defaults to upright. Falling
+        // back to the EXIF library here would read the entire RAW into RAM.
+        return tiff_root_orientation(file).unwrap_or(1);
+    }
+    if file.seek(SeekFrom::Start(0)).is_err() {
+        return 1;
+    }
+    exif::Reader::new()
+        .read_from_container(&mut BufReader::new(file))
+        .ok()
+        .and_then(|exif| {
+            exif.get_field(exif::Tag::Orientation, exif::In::PRIMARY)
+                .and_then(|field| field.value.get_uint(0))
+                .and_then(|value| u16::try_from(value).ok())
+                .filter(|orientation| (1..=8).contains(orientation))
+        })
+        .unwrap_or(1)
 }

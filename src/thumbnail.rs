@@ -34,17 +34,21 @@ type PriorityRequest = (
     PathBuf,
     std::time::Instant,
     Option<crate::thumbnail_display::DisplayRequest>,
+    bool,
 );
 
 type PriorityQueue = (Mutex<VecDeque<PriorityRequest>>, Condvar);
 
 static PRIORITY_QUEUE: OnceLock<Arc<PriorityQueue>> = OnceLock::new();
-static PRIORITY_PENDING: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
+static PRIORITY_PENDING: OnceLock<Mutex<HashMap<PathBuf, ThumbnailWorkState>>> = OnceLock::new();
 static PRIORITY_COMPLETIONS: OnceLock<Mutex<Vec<PathBuf>>> = OnceLock::new();
 static WALL_WAITERS: OnceLock<
     Mutex<HashMap<PathBuf, Vec<crate::thumbnail_display::DisplayRequest>>>,
 > = OnceLock::new();
 static WALL_WANTED: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+static RAW_ACTIVE: AtomicUsize = AtomicUsize::new(0);
+static NEF_ACTIVE: AtomicUsize = AtomicUsize::new(0);
+static VISIBLE_GENERATION_WANTED: OnceLock<Mutex<Option<HashMap<String, usize>>>> = OnceLock::new();
 static WALL_ACTIVE: AtomicUsize = AtomicUsize::new(0);
 static PRIORITY_DISPATCHES: AtomicUsize = AtomicUsize::new(0);
 // Grid and Photo Wall share one canonical cache. The setting only changes
@@ -85,12 +89,33 @@ fn cache_entry_in_flight(destination: &Path) -> bool {
         .unwrap_or(false)
 }
 
+// Missing, Ready and Failed are represented by the cache and its failure
+// marker. Keep ownership for both pending states to suppress repeated binds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ThumbnailWorkState {
+    Queued,
+    Generating,
+}
+
+struct RawWorkerGuard(bool, bool, Arc<PriorityQueue>);
+
+impl Drop for RawWorkerGuard {
+    fn drop(&mut self) {
+        if self.0 || self.1 {
+            let _jobs = self.2.0.lock().expect("priority queue lock");
+            if self.0 { RAW_ACTIVE.fetch_sub(1, Ordering::Relaxed); }
+            if self.1 { NEF_ACTIVE.fetch_sub(1, Ordering::Relaxed); }
+            self.2.1.notify_all();
+        }
+    }
+}
+
 struct PendingGuard(PathBuf);
 
 impl Drop for PendingGuard {
     fn drop(&mut self) {
         if let Ok(mut pending) = PRIORITY_PENDING
-            .get_or_init(|| Mutex::new(HashSet::new()))
+            .get_or_init(|| Mutex::new(HashMap::new()))
             .lock()
         {
             pending.remove(&self.0);
@@ -99,9 +124,9 @@ impl Drop for PendingGuard {
 }
 
 /// Ask the dedicated foreground thumbnail worker to create a thumbnail for a
-/// tile that is currently being bound. The request is best-effort and
-/// deduplicated; the regular bulk recovery/import pass remains untouched.
-pub fn request_priority(path: String, mtime: Option<i64>, size_bytes: Option<i64>) {
+/// tile that is being bound or prefetched. Visible requests are promoted
+/// ahead of prefetch work and ownership lasts through generation.
+pub fn request_priority(path: String, mtime: Option<i64>, size_bytes: Option<i64>, visible: bool) {
     let Ok(destination) = cache_path(&path, mtime, size_bytes) else {
         return;
     };
@@ -122,46 +147,63 @@ pub fn request_priority(path: String, mtime: Option<i64>, size_bytes: Option<i64
         return;
     }
 
-    let pending = PRIORITY_PENDING.get_or_init(|| Mutex::new(HashSet::new()));
+    let queue = priority_queue();
+    let (jobs, wake) = &**queue;
+    let mut jobs = jobs.lock().expect("priority queue lock");
+    let visible = current_generation_priority(&path, visible);
+    let pending = PRIORITY_PENDING.get_or_init(|| Mutex::new(HashMap::new()));
     let Ok(mut pending) = pending.lock() else {
         return;
     };
-    if !pending.insert(destination.clone()) {
+    if pending.contains_key(&destination) {
+        if visible {
+            if let Some(job) = jobs.iter_mut().find(|job| job.3 == destination) {
+                job.6 = true;
+                wake.notify_all();
+            }
+        }
         return;
     }
+    pending.insert(destination.clone(), ThumbnailWorkState::Queued);
     drop(pending);
     if std::env::var_os("PICASA_TRACE").is_some() {
         eprintln!(
-            "PIC_THUMBNAIL schedule source=visible uri={path} cache={}",
+            "PIC_THUMBNAIL schedule source={} uri={path} cache={}",
+            if visible { "visible" } else { "prefetch" },
             destination.display()
         );
     }
 
-    let queue = priority_queue();
-    let (queue, wake) = &**queue;
-    let mut queue = queue.lock().expect("priority queue should not be poisoned");
-    if queue.len() >= PRIORITY_QUEUE_CAPACITY {
-        if let Some((_, _, _, evicted, _, quality)) = queue.pop_back() {
+    if jobs.len() >= PRIORITY_QUEUE_CAPACITY {
+        // Prefetch may replace older prefetch, but cannot evict onscreen work.
+        let eviction = jobs.iter().rposition(|job| !job.6)
+            .or_else(|| visible.then(|| jobs.len() - 1));
+        let Some(eviction) = eviction else {
+            drop(PendingGuard(destination));
+            return;
+        };
+        if let Some((_, _, _, evicted, _, quality, _)) = jobs.remove(eviction) {
             if let Some(request) = quality {
                 crate::thumbnail_display::retry_wall_request(request.key);
             }
             if let Ok(mut pending) = PRIORITY_PENDING
-                .get_or_init(|| Mutex::new(HashSet::new()))
+                .get_or_init(|| Mutex::new(HashMap::new()))
                 .lock()
             {
                 pending.remove(&evicted);
             }
         }
     }
-    queue.push_front((
+    jobs.push_front((
         path,
         mtime,
         size_bytes,
         destination.clone(),
         std::time::Instant::now(),
         None,
+        visible,
     ));
-    wake.notify_one();
+    wake.notify_all();
 }
 
 /// Return the source paths whose foreground thumbnails finished since the last UI poll.
@@ -175,14 +217,9 @@ pub fn take_priority_completions() -> Vec<PathBuf> {
 
 pub fn priority_pending_count() -> usize {
     PRIORITY_PENDING
-        .get_or_init(|| Mutex::new(HashSet::new()))
+        .get_or_init(|| Mutex::new(HashMap::new()))
         .lock()
-        .map(|pending| {
-            pending
-                .iter()
-                .filter(|path| !path.to_string_lossy().ends_with("-wall640.jpg"))
-                .count()
-        })
+        .map(|pending| pending.len())
         .unwrap_or_default()
 }
 
@@ -200,6 +237,7 @@ include!("thumbnail/maintenance.rs");
 include!("thumbnail/recovery.rs");
 include!("thumbnail/viewer.rs");
 include!("thumbnail/nef.rs");
+include!("thumbnail/dng.rs");
 include!("thumbnail/decoders.rs");
 include!("thumbnail/batch.rs");
 
@@ -225,16 +263,142 @@ mod wall_queue_tests {
             PathBuf::from("a"),
             std::time::Instant::now(),
             quality.then_some(request),
+            true,
         )
     }
     #[test]
+    fn visible_jpeg_precedes_newer_raw_requests() {
+        let mut raw = job(false);
+        raw.0 = "/photo/newer.DNG".into();
+        let mut jpeg = job(false);
+        jpeg.0 = "/photo/visible.JPG".into();
+        let jobs = VecDeque::from([raw, jpeg]);
+        assert_eq!(priority_dispatch_index(&jobs, 0, 0, 0, 0), Some(1));
+    }
+
+    #[test]
+    fn active_raw_leaves_workers_available_for_visible_images() {
+        let mut raw = job(false);
+        raw.0 = "/photo/a.dng".into();
+        let mut quality_raw = raw.clone();
+        quality_raw.5 = job(true).5;
+        let mut jobs = VecDeque::from([raw, quality_raw]);
+        assert_eq!(priority_dispatch_index(&jobs, 0, 0, 1, 0), None);
+        jobs.push_back(job(false));
+        assert_eq!(priority_dispatch_index(&jobs, 0, 0, 1, 0), Some(2));
+        assert_eq!(priority_dispatch_index(&jobs, 0, 0, 0, 0), Some(2));
+    }
+
+    #[test]
+    fn visible_nef_preview_does_not_wait_for_active_dng() {
+        let mut nef = job(false);
+        nef.0 = "/photo/current.nef".into();
+        let jobs = VecDeque::from([nef]);
+        assert_eq!(priority_dispatch_index(&jobs, 0, 0, 1, 0), Some(0));
+    }
+
+    #[test]
+    fn two_nef_previews_still_leave_a_worker_for_visible_jpeg() {
+        let mut nef = job(false);
+        nef.0 = "/photo/current.nef".into();
+        let mut jobs = VecDeque::from([nef]);
+        assert_eq!(priority_dispatch_index(&jobs, 0, 0, 1, 2), None);
+        jobs.push_back(job(false));
+        assert_eq!(priority_dispatch_index(&jobs, 0, 0, 1, 2), Some(1));
+    }
+
+    #[test]
+    fn viewport_change_demotes_old_generation_and_promotes_current_requests() {
+        let mut old = job(false);
+        old.0 = "/photo/old.dng".into();
+        let mut current = job(false);
+        current.0 = "/photo/current.nef".into();
+        current.6 = false;
+        let mut jobs = VecDeque::from([old, current]);
+        let wanted = HashMap::from([("/photo/current.nef".into(), 0)]);
+        update_generation_visibility(&mut jobs, &wanted);
+        assert_eq!(jobs.len(), 2);
+        assert_eq!(jobs[0].0, "/photo/current.nef");
+        assert!(jobs[0].6);
+        assert!(!jobs[1].6);
+    }
+
+    #[test]
+    fn late_prefetch_becoming_visible_uses_current_viewport_priority() {
+        let wanted = HashMap::from([("/photo/current.nef".into(), 0)]);
+        assert!(generation_priority_for("/photo/current.nef", false, Some(&wanted)));
+        assert!(!generation_priority_for("/photo/old.dng", true, Some(&wanted)));
+        assert!(generation_priority_for("/photo/initial.jpg", true, None));
+    }
+
+    #[test]
+    fn empty_viewport_demotes_all_queued_generation() {
+        let mut jobs = VecDeque::from([job(false), job(true)]);
+        update_generation_visibility(&mut jobs, &HashMap::new());
+        assert!(jobs.iter().all(|job| !job.6));
+        assert_eq!(jobs.len(), 2);
+    }
+
+    #[test]
+    fn visible_raw_precedes_prefetched_jpeg() {
+        let mut raw = job(false);
+        raw.0 = "/photo/visible.dng".into();
+        let mut jpeg = job(false);
+        jpeg.0 = "/photo/prefetch.jpg".into();
+        jpeg.6 = false;
+        let jobs = VecDeque::from([jpeg, raw]);
+        assert_eq!(priority_dispatch_index(&jobs, 0, 0, 0, 0), Some(1));
+        assert_eq!(priority_dispatch_index(&jobs, 0, 0, 1, 0), Some(0));
+    }
+
+    #[test]
     fn wall_quality_queue_preserves_normal_precedence_and_two_worker_limit() {
         let mut jobs = VecDeque::from([job(true), job(false), job(true)]);
-        assert_eq!(priority_dispatch_index(&jobs, 0, 0), Some(1));
+        assert_eq!(priority_dispatch_index(&jobs, 0, 0, 0, 0), Some(1));
         jobs.remove(1);
-        assert_eq!(priority_dispatch_index(&jobs, 2, 0), None);
-        assert_eq!(priority_dispatch_index(&jobs, 1, 0), Some(0));
+        assert_eq!(priority_dispatch_index(&jobs, 2, 0, 0, 0), None);
+        assert_eq!(priority_dispatch_index(&jobs, 1, 0, 0, 0), Some(0));
     }
+}
+
+fn update_generation_visibility(
+    jobs: &mut VecDeque<PriorityRequest>,
+    wanted: &HashMap<String, usize>,
+) {
+    for job in jobs.iter_mut() {
+        job.6 = wanted.contains_key(&job.0);
+    }
+    jobs.make_contiguous().sort_by_key(|job| {
+        wanted.get(&job.0).copied().unwrap_or(usize::MAX)
+    });
+}
+
+fn generation_priority_for(
+    path: &str,
+    requested: bool,
+    wanted: Option<&HashMap<String, usize>>,
+) -> bool {
+    wanted.map_or(requested, |wanted| wanted.contains_key(path))
+}
+
+// Call under the generation queue lock, as viewport updates do.
+fn current_generation_priority(path: &str, requested: bool) -> bool {
+    let wanted = VISIBLE_GENERATION_WANTED.get_or_init(|| Mutex::new(None))
+        .lock().expect("generation viewport lock");
+    generation_priority_for(path, requested, wanted.as_ref())
+}
+
+/// Generation and cache presentation must agree about the current viewport.
+/// Keep old requests deduplicated, but demote them to prefetch priority.
+pub fn retain_visible_generation_requests(requests: &[crate::thumbnail_display::DisplayRequest]) {
+    let wanted: HashMap<String, usize> = requests.iter().enumerate()
+        .map(|(index, request)| (request.source_path.clone(), index)).collect();
+    let queue = priority_queue();
+    let mut jobs = queue.0.lock().expect("priority queue lock");
+    update_generation_visibility(&mut jobs, &wanted);
+    *VISIBLE_GENERATION_WANTED.get_or_init(|| Mutex::new(None))
+        .lock().expect("generation viewport lock") = Some(wanted);
+    queue.1.notify_all();
 }
 
 fn priority_queue() -> &'static Arc<PriorityQueue> {
@@ -246,7 +410,7 @@ fn priority_queue() -> &'static Arc<PriorityQueue> {
         for _ in 0..PRIORITY_WORKERS {
             let queue = queue.clone();
             std::thread::spawn(move || loop {
-                let (path, mtime, size_bytes, destination, queued_at, quality) = {
+                let (path, mtime, size_bytes, destination, queued_at, quality, visible) = {
                     let (queue, wake) = &*queue;
                     let mut queue = queue.lock().expect("priority queue should not be poisoned");
                     let job = loop {
@@ -255,9 +419,19 @@ fn priority_queue() -> &'static Arc<PriorityQueue> {
                             &queue,
                             WALL_ACTIVE.load(Ordering::Relaxed),
                             dispatch,
+                            RAW_ACTIVE.load(Ordering::Relaxed),
+                            NEF_ACTIVE.load(Ordering::Relaxed),
                         ) {
                             PRIORITY_DISPATCHES.fetch_add(1, Ordering::Relaxed);
                             let job = queue.remove(index).expect("selected queued request");
+                            if is_nikon_raw(&job.0) {
+                                NEF_ACTIVE.fetch_add(1, Ordering::Relaxed);
+                            } else if is_raw(&job.0) {
+                                RAW_ACTIVE.fetch_add(1, Ordering::Relaxed);
+                            }
+                            if let Ok(mut pending) = PRIORITY_PENDING.get().unwrap().lock() {
+                                pending.insert(job.3.clone(), ThumbnailWorkState::Generating);
+                            }
                             if job.5.is_some() {
                                 WALL_ACTIVE.fetch_add(1, Ordering::Relaxed);
                             }
@@ -269,9 +443,13 @@ fn priority_queue() -> &'static Arc<PriorityQueue> {
                     };
                     job
                 };
+                let _raw_guard = RawWorkerGuard(
+                    is_raw(&path) && !is_nikon_raw(&path), is_nikon_raw(&path), queue.clone()
+                );
                 if std::env::var_os("PICASA_TRACE").is_some() {
                     eprintln!(
-                        "PIC_THUMBNAIL queue_wait kind=visible elapsed_us={}",
+                        "PIC_THUMBNAIL queue_wait kind={} elapsed_us={} uri={path}",
+                        if visible { "visible" } else { "prefetch" },
                         queued_at.elapsed().as_micros()
                     );
                 }
@@ -282,7 +460,7 @@ fn priority_queue() -> &'static Arc<PriorityQueue> {
                     let requests = {
                         let _jobs = queue.0.lock().expect("priority queue lock");
                         PRIORITY_PENDING
-                            .get_or_init(|| Mutex::new(HashSet::new()))
+                            .get_or_init(|| Mutex::new(HashMap::new()))
                             .lock()
                             .expect("priority pending lock")
                             .remove(&destination);
@@ -341,23 +519,44 @@ fn priority_dispatch_index(
     jobs: &VecDeque<PriorityRequest>,
     active_quality: usize,
     dispatch: usize,
+    active_raw: usize,
+    active_nef: usize,
 ) -> Option<usize> {
-    let ordinary = if dispatch % (PRIORITY_NEWEST_DISPATCHES + 1) == PRIORITY_NEWEST_DISPATCHES {
-        jobs.iter().rposition(|job| job.5.is_none())
-    } else {
-        jobs.iter().position(|job| job.5.is_none())
+    // NEF embedded previews must not wait behind DNG sensor recovery.
+    // At most two NEFs and one other RAW occupy the four-worker pool,
+    // reserving at least one worker for visible JPEGs and other formats.
+    let eligible = |job: &PriorityRequest| {
+        if is_nikon_raw(&job.0) { active_nef < 2 }
+        else { !is_raw(&job.0) || active_raw == 0 }
     };
-    ordinary.or_else(|| {
+    let select = |predicate: &dyn Fn(&PriorityRequest) -> bool| {
+        if dispatch % (PRIORITY_NEWEST_DISPATCHES + 1) == PRIORITY_NEWEST_DISPATCHES {
+            jobs.iter().rposition(predicate)
+        } else {
+            jobs.iter().position(predicate)
+        }
+    };
+    let ordinary = |visible: bool| {
+        select(&|job| job.6 == visible && job.5.is_none() && is_jpeg(&job.0))
+            .or_else(|| select(&|job| job.6 == visible && job.5.is_none() && (!is_raw(&job.0) || is_nikon_raw(&job.0)) && eligible(job)))
+            .or_else(|| select(&|job| job.6 == visible && job.5.is_none() && eligible(job)))
+    };
+    let quality = |visible: bool| {
         (active_quality < 2)
-            .then(|| jobs.iter().position(|job| job.5.is_some()))
+            .then(|| jobs.iter().position(|job| job.6 == visible && job.5.is_some() && eligible(job)))
             .flatten()
-    })
+    };
+    ordinary(true)
+        .or_else(|| quality(true))
+        .or_else(|| ordinary(false))
+        .or_else(|| quality(false))
 }
 
 pub fn request_wall_quality(request: crate::thumbnail_display::DisplayRequest) -> bool {
     let destination = PathBuf::from(&request.cached_path);
     let queue = priority_queue();
     let mut jobs = queue.0.lock().expect("priority queue lock");
+    let visible = current_generation_priority(&request.source_path, request.visible_priority);
     if !WALL_WANTED
         .get_or_init(|| Mutex::new(HashSet::new()))
         .lock()
@@ -370,7 +569,7 @@ pub fn request_wall_quality(request: crate::thumbnail_display::DisplayRequest) -
         return false;
     }
     let mut pending = PRIORITY_PENDING
-        .get_or_init(|| Mutex::new(HashSet::new()))
+        .get_or_init(|| Mutex::new(HashMap::new()))
         .lock()
         .expect("priority pending lock");
     record_wall_waiter(
@@ -380,16 +579,24 @@ pub fn request_wall_quality(request: crate::thumbnail_display::DisplayRequest) -
             .expect("wall waiters lock"),
         request.clone(),
     );
-    if !pending.insert(destination.clone()) {
+    if pending.contains_key(&destination) {
+        if visible {
+            if let Some(job) = jobs.iter_mut().find(|job| job.3 == destination) {
+                job.6 = true;
+                queue.1.notify_all();
+            }
+        }
         return true;
     }
+    pending.insert(destination.clone(), ThumbnailWorkState::Queued);
     jobs.push_back((
         request.source_path.clone(),
         Some(request.mtime),
         Some(request.size_bytes),
         destination,
         std::time::Instant::now(),
-        Some(request),
+        Some(request.clone()),
+        visible,
     ));
     drop(pending);
     drop(jobs);
@@ -407,7 +614,7 @@ pub fn retain_wall_quality_requests(wanted: &HashSet<String>) {
     };
     let mut jobs = queue.0.lock().expect("priority queue lock");
     let mut pending = PRIORITY_PENDING
-        .get_or_init(|| Mutex::new(HashSet::new()))
+        .get_or_init(|| Mutex::new(HashMap::new()))
         .lock()
         .expect("priority pending lock");
     WALL_WAITERS

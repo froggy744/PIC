@@ -71,13 +71,61 @@ fn decode_raw_thumbnail_inner(reference: &str, max_edge: u32) -> Result<DecodedT
     let local_path = crate::source::materialize(reference)?;
     let mut failures = Vec::new();
 
-    // Prefer rawler's larger decoded preview for the cached thumbnail. This is
-    // the generic path used by DNG and every other supported RAW format.
+    if is_dng(reference) {
+        match rawler_decode(reference, "thumbnail_dng_embedded", || {
+            dng_embedded_preview(&local_path)
+        }) {
+            Ok(Some(preview)) => return Ok(preview),
+            Ok(None) => {},
+            Err(error) => failures.push(format!("Samsung embedded preview: {error}")),
+        }
+    }
+
+    // Read Nikon embedded images directly before asking rawler to decode;
+    // applying them to DNG/CR2/ARW/etc. can misinterpret unrelated TIFF data.
+    if is_nikon_raw(reference) {
+        for largest in [true, false] {
+            let bytes = if largest {
+                nef_embedded_preview(&local_path)
+            } else {
+                nef_embedded_thumbnail(&local_path)
+            };
+            match bytes {
+                Ok(Some(bytes)) => {
+                    // Preserve preview quality while TurboJPEG decodes directly
+                    // at thumbnail scale rather than at camera resolution.
+                    match decode_jpeg_turbo_with_max(&bytes, max_edge)
+                        .or_else(|_| decode_with_image(&bytes))
+                    {
+                        Ok(mut decoded) => {
+                            decoded.scale = if largest {
+                                "embedded JPEG preview"
+                            } else {
+                                "embedded JPEG thumbnail"
+                            };
+                            return Ok(decoded);
+                        }
+                        Err(error) => failures.push(format!("Nikon JPEG preview decode: {error}")),
+                    }
+                }
+                Ok(None) => failures.push("Nikon JPEG preview: not found".into()),
+                Err(error) => failures.push(format!("Nikon JPEG preview: {error}")),
+            }
+        }
+        match nef_uncompressed_thumbnail(&local_path) {
+            Ok(Some(thumbnail)) => return Ok(thumbnail),
+            Ok(None) => failures.push("Nikon uncompressed thumbnail: not found".into()),
+            Err(error) => failures.push(format!("Nikon uncompressed thumbnail: {error}")),
+        }
+    }
+
+    // Call the embedded-image methods directly. The analyze helpers silently
+    // fall back to full RAW development when an embedded image is absent.
     match rawler_decode(reference, "thumbnail_preview", || {
-        Ok(rawler::analyze::extract_preview_pixels(
-            local_path.clone(),
-            &rawler::decoders::RawDecodeParams::default(),
-        )?)
+        let source = rawler::rawsource::RawSource::new(&local_path)?;
+        rawler::get_decoder(&source)?
+            .preview_image(&source, &rawler::decoders::RawDecodeParams::default())?
+            .context("no embedded RAW preview")
     }) {
         Ok(image) => {
             let source_width = image.width();
@@ -95,35 +143,11 @@ fn decode_raw_thumbnail_inner(reference: &str, max_edge: u32) -> Result<DecodedT
         }
     }
 
-    // These fallbacks understand Nikon's unusual embedded thumbnail layout;
-    // applying them to DNG/CR2/ARW/etc. can misinterpret unrelated TIFF data.
-    if is_nikon_raw(reference) {
-        match nef_uncompressed_thumbnail(&local_path) {
-            Ok(Some(thumbnail)) => return Ok(thumbnail),
-            Ok(None) => failures.push("Nikon uncompressed thumbnail: not found".into()),
-            Err(error) => failures.push(format!("Nikon uncompressed thumbnail: {error}")),
-        }
-        match nef_embedded_thumbnail(&local_path) {
-            Ok(Some(bytes)) => {
-                // Nikon writes this tiny JPEG in IFD1. It is vastly faster
-                // than decoding the full-size camera preview for a tile.
-                match decode_jpeg_turbo_with_max(&bytes, max_edge)
-                    .or_else(|_| decode_with_image(&bytes))
-                {
-                    Ok(decoded) => return Ok(decoded),
-                    Err(error) => failures.push(format!("Nikon JPEG thumbnail decode: {error}")),
-                }
-            }
-            Ok(None) => failures.push("Nikon JPEG thumbnail: not found".into()),
-            Err(error) => failures.push(format!("Nikon JPEG thumbnail: {error}")),
-        }
-    }
-
     match rawler_decode(reference, "thumbnail", || {
-        Ok(rawler::analyze::extract_thumbnail_pixels(
-            &local_path,
-            &rawler::decoders::RawDecodeParams::default(),
-        )?)
+        let source = rawler::rawsource::RawSource::new(&local_path)?;
+        rawler::get_decoder(&source)?
+            .thumbnail_image(&source, &rawler::decoders::RawDecodeParams::default())?
+            .context("no embedded RAW thumbnail")
     }) {
         Ok(image) => {
             let source_width = image.width();
@@ -588,20 +612,7 @@ pub fn exif_orientation(reference: &str) -> u16 {
 
     let orientation = fs::File::open(local)
         .ok()
-        .and_then(|file| {
-            exif::Reader::new()
-                .read_from_container(&mut BufReader::new(file))
-                .ok()
-        })
-        .and_then(|exif| {
-            exif.get_field(exif::Tag::Orientation, exif::In::PRIMARY)
-                .and_then(|field| match &field.value {
-                    exif::Value::Short(values) => values.first().copied(),
-                    exif::Value::Long(values) => values.first().copied().map(|value| value as u16),
-                    _ => None,
-                })
-                .filter(|orientation| (1..=8).contains(orientation))
-        })
+        .map(|mut file| orientation_from_container(&mut file))
         .unwrap_or(1);
     let mut cache = cache.lock().unwrap();
     if cache.len() >= 256 {
@@ -722,6 +733,29 @@ mod tests {
 #[cfg(test)]
 mod raw_thumbnail_tests {
     use super::*;
+
+    #[test]
+    #[ignore = "set PICASA_TEST_RAW to profile a local RAW thumbnail"]
+    fn profiles_requested_raw_thumbnail() {
+        let path = std::env::var("PICASA_TEST_RAW").expect("PICASA_TEST_RAW must name a fixture");
+        let started = std::time::Instant::now();
+        let decoded = decode_raw_thumbnail(&path).unwrap();
+        eprintln!("RAW thumbnail strategy={} elapsed_ms={} source={}x{} output={}x{}",
+            decoded.scale, started.elapsed().as_millis(), decoded.source_width,
+            decoded.source_height, decoded.image.width(), decoded.image.height());
+        assert!(decoded.image.width() > 0);
+        assert!(decoded.image.height() > 0);
+        let destination = std::env::temp_dir().join(format!(
+            "pic-profile-thumbnail-{}.jpg", std::process::id()
+        ));
+        let started = std::time::Instant::now();
+        create_uncached(&path, &destination).unwrap();
+        let thumbnail = image::open(&destination).unwrap();
+        eprintln!("RAW thumbnail cache_generation_ms={} cached_dimensions={}x{}",
+            started.elapsed().as_millis(), thumbnail.width(), thumbnail.height());
+        assert!(thumbnail.width().max(thumbnail.height()) <= thumbnail_size());
+        fs::remove_file(destination).unwrap();
+    }
 
     #[test]
     fn non_nikon_raw_never_uses_nikon_thumbnail_fallbacks() {

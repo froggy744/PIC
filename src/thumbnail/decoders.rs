@@ -294,16 +294,22 @@ fn rawler_decode<T>(
     operation: &str,
     decode: impl FnOnce() -> Result<T> + std::panic::UnwindSafe,
 ) -> Result<T> {
+    let started = std::time::Instant::now();
     let trace = std::env::var_os("PICASA_TRACE").is_some();
     if trace {
         eprintln!("RAW TRACE decode_start operation={operation} path={reference}");
     }
-    std::panic::catch_unwind(decode).unwrap_or_else(|_| {
+    let result = std::panic::catch_unwind(decode).unwrap_or_else(|_| {
         if trace {
             eprintln!("RAW TRACE panic_caught operation={operation} path={reference}");
         }
         Err(RawlerPanic(reference.to_owned()).into())
-    })
+    });
+    if trace {
+        eprintln!("RAW TRACE decode_end operation={operation} elapsed_ms={} success={} path={reference}",
+            started.elapsed().as_millis(), result.is_ok());
+    }
+    result
 }
 
 #[cfg(test)]

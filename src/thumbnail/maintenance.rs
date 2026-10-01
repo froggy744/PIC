@@ -222,7 +222,7 @@ fn currently_generating_cache_paths() -> HashSet<PathBuf> {
     }
     if let Some(pending) = PRIORITY_PENDING.get() {
         if let Ok(pending) = pending.lock() {
-            paths.extend(pending.iter().cloned());
+            paths.extend(pending.keys().cloned());
         }
     }
     paths

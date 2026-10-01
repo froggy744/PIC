@@ -225,6 +225,7 @@ fn submit_with_policy(request: DisplayRequest, newest_visible_first: bool) -> bo
 /// prefetch, promotes matching background requests, and inserts the current
 /// viewport in caller order.
 pub fn replace_visible_requests(mut requests: Vec<DisplayRequest>) -> usize {
+    crate::thumbnail::retain_visible_generation_requests(&requests);
     if requests.is_empty() {
         return 0;
     }
@@ -417,6 +418,7 @@ fn load_thumbnail_with_policy(request: &DisplayRequest, regenerate: bool) -> Dis
             request.source_path.clone(),
             Some(request.mtime),
             Some(request.size_bytes),
+            request.visible_priority,
         );
         return DisplayOutcome::Missing;
     }
@@ -439,6 +441,7 @@ fn load_thumbnail_with_policy(request: &DisplayRequest, regenerate: bool) -> Dis
                 request.source_path.clone(),
                 Some(request.mtime),
                 Some(request.size_bytes),
+                request.visible_priority,
             );
             return DisplayOutcome::Failed;
         }

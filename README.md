@@ -79,7 +79,9 @@ Open **Edit Mode** from the pencil button or a photo's context menu. Use the fiv
 - Image overlays and styled text with placement, size and opacity controls.
 - Undo, redo, reset, and copy/paste of edits between photos.
 
-<img src="screenshots/effects%20screen.jpg" alt="Edit Mode with live filter previews and an edited portrait" width="900">
+<a href="screenshots/edit-mode.mp4"><img src="screenshots/effects%20screen.jpg" alt="Watch the Edit Mode video demonstration" width="900"></a>
+
+[Watch Edit Mode in action (MP4, about 1 minute)](screenshots/edit-mode.mp4).
 
 Edits are saved as recipes. Export renders a new image with the changes applied, leaving the source file intact. PIC is intended for practical photo adjustments; it is not a full professional RAW development suite.
 

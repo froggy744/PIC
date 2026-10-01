@@ -244,10 +244,9 @@ fn create_uncached_with_max(path: &str, destination: &PathBuf, max_edge: u32) ->
                 // issuing a second NFS/SMB metadata range request.
                 remote_jpeg_orientation = Some(jpeg_orientation_from_header(&bytes));
             }
-            match decode_jpeg_turbo_with_max(&bytes, max_edge) {
-                Ok(decoded) => decoded.image,
-                Err(_) => decode_with_image(&bytes)?.image,
-            }
+            let decoded = decode_jpeg_turbo_with_max(&bytes, max_edge)
+                .or_else(|_| decode_with_image(&bytes))?;
+            color::color_manage_jpeg_rgb(&bytes, decoded.image, path)
         } else if is_heif(path) {
             decode_heif(&bytes)?.image
         } else if is_svg(path) {

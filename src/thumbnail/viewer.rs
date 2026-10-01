@@ -412,8 +412,10 @@ where
             Err(_) => decode_with_image(&bytes)?,
         };
         check_viewer_cancelled(&cancelled, "after_jpeg_decode")?;
+        let corrected = color::color_manage_jpeg_rgb(&bytes, decoded.image, reference);
+        check_viewer_cancelled(&cancelled, "after_jpeg_color_conversion")?;
         (
-            DynamicImage::ImageRgb8(decoded.image),
+            DynamicImage::ImageRgb8(corrected),
             target_width,
             target_height,
         )

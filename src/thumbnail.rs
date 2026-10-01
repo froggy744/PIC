@@ -16,10 +16,10 @@ use turbojpeg::{Decompressor, Image as TurboImage, PixelFormat, ScalingFactor};
 
 const NORMAL_THUMBNAIL_SIZE: u32 = 320;
 const HIGH_QUALITY_THUMBNAIL_SIZE: u32 = 640;
-const THUMBNAIL_CACHE_VERSION: &[u8] = b"picasa-thumb-v4-heif-orientation";
+const THUMBNAIL_CACHE_VERSION: &[u8] = b"picasa-thumb-v5-icc-srgb";
 const RAW_THUMBNAIL_CACHE_VERSION: &[u8] = b"picasa-thumb-v6-generic-raw";
 const REMOTE_NEF_THUMBNAIL_CACHE_VERSION: &[u8] = b"picasa-thumb-v1-remote-nef-preview";
-const REMOTE_JPEG_THUMBNAIL_CACHE_VERSION: &[u8] = b"picasa-thumb-v1-remote-jpeg-orientation";
+const REMOTE_JPEG_THUMBNAIL_CACHE_VERSION: &[u8] = b"picasa-thumb-v2-remote-jpeg-icc-srgb";
 const DNG_THUMBNAIL_CACHE_VERSION: &[u8] = b"picasa-thumb-v7-dng-full-raw";
 
 // A folder import, startup recovery, and a manual refresh can overlap their
@@ -238,6 +238,7 @@ include!("thumbnail/recovery.rs");
 include!("thumbnail/viewer.rs");
 include!("thumbnail/nef.rs");
 include!("thumbnail/dng.rs");
+mod color;
 include!("thumbnail/decoders.rs");
 include!("thumbnail/batch.rs");
 

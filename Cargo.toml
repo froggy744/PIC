@@ -14,6 +14,8 @@ fast_image_resize = "5"
 gdk-pixbuf = "0.21"
 gio = "0.21"
 libc = "0.2"
+# 6.1 preserves the existing MSRV; static bundles LittleCMS for Linux/Flatpak/Windows.
+lcms2 = { version = "=6.1.1", features = ["static"] }
 glib = "0.21"
 gtk4 = { version = "0.10", features = ["v4_12"] }
 heif-oxide = "0.1"

@@ -18,7 +18,7 @@ PIC is **Linux-first**, local, lightweight and under active development. It is n
 
 ## Main Library
 
-<img src="samples/Picasa Iphoto Clone-PIC.jpg" alt="PIC main photo library" width="900">
+<img src="samples/Picasa%20Iphoto%20Clone-PIC.jpg" alt="PIC main photo library" width="900">
 
 PIC gives you a clean photo-first library with quick access to **All Photos, Favourites, Recently Added, Albums and your imported folders**.
 
@@ -28,7 +28,7 @@ The interface is intentionally simple. Select a photo and the important informat
 
 ## Photo Editing
 
-<img src="samples/Edit%20Mode.png" alt="PIC Edit Mode" width="900">
+<img src="samples/Edit%20Mode.jpg" alt="PIC Edit Mode" width="900">
 
 PIC now includes an **Edit Mode** so everyday photo adjustments can be done without leaving the photo library.
 
@@ -40,7 +40,7 @@ Editing is integrated into the normal photo workflow instead of feeling like a s
 
 ## Collage Creator
 
-<img src="samples/Collage2.png" alt="PIC Collage Creator" width="900">
+<img src="samples/Collage-SmartAI.jpg" alt="PIC Collage Creator" width="900">
 
 PIC also includes a built-in **Collage Creator**.
 

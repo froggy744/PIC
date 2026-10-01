@@ -29,7 +29,7 @@ APP_NAME="${APP_NAME:-PIC}"
 APP_ID="${APP_ID:-io.github.you.PicasaRs}"
 MAINTAINER="${MAINTAINER:-Petrus Rademeyer}"
 DESCRIPTION="${DESCRIPTION:-PIC - a fast Picasa/iPhoto-inspired photo manager for Linux}"
-HOMEPAGE="${HOMEPAGE:-https://github.com/froggy744/picasa-iphoto-clone}"
+HOMEPAGE="${HOMEPAGE:-https://github.com/froggy744/PIC}"
 
 DIST="$ROOT/dist"
 mkdir -p "$DIST"

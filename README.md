@@ -2,6 +2,8 @@
 
 *Inspired by Picasa and iPhoto*
 
+[GitHub repository](https://github.com/froggy744/PIC)
+
 ### The simple, fast photo manager for Linux. Your folders. Your photos. No fuss.
 
 ---

@@ -1038,7 +1038,9 @@ impl SectionedFolderView {
             .collect::<Vec<_>>();
         if !self.reflow_active.get() {
             for index in stale {
-                if let Some(tile) = self.live_tiles.borrow_mut().remove(&index) {
+                // Unparenting can emit GTK callbacks that refresh the viewport.
+                let tile = self.live_tiles.borrow_mut().remove(&index);
+                if let Some(tile) = tile {
                     tile.tile.clear_wall_quality();
                     self.root.remove(&tile.tile);
                     tile.tile.set_opacity(1.0);
@@ -1062,11 +1064,8 @@ impl SectionedFolderView {
             let tile = if let Some(tile) = existing {
                 tile
             } else {
-                let tile = self
-                    .tile_pool
-                    .borrow_mut()
-                    .pop_front()
-                    .unwrap_or_else(|| self.make_tile());
+                let pooled_tile = self.tile_pool.borrow_mut().pop_front();
+                let tile = pooled_tile.unwrap_or_else(|| self.make_tile());
                 let Some(photo) = photos.get(index as usize) else {
                     continue;
                 };
@@ -2336,14 +2335,22 @@ impl SectionedFolderView {
         true
     }
     fn focus_photo(&self, photo_id: i64) {
-        if let Some(tile) = self.live_tiles.borrow().values().find(|entry| {
-            entry
-                .tile
-                .photo()
-                .as_ref()
-                .is_some_and(|photo| photo.id() == photo_id)
-        }) {
-            tile.tile.grab_focus();
+        // Focusing can synchronously scroll GTK's viewport and refresh tiles.
+        // Release the map borrow before calling into GTK.
+        let tile = self
+            .live_tiles
+            .borrow()
+            .values()
+            .find(|entry| {
+                entry
+                    .tile
+                    .photo()
+                    .as_ref()
+                    .is_some_and(|photo| photo.id() == photo_id)
+            })
+            .map(|entry| entry.tile.clone());
+        if let Some(tile) = tile {
+            tile.grab_focus();
         }
     }
 }
@@ -2415,6 +2422,98 @@ impl Gallery {
 #[cfg(test)]
 mod section_lookup_tests {
     use super::*;
+
+    #[test]
+    #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+    fn sectioned_focus_and_removal_release_tile_map_before_gtk_callbacks() {
+        gtk::init().unwrap();
+        let gallery = Rc::new(Gallery::new(
+            &[],
+            120,
+            |_| {},
+            |_, _, _| {},
+            |_, _, _, _| {},
+            |_, _| {},
+            |_| {},
+        ));
+        gallery.group_mode.set(GroupMode::Folder);
+        gallery.current_photos.replace(
+            (0..400_i64)
+                .map(|id| {
+                    glib::Object::builder::<PhotoObject>()
+                        .property("id", id + 1)
+                        .property("path", format!("/focus-regression/photo-{id}.jpg"))
+                        .property("filename", format!("photo-{id}.jpg"))
+                        .property("folder-id", 7_i64)
+                        .property("folder-path", "/focus-regression")
+                        .property("original-available", false)
+                        .build()
+                })
+                .collect(),
+        );
+        gallery.rebuild_group_ranges();
+        gallery.sectioned_folder.refresh_model();
+        let scroll = gtk::ScrolledWindow::builder()
+            .child(&gallery.folder_sectioned_root)
+            .build();
+        gallery.attach_sectioned_folder_scroll(&scroll);
+        let window = gtk::Window::builder()
+            .default_width(900)
+            .default_height(650)
+            .child(&scroll)
+            .build();
+        window.present();
+        let context = glib::MainContext::default();
+        let until = Instant::now() + std::time::Duration::from_millis(250);
+        while Instant::now() < until {
+            while context.pending() {
+                context.iteration(false);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+
+        let view = &gallery.sectioned_folder;
+        let tile = view.live_tiles.borrow().get(&1).unwrap().tile.clone();
+        let focus_borrow_available = Rc::new(Cell::new(None));
+        let result = focus_borrow_available.clone();
+        let weak = Rc::downgrade(view);
+        let adjustment = scroll.vadjustment();
+        let scroll_callback_ran = Rc::new(Cell::new(false));
+        let callback_ran = scroll_callback_ran.clone();
+        adjustment.connect_value_changed(move |_| callback_ran.set(true));
+        tile.connect_has_focus_notify(move |tile| {
+            if tile.has_focus() {
+                if let Some(view) = weak.upgrade() {
+                    let available = view.live_tiles.try_borrow_mut().is_ok();
+                    result.set(Some(available));
+                    // Re-enter refresh through GTK's synchronous scroll signal.
+                    // Record a failed borrow without panicking across GTK FFI.
+                    if available {
+                        adjustment.set_value(300.0);
+                    }
+                }
+            }
+        });
+        view.focus_photo(2);
+        assert_eq!(focus_borrow_available.get(), Some(true));
+        assert!(scroll_callback_ran.get());
+
+        // Removing an on-screen tile emits unmap synchronously, just as focus
+        // can synchronously scroll the viewport and invoke refresh again.
+        let removal_borrow_available = Rc::new(Cell::new(None));
+        let result = removal_borrow_available.clone();
+        let weak = Rc::downgrade(view);
+        tile.connect_unmap(move |_| {
+            if let Some(view) = weak.upgrade() {
+                result.set(Some(view.live_tiles.try_borrow_mut().is_ok()));
+            }
+        });
+        gtk::prelude::GtkWindowExt::set_focus(&window, gtk::Widget::NONE);
+        scroll.vadjustment().set_value(10_000.0);
+        view.refresh();
+        assert_eq!(removal_borrow_available.get(), Some(true));
+        window.close();
+    }
 
     #[test]
     fn deep_folder_jump_waits_for_the_new_scroll_extent() {

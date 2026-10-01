@@ -15,6 +15,8 @@ use rusqlite::Connection;
 use crate::db::{self, PhotoMetadata};
 use crate::thumbnail;
 
+mod network_raw;
+
 #[derive(Debug, Clone)]
 pub enum ScanEvent {
     Started {
@@ -191,11 +193,11 @@ fn scan_with_control(
         let existing = indexed.get(&path);
         let fingerprint_matches =
             existing.is_some_and(|(mtime, size, _, _, _, _)| (*mtime, *size) == fingerprint);
-        let missing_raw_dimensions = is_raw(&path)
-            && !remote_raw_thumbnail_unsupported(&path)
-            && existing.is_some_and(|(_, _, width, height, _, _)| {
-                width.unwrap_or_default() <= 0 || height.unwrap_or_default() <= 0
-            });
+        // An unchanged source can still have incomplete catalog geometry from
+        // an older scanner. Once repaired, positive axes take the fast path.
+        let missing_dimensions = existing.is_some_and(|(_, _, width, height, _, _)| {
+            width.unwrap_or_default() <= 0 || height.unwrap_or_default() <= 0
+        });
         // NULL means the row predates aperture indexing. A zero is the stored
         // "metadata examined but absent" sentinel and must not re-trigger a
         // source read on every refresh.
@@ -218,7 +220,7 @@ fn scan_with_control(
                 .flatten()
                 .is_none();
         if fingerprint_matches
-            && !missing_raw_dimensions
+            && !missing_dimensions
             && !missing_aperture_metadata
             && !missing_exif_metadata
             && !missing_heif_thumbnail
@@ -623,8 +625,11 @@ fn read_metadata(path: &str, attributes: &gio::FileInfo) -> Result<PhotoMetadata
     let mtime = attributes
         .modification_date_time()
         .map(|time| time.to_unix());
-    let (width, height, exif) = if let Some(metadata) = network_exif(path)? {
-        metadata
+    let mut network_orientation = None;
+    let network = network_exif(path)?;
+    let (width, height, exif) = if let Some((width, height, exif, orientation)) = network {
+        network_orientation = orientation;
+        (width, height, exif)
     } else if is_raw(path) {
         // Prefer the cheap EXIF dimensions, then ask the RAW decoder for its
         // metadata-only image geometry. PixelX/YDimension are missing from
@@ -708,7 +713,9 @@ fn read_metadata(path: &str, attributes: &gio::FileInfo) -> Result<PhotoMetadata
     let (width, height) = display_oriented_dimensions(
         width,
         height,
-        exif.as_ref().and_then(exif_orientation_value),
+        exif.as_ref()
+            .and_then(exif_orientation_value)
+            .or(network_orientation),
     );
     Ok(PhotoMetadata {
         taken_at,
@@ -728,7 +735,9 @@ fn read_metadata(path: &str, attributes: &gio::FileInfo) -> Result<PhotoMetadata
 
 /// A bounded header fetch keeps direct SMB/NFS scans from copying originals.
 /// EXIF in JPEG and many RAW containers lives near the start of the file.
-fn network_exif(path: &str) -> Result<Option<(Option<u32>, Option<u32>, Option<exif::Exif>)>> {
+fn network_exif(
+    path: &str,
+) -> Result<Option<(Option<u32>, Option<u32>, Option<exif::Exif>, Option<u16>)>> {
     #[cfg(target_os = "linux")]
     {
         if !crate::network_shares::private(path) {
@@ -738,19 +747,101 @@ fn network_exif(path: &str) -> Result<Option<(Option<u32>, Option<u32>, Option<e
             return Ok(None);
         }
         let bytes = crate::network_shares::read_range(path, 0, 512 * 1024)?;
-        let exif = exif_from_bytes(&bytes);
-        let width = exif
-            .as_ref()
-            .and_then(|data| exif_u32(data, Tag::PixelXDimension));
-        let height = exif
-            .as_ref()
-            .and_then(|data| exif_u32(data, Tag::PixelYDimension));
-        Ok(Some((width, height, exif)))
+        Ok(Some(network_metadata(path, &bytes, |offset, length| {
+            crate::network_shares::read_range(path, offset, length)
+        })?))
     }
     #[cfg(not(target_os = "linux"))]
     {
         let _ = path;
         Ok(None)
+    }
+}
+
+fn network_metadata(
+    path: &str,
+    bytes: &[u8],
+    read_range: impl FnMut(u64, usize) -> Result<Vec<u8>>,
+) -> Result<(Option<u32>, Option<u32>, Option<exif::Exif>, Option<u16>)> {
+    let (mut width, mut height, exif) = network_header_metadata(bytes);
+    let mut orientation = None;
+    if is_raw(path) && (width.unwrap_or_default() == 0 || height.unwrap_or_default() == 0) {
+        // Returning Some from network_exif bypasses the local RAW decoder.
+        // Resolve RAW geometry here without materializing the original.
+        if let Some(geometry) = network_raw::dimensions(bytes, read_range) {
+            width = width.filter(|v| *v > 0).or(Some(geometry.width));
+            height = height.filter(|v| *v > 0).or(Some(geometry.height));
+            orientation = geometry.orientation;
+        }
+    }
+    Ok((width, height, exif, orientation))
+}
+
+// Shared by the bounded network fetch and header-only regression fixtures.
+fn network_header_metadata(bytes: &[u8]) -> (Option<u32>, Option<u32>, Option<exif::Exif>) {
+    let exif = exif_from_bytes(bytes);
+    let width = exif
+        .as_ref()
+        .and_then(|data| exif_u32(data, Tag::PixelXDimension));
+    let height = exif
+        .as_ref()
+        .and_then(|data| exif_u32(data, Tag::PixelYDimension));
+    let dimensions = if width.unwrap_or_default() == 0 || height.unwrap_or_default() == 0 {
+        jpeg_sof_dimensions(bytes)
+    } else {
+        None
+    };
+    // SOF axes describe stored pixels. read_metadata applies EXIF orientation
+    // once, just as it does for locally obtained dimensions.
+    let (width, height) = if let Some((sof_width, sof_height)) = dimensions {
+        (
+            width.filter(|value| *value > 0).or(Some(sof_width)),
+            height.filter(|value| *value > 0).or(Some(sof_height)),
+        )
+    } else {
+        (width, height)
+    };
+    (width, height, exif)
+}
+
+/// Read geometry without decoding pixels or reading beyond the supplied header.
+/// Non-JPEG containers and a SOF outside the bounded fetch remain unsupported.
+fn jpeg_sof_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
+    if !bytes.starts_with(&[0xff, 0xd8]) {
+        return None;
+    }
+    let mut offset = 2;
+    loop {
+        if *bytes.get(offset)? != 0xff {
+            return None;
+        }
+        while *bytes.get(offset)? == 0xff {
+            offset += 1;
+        }
+        let marker = *bytes.get(offset)?;
+        offset += 1;
+        match marker {
+            // Never search entropy-coded scan data for a marker.
+            0x00 | 0xd8 | 0xd9 | 0xda => return None,
+            0x01 | 0xd0..=0xd7 => continue,
+            _ => {}
+        }
+        let length = u16::from_be_bytes([*bytes.get(offset)?, *bytes.get(offset + 1)?]) as usize;
+        if length < 2 {
+            return None;
+        }
+        let segment = bytes.get(offset + 2..offset.checked_add(length)?)?;
+        // All JPEG SOF markers, excluding DHT (C4), JPG (C8), and DAC (CC).
+        if matches!(marker, 0xc0..=0xc3 | 0xc5..=0xc7 | 0xc9..=0xcb | 0xcd..=0xcf) {
+            let height = u16::from_be_bytes([*segment.get(1)?, *segment.get(2)?]);
+            let width = u16::from_be_bytes([*segment.get(3)?, *segment.get(4)?]);
+            let components = *segment.get(5)? as usize;
+            if components == 0 || segment.len() != 6 + 3 * components || width == 0 || height == 0 {
+                return None;
+            }
+            return Some((u32::from(width), u32::from(height)));
+        }
+        offset += length;
     }
 }
 
@@ -1118,3 +1209,6 @@ mod scan_lock_tests {
         drop(acquire_scan_lock(&lock));
     }
 }
+
+#[cfg(test)]
+mod network_dimensions_regression_tests;

@@ -1040,7 +1040,8 @@ build_appimage() {
 
 # Automatically give the newly built AppImage its own icon in GNOME Files and
 # make the icon discoverable for the running GTK application. Do not replace an
-# existing Flatpak/user launcher sharing APP_ID.
+# existing Flatpak/user launcher sharing APP_ID. Use a distinct AppImage
+# desktop ID so a missing AppImage cannot hide the installed Flatpak.
 integrate_appimage_gnome() {
     local appimage="$1" source_icon="$2" data_home icon_size icon_dir icon_dest
     local app_dir launcher icon_uri appimage_path
@@ -1069,13 +1070,9 @@ integrate_appimage_gnome() {
     fi
 
     app_dir="$data_home/applications"
-    launcher="$app_dir/$APP_ID.desktop"
+    launcher="$app_dir/$APP_ID.AppImage.desktop"
     if [[ -f "$launcher" ]]; then
         log "Preserving existing PIC desktop launcher: $launcher"
-        return 0
-    fi
-    if have flatpak && flatpak info "$APP_ID" >/dev/null 2>&1; then
-        log "Preserving installed PIC Flatpak launcher ($APP_ID); AppImage file/icon registered."
         return 0
     fi
 

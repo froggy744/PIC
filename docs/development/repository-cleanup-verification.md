@@ -126,3 +126,22 @@ been captured. No network-photo-wall fix is claimed.
 Cleanup changes remain on `cleanup/repository-2026-10-01` for review and
 further testing. PR #147 must remain unmerged. The user-built
 `PIC-1.0.0-x86_64.flatpak` artifact is retained locally and is not committed.
+
+## Follow-up: AppImage launcher collision
+
+A local AppImage launcher used the Flatpak desktop ID and pointed to a removed
+AppImage. GIO omitted PIC from its app enumeration despite the valid exported
+Flatpak entry/icon. Backing up the conflicting local launcher and refreshing
+local caches restored Flatpak visibility.
+
+AppImage integration now uses `$APP_ID.AppImage.desktop`, preserving the
+Flatpak desktop ID and package ID. A regression test failed against the old
+registration and passes with the distinct filename, including coexistence,
+paths with spaces, preservation of user edits and real GIO enumeration after
+the temporary AppImage is removed. Existing stale launchers need an explicit
+backup/removal; the packager does not delete user desktop entries.
+
+Validation: 35 script tests pass; Cargo tests pass (478 passed, 52 ignored);
+Bash syntax and diff checks pass. Fresh review found no important defects.
+The real GIO check ran successfully on this host; it is conditional on
+PyGObject being available on other test hosts.

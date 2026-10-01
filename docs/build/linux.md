@@ -175,3 +175,16 @@ gnome-software --show-metainfo resources/io.github.you.PicRs.metainfo.xml
 
 Display and caching of screenshots depend on the software center. This adds
 package metadata; repository publication remains a separate step.
+
+## AppImage and Flatpak launchers
+
+AppImage GNOME integration creates `io.github.you.PicRs.AppImage.desktop`
+in the user's applications directory. Flatpak uses
+`io.github.you.PicRs.desktop`, so both can be installed together and removing
+the AppImage cannot hide the Flatpak launcher. The icon name remains shared.
+Existing user-edited AppImage launchers are preserved.
+
+Older AppImage builds may have left a local `io.github.you.PicRs.desktop`
+entry pointing to a removed file. If that happens, back up that specific
+AppImage entry outside `~/.local/share/applications/`; keep Flatpak's exported
+desktop entry. New builds use the separate AppImage desktop filename.

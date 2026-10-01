@@ -65,8 +65,10 @@ setup still asks for approval:
 ./PIC-build-linux-one-script.sh github --branch main --flatpak-only
 ```
 
-Release tests run inside the Flatpak SDK and
-any failure stops packaging. `--skip-tests` is intended only for diagnostic
+Release tests run inside the Flatpak SDK before bundle export. Their temporary
+development app ID lets Glycin decode SVG fixtures in an uninstalled build;
+the exported app keeps its normal ID and decoder sandbox. Any test failure
+stops packaging. `--skip-tests` is intended only for diagnostic
 builds, not published releases.
 
 ## Install and launch

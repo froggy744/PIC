@@ -1074,6 +1074,44 @@ EOF_PIC_GNOME
     ok "GNOME PIC AppImage launcher: $launcher"
 }
 
+run_flatpak_tests() {
+    local fp_build="$1" source_dir="$2" test_metadata status=0
+    if [[ "$SKIP_TESTS" == 1 ]]; then
+        warn "Flatpak tests skipped (--skip-tests / PIC_SKIP_TESTS=1)."
+        return 0
+    fi
+    source_dir="$(realpath "$source_dir")" || return 1
+    [[ -d "$source_dir" ]] || die "Flatpak test source directory is unavailable."
+    test_metadata="$(mktemp "$fp_build/.pic-tests.XXXXXX.metadata")" || return 1
+    # Glycin recognizes an uninstalled Flatpak development build only when
+    # /.flatpak-info has a Devel app ID. Override metadata for this test process
+    # only; the normal package metadata and runtime sandbox stay unchanged.
+    if ! awk -v id="$APP_ID.Devel" '
+        /^\[/ { application = ($0 == "[Application]") }
+        application && /^name=/ { $0 = "name=" id }
+        { print }
+    ' "$fp_build/metadata" > "$test_metadata"; then
+        rm -f "$test_metadata"
+        return 1
+    fi
+    log "Testing Rust release binary in the Flatpak SDK development sandbox"
+    flatpak build \
+        --metadata="$(basename "$test_metadata")" \
+        --bind-mount="/run/build/picasa-rs=$source_dir" \
+        --build-dir=/run/build/picasa-rs \
+        --env=PATH=/usr/lib/sdk/rust-stable/bin:/app/bin:/usr/bin \
+        --env=CARGO_NET_OFFLINE=true \
+        "$fp_build" sh -c '
+            set -eu
+            for test_binary in /app/libexec/pic-build-tests/*; do
+                [ -x "$test_binary" ] || { echo "Compiled Flatpak tests are unavailable" >&2; exit 1; }
+                "$test_binary"
+            done
+        ' || status=$?
+    rm -f "$test_metadata"
+    return "$status"
+}
+
 build_flatpak() {
     local fp_work fp_src fp_build fp_repo manifest desktop_rel icon_rel bundle_name vendor_dir launcher_rel
     ensure_flatpak_runtime || return 1
@@ -1116,8 +1154,35 @@ directory = "vendor"
 offline = true
 EOF_CARGO
 
-    local flatpak_test_command="cargo test --release --locked --offline"
-    [[ "$SKIP_TESTS" != 1 ]] || flatpak_test_command="true"
+    # Cache test executables in the same module as the application, so a
+    # builder cache hit always restores tests for the selected source revision.
+    # Finish-phase cleanup removes them before exporting the runtime package.
+    cat > "$fp_src/packaging-generated/install-tests.py" <<'EOF_TEST_INSTALLER'
+import json
+from pathlib import Path
+import shutil
+import sys
+
+destination = Path(sys.argv[2])
+destination.mkdir(parents=True, exist_ok=True)
+installed = 0
+for line in Path(sys.argv[1]).read_text().splitlines():
+    artifact = json.loads(line)
+    if artifact.get("reason") != "compiler-artifact" or not artifact.get("profile", {}).get("test"):
+        continue
+    executable = artifact.get("executable")
+    if executable:
+        source = Path(executable)
+        output = destination / source.name
+        shutil.copyfile(source, output)
+        output.chmod(0o755)
+        installed += 1
+if not installed:
+    sys.exit("Cargo produced no test executables")
+EOF_TEST_INSTALLER
+    local flatpak_test_build_command="cargo test --release --locked --offline --no-run --message-format=json > packaging-generated/test-artifacts.json && python3 packaging-generated/install-tests.py packaging-generated/test-artifacts.json /app/libexec/pic-build-tests"
+    [[ "$SKIP_TESTS" != 1 ]] || flatpak_test_build_command="true"
+
     cat > "$manifest" <<EOF_MANIFEST
 {
   "app-id": "$APP_ID",
@@ -1146,6 +1211,7 @@ EOF_CARGO
     "append-path": "/usr/lib/sdk/rust-stable/bin",
     "env": { "CARGO_NET_OFFLINE": "true" }
   },
+  "cleanup": ["/libexec/pic-build-tests"],
   "modules": [
     {
       "name": "libnfs",
@@ -1189,7 +1255,7 @@ EOF_CARGO
       "name": "picasa-rs",
       "buildsystem": "simple",
       "build-commands": [
-        "$flatpak_test_command",
+        "$flatpak_test_build_command",
         "cargo build --release --locked --offline",
         "install -Dm755 target/release/$BIN_NAME /app/libexec/$BIN_NAME",
         "install -Dm755 $launcher_rel /app/bin/$BIN_NAME",
@@ -1217,6 +1283,15 @@ EOF_MANIFEST
     fi
     flatpak-builder \
         --force-clean \
+        --build-only \
+        --state-dir="$FLATPAK_STATE_DIR" \
+        "${download_args[@]}" \
+        "$fp_build" "$manifest" || return 1
+
+    # Test before clean/finish/export. A test failure never produces a bundle.
+    run_flatpak_tests "$fp_build" "$fp_src" || return 1
+    flatpak-builder \
+        --finish-only \
         --state-dir="$FLATPAK_STATE_DIR" \
         "${download_args[@]}" \
         --repo="$fp_repo" \

@@ -113,3 +113,16 @@ Final metadata validation: 34 Python checks pass, Bash syntax passes and
 `cargo test --locked` passes (478 tests, 52 ignored). Review's metadata-error
 propagation finding is fixed: a conditional-build regression failed without
 the explicit return and passes with it, stopping before vendoring begins.
+
+## User testing update — 2026-10-01
+
+After starting fresh, the user reports that PIC opens and otherwise works.
+The photo wall from NFS/SMB does not work. This remains unresolved and
+requires further application-level testing; successful diagnostic enumeration
+and reads do not establish that the photo wall works in the packaged app.
+The failing action, error output and affected server paths have not yet
+been captured. No network-photo-wall fix is claimed.
+
+Cleanup changes remain on `cleanup/repository-2026-10-01` for review and
+further testing. PR #147 must remain unmerged. The user-built
+`PIC-1.0.0-x86_64.flatpak` artifact is retained locally and is not committed.

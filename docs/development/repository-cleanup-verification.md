@@ -72,3 +72,23 @@ passed and 52 ignored (display/optional-fixture requirements). The thumbnail
 orientation fixture and embedded SVG resource tests pass. Native link-order
 verification passes. Cargo emits existing application/native warnings.
 The fresh Astra review found no Critical, Important or Minor issues.
+
+## Follow-up: Flatpak filesystem placement
+
+A real packaging run produced an AppImage, then Flatpak stopped before
+compilation because checkout state under `/tmp` (tmpfs) and the temporary
+build tree under the home cache (btrfs) were on different filesystems.
+Flatpak's temporary tree now lives at
+`$PIC_FLATPAK_STATE_DIR/pic-build-work` (default:
+`.flatpak-builder/pic-build-work` under the checkout). This preserves the
+state override and dependency cache while meeting the builder's hardlink
+requirement. Existing build outputs and cached downloads were preserved.
+A regression check reproduces the filesystem mismatch with temporary trees
+and exercises default/overridden state, offline manifest generation and
+builder failure propagation. Full Flatpak packaging still requires a rerun.
+
+The real `flatpak-builder` was also checked with a temporary empty GNOME 50
+manifest and `--disable-download --build-only`: the split-filesystem layout
+failed with the reported error; the new same-filesystem layout exited 0.
+The updated Python suite passes 31 checks. This confirms placement without
+claiming a complete PIC Flatpak build.

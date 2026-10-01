@@ -31,6 +31,11 @@ Build both packages from the current checkout:
 ./scripts/PIC-build-linux-one-script.sh local
 ```
 
+Flatpak's temporary source/build/export tree lives under
+`.flatpak-builder/pic-build-work` at the checkout root, beside builder state
+on the same filesystem. `PIC_FLATPAK_STATE_DIR` relocates both state and this
+temporary tree; dependency archives remain in `PIC_BUILD_CACHE`.
+
 Local mode keeps local changes. Approved downloads populate dependency caches;
 compilation and packaging run offline. Existing valid cache files are reused.
 Add `--appimage-only` or `--flatpak-only` to check/build only that target.

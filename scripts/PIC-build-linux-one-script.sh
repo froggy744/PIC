@@ -1126,7 +1126,10 @@ build_flatpak() {
     local fp_work fp_src fp_build fp_repo manifest desktop_rel icon_rel bundle_name vendor_dir launcher_rel
     ensure_flatpak_runtime || return 1
 
-    fp_work="$WORK_ROOT/flatpak"
+    # flatpak-builder hardlinks files between its state and build directories.
+    # Keep this temporary tree on the selected state's filesystem, even when
+    # the checkout, dependency cache or explicit state override lives elsewhere.
+    fp_work="$FLATPAK_STATE_DIR/pic-build-work"
     fp_src="$fp_work/flatpak-src"
     fp_build="$fp_work/build-dir"
     fp_repo="$fp_work/repo"

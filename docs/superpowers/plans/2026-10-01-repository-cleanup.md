@@ -43,7 +43,7 @@ Audit on 2026-10-01, starting from commit 10a788e:
 - build.windows.ps1 deliberately packages the executable in the caller's current directory. Moving it must preserve that input directory behavior.
 - build-linux.sh and build-linux-icons-only.sh have approximately 98.5% line similarity. This is evidence for a separate consolidation review, not evidence that either can be deleted safely.
 - big_pickle_network_reference.rs is reference code outside src/ and is not registered by src/main.rs.
-- tests/20151128_144228.jpg is used by src/thumbnail/cache.rs. It is a required test fixture, not clutter.
+- EXIF orientation coverage in src/thumbnail/cache.rs now generates a tiny JPEG at test time; tests/20151128_144228.jpg has been removed.
 - Baseline: 20 Python script tests pass; audited Bash scripts pass bash -n. Those checks do not currently establish that every package gets an icon or that every script works from another directory.
 
 ## User-authorized Deletions
@@ -209,7 +209,7 @@ This applies to future cleanup candidates; it does not restore the six deletions
 - [x] Add narrowly scoped ignores for Python __pycache__/ and generated Windows transcript logs. Avoid blanket *.zip ignores: first distinguish user archives from reproducible build products.
 - [x] Audit copy_source_tree exclusions. Prevent to-be-deleted/, worktrees and generated logs/caches from being copied into packaging source trees, including recursive worktree copies. Keep source assets, scripts, tests, Cargo.lock and native sources available.
 - [x] Check a temporary source-copy fixture contains everything needed for an offline build and excludes generated directories. Do not actually build or clean live caches for this check.
-- [x] Confirm tests/20151128_144228.jpg, runtime resource trees and compiled icon bundle remain available at their original paths.
+- [x] Preserve EXIF orientation regression coverage (now using a generated JPEG), runtime resource trees and the compiled icon bundle.
 - [ ] Run git diff --check and inventory the expected five root files. Commit the generated-file/reference cleanup.
 
 ## Task 5: Verify the user-authorized legacy-tool retirement

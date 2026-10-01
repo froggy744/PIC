@@ -13,7 +13,7 @@ class SourceCopy(unittest.TestCase):
         function=source.split('copy_source_tree() {',1)[1].split('\n}',1)[0]
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp)/'source with spaces';root.mkdir()
-            keep=['Cargo.toml','Cargo.lock','build.rs','src/main.rs','native/private_nfs.c','native/private_smb.c','resources/icons.gresource','scripts/test-shares.sh','scripts/pic-smb-probe.c','pic-nfs-probe.c','tests/20151128_144228.jpg','icon/pic-48.png','vendor/offline/data','user-archive.zip']
+            keep=['Cargo.toml','Cargo.lock','build.rs','src/main.rs','native/private_nfs.c','native/private_smb.c','resources/icons.gresource','scripts/test-shares.sh','scripts/pic-smb-probe.c','pic-nfs-probe.c','tests/generated-fixture.jpg','icon/pic-48.png','vendor/offline/data','user-archive.zip']
             omit=['target/cache','dist/pkg','build-logs/build.log','.flatpak-builder/state','logs/debug.txt','.worktrees/another/src/main.rs','nested/.worktrees/another/file','to-be-deleted/INDEX.md','.superpowers/state','scripts/tests/__pycache__/test.pyc','scripts/build.windows.log']
             for name in keep+omit:
                 path=root/name;path.parent.mkdir(parents=True,exist_ok=True);path.write_text(name)

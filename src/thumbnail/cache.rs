@@ -374,11 +374,42 @@ mod cache_layout_tests {
     #[test]
     fn exif_rotated_test_photo_is_cached_in_display_orientation() {
         let root = fixture();
-        let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/20151128_144228.jpg");
+        let source = root.join("source.jpg");
+        let image = image::RgbImage::from_fn(16, 8, |x, _| {
+            if x < 8 {
+                image::Rgb([240, 10, 10])
+            } else {
+                image::Rgb([10, 10, 240])
+            }
+        });
+        let mut bytes = Vec::new();
+        let mut encoder = JpegEncoder::new_with_quality(&mut bytes, 100);
+        // Little-endian TIFF with one IFD entry: orientation 6, clockwise 90 degrees.
+        encoder
+            .set_exif_metadata(vec![
+                b'I', b'I', 42, 0, 8, 0, 0, 0, // TIFF header and IFD offset
+                1, 0, // one IFD entry
+                0x12, 0x01, 3, 0, 1, 0, 0, 0, 6, 0, 0, 0, // orientation SHORT = 6
+                0, 0, 0, 0, // no next IFD
+            ])
+            .unwrap();
+        encoder
+            .write_image(image.as_raw(), 16, 8, ColorType::Rgb8.into())
+            .unwrap();
+        fs::write(&source, bytes).unwrap();
+
         let destination = root.join("oriented.jpg");
-        create_uncached(source.to_str().unwrap(), &destination).unwrap();
-        let cached = image::open(&destination).unwrap();
-        assert!(cached.height() > cached.width());
+        create_uncached_with_max(source.to_str().unwrap(), &destination, 16).unwrap();
+        let cached = image::open(&destination).unwrap().to_rgb8();
+        assert_eq!(cached.dimensions(), (8, 16));
+        // Clockwise rotation places the red left half above the blue right half.
+        let top = cached.get_pixel(2, 2);
+        let bottom = cached.get_pixel(2, 13);
+        assert!(top[0] > 200 && top[2] < 60, "top pixel: {top:?}");
+        assert!(
+            bottom[2] > 200 && bottom[0] < 60,
+            "bottom pixel: {bottom:?}"
+        );
         let _ = fs::remove_dir_all(root);
     }
 }

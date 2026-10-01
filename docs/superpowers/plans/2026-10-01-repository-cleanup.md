@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Status:** Proposed plan; no files have been relocated. The user selected a short root README linking into docs and authorized the six local deletions listed below to be committed and pushed.
+**Status:** Proposed plan; no files have been relocated. The user selected a short root README linking into docs and authorized the six local deletions listed below to be committed and pushed. Further unnecessary files must be staged in to-be-deleted/ for review. Preserving working NFS/SMB tooling is the highest cleanup priority.
 
 **Goal:** Reduce the repository root to project entry files while keeping documentation links, build tools, diagnostics and packaged runtime resources working.
 
-**Architecture:** Keep a short root README; put full documentation under docs and executable tooling under scripts. Resolve repository paths independently of script location and invocation directory. Separate mechanical moves from consolidation of older tools.
+**Architecture:** Keep a short root README; put full documentation under docs and executable tooling under scripts. Resolve repository paths independently of script location and invocation directory. Separate mechanical moves from consolidation of older tools. Stage confirmed unnecessary files in to-be-deleted/ with a review index, and verify network tooling before and after any path changes.
 
 **Tech Stack:** Rust/Cargo, Bash, PowerShell, Python unittest, Markdown, GTK GResource, AppImage/Flatpak/deb/rpm packaging.
 
@@ -18,11 +18,14 @@
 - Keep Cargo.toml, Cargo.lock, build.rs and .gitignore at the root.
 - Keep src/, native/, images/, themes/, icon/, resources/ and tests/ at their current locations during this cleanup.
 - Preserve application data and the pic-rs storage migration implemented for issues #145 and #146.
+- NFS/SMB reliability takes priority over folder organization: do not move, retire or stage active network tools until the network verification gate below passes.
+- Move files confirmed unnecessary into tracked to-be-deleted/, preserving their original relative paths and recording the reason and dependency checks in to-be-deleted/INDEX.md. Do not delete staged files without explicit user approval.
+- Never stage active network scripts, native transport code, required runtime assets, pinned offline dependencies or test fixtures as cleanup candidates.
 - Preserve PIC_* environment overrides, dependency-installation consent, offline build behavior and package IDs.
 - Do not delete build caches, downloads, logs, worktrees, screenshots or reference code as part of a move. The six user-authorized deletions below are already part of this cleanup.
 - Preserve executable file modes and use git mv for tracked relocations.
 - Keep all documentation links and screenshot references relative to the repository.
-- Do not run packaging that installs packages, modifies the desktop, downloads dependencies or contacts network shares merely to verify file moves.
+- Do not run packaging that installs packages, modifies the desktop or downloads dependencies merely to verify file moves. Network checks must be read-only and use explicitly configured test servers/exports/shares; never alter remote files or guess connection credentials.
 
 ## Audit Evidence
 
@@ -64,6 +67,8 @@ Cargo.toml / Cargo.lock / build.rs / .gitignore
 src/ native/                      application and linked native code
 images/ themes/ icon/ resources/   existing runtime/embedded resources
 samples/ tests/                    screenshots and test fixture, preserved
+to-be-deleted/                    confirmed unnecessary files staged for review
+  INDEX.md                        original paths, reasons and checks
 scripts/                          build, download, asset and diagnostic tools
   diagnostics/                    C probe sources
   tests/                          existing Python script tests
@@ -113,15 +118,44 @@ Move these root tools into scripts/, retaining their basenames initially:
 - build-resize-PNG-AlbumCovers.sh
 - generate-icon.sh
 
-Also move resources/build-icon-bundle.sh to scripts/build-icon-bundle.sh; move pic-nfs-probe.c and scripts/pic-smb-probe.c into scripts/diagnostics/. Keep scripts/test-shares.sh, scripts/verify-native-link-order.sh and scripts/tests/ where they are.
+Also move resources/build-icon-bundle.sh to scripts/build-icon-bundle.sh. Move pic-nfs-probe.c and scripts/pic-smb-probe.c into scripts/diagnostics/ only after the network verification gate passes; otherwise keep their existing locations. Keep scripts/test-shares.sh, scripts/verify-native-link-order.sh and scripts/tests/ where they are.
 
 ## Review Focus
 
+0. Working NFS/SMB discovery, enumeration and supported file access must survive the cleanup. Folder tidiness never takes precedence over the network verification gate.
 1. Scripts invoked from an unrelated directory or a checkout path containing spaces must resolve repository resources correctly.
 2. Default project and artifact paths must stay at repository root; explicit PIC_* overrides must still win.
 3. Documentation moves must preserve screenshot rendering, previous/next guide links and theme-template instructions.
 4. Icon generation and package icon discovery must agree on the real icon/ layout; bundle generation must still publish to resources/.
 5. Legacy packagers, offline dependency cache and the Windows caller-directory contract must not change silently during mechanical moves.
+
+## Task 0: Establish the Network Verification Gate
+
+**Priority:** Highest. Complete the baseline before changing any network-tool path. Repeat the checks after proposed moves and before committing those moves.
+
+**Protected files:** scripts/test-shares.sh, scripts/pic-smb-probe.c, pic-nfs-probe.c, scripts/verify-native-link-order.sh, native/private_smb.c, native/private_nfs.c, src/private_smb.rs, src/private_nfs.rs, src/network_shares.rs and the main packager's bundled-library/launcher configuration.
+
+**Test files:** Add scripts/tests/test_network_script_paths.py using temporary checkouts and mocked compiler/probe commands. Keep real probe compilation and server checks separate from mock tests.
+
+- [ ] Record the currently working diagnostic commands, source paths, executable modes and PIC_DIAGNOSTICS_BIN_DIR, PIC_SMB_PROBE_BIN and PIC_NFS_PROBE_BIN overrides. Record the configured NFS/SMB test endpoints without copying credentials into Git.
+- [ ] Compile both C probes with their existing pkg-config library flags into a temporary output directory; check native link order. Do not change their networking implementation during the cleanup.
+- [ ] Run the diagnostic entry point from repository root, from an unrelated directory and from a checkout path containing spaces. Check source resolution, compiler arguments, probe dispatch, default target/diagnostics output and all three binary/directory overrides with mocks.
+- [ ] Establish a read-only baseline on configured servers: discovery/export or share listing, NFS v3/v4 enumeration and stat/read where supported, SMB share/subfolder enumeration, and opening a known photo through PIC's existing NFS/SMB transports. Compare only behaviors supported by each configured server.
+- [ ] If endpoints are unavailable or baseline behavior is failing, keep network tools in their existing locations and document the gap. Continue independent documentation/non-network cleanup; do not treat compilation or mocks as proof that live networking works.
+- [ ] After any network-tool move, update every current source-path reference and supported invocation example together, then repeat compilation, path/override tests, native link-order checks and the same live-server checks.
+- [ ] Verify package source copies retain both native transports and diagnostic sources where needed; packaged applications still include required libnfs/libsmbclient runtime libraries and retain existing launcher/sandbox behavior.
+- [ ] If the move introduces a failure, restore the previous network-tool paths and references before integrating that cleanup task. Preserve all unrelated user changes.
+
+## Staging Policy for Unnecessary Files
+
+This applies to future cleanup candidates; it does not restore the six deletions already explicitly authorized and pushed.
+
+- Confirm a file is unnecessary by checking application/build imports, script callers, documentation references, runtime lookup, tests and packaging. A file being old or outside src/ is not sufficient evidence.
+- Move confirmed candidates to to-be-deleted/<original-relative-path> with git mv. Keep files readable and recoverable; do not rewrite their contents as part of staging.
+- Record original path, staged path, reason, dependency checks, staging date and pending deletion approval in to-be-deleted/INDEX.md. Active callers/links must be repaired or staging must wait.
+- Track the folder and its index in Git so the user can review it on GitHub. Exclude the folder from packaging source copies and current documentation/tool discovery checks; inspect the index separately.
+- Keep potentially useful reference material in docs/development/reference/ unless the dependency review establishes that it is genuinely unnecessary. Required NFS/SMB files and runtime/test assets never go into staging.
+- Final deletion requires an explicit user decision after reviewing the staged files. Do not empty the folder automatically, and do not remove generated caches or worktrees under this policy.
 
 ## Task 1: Relocate documentation and repair links
 
@@ -148,7 +182,7 @@ Also move resources/build-icon-bundle.sh to scripts/build-icon-bundle.sh; move p
 - [ ] Move root scripts into scripts/ and update existing tests to the new build-script location.
 - [ ] Separate script location from repository root. Update default project, dist, logs and Flatpak state paths, prompts, help examples, companion-script lookups and usage documentation. Preserve explicit overrides.
 - [ ] Move the icon-bundle tool and resolve ICON_DIR, custom-icons, XML and GResource output under REPO_ROOT/resources rather than SCRIPT_DIR.
-- [ ] Move both C probes into scripts/diagnostics/ and update scripts/test-shares.sh source paths. Keep probe binaries under target/diagnostics/.
+- [ ] Only after Task 0 passes, move both C probes into scripts/diagnostics/ and update scripts/test-shares.sh source paths. Keep probe binaries under target/diagnostics/. Repeat the network gate before committing these moves; retain the original layout if live-server checks cannot be completed.
 - [ ] Preserve build.windows.ps1's caller directory contract, and document invocation as a path to scripts/build.windows.ps1 from the executable folder. Do not add a repository-root default that packages the wrong executable.
 - [ ] Run all Python script checks with PYTHONDONTWRITEBYTECODE=1 and Bash syntax checks. Run the compiler/native link-order check where its documented prerequisites are available. Review generated Flatpak manifests and launcher resource paths using mocked package commands.
 - [ ] Commit tool relocation and path repairs together; no full release packaging is required to prove a filesystem move.
@@ -168,12 +202,12 @@ Also move resources/build-icon-bundle.sh to scripts/build-icon-bundle.sh; move p
 
 ## Task 4: Group development references and define generated-file policy
 
-**Files:** Remaining development/reference mappings; .gitignore; source-copy exclusions in scripts/PIC-build-linux-one-script.sh.
+**Files:** Remaining development/reference mappings; to-be-deleted/INDEX.md and staged candidates; .gitignore; source-copy exclusions in scripts/PIC-build-linux-one-script.sh.
 
-- [ ] Move the unused reference module into docs/development/reference/ without registering it in the application. Move notes into docs/development/notes/ and update active references.
+- [ ] Audit development/reference candidates. Keep useful reference code in docs/development/reference/ without registering it in the application. Move confirmed unnecessary files into to-be-deleted/ with their original relative paths and add index entries. Move useful notes into docs/development/notes/ and update active references; do not stage active NFS/SMB tooling.
 - [ ] Keep target/, dist/, build-logs/, .flatpak-builder/, logs/ and .worktrees/ ignored and in place. Inventory .superpowers/ ownership before deciding whether it belongs in .gitignore; never remove session/worktree state as repository clutter.
 - [ ] Add narrowly scoped ignores for Python __pycache__/ and generated Windows transcript logs. Avoid blanket *.zip ignores: first distinguish user archives from reproducible build products.
-- [ ] Audit copy_source_tree exclusions. Prevent worktrees and generated logs/caches from being copied into packaging source trees, including recursive worktree copies. Keep source assets, scripts, tests, Cargo.lock and native sources available.
+- [ ] Audit copy_source_tree exclusions. Prevent to-be-deleted/, worktrees and generated logs/caches from being copied into packaging source trees, including recursive worktree copies. Keep source assets, scripts, tests, Cargo.lock and native sources available.
 - [ ] Check a temporary source-copy fixture contains everything needed for an offline build and excludes generated directories. Do not actually build or clean live caches for this check.
 - [ ] Confirm tests/20151128_144228.jpg, runtime resource trees and compiled icon bundle remain available at their original paths.
 - [ ] Run git diff --check and inventory the expected five root files. Commit the generated-file/reference cleanup.
@@ -188,6 +222,8 @@ Also move resources/build-icon-bundle.sh to scripts/build-icon-bundle.sh; move p
 
 ## Final Validation and Handoff
 
+- [ ] Network verification passes before and after any network-tool moves, including real read-only NFS/SMB checks. If unavailable, network-tool paths remain unchanged and the limitation is reported.
+- [ ] Every staged unnecessary file is tracked under to-be-deleted/ and indexed with evidence; no staged files are deleted without explicit user approval.
 - [ ] All active documentation links/screenshots resolve; root README is readable on GitHub.
 - [ ] All script unit checks pass, including invocation-location, downloader, package-icon and source-copy regressions.
 - [ ] Bash tools pass bash -n; PowerShell is checked on Windows or with pwsh if available, with any platform validation gap stated.

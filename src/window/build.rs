@@ -4484,6 +4484,22 @@ fn start_photo_export_single(
                     }
                 }
 
+                scanner::ScanEvent::FoldersRemoved => {
+                    availability_refresh_for_events();
+                    if let sidebar::SidebarFilter::Folder(id) = filter_for_events.get() {
+                        if !db::folder_exists(&connection_for_events.borrow(), id).unwrap_or(true) {
+                            filter_for_events.set(sidebar::SidebarFilter::All);
+                        }
+                        refresh_grid(
+                            &connection_for_events,
+                            filter_for_events.get(),
+                            &search_for_events.borrow(),
+                            sort_for_events.get(),
+                            &gallery_for_events,
+                        );
+                    }
+                }
+
                 scanner::ScanEvent::LibraryCountsChanged { counts } => {
                     pending_sidebar_counts = Some(*counts);
                     // Reconciliation and final snapshots should be visible on

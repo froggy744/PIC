@@ -434,6 +434,18 @@ pub fn folder_availability_by_id(
 pub fn remove_folder(connection: &Connection, folder_id: i64) -> Result<()> {
     let transaction = connection.unchecked_transaction()?;
     transaction.execute(
+        "DELETE FROM settings WHERE key IN (
+           WITH RECURSIVE descendants(id) AS (
+             SELECT id FROM folders WHERE id = ?1
+             UNION ALL
+             SELECT child.id FROM folders child
+             JOIN descendants ON child.parent_id = descendants.id
+           )
+           SELECT 'scan-devices:' || id FROM descendants
+         )",
+        [folder_id],
+    )?;
+    transaction.execute(
         "DELETE FROM photos
          WHERE folder_id IN (
            WITH RECURSIVE descendants(id) AS (
@@ -506,6 +518,41 @@ pub fn remove_missing_photos(
         let transaction = connection.unchecked_transaction()?;
         for id in chunk {
             transaction.execute("DELETE FROM photos WHERE id = ?1", [id])?;
+        }
+        transaction.commit()?;
+    }
+    Ok(stale_ids.len())
+}
+
+/// Reconcile folder records only after a complete, successful tree scan.
+/// Existing empty directories and the scanned root remain in the catalogue.
+pub fn remove_missing_folders(
+    connection: &Connection,
+    folder_id: i64,
+    present_paths: &HashSet<String>,
+) -> Result<usize> {
+    let stale_ids = {
+        let mut statement = connection.prepare(
+            "WITH RECURSIVE descendants(id, path, depth) AS (
+               SELECT id, path, 0 FROM folders WHERE id = ?1
+               UNION ALL
+               SELECT child.id, child.path, parent.depth + 1
+               FROM folders child JOIN descendants parent ON child.parent_id = parent.id
+             )
+             SELECT id, path FROM descendants WHERE depth > 0 ORDER BY depth DESC",
+        )?;
+        let rows = statement.query_map([folder_id], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        })?.collect::<rusqlite::Result<Vec<_>>>()?;
+        rows.into_iter().filter(|(_, path)| !present_paths.contains(path))
+            .map(|(id, _)| id).collect::<Vec<_>>()
+    };
+    // Children precede parents so foreign keys remain valid between batches.
+    for chunk in stale_ids.chunks(128) {
+        let transaction = connection.unchecked_transaction()?;
+        for id in chunk {
+            transaction.execute("DELETE FROM settings WHERE key = ?1", [format!("scan-devices:{id}")])?;
+            transaction.execute("DELETE FROM folders WHERE id = ?1", [id])?;
         }
         transaction.commit()?;
     }

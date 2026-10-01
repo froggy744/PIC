@@ -32,6 +32,7 @@ pub enum ScanEvent {
         photos: Vec<IndexedPhoto>,
         counts: db::SidebarCounts,
     },
+    FoldersRemoved,
     LibraryCountsChanged {
         counts: db::SidebarCounts,
     },
@@ -111,6 +112,7 @@ fn scan_with_control(
     if let Some(folder) = folder {
         send(events, ScanEvent::FolderStarted { folder });
     }
+    verify_scan_devices(&connection, folder_id)?;
     let indexed = db::photo_fingerprints(&connection)?;
     let root_file = crate::source::file(root);
     let (files, discovered_folders) = collect_files(&root_file, events, control)?;
@@ -126,12 +128,18 @@ fn scan_with_control(
     if !root_is_available(root) {
         anyhow::bail!("scan root became unavailable: {root}");
     }
+    verify_scan_devices(&connection, folder_id)?;
     let present_paths = files
         .iter()
         .map(|(file, _, _)| crate::source::reference(file))
         .collect::<HashSet<_>>();
     let removed = db::remove_missing_photos(&connection, folder_id, &present_paths)?;
-    if removed > 0 {
+    let present_folders = discovered_folders.iter().map(|(path, _)| path.clone()).collect::<HashSet<_>>();
+    let removed_folders = db::remove_missing_folders(&connection, folder_id, &present_folders)?;
+    if removed_folders > 0 {
+        send(events, ScanEvent::FoldersRemoved);
+    }
+    if removed > 0 || removed_folders > 0 {
         send_library_counts(events, &connection);
     }
 
@@ -293,6 +301,7 @@ fn scan_with_control(
         send(events, ScanEvent::Cancelled { imported });
         return Ok(imported);
     }
+    remember_scan_devices(&connection, folder_id, &discovered_folders)?;
     send_library_counts(events, &connection);
     send(events, ScanEvent::IndexingFinished { imported });
     send(
@@ -407,6 +416,55 @@ fn commit_prepared(
         .transpose()?;
     transaction.commit()?;
     Ok(counts)
+}
+
+// Remember directory devices so an unmounted drive's empty mount point (or
+// a vanished nested mount) cannot be mistaken for deleted catalogue content.
+fn verify_scan_devices(connection: &Connection, folder_id: i64) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if let Some(saved) = db::setting(connection, &format!("scan-devices:{folder_id}"))? {
+            let devices: HashMap<String, u64> = serde_json::from_str(&saved)?;
+            for (path, device) in devices {
+                let mut ancestor = Path::new(&path);
+                let metadata = loop {
+                    match fs::metadata(ancestor) {
+                        Ok(metadata) => break metadata,
+                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                            ancestor = ancestor.parent().context("scan storage is unavailable")?;
+                        }
+                        Err(error) => return Err(error.into()),
+                    }
+                };
+                if metadata.dev() != device {
+                    anyhow::bail!("scan storage changed or was unmounted: {path}");
+                }
+            }
+        }
+    }
+    let _ = (connection, folder_id);
+    Ok(())
+}
+
+fn remember_scan_devices(
+    connection: &Connection,
+    folder_id: i64,
+    folders: &[(String, Option<String>)],
+) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let mut devices = HashMap::new();
+        for (path, _) in folders {
+            if !path.contains("://") {
+                devices.insert(path.clone(), fs::metadata(path)?.dev());
+            }
+        }
+        db::set_setting(connection, &format!("scan-devices:{folder_id}"), &serde_json::to_string(&devices)?)?;
+    }
+    let _ = (connection, folder_id, folders);
+    Ok(())
 }
 
 fn root_is_available(root: &str) -> bool {
@@ -985,6 +1043,68 @@ fn is_heif(path: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn refresh_removes_deleted_subfolders_but_keeps_existing_empty_folders() {
+        let unique = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let workspace = std::env::temp_dir().join(format!("pic-refresh-{}-{unique}", std::process::id()));
+        let root = workspace.join("photos");
+        let deleted = root.join("deleted/nested");
+        let empty = root.join("empty");
+        fs::create_dir_all(&deleted).unwrap();
+        fs::create_dir_all(&empty).unwrap();
+        let database = workspace.join("catalog.db");
+        let connection = Connection::open(&database).unwrap();
+        connection.execute_batch(db::SCHEMA).unwrap();
+        let root_path = root.to_str().unwrap();
+        scan_with_control(root_path, &database, None, &ScanControl::default()).unwrap();
+        let deleted_id = db::folders(&connection).unwrap().into_iter()
+            .find(|folder| folder.path == deleted.to_str().unwrap()).unwrap().id;
+        let photo_path = deleted.join("old.jpg");
+        db::upsert_photo(&connection, &photo_path, Some(deleted_id), &PhotoMetadata::default()).unwrap();
+        fs::remove_dir_all(root.join("deleted")).unwrap();
+
+        scan_with_control(root_path, &database, None, &ScanControl::default()).unwrap();
+        let paths = db::folders(&connection).unwrap().into_iter().map(|folder| folder.path).collect::<HashSet<_>>();
+        assert!(!paths.contains(deleted.to_str().unwrap()));
+        assert!(!paths.contains(root.join("deleted").to_str().unwrap()));
+        assert!(paths.contains(empty.to_str().unwrap()));
+        assert!(paths.contains(root_path));
+        assert_eq!(connection.query_row("SELECT COUNT(*) FROM photos", [], |row| row.get::<_, i64>(0)).unwrap(), 0);
+
+        // An unavailable root must not erase its catalogue.
+        fs::remove_dir_all(&root).unwrap();
+        assert!(scan_with_control(root_path, &database, None, &ScanControl::default()).is_err());
+        assert_eq!(db::folders(&connection).unwrap().len(), paths.len());
+        drop(connection);
+        fs::remove_dir_all(workspace).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn refresh_preserves_catalogue_when_mount_point_changes_device() {
+        use std::os::unix::fs::MetadataExt;
+        let unique = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let workspace = std::env::temp_dir().join(format!("pic-unmount-{}-{unique}", std::process::id()));
+        let root = workspace.join("mount");
+        fs::create_dir_all(&root).unwrap();
+        let database = workspace.join("catalog.db");
+        let connection = Connection::open(&database).unwrap();
+        connection.execute_batch(db::SCHEMA).unwrap();
+        let root_path = root.to_str().unwrap();
+        let root_id = db::insert_folder(&connection, root_path).unwrap();
+        let child_id = db::insert_folder(&connection, root.join("missing").to_str().unwrap()).unwrap();
+        db::upsert_photo(&connection, &root.join("missing/photo.jpg"), Some(child_id), &PhotoMetadata::default()).unwrap();
+        // Model the device difference caused by unmounting: the mount point
+        // exists, but belongs to the host filesystem instead of the saved drive.
+        let devices = HashMap::from([(root_path.to_string(), fs::metadata(&root).unwrap().dev().wrapping_add(1))]);
+        db::set_setting(&connection, &format!("scan-devices:{root_id}"), &serde_json::to_string(&devices).unwrap()).unwrap();
+        assert!(scan_with_control(root_path, &database, None, &ScanControl::default()).is_err());
+        assert!(db::folder_exists(&connection, child_id).unwrap());
+        assert_eq!(connection.query_row("SELECT COUNT(*) FROM photos", [], |row| row.get::<_, i64>(0)).unwrap(), 1);
+        drop(connection);
+        fs::remove_dir_all(workspace).unwrap();
+    }
 
     #[test]
     fn exif_parses_from_a_bounded_jpeg_header() {

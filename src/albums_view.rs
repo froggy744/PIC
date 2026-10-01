@@ -1201,8 +1201,8 @@ mod tests {
             .borrow()
             .execute_batch(
                 "INSERT INTO photos (id, path) VALUES
-                   (1, 'samples/01-Start Up.jpg'),
-                   (2, 'samples/Single Photo.jpg');",
+                   (1, 'Screenshots/All Photos.jpg'),
+                   (2, 'Screenshots/Rations Stars.jpg');",
             )
             .unwrap();
         // Photo 2 is only the chosen cover; it never joined the album.
@@ -1232,7 +1232,7 @@ mod tests {
             .unwrap();
         let drawn = picture.file().and_then(|file| file.path()).unwrap();
         assert!(
-            drawn.ends_with("samples/Single Photo.jpg"),
+            drawn.ends_with("Screenshots/Rations Stars.jpg"),
             "card drew {drawn:?}"
         );
 

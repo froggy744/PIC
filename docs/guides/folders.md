@@ -1,62 +1,51 @@
-# PIC Guide 2 — Folders: Your Real Folders, Untouched
+# PIC Guide 2 — Folders and network shares
 
-*Part of the [PIC release candidate guides](../README.md).*
+*Part of the [PIC user guides](../README.md).*
 
-PIC has a golden rule: **your folder structure belongs to you**. PIC never moves, renames or reorganises your files. It simply watches the folders you point it at and makes them a joy to browse.
+PIC indexes the folders you choose. Importing and removing a folder from the catalogue do not reorganise or delete its original files.
 
----
+## Add and browse a folder
 
-## Adding a Folder
+Click **+** beside **Folders** to choose a local or mounted folder. Indexing reports progress and updates counts while photos become available; thumbnails continue in the background. Refresh checks for changes without needlessly reprocessing unchanged images.
 
-Click the **+** button next to *Folders* in the sidebar and pick a folder from your computer, an external drive or a network location. PIC scans it, builds thumbnails, and the photos appear in the grid — progressively, so the app stays responsive while it works.
+<img src="../../Screenshots/Folders%20View.jpg" alt="Folder view showing photos beneath their folder heading" width="900">
 
-Already-imported photos aren't rebuilt every time; PIC is smart about only processing what's new or changed.
+Expand the sidebar tree to reach subfolders. Selecting a folder navigates to its section in the photo stream. Folder headings help keep the location clear, and the virtualised layout keeps only the required tiles active rather than building the whole library's widgets.
 
-## Browsing Folders
+Use the shared zoom slider or Ctrl + wheel to change photo size. The regular grid and Photo Wall are both available. Arrow keys move through the photos; Ctrl+A selects the active folder's scope. **Open in Folder** from a photo's context menu returns to its location.
 
-<img src="../../samples/Rewrite.jpg" alt="Browsing folders" width="900">
+## Watch, refresh or remove
 
-Your folders appear in the sidebar under **Folders**, each with:
+<img src="../../Screenshots/Watch%20Folders.jpg" alt="Watched folder menu with refresh, stop watching, statistics and library removal" width="900">
 
-- The **folder name**
-- A **photo count**
-- The **disk path** underneath, so you always know where the photos really live
+Right-click a folder for its available actions:
 
-Folders with **subfolders** show a small expand arrow — click it to open the tree and jump straight to any subfolder. Selecting a folder shows just that folder's photos in the grid, and the grid can even group photos under their **folder name headings** so you always know what you're looking at.
+- **Refresh Folder** checks it for changes.
+- **Watch Folder / Stop Watching Folder** changes automatic monitoring for that location.
+- **Folder Statistics** shows information about the folder.
+- **Remove from Library** removes its catalogue membership, leaving original files on storage.
+- Folder-wide favourite actions add or remove its photos from Favourites.
 
-Selecting *Photos* in the Library section returns you to your entire collection across all folders.
+Monitoring depends on storage availability. Use Refresh to request a rescan when needed, particularly after reconnecting storage or changing files outside PIC.
 
-## What About Albums Then?
+## Browse SMB and NFS
 
-Think of it this way:
+Open **Browse Network Photos** to discover servers, scan the local network, or enter a share URL. Expand the network tree to choose the folder to import. Registered shares are available in the **Network Shares** sidebar section.
 
-- **Folders = where photos physically live on your disk.** PIC mirrors them faithfully.
-- **Albums = what you make of them.** A trip album, a "best of" album, a work project — built on top of your folders without adding a single copy.
+<img src="../../Screenshots/Browse%20Network.jpg" alt="Browse Network Photos dialog with discovery, scanning and URL controls" width="900">
 
-A photo can live in one folder on disk *and* in ten albums. Remove it from an album and the original file stays perfectly safe in its folder.
+The Linux packages include direct SMB and NFS transports, so manually mounting a share is not required for those paths. An existing mount can still be imported as a local folder. Access depends on the server, export/share permissions and connectivity. See [Portable NFS](../build/portable-nfs.md) for NFS details.
 
-## When a Drive Goes to Sleep
+Local and network JPEGs use the same colour pipeline: valid embedded ICC profiles are converted to sRGB before thumbnail resizing and viewer display, with EXIF orientation preserved. The colour fix does not require an extra network read just to inspect the profile.
 
-<img src="../../samples/Offline.jpg" alt="Offline folders and photos" width="900">
+## Offline storage
 
-Photos often live on external drives, memory cards or network storage — and sometimes those get unplugged. PIC handles this gracefully:
+When a drive or share is unreachable, its catalogue entries and available cached thumbnails remain. Availability markers indicate that the original cannot currently be read. Reconnect the storage and refresh or allow PIC's availability checks to run. Full-resolution viewing, editing and export require an accessible original.
 
-- Disconnected folders get a small **warning marker** in the sidebar.
-- Their photos stay visible in the grid (thanks to cached thumbnails), each with a **warning badge** so you know the original isn't reachable right now.
-- Nothing is deleted and nothing is forgotten.
+Removing something in your file manager changes the underlying storage. PIC's catalogue and thumbnail cache are not backups of those files.
 
-Plug the drive back in and PIC reconnects everything automatically — your library is whole again, exactly as you left it.
+## Folders and albums
 
-This makes PIC ideal for photographers who keep older archives on shelf drives: the library remembers everything, even when the drive is in a drawer.
+Folders describe physical locations. Albums collect photos within PIC without moving them or making copies. A photo can appear in several albums while its original remains in one folder.
 
-## Photos Keep Living Their Own Lives
-
-Because PIC never locks your files:
-
-- You can add, move or delete photos in your file manager whenever you like — **Refresh** in PIC picks up the changes.
-- Edited versions are exported as **new files**, originals untouched.
-- Backing up your photos means simply backing up your folders — the same as always.
-
----
-
-**Previous guide:** [← Navigation](navigation.md) · **Next guide:** [Library →](library.md)
+**Previous:** [← Navigation](navigation.md) · **Next:** [Library →](library.md)

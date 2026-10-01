@@ -1,86 +1,63 @@
-# PIC Guide 3 — The Library: Photos, Favourites, Albums & Search
+# PIC Guide 3 — Library, ratings, albums and search
 
-*Part of the [PIC release candidate guides](../README.md).*
+*Part of the [PIC user guides](../README.md).*
 
-The Library is the heart of PIC — the place where all your photos come together. This guide covers the Library views, organising with Favourites and Albums, and finding any photo fast.
+## Library destinations
 
----
+The sidebar provides **All Photos**, **Favourites**, **Recently Added** and **History**. The Library heading opens the overview; choose a destination to browse that collection. Folder and Network Shares sections navigate the physical locations you imported.
 
-## The Three Library Views
+<img src="../../Screenshots/All%20Photos.jpg" alt="All Photos and library destinations in the sidebar" width="900">
 
-<img src="../../samples/Main.jpg" alt="Library views" width="900">
+## Grid and Photo Wall
 
-At the top of the sidebar you'll find three smart views:
+The regular grid uses consistent thumbnail slots. **Photo Wall** arranges photos in rows at their natural proportions; switch with the view toggle in the bottom bar. Both use the same collection and selection.
 
-- **Photos / All Photos** — your entire collection in one grid. Mine shows over 70,000 photos and it's still fast.
-- **Favourites** — every photo you've ever hearted, together in one place.
-- **Recently Added** — the newest imports, perfect after plugging in a memory card.
+<img src="../../Screenshots/Photo%20Wall%20Screen.jpg" alt="Photo Wall with proportion-preserving photo rows" width="900">
 
-Each view shows a **live count**, so you always know the size of your collection.
+Resize previews with the zoom slider or **Ctrl + wheel**. **Settings → Interface** controls filenames below thumbnails, portrait presentation and optional **High quality thumbnails (640 px)** for Photo Wall. Normal thumbnails remain 320 px. High-quality previews are generated as needed rather than regenerating the whole library at startup.
 
-## The Thumbnail Grid
+<img src="../../Screenshots/Settings%20Screen.jpg" alt="Interface settings for thumbnail presentation and high quality" width="900">
 
-<img src="../../samples/Picasa%20Iphoto%20Clone-PIC.jpg" alt="The photo grid" width="900">
+## Group, sort and filter
 
-Photos appear as rounded thumbnails in a smooth-scrolling grid. Little touches you'll notice:
+Group library photos by **Day** or **Month**, or use an ungrouped view. Folder browsing uses folder headings. Sort by date taken, name, file size, dimensions, date added or **Rating**, with ascending and descending choices.
 
-- A **selected photo** gets a clear highlight with a check mark.
-- **Favourites** show a small red heart on the corner.
-- Photos that have been edited show a small **pencil badge**.
-- The grid stays smooth even with tens of thousands of photos.
+The rating filter is independent of sorting: choose **Clear**, **All Stars**, **Unrated**, or an individual star level.
 
-## Zoom the Thumbnails In and Out
+## Favourites and ratings
 
-<img src="../../samples/ZoomIN.jpg" alt="Big thumbnails" width="900">
+Heart a photo from the bottom bar or context menu to include it in Favourites. Ctrl+click several photos to apply actions to a selection.
 
-Hold **Ctrl** and scroll your **mouse wheel** to make thumbnails bigger…
+<img src="../../Screenshots/Rations%20Stars.jpg" alt="Five-star rating control in the photo viewer" width="900">
 
-<img src="../../samples/ZoomOUT.jpg" alt="Small thumbnails" width="900">
+Assign **1–5 stars** with the star control or the number keys; **0** clears a rating. In the gallery, shortcuts rate the selection; in the viewer, they rate the current photo. Ratings appear on thumbnails and are stored in the database rather than the original file. These shortcuts do not run while you are typing in a text field.
 
-…or smaller. Zoomed in, you can almost enjoy each photo on its own. Zoomed out, you can scan hundreds at once. There's also a thumbnail-size button in the info bar at the bottom.
+## Albums
 
-## Grouping and Sorting
+Use **+** beside Albums to create a collection. Select photos and choose **Add to album** from the context menu. A photo can belong to several albums without duplication. Removing a photo from an album does not delete its original.
 
-From the top bar you can:
+Album context actions include renaming and cover customisation. An album is a virtual collection; it does not create a matching folder on your disk.
 
-- **Group** photos by **Day** or **Month** — the grid shows neat section headings like *"May 2026 · 85 photos"* — or turn grouping off.
-- **Sort** by date taken, name, file size, dimensions or date added — ascending or descending.
+## Search and return to a folder
 
-## Favourites — One Heart, Zero Effort
+Search matches photo and folder names. Choose a folder suggestion with the keyboard and press Enter to navigate there; Esc clears search. **Open in Folder** on a photo returns to its folder section. Closing the viewer restores the photo selection and browsing position.
 
-Select a photo (or several) and click the **❤️** in the info bar — or use the right-click menu. That's it. Hearted photos get a heart badge and appear in the **Favourites** view, and you can flip through your favourites in the viewer just like any other collection.
+History shows recently edited photos and recorded operations, including saved edits and collage work. It is distinct from Recently Added, which reflects catalogue additions.
 
-## Albums — Your Collections
+## Separate libraries and backups
 
-<img src="../../samples/Albums%20and%20Favourite.jpg" alt="Selecting photos and an album" width="900">
+Open **Settings → Database** to manage catalogue databases:
 
-Create an album with the **+** next to *Albums*, give it a name, and start filling it:
+- Create a library or open an existing `.db` file.
+- Choose from known libraries and change the library name and description.
+- Back up the database or restore a database backup.
 
-1. Select one photo — or Ctrl+click several.
-2. Right-click and choose **Add to album** (or use the photo menu).
-3. The photo now also lives in that album — no copies made.
+Separate libraries can represent different projects or archives. Photo files and the shared thumbnail cache are not copied by database management. A database backup protects organisation and edit recipes, not the original photographs; keep separate photo backups. Imported text/overlay assets also need to remain available for their edits.
 
-Here the *Mercedes* album is selected and shows its photos. One photo is selected, ready for an action. Removing a photo from an album never touches the original file in its folder.
+## Thumbnail colour
 
-## Search — Find Anything Instantly
+For standalone JPEGs, thumbnails and the viewer use the embedded ICC profile when it is valid, converting source RGB to sRGB before resizing. ProPhoto RGB and Adobe RGB files therefore receive actual profile conversion rather than a saturation adjustment. JPEGs without a profile retain their previous treatment, and bad profiles fall back to usable decoded pixels.
 
-<img src="../../samples/search.jpg" alt="Searching" width="900">
+Existing JPEG thumbnails from before this fix are regenerated through normal lazy/background caching. The library does not synchronously recolour every photo on startup.
 
-Click the search bar and just type. Results filter as you type, matching:
-
-- **Photo file names**
-- **Folder names** — with handy suggestions showing the matching folders and their locations
-
-Searching *2025* above instantly suggests all the 2025 folders, while the grid fills with matching photos. No tags to maintain, no cataloguing chore — it just finds things.
-
-## From Grid to Viewer
-
-- **Single click** selects a photo and shows its details in the bottom info bar.
-- **Double-click** (or press Enter / Space) opens it in the big photo viewer.
-- Navigate with **arrow keys** or the **mouse wheel**, zoom with **Ctrl + wheel**, press `Esc` to come back to the grid exactly where you left off.
-
-Multiple selection works here too: Ctrl+click several photos, then favourite, album or collage them in one go.
-
----
-
-**Previous guide:** [← Folders](folders.md) · **Next guide:** [Edit Mode →](edit-mode.md)
+**Previous:** [← Folders](folders.md) · **Next:** [Edit Mode →](edit-mode.md)

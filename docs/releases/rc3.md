@@ -8,11 +8,26 @@ Since RC2, a major amount of work has gone into the photo grid, Folder view, ful
 
 PIC remains non-destructive: your original photos are not modified by normal library browsing, organisation, ratings, albums, or editing recipes.
 
-<!-- Screenshot later:
-![PIC Release Candidate 3](../../samples/RC3-Main.jpg)
--->
+
+<img src="../../Screenshots/All%20Photos.jpg" alt="Current PIC All Photos view" width="900">
 
 ## What’s new since RC2
+
+### Photo Wall and high-quality previews
+
+The bottom layout toggle switches between the regular grid and Photo Wall, which preserves photo proportions in fitted rows. The shared zoom slider works in both layouts, and the sidebar can be hidden for more photo space.
+
+<img src="../../Screenshots/Photo%20Wall%20Sidebar%20Hidden.jpg" alt="Photo Wall with the sidebar hidden" width="900">
+
+Settings → Interface offers optional 640 px high-quality Photo Wall thumbnails, alongside the normal 320 px thumbnails. Previews are generated as needed without a synchronous startup rebuild of the library.
+
+### JPEG ICC colour management and gallery reliability
+
+Standalone JPEG thumbnail and viewer decoding now applies valid embedded ICC profiles before resizing, converting ProPhoto RGB, Adobe RGB and other supported RGB profiles to standard sRGB. EXIF orientation and native-resolution viewer decoding are preserved. Unprofiled JPEGs retain the fast path, and malformed or unsupported profiles safely fall back to the decoded RGB image.
+
+Old JPEG thumbnail entries are invalidated and regenerated through the existing background/lazy cache behavior. Network JPEGs use the same conversion without changing transport behavior. Other formats keep their existing colour treatment.
+
+A gallery crash caused by a tile-map borrow surviving across synchronous GTK focus/scroll callbacks has also been fixed, with display-dependent regression coverage for focus and tile removal.
 
 ### ⭐ Five-star photo ratings
 
@@ -32,9 +47,8 @@ RC3 also adds:
 
 Ratings are stored in the PIC library and do not modify the original image files.
 
-<!-- Screenshot later:
-![Five-star photo ratings](../../samples/RC3-Ratings.jpg)
--->
+
+<img src="../../Screenshots/Rations%20Stars.jpg" alt="Five-star rating control" width="900">
 
 ### 📚 Multiple photo libraries and database backups
 
@@ -46,9 +60,6 @@ Database handling has also been improved with library backup management and back
 
 This work is designed to make the PIC library safer and easier to manage as collections grow.
 
-<!-- Screenshot later:
-![Library management](../../samples/RC3-Libraries.jpg)
--->
 
 ### 🏠 Improved Library experience
 
@@ -64,9 +75,6 @@ RC3 includes improvements around the Library Home view and navigation between:
 
 The interface now does a better job of keeping your place while moving between the library, Folder view and the photo viewer.
 
-<!-- Screenshot later:
-![PIC Library Home](../../samples/RC3-Library-Home.jpg)
--->
 
 ### 🗂 Major Folder view rebuild
 
@@ -92,9 +100,8 @@ Work in this area includes:
 
 A large amount of internal work also went into preventing background refreshes from fighting with scrolling, selection and layout changes.
 
-<!-- Screenshot later:
-![Sectioned Folder view](../../samples/RC3-Folder-View.jpg)
--->
+
+<img src="../../Screenshots/Folders%20View.jpg" alt="Sectioned Folder view" width="900">
 
 ### 🔎 Better search and folder navigation
 
@@ -112,9 +119,6 @@ RC3 improves this workflow by:
 
 This makes Search useful not only for finding individual photos, but also for jumping around a large folder structure.
 
-<!-- Screenshot later:
-![Search and folder navigation](../../samples/RC3-Search.jpg)
--->
 
 ### ⌨️ Better keyboard navigation and selection
 
@@ -148,9 +152,6 @@ It can control:
 
 The slider is disabled where it does not make sense, such as during Collage editing, and returns to the correct gallery state afterwards.
 
-<!-- Screenshot later:
-![Zoom slider](../../samples/RC3-Zoom.jpg)
--->
 
 ### 🖼 Much better full-screen photo viewing
 
@@ -167,13 +168,14 @@ Manual zooming is now significantly more stable, with improvements to:
 - Photo positioning and viewport calculations.
 - Returning to the selected photo after closing the viewer.
 
+Use Space or the 1:1 control to switch magnification; the numeric shortcuts 1–5 assign ratings and 0 clears a rating.
+
 PIC now loads higher-quality native image data when required for manual zoom rather than simply enlarging the lower-resolution fit-to-window image.
 
 The transition from thumbnail to full-screen view has also been refined, including fixes for transparent PNG images and rotated RAW photos.
 
-<!-- Screenshot later:
-![Full-screen viewer and zoom](../../samples/RC3-Lightbox.jpg)
--->
+
+<img src="../../Screenshots/Portrait%20Photo%20Screen.jpg" alt="Portrait photographs in the grid" width="900">
 
 ### 📷 RAW and image handling improvements
 
@@ -200,9 +202,8 @@ RC3 also connects the shared zoom slider to the editor, giving Edit Mode a more 
 
 Editing remains non-destructive: the original source image is preserved until you deliberately export a new result.
 
-<!-- Screenshot later:
-![Edit Mode](../../samples/RC3-Edit.jpg)
--->
+
+<img src="../../Screenshots/Effects%20Screen.jpg" alt="Current Edit Mode filter previews" width="900">
 
 ### 🌐 Network browsing refinements
 
@@ -216,9 +217,8 @@ There are also fixes for:
 - Correct orientation of network-photo thumbnails.
 - Keeping Folder browsing responsive while thumbnails are being generated.
 
-<!-- Screenshot later:
-![Network tree navigation](../../samples/RC3-Network.jpg)
--->
+
+<img src="../../Screenshots/Browse%20Network.jpg" alt="Browse Network Photos dialog" width="900">
 
 ### 📥 Faster and clearer imports
 
@@ -238,9 +238,6 @@ RC3 now:
 
 The result is a more responsive application while importing large photo collections.
 
-<!-- Screenshot later:
-![Import progress](../../samples/RC3-Import.jpg)
--->
 
 ### 📐 A more responsive interface
 
@@ -272,9 +269,8 @@ RC3 includes:
 
 PIC now favours immediate, predictable interaction over animations that make large libraries feel slower.
 
-<!-- Screenshot later:
-![PIC themes](../../samples/RC3-Themes.jpg)
--->
+
+<img src="../../Screenshots/Themed%20Grid.jpg" alt="PIC using a dark interface theme" width="900">
 
 ### 💿 Albums and everyday fixes
 

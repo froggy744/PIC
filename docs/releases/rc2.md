@@ -4,7 +4,9 @@
 
 The familiar promise is still here: your photos stay yours. PIC works with your folders and keeps your original images safe.
 
-![Browse network shares in PIC](../../samples/Grid-NoRoundCorners.jpg)
+*The illustrations below show the current RC3 interface; this page records the features introduced in RC2.*
+
+<img src="../../Screenshots/All%20Photos.jpg" alt="Current PIC photo library" width="900">
 
 ## What’s new since RC1
 
@@ -14,19 +16,17 @@ If network browsing does not work, manually mount your SMB or NFS share to a loc
 
 PIC can now find and browse shared folders on your local network, including SMB and NFS shares. Add a share from the in-app browser, move through its folders, and let PIC reconnect registered shares when you start the app. Network photos can be browsed alongside your regular library.
 
-![Browse network shares in PIC](../../samples/Browse%20Network.jpg)
+<img src="../../Screenshots/Browse%20Network.jpg" alt="Current network browser" width="900">
 
 ### Make more with Collage
 
 Build Grid, Mosaic, or Smart Mosaic collages, adjust the layout and appearance, and export a high-resolution result. Collage work can be saved and resumed, with undo and redo to help you explore different arrangements. You can also open a photo for editing and return to your collage.
 
-![Smart collage in PIC](../../samples/Collage-SmartAI.jpg)
-
 ### More ways to edit
 
 Edit Mode now includes image overlays and text, with controls for placement, size, rotation, and styling. The expanded editing tools remain non-destructive, so your original photo is preserved. Filter previews and editing interactions have also been refined to feel smoother and clearer.
 
-![Text editing in PIC](../../samples/Edit%20Mode-Text.jpg)
+<img src="../../Screenshots/Effects%20Screen.jpg" alt="Current Edit Mode with filter previews" width="900">
 
 ### Print with control
 
@@ -36,7 +36,7 @@ Prepare one or many photos for printing. Choose page and photo sizes, paper orie
 
 PIC now discovers themes from theme folders, making it easier to explore different appearances and create community themes. The theme collection has grown, settings have been reorganized, and sidebar controls have been reworked for smoother browsing and easier customization.
 
-![Text editing in PIC](../../samples/Settings.jpg)
+<img src="../../Screenshots/Settings%20Screen.jpg" alt="Current Interface settings" width="900">
 
 ### A more comfortable everyday experience
 
@@ -46,8 +46,6 @@ PIC now discovers themes from theme folders, making it easier to explore differe
 - Clearer progress feedback for large export and photo operations.
 - Easier export from the viewer, editor, and photo menus.
 - Continued improvements to Linux and Windows build workflows.
-
-![Text editing in PIC](../../samples/Crop%20Mode.jpg)
 
 ## Thanks for trying PIC
 

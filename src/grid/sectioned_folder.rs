@@ -2729,9 +2729,9 @@ mod section_lookup_tests {
         let gallery = Rc::new(Gallery::new(&[], 120, |_| {}, |_, _, _| {}, |_, _, _, _| {}, |_, _| {}, |_| {}));
         gallery.group_mode.set(GroupMode::Folder);
         gallery.current_columns.set(5);
-        let sample_root = std::env::current_dir().unwrap().join("samples");
+        let sample_root = std::env::current_dir().unwrap().join("Screenshots");
         gallery.current_photos.replace((1..=100_i64).map(|id| {
-            let path = sample_root.join(format!("ZoomOUT-{}.jpg", id % 30 + 1));
+            let path = sample_root.join(if id % 2 == 0 { "All Photos.jpg" } else { "Portrait Photo Screen.jpg" });
             let folder_id = if id <= 12 { 1_i64 } else { 2_i64 };
             let folder_path = if folder_id == 1 { "/zoom-test/first" } else { "/zoom-test/second" };
             glib::Object::builder::<PhotoObject>()
@@ -2912,9 +2912,9 @@ mod section_lookup_tests {
         gtk::init().unwrap();
         let gallery = Rc::new(Gallery::new(&[], 120, |_| {}, |_, _, _| {}, |_, _, _, _| {}, |_, _| {}, |_| {}));
         gallery.group_mode.set(GroupMode::Folder);
-        let sample_root = std::env::current_dir().unwrap().join("samples");
+        let sample_root = std::env::current_dir().unwrap().join("Screenshots");
         gallery.current_photos.replace((1..=96_i64).map(|id| {
-            let path = sample_root.join(format!("ZoomOUT-{}.jpg", id % 30 + 1));
+            let path = sample_root.join(if id % 2 == 0 { "All Photos.jpg" } else { "Portrait Photo Screen.jpg" });
             let folder_id = if id <= 48 { 1_i64 } else { 2_i64 };
             glib::Object::builder::<PhotoObject>()
                 .property("id", id)

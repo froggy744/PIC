@@ -5,14 +5,18 @@
 set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+REPO_ROOT="$SCRIPT_DIR"
+if [[ -f "$SCRIPT_DIR/../Cargo.toml" ]]; then
+    REPO_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd -P)"
+fi
 ORIGINAL_ARGS=("$@")
 CACHE_ROOT="${PIC_BUILD_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/pic-linux-build}"
 TOOLS_DIR="$CACHE_ROOT/tools"
 GITHUB_CACHE="$CACHE_ROOT/github-source"
 WORK_ROOT="$CACHE_ROOT/work"
-FLATPAK_STATE_DIR="${PIC_FLATPAK_STATE_DIR:-$SCRIPT_DIR/.flatpak-builder}"
+FLATPAK_STATE_DIR="${PIC_FLATPAK_STATE_DIR:-$REPO_ROOT/.flatpak-builder}"
 FLATPAK_SOURCE_CACHE="$CACHE_ROOT/flatpak-sources"
-DIST_DIR="${PIC_DIST_DIR:-$SCRIPT_DIR/dist}"
+DIST_DIR="${PIC_DIST_DIR:-$REPO_ROOT/dist}"
 REPO_URL="${PIC_REPO_URL:-https://github.com/froggy744/PIC.git}"
 DEFAULT_BRANCH="${PIC_BRANCH:-main}"
 APP_ID="${PIC_APP_ID:-io.github.you.PicRs}"
@@ -27,7 +31,7 @@ ONLINE=0
 SKIP_TESTS="${PIC_SKIP_TESTS:-0}"
 CHECK_DEPENDENCIES_ONLY=0
 BUILD_TARGET="${PIC_BUILD_TARGET:-}"
-LOG_DIR="${PIC_BUILD_LOG_DIR:-$SCRIPT_DIR/build-logs}"
+LOG_DIR="${PIC_BUILD_LOG_DIR:-$REPO_ROOT/build-logs}"
 LOG_FILE=""
 BUILD_STARTED_AT=""
 BUILD_STARTED_EPOCH=0
@@ -39,7 +43,7 @@ warn() { printf '\033[1;33mWARN:\033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[1;31mERROR:\033[0m %s\n' "$*" >&2; exit 1; }
 
 usage() {
-    cat <<'HELP'
+    cat <<HELP
 PIC Linux build script
 
 Build targets:
@@ -52,24 +56,24 @@ Source modes:
   github   Clone/update the latest GitHub branch, cache build requirements, then build.
 
 Interactive:
-  ./PIC-build-linux-one-script.sh
+  "$SCRIPT_DIR/PIC-build-linux-one-script.sh"
 
 Direct commands:
-  ./PIC-build-linux-one-script.sh local
-  ./PIC-build-linux-one-script.sh local --project /home/peet/PIC
-  ./PIC-build-linux-one-script.sh github
-  ./PIC-build-linux-one-script.sh github --branch main
-  ./PIC-build-linux-one-script.sh github --branch editing.phase1
-  ./PIC-build-linux-one-script.sh local --appimage-only
-  ./PIC-build-linux-one-script.sh local --flatpak-only
-  ./PIC-build-linux-one-script.sh local --target appimage
+  "$SCRIPT_DIR/PIC-build-linux-one-script.sh" local
+  "$SCRIPT_DIR/PIC-build-linux-one-script.sh" local --project /home/peet/PIC
+  "$SCRIPT_DIR/PIC-build-linux-one-script.sh" github
+  "$SCRIPT_DIR/PIC-build-linux-one-script.sh" github --branch main
+  "$SCRIPT_DIR/PIC-build-linux-one-script.sh" github --branch editing.phase1
+  "$SCRIPT_DIR/PIC-build-linux-one-script.sh" local --appimage-only
+  "$SCRIPT_DIR/PIC-build-linux-one-script.sh" local --flatpak-only
+  "$SCRIPT_DIR/PIC-build-linux-one-script.sh" local --target appimage
 
 Options:
   --source MODE       local or github
-  --project PATH      local project folder (default: folder containing this script)
+  --project PATH      local project folder (default: checkout root, or standalone script folder)
   --branch NAME       GitHub branch (default: main)
-  --dist PATH         output folder (default: ./dist beside this script)
-  --log-dir PATH      build log folder (default: ./build-logs beside this script)
+  --dist PATH         output folder (default: dist/ at checkout root or standalone script folder)
+  --log-dir PATH      build log folder (default: build-logs/ at checkout root or standalone script folder)
   --target TARGET     both, appimage, or flatpak (default: both)
   --appimage-only     build only the AppImage
   --flatpak-only      build only the Flatpak bundle
@@ -229,8 +233,8 @@ interactive_menu() {
     case "$choice" in
         1)
             MODE=local
-            read -r -p "Project folder [$SCRIPT_DIR]: " PROJECT_DIR
-            PROJECT_DIR="${PROJECT_DIR:-$SCRIPT_DIR}"
+            read -r -p "Project folder [$REPO_ROOT]: " PROJECT_DIR
+            PROJECT_DIR="${PROJECT_DIR:-$REPO_ROOT}"
             ;;
         2)
             MODE=github
@@ -349,7 +353,7 @@ validate_project() {
 
 prepare_local_source() {
     ONLINE=0
-    PROJECT_DIR="${PROJECT_DIR:-$SCRIPT_DIR}"
+    PROJECT_DIR="${PROJECT_DIR:-$REPO_ROOT}"
     PROJECT_DIR="$(cd -- "$PROJECT_DIR" && pwd -P)"
     validate_project "$PROJECT_DIR"
     SOURCE_DIR="$PROJECT_DIR"
@@ -864,7 +868,13 @@ copy_source_tree() {
         --exclude='./build-logs' \
         --exclude='./.flatpak-builder' \
         --exclude='./*.log' \
-        --exclude='./*.zip' \
+        --exclude='.worktrees' \
+        --exclude='worktrees' \
+        --exclude='to-be-deleted' \
+        --exclude='.superpowers' \
+        --exclude='__pycache__' \
+        --exclude='./logs' \
+        --exclude='build.windows.log' \
         -cf - .) | (cd "$dest" && tar -xf -)
 }
 

@@ -1,6 +1,6 @@
 # PIC Guide 1 — Navigation: How the UI/UX Works
 
-*Part of the [PIC release candidate guides](README.release.candidate.md).*
+*Part of the [PIC release candidate guides](../README.md).*
 
 PIC is deliberately simple: **one window, three areas, zero learning curve**. This guide walks you through every part of the interface and how to move around.
 
@@ -8,7 +8,7 @@ PIC is deliberately simple: **one window, three areas, zero learning curve**. Th
 
 ## The Three Areas of the Window
 
-<img src="samples/01-Start%20Up.jpg" alt="The PIC window" width="900">
+<img src="../../samples/01-Start%20Up.jpg" alt="The PIC window" width="900">
 
 Every time you open PIC you see the same friendly layout:
 
@@ -32,7 +32,7 @@ Clicking anything in the sidebar instantly shows that collection in the grid. Cl
 
 ## The Top Bar — Search and Controls
 
-<img src="samples/Picasa%20Iphoto%20Clone-PIC.jpg" alt="Top bar" width="900">
+<img src="../../samples/Picasa%20Iphoto%20Clone-PIC.jpg" alt="Top bar" width="900">
 
 Across the top you'll find:
 
@@ -72,7 +72,7 @@ You never "leave" your library. Editing, viewing and organising all happen in th
 
 ## Hide the Sidebar for Full-Photo Immersion
 
-<img src="samples/AutoHide.jpg" alt="Sidebar hidden" width="900">
+<img src="../../samples/AutoHide.jpg" alt="Sidebar hidden" width="900">
 
 Want every pixel for your photos? Click the **sidebar toggle** in the top-left corner (or let it auto-hide) and the sidebar slides away, giving the photo grid the full width of the window. Click it again to bring the sidebar back.
 
@@ -103,4 +103,4 @@ Right-clicking a photo — in the grid *or* in the large viewer — opens a comp
 
 ---
 
-**Next guide:** [Folders — browsing your real folders →](README.folders.md)
+**Next guide:** [Folders — browsing your real folders →](folders.md)

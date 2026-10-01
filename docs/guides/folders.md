@@ -1,6 +1,6 @@
 # PIC Guide 2 — Folders: Your Real Folders, Untouched
 
-*Part of the [PIC release candidate guides](README.release.candidate.md).*
+*Part of the [PIC release candidate guides](../README.md).*
 
 PIC has a golden rule: **your folder structure belongs to you**. PIC never moves, renames or reorganises your files. It simply watches the folders you point it at and makes them a joy to browse.
 
@@ -14,7 +14,7 @@ Already-imported photos aren't rebuilt every time; PIC is smart about only proce
 
 ## Browsing Folders
 
-<img src="samples/Rewrite.jpg" alt="Browsing folders" width="900">
+<img src="../../samples/Rewrite.jpg" alt="Browsing folders" width="900">
 
 Your folders appear in the sidebar under **Folders**, each with:
 
@@ -37,7 +37,7 @@ A photo can live in one folder on disk *and* in ten albums. Remove it from an al
 
 ## When a Drive Goes to Sleep
 
-<img src="samples/Offline.jpg" alt="Offline folders and photos" width="900">
+<img src="../../samples/Offline.jpg" alt="Offline folders and photos" width="900">
 
 Photos often live on external drives, memory cards or network storage — and sometimes those get unplugged. PIC handles this gracefully:
 
@@ -59,4 +59,4 @@ Because PIC never locks your files:
 
 ---
 
-**Previous guide:** [← Navigation](README.navigation.md) · **Next guide:** [Library →](README.library.md)
+**Previous guide:** [← Navigation](navigation.md) · **Next guide:** [Library →](library.md)

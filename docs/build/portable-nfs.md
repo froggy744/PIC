@@ -51,6 +51,6 @@ Build checks:
 ```sh
 cargo test --release --locked --offline
 cargo build --release --locked --offline
-./PIC-build-linux-one-script.sh local --appimage-only
-./PIC-build-linux-one-script.sh local --flatpak-only
+./scripts/PIC-build-linux-one-script.sh local --appimage-only
+./scripts/PIC-build-linux-one-script.sh local --flatpak-only
 ```

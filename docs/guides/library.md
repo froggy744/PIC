@@ -1,6 +1,6 @@
 # PIC Guide 3 — The Library: Photos, Favourites, Albums & Search
 
-*Part of the [PIC release candidate guides](README.release.candidate.md).*
+*Part of the [PIC release candidate guides](../README.md).*
 
 The Library is the heart of PIC — the place where all your photos come together. This guide covers the Library views, organising with Favourites and Albums, and finding any photo fast.
 
@@ -8,7 +8,7 @@ The Library is the heart of PIC — the place where all your photos come togethe
 
 ## The Three Library Views
 
-<img src="samples/Main.jpg" alt="Library views" width="900">
+<img src="../../samples/Main.jpg" alt="Library views" width="900">
 
 At the top of the sidebar you'll find three smart views:
 
@@ -20,7 +20,7 @@ Each view shows a **live count**, so you always know the size of your collection
 
 ## The Thumbnail Grid
 
-<img src="samples/Picasa%20Iphoto%20Clone-PIC.jpg" alt="The photo grid" width="900">
+<img src="../../samples/Picasa%20Iphoto%20Clone-PIC.jpg" alt="The photo grid" width="900">
 
 Photos appear as rounded thumbnails in a smooth-scrolling grid. Little touches you'll notice:
 
@@ -31,11 +31,11 @@ Photos appear as rounded thumbnails in a smooth-scrolling grid. Little touches y
 
 ## Zoom the Thumbnails In and Out
 
-<img src="samples/ZoomIN.jpg" alt="Big thumbnails" width="900">
+<img src="../../samples/ZoomIN.jpg" alt="Big thumbnails" width="900">
 
 Hold **Ctrl** and scroll your **mouse wheel** to make thumbnails bigger…
 
-<img src="samples/ZoomOUT.jpg" alt="Small thumbnails" width="900">
+<img src="../../samples/ZoomOUT.jpg" alt="Small thumbnails" width="900">
 
 …or smaller. Zoomed in, you can almost enjoy each photo on its own. Zoomed out, you can scan hundreds at once. There's also a thumbnail-size button in the info bar at the bottom.
 
@@ -52,7 +52,7 @@ Select a photo (or several) and click the **❤️** in the info bar — or use 
 
 ## Albums — Your Collections
 
-<img src="samples/Albums%20and%20Favourite.jpg" alt="Selecting photos and an album" width="900">
+<img src="../../samples/Albums%20and%20Favourite.jpg" alt="Selecting photos and an album" width="900">
 
 Create an album with the **+** next to *Albums*, give it a name, and start filling it:
 
@@ -64,7 +64,7 @@ Here the *Mercedes* album is selected and shows its photos. One photo is selecte
 
 ## Search — Find Anything Instantly
 
-<img src="samples/search.jpg" alt="Searching" width="900">
+<img src="../../samples/search.jpg" alt="Searching" width="900">
 
 Click the search bar and just type. Results filter as you type, matching:
 
@@ -83,4 +83,4 @@ Multiple selection works here too: Ctrl+click several photos, then favourite, al
 
 ---
 
-**Previous guide:** [← Folders](README.folders.md) · **Next guide:** [Edit Mode →](README.edit-mode.md)
+**Previous guide:** [← Folders](folders.md) · **Next guide:** [Edit Mode →](edit-mode.md)

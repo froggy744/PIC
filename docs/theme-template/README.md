@@ -76,4 +76,4 @@ Unknown keys are ignored, so adding `version: 1` today is forward-compatible.
 - Invalid metadata values are dropped with a warning on the console; the
   theme still loads with defaults.
 
-See also `docs/THEMES.md` for the full discovery and layering model.
+See also [Themes](../THEMES.md) for the full discovery and layering model.

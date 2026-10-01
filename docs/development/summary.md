@@ -5,7 +5,7 @@
 **Status:** Release Candidate (post-v4 stabilization + theme system overhaul)  
 **Date:** 2026-09-18  
 **Primary Linux test environment:** Fedora  
-**Purpose:** Give a local/offline LLM enough context to make small UI/behavior tweaks safely. Summary only — read the relevant source files for detail. User-facing docs live in `README.md` and the `README.*.md` guides.
+**Purpose:** Give a local/offline LLM enough context to make small UI/behavior tweaks safely. Summary only — read the relevant source files for detail. User-facing docs live in `docs/README.md` and `docs/guides/`.
 
 ---
 

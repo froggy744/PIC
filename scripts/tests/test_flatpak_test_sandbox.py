@@ -9,7 +9,7 @@ import tempfile
 import unittest
 
 
-SCRIPT = Path(__file__).resolve().parents[2] / "PIC-build-linux-one-script.sh"
+SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "PIC-build-linux-one-script.sh"
 
 
 class FlatpakTestSandboxTests(unittest.TestCase):

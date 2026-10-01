@@ -11,7 +11,7 @@
 # what makes icons render on Windows/macOS, which ship no system icon theme.
 #
 # Usage:
-#   ./build-icon-bundle.sh [SOURCE_THEME_DIR]
+#   ./scripts/build-icon-bundle.sh [SOURCE_THEME_DIR]
 #
 #   SOURCE_THEME_DIR defaults to /usr/share/icons/Adwaita (override on
 #   macOS with e.g. ~/adwaita/Adwaita after installing adwaita-icon-theme
@@ -23,7 +23,9 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ICON_DIR="${SCRIPT_DIR}/icons"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+RESOURCE_DIR="${REPO_ROOT}/resources"
+ICON_DIR="${RESOURCE_DIR}/icons"
 SOURCE_DIR="${1:-${ADWAITA_THEME_DIR:-/usr/share/icons/Adwaita}}"
 
 if [[ ! -d "${SOURCE_DIR}/symbolic" ]]; then
@@ -93,7 +95,7 @@ fi
 # Hand-drawn collage icons (resources/custom-icons/ is their source of
 # truth): three layout tiles and the corner-radius slider ends. The import
 # above wiped icons/, so restore ours after it.
-for custom in "${SCRIPT_DIR}/custom-icons"/*.svg; do
+for custom in "${RESOURCE_DIR}/custom-icons"/*.svg; do
     [[ -e "${custom}" ]] || continue
     cp "${custom}" "${ICON_DIR}/$(basename "${custom}")"
 done
@@ -102,7 +104,7 @@ count="$(find "${ICON_DIR}" -name '*.svg' | wc -l)"
 echo "Imported ${count} icons into resources/icons/"
 
 # Regenerate icons.gresource.xml (sorted, one <file> entry per SVG).
-xml="${SCRIPT_DIR}/icons.gresource.xml"
+xml="${RESOURCE_DIR}/icons.gresource.xml"
 {
     echo '<?xml version="1.0" encoding="UTF-8"?>'
     echo '<gresources>'
@@ -116,5 +118,5 @@ xml="${SCRIPT_DIR}/icons.gresource.xml"
 
 echo "Wrote ${xml}"
 
-glib-compile-resources --sourcedir="${SCRIPT_DIR}" --target="${SCRIPT_DIR}/icons.gresource" "${xml}"
-echo "Compiled ${SCRIPT_DIR}/icons.gresource ($(du -h "${SCRIPT_DIR}/icons.gresource" | cut -f1))"
+glib-compile-resources --sourcedir="${RESOURCE_DIR}" --target="${RESOURCE_DIR}/icons.gresource" "${xml}"
+echo "Compiled ${RESOURCE_DIR}/icons.gresource ($(du -h "${RESOURCE_DIR}/icons.gresource" | cut -f1))"

@@ -18,7 +18,7 @@ PIC is **Linux-first**, local, lightweight and under active development. It is n
 
 ## Main Library
 
-<img src="samples/Picasa%20Iphoto%20Clone-PIC.jpg" alt="PIC main photo library" width="900">
+<img src="../../samples/Picasa%20Iphoto%20Clone-PIC.jpg" alt="PIC main photo library" width="900">
 
 PIC gives you a clean photo-first library with quick access to **All Photos, Favourites, Recently Added, Albums and your imported folders**.
 
@@ -28,7 +28,7 @@ The interface is intentionally simple. Select a photo and the important informat
 
 ## Photo Editing
 
-<img src="samples/Edit%20Mode.jpg" alt="PIC Edit Mode" width="900">
+<img src="../../samples/Edit%20Mode.jpg" alt="PIC Edit Mode" width="900">
 
 PIC now includes an **Edit Mode** so everyday photo adjustments can be done without leaving the photo library.
 
@@ -40,7 +40,7 @@ Editing is integrated into the normal photo workflow instead of feeling like a s
 
 ## Collage Creator
 
-<img src="samples/Collage-SmartAI.jpg" alt="PIC Collage Creator" width="900">
+<img src="../../samples/Collage-SmartAI.jpg" alt="PIC Collage Creator" width="900">
 
 PIC also includes a built-in **Collage Creator**.
 
@@ -65,7 +65,7 @@ Collages can be shuffled until you find an arrangement you like and then exporte
 - Rotate photos
 - See photo date, camera, dimensions and file size at a glance
 
-<img src="samples/Offline.jpg" alt="PIC Collage Creator" width="900">
+<img src="../../samples/Offline.jpg" alt="PIC Collage Creator" width="900">
 
 
 ## Organise without changing your folder structure
@@ -104,7 +104,7 @@ PIC's editing tools are aimed at the kind of quick changes many people used Pica
 - Adjust spacing and background
 - Export the finished collage as a high-resolution image
 
-<img src="samples/ZoomIN.jpg" alt="PIC Thumbsnail Zoom In Mode" width="900">
+<img src="../../samples/ZoomIN.jpg" alt="PIC Thumbsnail Zoom In Mode" width="900">
 
 ## Fast photo viewing
 
@@ -143,7 +143,7 @@ Existing unchanged photos are not needlessly rebuilt every time a folder is refr
 
 ---
 
-<img src="samples/ZoomOUT.jpg" alt="PIC Thumbsnail Zoom Out Mode" width="900">
+<img src="../../samples/ZoomOUT.jpg" alt="PIC Thumbsnail Zoom Out Mode" width="900">
 
 # Image Format Support
 
@@ -183,7 +183,7 @@ You can choose which image formats are visible from PIC's settings.
 | Double-click | Close photo viewer |
 | `Esc` | Close photo viewer |
 
-<img src="samples/AutoHide.jpg" alt="PIC Collage Creator" width="900">
+<img src="../../samples/AutoHide.jpg" alt="PIC Collage Creator" width="900">
 
 ## Photo grid
 
@@ -233,7 +233,7 @@ PIC was started because I wanted this kind of photo application on **Linux**, an
 
 I have also experimented with a Windows build, but Windows support is still secondary and should currently be considered a work in progress.
 
-<img src="samples/search.jpg" alt="PIC Search Mode" width="900">
+<img src="../../samples/search.jpg" alt="PIC Search Mode" width="900">
 
 ---
 
@@ -248,7 +248,7 @@ You will need the Rust toolchain together with the GTK4 and libadwaita developme
 Packaged releases and easier installation are still part of the ongoing work.
 
 ---
-<img src="samples/search.jpg" alt="PIC Search Mode" width="900">
+<img src="../../samples/search.jpg" alt="PIC Search Mode" width="900">
 
 # Project Status
 

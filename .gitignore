@@ -8,3 +8,11 @@ logs/
 database-chat-session.json
 pic-trace.log
 .log
+
+# Python bytecode and Windows builder transcripts
+__pycache__/
+/build.windows.log
+/scripts/build.windows.log
+
+# Local agent execution state
+.superpowers/

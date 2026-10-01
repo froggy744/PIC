@@ -5,9 +5,11 @@ runtime, so the resulting application does not depend on the host distribution's
 GLIBC, GTK4 or libadwaita versions. The AppImage target remains available for
 compatible systems.
 
+Run the build commands below from the repository root.
+
 ## Build prerequisites
 
-Use `PIC-build-linux-one-script.sh` for new builds. It checks the selected
+Use `scripts/PIC-build-linux-one-script.sh` for new builds. It checks the selected
 targets' host tools and development libraries, Rust crate cache, AppImage tool,
 Flatpak SDK compatibility, and source archive checksums before compiling.
 Missing dependencies are listed with an **Install/download? [y/N]** prompt.
@@ -20,13 +22,13 @@ versions required by AppImage; use the Flatpak target in that case.
 Check and optionally set up dependencies without building:
 
 ```sh
-./PIC-build-linux-one-script.sh local --check-dependencies
+./scripts/PIC-build-linux-one-script.sh local --check-dependencies
 ```
 
 Build both packages from the current checkout:
 
 ```sh
-./PIC-build-linux-one-script.sh local
+./scripts/PIC-build-linux-one-script.sh local
 ```
 
 Local mode keeps local changes. Approved downloads populate dependency caches;
@@ -55,14 +57,14 @@ flatpak remote-add --user --if-not-exists flathub \
 Build the current checkout:
 
 ```sh
-./PIC-build-linux-one-script.sh local --flatpak-only
+./scripts/PIC-build-linux-one-script.sh local --flatpak-only
 ```
 
 To build a GitHub checkout instead, select the branch explicitly. Dependency
 setup still asks for approval:
 
 ```sh
-./PIC-build-linux-one-script.sh github --branch main --flatpak-only
+./scripts/PIC-build-linux-one-script.sh github --branch main --flatpak-only
 ```
 
 Release tests run inside the Flatpak SDK before bundle export. Their temporary
@@ -93,7 +95,7 @@ when the Flatpak runtime lacks host `nss-mdns`.
 ## Optional AppImage
 
 ```sh
-./PIC-build-linux-one-script.sh local --appimage-only
+./scripts/PIC-build-linux-one-script.sh local --appimage-only
 ```
 
 The AppImage is not the primary cross-distribution package because a binary
@@ -113,3 +115,18 @@ application storage from its former `io.github.you.PicasaRs` sandbox. Close the
 older version before starting the upgraded application. If matching files exist
 in both locations, migration stops and preserves both copies for resolution.
 Original photo folders and filenames outside application storage are unchanged.
+
+## Other package tools
+
+From the repository root, run `./scripts/build-deb.sh` or
+`./scripts/build-rpm.sh` for host packages. These tools build with Cargo
+and require the corresponding package builder.
+
+For Windows, open PowerShell in the folder containing the executable and
+run the script by path:
+
+```powershell
+powershell.exe -ExecutionPolicy Bypass -File C:\path\to\PIC\scripts\build.windows.ps1
+```
+
+The caller's current directory supplies the executable and receives the runtime.

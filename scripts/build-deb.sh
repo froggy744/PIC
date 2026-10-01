@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Run from the repository root.
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Resolve the checkout independently of the invocation directory.
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 command -v cargo >/dev/null 2>&1 || { echo "ERROR: cargo is required."; exit 1; }
@@ -34,11 +34,6 @@ HOMEPAGE="${HOMEPAGE:-https://github.com/froggy744/PIC}"
 DIST="$ROOT/dist"
 mkdir -p "$DIST"
 
-if [[ -x "$ROOT/build-linux-icons.sh" ]]; then
-    echo "==> Building Linux icons"
-    "$ROOT/build-linux-icons.sh"
-fi
-
 echo "==> Building release binary"
 cargo build --release --locked 2>/dev/null || cargo build --release
 
@@ -48,7 +43,7 @@ BINARY="$ROOT/target/release/$BIN_NAME"
 find_icon() {
     local size="$1"
     local candidate
-    for candidate in         "$ROOT/icons/${size}x${size}.png"         "$ROOT/icons/${size}.png"         "$ROOT/data/icons/${size}x${size}/apps/${APP_ID}.png"         "$ROOT/data/icons/hicolor/${size}x${size}/apps/${APP_ID}.png"         "$ROOT/assets/icons/${size}x${size}.png"         "$ROOT/assets/icon-${size}.png"         "$ROOT/icon-${size}.png"; do
+    for candidate in         "$ROOT/icon/pic-${size}.png"         "$ROOT/icons/${size}x${size}.png"         "$ROOT/icons/${size}.png"         "$ROOT/data/icons/${size}x${size}/apps/${APP_ID}.png"         "$ROOT/data/icons/hicolor/${size}x${size}/apps/${APP_ID}.png"         "$ROOT/assets/icons/${size}x${size}.png"         "$ROOT/assets/icon-${size}.png"         "$ROOT/icon-${size}.png"; do
         [[ -f "$candidate" ]] && { printf '%s\n' "$candidate"; return 0; }
     done
     return 1

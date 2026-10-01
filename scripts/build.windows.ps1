@@ -2,7 +2,7 @@
 # PIC - Portable Windows Runtime Builder
 # ============================================================
 #
-# Put this script in the SAME folder as the PIC EXE.
+# Run this script from the folder containing the PIC EXE.
 #
 # EXE name does not matter:
 #   pic-rs.exe
@@ -11,7 +11,7 @@
 #   etc.
 #
 # Run:
-#   powershell.exe -ExecutionPolicy Bypass -File .\build.windows.ps1
+#   powershell.exe -ExecutionPolicy Bypass -File C:\path\to\PIC\scripts\build.windows.ps1
 #
 # Requires:
 #   C:\msys64\ucrt64

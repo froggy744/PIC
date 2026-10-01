@@ -1,6 +1,6 @@
 # PIC Guide 5 — Crop Mode: Trim & Straighten
 
-*Part of the [PIC release candidate guides](README.release.candidate.md).*
+*Part of the [PIC release candidate guides](../README.md).*
 
 Crop Mode is PIC's little trimming workshop — a drag-anywhere crop box, a rule-of-thirds grid and a straighten slider. Nothing more, nothing less. Like everything in PIC's editor, cropping is **non-destructive**: your original photo is never cut, and you can reset at any time.
 
@@ -13,7 +13,7 @@ Crop Mode is PIC's little trimming workshop — a drag-anywhere crop box, a rule
 
 Your photo appears with a bright **crop rectangle** over it, ready to shape.
 
-<img src="samples/Crop.jpg" alt="Crop Mode with the crop rectangle" width="900">
+<img src="../../samples/Crop.jpg" alt="Crop Mode with the crop rectangle" width="900">
 
 ## Drag Your Crop
 
@@ -25,7 +25,7 @@ Everything outside the rectangle dims slightly, so you always see exactly what w
 
 ## Pick a Ready-Made Shape
 
-<img src="samples/Theme-Aqua.jpg" alt="Aspect ratio choices" width="900">
+<img src="../../samples/Theme-Aqua.jpg" alt="Aspect ratio choices" width="900">
 
 Don't want to drag? Choose an **aspect ratio** and the crop box snaps to it:
 
@@ -57,4 +57,4 @@ Changed your mind a week later? Open Edit Mode and hit **Reset** — the full or
 
 ---
 
-**Previous guide:** [← Edit Mode](README.edit-mode.md) · **Back to the main README:** [README.release.candidate.md](README.release.candidate.md)
+**Previous guide:** [← Edit Mode](edit-mode.md) · **Back to the main README:** [Main documentation](../README.md)

@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+
 cache="${PIC_BUILD_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/pic-linux-build}"
 arch="$(uname -m)"
 
@@ -144,7 +146,7 @@ while IFS='|' read -r name sha url; do
     fi
 
 done < <(
-    sed -n '/^FLATPAK_MODULE_SOURCES=(/,/^)/p' PIC-build-linux-one-script.sh |
+    sed -n '/^FLATPAK_MODULE_SOURCES=(/,/^)/p' "$SCRIPT_DIR/PIC-build-linux-one-script.sh" |
     sed -n 's/^[[:space:]]*"\([^"]*\)".*/\1/p'
 )
 

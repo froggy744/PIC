@@ -11,7 +11,7 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[2]
-SCRIPT = ROOT / "PIC-build-linux-one-script.sh"
+SCRIPT = ROOT / "scripts" / "PIC-build-linux-one-script.sh"
 ARCHIVES = re.findall(r'"([^"|]+\.tar\.gz)\|([a-f0-9]{64})\|([^"\n]+)"', SCRIPT.read_text())
 
 STUB = r'''

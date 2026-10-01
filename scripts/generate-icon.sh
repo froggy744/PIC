@@ -1,9 +1,15 @@
 #!/usr/bin/env bash
 
-set -e
+set -euo pipefail
 
-SOURCE="PIC-icon.png"
-OUTPUT="icons"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+REPO_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd -P)"
+if [[ $# -ne 1 || ! -f "$1" ]]; then
+    echo "Usage: $0 SOURCE_IMAGE (existing original artwork)" >&2
+    exit 2
+fi
+SOURCE="$1"
+OUTPUT="$REPO_ROOT/icon"
 
 mkdir -p "$OUTPUT"
 

@@ -9,7 +9,7 @@ Since RC2, a major amount of work has gone into the photo grid, Folder view, ful
 PIC remains non-destructive: your original photos are not modified by normal library browsing, organisation, ratings, albums, or editing recipes.
 
 <!-- Screenshot later:
-![PIC Release Candidate 3](samples/RC3-Main.jpg)
+![PIC Release Candidate 3](../../samples/RC3-Main.jpg)
 -->
 
 ## What’s new since RC2
@@ -33,7 +33,7 @@ RC3 also adds:
 Ratings are stored in the PIC library and do not modify the original image files.
 
 <!-- Screenshot later:
-![Five-star photo ratings](samples/RC3-Ratings.jpg)
+![Five-star photo ratings](../../samples/RC3-Ratings.jpg)
 -->
 
 ### 📚 Multiple photo libraries and database backups
@@ -47,7 +47,7 @@ Database handling has also been improved with library backup management and back
 This work is designed to make the PIC library safer and easier to manage as collections grow.
 
 <!-- Screenshot later:
-![Library management](samples/RC3-Libraries.jpg)
+![Library management](../../samples/RC3-Libraries.jpg)
 -->
 
 ### 🏠 Improved Library experience
@@ -65,7 +65,7 @@ RC3 includes improvements around the Library Home view and navigation between:
 The interface now does a better job of keeping your place while moving between the library, Folder view and the photo viewer.
 
 <!-- Screenshot later:
-![PIC Library Home](samples/RC3-Library-Home.jpg)
+![PIC Library Home](../../samples/RC3-Library-Home.jpg)
 -->
 
 ### 🗂 Major Folder view rebuild
@@ -93,7 +93,7 @@ Work in this area includes:
 A large amount of internal work also went into preventing background refreshes from fighting with scrolling, selection and layout changes.
 
 <!-- Screenshot later:
-![Sectioned Folder view](samples/RC3-Folder-View.jpg)
+![Sectioned Folder view](../../samples/RC3-Folder-View.jpg)
 -->
 
 ### 🔎 Better search and folder navigation
@@ -113,7 +113,7 @@ RC3 improves this workflow by:
 This makes Search useful not only for finding individual photos, but also for jumping around a large folder structure.
 
 <!-- Screenshot later:
-![Search and folder navigation](samples/RC3-Search.jpg)
+![Search and folder navigation](../../samples/RC3-Search.jpg)
 -->
 
 ### ⌨️ Better keyboard navigation and selection
@@ -149,7 +149,7 @@ It can control:
 The slider is disabled where it does not make sense, such as during Collage editing, and returns to the correct gallery state afterwards.
 
 <!-- Screenshot later:
-![Zoom slider](samples/RC3-Zoom.jpg)
+![Zoom slider](../../samples/RC3-Zoom.jpg)
 -->
 
 ### 🖼 Much better full-screen photo viewing
@@ -172,7 +172,7 @@ PIC now loads higher-quality native image data when required for manual zoom rat
 The transition from thumbnail to full-screen view has also been refined, including fixes for transparent PNG images and rotated RAW photos.
 
 <!-- Screenshot later:
-![Full-screen viewer and zoom](samples/RC3-Lightbox.jpg)
+![Full-screen viewer and zoom](../../samples/RC3-Lightbox.jpg)
 -->
 
 ### 📷 RAW and image handling improvements
@@ -201,7 +201,7 @@ RC3 also connects the shared zoom slider to the editor, giving Edit Mode a more 
 Editing remains non-destructive: the original source image is preserved until you deliberately export a new result.
 
 <!-- Screenshot later:
-![Edit Mode](samples/RC3-Edit.jpg)
+![Edit Mode](../../samples/RC3-Edit.jpg)
 -->
 
 ### 🌐 Network browsing refinements
@@ -217,7 +217,7 @@ There are also fixes for:
 - Keeping Folder browsing responsive while thumbnails are being generated.
 
 <!-- Screenshot later:
-![Network tree navigation](samples/RC3-Network.jpg)
+![Network tree navigation](../../samples/RC3-Network.jpg)
 -->
 
 ### 📥 Faster and clearer imports
@@ -239,7 +239,7 @@ RC3 now:
 The result is a more responsive application while importing large photo collections.
 
 <!-- Screenshot later:
-![Import progress](samples/RC3-Import.jpg)
+![Import progress](../../samples/RC3-Import.jpg)
 -->
 
 ### 📐 A more responsive interface
@@ -273,7 +273,7 @@ RC3 includes:
 PIC now favours immediate, predictable interaction over animations that make large libraries feel slower.
 
 <!-- Screenshot later:
-![PIC themes](samples/RC3-Themes.jpg)
+![PIC themes](../../samples/RC3-Themes.jpg)
 -->
 
 ### 💿 Albums and everyday fixes

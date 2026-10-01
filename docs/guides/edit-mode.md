@@ -18,9 +18,9 @@ You have three easy ways in:
 
 The photo area becomes the editor: controls on the left, your photo big on the right, and the photo's details still visible in the bottom bar.
 
-<a href="../../screenshots/edit-mode.mp4"><img src="../../screenshots/effects%20screen.jpg" alt="Watch the Edit Mode video demonstration" width="900"></a>
+<a href="https://raw.githubusercontent.com/froggy744/PIC/main/screenshots/edit-mode.mp4"><img src="../../screenshots/effects%20screen.jpg" alt="Download the Edit Mode video demonstration" width="900"></a>
 
-[Watch the Edit Mode demonstration (MP4, about 1 minute)](../../screenshots/edit-mode.mp4).
+[Download the Edit Mode demonstration (MP4, about 1 minute)](https://raw.githubusercontent.com/froggy744/PIC/main/screenshots/edit-mode.mp4).
 
 At the top you'll find the **back arrow**, **Undo / Redo**, **Reset**, **Export** and **Done**. The shared zoom slider in the bottom bar controls editor magnification. Use the 1:1 control to inspect detail.
 

@@ -81,7 +81,7 @@ Open **Edit Mode** from the pencil button or a photo's context menu. Use the fiv
 
 <a href="https://raw.githubusercontent.com/froggy744/PIC/main/screenshots/edit-mode.mp4"><img src="screenshots/effects%20screen.jpg" alt="Download the Edit Mode video demonstration" width="900"></a>
 
-[Download Edit Mode in action (MP4, about 1 minute)](https://raw.githubusercontent.com/froggy744/PIC/main/screenshots/edit-mode.mp4).
+[Download Edit Mode in action (MP4, 20 seconds)](https://raw.githubusercontent.com/froggy744/PIC/main/screenshots/edit-mode.mp4).
 
 Edits are saved as recipes. Export renders a new image with the changes applied, leaving the source file intact. PIC is intended for practical photo adjustments; it is not a full professional RAW development suite.
 

@@ -20,7 +20,7 @@ The photo area becomes the editor: controls on the left, your photo big on the r
 
 <a href="https://raw.githubusercontent.com/froggy744/PIC/main/screenshots/edit-mode.mp4"><img src="../../screenshots/effects%20screen.jpg" alt="Download the Edit Mode video demonstration" width="900"></a>
 
-[Download the Edit Mode demonstration (MP4, about 1 minute)](https://raw.githubusercontent.com/froggy744/PIC/main/screenshots/edit-mode.mp4).
+[Download the Edit Mode demonstration (MP4, 20 seconds)](https://raw.githubusercontent.com/froggy744/PIC/main/screenshots/edit-mode.mp4).
 
 At the top you'll find the **back arrow**, **Undo / Redo**, **Reset**, **Export** and **Done**. The shared zoom slider in the bottom bar controls editor magnification. Use the 1:1 control to inspect detail.
 

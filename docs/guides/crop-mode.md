@@ -1,6 +1,6 @@
 # PIC Guide 5 — Crop Mode: Trim & Straighten
 
-*Part of the [PIC user guides](../README.md).*
+*Part of the [PIC user guides](../../README.md).*
 
 Crop Mode is PIC's little trimming workshop — a drag-anywhere crop box, a rule-of-thirds grid and a straighten slider. Nothing more, nothing less. Like everything in PIC's editor, cropping is **non-destructive**: your original photo is never cut, and you can reset at any time.
 
@@ -55,4 +55,4 @@ Changed your mind a week later? Open Edit Mode and hit **Reset** — the full or
 
 ---
 
-**Previous guide:** [← Edit Mode](edit-mode.md) · **Back to the main README:** [Main documentation](../README.md)
+**Previous guide:** [← Edit Mode](edit-mode.md) · **Back to the main README:** [Main documentation](../../README.md)

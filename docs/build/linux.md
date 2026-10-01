@@ -157,9 +157,9 @@ match the selected build, including `PIC_APP_ID` overrides.
 
 To replace the screenshots, overwrite these files while retaining their names:
 
-- `Screenshots/All Photos.jpg` — default library screenshot
-- `Screenshots/Effects Screen.jpg` — editing tools
-- `Screenshots/Photo Wall Screen.jpg` — Photo Wall
+- `screenshots/all photos.jpg` — default library screenshot
+- `screenshots/effects screen.jpg` — editing tools
+- `screenshots/photo wall screen.jpg` — Photo Wall
 
 Commit and push the replacements to GitHub `main`. The metadata uses direct
 image URLs on that branch so the filenames can stay stable while the images

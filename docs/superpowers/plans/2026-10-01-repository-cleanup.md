@@ -66,7 +66,7 @@ README.md                         short project entry and documentation links
 Cargo.toml / Cargo.lock / build.rs / .gitignore
 src/ native/                      application and linked native code
 images/ themes/ icon/ resources/   existing runtime/embedded resources
-Screenshots/ tests/                current screenshots and generated test fixtures
+screenshots/ tests/                current screenshots and generated test fixtures
 to-be-deleted/                    confirmed unnecessary files staged for review
   INDEX.md                        original paths, reasons and checks
 scripts/                          build, download, asset and diagnostic tools
@@ -104,7 +104,7 @@ docs/                             full documentation
 | resources/icons/README.md | docs/development/icon-bundle.md |
 | big_pickle_network_reference.rs | docs/development/reference/network-browser.rs |
 
-Keep docs/theme-template/README.md inside its existing docs directory. Keep docs/GALLERY_V2.md and docs/THEMES.md in place initially and link them from the documentation entry page. Repair the nonexistent release-candidate backlinks by linking user guides to docs/README.md, which owns the guide index. Screenshots/ now replaces the old screenshot directory; document depths determine ../Screenshots/ or ../../Screenshots/ paths, with spaces URL-encoded in image links. Historical absolute workspace paths in existing plans/notes remain identified as historical records rather than being rewritten as current instructions.
+Keep docs/theme-template/README.md inside its existing docs directory. Keep docs/GALLERY_V2.md and docs/THEMES.md in place initially and link them from the documentation entry page. Repair the nonexistent release-candidate backlinks by linking user guides to docs/README.md, which owns the guide index. screenshots/ now replaces the old screenshot directory; document depths determine ../screenshots/ or ../../screenshots/ paths, with spaces URL-encoded in image links. Historical absolute workspace paths in existing plans/notes remain identified as historical records rather than being rewritten as current instructions.
 
 ### Tool mappings
 

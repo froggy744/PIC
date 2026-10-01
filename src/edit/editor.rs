@@ -2142,7 +2142,7 @@ mod panel_tests {
 
     #[test]
     fn filter_thumbnail_renderer_builds_every_quick_look() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/Screenshots/Photo Wall Sidebar Hidden.jpg");
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/screenshots/photo wall sidebar hidden.jpg");
         let thumbnails = render_filter_thumbnails(path, 0, &EditRecipe::default()).unwrap();
 
         assert_eq!(thumbnails.len(), FilterPreset::ALL.len() + 3);
@@ -2216,7 +2216,7 @@ mod panel_tests {
         );
         let parent = gtk::Window::new();
         let photo: crate::photo_object::PhotoObject = glib::Object::new();
-        photo.set_path(concat!(env!("CARGO_MANIFEST_DIR"), "/Screenshots/Photo Wall Sidebar Hidden.jpg").to_string());
+        photo.set_path(concat!(env!("CARGO_MANIFEST_DIR"), "/screenshots/photo wall sidebar hidden.jpg").to_string());
         let editor = build(
             &parent,
             Rc::new(RefCell::new(Connection::open_in_memory().unwrap())),

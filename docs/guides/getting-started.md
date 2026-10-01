@@ -1,6 +1,6 @@
 # Getting started with PIC
 
-[Main documentation](../README.md) · [Navigation](navigation.md) · [Folders](folders.md) · [Library](library.md)
+[Main documentation](../../README.md) · [Navigation](navigation.md) · [Folders](folders.md) · [Library](library.md)
 
 PIC — Personal Image Catalogue is a local-first photo manager for Linux. It indexes your existing photo folders, stores organisation and edits in a local database, and caches thumbnails for browsing. Importing does not move your originals.
 
@@ -22,13 +22,13 @@ Native development and optional AppImage builds are also covered there. Windows 
 
 You can also import from **Browse Network Photos** using SMB or NFS. A disconnected drive or share can still have cached previews; the original must be reachable for full viewing, editing or export.
 
-<img src="../../Screenshots/All%20Photos.jpg" alt="All Photos with imported folders in the sidebar" width="900">
+<img src="../../screenshots/all%20photos.jpg" alt="All Photos with imported folders in the sidebar" width="900">
 
 ## Choose your layout
 
 Use the bottom bar's view toggle to switch between the regular grid and **Photo Wall**, which arranges photos in rows using their natural proportions. Change thumbnail size with the zoom slider or **Ctrl + mouse wheel**.
 
-<img src="../../Screenshots/Photo%20Wall%20Sidebar%20Hidden.jpg" alt="Photo Wall with the sidebar hidden" width="900">
+<img src="../../screenshots/photo%20wall%20sidebar%20hidden.jpg" alt="Photo Wall with the sidebar hidden" width="900">
 
 In **Settings → Interface**, choose whether filenames are shown, how portrait thumbnails are presented, and whether Photo Wall uses optional **640 px high-quality thumbnails**. Those previews are generated as needed. [Library guide →](library.md)
 
@@ -46,7 +46,7 @@ Search matches photo and folder names. Select a folder suggestion and press Ente
 
 Select a photo and choose the pencil button or **Edit** from its context menu. Explore **Tools, Filters, Crop, Overlays and Text**. Changes are recipes saved in PIC, with Undo, Redo and Reset. Use **Export** to create an edited image file.
 
-<img src="../../Screenshots/Effects%20Screen.jpg" alt="Filters in PIC Edit Mode" width="900">
+<img src="../../screenshots/effects%20screen.jpg" alt="Filters in PIC Edit Mode" width="900">
 
 [Edit Mode guide →](edit-mode.md) · [Crop Mode guide →](crop-mode.md)
 

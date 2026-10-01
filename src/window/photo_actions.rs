@@ -1824,7 +1824,7 @@ mod photo_actions_tests {
         ));
         connection
             .borrow()
-            .execute_batch("INSERT INTO photos (id, path) VALUES (1, 'Screenshots/All Photos.jpg');")
+            .execute_batch("INSERT INTO photos (id, path) VALUES (1, 'screenshots/all photos.jpg');")
             .unwrap();
         let album = db::create_album(&connection.borrow(), "Holiday").unwrap();
         db::add_photos_to_album(&connection.borrow(), album.id, &[1]).unwrap();

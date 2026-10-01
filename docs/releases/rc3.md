@@ -9,7 +9,7 @@ Since RC2, a major amount of work has gone into the photo grid, Folder view, ful
 PIC remains non-destructive: your original photos are not modified by normal library browsing, organisation, ratings, albums, or editing recipes.
 
 
-<img src="../../Screenshots/All%20Photos.jpg" alt="Current PIC All Photos view" width="900">
+<img src="../../screenshots/all%20photos.jpg" alt="Current PIC All Photos view" width="900">
 
 ## What’s new since RC2
 
@@ -17,7 +17,7 @@ PIC remains non-destructive: your original photos are not modified by normal lib
 
 The bottom layout toggle switches between the regular grid and Photo Wall, which preserves photo proportions in fitted rows. The shared zoom slider works in both layouts, and the sidebar can be hidden for more photo space.
 
-<img src="../../Screenshots/Photo%20Wall%20Sidebar%20Hidden.jpg" alt="Photo Wall with the sidebar hidden" width="900">
+<img src="../../screenshots/photo%20wall%20sidebar%20hidden.jpg" alt="Photo Wall with the sidebar hidden" width="900">
 
 Settings → Interface offers optional 640 px high-quality Photo Wall thumbnails, alongside the normal 320 px thumbnails. Previews are generated as needed without a synchronous startup rebuild of the library.
 
@@ -48,7 +48,7 @@ RC3 also adds:
 Ratings are stored in the PIC library and do not modify the original image files.
 
 
-<img src="../../Screenshots/Rations%20Stars.jpg" alt="Five-star rating control" width="900">
+<img src="../../screenshots/rations%20stars.jpg" alt="Five-star rating control" width="900">
 
 ### 📚 Multiple photo libraries and database backups
 
@@ -101,7 +101,7 @@ Work in this area includes:
 A large amount of internal work also went into preventing background refreshes from fighting with scrolling, selection and layout changes.
 
 
-<img src="../../Screenshots/Folders%20View.jpg" alt="Sectioned Folder view" width="900">
+<img src="../../screenshots/folders%20view.jpg" alt="Sectioned Folder view" width="900">
 
 ### 🔎 Better search and folder navigation
 
@@ -175,7 +175,7 @@ PIC now loads higher-quality native image data when required for manual zoom rat
 The transition from thumbnail to full-screen view has also been refined, including fixes for transparent PNG images and rotated RAW photos.
 
 
-<img src="../../Screenshots/Portrait%20Photo%20Screen.jpg" alt="Portrait photographs in the grid" width="900">
+<img src="../../screenshots/portrait%20photo%20screen.jpg" alt="Portrait photographs in the grid" width="900">
 
 ### 📷 RAW and image handling improvements
 
@@ -203,7 +203,7 @@ RC3 also connects the shared zoom slider to the editor, giving Edit Mode a more 
 Editing remains non-destructive: the original source image is preserved until you deliberately export a new result.
 
 
-<img src="../../Screenshots/Effects%20Screen.jpg" alt="Current Edit Mode filter previews" width="900">
+<img src="../../screenshots/effects%20screen.jpg" alt="Current Edit Mode filter previews" width="900">
 
 ### 🌐 Network browsing refinements
 
@@ -218,7 +218,7 @@ There are also fixes for:
 - Keeping Folder browsing responsive while thumbnails are being generated.
 
 
-<img src="../../Screenshots/Browse%20Network.jpg" alt="Browse Network Photos dialog" width="900">
+<img src="../../screenshots/browse%20network.jpg" alt="Browse Network Photos dialog" width="900">
 
 ### 📥 Faster and clearer imports
 
@@ -270,7 +270,7 @@ RC3 includes:
 PIC now favours immediate, predictable interaction over animations that make large libraries feel slower.
 
 
-<img src="../../Screenshots/Themed%20Grid.jpg" alt="PIC using a dark interface theme" width="900">
+<img src="../../screenshots/themed%20grid.jpg" alt="PIC using a dark interface theme" width="900">
 
 ### 💿 Albums and everyday fixes
 

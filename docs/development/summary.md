@@ -71,7 +71,7 @@ Platform typography stays separate from themes (Segoe UI / GTK / Apple stacks). 
 - **Editor:** now organized as Tools / Filters / Crop tabs; filter preset tiles render live previews of the actual photo; Apply/Reset Crop buttons.
 - **Collage:** resume-draft prompts wired to all entry buttons; per-photo edit-and-return.
 - **Tracing removed:** all runtime trace logging (PICASA_TRACE) was stripped. Debug via `cargo test` plus manual UI verification — do not reintroduce tracing casually.
-- **Docs:** new user-facing README set (release candidate + navigation/folders/library/edit/crop guides) with updated `Screenshots/` illustrations.
+- **Docs:** new user-facing README set (release candidate + navigation/folders/library/edit/crop guides) with updated `screenshots/` illustrations.
 
 ---
 

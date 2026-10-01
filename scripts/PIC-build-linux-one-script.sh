@@ -800,7 +800,7 @@ project_icon_candidate() {
         fi
     done
     find "$SOURCE_DIR" -maxdepth 3 -type f \( -iname '*.png' -o -iname '*.svg' \) \
-        ! -path '*/target/*' ! -path '*/Screenshots/*' | head -n 1 || true
+        ! -path '*/target/*' ! -path '*/screenshots/*' | head -n 1 || true
 }
 
 find_or_make_icon() {

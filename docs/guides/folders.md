@@ -1,6 +1,6 @@
 # PIC Guide 2 — Folders and network shares
 
-*Part of the [PIC user guides](../README.md).*
+*Part of the [PIC user guides](../../README.md).*
 
 PIC indexes the folders you choose. Importing and removing a folder from the catalogue do not reorganise or delete its original files.
 
@@ -8,7 +8,7 @@ PIC indexes the folders you choose. Importing and removing a folder from the cat
 
 Click **+** beside **Folders** to choose a local or mounted folder. Indexing reports progress and updates counts while photos become available; thumbnails continue in the background. Refresh checks for changes without needlessly reprocessing unchanged images.
 
-<img src="../../Screenshots/Folders%20View.jpg" alt="Folder view showing photos beneath their folder heading" width="900">
+<img src="../../screenshots/folders%20view.jpg" alt="Folder view showing photos beneath their folder heading" width="900">
 
 Expand the sidebar tree to reach subfolders. Selecting a folder navigates to its section in the photo stream. Folder headings help keep the location clear, and the virtualised layout keeps only the required tiles active rather than building the whole library's widgets.
 
@@ -16,7 +16,7 @@ Use the shared zoom slider or Ctrl + wheel to change photo size. The regular gri
 
 ## Watch, refresh or remove
 
-<img src="../../Screenshots/Watch%20Folders.jpg" alt="Watched folder menu with refresh, stop watching, statistics and library removal" width="900">
+<img src="../../screenshots/watch%20folders.jpg" alt="Watched folder menu with refresh, stop watching, statistics and library removal" width="900">
 
 Right-click a folder for its available actions:
 
@@ -32,7 +32,7 @@ Monitoring depends on storage availability. Use Refresh to request a rescan when
 
 Open **Browse Network Photos** to discover servers, scan the local network, or enter a share URL. Expand the network tree to choose the folder to import. Registered shares are available in the **Network Shares** sidebar section.
 
-<img src="../../Screenshots/Browse%20Network.jpg" alt="Browse Network Photos dialog with discovery, scanning and URL controls" width="900">
+<img src="../../screenshots/browse%20network.jpg" alt="Browse Network Photos dialog with discovery, scanning and URL controls" width="900">
 
 The Linux packages include direct SMB and NFS transports, so manually mounting a share is not required for those paths. An existing mount can still be imported as a local folder. Access depends on the server, export/share permissions and connectivity. See [Portable NFS](../build/portable-nfs.md) for NFS details.
 

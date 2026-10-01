@@ -1,6 +1,6 @@
 # PIC Guide 4 — Edit Mode: Quick Fixes, Sliders & Filters
 
-*Part of the [PIC user guides](../README.md).*
+*Part of the [PIC user guides](../../README.md).*
 
 PIC's Edit Mode is for the everyday fixes — the ones you used to open a heavy photo editor for. Brighten a dark room, warm up a sunset, straighten a horizon, try a filter. Done in a minute, without ever leaving your library.
 
@@ -18,7 +18,7 @@ You have three easy ways in:
 
 The photo area becomes the editor: controls on the left, your photo big on the right, and the photo's details still visible in the bottom bar.
 
-<img src="../../Screenshots/Effects%20Screen.jpg" alt="Edit Mode showing live filter previews" width="900">
+<img src="../../screenshots/effects%20screen.jpg" alt="Edit Mode showing live filter previews" width="900">
 
 At the top you'll find the **back arrow**, **Undo / Redo**, **Reset**, **Export** and **Done**. The shared zoom slider in the bottom bar controls editor magnification. Use the 1:1 control to inspect detail.
 

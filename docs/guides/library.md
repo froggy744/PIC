@@ -1,22 +1,22 @@
 # PIC Guide 3 — Library, ratings, albums and search
 
-*Part of the [PIC user guides](../README.md).*
+*Part of the [PIC user guides](../../README.md).*
 
 ## Library destinations
 
 The sidebar provides **All Photos**, **Favourites**, **Recently Added** and **History**. The Library heading opens the overview; choose a destination to browse that collection. Folder and Network Shares sections navigate the physical locations you imported.
 
-<img src="../../Screenshots/All%20Photos.jpg" alt="All Photos and library destinations in the sidebar" width="900">
+<img src="../../screenshots/all%20photos.jpg" alt="All Photos and library destinations in the sidebar" width="900">
 
 ## Grid and Photo Wall
 
 The regular grid uses consistent thumbnail slots. **Photo Wall** arranges photos in rows at their natural proportions; switch with the view toggle in the bottom bar. Both use the same collection and selection.
 
-<img src="../../Screenshots/Photo%20Wall%20Screen.jpg" alt="Photo Wall with proportion-preserving photo rows" width="900">
+<img src="../../screenshots/photo%20wall%20screen.jpg" alt="Photo Wall with proportion-preserving photo rows" width="900">
 
 Resize previews with the zoom slider or **Ctrl + wheel**. **Settings → Interface** controls filenames below thumbnails, portrait presentation and optional **High quality thumbnails (640 px)** for Photo Wall. Normal thumbnails remain 320 px. High-quality previews are generated as needed rather than regenerating the whole library at startup.
 
-<img src="../../Screenshots/Settings%20Screen.jpg" alt="Interface settings for thumbnail presentation and high quality" width="900">
+<img src="../../screenshots/settings%20screen.jpg" alt="Interface settings for thumbnail presentation and high quality" width="900">
 
 ## Group, sort and filter
 
@@ -28,7 +28,7 @@ The rating filter is independent of sorting: choose **Clear**, **All Stars**, **
 
 Heart a photo from the bottom bar or context menu to include it in Favourites. Ctrl+click several photos to apply actions to a selection.
 
-<img src="../../Screenshots/Rations%20Stars.jpg" alt="Five-star rating control in the photo viewer" width="900">
+<img src="../../screenshots/rations%20stars.jpg" alt="Five-star rating control in the photo viewer" width="900">
 
 Assign **1–5 stars** with the star control or the number keys; **0** clears a rating. In the gallery, shortcuts rate the selection; in the viewer, they rate the current photo. Ratings appear on thumbnails and are stored in the database rather than the original file. These shortcuts do not run while you are typing in a text field.
 

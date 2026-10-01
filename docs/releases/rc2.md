@@ -6,7 +6,7 @@ The familiar promise is still here: your photos stay yours. PIC works with your 
 
 *The illustrations below show the current RC3 interface; this page records the features introduced in RC2.*
 
-<img src="../../Screenshots/All%20Photos.jpg" alt="Current PIC photo library" width="900">
+<img src="../../screenshots/all%20photos.jpg" alt="Current PIC photo library" width="900">
 
 ## What’s new since RC1
 
@@ -16,7 +16,7 @@ If network browsing does not work, manually mount your SMB or NFS share to a loc
 
 PIC can now find and browse shared folders on your local network, including SMB and NFS shares. Add a share from the in-app browser, move through its folders, and let PIC reconnect registered shares when you start the app. Network photos can be browsed alongside your regular library.
 
-<img src="../../Screenshots/Browse%20Network.jpg" alt="Current network browser" width="900">
+<img src="../../screenshots/browse%20network.jpg" alt="Current network browser" width="900">
 
 ### Make more with Collage
 
@@ -26,7 +26,7 @@ Build Grid, Mosaic, or Smart Mosaic collages, adjust the layout and appearance, 
 
 Edit Mode now includes image overlays and text, with controls for placement, size, rotation, and styling. The expanded editing tools remain non-destructive, so your original photo is preserved. Filter previews and editing interactions have also been refined to feel smoother and clearer.
 
-<img src="../../Screenshots/Effects%20Screen.jpg" alt="Current Edit Mode with filter previews" width="900">
+<img src="../../screenshots/effects%20screen.jpg" alt="Current Edit Mode with filter previews" width="900">
 
 ### Print with control
 
@@ -36,7 +36,7 @@ Prepare one or many photos for printing. Choose page and photo sizes, paper orie
 
 PIC now discovers themes from theme folders, making it easier to explore different appearances and create community themes. The theme collection has grown, settings have been reorganized, and sidebar controls have been reworked for smoother browsing and easier customization.
 
-<img src="../../Screenshots/Settings%20Screen.jpg" alt="Current Interface settings" width="900">
+<img src="../../screenshots/settings%20screen.jpg" alt="Current Interface settings" width="900">
 
 ### A more comfortable everyday experience
 

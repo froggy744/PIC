@@ -7,6 +7,34 @@ compatible systems.
 
 ## Build prerequisites
 
+Use `PIC-build-linux-one-script.sh` for new builds. It checks the selected
+targets' host tools and development libraries, Rust crate cache, AppImage tool,
+Flatpak SDK compatibility, and source archive checksums before compiling.
+Missing dependencies are listed with an **Install/download? [y/N]** prompt.
+Only an explicit `y` or `yes` permits setup; declining or providing no input
+stops before compilation. Fedora (`dnf`) and Debian/Ubuntu (`apt-get`) host
+packages can be installed through `sudo`; other distributions receive a list
+to install manually. An older distribution may not provide the native GTK
+versions required by AppImage; use the Flatpak target in that case.
+
+Check and optionally set up dependencies without building:
+
+```sh
+./PIC-build-linux-one-script.sh local --check-dependencies
+```
+
+Build both packages from the current checkout:
+
+```sh
+./PIC-build-linux-one-script.sh local
+```
+
+Local mode keeps local changes. Approved downloads populate dependency caches;
+compilation and packaging run offline. Existing valid cache files are reused.
+Add `--appimage-only` or `--flatpak-only` to check/build only that target.
+
+If you prefer to install the basic host tools manually:
+
 KDE Neon and Ubuntu:
 
 ```sh
@@ -27,18 +55,17 @@ flatpak remote-add --user --if-not-exists flathub \
 Build the current checkout:
 
 ```sh
-./build-linux.sh local --flatpak-only
+./PIC-build-linux-one-script.sh local --flatpak-only
 ```
 
-The first fully online build can fetch the source, SDKs and native SMB/NFS
-dependencies and populate the build caches:
+To build a GitHub checkout instead, select the branch explicitly. Dependency
+setup still asks for approval:
 
 ```sh
-./build-linux.sh github --branch rc4 --flatpak-only
+./PIC-build-linux-one-script.sh github --branch main --flatpak-only
 ```
 
-Local mode is deliberately offline and therefore requires dependencies from an
-earlier online build to be cached. Release tests run inside the Flatpak SDK and
+Release tests run inside the Flatpak SDK and
 any failure stops packaging. `--skip-tests` is intended only for diagnostic
 builds, not published releases.
 
@@ -64,7 +91,7 @@ when the Flatpak runtime lacks host `nss-mdns`.
 ## Optional AppImage
 
 ```sh
-./build-linux.sh local --appimage-only
+./PIC-build-linux-one-script.sh local --appimage-only
 ```
 
 The AppImage is not the primary cross-distribution package because a binary

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # PIC - Picasa iPhoto Clone Linux packager
-# Builds AppImage and/or Flatpak from either local files (fully offline) or latest GitHub source.
+# Builds local files or GitHub source after checking dependencies and asking
+# before installing packages or downloading missing build dependencies.
 set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -24,6 +25,7 @@ PROJECT_DIR=""
 BRANCH="$DEFAULT_BRANCH"
 ONLINE=0
 SKIP_TESTS="${PIC_SKIP_TESTS:-0}"
+CHECK_DEPENDENCIES_ONLY=0
 BUILD_TARGET="${PIC_BUILD_TARGET:-}"
 LOG_DIR="${PIC_BUILD_LOG_DIR:-$SCRIPT_DIR/build-logs}"
 LOG_FILE=""
@@ -46,21 +48,21 @@ Build targets:
   • Flatpak only
 
 Source modes:
-  local    Build the files already on this PC. OFFLINE: no fetch, pull or download.
+  local    Build the files already on this PC; missing dependencies need approval.
   github   Clone/update the latest GitHub branch, cache build requirements, then build.
 
 Interactive:
-  ./build-linux.sh
+  ./PIC-build-linux-one-script.sh
 
 Direct commands:
-  ./build-linux.sh local
-  ./build-linux.sh local --project /home/peet/picasa-clone
-  ./build-linux.sh github
-  ./build-linux.sh github --branch main
-  ./build-linux.sh github --branch editing.phase1
-  ./build-linux.sh local --appimage-only
-  ./build-linux.sh local --flatpak-only
-  ./build-linux.sh local --target appimage
+  ./PIC-build-linux-one-script.sh local
+  ./PIC-build-linux-one-script.sh local --project /home/peet/picasa-clone
+  ./PIC-build-linux-one-script.sh github
+  ./PIC-build-linux-one-script.sh github --branch main
+  ./PIC-build-linux-one-script.sh github --branch editing.phase1
+  ./PIC-build-linux-one-script.sh local --appimage-only
+  ./PIC-build-linux-one-script.sh local --flatpak-only
+  ./PIC-build-linux-one-script.sh local --target appimage
 
 Options:
   --source MODE       local or github
@@ -73,6 +75,7 @@ Options:
   --flatpak-only      build only the Flatpak bundle
   --strict-tests      accepted for compatibility; release tests are always fatal
   --skip-tests        do not run cargo test
+  --check-dependencies  check/setup dependencies with approval, then exit
   -h, --help          show this help
 
 Useful environment overrides:
@@ -85,10 +88,12 @@ Useful environment overrides:
   PIC_BUILD_TARGET=...         both, appimage, or flatpak
   PIC_GNOME_INTEGRATE=0         skip host GNOME icon setup after AppImage build
 
-Offline rule:
-  'local' mode never uses git fetch/pull/clone, curl, wget, or Flatpak downloads.
-  Required Rust crates, Flatpak runtimes/SDKs, and linuxdeploy must already be cached/
-  installed. Run GitHub mode once while online to prepare these automatically.
+Dependency setup:
+  Every build checks its selected target's requirements before compiling.
+  Missing packages, Rust crates, SDKs and tools are listed for approval [y/N].
+  Local mode keeps your checkout and only downloads dependencies after approval.
+  Compilation and packaging then use the offline caches. With no input or a
+  declined prompt, missing dependencies stop the build before compilation.
 HELP
 }
 
@@ -126,6 +131,8 @@ while (($#)); do
             shift ;;
         --skip-tests)
             SKIP_TESTS=1; shift ;;
+        --check-dependencies)
+            CHECK_DEPENDENCIES_ONLY=1; shift ;;
         -h|--help)
             usage; exit 0 ;;
         *)
@@ -215,7 +222,7 @@ trap finish_logging EXIT
 
 interactive_menu() {
     printf '\nPIC Linux Packager\n'
-    printf '  1) Local files  (OFFLINE - no internet used)\n'
+    printf '  1) Local files  (dependency downloads require approval)\n'
     printf '  2) GitHub latest\n'
     printf '  3) Exit\n\n'
     read -r -p 'Choose [1-3]: ' choice
@@ -259,51 +266,77 @@ mkdir -p "$CACHE_ROOT" "$TOOLS_DIR" "$WORK_ROOT" "$DIST_DIR"
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
-fedora_hint() {
-    cat >&2 <<'HINT'
-
-On Fedora, the usual build prerequisites are:
-  sudo dnf install -y cargo rust git gtk4-devel libadwaita-devel \
-      libsmbclient-devel libnfs-devel flatpak flatpak-builder \
-      cmake gcc gcc-c++ make pkgconf-pkg-config file patchelf nasm curl tar ImageMagick
-
-Then run this script again.
-HINT
+# Host package names are selected for Fedora or Debian/Ubuntu. Other systems
+# still get a complete missing-dependency report and manual setup instructions.
+add_host_dependency() {
+    local description="$1" fedora_package="$2" debian_package="$3" package existing
+    MISSING_DEPENDENCIES+=("$description")
+    if [[ "$PACKAGE_MANAGER" == dnf ]]; then
+        package="$fedora_package"
+    else
+        package="$debian_package"
+    fi
+    for existing in "${HOST_PACKAGES[@]}"; do
+        [[ "$existing" != "$package" ]] || return 0
+    done
+    HOST_PACKAGES+=("$package")
 }
 
-check_host_tools() {
-    local missing=()
-    local commands=(cargo tar)
-    if [[ "$BUILD_TARGET" == both || "$BUILD_TARGET" == appimage ]]; then
-        commands+=(rustc pkg-config cmake cc make file)
-    fi
-    if [[ "$BUILD_TARGET" == both || "$BUILD_TARGET" == flatpak ]]; then
-        commands+=(flatpak flatpak-builder)
-    fi
-    [[ "$MODE" == github ]] && commands+=(git)
-    for cmd in "${commands[@]}"; do
-        have "$cmd" || missing+=("$cmd")
-    done
-    if ((${#missing[@]})); then
-        printf 'Missing commands: %s\n' "${missing[*]}" >&2
-        fedora_hint
-        exit 1
-    fi
+require_host_command() {
+    have "$1" || add_host_dependency "Host command: $1" "$2" "$3"
+}
 
-    if [[ "$BUILD_TARGET" != flatpak ]] && \
-       ! pkg-config --exists 'gtk4 >= 4.12' 'libadwaita-1 >= 1.5'; then
-        printf 'GTK4/libadwaita development packages are missing or too old.\n' >&2
-        fedora_hint
-        exit 1
+collect_host_dependencies() {
+    require_host_command cargo cargo cargo
+    require_host_command tar tar tar
+    require_host_command awk gawk gawk
+    require_host_command sed sed sed
+    require_host_command sha256sum coreutils coreutils
+    [[ "$MODE" != github ]] || require_host_command git git git
+    if [[ "$BUILD_TARGET" != flatpak ]]; then
+        require_host_command rustc rust rustc
+        require_host_command pkg-config pkgconf-pkg-config pkg-config
+        require_host_command cmake cmake cmake
+        require_host_command cc gcc build-essential
+        require_host_command c++ gcc-c++ build-essential
+        require_host_command make make make
+        require_host_command file file file
+        require_host_command patchelf patchelf patchelf
+        require_host_command nasm nasm nasm
+        # This repository's native Cargo configuration uses clang and mold.
+        # Custom source folders only need them when their config requests them.
+        local config="${SOURCE_DIR:-}/.cargo/config.toml"
+        if [[ -f "$config" ]]; then
+            if awk '/^[[:space:]]*linker[[:space:]]*=.*"clang"/ { found=1 } END { exit !found }' "$config"; then
+                require_host_command clang clang clang
+            fi
+            if awk '/^[[:space:]]*rustflags[[:space:]]*=.*fuse-ld=mold/ { found=1 } END { exit !found }' "$config"; then
+                require_host_command mold mold mold
+            fi
+        fi
+        if ! have pkg-config || ! pkg-config --exists 'gtk4 >= 4.12'; then
+            add_host_dependency "GTK4 development files >= 4.12" gtk4-devel libgtk-4-dev
+        fi
+        if ! have pkg-config || ! pkg-config --exists 'libadwaita-1 >= 1.5'; then
+            add_host_dependency "libadwaita development files >= 1.5" libadwaita-devel libadwaita-1-dev
+        fi
+        if ! have pkg-config || ! pkg-config --exists smbclient; then
+            add_host_dependency "SMB development files" libsmbclient-devel libsmbclient-dev
+        fi
+        if ! have pkg-config || ! pkg-config --exists libnfs; then
+            add_host_dependency "NFS development files" libnfs-devel libnfs-dev
+        fi
     fi
-    # Native/AppImage builds compile native/private_smb.c and native/private_nfs.c
-    # via build.rs, which hard-requires both pkg-config packages. Flatpak builds
-    # get them from the libnfs/samba modules inside the SDK instead.
-    if [[ "$BUILD_TARGET" != flatpak ]] && \
-       ! pkg-config --exists 'smbclient' 'libnfs'; then
-        printf 'SMB/NFS development packages are missing: need smbclient (libsmbclient-devel) and libnfs (libnfs-devel).\n' >&2
-        fedora_hint
-        exit 1
+    if [[ "$BUILD_TARGET" != appimage ]]; then
+        require_host_command flatpak flatpak flatpak
+        require_host_command flatpak-builder flatpak-builder flatpak-builder
+    fi
+    if [[ -n "${SOURCE_DIR:-}" ]] && ! have magick && ! have convert; then
+        local icon
+        icon="$(project_icon_candidate)"
+        if [[ "${icon,,}" == *.png ]]; then
+            add_host_dependency "ImageMagick (PNG application icon resizing)" ImageMagick imagemagick
+        fi
     fi
 }
 
@@ -320,9 +353,9 @@ prepare_local_source() {
     PROJECT_DIR="$(cd -- "$PROJECT_DIR" && pwd -P)"
     validate_project "$PROJECT_DIR"
     SOURCE_DIR="$PROJECT_DIR"
-    log "LOCAL/OFFLINE source selected"
+    log "LOCAL source selected"
     printf 'Source: %s\n' "$SOURCE_DIR"
-    printf 'Network: DISABLED by this mode\n'
+    printf 'Dependency downloads: only with approval; builds run offline\n'
     if [[ -d "$SOURCE_DIR/.git" ]] && have git; then
         local branch dirty
         branch="$(git -C "$SOURCE_DIR" branch --show-current 2>/dev/null || true)"
@@ -334,7 +367,6 @@ prepare_local_source() {
 
 prepare_github_source() {
     ONLINE=1
-    check_host_tools
     log "GitHub latest source selected"
     printf 'Repository: %s\nBranch: %s\n' "$REPO_URL" "$BRANCH"
 
@@ -353,9 +385,8 @@ prepare_github_source() {
     SOURCE_DIR="$GITHUB_CACHE"
     validate_project "$SOURCE_DIR"
 
-    # Prime Cargo's normal cache now. Every actual build below uses --offline.
-    log "Caching Rust dependencies for future offline builds"
-    (cd "$SOURCE_DIR" && cargo fetch --locked)
+    # Dependency preflight below checks this checkout's Rust cache and requests
+    # approval before fetching missing crates. Builds always use --offline.
 }
 
 # Module archives required by the generated Flatpak manifest (name|sha256|url).
@@ -407,8 +438,7 @@ ensure_flatpak_module_sources() {
         printf '\nOffline Flatpak build is missing module source archives:\n' >&2
         printf '  %s\n' "${missing[@]}" >&2
         printf '\nCache location: %s\n' "$FLATPAK_SOURCE_CACHE" >&2
-        printf "Run '%s github --branch %s' once while online to fetch them, then local builds work offline.\n" \
-            "$0" "$BRANCH" >&2
+        printf "Run '%s local --check-dependencies' to approve downloading them.\n" "$0" >&2
         return 1
     fi
 }
@@ -448,15 +478,21 @@ linuxdeploy_path() {
     case "$machine" in
         x86_64|amd64) arch_url=x86_64 ;;
         i386|i486|i586|i686) arch_url=i386 ;;
-        *)
-            if have linuxdeploy; then command -v linuxdeploy; return 0; fi
-            warn "AppImage skipped: automatic linuxdeploy download supports x86_64/i386 here. Install linuxdeploy manually for $machine."
-            return 1
-            ;;
+        *) arch_url="$machine" ;;
     esac
 
     tool="$TOOLS_DIR/linuxdeploy-${arch_url}.AppImage"
     if [[ ! -x "$tool" ]]; then
+        if have linuxdeploy; then
+            command -v linuxdeploy
+            return 0
+        fi
+        case "$arch_url" in
+            x86_64|i386) ;;
+            *)
+                warn "AppImage skipped: automatic linuxdeploy download supports x86_64/i386 here. Install linuxdeploy manually for $machine."
+                return 1 ;;
+        esac
         if ((ONLINE)); then
             log "Caching linuxdeploy (one-time online setup)"
             if ! download_file \
@@ -466,11 +502,8 @@ linuxdeploy_path() {
                 return 1
             fi
             chmod +x "$tool"
-        elif have linuxdeploy; then
-            command -v linuxdeploy
-            return 0
         else
-            warn "AppImage skipped: linuxdeploy is not cached. Run '$0 github --branch $BRANCH' once while online, then local builds can use it offline."
+            warn "AppImage skipped: linuxdeploy is not cached. Run '$0 local --check-dependencies' to approve downloading it."
             return 1
         fi
     fi
@@ -496,7 +529,7 @@ ensure_flatpak_runtime() {
     elif ((${#missing[@]})); then
         printf '\nMissing Flatpak runtime/SDK required for OFFLINE mode:\n' >&2
         printf '  %s\n' "${missing[@]}" >&2
-        printf '\nRun GitHub mode once while online to install/cache them, or install them manually.\n' >&2
+        printf "\nRun '%s local --check-dependencies' to approve installing them.\n" "$0" >&2
         return 1
     fi
 
@@ -520,6 +553,128 @@ verify_flatpak_sdk_compatibility() {
     [[ "$rust_base" == "$FDO_RUST_RUNTIME" ]] || die \
         "Rust SDK extension metadata targets ${rust_base:-unknown}, expected $FDO_RUST_RUNTIME."
     ok "Compatible Flatpak SDKs: GNOME $GNOME_RUNTIME / Freedesktop Rust $FDO_RUST_RUNTIME"
+}
+
+# Read-only inventory: never invoke a helper that downloads during this pass.
+collect_dependencies() {
+    MISSING_DEPENDENCIES=()
+    HOST_PACKAGES=()
+    NEED_LINUXDEPLOY=0
+    NEED_FLATPAK_SOURCES=0
+    NEED_FLATPAK_RUNTIME=0
+    NEED_RUST_CRATES=0
+    PACKAGE_MANAGER=""
+    if have dnf; then PACKAGE_MANAGER=dnf;
+    elif have apt-get; then PACKAGE_MANAGER=apt-get; fi
+    collect_host_dependencies
+
+    local arch entry name sha url ref diagnostic
+    if [[ "$BUILD_TARGET" != flatpak ]]; then
+        arch="$(uname -m)"
+        [[ "$arch" != amd64 ]] || arch=x86_64
+        case "$arch" in i386|i486|i586|i686) arch=i386 ;; esac
+        if [[ ! -x "$TOOLS_DIR/linuxdeploy-$arch.AppImage" ]] && ! have linuxdeploy; then
+            MISSING_DEPENDENCIES+=("AppImage tool: linuxdeploy ($arch)")
+            NEED_LINUXDEPLOY=1
+        fi
+    fi
+    if [[ "$BUILD_TARGET" != appimage ]]; then
+        for ref in "org.gnome.Platform//$GNOME_RUNTIME" "org.gnome.Sdk//$GNOME_RUNTIME" \
+                   "org.freedesktop.Sdk.Extension.rust-stable//$FDO_RUST_RUNTIME"; do
+            if ! have flatpak || ! flatpak info "$ref" >/dev/null 2>&1; then
+                MISSING_DEPENDENCIES+=("Flatpak runtime/SDK: $ref")
+                NEED_FLATPAK_RUNTIME=1
+            fi
+        done
+        for entry in "${FLATPAK_MODULE_SOURCES[@]}"; do
+            IFS='|' read -r name sha url <<<"$entry"
+            if have sha256sum && \
+               { { [[ -f "$FLATPAK_SOURCE_CACHE/$sha/$name" ]] && \
+                   verify_sha256 "$FLATPAK_SOURCE_CACHE/$sha/$name" "$sha"; } || \
+                 { [[ -f "$FLATPAK_STATE_DIR/downloads/$sha/$name" ]] && \
+                   verify_sha256 "$FLATPAK_STATE_DIR/downloads/$sha/$name" "$sha"; }; }; then
+                continue
+            fi
+            MISSING_DEPENDENCIES+=("Flatpak source archive: $name (missing or invalid checksum)")
+            NEED_FLATPAK_SOURCES=1
+        done
+    fi
+    if ((NEED_LINUXDEPLOY || NEED_FLATPAK_SOURCES)) && ! have curl && ! have wget; then
+        add_host_dependency "Downloader: curl or wget" curl curl
+    fi
+    if [[ -n "${SOURCE_DIR:-}" ]]; then
+        diagnostic="$(mktemp "$WORK_ROOT/cargo-dependencies.XXXXXX")"
+        if ! have cargo || ! (cd "$SOURCE_DIR" && cargo metadata --locked --offline \
+            --format-version 1 > /dev/null 2> "$diagnostic"); then
+            MISSING_DEPENDENCIES+=("Rust crates: resolve/fetch the locked dependency cache for $SOURCE_DIR")
+            NEED_RUST_CRATES=1
+            [[ ! -s "$diagnostic" ]] || cat "$diagnostic" >&2
+        fi
+        rm -f "$diagnostic"
+    fi
+}
+
+dependency_preflight() {
+    log "Checking build dependencies before compilation ($BUILD_TARGET)"
+    collect_dependencies
+    if ((${#MISSING_DEPENDENCIES[@]})); then
+        printf '\nMissing build dependencies:\n'
+        printf '  - %s\n' "${MISSING_DEPENDENCIES[@]}"
+        local install_command=() answer tool saved_online="$ONLINE"
+        if ((${#HOST_PACKAGES[@]})); then
+            [[ -n "$PACKAGE_MANAGER" ]] || \
+                die "Automatic host installation supports dnf or apt-get. Install the listed host dependencies manually."
+            if [[ "$(id -u)" != 0 ]]; then
+                have sudo || die "sudo is required to install host packages; install them manually and rerun."
+                install_command+=(sudo)
+            fi
+            install_command+=("$PACKAGE_MANAGER" install -y "${HOST_PACKAGES[@]}")
+            printf '\nHost installation command:'
+            printf ' %q' "${install_command[@]}"
+            printf '\n'
+        fi
+        printf '\nSetup may use the internet and install the listed packages/SDKs or populate build caches.\n'
+        printf 'The selected source remains: %s\n' "${SOURCE_DIR:-GitHub branch $BRANCH}"
+        printf 'Install/download these missing dependencies now? [y/N]: '
+        if ! read -r answer; then
+            die "Dependency installation requires explicit approval; no input was received."
+        fi
+        case "$answer" in
+            y|Y|yes|YES|Yes) ;;
+            *) die "Dependency installation declined; stopping before compilation." ;;
+        esac
+
+        if ((${#install_command[@]})); then
+            "${install_command[@]}" || die "Host dependency installation failed."
+        fi
+        # This network permission applies only to approved dependency setup.
+        # Local source selection and offline build flags remain unchanged.
+        ONLINE=1
+        if ((NEED_LINUXDEPLOY)); then
+            tool="$(linuxdeploy_path)" || die "Could not install linuxdeploy."
+            [[ -x "$tool" ]] || die "Downloaded linuxdeploy is not executable."
+        fi
+        if ((NEED_FLATPAK_RUNTIME)); then
+            ensure_flatpak_runtime || die "Could not install compatible Flatpak runtimes/SDKs."
+        fi
+        if ((NEED_FLATPAK_SOURCES)); then
+            ensure_flatpak_module_sources || die "Could not cache Flatpak source archives."
+        fi
+        if ((NEED_RUST_CRATES)); then
+            (cd "$SOURCE_DIR" && cargo fetch --locked) || die "Could not fetch locked Rust dependencies."
+        fi
+        ONLINE="$saved_online"
+        collect_dependencies
+        if ((${#MISSING_DEPENDENCIES[@]})); then
+            printf '\nDependencies still unavailable after setup:\n'
+            printf '  - %s\n' "${MISSING_DEPENDENCIES[@]}"
+            die "Dependency setup is incomplete; stopping before compilation."
+        fi
+    fi
+    if [[ "$BUILD_TARGET" != appimage ]]; then
+        verify_flatpak_sdk_compatibility
+    fi
+    ok "All build dependencies are ready."
 }
 
 project_binary_name() {
@@ -574,8 +729,8 @@ normalize_png_icon() {
     mv -f "$tmp" "$icon"
 }
 
-find_or_make_icon() {
-    local out_dir="$1" candidate
+project_icon_candidate() {
+    local candidate
     local candidates=(
         "$SOURCE_DIR/icon/pic-icon.png"
         "$SOURCE_DIR/icon/pic-icon.svg"
@@ -590,19 +745,17 @@ find_or_make_icon() {
     )
     for candidate in "${candidates[@]}"; do
         if [[ -f "$candidate" ]]; then
-            ICON_EXT="${candidate##*.}"
-            ICON_EXT="${ICON_EXT,,}"
-            ICON_FILE="$out_dir/$APP_ID.$ICON_EXT"
-            cp -f "$candidate" "$ICON_FILE"
-            if [[ "$ICON_EXT" == png ]]; then
-                normalize_png_icon "$ICON_FILE" || return 1
-            fi
+            printf '%s\n' "$candidate"
             return 0
         fi
     done
+    find "$SOURCE_DIR" -maxdepth 3 -type f \( -iname '*.png' -o -iname '*.svg' \) \
+        ! -path '*/target/*' ! -path '*/samples/*' | head -n 1 || true
+}
 
-    candidate="$(find "$SOURCE_DIR" -maxdepth 3 -type f \( -iname '*.png' -o -iname '*.svg' \) \
-        ! -path '*/target/*' ! -path '*/samples/*' | head -n 1 || true)"
+find_or_make_icon() {
+    local out_dir="$1" candidate
+    candidate="$(project_icon_candidate)"
     if [[ -n "$candidate" ]]; then
         ICON_EXT="${candidate##*.}"
         ICON_EXT="${ICON_EXT,,}"
@@ -611,7 +764,8 @@ find_or_make_icon() {
         if [[ "$ICON_EXT" == png ]]; then
             normalize_png_icon "$ICON_FILE" || return 1
         fi
-        warn "Expected icon/pic-icon.png was not found; using $candidate"
+        [[ "$candidate" == "$SOURCE_DIR/icon/"* ]] || \
+            warn "Expected application icon was not found; using $candidate"
         return 0
     fi
 
@@ -1088,11 +1242,22 @@ EOF_MANIFEST
 }
 
 # -------------------- main --------------------
-check_host_tools
 if [[ "$MODE" == local ]]; then
     prepare_local_source
+    dependency_preflight
 else
+    # Install host tools before using Git; check Rust crates again once the
+    # selected checkout and its lockfile are available.
+    dependency_preflight
     prepare_github_source
+    dependency_preflight
+fi
+# A disappearing cache entry must fail packaging rather than trigger any
+# additional installation/download outside the approval preflight.
+ONLINE=0
+if ((CHECK_DEPENDENCIES_ONLY)); then
+    ok "Dependency check/setup finished; no compilation requested."
+    exit 0
 fi
 
 BIN_NAME="${BIN_NAME_OVERRIDE:-$(project_binary_name)}"

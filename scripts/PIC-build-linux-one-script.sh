@@ -857,6 +857,24 @@ MimeType=image/jpeg;image/png;image/webp;image/gif;image/tiff;image/bmp;image/av
 EOF_DESKTOP
 }
 
+write_metainfo_file() {
+    local path="$1"
+    python3 - "$SOURCE_DIR/resources/io.github.you.PicRs.metainfo.xml" "$path" "$APP_ID" "$VERSION" <<'EOF_METAINFO'
+from pathlib import Path
+import sys
+import xml.etree.ElementTree as ET
+
+source, destination, app_id, version = sys.argv[1:]
+tree = ET.parse(source)
+component = tree.getroot()
+component.find('id').text = app_id
+component.find('launchable').text = app_id + '.desktop'
+component.find('releases/release').set('version', version)
+Path(destination).parent.mkdir(parents=True, exist_ok=True)
+tree.write(destination, encoding='utf-8', xml_declaration=True)
+EOF_METAINFO
+}
+
 copy_source_tree() {
     local dest="$1"
     rm -rf "$dest"
@@ -1123,7 +1141,7 @@ run_flatpak_tests() {
 }
 
 build_flatpak() {
-    local fp_work fp_src fp_build fp_repo manifest desktop_rel icon_rel bundle_name vendor_dir launcher_rel
+    local fp_work fp_src fp_build fp_repo manifest desktop_rel icon_rel bundle_name vendor_dir launcher_rel metainfo_rel
     ensure_flatpak_runtime || return 1
 
     # flatpak-builder hardlinks files between its state and build directories.
@@ -1141,10 +1159,12 @@ build_flatpak() {
 
     mkdir -p "$fp_src/packaging-generated" "$fp_src/.cargo"
     write_desktop_file "$fp_src/packaging-generated/$APP_ID.desktop"
+    write_metainfo_file "$fp_src/packaging-generated/$APP_ID.metainfo.xml" || return 1
     write_runtime_launcher "$fp_src/packaging-generated/$BIN_NAME-launcher"
     find_or_make_icon "$fp_src/packaging-generated" || return 1
     icon_rel="packaging-generated/$APP_ID.$ICON_EXT"
     desktop_rel="packaging-generated/$APP_ID.desktop"
+    metainfo_rel="packaging-generated/$APP_ID.metainfo.xml"
     launcher_rel="packaging-generated/$BIN_NAME-launcher"
     if [[ "$ICON_EXT" == svg ]]; then
         FLATPAK_ICON_DEST="/app/share/icons/hicolor/scalable/apps/$APP_ID.svg"
@@ -1280,6 +1300,7 @@ EOF_TEST_INSTALLER
         "cp -a themes /app/share/$BIN_NAME/",
         "cp -a resources /app/share/$BIN_NAME/",
         "install -Dm644 $desktop_rel /app/share/applications/$APP_ID.desktop",
+        "install -Dm644 $metainfo_rel /app/share/metainfo/$APP_ID.metainfo.xml",
         "install -Dm644 $icon_rel $FLATPAK_ICON_DEST"
       ],
       "sources": [

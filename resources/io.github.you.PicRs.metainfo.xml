@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.you.PicRs</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <name>PIC — Personal Image Catalogue</name>
+  <summary>Browse, organise and edit your photo collection</summary>
+  <developer id="io.github.froggy744">
+    <name>Petrus Rademeyer</name>
+  </developer>
+  <description>
+    <p>PIC is a native photo manager inspired by Picasa and iPhoto. Browse local folders and network shares, organise your library, and work with your photos in one application.</p>
+    <ul>
+      <li>Browse photo grids and open images in the full-screen viewer.</li>
+      <li>Organise photos with albums, favourites, ratings and search.</li>
+      <li>Adjust photos with editing tools and create photo collages.</li>
+      <li>Browse SMB and NFS shares using direct network transports.</li>
+      <li>Choose an appearance theme for your workspace.</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">io.github.you.PicRs.desktop</launchable>
+  <url type="homepage">https://github.com/froggy744/PIC</url>
+  <url type="bugtracker">https://github.com/froggy744/PIC/issues</url>
+  <url type="vcs-browser">https://github.com/froggy744/PIC</url>
+  <categories>
+    <category>Graphics</category>
+    <category>Photography</category>
+  </categories>
+  <keywords>
+    <keyword>photos</keyword>
+    <keyword>gallery</keyword>
+    <keyword>albums</keyword>
+    <keyword>collage</keyword>
+  </keywords>
+  <screenshots>
+    <screenshot type="default">
+      <image>https://raw.githubusercontent.com/froggy744/PIC/main/samples/Main.jpg</image>
+      <caption>Browse and organise your photo library</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/froggy744/PIC/main/samples/Edit%20Mode.jpg</image>
+      <caption>Adjust photos in Edit Mode</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/froggy744/PIC/main/samples/Collage-SmartAI.jpg</image>
+      <caption>Create a photo collage</caption>
+    </screenshot>
+  </screenshots>
+  <content_rating type="oars-1.1" />
+  <releases>
+    <release version="1.0.0" date="2026-10-01" type="development" />
+  </releases>
+  <supports>
+    <control>keyboard</control>
+    <control>pointing</control>
+  </supports>
+</component>

@@ -92,3 +92,24 @@ manifest and `--disable-download --build-only`: the split-filesystem layout
 failed with the reported error; the new same-filesystem layout exited 0.
 The updated Python suite passes 31 checks. This confirms placement without
 claiming a complete PIC Flatpak build.
+
+## Follow-up: software-center metadata
+
+AppStream metadata now supplies the PIC description, developer, project
+links, license, development release and three replaceable screenshot URLs.
+The Flatpak build generates matching app ID/desktop/version fields and
+installs the file to `/app/share/metainfo/`. Existing PNG package icons are
+used; screenshot images are unchanged.
+
+The regression tests failed without metadata generation/installation and
+pass with it. Real `appstreamcli validate --no-net` succeeds (one pedantic
+hint about uppercase letters in the preserved app ID), and an offline
+AppStream compose check exported the description, icon and three screenshots.
+Software-center GUI display and a full PIC Flatpak rebuild remain unverified.
+The screenshot URLs use GitHub `main` so the user can overwrite existing
+filenames; a Flathub release should pin them to a tag or commit.
+
+Final metadata validation: 34 Python checks pass, Bash syntax passes and
+`cargo test --locked` passes (478 tests, 52 ignored). Review's metadata-error
+propagation finding is fixed: a conditional-build regression failed without
+the explicit return and passes with it, stopping before vendoring begins.

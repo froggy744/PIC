@@ -135,3 +135,43 @@ powershell.exe -ExecutionPolicy Bypass -File C:\path\to\PIC\scripts\build.window
 ```
 
 The caller's current directory supplies the executable and receives the runtime.
+
+## Software-center app information
+
+The Flatpak package installs AppStream metadata from
+`resources/io.github.you.PicRs.metainfo.xml`. It supplies the app description,
+developer, release version, project links and screenshot URLs for software
+centers. Packaging updates the ID, desktop entry reference and version to
+match the selected build, including `PIC_APP_ID` overrides.
+
+To replace the screenshots, overwrite these files while retaining their names:
+
+- `samples/Main.jpg` — default library screenshot
+- `samples/Edit Mode.jpg` — editing tools
+- `samples/Collage-SmartAI.jpg` — photo collage
+
+Commit and push the replacements to GitHub `main`. The metadata uses direct
+image URLs on that branch so the filenames can stay stable while the images
+change. Software centers may cache old images. For a published Flathub release,
+pin screenshot URLs to a release tag or commit as recommended by Flathub.
+
+Rebuild the Flatpak to include the new app information:
+
+```sh
+./scripts/PIC-build-linux-one-script.sh local --flatpak-only
+```
+
+Validate metadata without network access:
+
+```sh
+appstreamcli validate --no-net --explain resources/io.github.you.PicRs.metainfo.xml
+```
+
+Preview it in GNOME Software if installed:
+
+```sh
+gnome-software --show-metainfo resources/io.github.you.PicRs.metainfo.xml
+```
+
+Display and caching of screenshots depend on the software center. This adds
+package metadata; repository publication remains a separate step.

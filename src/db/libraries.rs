@@ -45,6 +45,11 @@ struct LibraryRegistry {
 /// Resolve the last-used catalog, preserving the historical `library.db` as
 /// the first catalog for existing installations.
 pub fn initialize_library_manager() -> Result<LibraryEntry> {
+    crate::app_paths::initialize(
+        &dirs::data_dir().context("could not determine data directory")?,
+        &dirs::config_dir().context("could not determine configuration directory")?,
+        &dirs::cache_dir().context("could not determine cache directory")?,
+    )?;
     let _guard = registry_lock();
     let registry_already_existed = registry_path()?.is_file();
     let mut registry = load_or_create_registry()?;
@@ -178,14 +183,14 @@ pub fn select_library(id: &str) -> Result<(LibraryEntry, Connection)> {
 pub fn backup_directory() -> Result<PathBuf> {
     Ok(dirs::data_dir()
         .context("could not determine the user's data directory")?
-        .join("picasa-rs")
+        .join(crate::app_paths::APP_DIRECTORY)
         .join("backups"))
 }
 
 pub fn library_directory() -> Result<PathBuf> {
     Ok(dirs::data_dir()
         .context("could not determine the user's data directory")?
-        .join("picasa-rs")
+        .join(crate::app_paths::APP_DIRECTORY)
         .join("libraries"))
 }
 
@@ -370,10 +375,15 @@ fn load_or_create_registry() -> Result<LibraryRegistry> {
     let path = registry_path()?;
     if path.is_file() {
         let bytes = std::fs::read(&path)?;
-        let registry: LibraryRegistry = serde_json::from_slice(&bytes)
+        let mut registry: LibraryRegistry = serde_json::from_slice(&bytes)
             .with_context(|| format!("could not read library registry {}", path.display()))?;
         if registry.version != LIBRARY_REGISTRY_VERSION {
             anyhow::bail!("unsupported library registry version {}", registry.version);
+        }
+        if let Some(data) = dirs::data_dir() {
+            for library in &mut registry.libraries {
+                library.path = crate::app_paths::storage_path(&library.path, &data, &dirs::config_dir().context("could not determine configuration directory")?, "data");
+            }
         }
         if !registry.libraries.is_empty() {
             return Ok(registry);
@@ -410,7 +420,7 @@ fn save_registry(registry: &LibraryRegistry) -> Result<()> {
 fn registry_path() -> Result<PathBuf> {
     Ok(dirs::config_dir()
         .context("could not determine the user's configuration directory")?
-        .join("picasa-rs")
+        .join(crate::app_paths::APP_DIRECTORY)
         .join("libraries.json"))
 }
 

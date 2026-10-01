@@ -245,7 +245,7 @@ mod cleanup_tests {
     impl Fixture {
         fn new() -> Self {
             let directory = std::env::temp_dir().join(format!(
-                "picasa-thumb-cleanup-{}-{}",
+                "pic-thumb-cleanup-{}-{}",
                 std::process::id(),
                 NEXT.fetch_add(1, Ordering::Relaxed)
             ));
@@ -327,6 +327,18 @@ mod cleanup_tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.directory);
         }
+    }
+
+    #[test]
+    fn cache_cleanup_preserves_overlay_assets() {
+        let fixture = Fixture::new();
+        let overlay = fixture.directory.join("overlay");
+        fs::create_dir_all(&overlay).unwrap();
+        fs::write(overlay.join("hash.jpg"), b"overlay").unwrap();
+        fs::write(overlay.join("hash.png"), b"overlay").unwrap();
+        fixture.clean();
+        assert!(overlay.join("hash.jpg").is_file());
+        assert!(overlay.join("hash.png").is_file());
     }
 
     #[test]

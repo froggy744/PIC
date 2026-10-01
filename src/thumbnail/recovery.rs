@@ -49,7 +49,7 @@ mod recovery_tests {
         fn new(uri: bool) -> Self {
             static NEXT: AtomicUsize = AtomicUsize::new(0);
             let directory = std::env::temp_dir().join(format!(
-                "picasa-offline-test-{}-{}",
+                "pic-offline-test-{}-{}",
                 std::process::id(),
                 NEXT.fetch_add(1, Ordering::Relaxed)
             ));

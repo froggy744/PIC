@@ -949,7 +949,7 @@ mod tests {
             .unwrap()
             .as_nanos();
         let root = std::env::temp_dir().join(format!(
-            "picasa-rs-scanner-recursion-{}-{unique}",
+            "pic-rs-scanner-recursion-{}-{unique}",
             std::process::id()
         ));
         let nested = root.join("Marianne Lotter").join("FB-Marianne");
@@ -976,7 +976,7 @@ mod tests {
             .unwrap()
             .as_nanos();
         let root = std::env::temp_dir().join(format!(
-            "picasa-rs-scanner-progress-{}-{unique}",
+            "pic-rs-scanner-progress-{}-{unique}",
             std::process::id()
         ));
         fs::create_dir_all(&root).unwrap();

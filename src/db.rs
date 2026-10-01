@@ -187,3 +187,5 @@ include!("db/library_home.rs");
 include!("db/settings.rs");
 include!("db/overlay_assets.rs");
 include!("db/tests.rs");
+
+include!("db/path_migration.rs");

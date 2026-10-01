@@ -1,6 +1,6 @@
 pub fn database_path() -> Result<PathBuf> {
     let data_dir = dirs_path().context("could not determine the user's data directory")?;
-    Ok(data_dir.join("picasa-rs").join("library.db"))
+    Ok(data_dir.join(crate::app_paths::APP_DIRECTORY).join("library.db"))
 }
 
 fn dirs_path() -> Option<PathBuf> {
@@ -13,6 +13,7 @@ pub fn open_default() -> Result<Connection> {
 }
 
 pub fn open(path: &Path) -> Result<Connection> {
+    crate::app_paths::migration_status()?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("could not create database directory {}", parent.display()))?;
@@ -25,6 +26,7 @@ pub fn open(path: &Path) -> Result<Connection> {
     migrate_photo_schema(&connection)?;
     migrate_folder_schema(&connection)?;
     migrate_album_schema(&connection)?;
+    migrate_stored_paths(&connection)?;
     Ok(connection)
 }
 

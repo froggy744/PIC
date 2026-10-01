@@ -780,7 +780,7 @@ mod raw_thumbnail_tests {
         use rayon::prelude::*;
 
         let directory = std::env::temp_dir().join(format!(
-            "picasa-broken-dng-{}-{}",
+            "pic-broken-dng-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -836,7 +836,7 @@ mod raw_thumbnail_tests {
         );
 
         let destination =
-            std::env::temp_dir().join(format!("picasa-dng-test-{}.jpg", std::process::id()));
+            std::env::temp_dir().join(format!("pic-dng-test-{}.jpg", std::process::id()));
         create_uncached(&path, &destination).unwrap();
         let cached = image::open(&destination).unwrap();
         assert_eq!(cached.width().max(cached.height()), thumbnail_size());

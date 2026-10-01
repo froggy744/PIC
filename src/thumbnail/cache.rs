@@ -9,7 +9,7 @@ pub fn cache_dir() -> Result<PathBuf> {
     }
     let directory = dirs::cache_dir()
         .context("could not determine the user's cache directory")?
-        .join("picasa-rs")
+        .join("pic-rs")
         .join("thumbs");
     fs::create_dir_all(&directory)
         .with_context(|| format!("could not create cache directory {}", directory.display()))?;
@@ -294,7 +294,7 @@ mod cache_layout_tests {
 
     fn fixture() -> PathBuf {
         let directory = std::env::temp_dir().join(format!(
-            "picasa-thumbnail-layout-{}-{}",
+            "pic-thumbnail-layout-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));

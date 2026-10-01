@@ -77,15 +77,15 @@ Install or replace the generated bundle (substitute its actual filename):
 
 ```sh
 flatpak install --user --reinstall ./dist/PIC-1.0.0-REVISION-x86_64.flatpak
-flatpak run io.github.you.PicasaRs
+flatpak run io.github.you.PicRs
 ```
 
 These commands are the same on KDE Neon, Ubuntu and Fedora. Desktop menus may
 need a logout/login after Flatpak is installed for the first time.
 
 PIC retains access to its existing native library at
-`~/.local/share/picasa-rs/library.db` and thumbnail cache under
-`~/.cache/picasa-rs`. Network shares use PIC's bundled direct SMB/libnfs
+`~/.local/share/pic-rs/library.db` and thumbnail cache under
+`~/.cache/pic-rs`. Network shares use PIC's bundled direct SMB/libnfs
 transports; GVfs and manually mounted shares are not required. PIC also uses
 the host Avahi service to resolve discovered `.local` SMB/NFS server names
 when the Flatpak runtime lacks host `nss-mdns`.
@@ -98,3 +98,18 @@ when the Flatpak runtime lacks host `nss-mdns`.
 
 The AppImage is not the primary cross-distribution package because a binary
 built on a newer distribution can require a newer GLIBC than the target system.
+
+### Storage migration
+
+PIC stores libraries and backups under `~/.local/share/pic-rs`, the library
+registry under `~/.config/pic-rs`, and thumbnails under `~/.cache/pic-rs/thumbs`.
+Imported overlay images live in `~/.cache/pic-rs/thumbs/overlay`; retain this
+folder when clearing caches manually, since photo edits reference these assets.
+The application's thumbnail cleanup preserves overlays.
+
+On first startup, PIC migrates existing `picasa-rs` storage and repairs managed
+paths in the library registry and databases. The renamed Flatpak also migrates
+application storage from its former `io.github.you.PicasaRs` sandbox. Close the
+older version before starting the upgraded application. If matching files exist
+in both locations, migration stops and preserves both copies for resolution.
+Original photo folders and filenames outside application storage are unchanged.

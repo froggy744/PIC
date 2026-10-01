@@ -19,7 +19,7 @@ class FlatpakTestSandboxTests(unittest.TestCase):
         self.root = Path(self.tmp.name)
         self.build = self.root / "build-dir"
         self.build.mkdir()
-        self.metadata = "[Application]\nname=io.github.you.PicasaRs\nsdk=org.gnome.Sdk/x86_64/50\n"
+        self.metadata = "[Application]\nname=io.github.you.PicRs\nsdk=org.gnome.Sdk/x86_64/50\n"
         (self.build / "metadata").write_text(self.metadata)
         self.source = self.root / "selected-source"
         self.source.mkdir()
@@ -34,13 +34,13 @@ metadata_arg = next(arg.split("=", 1)[1] for arg in args if arg.startswith("--me
 metadata = (root / "build-dir" / metadata_arg).read_text()
 (root / "invocation.json").write_text(json.dumps({"args": args, "metadata": metadata}))
 # The actual SVG loader requires a Devel ID in an uninstalled build sandbox.
-if "name=io.github.you.PicasaRs.Devel\n" not in metadata:
+if "name=io.github.you.PicRs.Devel\n" not in metadata:
     sys.exit(101)
 sys.exit(int(os.environ.get("TEST_EXIT", "0")))
 ''')
         stub.chmod(0o755)
         self.env = dict(os.environ, PATH=f"{self.bin}:/usr/bin:/bin", TEST_ROOT=str(self.root),
-                        APP_ID="io.github.you.PicasaRs")
+                        APP_ID="io.github.you.PicRs")
 
     def run_tests(self, skip=False):
         source = SCRIPT.read_text()
@@ -59,10 +59,10 @@ sys.exit(int(os.environ.get("TEST_EXIT", "0")))
         result = self.run_tests()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         invocation = json.loads((self.root / "invocation.json").read_text())
-        self.assertIn("name=io.github.you.PicasaRs.Devel\n", invocation["metadata"])
+        self.assertIn("name=io.github.you.PicRs.Devel\n", invocation["metadata"])
         self.assertIn("/app/libexec/pic-build-tests/*", invocation["args"][-1])
-        self.assertIn("--bind-mount=/run/build/picasa-rs=" + str(self.source), invocation["args"])
-        self.assertIn("--build-dir=/run/build/picasa-rs", invocation["args"])
+        self.assertIn("--bind-mount=/run/build/pic-rs=" + str(self.source), invocation["args"])
+        self.assertIn("--build-dir=/run/build/pic-rs", invocation["args"])
         self.assertEqual((self.build / "metadata").read_text(), self.metadata)
         self.assertEqual(sorted(path.name for path in self.build.iterdir()), ["metadata"])
 

@@ -39,10 +39,12 @@ pub fn overlays_dir() -> PathBuf {
     if let Some(dir) = std::env::var_os(OVERLAY_DIR_ENV_VAR) {
         return PathBuf::from(dir);
     }
-    dirs::data_dir()
-        .unwrap_or_else(std::env::temp_dir)
-        .join("picasa-rs")
-        .join("overlays")
+    crate::thumbnail::cache_dir()
+        .unwrap_or_else(|error| {
+            eprintln!("Could not resolve thumbnail directory for overlays: {error:#}");
+            dirs::cache_dir().unwrap_or_else(std::env::temp_dir).join("pic-rs/thumbs")
+        })
+        .join("overlay")
 }
 
 /// An overlay image decoded and hashed, ready to be stored.

@@ -553,7 +553,7 @@ mod tests {
             .unwrap()
             .as_nanos();
         let path = std::env::temp_dir().join(format!(
-            "picasa-rs-album-test-{}-{unique}.db",
+            "pic-rs-album-test-{}-{unique}.db",
             std::process::id()
         ));
 
@@ -782,7 +782,7 @@ mod tests {
             .unwrap()
             .as_nanos();
         let path = std::env::temp_dir().join(format!(
-            "picasa-rs-legacy-folder-migration-{}-{unique}.db",
+            "pic-rs-legacy-folder-migration-{}-{unique}.db",
             std::process::id()
         ));
 
@@ -858,7 +858,7 @@ mod tests {
             .unwrap()
             .as_nanos();
         let path = std::env::temp_dir().join(format!(
-            "picasa-rs-root-repair-{}-{unique}.db",
+            "pic-rs-root-repair-{}-{unique}.db",
             std::process::id()
         ));
         {
@@ -898,7 +898,7 @@ mod tests {
             .unwrap()
             .as_nanos();
         let path = std::env::temp_dir().join(format!(
-            "picasa-rs-root-repair-multiple-{}-{unique}.db",
+            "pic-rs-root-repair-multiple-{}-{unique}.db",
             std::process::id()
         ));
         {
@@ -981,7 +981,7 @@ mod tests {
             .unwrap()
             .as_nanos();
         let path = std::env::temp_dir().join(format!(
-            "picasa-rs-import-root-test-{}-{unique}.db",
+            "pic-rs-import-root-test-{}-{unique}.db",
             std::process::id()
         ));
 

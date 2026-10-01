@@ -15,7 +15,7 @@ FLATPAK_SOURCE_CACHE="$CACHE_ROOT/flatpak-sources"
 DIST_DIR="${PIC_DIST_DIR:-$SCRIPT_DIR/dist}"
 REPO_URL="${PIC_REPO_URL:-https://github.com/froggy744/PIC.git}"
 DEFAULT_BRANCH="${PIC_BRANCH:-main}"
-APP_ID="${PIC_APP_ID:-io.github.you.PicasaRs}"
+APP_ID="${PIC_APP_ID:-io.github.you.PicRs}"
 BIN_NAME_OVERRIDE="${PIC_BIN_NAME:-}"
 BIN_NAME=""
 GNOME_RUNTIME="${PIC_GNOME_RUNTIME:-50}"
@@ -56,7 +56,7 @@ Interactive:
 
 Direct commands:
   ./PIC-build-linux-one-script.sh local
-  ./PIC-build-linux-one-script.sh local --project /home/peet/picasa-clone
+  ./PIC-build-linux-one-script.sh local --project /home/peet/PIC
   ./PIC-build-linux-one-script.sh github
   ./PIC-build-linux-one-script.sh github --branch main
   ./PIC-build-linux-one-script.sh github --branch editing.phase1
@@ -1097,8 +1097,8 @@ run_flatpak_tests() {
     log "Testing Rust release binary in the Flatpak SDK development sandbox"
     flatpak build \
         --metadata="$(basename "$test_metadata")" \
-        --bind-mount="/run/build/picasa-rs=$source_dir" \
-        --build-dir=/run/build/picasa-rs \
+        --bind-mount="/run/build/pic-rs=$source_dir" \
+        --build-dir=/run/build/pic-rs \
         --env=PATH=/usr/lib/sdk/rust-stable/bin:/app/bin:/usr/bin \
         --env=CARGO_NET_OFFLINE=true \
         "$fp_build" sh -c '
@@ -1198,8 +1198,11 @@ EOF_TEST_INSTALLER
     "--device=dri",
 "--share=network",
 "--filesystem=host",
-"--filesystem=xdg-data/picasa-rs:create",
-"--filesystem=xdg-cache/picasa-rs:create",
+"--filesystem=xdg-data/pic-rs:create",
+"--filesystem=xdg-data/picasa-rs",
+"--filesystem=xdg-cache/pic-rs:create",
+"--filesystem=xdg-cache/picasa-rs",
+"--filesystem=~/.var/app/io.github.you.PicasaRs",
 
 "--talk-name=org.gtk.vfs.*",
 "--filesystem=xdg-run/gvfs",
@@ -1252,7 +1255,7 @@ EOF_TEST_INSTALLER
       }]
     },
     {
-      "name": "picasa-rs",
+      "name": "pic-rs",
       "buildsystem": "simple",
       "build-commands": [
         "$flatpak_test_build_command",

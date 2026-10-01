@@ -6,7 +6,7 @@
 #
 # EXE name does not matter:
 #   pic-rs.exe
-#   picasa-rs.exe
+#   pic-rs.exe
 #   PIC.exe
 #   etc.
 #

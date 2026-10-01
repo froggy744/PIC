@@ -87,6 +87,8 @@ Edits are saved as recipes. Export renders a new image with the changes applied,
 
 Select several photos to create a **Grid, Mosaic or Smart Mosaic** collage. Adjust the arrangement, spacing, background and overall shape; shuffle, undo and redo; save a project to resume later; then export a high-resolution image.
 
+<img src="screenshots/collages.jpg" alt="Collage editor with Smart AI layout, portrait orientation, spacing controls and a five-photo preview" width="900">
+
 Print one or several photos with a page preview, paper size and orientation, fit or crop options, and per-page layouts.
 
 ## Local drives and network shares

@@ -50,6 +50,12 @@ Select a photo and choose the pencil button or **Edit** from its context menu. E
 
 [Edit Mode guide →](edit-mode.md) · [Crop Mode guide →](crop-mode.md)
 
+## Create a collage
+
+Select several photos and choose the collage action. Choose **Mosaic**, **Smart AI** (Smart Mosaic) or **Grid**, then adjust orientation, aspect ratio, background, round corners and spacing. Use **Shuffle** to try a different arrangement and **Add** to include more photos. **Create Collage…** renders and exports the result as a JPEG. Saved projects can be resumed later.
+
+<img src="../../screenshots/collages.jpg" alt="Five-photo collage with the Smart AI layout selected" width="900">
+
 ## Keep your collection safe
 
 **Settings → Database** manages separate libraries and database backups. These backups preserve catalogue information, not the original photo folders. Back up the originals separately.

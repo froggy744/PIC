@@ -22,6 +22,8 @@ PIC can now find and browse shared folders on your local network, including SMB 
 
 Build Grid, Mosaic, or Smart Mosaic collages, adjust the layout and appearance, and export a high-resolution result. Collage work can be saved and resumed, with undo and redo to help you explore different arrangements. You can also open a photo for editing and return to your collage.
 
+<img src="../../screenshots/collages.jpg" alt="Current collage editor with Smart AI layout and spacing controls" width="900">
+
 ### More ways to edit
 
 Edit Mode now includes image overlays and text, with controls for placement, size, rotation, and styling. The expanded editing tools remain non-destructive, so your original photo is preserved. Filter previews and editing interactions have also been refined to feel smoother and clearer.

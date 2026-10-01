@@ -18,6 +18,10 @@ Resize previews with the zoom slider or **Ctrl + wheel**. **Settings → Interfa
 
 <img src="../../screenshots/settings%20screen.jpg" alt="Interface settings for thumbnail presentation and high quality" width="900">
 
+Portrait collections can also be browsed in the regular grid. Choose portrait-thumbnail presentation in Interface settings to suit your collection.
+
+<img src="../../screenshots/portrait%20photo%20screen.jpg" alt="Portrait collection in the regular thumbnail grid" width="900">
+
 ## Group, sort and filter
 
 Group library photos by **Day** or **Month**, or use an ungrouped view. Folder browsing uses folder headings. Sort by date taken, name, file size, dimensions, date added or **Rating**, with ascending and descending choices.
@@ -43,6 +47,12 @@ Album context actions include renaming and cover customisation. An album is a vi
 Search matches photo and folder names. Choose a folder suggestion with the keyboard and press Enter to navigate there; Esc clears search. **Open in Folder** on a photo returns to its folder section. Closing the viewer restores the photo selection and browsing position.
 
 History shows recently edited photos and recorded operations, including saved edits and collage work. It is distinct from Recently Added, which reflects catalogue additions.
+
+## Create from your selection
+
+Select multiple photos and open the collage workspace. Choose Grid, Mosaic or Smart AI, adjust the layout and appearance, then create an exported JPEG. Save a project when you want to resume work later; saved collage work also appears in History.
+
+<img src="../../screenshots/collages.jpg" alt="Collage workspace showing layout choices and a five-photo arrangement" width="900">
 
 ## Separate libraries and backups
 

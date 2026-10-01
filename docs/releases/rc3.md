@@ -285,6 +285,8 @@ These include:
 
 Many smaller visual and interaction fixes are included throughout the application as part of RC3.
 
+<img src="../../screenshots/collages.jpg" alt="PIC collage editor with a five-photo preview" width="900">
+
 ### 🐧 Linux build and packaging improvements
 
 The Linux build workflow has continued to receive attention.

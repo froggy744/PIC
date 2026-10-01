@@ -483,7 +483,7 @@ pub fn remove_missing_photos(
     connection: &Connection,
     folder_id: i64,
     present_paths: &HashSet<String>,
-) -> Result<usize> {
+) -> Result<Vec<i64>> {
     let stale_ids = {
         let mut statement = connection.prepare(
             "SELECT id, path FROM photos
@@ -509,7 +509,7 @@ pub fn remove_missing_photos(
             .collect::<Vec<_>>()
     };
     if stale_ids.is_empty() {
-        return Ok(0);
+        return Ok(Vec::new());
     }
     // Keep refresh deletion commits bounded so interactive settings/state
     // writes are never queued behind one transaction containing thousands of
@@ -521,7 +521,7 @@ pub fn remove_missing_photos(
         }
         transaction.commit()?;
     }
-    Ok(stale_ids.len())
+    Ok(stale_ids)
 }
 
 /// Reconcile folder records only after a complete, successful tree scan.

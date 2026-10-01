@@ -26,7 +26,7 @@ Right-click a folder for its available actions:
 - **Remove from Library** removes its catalogue membership, leaving original files on storage.
 - Folder-wide favourite actions add or remove its photos from Favourites.
 
-After a complete successful scan, Refresh removes catalogue records for deleted photos and subfolders. Existing empty folders remain. If the imported folder itself is missing, PIC keeps it because it may be on disconnected storage; use **Remove from Library** to remove that root permanently.
+After a complete successful scan, Refresh removes catalogue records for deleted photos and subfolders. Existing empty folders remain. If the imported folder itself is missing, PIC removes it only when storage information saved by a previous scan confirms its filesystem is still connected. Unknown or offline roots remain; use **Remove from Library** to remove a confirmed deleted root that has no saved storage information.
 
 Monitoring depends on storage availability. Use Refresh to request a rescan when needed, particularly after reconnecting storage or changing files outside PIC.
 

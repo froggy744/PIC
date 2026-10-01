@@ -4206,6 +4206,7 @@ fn start_photo_export_single(
     });
 
     let gallery_for_events = gallery.clone();
+    let lightbox_for_events = lightbox.clone();
     let connection_for_events = connection.clone();
     let info_for_events = info.clone();
     let selected_photo_for_events = selected_photo.clone();
@@ -4484,6 +4485,13 @@ fn start_photo_export_single(
                     }
                 }
 
+                scanner::ScanEvent::PhotosRemoved { ids } => {
+                    pending_photos.retain(|photo| !ids.contains(&photo.id));
+                    gallery_for_events.remove_photos(ids);
+                    for id in ids {
+                        lightbox_for_events.remove_photo(*id);
+                    }
+                }
                 scanner::ScanEvent::FoldersRemoved => {
                     availability_refresh_for_events();
                     if let sidebar::SidebarFilter::Folder(id) = filter_for_events.get() {

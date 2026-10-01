@@ -32,6 +32,7 @@ pub enum ScanEvent {
         photos: Vec<IndexedPhoto>,
         counts: db::SidebarCounts,
     },
+    PhotosRemoved { ids: Vec<i64> },
     FoldersRemoved,
     LibraryCountsChanged {
         counts: db::SidebarCounts,
@@ -102,6 +103,9 @@ fn scan_with_control(
     control: &ScanControl,
 ) -> Result<usize> {
     if !root_is_available(root) {
+        if !control.is_cancelled() && reconcile_deleted_root(root, database, events)? {
+            return Ok(0);
+        }
         anyhow::bail!("scan root is unavailable: {root}");
     }
     let connection = db::open_existing(database)?;
@@ -139,7 +143,10 @@ fn scan_with_control(
     if removed_folders > 0 {
         send(events, ScanEvent::FoldersRemoved);
     }
-    if removed > 0 || removed_folders > 0 {
+    if !removed.is_empty() {
+        send(events, ScanEvent::PhotosRemoved { ids: removed.clone() });
+    }
+    if !removed.is_empty() || removed_folders > 0 {
         send_library_counts(events, &connection);
     }
 
@@ -416,6 +423,48 @@ fn commit_prepared(
         .transpose()?;
     transaction.commit()?;
     Ok(counts)
+}
+
+/// A missing local root can be a deletion only when its recorded filesystem
+/// still backs the nearest existing ancestor. Unknown/offline roots survive.
+fn reconcile_deleted_root(root: &str, database: &Path, events: Option<&Sender<ScanEvent>>) -> Result<bool> {
+    #[cfg(unix)]
+    {
+        if root.contains("://") || !matches!(fs::metadata(root), Err(error) if error.kind() == std::io::ErrorKind::NotFound) {
+            return Ok(false);
+        }
+        let connection = db::open_existing(database)?;
+        let Some(folder) = db::folders(&connection)?.into_iter().find(|folder| folder.path == root) else {
+            return Ok(false);
+        };
+        let Some(saved) = db::setting(&connection, &format!("scan-devices:{}", folder.id))? else {
+            return Ok(false);
+        };
+        let devices: HashMap<String, u64> = serde_json::from_str(&saved)?;
+        if !devices.contains_key(root) {
+            return Ok(false);
+        }
+        verify_scan_devices(&connection, folder.id)?;
+        let ids = connection.prepare(
+            "WITH RECURSIVE descendants(id) AS (
+               SELECT id FROM folders WHERE id = ?1
+               UNION ALL
+               SELECT child.id FROM folders child JOIN descendants ON child.parent_id = descendants.id
+             )
+             SELECT id FROM photos WHERE folder_id IN (SELECT id FROM descendants)"
+        )?.query_map([folder.id], |row| row.get::<_, i64>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
+        db::remove_folder(&connection, folder.id)?;
+        send(events, ScanEvent::PhotosRemoved { ids });
+        send(events, ScanEvent::FoldersRemoved);
+        send_library_counts(events, &connection);
+        send(events, ScanEvent::Finished { imported: 0, failed: 0 });
+        return Ok(true);
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (root, database, events);
+        Ok(false)
+    }
 }
 
 // Remember directory devices so an unmounted drive's empty mount point (or
@@ -1072,10 +1121,58 @@ mod tests {
         assert!(paths.contains(root_path));
         assert_eq!(connection.query_row("SELECT COUNT(*) FROM photos", [], |row| row.get::<_, i64>(0)).unwrap(), 0);
 
-        // An unavailable root must not erase its catalogue.
+        // Without a saved storage identity, an unavailable root is ambiguous.
+        connection.execute("DELETE FROM settings WHERE key LIKE 'scan-devices:%'", []).unwrap();
         fs::remove_dir_all(&root).unwrap();
         assert!(scan_with_control(root_path, &database, None, &ScanControl::default()).is_err());
         assert_eq!(db::folders(&connection).unwrap().len(), paths.len());
+        drop(connection);
+        fs::remove_dir_all(workspace).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn refresh_removes_deleted_root_when_saved_storage_is_still_connected() {
+        let unique = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let workspace = std::env::temp_dir().join(format!("pic-root-deletion-{}-{unique}", std::process::id()));
+        let root = workspace.join("photos");
+        fs::create_dir_all(&root).unwrap();
+        let database = workspace.join("catalog.db");
+        let connection = Connection::open(&database).unwrap();
+        connection.execute_batch(db::SCHEMA).unwrap();
+        scan_with_control(root.to_str().unwrap(), &database, None, &ScanControl::default()).unwrap();
+        let folder_id = db::folders(&connection).unwrap().into_iter().find(|folder| folder.path == root.to_str().unwrap()).unwrap().id;
+        let photo_id = db::upsert_photo(&connection, &root.join("deleted.png"), Some(folder_id), &PhotoMetadata::default()).unwrap();
+        fs::remove_dir_all(&root).unwrap();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        assert!(scan_with_control(root.to_str().unwrap(), &database, Some(&sender), &ScanControl::default()).is_ok());
+        assert!(!db::folder_exists(&connection, folder_id).unwrap());
+        assert!(db::photo(&connection, photo_id).unwrap().is_none());
+        assert!(receiver.try_iter().any(|event| matches!(event, ScanEvent::PhotosRemoved { ids } if ids == vec![photo_id])));
+        drop(connection);
+        fs::remove_dir_all(workspace).unwrap();
+    }
+
+    #[test]
+    fn refresh_reports_deleted_photo_ids_when_its_folder_still_exists() {
+        let unique = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let workspace = std::env::temp_dir().join(format!("pic-photo-deletion-{}-{unique}", std::process::id()));
+        let root = workspace.join("photos");
+        fs::create_dir_all(&root).unwrap();
+        let database = workspace.join("catalog.db");
+        let connection = Connection::open(&database).unwrap();
+        connection.execute_batch(db::SCHEMA).unwrap();
+        let folder_id = db::insert_folder(&connection, root.to_str().unwrap()).unwrap();
+        let photo_id = db::upsert_photo(&connection, &root.join("deleted.png"), Some(folder_id), &PhotoMetadata::default()).unwrap();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        scan_with_control(root.to_str().unwrap(), &database, Some(&sender), &ScanControl::default()).unwrap();
+        let removed = receiver.try_iter().filter_map(|event| match event {
+            ScanEvent::PhotosRemoved { ids } => Some(ids),
+            _ => None,
+        }).flatten().collect::<Vec<_>>();
+        assert_eq!(removed, vec![photo_id]);
+        assert!(db::photo(&connection, photo_id).unwrap().is_none());
+        assert!(db::folder_exists(&connection, folder_id).unwrap());
         drop(connection);
         fs::remove_dir_all(workspace).unwrap();
     }
@@ -1099,6 +1196,11 @@ mod tests {
         // exists, but belongs to the host filesystem instead of the saved drive.
         let devices = HashMap::from([(root_path.to_string(), fs::metadata(&root).unwrap().dev().wrapping_add(1))]);
         db::set_setting(&connection, &format!("scan-devices:{root_id}"), &serde_json::to_string(&devices).unwrap()).unwrap();
+        assert!(scan_with_control(root_path, &database, None, &ScanControl::default()).is_err());
+        assert!(db::folder_exists(&connection, child_id).unwrap());
+        assert_eq!(connection.query_row("SELECT COUNT(*) FROM photos", [], |row| row.get::<_, i64>(0)).unwrap(), 1);
+        // Some unmounts remove the mount directory altogether.
+        fs::remove_dir_all(&root).unwrap();
         assert!(scan_with_control(root_path, &database, None, &ScanControl::default()).is_err());
         assert!(db::folder_exists(&connection, child_id).unwrap());
         assert_eq!(connection.query_row("SELECT COUNT(*) FROM photos", [], |row| row.get::<_, i64>(0)).unwrap(), 1);

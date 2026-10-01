@@ -103,6 +103,17 @@ when the Flatpak runtime lacks host `nss-mdns`.
 ./scripts/PIC-build-linux-one-script.sh local --appimage-only
 ```
 
+To remove the AppImage and its matching GNOME launcher and icon, pass its path
+to the build script:
+
+```sh
+./scripts/PIC-build-linux-one-script.sh --uninstall-appimage "$PWD/dist/PIC-1.0.0-REVISION-x86_64.AppImage"
+```
+
+The command also removes the launcher and icon if the AppImage file was already
+deleted, provided the launcher's `Exec` entry still points to that path. It
+leaves the Flatpak launcher, Flatpak icon and PIC photo catalogue in place.
+
 The AppImage is not the primary cross-distribution package because a binary
 built on a newer distribution can require a newer GLIBC than the target system.
 
@@ -179,10 +190,11 @@ package metadata; repository publication remains a separate step.
 ## AppImage and Flatpak launchers
 
 AppImage GNOME integration creates `io.github.you.PicRs.AppImage.desktop`
-in the user's applications directory. Flatpak uses
-`io.github.you.PicRs.desktop`, so both can be installed together and removing
-the AppImage cannot hide the Flatpak launcher. The icon name remains shared.
-Existing user-edited AppImage launchers are preserved.
+and a separate AppImage icon in the user's data directory. Flatpak uses
+`io.github.you.PicRs.desktop` and its own icon, so uninstalling the AppImage
+does not affect the Flatpak. Existing user-edited AppImage launchers are
+preserved during builds; uninstall removes one only when its `Exec` entry
+matches the AppImage path supplied.
 
 Older AppImage builds may have left a local `io.github.you.PicRs.desktop`
 entry pointing to a removed file. If that happens, back up that specific

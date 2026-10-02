@@ -12,6 +12,14 @@ PIC is a local-first photo manager built with Rust, GTK4 and libadwaita. It brin
 
 Your originals remain in their existing folders. Importing indexes them rather than moving or copying them; albums, ratings and editing recipes are stored in PIC's local library. Edited images are exported as new files.
 
+## Important: back up your photos
+
+PIC is a **personal passion project** and is still under active development. Before using it with an important photo collection, test it with temporary/sample files and make sure you have current backups of your photos and PIC library data.
+
+PIC is designed to be **non-destructive**. It indexes and references photos in their existing locations; the PIC database stores catalogue information such as albums, ratings and edit recipes. Normal PIC library operations do not delete your original photo files, and edited photos are exported as new files. Removing a folder or photo from PIC's catalogue removes the database reference, not the original file.
+
+Even with that design, software can contain bugs and storage, filesystem, network-share or hardware failures can occur. **Do not treat PIC or its database as a backup of your photos.** You are responsible for maintaining backups of important data.
+
 ## What's current in RC3
 
 - **Photo Wall** fills rows with photos in their natural proportions, alongside the regular thumbnail grid.

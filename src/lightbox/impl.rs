@@ -24,6 +24,8 @@ impl Lightbox {
         picture.set_halign(gtk::Align::Center);
         picture.set_valign(gtk::Align::Center);
         picture.set_can_target(true);
+        picture.set_focusable(false);
+        picture.set_focus_on_click(false);
         picture.set_overflow(gtk::Overflow::Visible);
         picture.set_widget_name("lightbox-zoom-picture");
         picture.add_css_class("lightbox-picture");
@@ -37,11 +39,26 @@ impl Lightbox {
         picture_viewport.set_halign(gtk::Align::Fill);
         picture_viewport.set_valign(gtk::Align::Fill);
         picture_viewport.set_can_target(true);
+        picture_viewport.set_focusable(false);
+        picture_viewport.set_focus_on_click(false);
         // Keep scrollbars hidden while keeping the viewport constrained to
         // the lightbox allocation. External gives us real scroll ranges
         // without drawing normal scrollbar UI.
         picture_viewport.set_policy(gtk::PolicyType::External, gtk::PolicyType::External);
         picture_viewport.set_child(Some(&picture));
+        // GtkScrolledWindow wraps non-scrollable children such as GtkPicture
+        // in an implicit GtkViewport. Its default focus tracking may scroll a
+        // large child when a mouse click changes focus, which appears as a
+        // jump before panning starts. The lightbox owns focus at the root, so
+        // the image viewport must never reposition itself for focus.
+        if let Some(viewport) = picture_viewport
+            .child()
+            .and_then(|child| child.downcast::<gtk::Viewport>().ok())
+        {
+            viewport.set_scroll_to_focus(false);
+            viewport.set_focusable(false);
+            viewport.set_focus_on_click(false);
+        }
         root.add_overlay(&picture_viewport);
 
         let one_to_one_active = Rc::new(Cell::new(false));

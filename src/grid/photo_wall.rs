@@ -502,6 +502,7 @@ impl Gallery {
             return;
         }
         let anchor = self.capture_view_anchor();
+        self.sectioned_folder.cancel_scroll_animation();
         self.auto_default_zoom.set(false);
         if let Some(source) = self.zoom_reflow_source.borrow_mut().take() {
             source.remove();
@@ -514,8 +515,44 @@ impl Gallery {
         (self.on_zoom_changed)(width);
         self.sectioned_folder.invalidate_geometry();
         self.sectioned_folder.refresh();
-        if let Some(anchor) = anchor {
-            self.restore_view_anchor(anchor);
+        if let (Some(anchor), Some(scroll)) = (
+            anchor,
+            self.sectioned_folder.scroll.borrow().as_ref().cloned(),
+        ) {
+            let index = self
+                .current_photos
+                .borrow()
+                .iter()
+                .position(|photo| photo.id() == anchor.photo_id);
+            if let Some(y) = index.and_then(|index| self.sectioned_folder.y_for_index(index as u32))
+            {
+                // Commit the new extent and anchor together. Deferring the
+                // anchor until a later tick painted the refitted wall at the
+                // old scroll position for one frame on every zoom-in step.
+                let adjustment = scroll.vadjustment();
+                let page = adjustment.page_size();
+                let lower = adjustment.lower();
+                let upper = self.sectioned_folder.total_height.get().ceil().max(page);
+                adjustment.configure(
+                    (y - anchor.viewport_y_offset).clamp(lower, (upper - page).max(lower)),
+                    lower,
+                    upper,
+                    adjustment.step_increment(),
+                    adjustment.page_increment(),
+                    page,
+                );
+                self.sectioned_folder.refresh();
+                // Apply the viewport's translation now, as the resize path
+                // does, so its child cannot paint using the previous shift.
+                if let Some(viewport) = self
+                    .sectioned_folder
+                    .root
+                    .parent()
+                    .and_downcast::<gtk::Viewport>()
+                {
+                    viewport.size_allocate(&viewport.allocation(), viewport.allocated_baseline());
+                }
+            }
         }
     }
 

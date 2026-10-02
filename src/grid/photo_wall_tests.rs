@@ -1340,3 +1340,126 @@ fn photo_wall_integer_allocations_paint_every_pixel_including_final_row() {
     window.close();
     settle();
 }
+
+#[test]
+#[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+fn photo_wall_ctrl_wheel_zoom_allocations_match_every_painted_frame() {
+    gtk::init().unwrap();
+    crate::css::install_foundation(&gtk::gdk::Display::default().unwrap());
+    let gallery = Rc::new(Gallery::new(
+        &[],
+        100,
+        |_| {},
+        |_, _, _| {},
+        |_, _, _, _| {},
+        |_, _| {},
+        |_| {},
+    ));
+    let photos = (0..2000)
+        .map(|i| {
+            glib::Object::builder::<PhotoObject>()
+                .property("id", i as i64 + 1)
+                .property("width", [4000_i64, 6000, 4000][i % 3])
+                .property("height", [6000_i64, 4000, 4000][i % 3])
+                .build()
+        })
+        .collect::<Vec<_>>();
+    gallery.current_photos.replace(photos.clone());
+    gallery.store.splice(0, 0, &photos);
+    gallery.set_layout(PhotoLayout::PhotoWall);
+    let scroll = gtk::ScrolledWindow::builder()
+        .child(&gallery.folder_sectioned_root)
+        .build();
+    gallery.attach_sectioned_folder_scroll(&scroll);
+    let window = gtk::Window::builder()
+        .default_width(997)
+        .default_height(600)
+        .child(&scroll)
+        .build();
+    window.present();
+    settle();
+    scroll.vadjustment().set_value(7000.0);
+    settle();
+    let anchor = gallery.capture_view_anchor().unwrap();
+    let expected_anchor = Rc::new(Cell::new((
+        gallery
+            .current_photos
+            .borrow()
+            .iter()
+            .position(|photo| photo.id() == anchor.photo_id)
+            .unwrap(),
+        anchor.viewport_y_offset,
+    )));
+    let expected_for_paint = expected_anchor.clone();
+    let errors = Rc::new(RefCell::new(Vec::new()));
+    let samples = errors.clone();
+    let surface = gallery.sectioned_folder.clone();
+    let scroll_for_paint = scroll.clone();
+    let handler = window.frame_clock().unwrap().connect_after_paint(move |_| {
+        let state = surface.wall_state.borrow();
+        let (anchor_index, desired_offset) = expected_for_paint.get();
+        let anchor_item = state.layout.item(anchor_index).unwrap();
+        let offset = anchor_item.y - scroll_for_paint.vadjustment().value();
+        let root_bounds = surface.root.compute_bounds(&scroll_for_paint).unwrap();
+        let anchor_error = (offset - desired_offset)
+            .abs()
+            .max((f64::from(root_bounds.y()) + anchor_item.y - desired_offset).abs());
+        if anchor_error > 2.0 {
+            samples
+                .borrow_mut()
+                .push((anchor_index as u32, anchor_error));
+        }
+        for (&index, live) in surface.live_tiles.borrow().iter() {
+            let item = state.layout.item(index as usize).unwrap();
+            let tile = &live.tile;
+            let bounds = tile.compute_bounds(&surface.root).unwrap();
+            let frame = tile.first_child().unwrap();
+            let error = [
+                (f64::from(bounds.x()) - item.x).abs(),
+                (f64::from(bounds.y()) - item.y).abs(),
+                (f64::from(bounds.width()) - item.width).abs(),
+                (f64::from(bounds.height()) - item.height).abs(),
+                (f64::from(frame.width()) - item.width).abs(),
+                (f64::from(frame.height()) - item.height).abs(),
+            ]
+            .into_iter()
+            .fold(0.0_f64, f64::max);
+            if error > 0.0 {
+                samples.borrow_mut().push((index, error));
+            }
+        }
+    });
+    let viewport = scroll.clone().upcast::<gtk::Widget>();
+    for _ in 0..6 {
+        let anchor = gallery.capture_view_anchor().unwrap();
+        let index = gallery
+            .current_photos
+            .borrow()
+            .iter()
+            .position(|photo| photo.id() == anchor.photo_id)
+            .unwrap();
+        expected_anchor.set((index, anchor.viewport_y_offset));
+        gallery.wheel_zoom_in_at(&viewport, 500.0, 300.0);
+        settle();
+    }
+    for _ in 0..6 {
+        let anchor = gallery.capture_view_anchor().unwrap();
+        let index = gallery
+            .current_photos
+            .borrow()
+            .iter()
+            .position(|photo| photo.id() == anchor.photo_id)
+            .unwrap();
+        expected_anchor.set((index, anchor.viewport_y_offset));
+        gallery.wheel_zoom_out_at(&viewport, 500.0, 300.0);
+        settle();
+    }
+    window.frame_clock().unwrap().disconnect(handler);
+    assert!(
+        errors.borrow().is_empty(),
+        "zoom painted stale geometry or scroll translation: {:?}",
+        errors.borrow()
+    );
+    window.close();
+    settle();
+}

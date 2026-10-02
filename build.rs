@@ -14,6 +14,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 fn main() {
+    emit_build_metadata();
     // Fedora/Linux proof of concept; do not link private transports for other OSes.
     #[cfg(target_os = "linux")]
     {
@@ -78,6 +79,34 @@ fn main() {
             stage_dir(&source, &profile_dir.join(folder));
         }
     }
+}
+
+fn emit_build_metadata() {
+    let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".into());
+    let revision = std::process::Command::new("git")
+        .args(["-C", &manifest_dir, "rev-parse", "--short=10", "HEAD"])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "unknown".into());
+
+    let build_date = std::process::Command::new("date")
+        .args(["-u", "+%Y-%m-%d"])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "unknown".into());
+
+    println!("cargo:rustc-env=PIC_BUILD_REVISION={revision}");
+    println!("cargo:rustc-env=PIC_BUILD_DATE={build_date}");
+    println!("cargo:rerun-if-changed=.git/HEAD");
+    println!("cargo:rerun-if-changed=.git/index");
 }
 
 /// Replace `destination` with a fresh copy of `source`.

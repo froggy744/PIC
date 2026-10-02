@@ -1076,6 +1076,7 @@ build_appimage() {
     log "Creating AppDir with linuxdeploy"
     linuxdeploy_args=(
         --appdir "$appdir"
+        --exclude-library 'libselinux.so*'
         --executable "$NATIVE_BIN"
         --desktop-file "$desktop"
         --icon-file "$staging_icon"
@@ -1098,6 +1099,7 @@ build_appimage() {
         chmod +x "$deployed_pixbuf_query"
         APPIMAGE_EXTRACT_AND_RUN=1 "$linuxdeploy" \
             --appdir "$appdir" \
+            --exclude-library 'libselinux.so*' \
             --deploy-deps-only "$deployed_pixbuf_query"
         [[ -x "$deployed_pixbuf_query" ]] || \
             die "GdkPixbuf loader-cache helper was not staged correctly."
@@ -1207,7 +1209,7 @@ build_appimage() {
         LDAI_OUTPUT="$output_name" \
         LDAI_NO_APPSTREAM=1 \
         APPIMAGE_EXTRACT_AND_RUN=1 \
-            "$linuxdeploy" --appdir "$appdir" --output appimage
+            "$linuxdeploy" --appdir "$appdir" --exclude-library 'libselinux.so*' --output appimage
     )
     [[ -s "$DIST_DIR/$output_name" ]] || return 1
     chmod +x "$DIST_DIR/$output_name"

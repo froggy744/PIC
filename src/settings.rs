@@ -780,20 +780,20 @@ fn library_page(
         let available_label = available_label.clone();
         let unavailable_label = unavailable_label.clone();
         let updated = updated.clone();
-        let update_button = update_button.clone();
+        let button_for_click = update_button.clone();
         let stats_running = stats_running.clone();
-        update_button.connect_clicked(move |_| {
+        button_for_click.connect_clicked(move |button| {
             if stats_running.replace(true) {
                 return;
             }
-            update_button.set_sensitive(false);
+            button.set_sensitive(false);
             updated.set_text("Updating…");
             schedule_availability_stats(
                 connection.clone(),
                 available_label.clone(),
                 unavailable_label.clone(),
                 updated.clone(),
-                update_button.clone(),
+                button.clone(),
                 stats_running.clone(),
             );
         });

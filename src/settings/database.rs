@@ -148,13 +148,13 @@ pub(super) fn page(
         let unused_label = unused_label.clone();
         let cache_size_label = cache_size_label.clone();
         let thumbnail_status = thumbnail_status.clone();
-        let clean_button = clean_button.clone();
+        let button_for_click = clean_button.clone();
         let cleanup_running = cleanup_running.clone();
-        clean_button.connect_clicked(move |_| {
+        button_for_click.connect_clicked(move |button| {
             if cleanup_running.replace(true) {
                 return;
             }
-            clean_button.set_sensitive(false);
+            button.set_sensitive(false);
             thumbnail_status.set_text("Cleaning thumbnail cache…");
 
             let valid = match crate::thumbnail::valid_cache_paths(&connection.borrow()) {
@@ -162,7 +162,7 @@ pub(super) fn page(
                 Err(error) => {
                     eprintln!("Could not collect thumbnail cache keys: {error:#}");
                     thumbnail_status.set_text("Could not clean the thumbnail cache.");
-                    clean_button.set_sensitive(true);
+                    button.set_sensitive(true);
                     cleanup_running.set(false);
                     return;
                 }
@@ -182,7 +182,7 @@ pub(super) fn page(
             let poll_unused = unused_label.clone();
             let poll_size = cache_size_label.clone();
             let poll_status = thumbnail_status.clone();
-            let poll_button = clean_button.clone();
+            let poll_button = button.clone();
             let poll_running = cleanup_running.clone();
             glib::timeout_add_local(Duration::from_millis(50), move || {
                 match receiver.try_recv() {

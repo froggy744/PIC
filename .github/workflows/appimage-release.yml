@@ -127,6 +127,10 @@ jobs:
           APPIMAGE_EXTRACT_AND_RUN=1 "$appimage" --appimage-extract >/dev/null
           test -s squashfs-root/usr/lib/libpixbufloader-svg.so
           test -x squashfs-root/usr/libexec/pic-gdk-pixbuf-query-loaders
+          if find squashfs-root/usr/lib -maxdepth 1 \( -type f -o -type l \) -name 'libselinux.so*' -print -quit | grep -q .; then
+            echo "::error::AppImage must use the host SELinux runtime; bundled libselinux breaks older distributions."
+            exit 1
+          fi
 
           smoke_home="$(mktemp -d)"
           smoke_log="$(mktemp)"

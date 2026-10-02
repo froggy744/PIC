@@ -30,6 +30,20 @@ fn main() {
         for path in samba.include_paths.iter().chain(nfs.include_paths.iter()) {
             cc.include(path);
         }
+
+        // libnfs 5.x uses nfs_read(nfs, fh, count, buf), while newer
+        // releases use nfs_read(nfs, fh, buf, count). Ubuntu 24.04 ships
+        // libnfs 5.x; Fedora currently ships the newer API.
+        let libnfs_major = nfs
+            .version
+            .split('.')
+            .next()
+            .and_then(|part| part.parse::<u64>().ok())
+            .unwrap_or(0);
+        if libnfs_major > 0 && libnfs_major < 6 {
+            cc.define("PIC_LIBNFS_LEGACY_READ_ORDER", None);
+        }
+
         cc.compile("pic_private_transports");
 
         // Emit the native archive before the system libraries it depends on.

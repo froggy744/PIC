@@ -365,13 +365,14 @@ mod one_to_one_layout_regression {
         );
         lightbox.picture.set_paintable(Some(&native));
         lightbox.picture.set_can_shrink(false);
-        fit_one_to_one_picture(
+        fit_centered_picture(
             &lightbox.picture,
             &lightbox.picture_viewport,
             std::slice::from_ref(&photo),
             0,
             200,
             120,
+            -1.0,
             "test-one-to-one",
         );
         settle();
@@ -401,6 +402,44 @@ mod one_to_one_layout_regression {
         let expected_v = ((300.0 - v.page_size()) / 2.0).round_ties_even();
         assert!((h.value() - expected_h).abs() < 1.0);
         assert!((v.value() - expected_v).abs() < 1.0);
+
+        // Ctrl+wheel uses positive fit-relative zoom factors. Each step must
+        // position the newly sized picture before the next pointer event,
+        // including consecutive zoom-in, zoom-out, and return-to-Fit steps.
+        lightbox.picture.set_can_shrink(true);
+        for zoom in [0.0, 3.0, 4.0, 5.0, 4.0, 3.0, 0.0] {
+            fit_centered_picture(
+                &lightbox.picture,
+                &lightbox.picture_viewport,
+                std::slice::from_ref(&photo),
+                0,
+                lightbox.root.width(),
+                lightbox.root.height(),
+                zoom,
+                "ctrl-wheel",
+            );
+            settle();
+            let bounds = lightbox
+                .picture
+                .compute_bounds(&lightbox.picture_viewport)
+                .unwrap();
+            let expected_h = ((f64::from(lightbox.picture.width()) - h.page_size())
+                .max(0.0) / 2.0).round_ties_even();
+            let expected_v = ((f64::from(lightbox.picture.height()) - v.page_size())
+                .max(0.0) / 2.0).round_ties_even();
+            assert!((h.value() - expected_h).abs() < 1.0, "zoom={zoom}, h={h:?}");
+            assert!((v.value() - expected_v).abs() < 1.0, "zoom={zoom}, v={v:?}");
+            assert!(
+                (f64::from(bounds.x()) + h.value()).abs() < 1.0,
+                "zoom={zoom}, stale horizontal picture origin: bounds={bounds:?}, h={}",
+                h.value(),
+            );
+            assert!(
+                (f64::from(bounds.y()) + v.value()).abs() < 1.0,
+                "zoom={zoom}, stale vertical picture origin: bounds={bounds:?}, v={}",
+                v.value(),
+            );
+        }
         window.close();
     }
 }

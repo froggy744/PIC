@@ -15,7 +15,7 @@ Reviewed `3eb263d` (one centring owner), `fd92bdf` (range-change anchoring), and
 the reverted pan/focus/kinetic/controller experiments leading to the baseline.
 
 Both cached 1:1 and newly decoded native 1:1 paths now use
-`fit_one_to_one_picture`, which applies `fit_picture(-1.0)` (Start alignment on
+`fit_centered_picture` with zoom `-1.0`, which applies `fit_picture(-1.0)` (Start alignment on
 overflowing axes) and primes the centered adjustment ranges from the native
 picture size before GTK's queued viewport allocation. Before this change, the
 decode path retained Fit's Fill alignment, expansion and viewport-sized request;
@@ -60,6 +60,23 @@ before any pointer update. Run it on the desktop with
 `cargo test native_picture_is_centered_before_the_first_pointer_update
 -- --ignored --test-threads=1`.
 
+## Ctrl+wheel follow-up
+
+The subsequent desktop trace confirmed the same allocation ordering on the
+Ctrl+wheel path. At the final zoom step the adjustments were `(3874,2558)`,
+but the picture origin remained `(-3378,-2228)`, matching the previous zoom
+step's adjustments. The first drag applied the missing `(496,330)` movement.
+Ctrl+wheel had been deliberately left on its existing unprimed path during
+the 1:1 fix; it now uses the shared `fit_centered_picture` helper too.
+
+The GTK regression now covers consecutive positive zoom factors, zoom-out,
+and return to Fit in addition to native 1:1. Before changing the wheel geometry
+path, the positive-zoom case failed with adjustment `60` and picture origin
+`0`. After using the shared priming helper, every step passed. The handler's
+scale increments, bounds, slider synchronization and gesture math are unchanged.
+`PICASA_TRACE=1` additionally records `geometry stage=ctrl_wheel_settled` after
+paint so a desktop run can verify bounds against adjustments at each zoom step.
+
 ## Verification
 
 - `cargo check`: passed; existing compiler warnings remain.
@@ -79,6 +96,6 @@ before any pointer update. Run it on the desktop with
   restrictions no longer apply to this final verification run.
 - `git diff --check`: passed. Repository-wide `cargo fmt --check` reports
   existing formatting differences across unrelated files.
-- The production change is limited to priming 1:1 viewport ranges before
+- The production change primes 1:1 and Ctrl+wheel viewport ranges before
   allocation. Loading, PNG transition, Space, slider zoom, centring math and
   pan adjustment math are unchanged.

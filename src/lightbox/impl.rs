@@ -526,6 +526,7 @@ impl Lightbox {
         let photos_for_scroll = photos.clone();
         let index_for_scroll = index.clone();
         let picture_for_scroll = picture.clone();
+        let viewport_for_scroll = picture_viewport.clone();
         let root_for_scroll = root.clone();
         let zoom_for_scroll = zoom.clone();
         let applied_for_scroll = applied_native_scale.clone();
@@ -695,14 +696,22 @@ impl Lightbox {
                     applied_for_scroll.set(next_scale);
                 }
 
-                fit_picture(
+                fit_centered_picture(
                     &picture_for_scroll,
+                    &viewport_for_scroll,
                     &photos_for_scroll.borrow(),
                     index_for_scroll.get(),
                     root_for_scroll.width(),
                     root_for_scroll.height(),
                     zoom_for_scroll.get(),
                     "ctrl-wheel",
+                );
+                trace_lightbox_after_paint(
+                    &root_for_scroll,
+                    &picture_for_scroll,
+                    &viewport_for_scroll,
+                    "ctrl_wheel_settled",
+                    None,
                 );
 
                 if let Some(handler) = zoom_sync_for_scroll.borrow().as_ref() {
@@ -1238,8 +1247,8 @@ impl Lightbox {
         // A slider can issue a new picture size every frame. Publish the
         // matching scroll ranges now, before GTK's queued layout, so the
         // rendered frame never mixes the old adjustment range with the new
-        // picture allocation. Ctrl+wheel already feels stable and keeps its
-        // established path unchanged.
+        // picture allocation. Ctrl+wheel primes ranges through
+        // fit_centered_picture in its controller callback.
         if source == "slider" {
             let (picture_width, picture_height) = self.picture.size_request();
             prime_viewport_for_picture_size(
@@ -1347,13 +1356,14 @@ impl Lightbox {
                     && cache.edit_recipe == edit_recipe
                 {
                     self.picture.set_paintable(Some(&cache.texture));
-                    fit_one_to_one_picture(
+                    fit_centered_picture(
                         &self.picture,
                         &self.picture_viewport,
                         &self.photos.borrow(),
                         self.index.get(),
                         self.root.width(),
                         self.root.height(),
+                        -1.0,
                         "one-to-one",
                     );
                     self.picture.queue_resize();

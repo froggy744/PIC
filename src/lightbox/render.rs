@@ -206,13 +206,14 @@ fn show_photo(
                     );
                 }
                 if zoom.get() < 0.0 {
-                    fit_one_to_one_picture(
+                    fit_centered_picture(
                         &picture,
                         &picture_viewport,
                         std::slice::from_ref(&photo),
                         0,
                         root.width(),
                         root.height(),
+                        -1.0,
                         "one-to-one-decode",
                     );
                     picture.queue_resize();
@@ -998,18 +999,19 @@ fn centered_scroll_value(upper: f64, page_size: f64, lower: f64) -> f64 {
         .clamp(lower, max_scroll)
 }
 
-/// Install native geometry and its matching centered scroll ranges before
+/// Install explicit picture geometry and its matching centered scroll ranges before
 /// GTK allocates the GtkViewport child. The viewport configures adjustments
 /// during allocation, but its `changed` handlers run after it places the
 /// child; centering only from that handler leaves stale child bounds until a
 /// later adjustment write (such as the first drag) queues another allocation.
-fn fit_one_to_one_picture(
+fn fit_centered_picture(
     picture: &gtk::Picture,
     viewport: &gtk::ScrolledWindow,
     photos: &[PhotoObject],
     index: usize,
     viewport_width: i32,
     viewport_height: i32,
+    zoom: f64,
     source: &str,
 ) {
     fit_picture(
@@ -1018,7 +1020,7 @@ fn fit_one_to_one_picture(
         index,
         viewport_width,
         viewport_height,
-        -1.0,
+        zoom,
         source,
     );
     let (picture_width, picture_height) = picture.size_request();

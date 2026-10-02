@@ -14,6 +14,7 @@ pub(super) struct PhotoWallItem {
     pub photo_index: usize,
     pub section: usize,
     pub row: usize,
+    // Shared gallery APIs use f64; all wall allocations are whole pixels.
     pub x: f64,
     pub y: f64,
     pub width: f64,
@@ -26,6 +27,9 @@ pub(super) struct PhotoWallRow {
     pub y: f64,
     pub image_height: f64,
     pub block_height: f64,
+    ideal_height: f64,
+    ideal_block_height: f64,
+    justified: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -42,6 +46,8 @@ pub(super) struct PhotoWallLayout {
     pub sections: Vec<PhotoWallSectionBounds>,
     pub total_height: f64,
     lookup: Vec<Option<usize>>,
+    aspect_ratios: Vec<f64>,
+    viewport_width: f64,
 }
 
 fn ratio(value: f64) -> f64 {
@@ -50,6 +56,50 @@ fn ratio(value: f64) -> f64 {
     } else {
         1.0
     }
+}
+
+// Allocate whole pixels by largest remainder, then accumulate those widths.
+// The optional one-pixel minimum only applies when the row has enough pixels.
+fn integer_widths(ratios: &[f64], available: i32) -> Vec<i32> {
+    let sum: f64 = ratios.iter().sum();
+    let ideal: Vec<_> = ratios
+        .iter()
+        .map(|r| f64::from(available) * r / sum)
+        .collect();
+    let minimum = i32::from(available as usize >= ratios.len());
+    let mut widths: Vec<_> = ideal
+        .iter()
+        .map(|w| (w.floor() as i32).max(minimum))
+        .collect();
+    let mut remainder = available - widths.iter().sum::<i32>();
+    let mut order: Vec<_> = (0..widths.len()).collect();
+    order.sort_by(|&a, &b| {
+        ideal[b]
+            .fract()
+            .total_cmp(&ideal[a].fract())
+            .then(a.cmp(&b))
+    });
+    while remainder > 0 {
+        for &i in &order {
+            if remainder == 0 {
+                break;
+            }
+            widths[i] += 1;
+            remainder -= 1;
+        }
+    }
+    while remainder < 0 {
+        for &i in order.iter().rev() {
+            if remainder == 0 {
+                break;
+            }
+            if widths[i] > minimum {
+                widths[i] -= 1;
+                remainder += 1;
+            }
+        }
+    }
+    widths
 }
 
 impl PhotoWallLayout {
@@ -61,7 +111,7 @@ impl PhotoWallLayout {
         caption_height: f64,
     ) -> Self {
         let viewport = if viewport_width.is_finite() {
-            viewport_width.max(1.0)
+            viewport_width.round().max(1.0)
         } else {
             1.0
         };
@@ -73,23 +123,27 @@ impl PhotoWallLayout {
             100.0
         };
         let caption = if caption_height.is_finite() {
-            caption_height.max(0.0)
+            caption_height.round().max(0.0)
         } else {
             0.0
         };
         let mut layout = Self {
             lookup: vec![None; aspect_ratios.len()],
+            aspect_ratios: aspect_ratios.iter().copied().map(ratio).collect(),
+            viewport_width: viewport,
             ..Self::default()
         };
         let mut y = 0.0;
+        let mut ideal_y = 0.0;
         for (section_index, section) in sections.iter().enumerate() {
             let header_y = y;
             let header = if section.header_height.is_finite() {
-                section.header_height.max(0.0)
+                section.header_height.round().max(0.0)
             } else {
                 0.0
             };
             y += header;
+            ideal_y += header;
             let first_photo_y = y;
             let mut start = section.photo_range.start.min(aspect_ratios.len());
             let section_end = section.photo_range.end.min(aspect_ratios.len());
@@ -98,7 +152,7 @@ impl PhotoWallLayout {
                 let mut sum = 0.0;
                 // Stop on reaching the target width. A single wide image still
                 // produces a row, and tiny viewports never gain negative space.
-                while end < section_end {
+                while end < section_end && end - start < usable as usize {
                     // Leave positive image space before adding another gap.
                     if end > start && WALL_GAP * (end - start) as f64 >= usable {
                         break;
@@ -126,16 +180,26 @@ impl PhotoWallLayout {
                         sum = before_sum;
                     }
                 }
-                let height = if crossed {
-                    fitted(sum, end - start)
+                // Sparse final rows stay at target height if justification
+                // would exceed the existing preferred height band by 20%.
+                let fitted_height = fitted(sum, end - start);
+                let justified = crossed || fitted_height <= target * 1.20;
+                let ideal_height = if justified { fitted_height } else { target };
+                let height = (ideal_y + ideal_height.max(1.0)).round() - y;
+                let available = if justified {
+                    usable
                 } else {
-                    target.min(fitted(sum, end - start))
-                };
+                    (ideal_height * sum)
+                        .round()
+                        .max((end - start) as f64)
+                        .min(usable)
+                } as i32;
+                let widths = integer_widths(&layout.aspect_ratios[start..end], available);
                 let row_index = layout.rows.len();
                 let item_start = layout.items.len();
                 let mut x = margin;
                 for photo_index in start..end {
-                    let width = height * ratio(aspect_ratios[photo_index]);
+                    let width = f64::from(widths[photo_index - start]);
                     layout.lookup[photo_index] = Some(layout.items.len());
                     layout.items.push(PhotoWallItem {
                         photo_index,
@@ -153,8 +217,12 @@ impl PhotoWallLayout {
                     y,
                     image_height: height,
                     block_height: height + caption,
+                    ideal_height,
+                    ideal_block_height: ideal_height + caption,
+                    justified,
                 });
                 y += height + caption + WALL_GAP;
+                ideal_y += ideal_height.max(1.0) + caption + WALL_GAP;
                 start = end;
             }
             layout.sections.push(PhotoWallSectionBounds {
@@ -164,13 +232,14 @@ impl PhotoWallLayout {
             });
         }
         layout.total_height = y.max(1.0);
+        layout.trace_rows();
         layout
     }
 
     /// Scale the photo area horizontally and vertically by `factor`, exactly
     /// like resizing a picture: no row is re-broken, no photo changes row, and
-    /// every tile keeps its aspect ratio. Section header bands keep their
-    /// fixed height and are only shifted. `anchor_y` is a y in the old layout;
+    /// widths are redistributed to whole pixels using the original aspect
+    /// ratios. Section header bands keep their fixed height and are only shifted. `anchor_y` is a y in the old layout;
     /// the returned value is the same content point in the scaled layout.
     pub fn scale_photo_area(&mut self, factor: f64, anchor_y: f64) -> f64 {
         let factor = if factor.is_finite() && factor > 0.0 {
@@ -178,49 +247,88 @@ impl PhotoWallLayout {
         } else {
             1.0
         };
-        let mut old_first = Vec::with_capacity(self.sections.len());
-        let mut new_first = Vec::with_capacity(self.sections.len());
+        let viewport = (self.viewport_width * factor).round().max(1.0);
+        let old_total = self.total_height;
         let mut cursor = 0.0;
+        let mut ideal_cursor = 0.0;
         let mut mapped = None;
-        let mut old_total = 0.0;
-        for bounds in self.sections.iter_mut() {
-            let header = bounds.first_photo_y - bounds.header_y;
-            let (old_header_y, old_first_y, old_end_y) =
-                (bounds.header_y, bounds.first_photo_y, bounds.end_y);
-            let header_y = cursor;
-            let first_photo_y = header_y + header;
-            let end_y = first_photo_y + (old_end_y - old_first_y) * factor;
-            if mapped.is_none() && anchor_y < old_end_y {
-                mapped = Some(if anchor_y < old_first_y {
-                    header_y + (anchor_y - old_header_y).max(0.0)
-                } else {
-                    first_photo_y + (anchor_y - old_first_y) * factor
-                });
+        let mut row_index = 0;
+        for (section_index, bounds) in self.sections.iter_mut().enumerate() {
+            let old_header = bounds.header_y;
+            let old_first = bounds.first_photo_y;
+            let old_end = bounds.end_y;
+            bounds.header_y = cursor;
+            cursor += old_first - old_header;
+            ideal_cursor += old_first - old_header;
+            bounds.first_photo_y = cursor;
+            if (old_header..old_first).contains(&anchor_y) {
+                mapped = Some(bounds.header_y + anchor_y - old_header);
             }
-            old_first.push(old_first_y);
-            new_first.push(first_photo_y);
-            old_total = old_end_y;
-            *bounds = PhotoWallSectionBounds {
-                header_y,
-                first_photo_y,
-                end_y,
-            };
-            cursor = end_y;
+            while row_index < self.rows.len()
+                && self.items[self.rows[row_index].item_range.start].section == section_index
+            {
+                let row = &mut self.rows[row_index];
+                row_index += 1;
+                let old_y = row.y;
+                let old_block = row.block_height;
+                row.ideal_height *= factor;
+                row.ideal_block_height *= factor;
+                row.y = cursor;
+                // Round shared vertical edges so row-height error cannot
+                // accumulate through a long collection during resizing.
+                let caption = (row.ideal_block_height - row.ideal_height).round().max(0.0);
+                ideal_cursor += row.ideal_height.max(1.0);
+                row.image_height = ideal_cursor.round() - cursor;
+                row.block_height = row.image_height + caption;
+                ideal_cursor += caption;
+                if (old_y..old_y + old_block).contains(&anchor_y) {
+                    mapped = Some(cursor + (anchor_y - old_y) / old_block * row.block_height);
+                }
+                let tiles = &mut self.items[row.item_range.clone()];
+                let ratios: Vec<_> = tiles
+                    .iter()
+                    .map(|item| self.aspect_ratios[item.photo_index])
+                    .collect();
+                let available = if row.justified {
+                    viewport
+                } else {
+                    (row.ideal_height * ratios.iter().sum::<f64>())
+                        .round()
+                        .min(viewport)
+                } as i32;
+                let widths = integer_widths(&ratios, available);
+                let mut x = 0;
+                for (item, width) in tiles.iter_mut().zip(widths) {
+                    item.x = f64::from(x);
+                    item.y = cursor;
+                    item.width = f64::from(width);
+                    item.height = row.image_height;
+                    x += width;
+                }
+                cursor += row.block_height;
+            }
+            bounds.end_y = cursor;
+            if anchor_y == old_end {
+                mapped = Some(cursor);
+            }
         }
-        for item in self.items.iter_mut() {
-            item.x *= factor;
-            item.width *= factor;
-            item.height *= factor;
-            item.y = new_first[item.section] + (item.y - old_first[item.section]) * factor;
-        }
-        for row in self.rows.iter_mut() {
-            // A row's y is its first item's y, which was rescaled above.
-            row.y = self.items[row.item_range.start].y;
-            row.image_height *= factor;
-            row.block_height *= factor;
-        }
+        self.viewport_width = viewport;
         self.total_height = cursor.max(1.0);
+        self.trace_rows();
         mapped.unwrap_or(cursor + (anchor_y - old_total))
+    }
+
+    fn trace_rows(&self) {
+        if std::env::var_os("PICASA_TRACE").is_none() {
+            return;
+        }
+        for row in &self.rows {
+            let tiles = &self.items[row.item_range.clone()];
+            let row_width_sum: f64 = tiles.iter().map(|tile| tile.width).sum();
+            eprintln!("PIC_WALL_ROW viewport_width={} row_width_sum={} remainder={} tile_count={} justified={}",
+                self.viewport_width, row_width_sum, self.viewport_width - row_width_sum,
+                tiles.len(), row.justified);
+        }
     }
 
     pub fn visible_rows(&self, top: f64, bottom: f64) -> Range<usize> {
@@ -259,13 +367,48 @@ mod tests {
         )
     }
     #[test]
+    fn integer_rows_fill_exactly_after_repeated_resizes_and_zoom() {
+        let ratios = [1.5, 0.7, 1.0, 1.8, 0.6, 1.2, 1.3, 0.8, 1.6, 1.1];
+        for target in [32.0, 137.0, 240.0] {
+            let mut wall = layout(&ratios, 799.0, target);
+            let mut width = 799.0;
+            for next in [799.0, 801.0, 997.0, 43.0, 1401.0, 799.0] {
+                wall.scale_photo_area(next / width, 0.0);
+                for row in &wall.rows {
+                    let tiles = &wall.items[row.item_range.clone()];
+                    let mut edge = 0.0;
+                    for tile in tiles {
+                        for value in [tile.x, tile.y, tile.width, tile.height] {
+                            assert_eq!(value.fract(), 0.0, "fractional tile: {tile:?}");
+                        }
+                        assert_eq!(tile.x, edge);
+                        edge += tile.width;
+                    }
+                    if row.item_range.end < wall.items.len() {
+                        assert_eq!(edge, next);
+                    }
+                }
+                width = next;
+            }
+        }
+    }
+
+    #[test]
+    fn reasonable_final_row_is_justified() {
+        let wall = layout(&[1.0; 7], 799.0, 100.0);
+        assert_eq!(wall.rows.len(), 1);
+        assert_eq!(wall.items.iter().map(|item| item.width).sum::<f64>(), 799.0);
+        assert_eq!(wall.rows[0].image_height, 114.0);
+    }
+
+    #[test]
     fn completed_rows_fill_width() {
         let l = layout(&[1.5; 8], 800.0, 180.0);
         for row in &l.rows[..l.rows.len() - 1] {
             let last = &l.items[row.item_range.end - 1];
             assert!((last.x + last.width - 800.0).abs() < 0.001);
             for item in &l.items[row.item_range.clone()] {
-                assert!((item.width / item.height - 1.5).abs() < 0.001);
+                assert!((item.width - item.height * 1.5).abs() <= 1.0 + 1.5);
             }
         }
     }
@@ -395,12 +538,17 @@ mod tests {
         assert_eq!(before.rows.len(), after.rows.len());
         for (a, b) in before.items.iter().zip(&after.items) {
             assert_eq!((a.row, a.section, a.photo_index), (b.row, b.section, b.photo_index));
-            assert!((b.width / b.height - a.width / a.height).abs() < 1e-9);
-            assert!((b.x - a.x * factor).abs() < 1e-9);
+            // Whole-pixel widths and shared rounded row edges introduce at
+            // most one width pixel plus one height pixel of aspect error.
+            let ratio = ratios[b.photo_index];
+            assert!((b.width - b.height * ratio).abs() <= 1.0 + ratio);
+            assert_eq!(b.x.fract(), 0.0);
         }
         let last = after.items.last().unwrap();
         assert!((last.x + last.width - 1395.0).abs() < 1.0 || last.x + last.width <= 1395.0 + 1e-6);
-        assert!((mapped - (after.sections[1].first_photo_y + 40.0 * factor)).abs() < 1e-9);
+        let old_row = &before.rows[before.items[5].row];
+        let new_row = &after.rows[after.items[5].row];
+        assert!((mapped - (new_row.y + 40.0 / old_row.block_height * new_row.block_height)).abs() < 1e-9);
         assert!((after.sections[1].first_photo_y - after.sections[1].header_y - 70.0).abs() < 1e-9);
         assert!((after.total_height - after.sections[1].end_y).abs() < 1e-9);
     }

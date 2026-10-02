@@ -827,7 +827,7 @@ impl SectionedFolderView {
             &self.unavailable,
         );
         tile.set_filename_visible(self.show_file_names.get() && !self.is_wall());
-        tile.set_content_fit(if self.is_wall() || self.fit_whole_photo.get() {
+        tile.set_content_fit(if !self.is_wall() && self.fit_whole_photo.get() {
             gtk::ContentFit::Contain
         } else {
             gtk::ContentFit::Cover
@@ -1077,7 +1077,7 @@ impl SectionedFolderView {
                 tile.tile
                     .set_filename_visible(self.show_file_names.get() && !self.is_wall());
                 tile.tile
-                    .set_content_fit(if self.is_wall() || self.fit_whole_photo.get() {
+                    .set_content_fit(if !self.is_wall() && self.fit_whole_photo.get() {
                         gtk::ContentFit::Contain
                     } else {
                         gtk::ContentFit::Cover
@@ -1126,11 +1126,13 @@ impl SectionedFolderView {
                             }
                         }
                         tile.tile.set_tile_size(
-                            ((item.x + item.width).round() - item.x.round()) as i32,
-                            ((item.y + item.height).round() - item.y.round()) as i32,
+                            item.width as i32,
+                            item.height as i32,
                         );
-                        tile.tile.set_content_fit(gtk::ContentFit::Contain);
-                        self.root.move_(&tile.tile, item.x.round(), item.y.round());
+                        tile.tile.set_content_fit(gtk::ContentFit::Cover);
+                        tile.tile.set_presentation_scale(1.0);
+                        tile.tile.set_presentation_offset(0.0, 0.0);
+                        self.root.move_(&tile.tile, item.x, item.y);
                     }
                     continue;
                 }

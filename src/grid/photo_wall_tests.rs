@@ -1225,3 +1225,118 @@ fn pure_scaling_keeps_deep_section_row_visible_in_resize_frames() {
     window.close();
     settle();
 }
+
+#[test]
+#[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+fn photo_wall_integer_allocations_paint_every_pixel_including_final_row() {
+    gtk::init().unwrap();
+    crate::css::install_foundation(&gtk::gdk::Display::default().unwrap());
+    let gallery = Rc::new(Gallery::new(
+        &[],
+        100,
+        |_| {},
+        |_, _, _| {},
+        |_, _, _, _| {},
+        |_, _| {},
+        |_| {},
+    ));
+    let photos = (0..7)
+        .map(|i| {
+            glib::Object::builder::<PhotoObject>()
+                .property("id", i as i64 + 1)
+                .property("width", 40_i64)
+                .property("height", 40_i64)
+                .build()
+        })
+        .collect::<Vec<_>>();
+    gallery.current_photos.replace(photos.clone());
+    gallery.store.splice(0, 0, &photos);
+    gallery.set_layout(PhotoLayout::PhotoWall);
+    let scroll = gtk::ScrolledWindow::builder()
+        .child(&gallery.folder_sectioned_root)
+        .build();
+    gallery.attach_sectioned_folder_scroll(&scroll);
+    let window = gtk::Window::builder()
+        .default_width(799)
+        .default_height(400)
+        .child(&scroll)
+        .build();
+    window.present();
+    settle();
+    let surface = &gallery.sectioned_folder;
+    let texture = gtk::gdk::MemoryTexture::new(
+        40,
+        40,
+        gtk::gdk::MemoryFormat::R8g8b8a8,
+        &glib::Bytes::from_owned(vec![255u8; 40 * 40 * 4]),
+        40 * 4,
+    );
+    for width in [799, 801, 997, 799] {
+        scroll.allocate(width, 400, -1, None);
+        surface.geometry_for_current_layout(width);
+        surface.refresh();
+        // Allocate synchronously; a window frame would restore the actual
+        // window width, defeating this deliberately odd-width fixture.
+        for live in surface.live_tiles.borrow().values() {
+            let frame = live
+                .tile
+                .first_child()
+                .and_downcast::<gtk::Overlay>()
+                .unwrap();
+            let picture = frame.child().and_downcast::<gtk::Picture>().unwrap();
+            picture.set_paintable(Some(&texture));
+            assert_eq!(picture.content_fit(), gtk::ContentFit::Cover);
+        }
+        surface
+            .root
+            .allocate(width, surface.total_height.get() as i32, -1, None);
+        let state = surface.wall_state.borrow();
+        assert_eq!(state.layout.rows.len(), 1);
+        assert_eq!(
+            state
+                .layout
+                .items
+                .iter()
+                .map(|tile| tile.width)
+                .sum::<f64>(),
+            f64::from(width)
+        );
+        let height = state.layout.rows[0].image_height as i32;
+        let snapshot = gtk::Snapshot::new();
+        for live in surface.live_tiles.borrow().values() {
+            let item = state
+                .layout
+                .item(live.index.get().unwrap() as usize)
+                .unwrap();
+            let bounds = live.tile.compute_bounds(&surface.root).unwrap();
+            assert_eq!(
+                (bounds.x(), bounds.y(), bounds.width(), bounds.height()),
+                (
+                    item.x as f32,
+                    item.y as f32,
+                    item.width as f32,
+                    item.height as f32
+                )
+            );
+            surface.root.snapshot_child(&live.tile, &snapshot);
+        }
+        let node = snapshot.to_node().unwrap();
+        let rendered = window.renderer().unwrap().render_texture(
+            &node,
+            Some(&gtk::graphene::Rect::new(
+                0.0,
+                0.0,
+                width as f32,
+                height as f32,
+            )),
+        );
+        let mut pixels = vec![0u8; width as usize * height as usize * 4];
+        rendered.download(&mut pixels, width as usize * 4);
+        assert!(
+            pixels.chunks_exact(4).all(|pixel| pixel[3] == 255),
+            "background exposed between tiles at width {width}"
+        );
+    }
+    window.close();
+    settle();
+}

@@ -316,6 +316,25 @@ mkdir -p "$CACHE_ROOT" "$TOOLS_DIR" "$WORK_ROOT" "$DIST_DIR"
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
+find_gdk_pixbuf_svg_loader() {
+    find /usr/lib /usr/lib64 /lib /lib64 -type f \
+        -path '*/gdk-pixbuf-2.0/*/loaders/libpixbufloader-svg.so' \
+        -print -quit 2>/dev/null || true
+}
+
+find_gdk_pixbuf_query_loaders() {
+    local candidate
+    for candidate in gdk-pixbuf-query-loaders gdk-pixbuf-query-loaders-64; do
+        if have "$candidate"; then
+            command -v "$candidate"
+            return 0
+        fi
+    done
+    find /usr/lib /usr/lib64 /lib /lib64 -type f \
+        -name 'gdk-pixbuf-query-loaders*' -perm -u+x \
+        -print -quit 2>/dev/null || true
+}
+
 # Host package names are selected for Fedora or Debian/Ubuntu. Other systems
 # still get a complete missing-dependency report and manual setup instructions.
 add_host_dependency() {

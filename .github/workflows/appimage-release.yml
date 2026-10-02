@@ -49,7 +49,7 @@ jobs:
           rm -rf squashfs-root
           APPIMAGE_EXTRACT_AND_RUN=1 "$appimage" --appimage-extract >/dev/null
           test -s squashfs-root/usr/lib/libpixbufloader-svg.so
-          test -s squashfs-root/usr/lib/gdk-pixbuf-2.0/2.10.0/pic-svg-loaders.cache.in
+          test -x squashfs-root/usr/libexec/pic-gdk-pixbuf-query-loaders
 
           smoke_home="$(mktemp -d)"
           smoke_log="$(mktemp)"
@@ -65,7 +65,11 @@ jobs:
           set -e
           cat "$smoke_log"
 
-          if grep -Eq 'Failed to load icon .*Unrecognized image file format|Unable to load image-loading module' "$smoke_log"; then
+          cache_file="$smoke_home/.cache/pic-rs/gdk-pixbuf-svg-loaders.cache"
+          test -s "$cache_file"
+          grep -Fq "$PWD/squashfs-root/usr/lib/libpixbufloader-svg.so" "$cache_file"
+
+          if grep -Eq 'Failed to load icon .*Unrecognized image file format|Unable to load image-loading module|could not initialize bundled SVG image loader' "$smoke_log"; then
             echo "::error::Bundled GTK SVG icon decoding failed."
             exit 1
           fi

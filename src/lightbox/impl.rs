@@ -49,61 +49,91 @@ impl Lightbox {
         let native_quality_pending = Rc::new(Cell::new(false));
         let display_texture_cache: DisplayTextureCache = Rc::new(RefCell::new(VecDeque::new()));
 
-        // Drag-to-pan for the lightbox. Match the editor's proven pan path:
-        // keep one GestureDrag on the stationary ScrolledWindow, capture the
-        // current adjustments at drag start, and apply only the gesture delta.
-        // No exclusive claim, click tracker, threshold, or pointer re-anchoring
-        // is involved.
-        let drag_start_h = Rc::new(Cell::new(0.0f64));
-        let drag_start_v = Rc::new(Cell::new(0.0f64));
+        // Native-size 1:1 panning. Keep the drag gesture on the picture itself:
+        // that is the widget under the pointer, while the ScrolledWindow owns
+        // the adjustments that actually move the visible region.
+        //
+        // Do not manually claim the sequence here. The drag gesture is grouped
+        // with the existing double-click gesture below, so a double-click can
+        // still close the lightbox while a genuine drag pans the native image.
+        let drag_start_h = Rc::new(Cell::new(0.0));
+        let drag_start_v = Rc::new(Cell::new(0.0));
+        // True for the duration of a pan so drag_update ignores stale events
+        // after the gesture was denied.
+        let pan_active = Rc::new(Cell::new(false));
         let pan_drag = gtk::GestureDrag::new();
         pan_drag.set_button(1);
         pan_drag.set_propagation_phase(gtk::PropagationPhase::Capture);
+        pan_drag.set_exclusive(true);
 
-        {
-            let viewport = picture_viewport.clone();
-            let drag_start_h = drag_start_h.clone();
-            let drag_start_v = drag_start_v.clone();
-            pan_drag.connect_drag_begin(move |_, _, _| {
-                let hadj = viewport.hadjustment();
-                let vadj = viewport.vadjustment();
-                drag_start_h.set(hadj.value());
-                drag_start_v.set(vadj.value());
-                if hadj.upper() > hadj.page_size() || vadj.upper() > vadj.page_size() {
-                    viewport.set_cursor_from_name(Some("grabbing"));
-                }
+        let pan_active_for_drag_begin = pan_active.clone();
+        let viewport_for_drag_begin = picture_viewport.clone();
+        let drag_start_h_begin = drag_start_h.clone();
+        let drag_start_v_begin = drag_start_v.clone();
+        pan_drag.connect_drag_begin(move |gesture, x, y| {
+            // Pan whenever the image overflows the viewport: zoomed in via
+            // Ctrl+wheel as well as 1:1, not 1:1 only.
+            let hadj = viewport_for_drag_begin.hadjustment();
+            let vadj = viewport_for_drag_begin.vadjustment();
+            let scrollable =
+                hadj.upper() - hadj.page_size() > 1.0 || vadj.upper() - vadj.page_size() > 1.0;
+            if !scrollable {
+                gesture.set_state(gtk::EventSequenceState::Denied);
+                return;
+            }
+
+            // The controller is attached to the stationary image viewport,
+            // so the gesture coordinates are already local to that viewport.
+            let inside_viewport = x >= 0.0
+                && y >= 0.0
+                && x < viewport_for_drag_begin.width() as f64
+                && y < viewport_for_drag_begin.height() as f64;
+
+            if !inside_viewport {
+                gesture.set_state(gtk::EventSequenceState::Denied);
+                return;
+            }
+
+            pan_active_for_drag_begin.set(true);
+            drag_start_h_begin.set(hadj.value());
+            drag_start_v_begin.set(vadj.value());
+            viewport_for_drag_begin.set_cursor_from_name(Some("grabbing"));
+        });
+
+        let pan_active_for_drag_update = pan_active.clone();
+        let viewport_for_drag_update = picture_viewport.clone();
+        let drag_start_h_update = drag_start_h.clone();
+        let drag_start_v_update = drag_start_v.clone();
+        pan_drag.connect_drag_update(move |_, offset_x, offset_y| {
+            if !pan_active_for_drag_update.get() {
+                return;
+            }
+
+            let hadj = viewport_for_drag_update.hadjustment();
+            let vadj = viewport_for_drag_update.vadjustment();
+            let max_h = (hadj.upper() - hadj.page_size()).max(hadj.lower());
+            let max_v = (vadj.upper() - vadj.page_size()).max(vadj.lower());
+
+            let new_h = (drag_start_h_update.get() - offset_x).clamp(hadj.lower(), max_h);
+            let new_v = (drag_start_v_update.get() - offset_y).clamp(vadj.lower(), max_v);
+            hadj.set_value(new_h);
+            vadj.set_value(new_v);
+        });
+
+        let pan_active_for_drag_end = pan_active.clone();
+        let viewport_for_drag_end = picture_viewport.clone();
+        pan_drag.connect_drag_end(move |_, _, _| {
+            pan_active_for_drag_end.set(false);
+            let hadj = viewport_for_drag_end.hadjustment();
+            let vadj = viewport_for_drag_end.vadjustment();
+            let scrollable =
+                hadj.upper() - hadj.page_size() > 1.0 || vadj.upper() - vadj.page_size() > 1.0;
+            viewport_for_drag_end.set_cursor_from_name(if scrollable {
+                Some("grab")
+            } else {
+                None
             });
-        }
-
-        {
-            let viewport = picture_viewport.clone();
-            let drag_start_h = drag_start_h.clone();
-            let drag_start_v = drag_start_v.clone();
-            pan_drag.connect_drag_update(move |_, dx, dy| {
-                let hadj = viewport.hadjustment();
-                let vadj = viewport.vadjustment();
-                let max_h = (hadj.upper() - hadj.page_size()).max(hadj.lower());
-                let max_v = (vadj.upper() - vadj.page_size()).max(vadj.lower());
-                hadj.set_value((drag_start_h.get() - dx).clamp(hadj.lower(), max_h));
-                vadj.set_value((drag_start_v.get() - dy).clamp(vadj.lower(), max_v));
-            });
-        }
-
-        {
-            let viewport = picture_viewport.clone();
-            pan_drag.connect_drag_end(move |_, _, _| {
-                let hadj = viewport.hadjustment();
-                let vadj = viewport.vadjustment();
-                viewport.set_cursor_from_name(
-                    if hadj.upper() > hadj.page_size() || vadj.upper() > vadj.page_size() {
-                        Some("grab")
-                    } else {
-                        None
-                    },
-                );
-            });
-        }
-
+        });
         let photos = Rc::new(RefCell::new(Vec::<PhotoObject>::new()));
         let index = Rc::new(Cell::new(0usize));
         let last_width = Rc::new(Cell::new(0i32));

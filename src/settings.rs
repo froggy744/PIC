@@ -115,7 +115,6 @@ impl SettingsWindow {
                 theme_changed.clone(),
                 thumbnail_changed,
                 zoom_animations_changed,
-                sidebar_changed.clone(),
             ),
             Some("interface"),
             "Interface",
@@ -152,15 +151,20 @@ impl SettingsWindow {
         );
 
         stack.add_titled(
-            &library_page(connection.clone(), formats_changed, maintenance, &window),
+            &library_page(connection.clone(), formats_changed),
             Some("library"),
-            "Library & Storage",
+            "Stats",
         );
 
         stack.add_titled(
-            &database::page(&window, database_management),
+            &database::page(
+                &window,
+                connection.clone(),
+                maintenance,
+                database_management,
+            ),
             Some("database"),
-            "Libraries & Backups",
+            "Libraries",
         );
         if let Some(page) = initial_page {
             stack.set_visible_child_name(page);
@@ -314,6 +318,11 @@ fn sidebar_page(
             "Recently Added",
             "Show Recently Added in the Library section.",
             crate::sidebar::RECENTLY_ADDED_VISIBLE_SETTING_KEY,
+        ),
+        (
+            "History",
+            "Show History in the Library section.",
+            crate::sidebar::HISTORY_VISIBLE_SETTING_KEY,
         ),
     ] {
         let toggle = gtk::Switch::new();
@@ -645,37 +654,39 @@ fn append_album_appearance(
 fn library_page(
     connection: Rc<RefCell<Connection>>,
     recently_added_changed: Rc<dyn Fn()>,
-    maintenance: LibraryMaintenance,
-    parent_window: &adw::Window,
 ) -> gtk::ScrolledWindow {
     let content = page_content(
-        "Library & Storage",
-        "Library statistics, thumbnail cache storage, and maintenance.",
+        "Stats",
+        "A compact overview of the current library.",
     );
-    let list = settings_list();
+
+    let options = settings_list();
     let recent_limit = gtk::SpinButton::with_range(1.0, 1_000_000.0, 1.0);
     recent_limit.set_value(crate::db::recently_added_limit(&connection.borrow()) as f64);
     recent_limit.set_numeric(true);
     recent_limit.set_digits(0);
-    let connection_for_limit = connection.clone();
-    recent_limit.connect_value_changed(move |spin| {
-        let value = spin.value_as_int().max(1);
-        if let Err(error) = crate::db::set_setting(
-            &connection_for_limit.borrow(),
-            crate::db::RECENTLY_ADDED_LIMIT_SETTING_KEY,
-            &value.to_string(),
-        ) {
-            eprintln!("Could not save Recently Added limit: {error}");
-            return;
-        }
-        recently_added_changed();
-    });
+    {
+        let connection = connection.clone();
+        recent_limit.connect_value_changed(move |spin| {
+            let value = spin.value_as_int().max(1);
+            if let Err(error) = crate::db::set_setting(
+                &connection.borrow(),
+                crate::db::RECENTLY_ADDED_LIMIT_SETTING_KEY,
+                &value.to_string(),
+            ) {
+                eprintln!("Could not save Recently Added limit: {error}");
+                return;
+            }
+            recently_added_changed();
+        });
+    }
     append_row(
-        &list,
+        &options,
         "Recently Added limit",
-        Some("Maximum number of photos shown in the Recently Added view."),
+        Some("Maximum number of photos shown in Recently Added."),
         Some(recent_limit.upcast_ref()),
     );
+    content.append(&options);
 
     let counts = crate::db::library_counts(&connection.borrow()).unwrap_or_default();
     let database_size = crate::db::database_size(&connection.borrow()).unwrap_or_default();
@@ -693,6 +704,49 @@ fn library_page(
     .ok()
     .flatten()
     .unwrap_or_else(|| "Not calculated yet".to_string());
+
+    let stats_grid = gtk::Grid::new();
+    stats_grid.set_column_spacing(12);
+    stats_grid.set_row_spacing(0);
+    stats_grid.set_column_homogeneous(true);
+    stats_grid.set_hexpand(true);
+
+    let left = settings_list();
+    append_row(
+        &left,
+        "Total photos",
+        Some(&format_count(counts.photos.max(0) as u64)),
+        None,
+    );
+    let available_label = append_row(&left, "Originals available", Some(&available), None)
+        .expect("availability value row has a value label");
+    let unavailable_label = append_row(&left, "Originals unavailable", Some(&unavailable), None)
+        .expect("availability value row has a value label");
+
+    let right = settings_list();
+    append_row(
+        &right,
+        "Database size",
+        Some(&format_bytes(database_size)),
+        None,
+    );
+    append_row(
+        &right,
+        "Total albums",
+        Some(&format_count(counts.albums.max(0) as u64)),
+        None,
+    );
+    append_row(
+        &right,
+        "Library folders",
+        Some(&format_count(counts.folders.max(0) as u64)),
+        None,
+    );
+
+    stats_grid.attach(&left, 0, 0, 1, 1);
+    stats_grid.attach(&right, 1, 0, 1, 1);
+    content.append(&stats_grid);
+
     let updated = gtk::Label::new(
         crate::db::setting(
             &connection.borrow(),
@@ -705,277 +759,46 @@ fn library_page(
     updated.set_xalign(1.0);
     updated.set_ellipsize(gtk::pango::EllipsizeMode::End);
 
-    append_row(
-        &list,
-        "Total photos",
-        Some(&format_count(counts.photos.max(0) as u64)),
-        None,
-    );
-    let available_label = append_row(&list, "Originals available", Some(&available), None)
-        .expect("availability value row has a value label");
-    let unavailable_label = append_row(&list, "Originals unavailable", Some(&unavailable), None)
-        .expect("availability value row has a value label");
-    let cached_label = stat_row(&list, "Cached thumbnails");
-    let required_label = stat_row(&list, "Required thumbnails");
-    let unused_label = stat_row(&list, "Unused thumbnails");
-    let cache_size_label = stat_row(&list, "Thumbnail cache size");
-    append_row(
-        &list,
-        "Database size",
-        Some(&format_bytes(database_size)),
-        None,
-    );
-    append_row(
-        &list,
-        "Total albums",
-        Some(&format_count(counts.albums.max(0) as u64)),
-        None,
-    );
-    append_row(
-        &list,
-        "Total library folders",
-        Some(&format_count(counts.folders.max(0) as u64)),
-        None,
-    );
     let update_button = gtk::Button::with_label("Update now");
     update_button.set_valign(gtk::Align::Center);
     let updated_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     updated_row.append(&update_button);
     updated_row.append(&updated);
+
+    let availability = settings_list();
     append_row(
-        &list,
+        &availability,
         "Availability stats last updated",
-        Some("Values are read from the database. Update only when needed."),
+        Some("Recheck original-file availability only when needed."),
         Some(updated_row.upcast_ref()),
     );
-
-    let clean_button = gtk::Button::with_label("Clean Thumbnail Cache");
-    clean_button.set_valign(gtk::Align::Center);
-    append_row(
-        &list,
-        "Thumbnail maintenance",
-        Some(
-            "Deletes cached thumbnails that no longer match any current photo. \
-             Offline photos keep their thumbnails, and subdirectories and originals are never touched.",
-        ),
-        Some(clean_button.upcast_ref()),
-    );
-
-    // Destructive maintenance. The settings window owns only the buttons and
-    // confirmations; each action callback is provided by the main window so
-    // the gallery and refresh paths stay in one place.
-    let clear_thumbnails_button = gtk::Button::with_label("Clear");
-    clear_thumbnails_button.set_valign(gtk::Align::Center);
-    clear_thumbnails_button.add_css_class("clear-action-button");
-    append_row(
-        &list,
-        "Clear thumbnails",
-        Some("Deletes every cached thumbnail. Photos and the database remain."),
-        Some(clear_thumbnails_button.upcast_ref()),
-    );
-    let clear_database_button = gtk::Button::with_label("Clear");
-    clear_database_button.set_valign(gtk::Align::Center);
-    clear_database_button.add_css_class("clear-action-button");
-    append_row(
-        &list,
-        "Clear database",
-        Some("Indexed photos and album links are removed. Registered folders remain."),
-        Some(clear_database_button.upcast_ref()),
-    );
-    let clear_all_button = gtk::Button::with_label("Clear All");
-    clear_all_button.set_valign(gtk::Align::Center);
-    clear_all_button.add_css_class("clear-action-button");
-    append_row(
-        &list,
-        "Clear all",
-        Some("Indexed photos, albums, registered folders, and cached thumbnails are all deleted."),
-        Some(clear_all_button.upcast_ref()),
-    );
-    content.append(&list);
-
-    let clean_status = gtk::Label::new(None);
-    clean_status.set_xalign(0.0);
-    clean_status.set_hexpand(true);
-    clean_status.set_wrap(true);
-    clean_status.set_wrap_mode(gtk::pango::WrapMode::WordChar);
-    clean_status.add_css_class("dim-label");
-    content.append(&clean_status);
-
-    refresh_thumbnail_cache_stats(
-        connection.clone(),
-        cached_label.clone(),
-        required_label.clone(),
-        unused_label.clone(),
-        cache_size_label.clone(),
-    );
+    content.append(&availability);
 
     let stats_running = Rc::new(Cell::new(false));
-    let connection_for_update = connection.clone();
-    let available_for_update = available_label.clone();
-    let unavailable_for_update = unavailable_label.clone();
-    let updated_for_update = updated.clone();
-    let button_for_update = update_button.clone();
-    let stats_running_for_update = stats_running.clone();
-    update_button.connect_clicked(move |_| {
-        if stats_running_for_update.replace(true) {
-            return;
-        }
-        button_for_update.set_sensitive(false);
-        updated_for_update.set_text("Updating…");
-        schedule_availability_stats(
-            connection_for_update.clone(),
-            available_for_update.clone(),
-            unavailable_for_update.clone(),
-            updated_for_update.clone(),
-            button_for_update.clone(),
-            stats_running_for_update.clone(),
-        );
-    });
-
-    let cleanup_running = Rc::new(Cell::new(false));
     {
         let connection = connection.clone();
-        let cached_label = cached_label.clone();
-        let required_label = required_label.clone();
-        let unused_label = unused_label.clone();
-        let cache_size_label = cache_size_label.clone();
-        let clean_status = clean_status.clone();
-        let button_for_cleanup = clean_button.clone();
-        let cleanup_running = cleanup_running.clone();
-        clean_button.connect_clicked(move |_| {
-            if cleanup_running.replace(true) {
+        let available_label = available_label.clone();
+        let unavailable_label = unavailable_label.clone();
+        let updated = updated.clone();
+        let update_button = update_button.clone();
+        let stats_running = stats_running.clone();
+        update_button.connect_clicked(move |_| {
+            if stats_running.replace(true) {
                 return;
             }
-            button_for_cleanup.set_sensitive(false);
-            clean_status.set_text("Cleaning thumbnail cache…");
-            // The database connection is main-thread only, so build the
-            // expected key set here and let a worker do the file work.
-            let valid = match crate::thumbnail::valid_cache_paths(&connection.borrow()) {
-                Ok(valid) => valid,
-                Err(error) => {
-                    eprintln!("Could not collect thumbnail cache keys: {error:#}");
-                    clean_status.set_text("Could not clean the thumbnail cache.");
-                    button_for_cleanup.set_sensitive(true);
-                    cleanup_running.set(false);
-                    return;
-                }
-            };
-            let (sender, receiver) = std::sync::mpsc::channel();
-            std::thread::spawn(move || {
-                let result = crate::thumbnail::cleanup_cache(&valid).and_then(|cleanup| {
-                    let stats = crate::thumbnail::cache_stats(&valid)?;
-                    Ok((cleanup, stats))
-                });
-                let _ = sender.send(result);
-            });
-            // The clicked handler may run again, so the polling closure gets
-            // its own clones instead of moving the captured widgets out.
-            let poll_cached = cached_label.clone();
-            let poll_required = required_label.clone();
-            let poll_unused = unused_label.clone();
-            let poll_size = cache_size_label.clone();
-            let poll_status = clean_status.clone();
-            let poll_button = button_for_cleanup.clone();
-            let poll_running = cleanup_running.clone();
-            glib::timeout_add_local(std::time::Duration::from_millis(50), move || match receiver
-                .try_recv()
-            {
-                Ok(Ok((cleanup, stats))) => {
-                    poll_status.set_text(&cleanup_result_text(&cleanup));
-                    poll_cached.set_text(&format_count(stats.cached));
-                    poll_required.set_text(&format_count(stats.required));
-                    poll_unused.set_text(&format_count(stats.unused()));
-                    poll_size.set_text(&format_bytes(stats.bytes));
-                    poll_button.set_sensitive(true);
-                    poll_running.set(false);
-                    glib::ControlFlow::Break
-                }
-                Ok(Err(error)) => {
-                    eprintln!("Could not clean thumbnail cache: {error:#}");
-                    poll_status.set_text("Could not clean the thumbnail cache.");
-                    poll_button.set_sensitive(true);
-                    poll_running.set(false);
-                    glib::ControlFlow::Break
-                }
-                Err(std::sync::mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
-                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                    poll_status.set_text("Could not clean the thumbnail cache.");
-                    poll_button.set_sensitive(true);
-                    poll_running.set(false);
-                    glib::ControlFlow::Break
-                }
-            });
-        });
-    }
-    // Confirmations are parented to the settings window so they appear above
-    // it while it is open.
-    let parent_window = parent_window.clone();
-    let refresh_stats: Rc<dyn Fn()> = {
-        let connection = connection.clone();
-        let cached_label = cached_label.clone();
-        let required_label = required_label.clone();
-        let unused_label = unused_label.clone();
-        let cache_size_label = cache_size_label.clone();
-        Rc::new(move || {
-            refresh_thumbnail_cache_stats(
+            update_button.set_sensitive(false);
+            updated.set_text("Updating…");
+            schedule_availability_stats(
                 connection.clone(),
-                cached_label.clone(),
-                required_label.clone(),
-                unused_label.clone(),
-                cache_size_label.clone(),
-            );
-        })
-    };
-    {
-        let maintenance = maintenance.clone();
-        let refresh_stats = refresh_stats.clone();
-        let parent_window = parent_window.clone();
-        clear_thumbnails_button.connect_clicked(move |_| {
-            let action = {
-                let maintenance = maintenance.clone();
-                let refresh_stats = refresh_stats.clone();
-                Rc::new(move || {
-                    (maintenance.clear_thumbnails)();
-                    refresh_stats();
-                })
-            };
-            confirm_destructive(
-                &parent_window,
-                "Clear thumbnails?",
-                "Cached thumbnails will be deleted. Your photos and database will remain.",
-                action,
+                available_label.clone(),
+                unavailable_label.clone(),
+                updated.clone(),
+                update_button.clone(),
+                stats_running.clone(),
             );
         });
     }
-    {
-        let maintenance = maintenance.clone();
-        let parent_window = parent_window.clone();
-        clear_database_button.connect_clicked(move |_| {
-            let maintenance = maintenance.clone();
-            confirm_destructive(
-                &parent_window,
-                "Clear database?",
-                "Indexed photos and album links will be removed. Registered folders will remain.",
-                Rc::new(move || (maintenance.clear_database)()),
-            );
-        });
-    }
-    clear_all_button.connect_clicked(move |_| {
-        let action = {
-            let maintenance = maintenance.clone();
-            let refresh_stats = refresh_stats.clone();
-            Rc::new(move || {
-                (maintenance.clear_all)();
-                refresh_stats();
-            })
-        };
-        confirm_destructive(
-            &parent_window,
-            "Clear everything?",
-            "Indexed photos, albums, registered folders, and cached thumbnails will be deleted.",
-            action,
-        );
-    });
+
     scroll_page(content)
 }
 
@@ -1435,9 +1258,8 @@ fn interface_page(
     theme_changed: Rc<dyn Fn()>,
     thumbnail_changed: Rc<dyn Fn()>,
     zoom_animations_changed: Rc<dyn Fn()>,
-    sidebar_changed: Rc<dyn Fn()>,
 ) -> gtk::ScrolledWindow {
-    let content = page_content("Interface", "Customize thumbnail appearance and interface behaviour.");
+    let content = page_content("Interface", "Customize thumbnail appearance and interface effects.");
 
     // Thumbnail appearance toggles apply live through thumbnail_changed and
     // are re-read at startup.
@@ -1609,45 +1431,6 @@ fn interface_page(
         Some(zoom_animations.upcast_ref()),
     );
     content.append(&effects_list);
-
-    let navigation_heading = gtk::Label::new(Some("Navigation"));
-    navigation_heading.set_halign(gtk::Align::Start);
-    navigation_heading.set_hexpand(true);
-    navigation_heading.add_css_class("heading");
-    content.append(&navigation_heading);
-
-    let navigation_list = settings_list();
-    let show_history = gtk::Switch::new();
-    show_history.set_valign(gtk::Align::Center);
-    show_history.set_active(
-        saved_bool(
-            &connection.borrow(),
-            crate::sidebar::HISTORY_VISIBLE_SETTING_KEY,
-        )
-        .unwrap_or(true),
-    );
-    {
-        let connection = connection.clone();
-        let sidebar_changed = sidebar_changed.clone();
-        show_history.connect_active_notify(move |toggle| {
-            if let Err(error) = crate::db::set_setting(
-                &connection.borrow(),
-                crate::sidebar::HISTORY_VISIBLE_SETTING_KEY,
-                &toggle.is_active().to_string(),
-            ) {
-                eprintln!("Could not save History visibility: {error}");
-                return;
-            }
-            sidebar_changed();
-        });
-    }
-    append_row(
-        &navigation_list,
-        "Show History",
-        Some("Show or hide History in the Library section of the sidebar."),
-        Some(show_history.upcast_ref()),
-    );
-    content.append(&navigation_list);
 
     scroll_page(content)
 }

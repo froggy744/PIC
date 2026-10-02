@@ -49,6 +49,7 @@ pub(super) struct PhotoWallLayout {
     aspect_ratios: Vec<f64>,
     viewport_width: f64,
     masonry_columns: Vec<Vec<usize>>,
+    masonry_column_x: Vec<f64>,
     masonry_row_bottoms: Vec<f64>,
 }
 
@@ -123,6 +124,7 @@ impl PhotoWallLayout {
             total_height: masonry.total_height,
             lookup: vec![None; ratios.len()],
             masonry_columns: vec![Vec::new(); masonry.column_count],
+            masonry_column_x: masonry.column_x,
             ..Self::default()
         };
         layout
@@ -132,7 +134,8 @@ impl PhotoWallLayout {
         for (index, item) in layout.items.iter_mut().enumerate() {
             item.row = index;
             layout.lookup[item.photo_index] = Some(index);
-            let column = (item.x / (item.width + 1.0)) as usize;
+            let column = layout.masonry_column_x
+                .partition_point(|&x| x <= item.x).saturating_sub(1);
             layout.masonry_columns[column].push(index);
             max_bottom = max_bottom.max(item.y + item.height);
             layout.masonry_row_bottoms.push(max_bottom);
@@ -175,9 +178,9 @@ impl PhotoWallLayout {
 
     pub fn masonry_vertical_neighbor(&self, photo_index: usize, direction: i32) -> Option<usize> {
         let item = self.item(photo_index)?;
-        let column = self
-            .masonry_columns
-            .get((item.x / (item.width + 1.0)) as usize)?;
+        let column_index = self.masonry_column_x
+            .partition_point(|&x| x <= item.x).saturating_sub(1);
+        let column = self.masonry_columns.get(column_index)?;
         let position = column.binary_search(&item.row).ok()?;
         let next = if direction < 0 {
             position.checked_sub(1)?

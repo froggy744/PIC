@@ -6,6 +6,7 @@ pub(super) struct MasonryLayout {
     pub sections: Vec<PhotoWallSectionBounds>,
     pub total_height: f64,
     pub column_count: usize,
+    pub column_x: Vec<f64>,
 }
 
 impl MasonryLayout {
@@ -16,10 +17,32 @@ impl MasonryLayout {
         preferred_width: i32,
     ) -> Self {
         const GAP: f64 = 1.0;
-        let width = preferred_width.max(1).min(viewport.max(1));
-        let columns = ((viewport.max(1) + 1) / (width + 1)).max(1) as usize;
+        let viewport = viewport.max(1);
+        let preferred = preferred_width.max(1).min(viewport);
+        // Zoom specifies the preferred width. Fit the closest column count
+        // across the viewport, keeping widths fixed within each column.
+        let columns = ((f64::from(viewport) + GAP) / (f64::from(preferred) + GAP))
+            .round()
+            .max(1.0) as usize;
+        let columns = columns.min((viewport as usize + 1) / 2);
+        let available = viewport as usize - (columns - 1);
+        let base = available / columns;
+        let remainder = available - base * columns;
+        let widths: Vec<_> = (0..columns)
+            .map(|column| base + usize::from(column < remainder))
+            .collect();
+        let mut x = 0.0;
+        let column_x = widths
+            .iter()
+            .map(|&width| {
+                let left = x;
+                x += width as f64 + GAP;
+                left
+            })
+            .collect();
         let mut layout = Self {
             column_count: columns,
+            column_x,
             ..Self::default()
         };
         let mut y = 0.0;
@@ -46,14 +69,15 @@ impl MasonryLayout {
                 } else {
                     1.0
                 };
-                let height = (f64::from(width) / ratio).round().max(1.0);
+                let width = widths[column] as f64;
+                let height = (width / ratio).round().max(1.0);
                 layout.items.push(PhotoWallItem {
                     photo_index,
                     section,
                     row: 0,
-                    x: column as f64 * (f64::from(width) + GAP),
+                    x: layout.column_x[column],
                     y: bottoms[column],
-                    width: f64::from(width),
+                    width,
                     height,
                 });
                 bottoms[column] += height + GAP;
@@ -125,7 +149,10 @@ mod tests {
         assert_eq!(wall.items.len(), ratios.len());
         let mut bottoms = vec![0.0; wall.column_count];
         for tile in &wall.items {
-            let column = tile.x as usize / 101;
+            let column = wall.items[..wall.column_count]
+                .iter()
+                .position(|first| first.x == tile.x)
+                .unwrap();
             assert!(tile.y >= bottoms[column]);
             assert!(
                 (tile.height * ratios[tile.photo_index] - tile.width).abs()
@@ -151,6 +178,41 @@ mod tests {
         for row in rows {
             let tile = &wall.items[row];
             assert!(tile.y < 50_600.0 && tile.y + tile.height > 50_000.0);
+        }
+    }
+    #[test]
+    fn zoom_and_resize_fill_width_instead_of_leaving_a_missing_column() {
+        for (viewport, zoom, expected_columns) in [
+            (1510, 219, 7),
+            (997, 219, 5),
+            (997, 100, 10),
+            (701, 219, 3),
+            (80, 100, 1),
+        ] {
+            let wall = MasonryLayout::calculate(
+                &[1.0; 20],
+                &[PhotoWallSection {
+                    photo_range: 0..20,
+                    header_height: 0.0,
+                }],
+                viewport,
+                zoom,
+            );
+            assert_eq!(wall.column_count, expected_columns);
+            let mut first = wall
+                .items
+                .iter()
+                .filter(|tile| tile.y == 0.0)
+                .collect::<Vec<_>>();
+            first.sort_by(|a, b| a.x.total_cmp(&b.x));
+            assert_eq!(first.len(), expected_columns);
+            assert_eq!(first[0].x, 0.0);
+            for pair in first.windows(2) {
+                assert_eq!(pair[0].x + pair[0].width + 1.0, pair[1].x);
+                assert!((pair[0].width - pair[1].width).abs() <= 1.0);
+            }
+            let last = first.last().unwrap();
+            assert_eq!(last.x + last.width, f64::from(viewport));
         }
     }
 }

@@ -59,7 +59,7 @@ uninstall_appimage() {
                 "$icon_dir/scalable/apps/$icon_name.svg"
         fi
         rm -f -- "$launcher"
-        printf 'Removed AppImage, GNOME launcher, and AppImage icon: %s\n' "$appimage"
+        printf 'Removed AppImage, desktop launcher, and AppImage icon: %s\n' "$appimage"
     else
         if [[ ! -e "$launcher" ]]; then
             rm -f -- "$icon_dir/256x256/apps/$icon_name.png" \
@@ -67,7 +67,7 @@ uninstall_appimage() {
             printf 'Removed AppImage and orphaned AppImage icon: %s\n' "$appimage"
         else
             printf 'Removed AppImage: %s\n' "$appimage"
-            printf 'Kept GNOME launcher because it does not point to this file: %s\n' "$launcher"
+            printf 'Kept desktop launcher because it does not point to this file: %s\n' "$launcher"
         fi
     fi
 }
@@ -110,7 +110,7 @@ Options:
   --target TARGET     both, appimage, or flatpak (default: both)
   --appimage-only     build only the AppImage
   --flatpak-only      build only the Flatpak bundle
-  --uninstall-appimage PATH  remove an AppImage and its matching GNOME registration
+  --uninstall-appimage PATH  remove an AppImage and its matching desktop registration
   --strict-tests      accepted for compatibility; release tests are always fatal
   --skip-tests        do not run cargo test
   --check-dependencies  check/setup dependencies with approval, then exit
@@ -124,7 +124,7 @@ Useful environment overrides:
   PIC_BUILD_CACHE=...          build cache location
   PIC_BUILD_LOG_DIR=...        build log folder
   PIC_BUILD_TARGET=...         both, appimage, or flatpak
-  PIC_GNOME_INTEGRATE=0         skip host GNOME icon setup after AppImage build
+  PIC_GNOME_INTEGRATE=0         skip host XDG desktop integration after AppImage build
 
 Dependency setup:
   Every build checks its selected target's requirements before compiling.
@@ -1198,60 +1198,46 @@ build_appimage() {
     APPIMAGE_OUTPUT="$DIST_DIR/$output_name"
     ok "AppImage created: $APPIMAGE_OUTPUT"
 
-    # GNOME integration is local user metadata, not part of AppImage packaging.
+    # XDG desktop integration is local user metadata, not part of AppImage packaging.
     # Keep it in this one build command; never change an installed Flatpak.
     if [[ "${PIC_GNOME_INTEGRATE:-1}" == 1 ]]; then
-        integrate_appimage_gnome "$APPIMAGE_OUTPUT" "$staging_icon" || \
-            warn "GNOME icon integration was incomplete; the AppImage itself built successfully."
+        integrate_appimage_xdg "$APPIMAGE_OUTPUT" "$staging_icon" || \
+            warn "XDG desktop integration was incomplete; the AppImage itself built successfully."
     fi
 }
 
-# Automatically give the newly built AppImage its own icon in GNOME Files and
-# make the icon discoverable for the running GTK application. Do not replace an
+# Register the newly built AppImage using freedesktop XDG conventions so KDE,
+# GNOME, Cinnamon, XFCE, MATE and other desktops can discover its launcher/icon. Do not replace an
 # existing Flatpak/user launcher sharing APP_ID. Use a distinct AppImage
 # desktop ID so a missing AppImage cannot hide the installed Flatpak.
-integrate_appimage_gnome() {
+integrate_appimage_xdg() {
     local appimage="$1" source_icon="$2" data_home icon_size icon_dir icon_dest
-    local app_dir launcher icon_uri appimage_path icon_name
+    local app_dir launcher appimage_path icon_name
 
     [[ -s "$appimage" && -s "$source_icon" ]] || return 1
     data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
     app_dir="$data_home/applications"
     launcher="$app_dir/$APP_ID.AppImage.desktop"
     appimage_path="$(realpath -- "$appimage")" || return 1
-    if [[ -f "$launcher" ]]; then
-        log "Preserving existing PIC desktop launcher: $launcher"
-        return 0
-    fi
+
     # Do not generate an invalid .desktop Exec entry for unusual filenames.
     if [[ "$appimage_path" == *$'\n'* || "$appimage_path" == *'"'* || \
-          "$appimage_path" == *'`'* || "$appimage_path" == *'\'* || \
+          "$appimage_path" == *'`'* || "$appimage_path" == *'\\'* || \
           "$appimage_path" == *'$'* ]]; then
         warn "AppImage path cannot safely be represented in a desktop launcher."
         return 0
     fi
+
     if [[ "$ICON_EXT" == svg ]]; then icon_size=scalable; else icon_size=256x256; fi
     icon_name="$APP_ID.AppImage"
     icon_dir="$data_home/icons/hicolor/$icon_size/apps"
     icon_dest="$icon_dir/$icon_name.$ICON_EXT"
     mkdir -p "$app_dir" "$icon_dir" || return 1
     cp -f "$source_icon" "$icon_dest" || return 1
-    ok "GNOME AppImage icon: $icon_dest"
 
-    # Nautilus/GNOME Files does not automatically read .DirIcon inside AppImages.
-    # GVfs metadata lets this user see the proper icon for this exact file.
-    if have gio && have python3; then
-        icon_uri="$(python3 -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve().as_uri())' "$icon_dest")" || return 1
-        if gio set -t string "$appimage_path" metadata::custom-icon "$icon_uri"; then
-            ok "GNOME Files icon: $appimage_path"
-        else
-            warn "GNOME Files custom icon could not be set; GVfs metadata may be unavailable."
-        fi
-    else
-        warn "gio/python3 unavailable; GNOME Files custom file icon not set."
-    fi
-
-    cat > "$launcher" <<EOF_PIC_GNOME
+    # Keep the AppImage launcher separate from the Flatpak desktop ID. Rebuilds
+    # update only this AppImage-owned launcher and never replace the Flatpak.
+    cat > "$launcher" <<EOF_PIC_XDG
 [Desktop Entry]
 Type=Application
 Name=PIC — Personal Image Catalogue (AppImage)
@@ -1261,8 +1247,19 @@ Icon=$icon_name
 Terminal=false
 StartupNotify=true
 Categories=Graphics;Photography;
-EOF_PIC_GNOME
-    ok "GNOME PIC AppImage launcher: $launcher"
+MimeType=image/jpeg;image/png;image/webp;image/gif;image/tiff;image/bmp;image/avif;image/heif;
+EOF_PIC_XDG
+    chmod 0644 "$launcher"
+
+    # Refresh standard freedesktop caches when the desktop provides the tools.
+    # These are optional: desktops also discover files directly from XDG paths.
+    have update-desktop-database && update-desktop-database "$app_dir" >/dev/null 2>&1 || true
+    if have gtk-update-icon-cache; then
+        gtk-update-icon-cache -f -t "$data_home/icons/hicolor" >/dev/null 2>&1 || true
+    fi
+
+    ok "XDG AppImage icon: $icon_dest"
+    ok "XDG AppImage launcher: $launcher"
 }
 
 run_flatpak_tests() {

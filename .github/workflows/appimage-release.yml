@@ -24,7 +24,8 @@ jobs:
           sudo apt-get install -y \
             build-essential clang mold cmake nasm patchelf pkg-config \
             libgtk-4-dev libadwaita-1-dev libsmbclient-dev libnfs-dev \
-            imagemagick file curl python3
+            librsvg2-common libgdk-pixbuf2.0-bin \
+            imagemagick file curl python3 xvfb xauth
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -39,6 +40,44 @@ jobs:
       - name: Build catalog-compatible AppImage
         run: |
           ./scripts/PIC-build-linux-one-script.sh local --appimage-only
+
+      - name: Verify bundled SVG icon runtime
+        run: |
+          set -euo pipefail
+          appimage="$(find dist -maxdepth 1 -type f -name '*.AppImage' -print -quit)"
+          test -n "$appimage"
+          rm -rf squashfs-root
+          APPIMAGE_EXTRACT_AND_RUN=1 "$appimage" --appimage-extract >/dev/null
+          test -s squashfs-root/usr/lib/libpixbufloader-svg.so
+          test -s squashfs-root/usr/lib/gdk-pixbuf-2.0/2.10.0/pic-svg-loaders.cache.in
+
+          smoke_home="$(mktemp -d)"
+          smoke_log="$(mktemp)"
+          set +e
+          timeout 10s xvfb-run -a env \
+            HOME="$smoke_home" \
+            APPDIR="$PWD/squashfs-root" \
+            GTK_DEBUG=icontheme \
+            GSK_RENDERER=cairo \
+            LIBGL_ALWAYS_SOFTWARE=1 \
+            ./squashfs-root/AppRun >"$smoke_log" 2>&1
+          status=$?
+          set -e
+          cat "$smoke_log"
+
+          if grep -Eq 'Failed to load icon .*Unrecognized image file format|Unable to load image-loading module' "$smoke_log"; then
+            echo "::error::Bundled GTK SVG icon decoding failed."
+            exit 1
+          fi
+          if ! grep -q 'looking up icon' "$smoke_log"; then
+            echo "::error::PIC did not reach GTK icon lookup during the smoke test."
+            exit 1
+          fi
+          if [[ "$status" -ne 0 && "$status" -ne 124 ]]; then
+            echo "::error::PIC icon smoke test exited unexpectedly with status $status."
+            exit "$status"
+          fi
+          rm -rf squashfs-root "$smoke_home" "$smoke_log"
 
       - name: Verify GLIBC compatibility ceiling
         run: |

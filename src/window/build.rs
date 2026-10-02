@@ -753,6 +753,26 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         },
     };
 
+    let clear_saved_views: Rc<dyn Fn()> = {
+        let connection = connection.clone();
+        let gallery = gallery.clone();
+        let weak_info = Rc::downgrade(&info);
+        Rc::new(move || {
+            if let Err(error) = clear_saved_layouts(&connection.borrow()) {
+                eprintln!("Could not clear saved views: {error}");
+                return;
+            }
+            if let Some(info) = weak_info.upgrade() {
+                info.set_photo_layout(grid::PhotoLayout::Grid);
+            }
+            gallery.set_layout(grid::PhotoLayout::Grid);
+        })
+    };
+    {
+        let clear = clear_saved_views.clone();
+        info.connect_clear_saved_views(move || clear());
+    }
+
     let switch_library_slot: Rc<RefCell<Option<Rc<dyn Fn(&str) -> Result<(), String>>>>> =
         Rc::new(RefCell::new(None));
     let settings_window = crate::settings::SettingsWindow::default();
@@ -772,6 +792,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let settings_rebuild_folder_watches = rebuild_folder_watches.clone();
     let settings_theme_engine = theme_engine.clone();
     let settings_switch_library_slot = switch_library_slot.clone();
+    let settings_clear_saved_views = clear_saved_views.clone();
     let present_settings: Rc<dyn Fn(Option<&'static str>)> = Rc::new(move |initial_page| {
         let connection = settings_connection.clone();
         let gallery = settings_gallery.clone();
@@ -881,6 +902,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                     ));
                 })
             },
+            settings_clear_saved_views.clone(),
             Rc::new(move || {
                 if let Some(sidebar) = visibility_sidebar.borrow().as_ref().cloned() {
                     let visibility = sidebar::SidebarVisibility::from_connection(

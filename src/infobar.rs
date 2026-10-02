@@ -20,6 +20,7 @@ pub struct InfoBar {
     pub collage: gtk::Button,
     pub view_toggle: gtk::Button,
     photo_layout: Rc<Cell<crate::grid::PhotoLayout>>,
+    clear_saved_views: gio::SimpleAction,
     pub add_to_album: gtk::MenuButton,
     pub one_to_one: gtk::ToggleButton,
     pub rotate: gtk::Button,
@@ -194,6 +195,16 @@ impl InfoBar {
             update_photo_layout_button(button, layout);
         });
 
+        let clear_saved_views = gio::SimpleAction::new("clear-saved-views", None);
+        let right_click = gtk::GestureClick::new();
+        right_click.set_button(3);
+        let clear_for_right_click = clear_saved_views.clone();
+        right_click.connect_pressed(move |gesture, _, _, _| {
+            gesture.set_state(gtk::EventSequenceState::Claimed);
+            clear_for_right_click.activate(None);
+        });
+        view_toggle.add_controller(right_click);
+
         let add_to_album = gtk::MenuButton::new();
         add_to_album.set_icon_name("folder-new-symbolic");
         add_to_album.set_has_frame(false);
@@ -315,6 +326,7 @@ impl InfoBar {
             collage,
             view_toggle,
             photo_layout,
+            clear_saved_views,
             add_to_album,
             one_to_one,
             rotate,
@@ -338,6 +350,10 @@ impl InfoBar {
     pub fn connect_photo_layout(&self, changed: impl Fn(crate::grid::PhotoLayout) + 'static) {
         let layout = self.photo_layout.clone();
         self.view_toggle.connect_clicked(move |_| changed(layout.get()));
+    }
+
+    pub fn connect_clear_saved_views(&self, clear: impl Fn() + 'static) {
+        self.clear_saved_views.connect_activate(move |_, _| clear());
     }
 
     pub fn set_collage_active(&self, active: bool) {

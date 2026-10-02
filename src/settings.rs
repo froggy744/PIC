@@ -55,6 +55,7 @@ impl SettingsWindow {
         theme_changed: Rc<dyn Fn()>,
         thumbnail_changed: Rc<dyn Fn()>,
         zoom_animations_changed: Rc<dyn Fn()>,
+        clear_saved_views: Rc<dyn Fn()>,
         sidebar_changed: Rc<dyn Fn()>,
         folder_watch_changed: Rc<dyn Fn()>,
         maintenance: LibraryMaintenance,
@@ -116,6 +117,7 @@ impl SettingsWindow {
                 theme_changed.clone(),
                 thumbnail_changed,
                 zoom_animations_changed,
+                clear_saved_views,
             ),
             Some("interface"),
             "Interface",
@@ -1477,6 +1479,7 @@ fn interface_page(
     theme_changed: Rc<dyn Fn()>,
     thumbnail_changed: Rc<dyn Fn()>,
     zoom_animations_changed: Rc<dyn Fn()>,
+    clear_saved_views: Rc<dyn Fn()>,
 ) -> gtk::ScrolledWindow {
     let content = page_content("Interface", "Customize thumbnail appearance and interface effects.");
 
@@ -1650,6 +1653,18 @@ fn interface_page(
         Some(zoom_animations.upcast_ref()),
     );
     content.append(&effects_list);
+
+    let views_list = settings_list();
+    let clear_views = gtk::Button::with_label("Clear all saved views");
+    clear_views.set_valign(gtk::Align::Center);
+    clear_views.connect_clicked(move |_| clear_saved_views());
+    append_row(
+        &views_list,
+        "Saved gallery views",
+        Some("Reset the view for every section to Grid."),
+        Some(clear_views.upcast_ref()),
+    );
+    content.append(&views_list);
 
     scroll_page(content)
 }
@@ -2140,6 +2155,7 @@ mod tests {
                 animation_notified_for_callback
                     .set(animation_notified_for_callback.get() + 1)
             }),
+            Rc::new(|| {}),
         );
         let mut switches = Vec::new();
         let mut buttons = Vec::new();
@@ -2213,4 +2229,52 @@ mod tests {
         drop(reopened);
         std::fs::remove_file(path).unwrap();
     }
+
+    #[test]
+    #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+    fn interface_clear_saved_views_invokes_only_the_reset_callback() {
+        use super::*;
+        fn find_reset(widget: &gtk::Widget) -> Option<gtk::Button> {
+            if let Some(button) = widget.downcast_ref::<gtk::Button>() {
+                if button.label().as_deref() == Some("Clear all saved views") {
+                    return Some(button.clone());
+                }
+            }
+            let mut child = widget.first_child();
+            while let Some(widget) = child {
+                if let Some(button) = find_reset(&widget) {
+                    return Some(button);
+                }
+                child = widget.next_sibling();
+            }
+            None
+        }
+        gtk::init().unwrap();
+        let connection = Rc::new(RefCell::new(Connection::open_in_memory().unwrap()));
+        connection
+            .borrow()
+            .execute_batch("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+            .unwrap();
+        crate::db::set_setting(&connection.borrow(), "grid-thumbnail-size", "219").unwrap();
+        let resets = Rc::new(Cell::new(0));
+        let resets_for_callback = resets.clone();
+        let page = interface_page(
+            connection.clone(),
+            Rc::new(|| panic!("reset changed theme settings")),
+            Rc::new(|| panic!("reset changed thumbnails")),
+            Rc::new(|| panic!("reset changed animations")),
+            Rc::new(move || resets_for_callback.set(resets_for_callback.get() + 1)),
+        );
+        find_reset(page.upcast_ref())
+            .expect("Interface reset button missing")
+            .emit_clicked();
+        assert_eq!(resets.get(), 1);
+        assert_eq!(
+            crate::db::setting(&connection.borrow(), "grid-thumbnail-size")
+                .unwrap()
+                .as_deref(),
+            Some("219")
+        );
+    }
+
 }

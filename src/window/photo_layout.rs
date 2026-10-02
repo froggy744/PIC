@@ -53,6 +53,14 @@ pub(super) fn restore_section_layout(
     gallery.set_layout(layout);
 }
 
+pub(super) fn clear_saved_layouts(connection: &Connection) -> anyhow::Result<()> {
+    connection.execute(
+        "DELETE FROM settings WHERE key = 'photo_layout' OR key GLOB 'photo_layout.*'",
+        [],
+    )?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -63,6 +71,57 @@ mod tests {
             .execute_batch("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
             .unwrap();
         connection
+    }
+
+    #[test]
+    fn clearing_views_removes_sections_and_legacy_fallback_only() {
+        let connection = connection();
+        let sections = [
+            SidebarFilter::All,
+            SidebarFilter::Favorites,
+            SidebarFilter::RecentlyAdded,
+            SidebarFilter::History,
+            SidebarFilter::Folder(1),
+            SidebarFilter::Album(1),
+            SidebarFilter::Library,
+        ];
+        db::set_setting(&connection, "photo_layout", "photo_wall").unwrap();
+        db::set_setting(&connection, "photo_layout_backup", "keep").unwrap();
+        db::set_setting(&connection, "grid-thumbnail-size", "219").unwrap();
+        for section in sections {
+            save_section_layout(&connection, section, PhotoLayout::Masonry).unwrap();
+        }
+        clear_saved_layouts(&connection).unwrap();
+        for section in sections {
+            assert_eq!(
+                saved_section_layout(&connection, section),
+                PhotoLayout::Grid
+            );
+            assert_eq!(
+                db::setting(&connection, section_key(section)).unwrap(),
+                None
+            );
+        }
+        assert_eq!(db::setting(&connection, "photo_layout").unwrap(), None);
+        assert_eq!(
+            db::setting(&connection, "photo_layout_backup")
+                .unwrap()
+                .as_deref(),
+            Some("keep")
+        );
+        assert_eq!(
+            db::setting(&connection, "grid-thumbnail-size")
+                .unwrap()
+                .as_deref(),
+            Some("219")
+        );
+        // Resetting twice is harmless and users can save a fresh preference.
+        clear_saved_layouts(&connection).unwrap();
+        save_section_layout(&connection, SidebarFilter::All, PhotoLayout::PhotoWall).unwrap();
+        assert_eq!(
+            saved_section_layout(&connection, SidebarFilter::All),
+            PhotoLayout::PhotoWall
+        );
     }
 
     #[test]
@@ -142,7 +201,7 @@ mod tests {
             |_, _| {},
             |_| {},
         ));
-        let info = crate::infobar::InfoBar::new();
+        let info = Rc::new(crate::infobar::InfoBar::new());
         let filter = Rc::new(Cell::new(SidebarFilter::All));
         let changes = Rc::new(Cell::new(0));
         {
@@ -203,5 +262,34 @@ mod tests {
             saved_section_layout(&connection.borrow(), SidebarFilter::Folder(1)),
             PhotoLayout::Grid
         );
+        {
+            let connection = connection.clone();
+            let gallery = gallery.clone();
+            let weak_info = Rc::downgrade(&info);
+            info.connect_clear_saved_views(move || {
+                clear_saved_layouts(&connection.borrow()).unwrap();
+                let info = weak_info.upgrade().unwrap();
+                restore_section_layout(&connection.borrow(), &gallery, &info, SidebarFilter::All);
+            });
+        }
+        let window = gtk4::Window::builder().child(&info.view_toggle).build();
+        window.present();
+        let controllers = info.view_toggle.observe_controllers();
+        let right_click = (0..controllers.n_items())
+            .filter_map(|i| controllers.item(i).and_downcast::<gtk4::GestureClick>())
+            .find(|gesture| gesture.button() == 3)
+            .unwrap();
+        right_click.emit_by_name::<()>("pressed", &[&1_i32, &4.0_f64, &4.0_f64]);
+        window.close();
+        assert_eq!(gallery.layout(), PhotoLayout::Grid);
+        assert_eq!(
+            info.view_toggle.tooltip_text().as_deref(),
+            Some("Switch to Photo Wall")
+        );
+        assert_eq!(
+            saved_section_layout(&connection.borrow(), SidebarFilter::All),
+            PhotoLayout::Grid
+        );
+        assert_eq!(changes.get(), 1, "reset must not save another preference");
     }
 }

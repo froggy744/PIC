@@ -118,13 +118,27 @@ fn is_sqlite_shm(path: &Path) -> bool {
         .is_some_and(|name| name.ends_with("-shm"))
 }
 
+fn is_orphan_sqlite_wal(path: &Path) -> bool {
+    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    let Some(database_name) = name.strip_suffix("-wal") else {
+        return false;
+    };
+    !path.with_file_name(database_name).exists()
+}
+
+fn is_discardable_sqlite_sidecar(path: &Path) -> bool {
+    is_sqlite_shm(path) || is_orphan_sqlite_wal(path)
+}
+
 fn check_conflicts(source: &Path, destination: &Path) -> io::Result<()> {
     if !source.exists() || !destination.exists() {
         return Ok(());
     }
     // SQLite shared-memory files are transient coordination state. They are
     // recreated from the database/WAL and must never block a storage migration.
-    if is_sqlite_shm(source) || is_sqlite_shm(destination) {
+    if is_discardable_sqlite_sidecar(source) {
         return Ok(());
     }
     if source.is_dir() && destination.is_dir() {
@@ -154,7 +168,7 @@ fn move_directory(source: &Path, destination: &Path) -> io::Result<()> {
     // Never migrate SQLite's transient shared-memory sidecar. Keeping an old
     // -shm file can make a valid database/WAL pair look conflicted after an
     // app-id or storage-root migration. SQLite recreates this file as needed.
-    if source.is_file() && is_sqlite_shm(source) {
+    if source.is_file() && is_discardable_sqlite_sidecar(source) {
         return fs::remove_file(source);
     }
 
@@ -363,6 +377,41 @@ mod tests {
 
         assert!(!old.exists());
         assert!(!new.join("library.db-shm").exists());
+    }
+
+    #[test]
+    fn orphan_sqlite_wal_conflict_does_not_block_migration() {
+        let f = Fixture::new();
+        let old = f.0.join("old");
+        let new = f.0.join("new");
+        fs::create_dir_all(&old).unwrap();
+        fs::create_dir_all(&new).unwrap();
+        fs::write(old.join("library.db-wal"), b"orphan-old-wal").unwrap();
+        fs::write(new.join("library.db-wal"), b"current-wal").unwrap();
+
+        move_directory(&old, &new).unwrap();
+
+        assert!(!old.exists());
+        assert_eq!(
+            fs::read(new.join("library.db-wal")).unwrap(),
+            b"current-wal"
+        );
+    }
+
+    #[test]
+    fn sqlite_wal_is_preserved_when_its_database_still_exists() {
+        let f = Fixture::new();
+        let old = f.0.join("old");
+        let new = f.0.join("new");
+        fs::create_dir_all(&old).unwrap();
+        fs::create_dir_all(&new).unwrap();
+        fs::write(old.join("library.db"), b"old-database").unwrap();
+        fs::write(old.join("library.db-wal"), b"old-wal").unwrap();
+        fs::write(new.join("library.db-wal"), b"current-wal").unwrap();
+
+        assert!(move_directory(&old, &new).is_err());
+        assert_eq!(fs::read(old.join("library.db-wal")).unwrap(), b"old-wal");
+        assert_eq!(fs::read(new.join("library.db-wal")).unwrap(), b"current-wal");
     }
 
     #[test]

@@ -2,6 +2,7 @@
 use std::{
     fs, io,
     path::{Path, PathBuf},
+    collections::HashSet,
 };
 
 pub const APP_DIRECTORY: &str = "pic-rs";
@@ -128,23 +129,55 @@ fn is_orphan_sqlite_wal(path: &Path) -> bool {
     !path.with_file_name(database_name).exists()
 }
 
-fn is_discardable_sqlite_sidecar(path: &Path) -> bool {
-    is_sqlite_shm(path) || is_orphan_sqlite_wal(path)
+fn snapshot_discardable_sqlite_sidecars(source: &Path) -> io::Result<HashSet<PathBuf>> {
+    let mut discardable = HashSet::new();
+    collect_discardable_sqlite_sidecars(source, &mut discardable)?;
+    Ok(discardable)
+}
+
+fn collect_discardable_sqlite_sidecars(
+    path: &Path,
+    discardable: &mut HashSet<PathBuf>,
+) -> io::Result<()> {
+    if !path.exists() {
+        return Ok(());
+    }
+    if path.is_dir() {
+        for entry in fs::read_dir(path)? {
+            collect_discardable_sqlite_sidecars(&entry?.path(), discardable)?;
+        }
+    } else if is_sqlite_shm(path) || is_orphan_sqlite_wal(path) {
+        discardable.insert(path.to_path_buf());
+    }
+    Ok(())
+}
+
+fn is_discardable_sqlite_sidecar(path: &Path, discardable: &HashSet<PathBuf>) -> bool {
+    discardable.contains(path)
 }
 
 fn check_conflicts(source: &Path, destination: &Path) -> io::Result<()> {
+    let discardable = snapshot_discardable_sqlite_sidecars(source)?;
+    check_conflicts_with_snapshot(source, destination, &discardable)
+}
+
+fn check_conflicts_with_snapshot(
+    source: &Path,
+    destination: &Path,
+    discardable: &HashSet<PathBuf>,
+) -> io::Result<()> {
     if !source.exists() || !destination.exists() {
         return Ok(());
     }
     // SQLite shared-memory files are transient coordination state. They are
     // recreated from the database/WAL and must never block a storage migration.
-    if is_discardable_sqlite_sidecar(source) {
+    if is_discardable_sqlite_sidecar(source, discardable) {
         return Ok(());
     }
     if source.is_dir() && destination.is_dir() {
         for entry in fs::read_dir(source)? {
             let entry = entry?;
-            check_conflicts(&entry.path(), &destination.join(entry.file_name()))?;
+            check_conflicts_with_snapshot(&entry.path(), &destination.join(entry.file_name()), discardable)?;
         }
         return Ok(());
     }
@@ -163,12 +196,23 @@ fn move_directory(source: &Path, destination: &Path) -> io::Result<()> {
     if !source.exists() {
         return Ok(());
     }
-    check_conflicts(source, destination)?;
+    let discardable = snapshot_discardable_sqlite_sidecars(source)?;
+    check_conflicts_with_snapshot(source, destination, &discardable)?;
+    move_directory_with_snapshot(source, destination, &discardable)
+}
 
-    // Never migrate SQLite's transient shared-memory sidecar. Keeping an old
-    // -shm file can make a valid database/WAL pair look conflicted after an
-    // app-id or storage-root migration. SQLite recreates this file as needed.
-    if source.is_file() && is_discardable_sqlite_sidecar(source) {
+fn move_directory_with_snapshot(
+    source: &Path,
+    destination: &Path,
+    discardable: &HashSet<PathBuf>,
+) -> io::Result<()> {
+    if !source.exists() {
+        return Ok(());
+    }
+
+    // The snapshot was taken before any migration mutation. A valid WAL
+    // therefore stays valid even if its database file is moved first.
+    if source.is_file() && is_discardable_sqlite_sidecar(source, discardable) {
         return fs::remove_file(source);
     }
 
@@ -176,7 +220,11 @@ fn move_directory(source: &Path, destination: &Path) -> io::Result<()> {
         fs::create_dir_all(destination)?;
         for entry in fs::read_dir(source)? {
             let entry = entry?;
-            move_directory(&entry.path(), &destination.join(entry.file_name()))?;
+            move_directory_with_snapshot(
+                &entry.path(),
+                &destination.join(entry.file_name()),
+                discardable,
+            )?;
         }
         return fs::remove_dir(source);
     }
@@ -344,6 +392,40 @@ mod tests {
         assert_eq!(fs::read(new.join("overlays/hash.png")).unwrap(), b"image");
         assert!(!old.exists());
         move_directory(&old, &new).unwrap();
+    }
+
+    #[test]
+    fn database_wal_pair_survives_when_database_moves_before_wal() {
+        let f = Fixture::new();
+        let old = f.0.join("old");
+        let new = f.0.join("new");
+        fs::create_dir_all(&old).unwrap();
+        fs::write(old.join("library.db"), b"database").unwrap();
+        fs::write(old.join("library.db-wal"), b"important-wal").unwrap();
+
+        // Force the exact mutation that exposed the bug: snapshot the source,
+        // move the database first, then process its WAL.
+        let discardable = snapshot_discardable_sqlite_sidecars(&old).unwrap();
+        assert!(!discardable.contains(&old.join("library.db-wal")));
+        fs::create_dir_all(&new).unwrap();
+        move_directory_with_snapshot(
+            &old.join("library.db"),
+            &new.join("library.db"),
+            &discardable,
+        )
+        .unwrap();
+        assert!(!old.join("library.db").exists());
+        assert!(is_orphan_sqlite_wal(&old.join("library.db-wal")));
+
+        move_directory_with_snapshot(
+            &old.join("library.db-wal"),
+            &new.join("library.db-wal"),
+            &discardable,
+        )
+        .unwrap();
+
+        assert_eq!(fs::read(new.join("library.db-wal")).unwrap(), b"important-wal");
+        assert!(!old.join("library.db-wal").exists());
     }
 
     #[test]

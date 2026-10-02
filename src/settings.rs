@@ -1,4 +1,5 @@
 use std::cell::{Cell, RefCell};
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use gtk4 as gtk;
@@ -357,8 +358,8 @@ fn folders_page(
         "Folders",
         "Manage registered folders and choose which folders are watched for changes.",
     );
-    let list = settings_list();
 
+    let options = settings_list();
     let automatic = gtk::Switch::new();
     automatic.set_valign(gtk::Align::Center);
     automatic.set_active(crate::db::folder_watching_enabled(&connection.borrow()));
@@ -376,27 +377,205 @@ fn folders_page(
         });
     }
     append_row(
-        &list,
+        &options,
         "Automatic folder watching",
         Some("Detect changes automatically in folders marked for watching."),
         Some(automatic.upcast_ref()),
     );
+    content.append(&options);
 
-    let folders = crate::db::folders(&connection.borrow()).unwrap_or_default();
-    for folder in &folders {
-        let status = if folder.available {
-            "Available"
+    let heading = gtk::Label::new(Some("Library folders"));
+    heading.set_halign(gtk::Align::Start);
+    heading.set_hexpand(true);
+    heading.add_css_class("heading");
+    content.append(&heading);
+
+    let tree = settings_list();
+    content.append(&tree);
+
+    let folders = Rc::new(crate::db::folders(&connection.borrow()).unwrap_or_default());
+    let expanded = Rc::new(RefCell::new(HashSet::<i64>::new()));
+
+    rebuild_settings_folder_tree(
+        &tree,
+        folders.clone(),
+        expanded.clone(),
+        automatic.clone(),
+        connection,
+        folder_watch_changed,
+    );
+
+    scroll_page(content)
+}
+
+fn rebuild_settings_folder_tree(
+    list: &gtk::ListBox,
+    folders: Rc<Vec<crate::db::Folder>>,
+    expanded: Rc<RefCell<HashSet<i64>>>,
+    automatic: gtk::Switch,
+    connection: Rc<RefCell<Connection>>,
+    folder_watch_changed: Rc<dyn Fn()>,
+) {
+    while let Some(child) = list.first_child() {
+        list.remove(&child);
+    }
+
+    if folders.is_empty() {
+        append_empty_state(list, "No library folders", true);
+        return;
+    }
+
+    let by_id = folders
+        .iter()
+        .map(|folder| (folder.id, folder))
+        .collect::<HashMap<_, _>>();
+    let mut children = HashMap::<Option<i64>, Vec<i64>>::new();
+    for folder in folders.iter() {
+        let parent = folder.parent_id.filter(|parent| by_id.contains_key(parent));
+        children.entry(parent).or_default().push(folder.id);
+    }
+
+    for ids in children.values_mut() {
+        ids.sort_by(|left, right| {
+            let left = by_id.get(left).expect("folder id exists");
+            let right = by_id.get(right).expect("folder id exists");
+            left.name
+                .to_lowercase()
+                .cmp(&right.name.to_lowercase())
+                .then_with(|| left.path.to_lowercase().cmp(&right.path.to_lowercase()))
+        });
+    }
+
+    let roots = children.get(&None).cloned().unwrap_or_default();
+    for id in roots {
+        append_settings_folder_branch(
+            list,
+            id,
+            0,
+            &by_id,
+            &children,
+            folders.clone(),
+            expanded.clone(),
+            automatic.clone(),
+            connection.clone(),
+            folder_watch_changed.clone(),
+        );
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn append_settings_folder_branch(
+    list: &gtk::ListBox,
+    folder_id: i64,
+    depth: usize,
+    by_id: &HashMap<i64, &crate::db::Folder>,
+    children: &HashMap<Option<i64>, Vec<i64>>,
+    folders: Rc<Vec<crate::db::Folder>>,
+    expanded: Rc<RefCell<HashSet<i64>>>,
+    automatic: gtk::Switch,
+    connection: Rc<RefCell<Connection>>,
+    folder_watch_changed: Rc<dyn Fn()>,
+) {
+    let Some(folder) = by_id.get(&folder_id).copied() else {
+        return;
+    };
+    let child_ids = children.get(&Some(folder_id)).cloned().unwrap_or_default();
+    let has_children = !child_ids.is_empty();
+    let is_expanded = expanded.borrow().contains(&folder_id);
+
+    let row = gtk::ListBoxRow::new();
+    row.set_activatable(false);
+
+    let horizontal = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    horizontal.set_hexpand(true);
+    horizontal.set_margin_top(8);
+    horizontal.set_margin_bottom(8);
+    horizontal.set_margin_start(12 + (depth as i32 * 18));
+    horizontal.set_margin_end(12);
+
+    let disclosure = if has_children {
+        let button = gtk::Button::from_icon_name(if is_expanded {
+            "pan-down-symbolic"
         } else {
-            "Unavailable"
-        };
-        let toggle = gtk::Switch::new();
-        toggle.set_valign(gtk::Align::Center);
-        toggle.set_active(folder.watched);
-        automatic
-            .bind_property("active", &toggle, "sensitive")
-            .sync_create()
-            .build();
-        let folder_id = folder.id;
+            "pan-end-symbolic"
+        });
+        button.add_css_class("flat");
+        button.set_valign(gtk::Align::Center);
+        button.set_tooltip_text(Some(if is_expanded {
+            "Collapse folder"
+        } else {
+            "Expand folder"
+        }));
+
+        let list = list.clone();
+        let folders = folders.clone();
+        let expanded = expanded.clone();
+        let automatic = automatic.clone();
+        let connection = connection.clone();
+        let folder_watch_changed = folder_watch_changed.clone();
+        button.connect_clicked(move |_| {
+            {
+                let mut expanded = expanded.borrow_mut();
+                if !expanded.insert(folder_id) {
+                    expanded.remove(&folder_id);
+                }
+            }
+            rebuild_settings_folder_tree(
+                &list,
+                folders.clone(),
+                expanded.clone(),
+                automatic.clone(),
+                connection.clone(),
+                folder_watch_changed.clone(),
+            );
+        });
+        Some(button)
+    } else {
+        None
+    };
+
+    if let Some(disclosure) = disclosure.as_ref() {
+        horizontal.append(disclosure);
+    } else {
+        let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        spacer.set_width_request(30);
+        horizontal.append(&spacer);
+    }
+
+    let labels = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    labels.set_hexpand(true);
+
+    let title = gtk::Label::new(Some(&folder.name));
+    title.set_xalign(0.0);
+    title.set_hexpand(true);
+    title.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    labels.append(&title);
+
+    let status = if folder.available {
+        "Available"
+    } else {
+        "Unavailable"
+    };
+    let subtitle = gtk::Label::new(Some(&format!(
+        "{}\n{status} · {} photos",
+        folder.path, folder.photo_count
+    )));
+    subtitle.set_xalign(0.0);
+    subtitle.set_hexpand(true);
+    subtitle.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+    subtitle.add_css_class("dim-label");
+    labels.append(&subtitle);
+    horizontal.append(&labels);
+
+    let toggle = gtk::Switch::new();
+    toggle.set_valign(gtk::Align::Center);
+    toggle.set_active(folder.watched);
+    automatic
+        .bind_property("active", &toggle, "sensitive")
+        .sync_create()
+        .build();
+
+    {
         let connection = connection.clone();
         let folder_watch_changed = folder_watch_changed.clone();
         toggle.connect_active_notify(move |toggle| {
@@ -406,24 +585,31 @@ fn folders_page(
                 Ok(false) => {
                     eprintln!("Could not change watch state for missing folder {folder_id}")
                 }
-                Err(error) => {
-                    eprintln!("Could not change folder watch state: {error}");
-                }
+                Err(error) => eprintln!("Could not change folder watch state: {error}"),
             }
         });
-        append_row(
-            &list,
-            &folder.name,
-            Some(&format!(
-                "{}\n{status} · {} photos",
-                folder.path, folder.photo_count
-            )),
-            Some(toggle.upcast_ref()),
-        );
     }
-    append_empty_state(&list, "No library folders", folders.is_empty());
-    content.append(&list);
-    scroll_page(content)
+
+    horizontal.append(&toggle);
+    row.set_child(Some(&horizontal));
+    list.append(&row);
+
+    if has_children && is_expanded {
+        for child_id in child_ids {
+            append_settings_folder_branch(
+                list,
+                child_id,
+                depth + 1,
+                by_id,
+                children,
+                folders.clone(),
+                expanded.clone(),
+                automatic.clone(),
+                connection.clone(),
+                folder_watch_changed.clone(),
+            );
+        }
+    }
 }
 
 fn albums_page(

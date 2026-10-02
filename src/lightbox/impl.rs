@@ -37,11 +37,6 @@ impl Lightbox {
         picture_viewport.set_halign(gtk::Align::Fill);
         picture_viewport.set_valign(gtk::Align::Fill);
         picture_viewport.set_can_target(true);
-        // Lightbox mouse panning is implemented explicitly below so the
-        // grabbed image point stays tied to the pointer. Disable GTK's own
-        // kinetic drag handling here; otherwise ScrolledWindow and our custom
-        // GestureDrag can both update the same adjustments during one press.
-        picture_viewport.set_kinetic_scrolling(false);
         // Keep scrollbars hidden while keeping the viewport constrained to
         // the lightbox allocation. External gives us real scroll ranges
         // without drawing normal scrollbar UI.
@@ -151,73 +146,10 @@ impl Lightbox {
                 return;
             }
 
-            if !pan_active_for_drag_update.get() {
-                // Ignore hand jitter and stationary-click updates. Once the
-                // pointer has genuinely moved, claim the sequence. Preserve
-                // the mouse-down origin when the geometry is unchanged so the
-                // exact image point pressed remains under the pointer.
-                if offset_x.hypot(offset_y) < PAN_CLAIM_THRESHOLD {
-                    return;
-                }
-
-                gesture.set_state(gtk::EventSequenceState::Claimed);
-                pan_active_for_drag_update.set(true);
-                viewport_for_drag_update.set_cursor_from_name(Some("grabbing"));
-
-                let h_range = (hadj.lower(), hadj.upper(), hadj.page_size());
-                let v_range = (vadj.lower(), vadj.upper(), vadj.page_size());
-                let old_h = drag_range_h_update.get();
-                let old_v = drag_range_v_update.get();
-                let range_changed = (h_range.0 - old_h.0).abs() > 0.5
-                    || (h_range.1 - old_h.1).abs() > 0.5
-                    || (h_range.2 - old_h.2).abs() > 0.5
-                    || (v_range.0 - old_v.0).abs() > 0.5
-                    || (v_range.1 - old_v.1).abs() > 0.5
-                    || (v_range.2 - old_v.2).abs() > 0.5;
-
-                if range_changed {
-                    // The native texture or viewport geometry changed after
-                    // mouse-down. Rebase only in this exceptional case; using
-                    // the old origin would produce a genuine jump.
-                    drag_start_h_update.set(hadj.value());
-                    drag_start_v_update.set(vadj.value());
-                    drag_activation_x_update.set(offset_x);
-                    drag_activation_y_update.set(offset_y);
-                    drag_range_h_update.set(h_range);
-                    drag_range_v_update.set(v_range);
-                    zoom_trace(format!(
-                        "pan_activate_rebase offset={offset_x:.1},{offset_y:.1} origin={:.1},{:.1} h_range={:.1}/{:.1}/{:.1} v_range={:.1}/{:.1}/{:.1}",
-                        hadj.value(),
-                        vadj.value(),
-                        h_range.0,
-                        h_range.1,
-                        h_range.2,
-                        v_range.0,
-                        v_range.1,
-                        v_range.2,
-                    ));
-                    return;
-                }
-
-                // Normal case: activation offset remains 0,0 from mouse-down,
-                // so the full drag offset is applied below on this same event.
-                zoom_trace(format!(
-                    "pan_activate offset={offset_x:.1},{offset_y:.1} origin={:.1},{:.1} h_range={:.1}/{:.1}/{:.1} v_range={:.1}/{:.1}/{:.1}",
-                    drag_start_h_update.get(),
-                    drag_start_v_update.get(),
-                    h_range.0,
-                    h_range.1,
-                    h_range.2,
-                    v_range.0,
-                    v_range.1,
-                    v_range.2,
-                ));
-            }
-
             // A native texture can finish decoding, or the window can resize,
-            // while the button is held. If GTK publishes a new scroll range,
-            // rebase the drag at the current visible position instead of
-            // applying offsets to a stale pre-layout origin.
+            // while the button is held. Rebase only when the actual scroll
+            // geometry changed; normal pointer motion must keep the original
+            // mouse-down anchor.
             let h_range = (hadj.lower(), hadj.upper(), hadj.page_size());
             let v_range = (vadj.lower(), vadj.upper(), vadj.page_size());
             let old_h = drag_range_h_update.get();
@@ -249,23 +181,57 @@ impl Lightbox {
                 return;
             }
 
+            // Move continuously from mouse-down. Waiting until the claim
+            // threshold and then applying the accumulated offset produces the
+            // exact visible jump this gesture must avoid.
             let max_h = (hadj.upper() - hadj.page_size()).max(hadj.lower());
             let max_v = (vadj.upper() - vadj.page_size()).max(vadj.lower());
             let delta_x = offset_x - drag_activation_x_update.get();
             let delta_y = offset_y - drag_activation_y_update.get();
-
             let new_h = (drag_start_h_update.get() - delta_x).clamp(hadj.lower(), max_h);
             let new_v = (drag_start_v_update.get() - delta_y).clamp(vadj.lower(), max_v);
             hadj.set_value(new_h);
             vadj.set_value(new_v);
+
+            // Claim only after meaningful travel so ordinary click and
+            // double-click recognition still work. Claiming no longer changes
+            // the drag origin or the visible image position.
+            if !pan_active_for_drag_update.get()
+                && offset_x.hypot(offset_y) >= PAN_CLAIM_THRESHOLD
+            {
+                gesture.set_state(gtk::EventSequenceState::Claimed);
+                pan_active_for_drag_update.set(true);
+                viewport_for_drag_update.set_cursor_from_name(Some("grabbing"));
+                zoom_trace(format!(
+                    "pan_activate offset={offset_x:.1},{offset_y:.1} origin={:.1},{:.1} h_range={:.1}/{:.1}/{:.1} v_range={:.1}/{:.1}/{:.1}",
+                    drag_start_h_update.get(),
+                    drag_start_v_update.get(),
+                    h_range.0,
+                    h_range.1,
+                    h_range.2,
+                    v_range.0,
+                    v_range.1,
+                    v_range.2,
+                ));
+            }
         });
 
         let pan_active_for_drag_end = pan_active.clone();
         let viewport_for_drag_end = picture_viewport.clone();
+        let drag_start_h_end = drag_start_h.clone();
+        let drag_start_v_end = drag_start_v.clone();
         pan_drag.connect_drag_end(move |_, offset_x, offset_y| {
             let was_active = pan_active_for_drag_end.replace(false);
             let hadj = viewport_for_drag_end.hadjustment();
             let vadj = viewport_for_drag_end.vadjustment();
+
+            if !was_active {
+                let max_h = (hadj.upper() - hadj.page_size()).max(hadj.lower());
+                let max_v = (vadj.upper() - vadj.page_size()).max(vadj.lower());
+                hadj.set_value(drag_start_h_end.get().clamp(hadj.lower(), max_h));
+                vadj.set_value(drag_start_v_end.get().clamp(vadj.lower(), max_v));
+            }
+
             let scrollable =
                 hadj.upper() - hadj.page_size() > 1.0 || vadj.upper() - vadj.page_size() > 1.0;
             viewport_for_drag_end.set_cursor_from_name(if scrollable {

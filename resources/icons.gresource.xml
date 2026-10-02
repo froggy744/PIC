@@ -655,6 +655,7 @@
     <file compressed="true" preprocess="xml-stripblanks">icons/view-dual-symbolic.svg</file>
     <file compressed="true" preprocess="xml-stripblanks">icons/view-fullscreen-symbolic.svg</file>
     <file compressed="true" preprocess="xml-stripblanks">icons/view-grid-symbolic.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">icons/view-masonry-symbolic.svg</file>
     <file compressed="true" preprocess="xml-stripblanks">icons/view-list-bullet-rtl-symbolic.svg</file>
     <file compressed="true" preprocess="xml-stripblanks">icons/view-list-bullet-symbolic-rtl.svg</file>
     <file compressed="true" preprocess="xml-stripblanks">icons/view-list-bullet-symbolic.svg</file>

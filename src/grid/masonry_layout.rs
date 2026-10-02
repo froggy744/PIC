@@ -21,20 +21,22 @@ impl MasonryLayout {
     ) -> Self {
         let gap = MASONRY_GAP as f64;
         let viewport = viewport.max(1);
-        let preferred = preferred_width.max(1).min(viewport);
+        let side = MASONRY_GAP.min((viewport as usize - 1) / 2);
+        let content_width = viewport as usize - 2 * side;
+        let preferred = preferred_width.max(1).min(content_width as i32);
         // Zoom specifies the preferred width. Fit the closest column count
         // across the viewport, keeping widths fixed within each column.
-        let columns = ((f64::from(viewport) + gap) / (f64::from(preferred) + gap))
+        let columns = ((content_width as f64 + gap) / (f64::from(preferred) + gap))
             .round()
             .max(1.0) as usize;
-        let columns = columns.min((viewport as usize + MASONRY_GAP) / (MASONRY_GAP + 1));
-        let available = viewport as usize - (columns - 1) * MASONRY_GAP;
+        let columns = columns.min((content_width + MASONRY_GAP) / (MASONRY_GAP + 1));
+        let available = content_width - (columns - 1) * MASONRY_GAP;
         let base = available / columns;
         let remainder = available - base * columns;
         let widths: Vec<_> = (0..columns)
             .map(|column| base + usize::from(column < remainder))
             .collect();
-        let mut x = 0.0;
+        let mut x = side as f64;
         let column_x = widths
             .iter()
             .map(|&width| {
@@ -115,7 +117,7 @@ mod tests {
     }
     #[test]
     fn mixed_images_use_shortest_column_and_keep_aspect() {
-        let wall = layout(&[0.5, 2.0, 1.0, 1.0], 208);
+        let wall = layout(&[0.5, 2.0, 1.0, 1.0], 224);
         let positions = wall
             .items
             .iter()
@@ -124,17 +126,17 @@ mod tests {
         assert_eq!(
             positions,
             vec![
-                (0.0, 0.0, 100.0, 200.0),
-                (108.0, 0.0, 100.0, 50.0),
-                (108.0, 58.0, 100.0, 100.0),
-                (108.0, 166.0, 100.0, 100.0)
+                (8.0, 0.0, 100.0, 200.0),
+                (116.0, 0.0, 100.0, 50.0),
+                (116.0, 58.0, 100.0, 100.0),
+                (116.0, 166.0, 100.0, 100.0)
             ]
         );
         assert_eq!(wall.total_height, 266.0);
     }
     #[test]
     fn resize_changes_columns_and_handles_narrow_width() {
-        for (width, columns, tile_width) in [(316, 3, 100.0), (208, 2, 100.0), (80, 1, 80.0)] {
+        for (width, columns, tile_width) in [(332, 3, 100.0), (224, 2, 100.0), (80, 1, 64.0)] {
             let wall = layout(&[1.0; 6], width);
             assert_eq!(wall.column_count, columns);
             assert!(wall
@@ -173,7 +175,7 @@ mod tests {
             header_height: 0.0,
         }];
         let wall = super::super::photo_wall_layout::PhotoWallLayout::calculate_masonry(
-            &ratios, &sections, 208, 100,
+            &ratios, &sections, 224, 100,
         );
         let rows = wall.visible_row_indices(50_000.0, 50_600.0);
         assert!(rows.len() <= 8);
@@ -209,13 +211,16 @@ mod tests {
                 .collect::<Vec<_>>();
             first.sort_by(|a, b| a.x.total_cmp(&b.x));
             assert_eq!(first.len(), expected_columns);
-            assert_eq!(first[0].x, 0.0);
+            assert_eq!(first[0].x, MASONRY_GAP as f64);
             for pair in first.windows(2) {
                 assert_eq!(pair[0].x + pair[0].width + MASONRY_GAP as f64, pair[1].x);
                 assert!((pair[0].width - pair[1].width).abs() <= 1.0);
             }
             let last = first.last().unwrap();
-            assert_eq!(last.x + last.width, f64::from(viewport));
+            assert_eq!(
+                last.x + last.width,
+                f64::from(viewport) - MASONRY_GAP as f64
+            );
         }
     }
 }

@@ -2171,7 +2171,8 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         if saved.as_deref() == Some("photo_wall") {
             info.view_toggle.emit_clicked();
         } else if saved.as_deref() == Some("masonry") {
-            info.masonry_toggle.emit_clicked();
+            info.view_toggle.emit_clicked();
+            info.view_toggle.emit_clicked();
         }
     }
 

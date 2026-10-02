@@ -473,11 +473,11 @@ fn photo_wall_view_toggle_keeps_selection_and_grid_scroll_context() {
     assert!(!view_toggle.state_flags().contains(gtk::StateFlags::CHECKED));
     assert_eq!(
         view_toggle.icon_name().as_deref(),
-        Some("view-app-grid-symbolic")
+        Some("view-masonry-symbolic")
     );
     assert_eq!(
         view_toggle.tooltip_text().as_deref(),
-        Some("Switch to Grid")
+        Some("Switch to Masonry")
     );
     settle();
     assert_eq!(gallery.layout(), PhotoLayout::PhotoWall);
@@ -535,6 +535,7 @@ fn photo_wall_view_toggle_keeps_selection_and_grid_scroll_context() {
             "resize lost logical viewport position");
     }
 
+    view_toggle.emit_clicked();
     view_toggle.emit_clicked();
     assert!(!view_toggle.state_flags().contains(gtk::StateFlags::CHECKED));
     assert_eq!(
@@ -1494,7 +1495,8 @@ fn masonry_virtualizes_twenty_thousand_photos_and_resizes() {
     let info = crate::infobar::InfoBar::new();
     let gallery_for_mode = gallery.clone();
     info.connect_photo_layout(move |mode| gallery_for_mode.set_layout(mode));
-    info.masonry_toggle.emit_clicked();
+    info.view_toggle.emit_clicked();
+    info.view_toggle.emit_clicked();
     assert_eq!(gallery.layout(), PhotoLayout::Masonry);
     let scroll = gtk::ScrolledWindow::builder()
         .child(&gallery.folder_sectioned_root)
@@ -1531,7 +1533,7 @@ fn masonry_virtualizes_twenty_thousand_photos_and_resizes() {
         }
         assert!(gallery.selection.is_selected(42));
     }
-    info.masonry_toggle.emit_clicked();
+    info.view_toggle.emit_clicked();
     assert_eq!(gallery.layout(), PhotoLayout::Grid);
     assert!(gallery.selection.is_selected(42));
     window.close();

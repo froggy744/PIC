@@ -49,6 +49,7 @@ pub const NETWORK_SHARES_VISIBLE_SETTING_KEY: &str = "sidebar-network-shares-vis
 pub const ALL_PHOTOS_VISIBLE_SETTING_KEY: &str = "sidebar-all-photos-visible";
 pub const FAVOURITES_VISIBLE_SETTING_KEY: &str = "sidebar-favourites-visible";
 pub const RECENTLY_ADDED_VISIBLE_SETTING_KEY: &str = "sidebar-recently-added-visible";
+pub const HISTORY_VISIBLE_SETTING_KEY: &str = "sidebar-history-visible";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SidebarVisibility {
@@ -59,6 +60,7 @@ pub struct SidebarVisibility {
     pub all_photos: bool,
     pub favourites: bool,
     pub recently_added: bool,
+    pub history: bool,
 }
 
 impl Default for SidebarVisibility {
@@ -71,6 +73,7 @@ impl Default for SidebarVisibility {
             all_photos: true,
             favourites: true,
             recently_added: true,
+            history: true,
         }
     }
 }
@@ -93,6 +96,7 @@ impl SidebarVisibility {
             all_photos: visible(connection, ALL_PHOTOS_VISIBLE_SETTING_KEY),
             favourites: visible(connection, FAVOURITES_VISIBLE_SETTING_KEY),
             recently_added: visible(connection, RECENTLY_ADDED_VISIBLE_SETTING_KEY),
+            history: visible(connection, HISTORY_VISIBLE_SETTING_KEY),
         }
     }
 }
@@ -2085,6 +2089,7 @@ fn apply_library_visibility(scrolled: &gtk::ScrolledWindow, visibility: SidebarV
             SidebarFilter::All => visibility.all_photos,
             SidebarFilter::Favorites => visibility.favourites,
             SidebarFilter::RecentlyAdded => visibility.recently_added,
+            SidebarFilter::History => visibility.history,
             _ => true,
         };
         row.set_visible(visible);

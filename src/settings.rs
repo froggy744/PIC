@@ -167,6 +167,7 @@ impl SettingsWindow {
             Some("database"),
             "Libraries",
         );
+        stack.add_titled(&about_page(), Some("about"), "About");
         if let Some(page) = initial_page {
             stack.set_visible_child_name(page);
         }
@@ -1650,6 +1651,46 @@ fn interface_page(
     );
     content.append(&effects_list);
 
+    scroll_page(content)
+}
+
+fn package_type() -> &'static str {
+    if std::env::var_os("FLATPAK_ID").is_some() {
+        "Flatpak"
+    } else if std::env::var_os("APPIMAGE").is_some() {
+        "AppImage"
+    } else {
+        "Native / Cargo"
+    }
+}
+
+fn about_page() -> gtk::ScrolledWindow {
+    let content = page_content(
+        "About PIC",
+        "Build and package information for this installation of PIC.",
+    );
+    let list = settings_list();
+    append_row(&list, "Version", Some(env!("CARGO_PKG_VERSION")), None);
+    append_row(
+        &list,
+        "Build",
+        Some(env!("PIC_BUILD_REVISION")),
+        None,
+    );
+    append_row(
+        &list,
+        "Build date",
+        Some(env!("PIC_BUILD_DATE")),
+        None,
+    );
+    append_row(&list, "Package", Some(package_type()), None);
+    append_row(
+        &list,
+        "Architecture",
+        Some(std::env::consts::ARCH),
+        None,
+    );
+    content.append(&list);
     scroll_page(content)
 }
 

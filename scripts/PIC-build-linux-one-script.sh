@@ -891,18 +891,22 @@ if [ -n "\${APPDIR:-}" ] && [ -d "\$APPDIR/usr/share/$BIN_NAME" ]; then
     # on hosts whose installed icon theme differs from the build environment.
     export XDG_DATA_DIRS="\$PREFIX/share:\${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
 
-    # SVG support is a dynamically loaded GdkPixbuf plugin. Its cache must
-    # contain the real AppImage mount path, which only exists at launch time.
-    PIXBUF_CACHE_TEMPLATE="\$PREFIX/lib/gdk-pixbuf-2.0/2.10.0/pic-svg-loaders.cache.in"
-    if [ -f "\$PIXBUF_CACHE_TEMPLATE" ]; then
+    # SVG support is a dynamically loaded GdkPixbuf plugin. Generate its cache
+    # at launch time so the module path contains the real AppImage mount point.
+    PIXBUF_QUERY="\$PREFIX/libexec/pic-gdk-pixbuf-query-loaders"
+    PIXBUF_SVG_LOADER="\$PREFIX/lib/libpixbufloader-svg.so"
+    if [ -x "\$PIXBUF_QUERY" ] && [ -f "\$PIXBUF_SVG_LOADER" ]; then
+        export LD_LIBRARY_PATH="\$PREFIX/lib\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}"
         PIC_CACHE_ROOT="\${XDG_CACHE_HOME:-\${HOME:-/tmp}/.cache}/pic-rs"
         mkdir -p "\$PIC_CACHE_ROOT"
         GDK_PIXBUF_MODULE_FILE="\$PIC_CACHE_ROOT/gdk-pixbuf-svg-loaders.cache"
-        PIC_PIXBUF_PREFIX_ESCAPED="\$(printf '%s' "\$PREFIX" | sed 's/[\\\\&|]/\\\\&/g')"
-        sed "s|@PIC_PREFIX@|\$PIC_PIXBUF_PREFIX_ESCAPED|g" \
-            "\$PIXBUF_CACHE_TEMPLATE" > "\$GDK_PIXBUF_MODULE_FILE.tmp"
-        mv -f "\$GDK_PIXBUF_MODULE_FILE.tmp" "\$GDK_PIXBUF_MODULE_FILE"
-        export GDK_PIXBUF_MODULE_FILE
+        if "\$PIXBUF_QUERY" "\$PIXBUF_SVG_LOADER" > "\$GDK_PIXBUF_MODULE_FILE.tmp"; then
+            mv -f "\$GDK_PIXBUF_MODULE_FILE.tmp" "\$GDK_PIXBUF_MODULE_FILE"
+            export GDK_PIXBUF_MODULE_FILE
+        else
+            rm -f "\$GDK_PIXBUF_MODULE_FILE.tmp"
+            echo "PIC warning: could not initialize bundled SVG image loader" >&2
+        fi
     fi
 else
     BIN_DIR="\$(CDPATH= cd -- "\$(dirname -- "\$0")" && pwd)"
@@ -1030,7 +1034,7 @@ validate_appimage_icon_layout() {
 
 build_appimage() {
     local linuxdeploy app_work appdir desktop staging_icon output_name deployed_bin real_bin resource_root app_icon_dir
-    local svg_loader glycin_svg pixbuf_query deployed_svg_loader pixbuf_cache_dir pixbuf_cache_template cache_loader line
+    local svg_loader glycin_svg pixbuf_query deployed_svg_loader deployed_pixbuf_query
     local -a linuxdeploy_args
     if ! linuxdeploy="$(linuxdeploy_path)"; then
         return 1
@@ -1083,23 +1087,22 @@ build_appimage() {
 
     if [[ -n "$svg_loader" ]]; then
         # GdkPixbuf image loaders are plugins, not normal link dependencies.
-        # The explicit --library above makes linuxdeploy collect librsvg and
-        # its ELF dependencies. Build a one-loader cache template whose path
-        # is resolved after the AppImage runtime mount point is known.
+        # Bundle both the SVG module and the cache generator. The latter runs
+        # from inside the AppImage so its cache records the actual mount path.
         deployed_svg_loader="$appdir/usr/lib/$(basename "$svg_loader")"
         [[ -s "$deployed_svg_loader" ]] || \
             die "linuxdeploy did not stage the GdkPixbuf SVG loader: $deployed_svg_loader"
-        pixbuf_cache_dir="$appdir/usr/lib/gdk-pixbuf-2.0/2.10.0"
-        pixbuf_cache_template="$pixbuf_cache_dir/pic-svg-loaders.cache.in"
-        mkdir -p "$pixbuf_cache_dir"
-        cache_loader="@PIC_PREFIX@/lib/$(basename "$svg_loader")"
-        : > "$pixbuf_cache_template"
-        while IFS= read -r line; do
-            printf '%s\n' "${line//$svg_loader/$cache_loader}"
-        done < <("$pixbuf_query" "$svg_loader") > "$pixbuf_cache_template"
-        grep -Fq "$cache_loader" "$pixbuf_cache_template" || \
-            die "Could not generate relocatable GdkPixbuf SVG loader cache template."
+        mkdir -p "$appdir/usr/libexec"
+        deployed_pixbuf_query="$appdir/usr/libexec/pic-gdk-pixbuf-query-loaders"
+        cp -f "$pixbuf_query" "$deployed_pixbuf_query"
+        chmod +x "$deployed_pixbuf_query"
+        APPIMAGE_EXTRACT_AND_RUN=1 "$linuxdeploy" \
+            --appdir "$appdir" \
+            --deploy-deps-only "$deployed_pixbuf_query"
+        [[ -x "$deployed_pixbuf_query" ]] || \
+            die "GdkPixbuf loader-cache helper was not staged correctly."
         ok "Bundled GdkPixbuf SVG loader: $deployed_svg_loader"
+        ok "Bundled GdkPixbuf cache helper: $deployed_pixbuf_query"
     else
         warn "Using Fedora host glycin-svg for this local AppImage; the GitHub Ubuntu release build bundles its SVG decoder."
     fi

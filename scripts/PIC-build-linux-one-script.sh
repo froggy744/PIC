@@ -1469,6 +1469,11 @@ EOF_TEST_INSTALLER
     {
       "name": "pic-rs",
       "buildsystem": "simple",
+      "build-options": {
+        "env": {
+          "PIC_BUILD_REVISION": "$REVISION"
+        }
+      },
       "build-commands": [
         "$flatpak_test_build_command",
         "cargo build --release --locked --offline",

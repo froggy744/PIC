@@ -83,14 +83,20 @@ fn main() {
 
 fn emit_build_metadata() {
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".into());
-    let revision = std::process::Command::new("git")
-        .args(["-C", &manifest_dir, "rev-parse", "--short=10", "HEAD"])
-        .output()
+    let revision = env::var("PIC_BUILD_REVISION")
         .ok()
-        .filter(|output| output.status.success())
-        .and_then(|output| String::from_utf8(output.stdout).ok())
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
+        .or_else(|| {
+            std::process::Command::new("git")
+                .args(["-C", &manifest_dir, "rev-parse", "--short=10", "HEAD"])
+                .output()
+                .ok()
+                .filter(|output| output.status.success())
+                .and_then(|output| String::from_utf8(output.stdout).ok())
+                .map(|value| value.trim().to_owned())
+                .filter(|value| !value.is_empty())
+        })
         .unwrap_or_else(|| "unknown".into());
 
     let build_date = std::process::Command::new("date")
@@ -104,6 +110,7 @@ fn emit_build_metadata() {
         .unwrap_or_else(|| "unknown".into());
 
     println!("cargo:rustc-env=PIC_BUILD_REVISION={revision}");
+    println!("cargo:rerun-if-env-changed=PIC_BUILD_REVISION");
     println!("cargo:rustc-env=PIC_BUILD_DATE={build_date}");
     println!("cargo:rerun-if-changed=.git/HEAD");
     println!("cargo:rerun-if-changed=.git/index");

@@ -1,0 +1,80 @@
+name: Build release AppImage
+
+on:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  appimage:
+    name: Ubuntu 24.04 AppImage
+    runs-on: ubuntu-24.04
+    env:
+      PIC_GNOME_INTEGRATE: "0"
+      PIC_BUILD_TARGET: appimage
+    steps:
+      - name: Check out PIC
+        uses: actions/checkout@v4
+
+      - name: Install native build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential clang mold cmake nasm patchelf pkg-config \
+            libgtk-4-dev libadwaita-1-dev libsmbclient-dev libnfs-dev \
+            imagemagick file curl python3
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Prepare packaging dependencies
+        run: |
+          printf 'yes\n' | ./scripts/PIC-build-linux-one-script.sh local --appimage-only --check-dependencies
+
+      - name: Build catalog-compatible AppImage
+        run: |
+          ./scripts/PIC-build-linux-one-script.sh local --appimage-only
+
+      - name: Verify GLIBC compatibility ceiling
+        run: |
+          set -euo pipefail
+          appimage="$(find dist -maxdepth 1 -type f -name '*.AppImage' -print -quit)"
+          test -n "$appimage"
+          APPIMAGE_EXTRACT_AND_RUN=1 "$appimage" --appimage-extract >/dev/null
+          max="$(
+            find squashfs-root -type f -print0 |
+            xargs -0 -r strings 2>/dev/null |
+            grep -oE 'GLIBC_[0-9]+\.[0-9]+' |
+            sed 's/GLIBC_//' |
+            sort -V |
+            tail -n1
+          )"
+          echo "Highest GLIBC symbol referenced: ${max:-none}"
+          if [[ -n "${max:-}" ]] && printf '%s\n%s\n' "2.39" "$max" | sort -V -C; then
+            echo "GLIBC compatibility check passed."
+          elif [[ -z "${max:-}" ]]; then
+            echo "No GLIBC version references found."
+          else
+            echo "::error::AppImage references GLIBC $max, newer than Ubuntu 24.04's 2.39 compatibility target."
+            exit 1
+          fi
+          rm -rf squashfs-root
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PIC-AppImage-ubuntu-24.04
+          path: dist/*.AppImage
+          if-no-files-found: error
+
+      - name: Attach AppImage to GitHub release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.event.release.tag_name }}" dist/*.AppImage --clobber

@@ -57,7 +57,7 @@
       <description>
         <p>Release Candidate 3 improves large-library browsing, Folder view performance, five-star ratings, multiple libraries, photo viewing, editing, imports, network browsing, colour management and Linux packaging.</p>
       </description>
-      <url>https://github.com/froggy744/PIC/blob/main/docs/releases/rc3.md</url>
+      <url type="details">https://github.com/froggy744/PIC/blob/main/docs/releases/rc3.md</url>
     </release>
   </releases>
   <supports>

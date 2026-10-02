@@ -2,6 +2,12 @@
 
 Thanks for helping improve PIC.
 
+## Project status and test data
+
+PIC is a personal passion project under active development. Development and testing should use temporary/sample photo libraries wherever practical. Keep backups before testing changes against important collections.
+
+PIC is designed to be non-destructive: its catalogue database references local originals and stores metadata such as albums, ratings and edit recipes. Changes must preserve that model. Removing catalogue entries must not delete original photo files, and editing should continue to export new files rather than overwrite originals unless a future feature is deliberately designed, documented and reviewed to do otherwise.
+
 ## Before making a change
 
 For a bug, open an issue with the PIC version/build, Linux distribution, steps to reproduce, expected behaviour, actual behaviour, and relevant logs. For a larger feature, open an issue first so the approach can be discussed before substantial work begins.

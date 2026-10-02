@@ -3927,6 +3927,7 @@ mod tests {
                 all_photos: false,
                 favourites: true,
                 recently_added: false,
+                history: false,
             },
         );
         assert!(!stored_widget::<gtk::Box>(&sidebar, LIBRARY_HEADING_KEY)

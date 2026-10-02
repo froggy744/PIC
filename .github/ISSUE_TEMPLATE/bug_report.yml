@@ -1,0 +1,56 @@
+name: Bug report
+description: Report a reproducible problem in PIC
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for helping improve PIC.
+  - type: input
+    id: version
+    attributes:
+      label: PIC version or commit
+      placeholder: Release tag, AppImage filename, or commit SHA
+    validations:
+      required: true
+  - type: input
+    id: distro
+    attributes:
+      label: Linux distribution
+      placeholder: Fedora 44, Ubuntu 24.04, etc.
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: Describe the problem and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open ...
+        2. Click ...
+        3. See ...
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Paste relevant output here. Remove private paths, credentials, or personal information first.
+      render: shell
+  - type: dropdown
+    id: package
+    attributes:
+      label: Package type
+      options:
+        - Native/local build
+        - AppImage
+        - Flatpak
+        - Other
+    validations:
+      required: true

@@ -167,3 +167,22 @@ Still to verify manually:
 - History toggle persistence across restart and immediate sidebar refresh.
 - Album appearance controls still apply live from their new page.
 - Libraries & Backups page no longer clips on the right.
+
+
+## Follow-up implementation — compact Stats and Libraries
+
+Completed:
+- Moved Show History from Interface to Sidebar.
+- Renamed Library & Storage to Stats.
+- Reworked Stats into a compact two-column overview:
+  - Total photos
+  - Originals available
+  - Originals unavailable
+  - Database size
+  - Total albums
+  - Library folders
+- Kept Recently Added limit and availability refresh on Stats.
+- Renamed Libraries & Backups to Libraries.
+- Moved Database files actions above Known libraries.
+- Moved thumbnail cache statistics, Clean Cache, and Clear thumbnails to Libraries.
+- Moved destructive Clear database / Clear all maintenance to Libraries as well.

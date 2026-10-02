@@ -679,6 +679,16 @@ fn photo_wall_progressive_folder_batches_publish_matching_sections() {
 #[test]
 #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
 fn photo_wall_lightbox_return_waits_for_allocation_and_focuses_current_photo() {
+    check_lightbox_return(PhotoLayout::PhotoWall);
+}
+
+#[test]
+#[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+fn masonry_lightbox_return_preserves_position_and_focus() {
+    check_lightbox_return(PhotoLayout::Masonry);
+}
+
+fn check_lightbox_return(layout: PhotoLayout) {
     gtk::init().unwrap();
     let gallery = Rc::new(Gallery::new(
         &[],
@@ -694,14 +704,21 @@ fn photo_wall_lightbox_return_waits_for_allocation_and_focuses_current_photo() {
             glib::Object::builder::<PhotoObject>()
                 .property("id", i as i64 + 1)
                 .property("width", 4000_i64)
-                .property("height", 3000_i64)
+                .property(
+                    "height",
+                    if layout == PhotoLayout::Masonry {
+                        [2000_i64, 4000, 6000][i % 3]
+                    } else {
+                        3000_i64
+                    },
+                )
                 .property("folder-id", if i < 1000 { 1_i64 } else { 2_i64 })
                 .build()
         })
         .collect::<Vec<_>>();
     gallery.store.splice(0, 0, &objects);
     gallery.current_photos.replace(objects.clone());
-    gallery.set_layout(PhotoLayout::PhotoWall);
+    gallery.set_layout(layout);
     let scroll = gtk::ScrolledWindow::builder()
         .child(&gallery.folder_sectioned_root)
         .build();

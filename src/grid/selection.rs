@@ -104,7 +104,7 @@ impl Gallery {
         else {
             return false;
         };
-        if self.layout() == PhotoLayout::PhotoWall {
+        if matches!(self.layout(), PhotoLayout::PhotoWall | PhotoLayout::Masonry) {
             let surface = self.sectioned_folder.clone();
             let viewport_offset = surface.scroll.borrow().as_ref().and_then(|scroll| {
                 let adjustment = scroll.vadjustment();

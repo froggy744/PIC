@@ -892,7 +892,7 @@ if [ -n "\${APPDIR:-}" ] && [ -d "\$APPDIR/usr/share/$BIN_NAME" ]; then
         PIC_CACHE_ROOT="\${XDG_CACHE_HOME:-\${HOME:-/tmp}/.cache}/pic-rs"
         mkdir -p "\$PIC_CACHE_ROOT"
         GDK_PIXBUF_MODULE_FILE="\$PIC_CACHE_ROOT/gdk-pixbuf-svg-loaders.cache"
-        PIC_PIXBUF_PREFIX_ESCAPED="\$(printf '%s' "\$PREFIX" | sed 's/[\\&|]/\\&/g')"
+        PIC_PIXBUF_PREFIX_ESCAPED="\$(printf '%s' "\$PREFIX" | sed 's/[\\\\&|]/\\\\&/g')"
         sed "s|@PIC_PREFIX@|\$PIC_PIXBUF_PREFIX_ESCAPED|g" \
             "\$PIXBUF_CACHE_TEMPLATE" > "\$GDK_PIXBUF_MODULE_FILE.tmp"
         mv -f "\$GDK_PIXBUF_MODULE_FILE.tmp" "\$GDK_PIXBUF_MODULE_FILE"

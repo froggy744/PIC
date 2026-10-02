@@ -3,6 +3,7 @@
 #define _DEFAULT_SOURCE
 
 #include <stddef.h>
+#include <sys/time.h>
 #include <nfsc/libnfs.h>
 #include <nfsc/libnfs-raw.h>
 #include <nfsc/libnfs-raw-mount.h>
@@ -233,7 +234,12 @@ int pic_nfs_read(const char *host, const char *export_path, const char *relative
             bytes=more;capbytes=next;
         }
         uint64_t call_started = monotonic_ms();
-        int got=nfs_read(nfs,fh,bytes+used,capbytes-used);
+        int got;
+#if defined(PIC_LIBNFS_LEGACY_READ_ORDER)
+        got=nfs_read(nfs,fh,(uint64_t)(capbytes-used),bytes+used);
+#else
+        got=nfs_read(nfs,fh,bytes+used,capbytes-used);
+#endif
         read_calls++;
         if (trace_enabled()) {
             char detail[128];
@@ -281,7 +287,12 @@ int pic_nfs_read_range(const char *host, const char *export_path, const char *re
     if (!bytes) { snprintf(error,cap,"NFS out of memory"); nfs_close(nfs,fh); pthread_mutex_unlock(&read_session_lock); return -1; }
     size_t used=0;
     while (used < requested) {
-        int got=nfs_read(nfs,fh,bytes+used,requested-used);
+        int got;
+#if defined(PIC_LIBNFS_LEGACY_READ_ORDER)
+        got=nfs_read(nfs,fh,(uint64_t)(requested-used),bytes+used);
+#else
+        got=nfs_read(nfs,fh,bytes+used,requested-used);
+#endif
         if (got < 0) { err(error,cap,"nfs_read",nfs); free(bytes); nfs_close(nfs,fh); invalidate_read_session(); pthread_mutex_unlock(&read_session_lock); return -1; }
         if (got == 0) break;
         used+=(size_t)got;

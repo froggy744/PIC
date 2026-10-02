@@ -4108,16 +4108,25 @@ fn start_photo_export_single(
         let selected_for_local=selected.clone();
         // The Folders + button imports local folders only. Network shares are
         // added through their own section below Folders.
-        let dialog=gtk::FileChooserNative::new(
-            Some("Import Local Folder"),Some(&parent_for_local),
-            gtk::FileChooserAction::SelectFolder,Some("Import"),Some("Cancel"));
-        dialog.connect_response(move |dlg,response| {
-            if response==gtk::ResponseType::Accept {
-                if let Some(file)=dlg.file(){ selected_for_local(crate::source::reference(&file)); }
-            }
-            dlg.destroy();
-        });
-        dialog.show();
+        //
+        // Use GTK4's asynchronous FileDialog rather than the deprecated
+        // FileChooserNative path. On AppImage/GTK 4.14 the legacy chooser can
+        // tear down its GtkFileSystemModel while updates are still thawing,
+        // producing repeated GTK_IS_FILE_SYSTEM_MODEL criticals.
+        let dialog = gtk::FileDialog::builder()
+            .title("Import Local Folder")
+            .accept_label("Import")
+            .modal(true)
+            .build();
+        dialog.select_folder(
+            Some(&parent_for_local),
+            None::<&gio::Cancellable>,
+            move |result| {
+                if let Ok(file) = result {
+                    selected_for_local(crate::source::reference(&file));
+                }
+            },
+        );
     })));
 
     #[cfg(target_os="linux")]

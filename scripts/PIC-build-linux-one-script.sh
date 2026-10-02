@@ -19,7 +19,7 @@ FLATPAK_SOURCE_CACHE="$CACHE_ROOT/flatpak-sources"
 DIST_DIR="${PIC_DIST_DIR:-$REPO_ROOT/dist}"
 REPO_URL="${PIC_REPO_URL:-https://github.com/froggy744/PIC.git}"
 DEFAULT_BRANCH="${PIC_BRANCH:-main}"
-APP_ID="${PIC_APP_ID:-io.github.you.PicRs}"
+APP_ID="${PIC_APP_ID:-io.github.froggy744.PIC}"
 BIN_NAME_OVERRIDE="${PIC_BIN_NAME:-}"
 BIN_NAME=""
 GNOME_RUNTIME="${PIC_GNOME_RUNTIME:-50}"
@@ -960,7 +960,7 @@ EOF_DESKTOP
 
 write_metainfo_file() {
     local path="$1"
-    python3 - "$SOURCE_DIR/resources/io.github.you.PicRs.metainfo.xml" "$path" "$APP_ID" "$VERSION" <<'EOF_METAINFO'
+    python3 - "$SOURCE_DIR/resources/io.github.froggy744.PIC.metainfo.xml" "$path" "$APP_ID" "$VERSION" <<'EOF_METAINFO'
 from pathlib import Path
 import sys
 import xml.etree.ElementTree as ET
@@ -1413,6 +1413,7 @@ EOF_TEST_INSTALLER
 "--filesystem=xdg-data/picasa-rs",
 "--filesystem=xdg-cache/pic-rs:create",
 "--filesystem=xdg-cache/picasa-rs",
+"--filesystem=~/.var/app/io.github.you.PicRs",
 "--filesystem=~/.var/app/io.github.you.PicasaRs",
 
 "--talk-name=org.gtk.vfs.*",

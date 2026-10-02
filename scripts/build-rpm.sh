@@ -26,7 +26,7 @@ VERSION="${VERSION:-${META[1]}}"
 BIN_NAME="${BIN_NAME:-${META[2]}}"
 
 APP_NAME="${APP_NAME:-PIC}"
-APP_ID="${APP_ID:-io.github.you.PicRs}"
+APP_ID="${APP_ID:-io.github.froggy744.PIC}"
 MAINTAINER="${MAINTAINER:-Petrus Rademeyer}"
 DESCRIPTION="${DESCRIPTION:-PIC - a fast Picasa/iPhoto-inspired photo manager for Linux}"
 HOMEPAGE="${HOMEPAGE:-https://github.com/froggy744/PIC}"

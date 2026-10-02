@@ -8,30 +8,49 @@ use std::{
 pub const APP_DIRECTORY: &str = "pic-rs";
 const LEGACY_DIRECTORY: &str = "picasa-rs";
 
-/// Former Flatpak sandbox root, when this root belongs to the renamed app ID.
-pub fn legacy_sandbox_root(root: &Path) -> Option<PathBuf> {
-    let app = root.parent()?;
-    if app.file_name()? != "io.github.you.PicRs" {
-        return None;
+const CURRENT_FLATPAK_ID: &str = "io.github.froggy744.PIC";
+const LEGACY_FLATPAK_IDS: [&str; 2] = ["io.github.you.PicRs", "io.github.you.PicasaRs"];
+
+/// Former Flatpak sandbox roots, when this root belongs to the renamed app ID.
+pub fn legacy_sandbox_roots(root: &Path) -> Vec<PathBuf> {
+    let Some(app) = root.parent() else {
+        return Vec::new();
+    };
+    if app.file_name().and_then(|name| name.to_str()) != Some(CURRENT_FLATPAK_ID) {
+        return Vec::new();
     }
-    Some(
-        app.parent()?
-            .join("io.github.you.PicasaRs")
-            .join(root.file_name()?),
-    )
+    let Some(apps_root) = app.parent() else {
+        return Vec::new();
+    };
+    let Some(kind) = root.file_name() else {
+        return Vec::new();
+    };
+    LEGACY_FLATPAK_IDS
+        .iter()
+        .map(|id| apps_root.join(id).join(kind))
+        .collect()
 }
 
 /// Packaged launchers use host data/cache roots but sandboxed config. Discover
-/// the former sandbox through either location so that mixed layout also works.
-pub fn legacy_storage_root(root: &Path, config: &Path, kind: &str) -> Option<PathBuf> {
-    legacy_sandbox_root(root).or_else(|| Some(legacy_sandbox_root(config)?.parent()?.join(kind)))
+/// former sandboxes through either location so that mixed layout also works.
+pub fn legacy_storage_roots(root: &Path, config: &Path, kind: &str) -> Vec<PathBuf> {
+    let direct = legacy_sandbox_roots(root);
+    if !direct.is_empty() {
+        return direct;
+    }
+    legacy_sandbox_roots(config)
+        .into_iter()
+        .filter_map(|legacy_config| legacy_config.parent().map(|app| app.join(kind)))
+        .collect()
 }
 
 pub fn storage_path(path: &Path, root: &Path, config: &Path, kind: &str) -> PathBuf {
     let destination = root.join(APP_DIRECTORY);
     let mut result = relocated_path(path, &root.join(LEGACY_DIRECTORY), &destination);
-    if let Some(legacy) = legacy_storage_root(root, config, kind) {
-        result = relocated_path(&result, &legacy.join(LEGACY_DIRECTORY), &destination);
+    for legacy in legacy_storage_roots(root, config, kind) {
+        for directory in [LEGACY_DIRECTORY, APP_DIRECTORY] {
+            result = relocated_path(&result, &legacy.join(directory), &destination);
+        }
     }
     result
 }
@@ -66,10 +85,12 @@ pub fn migrate_roots(data: &Path, config: &Path, cache: &Path) -> io::Result<()>
         if !moves.contains(&movement) {
             moves.push(movement);
         }
-        if let Some(legacy) = legacy_storage_root(root, config, kind) {
-            let movement = (legacy.join(LEGACY_DIRECTORY), root.join(APP_DIRECTORY));
-            if !moves.contains(&movement) {
-                moves.push(movement);
+        for legacy in legacy_storage_roots(root, config, kind) {
+            for directory in [LEGACY_DIRECTORY, APP_DIRECTORY] {
+                let movement = (legacy.join(directory), root.join(APP_DIRECTORY));
+                if !moves.contains(&movement) {
+                    moves.push(movement);
+                }
             }
         }
     }
@@ -81,15 +102,19 @@ pub fn migrate_roots(data: &Path, config: &Path, cache: &Path) -> io::Result<()>
         data.join(LEGACY_DIRECTORY).join("overlays"),
         data.join(APP_DIRECTORY).join("overlays"),
     ];
-    if let Some(legacy) = legacy_storage_root(data, config, "data") {
-        overlay_sources.push(legacy.join(LEGACY_DIRECTORY).join("overlays"));
+    for legacy in legacy_storage_roots(data, config, "data") {
+        for directory in [LEGACY_DIRECTORY, APP_DIRECTORY] {
+            overlay_sources.push(legacy.join(directory).join("overlays"));
+        }
     }
     let mut overlay_destinations = vec![
         cache.join(APP_DIRECTORY).join("thumbs/overlay"),
         cache.join(LEGACY_DIRECTORY).join("thumbs/overlay"),
     ];
-    if let Some(legacy) = legacy_storage_root(cache, config, "cache") {
-        overlay_destinations.push(legacy.join(LEGACY_DIRECTORY).join("thumbs/overlay"));
+    for legacy in legacy_storage_roots(cache, config, "cache") {
+        for directory in [LEGACY_DIRECTORY, APP_DIRECTORY] {
+            overlay_destinations.push(legacy.join(directory).join("thumbs/overlay"));
+        }
     }
     for source in &overlay_sources {
         for destination in &overlay_destinations {
@@ -307,7 +332,7 @@ mod tests {
         let f = Fixture::new();
         let data = f.0.join("share");
         let cache = f.0.join("cache");
-        let app = f.0.join(".var/app/io.github.you.PicRs");
+        let app = f.0.join(".var/app/io.github.froggy744.PIC");
         let old_app = f.0.join(".var/app/io.github.you.PicasaRs");
         fs::create_dir_all(old_app.join("data/picasa-rs/overlays")).unwrap();
         fs::write(old_app.join("data/picasa-rs/library.db"), b"database").unwrap();
@@ -320,9 +345,9 @@ mod tests {
     #[test]
     fn renamed_flatpak_migrates_the_former_sandbox_and_registry_paths() {
         let f = Fixture::new();
-        let app = f.0.join(".var/app/io.github.you.PicRs");
-        let old_app = f.0.join(".var/app/io.github.you.PicasaRs");
-        let old_data = old_app.join("data/picasa-rs");
+        let app = f.0.join(".var/app/io.github.froggy744.PIC");
+        let old_app = f.0.join(".var/app/io.github.you.PicRs");
+        let old_data = old_app.join("data/pic-rs");
         fs::create_dir_all(old_data.join("overlays")).unwrap();
         fs::create_dir_all(old_app.join("config/picasa-rs")).unwrap();
         fs::write(old_data.join("library.db"), b"database").unwrap();

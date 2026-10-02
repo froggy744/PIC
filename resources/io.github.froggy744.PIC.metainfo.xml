@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<!-- Copyright 2026 Petrus Rademeyer -->
 <component type="desktop-application">
-  <id>io.github.you.PicRs</id>
+  <id>io.github.froggy744.PIC</id>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>MIT</project_license>
   <name>PIC — Personal Image Catalogue</name>
@@ -21,7 +22,7 @@
       <li>Choose an appearance theme for your workspace.</li>
     </ul>
   </description>
-  <launchable type="desktop-id">io.github.you.PicRs.desktop</launchable>
+  <launchable type="desktop-id">io.github.froggy744.PIC.desktop</launchable>
   <url type="homepage">https://github.com/froggy744/PIC</url>
   <url type="bugtracker">https://github.com/froggy744/PIC/issues</url>
   <url type="vcs-browser">https://github.com/froggy744/PIC</url>
@@ -38,15 +39,15 @@
   </keywords>
   <screenshots>
     <screenshot type="default">
-      <image>https://raw.githubusercontent.com/froggy744/PIC/main/screenshots/all%20photos.jpg</image>
+      <image>https://raw.githubusercontent.com/froggy744/PIC/65720d13933103ef3147bda8572c4e07857c6bba/screenshots/all%20photos.jpg</image>
       <caption>Browse and organise your photo library</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/froggy744/PIC/main/screenshots/effects%20screen.jpg</image>
+      <image>https://raw.githubusercontent.com/froggy744/PIC/65720d13933103ef3147bda8572c4e07857c6bba/screenshots/effects%20screen.jpg</image>
       <caption>Adjust photos in Edit Mode</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/froggy744/PIC/main/screenshots/photo%20wall%20screen.jpg</image>
+      <image>https://raw.githubusercontent.com/froggy744/PIC/65720d13933103ef3147bda8572c4e07857c6bba/screenshots/photo%20wall%20screen.jpg</image>
       <caption>Browse photos in Photo Wall</caption>
     </screenshot>
   </screenshots>

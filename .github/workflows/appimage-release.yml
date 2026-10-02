@@ -9,8 +9,85 @@ permissions:
   contents: write
 
 jobs:
+  preflight:
+    name: Fast AppImage preflight
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out PIC
+        uses: actions/checkout@v4
+
+      - name: Validate packaging script and resources
+        run: |
+          set -euo pipefail
+          bash -n scripts/PIC-build-linux-one-script.sh
+          test -s resources/icons.gresource
+          test -s resources/icons/sidebar-hide-symbolic.svg
+          test -d icon
+          find icon -maxdepth 1 -type f \( -iname '*.png' -o -iname '*.svg' \) -print -quit | grep -q .
+          grep -Fq 'pic-gdk-pixbuf-query-loaders' scripts/PIC-build-linux-one-script.sh
+          grep -Fq 'GDK_PIXBUF_MODULE_FILE' scripts/PIC-build-linux-one-script.sh
+
+      - name: Install minimal SVG preflight dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential pkg-config libgdk-pixbuf-2.0-dev \
+            libgdk-pixbuf2.0-bin librsvg2-common libglib2.0-bin
+
+      - name: Verify isolated SVG loader path
+        run: |
+          set -euo pipefail
+
+          loader="$(find /usr/lib /usr/lib64 /lib /lib64 -type f \
+            -path '*/gdk-pixbuf-2.0/*/loaders/libpixbufloader-svg.so' \
+            -print -quit 2>/dev/null)"
+          test -n "$loader"
+          test -s "$loader"
+
+          query="$(command -v gdk-pixbuf-query-loaders || true)"
+          if [[ -z "$query" ]]; then
+            query="$(find /usr/lib /usr/lib64 /lib /lib64 -type f \
+              -name 'gdk-pixbuf-query-loaders*' -perm -u+x \
+              -print -quit 2>/dev/null)"
+          fi
+          test -n "$query"
+          test -x "$query"
+
+          cache="$(mktemp)"
+          "$query" "$loader" > "$cache"
+          test -s "$cache"
+          grep -Fq "$loader" "$cache"
+
+          cat > /tmp/pic-svg-preflight.c <<'EOF'
+          #include <gdk-pixbuf/gdk-pixbuf.h>
+          int main(int argc, char **argv) {
+              GError *error = NULL;
+              GdkPixbuf *pixbuf;
+              if (argc != 2)
+                  return 2;
+              pixbuf = gdk_pixbuf_new_from_file(argv[1], &error);
+              if (pixbuf == NULL) {
+                  g_printerr("%s\n", error ? error->message : "SVG decode failed");
+                  g_clear_error(&error);
+                  return 1;
+              }
+              g_object_unref(pixbuf);
+              return 0;
+          }
+          EOF
+
+          cc /tmp/pic-svg-preflight.c -o /tmp/pic-svg-preflight \
+            $(pkg-config --cflags --libs gdk-pixbuf-2.0)
+
+          GDK_PIXBUF_MODULE_FILE="$cache" \
+            /tmp/pic-svg-preflight resources/icons/sidebar-hide-symbolic.svg
+
+          rm -f "$cache" /tmp/pic-svg-preflight /tmp/pic-svg-preflight.c
+          echo "Fast SVG/AppImage preflight passed."
+
   appimage:
     name: Ubuntu 24.04 AppImage
+    needs: preflight
     runs-on: ubuntu-24.04
     env:
       PIC_GNOME_INTEGRATE: "0"

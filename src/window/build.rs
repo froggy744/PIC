@@ -932,6 +932,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     // already contains the complete continuous folder stream.
     let connection_for_collection_nav = connection.clone();
     let filter_for_collection_nav = filter.clone();
+    let info_for_collection_nav = info.clone();
     let search_for_collection_nav = search_text.clone();
     let sort_for_collection_nav = sort.clone();
     let rating_filter_for_collection_nav = rating_filter.clone();
@@ -995,6 +996,12 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                     if !photos.is_empty() {
                         let new_filter = sidebar::SidebarFilter::Folder(folder.id);
                         filter_for_collection_nav.set(new_filter);
+                        restore_section_layout(
+                            &connection_for_collection_nav.borrow(),
+                            &gallery_for_collection_nav,
+                            &info_for_collection_nav,
+                            new_filter,
+                        );
                         if let Some(sidebar) = sidebar_selection_for_collection_nav.borrow().as_ref() {
                             sidebar::set_active_filter(sidebar, new_filter);
                             let sidebar = sidebar.clone();
@@ -1079,6 +1086,12 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                     if !photos.is_empty() {
                         let new_filter = sidebar::SidebarFilter::RecentlyAdded;
                         filter_for_collection_nav.set(new_filter);
+                        restore_section_layout(
+                            &connection_for_collection_nav.borrow(),
+                            &gallery_for_collection_nav,
+                            &info_for_collection_nav,
+                            new_filter,
+                        );
                         if let Some(sidebar) = sidebar_selection_for_collection_nav.borrow().as_ref() {
                             sidebar::set_active_filter(sidebar, new_filter);
                         }
@@ -1123,6 +1136,12 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
 
                         let new_filter = sidebar::SidebarFilter::Folder(folder.id);
                         filter_for_collection_nav.set(new_filter);
+                        restore_section_layout(
+                            &connection_for_collection_nav.borrow(),
+                            &gallery_for_collection_nav,
+                            &info_for_collection_nav,
+                            new_filter,
+                        );
                         if let Some(sidebar) = sidebar_selection_for_collection_nav.borrow().as_ref() {
                             sidebar::set_active_filter(sidebar, new_filter);
                             let sidebar = sidebar.clone();
@@ -1166,6 +1185,12 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                     if !photos.is_empty() {
                         let new_filter = sidebar::SidebarFilter::Album(album.id);
                         filter_for_collection_nav.set(new_filter);
+                        restore_section_layout(
+                            &connection_for_collection_nav.borrow(),
+                            &gallery_for_collection_nav,
+                            &info_for_collection_nav,
+                            new_filter,
+                        );
                         if let Some(sidebar) = sidebar_selection_for_collection_nav.borrow().as_ref() {
                             sidebar::set_active_filter(sidebar, new_filter);
                         }
@@ -1208,6 +1233,12 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                     if !photos.is_empty() {
                         let new_filter = sidebar::SidebarFilter::Favorites;
                         filter_for_collection_nav.set(new_filter);
+                        restore_section_layout(
+                            &connection_for_collection_nav.borrow(),
+                            &gallery_for_collection_nav,
+                            &info_for_collection_nav,
+                            new_filter,
+                        );
                         if let Some(sidebar) = sidebar_selection_for_collection_nav.borrow().as_ref() {
                             sidebar::set_active_filter(sidebar, new_filter);
                         }
@@ -1249,6 +1280,12 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                     if !photos.is_empty() {
                         let new_filter = sidebar::SidebarFilter::All;
                         filter_for_collection_nav.set(new_filter);
+                        restore_section_layout(
+                            &connection_for_collection_nav.borrow(),
+                            &gallery_for_collection_nav,
+                            &info_for_collection_nav,
+                            new_filter,
+                        );
                         if let Some(sidebar) = sidebar_selection_for_collection_nav.borrow().as_ref() {
                             sidebar::set_active_filter(sidebar, new_filter);
                         }
@@ -1293,6 +1330,12 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                     if !photos.is_empty() {
                         let new_filter = sidebar::SidebarFilter::RecentlyAdded;
                         filter_for_collection_nav.set(new_filter);
+                        restore_section_layout(
+                            &connection_for_collection_nav.borrow(),
+                            &gallery_for_collection_nav,
+                            &info_for_collection_nav,
+                            new_filter,
+                        );
                         if let Some(sidebar) = sidebar_selection_for_collection_nav.borrow().as_ref() {
                             sidebar::set_active_filter(sidebar, new_filter);
                         }
@@ -1331,6 +1374,12 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                     if !photos.is_empty() {
                         let new_filter = sidebar::SidebarFilter::Favorites;
                         filter_for_collection_nav.set(new_filter);
+                        restore_section_layout(
+                            &connection_for_collection_nav.borrow(),
+                            &gallery_for_collection_nav,
+                            &info_for_collection_nav,
+                            new_filter,
+                        );
                         if let Some(sidebar) = sidebar_selection_for_collection_nav.borrow().as_ref() {
                             sidebar::set_active_filter(sidebar, new_filter);
                         }
@@ -1376,6 +1425,12 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
 
                         let new_filter = sidebar::SidebarFilter::Album(album.id);
                         filter_for_collection_nav.set(new_filter);
+                        restore_section_layout(
+                            &connection_for_collection_nav.borrow(),
+                            &gallery_for_collection_nav,
+                            &info_for_collection_nav,
+                            new_filter,
+                        );
                         if let Some(sidebar) = sidebar_selection_for_collection_nav.borrow().as_ref() {
                             sidebar::set_active_filter(sidebar, new_filter);
                         }
@@ -1440,6 +1495,12 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                     if !photos.is_empty() {
                         let new_filter = sidebar::SidebarFilter::Folder(folder.id);
                         filter_for_collection_nav.set(new_filter);
+                        restore_section_layout(
+                            &connection_for_collection_nav.borrow(),
+                            &gallery_for_collection_nav,
+                            &info_for_collection_nav,
+                            new_filter,
+                        );
                         if let Some(sidebar) = sidebar_selection_for_collection_nav.borrow().as_ref() {
                             sidebar::set_active_filter(sidebar, new_filter);
                             let sidebar = sidebar.clone();
@@ -2156,24 +2217,18 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     {
         let gallery_for_mode = gallery.clone();
         let connection_for_mode = connection.clone();
+        let filter_for_mode = filter.clone();
         info.connect_photo_layout(move |mode| {
             gallery_for_mode.set_layout(mode);
-            let value = match mode {
-                grid::PhotoLayout::Grid => "grid",
-                grid::PhotoLayout::PhotoWall => "photo_wall",
-                grid::PhotoLayout::Masonry => "masonry",
-            };
-            let _ = db::set_setting(&connection_for_mode.borrow(), "photo_layout", value);
+            if let Err(error) = save_section_layout(
+                &connection_for_mode.borrow(),
+                filter_for_mode.get(),
+                mode,
+            ) {
+                eprintln!("Could not save section photo layout: {error}");
+            }
         });
-        let saved = db::setting(&connection.borrow(), "photo_layout")
-            .ok()
-            .flatten();
-        if saved.as_deref() == Some("photo_wall") {
-            info.view_toggle.emit_clicked();
-        } else if saved.as_deref() == Some("masonry") {
-            info.view_toggle.emit_clicked();
-            info.view_toggle.emit_clicked();
-        }
+        restore_section_layout(&connection.borrow(), &gallery, &info, initial_filter);
     }
 
     let grid_surface = gtk::Box::new(gtk::Orientation::Vertical, 0);
@@ -4509,6 +4564,12 @@ fn start_photo_export_single(
                     if let sidebar::SidebarFilter::Folder(id) = filter_for_events.get() {
                         if !db::folder_exists(&connection_for_events.borrow(), id).unwrap_or(true) {
                             filter_for_events.set(sidebar::SidebarFilter::All);
+                            restore_section_layout(
+                                &connection_for_events.borrow(),
+                                &gallery_for_events,
+                                &info_for_events,
+                                sidebar::SidebarFilter::All,
+                            );
                         }
                         refresh_grid(
                             &connection_for_events,
@@ -4948,6 +5009,7 @@ fn start_photo_export_single(
             selected_photo.replace(None);
             info.set_photo(None);
             filter.set(new_filter);
+            restore_section_layout(&connection.borrow(), &gallery, &info, new_filter);
             sort.set(new_sort);
             group_mode.set(new_group);
             last_activated_photo_id.set(numeric_setting::<i64>(

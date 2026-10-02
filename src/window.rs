@@ -13,6 +13,9 @@ use rusqlite::Connection;
 use crate::albums_view;
 use crate::{db, grid, infobar::InfoBar, lightbox::Lightbox, scanner, sidebar};
 
+mod photo_layout;
+use photo_layout::{restore_section_layout, save_section_layout};
+
 mod layout_settle;
 use layout_settle::{should_observe_width, WidthSettleGate};
 

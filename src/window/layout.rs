@@ -9,6 +9,7 @@
         let debounce = search_debounce.clone();
         let cleared_query = cleared_search_query.clone();
         let filter = filter.clone();
+        let info = info.clone();
         let connection = connection.clone();
         let folder_cache = folder_cache.clone();
         let gallery = gallery.clone();
@@ -67,6 +68,7 @@
                 }
             });
             filter.set(new_filter);
+            restore_section_layout(&connection.borrow(), &gallery, &info, new_filter);
             if let Err(error) = db::set_setting(
                 &connection.borrow(),
                 LAST_VIEW_SETTING_KEY,

@@ -201,6 +201,14 @@ fn show_delete_album_confirmation(parent: gtk::Widget, album_id: i64, context: P
         }
         if context.filter.get() == sidebar::SidebarFilter::Album(album_id) {
             context.filter.set(sidebar::SidebarFilter::All);
+            if let Some(gallery) = context.gallery.borrow().upgrade() {
+                restore_section_layout(
+                    &context.connection.borrow(),
+                    &gallery,
+                    &context.info,
+                    sidebar::SidebarFilter::All,
+                );
+            }
             refresh_photo_actions_grid(&context);
         }
         refresh_album_ui(&context);
@@ -242,6 +250,14 @@ fn show_remove_folder_confirmation(
         };
         if current_folder_removed {
             context.filter.set(sidebar::SidebarFilter::All);
+            if let Some(gallery) = context.gallery.borrow().upgrade() {
+                restore_section_layout(
+                    &context.connection.borrow(),
+                    &gallery,
+                    &context.info,
+                    sidebar::SidebarFilter::All,
+                );
+            }
             if let Some(sidebar) = context.sidebar.borrow().as_ref() {
                 sidebar::set_active_filter(sidebar, sidebar::SidebarFilter::All);
             }

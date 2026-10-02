@@ -185,20 +185,13 @@ impl InfoBar {
         let layout_for_toggle = photo_layout.clone();
         view_toggle.connect_clicked(move |button| {
             use crate::grid::PhotoLayout;
-            let (layout, icon, tooltip) = match layout_for_toggle.get() {
-                PhotoLayout::Grid => (
-                    PhotoLayout::PhotoWall, "view-masonry-symbolic", "Switch to Masonry",
-                ),
-                PhotoLayout::PhotoWall => (
-                    PhotoLayout::Masonry, "view-app-grid-symbolic", "Switch to Grid",
-                ),
-                PhotoLayout::Masonry => (
-                    PhotoLayout::Grid, "collage-smart-mosaic-symbolic", "Switch to Photo Wall",
-                ),
+            let layout = match layout_for_toggle.get() {
+                PhotoLayout::Grid => PhotoLayout::PhotoWall,
+                PhotoLayout::PhotoWall => PhotoLayout::Masonry,
+                PhotoLayout::Masonry => PhotoLayout::Grid,
             };
             layout_for_toggle.set(layout);
-            button.set_icon_name(icon);
-            button.set_tooltip_text(Some(tooltip));
+            update_photo_layout_button(button, layout);
         });
 
         let add_to_album = gtk::MenuButton::new();
@@ -334,6 +327,12 @@ impl InfoBar {
             has_aperture,
             collage_active,
         }
+    }
+
+    /// Synchronize a restored section without emitting a user layout change.
+    pub fn set_photo_layout(&self, layout: crate::grid::PhotoLayout) {
+        self.photo_layout.set(layout);
+        update_photo_layout_button(&self.view_toggle, layout);
     }
 
     pub fn connect_photo_layout(&self, changed: impl Fn(crate::grid::PhotoLayout) + 'static) {
@@ -583,4 +582,15 @@ pub(crate) fn format_date(value: &str) -> String {
         return parsed.format("%d %b %Y").to_string();
     }
     value.to_string()
+}
+
+fn update_photo_layout_button(button: &gtk::Button, layout: crate::grid::PhotoLayout) {
+    use crate::grid::PhotoLayout;
+    let (icon, tooltip) = match layout {
+        PhotoLayout::Grid => ("collage-smart-mosaic-symbolic", "Switch to Photo Wall"),
+        PhotoLayout::PhotoWall => ("view-masonry-symbolic", "Switch to Masonry"),
+        PhotoLayout::Masonry => ("view-app-grid-symbolic", "Switch to Grid"),
+    };
+    button.set_icon_name(icon);
+    button.set_tooltip_text(Some(tooltip));
 }

@@ -395,6 +395,14 @@ collect_host_dependencies() {
         if ! have pkg-config || ! pkg-config --exists libnfs; then
             add_host_dependency "NFS development files" libnfs-devel libnfs-dev
         fi
+        # SVG icons are decoded through a dynamically loaded GdkPixbuf plugin.
+        # linuxdeploy cannot discover that plugin from ELF dependencies alone.
+        if [[ -z "$(find_gdk_pixbuf_svg_loader)" ]]; then
+            add_host_dependency "GdkPixbuf SVG loader" librsvg2 librsvg2-common
+        fi
+        if [[ -z "$(find_gdk_pixbuf_query_loaders)" ]]; then
+            add_host_dependency "GdkPixbuf loader cache tool" gdk-pixbuf2 libgdk-pixbuf2.0-bin
+        fi
     fi
     if [[ "$BUILD_TARGET" != appimage ]]; then
         require_host_command flatpak flatpak flatpak

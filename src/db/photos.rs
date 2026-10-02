@@ -298,17 +298,34 @@ pub fn raw_jpeg_pair_folder_ids(connection: &Connection) -> Result<HashSet<i64>>
 }
 
 pub fn folders(connection: &Connection) -> Result<Vec<Folder>> {
+    // Read the folder rows and direct counts in one pass. The old query ran a
+    // recursive descendant CTE once per folder, which became very expensive on
+    // large trees and could block the GTK thread for seconds when Settings or
+    // the sidebar requested a refresh.
     let mut statement = connection.prepare(
-        "SELECT f.id, f.path, COALESCE(f.name, f.path), f.parent_id, f.imported_root, f.watched,
-                (WITH RECURSIVE descendants(id) AS (
-                   SELECT id FROM folders WHERE id = f.id
-                   UNION ALL
-                   SELECT child.id FROM folders child JOIN descendants ON child.parent_id = descendants.id
-                 )
-                 SELECT COUNT(*) FROM photos p
-                 WHERE p.trashed = 0 AND p.folder_id IN (SELECT id FROM descendants)),
-                (SELECT COUNT(*) FROM folders child WHERE child.parent_id = f.id)
-         FROM folders f ORDER BY f.path COLLATE NOCASE",
+        "SELECT
+             f.id,
+             f.path,
+             COALESCE(f.name, f.path),
+             f.parent_id,
+             f.imported_root,
+             f.watched,
+             COALESCE(photo_counts.photo_count, 0),
+             COALESCE(child_counts.subfolder_count, 0)
+         FROM folders f
+         LEFT JOIN (
+             SELECT folder_id, COUNT(*) AS photo_count
+             FROM photos
+             WHERE trashed = 0
+             GROUP BY folder_id
+         ) photo_counts ON photo_counts.folder_id = f.id
+         LEFT JOIN (
+             SELECT parent_id, COUNT(*) AS subfolder_count
+             FROM folders
+             WHERE parent_id IS NOT NULL
+             GROUP BY parent_id
+         ) child_counts ON child_counts.parent_id = f.id
+         ORDER BY f.path COLLATE NOCASE",
     )?;
     let rows = statement.query_map([], |row| {
         Ok(Folder {
@@ -318,14 +335,69 @@ pub fn folders(connection: &Connection) -> Result<Vec<Folder>> {
             parent_id: row.get(3)?,
             imported_root: row.get(4)?,
             watched: row.get(5)?,
+            // Direct photo count for now; rolled up to descendants below.
             photo_count: row.get(6)?,
             subfolder_count: row.get(7)?,
-            // Availability is resolved below from imported roots so a USB
-            // library checks its one registered source, not every descendant.
             available: true,
         })
     })?;
     let mut folders = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+
+    // Build the hierarchy once and roll direct photo counts upward in memory.
+    // This preserves the historical meaning of Folder::photo_count (the
+    // folder plus all descendants) without repeated recursive SQL.
+    let by_id = folders
+        .iter()
+        .enumerate()
+        .map(|(index, folder)| (folder.id, index))
+        .collect::<HashMap<_, _>>();
+    let mut children = HashMap::<i64, Vec<i64>>::new();
+    for folder in &folders {
+        if let Some(parent_id) = folder.parent_id.filter(|id| by_id.contains_key(id)) {
+            children.entry(parent_id).or_default().push(folder.id);
+        }
+    }
+    let direct_counts = folders
+        .iter()
+        .map(|folder| (folder.id, folder.photo_count))
+        .collect::<HashMap<_, _>>();
+
+    fn subtree_photo_count(
+        folder_id: i64,
+        direct_counts: &HashMap<i64, i64>,
+        children: &HashMap<i64, Vec<i64>>,
+        memo: &mut HashMap<i64, i64>,
+        visiting: &mut HashSet<i64>,
+    ) -> i64 {
+        if let Some(total) = memo.get(&folder_id) {
+            return *total;
+        }
+        if !visiting.insert(folder_id) {
+            return direct_counts.get(&folder_id).copied().unwrap_or_default();
+        }
+        let mut total = direct_counts.get(&folder_id).copied().unwrap_or_default();
+        if let Some(child_ids) = children.get(&folder_id) {
+            for child_id in child_ids {
+                total += subtree_photo_count(*child_id, direct_counts, children, memo, visiting);
+            }
+        }
+        visiting.remove(&folder_id);
+        memo.insert(folder_id, total);
+        total
+    }
+
+    let mut memo = HashMap::with_capacity(folders.len());
+    let mut visiting = HashSet::new();
+    for folder in &mut folders {
+        folder.photo_count = subtree_photo_count(
+            folder.id,
+            &direct_counts,
+            &children,
+            &mut memo,
+            &mut visiting,
+        );
+    }
+
     for folder in &mut folders {
         if is_remote_path(&folder.path) {
             folder.name = folder_name(&folder.path);

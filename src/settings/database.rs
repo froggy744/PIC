@@ -10,11 +10,15 @@ use super::DatabaseManagement;
 
 pub(super) fn page(parent: &adw::Window, management: DatabaseManagement) -> gtk::ScrolledWindow {
     let content = super::page_content(
-        "Database",
-        "Manage separate local PIC libraries and consistent metadata backups. Photos and the shared thumbnail cache are not copied.",
+        "Libraries & Backups",
+        "Manage separate PIC libraries and metadata backups. Photos and the shared thumbnail cache are not copied.",
     );
     let current = gtk::Label::new(None);
     current.set_xalign(0.0);
+    current.set_hexpand(true);
+    current.set_wrap(true);
+    current.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+    current.set_max_width_chars(64);
     current.add_css_class("title-4");
     content.append(&current);
 
@@ -50,14 +54,27 @@ pub(super) fn page(parent: &adw::Window, management: DatabaseManagement) -> gtk:
     known.add_css_class("boxed-list");
     content.append(&known);
 
-    let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    let create = gtk::Button::with_label("Create Database");
-    let open = gtk::Button::with_label("Open Database…");
-    let backup = gtk::Button::with_label("Backup Database");
-    let restore = gtk::Button::with_label("Restore Database…");
+    let actions_heading = gtk::Label::new(Some("Database files"));
+    actions_heading.set_xalign(0.0);
+    actions_heading.add_css_class("heading");
+    content.append(&actions_heading);
+
+    let actions = gtk::Grid::new();
+    actions.set_column_spacing(8);
+    actions.set_row_spacing(8);
+    actions.set_hexpand(true);
+
+    let create = gtk::Button::with_label("Create Library");
+    let open = gtk::Button::with_label("Open Existing…");
+    let backup = gtk::Button::with_label("Back Up");
+    let restore = gtk::Button::with_label("Restore Backup…");
     for button in [&create, &open, &backup, &restore] {
-        actions.append(button);
+        button.set_hexpand(true);
     }
+    actions.attach(&create, 0, 0, 1, 1);
+    actions.attach(&open, 1, 0, 1, 1);
+    actions.attach(&backup, 0, 1, 1, 1);
+    actions.attach(&restore, 1, 1, 1, 1);
     content.append(&actions);
     let status = gtk::Label::new(None);
     status.set_xalign(0.0);
@@ -224,6 +241,7 @@ fn refresh_page(
     }
     for library in crate::db::known_libraries().unwrap_or_default() {
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+        row.set_hexpand(true);
         row.set_margin_top(8);
         row.set_margin_bottom(8);
         row.set_margin_start(12);
@@ -248,6 +266,8 @@ fn refresh_page(
         }
         let path = gtk::Label::new(Some(&library.path.display().to_string()));
         path.set_xalign(0.0);
+        path.set_hexpand(true);
+        path.set_max_width_chars(48);
         path.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
         path.add_css_class("dim-label");
         labels.append(&path);

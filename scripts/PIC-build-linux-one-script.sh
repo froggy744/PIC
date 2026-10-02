@@ -1486,9 +1486,11 @@ EOF_MANIFEST
         "$fp_build" "$manifest" || return 1
 
     # Validate the installed AppStream metadata before export so a release
-    # bundle cannot silently ship metadata that GNOME Software will ignore.
+    # bundle cannot silently ship invalid metadata. Packaging runs offline after
+    # dependency preflight, so disable remote URL/screenshot reachability checks.
     log "Validating Flatpak AppStream metadata"
-    flatpak build "$fp_build" appstreamcli validate "/app/share/metainfo/$APP_ID.metainfo.xml" || \
+    flatpak build "$fp_build" appstreamcli validate --no-net \
+        "/app/share/metainfo/$APP_ID.metainfo.xml" || \
         die "Flatpak AppStream metadata validation failed."
 
     # Test before clean/finish/export. A test failure never produces a bundle.

@@ -1488,6 +1488,12 @@ EOF_MANIFEST
         "${download_args[@]}" \
         "$fp_build" "$manifest" || return 1
 
+    # Validate the installed AppStream metadata before export so a release
+    # bundle cannot silently ship metadata that GNOME Software will ignore.
+    log "Validating Flatpak AppStream metadata"
+    flatpak build "$fp_build" appstreamcli validate "/app/share/metainfo/$APP_ID.metainfo.xml" || \
+        die "Flatpak AppStream metadata validation failed."
+
     # Test before clean/finish/export. A test failure never produces a bundle.
     run_flatpak_tests "$fp_build" "$fp_src" || return 1
     flatpak-builder \

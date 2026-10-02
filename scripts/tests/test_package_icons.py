@@ -32,7 +32,7 @@ class PackageIcons(unittest.TestCase):
                 result=subprocess.run(['bash',str(root/f'scripts/build-{kind}.sh')],cwd=tmp,env=env,text=True,capture_output=True)
                 self.assertEqual(result.returncode,0,result.stdout+result.stderr)
                 payload=root/('target/package-deb' if kind=='deb' else 'target/rpmbuild/SOURCES/payload')
-                self.assertEqual((payload/'usr/share/icons/hicolor/48x48/apps/io.github.you.PicRs.png').read_bytes(),b'test-png')
+                self.assertEqual((payload/'usr/share/icons/hicolor/48x48/apps/io.github.froggy744.PIC.png').read_bytes(),b'test-png')
 
     def test_generator_requires_explicit_artwork(self):
         result=subprocess.run(['bash',str(ROOT/'scripts/generate-icon.sh')],cwd='/tmp',text=True,capture_output=True)

@@ -84,7 +84,7 @@ Install or replace the generated bundle (substitute its actual filename):
 
 ```sh
 flatpak install --user --reinstall ./dist/PIC-1.0.0-REVISION-x86_64.flatpak
-flatpak run io.github.you.PicRs
+flatpak run io.github.froggy744.PIC
 ```
 
 These commands are the same on KDE Neon, Ubuntu and Fedora. Desktop menus may
@@ -131,7 +131,8 @@ The application's thumbnail cleanup preserves overlays.
 
 On first startup, PIC migrates existing `picasa-rs` storage and repairs managed
 paths in the library registry and databases. The renamed Flatpak also migrates
-application storage from its former `io.github.you.PicasaRs` sandbox. Close the
+application storage from the previous `io.github.you.PicRs` sandbox and the
+older `io.github.you.PicasaRs` sandbox. Close the
 older version before starting the upgraded application. If matching files exist
 in both locations, migration stops and preserves both copies for resolution.
 Original photo folders and filenames outside application storage are unchanged.
@@ -154,7 +155,7 @@ The caller's current directory supplies the executable and receives the runtime.
 ## Software-center app information
 
 The Flatpak package installs AppStream metadata from
-`resources/io.github.you.PicRs.metainfo.xml`. It supplies the app description,
+`resources/io.github.froggy744.PIC.metainfo.xml`. It supplies the app description,
 developer, release version, project links and screenshot URLs for software
 centers. Packaging updates the ID, desktop entry reference and version to
 match the selected build, including `PIC_APP_ID` overrides.
@@ -179,13 +180,13 @@ Rebuild the Flatpak to include the new app information:
 Validate metadata without network access:
 
 ```sh
-appstreamcli validate --no-net --explain resources/io.github.you.PicRs.metainfo.xml
+appstreamcli validate --no-net --explain resources/io.github.froggy744.PIC.metainfo.xml
 ```
 
 Preview it in GNOME Software if installed:
 
 ```sh
-gnome-software --show-metainfo resources/io.github.you.PicRs.metainfo.xml
+gnome-software --show-metainfo resources/io.github.froggy744.PIC.metainfo.xml
 ```
 
 Display and caching of screenshots depend on the software center. This adds
@@ -193,14 +194,14 @@ package metadata; repository publication remains a separate step.
 
 ## AppImage and Flatpak launchers
 
-AppImage GNOME integration creates `io.github.you.PicRs.AppImage.desktop`
+AppImage GNOME integration creates `io.github.froggy744.PIC.AppImage.desktop`
 and a separate AppImage icon in the user's data directory. Flatpak uses
-`io.github.you.PicRs.desktop` and its own icon, so uninstalling the AppImage
+`io.github.froggy744.PIC.desktop` and its own icon, so uninstalling the AppImage
 does not affect the Flatpak. Existing user-edited AppImage launchers are
 preserved during builds; uninstall removes one only when its `Exec` entry
 matches the AppImage path supplied.
 
-Older AppImage builds may have left a local `io.github.you.PicRs.desktop`
+Older AppImage builds may have left a local `io.github.froggy744.PIC.desktop`
 entry pointing to a removed file. If that happens, back up that specific
 AppImage entry outside `~/.local/share/applications/`; keep Flatpak's exported
 desktop entry. New builds use the separate AppImage desktop filename.

@@ -171,7 +171,7 @@ Install the generated bundle, replacing `REVISION` with its actual filename:
 
 ```sh
 flatpak install --user --reinstall ./dist/PIC-1.0.0-REVISION-x86_64.flatpak
-flatpak run io.github.you.PicRs
+flatpak run io.github.froggy744.PIC
 ```
 
 For native development, after installing the required build dependencies:

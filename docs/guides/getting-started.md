@@ -9,7 +9,7 @@ PIC — Personal Image Catalogue is a local-first photo manager for Linux. It in
 Flatpak is the primary Linux package. Follow the [Linux build and installation guide](../build/linux.md) to build or install it, then launch PIC from your desktop menu or run:
 
 ```sh
-flatpak run io.github.you.PicRs
+flatpak run io.github.froggy744.PIC
 ```
 
 Native development and optional AppImage builds are also covered there. Windows builds remain experimental.

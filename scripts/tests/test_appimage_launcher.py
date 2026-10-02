@@ -18,8 +18,8 @@ class AppImageLauncherTests(unittest.TestCase):
             data = root / 'local data'
             applications = data / 'applications'
             applications.mkdir(parents=True)
-            flatpak_desktop = applications / 'io.github.you.PicRs.desktop'
-            flatpak_desktop.write_text('[Desktop Entry]\nType=Application\nName=PIC Flatpak\nExec=/usr/bin/true\nIcon=io.github.you.PicRs\n')
+            flatpak_desktop = applications / 'io.github.froggy744.PIC.desktop'
+            flatpak_desktop.write_text('[Desktop Entry]\nType=Application\nName=PIC Flatpak\nExec=/usr/bin/true\nIcon=io.github.froggy744.PIC\n')
             original = flatpak_desktop.read_bytes()
             appimage = root / 'PIC with spaces.AppImage'
             appimage.write_text('#!/bin/sh\nexit 0\n')
@@ -38,15 +38,15 @@ warn() { :; }
 have() { case "$1" in gio|python3) return 1;; *) command -v "$1" >/dev/null;; esac; }
 '''
             command = helpers + function + '\nintegrate_appimage_gnome "$1" "$2"\n'
-            env = dict(os.environ, XDG_DATA_HOME=str(data), APP_ID='io.github.you.PicRs', ICON_EXT='png', PATH=f'{tools}:/usr/bin:/bin')
+            env = dict(os.environ, XDG_DATA_HOME=str(data), APP_ID='io.github.froggy744.PIC', ICON_EXT='png', PATH=f'{tools}:/usr/bin:/bin')
             result = subprocess.run(['bash', '-c', command, 'test', str(appimage), str(icon)], env=env, text=True, capture_output=True)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(flatpak_desktop.read_bytes(), original)
-            launcher = applications / 'io.github.you.PicRs.AppImage.desktop'
+            launcher = applications / 'io.github.froggy744.PIC.AppImage.desktop'
             self.assertTrue(launcher.is_file(), 'AppImage launcher does not have a separate desktop ID')
             self.assertIn('Exec="' + str(appimage) + '" %F', launcher.read_text())
-            self.assertIn('Icon=io.github.you.PicRs.AppImage', launcher.read_text())
-            self.assertTrue((data / 'icons/hicolor/256x256/apps/io.github.you.PicRs.AppImage.png').is_file())
+            self.assertIn('Icon=io.github.froggy744.PIC.AppImage', launcher.read_text())
+            self.assertTrue((data / 'icons/hicolor/256x256/apps/io.github.froggy744.PIC.AppImage.png').is_file())
             # A second run must preserve a user's edited AppImage launcher.
             launcher.write_text(launcher.read_text() + 'X-Test-User-Edit=true\n')
             edited = launcher.read_bytes()
@@ -57,7 +57,7 @@ have() { case "$1" in gio|python3) return 1;; *) command -v "$1" >/dev/null;; es
             appimage.unlink()
             # GNOME/GIO enumeration must still find Flatpak after the file is removed.
             probe = '''from gi.repository import Gio
-apps = [a for a in Gio.AppInfo.get_all() if a.get_id() == 'io.github.you.PicRs.desktop']
+apps = [a for a in Gio.AppInfo.get_all() if a.get_id() == 'io.github.froggy744.PIC.desktop']
 assert len(apps) == 1 and apps[0].get_name() == 'PIC Flatpak'
 assert apps[0].should_show()
 print('Flatpak remains visible after AppImage removal')
@@ -89,7 +89,7 @@ class AppImageUninstallTests(unittest.TestCase):
             icons = data / 'icons/hicolor/256x256/apps'
             applications.mkdir(parents=True)
             icons.mkdir(parents=True)
-            app_id = 'io.github.you.PicRs'
+            app_id = 'io.github.froggy744.PIC'
             appimage = root / 'PIC build.AppImage'
             appimage.write_text('#!/bin/sh\nexit 0\n')
             launcher = applications / f'{app_id}.AppImage.desktop'
@@ -129,7 +129,7 @@ class AppImageUninstallTests(unittest.TestCase):
             data = root / 'data'
             applications = data / 'applications'
             applications.mkdir(parents=True)
-            app_id = 'io.github.you.PicRs'
+            app_id = 'io.github.froggy744.PIC'
             requested = root / 'requested.AppImage'
             other = root / 'other.AppImage'
             requested.touch()
@@ -161,7 +161,7 @@ class AppImageUninstallTests(unittest.TestCase):
             icon_dir = data / 'icons/hicolor/256x256/apps'
             applications.mkdir(parents=True)
             icon_dir.mkdir(parents=True)
-            app_id = 'io.github.you.PicRs'
+            app_id = 'io.github.froggy744.PIC'
             appimage = root / 'already deleted.AppImage'
             launcher = applications / f'{app_id}.AppImage.desktop'
             launcher.write_text(f'Exec="{appimage}" %F\nIcon={app_id}.AppImage\n')
@@ -184,7 +184,7 @@ class AppImageUninstallTests(unittest.TestCase):
             data = root / 'data'
             icon_dir = data / 'icons/hicolor/256x256/apps'
             icon_dir.mkdir(parents=True)
-            app_id = 'io.github.you.PicRs'
+            app_id = 'io.github.froggy744.PIC'
             appimage = root / 'removed.AppImage'
             icon = icon_dir / f'{app_id}.AppImage.png'
             icon.write_bytes(b'orphaned icon')

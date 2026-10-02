@@ -72,6 +72,12 @@ impl Lightbox {
 
         let pan_active_for_drag_begin = pan_active.clone();
         let viewport_for_drag_begin = picture_viewport.clone();
+        let drag_start_h_begin = drag_start_h.clone();
+        let drag_start_v_begin = drag_start_v.clone();
+        let drag_activation_x_begin = drag_activation_x.clone();
+        let drag_activation_y_begin = drag_activation_y.clone();
+        let drag_range_h_begin = drag_range_h.clone();
+        let drag_range_v_begin = drag_range_v.clone();
         pan_drag.connect_drag_begin(move |gesture, x, y| {
             pan_active_for_drag_begin.set(false);
 
@@ -87,12 +93,20 @@ impl Lightbox {
                 return;
             }
 
-            // Do not capture adjustment values yet. Explicit 1:1 may still be
-            // replacing the fitted preview with its native texture, which can
-            // change the adjustment ranges after the button went down. The
-            // origin is captured only when a real pan crosses the threshold.
+            // Capture the exact mouse-down anchor. If the scroll geometry is
+            // still the same when the drag threshold is crossed, the full
+            // offset from this press is applied so the grabbed image point
+            // stays under the pointer. A later range change is handled by the
+            // rebase path below.
             let hadj = viewport_for_drag_begin.hadjustment();
             let vadj = viewport_for_drag_begin.vadjustment();
+            drag_start_h_begin.set(hadj.value());
+            drag_start_v_begin.set(vadj.value());
+            drag_activation_x_begin.set(0.0);
+            drag_activation_y_begin.set(0.0);
+            drag_range_h_begin.set((hadj.lower(), hadj.upper(), hadj.page_size()));
+            drag_range_v_begin.set((vadj.lower(), vadj.upper(), vadj.page_size()));
+
             let scrollable =
                 hadj.upper() - hadj.page_size() > 1.0 || vadj.upper() - vadj.page_size() > 1.0;
             viewport_for_drag_begin.set_cursor_from_name(if scrollable {
@@ -101,7 +115,9 @@ impl Lightbox {
                 None
             });
             zoom_trace(format!(
-                "pan_press x={x:.1} y={y:.1} h={:.1}/{:.1}/{:.1} v={:.1}/{:.1}/{:.1}",
+                "pan_press x={x:.1} y={y:.1} origin={:.1},{:.1} h={:.1}/{:.1}/{:.1} v={:.1}/{:.1}/{:.1}",
+                hadj.value(),
+                vadj.value(),
                 hadj.value(),
                 hadj.upper(),
                 hadj.page_size(),
@@ -131,36 +147,66 @@ impl Lightbox {
             }
 
             if !pan_active_for_drag_update.get() {
-                // Ignore hand jitter and stationary-click updates. When the
-                // threshold is crossed, claim the sequence so a genuine pan
-                // cancels the child click gesture, but start from the current
-                // adjustment values and current pointer offset. The first
-                // claimed update therefore moves the image by exactly 0 px.
+                // Ignore hand jitter and stationary-click updates. Once the
+                // pointer has genuinely moved, claim the sequence. Preserve
+                // the mouse-down origin when the geometry is unchanged so the
+                // exact image point pressed remains under the pointer.
                 if offset_x.hypot(offset_y) < PAN_CLAIM_THRESHOLD {
                     return;
                 }
 
                 gesture.set_state(gtk::EventSequenceState::Claimed);
                 pan_active_for_drag_update.set(true);
-                drag_start_h_update.set(hadj.value());
-                drag_start_v_update.set(vadj.value());
-                drag_activation_x_update.set(offset_x);
-                drag_activation_y_update.set(offset_y);
-                drag_range_h_update.set((hadj.lower(), hadj.upper(), hadj.page_size()));
-                drag_range_v_update.set((vadj.lower(), vadj.upper(), vadj.page_size()));
                 viewport_for_drag_update.set_cursor_from_name(Some("grabbing"));
+
+                let h_range = (hadj.lower(), hadj.upper(), hadj.page_size());
+                let v_range = (vadj.lower(), vadj.upper(), vadj.page_size());
+                let old_h = drag_range_h_update.get();
+                let old_v = drag_range_v_update.get();
+                let range_changed = (h_range.0 - old_h.0).abs() > 0.5
+                    || (h_range.1 - old_h.1).abs() > 0.5
+                    || (h_range.2 - old_h.2).abs() > 0.5
+                    || (v_range.0 - old_v.0).abs() > 0.5
+                    || (v_range.1 - old_v.1).abs() > 0.5
+                    || (v_range.2 - old_v.2).abs() > 0.5;
+
+                if range_changed {
+                    // The native texture or viewport geometry changed after
+                    // mouse-down. Rebase only in this exceptional case; using
+                    // the old origin would produce a genuine jump.
+                    drag_start_h_update.set(hadj.value());
+                    drag_start_v_update.set(vadj.value());
+                    drag_activation_x_update.set(offset_x);
+                    drag_activation_y_update.set(offset_y);
+                    drag_range_h_update.set(h_range);
+                    drag_range_v_update.set(v_range);
+                    zoom_trace(format!(
+                        "pan_activate_rebase offset={offset_x:.1},{offset_y:.1} origin={:.1},{:.1} h_range={:.1}/{:.1}/{:.1} v_range={:.1}/{:.1}/{:.1}",
+                        hadj.value(),
+                        vadj.value(),
+                        h_range.0,
+                        h_range.1,
+                        h_range.2,
+                        v_range.0,
+                        v_range.1,
+                        v_range.2,
+                    ));
+                    return;
+                }
+
+                // Normal case: activation offset remains 0,0 from mouse-down,
+                // so the full drag offset is applied below on this same event.
                 zoom_trace(format!(
                     "pan_activate offset={offset_x:.1},{offset_y:.1} origin={:.1},{:.1} h_range={:.1}/{:.1}/{:.1} v_range={:.1}/{:.1}/{:.1}",
-                    hadj.value(),
-                    vadj.value(),
-                    hadj.lower(),
-                    hadj.upper(),
-                    hadj.page_size(),
-                    vadj.lower(),
-                    vadj.upper(),
-                    vadj.page_size(),
+                    drag_start_h_update.get(),
+                    drag_start_v_update.get(),
+                    h_range.0,
+                    h_range.1,
+                    h_range.2,
+                    v_range.0,
+                    v_range.1,
+                    v_range.2,
                 ));
-                return;
             }
 
             // A native texture can finish decoding, or the window can resize,

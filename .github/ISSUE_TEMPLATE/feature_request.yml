@@ -1,0 +1,23 @@
+name: Feature request
+description: Suggest an improvement for PIC
+title: "[Feature] "
+body:
+  - type: textarea
+    id: need
+    attributes:
+      label: What would you like PIC to do?
+      description: Describe the use case or problem the feature would address.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behaviour
+      description: Describe how you think the feature should work.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives or additional context
+      description: Add screenshots, examples, or alternatives if useful.

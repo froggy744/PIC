@@ -110,45 +110,57 @@ impl SettingsWindow {
         stack.set_transition_type(gtk::StackTransitionType::None);
 
         stack.add_titled(
-            &formats_page(connection.clone(), formats_changed.clone()),
-            Some("formats"),
-            "File Formats",
+            &interface_page(
+                connection.clone(),
+                theme_changed.clone(),
+                thumbnail_changed,
+                zoom_animations_changed,
+                sidebar_changed.clone(),
+            ),
+            Some("interface"),
+            "Interface",
         );
+
         let (themes_page, refresh_appearance) = themes_page(theme_engine);
         self.refresh_appearance
             .borrow_mut()
             .replace(refresh_appearance);
         stack.add_titled(&themes_page, Some("themes"), "Themes");
-        stack.add_titled(
-            &interface_page(
-                connection.clone(),
-                theme_changed,
-                thumbnail_changed,
-                zoom_animations_changed,
-            ),
-            Some("interface"),
-            "Interface",
-        );
+
         stack.add_titled(
             &sidebar_page(connection.clone(), sidebar_changed),
             Some("sidebar"),
             "Sidebar",
         );
+
+        stack.add_titled(
+            &albums_page(connection.clone(), theme_changed),
+            Some("albums"),
+            "Albums",
+        );
+
         stack.add_titled(
             &folders_page(connection.clone(), folder_watch_changed),
             Some("folders"),
             "Folders",
         );
+
         stack.add_titled(
-            &database::page(&window, database_management),
-            Some("database"),
-            "Database",
+            &formats_page(connection.clone(), formats_changed.clone()),
+            Some("formats"),
+            "File Formats",
         );
-        stack.add_titled(&albums_page(&connection.borrow()), Some("albums"), "Albums");
+
         stack.add_titled(
             &library_page(connection.clone(), formats_changed, maintenance, &window),
             Some("library"),
-            "Library",
+            "Library & Storage",
+        );
+
+        stack.add_titled(
+            &database::page(&window, database_management),
+            Some("database"),
+            "Libraries & Backups",
         );
         if let Some(page) = initial_page {
             stack.set_visible_child_name(page);
@@ -405,9 +417,24 @@ fn folders_page(
     scroll_page(content)
 }
 
-fn albums_page(connection: &Connection) -> gtk::ScrolledWindow {
-    let content = page_content("Albums", "Virtual albums in this library.");
-    let albums = crate::db::albums(connection).unwrap_or_default();
+fn albums_page(
+    connection: Rc<RefCell<Connection>>,
+    theme_changed: Rc<dyn Fn()>,
+) -> gtk::ScrolledWindow {
+    let content = page_content(
+        "Albums",
+        "Customize album presentation and review albums in the current library.",
+    );
+
+    append_album_appearance(&content, connection.clone(), theme_changed);
+
+    let heading = gtk::Label::new(Some("Albums in this library"));
+    heading.set_halign(gtk::Align::Start);
+    heading.set_hexpand(true);
+    heading.add_css_class("heading");
+    content.append(&heading);
+
+    let albums = crate::db::albums(&connection.borrow()).unwrap_or_default();
     let list = settings_list();
     for album in &albums {
         append_row(
@@ -422,13 +449,209 @@ fn albums_page(connection: &Connection) -> gtk::ScrolledWindow {
     scroll_page(content)
 }
 
+fn append_album_appearance(
+    content: &gtk::Box,
+    connection: Rc<RefCell<Connection>>,
+    theme_changed: Rc<dyn Fn()>,
+) {
+    let heading = gtk::Label::new(Some("Appearance"));
+    heading.set_halign(gtk::Align::Start);
+    heading.set_hexpand(true);
+    heading.add_css_class("heading");
+    content.append(&heading);
+
+    let list = settings_list();
+    let appearance = album_appearance(&connection.borrow());
+    let updating = Rc::new(Cell::new(false));
+
+    let bookshelf = gtk::Switch::new();
+    bookshelf.set_active(appearance.bookshelf_enabled);
+    bookshelf.set_valign(gtk::Align::Center);
+    append_row(
+        &list,
+        "Bookshelf",
+        Some("Show the selected wooden background behind albums."),
+        Some(bookshelf.upcast_ref()),
+    );
+
+    let next_background = gtk::Button::with_label("Next Background");
+    next_background.set_valign(gtk::Align::Center);
+    append_row(
+        &list,
+        "Bookshelf background",
+        Some("Cycle through the available bookshelf images."),
+        Some(next_background.upcast_ref()),
+    );
+
+    let album_covers = gtk::Switch::new();
+    album_covers.set_active(appearance.covers_enabled);
+    album_covers.set_valign(gtk::Align::Center);
+    append_row(
+        &list,
+        "Album Covers",
+        Some("Show decorative covers around album thumbnails."),
+        Some(album_covers.upcast_ref()),
+    );
+
+    let next_covers = gtk::Button::with_label("Next Album Covers");
+    next_covers.set_valign(gtk::Align::Center);
+    append_row(
+        &list,
+        "Album cover design",
+        Some("Cycle through the available cover themes."),
+        Some(next_covers.upcast_ref()),
+    );
+
+    let disable_all = gtk::Button::with_label("Disable All Themes");
+    disable_all.set_valign(gtk::Align::Center);
+    disable_all.set_sensitive(appearance.bookshelf_enabled || appearance.covers_enabled);
+    append_row(
+        &list,
+        "Default appearance",
+        Some("Turn off the bookshelf and album covers."),
+        Some(disable_all.upcast_ref()),
+    );
+
+    let reset_all = gtk::Button::with_label("Reset All Theme Settings");
+    reset_all.set_valign(gtk::Align::Center);
+    reset_all.add_css_class("reset-all-themes-action");
+    append_row(
+        &list,
+        "Reset themes",
+        Some("Clear every saved theme choice, including each album's own cover."),
+        Some(reset_all.upcast_ref()),
+    );
+
+    {
+        let connection = connection.clone();
+        let theme_changed = theme_changed.clone();
+        let updating = updating.clone();
+        let disable_all = disable_all.clone();
+        let album_covers = album_covers.clone();
+        bookshelf.connect_active_notify(move |bookshelf| {
+            if updating.get() {
+                return;
+            }
+            if let Err(error) = set_bookshelf_enabled(&connection.borrow(), bookshelf.is_active()) {
+                eprintln!("Could not save bookshelf setting: {error}");
+                return;
+            }
+            disable_all.set_sensitive(bookshelf.is_active() || album_covers.is_active());
+            theme_changed();
+        });
+    }
+    {
+        let connection = connection.clone();
+        let theme_changed = theme_changed.clone();
+        let updating = updating.clone();
+        let disable_all = disable_all.clone();
+        let bookshelf = bookshelf.clone();
+        album_covers.connect_active_notify(move |covers| {
+            if updating.get() {
+                return;
+            }
+            if let Err(error) = set_covers_enabled(&connection.borrow(), covers.is_active()) {
+                eprintln!("Could not save album cover setting: {error}");
+                return;
+            }
+            disable_all.set_sensitive(bookshelf.is_active() || covers.is_active());
+            theme_changed();
+        });
+    }
+    {
+        let connection = connection.clone();
+        let theme_changed = theme_changed.clone();
+        let updating = updating.clone();
+        let bookshelf = bookshelf.clone();
+        let disable_all = disable_all.clone();
+        next_background.connect_clicked(move |_| {
+            if let Err(error) = next_bookshelf_background(
+                &connection.borrow(),
+                crate::albums_view::bookshelf_background_count(),
+            ) {
+                eprintln!("Could not save bookshelf background: {error}");
+                return;
+            }
+            updating.set(true);
+            bookshelf.set_active(true);
+            updating.set(false);
+            disable_all.set_sensitive(true);
+            theme_changed();
+        });
+    }
+    {
+        let connection = connection.clone();
+        let theme_changed = theme_changed.clone();
+        let updating = updating.clone();
+        let album_covers = album_covers.clone();
+        let disable_all = disable_all.clone();
+        next_covers.connect_clicked(move |_| {
+            if let Err(error) = next_album_covers(
+                &connection.borrow(),
+                crate::albums_view::album_cover_theme_count(),
+            ) {
+                eprintln!("Could not save album cover design: {error}");
+                return;
+            }
+            updating.set(true);
+            album_covers.set_active(true);
+            updating.set(false);
+            disable_all.set_sensitive(true);
+            theme_changed();
+        });
+    }
+    {
+        let connection = connection.clone();
+        let theme_changed = theme_changed.clone();
+        let updating = updating.clone();
+        let bookshelf = bookshelf.clone();
+        let album_covers = album_covers.clone();
+        disable_all.connect_clicked(move |button| {
+            if let Err(error) = disable_all_album_themes(&connection.borrow()) {
+                eprintln!("Could not disable album themes: {error}");
+                return;
+            }
+            updating.set(true);
+            bookshelf.set_active(false);
+            album_covers.set_active(false);
+            updating.set(false);
+            button.set_sensitive(false);
+            theme_changed();
+        });
+    }
+    {
+        let connection = connection.clone();
+        let theme_changed = theme_changed.clone();
+        let updating = updating.clone();
+        let bookshelf = bookshelf.clone();
+        let album_covers = album_covers.clone();
+        let disable_all = disable_all.clone();
+        reset_all.connect_clicked(move |_| {
+            if let Err(error) = reset_all_album_themes(&connection.borrow()) {
+                eprintln!("Could not reset theme settings: {error}");
+                return;
+            }
+            updating.set(true);
+            bookshelf.set_active(false);
+            album_covers.set_active(false);
+            updating.set(false);
+            disable_all.set_sensitive(false);
+            theme_changed();
+        });
+    }
+    content.append(&list);
+}
+
 fn library_page(
     connection: Rc<RefCell<Connection>>,
     recently_added_changed: Rc<dyn Fn()>,
     maintenance: LibraryMaintenance,
     parent_window: &adw::Window,
 ) -> gtk::ScrolledWindow {
-    let content = page_content("Library", "Current library statistics.");
+    let content = page_content(
+        "Library & Storage",
+        "Library statistics, thumbnail cache storage, and maintenance.",
+    );
     let list = settings_list();
     let recent_limit = gtk::SpinButton::with_range(1.0, 1_000_000.0, 1.0);
     recent_limit.set_value(crate::db::recently_added_limit(&connection.borrow()) as f64);
@@ -1212,8 +1435,9 @@ fn interface_page(
     theme_changed: Rc<dyn Fn()>,
     thumbnail_changed: Rc<dyn Fn()>,
     zoom_animations_changed: Rc<dyn Fn()>,
+    sidebar_changed: Rc<dyn Fn()>,
 ) -> gtk::ScrolledWindow {
-    let content = page_content("Interface", "Customize albums and thumbnail appearance.");
+    let content = page_content("Interface", "Customize thumbnail appearance and interface behaviour.");
 
     // Thumbnail appearance toggles apply live through thumbnail_changed and
     // are re-read at startup.
@@ -1386,193 +1610,45 @@ fn interface_page(
     );
     content.append(&effects_list);
 
-    let heading = gtk::Label::new(Some("Albums"));
-    heading.set_halign(gtk::Align::Start);
-    heading.set_hexpand(true);
-    heading.set_ellipsize(gtk::pango::EllipsizeMode::End);
-    heading.add_css_class("heading");
-    content.append(&heading);
+    let navigation_heading = gtk::Label::new(Some("Navigation"));
+    navigation_heading.set_halign(gtk::Align::Start);
+    navigation_heading.set_hexpand(true);
+    navigation_heading.add_css_class("heading");
+    content.append(&navigation_heading);
 
-    let list = settings_list();
-    let appearance = album_appearance(&connection.borrow());
-    let updating = Rc::new(Cell::new(false));
-
-    let bookshelf = gtk::Switch::new();
-    bookshelf.set_active(appearance.bookshelf_enabled);
-    bookshelf.set_valign(gtk::Align::Center);
-    append_row(
-        &list,
-        "Bookshelf",
-        Some("Show the selected wooden background behind albums."),
-        Some(bookshelf.upcast_ref()),
+    let navigation_list = settings_list();
+    let show_history = gtk::Switch::new();
+    show_history.set_valign(gtk::Align::Center);
+    show_history.set_active(
+        saved_bool(
+            &connection.borrow(),
+            crate::sidebar::HISTORY_VISIBLE_SETTING_KEY,
+        )
+        .unwrap_or(true),
     );
-
-    let next_background = gtk::Button::with_label("Next Background");
-    next_background.set_valign(gtk::Align::Center);
-    append_row(
-        &list,
-        "Bookshelf background",
-        Some("Cycle through the available bookshelf images."),
-        Some(next_background.upcast_ref()),
-    );
-
-    let album_covers = gtk::Switch::new();
-    album_covers.set_active(appearance.covers_enabled);
-    album_covers.set_valign(gtk::Align::Center);
-    append_row(
-        &list,
-        "Album Covers",
-        Some("Show decorative covers around album thumbnails."),
-        Some(album_covers.upcast_ref()),
-    );
-
-    let next_covers = gtk::Button::with_label("Next Album Covers");
-    next_covers.set_valign(gtk::Align::Center);
-    append_row(
-        &list,
-        "Album cover design",
-        Some("Cycle through the available cover themes."),
-        Some(next_covers.upcast_ref()),
-    );
-
-    let disable_all = gtk::Button::with_label("Disable All Themes");
-    disable_all.set_valign(gtk::Align::Center);
-    disable_all.set_sensitive(appearance.bookshelf_enabled || appearance.covers_enabled);
-    append_row(
-        &list,
-        "Default appearance",
-        Some("Turn off the bookshelf and album covers."),
-        Some(disable_all.upcast_ref()),
-    );
-
-    let reset_all = gtk::Button::with_label("Reset All Theme Settings");
-    reset_all.set_valign(gtk::Align::Center);
-    reset_all.add_css_class("reset-all-themes-action");
-    append_row(
-        &list,
-        "Reset themes",
-        Some("Clear every saved theme choice, including each album's own cover."),
-        Some(reset_all.upcast_ref()),
-    );
-
     {
         let connection = connection.clone();
-        let theme_changed = theme_changed.clone();
-        let updating = updating.clone();
-        let disable_all = disable_all.clone();
-        let album_covers = album_covers.clone();
-        bookshelf.connect_active_notify(move |bookshelf| {
-            if updating.get() {
-                return;
-            }
-            if let Err(error) = set_bookshelf_enabled(&connection.borrow(), bookshelf.is_active()) {
-                eprintln!("Could not save bookshelf setting: {error}");
-                return;
-            }
-            disable_all.set_sensitive(bookshelf.is_active() || album_covers.is_active());
-            theme_changed();
-        });
-    }
-    {
-        let connection = connection.clone();
-        let theme_changed = theme_changed.clone();
-        let updating = updating.clone();
-        let disable_all = disable_all.clone();
-        let bookshelf = bookshelf.clone();
-        album_covers.connect_active_notify(move |covers| {
-            if updating.get() {
-                return;
-            }
-            if let Err(error) = set_covers_enabled(&connection.borrow(), covers.is_active()) {
-                eprintln!("Could not save album cover setting: {error}");
-                return;
-            }
-            disable_all.set_sensitive(bookshelf.is_active() || covers.is_active());
-            theme_changed();
-        });
-    }
-    {
-        let connection = connection.clone();
-        let theme_changed = theme_changed.clone();
-        let updating = updating.clone();
-        let bookshelf = bookshelf.clone();
-        let disable_all = disable_all.clone();
-        next_background.connect_clicked(move |_| {
-            if let Err(error) = next_bookshelf_background(
+        let sidebar_changed = sidebar_changed.clone();
+        show_history.connect_active_notify(move |toggle| {
+            if let Err(error) = crate::db::set_setting(
                 &connection.borrow(),
-                crate::albums_view::bookshelf_background_count(),
+                crate::sidebar::HISTORY_VISIBLE_SETTING_KEY,
+                &toggle.is_active().to_string(),
             ) {
-                eprintln!("Could not save bookshelf background: {error}");
+                eprintln!("Could not save History visibility: {error}");
                 return;
             }
-            updating.set(true);
-            bookshelf.set_active(true);
-            updating.set(false);
-            disable_all.set_sensitive(true);
-            theme_changed();
+            sidebar_changed();
         });
     }
-    {
-        let connection = connection.clone();
-        let theme_changed = theme_changed.clone();
-        let updating = updating.clone();
-        let album_covers = album_covers.clone();
-        let disable_all = disable_all.clone();
-        next_covers.connect_clicked(move |_| {
-            if let Err(error) = next_album_covers(
-                &connection.borrow(),
-                crate::albums_view::album_cover_theme_count(),
-            ) {
-                eprintln!("Could not save album cover design: {error}");
-                return;
-            }
-            updating.set(true);
-            album_covers.set_active(true);
-            updating.set(false);
-            disable_all.set_sensitive(true);
-            theme_changed();
-        });
-    }
-    {
-        let connection = connection.clone();
-        let theme_changed = theme_changed.clone();
-        let updating = updating.clone();
-        let bookshelf = bookshelf.clone();
-        let album_covers = album_covers.clone();
-        disable_all.connect_clicked(move |button| {
-            if let Err(error) = disable_all_album_themes(&connection.borrow()) {
-                eprintln!("Could not disable album themes: {error}");
-                return;
-            }
-            updating.set(true);
-            bookshelf.set_active(false);
-            album_covers.set_active(false);
-            updating.set(false);
-            button.set_sensitive(false);
-            theme_changed();
-        });
-    }
-    {
-        let connection = connection.clone();
-        let theme_changed = theme_changed.clone();
-        let updating = updating.clone();
-        let bookshelf = bookshelf.clone();
-        let album_covers = album_covers.clone();
-        let disable_all = disable_all.clone();
-        reset_all.connect_clicked(move |_| {
-            if let Err(error) = reset_all_album_themes(&connection.borrow()) {
-                eprintln!("Could not reset theme settings: {error}");
-                return;
-            }
-            updating.set(true);
-            bookshelf.set_active(false);
-            album_covers.set_active(false);
-            updating.set(false);
-            disable_all.set_sensitive(false);
-            theme_changed();
-        });
-    }
-    content.append(&list);
+    append_row(
+        &navigation_list,
+        "Show History",
+        Some("Show or hide History in the Library section of the sidebar."),
+        Some(show_history.upcast_ref()),
+    );
+    content.append(&navigation_list);
+
     scroll_page(content)
 }
 

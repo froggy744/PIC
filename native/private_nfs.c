@@ -233,21 +233,13 @@ int pic_nfs_read(const char *host, const char *export_path, const char *relative
             bytes=more;capbytes=next;
         }
         uint64_t call_started = monotonic_ms();
-        struct rpc_stats stats_before = {0}, stats_after = {0};
-        int collect_rpc_stats = trace_enabled();
-        if (collect_rpc_stats)
-            rpc_get_stats(nfs_get_rpc_context(nfs), &stats_before);
         int got=nfs_read(nfs,fh,bytes+used,capbytes-used);
         read_calls++;
-        if (collect_rpc_stats) {
-            rpc_get_stats(nfs_get_rpc_context(nfs), &stats_after);
-            char detail[192];
+        if (trace_enabled()) {
+            char detail[128];
             snprintf(detail, sizeof detail,
-                     "iteration=%d outcome=%s bytes=%d timedout_delta=%llu retransmitted_delta=%llu reconnects_delta=%llu",
-                     read_calls, got < 0 ? "error" : "ok", got,
-                     (unsigned long long)(stats_after.num_timedout - stats_before.num_timedout),
-                     (unsigned long long)(stats_after.num_retransmitted - stats_before.num_retransmitted),
-                     (unsigned long long)(stats_after.num_reconnects - stats_before.num_reconnects));
+                     "iteration=%d outcome=%s bytes=%d",
+                     read_calls, got < 0 ? "error" : "ok", got);
             trace_stage("rpc_read", call_started, host, export_path, relative, detail);
         }
         if (read_calls == 1) {

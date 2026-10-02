@@ -335,6 +335,12 @@ find_gdk_pixbuf_query_loaders() {
         -print -quit 2>/dev/null || true
 }
 
+find_glycin_svg_loader() {
+    find /usr/libexec /usr/lib /usr/lib64 -type f \
+        -path '*/glycin-loaders/*/glycin-svg' -perm -u+x \
+        -print -quit 2>/dev/null || true
+}
+
 # Host package names are selected for Fedora or Debian/Ubuntu. Other systems
 # still get a complete missing-dependency report and manual setup instructions.
 add_host_dependency() {
@@ -395,12 +401,12 @@ collect_host_dependencies() {
         if ! have pkg-config || ! pkg-config --exists libnfs; then
             add_host_dependency "NFS development files" libnfs-devel libnfs-dev
         fi
-        # SVG icons are decoded through a dynamically loaded GdkPixbuf plugin.
-        # linuxdeploy cannot discover that plugin from ELF dependencies alone.
-        if [[ -z "$(find_gdk_pixbuf_svg_loader)" ]]; then
-            add_host_dependency "GdkPixbuf SVG loader" librsvg2 librsvg2-common
+        # SVG icon decoding differs by distro generation. Ubuntu 24.04 uses
+        # the classic GdkPixbuf librsvg plugin; current Fedora uses glycin-svg.
+        if [[ -z "$(find_gdk_pixbuf_svg_loader)" && -z "$(find_glycin_svg_loader)" ]]; then
+            add_host_dependency "SVG image loader" glycin-loaders librsvg2-common
         fi
-        if [[ -z "$(find_gdk_pixbuf_query_loaders)" ]]; then
+        if [[ -n "$(find_gdk_pixbuf_svg_loader)" && -z "$(find_gdk_pixbuf_query_loaders)" ]]; then
             add_host_dependency "GdkPixbuf loader cache tool" gdk-pixbuf2 libgdk-pixbuf2.0-bin
         fi
     fi
@@ -883,7 +889,7 @@ if [ -n "\${APPDIR:-}" ] && [ -d "\$APPDIR/usr/share/$BIN_NAME" ]; then
     # Make GTK/GIO discover data bundled in the AppImage before host data.
     # This is required for named Adwaita symbolic icons to render consistently
     # on hosts whose installed icon theme differs from the build environment.
-    export XDG_DATA_DIRS="\$PREFIX/share\${XDG_DATA_DIRS:+:\$XDG_DATA_DIRS}"
+    export XDG_DATA_DIRS="\$PREFIX/share:\${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
 
     # SVG support is a dynamically loaded GdkPixbuf plugin. Its cache must
     # contain the real AppImage mount path, which only exists at launch time.

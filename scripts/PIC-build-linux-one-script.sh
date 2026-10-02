@@ -1010,6 +1010,7 @@ validate_appimage_icon_layout() {
 
 build_appimage() {
     local linuxdeploy app_work appdir desktop staging_icon output_name deployed_bin real_bin resource_root app_icon_dir
+    local svg_loader pixbuf_query deployed_svg_loader pixbuf_cache_dir pixbuf_cache_template cache_loader line
     if ! linuxdeploy="$(linuxdeploy_path)"; then
         return 1
     fi
@@ -1017,6 +1018,13 @@ build_appimage() {
         warn "AppImage skipped: linuxdeploy is unavailable or not executable."
         return 1
     }
+
+    svg_loader="$(find_gdk_pixbuf_svg_loader)"
+    [[ -n "$svg_loader" && -f "$svg_loader" ]] || \
+        die "GdkPixbuf SVG loader is unavailable; install librsvg2/librsvg2-common."
+    pixbuf_query="$(find_gdk_pixbuf_query_loaders)"
+    [[ -n "$pixbuf_query" && -x "$pixbuf_query" ]] || \
+        die "gdk-pixbuf-query-loaders is unavailable."
 
     app_work="$WORK_ROOT/appimage"
     appdir="$app_work/AppDir"
@@ -1034,8 +1042,28 @@ build_appimage() {
     APPIMAGE_EXTRACT_AND_RUN=1 "$linuxdeploy" \
         --appdir "$appdir" \
         --executable "$NATIVE_BIN" \
+        --library "$svg_loader" \
         --desktop-file "$desktop" \
         --icon-file "$staging_icon"
+
+    # GdkPixbuf image loaders are plugins, not normal link dependencies. The
+    # explicit --library above makes linuxdeploy collect librsvg and its ELF
+    # dependencies. Build a one-loader cache template whose path is resolved
+    # by the AppImage launcher after the runtime mount point is known.
+    deployed_svg_loader="$appdir/usr/lib/$(basename "$svg_loader")"
+    [[ -s "$deployed_svg_loader" ]] || \
+        die "linuxdeploy did not stage the GdkPixbuf SVG loader: $deployed_svg_loader"
+    pixbuf_cache_dir="$appdir/usr/lib/gdk-pixbuf-2.0/2.10.0"
+    pixbuf_cache_template="$pixbuf_cache_dir/pic-svg-loaders.cache.in"
+    mkdir -p "$pixbuf_cache_dir"
+    cache_loader="@PIC_PREFIX@/lib/$(basename "$svg_loader")"
+    : > "$pixbuf_cache_template"
+    while IFS= read -r line; do
+        printf '%s\n' "${line//$svg_loader/$cache_loader}"
+    done < <("$pixbuf_query" "$svg_loader") > "$pixbuf_cache_template"
+    grep -Fq "$cache_loader" "$pixbuf_cache_template" || \
+        die "Could not generate relocatable GdkPixbuf SVG loader cache template."
+    ok "Bundled GdkPixbuf SVG loader: $deployed_svg_loader"
 
     # linuxdeploy versions differ in whether they leave a real application icon
     # at the AppDir root. Install PIC's selected custom icon deterministically:

@@ -86,23 +86,57 @@ fn main() {
             Ok(connection) => window::build(application, connection).present(),
             Err(error) => {
                 eprintln!("Could not open photo library: {error:#}");
+                // Startup recovery needs an application-owned parent even though the
+                // normal main window cannot be built until a database is open. Keeping
+                // this tiny window alive also gives native choosers a valid transient
+                // parent instead of triggering GtkDialog's unparented-dialog warning.
+                let recovery_parent = adw::ApplicationWindow::builder()
+                    .application(application)
+                    .title("PIC")
+                    .default_width(1)
+                    .default_height(1)
+                    .build();
+                recovery_parent.present();
+
                 let dialog = gtk::MessageDialog::builder()
+                    .transient_for(&recovery_parent)
+                    .modal(true)
                     .message_type(gtk::MessageType::Error)
                     .buttons(gtk::ButtonsType::None)
                     .text("Could not open the photo library")
-                    .secondary_text(format!("{error:#}\n\nChoose another PIC database or close the app."))
+                    .secondary_text(format!("{error:#}\n\nChoose another PIC database, create a new library, or close the app."))
                     .build();
                 dialog.add_button("Close", gtk::ResponseType::Close);
+                dialog.add_button("Create New Library", gtk::ResponseType::Other(1));
                 dialog.add_button("Choose Database…", gtk::ResponseType::Accept);
                 let application = application.clone();
                 dialog.connect_response(move |dialog, response| {
                     dialog.close();
+
+                    if response == gtk::ResponseType::Other(1) {
+                        let result = db::suggested_library_path("Default Library")
+                            .and_then(|path| db::create_library(&path, "Default Library", ""))
+                            .and_then(|library| db::select_library(&library.id));
+                        match result {
+                            Ok((_library, connection)) => {
+                                window::build(&application, connection).present();
+                                recovery_parent.close();
+                            }
+                            Err(error) => {
+                                eprintln!("Could not create a new photo library: {error:#}");
+                                recovery_parent.close();
+                            }
+                        }
+                        return;
+                    }
+
                     if response != gtk::ResponseType::Accept {
+                        recovery_parent.close();
                         return;
                     }
                     let chooser = gtk::FileChooserNative::new(
                         Some("Open PIC Database"),
-                        None::<&gtk::Window>,
+                        Some(&recovery_parent),
                         gtk::FileChooserAction::Open,
                         Some("Open"),
                         Some("Cancel"),
@@ -130,6 +164,7 @@ fn main() {
                                 match selected.and_then(|library| db::select_library(&library.id)) {
                                     Ok((_library, connection)) => {
                                         window::build(&application, connection).present();
+                                        recovery_parent.close();
                                     }
                                     Err(error) => eprintln!("Could not open selected library: {error:#}"),
                                 }

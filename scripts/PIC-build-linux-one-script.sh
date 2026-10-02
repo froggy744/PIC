@@ -1057,8 +1057,11 @@ build_appimage() {
     mkdir -p "$appdir/usr/share/icons"
     for icon_theme in Adwaita AdwaitaLegacy hicolor; do
         if [[ -d "/usr/share/icons/$icon_theme" ]]; then
-            rm -rf "$appdir/usr/share/icons/$icon_theme"
-            cp -a "/usr/share/icons/$icon_theme" "$appdir/usr/share/icons/"
+            # Merge rather than replace: linuxdeploy has already installed
+            # PIC's own application icon under hicolor, and replacing that
+            # directory would leave the AppDir root icon symlink dangling.
+            mkdir -p "$appdir/usr/share/icons/$icon_theme"
+            cp -a "/usr/share/icons/$icon_theme/." "$appdir/usr/share/icons/$icon_theme/"
         fi
     done
 

@@ -644,6 +644,7 @@ impl SquareTile {
     /// geometry (grid item height, Folder line height) grows by exactly
     /// `filename_caption_height()`.
     pub(crate) fn set_filename_visible(&self, visible: bool) -> bool {
+        let visible = visible && !self.has_css_class("masonry-tile");
         let changed = self.imp().filename_visible.replace(visible) != visible;
         let mut created = false;
         if visible && self.imp().filename_label.borrow().is_none() {

@@ -1094,6 +1094,11 @@ impl SectionedFolderView {
                 tile
             };
 
+            if self.layout_mode.get() == PhotoLayout::Masonry {
+                tile.tile.add_css_class("masonry-tile");
+            } else {
+                tile.tile.remove_css_class("masonry-tile");
+            }
             if self.is_wall() {
                 tile.tile.add_css_class("photo-wall-tile");
                 tile.tile.set_overflow(gtk::Overflow::Hidden);

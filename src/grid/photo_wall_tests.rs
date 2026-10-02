@@ -1537,3 +1537,79 @@ fn masonry_virtualizes_twenty_thousand_photos_and_resizes() {
     window.close();
     settle();
 }
+
+#[test]
+#[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+fn masonry_corners_follow_settings_and_filenames_stay_disabled() {
+    gtk::init().unwrap();
+    crate::css::install_foundation(&gtk::gdk::Display::default().unwrap());
+    let picture = gtk::Picture::new();
+    picture.add_css_class("thumbnail");
+    let white = gtk::gdk::MemoryTexture::new(
+        100,
+        100,
+        gtk::gdk::MemoryFormat::R8g8b8a8,
+        &glib::Bytes::from_owned(vec![255u8; 100 * 100 * 4]),
+        400,
+    );
+    picture.set_paintable(Some(&white));
+    let frame = gtk::Overlay::new();
+    frame.add_css_class("photo-frame");
+    frame.add_css_class("photo-tile");
+    frame.set_overflow(gtk::Overflow::Hidden);
+    frame.set_child(Some(&picture));
+    let tile = SquareTile::new(100, 100, &frame);
+    tile.add_css_class("photo-wall-tile");
+    tile.add_css_class("masonry-tile");
+    tile.set_filename_visible(true);
+    assert!(
+        tile.imp().filename_label.borrow().is_none(),
+        "Masonry created a filename label"
+    );
+    assert_eq!(
+        tile.measure(gtk::Orientation::Vertical, -1).0,
+        100,
+        "Masonry gained a filename row"
+    );
+    let window = gtk::Window::builder()
+        .default_width(100)
+        .default_height(100)
+        .child(&tile)
+        .build();
+    window.present();
+    settle();
+    let render = || {
+        let snapshot = gtk::Snapshot::new();
+        window.snapshot_child(&tile, &snapshot);
+        let node = snapshot.to_node().unwrap();
+        let texture = window
+            .renderer()
+            .unwrap()
+            .render_texture(&node, Some(&frame.compute_bounds(&window).unwrap()));
+        let mut pixels = vec![0u8; 100 * 100 * 4];
+        texture.download(&mut pixels, 400);
+        pixels
+    };
+    let rounded = render();
+    assert!(rounded[3] < 255, "default Masonry corner was square");
+    window.add_css_class("square-corners");
+    settle();
+    assert_eq!(
+        render()[3],
+        255,
+        "square-corner setting did not affect Masonry"
+    );
+    let baseline = render();
+    tile.set_manual_selected(true);
+    settle();
+    let selected = render();
+    let edge = (50 * 100 + 1) * 4;
+    assert_ne!(
+        &selected[edge..edge + 4],
+        &baseline[edge..edge + 4],
+        "selection outline disappeared"
+    );
+    assert_eq!(frame.style_context().border(), gtk::Border::new());
+    window.close();
+    settle();
+}

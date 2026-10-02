@@ -1,11 +1,10 @@
-/* Only Photo Wall removes the shared Grid frame. Selection stays inside. */
+/* Photo Wall and Masonry remove the shared Grid frame. Selection stays inside. */
 .photo-wall-tile,
 .photo-wall-tile .photo-frame.photo-tile,
 .photo-wall-tile .thumbnail {
   margin: 0;
   padding: 0;
   border: none;
-  border-radius: 0;
   box-shadow: none;
   outline: none;
   background: transparent;
@@ -21,4 +20,21 @@
 .photo-wall-tile:hover .photo-frame.photo-tile.folder-photo-selected {
   outline: 3px solid @accent_bg_color;
   outline-offset: -3px;
+}
+
+/* Masonry shares border-free tiles, while following thumbnail corner settings. */
+.photo-wall-tile:not(.masonry-tile),
+.photo-wall-tile:not(.masonry-tile) .photo-frame.photo-tile,
+.photo-wall-tile:not(.masonry-tile) .thumbnail {
+  border-radius: 0;
+}
+.masonry-tile .photo-frame.photo-tile {
+  border-radius: 10px;
+}
+.masonry-tile .thumbnail {
+  border-radius: 8px;
+}
+.square-corners .masonry-tile .photo-frame.photo-tile,
+.square-corners .masonry-tile .thumbnail {
+  border-radius: 0;
 }

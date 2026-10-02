@@ -1,5 +1,8 @@
 use super::photo_wall_layout::{PhotoWallItem, PhotoWallSection, PhotoWallSectionBounds};
 
+// Shared horizontal and vertical tile spacing, in logical pixels.
+pub(super) const MASONRY_GAP: usize = 8;
+
 #[derive(Default)]
 pub(super) struct MasonryLayout {
     pub items: Vec<PhotoWallItem>,
@@ -16,16 +19,16 @@ impl MasonryLayout {
         viewport: i32,
         preferred_width: i32,
     ) -> Self {
-        const GAP: f64 = 1.0;
+        let gap = MASONRY_GAP as f64;
         let viewport = viewport.max(1);
         let preferred = preferred_width.max(1).min(viewport);
         // Zoom specifies the preferred width. Fit the closest column count
         // across the viewport, keeping widths fixed within each column.
-        let columns = ((f64::from(viewport) + GAP) / (f64::from(preferred) + GAP))
+        let columns = ((f64::from(viewport) + gap) / (f64::from(preferred) + gap))
             .round()
             .max(1.0) as usize;
-        let columns = columns.min((viewport as usize + 1) / 2);
-        let available = viewport as usize - (columns - 1);
+        let columns = columns.min((viewport as usize + MASONRY_GAP) / (MASONRY_GAP + 1));
+        let available = viewport as usize - (columns - 1) * MASONRY_GAP;
         let base = available / columns;
         let remainder = available - base * columns;
         let widths: Vec<_> = (0..columns)
@@ -36,7 +39,7 @@ impl MasonryLayout {
             .iter()
             .map(|&width| {
                 let left = x;
-                x += width as f64 + GAP;
+                x += width as f64 + gap;
                 left
             })
             .collect();
@@ -80,10 +83,10 @@ impl MasonryLayout {
                     width,
                     height,
                 });
-                bottoms[column] += height + GAP;
+                bottoms[column] += height + gap;
             }
             if layout.items.len() > start {
-                y = bottoms.into_iter().fold(y, f64::max) - GAP;
+                y = bottoms.into_iter().fold(y, f64::max) - gap;
             }
             layout.sections.push(PhotoWallSectionBounds {
                 header_y,
@@ -112,7 +115,7 @@ mod tests {
     }
     #[test]
     fn mixed_images_use_shortest_column_and_keep_aspect() {
-        let wall = layout(&[0.5, 2.0, 1.0, 1.0], 201);
+        let wall = layout(&[0.5, 2.0, 1.0, 1.0], 208);
         let positions = wall
             .items
             .iter()
@@ -122,16 +125,16 @@ mod tests {
             positions,
             vec![
                 (0.0, 0.0, 100.0, 200.0),
-                (101.0, 0.0, 100.0, 50.0),
-                (101.0, 51.0, 100.0, 100.0),
-                (101.0, 152.0, 100.0, 100.0)
+                (108.0, 0.0, 100.0, 50.0),
+                (108.0, 58.0, 100.0, 100.0),
+                (108.0, 166.0, 100.0, 100.0)
             ]
         );
-        assert_eq!(wall.total_height, 252.0);
+        assert_eq!(wall.total_height, 266.0);
     }
     #[test]
     fn resize_changes_columns_and_handles_narrow_width() {
-        for (width, columns, tile_width) in [(302, 3, 100.0), (201, 2, 100.0), (80, 1, 80.0)] {
+        for (width, columns, tile_width) in [(316, 3, 100.0), (208, 2, 100.0), (80, 1, 80.0)] {
             let wall = layout(&[1.0; 6], width);
             assert_eq!(wall.column_count, columns);
             assert!(wall
@@ -158,7 +161,7 @@ mod tests {
                 (tile.height * ratios[tile.photo_index] - tile.width).abs()
                     <= ratios[tile.photo_index] * 0.5
             );
-            bottoms[column] = tile.y + tile.height + 1.0;
+            bottoms[column] = tile.y + tile.height + MASONRY_GAP as f64;
         }
     }
     #[test]
@@ -170,7 +173,7 @@ mod tests {
             header_height: 0.0,
         }];
         let wall = super::super::photo_wall_layout::PhotoWallLayout::calculate_masonry(
-            &ratios, &sections, 201, 100,
+            &ratios, &sections, 208, 100,
         );
         let rows = wall.visible_row_indices(50_000.0, 50_600.0);
         assert!(rows.len() <= 8);
@@ -184,8 +187,8 @@ mod tests {
     fn zoom_and_resize_fill_width_instead_of_leaving_a_missing_column() {
         for (viewport, zoom, expected_columns) in [
             (1510, 219, 7),
-            (997, 219, 5),
-            (997, 100, 10),
+            (997, 219, 4),
+            (997, 100, 9),
             (701, 219, 3),
             (80, 100, 1),
         ] {
@@ -208,7 +211,7 @@ mod tests {
             assert_eq!(first.len(), expected_columns);
             assert_eq!(first[0].x, 0.0);
             for pair in first.windows(2) {
-                assert_eq!(pair[0].x + pair[0].width + 1.0, pair[1].x);
+                assert_eq!(pair[0].x + pair[0].width + MASONRY_GAP as f64, pair[1].x);
                 assert!((pair[0].width - pair[1].width).abs() <= 1.0);
             }
             let last = first.last().unwrap();

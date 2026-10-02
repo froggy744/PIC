@@ -24,8 +24,6 @@ impl Lightbox {
         picture.set_halign(gtk::Align::Center);
         picture.set_valign(gtk::Align::Center);
         picture.set_can_target(true);
-        picture.set_focusable(false);
-        picture.set_focus_on_click(false);
         picture.set_overflow(gtk::Overflow::Visible);
         picture.set_widget_name("lightbox-zoom-picture");
         picture.add_css_class("lightbox-picture");
@@ -39,26 +37,11 @@ impl Lightbox {
         picture_viewport.set_halign(gtk::Align::Fill);
         picture_viewport.set_valign(gtk::Align::Fill);
         picture_viewport.set_can_target(true);
-        picture_viewport.set_focusable(false);
-        picture_viewport.set_focus_on_click(false);
         // Keep scrollbars hidden while keeping the viewport constrained to
         // the lightbox allocation. External gives us real scroll ranges
         // without drawing normal scrollbar UI.
         picture_viewport.set_policy(gtk::PolicyType::External, gtk::PolicyType::External);
         picture_viewport.set_child(Some(&picture));
-        // GtkScrolledWindow wraps non-scrollable children such as GtkPicture
-        // in an implicit GtkViewport. Its default focus tracking may scroll a
-        // large child when a mouse click changes focus, which appears as a
-        // jump before panning starts. The lightbox owns focus at the root, so
-        // the image viewport must never reposition itself for focus.
-        if let Some(viewport) = picture_viewport
-            .child()
-            .and_then(|child| child.downcast::<gtk::Viewport>().ok())
-        {
-            viewport.set_scroll_to_focus(false);
-            viewport.set_focusable(false);
-            viewport.set_focus_on_click(false);
-        }
         root.add_overlay(&picture_viewport);
 
         let one_to_one_active = Rc::new(Cell::new(false));
@@ -66,266 +49,91 @@ impl Lightbox {
         let native_quality_pending = Rc::new(Cell::new(false));
         let display_texture_cache: DisplayTextureCache = Rc::new(RefCell::new(VecDeque::new()));
 
-        // Native-size/manual-zoom panning.
+        // Native-size 1:1 panning. Keep the drag gesture on the picture itself:
+        // that is the widget under the pointer, while the ScrolledWindow owns
+        // the adjustments that actually move the visible region.
         //
-        // GestureDrag may not become active on the exact button-down frame.
-        // Keep a separate primary-button press tracker so the image follows
-        // the pointer during those first few pixels instead of catching up
-        // when GTK finally recognizes the drag.
-        const PAN_EARLY_MOTION_EPSILON: f64 = 1.0;
+        // Do not manually claim the sequence here. The drag gesture is grouped
+        // with the existing double-click gesture below, so a double-click can
+        // still close the lightbox while a genuine drag pans the native image.
         let drag_start_h = Rc::new(Cell::new(0.0));
         let drag_start_v = Rc::new(Cell::new(0.0));
-        let drag_press_x = Rc::new(Cell::new(0.0));
-        let drag_press_y = Rc::new(Cell::new(0.0));
-        let drag_range_h = Rc::new(Cell::new((0.0, 0.0, 0.0)));
-        let drag_range_v = Rc::new(Cell::new((0.0, 0.0, 0.0)));
-        let pan_pressed = Rc::new(Cell::new(false));
+        // True for the duration of a pan so drag_update ignores stale events
+        // after the gesture was denied.
         let pan_active = Rc::new(Cell::new(false));
-
-        // True mouse-down anchor. This runs immediately on press, before a
-        // GestureDrag needs to decide whether the sequence is actually a drag.
-        let pan_press = gtk::GestureClick::new();
-        pan_press.set_button(1);
-        pan_press.set_propagation_phase(gtk::PropagationPhase::Capture);
-        {
-            let viewport = picture_viewport.clone();
-            let drag_start_h = drag_start_h.clone();
-            let drag_start_v = drag_start_v.clone();
-            let drag_press_x = drag_press_x.clone();
-            let drag_press_y = drag_press_y.clone();
-            let drag_range_h = drag_range_h.clone();
-            let drag_range_v = drag_range_v.clone();
-            let pan_pressed = pan_pressed.clone();
-            let pan_active = pan_active.clone();
-            pan_press.connect_pressed(move |_, _, x, y| {
-                let hadj = viewport.hadjustment();
-                let vadj = viewport.vadjustment();
-                let scrollable =
-                    hadj.upper() - hadj.page_size() > 1.0 || vadj.upper() - vadj.page_size() > 1.0;
-
-                if !scrollable {
-                    pan_pressed.set(false);
-                    pan_active.set(false);
-                    return;
-                }
-
-                // GTK does not guarantee GestureClick::pressed runs before
-                // GestureDrag::drag_begin when both controllers are in capture
-                // phase. If drag_begin already owns this press, do not reset
-                // pan_active or overwrite its origin; doing so re-enables the
-                // early-motion path and makes two handlers move the viewport.
-                if pan_active.get() {
-                    pan_pressed.set(true);
-                    zoom_trace(format!(
-                        "pan_mouse_down_after_drag x={x:.1} y={y:.1} origin={:.1},{:.1}",
-                        drag_start_h.get(),
-                        drag_start_v.get(),
-                    ));
-                    return;
-                }
-
-                pan_pressed.set(true);
-                drag_start_h.set(hadj.value());
-                drag_start_v.set(vadj.value());
-                drag_press_x.set(x);
-                drag_press_y.set(y);
-                drag_range_h.set((hadj.lower(), hadj.upper(), hadj.page_size()));
-                drag_range_v.set((vadj.lower(), vadj.upper(), vadj.page_size()));
-                viewport.set_cursor_from_name(Some("grab"));
-
-                zoom_trace(format!(
-                    "pan_mouse_down x={x:.1} y={y:.1} origin={:.1},{:.1}",
-                    hadj.value(),
-                    vadj.value(),
-                ));
-            });
-        }
-        {
-            let viewport = picture_viewport.clone();
-            let pan_pressed = pan_pressed.clone();
-            let pan_active = pan_active.clone();
-            pan_press.connect_released(move |_, _, _, _| {
-                pan_pressed.set(false);
-                if !pan_active.get() {
-                    let hadj = viewport.hadjustment();
-                    let vadj = viewport.vadjustment();
-                    let scrollable =
-                        hadj.upper() - hadj.page_size() > 1.0 || vadj.upper() - vadj.page_size() > 1.0;
-                    viewport.set_cursor_from_name(if scrollable {
-                        Some("grab")
-                    } else {
-                        None
-                    });
-                }
-            });
-        }
-        picture_viewport.add_controller(pan_press);
-
-        // Before GestureDrag recognition, follow ordinary pointer motion from
-        // the exact mouse-down coordinates. Once the drag gesture activates it
-        // takes over with the same origin, so there is no first-frame jump.
-        let early_motion = gtk::EventControllerMotion::new();
-        early_motion.set_propagation_phase(gtk::PropagationPhase::Capture);
-        {
-            let viewport = picture_viewport.clone();
-            let drag_start_h = drag_start_h.clone();
-            let drag_start_v = drag_start_v.clone();
-            let drag_press_x = drag_press_x.clone();
-            let drag_press_y = drag_press_y.clone();
-            let drag_range_h = drag_range_h.clone();
-            let drag_range_v = drag_range_v.clone();
-            let pan_pressed = pan_pressed.clone();
-            let pan_active = pan_active.clone();
-            early_motion.connect_motion(move |_, x, y| {
-                if !pan_pressed.get() || pan_active.get() {
-                    return;
-                }
-
-                let hadj = viewport.hadjustment();
-                let vadj = viewport.vadjustment();
-                let h_range = (hadj.lower(), hadj.upper(), hadj.page_size());
-                let v_range = (vadj.lower(), vadj.upper(), vadj.page_size());
-                let old_h = drag_range_h.get();
-                let old_v = drag_range_v.get();
-                let range_changed = (h_range.0 - old_h.0).abs() > 0.5
-                    || (h_range.1 - old_h.1).abs() > 0.5
-                    || (h_range.2 - old_h.2).abs() > 0.5
-                    || (v_range.0 - old_v.0).abs() > 0.5
-                    || (v_range.1 - old_v.1).abs() > 0.5
-                    || (v_range.2 - old_v.2).abs() > 0.5;
-
-                if range_changed {
-                    drag_start_h.set(hadj.value());
-                    drag_start_v.set(vadj.value());
-                    drag_press_x.set(x);
-                    drag_press_y.set(y);
-                    drag_range_h.set(h_range);
-                    drag_range_v.set(v_range);
-                    return;
-                }
-
-                let dx = x - drag_press_x.get();
-                let dy = y - drag_press_y.get();
-                if dx.hypot(dy) < PAN_EARLY_MOTION_EPSILON {
-                    return;
-                }
-
-                let max_h = (hadj.upper() - hadj.page_size()).max(hadj.lower());
-                let max_v = (vadj.upper() - vadj.page_size()).max(vadj.lower());
-                hadj.set_value((drag_start_h.get() - dx).clamp(hadj.lower(), max_h));
-                vadj.set_value((drag_start_v.get() - dy).clamp(vadj.lower(), max_v));
-            });
-        }
-        picture_viewport.add_controller(early_motion);
-
         let pan_drag = gtk::GestureDrag::new();
         pan_drag.set_button(1);
         pan_drag.set_propagation_phase(gtk::PropagationPhase::Capture);
         pan_drag.set_exclusive(true);
 
-        {
-            let viewport = picture_viewport.clone();
-            let pan_pressed = pan_pressed.clone();
-            let pan_active = pan_active.clone();
-            let drag_start_h = drag_start_h.clone();
-            let drag_start_v = drag_start_v.clone();
-            let drag_press_x = drag_press_x.clone();
-            let drag_press_y = drag_press_y.clone();
-            let drag_range_h = drag_range_h.clone();
-            let drag_range_v = drag_range_v.clone();
-            pan_drag.connect_drag_begin(move |gesture, x, y| {
-                let hadj = viewport.hadjustment();
-                let vadj = viewport.vadjustment();
-                let scrollable =
-                    hadj.upper() - hadj.page_size() > 1.0 || vadj.upper() - vadj.page_size() > 1.0;
-                if !scrollable {
-                    gesture.set_state(gtk::EventSequenceState::Denied);
-                    pan_pressed.set(false);
-                    pan_active.set(false);
-                    return;
-                }
+        let pan_active_for_drag_begin = pan_active.clone();
+        let viewport_for_drag_begin = picture_viewport.clone();
+        let drag_start_h_begin = drag_start_h.clone();
+        let drag_start_v_begin = drag_start_v.clone();
+        pan_drag.connect_drag_begin(move |gesture, x, y| {
+            // Pan whenever the image overflows the viewport: zoomed in via
+            // Ctrl+wheel as well as 1:1, not 1:1 only.
+            let hadj = viewport_for_drag_begin.hadjustment();
+            let vadj = viewport_for_drag_begin.vadjustment();
+            let scrollable =
+                hadj.upper() - hadj.page_size() > 1.0 || vadj.upper() - vadj.page_size() > 1.0;
+            if !scrollable {
+                gesture.set_state(gtk::EventSequenceState::Denied);
+                return;
+            }
 
-                // Normally the GestureClick above already captured the exact
-                // press. Keep this fallback for synthetic/non-mouse sequences.
-                if !pan_pressed.get() {
-                    pan_pressed.set(true);
-                    drag_start_h.set(hadj.value());
-                    drag_start_v.set(vadj.value());
-                    drag_press_x.set(x);
-                    drag_press_y.set(y);
-                    drag_range_h.set((hadj.lower(), hadj.upper(), hadj.page_size()));
-                    drag_range_v.set((vadj.lower(), vadj.upper(), vadj.page_size()));
-                }
+            // The controller is attached to the stationary image viewport,
+            // so the gesture coordinates are already local to that viewport.
+            let inside_viewport = x >= 0.0
+                && y >= 0.0
+                && x < viewport_for_drag_begin.width() as f64
+                && y < viewport_for_drag_begin.height() as f64;
 
-                pan_active.set(true);
-                viewport.set_cursor_from_name(Some("grabbing"));
-                zoom_trace(format!(
-                    "pan_drag_begin x={x:.1} y={y:.1} origin={:.1},{:.1}",
-                    drag_start_h.get(),
-                    drag_start_v.get(),
-                ));
+            if !inside_viewport {
+                gesture.set_state(gtk::EventSequenceState::Denied);
+                return;
+            }
+
+            pan_active_for_drag_begin.set(true);
+            drag_start_h_begin.set(hadj.value());
+            drag_start_v_begin.set(vadj.value());
+            viewport_for_drag_begin.set_cursor_from_name(Some("grabbing"));
+        });
+
+        let pan_active_for_drag_update = pan_active.clone();
+        let viewport_for_drag_update = picture_viewport.clone();
+        let drag_start_h_update = drag_start_h.clone();
+        let drag_start_v_update = drag_start_v.clone();
+        pan_drag.connect_drag_update(move |_, offset_x, offset_y| {
+            if !pan_active_for_drag_update.get() {
+                return;
+            }
+
+            let hadj = viewport_for_drag_update.hadjustment();
+            let vadj = viewport_for_drag_update.vadjustment();
+            let max_h = (hadj.upper() - hadj.page_size()).max(hadj.lower());
+            let max_v = (vadj.upper() - vadj.page_size()).max(vadj.lower());
+
+            let new_h = (drag_start_h_update.get() - offset_x).clamp(hadj.lower(), max_h);
+            let new_v = (drag_start_v_update.get() - offset_y).clamp(vadj.lower(), max_v);
+            hadj.set_value(new_h);
+            vadj.set_value(new_v);
+        });
+
+        let pan_active_for_drag_end = pan_active.clone();
+        let viewport_for_drag_end = picture_viewport.clone();
+        pan_drag.connect_drag_end(move |_, _, _| {
+            pan_active_for_drag_end.set(false);
+            let hadj = viewport_for_drag_end.hadjustment();
+            let vadj = viewport_for_drag_end.vadjustment();
+            let scrollable =
+                hadj.upper() - hadj.page_size() > 1.0 || vadj.upper() - vadj.page_size() > 1.0;
+            viewport_for_drag_end.set_cursor_from_name(if scrollable {
+                Some("grab")
+            } else {
+                None
             });
-        }
-
-        {
-            let viewport = picture_viewport.clone();
-            let drag_start_h = drag_start_h.clone();
-            let drag_start_v = drag_start_v.clone();
-            let drag_range_h = drag_range_h.clone();
-            let drag_range_v = drag_range_v.clone();
-            pan_drag.connect_drag_update(move |_, offset_x, offset_y| {
-                let hadj = viewport.hadjustment();
-                let vadj = viewport.vadjustment();
-                let h_range = (hadj.lower(), hadj.upper(), hadj.page_size());
-                let v_range = (vadj.lower(), vadj.upper(), vadj.page_size());
-                let old_h = drag_range_h.get();
-                let old_v = drag_range_v.get();
-
-                let range_changed = (h_range.0 - old_h.0).abs() > 0.5
-                    || (h_range.1 - old_h.1).abs() > 0.5
-                    || (h_range.2 - old_h.2).abs() > 0.5
-                    || (v_range.0 - old_v.0).abs() > 0.5
-                    || (v_range.1 - old_v.1).abs() > 0.5
-                    || (v_range.2 - old_v.2).abs() > 0.5;
-                if range_changed {
-                    // Geometry changed mid-drag (native texture/window resize).
-                    // Restart from the newly authoritative visible position.
-                    drag_start_h.set(hadj.value() + offset_x);
-                    drag_start_v.set(vadj.value() + offset_y);
-                    drag_range_h.set(h_range);
-                    drag_range_v.set(v_range);
-                }
-
-                let max_h = (hadj.upper() - hadj.page_size()).max(hadj.lower());
-                let max_v = (vadj.upper() - vadj.page_size()).max(vadj.lower());
-                hadj.set_value((drag_start_h.get() - offset_x).clamp(hadj.lower(), max_h));
-                vadj.set_value((drag_start_v.get() - offset_y).clamp(vadj.lower(), max_v));
-            });
-        }
-
-        {
-            let viewport = picture_viewport.clone();
-            let pan_pressed = pan_pressed.clone();
-            let pan_active = pan_active.clone();
-            pan_drag.connect_drag_end(move |_, offset_x, offset_y| {
-                pan_pressed.set(false);
-                pan_active.set(false);
-                let hadj = viewport.hadjustment();
-                let vadj = viewport.vadjustment();
-                let scrollable =
-                    hadj.upper() - hadj.page_size() > 1.0 || vadj.upper() - vadj.page_size() > 1.0;
-                viewport.set_cursor_from_name(if scrollable {
-                    Some("grab")
-                } else {
-                    None
-                });
-                zoom_trace(format!(
-                    "pan_end offset={offset_x:.1},{offset_y:.1} value={:.1},{:.1}",
-                    hadj.value(),
-                    vadj.value(),
-                ));
-            });
-        }
+        });
         let photos = Rc::new(RefCell::new(Vec::<PhotoObject>::new()));
         let index = Rc::new(Cell::new(0usize));
         let last_width = Rc::new(Cell::new(0i32));

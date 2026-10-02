@@ -774,6 +774,38 @@ fn library_page(
     );
     content.append(&availability);
 
+    let thumbnail_heading = gtk::Label::new(Some("Thumbnail cache"));
+    thumbnail_heading.set_halign(gtk::Align::Start);
+    thumbnail_heading.set_hexpand(true);
+    thumbnail_heading.add_css_class("heading");
+    content.append(&thumbnail_heading);
+
+    let thumbnail_grid = gtk::Grid::new();
+    thumbnail_grid.set_column_spacing(12);
+    thumbnail_grid.set_row_spacing(0);
+    thumbnail_grid.set_column_homogeneous(true);
+    thumbnail_grid.set_hexpand(true);
+
+    let thumbnail_left = settings_list();
+    let cached_label = stat_row(&thumbnail_left, "Cached thumbnails");
+    let required_label = stat_row(&thumbnail_left, "Required thumbnails");
+
+    let thumbnail_right = settings_list();
+    let unused_label = stat_row(&thumbnail_right, "Unused thumbnails");
+    let cache_size_label = stat_row(&thumbnail_right, "Thumbnail cache size");
+
+    thumbnail_grid.attach(&thumbnail_left, 0, 0, 1, 1);
+    thumbnail_grid.attach(&thumbnail_right, 1, 0, 1, 1);
+    content.append(&thumbnail_grid);
+
+    refresh_thumbnail_cache_stats(
+        connection.clone(),
+        cached_label,
+        required_label,
+        unused_label,
+        cache_size_label,
+    );
+
     let stats_running = Rc::new(Cell::new(false));
     {
         let connection = connection.clone();

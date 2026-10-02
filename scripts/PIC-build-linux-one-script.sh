@@ -982,7 +982,7 @@ validate_appimage_icon_layout() {
 }
 
 build_appimage() {
-    local linuxdeploy app_work appdir desktop staging_icon output_name deployed_bin real_bin resource_root
+    local linuxdeploy app_work appdir desktop staging_icon output_name deployed_bin real_bin resource_root app_icon_dir
     if ! linuxdeploy="$(linuxdeploy_path)"; then
         return 1
     fi
@@ -1009,6 +1009,20 @@ build_appimage() {
         --executable "$NATIVE_BIN" \
         --desktop-file "$desktop" \
         --icon-file "$staging_icon"
+
+    # linuxdeploy versions differ in whether they leave a real application icon
+    # at the AppDir root. Install PIC's selected custom icon deterministically:
+    # the root copy/.DirIcon is the AppImage file icon, while hicolor is used by
+    # desktop launchers. This is separate from the Adwaita symbolic UI icons.
+    cp -f "$staging_icon" "$appdir/$APP_ID.$ICON_EXT"
+    if [[ "$ICON_EXT" == svg ]]; then
+        app_icon_dir="$appdir/usr/share/icons/hicolor/scalable/apps"
+    else
+        app_icon_dir="$appdir/usr/share/icons/hicolor/256x256/apps"
+    fi
+    mkdir -p "$app_icon_dir"
+    cp -f "$staging_icon" "$app_icon_dir/$APP_ID.$ICON_EXT"
+    ln -sfn "$APP_ID.$ICON_EXT" "$appdir/.DirIcon"
 
     # Keep the real executable separate and put a launcher at usr/bin/pic-rs.
     # The launcher changes into usr/share/pic-rs before starting PIC so existing

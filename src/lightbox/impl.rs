@@ -49,17 +49,21 @@ impl Lightbox {
         let native_quality_pending = Rc::new(Cell::new(false));
         let display_texture_cache: DisplayTextureCache = Rc::new(RefCell::new(VecDeque::new()));
 
-        // Native-size 1:1 panning. Keep the drag gesture on the picture itself:
-        // that is the widget under the pointer, while the ScrolledWindow owns
-        // the adjustments that actually move the visible region.
+        // Native-size/manual-zoom panning. Keep the drag gesture on the
+        // stationary ScrolledWindow so its coordinates do not move while the
+        // adjustments pan the image.
         //
-        // Do not manually claim the sequence here. The drag gesture is grouped
-        // with the existing double-click gesture below, so a double-click can
-        // still close the lightbox while a genuine drag pans the native image.
+        // GtkGestureDrag begins on button press, not after a motion threshold.
+        // Leave the sequence unclaimed until the pointer has actually moved;
+        // otherwise normal clicks can look like tiny pans and interfere with
+        // the picture's double-click gesture.
+        const PAN_CLAIM_THRESHOLD: f64 = 6.0;
         let drag_start_h = Rc::new(Cell::new(0.0));
         let drag_start_v = Rc::new(Cell::new(0.0));
-        // True for the duration of a pan so drag_update ignores stale events
-        // after the gesture was denied.
+        let drag_activation_x = Rc::new(Cell::new(0.0));
+        let drag_activation_y = Rc::new(Cell::new(0.0));
+        let drag_range_h = Rc::new(Cell::new((0.0, 0.0, 0.0)));
+        let drag_range_v = Rc::new(Cell::new((0.0, 0.0, 0.0)));
         let pan_active = Rc::new(Cell::new(false));
         let pan_drag = gtk::GestureDrag::new();
         pan_drag.set_button(1);
@@ -68,19 +72,8 @@ impl Lightbox {
 
         let pan_active_for_drag_begin = pan_active.clone();
         let viewport_for_drag_begin = picture_viewport.clone();
-        let drag_start_h_begin = drag_start_h.clone();
-        let drag_start_v_begin = drag_start_v.clone();
         pan_drag.connect_drag_begin(move |gesture, x, y| {
-            // Pan whenever the image overflows the viewport: zoomed in via
-            // Ctrl+wheel as well as 1:1, not 1:1 only.
-            let hadj = viewport_for_drag_begin.hadjustment();
-            let vadj = viewport_for_drag_begin.vadjustment();
-            let scrollable =
-                hadj.upper() - hadj.page_size() > 1.0 || vadj.upper() - vadj.page_size() > 1.0;
-            if !scrollable {
-                gesture.set_state(gtk::EventSequenceState::Denied);
-                return;
-            }
+            pan_active_for_drag_begin.set(false);
 
             // The controller is attached to the stationary image viewport,
             // so the gesture coordinates are already local to that viewport.
@@ -94,36 +87,132 @@ impl Lightbox {
                 return;
             }
 
-            pan_active_for_drag_begin.set(true);
-            drag_start_h_begin.set(hadj.value());
-            drag_start_v_begin.set(vadj.value());
-            viewport_for_drag_begin.set_cursor_from_name(Some("grabbing"));
+            // Do not capture adjustment values yet. Explicit 1:1 may still be
+            // replacing the fitted preview with its native texture, which can
+            // change the adjustment ranges after the button went down. The
+            // origin is captured only when a real pan crosses the threshold.
+            let hadj = viewport_for_drag_begin.hadjustment();
+            let vadj = viewport_for_drag_begin.vadjustment();
+            let scrollable =
+                hadj.upper() - hadj.page_size() > 1.0 || vadj.upper() - vadj.page_size() > 1.0;
+            viewport_for_drag_begin.set_cursor_from_name(if scrollable {
+                Some("grab")
+            } else {
+                None
+            });
+            zoom_trace(format!(
+                "pan_press x={x:.1} y={y:.1} h={:.1}/{:.1}/{:.1} v={:.1}/{:.1}/{:.1}",
+                hadj.value(),
+                hadj.upper(),
+                hadj.page_size(),
+                vadj.value(),
+                vadj.upper(),
+                vadj.page_size(),
+            ));
         });
 
         let pan_active_for_drag_update = pan_active.clone();
         let viewport_for_drag_update = picture_viewport.clone();
         let drag_start_h_update = drag_start_h.clone();
         let drag_start_v_update = drag_start_v.clone();
-        pan_drag.connect_drag_update(move |_, offset_x, offset_y| {
-            if !pan_active_for_drag_update.get() {
+        let drag_activation_x_update = drag_activation_x.clone();
+        let drag_activation_y_update = drag_activation_y.clone();
+        let drag_range_h_update = drag_range_h.clone();
+        let drag_range_v_update = drag_range_v.clone();
+        pan_drag.connect_drag_update(move |gesture, offset_x, offset_y| {
+            let hadj = viewport_for_drag_update.hadjustment();
+            let vadj = viewport_for_drag_update.vadjustment();
+            let scrollable =
+                hadj.upper() - hadj.page_size() > 1.0 || vadj.upper() - vadj.page_size() > 1.0;
+
+            if !scrollable {
+                pan_active_for_drag_update.set(false);
                 return;
             }
 
-            let hadj = viewport_for_drag_update.hadjustment();
-            let vadj = viewport_for_drag_update.vadjustment();
+            if !pan_active_for_drag_update.get() {
+                // Ignore hand jitter and stationary-click updates. When the
+                // threshold is crossed, claim the sequence so a genuine pan
+                // cancels the child click gesture, but start from the current
+                // adjustment values and current pointer offset. The first
+                // claimed update therefore moves the image by exactly 0 px.
+                if offset_x.hypot(offset_y) < PAN_CLAIM_THRESHOLD {
+                    return;
+                }
+
+                gesture.set_state(gtk::EventSequenceState::Claimed);
+                pan_active_for_drag_update.set(true);
+                drag_start_h_update.set(hadj.value());
+                drag_start_v_update.set(vadj.value());
+                drag_activation_x_update.set(offset_x);
+                drag_activation_y_update.set(offset_y);
+                drag_range_h_update.set((hadj.lower(), hadj.upper(), hadj.page_size()));
+                drag_range_v_update.set((vadj.lower(), vadj.upper(), vadj.page_size()));
+                viewport_for_drag_update.set_cursor_from_name(Some("grabbing"));
+                zoom_trace(format!(
+                    "pan_activate offset={offset_x:.1},{offset_y:.1} origin={:.1},{:.1} h_range={:.1}/{:.1}/{:.1} v_range={:.1}/{:.1}/{:.1}",
+                    hadj.value(),
+                    vadj.value(),
+                    hadj.lower(),
+                    hadj.upper(),
+                    hadj.page_size(),
+                    vadj.lower(),
+                    vadj.upper(),
+                    vadj.page_size(),
+                ));
+                return;
+            }
+
+            // A native texture can finish decoding, or the window can resize,
+            // while the button is held. If GTK publishes a new scroll range,
+            // rebase the drag at the current visible position instead of
+            // applying offsets to a stale pre-layout origin.
+            let h_range = (hadj.lower(), hadj.upper(), hadj.page_size());
+            let v_range = (vadj.lower(), vadj.upper(), vadj.page_size());
+            let old_h = drag_range_h_update.get();
+            let old_v = drag_range_v_update.get();
+            let range_changed = (h_range.0 - old_h.0).abs() > 0.5
+                || (h_range.1 - old_h.1).abs() > 0.5
+                || (h_range.2 - old_h.2).abs() > 0.5
+                || (v_range.0 - old_v.0).abs() > 0.5
+                || (v_range.1 - old_v.1).abs() > 0.5
+                || (v_range.2 - old_v.2).abs() > 0.5;
+            if range_changed {
+                drag_start_h_update.set(hadj.value());
+                drag_start_v_update.set(vadj.value());
+                drag_activation_x_update.set(offset_x);
+                drag_activation_y_update.set(offset_y);
+                drag_range_h_update.set(h_range);
+                drag_range_v_update.set(v_range);
+                zoom_trace(format!(
+                    "pan_rebase offset={offset_x:.1},{offset_y:.1} origin={:.1},{:.1} h_range={:.1}/{:.1}/{:.1} v_range={:.1}/{:.1}/{:.1}",
+                    hadj.value(),
+                    vadj.value(),
+                    h_range.0,
+                    h_range.1,
+                    h_range.2,
+                    v_range.0,
+                    v_range.1,
+                    v_range.2,
+                ));
+                return;
+            }
+
             let max_h = (hadj.upper() - hadj.page_size()).max(hadj.lower());
             let max_v = (vadj.upper() - vadj.page_size()).max(vadj.lower());
+            let delta_x = offset_x - drag_activation_x_update.get();
+            let delta_y = offset_y - drag_activation_y_update.get();
 
-            let new_h = (drag_start_h_update.get() - offset_x).clamp(hadj.lower(), max_h);
-            let new_v = (drag_start_v_update.get() - offset_y).clamp(vadj.lower(), max_v);
+            let new_h = (drag_start_h_update.get() - delta_x).clamp(hadj.lower(), max_h);
+            let new_v = (drag_start_v_update.get() - delta_y).clamp(vadj.lower(), max_v);
             hadj.set_value(new_h);
             vadj.set_value(new_v);
         });
 
         let pan_active_for_drag_end = pan_active.clone();
         let viewport_for_drag_end = picture_viewport.clone();
-        pan_drag.connect_drag_end(move |_, _, _| {
-            pan_active_for_drag_end.set(false);
+        pan_drag.connect_drag_end(move |_, offset_x, offset_y| {
+            let was_active = pan_active_for_drag_end.replace(false);
             let hadj = viewport_for_drag_end.hadjustment();
             let vadj = viewport_for_drag_end.vadjustment();
             let scrollable =
@@ -133,6 +222,11 @@ impl Lightbox {
             } else {
                 None
             });
+            zoom_trace(format!(
+                "pan_end active={was_active} offset={offset_x:.1},{offset_y:.1} value={:.1},{:.1}",
+                hadj.value(),
+                vadj.value(),
+            ));
         });
         let photos = Rc::new(RefCell::new(Vec::<PhotoObject>::new()));
         let index = Rc::new(Cell::new(0usize));

@@ -584,7 +584,7 @@ impl Gallery {
     }
 
     pub fn request_slider_zoom(self: &Rc<Self>, width: i32) {
-        if self.layout() == PhotoLayout::PhotoWall {
+        if self.layout() != PhotoLayout::Grid {
             self.apply_wall_zoom(width);
             return;
         }
@@ -688,7 +688,7 @@ impl Gallery {
         for tile in tiles {
             tile.set_content_fit(content_fit);
         }
-        if self.layout() == PhotoLayout::PhotoWall {
+        if self.layout() != PhotoLayout::Grid {
             self.sectioned_folder.refresh();
         }
     }
@@ -701,7 +701,7 @@ impl Gallery {
         if self.show_file_names.get() == show {
             return;
         }
-        let wall_anchor = if self.layout() == PhotoLayout::PhotoWall {
+        let wall_anchor = if self.layout() != PhotoLayout::Grid {
             self.capture_view_anchor()
         } else {
             None
@@ -789,7 +789,7 @@ impl Gallery {
     /// now commits its own step; the in-cell ease in view.rs retargets from
     /// the current visual size, so successive steps never queue animations.
     fn request_wheel_zoom(self: &Rc<Self>, width: i32) {
-        if self.layout() == PhotoLayout::PhotoWall {
+        if self.layout() != PhotoLayout::Grid {
             self.apply_wall_zoom(width);
             return;
         }
@@ -824,7 +824,7 @@ impl Gallery {
     /// crossing several column boundaries does not rebuild the Folder rows per
     /// notch.
     pub fn request_zoom(self: &Rc<Self>, width: i32) {
-        if self.layout() == PhotoLayout::PhotoWall {
+        if self.layout() != PhotoLayout::Grid {
             self.apply_wall_zoom(width);
             return;
         }
@@ -1158,7 +1158,7 @@ impl Gallery {
     /// widget pool than the visible rows, so loading every bound tile causes
     /// thousands of unnecessary thumbnail operations during scrollbar jumps.
     pub fn refresh_visible_folder_tiles(&self) -> usize {
-        if self.layout() == PhotoLayout::PhotoWall {
+        if self.layout() != PhotoLayout::Grid {
             return self.wall_apply_cached();
         }
         if self.group_mode.get() != GroupMode::Folder
@@ -1203,7 +1203,7 @@ impl Gallery {
     /// Folder motion pump and prevents fast scrollbar movement from filling the
     /// worker queue with viewports the user has already passed.
     pub fn queue_visible_grid_cached_tiles_async(&self, budget: usize) -> usize {
-        if self.layout() == PhotoLayout::PhotoWall {
+        if self.layout() != PhotoLayout::Grid {
             return 0;
         }
         if budget == 0
@@ -1264,7 +1264,7 @@ impl Gallery {
     /// visible tiles against the RAM cache every frame paints exactly those
     /// finished thumbnails while the scrub is still moving.
     pub fn apply_visible_grid_cached_paintables(&self) -> usize {
-        if self.layout() == PhotoLayout::PhotoWall {
+        if self.layout() != PhotoLayout::Grid {
             return 0;
         }
         if (self.group_mode.get() == GroupMode::Folder
@@ -1318,7 +1318,7 @@ impl Gallery {
         viewport_height: f64,
         budget: usize,
     ) -> usize {
-        if self.layout() == PhotoLayout::PhotoWall {
+        if self.layout() != PhotoLayout::Grid {
             return 0;
         }
         if budget == 0
@@ -1381,7 +1381,7 @@ impl Gallery {
     }
 
     fn visible_grid_photo_index_span(&self) -> Option<(usize, usize)> {
-        if self.layout() == PhotoLayout::PhotoWall {
+        if self.layout() != PhotoLayout::Grid {
             return None;
         }
         if (self.group_mode.get() == GroupMode::Folder
@@ -1423,7 +1423,7 @@ impl Gallery {
     /// the correct RAM-cached thumbnail or restores the normal placeholder and
     /// queues the correct visible thumbnail.
     pub fn refresh_visible_grid_tiles(&self) -> usize {
-        if self.layout() == PhotoLayout::PhotoWall {
+        if self.layout() != PhotoLayout::Grid {
             return 0;
         }
         if (self.group_mode.get() == GroupMode::Folder
@@ -1459,7 +1459,7 @@ impl Gallery {
     /// Library/Favourites/Albums/Search can scroll into already-decoded RAM
     /// paintables just like Folder mode.
     pub fn prefetch_grid_cached_tiles(&self, budget: usize, direction: f64) -> usize {
-        if self.layout() == PhotoLayout::PhotoWall {
+        if self.layout() != PhotoLayout::Grid {
             return 0;
         }
         if budget == 0
@@ -1519,7 +1519,7 @@ impl Gallery {
     /// occupies its smaller quota, so a scrollbar jump cannot be blocked by
     /// thumbnails for rows the user has already passed.
     pub fn queue_visible_folder_cached_tiles_async(&self, budget: usize) -> usize {
-        if self.layout() == PhotoLayout::PhotoWall {
+        if self.layout() != PhotoLayout::Grid {
             if let Some(scroll) = self.sectioned_folder.scroll.borrow().as_ref() {
                 let a = scroll.vadjustment();
                 return self.wall_target_requests(a.value(), a.page_size(), budget);
@@ -1572,7 +1572,7 @@ impl Gallery {
     /// thumbnails onto currently visible rows during a direct scrub without
     /// replacing the model-derived decode target.
     pub fn apply_visible_folder_cached_paintables(&self) -> usize {
-        if self.layout() == PhotoLayout::PhotoWall {
+        if self.layout() != PhotoLayout::Grid {
             return self.wall_apply_cached();
         }
         if self.group_mode.get() != GroupMode::Folder {
@@ -1630,7 +1630,7 @@ impl Gallery {
         viewport_height: f64,
         budget: usize,
     ) -> usize {
-        if self.layout() == PhotoLayout::PhotoWall {
+        if self.layout() != PhotoLayout::Grid {
             return self.wall_target_requests(scroll_y, viewport_height, budget);
         }
         if budget == 0 || self.group_mode.get() != GroupMode::Folder {
@@ -1797,7 +1797,7 @@ impl Gallery {
     /// GTK's realized row pool. That gives a scrollbar jump several screens of
     /// cache runway even before GtkListView has created/rebound those widgets.
     pub fn prefetch_folder_cached_tiles(&self, budget: usize, direction: f64) -> usize {
-        if self.layout() == PhotoLayout::PhotoWall {
+        if self.layout() != PhotoLayout::Grid {
             return self.wall_prefetch(budget, direction);
         }
         if budget == 0 || self.group_mode.get() != GroupMode::Folder {
@@ -1921,7 +1921,7 @@ impl Gallery {
     }
 
     pub fn refresh_thumbnails(&self) {
-        if self.layout() == PhotoLayout::PhotoWall {
+        if self.layout() != PhotoLayout::Grid {
             self.sectioned_folder.invalidate_geometry();
         }
         let mut tiles = Vec::new();

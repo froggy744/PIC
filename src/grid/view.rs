@@ -918,7 +918,7 @@ impl Gallery {
     }
 
     pub fn update_width(&self, width: i32) {
-        if self.layout() == PhotoLayout::PhotoWall {
+        if self.layout() != PhotoLayout::Grid {
             if width != self.last_layout_width.get() {
                 self.last_layout_width.set(width);
                 // Photo Wall scales its geometry and scroll position itself.

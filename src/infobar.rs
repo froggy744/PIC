@@ -19,6 +19,7 @@ pub struct InfoBar {
     pub edit: gtk::Button,
     pub collage: gtk::Button,
     pub view_toggle: gtk::Button,
+    pub masonry_toggle: gtk::Button,
     photo_layout: Rc<Cell<crate::grid::PhotoLayout>>,
     pub add_to_album: gtk::MenuButton,
     pub one_to_one: gtk::ToggleButton,
@@ -203,6 +204,30 @@ impl InfoBar {
             button.set_tooltip_text(Some(tooltip));
         });
 
+        let masonry_toggle = gtk::Button::with_label("Masonry");
+        masonry_toggle.set_tooltip_text(Some("Toggle Masonry / Grid view"));
+        let layout_for_masonry = photo_layout.clone();
+        let view_for_masonry = view_toggle.clone();
+        masonry_toggle.connect_clicked(move |_| {
+            let mode = if layout_for_masonry.get() == crate::grid::PhotoLayout::Masonry {
+                crate::grid::PhotoLayout::Grid
+            } else {
+                crate::grid::PhotoLayout::Masonry
+            };
+            layout_for_masonry.set(mode);
+            let grid = mode == crate::grid::PhotoLayout::Grid;
+            view_for_masonry.set_icon_name(if grid {
+                "collage-smart-mosaic-symbolic"
+            } else {
+                "view-app-grid-symbolic"
+            });
+            view_for_masonry.set_tooltip_text(Some(if grid {
+                "Switch to Photo Wall"
+            } else {
+                "Switch to Grid"
+            }));
+        });
+
         let add_to_album = gtk::MenuButton::new();
         add_to_album.set_icon_name("folder-new-symbolic");
         add_to_album.set_has_frame(false);
@@ -259,6 +284,7 @@ impl InfoBar {
         print.set_tooltip_text(Some("Print photo"));
 
         actions.append(&grid_zoom);
+        actions.append(&masonry_toggle);
         actions.append(&favorite);
         actions.append(&rating);
         actions.append(&edit);
@@ -323,6 +349,7 @@ impl InfoBar {
             edit,
             collage,
             view_toggle,
+            masonry_toggle,
             photo_layout,
             add_to_album,
             one_to_one,
@@ -339,13 +366,18 @@ impl InfoBar {
     }
 
     pub fn connect_photo_layout(&self, changed: impl Fn(crate::grid::PhotoLayout) + 'static) {
+        let changed = Rc::new(changed);
+        let changed_for_wall = changed.clone();
         let layout = self.photo_layout.clone();
-        self.view_toggle.connect_clicked(move |_| changed(layout.get()));
+        self.view_toggle.connect_clicked(move |_| changed_for_wall(layout.get()));
+        let layout = self.photo_layout.clone();
+        self.masonry_toggle.connect_clicked(move |_| changed(layout.get()));
     }
 
     pub fn set_collage_active(&self, active: bool) {
         self.collage_active.set(active);
         self.view_toggle.set_sensitive(!active);
+        self.masonry_toggle.set_sensitive(!active);
         self.edit
             .set_sensitive(edit_button_sensitive(self.has_photo.get(), active));
         // Collage has no presentation zoom. Disable the shared zoom slider

@@ -1463,3 +1463,77 @@ fn photo_wall_ctrl_wheel_zoom_allocations_match_every_painted_frame() {
     window.close();
     settle();
 }
+
+#[test]
+#[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+fn masonry_virtualizes_twenty_thousand_photos_and_resizes() {
+    gtk::init().unwrap();
+    crate::css::install_foundation(&gtk::gdk::Display::default().unwrap());
+    let gallery = Rc::new(Gallery::new(
+        &[],
+        100,
+        |_| {},
+        |_, _, _| {},
+        |_, _, _, _| {},
+        |_, _| {},
+        |_| {},
+    ));
+    assert_eq!(gallery.layout(), PhotoLayout::Grid);
+    let photos = (0..20_000)
+        .map(|i| {
+            glib::Object::builder::<PhotoObject>()
+                .property("id", i as i64 + 1)
+                .property("width", if i % 2 == 0 { 4000_i64 } else { 6000_i64 })
+                .property("height", if i % 2 == 0 { 6000_i64 } else { 4000_i64 })
+                .build()
+        })
+        .collect::<Vec<_>>();
+    gallery.current_photos.replace(photos.clone());
+    gallery.store.splice(0, 0, &photos);
+    gallery.selection.select_item(42, false);
+    let info = crate::infobar::InfoBar::new();
+    let gallery_for_mode = gallery.clone();
+    info.connect_photo_layout(move |mode| gallery_for_mode.set_layout(mode));
+    info.masonry_toggle.emit_clicked();
+    assert_eq!(gallery.layout(), PhotoLayout::Masonry);
+    let scroll = gtk::ScrolledWindow::builder()
+        .child(&gallery.folder_sectioned_root)
+        .build();
+    gallery.attach_sectioned_folder_scroll(&scroll);
+    let window = gtk::Window::builder()
+        .default_width(997)
+        .default_height(600)
+        .child(&scroll)
+        .build();
+    window.present();
+    settle();
+    for width in [997, 701, 1103] {
+        window.set_default_size(width, 600);
+        settle();
+        scroll
+            .vadjustment()
+            .set_value((scroll.vadjustment().upper() - scroll.vadjustment().page_size()) * 0.4);
+        settle();
+        let surface = &gallery.sectioned_folder;
+        assert!(surface.live_tiles.borrow().len() > 10);
+        assert!(surface.live_tiles.borrow().len() < 300);
+        assert_eq!(surface.geometry_width.get(), scroll.width());
+        let state = surface.wall_state.borrow();
+        for (&index, live) in surface.live_tiles.borrow().iter() {
+            let item = state.layout.item(index as usize).unwrap();
+            assert_eq!(live.tile.photo().unwrap().id(), photos[index as usize].id());
+            assert_eq!(live.tile.width(), item.width as i32);
+            assert_eq!(live.tile.height(), item.height as i32);
+            assert!(item.x + item.width <= f64::from(scroll.width()));
+            let frame = live.tile.first_child().unwrap();
+            assert_eq!(frame.width(), live.tile.width());
+            assert_eq!(frame.style_context().border(), gtk::Border::new());
+        }
+        assert!(gallery.selection.is_selected(42));
+    }
+    info.masonry_toggle.emit_clicked();
+    assert_eq!(gallery.layout(), PhotoLayout::Grid);
+    assert!(gallery.selection.is_selected(42));
+    window.close();
+    settle();
+}

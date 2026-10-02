@@ -1618,7 +1618,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             // Capture before switching children: GTK may move focus when a
             // focused renderer is hidden. Search and sidebar focus stay put.
             let had_gallery_focus = gallery_owns_focus(&gallery_scroll_stack);
-            let wall = gallery_for_folder_view.layout() == grid::PhotoLayout::PhotoWall;
+            let wall = gallery_for_folder_view.layout() != grid::PhotoLayout::Grid;
             let folder_sectioned =
                 wall || (crate::grid::sectioned_folder_view_enabled() && folder_mode);
             if folder_sectioned {
@@ -2158,10 +2158,10 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         let connection_for_mode = connection.clone();
         info.connect_photo_layout(move |mode| {
             gallery_for_mode.set_layout(mode);
-            let value = if mode == grid::PhotoLayout::PhotoWall {
-                "photo_wall"
-            } else {
-                "grid"
+            let value = match mode {
+                grid::PhotoLayout::Grid => "grid",
+                grid::PhotoLayout::PhotoWall => "photo_wall",
+                grid::PhotoLayout::Masonry => "masonry",
             };
             let _ = db::set_setting(&connection_for_mode.borrow(), "photo_layout", value);
         });
@@ -2170,6 +2170,8 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             .flatten();
         if saved.as_deref() == Some("photo_wall") {
             info.view_toggle.emit_clicked();
+        } else if saved.as_deref() == Some("masonry") {
+            info.masonry_toggle.emit_clicked();
         }
     }
 

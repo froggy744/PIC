@@ -48,6 +48,8 @@ pub(super) struct PhotoWallLayout {
     lookup: Vec<Option<usize>>,
     aspect_ratios: Vec<f64>,
     viewport_width: f64,
+    masonry_columns: Vec<Vec<usize>>,
+    masonry_row_bottoms: Vec<f64>,
 }
 
 fn ratio(value: f64) -> f64 {
@@ -103,6 +105,88 @@ fn integer_widths(ratios: &[f64], available: i32) -> Vec<i32> {
 }
 
 impl PhotoWallLayout {
+    pub fn calculate_masonry(
+        ratios: &[f64],
+        sections: &[PhotoWallSection],
+        viewport: i32,
+        preferred_width: i32,
+    ) -> Self {
+        let masonry = super::masonry_layout::MasonryLayout::calculate(
+            ratios,
+            sections,
+            viewport,
+            preferred_width,
+        );
+        let mut layout = Self {
+            items: masonry.items,
+            sections: masonry.sections,
+            total_height: masonry.total_height,
+            lookup: vec![None; ratios.len()],
+            masonry_columns: vec![Vec::new(); masonry.column_count],
+            ..Self::default()
+        };
+        layout
+            .items
+            .sort_by(|a, b| a.y.total_cmp(&b.y).then(a.x.total_cmp(&b.x)));
+        let mut max_bottom = 0.0_f64;
+        for (index, item) in layout.items.iter_mut().enumerate() {
+            item.row = index;
+            layout.lookup[item.photo_index] = Some(index);
+            let column = (item.x / (item.width + 1.0)) as usize;
+            layout.masonry_columns[column].push(index);
+            max_bottom = max_bottom.max(item.y + item.height);
+            layout.masonry_row_bottoms.push(max_bottom);
+            layout.rows.push(PhotoWallRow {
+                item_range: index..index + 1,
+                y: item.y,
+                image_height: item.height,
+                block_height: item.height,
+                ideal_height: item.height,
+                ideal_block_height: item.height,
+                justified: false,
+            });
+        }
+        layout
+    }
+
+    // Column entries have monotonically increasing tops and bottoms. Binary
+    // search each column so scrolling only visits the viewport plus overscan.
+    pub fn visible_row_indices(&self, top: f64, bottom: f64) -> Vec<usize> {
+        if self.masonry_columns.is_empty() {
+            return self.visible_rows(top, bottom).collect();
+        }
+        if bottom <= top {
+            return Vec::new();
+        }
+        let mut visible = Vec::new();
+        for column in &self.masonry_columns {
+            let start = column
+                .partition_point(|&row| self.rows[row].y + self.rows[row].block_height <= top);
+            visible.extend(
+                column[start..]
+                    .iter()
+                    .copied()
+                    .take_while(|&row| self.rows[row].y < bottom),
+            );
+        }
+        visible.sort_unstable();
+        visible
+    }
+
+    pub fn masonry_vertical_neighbor(&self, photo_index: usize, direction: i32) -> Option<usize> {
+        let item = self.item(photo_index)?;
+        let column = self
+            .masonry_columns
+            .get((item.x / (item.width + 1.0)) as usize)?;
+        let position = column.binary_search(&item.row).ok()?;
+        let next = if direction < 0 {
+            position.checked_sub(1)?
+        } else {
+            position + 1
+        };
+        Some(self.items[*column.get(next)?].photo_index)
+    }
+
     pub fn calculate(
         aspect_ratios: &[f64],
         sections: &[PhotoWallSection],
@@ -332,9 +416,11 @@ impl PhotoWallLayout {
     }
 
     pub fn visible_rows(&self, top: f64, bottom: f64) -> Range<usize> {
-        let start = self
-            .rows
-            .partition_point(|row| row.y + row.block_height <= top);
+        let start = if self.masonry_columns.is_empty() {
+            self.rows.partition_point(|row| row.y + row.block_height <= top)
+        } else {
+            self.masonry_row_bottoms.partition_point(|&end| end <= top)
+        };
         if bottom <= top {
             return start..start;
         }

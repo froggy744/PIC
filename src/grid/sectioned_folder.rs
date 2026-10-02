@@ -703,7 +703,7 @@ impl SectionedFolderView {
             let (Some(surface), Some(scroll)) = (weak.upgrade(), weak_scroll.upgrade()) else {
                 return;
             };
-            if surface.is_wall()
+            if surface.layout_mode.get() == PhotoLayout::PhotoWall
                 && !surface.wall_width_frozen.get()
                 && surface.geometry_width.get() > 1
                 && scroll.width() > 1
@@ -768,7 +768,8 @@ impl SectionedFolderView {
             // even though GtkScrolledWindow is allocated intermediate widths
             // on every animation frame. This prevents justified rows from
             // continuously reshuffling while the drawer moves.
-            let width = if self.wall_width_frozen.get() && self.geometry_width.get() > 0 {
+            let width = if self.layout_mode.get() == PhotoLayout::PhotoWall
+                && self.wall_width_frozen.get() && self.geometry_width.get() > 0 {
                 self.geometry_width.get()
             } else {
                 width
@@ -980,7 +981,7 @@ impl SectionedFolderView {
         let mut wanted_tiles = Vec::<(u32, usize, u32, u32)>::new();
         if self.is_wall() {
             let wall = self.wall_state.borrow();
-            for row in wall.layout.visible_rows(top, bottom) {
+            for row in wall.layout.visible_row_indices(top, bottom) {
                 for item in &wall.layout.items[wall.layout.rows[row].item_range.clone()] {
                     wanted_tiles.push((item.photo_index as u32, item.section, row as u32, 0));
                 }
@@ -2373,7 +2374,7 @@ impl Gallery {
     }
 
     pub fn refresh_sectioned_folder(self: &Rc<Self>) {
-        if self.layout() == PhotoLayout::PhotoWall {
+        if self.layout() != PhotoLayout::Grid {
             self.sectioned_folder.refresh();
             return;
         }

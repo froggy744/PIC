@@ -3,6 +3,7 @@ pub enum PhotoLayout {
     #[default]
     Grid,
     PhotoWall,
+    Masonry,
 }
 
 #[derive(Default)]
@@ -15,7 +16,8 @@ struct PhotoWallState {
 
 impl SectionedFolderView {
     fn is_wall(&self) -> bool {
-        self.layout_mode.get() == PhotoLayout::PhotoWall
+        // Aspect-based views share the virtual tile surface and interactions.
+        self.layout_mode.get() != PhotoLayout::Grid
     }
 
     fn calculate_wall_geometry(&self, width: i32) {
@@ -29,7 +31,8 @@ impl SectionedFolderView {
         // refit. The wall behaves like a resized picture; rows, membership and
         // viewport stay exactly as they were and only the scale changes.
         let old_width = self.geometry_width.get();
-        if old_width > 1
+        if self.layout_mode.get() == PhotoLayout::PhotoWall
+            && old_width > 1
             && old_width != width
             && self.geometry_row_height.get() == target + caption
             && !self.wall_state.borrow().layout.rows.is_empty()
@@ -57,13 +60,17 @@ impl SectionedFolderView {
                 header_height: 0.0,
             }]
         };
-        let layout = photo_wall_layout::PhotoWallLayout::calculate(
-            &ratios,
-            &sections,
-            width as f64,
-            target as f64,
-            caption as f64,
-        );
+        let layout = if self.layout_mode.get() == PhotoLayout::Masonry {
+            photo_wall_layout::PhotoWallLayout::calculate_masonry(&ratios, &sections, width, target)
+        } else {
+            photo_wall_layout::PhotoWallLayout::calculate(
+                &ratios,
+                &sections,
+                width as f64,
+                target as f64,
+                caption as f64,
+            )
+        };
         self.geometry.replace(
             layout
                 .sections
@@ -137,6 +144,10 @@ impl SectionedFolderView {
 
     fn wall_vertical_neighbor(&self, index: u32, direction: i32) -> Option<u32> {
         let state = self.wall_state.borrow();
+        if self.layout_mode.get() == PhotoLayout::Masonry {
+            return state.layout.masonry_vertical_neighbor(index as usize, direction)
+                .map(|i| i as u32);
+        }
         let item = state.layout.item(index as usize)?;
         let row = if direction < 0 {
             item.row.checked_sub(1)?
@@ -157,6 +168,11 @@ impl SectionedFolderView {
 
     fn wall_index_for_y(&self, y: f64) -> Option<usize> {
         let state = self.wall_state.borrow();
+        if self.layout_mode.get() == PhotoLayout::Masonry {
+            let rows = state.layout.visible_row_indices(y, y + 1.0);
+            return rows.first().map(|&row| state.layout.items[row].photo_index)
+                .or_else(|| state.layout.items.last().map(|item| item.photo_index));
+        }
         let row = state
             .layout
             .rows
@@ -268,7 +284,7 @@ impl Gallery {
         self.sectioned_folder.layout_mode.get()
     }
     pub fn using_virtual_photo_surface(&self) -> bool {
-        self.layout() == PhotoLayout::PhotoWall
+        self.layout() != PhotoLayout::Grid
             || (self.group_mode.get() == GroupMode::Folder && sectioned_folder_view_enabled())
     }
 
@@ -565,7 +581,7 @@ impl Gallery {
         let mut requests = Vec::new();
         for row in state
             .layout
-            .visible_rows(scroll_y, scroll_y + viewport_height)
+            .visible_row_indices(scroll_y, scroll_y + viewport_height)
         {
             for item in &state.layout.items[state.layout.rows[row].item_range.clone()] {
                 if requests.len() >= budget {
@@ -592,7 +608,7 @@ impl Gallery {
         let state = surface.wall_state.borrow();
         let tiles = surface.live_tiles.borrow();
         let mut applied = 0;
-        for row in state.layout.visible_rows(
+        for row in state.layout.visible_row_indices(
             adjustment.value(),
             adjustment.value() + adjustment.page_size(),
         ) {

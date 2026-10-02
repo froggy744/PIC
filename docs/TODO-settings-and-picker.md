@@ -149,3 +149,21 @@ Current status:
 - Keep Network Shares on PIC's own network picker.
 - Verify both Accept and Cancel during normal testing.
 - Confirm the old repeated `thaw_updates` criticals no longer appear.
+
+## Implementation status — 2026-10-02
+
+Completed:
+- Reordered Settings to Interface, Themes, Sidebar, Albums, Folders, File Formats, Library & Storage, Libraries & Backups.
+- Moved album appearance controls out of Interface and into Albums.
+- Added persisted Show History toggle under Interface → Navigation.
+- Added sidebar support for the new History visibility setting.
+- Renamed Library to Library & Storage.
+- Renamed Database to Libraries & Backups.
+- Made the Libraries & Backups page more responsive: wrapping current-library path, ellipsized known-library paths, and 2×2 database action grid.
+- Add Folder picker is working and requires no further work at present.
+
+Still to verify manually:
+- Settings page layout at narrow and normal window widths.
+- History toggle persistence across restart and immediate sidebar refresh.
+- Album appearance controls still apply live from their new page.
+- Libraries & Backups page no longer clips on the right.

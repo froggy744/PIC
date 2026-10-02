@@ -703,7 +703,7 @@ impl SectionedFolderView {
             let (Some(surface), Some(scroll)) = (weak.upgrade(), weak_scroll.upgrade()) else {
                 return;
             };
-            if surface.layout_mode.get() == PhotoLayout::PhotoWall
+            if surface.is_wall()
                 && !surface.wall_width_frozen.get()
                 && surface.geometry_width.get() > 1
                 && scroll.width() > 1
@@ -739,13 +739,14 @@ impl SectionedFolderView {
             let width = scrolled_for_tick.width();
             if width > 0 && width != last_width_for_tick.get() {
                 last_width_for_tick.set(width);
-                // Photo Wall scales its existing geometry inside refresh();
-                // other layouts only stretch headers here.
+                // Aspect-based views resize existing geometry inside refresh();
+                // Grid only stretches headers here.
                 this.refresh();
             }
             if this.is_wall() && this.geometry_width.get() == 0 {
                 this.refresh();
             }
+            this.poll_masonry_resize();
             this.poll_wall_quality();
             glib::ControlFlow::Continue
         });
@@ -756,6 +757,7 @@ impl SectionedFolderView {
     fn invalidate_geometry(&self) {
         let generation = self.wall_state.borrow().generation.wrapping_add(1);
         self.wall_state.borrow_mut().generation = generation;
+        self.wall_state.borrow_mut().masonry_resize_pending = None;
         self.geometry_width.set(0);
         self.geometry_columns.set(0);
         self.geometry_row_height.set(0);

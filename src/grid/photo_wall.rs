@@ -12,6 +12,7 @@ struct PhotoWallState {
     layout: photo_wall_layout::PhotoWallLayout,
     quality_gate: WallQualityGate,
     quality_attempted: HashSet<String>,
+    masonry_resize_pending: Option<Instant>,
 }
 
 impl SectionedFolderView {
@@ -31,14 +32,18 @@ impl SectionedFolderView {
         // refit. The wall behaves like a resized picture; rows, membership and
         // viewport stay exactly as they were and only the scale changes.
         let old_width = self.geometry_width.get();
-        if self.layout_mode.get() == PhotoLayout::PhotoWall
+        if self.is_wall()
             && old_width > 1
             && old_width != width
             && self.geometry_row_height.get() == target + caption
             && !self.wall_state.borrow().layout.rows.is_empty()
         {
-            self.scale_wall_geometry(width);
-            return;
+            if self.scale_wall_geometry(width) {
+                if self.layout_mode.get() == PhotoLayout::Masonry {
+                    self.wall_state.borrow_mut().masonry_resize_pending = Some(Instant::now());
+                }
+                return;
+            }
         }
         let photos = self.current_photos.borrow();
         let ratios = photos
@@ -86,6 +91,7 @@ impl SectionedFolderView {
         let mut state = self.wall_state.borrow_mut();
         state.generation = state.generation.wrapping_add(1);
         state.layout = layout;
+        state.masonry_resize_pending = None;
         self.geometry_width.set(width);
         self.geometry_row_height.set(target + caption);
     }
@@ -93,7 +99,7 @@ impl SectionedFolderView {
     /// Scale the existing wall geometry to `width` and carry the scroll
     /// position along with it, applied immediately so the very next frame is
     /// already consistent (no dependence on a later GTK allocation).
-    fn scale_wall_geometry(&self, width: i32) {
+    fn scale_wall_geometry(&self, width: i32) -> bool {
         let old_width = self.geometry_width.get().max(1);
         let factor = f64::from(width.max(1)) / f64::from(old_width);
         let adjustment = self.scroll.borrow().as_ref().map(|s| s.vadjustment());
@@ -101,7 +107,14 @@ impl SectionedFolderView {
         self.cancel_scroll_animation();
         let new_value = {
             let mut state = self.wall_state.borrow_mut();
-            let mapped = state.layout.scale_photo_area(factor, old_value);
+            let mapped = if self.layout_mode.get() == PhotoLayout::Masonry {
+                let Some(mapped) = state.layout.resize_masonry(width, old_value) else {
+                    return false;
+                };
+                mapped
+            } else {
+                state.layout.scale_photo_area(factor, old_value)
+            };
             state.generation = state.generation.wrapping_add(1);
             self.geometry.replace(
                 state
@@ -139,6 +152,44 @@ impl SectionedFolderView {
                 adjustment.page_increment(),
                 page,
             );
+        }
+        true
+    }
+
+    // Repack once after the drag stops, rather than swapping photos between
+    // columns on every frame. Zoom/model changes still repack immediately.
+    fn poll_masonry_resize(self: &Rc<Self>) {
+        const RESIZE_SETTLE: std::time::Duration = std::time::Duration::from_millis(150);
+        let settled = self.layout_mode.get() == PhotoLayout::Masonry
+            && self
+                .wall_state
+                .borrow()
+                .masonry_resize_pending
+                .is_some_and(|changed| changed.elapsed() >= RESIZE_SETTLE);
+        if !settled {
+            return;
+        }
+        self.wall_state.borrow_mut().masonry_resize_pending = None;
+        let anchor = self.capture_center_anchor();
+        self.invalidate_geometry();
+        self.refresh();
+        if let Some(scroll) = self.scroll.borrow().as_ref().cloned() {
+            let adjustment = scroll.vadjustment();
+            let page = adjustment.page_size();
+            adjustment.configure(
+                adjustment.value(),
+                adjustment.lower(),
+                self.total_height.get().ceil().max(page),
+                adjustment.step_increment(),
+                adjustment.page_increment(),
+                page,
+            );
+        }
+        if let Some((photo, offset)) = anchor {
+            self.restore_anchor(photo, offset);
+        }
+        if let Some(viewport) = self.root.parent().and_downcast::<gtk::Viewport>() {
+            viewport.size_allocate(&viewport.allocation(), viewport.allocated_baseline());
         }
     }
 

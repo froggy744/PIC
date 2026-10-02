@@ -1632,3 +1632,74 @@ fn masonry_corners_follow_settings_and_filenames_stay_disabled() {
     window.close();
     settle();
 }
+
+#[test]
+#[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+fn masonry_resize_keeps_the_visible_photo_anchor() {
+    gtk::init().unwrap();
+    let gallery = Rc::new(Gallery::new(
+        &[],
+        100,
+        |_| {},
+        |_, _, _| {},
+        |_, _, _, _| {},
+        |_, _| {},
+        |_| {},
+    ));
+    let photos = (0..2000)
+        .map(|i| {
+            glib::Object::builder::<PhotoObject>()
+                .property("id", i as i64 + 1)
+                .property("width", 4000_i64)
+                .property("height", [2000_i64, 3000, 6000][i % 3])
+                .build()
+        })
+        .collect::<Vec<_>>();
+    gallery.current_photos.replace(photos.clone());
+    gallery.store.splice(0, 0, &photos);
+    gallery.set_layout(PhotoLayout::Masonry);
+    let scroll = gtk::ScrolledWindow::builder()
+        .child(&gallery.folder_sectioned_root)
+        .build();
+    gallery.attach_sectioned_folder_scroll(&scroll);
+    let window = gtk::Window::builder()
+        .default_width(997)
+        .default_height(600)
+        .child(&scroll)
+        .build();
+    window.present();
+    settle();
+    let surface = &gallery.sectioned_folder;
+    let adjustment = scroll.vadjustment();
+    adjustment.set_value((adjustment.upper() - adjustment.page_size()) * 0.4);
+    settle();
+    let anchor = surface.wall_photo_for_y(adjustment.value()).unwrap();
+    let index = photos.iter().position(|p| p.id() == anchor.id()).unwrap();
+    let old_offset = surface.wall_state.borrow().layout.item(index).unwrap().y - adjustment.value();
+    surface.calculate_wall_geometry(surface.geometry_width.get() + 10);
+    let new_offset = surface.wall_state.borrow().layout.item(index).unwrap().y - adjustment.value();
+    assert!(
+        (new_offset - old_offset).abs() < 1.0,
+        "resize moved the visible photo: old_offset={old_offset}, new_offset={new_offset}"
+    );
+    let (center_photo, center_offset) = surface.capture_center_anchor().unwrap();
+    let center_index = photos.iter().position(|p| p.id() == center_photo).unwrap();
+    surface.wall_state.borrow_mut().masonry_resize_pending =
+        Some(Instant::now() - std::time::Duration::from_millis(200));
+    surface.poll_masonry_resize();
+    assert!(surface.wall_state.borrow().masonry_resize_pending.is_none());
+    assert_eq!(surface.geometry_width.get(), scroll.width());
+    let after = surface
+        .wall_state
+        .borrow()
+        .layout
+        .item(center_index)
+        .unwrap()
+        .y
+        - adjustment.value();
+    assert!(
+        (after - center_offset).abs() < 1.0,
+        "settled resize lost its photo anchor"
+    );
+    window.close();
+}

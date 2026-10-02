@@ -123,23 +123,37 @@ impl PhotoWallLayout {
             sections: masonry.sections,
             total_height: masonry.total_height,
             lookup: vec![None; ratios.len()],
+            aspect_ratios: ratios.iter().copied().map(ratio).collect(),
+            viewport_width: viewport.max(1) as f64,
             masonry_columns: vec![Vec::new(); masonry.column_count],
             masonry_column_x: masonry.column_x,
             ..Self::default()
         };
+        layout.index_masonry_items();
         layout
-            .items
+    }
+
+    fn index_masonry_items(&mut self) {
+        self.rows.clear();
+        self.lookup.fill(None);
+        self.masonry_row_bottoms.clear();
+        for column in &mut self.masonry_columns {
+            column.clear();
+        }
+        self.items
             .sort_by(|a, b| a.y.total_cmp(&b.y).then(a.x.total_cmp(&b.x)));
         let mut max_bottom = 0.0_f64;
-        for (index, item) in layout.items.iter_mut().enumerate() {
+        for (index, item) in self.items.iter_mut().enumerate() {
             item.row = index;
-            layout.lookup[item.photo_index] = Some(index);
-            let column = layout.masonry_column_x
-                .partition_point(|&x| x <= item.x).saturating_sub(1);
-            layout.masonry_columns[column].push(index);
+            self.lookup[item.photo_index] = Some(index);
+            let column = self
+                .masonry_column_x
+                .partition_point(|&x| x <= item.x)
+                .saturating_sub(1);
+            self.masonry_columns[column].push(index);
             max_bottom = max_bottom.max(item.y + item.height);
-            layout.masonry_row_bottoms.push(max_bottom);
-            layout.rows.push(PhotoWallRow {
+            self.masonry_row_bottoms.push(max_bottom);
+            self.rows.push(PhotoWallRow {
                 item_range: index..index + 1,
                 y: item.y,
                 image_height: item.height,
@@ -149,7 +163,76 @@ impl PhotoWallLayout {
                 justified: false,
             });
         }
-        layout
+    }
+
+    /// Resize existing columns without rerunning shortest-column placement.
+    /// Gaps stay fixed and integer allocations derive from original ratios.
+    /// Return the old top photo at its original viewport offset.
+    pub fn resize_masonry(&mut self, viewport: i32, anchor_y: f64) -> Option<f64> {
+        let gap = super::masonry_layout::MASONRY_GAP;
+        let viewport = viewport.max(1) as usize;
+        let side = gap.min((viewport - 1) / 2);
+        let content = viewport - 2 * side;
+        let columns = self.masonry_columns.len();
+        if columns == 0 || content < columns + (columns - 1) * gap {
+            return None;
+        }
+        let available = content - (columns - 1) * gap;
+        let widths: Vec<_> = (0..columns)
+            .map(|column| available / columns + usize::from(column < available % columns))
+            .collect();
+        let mut x = side as f64;
+        let positions: Vec<_> = widths
+            .iter()
+            .map(|&width| {
+                let left = x;
+                x += (width + gap) as f64;
+                left
+            })
+            .collect();
+        let anchor = self
+            .items
+            .iter()
+            .find(|item| item.y + item.height > anchor_y)
+            .map(|item| (item.photo_index, item.y - anchor_y));
+        let old_positions = &self.masonry_column_x;
+        let mut cursor = 0.0;
+        let mut item_index = 0;
+        for (section, bounds) in self.sections.iter_mut().enumerate() {
+            let header = bounds.first_photo_y - bounds.header_y;
+            bounds.header_y = cursor;
+            cursor += header;
+            bounds.first_photo_y = cursor;
+            let mut bottoms = vec![cursor; columns];
+            while item_index < self.items.len() && self.items[item_index].section == section {
+                let item = &mut self.items[item_index];
+                item_index += 1;
+                let column = old_positions
+                    .partition_point(|&x| x <= item.x)
+                    .saturating_sub(1);
+                item.x = positions[column];
+                item.y = bottoms[column];
+                item.width = widths[column] as f64;
+                item.height = (item.width / self.aspect_ratios[item.photo_index])
+                    .round()
+                    .max(1.0);
+                bottoms[column] += item.height + gap as f64;
+            }
+            cursor = bottoms.into_iter().fold(cursor, f64::max);
+            if cursor > bounds.first_photo_y {
+                cursor -= gap as f64;
+            }
+            bounds.end_y = cursor;
+        }
+        self.total_height = cursor.max(1.0);
+        self.viewport_width = viewport as f64;
+        self.masonry_column_x = positions;
+        self.index_masonry_items();
+        Some(
+            anchor
+                .and_then(|(photo, offset)| self.item(photo).map(|item| item.y - offset))
+                .unwrap_or(anchor_y),
+        )
     }
 
     // Column entries have monotonically increasing tops and bottoms. Binary
@@ -729,5 +812,103 @@ mod tests {
                 assert!(rows.len() < 20);
             }
         }
+    }
+}
+
+
+#[cfg(test)]
+mod masonry_resize_tests {
+    use super::*;
+
+    #[test]
+    fn resizing_preserves_columns_gaps_aspects_and_round_trip_geometry() {
+        let ratios = (0..2000)
+            .map(|i| [0.5, 1.0, 1.5, 2.0][i % 4])
+            .collect::<Vec<_>>();
+        let sections = [
+            PhotoWallSection {
+                photo_range: 0..1000,
+                header_height: 32.0,
+            },
+            PhotoWallSection {
+                photo_range: 1000..2000,
+                header_height: 32.0,
+            },
+        ];
+        let original = PhotoWallLayout::calculate_masonry(&ratios, &sections, 997, 100);
+        let mut layout = original.clone();
+        let original_columns = original
+            .masonry_columns
+            .iter()
+            .map(|rows| {
+                rows.iter()
+                    .map(|&row| original.items[row].photo_index)
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        let photo = 0;
+        let offset = -13.0;
+        let mut anchor = layout.item(photo).unwrap().y - offset;
+        for width in [992, 1103, 701, 997] {
+            anchor = layout.resize_masonry(width, anchor).unwrap();
+            assert_eq!(layout.masonry_columns.len(), original_columns.len());
+            for (column, rows) in layout.masonry_columns.iter().enumerate() {
+                assert_eq!(
+                    rows.iter()
+                        .map(|&row| layout.items[row].photo_index)
+                        .collect::<Vec<_>>(),
+                    original_columns[column]
+                );
+                for pair in rows.windows(2) {
+                    let a = &layout.items[pair[0]];
+                    let b = &layout.items[pair[1]];
+                    if a.section == b.section {
+                        assert_eq!(b.y - a.y - a.height, 8.0);
+                    }
+                }
+            }
+            assert!((layout.item(photo).unwrap().y - anchor - offset).abs() < 1.0);
+            for item in &layout.items {
+                for value in [item.x, item.y, item.width, item.height] {
+                    assert_eq!(value.fract(), 0.0);
+                }
+                assert_eq!(
+                    item.height,
+                    (item.width / ratios[item.photo_index]).round().max(1.0)
+                );
+                assert!(item.x >= 8.0 && item.x + item.width <= width as f64 - 8.0);
+            }
+            let last = layout
+                .items
+                .iter()
+                .map(|item| item.x + item.width)
+                .fold(0.0_f64, f64::max);
+            assert_eq!(last, width as f64 - 8.0);
+        }
+        for photo in 0..ratios.len() {
+            let before = original.item(photo).unwrap();
+            let after = layout.item(photo).unwrap();
+            assert_eq!(
+                (before.x, before.y, before.width, before.height),
+                (after.x, after.y, after.width, after.height)
+            );
+        }
+    }
+
+    #[test]
+    fn very_narrow_resize_requests_a_repack_without_mutating_geometry() {
+        let mut layout = PhotoWallLayout::calculate_masonry(
+            &[1.0; 20],
+            &[PhotoWallSection {
+                photo_range: 0..20,
+                header_height: 0.0,
+            }],
+            997,
+            100,
+        );
+        let height = layout.total_height;
+        assert_eq!(layout.resize_masonry(20, 0.0), None);
+        assert_eq!(layout.total_height, height);
+        assert_eq!(layout.viewport_width, 997.0);
     }
 }

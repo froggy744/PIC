@@ -1569,14 +1569,22 @@ impl Lightbox {
                             }
 
                             if linear >= 1.0 {
-                                // If the full viewer decode is still pending,
-                                // keep the source paintable as a seamless visual
-                                // backstop. show_photo() will replace it with the
-                                // full-resolution texture when that result lands.
-                                // A PNG skips this: its source paintable is the
-                                // cached JPEG thumbnail, whose black pixels would
-                                // cover the viewer's alpha-correct background
-                                // until the decode lands.
+                                // PNG thumbnails are cached as JPEG and cannot
+                                // preserve alpha. Hold the transition overlay at
+                                // its final geometry until the real RGBA viewer
+                                // texture arrives instead of exposing a blank
+                                // lightbox between animation and decode.
+                                if png_transition && !decoded_swapped.get() {
+                                    if generation_for_transition.get() != generation {
+                                        root_for_transition.remove_overlay(transition);
+                                        return glib::ControlFlow::Break;
+                                    }
+                                    return glib::ControlFlow::Continue;
+                                }
+
+                                // For non-PNG images, keep the existing source
+                                // thumbnail backstop if the full decode is still
+                                // pending. show_photo() replaces it when ready.
                                 if picture_for_transition.paintable().is_none() && !png_transition {
                                     picture_for_transition
                                         .set_paintable(transition.paintable().as_ref());

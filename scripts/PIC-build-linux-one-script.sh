@@ -22,8 +22,8 @@ DEFAULT_BRANCH="${PIC_BRANCH:-main}"
 APP_ID="${PIC_APP_ID:-io.github.froggy744.PIC}"
 BIN_NAME_OVERRIDE="${PIC_BIN_NAME:-}"
 BIN_NAME=""
-GNOME_RUNTIME="${PIC_GNOME_RUNTIME:-50}"
-FDO_RUST_RUNTIME="${PIC_FDO_RUST_RUNTIME:-25.08}"
+GNOME_RUNTIME="${PIC_GNOME_RUNTIME:-51}"
+FDO_RUST_RUNTIME="${PIC_FDO_RUST_RUNTIME:-26.08}"
 MODE=""
 UNINSTALL_APPIMAGE=""
 PROJECT_DIR=""
@@ -118,8 +118,8 @@ Options:
 
 Useful environment overrides:
   PIC_SKIP_TESTS=1             skip cargo test
-  PIC_GNOME_RUNTIME=50         Flatpak GNOME runtime branch
-  PIC_FDO_RUST_RUNTIME=25.08   Flatpak Rust SDK-extension branch
+  PIC_GNOME_RUNTIME=51         Flatpak GNOME runtime branch
+  PIC_FDO_RUST_RUNTIME=26.08   Flatpak Rust SDK-extension branch
   PIC_APP_ID=...               application/Flatpak ID
   PIC_BUILD_CACHE=...          build cache location
   PIC_BUILD_LOG_DIR=...        build log folder

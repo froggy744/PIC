@@ -1703,3 +1703,129 @@ fn masonry_resize_keeps_the_visible_photo_anchor() {
     );
     window.close();
 }
+
+#[test]
+#[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+fn grid_lightbox_return_preserves_visible_photo_position() {
+    check_grid_lightbox_return(false);
+}
+
+#[test]
+#[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+fn folder_grid_lightbox_return_preserves_visible_photo_position() {
+    check_grid_lightbox_return(true);
+}
+
+fn check_grid_lightbox_return(folder: bool) {
+    gtk::init().unwrap();
+    crate::css::install_foundation(&gtk::gdk::Display::default().unwrap());
+    let gallery = Rc::new(Gallery::new(
+        &[],
+        100,
+        |_| {},
+        |_, _, _| {},
+        |_, _, _, _| {},
+        |_, _| {},
+        |_| {},
+    ));
+    let photos = (0..2000)
+        .map(|i| {
+            glib::Object::builder::<PhotoObject>()
+                .property("id", i as i64 + 1)
+                .property("width", 4000_i64)
+                .property("height", 3000_i64)
+                .property("folder-id", if i < 1000 { 1_i64 } else { 2_i64 })
+                .build()
+        })
+        .collect::<Vec<_>>();
+    gallery.current_photos.replace(photos.clone());
+    gallery.store.splice(0, 0, &photos);
+    if folder {
+        gallery.group_mode.set(GroupMode::Folder);
+        gallery.rebuild_group_ranges();
+        gallery.sectioned_folder.refresh_model();
+    }
+    let root = gallery.visible_root();
+    let scroll = gtk::ScrolledWindow::builder().child(&root).build();
+    if folder {
+        gallery.attach_sectioned_folder_scroll(&scroll);
+    }
+    let window = gtk::Window::builder()
+        .default_width(997)
+        .default_height(600)
+        .child(&scroll)
+        .build();
+    let gallery_for_width = gallery.clone();
+    scroll.add_tick_callback(move |scroll, _| {
+        gallery_for_width.update_width(scroll.width());
+        glib::ControlFlow::Continue
+    });
+    window.present();
+    settle();
+    let adjustment = scroll.vadjustment();
+    adjustment.set_value(3000.0);
+    settle();
+    let mut tiles = Vec::new();
+    collect_tiles(&root, &mut tiles);
+    let tile = tiles
+        .into_iter()
+        .find(|tile| {
+            tile.is_mapped()
+                && tile.compute_bounds(&scroll).is_some_and(|b| {
+                    b.y() > 0.0 && b.y() + b.height() < adjustment.page_size() as f32
+                })
+        })
+        .unwrap();
+    let photo = tile.photo().unwrap();
+    let position = photos.iter().position(|p| p.id() == photo.id()).unwrap();
+    gallery.selection.select_item(position as u32, true);
+    for partial in [false, true] {
+        let bounds = tile.compute_bounds(&scroll).unwrap();
+        let offset = adjustment.page_size()
+            - bounds.height() as f64 * if partial { 0.5 } else { 1.0 }
+            - 12.0;
+        adjustment.set_value(adjustment.value() + bounds.y() as f64 - offset);
+        settle();
+        let before = adjustment.value();
+        gallery.restore_activated_photo(photo.id());
+        gallery.grab_focus();
+        settle();
+        assert!((adjustment.value() - before).abs() < 1.0,
+            "Grid lightbox return shifted: folder={folder}, partial={partial}, before={before}, after={}", adjustment.value());
+        let focused = gtk::prelude::RootExt::focus(&window).unwrap();
+        assert!(
+            focused == tile.clone().upcast::<gtk::Widget>() || tile.is_ancestor(&focused),
+            "focus did not return to the opened photo: {}",
+            focused.type_().name()
+        );
+        assert_eq!(
+            selected_positions(&gallery.selection),
+            vec![position as u32]
+        );
+    }
+    // Navigating in the viewer to an offscreen photo must still reveal it.
+    let far = 1800;
+    assert!(gallery.restore_activated_photo(photos[far].id()));
+    gallery.grab_focus();
+    settle();
+    let mut tiles = Vec::new();
+    collect_tiles(&root, &mut tiles);
+    let returned = tiles
+        .iter()
+        .find(|tile| tile.is_mapped() && tile.photo().is_some_and(|p| p.id() == photos[far].id()))
+        .unwrap();
+    let bounds = returned.compute_bounds(&scroll).unwrap();
+    assert!(bounds.y() < adjustment.page_size() as f32 && bounds.y() + bounds.height() > 0.0);
+    let focused = gtk::prelude::RootExt::focus(&window).unwrap();
+    assert!(focused == returned.clone().upcast::<gtk::Widget>() || returned.is_ancestor(&focused));
+    assert_eq!(selected_positions(&gallery.selection), vec![far as u32]);
+
+    // A subsequent user selection must cancel the queued return.
+    let before = adjustment.value();
+    gallery.restore_activated_photo(photos[0].id());
+    gallery.selection.select_item(far as u32, true);
+    settle();
+    assert_eq!(adjustment.value(), before);
+    assert_eq!(selected_positions(&gallery.selection), vec![far as u32]);
+    window.close();
+}

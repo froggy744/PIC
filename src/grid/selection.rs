@@ -104,22 +104,22 @@ impl Gallery {
         else {
             return false;
         };
-        if matches!(self.layout(), PhotoLayout::PhotoWall | PhotoLayout::Masonry) {
+        if self.using_virtual_photo_surface() {
             let surface = self.sectioned_folder.clone();
             let viewport_offset = surface.scroll.borrow().as_ref().and_then(|scroll| {
                 let adjustment = scroll.vadjustment();
                 let top = adjustment.value();
                 let bottom = top + adjustment.page_size();
-                let state = surface.wall_state.borrow();
-                state
-                    .layout
-                    .item(position)
-                    .filter(|item| {
-                        adjustment.page_size() > 0.0
-                            && item.y < bottom
-                            && item.y + item.height > top
-                    })
-                    .map(|item| item.y - top)
+                let y = surface.y_for_index(position as u32)?;
+                let height = if surface.is_wall() {
+                    surface.wall_state.borrow().layout.item(position)?.height
+                } else {
+                    f64::from(folder_line_height(
+                        surface.tile_height.get(),
+                        surface.show_file_names.get(),
+                    ))
+                };
+                (adjustment.page_size() > 0.0 && y < bottom && y + height > top).then_some(y - top)
             });
             self.selection.select_item(position as u32, true);
             surface.selection_anchor.set(Some(position as u32));
@@ -156,7 +156,7 @@ impl Gallery {
                     && if let Some(offset) = viewport_offset {
                         surface.restore_anchor(photo_id, offset)
                     } else {
-                        surface.scroll_to_index_centered(index as u32)
+                        surface.scroll_to_index_centered_now(index as u32)
                     };
                 if restored {
                     generation.set(surface.scroll_animation_generation.get());
@@ -184,16 +184,6 @@ impl Gallery {
             });
             return true;
         }
-        if self.using_virtual_photo_surface() {
-            self.selection.select_item(position as u32, true);
-            let revealed = self
-                .sectioned_folder
-                .scroll_to_index_centered(position as u32);
-            if revealed {
-                self.sectioned_folder.focus_photo(photo_id);
-            }
-            return revealed;
-        }
         let folder_list_mode = self.group_mode.get() == GroupMode::Folder
             && !crate::grid::folder_gridview_experiment_enabled();
         let folder_row = folder_list_mode
@@ -209,25 +199,55 @@ impl Gallery {
         } else {
             self.root.vadjustment()
         };
+        let viewport = root.parent().unwrap_or_else(|| root.clone());
+        let mut tiles = Vec::new();
+        collect_tiles(&root, &mut tiles);
+        let viewport_offset = tiles
+            .iter()
+            .find(|tile| tile.is_mapped() && tile.photo().is_some_and(|p| p.id() == photo_id))
+            .and_then(|tile| tile.compute_bounds(&viewport))
+            .filter(|bounds| {
+                bounds.y() < viewport.height() as f32 && bounds.y() + bounds.height() > 0.0
+            })
+            .map(|bounds| f64::from(bounds.y()));
+        let saved_scroll = viewport_offset.and_then(|_| adjustment.as_ref().map(|a| a.value()));
+        self.selection.select_item(position as u32, true);
         let grid_root = self.root.clone();
         let folder_root = self.folder_root.clone();
         let selection = self.selection.clone();
         glib::idle_add_local_once(move || {
-            selection.select_item(position as u32, true);
+            if !selection.is_selected(position as u32) {
+                return;
+            }
+            // Container focus may have moved the view before this idle runs.
+            // Restore it before asking GTK to focus the already visible tile.
+            if let (Some(adjustment), Some(value)) = (adjustment.as_ref(), saved_scroll) {
+                adjustment.set_value(value);
+            }
+            // Focus a visible photo without GTK first scrolling it elsewhere.
+            let scroll = viewport_offset.map(|_| {
+                let scroll = gtk::ScrollInfo::new();
+                scroll.set_enable_horizontal(false);
+                scroll.set_enable_vertical(false);
+                scroll
+            });
             if folder_list_mode {
                 if let Some(row) = folder_row {
-                    folder_root.scroll_to(row, gtk::ListScrollFlags::FOCUS, None);
+                    folder_root.scroll_to(row, gtk::ListScrollFlags::FOCUS, scroll);
                 }
             } else {
                 grid_root.scroll_to(
                     position as u32,
                     gtk::ListScrollFlags::SELECT | gtk::ListScrollFlags::FOCUS,
-                    None,
+                    scroll,
                 );
             }
 
             let attempts = Cell::new(0_u8);
             root.add_tick_callback(move |root, _| {
+                if !selection.is_selected(position as u32) {
+                    return glib::ControlFlow::Break;
+                }
                 attempts.set(attempts.get().saturating_add(1));
                 // Let scroll_to() realize and allocate the destination before
                 // measuring its centre; first-frame bounds can belong to a
@@ -254,19 +274,36 @@ impl Gallery {
                         glib::ControlFlow::Continue
                     };
                 };
-                let Some(bounds) = tile.compute_bounds(root) else {
+                let Some(bounds) = tile.compute_bounds(&viewport) else {
                     return glib::ControlFlow::Continue;
                 };
-                if let Some(adjustment) = adjustment.as_ref() {
-                    let target = adjustment.value()
-                        + f64::from(bounds.y())
-                        + f64::from(bounds.height()) * 0.5
-                        - f64::from(root.height()) * 0.5;
+                let target = adjustment.as_ref().map(|adjustment| {
+                    let offset = viewport_offset.unwrap_or_else(|| {
+                        (f64::from(viewport.height()) - f64::from(bounds.height())) * 0.5
+                    });
+                    let target = adjustment.value() + f64::from(bounds.y()) - offset;
                     let upper =
                         (adjustment.upper() - adjustment.page_size()).max(adjustment.lower());
-                    adjustment.set_value(target.clamp(adjustment.lower(), upper));
+                    target.clamp(adjustment.lower(), upper)
+                });
+                // GridView's native item owns keyboard focus; unlike the
+                // virtual surface, its SquareTile child is not focusable.
+                let focus_target = tile
+                    .parent()
+                    .filter(|parent| parent.is_focusable())
+                    .unwrap_or_else(|| tile.clone().upcast());
+                if !focus_target.grab_focus() {
+                    return if attempts.get() >= 60 {
+                        glib::ControlFlow::Break
+                    } else {
+                        glib::ControlFlow::Continue
+                    };
                 }
-                tile.grab_focus();
+                // Focus may reveal a clipped photo. Apply the saved position
+                // afterwards, just as the aspect-based virtual surface does.
+                if let (Some(adjustment), Some(target)) = (adjustment.as_ref(), target) {
+                    adjustment.set_value(target);
+                }
                 glib::ControlFlow::Break
             });
         });

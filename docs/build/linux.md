@@ -99,6 +99,10 @@ when the Flatpak runtime lacks host `nss-mdns`.
 
 ## Optional AppImage
 
+Published AppImages are built by `.github/workflows/appimage-release.yml` on Ubuntu 24.04. That is the oldest Ubuntu LTS whose packaged GTK4 and libadwaita satisfy PIC's current GTK 4.12 and libadwaita 1.5 requirements. The release workflow verifies that the finished AppImage does not reference GLIBC symbols newer than 2.39 before uploading it.
+
+Local AppImage builds remain useful for development, but an AppImage built on a newer host such as Fedora can inherit that host's newer GLIBC requirements and should not be uploaded as the cross-distribution release artifact. Use the GitHub Actions artifact, or the AppImage attached automatically when a GitHub release is published, for public releases and AppImage catalog testing.
+
 ```sh
 ./scripts/PIC-build-linux-one-script.sh local --appimage-only
 ```

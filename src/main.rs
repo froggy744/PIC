@@ -146,6 +146,7 @@ fn main() {
                     filter.add_pattern("*.db");
                     chooser.add_filter(&filter);
                     let application = application.clone();
+                    let recovery_parent = recovery_parent.clone();
                     chooser.connect_response(move |chooser, response| {
                         if response == gtk::ResponseType::Accept {
                             if let Some(path) = chooser.file().and_then(|file| file.path()) {

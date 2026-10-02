@@ -56,7 +56,7 @@ jobs:
             tail -n1
           )"
           echo "Highest GLIBC symbol referenced: ${max:-none}"
-          if [[ -n "${max:-}" ]] && printf '%s\n%s\n' "2.39" "$max" | sort -V -C; then
+          if [[ -n "${max:-}" ]] && [[ "$(printf '%s\n%s\n' "$max" "2.39" | sort -V | head -n1)" == "$max" ]]; then
             echo "GLIBC compatibility check passed."
           elif [[ -z "${max:-}" ]]; then
             echo "No GLIBC version references found."

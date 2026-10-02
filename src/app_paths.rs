@@ -112,8 +112,19 @@ pub fn migrate_roots(data: &Path, config: &Path, cache: &Path) -> io::Result<()>
     )
 }
 
+fn is_sqlite_shm(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.ends_with("-shm"))
+}
+
 fn check_conflicts(source: &Path, destination: &Path) -> io::Result<()> {
     if !source.exists() || !destination.exists() {
+        return Ok(());
+    }
+    // SQLite shared-memory files are transient coordination state. They are
+    // recreated from the database/WAL and must never block a storage migration.
+    if is_sqlite_shm(source) || is_sqlite_shm(destination) {
         return Ok(());
     }
     if source.is_dir() && destination.is_dir() {
@@ -139,44 +150,53 @@ fn move_directory(source: &Path, destination: &Path) -> io::Result<()> {
         return Ok(());
     }
     check_conflicts(source, destination)?;
-    if let Some(parent) = destination.parent() {
-        fs::create_dir_all(parent)?;
+
+    // Never migrate SQLite's transient shared-memory sidecar. Keeping an old
+    // -shm file can make a valid database/WAL pair look conflicted after an
+    // app-id or storage-root migration. SQLite recreates this file as needed.
+    if source.is_file() && is_sqlite_shm(source) {
+        return fs::remove_file(source);
     }
-    if !destination.exists() && fs::rename(source, destination).is_ok() {
-        return Ok(());
-    }
+
     if source.is_dir() {
         fs::create_dir_all(destination)?;
         for entry in fs::read_dir(source)? {
             let entry = entry?;
             move_directory(&entry.path(), &destination.join(entry.file_name()))?;
         }
-        fs::remove_dir(source)
-    } else {
-        // Data and cache can be on different filesystems. Publish a complete
-        // copy and retain the source if copying fails.
-        let temporary = destination.with_file_name(format!(
-            ".{}.migrating-{}",
-            destination.file_name().unwrap().to_string_lossy(),
-            std::process::id()
-        ));
-        let mut output = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temporary)?;
-        let result = (|| {
-            let mut input = fs::File::open(source)?;
-            io::copy(&mut input, &mut output)?;
-            output.sync_all()?;
-            drop(output);
-            fs::rename(&temporary, destination)
-        })();
-        if let Err(error) = result {
-            let _ = fs::remove_file(&temporary);
-            return Err(error);
-        }
-        fs::remove_file(source)
+        return fs::remove_dir(source);
     }
+
+    if let Some(parent) = destination.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    if !destination.exists() && fs::rename(source, destination).is_ok() {
+        return Ok(());
+    }
+
+    // Data and cache can be on different filesystems. Publish a complete
+    // copy and retain the source if copying fails.
+    let temporary = destination.with_file_name(format!(
+        ".{}.migrating-{}",
+        destination.file_name().unwrap().to_string_lossy(),
+        std::process::id()
+    ));
+    let mut output = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temporary)?;
+    let result = (|| {
+        let mut input = fs::File::open(source)?;
+        io::copy(&mut input, &mut output)?;
+        output.sync_all()?;
+        drop(output);
+        fs::rename(&temporary, destination)
+    })();
+    if let Err(error) = result {
+        let _ = fs::remove_file(&temporary);
+        return Err(error);
+    }
+    fs::remove_file(source)
 }
 
 pub fn relocated_path(path: &Path, old: &Path, new: &Path) -> PathBuf {
@@ -310,6 +330,39 @@ mod tests {
         assert_eq!(fs::read(new.join("overlays/hash.png")).unwrap(), b"image");
         assert!(!old.exists());
         move_directory(&old, &new).unwrap();
+    }
+
+    #[test]
+    fn sqlite_shm_conflicts_do_not_block_migration() {
+        let f = Fixture::new();
+        let old = f.0.join("old");
+        let new = f.0.join("new");
+        fs::create_dir_all(&old).unwrap();
+        fs::create_dir_all(&new).unwrap();
+        fs::write(old.join("library.db-shm"), b"stale-old-shm").unwrap();
+        fs::write(new.join("library.db-shm"), b"stale-new-shm").unwrap();
+
+        move_directory(&old, &new).unwrap();
+
+        assert!(!old.exists());
+        assert_eq!(
+            fs::read(new.join("library.db-shm")).unwrap(),
+            b"stale-new-shm"
+        );
+    }
+
+    #[test]
+    fn sqlite_shm_is_discarded_when_no_destination_exists() {
+        let f = Fixture::new();
+        let old = f.0.join("old");
+        let new = f.0.join("new");
+        fs::create_dir_all(&old).unwrap();
+        fs::write(old.join("library.db-shm"), b"stale-shm").unwrap();
+
+        move_directory(&old, &new).unwrap();
+
+        assert!(!old.exists());
+        assert!(!new.join("library.db-shm").exists());
     }
 
     #[test]

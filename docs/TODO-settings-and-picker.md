@@ -135,19 +135,17 @@ Keep:
 - Make action buttons wrap or use a compact two-column/vertical layout.
 - Keep the Settings window reasonably sized; pages should adapt instead of requiring a huge window.
 
-## Add Folder picker regression
+## Add Folder picker status
 
-The GTK4 `FileDialog::select_folder()` replacement introduced in commit `1b481884c` did not work in the tested build.
+The GTK4 `FileDialog::select_folder()` replacement introduced in commit `1b481884c` is working in the tested build.
 
 Previous behaviour:
 - `GtkFileChooserNative` opened and selected folders correctly.
 - Closing/accepting it emitted repeated GTK criticals:
   `thaw_updates: assertion 'GTK_IS_FILE_SYSTEM_MODEL (model)' failed`.
 
-Next fix:
-- Restore the working native folder chooser path.
-- Avoid immediately destroying the chooser inside its response callback; let GTK/native-dialog lifecycle close it normally.
-- Verify both Accept and Cancel.
-- Verify no repeated `thaw_updates` criticals.
+Current status:
+- Local Add Folder picker works with `GtkFileDialog`.
 - Keep Network Shares on PIC's own network picker.
-- Test locally before another GitHub AppImage build.
+- Verify both Accept and Cancel during normal testing.
+- Confirm the old repeated `thaw_updates` criticals no longer appear.

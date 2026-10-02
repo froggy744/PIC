@@ -37,6 +37,11 @@ impl Lightbox {
         picture_viewport.set_halign(gtk::Align::Fill);
         picture_viewport.set_valign(gtk::Align::Fill);
         picture_viewport.set_can_target(true);
+        // Lightbox mouse panning is implemented explicitly below so the
+        // grabbed image point stays tied to the pointer. Disable GTK's own
+        // kinetic drag handling here; otherwise ScrolledWindow and our custom
+        // GestureDrag can both update the same adjustments during one press.
+        picture_viewport.set_kinetic_scrolling(false);
         // Keep scrollbars hidden while keeping the viewport constrained to
         // the lightbox allocation. External gives us real scroll ranges
         // without drawing normal scrollbar UI.

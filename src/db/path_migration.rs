@@ -1,7 +1,7 @@
 /// Repair application-owned paths after relocating storage. Photo directories
 /// outside the moved application roots retain their original spelling.
 fn migrate_stored_paths(connection: &Connection) -> Result<()> {
-    let marker = "pic_rs_storage_paths_v1";
+    let marker = "pic_rs_storage_paths_v2";
     if connection
         .query_row(
             "SELECT value FROM settings WHERE key = ?1",
@@ -17,12 +17,14 @@ fn migrate_stored_paths(connection: &Connection) -> Result<()> {
     let transaction = connection.unchecked_transaction()?;
     let config = dirs::config_dir().context("could not determine configuration directory")?;
     if let (Some(data), Some(cache)) = (dirs::data_dir(), dirs::cache_dir()) {
-        if let Some(legacy) = crate::app_paths::legacy_storage_root(&data, &config, "data") {
-            rewrite_stored_paths(
-                &transaction,
-                &legacy.join("picasa-rs/overlays"),
-                &cache.join("pic-rs/thumbs/overlay"),
-            )?;
+        for legacy in crate::app_paths::legacy_storage_roots(&data, &config, "data") {
+            for name in ["picasa-rs", "pic-rs"] {
+                rewrite_stored_paths(
+                    &transaction,
+                    &legacy.join(name).join("overlays"),
+                    &cache.join("pic-rs/thumbs/overlay"),
+                )?;
+            }
         }
         for name in ["picasa-rs", "pic-rs"] {
             rewrite_stored_paths(
@@ -45,12 +47,14 @@ fn migrate_stored_paths(connection: &Connection) -> Result<()> {
             &root.join("picasa-rs"),
             &root.join(crate::app_paths::APP_DIRECTORY),
         )?;
-        if let Some(legacy) = crate::app_paths::legacy_storage_root(&root, &config, kind) {
-            rewrite_stored_paths(
-                &transaction,
-                &legacy.join("picasa-rs"),
-                &root.join(crate::app_paths::APP_DIRECTORY),
-            )?;
+        for legacy in crate::app_paths::legacy_storage_roots(&root, &config, kind) {
+            for name in ["picasa-rs", "pic-rs"] {
+                rewrite_stored_paths(
+                    &transaction,
+                    &legacy.join(name),
+                    &root.join(crate::app_paths::APP_DIRECTORY),
+                )?;
+            }
         }
     }
     transaction.execute(

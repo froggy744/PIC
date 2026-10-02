@@ -103,12 +103,28 @@ impl Lightbox {
                 let scrollable =
                     hadj.upper() - hadj.page_size() > 1.0 || vadj.upper() - vadj.page_size() > 1.0;
 
-                pan_pressed.set(scrollable);
-                pan_active.set(false);
                 if !scrollable {
+                    pan_pressed.set(false);
+                    pan_active.set(false);
                     return;
                 }
 
+                // GTK does not guarantee GestureClick::pressed runs before
+                // GestureDrag::drag_begin when both controllers are in capture
+                // phase. If drag_begin already owns this press, do not reset
+                // pan_active or overwrite its origin; doing so re-enables the
+                // early-motion path and makes two handlers move the viewport.
+                if pan_active.get() {
+                    pan_pressed.set(true);
+                    zoom_trace(format!(
+                        "pan_mouse_down_after_drag x={x:.1} y={y:.1} origin={:.1},{:.1}",
+                        drag_start_h.get(),
+                        drag_start_v.get(),
+                    ));
+                    return;
+                }
+
+                pan_pressed.set(true);
                 drag_start_h.set(hadj.value());
                 drag_start_v.set(vadj.value());
                 drag_press_x.set(x);

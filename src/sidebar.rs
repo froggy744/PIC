@@ -3782,9 +3782,11 @@ mod tests {
 
         crate::db::set_setting(&connection, ALBUMS_VISIBLE_SETTING_KEY, "false").unwrap();
         crate::db::set_setting(&connection, FAVOURITES_VISIBLE_SETTING_KEY, "false").unwrap();
+        crate::db::set_setting(&connection, HISTORY_VISIBLE_SETTING_KEY, "false").unwrap();
         let visibility = SidebarVisibility::from_connection(&connection);
         assert!(!visibility.albums);
         assert!(!visibility.favourites);
+        assert!(!visibility.history);
         assert!(visibility.library);
         assert!(visibility.folders);
     }
@@ -3947,6 +3949,7 @@ mod tests {
                 all_photos: false,
                 favourites: true,
                 recently_added: false,
+                history: false,
                 ..SidebarVisibility::default()
             },
         );
@@ -3958,6 +3961,9 @@ mod tests {
             .unwrap()
             .is_visible());
         assert!(!row_for_filter(&library_list, SidebarFilter::RecentlyAdded)
+            .unwrap()
+            .is_visible());
+        assert!(!row_for_filter(&library_list, SidebarFilter::History)
             .unwrap()
             .is_visible());
     }

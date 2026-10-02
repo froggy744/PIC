@@ -853,6 +853,10 @@ fi
 # directly and does not set APPDIR, so keep the normal bin-directory fallback.
 if [ -n "\${APPDIR:-}" ] && [ -d "\$APPDIR/usr/share/$BIN_NAME" ]; then
     PREFIX="\$APPDIR/usr"
+    # Make GTK/GIO discover data bundled in the AppImage before host data.
+    # This is required for named Adwaita symbolic icons to render consistently
+    # on hosts whose installed icon theme differs from the build environment.
+    export XDG_DATA_DIRS="\$PREFIX/share\${XDG_DATA_DIRS:+:\$XDG_DATA_DIRS}"
 else
     BIN_DIR="\$(CDPATH= cd -- "\$(dirname -- "\$0")" && pwd)"
     PREFIX="\$(dirname -- "\$BIN_DIR")"
@@ -1045,14 +1049,18 @@ build_appimage() {
             glib-compile-schemas "$appdir/usr/share/glib-2.0/schemas" || true
         fi
     fi
-    if [[ -d /usr/share/icons/Adwaita ]]; then
-        mkdir -p "$appdir/usr/share/icons"
-        cp -a /usr/share/icons/Adwaita "$appdir/usr/share/icons/"
-    fi
-    if [[ -f /usr/share/icons/hicolor/index.theme ]]; then
-        mkdir -p "$appdir/usr/share/icons/hicolor"
-        cp -f /usr/share/icons/hicolor/index.theme "$appdir/usr/share/icons/hicolor/"
-    fi
+    # Bundle the icon-theme data used by GTK/libadwaita widgets. Adwaita
+    # inherits from hicolor, and Ubuntu may also provide AdwaitaLegacy assets
+    # referenced by applications/themes. Copy the complete available themes,
+    # not only index.theme, so symbolic toolbar/sidebar icons do not fall back
+    # to missing-image placeholders when the host theme differs.
+    mkdir -p "$appdir/usr/share/icons"
+    for icon_theme in Adwaita AdwaitaLegacy hicolor; do
+        if [[ -d "/usr/share/icons/$icon_theme" ]]; then
+            rm -rf "$appdir/usr/share/icons/$icon_theme"
+            cp -a "/usr/share/icons/$icon_theme" "$appdir/usr/share/icons/"
+        fi
+    done
 
     # The embedded icon is used by AppImage-aware launchers/integrators. GNOME
     # Files does not automatically render arbitrary executable files using it.

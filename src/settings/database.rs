@@ -99,16 +99,12 @@ pub(super) fn page(
     thumbnail_title.add_css_class("heading");
     content.append(&thumbnail_title);
 
-    let thumbnail_stats = super::settings_list();
-    let cached_label = super::stat_row(&thumbnail_stats, "Cached thumbnails");
-    let required_label = super::stat_row(&thumbnail_stats, "Required thumbnails");
-    let unused_label = super::stat_row(&thumbnail_stats, "Unused thumbnails");
-    let cache_size_label = super::stat_row(&thumbnail_stats, "Thumbnail cache size");
+    let thumbnail_actions = super::settings_list();
 
     let clean_button = gtk::Button::with_label("Clean Cache");
     clean_button.set_valign(gtk::Align::Center);
     super::append_row(
-        &thumbnail_stats,
+        &thumbnail_actions,
         "Thumbnail maintenance",
         Some("Remove cached thumbnails that no longer match current photos."),
         Some(clean_button.upcast_ref()),
@@ -118,12 +114,12 @@ pub(super) fn page(
     clear_thumbnails_button.set_valign(gtk::Align::Center);
     clear_thumbnails_button.add_css_class("clear-action-button");
     super::append_row(
-        &thumbnail_stats,
+        &thumbnail_actions,
         "Clear thumbnails",
         Some("Delete every cached thumbnail. Photos and the database remain."),
         Some(clear_thumbnails_button.upcast_ref()),
     );
-    content.append(&thumbnail_stats);
+    content.append(&thumbnail_actions);
 
     let thumbnail_status = gtk::Label::new(None);
     thumbnail_status.set_xalign(0.0);
@@ -132,21 +128,9 @@ pub(super) fn page(
     thumbnail_status.add_css_class("dim-label");
     content.append(&thumbnail_status);
 
-    super::refresh_thumbnail_cache_stats(
-        connection.clone(),
-        cached_label.clone(),
-        required_label.clone(),
-        unused_label.clone(),
-        cache_size_label.clone(),
-    );
-
     let cleanup_running = Rc::new(Cell::new(false));
     {
         let connection = connection.clone();
-        let cached_label = cached_label.clone();
-        let required_label = required_label.clone();
-        let unused_label = unused_label.clone();
-        let cache_size_label = cache_size_label.clone();
         let thumbnail_status = thumbnail_status.clone();
         let button_for_click = clean_button.clone();
         let cleanup_running = cleanup_running.clone();
@@ -170,28 +154,17 @@ pub(super) fn page(
 
             let (sender, receiver) = std::sync::mpsc::channel();
             std::thread::spawn(move || {
-                let result = crate::thumbnail::cleanup_cache(&valid).and_then(|cleanup| {
-                    let stats = crate::thumbnail::cache_stats(&valid)?;
-                    Ok((cleanup, stats))
-                });
+                let result = crate::thumbnail::cleanup_cache(&valid);
                 let _ = sender.send(result);
             });
 
-            let poll_cached = cached_label.clone();
-            let poll_required = required_label.clone();
-            let poll_unused = unused_label.clone();
-            let poll_size = cache_size_label.clone();
             let poll_status = thumbnail_status.clone();
             let poll_button = button.clone();
             let poll_running = cleanup_running.clone();
             glib::timeout_add_local(Duration::from_millis(50), move || {
                 match receiver.try_recv() {
-                    Ok(Ok((cleanup, stats))) => {
+                    Ok(Ok(cleanup)) => {
                         poll_status.set_text(&super::cleanup_result_text(&cleanup));
-                        poll_cached.set_text(&super::format_count(stats.cached));
-                        poll_required.set_text(&super::format_count(stats.required));
-                        poll_unused.set_text(&super::format_count(stats.unused()));
-                        poll_size.set_text(&super::format_bytes(stats.bytes));
                         poll_button.set_sensitive(true);
                         poll_running.set(false);
                         glib::ControlFlow::Break
@@ -247,35 +220,18 @@ pub(super) fn page(
     {
         let maintenance = maintenance.clone();
         let parent = parent.clone();
-        let connection = connection.clone();
-        let cached_label = cached_label.clone();
-        let required_label = required_label.clone();
-        let unused_label = unused_label.clone();
-        let cache_size_label = cache_size_label.clone();
+        let thumbnail_status = thumbnail_status.clone();
         clear_thumbnails_button.connect_clicked(move |_| {
-            let refresh_connection = connection.clone();
-            let refresh_cached = cached_label.clone();
-            let refresh_required = required_label.clone();
-            let refresh_unused = unused_label.clone();
-            let refresh_size = cache_size_label.clone();
-            let action = {
-                let maintenance = maintenance.clone();
-                Rc::new(move || {
-                    (maintenance.clear_thumbnails)();
-                    super::refresh_thumbnail_cache_stats(
-                        refresh_connection.clone(),
-                        refresh_cached.clone(),
-                        refresh_required.clone(),
-                        refresh_unused.clone(),
-                        refresh_size.clone(),
-                    );
-                })
-            };
+            let maintenance = maintenance.clone();
+            let thumbnail_status = thumbnail_status.clone();
             super::confirm_destructive(
                 &parent,
                 "Clear thumbnails?",
                 "Cached thumbnails will be deleted. Your photos and database will remain.",
-                action,
+                Rc::new(move || {
+                    (maintenance.clear_thumbnails)();
+                    thumbnail_status.set_text("Thumbnail cache cleared. Reopen Stats to refresh cache totals.");
+                }),
             );
         });
     }

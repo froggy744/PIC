@@ -1030,7 +1030,8 @@ validate_appimage_icon_layout() {
 
 build_appimage() {
     local linuxdeploy app_work appdir desktop staging_icon output_name deployed_bin real_bin resource_root app_icon_dir
-    local svg_loader pixbuf_query deployed_svg_loader pixbuf_cache_dir pixbuf_cache_template cache_loader line
+    local svg_loader glycin_svg pixbuf_query deployed_svg_loader pixbuf_cache_dir pixbuf_cache_template cache_loader line
+    local -a linuxdeploy_args
     if ! linuxdeploy="$(linuxdeploy_path)"; then
         return 1
     fi
@@ -1040,11 +1041,21 @@ build_appimage() {
     }
 
     svg_loader="$(find_gdk_pixbuf_svg_loader)"
-    [[ -n "$svg_loader" && -f "$svg_loader" ]] || \
-        die "GdkPixbuf SVG loader is unavailable; install librsvg2/librsvg2-common."
-    pixbuf_query="$(find_gdk_pixbuf_query_loaders)"
-    [[ -n "$pixbuf_query" && -x "$pixbuf_query" ]] || \
-        die "gdk-pixbuf-query-loaders is unavailable."
+    glycin_svg="$(find_glycin_svg_loader)"
+    if [[ -n "$svg_loader" && -f "$svg_loader" ]]; then
+        pixbuf_query="$(find_gdk_pixbuf_query_loaders)"
+        [[ -n "$pixbuf_query" && -x "$pixbuf_query" ]] || \
+            die "gdk-pixbuf-query-loaders is unavailable."
+    elif [[ -n "$glycin_svg" && -x "$glycin_svg" ]]; then
+        # Fedora 43+ moved SVG decoding from librsvg's old pixbuf plugin to
+        # gdk-pixbuf's built-in glycin loader. Local Fedora AppImages keep
+        # host XDG data dirs available so the matching glycin config/loader is
+        # discoverable. Catalog release builds on Ubuntu bundle the classic
+        # SVG plugin below and remain self-contained.
+        ok "Fedora glycin SVG runtime detected: $glycin_svg"
+    else
+        die "No supported SVG runtime found (GdkPixbuf librsvg plugin or glycin-svg)."
+    fi
 
     app_work="$WORK_ROOT/appimage"
     appdir="$app_work/AppDir"
@@ -1059,31 +1070,39 @@ build_appimage() {
     rm -f "$DIST_DIR/$output_name"
 
     log "Creating AppDir with linuxdeploy"
-    APPIMAGE_EXTRACT_AND_RUN=1 "$linuxdeploy" \
-        --appdir "$appdir" \
-        --executable "$NATIVE_BIN" \
-        --library "$svg_loader" \
-        --desktop-file "$desktop" \
+    linuxdeploy_args=(
+        --appdir "$appdir"
+        --executable "$NATIVE_BIN"
+        --desktop-file "$desktop"
         --icon-file "$staging_icon"
+    )
+    if [[ -n "$svg_loader" ]]; then
+        linuxdeploy_args+=(--library "$svg_loader")
+    fi
+    APPIMAGE_EXTRACT_AND_RUN=1 "$linuxdeploy" "${linuxdeploy_args[@]}"
 
-    # GdkPixbuf image loaders are plugins, not normal link dependencies. The
-    # explicit --library above makes linuxdeploy collect librsvg and its ELF
-    # dependencies. Build a one-loader cache template whose path is resolved
-    # by the AppImage launcher after the runtime mount point is known.
-    deployed_svg_loader="$appdir/usr/lib/$(basename "$svg_loader")"
-    [[ -s "$deployed_svg_loader" ]] || \
-        die "linuxdeploy did not stage the GdkPixbuf SVG loader: $deployed_svg_loader"
-    pixbuf_cache_dir="$appdir/usr/lib/gdk-pixbuf-2.0/2.10.0"
-    pixbuf_cache_template="$pixbuf_cache_dir/pic-svg-loaders.cache.in"
-    mkdir -p "$pixbuf_cache_dir"
-    cache_loader="@PIC_PREFIX@/lib/$(basename "$svg_loader")"
-    : > "$pixbuf_cache_template"
-    while IFS= read -r line; do
-        printf '%s\n' "${line//$svg_loader/$cache_loader}"
-    done < <("$pixbuf_query" "$svg_loader") > "$pixbuf_cache_template"
-    grep -Fq "$cache_loader" "$pixbuf_cache_template" || \
-        die "Could not generate relocatable GdkPixbuf SVG loader cache template."
-    ok "Bundled GdkPixbuf SVG loader: $deployed_svg_loader"
+    if [[ -n "$svg_loader" ]]; then
+        # GdkPixbuf image loaders are plugins, not normal link dependencies.
+        # The explicit --library above makes linuxdeploy collect librsvg and
+        # its ELF dependencies. Build a one-loader cache template whose path
+        # is resolved after the AppImage runtime mount point is known.
+        deployed_svg_loader="$appdir/usr/lib/$(basename "$svg_loader")"
+        [[ -s "$deployed_svg_loader" ]] || \
+            die "linuxdeploy did not stage the GdkPixbuf SVG loader: $deployed_svg_loader"
+        pixbuf_cache_dir="$appdir/usr/lib/gdk-pixbuf-2.0/2.10.0"
+        pixbuf_cache_template="$pixbuf_cache_dir/pic-svg-loaders.cache.in"
+        mkdir -p "$pixbuf_cache_dir"
+        cache_loader="@PIC_PREFIX@/lib/$(basename "$svg_loader")"
+        : > "$pixbuf_cache_template"
+        while IFS= read -r line; do
+            printf '%s\n' "${line//$svg_loader/$cache_loader}"
+        done < <("$pixbuf_query" "$svg_loader") > "$pixbuf_cache_template"
+        grep -Fq "$cache_loader" "$pixbuf_cache_template" || \
+            die "Could not generate relocatable GdkPixbuf SVG loader cache template."
+        ok "Bundled GdkPixbuf SVG loader: $deployed_svg_loader"
+    else
+        warn "Using Fedora host glycin-svg for this local AppImage; the GitHub Ubuntu release build bundles its SVG decoder."
+    fi
 
     # linuxdeploy versions differ in whether they leave a real application icon
     # at the AppDir root. Install PIC's selected custom icon deterministically:

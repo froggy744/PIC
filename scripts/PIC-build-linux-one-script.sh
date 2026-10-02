@@ -1107,16 +1107,6 @@ build_appimage() {
         warn "Using Fedora host glycin-svg for this local AppImage; the GitHub Ubuntu release build bundles its SVG decoder."
     fi
 
-    # libselinux is part of the host OS ABI and must not be carried from the
-    # build distribution into the AppImage. If bundled, our launcher utilities
-    # (for example mkdir) can load the Ubuntu copy before PIC starts, making an
-    # otherwise portable AppImage require the build host's newer glibc.
-    find "$appdir/usr/lib" -maxdepth 1 \( -type f -o -type l \) -name 'libselinux.so*' -delete 2>/dev/null || true
-    if find "$appdir/usr/lib" -maxdepth 1 \( -type f -o -type l \) -name 'libselinux.so*' -print -quit | grep -q .; then
-        die "AppImage staging still contains host libselinux"
-    fi
-    ok "Excluded host libselinux from AppImage runtime"
-
     # linuxdeploy versions differ in whether they leave a real application icon
     # at the AppDir root. Install PIC's selected custom icon deterministically:
     # the root copy/.DirIcon is the AppImage file icon, while hicolor is used by
@@ -1193,6 +1183,15 @@ build_appimage() {
         "$appdir/usr/share/applications/$APP_ID.desktop" \
         "$appdir/$APP_ID.$ICON_EXT" \
         "$appdir/usr/share/icons/hicolor/$([[ "$ICON_EXT" == svg ]] && printf scalable || printf 256x256)/apps/$APP_ID.$ICON_EXT"
+
+    # libselinux is part of the host OS ABI and must not be carried from the
+    # build distribution into the AppImage. Do this only after every linuxdeploy
+    # dependency pass: the SVG cache-helper deployment can otherwise add it back.
+    find "$appdir/usr/lib" -maxdepth 1 \( -type f -o -type l \) -name 'libselinux.so*' -delete 2>/dev/null || true
+    if find "$appdir/usr/lib" -maxdepth 1 \( -type f -o -type l \) -name 'libselinux.so*' -print -quit | grep -q .; then
+        die "AppImage staging still contains host libselinux"
+    fi
+    ok "Excluded host libselinux from final AppImage runtime"
 
     log "Writing AppImage: $DIST_DIR/$output_name"
     (

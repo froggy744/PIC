@@ -300,3 +300,107 @@ mod viewer_presentation_tests {
         );
     }
 }
+
+
+
+#[cfg(test)]
+mod one_to_one_layout_regression {
+    use super::*;
+
+    fn settle() {
+        let context = glib::MainContext::default();
+        for _ in 0..20 {
+            while context.pending() {
+                context.iteration(false);
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    #[test]
+    #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+    fn native_picture_is_centered_before_the_first_pointer_update() {
+        gtk::init().unwrap();
+        let lightbox = Lightbox::new();
+        let window = gtk::Window::new();
+        window.set_default_size(200, 120);
+        window.set_child(Some(&lightbox.root));
+        window.present();
+        lightbox.root.set_visible(true);
+        settle();
+
+        let photo: PhotoObject = glib::Object::builder::<PhotoObject>()
+            .property("id", 1_i64)
+            .property("width", 400_i64)
+            .property("height", 300_i64)
+            .build();
+        let preview_bytes = glib::Bytes::from_owned(vec![0; 200 * 120 * 4]);
+        let preview = gtk::gdk::MemoryTexture::new(
+            200,
+            120,
+            gtk::gdk::MemoryFormat::R8g8b8a8,
+            &preview_bytes,
+            200 * 4,
+        );
+        lightbox.picture.set_paintable(Some(&preview));
+        lightbox.picture.set_can_shrink(true);
+        fit_picture(
+            &lightbox.picture,
+            std::slice::from_ref(&photo),
+            0,
+            200,
+            120,
+            0.0,
+            "test-fit",
+        );
+        settle();
+
+        let native_bytes = glib::Bytes::from_owned(vec![0; 400 * 300 * 4]);
+        let native = gtk::gdk::MemoryTexture::new(
+            400,
+            300,
+            gtk::gdk::MemoryFormat::R8g8b8a8,
+            &native_bytes,
+            400 * 4,
+        );
+        lightbox.picture.set_paintable(Some(&native));
+        lightbox.picture.set_can_shrink(false);
+        fit_one_to_one_picture(
+            &lightbox.picture,
+            &lightbox.picture_viewport,
+            std::slice::from_ref(&photo),
+            0,
+            200,
+            120,
+            "test-one-to-one",
+        );
+        settle();
+
+        let bounds = lightbox
+            .picture
+            .compute_bounds(&lightbox.picture_viewport)
+            .unwrap();
+        let h = lightbox.picture_viewport.hadjustment();
+        let v = lightbox.picture_viewport.vadjustment();
+        eprintln!(
+            "1:1 regression geometry: root={:?} scroll={:?} picture={:?} bounds={bounds:?} request={:?} h={}/{}/{}/{} v={}/{}/{}/{}",
+            lightbox.root.allocation(),
+            lightbox.picture_viewport.allocation(),
+            lightbox.picture.allocation(),
+            lightbox.picture.size_request(),
+            h.value(), h.lower(), h.upper(), h.page_size(),
+            v.value(), v.lower(), v.upper(), v.page_size(),
+        );
+        assert!((bounds.x() + h.value() as f32).abs() < 1.0);
+        assert!((bounds.y() + v.value() as f32).abs() < 1.0);
+        // The window manager and window decorations determine the actual
+        // content allocation; set_default_size does not guarantee 200×120.
+        assert!(h.page_size() < 400.0, "test must overflow horizontally");
+        assert!(v.page_size() < 300.0, "test must overflow vertically");
+        let expected_h = ((400.0 - h.page_size()) / 2.0).round_ties_even();
+        let expected_v = ((300.0 - v.page_size()) / 2.0).round_ties_even();
+        assert!((h.value() - expected_h).abs() < 1.0);
+        assert!((v.value() - expected_v).abs() < 1.0);
+        window.close();
+    }
+}

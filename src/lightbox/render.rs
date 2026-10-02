@@ -206,11 +206,24 @@ fn show_photo(
                     );
                 }
                 if zoom.get() < 0.0 {
-                    // The range-change handler keeps the viewport-centred
-                    // point anchored while the new geometry is laid out, so a
-                    // 1:1 allocation lands centred without a follow-up timer.
+                    fit_one_to_one_picture(
+                        &picture,
+                        &picture_viewport,
+                        std::slice::from_ref(&photo),
+                        0,
+                        root.width(),
+                        root.height(),
+                        "one-to-one-decode",
+                    );
                     picture.queue_resize();
                     picture_viewport.queue_resize();
+                    trace_lightbox_after_paint(
+                        &root,
+                        &picture,
+                        &picture_viewport,
+                        "one_to_one_settled_decode",
+                        None,
+                    );
                 }
             }
             Err(_) => {
@@ -272,6 +285,81 @@ fn zoom_trace(message: impl std::fmt::Display) {
             std::thread::current().id()
         );
     }
+}
+
+// Event callbacks can see the old allocation after an adjustment write. Pair
+// those samples with after-paint samples to distinguish input math from the
+// geometry GTK actually displayed. Only the first two pan updates are sampled.
+fn trace_lightbox_geometry(
+    root: &gtk::Overlay,
+    picture: &gtk::Picture,
+    scroll: &gtk::ScrolledWindow,
+    stage: &str,
+    pointer: Option<(f64, f64)>,
+) {
+    if std::env::var_os("PICASA_TRACE").is_none() {
+        return;
+    }
+    let h = scroll.hadjustment();
+    let v = scroll.vadjustment();
+    let bounds = picture.compute_bounds(root);
+    let viewport = scroll.child();
+    let focus = root.root().and_then(|root| root.focus());
+    let focus = focus.map(|widget| {
+        format!(
+            "{}:{} flags={:?}",
+            widget.type_().name(),
+            widget.widget_name(),
+            widget.state_flags()
+        )
+    });
+    zoom_trace(format!(
+        "geometry stage={stage} frame={:?} pointer_viewport={pointer:?} h={:.2}/{:.2}/{:.2}/{:.2} v={:.2}/{:.2}/{:.2}/{:.2} picture_alloc={:?} picture_req={:?} align={:?}/{:?} expand={}/{} shrink={} fit={:?} intrinsic={:?} picture_root={bounds:?} picture_scroll={:?} origin_plus_adjustment={:?} viewport={:?} viewport_alloc={:?} viewport_root={:?} scroll_alloc={:?} scroll_root={:?} root_alloc={:?} focus={focus:?} picture_flags={:?} scroll_flags={:?} scroll_to_focus={:?}",
+        root.frame_clock().map(|clock| clock.frame_counter()),
+        h.value(), h.lower(), h.upper(), h.page_size(),
+        v.value(), v.lower(), v.upper(), v.page_size(),
+        picture.allocation(), picture.size_request(), picture.halign(), picture.valign(),
+        picture.hexpands(), picture.vexpands(), picture.can_shrink(), picture.content_fit(),
+        picture_intrinsic_dimensions(picture), picture.compute_bounds(scroll),
+        picture.compute_bounds(scroll).map(|b| (f64::from(b.x()) + h.value(), f64::from(b.y()) + v.value())),
+        viewport.as_ref().map(|widget| widget.type_().name()),
+        viewport.as_ref().map(|widget| widget.allocation()),
+        viewport.as_ref().and_then(|widget| widget.compute_bounds(root)),
+        scroll.allocation(), scroll.compute_bounds(root), root.allocation(),
+        picture.state_flags(), scroll.state_flags(),
+        viewport.and_then(|widget| widget.downcast::<gtk::Viewport>().ok()).map(|viewport| viewport.is_scroll_to_focus()),
+    ));
+}
+
+fn trace_lightbox_after_paint(
+    root: &gtk::Overlay,
+    picture: &gtk::Picture,
+    scroll: &gtk::ScrolledWindow,
+    stage: &'static str,
+    pointer: Option<(f64, f64)>,
+) {
+    if std::env::var_os("PICASA_TRACE").is_none() {
+        return;
+    }
+    let Some(clock) = root.frame_clock() else {
+        return;
+    };
+    let root = root.downgrade();
+    let picture = picture.downgrade();
+    let scroll = scroll.downgrade();
+    let handler = Rc::new(RefCell::new(None));
+    let handler_for_callback = handler.clone();
+    *handler.borrow_mut() = Some(clock.connect_after_paint(move |clock| {
+        if let Some(id) = handler_for_callback.borrow_mut().take() {
+            clock.disconnect(id);
+        }
+        if let (Some(root), Some(picture), Some(scroll)) =
+            (root.upgrade(), picture.upgrade(), scroll.upgrade())
+        {
+            trace_lightbox_geometry(&root, &picture, &scroll, stage, pointer);
+        }
+    }));
+    clock.request_phase(gtk::gdk::FrameClockPhase::AFTER_PAINT);
 }
 
 fn viewer_trace_uri(uri: &str) -> String {
@@ -910,16 +998,37 @@ fn centered_scroll_value(upper: f64, page_size: f64, lower: f64) -> f64 {
         .clamp(lower, max_scroll)
 }
 
-/// Wire one viewport axis to the centring rule described above. Only the
-/// `changed` signal is needed: `GtkAdjustment::configure` clamps the stored
-/// value into the new range before emitting it, and the viewport allocates the
-/// child at `-value` afterwards in the same pass.
-/// Pre-publish the scroll ranges for a slider-driven picture size before
-/// GTK runs the queued layout. Without this, the picture request changes in
-/// one phase and GtkScrolledWindow updates its adjustment ranges in the next;
-/// a live slider then renders alternating old-range/new-size states that look
-/// like the whole photo is jiggling. Both axes are configured while still in
-/// the slider callback, so the next frame starts with one coherent geometry.
+/// Install native geometry and its matching centered scroll ranges before
+/// GTK allocates the GtkViewport child. The viewport configures adjustments
+/// during allocation, but its `changed` handlers run after it places the
+/// child; centering only from that handler leaves stale child bounds until a
+/// later adjustment write (such as the first drag) queues another allocation.
+fn fit_one_to_one_picture(
+    picture: &gtk::Picture,
+    viewport: &gtk::ScrolledWindow,
+    photos: &[PhotoObject],
+    index: usize,
+    viewport_width: i32,
+    viewport_height: i32,
+    source: &str,
+) {
+    fit_picture(
+        picture,
+        photos,
+        index,
+        viewport_width,
+        viewport_height,
+        -1.0,
+        source,
+    );
+    let (picture_width, picture_height) = picture.size_request();
+    prime_viewport_for_picture_size(viewport, picture_width, picture_height);
+}
+
+/// Wire one viewport axis to the centring rule above. GtkViewport can emit
+/// `changed` after it places its child during allocation, so this handler
+/// centres range changes only after that placement. Geometry-writing paths
+/// prime the new range before their queued allocation instead.
 fn prime_viewport_for_picture_size(
     viewport: &gtk::ScrolledWindow,
     picture_width: i32,

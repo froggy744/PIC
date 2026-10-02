@@ -61,6 +61,7 @@ impl Lightbox {
         // True for the duration of a pan so drag_update ignores stale events
         // after the gesture was denied.
         let pan_active = Rc::new(Cell::new(false));
+        let trace_updates = Rc::new(Cell::new(0u32));
         let pan_drag = gtk::GestureDrag::new();
         pan_drag.set_button(1);
         pan_drag.set_propagation_phase(gtk::PropagationPhase::Capture);
@@ -70,7 +71,18 @@ impl Lightbox {
         let viewport_for_drag_begin = picture_viewport.clone();
         let drag_start_h_begin = drag_start_h.clone();
         let drag_start_v_begin = drag_start_v.clone();
+        let root_for_drag_begin = root.clone();
+        let picture_for_drag_begin = picture.clone();
+        let trace_updates_begin = trace_updates.clone();
         pan_drag.connect_drag_begin(move |gesture, x, y| {
+            trace_updates_begin.set(0);
+            trace_lightbox_geometry(
+                &root_for_drag_begin,
+                &picture_for_drag_begin,
+                &viewport_for_drag_begin,
+                "drag_begin",
+                Some((x, y)),
+            );
             // Pan whenever the image overflows the viewport: zoomed in via
             // Ctrl+wheel as well as 1:1, not 1:1 only.
             let hadj = viewport_for_drag_begin.hadjustment();
@@ -104,7 +116,10 @@ impl Lightbox {
         let viewport_for_drag_update = picture_viewport.clone();
         let drag_start_h_update = drag_start_h.clone();
         let drag_start_v_update = drag_start_v.clone();
-        pan_drag.connect_drag_update(move |_, offset_x, offset_y| {
+        let root_for_drag_update = root.clone();
+        let picture_for_drag_update = picture.clone();
+        let trace_updates_update = trace_updates.clone();
+        pan_drag.connect_drag_update(move |gesture, offset_x, offset_y| {
             if !pan_active_for_drag_update.get() {
                 return;
             }
@@ -116,13 +131,75 @@ impl Lightbox {
 
             let new_h = (drag_start_h_update.get() - offset_x).clamp(hadj.lower(), max_h);
             let new_v = (drag_start_v_update.get() - offset_y).clamp(vadj.lower(), max_v);
+            let sample =
+                std::env::var_os("PICASA_TRACE").is_some() && trace_updates_update.get() < 2;
+            let first_update = trace_updates_update.get() == 0;
+            let pointer = sample
+                .then(|| gesture.start_point())
+                .flatten()
+                .map(|(x, y)| (x + offset_x, y + offset_y));
+            if sample {
+                trace_lightbox_geometry(
+                    &root_for_drag_update,
+                    &picture_for_drag_update,
+                    &viewport_for_drag_update,
+                    if first_update {
+                        "drag_first_update_before"
+                    } else {
+                        "drag_update_before"
+                    },
+                    pointer,
+                );
+            }
             hadj.set_value(new_h);
             vadj.set_value(new_v);
+            if sample {
+                trace_updates_update.set(trace_updates_update.get() + 1);
+                trace_lightbox_geometry(
+                    &root_for_drag_update,
+                    &picture_for_drag_update,
+                    &viewport_for_drag_update,
+                    if first_update {
+                        "drag_first_update_after"
+                    } else {
+                        "drag_update_after"
+                    },
+                    pointer,
+                );
+                trace_lightbox_after_paint(
+                    &root_for_drag_update,
+                    &picture_for_drag_update,
+                    &viewport_for_drag_update,
+                    if first_update {
+                        "drag_first_update_painted"
+                    } else {
+                        "drag_update_painted"
+                    },
+                    pointer,
+                );
+            }
         });
 
         let pan_active_for_drag_end = pan_active.clone();
         let viewport_for_drag_end = picture_viewport.clone();
-        pan_drag.connect_drag_end(move |_, _, _| {
+        let root_for_drag_end = root.clone();
+        let picture_for_drag_end = picture.clone();
+        pan_drag.connect_drag_end(move |gesture, dx, dy| {
+            let pointer = gesture.start_point().map(|(x, y)| (x + dx, y + dy));
+            trace_lightbox_geometry(
+                &root_for_drag_end,
+                &picture_for_drag_end,
+                &viewport_for_drag_end,
+                "drag_end",
+                pointer,
+            );
+            trace_lightbox_after_paint(
+                &root_for_drag_end,
+                &picture_for_drag_end,
+                &viewport_for_drag_end,
+                "drag_end_painted",
+                pointer,
+            );
             pan_active_for_drag_end.set(false);
             let hadj = viewport_for_drag_end.hadjustment();
             let vadj = viewport_for_drag_end.vadjustment();
@@ -199,11 +276,11 @@ impl Lightbox {
                 .connect_changed(move |_| update_for_h());
         }
 
-        // Every zoom path writes real GtkPicture geometry, and GTK publishes
-        // the resulting scroll range before it places the child. Keeping the
-        // point under the viewport centre anchored on that range change is the
-        // single recentering rule: slider, Ctrl+wheel, keys, 1:1 and window
-        // resizes all keep their centre without timers or deferred fixes.
+        // The adjustment range remains the sole centering owner. GTK emits an
+        // implicit GtkViewport's changed signal after placing its child during
+        // allocation, so paths that resize the picture must prime the range
+        // before that allocation. The handler still centres range changes such
+        // as viewport resizes.
         install_viewport_anchor(&picture_viewport.hadjustment());
         install_viewport_anchor(&picture_viewport.vadjustment());
 
@@ -239,8 +316,33 @@ impl Lightbox {
 
         let root_for_outside = root.clone();
         let picture_for_outside = picture.clone();
+        let viewport_for_outside = picture_viewport.clone();
 
         outside_click.connect_pressed(move |gesture, n_press, x, y| {
+            if std::env::var_os("PICASA_TRACE").is_some()
+                && (viewport_for_outside.hadjustment().upper()
+                    > viewport_for_outside.hadjustment().page_size()
+                    || viewport_for_outside.vadjustment().upper()
+                        > viewport_for_outside.vadjustment().page_size())
+            {
+                let pointer = viewport_for_outside
+                    .compute_bounds(&root_for_outside)
+                    .map(|b| (x - f64::from(b.x()), y - f64::from(b.y())));
+                trace_lightbox_geometry(
+                    &root_for_outside,
+                    &picture_for_outside,
+                    &viewport_for_outside,
+                    "button_press",
+                    pointer,
+                );
+                trace_lightbox_after_paint(
+                    &root_for_outside,
+                    &picture_for_outside,
+                    &viewport_for_outside,
+                    "button_press_painted",
+                    pointer,
+                );
+            }
             if n_press > 1 {
                 return;
             }
@@ -1245,17 +1347,24 @@ impl Lightbox {
                     && cache.edit_recipe == edit_recipe
                 {
                     self.picture.set_paintable(Some(&cache.texture));
-                    fit_picture(
+                    fit_one_to_one_picture(
                         &self.picture,
+                        &self.picture_viewport,
                         &self.photos.borrow(),
                         self.index.get(),
                         self.root.width(),
                         self.root.height(),
-                        -1.0,
                         "one-to-one",
                     );
                     self.picture.queue_resize();
                     self.picture_viewport.queue_resize();
+                    trace_lightbox_after_paint(
+                        &self.root,
+                        &self.picture,
+                        &self.picture_viewport,
+                        "one_to_one_settled_cached",
+                        None,
+                    );
                     return;
                 }
             }

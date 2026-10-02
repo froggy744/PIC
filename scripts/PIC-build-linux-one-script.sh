@@ -884,6 +884,20 @@ if [ -n "\${APPDIR:-}" ] && [ -d "\$APPDIR/usr/share/$BIN_NAME" ]; then
     # This is required for named Adwaita symbolic icons to render consistently
     # on hosts whose installed icon theme differs from the build environment.
     export XDG_DATA_DIRS="\$PREFIX/share\${XDG_DATA_DIRS:+:\$XDG_DATA_DIRS}"
+
+    # SVG support is a dynamically loaded GdkPixbuf plugin. Its cache must
+    # contain the real AppImage mount path, which only exists at launch time.
+    PIXBUF_CACHE_TEMPLATE="\$PREFIX/lib/gdk-pixbuf-2.0/2.10.0/pic-svg-loaders.cache.in"
+    if [ -f "\$PIXBUF_CACHE_TEMPLATE" ]; then
+        PIC_CACHE_ROOT="\${XDG_CACHE_HOME:-\${HOME:-/tmp}/.cache}/pic-rs"
+        mkdir -p "\$PIC_CACHE_ROOT"
+        GDK_PIXBUF_MODULE_FILE="\$PIC_CACHE_ROOT/gdk-pixbuf-svg-loaders.cache"
+        PIC_PIXBUF_PREFIX_ESCAPED="\$(printf '%s' "\$PREFIX" | sed 's/[\\&|]/\\&/g')"
+        sed "s|@PIC_PREFIX@|\$PIC_PIXBUF_PREFIX_ESCAPED|g" \
+            "\$PIXBUF_CACHE_TEMPLATE" > "\$GDK_PIXBUF_MODULE_FILE.tmp"
+        mv -f "\$GDK_PIXBUF_MODULE_FILE.tmp" "\$GDK_PIXBUF_MODULE_FILE"
+        export GDK_PIXBUF_MODULE_FILE
+    fi
 else
     BIN_DIR="\$(CDPATH= cd -- "\$(dirname -- "\$0")" && pwd)"
     PREFIX="\$(dirname -- "\$BIN_DIR")"

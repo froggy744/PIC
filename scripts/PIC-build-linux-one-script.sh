@@ -1121,6 +1121,13 @@ build_appimage() {
     cp -f "$staging_icon" "$app_icon_dir/$APP_ID.$ICON_EXT"
     ln -sfn "$APP_ID.$ICON_EXT" "$appdir/.DirIcon"
 
+    # AppImageHub/AppStream expects application metadata inside the AppDir too.
+    # Reuse the same canonical metadata generator as the Flatpak package.
+    write_metainfo_file "$appdir/usr/share/metainfo/$APP_ID.metainfo.xml" || return 1
+    [[ -s "$appdir/usr/share/metainfo/$APP_ID.metainfo.xml" ]] || \
+        die "AppImage metainfo was not staged"
+    ok "Bundled AppStream metadata: $APP_ID.metainfo.xml"
+
     # Keep the real executable separate and put a launcher at usr/bin/pic-rs.
     # The launcher changes into usr/share/pic-rs before starting PIC so existing
     # relative paths such as images/theme/... continue to work in the AppImage.

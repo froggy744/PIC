@@ -14,7 +14,6 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       PIC_GNOME_INTEGRATE: "0"
-      PIC_BUILD_TARGET: appimage
     steps:
       - name: Check out PIC
         uses: actions/checkout@v4

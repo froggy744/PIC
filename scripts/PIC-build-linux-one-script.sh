@@ -1107,6 +1107,16 @@ build_appimage() {
         warn "Using Fedora host glycin-svg for this local AppImage; the GitHub Ubuntu release build bundles its SVG decoder."
     fi
 
+    # libselinux is part of the host OS ABI and must not be carried from the
+    # build distribution into the AppImage. If bundled, our launcher utilities
+    # (for example mkdir) can load the Ubuntu copy before PIC starts, making an
+    # otherwise portable AppImage require the build host's newer glibc.
+    find "$appdir/usr/lib" -maxdepth 1 \( -type f -o -type l \) -name 'libselinux.so*' -delete 2>/dev/null || true
+    if find "$appdir/usr/lib" -maxdepth 1 \( -type f -o -type l \) -name 'libselinux.so*' -print -quit | grep -q .; then
+        die "AppImage staging still contains host libselinux"
+    fi
+    ok "Excluded host libselinux from AppImage runtime"
+
     # linuxdeploy versions differ in whether they leave a real application icon
     # at the AppDir root. Install PIC's selected custom icon deterministically:
     # the root copy/.DirIcon is the AppImage file icon, while hicolor is used by

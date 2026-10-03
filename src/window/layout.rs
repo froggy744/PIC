@@ -1261,8 +1261,6 @@
                 info.grid_zoom.set_increments(1.0, 1.0);
                 info.grid_zoom.set_round_digits(0);
                 info.grid_zoom.clear_marks();
-                info.grid_zoom.add_mark(3.5, gtk::PositionType::Top, None);
-                info.grid_zoom.add_mark(3.5, gtk::PositionType::Bottom, None);
                 info.grid_zoom
                     .set_value(grid_zoom_slider_value(gallery.current_zoom_width()));
                 info.grid_zoom

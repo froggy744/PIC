@@ -2653,8 +2653,6 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                         info.grid_zoom.set_increments(1.0, 1.0);
                         info.grid_zoom.set_round_digits(0);
                         info.grid_zoom.clear_marks();
-                        info.grid_zoom.add_mark(3.5, gtk::PositionType::Top, None);
-                        info.grid_zoom.add_mark(3.5, gtk::PositionType::Bottom, None);
                         info.grid_zoom.set_value(grid_zoom_slider_value(
                             gallery.current_zoom_width(),
                         ));
@@ -2718,8 +2716,6 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 info.grid_zoom.set_increments(0.25, 5.0);
                 info.grid_zoom.set_round_digits(-1);
                 info.grid_zoom.clear_marks();
-                info.grid_zoom.add_mark(50.0, gtk::PositionType::Top, None);
-                info.grid_zoom.add_mark(50.0, gtk::PositionType::Bottom, None);
                 info.grid_zoom
                     .set_value(lightbox_slider_from_scale(native_scale, fit_scale));
                 info.grid_zoom.set_tooltip_text(Some(
@@ -3093,8 +3089,6 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             grid_zoom_for_visibility.set_increments(0.25, 5.0);
             grid_zoom_for_visibility.set_round_digits(-1);
             grid_zoom_for_visibility.clear_marks();
-            grid_zoom_for_visibility.add_mark(50.0, gtk::PositionType::Top, None);
-            grid_zoom_for_visibility.add_mark(50.0, gtk::PositionType::Bottom, None);
             let native_scale = lightbox_for_zoom_visibility.current_manual_zoom_scale();
             let value = lightbox_slider_from_scale(
                 native_scale,
@@ -3110,8 +3104,6 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             grid_zoom_for_visibility.set_increments(1.0, 1.0);
             grid_zoom_for_visibility.set_round_digits(0);
             grid_zoom_for_visibility.clear_marks();
-            grid_zoom_for_visibility.add_mark(3.5, gtk::PositionType::Top, None);
-            grid_zoom_for_visibility.add_mark(3.5, gtk::PositionType::Bottom, None);
             let value = grid_zoom_slider_value(gallery_for_zoom_visibility.current_zoom_width());
             grid_zoom_for_visibility.set_value(value);
             slider_last_value_for_visibility.set(value);

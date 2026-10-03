@@ -93,3 +93,12 @@ popover.sidebar-section-tooltip-menu button.sidebar-section-tooltip-item:active 
 
 /* Inset contents without leaving unthemed gaps beside the info bar. */
 .photo-info-bar { padding-left: 16px; padding-right: 16px; }
+
+/* Compact zoom handle; the scale retains its full pointer target. */
+.photo-info-bar scale.infobar-zoom slider {
+  min-width: 12px;
+  min-height: 12px;
+  padding: 0;
+  margin: -4px;
+  border-radius: 9999px;
+}

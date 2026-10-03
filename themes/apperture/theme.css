@@ -1,0 +1,422 @@
+/* picasa-theme
+   version: 1
+   name: Aperture
+   dark: true
+   mode: overlay
+   window-controls: native
+*/
+
+/* ==========================================================================
+   Aperture — charcoal-grey pro-photo UI in the style of Apple Aperture 3.
+   Brushed dark-metal toolbars with a top-edge highlight, near-black viewer,
+   dark inset fields, Aqua-blue selection and default buttons, HUD-black menus.
+
+   Install: copy this folder to <PIC folder>/themes/aperture/
+   Want Mac traffic lights? Change `window-controls: native` above to
+   `traffic-light` and add the gel-button block from the template's section 10.
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   1. PALETTE
+   -------------------------------------------------------------------------- */
+
+@define-color accent_bg_color #3D7FE0;       /* Aqua selection blue          */
+@define-color accent_fg_color #FFFFFF;
+@define-color accent_color #6FA6F2;
+
+@define-color window_bg_color #2B2B2B;       /* sidebar / panels             */
+@define-color view_bg_color #1C1C1C;         /* viewer + photo grid          */
+@define-color headerbar_bg_color #3A3A3A;    /* toolbars                     */
+@define-color card_bg_color #323232;
+@define-color dialog_bg_color #2B2B2B;
+@define-color popover_bg_color #262626;
+@define-color theme_fg_color #DCDCDC;
+
+@define-color ap_hi rgba(255,255,255,0.12);  /* top-edge bevel highlight     */
+@define-color ap_line #151515;               /* hard dark separators         */
+@define-color ap_dim #8E8E8E;                /* secondary text               */
+@define-color ap_blue_top #5B97EC;
+@define-color ap_blue_bot #2F69C9;
+
+/* --------------------------------------------------------------------------
+   2. SURFACES — window, sidebar, brushed-metal toolbars
+   -------------------------------------------------------------------------- */
+
+window, .layout-left-column, .navigation-sidebar { background: #2B2B2B; color: #DCDCDC; }
+    .layout-left-column {
+        background-image: linear-gradient(to bottom, #2F2F2F, #272727);
+        border-right: 1px solid @ap_line;
+        box-shadow: inset -1px 0 0 alpha(#FFFFFF, 0.05);
+    }
+    .navigation-sidebar { background: transparent; background-image: none; }
+    .layout-left-column scrolledwindow,
+    .layout-left-column viewport { background: transparent; background-image: none; }
+
+    .layout-left-header, .layout-right-header {
+        background-color: #3A3A3A;
+        background-image: linear-gradient(to bottom, #4D4D4D 0%, #3C3C3C 50%, #333333 100%);
+        border-bottom: 1px solid @ap_line;
+        box-shadow: inset 0 1px 0 @ap_hi;
+        color: #DCDCDC;
+    }
+    .app-title { color: #E6E6E6; text-shadow: 0 -1px 0 alpha(#000000, 0.6); font-weight: 700; }
+
+/* --------------------------------------------------------------------------
+   3. BUTTONS — dark-metal gradient, 1px black outline, inner highlight
+   -------------------------------------------------------------------------- */
+
+    .layout-left-header button, .layout-right-header button,
+    .photo-action-button, .section-more-btn, .favorite-btn,
+    button.clear-action-button {
+        color: #DCDCDC;
+        border-radius: 4px;
+        background-color: #4A4A4A;
+        background-image: linear-gradient(to bottom, #5E5E5E 0%, #4A4A4A 50%, #3E3E3E 100%);
+        border: 1px solid #141414;
+        box-shadow: inset 0 1px 0 @ap_hi, 0 1px 0 alpha(#FFFFFF, 0.06);
+        text-shadow: 0 -1px 0 alpha(#000000, 0.5);
+    }
+    .layout-left-header button:hover, .layout-right-header button:hover,
+    .photo-action-button:hover, .section-more-btn:hover, .favorite-btn:hover,
+    button.clear-action-button:hover {
+        background-image: linear-gradient(to bottom, #6B6B6B 0%, #565656 50%, #484848 100%);
+        color: #FFFFFF;
+    }
+    .layout-left-header button:active, .layout-right-header button:active,
+    .photo-action-button:active, .favorite-btn:active,
+    button.clear-action-button:active {
+        background-image: linear-gradient(to bottom, #333333, #404040);
+        box-shadow: inset 0 1px 3px alpha(#000000, 0.6);
+    }
+    .layout-left-header button:checked, .layout-right-header button:checked,
+    .photo-action-button:checked, .one-to-one-btn:checked {
+        color: #FFFFFF;
+        background-image: linear-gradient(to bottom, @ap_blue_top, @ap_blue_bot);
+        border-color: #1B3F80;
+        box-shadow: inset 0 1px 0 alpha(#FFFFFF, 0.35);
+    }
+    .photo-action-button:disabled, .photo-info-bar button:disabled { opacity: 0.4; }
+
+    /* Default / suggested buttons (Done, Apply Crop…) — glossy Aqua blue. */
+    button.suggested-action, .suggested-action {
+        color: #FFFFFF;
+        border-radius: 4px;
+        background-image: linear-gradient(to bottom, @ap_blue_top 0%, #3F7FE0 50%, @ap_blue_bot 100%);
+        border: 1px solid #1B3F80;
+        box-shadow: inset 0 1px 0 alpha(#FFFFFF, 0.40), 0 1px 2px alpha(#000000, 0.5);
+        text-shadow: 0 -1px 0 alpha(#000000, 0.35);
+    }
+    button.suggested-action:hover { background-image: linear-gradient(to bottom, #6BA5F2, #3A78DA); }
+    button.suggested-action:active { background-image: linear-gradient(to bottom, #2F69C9, #3A78DA); }
+
+/* --------------------------------------------------------------------------
+   4. SEARCH FIELD — dark inset well
+   -------------------------------------------------------------------------- */
+
+    .search-field {
+        min-height: 26px;
+        border-radius: 13px;
+        background: #1E1E1E;
+        border: 1px solid #111111;
+        color: #DCDCDC;
+        box-shadow: inset 0 1px 3px alpha(#000000, 0.7), 0 1px 0 alpha(#FFFFFF, 0.08);
+    }
+    .search-field:focus-within { box-shadow: inset 0 1px 3px alpha(#000000, 0.7), 0 0 0 3px alpha(@accent_bg_color, 0.55); }
+    .search-field image { color: @ap_dim; }
+    .search-field entry { background: transparent; color: #E6E6E6; caret-color: #FFFFFF; box-shadow: none; }
+
+/* --------------------------------------------------------------------------
+   5. PHOTO GRID — near-black light table, framed thumbnails
+   -------------------------------------------------------------------------- */
+
+    .photo-grid { background: #1C1C1C; }
+    .group-heading-bar { background: transparent; padding: 0; }
+    .section-heading-box { margin-top: 16px; margin-bottom: 8px; }
+    .section-heading { color: #E0E0E0; font-size: 14px; font-weight: 700; text-shadow: 0 -1px 0 alpha(#000000, 0.6); }
+    .section-count { font-size: 12px; color: @ap_dim; }
+
+    .photo-frame { box-shadow: none; }
+    .photo-tile {
+        border-radius: 2px;
+        border: 1px solid #0E0E0E;
+        background: #262626;
+        box-shadow: 0 2px 6px alpha(#000000, 0.65);
+    }
+    .photo-tile:hover { border-color: #6E6E6E; box-shadow: 0 3px 10px alpha(#000000, 0.8); }
+    .thumbnail { border-radius: 1px; }
+    .missing-thumbnail { background: #262626; }
+
+    /* Selection: bright frame with an Aqua outer ring, like a selected Aperture thumbnail. */
+    .folder-photo-selected.photo-tile {
+        border-color: #E8F0FB;
+        box-shadow: 0 0 0 2px @accent_bg_color, 0 4px 12px alpha(#000000, 0.8);
+    }
+    .folder-photo-selected .selection-badge { opacity: 1; }
+    gridview.section-grid > child:selected .photo-tile,
+    gridview.section-grid > item:selected .photo-tile {
+        border-color: #E8F0FB;
+        box-shadow: 0 0 0 2px @accent_bg_color, 0 4px 12px alpha(#000000, 0.8);
+    }
+    .selection-badge {
+        color: @accent_fg_color;
+        background-image: linear-gradient(to bottom, @ap_blue_top, @ap_blue_bot);
+        box-shadow: 0 1px 3px alpha(#000000, 0.7);
+    }
+
+    .offline-badge, .sidebar-offline-badge {
+        border-radius: 9999px;
+        color: #2A1C00;
+        background: #E8B84A;
+        font-weight: 700;
+    }
+
+/* --------------------------------------------------------------------------
+   6. FOLDER CONTENT VIEW
+   -------------------------------------------------------------------------- */
+
+    listview.folder-stream { background: transparent; padding: 0 20px 24px 20px; }
+    listview.folder-stream > row,
+    listview.folder-stream > row:hover,
+    listview.folder-stream > row:selected,
+    listview.folder-stream > row:focus,
+    listview.folder-stream > row:active {
+        padding: 0; margin: 0;
+        background: transparent; background-image: none;
+        outline: none; box-shadow: none;
+    }
+    .folder-section-header { background: transparent; }
+    .folder-section-title { color: #E0E0E0; font-weight: 700; font-size: 13px; text-shadow: 0 -1px 0 alpha(#000000, 0.6); }
+    .folder-section-count { color: @ap_dim; font-size: 12px; }
+    .folder-section-icon { color: #A0A0A0; }
+    .folder-section-separator { margin-top: 7px; opacity: 0.6; background: #101010; }
+    .folder-photo-row { background: transparent; }
+
+    gridview.section-grid > child,
+    gridview.section-grid > item,
+    gridview.section-grid > child:hover,
+    gridview.section-grid > child:selected,
+    gridview.section-grid > child:focus,
+    gridview.section-grid > child:active,
+    gridview.section-grid > item:hover,
+    gridview.section-grid > item:selected,
+    gridview.section-grid > item:focus,
+    gridview.section-grid > item:active {
+        padding: 6px; margin: 0;
+        background: transparent; background-image: none;
+        outline: none; box-shadow: none;
+    }
+    .folder-photo-flow > flowboxchild,
+    .folder-photo-flow > flowboxchild:hover,
+    .folder-photo-flow > flowboxchild:focus,
+    .folder-photo-flow > flowboxchild:active,
+    .folder-photo-flow > flowboxchild:selected {
+        padding: 6px; margin: 0; min-height: 0;
+        background: transparent; background-image: none;
+        outline: none; box-shadow: none;
+    }
+
+/* --------------------------------------------------------------------------
+   7. ALBUMS HOME
+   -------------------------------------------------------------------------- */
+
+    .albums-home-grid > flowboxchild { padding: 0; margin: 0; min-height: 0; }
+    button.album-card {
+        min-width: 0; padding: 0; margin: 0;
+        background: transparent; background-image: none;
+        border: none; box-shadow: none;
+    }
+    button.album-card:hover, button.album-card:focus, button.album-card:active {
+        background: transparent; background-image: none; box-shadow: none;
+    }
+.albums-index-title { font-size: 22px; font-weight: 700; text-shadow: 0 -1px 0 alpha(#000000, 0.6); }
+    .plain-album-cover { border-radius: 2px; border: 1px solid #0E0E0E; background: #262626; box-shadow: 0 2px 6px alpha(#000000, 0.65); }
+    .plain-album-cover .thumbnail { border-radius: 1px; }
+    .albums-standard > flowboxchild { padding: 0; margin: 0; min-height: 0; background: transparent; box-shadow: none; }
+    .albums-standard button.album-card { color: inherit; min-width: 0; padding: 0; margin: 0; border: none; border-radius: 4px; background: transparent; background-image: none; box-shadow: none; }
+    .albums-standard button.album-card:hover .album-cover { border-color: #8AB4F2; }
+    .albums-standard button.album-card:hover { background: alpha(#FFFFFF, 0.04); }
+    .albums-standard button.album-card:focus-visible { outline: 2px solid @accent_bg_color; outline-offset: 3px; }
+    .albums-standard .album-name { font-weight: 600; font-size: 13px; }
+    .albums-standard .album-photo-count { font-size: 12px; color: @ap_dim; }
+
+.albums-bookshelf-photo-count { color: #3a210f; }
+button.album-card.framed-album-card { color: #302014; }
+button.album-card.framed-album-card:hover { opacity: 0.90; }
+
+/* --------------------------------------------------------------------------
+   8. SIDEBAR — Mac source-list: grey headings, glossy blue selection
+   -------------------------------------------------------------------------- */
+
+    .navigation-sidebar row { color: #D4D4D4; border-radius: 3px; margin: 0 4px; }
+    .navigation-sidebar row:hover { background: alpha(#FFFFFF, 0.05); }
+    .navigation-sidebar row:selected {
+        color: #FFFFFF;
+        font-weight: 700;
+        background-image: linear-gradient(to bottom, @ap_blue_top, @ap_blue_bot);
+        box-shadow: inset 0 1px 0 alpha(#FFFFFF, 0.30), 0 1px 2px alpha(#000000, 0.5);
+        text-shadow: 0 -1px 0 alpha(#000000, 0.35);
+    }
+    /* Scroll-follow folder marker — deliberately not row:selected. */
+    .navigation-sidebar row.sidebar-scroll-location {
+        color: #FFFFFF;
+        background-image: linear-gradient(to bottom, @ap_blue_top, @ap_blue_bot);
+        box-shadow: inset 0 1px 0 alpha(#FFFFFF, 0.30), 0 1px 2px alpha(#000000, 0.5);
+        text-shadow: 0 -1px 0 alpha(#000000, 0.35);
+    }
+    .navigation-sidebar row.sidebar-scroll-location .folder-count,
+    .navigation-sidebar row.sidebar-scroll-location .sidebar-count { color: alpha(#FFFFFF, 0.85); }
+    .navigation-sidebar .heading { color: #7C7C7C; }
+    .navigation-sidebar .sidebar-section-heading { margin-top: 8px; padding-top: 0; }
+    .navigation-sidebar .sidebar-section-heading-title { color: #9A9A9A; font-size: inherit; font-weight: 700; letter-spacing: 0.4px; text-shadow: 0 -1px 0 alpha(#000000, 0.6); }
+    .navigation-sidebar .folder-count { color: @ap_dim; }
+    .navigation-sidebar row:selected .folder-count,
+    .navigation-sidebar row:selected .sidebar-count { color: alpha(#FFFFFF, 0.85); }
+    .folder-disclosure { opacity: 0.6; }
+    .sidebar-count { min-width: 38px; font-variant-numeric: tabular-nums; color: @ap_dim; }
+
+/* --------------------------------------------------------------------------
+   9. SEGMENTED TOGGLES — squared Aperture-style segments
+   -------------------------------------------------------------------------- */
+
+    .crop-aspect-button,
+    .crop-orientation-row button,
+    .collage-layout-tile,
+    .collage-tabs > button {
+        border-radius: 3px;
+        color: #D0D0D0;
+        background-image: linear-gradient(to bottom, #565656, #3E3E3E);
+        border: 1px solid #141414;
+        box-shadow: inset 0 1px 0 @ap_hi;
+        text-shadow: 0 -1px 0 alpha(#000000, 0.5);
+    }
+    .crop-aspect-button:hover,
+    .crop-orientation-row button:hover,
+    .collage-layout-tile:hover,
+    .collage-tabs > button:hover { background-image: linear-gradient(to bottom, #646464, #4A4A4A); color: #FFFFFF; }
+    .crop-aspect-button:checked,
+    .crop-orientation-row button:checked,
+    .collage-layout-tile:checked,
+    .collage-tabs > button:checked {
+        color: #FFFFFF;
+        background-image: linear-gradient(to bottom, @ap_blue_top, @ap_blue_bot);
+        border-color: #1B3F80;
+        box-shadow: inset 0 1px 0 alpha(#FFFFFF, 0.35);
+    }
+    .crop-aspect-button:checked:hover,
+    .crop-orientation-row button:checked:hover,
+    .collage-layout-tile:checked:hover,
+    .collage-tabs > button:checked:hover { background-image: linear-gradient(to bottom, #6BA5F2, #3A78DA); }
+
+/* --------------------------------------------------------------------------
+   10. SLIDERS — metal knob on a dark inset groove, blue fill
+   -------------------------------------------------------------------------- */
+
+    scale trough {
+        background-color: #181818;
+        background-image: none;
+        border: 1px solid #0C0C0C;
+        border-radius: 3px;
+        min-height: 4px;
+        box-shadow: inset 0 1px 2px alpha(#000000, 0.8), 0 1px 0 alpha(#FFFFFF, 0.07);
+    }
+    scale trough highlight, scale highlight {
+        background-color: #BDBDBD;
+        background-image: linear-gradient(to bottom, #E2E2E2, #A6A6A6);
+        border: none;
+        border-radius: 3px;
+    }
+    scale slider,
+    scale:hover slider,
+    scale:focus slider,
+    scale:active slider {
+        min-width: 15px; min-height: 15px;
+        border-radius: 9999px;
+        background-color: #B4B4B4;
+        background-image: linear-gradient(to bottom, #F2F2F2 0%, #BDBDBD 50%, #8F8F8F 100%);
+        border: 1px solid #1A1A1A;
+        box-shadow: inset 0 1px 0 alpha(#FFFFFF, 0.8), 0 1px 3px alpha(#000000, 0.7);
+        outline: none;
+    }
+    scale slider:hover { background-image: linear-gradient(to bottom, #FFFFFF, #C8C8C8 50%, #9C9C9C); }
+
+/* --------------------------------------------------------------------------
+   11. INFO BAR — bottom brushed-metal strip, matches the top toolbar
+   -------------------------------------------------------------------------- */
+
+    /* PIC insets this bar ~16px from the window edges. Flat side fills in the
+       exact same tone as the bar paint those gaps so the strip runs edge to
+       edge. Keep this to a single flat colour and only these two shadows:
+       any extra shadow listed here can paint over the side fills. */
+    .photo-info-bar {
+        margin: 0;
+        border: none;
+        border-radius: 0;
+        background-color: #383838;
+        background-image: none;
+        color: #DCDCDC;
+        box-shadow:
+            -80px 0 0 0 #383838,
+            80px 0 0 0 #383838;
+    }
+    .info-preview { border-radius: 2px; background: #1E1E1E; border: 1px solid #0E0E0E; }
+    .info-title, .metric-val { color: #E6E6E6; }
+    .metric-key, .navigation-sidebar .dim-label, .photo-info-bar .dim-label { color: #8A8A8A; }
+
+/* --------------------------------------------------------------------------
+   12. CONTEXT MENU — HUD black
+   -------------------------------------------------------------------------- */
+
+    .photo-context-menu viewport, .photo-context-menu scrolledwindow, .photo-context-menu box {
+        background: transparent; background-image: none;
+    }
+    .photo-context-menu {
+        background-color: alpha(#1E1E1E, 0.96);
+        background-image: linear-gradient(to bottom, #2A2A2A, #1C1C1C);
+        border: 1px solid #000000;
+        border-radius: 6px;
+        box-shadow: inset 0 0 0 1px alpha(#FFFFFF, 0.10), 0 10px 28px alpha(#000000, 0.75);
+    }
+    .photo-context-menu button { color: #E0E0E0; min-height: 28px; padding: 4px 12px; border-radius: 3px; background: transparent; background-image: none; border: none; box-shadow: none; text-shadow: none; }
+    .photo-context-menu button:hover { color: #FFFFFF; background-image: linear-gradient(to bottom, @ap_blue_top, @ap_blue_bot); }
+
+    .photo-context-item, .photo-context-submenu > button { color: #E0E0E0; background: transparent; border: none; box-shadow: none; }
+    .photo-context-item:hover, .photo-context-submenu > button:hover { color: #FFFFFF; background-image: linear-gradient(to bottom, @ap_blue_top, @ap_blue_bot); }
+    .photo-context-item:disabled { background: transparent; opacity: 0.4; }
+    .photo-context-separator { background: alpha(#FFFFFF, 0.12); }
+
+/* --------------------------------------------------------------------------
+   13. MISC — badges, favourites, scrub date, dialogs
+   -------------------------------------------------------------------------- */
+
+    .favorite-btn:not(.active):not(:disabled) image { color: #DCDCDC; }
+    .favorite-btn.active, .favorite-btn.active image { color: #F0566E; }
+    .favorite-badge { color: #F0566E; }
+    .edited-badge { color: #A0A0A0; }
+
+    .scroll-scrub-date {
+        padding: 6px 12px;
+        border-radius: 9999px;
+        background: alpha(#1C1C1C, 0.92);
+        border: 1px solid #000000;
+        color: #E8E8E8;
+        font-weight: 700;
+        box-shadow: inset 0 0 0 1px alpha(#FFFFFF, 0.10), 0 4px 12px alpha(#000000, 0.6);
+    }
+
+    headerbar, .titlebar {
+        background-color: #3A3A3A;
+        background-image: linear-gradient(to bottom, #4D4D4D, #333333);
+        border-bottom: 1px solid @ap_line;
+        box-shadow: inset 0 1px 0 @ap_hi;
+        color: #DCDCDC;
+    }
+    list.boxed-list, .boxed-list, .card {
+        background-color: #323232;
+        background-image: none;
+        color: #DCDCDC;
+        border: 1px solid #141414;
+        border-radius: 6px;
+        box-shadow: inset 0 1px 0 alpha(#FFFFFF, 0.05);
+    }
+    list.boxed-list > row, .boxed-list > row { background: transparent; color: #DCDCDC; border-bottom: 1px solid #1E1E1E; }
+    list.boxed-list > row:hover, .boxed-list > row:hover { background: alpha(#FFFFFF, 0.05); }

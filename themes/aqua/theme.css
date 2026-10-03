@@ -1,0 +1,427 @@
+/* picasa-theme
+   version: 1
+   name: Aqua
+   dark: false
+   color-scheme: theme
+   mode: overlay
+   window-controls: native
+*/
+
+/* ==========================================================================
+   Aqua — the Aperture layout re-coloured in classic Mac OS X Aqua style:
+   pale blue-white surfaces, brushed-metal light-grey toolbars, glossy "gel"
+   blue for selection and default buttons, dark slate text. No traffic-light
+   dots (native window buttons).
+
+   Install: copy this folder to <PIC folder>/themes/aqua/
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   1. PALETTE
+   -------------------------------------------------------------------------- */
+
+@define-color accent_bg_color #2D7FE0;       /* Aqua blue                    */
+@define-color accent_fg_color #FFFFFF;
+@define-color accent_color #2D7FE0;
+
+@define-color window_bg_color #EEF0F6;       /* sidebar / panels             */
+@define-color view_bg_color #F5F6FA;         /* photo grid                   */
+@define-color headerbar_bg_color #E4E5E9;    /* toolbars                     */
+@define-color card_bg_color #FFFFFF;
+@define-color dialog_bg_color #F0F2F7;
+@define-color popover_bg_color #F7F8FB;
+@define-color theme_fg_color #2A2D34;        /* dark slate text              */
+
+@define-color ap_line #A9ABB1;               /* metal edge lines             */
+@define-color ap_dim #7A7F89;                /* secondary text               */
+@define-color ap_emboss rgba(255,255,255,0.85);
+@define-color ap_blue_top #A9D2FF;
+@define-color ap_blue_bot #2F78E4;
+
+/* --------------------------------------------------------------------------
+   2. SURFACES — pinstripe sidebar, brushed-metal toolbars
+   -------------------------------------------------------------------------- */
+
+window, .layout-left-column, .navigation-sidebar { background: #F5F6FA; color: #2A2D34; }
+    .layout-left-column {
+        background-color: #EDF0F6;
+        /* Aqua pinstripes (dropped harmlessly if a GTK build lacks repeating gradients). */
+        background-image: repeating-linear-gradient(to bottom,
+            rgba(255,255,255,0.75) 0px, rgba(255,255,255,0.75) 2px,
+            rgba(225,229,238,0.55) 2px, rgba(225,229,238,0.55) 4px);
+        border-right: 1px solid @ap_line;
+    }
+    .navigation-sidebar { background: transparent; background-image: none; }
+    .layout-left-column scrolledwindow,
+    .layout-left-column viewport { background: transparent; background-image: none; }
+
+    .layout-left-header, .layout-right-header {
+        background-color: #E4E5E9;
+        background-image: linear-gradient(to bottom, #F8F9FB 0%, #E6E7EB 50%, #D3D5DA 100%);
+        border-bottom: 1px solid @ap_line;
+        box-shadow: inset 0 1px 0 alpha(#FFFFFF, 0.9);
+        color: #2A2D34;
+    }
+    .app-title { color: #2A2D34; text-shadow: 0 1px 0 @ap_emboss; font-weight: 700; }
+
+/* --------------------------------------------------------------------------
+   3. BUTTONS — light gel; checked/default buttons are glossy Aqua blue
+   -------------------------------------------------------------------------- */
+
+    .layout-left-header button, .layout-right-header button,
+    .photo-action-button, .section-more-btn, .favorite-btn,
+    button.clear-action-button {
+        color: #2A2D34;
+        border-radius: 12px;
+        background-color: #E8EAEE;
+        background-image: linear-gradient(to bottom, #FFFFFF 0%, #F0F2F5 50%, #D9DBE0 51%, #E8EAEE 100%);
+        border: 1px solid #9EA1A8;
+        box-shadow: inset 0 1px 0 alpha(#FFFFFF, 0.9), 0 1px 1px alpha(#000000, 0.12);
+        text-shadow: 0 1px 0 @ap_emboss;
+    }
+    .layout-left-header button:hover, .layout-right-header button:hover,
+    .photo-action-button:hover, .section-more-btn:hover, .favorite-btn:hover,
+    button.clear-action-button:hover {
+        background-image: linear-gradient(to bottom, #FFFFFF 0%, #F7F9FC 50%, #E2E5EA 51%, #EEF0F4 100%);
+        border-color: #8A8E96;
+    }
+    .layout-left-header button:active, .layout-right-header button:active,
+    .photo-action-button:active, .favorite-btn:active,
+    button.clear-action-button:active {
+        background-image: linear-gradient(to bottom, #C9CCD2, #DDE0E5);
+        box-shadow: inset 0 1px 3px alpha(#000000, 0.25);
+    }
+    .layout-left-header button:checked, .layout-right-header button:checked,
+    .photo-action-button:checked, .one-to-one-btn:checked {
+        color: #FFFFFF;
+        background-image: linear-gradient(to bottom, #A9D2FF 0%, #5BA0F5 50%, #2F78E4 51%, #4C93EE 100%);
+        border-color: #1D55B5;
+        box-shadow: inset 0 1px 0 alpha(#FFFFFF, 0.6), 0 1px 1px alpha(#000000, 0.2);
+        text-shadow: 0 -1px 0 alpha(#0A2E6B, 0.5);
+    }
+    .photo-action-button:disabled, .photo-info-bar button:disabled { opacity: 0.4; }
+
+    /* Default / suggested buttons (Done, Apply Crop…) — the gel pill from the reference. */
+    button.suggested-action, .suggested-action {
+        color: #FFFFFF;
+        border-radius: 9999px;
+        background-image: linear-gradient(to bottom, #A9D2FF 0%, #5BA0F5 50%, #2F78E4 51%, #4C93EE 100%);
+        border: 1px solid #1D55B5;
+        box-shadow: inset 0 1px 0 alpha(#FFFFFF, 0.6), 0 1px 2px alpha(#000000, 0.25);
+        text-shadow: 0 -1px 0 alpha(#0A2E6B, 0.5);
+    }
+    button.suggested-action:hover { background-image: linear-gradient(to bottom, #BADBFF 0%, #6BAAF8 50%, #3A84EA 51%, #58A0F2 100%); }
+    button.suggested-action:active { background-image: linear-gradient(to bottom, #2F78E4, #4C93EE); box-shadow: inset 0 1px 3px alpha(#0A2E6B, 0.5); }
+
+/* --------------------------------------------------------------------------
+   4. SEARCH FIELD — white inset pill
+   -------------------------------------------------------------------------- */
+
+    .search-field {
+        min-height: 26px;
+        border-radius: 13px;
+        background: #FFFFFF;
+        border: 1px solid #A3A6AD;
+        color: #2A2D34;
+        box-shadow: inset 0 1px 3px alpha(#000000, 0.18), 0 1px 0 alpha(#FFFFFF, 0.8);
+    }
+    .search-field:focus-within { box-shadow: inset 0 1px 3px alpha(#000000, 0.15), 0 0 0 3px alpha(@accent_bg_color, 0.45); }
+    .search-field image { color: @ap_dim; }
+    .search-field entry { background: transparent; color: #2A2D34; caret-color: #2D7FE0; box-shadow: none; }
+
+/* --------------------------------------------------------------------------
+   5. PHOTO GRID — pale light table, white-framed thumbnails
+   -------------------------------------------------------------------------- */
+
+    .photo-grid { background: #F5F6FA; }
+    .group-heading-bar { background: transparent; padding: 0; }
+    .section-heading-box { margin-top: 16px; margin-bottom: 8px; }
+    .section-heading { color: #2A2D34; font-size: 14px; font-weight: 700; text-shadow: 0 1px 0 @ap_emboss; }
+    .section-count { font-size: 12px; color: @ap_dim; }
+
+    .photo-frame { box-shadow: none; }
+    .photo-tile {
+        border-radius: 3px;
+        border: 3px solid #FFFFFF;
+        background: #FFFFFF;
+        box-shadow: 0 1px 4px alpha(#1B2A4A, 0.35);
+    }
+    .photo-tile:hover { border-color: #FFFFFF; box-shadow: 0 0 0 2px alpha(@accent_bg_color, 0.45), 0 2px 8px alpha(#1B2A4A, 0.4); }
+    .thumbnail { border-radius: 1px; }
+    .missing-thumbnail { background: #E3E6EE; }
+
+    /* Selection: Aqua-blue frame. */
+    .folder-photo-selected.photo-tile {
+        border-color: @accent_bg_color;
+        box-shadow: 0 0 0 1px #1D55B5, 0 3px 10px alpha(#1B2A4A, 0.4);
+    }
+    .folder-photo-selected .selection-badge { opacity: 1; }
+    gridview.section-grid > child:selected .photo-tile,
+    gridview.section-grid > item:selected .photo-tile {
+        border-color: @accent_bg_color;
+        box-shadow: 0 0 0 1px #1D55B5, 0 3px 10px alpha(#1B2A4A, 0.4);
+    }
+    .selection-badge {
+        color: @accent_fg_color;
+        background-image: linear-gradient(to bottom, #A9D2FF 0%, #5BA0F5 50%, #2F78E4 51%, #4C93EE 100%);
+        box-shadow: 0 1px 3px alpha(#0A2E6B, 0.5);
+    }
+
+    .offline-badge, .sidebar-offline-badge {
+        border-radius: 9999px;
+        color: #3A2A00;
+        background: #F2C14E;
+        font-weight: 700;
+    }
+
+/* --------------------------------------------------------------------------
+   6. FOLDER CONTENT VIEW
+   -------------------------------------------------------------------------- */
+
+    listview.folder-stream { background: transparent; padding: 0 20px 24px 20px; }
+    listview.folder-stream > row,
+    listview.folder-stream > row:hover,
+    listview.folder-stream > row:selected,
+    listview.folder-stream > row:focus,
+    listview.folder-stream > row:active {
+        padding: 0; margin: 0;
+        background: transparent; background-image: none;
+        outline: none; box-shadow: none;
+    }
+    .folder-section-header { background: transparent; }
+    .folder-section-title { color: #2A2D34; font-weight: 700; font-size: 13px; text-shadow: 0 1px 0 @ap_emboss; }
+    .folder-section-count { color: @ap_dim; font-size: 12px; }
+    .folder-section-icon { color: #6A6F79; }
+    .folder-section-separator { margin-top: 7px; opacity: 0.8; background: #CBCED5; }
+    .folder-photo-row { background: transparent; }
+
+    gridview.section-grid > child,
+    gridview.section-grid > item,
+    gridview.section-grid > child:hover,
+    gridview.section-grid > child:selected,
+    gridview.section-grid > child:focus,
+    gridview.section-grid > child:active,
+    gridview.section-grid > item:hover,
+    gridview.section-grid > item:selected,
+    gridview.section-grid > item:focus,
+    gridview.section-grid > item:active {
+        padding: 6px; margin: 0;
+        background: transparent; background-image: none;
+        outline: none; box-shadow: none;
+    }
+    .folder-photo-flow > flowboxchild,
+    .folder-photo-flow > flowboxchild:hover,
+    .folder-photo-flow > flowboxchild:focus,
+    .folder-photo-flow > flowboxchild:active,
+    .folder-photo-flow > flowboxchild:selected {
+        padding: 6px; margin: 0; min-height: 0;
+        background: transparent; background-image: none;
+        outline: none; box-shadow: none;
+    }
+
+/* --------------------------------------------------------------------------
+   7. ALBUMS HOME
+   -------------------------------------------------------------------------- */
+
+    .albums-home-grid > flowboxchild { padding: 0; margin: 0; min-height: 0; }
+    button.album-card {
+        min-width: 0; padding: 0; margin: 0;
+        background: transparent; background-image: none;
+        border: none; box-shadow: none;
+    }
+    button.album-card:hover, button.album-card:focus, button.album-card:active {
+        background: transparent; background-image: none; box-shadow: none;
+    }
+.albums-index-title { font-size: 22px; font-weight: 700; text-shadow: 0 1px 0 @ap_emboss; }
+    .plain-album-cover { border-radius: 3px; border: 3px solid #FFFFFF; background: #FFFFFF; box-shadow: 0 1px 4px alpha(#1B2A4A, 0.35); }
+    .plain-album-cover .thumbnail { border-radius: 1px; }
+    .albums-standard > flowboxchild { padding: 0; margin: 0; min-height: 0; background: transparent; box-shadow: none; }
+    .albums-standard button.album-card { color: inherit; min-width: 0; padding: 0; margin: 0; border: none; border-radius: 6px; background: transparent; background-image: none; box-shadow: none; }
+    .albums-standard button.album-card:hover .album-cover { border-color: #7FB2F5; }
+    .albums-standard button.album-card:hover { background: alpha(@accent_bg_color, 0.07); }
+    .albums-standard button.album-card:focus-visible { outline: 2px solid @accent_bg_color; outline-offset: 3px; }
+    .albums-standard .album-name { font-weight: 600; font-size: 13px; }
+    .albums-standard .album-photo-count { font-size: 12px; color: @ap_dim; }
+
+.albums-bookshelf-photo-count { color: #3a210f; }
+button.album-card.framed-album-card { color: #302014; }
+button.album-card.framed-album-card:hover { opacity: 0.90; }
+
+/* --------------------------------------------------------------------------
+   8. SIDEBAR — Aqua source list: grey headings, glossy blue selection
+   -------------------------------------------------------------------------- */
+
+    .navigation-sidebar row { color: #2A2D34; border-radius: 4px; margin: 0 4px; }
+    .navigation-sidebar row:hover { background: alpha(@accent_bg_color, 0.08); }
+    .navigation-sidebar row:selected {
+        color: #FFFFFF;
+        font-weight: 700;
+        background-image: linear-gradient(to bottom, #A9D2FF 0%, #5BA0F5 50%, #2F78E4 51%, #4C93EE 100%);
+        box-shadow: inset 0 1px 0 alpha(#FFFFFF, 0.55), 0 0 0 1px #1D55B5;
+        text-shadow: 0 -1px 0 alpha(#0A2E6B, 0.5);
+    }
+    /* Scroll-follow folder marker — deliberately not row:selected. */
+    .navigation-sidebar row.sidebar-scroll-location {
+        color: #FFFFFF;
+        background-image: linear-gradient(to bottom, #A9D2FF 0%, #5BA0F5 50%, #2F78E4 51%, #4C93EE 100%);
+        box-shadow: inset 0 1px 0 alpha(#FFFFFF, 0.55), 0 0 0 1px #1D55B5;
+        text-shadow: 0 -1px 0 alpha(#0A2E6B, 0.5);
+    }
+    .navigation-sidebar row.sidebar-scroll-location .folder-count,
+    .navigation-sidebar row.sidebar-scroll-location .sidebar-count,
+    .navigation-sidebar row:selected .folder-count,
+    .navigation-sidebar row:selected .sidebar-count { color: alpha(#FFFFFF, 0.9); }
+    .navigation-sidebar .heading { color: #8A8F99; }
+    .navigation-sidebar .sidebar-section-heading { margin-top: 8px; padding-top: 0; }
+    .navigation-sidebar .sidebar-section-heading-title { color: #6F7480; font-size: inherit; font-weight: 700; letter-spacing: 0.4px; text-shadow: 0 1px 0 @ap_emboss; }
+    .navigation-sidebar .folder-count { color: @ap_dim; }
+    .folder-disclosure { opacity: 0.7; }
+    .sidebar-count { min-width: 38px; font-variant-numeric: tabular-nums; color: @ap_dim; }
+
+/* --------------------------------------------------------------------------
+   9. SEGMENTED TOGGLES
+   -------------------------------------------------------------------------- */
+
+    .crop-aspect-button,
+    .crop-orientation-row button,
+    .collage-layout-tile,
+    .collage-tabs > button {
+        border-radius: 3px;
+        color: #2A2D34;
+        background-image: linear-gradient(to bottom, #FFFFFF 0%, #F0F2F5 50%, #D9DBE0 51%, #E8EAEE 100%);
+        border: 1px solid #9EA1A8;
+        box-shadow: inset 0 1px 0 alpha(#FFFFFF, 0.9);
+        text-shadow: 0 1px 0 @ap_emboss;
+    }
+    .crop-aspect-button:hover,
+    .crop-orientation-row button:hover,
+    .collage-layout-tile:hover,
+    .collage-tabs > button:hover { background-image: linear-gradient(to bottom, #FFFFFF, #E4E7EC); }
+    .crop-aspect-button:checked,
+    .crop-orientation-row button:checked,
+    .collage-layout-tile:checked,
+    .collage-tabs > button:checked {
+        color: #FFFFFF;
+        background-image: linear-gradient(to bottom, #A9D2FF 0%, #5BA0F5 50%, #2F78E4 51%, #4C93EE 100%);
+        border-color: #1D55B5;
+        box-shadow: inset 0 1px 0 alpha(#FFFFFF, 0.55);
+        text-shadow: 0 -1px 0 alpha(#0A2E6B, 0.5);
+    }
+    .crop-aspect-button:checked:hover,
+    .crop-orientation-row button:checked:hover,
+    .collage-layout-tile:checked:hover,
+    .collage-tabs > button:checked:hover { background-image: linear-gradient(to bottom, #BADBFF 0%, #6BAAF8 50%, #3A84EA 51%, #58A0F2 100%); }
+
+/* --------------------------------------------------------------------------
+   10. SLIDERS — gel knob on a light groove, grey fill
+   -------------------------------------------------------------------------- */
+
+    scale trough {
+        background-color: #D6D9E0;
+        background-image: none;
+        border: 1px solid #A3A6AD;
+        border-radius: 3px;
+        min-height: 4px;
+        box-shadow: inset 0 1px 2px alpha(#000000, 0.2), 0 1px 0 alpha(#FFFFFF, 0.8);
+    }
+    scale trough highlight, scale highlight {
+        background-color: #A9AFBA;
+        background-image: linear-gradient(to bottom, #BFC4CD, #8E95A1);
+        border: none;
+        border-radius: 3px;
+    }
+    scale slider,
+    scale:hover slider,
+    scale:focus slider,
+    scale:active slider {
+        min-width: 15px; min-height: 15px;
+        border-radius: 9999px;
+        background-color: #E8EAEE;
+        background-image: linear-gradient(to bottom, #FFFFFF 0%, #EEF0F4 50%, #CDD0D6 51%, #E2E4E9 100%);
+        border: 1px solid #8A8E96;
+        box-shadow: inset 0 1px 0 alpha(#FFFFFF, 0.9), 0 1px 3px alpha(#000000, 0.3);
+        outline: none;
+    }
+    scale slider:hover { border-color: #6F737B; }
+
+/* --------------------------------------------------------------------------
+   11. INFO BAR — flat metal strip, extended edge to edge
+   -------------------------------------------------------------------------- */
+
+    /* PIC insets this bar ~16px from the window edges. Flat side fills in the
+       exact same tone as the bar paint those gaps so the strip runs edge to
+       edge. Keep this to a single flat colour and only these two shadows:
+       any extra shadow listed here can paint over the side fills. */
+    .photo-info-bar {
+        margin: 0;
+        border: none;
+        border-radius: 0;
+        background-color: #E1E3E8;
+        background-image: none;
+        color: #2A2D34;
+        box-shadow:
+            -80px 0 0 0 #E1E3E8,
+            80px 0 0 0 #E1E3E8;
+    }
+    .info-preview { border-radius: 2px; background: #FFFFFF; border: 1px solid #B5B8BF; }
+    .info-title, .metric-val { color: #2A2D34; }
+    .metric-key, .navigation-sidebar .dim-label, .photo-info-bar .dim-label { color: #7A7F89; }
+
+/* --------------------------------------------------------------------------
+   12. CONTEXT MENU — light Aqua menu with blue gel hover
+   -------------------------------------------------------------------------- */
+
+    .photo-context-menu viewport, .photo-context-menu scrolledwindow, .photo-context-menu box {
+        background: transparent; background-image: none;
+    }
+    .photo-context-menu {
+        background-color: #F7F8FB;
+        background-image: none;
+        border: 1px solid #A3A6AD;
+        border-radius: 6px;
+        box-shadow: 0 8px 24px alpha(#1B2A4A, 0.35);
+    }
+    .photo-context-menu button { color: #2A2D34; min-height: 28px; padding: 4px 12px; border-radius: 3px; background: transparent; background-image: none; border: none; box-shadow: none; text-shadow: none; }
+    .photo-context-menu button:hover { color: #FFFFFF; background-image: linear-gradient(to bottom, #A9D2FF 0%, #5BA0F5 50%, #2F78E4 51%, #4C93EE 100%); }
+
+    .photo-context-item, .photo-context-submenu > button { color: #2A2D34; background: transparent; border: none; box-shadow: none; }
+    .photo-context-item:hover, .photo-context-submenu > button:hover { color: #FFFFFF; background-image: linear-gradient(to bottom, #A9D2FF 0%, #5BA0F5 50%, #2F78E4 51%, #4C93EE 100%); }
+    .photo-context-item:disabled { background: transparent; opacity: 0.4; }
+    .photo-context-separator { background: #D3D6DD; }
+
+/* --------------------------------------------------------------------------
+   13. MISC — badges, favourites, scrub date, dialogs
+   -------------------------------------------------------------------------- */
+
+    .favorite-btn:not(.active):not(:disabled) image { color: #2A2D34; }
+    .favorite-btn.active, .favorite-btn.active image { color: #E0354F; }
+    .favorite-badge { color: #E0354F; }
+    .edited-badge { color: #6A6F79; }
+
+    .scroll-scrub-date {
+        padding: 6px 12px;
+        border-radius: 9999px;
+        background: alpha(#F7F8FB, 0.96);
+        border: 1px solid #A3A6AD;
+        color: #2A2D34;
+        font-weight: 700;
+        box-shadow: 0 4px 12px alpha(#1B2A4A, 0.3);
+    }
+
+    headerbar, .titlebar {
+        background-color: #E4E5E9;
+        background-image: linear-gradient(to bottom, #F8F9FB, #D3D5DA);
+        border-bottom: 1px solid @ap_line;
+        box-shadow: inset 0 1px 0 alpha(#FFFFFF, 0.9);
+        color: #2A2D34;
+    }
+    list.boxed-list, .boxed-list, .card {
+        background-color: #FFFFFF;
+        background-image: none;
+        color: #2A2D34;
+        border: 1px solid #C3C6CD;
+        border-radius: 6px;
+        box-shadow: 0 1px 2px alpha(#1B2A4A, 0.12);
+    }
+    list.boxed-list > row, .boxed-list > row { background: transparent; color: #2A2D34; border-bottom: 1px solid #E3E6EC; }
+    list.boxed-list > row:hover, .boxed-list > row:hover { background: alpha(@accent_bg_color, 0.07); }

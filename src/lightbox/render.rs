@@ -1,3 +1,130 @@
+// Wheel and slider zoom share the native source request and cache.
+fn ensure_native_zoom_texture(
+    picture: &gtk::Picture,
+    root: &gtk::Overlay,
+    photos: Rc<RefCell<Vec<PhotoObject>>>,
+    index: Rc<Cell<usize>>,
+    zoom: Rc<Cell<f64>>,
+    one_to_one: Rc<Cell<bool>>,
+    native_texture: Rc<RefCell<Option<NativeTextureCache>>>,
+    pending: Rc<Cell<bool>>,
+    photo: &PhotoObject,
+) {
+    let path = photo.path();
+    let rotation = photo.rotation();
+    let edit_recipe = photo.edit_recipe();
+
+    if let Some(cache) = native_texture.borrow().as_ref() {
+        if cache.path == path && cache.rotation == rotation && cache.edit_recipe == edit_recipe {
+            let request = picture.size_request();
+            picture.set_paintable(Some(&cache.texture));
+            if picture.size_request() != request {
+                picture.set_size_request(request.0, request.1);
+            }
+            picture.queue_draw();
+            return;
+        }
+    }
+
+    if pending.replace(true) {
+        return;
+    }
+
+    let (target_width, target_height, _, _, _, _) = viewer_decode_target(&root, rotation, true);
+    let key = ViewerRequestKey {
+        path: path.clone(),
+        mtime: photo.mtime(),
+        size_bytes: photo.size_bytes(),
+        rotation,
+        edit_recipe: edit_recipe.clone(),
+        target_width,
+        target_height,
+    };
+    let (request, lease, claim) = claim_viewer_request(&key, true);
+    viewer_trace(format!(
+        "request lane=native-zoom action={} uri={} variant={}x{}",
+        match claim {
+            ViewerRequestClaim::New => "new",
+            ViewerRequestClaim::JoinedForeground => "join",
+            ViewerRequestClaim::PromotedPrefetch => "promote",
+        },
+        viewer_trace_uri(&path),
+        target_width,
+        target_height,
+    ));
+    if matches!(claim, ViewerRequestClaim::New) {
+        start_viewer_request(key, request.clone());
+    }
+
+    let picture = picture.clone();
+    let root = root.clone();
+    let photos = photos.clone();
+    let index = index.clone();
+    let zoom = zoom.clone();
+    let one_to_one = one_to_one.clone();
+    let native_texture = native_texture.clone();
+    let pending = pending.clone();
+    let expected_path = path.clone();
+    let expected_rotation = rotation;
+    let expected_recipe = edit_recipe.clone();
+
+    glib::MainContext::default().spawn_local(async move {
+        let result = ViewerResultSlot::wait(request.result.clone()).await;
+        pending.set(false);
+
+        if lease.cancelled() || !root.is_visible() {
+            lease.release();
+            return;
+        }
+
+        let still_current = photos.borrow().get(index.get()).is_some_and(|current| {
+            current.path() == expected_path
+                && current.rotation() == expected_rotation
+                && current.edit_recipe() == expected_recipe
+        });
+        if !still_current {
+            lease.release();
+            return;
+        }
+
+        if let Ok(result) = result {
+            let bytes = glib::Bytes::from_owned(result.pixels.clone());
+            let texture = gtk::gdk::MemoryTexture::new(
+                result.width as i32,
+                result.height as i32,
+                gtk::gdk::MemoryFormat::R8g8b8a8,
+                &bytes,
+                result.width as usize * 4,
+            );
+            *native_texture.borrow_mut() = Some(NativeTextureCache {
+                path: expected_path.clone(),
+                rotation: expected_rotation,
+                edit_recipe: expected_recipe.clone(),
+                texture: texture.clone(),
+            });
+
+            // Replace only the source texture, never the current zoom
+            // geometry. This turns the temporary viewport-sized preview
+            // into a sharp native source without moving the photo.
+            if zoom.get() > 0.0 && !one_to_one.get() {
+                let request = picture.size_request();
+                picture.set_paintable(Some(&texture));
+                if picture.size_request() != request {
+                    picture.set_size_request(request.0, request.1);
+                }
+                picture.queue_draw();
+                viewer_trace(format!(
+                    "native_zoom_apply uri={} texture={}x{} request={:?}",
+                    viewer_trace_uri(&expected_path),
+                    texture.width(),
+                    texture.height(),
+                    request,
+                ));
+            }
+        }
+        lease.release();
+    });
+}
 fn notify_photo_changed(handler: &PhotoChangedHandler, photos: &[PhotoObject], index: usize) {
     let Some(photo) = photos.get(index) else {
         return;

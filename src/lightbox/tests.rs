@@ -443,3 +443,93 @@ mod one_to_one_layout_regression {
         window.close();
     }
 }
+
+#[cfg(test)]
+mod wheel_quality_regression {
+    use super::*;
+
+    #[test]
+    #[ignore = "requires an X11 GTK display and xdotool; run with --ignored --test-threads=1"]
+    fn wheel_zoom_loads_native_pixels_without_one_to_one() {
+        gtk::init().unwrap();
+        let path =
+            std::env::temp_dir().join(format!("pic-wheel-quality-{}.png", std::process::id()));
+        image::RgbaImage::from_pixel(800, 600, image::Rgba([120, 80, 40, 255]))
+            .save(&path)
+            .unwrap();
+        let photo: PhotoObject = glib::Object::builder::<PhotoObject>()
+            .property("id", 1_i64)
+            .property("path", path.to_string_lossy().as_ref())
+            .property("width", 800_i64)
+            .property("height", 600_i64)
+            .build();
+        let lightbox = Lightbox::new();
+        let window = gtk::Window::new();
+        let title = format!("PIC wheel quality regression {}", std::process::id());
+        window.set_title(Some(&title));
+        window.set_default_size(240, 180);
+        window.set_child(Some(&lightbox.root));
+        window.present();
+        lightbox.open(vec![photo], 0);
+        let context = glib::MainContext::default();
+        let settle_until = |label: &str, condition: &dyn Fn() -> bool| {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while !condition() && Instant::now() < deadline {
+                while context.pending() {
+                    context.iteration(false);
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            assert!(condition(), "timed out waiting for {label}");
+        };
+        settle_until("initial preview", &|| {
+            lightbox.key_navigation_ready.get() && lightbox.picture.paintable().is_some()
+        });
+        assert!(
+            picture_intrinsic_dimensions(&lightbox.picture).0 < 800,
+            "test must start with a reduced fit preview"
+        );
+        let search = std::process::Command::new("xdotool")
+            .args(["search", "--name", &title])
+            .output()
+            .unwrap();
+        assert!(search.status.success());
+        let windows = String::from_utf8(search.stdout).unwrap();
+        let window_id = windows.lines().last().unwrap();
+        let status = std::process::Command::new("xdotool")
+            .args([
+                "windowfocus",
+                "--sync",
+                window_id,
+                "mousemove",
+                "--window",
+                window_id,
+                "100",
+                "90",
+                "sleep",
+                "0.2",
+                "keydown",
+                "ctrl",
+                "sleep",
+                "0.1",
+                "click",
+                "4",
+                "keyup",
+                "ctrl",
+            ])
+            .status()
+            .unwrap();
+        assert!(status.success());
+        settle_until("wheel zoom", &|| lightbox.zoom.get() > 0.0);
+        assert!(!lightbox.one_to_one_active.get());
+        settle_until("native pixels after wheel zoom", &|| {
+            picture_intrinsic_dimensions(&lightbox.picture) == (800, 600)
+        });
+        assert!(
+            lightbox.native_texture.borrow().is_some(),
+            "wheel must load the native source"
+        );
+        window.close();
+        std::fs::remove_file(path).unwrap();
+    }
+}

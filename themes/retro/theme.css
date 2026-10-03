@@ -103,10 +103,8 @@ window, .layout-left-column, .navigation-sidebar { background: @window_bg_color;
     .section-more-btn { color: @theme_fg_color; }
     .section-more-btn:hover { background: alpha(@theme_fg_color, 0.08); }
     .photo-info-bar {
-        /* Extend the info bar into the left/right layout inset so it reaches
-           the full width without using dark side shadows. */
-        margin-left: -16px;
-        margin-right: -16px;
+        /* The shared layout spans the full width; inset only the contents. */
+        margin: 0;
         padding-left: 16px;
         padding-right: 16px;
         background: @window_bg_color;

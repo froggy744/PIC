@@ -55,10 +55,7 @@ gridview.section-grid > child:selected .selection-badge, gridview.section-grid >
 .section-heading { color: #f0f0f0; font-weight: 700; font-size: 14px; text-shadow: 0 1px #151515; }
 .section-more-btn { opacity: 0.6; color: #d8d8d8; border-radius: 6px; min-width: 28px; min-height: 28px; padding: 2px 4px; }
 .section-more-btn:hover { opacity: 1.0; background: rgba(255,255,255,0.10); }
-/* PIC insets the info bar ~16px from the window edges. A flat single-tone fill plus two
-   same-colour side shadows paints those gaps so the bar runs edge to edge. Keep this to
-   exactly these two shadows; extra shadows or a gradient make the side fills show as blocks. */
-.photo-info-bar { background: #333333; border: none; border-radius: 0; margin: 0; min-height: 58px; color: #efefef; box-shadow: -80px 0 0 0 #333333, 80px 0 0 0 #333333; }
+.photo-info-bar { background: #333333; border: none; border-radius: 0; margin: 0; min-height: 58px; color: #efefef; box-shadow: none; }
 .info-preview { min-width: 40px; min-height: 40px; border-radius: 6px; background: #333; border: 1px solid #555; }
 .info-title { font-weight: 700; font-size: 13px; color: #f4f4f4; }
 .metric-key { font-size: 11px; color: #bcbcbc; font-weight: 600; }

@@ -41,8 +41,9 @@ impl InfoBar {
         root.set_valign(gtk::Align::End);
         root.set_margin_top(0);
         root.set_margin_bottom(0);
-        root.set_margin_start(16);
-        root.set_margin_end(16);
+        // The themed background spans the full width; CSS insets the contents.
+        root.set_margin_start(0);
+        root.set_margin_end(0);
         root.add_css_class("photo-info-bar");
 
         let preview = gtk::Image::new();
@@ -349,7 +350,8 @@ impl InfoBar {
 
     pub fn connect_photo_layout(&self, changed: impl Fn(crate::grid::PhotoLayout) + 'static) {
         let layout = self.photo_layout.clone();
-        self.view_toggle.connect_clicked(move |_| changed(layout.get()));
+        self.view_toggle
+            .connect_clicked(move |_| changed(layout.get()));
     }
 
     pub fn connect_clear_saved_views(&self, clear: impl Fn() + 'static) {
@@ -609,4 +611,49 @@ fn update_photo_layout_button(button: &gtk::Button, layout: crate::grid::PhotoLa
     };
     button.set_icon_name(icon);
     button.set_tooltip_text(Some(tooltip));
+}
+
+#[cfg(test)]
+mod layout_tests {
+    use super::*;
+
+    #[test]
+    #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+    fn themed_infobar_background_spans_parent_width() {
+        gtk::init().unwrap();
+        let display = gtk::gdk::Display::default().unwrap();
+        let base = gtk::CssProvider::new();
+        base.load_from_data(&format!(
+            "{}\n{}",
+            crate::css::BASE,
+            include_str!("../themes/iDark/theme.css")
+        ));
+        gtk::style_context_add_provider_for_display(
+            &display,
+            &base,
+            gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+        );
+        let overlay = gtk::CssProvider::new();
+        overlay.load_from_data(include_str!("../themes/standard/theme.css"));
+        gtk::style_context_add_provider_for_display(
+            &display,
+            &overlay,
+            gtk::STYLE_PROVIDER_PRIORITY_APPLICATION + 1,
+        );
+        let info = InfoBar::new();
+        let parent = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        parent.append(&info.root);
+        parent.allocate(1800, 100, -1, None);
+        let bounds = info.root.compute_bounds(&parent).unwrap();
+        assert_eq!(bounds.x(), 0.0, "background must reach the left edge");
+        assert_eq!(
+            bounds.width(),
+            1800.0,
+            "background must reach the right edge"
+        );
+        let preview = info.preview.compute_bounds(&parent).unwrap();
+        assert!(preview.x() >= 16.0, "contents must retain their inset");
+        gtk::style_context_remove_provider_for_display(&display, &overlay);
+        gtk::style_context_remove_provider_for_display(&display, &base);
+    }
 }

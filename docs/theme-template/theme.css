@@ -2,6 +2,7 @@
    version: 1
    name: My Theme
    dark: false
+   color-scheme: theme
    mode: overlay
    window-controls: native
 */
@@ -27,7 +28,8 @@
        PIC saves in its settings — never rename a folder people already use.
      - `dark: true` marks a dark palette. Add `color-scheme: theme` when you
        want GTK chrome outside your stylesheet pinned to match the palette;
-       otherwise the interface follows GNOME's light/dark preference.
+       light palettes without that key follow GNOME's preference. Dark
+       palettes always force dark GTK chrome and the dark lightbox backdrop.
      - `version:` is the metadata contract version of this file (current: 1).
        Keep it at 1 unless a PIC release documents a new contract.
      - `window-controls: native` keeps the GTK title buttons; set
@@ -80,10 +82,15 @@ window, .layout-left-column, .navigation-sidebar { background: @window_bg_color;
         box-shadow: none;
     }
     .search-field image { color: alpha(@theme_fg_color, 0.70); }
-    .search-field entry { background: transparent; color: @theme_fg_color; }
+    .search-field entry { background: transparent; color: @theme_fg_color; caret-color: @theme_fg_color; }
 
 /* --------------------------------------------------------------------------
    4. PHOTO GRID — group headers, tiles, selection.
+      Photo Wall and Masonry use these accent colors, but a higher-priority
+      app stylesheet removes tile borders, padding and shadows. Hover and
+      selection use inset outlines. Photo Wall always has square corners;
+      Masonry follows the thumbnail corner setting and hides filenames.
+      Do not copy Grid borders into Wall/Masonry overrides.
    -------------------------------------------------------------------------- */
 
     .photo-grid { background: @view_bg_color; }
@@ -109,7 +116,7 @@ window, .layout-left-column, .navigation-sidebar { background: @window_bg_color;
     .folder-photo-selected .selection-badge { opacity: 1; }
     gridview.section-grid > child:selected .photo-tile,
     gridview.section-grid > item:selected .photo-tile { border-color: @accent_bg_color; box-shadow: none; }
-    .selection-badge { background: @accent_bg_color; box-shadow: 0 1px 3px rgba(0,0,0,0.25); }
+    .selection-badge { color: @accent_fg_color; background: @accent_bg_color; box-shadow: 0 1px 3px rgba(0,0,0,0.25); }
 
     .offline-badge, .sidebar-offline-badge {
         border-radius: 9999px;
@@ -175,7 +182,9 @@ window, .layout-left-column, .navigation-sidebar { background: @window_bg_color;
     }
 
 /* --------------------------------------------------------------------------
-   6. ALBUMS HOME.
+   6. ALBUMS HOME — shared component rules load above appearance themes.
+      Palette colors below feed plain album covers. Framed covers and shelf
+      artwork come from images/theme/ (see README), independently of CSS.
    -------------------------------------------------------------------------- */
 
     .albums-home-grid > flowboxchild { padding: 0; margin: 0; min-height: 0; }
@@ -187,6 +196,22 @@ window, .layout-left-column, .navigation-sidebar { background: @window_bg_color;
     button.album-card:hover, button.album-card:focus, button.album-card:active {
         background: transparent; background-image: none; box-shadow: none;
     }
+
+    /* Current shared album selectors; keep plain covers palette-driven. */
+.albums-index-title { font-size: 24px; font-weight: 700; text-shadow: none; }
+    .plain-album-cover { border-radius: 8px; border: 1px solid alpha(@theme_fg_color, 0.14); background: alpha(@theme_fg_color, 0.045); box-shadow: none; }
+    .plain-album-cover .thumbnail { border-radius: 7px; }
+    .albums-standard > flowboxchild { padding: 0; margin: 0; min-height: 0; background: transparent; box-shadow: none; }
+    .albums-standard button.album-card { color: inherit; min-width: 0; padding: 0; margin: 0; border: none; border-radius: 8px; background: transparent; background-image: none; box-shadow: none; }
+    .albums-standard button.album-card:hover .album-cover { border-color: alpha(@accent_bg_color, 0.65); }
+    .albums-standard button.album-card:hover { background: alpha(@theme_fg_color, 0.035); }
+    .albums-standard button.album-card:focus-visible { outline: 2px solid @accent_bg_color; outline-offset: 3px; }
+    .albums-standard .album-name { font-weight: 600; font-size: 14px; }
+    .albums-standard .album-photo-count { font-size: 12px; }
+
+.albums-bookshelf-photo-count { color: #3a210f; }
+button.album-card.framed-album-card { color: #302014; }
+button.album-card.framed-album-card:hover { opacity: 0.90; }
 
 /* --------------------------------------------------------------------------
    7. SIDEBAR — library rows, selected state, and the scroll-follow folder
@@ -256,6 +281,8 @@ window, .layout-left-column, .navigation-sidebar { background: @window_bg_color;
     button.clear-action-button:hover { color: #1f2325; background: #f0f0f0; border-color: #777777; }
     button.clear-action-button:active { background: #d2d2d2; }
 
+    .favorite-btn:not(.active):not(:disabled) image { color: @theme_fg_color; }
+
     /* Favourites stay red by convention; recolor if your accent is red. */
     .favorite-btn.active, .favorite-btn.active image { color: #e01b24; }
     .favorite-badge { color: #e01b24; }
@@ -270,6 +297,22 @@ window, .layout-left-column, .navigation-sidebar { background: @window_bg_color;
         font-weight: 700;
         box-shadow: 0 1px 4px alpha(black, 0.22);
     }
+
+/* --------------------------------------------------------------------------
+   Shared context-menu selectors (including submenu and disabled states).
+   -------------------------------------------------------------------------- */
+
+    .photo-context-item, .photo-context-submenu > button {
+        color: @theme_fg_color;
+        background: transparent;
+        border: none;
+        box-shadow: none;
+    }
+    .photo-context-item:hover, .photo-context-submenu > button:hover {
+        background: alpha(@theme_fg_color, 0.10);
+    }
+    .photo-context-item:disabled { background: transparent; opacity: 0.45; }
+    .photo-context-separator { background: alpha(@theme_fg_color, 0.12); }
 
 /* --------------------------------------------------------------------------
    10. WINDOW CONTROLS (optional) — only needed when the metadata above sets

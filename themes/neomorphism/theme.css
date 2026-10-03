@@ -1,48 +1,42 @@
 /* picasa-theme
    version: 1
-   name: Apple Liquid Glass
+   name: Neumorphism — Soft UI
    dark: false
    color-scheme: theme
    mode: overlay
 */
 
 /* ==========================================================================
-   APPLE LIQUID GLASS — GTK4 approximation
-   GTK CSS cannot reproduce browser backdrop-filter/SVG displacement/refraction,
-   so this theme recreates the look with translucent surfaces, bright edge
-   highlights, soft inner/outer shadows, rounded lenses and layered gradients.
+   NEUMORPHISM / SOFT UI
+   Inspired by the Superdesign neumorphism recipe:
+   one shared mid-tone surface, raised dual shadows, and inset pressed states.
    ========================================================================== */
 
-@define-color window_bg_color #EAF0F6;
-@define-color view_bg_color #E8EEF5;
-@define-color headerbar_bg_color alpha(#F8FBFF, 0.72);
-@define-color card_bg_color alpha(#FFFFFF, 0.46);
-@define-color dialog_bg_color alpha(#F5F9FD, 0.82);
-@define-color popover_bg_color alpha(#FFFFFF, 0.78);
+@define-color window_bg_color #E0E5EC;
+@define-color view_bg_color #E0E5EC;
+@define-color headerbar_bg_color #E0E5EC;
+@define-color card_bg_color #E0E5EC;
+@define-color dialog_bg_color #E0E5EC;
+@define-color popover_bg_color #E0E5EC;
 
-@define-color theme_fg_color #17212B;
-@define-color theme_dim_color #657382;
+@define-color theme_fg_color #4A5056;
+@define-color theme_dim_color #7A828A;
 
-@define-color accent_bg_color #0A84FF;
-@define-color accent_fg_color #FFFFFF;
-@define-color accent_color #0A84FF;
+@define-color accent_bg_color #C9D0D8;
+@define-color accent_fg_color #4A5056;
+@define-color accent_color #AEB6BF;
 
-@define-color glass_fill alpha(#FFFFFF, 0.42);
-@define-color glass_fill_strong alpha(#FFFFFF, 0.62);
-@define-color glass_fill_hover alpha(#FFFFFF, 0.55);
-@define-color glass_fill_pressed alpha(#DCE7F1, 0.50);
-@define-color glass_border alpha(#FFFFFF, 0.78);
-@define-color glass_border_dim alpha(#AFC0D0, 0.38);
-@define-color glass_shadow alpha(#40566C, 0.20);
-@define-color glass_shadow_deep alpha(#26384A, 0.26);
-@define-color glass_highlight alpha(#FFFFFF, 0.95);
-@define-color glass_selected alpha(#0A84FF, 0.16);
+@define-color neu_surface #E0E5EC;
+@define-color neu_shadow_dark #BEC3C9;
+@define-color neu_shadow_light #FFFFFF;
+@define-color neu_focus #AEB6BF;
+@define-color neu_selected #D3D9E0;
 
 
 /* Standard GTK4/libadwaita appearance. Typography is supplied separately by platform CSS. */
 window, .layout-left-column, .navigation-sidebar { background: @window_bg_color; color: @theme_fg_color; }
-    .layout-left-column { border-right: 1px solid alpha(@theme_fg_color, 0.12); }
-    .layout-left-header, .layout-right-header { background: @headerbar_bg_color; border-bottom: none; color: @theme_fg_color; }
+    .layout-left-column { border-right: none; box-shadow: 7px 0 14px alpha(@neu_shadow_dark, 0.72); }
+    .layout-left-header, .layout-right-header { background: @neu_surface; border-bottom: none; color: @theme_fg_color; box-shadow: 0 5px 10px alpha(@neu_shadow_dark, 0.50); }
     .app-title { color: @theme_fg_color; text-shadow: none; }
     .layout-left-header button, .layout-right-header button { color: @theme_fg_color; }
     .layout-left-header .sidebar-toggle-button, .layout-left-header .sidebar-toggle-button image { color: @theme_fg_color; opacity: 1; }
@@ -50,7 +44,7 @@ window, .layout-left-column, .navigation-sidebar { background: @window_bg_color;
     .search-field { min-height: 34px; border-radius: 9999px; background: alpha(@theme_fg_color, 0.10); border: none; color: @theme_fg_color; box-shadow: none; }
     .search-field image { color: alpha(@theme_fg_color, 0.70); }
     .search-field entry { background: transparent; color: @theme_fg_color; }
-    .photo-grid { background: @view_bg_color; }
+    .photo-grid { background: @neu_surface; }
     listview.folder-stream { background: transparent; padding: 0 20px 24px 20px; }
     listview.folder-stream > row {
         padding: 0;
@@ -116,8 +110,8 @@ window, .layout-left-column, .navigation-sidebar { background: @window_bg_color;
         box-shadow: none;
     }
     .selection-badge { background: @accent_bg_color; box-shadow: 0 1px 3px rgba(0,0,0,0.25); }
-    .offline-badge { min-width: 20px; min-height: 20px; padding: 0; border-radius: 9999px; color: #2a1a00; background: #f2c14e; font-weight: 700; }
-    .sidebar-offline-badge { min-width: 16px; min-height: 16px; padding: 0; border-radius: 9999px; color: #2a1a00; background: #f2c14e; font-weight: 700; font-size: 10px; }
+    .offline-badge { min-width: 20px; min-height: 20px; padding: 0; border-radius: 9999px; color: #4A5056; background: #D3D9E0; font-weight: 700; }
+    .sidebar-offline-badge { min-width: 16px; min-height: 16px; padding: 0; border-radius: 9999px; color: #4A5056; background: #D3D9E0; font-weight: 700; font-size: 10px; }
     .folder-disclosure { opacity: 0.68; }
     .navigation-sidebar .folder-count { color: alpha(@theme_fg_color, 0.68); }
     .thumbnail { border-radius: 8px; }
@@ -126,7 +120,7 @@ window, .layout-left-column, .navigation-sidebar { background: @window_bg_color;
     .section-heading { color: @theme_fg_color; font-size: 15px; text-shadow: none; }
     .section-more-btn { color: @theme_fg_color; }
     .section-more-btn:hover { background: alpha(@theme_fg_color, 0.08); }
-    .photo-info-bar { background: @window_bg_color; border-top: 1px solid alpha(@theme_fg_color, 0.12); color: @theme_fg_color; }
+    .photo-info-bar { background: @neu_surface; border: none; color: @theme_fg_color; box-shadow: 0 -5px 12px alpha(@neu_shadow_dark, 0.50); }
     .info-preview { border-radius: 8px; background: alpha(@theme_fg_color, 0.06); border: 1px solid alpha(@theme_fg_color, 0.10); }
     .info-title, .metric-val { color: @theme_fg_color; }
     .metric-key, .navigation-sidebar .dim-label, .photo-info-bar .dim-label { color: alpha(@theme_fg_color, 0.55); }
@@ -134,14 +128,14 @@ window, .layout-left-column, .navigation-sidebar { background: @window_bg_color;
     .photo-info-bar .photo-action-button:hover { background: alpha(@theme_fg_color, 0.10); }
     .photo-info-bar .photo-action-button:checked { color: @accent_fg_color; background: @accent_bg_color; }
     .photo-context-menu, .photo-context-menu viewport { background: @window_bg_color; }
-    .photo-context-menu { border: 1px solid alpha(@theme_fg_color, 0.18); border-radius: 8px; box-shadow: 0 5px 18px alpha(#000000, 0.40); }
+    .photo-context-menu { border: 1px solid alpha(@theme_fg_color, 0.18); border-radius: 8px; box-shadow: 0 5px 18px alpha(#7A828A, 0.40); }
     .photo-context-menu button { color: @theme_fg_color; }
     .photo-context-menu button:hover { background: alpha(@theme_fg_color, 0.10); }
     button.clear-action-button { color: @theme_fg_color; background: alpha(@theme_fg_color, 0.08); border: 1px solid alpha(@theme_fg_color, 0.20); }
     button.clear-action-button:hover { background: alpha(@theme_fg_color, 0.14); border-color: alpha(@theme_fg_color, 0.32); }
     button.clear-action-button:active { background: alpha(@theme_fg_color, 0.20); }
-    .favorite-btn.active, .favorite-btn.active image { color: #e01b24; }
-    .favorite-badge { color: #e01b24; }
+    .favorite-btn.active, .favorite-btn.active image { color: #7A828A; }
+    .favorite-badge { color: #7A828A; }
     .edited-badge { color: @theme_fg_color; }
     .one-to-one-btn:checked { color: @accent_fg_color; background: @accent_bg_color; }
     .sidebar-count { min-width: 38px; font-variant-numeric: tabular-nums; }
@@ -190,73 +184,41 @@ window, .layout-left-column, .navigation-sidebar { background: @window_bg_color;
 
 
 /* ==========================================================================
-   LIQUID GLASS OVERRIDE LAYER
+   NEUMORPHIC COMPONENT OVERRIDES
    ========================================================================== */
 
-/* Base surfaces */
+/* One continuous molded surface everywhere. */
 window,
 .background,
 .layout-left-column,
 .navigation-sidebar,
 .layout-right-column,
 .photo-grid,
+scrolledwindow,
+viewport,
+stack,
+preferencespage,
+preferencesgroup,
+.dialog-vbox,
+.content-view {
+    background-color: @neu_surface;
+    background-image: none;
+    color: @theme_fg_color;
+}
+
+/* Do not let generic scrolledwindow/viewport nodes introduce white panels. */
+.layout-left-column scrolledwindow,
+.layout-left-column viewport,
 .layout-right-column scrolledwindow,
 .layout-right-column viewport,
-.layout-right-column stack,
-.layout-right-column stack > widget,
-listview.folder-stream {
-    background-color: @view_bg_color;
-    background-image:
-        linear-gradient(135deg,
-            alpha(#FFFFFF, 0.36),
-            alpha(#D9E7F3, 0.12) 42%,
-            alpha(#BFD5E8, 0.16));
-    color: @theme_fg_color;
-}
-
-/* Sidebar as a translucent glass sheet */
-.layout-left-column,
-.navigation-sidebar {
-    background-color: alpha(#F8FBFF, 0.72);
-    background-image:
-        linear-gradient(150deg,
-            alpha(#FFFFFF, 0.72),
-            alpha(#EDF4FA, 0.52) 48%,
-            alpha(#DCE8F2, 0.48));
-}
-
-.layout-left-column {
-    border-right: 1px solid @glass_border;
-    box-shadow:
-        10px 0 26px alpha(#31465A, 0.10),
-        inset -1px 0 0 alpha(#8799A9, 0.12);
-}
-
-/* Headerbars */
-.layout-left-header,
-.layout-right-header,
-headerbar,
-.titlebar {
-    background-color: alpha(#F8FBFF, 0.68);
-    background-image:
-        linear-gradient(to bottom,
-            alpha(#FFFFFF, 0.74),
-            alpha(#F4F8FC, 0.52));
-    color: @theme_fg_color;
-    border: none;
-    border-bottom: 1px solid @glass_border;
-    box-shadow:
-        0 5px 18px alpha(#40566C, 0.10),
-        inset 0 1px 0 @glass_highlight;
-}
-
-.app-title {
-    color: @theme_fg_color;
-    text-shadow: 0 1px alpha(#FFFFFF, 0.75);
+.navigation-sidebar,
+.photo-grid {
+    background-color: @neu_surface;
+    background-image: none;
 }
 
 /* --------------------------------------------------------------------------
-   ALL BUTTONS — rounded glass lenses
+   ALL NORMAL BUTTONS — raised soft plastic
    -------------------------------------------------------------------------- */
 
 button:not(.album-card),
@@ -272,19 +234,14 @@ button:not(.album-card),
 .layout-left-header button,
 .layout-right-header button {
     color: @theme_fg_color;
-    background-color: @glass_fill;
-    background-image:
-        linear-gradient(to bottom,
-            alpha(#FFFFFF, 0.70),
-            alpha(#FFFFFF, 0.26) 48%,
-            alpha(#C9DAE8, 0.20));
-    border: 1px solid @glass_border;
-    border-radius: 14px;
+    background-color: @neu_surface;
+    background-image: none;
+    border: none;
+    border-radius: 12px;
     box-shadow:
-        0 5px 14px @glass_shadow,
-        inset 0 1px 0 @glass_highlight,
-        inset 0 -1px 0 alpha(#7E95AA, 0.12);
-    text-shadow: 0 1px alpha(#FFFFFF, 0.72);
+        5px 5px 10px @neu_shadow_dark,
+        -5px -5px 10px @neu_shadow_light;
+    text-shadow: none;
     outline: none;
 }
 
@@ -300,17 +257,13 @@ button:not(.album-card):hover,
 .collage-tabs > button:hover,
 .layout-left-header button:hover,
 .layout-right-header button:hover {
-    background-color: @glass_fill_hover;
-    background-image:
-        linear-gradient(to bottom,
-            alpha(#FFFFFF, 0.86),
-            alpha(#FFFFFF, 0.34) 48%,
-            alpha(#C8DCEA, 0.24));
-    border-color: alpha(#FFFFFF, 0.92);
+    color: @theme_fg_color;
+    background-color: #E5EAF1;
+    background-image: none;
+    border: none;
     box-shadow:
-        0 7px 18px @glass_shadow,
-        inset 0 1px 0 #FFFFFF,
-        inset 0 -1px 0 alpha(#7990A4, 0.14);
+        6px 6px 12px @neu_shadow_dark,
+        -6px -6px 12px @neu_shadow_light;
 }
 
 button:not(.album-card):active,
@@ -323,14 +276,11 @@ button:not(.album-card):active,
 .crop-orientation-row button:active,
 .collage-layout-tile:active,
 .collage-tabs > button:active {
-    background-color: @glass_fill_pressed;
-    background-image:
-        linear-gradient(to bottom,
-            alpha(#D5E1EC, 0.34),
-            alpha(#FFFFFF, 0.38));
+    background-color: @neu_surface;
+    background-image: none;
     box-shadow:
-        inset 0 2px 6px alpha(#496078, 0.20),
-        inset 0 -1px 0 alpha(#FFFFFF, 0.82);
+        inset 4px 4px 8px @neu_shadow_dark,
+        inset -4px -4px 8px @neu_shadow_light;
 }
 
 button:not(.album-card):checked,
@@ -342,18 +292,26 @@ button:not(.album-card):checked,
 .collage-layout-tile:checked,
 .collage-tabs > button:checked {
     color: @accent_bg_color;
-    background-color: @glass_selected;
-    background-image:
-        linear-gradient(to bottom,
-            alpha(#FFFFFF, 0.68),
-            alpha(#0A84FF, 0.10));
-    border-color: alpha(#0A84FF, 0.30);
+    background-color: @neu_surface;
+    background-image: none;
+    border: none;
     box-shadow:
-        inset 0 2px 6px alpha(#1E5B8E, 0.16),
-        0 3px 10px alpha(#0A84FF, 0.10);
+        inset 4px 4px 8px @neu_shadow_dark,
+        inset -4px -4px 8px @neu_shadow_light;
 }
 
-/* circular icon/action buttons */
+button:not(.album-card):focus-visible,
+.button:focus-visible,
+.photo-action-button:focus-visible,
+.crop-aspect-button:focus-visible,
+.crop-orientation-row button:focus-visible,
+.collage-layout-tile:focus-visible,
+.collage-tabs > button:focus-visible {
+    outline: 2px solid @neu_focus;
+    outline-offset: 2px;
+}
+
+/* Circular icon controls keep the same raised/pressed language. */
 .photo-info-bar .photo-action-button,
 .favorite-btn,
 button.circular,
@@ -361,35 +319,41 @@ button.image-button {
     border-radius: 9999px;
 }
 
-/* focus */
-button:focus-visible,
-entry:focus,
-spinbutton:focus,
-.search-field:focus-within {
-    outline: 2px solid alpha(@accent_bg_color, 0.55);
-    outline-offset: 2px;
+/* Keep dangerous/primary suggested actions legible, but give them soft depth. */
+button.suggested-action,
+.suggested-action {
+    color: @accent_fg_color;
+    background: @accent_bg_color;
+    border: none;
+    border-radius: 12px;
+    box-shadow:
+        5px 5px 10px @neu_shadow_dark,
+        -5px -5px 10px @neu_shadow_light;
+}
+button.suggested-action:active,
+.suggested-action:active {
+    box-shadow:
+        inset 3px 3px 7px shade(@accent_bg_color, 0.72),
+        inset -3px -3px 7px shade(@accent_bg_color, 1.18);
 }
 
 /* --------------------------------------------------------------------------
-   SEARCH / INPUTS — recessed glass
+   SEARCH / ENTRIES — pressed into the surface
    -------------------------------------------------------------------------- */
 
 .search-field,
 entry,
 spinbutton,
-textview {
+textview,
+textarea {
     color: @theme_fg_color;
-    background-color: alpha(#FFFFFF, 0.44);
-    background-image:
-        linear-gradient(to bottom,
-            alpha(#FFFFFF, 0.52),
-            alpha(#EDF4FA, 0.26));
-    border: 1px solid @glass_border;
-    border-radius: 16px;
+    background-color: @neu_surface;
+    background-image: none;
+    border: none;
+    border-radius: 14px;
     box-shadow:
-        inset 0 2px 7px alpha(#40566C, 0.12),
-        inset 0 1px 0 alpha(#FFFFFF, 0.84),
-        0 1px 2px alpha(#40566C, 0.08);
+        inset 4px 4px 8px @neu_shadow_dark,
+        inset -4px -4px 8px @neu_shadow_light;
 }
 
 .search-field {
@@ -399,148 +363,144 @@ textview {
 
 .search-field entry {
     background: transparent;
-    border: none;
     box-shadow: none;
 }
 
+.search-field:focus-within,
+entry:focus,
+spinbutton:focus {
+    outline: 2px solid @neu_focus;
+    outline-offset: 2px;
+}
+
 /* --------------------------------------------------------------------------
-   SIDEBAR SELECTIONS
+   SIDEBAR — selected rows look gently pressed, not flat.
    -------------------------------------------------------------------------- */
 
 .navigation-sidebar row {
     color: @theme_fg_color;
-    border-radius: 12px;
-    margin: 2px 7px;
+    border-radius: 10px;
+    margin: 3px 7px;
     background: transparent;
     box-shadow: none;
 }
 
 .navigation-sidebar row:hover {
-    background-color: alpha(#FFFFFF, 0.38);
-    background-image:
-        linear-gradient(to bottom,
-            alpha(#FFFFFF, 0.46),
-            alpha(#DDEAF4, 0.20));
+    background-color: @neu_surface;
+    background-image: none;
     box-shadow:
-        inset 0 1px 0 alpha(#FFFFFF, 0.70);
+        3px 3px 7px @neu_shadow_dark,
+        -3px -3px 7px @neu_shadow_light;
 }
 
 .navigation-sidebar row:selected,
 .navigation-sidebar row.sidebar-scroll-location {
     color: @theme_fg_color;
-    background-color: @glass_selected;
-    background-image:
-        linear-gradient(to bottom,
-            alpha(#FFFFFF, 0.44),
-            alpha(#0A84FF, 0.12));
-    border: 1px solid alpha(#FFFFFF, 0.58);
+    background-color: @neu_selected;
+    background-image: none;
     box-shadow:
-        inset 0 1px 0 alpha(#FFFFFF, 0.78),
-        0 2px 6px alpha(#40566C, 0.08);
+        inset 3px 3px 7px alpha(@neu_shadow_dark, 0.85),
+        inset -3px -3px 7px alpha(@neu_shadow_light, 0.90);
 }
 
-/* sidebar vertical resize handle */
+/* The vertical sidebar resize handle: neutral soft-UI tone, never stock blue. */
 paned.horizontal > separator,
 .sidebar-paned > separator,
 .layout-paned > separator,
 .sidebar-resize-handle,
 .sidebar-resizer {
     min-width: 5px;
-    background-color: alpha(#FFFFFF, 0.34);
-    background-image:
-        linear-gradient(to right,
-            alpha(#FFFFFF, 0.50),
-            alpha(#AFC2D1, 0.18),
-            alpha(#FFFFFF, 0.36));
+    background: @neu_surface;
+    background-image: none;
     border: none;
     box-shadow:
-        inset 1px 0 0 alpha(#FFFFFF, 0.76),
-        inset -1px 0 0 alpha(#8195A7, 0.14);
+        inset 2px 0 3px alpha(@neu_shadow_dark, 0.65),
+        inset -2px 0 3px alpha(@neu_shadow_light, 0.80);
 }
-
 paned.horizontal > separator:hover,
 .sidebar-paned > separator:hover,
 .layout-paned > separator:hover,
 .sidebar-resize-handle:hover,
 .sidebar-resizer:hover {
-    background-color: alpha(#0A84FF, 0.14);
+    background: @neu_selected;
 }
 
 /* --------------------------------------------------------------------------
-   PHOTO GRID / TILES
+   SLIDERS — inset track + raised circular knob
    -------------------------------------------------------------------------- */
 
-.photo-grid,
-.group-heading-bar,
-.folder-photo-row,
-.folder-section-header {
-    background-color: transparent;
-    background-image: none;
-}
-
-.photo-tile {
-    border-radius: 14px;
-    border: 1px solid alpha(#FFFFFF, 0.62);
-    background-color: alpha(#FFFFFF, 0.20);
-    background-image:
-        linear-gradient(to bottom,
-            alpha(#FFFFFF, 0.26),
-            alpha(#FFFFFF, 0.08));
-    box-shadow:
-        0 5px 16px alpha(#40566C, 0.16),
-        inset 0 1px 0 alpha(#FFFFFF, 0.74);
-}
-
-.photo-tile:hover {
-    border-color: alpha(#FFFFFF, 0.88);
-    box-shadow:
-        0 8px 22px alpha(#40566C, 0.20),
-        inset 0 1px 0 #FFFFFF;
-}
-
-.folder-photo-selected.photo-tile,
-gridview.section-grid > child:selected .photo-tile,
-gridview.section-grid > item:selected .photo-tile {
-    border: 2px solid alpha(#0A84FF, 0.78);
-    box-shadow:
-        0 0 0 2px alpha(#FFFFFF, 0.42),
-        0 7px 20px alpha(#0A84FF, 0.18);
-}
-
-.thumbnail {
-    border-radius: 12px;
-}
-
-/* --------------------------------------------------------------------------
-   INFO BAR
-   -------------------------------------------------------------------------- */
-
-.photo-info-bar {
-    background-color: alpha(#F8FBFF, 0.72);
-    background-image:
-        linear-gradient(to bottom,
-            alpha(#FFFFFF, 0.62),
-            alpha(#E6F0F7, 0.42));
-    color: @theme_fg_color;
+scale trough {
+    min-height: 6px;
+    border-radius: 9999px;
     border: none;
-    border-top: 1px solid @glass_border;
-    border-radius: 0;
+    background: @neu_surface;
+    background-image: none;
     box-shadow:
-        0 -6px 20px alpha(#40566C, 0.11),
-        inset 0 1px 0 alpha(#FFFFFF, 0.82);
+        inset 3px 3px 6px @neu_shadow_dark,
+        inset -3px -3px 6px @neu_shadow_light;
 }
 
-.info-preview {
-    border-radius: 12px;
-    background-color: alpha(#FFFFFF, 0.34);
-    border: 1px solid @glass_border;
+scale trough highlight,
+scale highlight {
+    border-radius: 9999px;
+    background: @accent_bg_color;
+    background-image: none;
+    box-shadow: none;
+}
+
+scale slider,
+scale:hover slider,
+scale:focus slider,
+scale:active slider {
+    min-width: 17px;
+    min-height: 17px;
+    border-radius: 9999px;
+    border: none;
+    background: @neu_surface;
+    background-image: none;
     box-shadow:
-        inset 0 1px 0 alpha(#FFFFFF, 0.76),
-        0 2px 6px alpha(#40566C, 0.10);
+        4px 4px 8px @neu_shadow_dark,
+        -4px -4px 8px @neu_shadow_light;
 }
 
 /* --------------------------------------------------------------------------
-   MENUS / SETTINGS / CARDS
+   SWITCHES / CHECKS / RADIOS
+   -------------------------------------------------------------------------- */
+
+switch {
+    border: none;
+    border-radius: 9999px;
+    background: @neu_surface;
+    box-shadow:
+        inset 3px 3px 6px @neu_shadow_dark,
+        inset -3px -3px 6px @neu_shadow_light;
+}
+switch:checked {
+    background: @neu_selected;
+}
+switch slider {
+    background: @neu_surface;
+    border: none;
+    box-shadow:
+        3px 3px 6px @neu_shadow_dark,
+        -3px -3px 6px @neu_shadow_light;
+}
+
+check,
+radio {
+    background: @neu_surface;
+    border: none;
+    box-shadow:
+        inset 2px 2px 5px @neu_shadow_dark,
+        inset -2px -2px 5px @neu_shadow_light;
+}
+check:checked,
+radio:checked {
+    color: @accent_bg_color;
+}
+
+/* --------------------------------------------------------------------------
+   POPOVERS, MENUS, DIALOGS AND SETTINGS CARDS
    -------------------------------------------------------------------------- */
 
 popover contents,
@@ -551,117 +511,89 @@ list.boxed-list,
 .card,
 preferencesgroup > box > list {
     color: @theme_fg_color;
-    background-color: alpha(#F8FBFF, 0.78);
-    background-image:
-        linear-gradient(145deg,
-            alpha(#FFFFFF, 0.72),
-            alpha(#E8F1F8, 0.46));
-    border: 1px solid @glass_border;
-    border-radius: 18px;
-    box-shadow:
-        0 14px 38px @glass_shadow_deep,
-        inset 0 1px 0 @glass_highlight;
-}
-
-.photo-context-menu viewport,
-.photo-context-menu scrolledwindow,
-.photo-context-menu box {
-    background: transparent;
-}
-
-.photo-context-menu button {
-    color: @theme_fg_color;
-    background: transparent;
+    background: @neu_surface;
+    background-image: none;
     border: none;
-    box-shadow: none;
-}
-
-.photo-context-menu button:hover {
-    background-color: alpha(#FFFFFF, 0.40);
+    border-radius: 16px;
+    box-shadow:
+        8px 8px 16px @neu_shadow_dark,
+        -8px -8px 16px @neu_shadow_light;
 }
 
 list.boxed-list > row,
 .boxed-list > row {
     background: transparent;
     color: @theme_fg_color;
-    border-bottom: 1px solid alpha(#AFC0D0, 0.22);
+    border: none;
 }
 
 list.boxed-list > row:hover,
 .boxed-list > row:hover {
-    background-color: alpha(#FFFFFF, 0.30);
+    background: alpha(@accent_bg_color, 0.08);
 }
 
 list.boxed-list > row:selected,
 .boxed-list > row:selected {
-    background-color: @glass_selected;
+    background: @neu_selected;
 }
 
 /* --------------------------------------------------------------------------
-   SLIDERS / SWITCHES / CHECKS
+   PHOTO TILES — keep the images visually clean; only lift the tile slightly.
    -------------------------------------------------------------------------- */
 
-scale trough {
-    min-height: 5px;
-    border-radius: 9999px;
-    background-color: alpha(#9BAFC0, 0.22);
-    background-image: none;
-    border: 1px solid alpha(#FFFFFF, 0.52);
+.photo-tile {
+    border-radius: 12px;
+    border: none;
+    background: @neu_surface;
     box-shadow:
-        inset 0 1px 3px alpha(#40566C, 0.14),
-        inset 0 1px 0 alpha(#FFFFFF, 0.50);
+        4px 4px 8px @neu_shadow_dark,
+        -4px -4px 8px @neu_shadow_light;
 }
 
-scale trough highlight,
-scale highlight {
-    border-radius: 9999px;
-    background-image:
-        linear-gradient(to right, #64B5FF, #0A84FF);
+.photo-tile:hover {
+    border: none;
     box-shadow:
-        inset 0 1px 0 alpha(#FFFFFF, 0.45);
+        6px 6px 12px @neu_shadow_dark,
+        -6px -6px 12px @neu_shadow_light;
 }
 
-scale slider,
-scale:hover slider,
-scale:focus slider,
-scale:active slider {
-    min-width: 18px;
-    min-height: 18px;
-    border-radius: 9999px;
-    background-color: alpha(#FFFFFF, 0.82);
-    background-image:
-        linear-gradient(to bottom, #FFFFFF, #E7EEF5);
-    border: 1px solid alpha(#FFFFFF, 0.95);
+.folder-photo-selected.photo-tile,
+gridview.section-grid > child:selected .photo-tile,
+gridview.section-grid > item:selected .photo-tile {
+    border: 2px solid @accent_bg_color;
     box-shadow:
-        0 3px 8px alpha(#40566C, 0.24),
-        inset 0 1px 0 #FFFFFF;
+        inset 2px 2px 5px alpha(@neu_shadow_dark, 0.65),
+        inset -2px -2px 5px alpha(@neu_shadow_light, 0.80);
 }
 
-switch {
-    border-radius: 9999px;
-    background-color: alpha(#9BAFC0, 0.28);
-    border: 1px solid alpha(#FFFFFF, 0.56);
-    box-shadow:
-        inset 0 2px 5px alpha(#40566C, 0.16),
-        inset 0 1px 0 alpha(#FFFFFF, 0.48);
-}
-
-switch:checked {
-    background-color: alpha(#0A84FF, 0.74);
-    background-image:
-        linear-gradient(to bottom, #5DB2FF, #0A84FF);
-}
-
-switch slider {
-    border-radius: 9999px;
-    background: #FFFFFF;
-    border: 1px solid alpha(#FFFFFF, 0.95);
-    box-shadow:
-        0 2px 6px alpha(#40566C, 0.22);
+.thumbnail {
+    border-radius: 10px;
 }
 
 /* --------------------------------------------------------------------------
-   ALBUMS
+   INFO BAR
+   -------------------------------------------------------------------------- */
+
+.photo-info-bar {
+    background: @neu_surface;
+    background-image: none;
+    border: none;
+    border-radius: 0;
+    box-shadow: 0 -5px 12px alpha(@neu_shadow_dark, 0.50);
+    color: @theme_fg_color;
+}
+
+.info-preview {
+    border: none;
+    border-radius: 12px;
+    background: @neu_surface;
+    box-shadow:
+        inset 3px 3px 7px @neu_shadow_dark,
+        inset -3px -3px 7px @neu_shadow_light;
+}
+
+/* --------------------------------------------------------------------------
+   ALBUM CARDS remain image-led rather than looking like giant push buttons.
    -------------------------------------------------------------------------- */
 
 button.album-card,
@@ -669,40 +601,214 @@ button.album-card:hover,
 button.album-card:focus,
 button.album-card:active {
     background: transparent;
+    background-image: none;
     border: none;
     box-shadow: none;
 }
 
 .album-cover,
 .plain-album-cover {
-    border-radius: 16px;
-    border: 1px solid alpha(#FFFFFF, 0.62);
-    background-color: alpha(#FFFFFF, 0.22);
+    border: none;
+    border-radius: 14px;
+    background: @neu_surface;
     box-shadow:
-        0 7px 20px alpha(#40566C, 0.16),
-        inset 0 1px 0 alpha(#FFFFFF, 0.75);
+        5px 5px 10px @neu_shadow_dark,
+        -5px -5px 10px @neu_shadow_light;
 }
 
-/* Misc glass accents */
-.selection-badge {
-    color: #FFFFFF;
-    background: alpha(#0A84FF, 0.88);
-    box-shadow:
-        0 3px 8px alpha(#0A84FF, 0.25),
-        inset 0 1px 0 alpha(#FFFFFF, 0.45);
+/* --------------------------------------------------------------------------
+   MISC
+   -------------------------------------------------------------------------- */
+
+separator,
+.folder-section-separator {
+    background: alpha(@theme_fg_color, 0.12);
+    min-height: 1px;
 }
 
 .scroll-scrub-date {
-    background-color: alpha(#FFFFFF, 0.72);
-    border: 1px solid @glass_border;
+    background: @neu_surface;
+    border: none;
     border-radius: 9999px;
     box-shadow:
-        0 6px 18px @glass_shadow,
-        inset 0 1px 0 @glass_highlight;
+        5px 5px 10px @neu_shadow_dark,
+        -5px -5px 10px @neu_shadow_light;
 }
 
+.selection-badge,
+.offline-badge,
+.sidebar-offline-badge {
+    box-shadow:
+        3px 3px 6px alpha(@neu_shadow_dark, 0.75),
+        -3px -3px 6px alpha(@neu_shadow_light, 0.85);
+}
+
+
+
+/* ==========================================================================
+   MONOCHROME NEUMORPHISM — no blue/red/yellow accents anywhere
+   ========================================================================== */
+
+@define-color neu_surface #E0E5EC;
+@define-color neu_shadow_dark #BEC3C9;
+@define-color neu_shadow_light #FFFFFF;
+@define-color neu_text #4A5056;
+@define-color neu_dim #7A828A;
+@define-color neu_selected #D3D9E0;
+@define-color neu_deep #AEB6BF;
+
+/* Global text/icon palette */
+window,
+label,
+image,
+button,
+entry,
+spinbutton,
+textview,
+.navigation-sidebar,
+.photo-info-bar,
+.photo-grid {
+    color: @neu_text;
+}
+
+/* Selection/focus is neutral grey only */
+button:checked,
+button:selected,
+.toggle:checked,
+.photo-action-button:checked,
+.one-to-one-btn:checked,
+.crop-aspect-button:checked,
+.crop-orientation-row button:checked,
+.collage-layout-tile:checked,
+.collage-tabs > button:checked,
+.navigation-sidebar row:selected,
+.navigation-sidebar row.sidebar-scroll-location,
+list.boxed-list > row:selected,
+.boxed-list > row:selected {
+    color: @neu_text;
+    background-color: @neu_selected;
+    border-color: @neu_deep;
+}
+
+/* No coloured selection rings */
+button:focus-visible,
+entry:focus,
+spinbutton:focus,
+.search-field:focus-within,
+.photo-action-button:focus-visible,
+.crop-aspect-button:focus-visible,
+.crop-orientation-row button:focus-visible,
+.collage-layout-tile:focus-visible,
+.collage-tabs > button:focus-visible {
+    outline-color: @neu_deep;
+}
+
+/* Favourite / edited / badges become neutral */
 .favorite-btn.active,
 .favorite-btn.active image,
-.favorite-badge {
-    color: #FF375F;
+.favorite-badge,
+.edited-badge,
+.selection-badge,
+.offline-badge,
+.sidebar-offline-badge {
+    color: @neu_text;
+    background-color: @neu_selected;
+}
+
+/* Selected photo border is neutral, not blue/red */
+.folder-photo-selected.photo-tile,
+gridview.section-grid > child:selected .photo-tile,
+gridview.section-grid > item:selected .photo-tile {
+    border-color: @neu_deep;
+}
+
+/* Slider fill remains within the same neutral palette */
+scale trough highlight,
+scale highlight {
+    background-color: @neu_deep;
+}
+
+/* Switches remain monochrome */
+switch:checked {
+    background-color: @neu_selected;
+}
+switch:checked slider {
+    background-color: @neu_surface;
+}
+
+/* Suggested/primary actions stay neumorphic instead of becoming coloured */
+button.suggested-action,
+.suggested-action,
+button.destructive-action,
+.destructive-action {
+    color: @neu_text;
+    background-color: @neu_surface;
+    background-image: none;
+    border: none;
+    box-shadow:
+        5px 5px 10px @neu_shadow_dark,
+        -5px -5px 10px @neu_shadow_light;
+}
+
+button.suggested-action:hover,
+.suggested-action:hover,
+button.destructive-action:hover,
+.destructive-action:hover {
+    background-color: #E5EAF1;
+}
+
+button.suggested-action:active,
+.suggested-action:active,
+button.destructive-action:active,
+.destructive-action:active {
+    background-color: @neu_surface;
+    box-shadow:
+        inset 4px 4px 8px @neu_shadow_dark,
+        inset -4px -4px 8px @neu_shadow_light;
+}
+
+/* Sidebar resize handle uses only neumorphic grey */
+paned.horizontal > separator,
+.sidebar-paned > separator,
+.layout-paned > separator,
+.sidebar-resize-handle,
+.sidebar-resizer {
+    background-color: @neu_surface;
+}
+paned.horizontal > separator:hover,
+.sidebar-paned > separator:hover,
+.layout-paned > separator:hover,
+.sidebar-resize-handle:hover,
+.sidebar-resizer:hover {
+    background-color: @neu_selected;
+}
+
+/* Info, cards, dialogs and menus use the same surface */
+headerbar,
+.titlebar,
+popover contents,
+menu,
+.photo-context-menu,
+list.boxed-list,
+.boxed-list,
+.card,
+preferencespage,
+preferencesgroup > box > list,
+.photo-info-bar,
+.info-preview,
+.album-cover,
+.plain-album-cover {
+    background-color: @neu_surface;
+    color: @neu_text;
+}
+
+/* Secondary text stays within grey family */
+.metric-key,
+.dim-label,
+.navigation-sidebar .dim-label,
+.photo-info-bar .dim-label,
+.section-count,
+.folder-count,
+.sidebar-count {
+    color: @neu_dim;
 }

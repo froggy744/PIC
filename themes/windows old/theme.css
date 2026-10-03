@@ -1,0 +1,664 @@
+/* picasa-theme
+   version: 1
+   name: Windows Old Screen
+   dark: false
+   mode: overlay
+*/
+
+/* Chicago95-inspired palette: https://github.com/grassmunk/Chicago95 */
+@define-color nord0 #C0C0C0;
+@define-color nord1 #000080;
+@define-color nord2 #DCDCDC;
+@define-color nord3 #808080;
+@define-color nord4 #000000;
+@define-color nord5 #FFFFFF;
+@define-color nord6 #FFFFFF;
+@define-color nord7 #008080;
+@define-color nord8 #000080;
+@define-color nord9 #1084D0;
+@define-color nord10 #000080;
+@define-color nord11 #800000;
+@define-color nord12 #808000;
+@define-color nord13 #FFFF00;
+@define-color nord14 #008000;
+@define-color nord15 #800080;
+
+@define-color accent_bg_color #000080;
+@define-color accent_fg_color #FFFFFF;
+@define-color accent_color #000080;
+@define-color window_bg_color #C0C0C0;
+@define-color view_bg_color #C0C0C0;
+@define-color headerbar_bg_color #000080;
+@define-color theme_fg_color #000000;
+
+/* Standard GTK4 layout with Chicago95-inspired colors. Typography is supplied separately by platform CSS. */
+window, .layout-left-column, .navigation-sidebar { background: @nord0; color: @nord4; }
+    .layout-left-column { border-right: 2px solid @nord3; box-shadow: inset -1px 0 0 0 @nord4; }
+    .layout-left-header, .layout-right-header { background: @nord1; border-bottom: 2px solid @nord3; color: @nord5; }
+    .app-title { color: @nord6; font-weight: 700; text-shadow: 1px 1px @nord4; }
+    .layout-left-header button, .layout-right-header button { color: @nord5; border-radius: 0; }
+    .layout-left-header .sidebar-toggle-button, .layout-left-header .sidebar-toggle-button image { color: @nord5; opacity: 1; }
+    .layout-left-header button:hover, .layout-right-header button:hover { background: @nord9; }
+    .search-field { min-height: 28px; border-radius: 0; background: @nord5; border: 2px solid @nord3; color: @nord4; box-shadow: inset 1px 1px 0 0 @nord4, inset -1px -1px 0 0 @nord6; }
+    .search-field image { color: @nord3; }
+    .search-field entry { background: transparent; color: @nord4; }
+    .photo-grid { background: @nord0; }
+    listview.folder-stream { background: transparent; padding: 0 20px 24px 20px; }
+    listview.folder-stream > row {
+        padding: 0;
+        margin: 0;
+        background: transparent;
+        background-image: none;
+        box-shadow: none;
+    }
+    listview.folder-stream > row:hover,
+    listview.folder-stream > row:selected,
+    listview.folder-stream > row:focus,
+    listview.folder-stream > row:active {
+        background: transparent;
+        background-image: none;
+        outline: none;
+        box-shadow: none;
+    }
+    .folder-section-header { background: transparent; }
+    .folder-section-title { color: @nord4; font-weight: 700; font-size: 14px; text-shadow: 1px 1px @nord5; }
+    .folder-section-count { color: @nord4; font-size: 12px; }
+    .folder-section-icon { color: @nord1; }
+    .folder-section-separator { margin-top: 7px; opacity: 0.35; }
+    .folder-photo-row { background: transparent; }
+    /* GtkGridView uses CSS child nodes for its cells. Keep the old `item`
+       selector too so this stays harmless across GTK minor-version styling. */
+    gridview.section-grid > child,
+    gridview.section-grid > item {
+        padding: 6px;
+        margin: 0;
+        background: transparent;
+        box-shadow: none;
+    }
+    gridview.section-grid > child:hover,
+    gridview.section-grid > child:selected,
+    gridview.section-grid > child:focus,
+    gridview.section-grid > child:active,
+    gridview.section-grid > item:hover,
+    gridview.section-grid > item:selected,
+    gridview.section-grid > item:focus,
+    gridview.section-grid > item:active {
+        background: transparent;
+        background-image: none;
+        outline: none;
+        box-shadow: none;
+    }
+    .group-heading-bar { background: transparent; padding: 0; }
+    .photo-frame { box-shadow: none; }
+    .photo-tile { border-radius: 0; border: 2px solid @nord0; background: @nord2; box-shadow: inset 1px 1px 0 0 @nord6, inset -1px -1px 0 0 @nord4; }
+    .photo-tile:hover { border-color: @nord1; box-shadow: inset 1px 1px 0 0 @nord6, inset -1px -1px 0 0 @nord4; }
+    .folder-photo-flow > flowboxchild { padding: 6px; margin: 0; min-height: 0; background: transparent; background-image: none; box-shadow: none; }
+    .folder-photo-flow > flowboxchild:hover,
+    .folder-photo-flow > flowboxchild:focus,
+    .folder-photo-flow > flowboxchild:active,
+    .folder-photo-flow > flowboxchild:selected { background: transparent; background-image: none; outline: none; box-shadow: none; }
+    .folder-photo-selected.photo-tile { border-color: @nord8; box-shadow: none; }
+    .folder-photo-selected .selection-badge { opacity: 1; }
+    .albums-home-grid > flowboxchild { padding: 0; margin: 0; min-height: 0; }
+    button.album-card { min-width: 0; padding: 0; margin: 0; background: transparent; background-image: none; border: none; box-shadow: none; }
+    button.album-card:hover, button.album-card:focus, button.album-card:active { background: transparent; background-image: none; box-shadow: none; }
+    gridview.section-grid > child:selected .photo-tile,
+    gridview.section-grid > item:selected .photo-tile {
+        border-color: @nord8;
+        box-shadow: none;
+    }
+    .selection-badge { background: @nord8; color: @nord0; box-shadow: 0 1px 3px rgba(0,0,0,0.25); }
+    .offline-badge { min-width: 20px; min-height: 20px; padding: 0; border-radius: 9999px; color: @nord0; background: @nord13; font-weight: 700; }
+    .sidebar-offline-badge { min-width: 16px; min-height: 16px; padding: 0; border-radius: 9999px; color: @nord0; background: @nord13; font-weight: 700; font-size: 10px; }
+    .folder-disclosure { opacity: 0.68; }
+    .navigation-sidebar .folder-count { color: alpha(@nord4, 0.68); }
+    .thumbnail { border-radius: 0; }
+    .missing-thumbnail { background: @nord2; }
+    .section-heading-box { margin-top: 16px; margin-bottom: 8px; }
+    .section-heading { color: @nord4; font-size: 15px; text-shadow: 1px 1px @nord5; }
+    .section-more-btn { color: @nord4; border-radius: 0; }
+    .section-more-btn:hover { background: @nord2; }
+    .photo-info-bar { background: @nord0; border-top: 1px solid alpha(@nord4, 0.12); color: @nord4; }
+    .info-preview { border-radius: 8px; background: alpha(@nord4, 0.06); border: 1px solid alpha(@nord4, 0.10); }
+    .info-title, .metric-val { color: @nord4; }
+    .metric-key, .navigation-sidebar .dim-label, .photo-info-bar .dim-label { color: alpha(@nord4, 0.55); }
+    .photo-action-button { border-radius: 8px; color: @nord5; background: alpha(@nord4, 0.05); border: 1px solid alpha(@nord4, 0.10); box-shadow: none; }
+    .photo-action-button:hover { background: alpha(@nord4, 0.12); }
+    .photo-context-menu, .photo-context-menu viewport { background: @nord1; }
+    .photo-context-menu { border: 1px solid alpha(@nord4, 0.18); border-radius: 8px; box-shadow: 0 5px 18px alpha(#000000, 0.40); }
+    .photo-context-menu button { color: @nord5; }
+    .photo-context-menu button:hover { background: alpha(@nord4, 0.10); }
+    button.clear-action-button { color: @nord0; background: @nord4; border: 1px solid @nord3; }
+    button.clear-action-button:hover { color: @nord0; background: @nord5; border-color: @nord10; }
+    button.clear-action-button:active { background: @nord3; color: @nord6; }
+    .favorite-btn.active, .favorite-btn.active image { color: @nord11; }
+    .favorite-badge { color: @nord11; }
+    .edited-badge { color: @nord8; }
+    .one-to-one-btn:checked { color: @nord0; background: @nord8; }
+    .sidebar-count { min-width: 38px; font-variant-numeric: tabular-nums; }
+    .section-count { font-size: 13px; }
+    .scroll-scrub-date {
+        padding: 7px 10px;
+        border-radius: 8px;
+        background: alpha(@nord1, 0.88);
+        color: @nord6;
+        font-weight: 700;
+        box-shadow: 0 1px 4px alpha(black, 0.22);
+    }
+    .navigation-sidebar row { color: @nord4; }
+    .navigation-sidebar row:hover { background: alpha(@nord4, 0.06); }
+    .navigation-sidebar .sidebar-section-heading { margin-top: 8px; padding-top: 0; }
+    .navigation-sidebar .sidebar-section-heading-title { color: @nord4; font-size: inherit; font-weight: 700; }
+    .navigation-sidebar row:selected { background: @nord8; color: @nord5; }
+    .navigation-sidebar .heading { color: alpha(@nord4, 0.55); }
+
+    /* Scroll-follow folder marker (sidebar.rs set_scroll_location). It is
+       deliberately not row:selected, so without its own rule the base
+       theme's blue marker shows through. */
+    .navigation-sidebar row.sidebar-scroll-location {
+        background: @nord8;
+        box-shadow: none;
+        color: @nord5;
+    }
+
+    /* Segmented toggle groups: crop aspect presets (Free/Original/1:1…),
+       crop orientation (Landscape/Portrait), and the collage layout tiles
+       and fit/orientation row. Checked state follows the accent. */
+    .crop-aspect-button:checked,
+    .crop-orientation-row button:checked,
+    .collage-layout-tile:checked,
+    .collage-tabs > button:checked {
+        background: @nord8;
+        color: @nord0;
+    }
+    .crop-aspect-button:checked:hover,
+    .crop-orientation-row button:checked:hover,
+    .collage-layout-tile:checked:hover,
+    .collage-tabs > button:checked:hover {
+        background: alpha(@nord8, 0.85);
+    }
+
+
+
+/* ==========================================================================
+   WIN95/98 RETRO CORRECTION LAYER
+   Based on the Superdesign retro recipe:
+   #c0c0c0 chrome, #dfdfdf light bevels, #808080 shadow bevels,
+   blue title bars, white inset fields, and pressed inset buttons.
+   ========================================================================== */
+
+@define-color win95_face #C0C0C0;
+@define-color win95_light #FFFFFF;
+@define-color win95_midlight #DFDFDF;
+@define-color win95_shadow #808080;
+@define-color win95_dark #000000;
+@define-color win95_blue #000080;
+@define-color win95_blue2 #1084D0;
+@define-color win95_white #FFFFFF;
+@define-color win95_teal #008080;
+
+/* Main application chrome should be silver, not a full teal canvas. */
+window,
+.background,
+.layout-left-column,
+.navigation-sidebar,
+.layout-right-column,
+.photo-grid,
+.layout-right-column scrolledwindow,
+.layout-right-column viewport,
+.layout-right-column stack,
+.layout-right-column stack > widget,
+listview.folder-stream {
+    background-color: @win95_face;
+    background-image: none;
+    color: @win95_dark;
+}
+
+/* Classic blue application/header bars. */
+.layout-left-header,
+.layout-right-header,
+headerbar,
+.titlebar {
+    background-color: @win95_blue;
+    background-image: linear-gradient(to right, @win95_blue, @win95_blue2);
+    color: @win95_white;
+    border: none;
+    border-bottom: 2px solid @win95_shadow;
+    box-shadow: none;
+    border-radius: 0;
+}
+
+.app-title,
+.layout-left-header label,
+.layout-right-header label,
+headerbar label,
+.titlebar label {
+    color: @win95_white;
+    text-shadow: none;
+}
+
+/* --------------------------------------------------------------------------
+   BUTTONS — true raised Win95 bevel. Active/checked = sunken.
+   -------------------------------------------------------------------------- */
+
+button:not(.album-card),
+.button,
+.photo-action-button,
+.section-more-btn,
+.favorite-btn,
+.clear-action-button,
+.crop-aspect-button,
+.crop-orientation-row button,
+.collage-layout-tile,
+.collage-tabs > button,
+.layout-left-header button,
+.layout-right-header button {
+    color: @win95_dark;
+    background-color: @win95_face;
+    background-image: none;
+    border-radius: 0;
+    border-top: 2px solid @win95_white;
+    border-left: 2px solid @win95_white;
+    border-right: 2px solid @win95_shadow;
+    border-bottom: 2px solid @win95_shadow;
+    box-shadow:
+        inset -1px -1px 0 @win95_dark,
+        inset 1px 1px 0 @win95_midlight;
+    text-shadow: none;
+    outline: none;
+}
+
+button:not(.album-card):hover,
+.button:hover,
+.photo-action-button:hover,
+.section-more-btn:hover,
+.favorite-btn:hover,
+.clear-action-button:hover,
+.crop-aspect-button:hover,
+.crop-orientation-row button:hover,
+.collage-layout-tile:hover,
+.collage-tabs > button:hover {
+    background-color: #D0D0D0;
+    background-image: none;
+}
+
+button:not(.album-card):active,
+button:not(.album-card):checked,
+.button:active,
+.button:checked,
+.photo-action-button:active,
+.photo-action-button:checked,
+.one-to-one-btn:checked,
+.crop-aspect-button:active,
+.crop-aspect-button:checked,
+.crop-orientation-row button:active,
+.crop-orientation-row button:checked,
+.collage-layout-tile:active,
+.collage-layout-tile:checked,
+.collage-tabs > button:active,
+.collage-tabs > button:checked {
+    color: @win95_dark;
+    background-color: @win95_face;
+    border-top: 2px solid @win95_shadow;
+    border-left: 2px solid @win95_shadow;
+    border-right: 2px solid @win95_white;
+    border-bottom: 2px solid @win95_white;
+    box-shadow:
+        inset 1px 1px 0 @win95_dark,
+        inset -1px -1px 0 @win95_midlight;
+}
+
+/* Header buttons remain readable against the blue title bar. */
+.layout-left-header button,
+.layout-right-header button {
+    color: @win95_dark;
+    background-color: @win95_face;
+}
+
+/* --------------------------------------------------------------------------
+   SEARCH / INPUTS — sunken white Win95 fields.
+   -------------------------------------------------------------------------- */
+
+.search-field,
+entry,
+spinbutton,
+textview {
+    color: @win95_dark;
+    background-color: @win95_white;
+    background-image: none;
+    border-radius: 0;
+    border-top: 2px solid @win95_shadow;
+    border-left: 2px solid @win95_shadow;
+    border-right: 2px solid @win95_white;
+    border-bottom: 2px solid @win95_white;
+    box-shadow:
+        inset 1px 1px 0 @win95_dark,
+        inset -1px -1px 0 @win95_midlight;
+}
+
+.search-field {
+    min-height: 28px;
+}
+
+.search-field entry {
+    border: none;
+    box-shadow: none;
+    background: transparent;
+}
+
+/* --------------------------------------------------------------------------
+   SIDEBAR — classic flat list with blue selected row.
+   -------------------------------------------------------------------------- */
+
+.navigation-sidebar row {
+    color: @win95_dark;
+    background: transparent;
+    border-radius: 0;
+    margin: 0 4px;
+    box-shadow: none;
+}
+
+.navigation-sidebar row:hover {
+    background: #D7D7D7;
+    color: @win95_dark;
+}
+
+.navigation-sidebar row:selected,
+.navigation-sidebar row.sidebar-scroll-location {
+    background: @win95_blue;
+    color: @win95_white;
+    box-shadow: none;
+}
+
+.navigation-sidebar row:selected label,
+.navigation-sidebar row:selected image,
+.navigation-sidebar row.sidebar-scroll-location label,
+.navigation-sidebar row.sidebar-scroll-location image,
+.navigation-sidebar row:selected .folder-count,
+.navigation-sidebar row.sidebar-scroll-location .folder-count {
+    color: @win95_white;
+}
+
+.navigation-sidebar .sidebar-section-heading-title,
+.navigation-sidebar .heading,
+.navigation-sidebar .folder-count,
+.sidebar-count {
+    color: @win95_dark;
+}
+
+/* Sidebar resizing handle: grey bevel, never GTK blue. */
+paned.horizontal > separator,
+.sidebar-paned > separator,
+.layout-paned > separator,
+.sidebar-resize-handle,
+.sidebar-resizer {
+    min-width: 5px;
+    background: @win95_face;
+    border-left: 1px solid @win95_white;
+    border-right: 1px solid @win95_shadow;
+    box-shadow: none;
+}
+paned.horizontal > separator:hover,
+.sidebar-paned > separator:hover,
+.layout-paned > separator:hover,
+.sidebar-resize-handle:hover,
+.sidebar-resizer:hover {
+    background: #D0D0D0;
+}
+
+/* --------------------------------------------------------------------------
+   PHOTO WORKSPACE — silver panel, framed photos.
+   -------------------------------------------------------------------------- */
+
+.photo-grid,
+.group-heading-bar,
+.folder-photo-row,
+.folder-section-header {
+    background-color: @win95_face;
+    background-image: none;
+}
+
+.photo-tile {
+    border-radius: 0;
+    background: @win95_white;
+    border-top: 2px solid @win95_white;
+    border-left: 2px solid @win95_white;
+    border-right: 2px solid @win95_shadow;
+    border-bottom: 2px solid @win95_shadow;
+    box-shadow: 1px 1px 0 @win95_dark;
+}
+
+.photo-tile:hover {
+    border-color: @win95_blue;
+    box-shadow: 1px 1px 0 @win95_dark;
+}
+
+.folder-photo-selected.photo-tile,
+gridview.section-grid > child:selected .photo-tile,
+gridview.section-grid > item:selected .photo-tile {
+    border: 2px solid @win95_blue;
+    box-shadow: 1px 1px 0 @win95_dark;
+}
+
+.thumbnail,
+.info-preview,
+.album-cover,
+.plain-album-cover {
+    border-radius: 0;
+}
+
+/* --------------------------------------------------------------------------
+   INFO BAR — classic raised status panel.
+   -------------------------------------------------------------------------- */
+
+.photo-info-bar {
+    background: @win95_face;
+    color: @win95_dark;
+    border: none;
+    border-top: 2px solid @win95_white;
+    box-shadow: inset 0 1px 0 @win95_midlight;
+    border-radius: 0;
+}
+
+.info-title,
+.metric-val,
+.metric-key,
+.photo-info-bar .dim-label {
+    color: @win95_dark;
+}
+
+.info-preview {
+    background: @win95_white;
+    border-top: 2px solid @win95_shadow;
+    border-left: 2px solid @win95_shadow;
+    border-right: 2px solid @win95_white;
+    border-bottom: 2px solid @win95_white;
+}
+
+/* --------------------------------------------------------------------------
+   MENUS / SETTINGS PANELS
+   -------------------------------------------------------------------------- */
+
+popover contents,
+menu,
+.photo-context-menu,
+list.boxed-list,
+.boxed-list,
+.card,
+preferencesgroup > box > list {
+    background: @win95_face;
+    color: @win95_dark;
+    border-radius: 0;
+    border-top: 2px solid @win95_white;
+    border-left: 2px solid @win95_white;
+    border-right: 2px solid @win95_shadow;
+    border-bottom: 2px solid @win95_shadow;
+    box-shadow: 1px 1px 0 @win95_dark;
+}
+
+.photo-context-menu viewport,
+.photo-context-menu scrolledwindow,
+.photo-context-menu box {
+    background: @win95_face;
+}
+
+.photo-context-menu button {
+    color: @win95_dark;
+}
+
+.photo-context-menu button:hover,
+list.boxed-list > row:hover,
+.boxed-list > row:hover {
+    background: @win95_blue;
+    color: @win95_white;
+}
+
+list.boxed-list > row:selected,
+.boxed-list > row:selected {
+    background: @win95_blue;
+    color: @win95_white;
+}
+
+/* --------------------------------------------------------------------------
+   SLIDERS / SWITCHES — keep the period-correct square geometry.
+   -------------------------------------------------------------------------- */
+
+scale trough {
+    min-height: 5px;
+    border-radius: 0;
+    background: @win95_white;
+    border-top: 1px solid @win95_shadow;
+    border-left: 1px solid @win95_shadow;
+    border-right: 1px solid @win95_white;
+    border-bottom: 1px solid @win95_white;
+    box-shadow: inset 1px 1px 0 @win95_dark;
+}
+
+scale trough highlight,
+scale highlight {
+    background: @win95_blue;
+    border-radius: 0;
+}
+
+scale slider,
+scale:hover slider,
+scale:focus slider,
+scale:active slider {
+    min-width: 14px;
+    min-height: 18px;
+    border-radius: 0;
+    background: @win95_face;
+    border-top: 2px solid @win95_white;
+    border-left: 2px solid @win95_white;
+    border-right: 2px solid @win95_shadow;
+    border-bottom: 2px solid @win95_shadow;
+    box-shadow: inset -1px -1px 0 @win95_dark;
+}
+
+switch {
+    border-radius: 0;
+    background: @win95_face;
+    border: 2px inset @win95_shadow;
+}
+
+switch:checked {
+    background: @win95_blue;
+}
+
+switch slider {
+    border-radius: 0;
+    background: @win95_face;
+    border: 2px outset @win95_midlight;
+}
+
+/* Period-correct square badges/selections. */
+.selection-badge {
+    background: @win95_blue;
+    color: @win95_white;
+    border-radius: 0;
+    box-shadow: 1px 1px 0 @win95_dark;
+}
+
+.offline-badge,
+.sidebar-offline-badge {
+    background: #FFFF00;
+    color: @win95_dark;
+    border-radius: 0;
+    border: 1px solid @win95_dark;
+}
+
+/* Keep semantic red only for favourites; everything else follows Win95 chrome. */
+.favorite-btn.active,
+.favorite-btn.active image,
+.favorite-badge {
+    color: #800000;
+}
+
+.edited-badge {
+    color: @win95_blue;
+}
+
+.scroll-scrub-date {
+    background: @win95_face;
+    color: @win95_dark;
+    border-radius: 0;
+    border: 2px outset @win95_midlight;
+    box-shadow: 1px 1px 0 @win95_dark;
+}
+
+/* Album cards stay visually image-led. */
+button.album-card,
+button.album-card:hover,
+button.album-card:focus,
+button.album-card:active {
+    background: transparent;
+    border: none;
+    box-shadow: none;
+}
+
+
+
+/* ==========================================================================
+   GREEN RETRO WORKSPACE
+   Use the classic Win95/Win98 teal for the photo grid/work area background,
+   while keeping the sidebar and window chrome silver.
+   ========================================================================== */
+
+@define-color retro_workspace_green #008080;
+
+.photo-grid,
+.layout-right-column,
+.layout-right-column scrolledwindow,
+.layout-right-column viewport,
+.layout-right-column stack,
+.layout-right-column stack > widget,
+.group-heading-bar,
+.folder-photo-row,
+.folder-section-header,
+listview.folder-stream {
+    background-color: @retro_workspace_green;
+    background-image: none;
+}
+
+/* Keep grid cell containers transparent so the green shows through cleanly. */
+gridview.section-grid > child,
+gridview.section-grid > item,
+.folder-photo-flow > flowboxchild {
+    background: transparent;
+    background-image: none;
+}
+
+/* Make section headings readable on the green workspace. */
+.section-heading,
+.section-count,
+.folder-section-title,
+.folder-section-count,
+.folder-section-icon {
+    color: @win95_white;
+    text-shadow: 1px 1px @win95_dark;
+}
+
+/* Slightly strengthen the photo tile frame against the green background. */
+.photo-tile {
+    background: @win95_white;
+}

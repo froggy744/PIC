@@ -388,12 +388,11 @@ fn update_selection(
     invert_selection.set_sensitive(total > 0 && !busy.get());
 
     import_all.set_label(&format!("Import all {total}"));
-    import_selected.set_label(if selected == 0 {
-        "Select photos to import"
+    if selected == 0 {
+        import_selected.set_label("Select photos to import");
     } else {
-        // Keep the primary action explicit as the selection changes.
-        &format!("Import {selected} selected")
-    });
+        import_selected.set_label(&format!("Import {selected} selected"));
+    }
 
     let ready = destination.borrow().is_some() && total > 0 && !busy.get();
     // Keep the primary action visually present even at zero selection; its
@@ -1089,6 +1088,9 @@ pub fn present(
             update_selection(
                 &photos,
                 &selection_label,
+                &select_all,
+                &deselect_all,
+                &invert_selection,
                 &import_selected,
                 &import_all,
                 &sources,

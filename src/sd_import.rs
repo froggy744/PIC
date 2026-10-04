@@ -414,8 +414,8 @@ pub fn present(parent: &adw::ApplicationWindow) {
         dialog.select_folder(
             Some(&parent_for_source),
             None::<&gio::Cancellable>,
-            move |result| match result {
-                Ok(folder) => {
+            move |result| {
+                if let Ok(folder) = result {
                     if let Some(path) = folder.path() {
                         let name = path
                             .file_name()
@@ -427,10 +427,6 @@ pub fn present(parent: &adw::ApplicationWindow) {
                         source_value.set_text("Selected source is not a local mounted folder");
                     }
                 }
-                Err(error) if !error.matches(gtk::DialogError::Dismissed) => {
-                    trace(format!("manual_source_error error={error}"));
-                }
-                Err(_) => {}
             },
         );
     });

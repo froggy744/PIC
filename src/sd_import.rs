@@ -91,7 +91,7 @@ fn fingerprint(path: &Path) -> (Option<i64>, Option<i64>) {
     (mtime, Some(metadata.len() as i64))
 }
 
-fn preview_tile(source: &Path) -> (gtk::FlowBoxChild, gtk::Picture) {
+fn preview_tile(source: &Path) -> (gtk::FlowBoxChild, gtk::Picture, gtk::Button) {
     // Make the selectable FlowBox cell itself fixed-width. Keeping only the
     // inner picture small still lets FlowBox stretch the cell across the row,
     // leaving large empty "columns" between thumbnails.
@@ -112,7 +112,25 @@ fn preview_tile(source: &Path) -> (gtk::FlowBoxChild, gtk::Picture) {
     picture.set_halign(gtk::Align::Start);
     picture.set_valign(gtk::Align::Start);
     picture.add_css_class("thumbnail");
-    tile.append(&picture);
+
+    let overlay = gtk::Overlay::new();
+    overlay.set_child(Some(&picture));
+    overlay.set_size_request(96, 72);
+
+    let selected_badge = gtk::Button::from_icon_name("object-select-symbolic");
+    selected_badge.add_css_class("suggested-action");
+    selected_badge.add_css_class("circular");
+    selected_badge.set_size_request(26, 26);
+    selected_badge.set_halign(gtk::Align::End);
+    selected_badge.set_valign(gtk::Align::Start);
+    selected_badge.set_margin_top(4);
+    selected_badge.set_margin_end(4);
+    selected_badge.set_can_target(false);
+    selected_badge.set_focusable(false);
+    selected_badge.set_visible(false);
+    overlay.add_overlay(&selected_badge);
+
+    tile.append(&overlay);
 
     let child = gtk::FlowBoxChild::new();
     child.set_child(Some(&tile));
@@ -123,7 +141,7 @@ fn preview_tile(source: &Path) -> (gtk::FlowBoxChild, gtk::Picture) {
     child.set_valign(gtk::Align::Start);
     child.set_tooltip_text(Some(&source.display().to_string()));
 
-    (child, picture)
+    (child, picture, selected_badge)
 }
 
 fn scan_source(
@@ -491,18 +509,34 @@ pub fn present(parent: &adw::ApplicationWindow, on_imported: Rc<dyn Fn(String)>)
     let generation = Rc::new(Cell::new(0_u64));
     let current_source = Rc::new(RefCell::new(None::<PathBuf>));
     let sources = Rc::new(RefCell::new(Vec::<PathBuf>::new()));
+    let selection_badges = Rc::new(RefCell::new(Vec::<gtk::Button>::new()));
     let busy = Rc::new(Cell::new(false));
 
     {
         let selection_label = selection_label.clone();
         let deselect_all = deselect_all.clone();
+        let selection_badges = selection_badges.clone();
         let import_selected = import_selected.clone();
         let import_all = import_all.clone();
         let sources = sources.clone();
         let destination = destination.clone();
         let busy = busy.clone();
         photos.connect_selected_children_changed(move |flow| {
-            deselect_all.set_sensitive(!flow.selected_children().is_empty());
+            let selected = flow.selected_children();
+            deselect_all.set_sensitive(!selected.is_empty());
+
+            for badge in selection_badges.borrow().iter() {
+                badge.set_visible(false);
+            }
+            for child in &selected {
+                let index = child.index();
+                if index >= 0 {
+                    if let Some(badge) = selection_badges.borrow().get(index as usize) {
+                        badge.set_visible(true);
+                    }
+                }
+            }
+
             update_selection(
                 flow,
                 &selection_label,
@@ -525,6 +559,7 @@ pub fn present(parent: &adw::ApplicationWindow, on_imported: Rc<dyn Fn(String)>)
         let generation = generation.clone();
         let current_source = current_source.clone();
         let sources = sources.clone();
+        let selection_badges = selection_badges.clone();
         let selection_label = selection_label.clone();
         let import_selected = import_selected.clone();
         let import_all = import_all.clone();
@@ -537,6 +572,7 @@ pub fn present(parent: &adw::ApplicationWindow, on_imported: Rc<dyn Fn(String)>)
             generation.set(request);
             current_source.replace(Some(root_path.clone()));
             sources.borrow_mut().clear();
+            selection_badges.borrow_mut().clear();
             clear_flow(&photos);
 
             source_value.set_text(&format!("{name} — {}", root_path.display()));
@@ -562,6 +598,7 @@ pub fn present(parent: &adw::ApplicationWindow, on_imported: Rc<dyn Fn(String)>)
             let preview_stack = preview_stack.clone();
             let generation = generation.clone();
             let sources = sources.clone();
+            let selection_badges = selection_badges.clone();
             let selection_label = selection_label.clone();
             let import_selected = import_selected.clone();
             let import_all = import_all.clone();
@@ -586,12 +623,14 @@ pub fn present(parent: &adw::ApplicationWindow, on_imported: Rc<dyn Fn(String)>)
                             discovered = found.len();
                             *sources.borrow_mut() = found.clone();
                             pictures.clear();
+                            selection_badges.borrow_mut().clear();
                             clear_flow(&photos);
 
                             for source in &found {
-                                let (tile, picture) = preview_tile(source);
+                                let (tile, picture, badge) = preview_tile(source);
                                 photos.insert(&tile, -1);
                                 pictures.push(picture);
+                                selection_badges.borrow_mut().push(badge);
                             }
 
                             if discovered == 0 {

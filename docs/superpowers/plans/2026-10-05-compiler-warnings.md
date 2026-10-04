@@ -16,7 +16,7 @@ Spec: User requested most compiler warnings fixed on this branch and will test t
 - [x] 1. Prepare branch and capture baseline diagnostics; resolve verification dependencies.
 - [x] 2. Remove unused imports, variables and duplicate match arms; replace identical CSS string API calls.
 - [x] 3. Migrate dropdowns and dialogs while preserving callbacks and cancellation; audit dead helpers.
-- [ ] 4. Compile/check tests, compare warning counts, independently review changes, push cleanup branch and report exact verification limits.
+- [x] 4. Compile/check tests, compare warning counts, independently review changes, push cleanup branch and report exact verification limits.
 
 Verification: cargo check --all-targets; cargo test -- --test-threads=1; selected GTK tests under Xvfb; git diff --check. If native dependencies cannot be installed, record the blocker and provide branch checks for the user's environment.
 

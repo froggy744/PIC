@@ -4160,11 +4160,13 @@ fn start_photo_export_single(
         let sidebar_refresh = sidebar_refresh_for_import.clone();
         let scan_job = scan_job_for_import.clone();
         let start_next_scan = start_next_scan_for_import.clone();
+        let operation_progress = operation_progress.clone();
         Rc::new(move || {
             let connection = connection.clone();
             let sidebar_refresh = sidebar_refresh.clone();
             let scan_job = scan_job.clone();
             let start_next_scan = start_next_scan.clone();
+            let operation_progress = operation_progress.clone();
             let imported: Rc<dyn Fn(String)> = Rc::new(move |root: String| {
                 if let Err(error) = db::mark_import_root(&connection.borrow(), &root) {
                     eprintln!("Could not register imported SD-card destination {root}: {error}");
@@ -4179,7 +4181,7 @@ fn start_photo_export_single(
                 }
                 start_next_scan();
             });
-            crate::sd_import::present(&parent, imported);
+            crate::sd_import::present(&parent, imported, operation_progress);
         })
     }));
 

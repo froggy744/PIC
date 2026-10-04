@@ -441,17 +441,21 @@ pub fn present(
     let source_label = gtk::Label::new(Some("Import from:"));
     source_label.set_xalign(0.0);
 
-    let source_info = gtk::Box::new(gtk::Orientation::Vertical, 1);
+    let source_info = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     source_info.set_hexpand(true);
+    source_info.set_valign(gtk::Align::Center);
 
     let source_name = gtk::Label::new(Some("Looking for camera or SD card…"));
     source_name.set_xalign(0.0);
     source_name.set_ellipsize(gtk::pango::EllipsizeMode::End);
     source_name.add_css_class("heading");
+    source_name.set_valign(gtk::Align::Center);
 
     let source_path = gtk::Label::new(None);
     source_path.set_xalign(0.0);
     source_path.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+    source_path.set_hexpand(true);
+    source_path.set_valign(gtk::Align::Center);
     source_path.add_css_class("dim-label");
     source_path.add_css_class("caption");
     source_path.set_visible(false);

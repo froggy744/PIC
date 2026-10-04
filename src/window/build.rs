@@ -205,6 +205,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         })
     };
     let import_folder_slot: Rc<RefCell<Option<Rc<dyn Fn()>>>> = Rc::new(RefCell::new(None));
+    let sd_import_slot: Rc<RefCell<Option<Rc<dyn Fn()>>>> = Rc::new(RefCell::new(None));
     let edit_open_slot: Rc<RefCell<Option<Rc<dyn Fn(i64)>>>> = Rc::new(RefCell::new(None));
     let edit_clipboard: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
     let open_edit: Rc<dyn Fn(i64)> = {
@@ -939,9 +940,11 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             initial_page,
         );
     });
-    let import_parent = window.clone();
+    let sd_import_slot_for_button = sd_import_slot.clone();
     info.import_photos.connect_clicked(move |_| {
-        crate::sd_import::present(&import_parent);
+        if let Some(callback) = sd_import_slot_for_button.borrow().as_ref() {
+            callback();
+        }
     });
 
     let present_settings_from_more = present_settings.clone();
@@ -4150,6 +4153,35 @@ fn start_photo_export_single(
     let sidebar_refresh_for_import = availability_refresh.clone();
     let scan_job_for_import = scan_job.clone();
     let start_next_scan_for_import = start_next_scan.clone();
+
+    sd_import_slot.replace(Some({
+        let parent = parent.clone();
+        let connection = connection_for_import.clone();
+        let sidebar_refresh = sidebar_refresh_for_import.clone();
+        let scan_job = scan_job_for_import.clone();
+        let start_next_scan = start_next_scan_for_import.clone();
+        Rc::new(move || {
+            let connection = connection.clone();
+            let sidebar_refresh = sidebar_refresh.clone();
+            let scan_job = scan_job.clone();
+            let start_next_scan = start_next_scan.clone();
+            let imported: Rc<dyn Fn(String)> = Rc::new(move |root: String| {
+                if let Err(error) = db::mark_import_root(&connection.borrow(), &root) {
+                    eprintln!("Could not register imported SD-card destination {root}: {error}");
+                    return;
+                }
+                sidebar_refresh();
+                {
+                    let mut job = scan_job.borrow_mut();
+                    job.authorize_photo_scan(PhotoScanRequestReason::ImportFolder)
+                        .expect("SD-card import is an authorized scan reason");
+                    job.pending.push_back(root);
+                }
+                start_next_scan();
+            });
+            crate::sd_import::present(&parent, imported);
+        })
+    }));
 
     #[cfg(target_os = "linux")]
     let scan_job_for_network = scan_job_for_import.clone();

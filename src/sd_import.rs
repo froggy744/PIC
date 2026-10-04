@@ -99,11 +99,10 @@ fn fingerprint(path: &Path) -> (Option<i64>, Option<i64>) {
 }
 
 fn preview_tile(source: &Path) -> (gtk::FlowBoxChild, gtk::Picture, gtk::Button) {
-    // Make the selectable FlowBox cell itself fixed-width. Keeping only the
-    // inner picture small still lets FlowBox stretch the cell across the row,
-    // leaving large empty "columns" between thumbnails.
+    // Nikon stills are 3:2, so use a matching 144x96 thumbnail box.
+    // Cover only trims minimally when source aspect ratios differ.
     let tile = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    tile.set_size_request(96, 72);
+    tile.set_size_request(144, 96);
     tile.set_hexpand(false);
     tile.set_vexpand(false);
     tile.set_halign(gtk::Align::Start);
@@ -113,7 +112,7 @@ fn preview_tile(source: &Path) -> (gtk::FlowBoxChild, gtk::Picture, gtk::Button)
     let picture = gtk::Picture::new();
     picture.set_content_fit(gtk::ContentFit::Cover);
     picture.set_can_shrink(true);
-    picture.set_size_request(96, 72);
+    picture.set_size_request(144, 96);
     picture.set_hexpand(false);
     picture.set_vexpand(false);
     picture.set_halign(gtk::Align::Start);
@@ -122,7 +121,7 @@ fn preview_tile(source: &Path) -> (gtk::FlowBoxChild, gtk::Picture, gtk::Button)
 
     let overlay = gtk::Overlay::new();
     overlay.set_child(Some(&picture));
-    overlay.set_size_request(96, 72);
+    overlay.set_size_request(144, 96);
 
     let selected_badge = gtk::Button::from_icon_name("object-select-symbolic");
     selected_badge.add_css_class("suggested-action");
@@ -141,7 +140,7 @@ fn preview_tile(source: &Path) -> (gtk::FlowBoxChild, gtk::Picture, gtk::Button)
 
     let child = gtk::FlowBoxChild::new();
     child.set_child(Some(&tile));
-    child.set_size_request(96, 72);
+    child.set_size_request(144, 96);
     child.set_hexpand(false);
     child.set_vexpand(false);
     child.set_halign(gtk::Align::Start);

@@ -2,7 +2,8 @@ use std::cell::{Cell, RefCell};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, Arc};
 use std::time::{Duration, UNIX_EPOCH};
 
 use gio::prelude::*;
@@ -26,8 +27,14 @@ enum ImportMessage {
         total: usize,
         copied: usize,
         skipped: usize,
+        filename: String,
     },
     Done {
+        copied: usize,
+        skipped: usize,
+        destination: PathBuf,
+    },
+    Cancelled {
         copied: usize,
         skipped: usize,
         destination: PathBuf,
@@ -278,6 +285,7 @@ fn copy_photos(
     files: Vec<PathBuf>,
     destination: PathBuf,
     exclude_duplicates: bool,
+    cancelled: Arc<AtomicBool>,
     sender: mpsc::Sender<ImportMessage>,
 ) {
     if let Err(error) = std::fs::create_dir_all(&destination) {
@@ -293,6 +301,15 @@ fn copy_photos(
     let mut skipped = 0usize;
 
     for (index, source) in files.into_iter().enumerate() {
+        if cancelled.load(Ordering::Relaxed) {
+            let _ = sender.send(ImportMessage::Cancelled {
+                copied,
+                skipped,
+                destination,
+            });
+            return;
+        }
+
         let Some(filename) = source.file_name() else {
             skipped += 1;
             continue;
@@ -307,6 +324,7 @@ fn copy_photos(
                     total,
                     copied,
                     skipped,
+                    filename: filename.to_string_lossy().into_owned(),
                 });
                 continue;
             }
@@ -331,6 +349,7 @@ fn copy_photos(
             total,
             copied,
             skipped,
+            filename: filename.to_string_lossy().into_owned(),
         });
     }
 
@@ -384,7 +403,11 @@ fn selected_sources(photos: &gtk::FlowBox, sources: &[PathBuf]) -> Vec<PathBuf> 
 /// The source card is preview-only. Import copies originals to the chosen
 /// local destination, then hands that destination to the normal PIC folder
 /// import/scan pipeline so the card itself never becomes a library root.
-pub fn present(parent: &adw::ApplicationWindow, on_imported: Rc<dyn Fn(String)>) {
+pub fn present(
+    parent: &adw::ApplicationWindow,
+    on_imported: Rc<dyn Fn(String)>,
+    progress: Rc<crate::window::OperationProgressUi>,
+) {
     let window = gtk::Window::builder()
         .title("Import Photos")
         .transient_for(parent)
@@ -788,16 +811,10 @@ pub fn present(parent: &adw::ApplicationWindow, on_imported: Rc<dyn Fn(String)>)
         let destination = destination.clone();
         let exclude_duplicates = exclude_duplicates.clone();
         let status = status.clone();
-        let photos = photos.clone();
-        let choose_source = choose_source.clone();
-        let choose_destination = choose_destination.clone();
-        let import_selected = import_selected.clone();
-        let import_all = import_all.clone();
-        let selection_label = selection_label.clone();
-        let sources = sources.clone();
         let busy = busy.clone();
         let on_imported = on_imported.clone();
-        let window = window.downgrade();
+        let progress = progress.clone();
+        let window = window.clone();
 
         Rc::new(move |files: Vec<PathBuf>| {
             if files.is_empty() || busy.get() {
@@ -808,56 +825,44 @@ pub fn present(parent: &adw::ApplicationWindow, on_imported: Rc<dyn Fn(String)>)
                 return;
             };
 
+            let total = files.len();
+            let exclude = exclude_duplicates.is_active();
             busy.set(true);
-            photos.set_sensitive(false);
-            choose_source.set_sensitive(false);
-            choose_destination.set_sensitive(false);
-            exclude_duplicates.set_sensitive(false);
-            import_selected.set_sensitive(false);
-            import_all.set_sensitive(false);
-            status.set_text(&format!("Importing {} photos…", files.len()));
 
             trace(format!(
                 "copy_start count={} destination={} exclude_duplicates={}",
-                files.len(),
+                total,
                 destination_path.display(),
-                exclude_duplicates.is_active()
+                exclude
             ));
 
-            let (sender, receiver) = mpsc::channel::<ImportMessage>();
-            let exclude = exclude_duplicates.is_active();
-            std::thread::spawn(move || copy_photos(files, destination_path, exclude, sender));
+            // From this point the import belongs to PIC, not to this dialog.
+            // Close immediately and continue copy + indexing in the normal
+            // header progress surface.
+            progress.begin("Importing photos", total);
+            let cancelled = progress.cancel_flag();
+            window.close();
 
-            let destination = destination.clone();
-            let exclude_duplicates = exclude_duplicates.clone();
-            let status = status.clone();
-            let photos = photos.clone();
-            let choose_source = choose_source.clone();
-            let choose_destination = choose_destination.clone();
-            let import_selected = import_selected.clone();
-            let import_all = import_all.clone();
-            let selection_label = selection_label.clone();
-            let sources = sources.clone();
-            let busy = busy.clone();
+            let (sender, receiver) = mpsc::channel::<ImportMessage>();
+            std::thread::spawn({
+                let destination_path = destination_path.clone();
+                move || copy_photos(files, destination_path, exclude, cancelled, sender)
+            });
+
+            let progress = progress.clone();
             let on_imported = on_imported.clone();
-            let window = window.clone();
 
             glib::timeout_add_local(Duration::from_millis(50), move || {
-                if window.upgrade().is_none() {
-                    return glib::ControlFlow::Break;
-                }
-
                 loop {
                     match receiver.try_recv() {
                         Ok(ImportMessage::Progress {
                             done,
                             total,
-                            copied,
-                            skipped,
+                            copied: _,
+                            skipped: _,
+                            filename,
                         }) => {
-                            status.set_text(&format!(
-                                "Importing… {done}/{total} — {copied} copied, {skipped} skipped"
-                            ));
+                            progress.update("Importing photos", done, total, &filename, 0);
                         }
                         Ok(ImportMessage::Done {
                             copied,
@@ -868,57 +873,44 @@ pub fn present(parent: &adw::ApplicationWindow, on_imported: Rc<dyn Fn(String)>)
                                 "copy_done copied={copied} skipped={skipped} destination={}",
                                 imported_root.display()
                             ));
-                            busy.set(false);
-                            photos.set_sensitive(true);
-                            choose_source.set_sensitive(true);
-                            choose_destination.set_sensitive(true);
-                            exclude_duplicates.set_sensitive(true);
-                            status.set_text(&format!(
-                                "{copied} copied, {skipped} skipped — adding to PIC library…"
+                            progress.handoff(&format!(
+                                "Import copy complete — {copied} copied, {skipped} skipped · adding to library…"
                             ));
                             on_imported(imported_root.to_string_lossy().into_owned());
-                            update_selection(
-                                &photos,
-                                &selection_label,
-                                &import_selected,
-                                &import_all,
-                                &sources,
-                                &destination,
-                                &busy,
-                            );
+                            return glib::ControlFlow::Break;
+                        }
+                        Ok(ImportMessage::Cancelled {
+                            copied,
+                            skipped,
+                            destination: imported_root,
+                        }) => {
+                            trace(format!(
+                                "copy_cancelled copied={copied} skipped={skipped} destination={}",
+                                imported_root.display()
+                            ));
+                            if copied > 0 {
+                                progress.handoff(&format!(
+                                    "Import stopped — {copied} copied · adding copied photos to library…"
+                                ));
+                                on_imported(imported_root.to_string_lossy().into_owned());
+                            } else {
+                                progress.finish("Importing photos", "Import cancelled");
+                            }
                             return glib::ControlFlow::Break;
                         }
                         Ok(ImportMessage::Error(error)) => {
                             trace(format!("copy_failed error={error}"));
-                            busy.set(false);
-                            photos.set_sensitive(true);
-                            choose_source.set_sensitive(true);
-                            choose_destination.set_sensitive(true);
-                            exclude_duplicates.set_sensitive(true);
-                            status.set_text(&format!("Import failed: {error}"));
-                            update_selection(
-                                &photos,
-                                &selection_label,
-                                &import_selected,
-                                &import_all,
-                                &sources,
-                                &destination,
-                                &busy,
+                            progress.finish(
+                                "Importing photos",
+                                &format!("Import failed — {error}"),
                             );
                             return glib::ControlFlow::Break;
                         }
                         Err(mpsc::TryRecvError::Empty) => break,
                         Err(mpsc::TryRecvError::Disconnected) => {
-                            busy.set(false);
-                            status.set_text("Import worker stopped unexpectedly");
-                            update_selection(
-                                &photos,
-                                &selection_label,
-                                &import_selected,
-                                &import_all,
-                                &sources,
-                                &destination,
-                                &busy,
+                            progress.finish(
+                                "Importing photos",
+                                "Import failed — worker stopped unexpectedly",
                             );
                             return glib::ControlFlow::Break;
                         }

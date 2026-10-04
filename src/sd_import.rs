@@ -95,15 +95,19 @@ fn preview_tile(source: &Path) -> (gtk::Box, gtk::Picture) {
     // Import is a dense chooser, not a second library gallery. Keep tiles
     // deliberately small so a camera roll can be scanned quickly.
     let tile = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    tile.set_width_request(104);
+    tile.set_size_request(100, 74);
+    tile.set_hexpand(false);
+    tile.set_vexpand(false);
+    tile.set_halign(gtk::Align::Start);
     tile.set_tooltip_text(Some(&source.display().to_string()));
 
     let picture = gtk::Picture::new();
     picture.set_content_fit(gtk::ContentFit::Cover);
     picture.set_can_shrink(true);
-    picture.set_size_request(100, 75);
+    picture.set_size_request(96, 72);
     picture.set_hexpand(false);
     picture.set_vexpand(false);
+    picture.set_halign(gtk::Align::Start);
     picture.add_css_class("thumbnail");
 
     tile.append(&picture);
@@ -401,7 +405,7 @@ pub fn present(parent: &adw::ApplicationWindow, on_imported: Rc<dyn Fn(String)>)
     empty_state.set_halign(gtk::Align::Center);
     empty_state.set_valign(gtk::Align::Center);
 
-    let device_icon = gtk::Image::from_icon_name("media-removable-symbolic");
+    let device_icon = gtk::Image::from_icon_name("media-flash-symbolic");
     device_icon.set_pixel_size(64);
     let empty = gtk::Label::new(Some("Looking for a camera or SD card…"));
     empty.add_css_class("dim-label");
@@ -410,11 +414,11 @@ pub fn present(parent: &adw::ApplicationWindow, on_imported: Rc<dyn Fn(String)>)
 
     let photos = gtk::FlowBox::new();
     photos.set_selection_mode(gtk::SelectionMode::Multiple);
-    photos.set_homogeneous(true);
+    photos.set_homogeneous(false);
     photos.set_min_children_per_line(4);
-    photos.set_max_children_per_line(9);
-    photos.set_row_spacing(6);
-    photos.set_column_spacing(6);
+    photos.set_max_children_per_line(12);
+    photos.set_row_spacing(5);
+    photos.set_column_spacing(5);
     photos.set_margin_top(6);
     photos.set_margin_bottom(6);
     photos.set_margin_start(6);

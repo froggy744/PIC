@@ -323,7 +323,9 @@ impl OperationProgressUi {
         self.bar.set_fraction(1.0);
         self.bar.set_visible(false);
         self.spinner.set_spinning(true);
-        self.stop.set_sensitive(false);
+        // The next library scan reuses this same Stop button.
+        self.stop.set_sensitive(true);
+        self.stop.set_visible(true);
         self.root.set_visible(true);
         self.last_paint.set(Some(Instant::now()));
         self.last_done.set(0);

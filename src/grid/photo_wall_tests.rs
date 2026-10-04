@@ -17,7 +17,7 @@ fn photo_wall_reuses_models_and_virtualizes_headerless_and_folder_collections() 
     // Match application ordering: foundation first, then a theme at +1.
     crate::css::install_foundation(&gtk::gdk::Display::default().unwrap());
     let css = gtk::CssProvider::new();
-    css.load_from_data(include_str!("../../themes/standard/theme.css"));
+    css.load_from_string(include_str!("../../themes/standard/theme.css"));
     gtk::style_context_add_provider_for_display(
         &gtk::gdk::Display::default().unwrap(),
         &css,
@@ -126,7 +126,7 @@ fn photo_wall_reuses_models_and_virtualizes_headerless_and_folder_collections() 
     // during the rendered-pixel checks. Use the production rules unchanged
     // apart from their hover selector, and inspect settled style states.
     let hover_css = gtk::CssProvider::new();
-    hover_css.load_from_data(&format!(
+    hover_css.load_from_string(&format!(
         "{}\n.photo-wall-tile .photo-frame.photo-tile {{ transition: none; }}",
         crate::css::PHOTO_WALL.replace(":hover", ".test-hover")
     ));

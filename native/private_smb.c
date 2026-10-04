@@ -130,7 +130,7 @@ int pic_smb_scan_hosts(const char *prefix, scan_host_callback cb, void *context,
     int socket_port[254 * 2];
     int count = 0;
     for (int i = 1; i <= 254; i++) {
-        char ip[16];
+        char ip[sizeof base + 3];
         snprintf(ip, sizeof ip, "%s%d", base, i);
         for (int p = 0; p < 2; p++) {
             int port = p == 0 ? 445 : 2049;
@@ -186,7 +186,7 @@ int pic_smb_scan_hosts(const char *prefix, scan_host_callback cb, void *context,
     int found = 0;
     for (int index = 1; index <= 254; index++) {
         if (!smb_up[index] && !nfs_up[index]) continue;
-        char ip[16];
+        char ip[sizeof base + 3];
         snprintf(ip, sizeof ip, "%s%d", base, index);
         /* Best-effort PC name from reverse DNS (works for DHCP-registered
          * Windows hosts and mDNS-resolving .local/.lan names). */

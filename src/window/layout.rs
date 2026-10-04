@@ -320,7 +320,7 @@
                     folder.id,
                     favorite,
                 ) {
-                    Ok(changed) => {
+                    Ok(_) => {
                         
                         refresh_photo_actions_grid(&context);
                         (context.on_unavailable)();
@@ -506,17 +506,17 @@
         })
     };
     let schedule_mount_refresh_for_mount = schedule_mount_refresh.clone();
-    volume_monitor.connect_mount_added(move |_, mount| {
+    volume_monitor.connect_mount_added(move |_, _mount| {
         
         schedule_mount_refresh_for_mount();
     });
     let schedule_mount_refresh_for_unmount = schedule_mount_refresh.clone();
-    volume_monitor.connect_mount_removed(move |_, mount| {
+    volume_monitor.connect_mount_removed(move |_, _mount| {
         
         schedule_mount_refresh_for_unmount();
     });
     let schedule_mount_refresh_for_change = schedule_mount_refresh.clone();
-    volume_monitor.connect_mount_changed(move |_, mount| {
+    volume_monitor.connect_mount_changed(move |_, _mount| {
         
         schedule_mount_refresh_for_change();
     });

@@ -7,10 +7,6 @@ fn dirs_path() -> Option<PathBuf> {
     dirs::data_dir()
 }
 
-pub fn open_default() -> Result<Connection> {
-    let path = active_database_path()?;
-    open(&path)
-}
 
 pub fn open(path: &Path) -> Result<Connection> {
     crate::app_paths::migration_status()?;

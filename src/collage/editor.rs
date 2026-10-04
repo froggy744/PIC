@@ -134,13 +134,6 @@ impl CollageEditor {
             .collect()
     }
 
-    pub fn add_photos(&self, photos: Vec<crate::photo_object::PhotoObject>) {
-        self.project.borrow_mut().add_photos(photos);
-        self.status
-            .set_text(&photo_count_text(self.project.borrow().items.len()));
-        refresh_preview(&self.canvas, &self.frames, &self.project, &self.hooks);
-    }
-
     pub fn set_photos(&self, photos: Vec<crate::photo_object::PhotoObject>) {
         self.project.borrow_mut().set_photos(photos);
         self.status
@@ -175,7 +168,7 @@ pub fn build(
     if !COLLAGE_CSS_INSTALLED.with(Cell::get) {
         let css = gtk::CssProvider::new();
         let css_data = collage_css();
-        css.load_from_data(&css_data);
+        css.load_from_string(&css_data);
         gtk::style_context_add_provider_for_display(
             &display,
             &css,
@@ -1346,16 +1339,16 @@ fn choose_export_path(
     project: Rc<RefCell<CollageProject>>,
     saved_photo_id: Rc<Cell<Option<i64>>>,
 ) {
-    let dialog = gtk::Dialog::new();
-    dialog.set_title(Some("Export Collage"));
-    dialog.set_transient_for(Some(window));
-    dialog.set_modal(true);
-    dialog.add_button("Cancel", gtk::ResponseType::Cancel);
-    let export_button = dialog.add_button("Export", gtk::ResponseType::Ok);
-    export_button.add_css_class("suggested-action");
-    dialog.set_default_response(gtk::ResponseType::Ok);
-
-    let content = dialog.content_area();
+    let dialog = adw::AlertDialog::builder()
+        .heading("Export Collage")
+        .close_response("cancel")
+        .default_response("export")
+        .build();
+    dialog.add_response("cancel", "Cancel");
+    dialog.add_response("export", "Export");
+    dialog.set_response_appearance("export", adw::ResponseAppearance::Suggested);
+    let content = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    dialog.set_extra_child(Some(&content));
     content.set_spacing(12);
     content.set_margin_top(18);
     content.set_margin_bottom(6);
@@ -1423,15 +1416,13 @@ fn choose_export_path(
 
     content.append(&grid);
     {
-        let dialog_for_response = dialog.clone();
         let window = window.clone();
         let project = project.clone();
         let png_toggle = png_toggle.clone();
         let quality_scale = quality_scale.clone();
         let size = size.clone();
-        dialog.connect_response(move |_, response| {
-            if response != gtk::ResponseType::Ok {
-                dialog_for_response.destroy();
+        dialog.connect_response(None, move |_, response| {
+            if response != "export" {
                 return;
             }
             let options = super::render::ExportOptions {
@@ -1448,11 +1439,10 @@ fn choose_export_path(
                 },
                 jpeg_quality: quality_scale.value().round().clamp(60.0, 100.0) as u8,
             };
-            dialog_for_response.destroy();
             choose_export_destination(&window, project.clone(), options, saved_photo_id.clone());
         });
     }
-    dialog.show();
+    dialog.present(Some(window));
 }
 
 fn choose_export_destination(
@@ -1465,92 +1455,92 @@ fn choose_export_destination(
         super::render::ExportFormat::Jpeg => "jpg",
         super::render::ExportFormat::Png => "png",
     };
-    let dialog = gtk::FileChooserNative::new(
-        Some("Export Collage"),
-        Some(window),
-        gtk::FileChooserAction::Save,
-        Some("Export"),
-        Some("Cancel"),
-    );
-    dialog.set_current_name(&format!("collage.{extension}"));
-    dialog.set_modal(true);
     let filter = gtk::FileFilter::new();
     filter.set_name(Some(match options.format {
         super::render::ExportFormat::Jpeg => "JPEG image",
         super::render::ExportFormat::Png => "PNG image",
     }));
     filter.add_pattern(&format!("*.{extension}"));
-    dialog.add_filter(&filter);
+    let parent = window.clone();
     let window = window.clone();
-    dialog.connect_response(move |dialog, response| {
-        if response != gtk::ResponseType::Accept {
-            return;
-        }
-        let Some(path) = dialog.file().and_then(|file| file.path()) else {
-            return;
-        };
-        let path = if path.extension().is_none() {
-            path.with_extension(extension)
-        } else {
-            path
-        };
-        let project = project.borrow().clone();
-        let photo_id = saved_photo_id.get();
-        let progress = adw::AlertDialog::builder()
-            .heading("Saving collage…")
-            .body("Rendering the image and saving its editable project.")
-            .build();
-        progress.set_can_close(false);
-        progress.present(Some(&window));
-        let (sender, receiver) = std::sync::mpsc::channel();
-        let database = crate::db::active_database_path();
-        std::thread::spawn(move || {
-            let result = (|| -> anyhow::Result<i64> {
-                let connection = crate::db::open_existing(&database?)?;
-                let id = super::persistence::export_project(&connection, &project, photo_id, &path, &options)?;
-                if let Some(photo) = crate::db::photo(&connection, id)? {
-                    if let Err(error) = crate::thumbnail::create(&photo.path,photo.mtime,photo.size_bytes) {
-                        eprintln!("Could not cache collage thumbnail: {error}");
+    crate::file_picker::choose(
+        &parent,
+        "Export Collage",
+        "Export",
+        crate::file_picker::FileChoice::Save,
+        Some(&format!("collage.{extension}")),
+        Some(&filter),
+        move |path| {
+            let path = if path.extension().is_none() {
+                path.with_extension(extension)
+            } else {
+                path
+            };
+            let project = project.borrow().clone();
+            let photo_id = saved_photo_id.get();
+            let progress = adw::AlertDialog::builder()
+                .heading("Saving collage…")
+                .body("Rendering the image and saving its editable project.")
+                .build();
+            progress.set_can_close(false);
+            progress.present(Some(&window));
+            let (sender, receiver) = std::sync::mpsc::channel();
+            let database = crate::db::active_database_path();
+            std::thread::spawn(move || {
+                let result = (|| -> anyhow::Result<i64> {
+                    let connection = crate::db::open_existing(&database?)?;
+                    let id = super::persistence::export_project(
+                        &connection,
+                        &project,
+                        photo_id,
+                        &path,
+                        &options,
+                    )?;
+                    if let Some(photo) = crate::db::photo(&connection, id)? {
+                        if let Err(error) =
+                            crate::thumbnail::create(&photo.path, photo.mtime, photo.size_bytes)
+                        {
+                            eprintln!("Could not cache collage thumbnail: {error}");
+                        }
                     }
-                }
-                Ok(id)
-            })();
-            let _ = sender.send(result.map_err(|error| error.to_string()));
-        });
-        let window = window.clone();
-        let saved_photo_id = saved_photo_id.clone();
-        glib::timeout_add_local(Duration::from_millis(50), move || {
-            match receiver.try_recv() {
-                Ok(Ok(id)) => {
-                    saved_photo_id.set(Some(id));
-                    progress.force_close();
-                    let dialog = adw::AlertDialog::builder()
+                    Ok(id)
+                })();
+                let _ = sender.send(result.map_err(|error| error.to_string()));
+            });
+            let window = window.clone();
+            let saved_photo_id = saved_photo_id.clone();
+            glib::timeout_add_local(Duration::from_millis(50), move || {
+                match receiver.try_recv() {
+                    Ok(Ok(id)) => {
+                        saved_photo_id.set(Some(id));
+                        progress.force_close();
+                        let dialog = adw::AlertDialog::builder()
                         .heading("Collage exported")
                         .body("The collage and its editable project were saved. Reopen it from History.")
                         .close_response("close")
                         .build();
-                    dialog.add_response("close", "Close");
-                    dialog.present(Some(&window));
-                    glib::ControlFlow::Break
+                        dialog.add_response("close", "Close");
+                        dialog.present(Some(&window));
+                        glib::ControlFlow::Break
+                    }
+                    Ok(Err(error)) => {
+                        progress.force_close();
+                        let dialog = adw::AlertDialog::builder()
+                            .heading("Could not export collage")
+                            .body(error)
+                            .close_response("close")
+                            .build();
+                        dialog.add_response("close", "Close");
+                        dialog.present(Some(&window));
+                        glib::ControlFlow::Break
+                    }
+                    Err(std::sync::mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                        progress.force_close();
+                        glib::ControlFlow::Break
+                    }
                 }
-                Ok(Err(error)) => {
-                    progress.force_close();
-                    let dialog = adw::AlertDialog::builder()
-                        .heading("Could not export collage")
-                        .body(error)
-                        .close_response("close")
-                        .build();
-                    dialog.add_response("close", "Close");
-                    dialog.present(Some(&window));
-                    glib::ControlFlow::Break
-                }
-                Err(std::sync::mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
-                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                    progress.force_close();
-                    glib::ControlFlow::Break
-                }
-            }
-        });
-    });
-    dialog.show();
+            });
+        },
+    );
 }

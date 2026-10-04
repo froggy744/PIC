@@ -311,7 +311,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 };
                 let pending_for_event = pending.clone();
                 let scan_root_for_event = scan_root.clone();
-                monitor.connect_changed(move |_, file, other_file, event| {
+                monitor.connect_changed(move |_, _file, _other_file, event| {
                     // Ignore metadata-only monitor noise. Content changes are
                     // coalesced below before they can authorize any scan.
                     if matches!(
@@ -3236,20 +3236,16 @@ fn show_photo_export_dialog(
     jobs: Vec<crate::edit::export_batch::ExportJob>,
     progress: Rc<OperationProgressUi>,
 ) {
-    let dialog = gtk::Dialog::new();
-    if jobs.len() == 1 {
-        dialog.set_title(Some("Export Photo"));
-    } else {
-        dialog.set_title(Some("Export Photos"));
-    }
-    dialog.set_transient_for(Some(window));
-    dialog.set_modal(true);
-    dialog.add_button("Cancel", gtk::ResponseType::Cancel);
-    let export_button = dialog.add_button("Export", gtk::ResponseType::Ok);
-    export_button.add_css_class("suggested-action");
-    dialog.set_default_response(gtk::ResponseType::Ok);
-
-    let content = dialog.content_area();
+    let dialog = libadwaita::AlertDialog::builder()
+        .heading(if jobs.len() == 1 { "Export Photo" } else { "Export Photos" })
+        .close_response("cancel")
+        .default_response("export")
+        .build();
+    dialog.add_response("cancel", "Cancel");
+    dialog.add_response("export", "Export");
+    dialog.set_response_appearance("export", libadwaita::ResponseAppearance::Suggested);
+    let content = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    dialog.set_extra_child(Some(&content));
     content.set_spacing(12);
     content.set_margin_top(18);
     content.set_margin_bottom(6);
@@ -3291,13 +3287,11 @@ fn show_photo_export_dialog(
     content.append(&grid);
 
     {
-        let dialog_for_response = dialog.clone();
         let window = window.clone();
         let size = size.clone();
         let file_type = file_type.clone();
-        dialog.connect_response(move |_, response| {
-            if response != gtk::ResponseType::Ok {
-                dialog_for_response.destroy();
+        dialog.connect_response(None, move |_, response| {
+            if response != "export" {
                 return;
             }
             let max_edge = match size.selected() {
@@ -3318,7 +3312,6 @@ fn show_photo_export_dialog(
                     job
                 })
                 .collect::<Vec<_>>();
-            dialog_for_response.destroy();
             choose_photo_export_destination(
                 &window,
                 jobs,
@@ -3328,7 +3321,7 @@ fn show_photo_export_dialog(
             );
         });
     }
-    dialog.show();
+    dialog.present(Some(window));
 }
 
 fn choose_photo_export_destination(
@@ -3339,39 +3332,30 @@ fn choose_photo_export_destination(
     progress: Rc<OperationProgressUi>,
 ) {
     let multiple = jobs.len() > 1;
-    let dialog = gtk::FileChooserNative::new(
-        Some(if multiple {
-            "Export Photos to Folder"
-        } else {
-            "Export Photo"
-        }),
-        Some(window),
+    let initial_name = if multiple {
+        None
+    } else {
+        jobs.first().map(|job| job.file_name.clone())
+    };
+    crate::file_picker::choose(
+        window,
+        if multiple { "Export Photos to Folder" } else { "Export Photo" },
+        "Export",
         if multiple {
-            gtk::FileChooserAction::SelectFolder
+            crate::file_picker::FileChoice::Folder
         } else {
-            gtk::FileChooserAction::Save
+            crate::file_picker::FileChoice::Save
         },
-        Some("Export"),
-        Some("Cancel"),
-    );
-    if !multiple {
-        if let Some(job) = jobs.first() {
-            dialog.set_current_name(&job.file_name);
-        }
-    }
-    dialog.connect_response(move |dialog, response| {
-        if response == gtk::ResponseType::Accept {
-            if let Some(path) = dialog.file().and_then(|file| file.path()) {
-                if multiple {
-                    start_photo_export_folder(progress.clone(), jobs.clone(), path, max_edge, format);
-                } else if let Some(job) = jobs.first().cloned() {
-                    start_photo_export_single(progress.clone(), job, path, max_edge, format);
-                }
+        initial_name.as_deref(),
+        None,
+        move |path| {
+            if multiple {
+                start_photo_export_folder(progress.clone(), jobs.clone(), path, max_edge, format);
+            } else if let Some(job) = jobs.first().cloned() {
+                start_photo_export_single(progress.clone(), job, path, max_edge, format);
             }
-        }
-        dialog.destroy();
-    });
-    dialog.show();
+        },
+    );
 }
 
 enum ExportProgressMessage {
@@ -3622,7 +3606,7 @@ fn start_photo_export_single(
         sidebar_for_events,
         right_column,
         right_header,
-        search,
+        _search,
     ) = include!("layout.rs");
 
     // Window-level photo shortcuts own keys that must work regardless of
@@ -3843,7 +3827,6 @@ fn start_photo_export_single(
     let sidebar_breakpoint_transition = Rc::new(Cell::new(false));
     let sidebar_breakpoint_generation = Rc::new(Cell::new(0u64));
     {
-        let window_for_breakpoint = window.clone();
         let main_split_for_breakpoint = main_split.clone();
         let sidebar_for_breakpoint = sidebar.clone();
         let transition = sidebar_breakpoint_transition.clone();
@@ -3960,7 +3943,7 @@ fn start_photo_export_single(
                         .map(|root| (root, job.generation, job.kind))
                 }
             };
-            let Some((root, generation, kind)) = next else {
+            let Some((root, generation, _kind)) = next else {
                 return;
             };
             
@@ -4316,7 +4299,6 @@ fn start_photo_export_single(
                 .and_then(|database| db::open_existing(&database))
                 .and_then(|connection| db::imported_root_paths(&connection))
                 .map_err(|error| error.to_string());
-            let count = roots.as_ref().map(|roots| roots.len()).unwrap_or(0);
             
             let _ = sender.send(RefreshPrepareEvent::LibraryReady {
                 generation,

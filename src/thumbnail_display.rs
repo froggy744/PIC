@@ -425,7 +425,7 @@ fn load_thumbnail_with_policy(request: &DisplayRequest, regenerate: bool) -> Dis
 
     let mut image = match image::open(&path) {
         Ok(image) => image.to_rgba8(),
-        Err(error) => {
+        Err(_) => {
             if quality {
                 return DisplayOutcome::Failed;
             }
@@ -616,13 +616,6 @@ pub fn retain_wall_requests(wanted: &HashSet<String>) {
     });
 }
 
-pub fn take_wall_retry_keys() -> Vec<String> {
-    WALL_RETRIES
-        .get_or_init(|| Mutex::new(Vec::new()))
-        .lock()
-        .map(|mut keys| std::mem::take(&mut *keys))
-        .unwrap_or_default()
-}
 
 pub fn retry_wall_request(key: String) {
     if let Ok(mut retries) = WALL_RETRIES.get_or_init(|| Mutex::new(Vec::new())).lock() {

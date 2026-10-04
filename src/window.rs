@@ -24,6 +24,7 @@ pub(crate) mod theme;
 const THEME_SETTING_KEY: &str = "appearance-theme";
 
 /// Structural edit-mode styling shared by every visual theme.
+#[cfg(test)]
 pub(crate) const EDIT_PANEL_CSS: &str = crate::css::BASE;
 const SORT_FIELD_SETTING_KEY: &str = "photo-sort-field";
 const SORT_DIRECTION_SETTING_KEY: &str = "photo-sort-direction";

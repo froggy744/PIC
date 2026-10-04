@@ -26,6 +26,7 @@ struct ReconnectedSources {
 }
 
 impl ReconnectedSources {
+    #[cfg(test)]
     fn update(&mut self, mounted: std::collections::HashSet<String>) {
         self.pending.extend(mounted.difference(&self.mounted).cloned());
         // A drive may disappear again while recovery waits for another scan.

@@ -64,6 +64,7 @@ fn folder_chunk_size(columns: u32) -> usize {
 /// Exact vertical offset for a virtual Folder row. Folder mode deliberately
 /// gives every model row a fixed height, so we do not need GtkListView's
 /// estimated far-row position when restoring an anchor after a column change.
+#[cfg(test)]
 fn folder_row_offset(
     rows: &[FolderVirtualRow],
     target_row: usize,
@@ -98,6 +99,7 @@ pub(crate) struct FolderRowData {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg(test)]
 struct FolderVirtualRow {
     kind: FolderRowKind,
     start: usize,
@@ -107,6 +109,7 @@ struct FolderVirtualRow {
 /// Folder mode uses a flat virtualized model: one lightweight header row plus
 /// fixed photo lines containing at most `columns` photos. GtkListView therefore
 /// virtualizes one stable-height visual line at a time.
+#[cfg(test)]
 fn folder_virtual_rows(ranges: &[GroupRange], chunk_size: usize) -> Vec<FolderVirtualRow> {
     let chunk_size = chunk_size.max(1);
     let mut rows = Vec::new();

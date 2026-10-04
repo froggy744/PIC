@@ -230,7 +230,8 @@ pub(super) fn page(
                 "Cached thumbnails will be deleted. Your photos and database will remain.",
                 Rc::new(move || {
                     (maintenance.clear_thumbnails)();
-                    thumbnail_status.set_text("Thumbnail cache cleared. Reopen Stats to refresh cache totals.");
+                    thumbnail_status
+                        .set_text("Thumbnail cache cleared. Reopen Stats to refresh cache totals.");
                 }),
             );
         });
@@ -311,44 +312,37 @@ pub(super) fn page(
         let refresh = refresh.clone();
         let management = management.clone();
         open.connect_clicked(move |_| {
-            let chooser = gtk::FileChooserNative::new(
-                Some("Open PIC Database"),
-                Some(&parent),
-                gtk::FileChooserAction::Open,
-                Some("Open"),
-                Some("Cancel"),
-            );
             let filter = gtk::FileFilter::new();
             filter.set_name(Some("SQLite databases"));
             filter.add_pattern("*.db");
-            chooser.add_filter(&filter);
             let status = status.clone();
             let refresh = refresh.clone();
             let management = management.clone();
-            chooser.connect_response(move |chooser, response| {
-                if response == gtk::ResponseType::Accept {
-                    if let Some(path) = chooser.file().and_then(|file| file.path()) {
-                        let display_name = file_stem(&path);
-                        match crate::db::add_existing_library(&path, &display_name, "").and_then(
-                            |library| {
-                                (management.switch_library)(&library.id)
-                                    .map_err(anyhow::Error::msg)?;
-                                Ok(library)
-                            },
-                        ) {
-                            Ok(library) => {
-                                status.set_text(&format!("Opened {}.", library.name));
-                                refresh();
-                            }
-                            Err(error) => {
-                                status.set_text(&format!("Could not open database: {error:#}"))
-                            }
+            crate::file_picker::choose(
+                &parent,
+                "Open PIC Database",
+                "Open",
+                crate::file_picker::FileChoice::Open,
+                None,
+                Some(&filter),
+                move |path| {
+                    let display_name = file_stem(&path);
+                    match crate::db::add_existing_library(&path, &display_name, "").and_then(
+                        |library| {
+                            (management.switch_library)(&library.id).map_err(anyhow::Error::msg)?;
+                            Ok(library)
+                        },
+                    ) {
+                        Ok(library) => {
+                            status.set_text(&format!("Opened {}.", library.name));
+                            refresh();
+                        }
+                        Err(error) => {
+                            status.set_text(&format!("Could not open database: {error:#}"))
                         }
                     }
-                }
-                chooser.destroy();
-            });
-            chooser.show();
+                },
+            );
         });
     }
 
@@ -495,12 +489,13 @@ fn create_dialog(
     refresh: Rc<dyn Fn()>,
     management: DatabaseManagement,
 ) {
-    let dialog = gtk::Dialog::new();
-    dialog.set_title(Some("Create Database"));
-    dialog.set_transient_for(Some(parent));
-    dialog.set_modal(true);
-    dialog.add_button("Cancel", gtk::ResponseType::Cancel);
-    dialog.add_button("Create", gtk::ResponseType::Accept);
+    let dialog = adw::AlertDialog::builder()
+        .heading("Create Database")
+        .close_response("cancel")
+        .build();
+    dialog.add_response("cancel", "Cancel");
+    dialog.add_response("create", "Create");
+    dialog.set_response_appearance("create", adw::ResponseAppearance::Suggested);
     let form = gtk::Box::new(gtk::Orientation::Vertical, 8);
     form.set_margin_top(16);
     form.set_margin_bottom(16);
@@ -512,9 +507,9 @@ fn create_dialog(
     description.set_placeholder_text(Some("Description (optional)"));
     form.append(&name);
     form.append(&description);
-    dialog.content_area().append(&form);
-    dialog.connect_response(move |dialog, response| {
-        if response == gtk::ResponseType::Accept {
+    dialog.set_extra_child(Some(&form));
+    dialog.connect_response(None, move |_, response| {
+        if response == "create" {
             let result = crate::db::suggested_library_path(&name.text())
                 .and_then(|path| {
                     crate::db::create_library(&path, &name.text(), &description.text())
@@ -531,9 +526,8 @@ fn create_dialog(
                 Err(error) => status.set_text(&format!("Could not create database: {error:#}")),
             }
         }
-        dialog.close();
     });
-    dialog.show();
+    dialog.present(Some(parent));
 }
 
 fn restore_dialog(
@@ -542,69 +536,63 @@ fn restore_dialog(
     refresh: Rc<dyn Fn()>,
     management: DatabaseManagement,
 ) {
-    let chooser = gtk::FileChooserNative::new(
-        Some("Restore Database Backup"),
-        Some(parent),
-        gtk::FileChooserAction::Open,
-        Some("Restore"),
-        Some("Cancel"),
-    );
     let filter = gtk::FileFilter::new();
     filter.set_name(Some("PIC database backups"));
     filter.add_pattern("*.db");
-    chooser.add_filter(&filter);
-    chooser.connect_response(move |chooser, response| {
-        if response == gtk::ResponseType::Accept {
-            if let Some(backup_path) = chooser.file().and_then(|file| file.path()) {
-                let restored_name = format!("Restored {}", file_stem(&backup_path));
-                status.set_text("Restoring database…");
-                let (sender, receiver) = std::sync::mpsc::channel();
-                std::thread::spawn(move || {
-                    let result = crate::db::suggested_library_path(&restored_name)
-                        .and_then(|destination| {
-                            crate::db::restore_as_library(
-                                &backup_path,
-                                &destination,
-                                &restored_name,
-                                &format!("Restored from {}", backup_path.display()),
-                            )
-                        })
-                        .map_err(|error| format!("{error:#}"));
-                    let _ = sender.send(result);
-                });
-                let status = status.clone();
-                let refresh = refresh.clone();
-                let management = management.clone();
-                glib::timeout_add_local(Duration::from_millis(50), move || {
-                    match receiver.try_recv() {
-                        Ok(Ok(library)) => {
-                            match (management.switch_library)(&library.id) {
-                                Ok(()) => {
-                                    status.set_text(&format!("Restored {}.", library.name));
-                                    refresh();
-                                }
-                                Err(error) => status.set_text(&format!(
-                                    "Restored the database, but could not open it: {error}"
-                                )),
+    crate::file_picker::choose(
+        parent,
+        "Restore Database Backup",
+        "Restore",
+        crate::file_picker::FileChoice::Open,
+        None,
+        Some(&filter),
+        move |backup_path| {
+            let restored_name = format!("Restored {}", file_stem(&backup_path));
+            status.set_text("Restoring database…");
+            let (sender, receiver) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                let result = crate::db::suggested_library_path(&restored_name)
+                    .and_then(|destination| {
+                        crate::db::restore_as_library(
+                            &backup_path,
+                            &destination,
+                            &restored_name,
+                            &format!("Restored from {}", backup_path.display()),
+                        )
+                    })
+                    .map_err(|error| format!("{error:#}"));
+                let _ = sender.send(result);
+            });
+            let status = status.clone();
+            let refresh = refresh.clone();
+            let management = management.clone();
+            glib::timeout_add_local(Duration::from_millis(50), move || {
+                match receiver.try_recv() {
+                    Ok(Ok(library)) => {
+                        match (management.switch_library)(&library.id) {
+                            Ok(()) => {
+                                status.set_text(&format!("Restored {}.", library.name));
+                                refresh();
                             }
-                            glib::ControlFlow::Break
+                            Err(error) => status.set_text(&format!(
+                                "Restored the database, but could not open it: {error}"
+                            )),
                         }
-                        Ok(Err(error)) => {
-                            status.set_text(&format!("Restore failed: {error}"));
-                            glib::ControlFlow::Break
-                        }
-                        Err(std::sync::mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
-                        Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                            status.set_text("Restore failed.");
-                            glib::ControlFlow::Break
-                        }
+                        glib::ControlFlow::Break
                     }
-                });
-            }
-        }
-        chooser.destroy();
-    });
-    chooser.show();
+                    Ok(Err(error)) => {
+                        status.set_text(&format!("Restore failed: {error}"));
+                        glib::ControlFlow::Break
+                    }
+                    Err(std::sync::mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                        status.set_text("Restore failed.");
+                        glib::ControlFlow::Break
+                    }
+                }
+            });
+        },
+    );
 }
 
 fn file_stem(path: &Path) -> String {

@@ -88,10 +88,6 @@ struct PreviewJob {
     target_width: u32,
     target_height: u32,
     recipe: EditRecipe,
-    // True for rapid-fire frames rendered while a slider drag is in progress.
-    // They skip the busy spinner/status churn; the settle render after the
-    // drag ends shows them again.
-    interactive: bool,
     result_sender: std::sync::mpsc::Sender<anyhow::Result<(u64, u32, u32, Vec<u8>)>>,
 }
 

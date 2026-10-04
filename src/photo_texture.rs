@@ -48,10 +48,6 @@ pub fn edited_thumbnail(
     Some(paintable)
 }
 
-/// Compatibility helper used by collage code that only has rotation metadata.
-pub fn rotated_thumbnail(path: &str, rotation: i32) -> Option<gtk::gdk::Paintable> {
-    edited_thumbnail(path, rotation, "")
-}
 
 fn cache_get(path: &str, rotation: i32, recipe: &str) -> Option<gtk::gdk::Paintable> {
     EDITED_THUMBNAIL_CACHE.with(|cache| {

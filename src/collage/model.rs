@@ -276,30 +276,6 @@ impl CollageProject {
         }
     }
 
-    pub fn add_photos(&mut self, photos: Vec<PhotoObject>) {
-        let first_z = self.items.len();
-        let mut ids = self
-            .items
-            .iter()
-            .map(|item| item.photo.id)
-            .collect::<HashSet<_>>();
-        self.items.extend(
-            photos
-                .into_iter()
-                .filter(|photo| ids.insert(photo.id()))
-                .enumerate()
-                .map(|(index, photo)| CollageItem {
-                    photo: collage_photo_from_object(&photo),
-                    x: 0.0,
-                    y: 0.0,
-                    width: 1.0,
-                    height: 1.0,
-                    rotation: 0.0,
-                    z: first_z + index,
-                }),
-        );
-        self.relayout();
-    }
 
     pub fn set_photos(&mut self, photos: Vec<PhotoObject>) {
         let existing = self
@@ -514,7 +490,7 @@ mod draft_tests {
 
     #[test]
     fn draft_json_round_trips_project_settings_and_rejects_versions() {
-        let mut project = CollageProject {
+        let project = CollageProject {
             aspect: AspectRatio::Square,
             custom_aspect: 1.5,
             orientation: CollageOrientation::Portrait,

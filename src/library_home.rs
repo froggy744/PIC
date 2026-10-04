@@ -45,7 +45,7 @@ fn install_home_css(display: &gtk::gdk::Display) {
         return;
     }
     let provider = gtk::CssProvider::new();
-    provider.load_from_data(HOME_CSS);
+    provider.load_from_string(HOME_CSS);
     gtk::style_context_add_provider_for_display(
         display,
         &provider,

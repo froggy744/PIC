@@ -249,6 +249,7 @@ fn decode_svg_rgba(
     Ok((pixbuf_to_rgba(&pixbuf)?, source_width, source_height))
 }
 
+#[cfg(test)]
 fn decode_svg_thumbnail(bytes: &[u8]) -> Result<DecodedThumbnailSource> {
     decode_svg_thumbnail_with_max(bytes, thumbnail_size())
 }

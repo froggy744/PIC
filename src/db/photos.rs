@@ -262,6 +262,7 @@ pub fn search_folders(
     Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
 }
 
+#[cfg(test)]
 pub fn folder_path_by_id(connection: &Connection, folder_id: i64) -> Result<Option<String>> {
     Ok(connection
         .query_row(
@@ -797,6 +798,7 @@ pub fn set_favorite(connection: &Connection, id: i64, favorite: bool) -> Result<
     Ok(())
 }
 
+#[cfg(test)]
 pub fn set_rating(connection: &Connection, id: i64, rating: i32) -> Result<()> {
     anyhow::ensure!((0..=5).contains(&rating), "invalid rating: {rating}");
     connection.execute(

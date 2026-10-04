@@ -35,12 +35,6 @@ pub fn apply_recipe(image: RgbaImage, recipe: &EditRecipe) -> RgbaImage {
     super::overlays::composite_overlays(apply_tone(apply_geometry(image, recipe), recipe), recipe)
 }
 
-pub fn apply_recipe_without_crop(mut image: RgbaImage, recipe: &EditRecipe) -> RgbaImage {
-    if recipe.straighten.abs() >= 0.01 {
-        image = rotate_autocrop(&image, recipe.straighten.to_radians());
-    }
-    apply_tone(image, recipe)
-}
 
 pub fn estimated_output_dimensions(width: u32, height: u32, recipe: &EditRecipe) -> (u32, u32) {
     let (mut width, mut height) = (width.max(1) as f32, height.max(1) as f32);

@@ -5,24 +5,25 @@ mod css;
 mod db;
 mod diagnostics;
 mod edit;
+mod file_picker;
 mod grid;
 mod image_format;
 mod infobar;
-mod sd_import;
-mod lightbox;
 mod library_home;
-#[cfg(target_os="linux")]
-mod private_smb;
-#[cfg(target_os="linux")]
-mod private_nfs;
-#[cfg(target_os="linux")]
-mod network_shares;
-#[cfg(target_os="linux")]
+mod lightbox;
+#[cfg(target_os = "linux")]
 mod network_picker;
+#[cfg(target_os = "linux")]
+mod network_shares;
 mod photo_object;
 mod photo_texture;
 mod platform;
+#[cfg(target_os = "linux")]
+mod private_nfs;
+#[cfg(target_os = "linux")]
+mod private_smb;
 mod scanner;
+mod sd_import;
 mod settings;
 mod sidebar;
 mod smooth_scroll;
@@ -43,8 +44,8 @@ fn register_bundled_icons() {
 }
 
 fn main() {
+    use adw::prelude::*;
     use gio::prelude::*;
-    use gtk::prelude::*;
     use gtk4 as gtk;
     use libadwaita as adw;
 
@@ -99,22 +100,18 @@ fn main() {
                     .build();
                 recovery_parent.present();
 
-                let dialog = gtk::MessageDialog::builder()
-                    .transient_for(&recovery_parent)
-                    .modal(true)
-                    .message_type(gtk::MessageType::Error)
-                    .buttons(gtk::ButtonsType::None)
-                    .text("Could not open the photo library")
-                    .secondary_text(format!("{error:#}\n\nChoose another PIC database, create a new library, or close the app."))
+                let dialog = adw::AlertDialog::builder()
+                    .heading("Could not open the photo library")
+                    .body(format!("{error:#}\n\nChoose another PIC database, create a new library, or close the app."))
+                    .close_response("close")
                     .build();
-                dialog.add_button("Close", gtk::ResponseType::Close);
-                dialog.add_button("Create New Library", gtk::ResponseType::Other(1));
-                dialog.add_button("Choose Database…", gtk::ResponseType::Accept);
+                dialog.add_response("close", "Close");
+                dialog.add_response("create", "Create New Library");
+                dialog.add_response("choose", "Choose Database…");
+                let parent = recovery_parent.clone();
                 let application = application.clone();
-                dialog.connect_response(move |dialog, response| {
-                    dialog.close();
-
-                    if response == gtk::ResponseType::Other(1) {
+                dialog.connect_response(None, move |_, response| {
+                    if response == "create" {
                         let result = db::suggested_library_path("Default Library")
                             .and_then(|path| db::create_library(&path, "Default Library", ""))
                             .and_then(|library| db::select_library(&library.id));
@@ -131,26 +128,20 @@ fn main() {
                         return;
                     }
 
-                    if response != gtk::ResponseType::Accept {
+                    if response != "choose" {
                         recovery_parent.close();
                         return;
                     }
-                    let chooser = gtk::FileChooserNative::new(
-                        Some("Open PIC Database"),
-                        Some(&recovery_parent),
-                        gtk::FileChooserAction::Open,
-                        Some("Open"),
-                        Some("Cancel"),
-                    );
                     let filter = gtk::FileFilter::new();
                     filter.set_name(Some("SQLite databases"));
                     filter.add_pattern("*.db");
-                    chooser.add_filter(&filter);
                     let application = application.clone();
                     let recovery_parent = recovery_parent.clone();
-                    chooser.connect_response(move |chooser, response| {
-                        if response == gtk::ResponseType::Accept {
-                            if let Some(path) = chooser.file().and_then(|file| file.path()) {
+                    let parent = recovery_parent.clone();
+                    crate::file_picker::choose(
+                        &parent, "Open PIC Database", "Open",
+                        crate::file_picker::FileChoice::Open, None, Some(&filter),
+                        move |path| {
                                 let known = db::known_libraries()
                                     .ok()
                                     .and_then(|libraries| {
@@ -170,13 +161,10 @@ fn main() {
                                     }
                                     Err(error) => eprintln!("Could not open selected library: {error:#}"),
                                 }
-                            }
-                        }
-                        chooser.destroy();
-                    });
-                    chooser.show();
+                        },
+                    );
                 });
-                dialog.present();
+                dialog.present(Some(&parent));
             }
         }
     });

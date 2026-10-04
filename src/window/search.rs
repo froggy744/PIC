@@ -200,7 +200,7 @@ fn connect_search_popup_dismissal(
     let popup_weak = popup.downgrade();
     let search_weak = search.downgrade();
     focus.connect_leave(move |_| {
-        if let (Some(search), Some(popup)) = (search_weak.upgrade(), popup_weak.upgrade()) {
+        if let (Some(_search), Some(popup)) = (search_weak.upgrade(), popup_weak.upgrade()) {
             popup.popdown();
         }
     });

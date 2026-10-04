@@ -720,6 +720,7 @@ struct WallQualityGate {
 }
 
 impl WallQualityGate {
+    #[cfg(test)]
     fn ready(&mut self, signature: (u64, u64, u64, i32), now: Instant) -> bool {
         if self.signature != Some(signature) {
             self.signature = Some(signature);
@@ -732,6 +733,7 @@ impl WallQualityGate {
     }
 }
 
+#[cfg(test)]
 fn wall_quality_needed(width: i32, height: i32, scale: i32) -> bool {
     width.max(height).max(0).saturating_mul(scale.max(1)) > 320
 }

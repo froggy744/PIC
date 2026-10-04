@@ -311,6 +311,24 @@ impl OperationProgressUi {
         self.bar.set_visible(true);
     }
 
+    /// End a batch operation without scheduling the status row to hide.
+    ///
+    /// Used when another foreground operation immediately takes over the same
+    /// header status surface (for example SD-card copy -> library scan).
+    pub fn handoff(&self, summary: &str) {
+        self.cancel_hide();
+        self.running.set(false);
+        self.clear_cancel();
+        self.label.set_text(summary);
+        self.bar.set_fraction(1.0);
+        self.bar.set_visible(false);
+        self.spinner.set_spinning(true);
+        self.stop.set_sensitive(false);
+        self.root.set_visible(true);
+        self.last_paint.set(Some(Instant::now()));
+        self.last_done.set(0);
+    }
+
     pub fn finish(&self, name: &str, summary: &str) {
         self.cancel_hide();
         self.running.set(false);

@@ -440,14 +440,28 @@ pub fn present(
     let source_row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
     let source_label = gtk::Label::new(Some("Import from:"));
     source_label.set_xalign(0.0);
-    let source_value = gtk::Label::new(Some("Looking for camera or SD card…"));
-    source_value.set_xalign(0.0);
-    source_value.set_hexpand(true);
-    source_value.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+
+    let source_info = gtk::Box::new(gtk::Orientation::Vertical, 1);
+    source_info.set_hexpand(true);
+
+    let source_name = gtk::Label::new(Some("Looking for camera or SD card…"));
+    source_name.set_xalign(0.0);
+    source_name.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    source_name.add_css_class("heading");
+
+    let source_path = gtk::Label::new(None);
+    source_path.set_xalign(0.0);
+    source_path.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+    source_path.add_css_class("dim-label");
+    source_path.add_css_class("caption");
+    source_path.set_visible(false);
+
+    source_info.append(&source_name);
+    source_info.append(&source_path);
 
     let choose_source = gtk::Button::with_label("Change source");
     source_row.append(&source_label);
-    source_row.append(&source_value);
+    source_row.append(&source_info);
     source_row.append(&choose_source);
     root.append(&source_row);
 
@@ -606,7 +620,8 @@ pub fn present(
     }
 
     let start_scan: Rc<dyn Fn(String, PathBuf)> = {
-        let source_value = source_value.clone();
+        let source_name = source_name.clone();
+        let source_path = source_path.clone();
         let status = status.clone();
         let empty = empty.clone();
         let photos = photos.clone();
@@ -634,9 +649,13 @@ pub fn present(
             selection_badges.borrow_mut().clear();
             clear_flow(&photos);
 
-            source_value.set_text(&format!("{name} — {}", root_path.display()));
+            source_name.set_text(&name);
+            source_name.set_tooltip_text(Some(&root_path.display().to_string()));
+            source_path.set_text(&root_path.display().to_string());
+            source_path.set_visible(true);
             choose_source.set_label("Change source");
-            status.set_text("Scanning DCIM for photos…");
+            status.set_text("Loading thumbnails…");
+            status.set_visible(true);
             empty.set_text("Scanning camera or SD card…");
             selection_label.set_text("0 of 0 selected");
             preview_stack.set_visible_child_name("empty");
@@ -696,13 +715,13 @@ pub fn present(
                             }
 
                             if discovered == 0 {
-                                status.set_text("No supported photos found");
+                                status.set_visible(false);
                                 empty.set_text("No supported photos found in DCIM");
                                 preview_stack.set_visible_child_name("empty");
                             } else {
                                 preview_stack.set_visible_child_name("photos");
                                 status.set_text(&format!(
-                                    "Found {discovered} photos — loading thumbnails…"
+                                    "Loading thumbnails… 0 of {discovered}"
                                 ));
                             }
                             update_selection(
@@ -724,7 +743,7 @@ pub fn present(
                                 picture.set_filename(Some(&cached));
                             }
                             status.set_text(&format!(
-                                "Loading thumbnails… {shown}/{}",
+                                "Loading thumbnails… {shown} of {}",
                                 discovered.max(shown)
                             ));
                         }
@@ -738,15 +757,14 @@ pub fn present(
                             },
                         )) => {
                             if total == 0 {
-                                status.set_text("No supported photos found");
+                                status.set_visible(false);
                                 empty.set_text("No supported photos found in DCIM");
                                 preview_stack.set_visible_child_name("empty");
-                            } else if failed == 0 {
-                                status.set_text(&format!("{ready} thumbnails ready"));
                             } else {
-                                status.set_text(&format!(
-                                    "{ready} thumbnails ready — {failed} could not be decoded"
-                                ));
+                                // Once preview generation is complete the photo count
+                                // already lives in the selection toolbar. Reclaim this row.
+                                let _ = (ready, failed);
+                                status.set_visible(false);
                             }
                             update_selection(
                                 &photos,
@@ -773,7 +791,8 @@ pub fn present(
         })
     };
 
-    let source_value_for_dialog = source_value.clone();
+    let source_name_for_dialog = source_name.clone();
+    let source_path_for_dialog = source_path.clone();
     let parent_for_source = window.clone();
     let start_scan_for_dialog = start_scan.clone();
     choose_source.connect_clicked(move |_| {
@@ -782,7 +801,8 @@ pub fn present(
             .accept_label("Choose")
             .modal(true)
             .build();
-        let source_value = source_value_for_dialog.clone();
+        let source_name = source_name_for_dialog.clone();
+        let source_path = source_path_for_dialog.clone();
         let start_scan = start_scan_for_dialog.clone();
         dialog.select_folder(
             Some(&parent_for_source),
@@ -797,7 +817,8 @@ pub fn present(
                             .to_string();
                         start_scan(name, path);
                     } else {
-                        source_value.set_text("Selected source is not a local mounted folder");
+                        source_name.set_text("Selected source is not a local mounted folder");
+                        source_path.set_visible(false);
                     }
                 }
             },
@@ -1049,7 +1070,8 @@ pub fn present(
     {
         let current_source = current_source.clone();
         let generation = generation.clone();
-        let source_value = source_value.clone();
+        let source_name = source_name.clone();
+        let source_path = source_path.clone();
         let status = status.clone();
         let empty = empty.clone();
         let photos = photos.clone();
@@ -1080,8 +1102,11 @@ pub fn present(
             current_source.replace(None);
             sources.borrow_mut().clear();
             clear_flow(&photos);
-            source_value.set_text("No device selected");
-            status.set_text("Camera or SD card removed");
+            source_name.set_text("No device selected");
+            source_name.set_tooltip_text(None);
+            source_path.set_text("");
+            source_path.set_visible(false);
+            status.set_visible(false);
             empty.set_text("Insert a camera or SD card to import photos");
             preview_stack.set_visible_child_name("empty");
             update_selection(
@@ -1126,8 +1151,10 @@ pub fn present(
         start_scan(name, root);
     } else {
         trace("startup_detect camera=false");
-        source_value.set_text("No camera or SD card detected");
-        status.set_text("No camera or SD card detected");
+        source_name.set_text("No camera or SD card detected");
+        source_name.set_tooltip_text(None);
+        source_path.set_visible(false);
+        status.set_visible(false);
         empty.set_text("Insert a camera or SD card, or choose one manually");
     }
 }

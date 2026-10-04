@@ -8,6 +8,7 @@ mod edit;
 mod grid;
 mod image_format;
 mod infobar;
+mod sd_import;
 mod lightbox;
 mod library_home;
 #[cfg(target_os="linux")]

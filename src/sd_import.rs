@@ -370,6 +370,9 @@ fn default_destination() -> PathBuf {
 fn update_selection(
     photos: &gtk::FlowBox,
     selection_label: &gtk::Label,
+    select_all: &gtk::Button,
+    deselect_all: &gtk::Button,
+    invert_selection: &gtk::Button,
     import_selected: &gtk::Button,
     import_all: &gtk::Button,
     sources: &Rc<RefCell<Vec<PathBuf>>>,
@@ -378,11 +381,25 @@ fn update_selection(
 ) {
     let total = sources.borrow().len();
     let selected = photos.selected_children().len();
-    selection_label.set_text(&format!("{selected} selected / {total} photos"));
+    selection_label.set_text(&format!("{selected} of {total} selected"));
 
-    let ready = destination.borrow().is_some() && !busy.get();
-    import_selected.set_sensitive(ready && selected > 0);
-    import_all.set_sensitive(ready && total > 0);
+    select_all.set_sensitive(total > 0 && selected < total && !busy.get());
+    deselect_all.set_sensitive(selected > 0 && !busy.get());
+    invert_selection.set_sensitive(total > 0 && !busy.get());
+
+    import_all.set_label(&format!("Import all {total}"));
+    import_selected.set_label(if selected == 0 {
+        "Select photos to import"
+    } else {
+        // Keep the primary action explicit as the selection changes.
+        &format!("Import {selected} selected")
+    });
+
+    let ready = destination.borrow().is_some() && total > 0 && !busy.get();
+    // Keep the primary action visually present even at zero selection; its
+    // click handler simply has no files to start until something is selected.
+    import_selected.set_sensitive(ready);
+    import_all.set_sensitive(ready);
 }
 
 fn selected_sources(photos: &gtk::FlowBox, sources: &[PathBuf]) -> Vec<PathBuf> {
@@ -430,22 +447,34 @@ pub fn present(
     source_value.set_hexpand(true);
     source_value.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
 
-    let choose_source = gtk::Button::with_label("Choose SD card…");
+    let choose_source = gtk::Button::with_label("Change source");
     source_row.append(&source_label);
     source_row.append(&source_value);
     source_row.append(&choose_source);
     root.append(&source_row);
 
-    let options_row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
-    let exclude_duplicates = gtk::CheckButton::with_label("Exclude duplicates");
+    let selection_toolbar = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let select_all = gtk::Button::with_label("Select all");
+    let deselect_all = gtk::Button::with_label("Deselect all");
+    let invert_selection = gtk::Button::with_label("Invert");
+    let toolbar_spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    toolbar_spacer.set_hexpand(true);
+    let exclude_duplicates = gtk::CheckButton::with_label("Skip duplicates");
     exclude_duplicates.set_active(true);
-    let selection_label = gtk::Label::new(Some("0 selected / 0 photos"));
+    let selection_label = gtk::Label::new(Some("0 of 0 selected"));
     selection_label.set_xalign(1.0);
-    selection_label.set_hexpand(true);
-    selection_label.add_css_class("dim-label");
-    options_row.append(&exclude_duplicates);
-    options_row.append(&selection_label);
-    root.append(&options_row);
+
+    select_all.set_sensitive(false);
+    deselect_all.set_sensitive(false);
+    invert_selection.set_sensitive(false);
+
+    selection_toolbar.append(&select_all);
+    selection_toolbar.append(&deselect_all);
+    selection_toolbar.append(&invert_selection);
+    selection_toolbar.append(&toolbar_spacer);
+    selection_toolbar.append(&exclude_duplicates);
+    selection_toolbar.append(&selection_label);
+    root.append(&selection_toolbar);
 
     let status = gtk::Label::new(Some("Checking mounted media…"));
     status.set_xalign(0.0);
@@ -495,7 +524,10 @@ pub fn present(
     root.append(&separator);
 
     let destination = Rc::new(RefCell::new(Some(default_destination())));
-    let destination_row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+    let footer = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+
+    let destination_group = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    destination_group.set_hexpand(true);
     let destination_label = gtk::Label::new(Some("Import to:"));
     let destination_value = gtk::Label::new(
         destination
@@ -505,29 +537,28 @@ pub fn present(
             .or(Some("Choose destination folder")),
     );
     destination_value.set_xalign(0.0);
-    destination_value.set_hexpand(true);
     destination_value.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
-    let choose_destination = gtk::Button::with_label("Destination…");
+    let choose_destination = gtk::Button::with_label("Change");
 
-    destination_row.append(&destination_label);
-    destination_row.append(&destination_value);
-    destination_row.append(&choose_destination);
-    root.append(&destination_row);
+    destination_group.append(&destination_label);
+    destination_group.append(&destination_value);
+    destination_group.append(&choose_destination);
 
     let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     actions.set_halign(gtk::Align::End);
-    let deselect_all = gtk::Button::with_label("Deselect All");
     let cancel = gtk::Button::with_label("Cancel");
-    let import_selected = gtk::Button::with_label("Import Selected");
-    let import_all = gtk::Button::with_label("Import All");
-    deselect_all.set_sensitive(false);
+    let import_all = gtk::Button::with_label("Import all 0");
+    let import_selected = gtk::Button::with_label("Select photos to import");
+    import_selected.add_css_class("suggested-action");
     import_selected.set_sensitive(false);
     import_all.set_sensitive(false);
-    actions.append(&deselect_all);
+
     actions.append(&cancel);
-    actions.append(&import_selected);
     actions.append(&import_all);
-    root.append(&actions);
+    actions.append(&import_selected);
+    footer.append(&destination_group);
+    footer.append(&actions);
+    root.append(&footer);
 
     let generation = Rc::new(Cell::new(0_u64));
     let current_source = Rc::new(RefCell::new(None::<PathBuf>));
@@ -537,7 +568,9 @@ pub fn present(
 
     {
         let selection_label = selection_label.clone();
+        let select_all = select_all.clone();
         let deselect_all = deselect_all.clone();
+        let invert_selection = invert_selection.clone();
         let selection_badges = selection_badges.clone();
         let import_selected = import_selected.clone();
         let import_all = import_all.clone();
@@ -546,7 +579,6 @@ pub fn present(
         let busy = busy.clone();
         photos.connect_selected_children_changed(move |flow| {
             let selected = flow.selected_children();
-            deselect_all.set_sensitive(!selected.is_empty());
 
             for badge in selection_badges.borrow().iter() {
                 badge.set_visible(false);
@@ -563,6 +595,9 @@ pub fn present(
             update_selection(
                 flow,
                 &selection_label,
+                &select_all,
+                &deselect_all,
+                &invert_selection,
                 &import_selected,
                 &import_all,
                 &sources,
@@ -584,6 +619,9 @@ pub fn present(
         let sources = sources.clone();
         let selection_badges = selection_badges.clone();
         let selection_label = selection_label.clone();
+        let select_all = select_all.clone();
+        let deselect_all = deselect_all.clone();
+        let invert_selection = invert_selection.clone();
         let import_selected = import_selected.clone();
         let import_all = import_all.clone();
         let destination = destination.clone();
@@ -599,10 +637,10 @@ pub fn present(
             clear_flow(&photos);
 
             source_value.set_text(&format!("{name} — {}", root_path.display()));
-            choose_source.set_label("Choose other…");
+            choose_source.set_label("Change source");
             status.set_text("Scanning DCIM for photos…");
             empty.set_text("Scanning camera or SD card…");
-            selection_label.set_text("0 selected / 0 photos");
+            selection_label.set_text("0 of 0 selected");
             preview_stack.set_visible_child_name("empty");
             import_selected.set_sensitive(false);
             import_all.set_sensitive(false);
@@ -623,6 +661,9 @@ pub fn present(
             let sources = sources.clone();
             let selection_badges = selection_badges.clone();
             let selection_label = selection_label.clone();
+            let select_all = select_all.clone();
+            let deselect_all = deselect_all.clone();
+            let invert_selection = invert_selection.clone();
             let import_selected = import_selected.clone();
             let import_all = import_all.clone();
             let destination = destination.clone();
@@ -669,6 +710,9 @@ pub fn present(
                             update_selection(
                                 &photos,
                                 &selection_label,
+                                &select_all,
+                                &deselect_all,
+                                &invert_selection,
                                 &import_selected,
                                 &import_all,
                                 &sources,
@@ -709,6 +753,9 @@ pub fn present(
                             update_selection(
                                 &photos,
                                 &selection_label,
+                                &select_all,
+                                &deselect_all,
+                                &invert_selection,
                                 &import_selected,
                                 &import_all,
                                 &sources,
@@ -765,6 +812,9 @@ pub fn present(
         let destination = destination.clone();
         let photos = photos.clone();
         let selection_label = selection_label.clone();
+        let select_all = select_all.clone();
+        let deselect_all = deselect_all.clone();
+        let invert_selection = invert_selection.clone();
         let import_selected = import_selected.clone();
         let import_all = import_all.clone();
         let sources = sources.clone();
@@ -779,6 +829,9 @@ pub fn present(
             let destination = destination.clone();
             let photos = photos.clone();
             let selection_label = selection_label.clone();
+            let select_all = select_all.clone();
+            let deselect_all = deselect_all.clone();
+            let invert_selection = invert_selection.clone();
             let import_selected = import_selected.clone();
             let import_all = import_all.clone();
             let sources = sources.clone();
@@ -794,6 +847,9 @@ pub fn present(
                             update_selection(
                                 &photos,
                                 &selection_label,
+                                &select_all,
+                                &deselect_all,
+                                &invert_selection,
                                 &import_selected,
                                 &import_all,
                                 &sources,
@@ -941,6 +997,33 @@ pub fn present(
 
     {
         let photos = photos.clone();
+        select_all.connect_clicked(move |_| photos.select_all());
+    }
+
+    {
+        let photos = photos.clone();
+        let sources = sources.clone();
+        invert_selection.connect_clicked(move |_| {
+            let selected = photos
+                .selected_children()
+                .into_iter()
+                .filter_map(|child| usize::try_from(child.index()).ok())
+                .collect::<std::collections::HashSet<_>>();
+
+            for index in 0..sources.borrow().len() {
+                if let Some(child) = photos.child_at_index(index as i32) {
+                    if selected.contains(&index) {
+                        photos.unselect_child(&child);
+                    } else {
+                        photos.select_child(&child);
+                    }
+                }
+            }
+        });
+    }
+
+    {
+        let photos = photos.clone();
         deselect_all.connect_clicked(move |_| photos.unselect_all());
     }
 
@@ -975,6 +1058,9 @@ pub fn present(
         let preview_stack = preview_stack.clone();
         let sources = sources.clone();
         let selection_label = selection_label.clone();
+        let select_all = select_all.clone();
+        let deselect_all = deselect_all.clone();
+        let invert_selection = invert_selection.clone();
         let import_selected = import_selected.clone();
         let import_all = import_all.clone();
         let destination = destination.clone();

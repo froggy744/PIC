@@ -91,14 +91,16 @@ fn fingerprint(path: &Path) -> (Option<i64>, Option<i64>) {
     (mtime, Some(metadata.len() as i64))
 }
 
-fn preview_tile(source: &Path) -> (gtk::Box, gtk::Picture) {
-    // Import is a dense chooser, not a second library gallery. Keep tiles
-    // deliberately small so a camera roll can be scanned quickly.
+fn preview_tile(source: &Path) -> (gtk::FlowBoxChild, gtk::Picture) {
+    // Make the selectable FlowBox cell itself fixed-width. Keeping only the
+    // inner picture small still lets FlowBox stretch the cell across the row,
+    // leaving large empty "columns" between thumbnails.
     let tile = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    tile.set_size_request(100, 74);
+    tile.set_size_request(96, 72);
     tile.set_hexpand(false);
     tile.set_vexpand(false);
     tile.set_halign(gtk::Align::Start);
+    tile.set_valign(gtk::Align::Start);
     tile.set_tooltip_text(Some(&source.display().to_string()));
 
     let picture = gtk::Picture::new();
@@ -108,10 +110,20 @@ fn preview_tile(source: &Path) -> (gtk::Box, gtk::Picture) {
     picture.set_hexpand(false);
     picture.set_vexpand(false);
     picture.set_halign(gtk::Align::Start);
+    picture.set_valign(gtk::Align::Start);
     picture.add_css_class("thumbnail");
-
     tile.append(&picture);
-    (tile, picture)
+
+    let child = gtk::FlowBoxChild::new();
+    child.set_child(Some(&tile));
+    child.set_size_request(96, 72);
+    child.set_hexpand(false);
+    child.set_vexpand(false);
+    child.set_halign(gtk::Align::Start);
+    child.set_valign(gtk::Align::Start);
+    child.set_tooltip_text(Some(&source.display().to_string()));
+
+    (child, picture)
 }
 
 fn scan_source(
@@ -416,9 +428,9 @@ pub fn present(parent: &adw::ApplicationWindow, on_imported: Rc<dyn Fn(String)>)
     photos.set_selection_mode(gtk::SelectionMode::Multiple);
     photos.set_homogeneous(false);
     photos.set_min_children_per_line(4);
-    photos.set_max_children_per_line(12);
-    photos.set_row_spacing(5);
-    photos.set_column_spacing(5);
+    photos.set_max_children_per_line(20);
+    photos.set_row_spacing(4);
+    photos.set_column_spacing(4);
     photos.set_margin_top(6);
     photos.set_margin_bottom(6);
     photos.set_margin_start(6);

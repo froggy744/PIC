@@ -99,10 +99,13 @@ fn fingerprint(path: &Path) -> (Option<i64>, Option<i64>) {
 }
 
 fn preview_tile(source: &Path) -> (gtk::FlowBoxChild, gtk::Picture, gtk::Button) {
-    // Nikon stills are 3:2, so use a matching 144x96 thumbnail box.
-    // Cover only trims minimally when source aspect ratios differ.
+    // Fixed 3:2 camera thumbnail. The FlowBox is constrained to five
+    // columns below, so GTK cannot stretch this into a wide banner.
+    const THUMB_W: i32 = 168;
+    const THUMB_H: i32 = 112;
+
     let tile = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    tile.set_size_request(144, 96);
+    tile.set_size_request(THUMB_W, THUMB_H);
     tile.set_hexpand(false);
     tile.set_vexpand(false);
     tile.set_halign(gtk::Align::Start);
@@ -112,7 +115,7 @@ fn preview_tile(source: &Path) -> (gtk::FlowBoxChild, gtk::Picture, gtk::Button)
     let picture = gtk::Picture::new();
     picture.set_content_fit(gtk::ContentFit::Cover);
     picture.set_can_shrink(true);
-    picture.set_size_request(144, 96);
+    picture.set_size_request(THUMB_W, THUMB_H);
     picture.set_hexpand(false);
     picture.set_vexpand(false);
     picture.set_halign(gtk::Align::Start);
@@ -121,7 +124,7 @@ fn preview_tile(source: &Path) -> (gtk::FlowBoxChild, gtk::Picture, gtk::Button)
 
     let overlay = gtk::Overlay::new();
     overlay.set_child(Some(&picture));
-    overlay.set_size_request(144, 96);
+    overlay.set_size_request(THUMB_W, THUMB_H);
 
     let selected_badge = gtk::Button::from_icon_name("object-select-symbolic");
     selected_badge.add_css_class("suggested-action");
@@ -140,12 +143,42 @@ fn preview_tile(source: &Path) -> (gtk::FlowBoxChild, gtk::Picture, gtk::Button)
 
     let child = gtk::FlowBoxChild::new();
     child.set_child(Some(&tile));
-    child.set_size_request(144, 96);
+    child.set_size_request(THUMB_W, THUMB_H);
     child.set_hexpand(false);
     child.set_vexpand(false);
     child.set_halign(gtk::Align::Start);
     child.set_valign(gtk::Align::Start);
     child.set_tooltip_text(Some(&source.display().to_string()));
+
+    // GTK Multiple selection does not reliably toggle a selected FlowBoxChild
+    // off with a plain second click. Claim only that case; first-click and
+    // Shift/Ctrl multi-selection continue through GTK normally.
+    let click = gtk::GestureClick::new();
+    click.set_button(1);
+    click.set_propagation_phase(gtk::PropagationPhase::Capture);
+    {
+        let child = child.clone();
+        click.connect_pressed(move |gesture, _, _, _| {
+            let modifiers = gesture.current_event_state();
+            if modifiers.intersects(
+                gtk::gdk::ModifierType::CONTROL_MASK | gtk::gdk::ModifierType::SHIFT_MASK,
+            ) {
+                return;
+            }
+            if !child.is_selected() {
+                return;
+            }
+            let Some(parent) = child.parent() else {
+                return;
+            };
+            let Ok(flow) = parent.downcast::<gtk::FlowBox>() else {
+                return;
+            };
+            flow.unselect_child(&child);
+            gesture.set_state(gtk::EventSequenceState::Claimed);
+        });
+    }
+    child.add_controller(click);
 
     (child, picture, selected_badge)
 }
@@ -513,8 +546,13 @@ pub fn present(
     let photos = gtk::FlowBox::new();
     photos.set_selection_mode(gtk::SelectionMode::Multiple);
     photos.set_homogeneous(false);
-    photos.set_min_children_per_line(4);
-    photos.set_max_children_per_line(20);
+    photos.set_min_children_per_line(5);
+    photos.set_max_children_per_line(5);
+    photos.set_halign(gtk::Align::Center);
+    photos.set_valign(gtk::Align::Start);
+    photos.set_hexpand(false);
+    photos.set_vexpand(false);
+    photos.set_width_request(868);
     photos.set_row_spacing(4);
     photos.set_column_spacing(4);
     photos.set_margin_top(6);
@@ -522,11 +560,20 @@ pub fn present(
     photos.set_margin_start(6);
     photos.set_margin_end(6);
 
+    // Stack children are normally allocated to the full stack width. A
+    // wrapper lets FlowBox keep its natural five-column width instead.
+    let photo_grid_wrap = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    photo_grid_wrap.set_hexpand(true);
+    photo_grid_wrap.set_vexpand(true);
+    photo_grid_wrap.set_halign(gtk::Align::Fill);
+    photo_grid_wrap.set_valign(gtk::Align::Start);
+    photo_grid_wrap.append(&photos);
+
     let preview_stack = gtk::Stack::new();
     preview_stack.set_hexpand(true);
     preview_stack.set_vexpand(true);
     preview_stack.add_named(&empty_state, Some("empty"));
-    preview_stack.add_named(&photos, Some("photos"));
+    preview_stack.add_named(&photo_grid_wrap, Some("photos"));
     preview_stack.set_visible_child_name("empty");
 
     let scrolled = gtk::ScrolledWindow::builder()

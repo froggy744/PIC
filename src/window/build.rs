@@ -939,6 +939,11 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             initial_page,
         );
     });
+    let import_parent = window.clone();
+    info.import_photos.connect_clicked(move |_| {
+        crate::sd_import::present(&import_parent);
+    });
+
     let present_settings_from_more = present_settings.clone();
     info.more.connect_clicked(move |_| {
         present_settings_from_more(None);

@@ -25,6 +25,7 @@ pub struct InfoBar {
     pub one_to_one: gtk::ToggleButton,
     pub rotate: gtk::Button,
     pub export: gtk::Button,
+    pub import_photos: gtk::Button,
     pub more: gtk::Button,
     pub print: gtk::Button,
     pub grid_zoom: gtk::Scale,
@@ -249,6 +250,10 @@ impl InfoBar {
         configure_action_button(&export);
         export.set_tooltip_text(Some("Export photo"));
 
+        let import_photos = gtk::Button::from_icon_name("folder-download-symbolic");
+        configure_action_button(&import_photos);
+        import_photos.set_tooltip_text(Some("Import photos from camera or SD card"));
+
         let more = gtk::Button::from_icon_name("emblem-system-symbolic");
         configure_action_button(&more);
         more.set_tooltip_text(Some("Settings"));
@@ -266,6 +271,7 @@ impl InfoBar {
         actions.append(&one_to_one);
         actions.append(&rotate);
         actions.append(&export);
+        actions.append(&import_photos);
         actions.append(&more);
         actions.append(&print);
         root.append(&actions);
@@ -328,6 +334,7 @@ impl InfoBar {
             one_to_one,
             rotate,
             export,
+            import_photos,
             more,
             print,
             grid_zoom,

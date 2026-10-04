@@ -250,7 +250,7 @@ impl InfoBar {
         configure_action_button(&export);
         export.set_tooltip_text(Some("Export photo"));
 
-        let import_photos = gtk::Button::from_icon_name("folder-download-symbolic");
+        let import_photos = gtk::Button::from_icon_name("media-flash-symbolic");
         configure_action_button(&import_photos);
         import_photos.set_tooltip_text(Some("Import photos from camera or SD card"));
 

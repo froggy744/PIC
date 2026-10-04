@@ -475,11 +475,14 @@ pub fn present(parent: &adw::ApplicationWindow, on_imported: Rc<dyn Fn(String)>)
 
     let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     actions.set_halign(gtk::Align::End);
+    let deselect_all = gtk::Button::with_label("Deselect All");
     let cancel = gtk::Button::with_label("Cancel");
     let import_selected = gtk::Button::with_label("Import Selected");
     let import_all = gtk::Button::with_label("Import All");
+    deselect_all.set_sensitive(false);
     import_selected.set_sensitive(false);
     import_all.set_sensitive(false);
+    actions.append(&deselect_all);
     actions.append(&cancel);
     actions.append(&import_selected);
     actions.append(&import_all);
@@ -492,12 +495,14 @@ pub fn present(parent: &adw::ApplicationWindow, on_imported: Rc<dyn Fn(String)>)
 
     {
         let selection_label = selection_label.clone();
+        let deselect_all = deselect_all.clone();
         let import_selected = import_selected.clone();
         let import_all = import_all.clone();
         let sources = sources.clone();
         let destination = destination.clone();
         let busy = busy.clone();
         photos.connect_selected_children_changed(move |flow| {
+            deselect_all.set_sensitive(!flow.selected_children().is_empty());
             update_selection(
                 flow,
                 &selection_label,
@@ -901,6 +906,11 @@ pub fn present(parent: &adw::ApplicationWindow, on_imported: Rc<dyn Fn(String)>)
         import_all.connect_clicked(move |_| {
             start_import(sources.borrow().clone());
         });
+    }
+
+    {
+        let photos = photos.clone();
+        deselect_all.connect_clicked(move |_| photos.unselect_all());
     }
 
     let window_for_cancel = window.clone();

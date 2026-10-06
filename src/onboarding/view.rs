@@ -111,11 +111,13 @@ impl StartupWizard {
         ))
         .expect("bundled PIC logo is valid");
         let logo = gtk::Image::from_paintable(Some(&logo_texture));
-        logo.set_pixel_size(128);
+        // Welcome camera size in logical pixels; increase to enlarge it.
+        logo.set_pixel_size(147);
         logo.set_halign(gtk::Align::Center);
         branding.append(&heading);
         logo.set_valign(gtk::Align::End);
-        logo.set_margin_bottom(2);
+        // Increase this bottom margin to move the camera upward.
+        logo.set_margin_bottom(6);
         logo.add_css_class("welcome-camera");
         let camera_style = gtk::CssProvider::new();
         camera_style

@@ -47,6 +47,8 @@ pub struct Gallery {
     tile_width: Rc<Cell<i32>>,
     tile_height: Rc<Cell<i32>>,
     current_photos: Rc<RefCell<Vec<PhotoObject>>>,
+    metadata_index: RefCell<metadata_index::CatalogObjectIndex>,
+    pending_metadata: Rc<RefCell<HashMap<i64, Photo>>>,
     replace_generation: Rc<Cell<u64>>,
     // True while a progressive gallery replacement is still building batches.
     // Folder navigation relies on this to keep retrying until the virtualized
@@ -847,6 +849,8 @@ impl Gallery {
             tile_height,
             current_photos,
             replace_generation: Rc::new(Cell::new(0)),
+            metadata_index: RefCell::new(metadata_index::CatalogObjectIndex::default()),
+            pending_metadata: Rc::new(RefCell::new(HashMap::new())),
             stream_building: Rc::new(Cell::new(false)),
             pending_folder_target: Rc::new(RefCell::new(None)),
             group_mode,

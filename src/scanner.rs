@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{BufReader, Cursor};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -16,6 +16,8 @@ use crate::db::{self, PhotoMetadata};
 use crate::thumbnail;
 
 mod network_raw;
+#[cfg(target_os = "linux")]
+mod progressive;
 
 #[derive(Debug, Clone)]
 pub enum ScanEvent {
@@ -31,6 +33,14 @@ pub enum ScanEvent {
     PhotosIndexed {
         photos: Vec<IndexedPhoto>,
         counts: db::SidebarCounts,
+    },
+    PhotosUpdated { photos: Vec<db::Photo> },
+    NetworkProgress {
+        found: usize,
+        added: usize,
+        metadata_ready: usize,
+        previews_ready: usize,
+        catalog_complete: bool,
     },
     PhotosRemoved { ids: Vec<i64> },
     FoldersRemoved,
@@ -70,15 +80,25 @@ pub struct IndexedPhoto {
 
 /// Cooperative cancellation handle for an import and its thumbnail pass.
 #[derive(Clone, Default)]
-pub struct ScanControl(Arc<AtomicBool>);
+pub struct ScanControl(Arc<AtomicU8>);
 
 impl ScanControl {
     pub fn cancel(&self) {
-        self.0.store(true, Ordering::Release);
+        self.0.store(1, Ordering::Release);
+    }
+
+    /// Closing a window or switching libraries suspends authorized work
+    /// without turning it into an explicit, persistent user Stop.
+    pub fn interrupt(&self) {
+        let _=self.0.compare_exchange(0,2,Ordering::AcqRel,Ordering::Acquire);
+    }
+
+    pub fn should_resume(&self) -> bool {
+        self.0.load(Ordering::Acquire)==2
     }
 
     pub fn is_cancelled(&self) -> bool {
-        self.0.load(Ordering::Acquire)
+        self.0.load(Ordering::Acquire)!=0
     }
 }
 
@@ -102,6 +122,10 @@ fn scan_with_control(
     events: Option<&Sender<ScanEvent>>,
     control: &ScanControl,
 ) -> Result<usize> {
+    #[cfg(target_os = "linux")]
+    if crate::network_shares::private(root) {
+        return progressive::scan(root, database, events, control, false);
+    }
     if !root_is_available(root) {
         if !control.is_cancelled() && reconcile_deleted_root(root, database, events)? {
             return Ok(0);
@@ -531,18 +555,39 @@ fn root_is_available(root: &str) -> bool {
 }
 
 pub fn spawn_scan(root: String, database: PathBuf, events: Sender<ScanEvent>) -> ScanControl {
+    spawn_scan_mode(root, database, events, false)
+}
+
+pub fn spawn_scan_mode(root: String, database: PathBuf, events: Sender<ScanEvent>, resume: bool) -> ScanControl {
     let control = ScanControl::default();
     let worker_control = control.clone();
     std::thread::spawn(move || {
         let lock = SCAN_LOCK.get_or_init(|| Mutex::new(()));
         let _guard = acquire_scan_lock(lock);
+        if worker_control.is_cancelled() {
+            send(Some(&events),ScanEvent::Cancelled {imported:0});
+            return;
+        }
         send(
             Some(&events),
             ScanEvent::Started {
                 root: PathBuf::from(&root),
             },
         );
-        if let Err(error) = scan_with_control(&root, &database, Some(&events), &worker_control) {
+        let result = {
+            #[cfg(target_os = "linux")]
+            if crate::network_shares::private(&root) {
+                progressive::scan(&root, &database, Some(&events), &worker_control, resume)
+            } else {
+                scan_with_control(&root, &database, Some(&events), &worker_control)
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                let _ = resume;
+                scan_with_control(&root, &database, Some(&events), &worker_control)
+            }
+        };
+        if let Err(error) = result {
             send(
                 Some(&events),
                 ScanEvent::Failed {
@@ -1429,6 +1474,17 @@ mod scan_lock_tests {
         assert!(lock.is_poisoned());
         drop(acquire_scan_lock(&lock));
         drop(acquire_scan_lock(&lock));
+    }
+
+    #[test]
+    fn closing_can_resume_but_an_explicit_stop_takes_precedence() {
+        let control=ScanControl::default();
+        control.interrupt();
+        assert!(control.is_cancelled() && control.should_resume());
+        control.cancel();
+        control.interrupt();
+        assert!(control.is_cancelled());
+        assert!(!control.should_resume());
     }
 }
 

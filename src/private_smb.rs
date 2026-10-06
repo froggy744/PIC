@@ -3,6 +3,10 @@ use crate::network_shares::Entry;
 use std::ffi::{CStr, CString, c_char, c_int, c_uint, c_void};
 
 unsafe extern "C" {
+    fn pic_smb_scan(uri:*const c_char,
+        cb:extern "C" fn(*mut c_void,*const c_char,c_uint,u64,i64,c_int)->c_int,
+        ctx:*mut c_void,error:*mut c_char,cap:usize)->c_int;
+    fn pic_smb_scan_close();
     fn pic_smb_list(uri: *const c_char, cb: extern "C" fn(*mut c_void,*const c_char,c_uint)->c_int,
         ctx: *mut c_void, error: *mut c_char, capacity: usize) -> c_int;
     fn pic_smb_read(uri: *const c_char, out: *mut *mut u8, length: *mut usize,
@@ -14,6 +18,17 @@ unsafe extern "C" {
     fn pic_smb_scan_hosts(prefix: *const c_char,
         cb: extern "C" fn(*mut c_void,*const c_char,c_uint,*const c_char)->c_int,
         ctx: *mut c_void, error: *mut c_char, capacity: usize) -> c_int;
+}
+pub fn close_scan_session() { unsafe {pic_smb_scan_close();} }
+pub fn visit_scan(uri:&str, visitor:&mut dyn FnMut(crate::network_shares::ScanEntry)->bool) -> anyhow::Result<()> {
+    let mut context=crate::network_shares::ScanVisitor {parent:uri,visitor,panicked:false};
+    let uri=CString::new(uri)?;
+    let mut error=[0 as c_char;512];
+    let result=unsafe {pic_smb_scan(uri.as_ptr(),crate::network_shares::receive_scan_entry,
+        &mut context as *mut _ as *mut c_void,error.as_mut_ptr(),error.len())};
+    anyhow::ensure!(!context.panicked,"network scan callback panicked");
+    anyhow::ensure!(result>=0,"{}",c_error(&error));
+    Ok(())
 }
 fn c_error(buf: &[c_char]) -> String {
     unsafe { CStr::from_ptr(buf.as_ptr()) }.to_string_lossy().into_owned()

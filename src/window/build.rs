@@ -3978,12 +3978,13 @@ fn start_photo_export_single(
                 if job.active.is_some() {
                     None
                 } else {
-                    job.pending
-                        .pop_front()
-                        .map(|root| (root, job.generation, job.kind))
+                    job.pending.pop_front().map(|root| {
+                        let resume=job.resume_roots.remove(&root);
+                        (root,job.generation,resume)
+                    })
                 }
             };
-            let Some((root, generation, kind)) = next else {
+            let Some((root, generation, resume)) = next else {
                 return;
             };
             
@@ -3991,7 +3992,7 @@ fn start_photo_export_single(
                 scan_job.borrow_mut().kind = None;
                 return;
             };
-            let control = spawn_tagged_scan(root.clone(), database, generation, scan_sender.clone());
+            let control = spawn_tagged_scan(root.clone(), database, generation, scan_sender.clone(),resume);
             let mut job = scan_job.borrow_mut();
             job.active_root = Some(root);
             job.active = Some(control);
@@ -4088,13 +4089,20 @@ fn start_photo_export_single(
 
     let cancel_scan_job: Rc<dyn Fn()> = {
         let scan_job = scan_job.clone();
+        let connection = connection.clone();
         let refresh_status_label = refresh_status_label.clone();
         Rc::new(move || {
             let mut job = scan_job.borrow_mut();
             // Stop means the whole current job. In particular, a library refresh
             // must not continue with the next queued folder after cancellation.
             job.stop_requested = true;
+            for root in job.active_root.iter().chain(job.pending.iter()) {
+                if let Err(error)=db::pause_network_import(&connection.borrow(),root) {
+                    eprintln!("Could not save stopped import {root}: {error}");
+                }
+            }
             job.pending.clear();
+            job.resume_roots.clear();
             if matches!(job.kind, Some(ScanJobKind::Refresh | ScanJobKind::FolderRefresh)) {
                 refresh_status_label.set_text("Stopping refresh…");
             }
@@ -4314,6 +4322,17 @@ fn start_photo_export_single(
     onboarding.install_library_surface(&info.root);
     onboarding.bind_scan_job(&scan_job);
     onboarding_slot.replace(Some(onboarding.clone()));
+    // Only persisted unfinished jobs authorize continuation. A completed root,
+    // sidebar selection, or a generic startup signal never requests discovery.
+    #[cfg(target_os="linux")]
+    match db::resumable_network_imports(&connection.borrow()) {
+        Ok(roots) if !roots.is_empty() => {
+            for root in roots { scan_job.borrow_mut().enqueue_network_import(root,true); }
+            start_next_scan();
+        }
+        Ok(_) => {},
+        Err(error) => eprintln!("Could not recover unfinished network imports: {error}"),
+    }
     let getting_started = gio::SimpleAction::new("getting-started", None);
     {
         let owner = Rc::downgrade(&onboarding);
@@ -4346,16 +4365,18 @@ fn start_photo_export_single(
         let connection=connection_for_network.clone();
         let sidebar_refresh=sidebar_refresh_for_network.clone();
         let selected: Rc<dyn Fn(String)>=Rc::new(move |root: String| {
+            if scan_job.borrow().active_root.as_ref()==Some(&root) || scan_job.borrow().pending.contains(&root) { return; }
             if let Err(error)=db::mark_import_root(&connection.borrow(),&root){
                 eprintln!("Could not register imported folder {root}: {error}");
                 return;
             }
+            if let Err(error)=db::register_network_import(&connection.borrow(),&root) {
+                eprintln!("Could not save queued network import {root}: {error}");return;
+            }
             sidebar_refresh();
             {
                 let mut job=scan_job.borrow_mut();
-                job.authorize_photo_scan(PhotoScanRequestReason::ImportFolder)
-                    .expect("import is an authorized scan reason");
-                job.pending.push_back(root);
+                job.enqueue_network_import(root,true);
             }
             start_next_scan();
         });
@@ -4448,6 +4469,7 @@ fn start_photo_export_single(
     let mut priority_thumbnail_paths = Vec::new();
     let mut failure_message_shown = false;
     let mut thumbnail_total: usize = 0;
+    let mut network_scan = false;
     let mut last_progress_update = Instant::now();
     let mut pending_sidebar_counts: Option<db::SidebarCounts> = None;
     let mut photos_since_sidebar_update = 0usize;
@@ -4583,11 +4605,11 @@ fn start_photo_export_single(
             }
         }
 
-        if priority_pending > 0 && thumbnail_total == 0 {
+        if !network_scan && priority_pending > 0 && thumbnail_total == 0 {
             refresh_status_label_for_events
                 .set_text(&format!("Creating visible thumbnails ({priority_pending} queued)"));
             refresh_status_box_for_events.set_visible(true);
-        } else if priority_completions > 0 && thumbnail_total == 0 {
+        } else if !network_scan && priority_completions > 0 && thumbnail_total == 0 {
             refresh_status_box_for_events.set_visible(false);
         }
         // Drain committed batches promptly, but cap both event count and wall
@@ -4629,6 +4651,7 @@ fn start_photo_export_single(
                     
                     scan_count = 0;
                     thumbnail_total = 0;
+                    network_scan = root.to_str().is_some_and(|path| path.starts_with("nfs://") || path.starts_with("smb://"));
                     let is_user_job = !matches!(
                         scan_job_for_events.borrow().kind,
                         Some(ScanJobKind::Maintenance) | None
@@ -4665,6 +4688,24 @@ fn start_photo_export_single(
                     refresh_status_label_for_events
                         .set_text(&format!("Scanning… found {found} photos"));
                     refresh_status_box_for_events.set_visible(true);
+                }
+
+                scanner::ScanEvent::NetworkProgress {found,added,metadata_ready,previews_ready,catalog_complete} => {
+                    let phase=if *catalog_complete {"Finishing previews"}else{"Adding photos"};
+                    refresh_status_label_for_events.set_text(&format!("{phase} · Found {found} · Added {added} · Metadata {metadata_ready} · Previews {previews_ready}"));
+                    refresh_status_box_for_events.set_visible(true);
+                    refresh_status_spinner_for_events.set_spinning(true);
+                }
+
+                scanner::ScanEvent::PhotosUpdated {photos} => {
+                    for photo in photos {
+                        if let Some(queued)=pending_photos.iter_mut().find(|queued|queued.id==photo.id) { *queued=photo.clone(); }
+                        gallery_for_events.update_photo(photo);
+                        if let Some(selected)=selected_photo_for_events.borrow().as_ref().filter(|selected|selected.id()==photo.id) {
+                            selected.set_from_photo(photo);
+                            info_for_events.set_photo(Some(selected));
+                        }
+                    }
                 }
 
                 scanner::ScanEvent::PhotosIndexed { photos, counts } => {
@@ -4705,7 +4746,7 @@ fn start_photo_export_single(
                         }
                     }
 
-                    if last_progress_update.elapsed() >= Duration::from_millis(150) {
+                    if !network_scan && last_progress_update.elapsed() >= Duration::from_millis(150) {
                         let text = format!("Indexed {scan_count} photos");
                         refresh_status_label_for_events.set_text(&text);
                         refresh_status_box_for_events.set_visible(true);
@@ -4772,8 +4813,9 @@ fn start_photo_export_single(
                             &gallery_for_events,
                         );
                     }
-                    let text = format!("Indexed {imported} photos");
-                    refresh_status_label_for_events.set_text(&text);
+                    if !network_scan {
+                        refresh_status_label_for_events.set_text(&format!("Indexed {imported} photos"));
+                    }
                     refresh_status_box_for_events.set_visible(true);
                 }
 
@@ -4808,7 +4850,7 @@ fn start_photo_export_single(
                     if thumbnail_dirty_seen.insert(path.clone()) {
                         thumbnail_dirty_paths.push_back(path.clone());
                     }
-                    if last_progress_update.elapsed() >= Duration::from_millis(150) {
+                    if !network_scan && last_progress_update.elapsed() >= Duration::from_millis(150) {
                         let text = format!("Creating thumbnails {scan_count} / {thumbnail_total}");
                         refresh_status_label_for_events.set_text(&text);
                         refresh_status_box_for_events.set_visible(true);
@@ -4850,7 +4892,7 @@ fn start_photo_export_single(
                         )
                     };
 
-                    if kind == Some(ScanJobKind::Refresh) && has_more {
+                    if has_more && !scan_job_for_events.borrow().stop_requested {
                         // Start exactly one next folder. Because scanner::Finished
                         // arrives after that folder's thumbnail pass, refresh
                         // progress remains serialized end-to-end.
@@ -5089,16 +5131,18 @@ fn start_photo_export_single(
         let refresh_status_spinner = refresh_status_spinner.clone();
         let stop_scan = stop_scan.clone();
         let settings_window = settings_window_for_switch.clone();
+        let start_next_scan = start_next_scan.clone();
         Rc::new(move |id: &str| -> Result<(), String> {
             {
                 let mut job = scan_job.borrow_mut();
                 if let Some(active) = job.active.take() {
-                    active.cancel();
+                    active.interrupt();
                 }
                 job.generation = job.generation.wrapping_add(1);
                 job.kind = None;
                 job.active_root = None;
                 job.pending.clear();
+                job.resume_roots.clear();
                 job.stop_requested = true;
             }
             onboarding_for_switch.library_changed();
@@ -5255,6 +5299,12 @@ fn start_photo_export_single(
             rebuild_folder_watches();
             window.set_title(Some(&format!("PIC — {}", library.name)));
             settings_window.reset();
+            #[cfg(target_os="linux")]
+            {
+                let roots=db::resumable_network_imports(&connection.borrow()).map_err(|error|error.to_string())?;
+                for root in roots {scan_job.borrow_mut().enqueue_network_import(root,true);}
+                start_next_scan();
+            }
             Ok(())
         })
     }));
@@ -5265,12 +5315,14 @@ fn start_photo_export_single(
     // important part of the session.
     install_close_confirmation(&window, {
         let connection = connection.clone();
+        let scan_job = scan_job.clone();
         let filter = filter.clone();
         let gallery = gallery.clone();
         let albums_home = albums_home.clone();
         let main_split = main_split.clone();
         let window = window.clone();
         Rc::new(move || {
+            if let Some(active)=scan_job.borrow().active.as_ref() {active.interrupt();}
             let guard = connection.borrow();
             let current_filter = filter.get();
             let _ = db::set_setting(

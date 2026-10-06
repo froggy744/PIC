@@ -84,6 +84,47 @@ CREATE INDEX IF NOT EXISTS idx_editing_event_items_photo ON editing_event_items(
 CREATE INDEX IF NOT EXISTS idx_photos_taken_at ON photos(taken_at DESC);
 CREATE INDEX IF NOT EXISTS idx_photos_folder ON photos(folder_id);
 CREATE INDEX IF NOT EXISTS idx_album_photos_photo ON album_photos(photo_id);
+CREATE TABLE IF NOT EXISTS network_import_jobs (
+  root TEXT PRIMARY KEY REFERENCES folders(path) ON DELETE CASCADE,
+  generation INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'queued',
+  recovered INTEGER NOT NULL DEFAULT 0,
+  added INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS network_import_dirs (
+  root TEXT NOT NULL REFERENCES network_import_jobs(root) ON DELETE CASCADE,
+  path TEXT NOT NULL,
+  parent TEXT,
+  state TEXT NOT NULL DEFAULT 'pending',
+  PRIMARY KEY(root, path)
+);
+CREATE INDEX IF NOT EXISTS idx_network_dirs_pending ON network_import_dirs(root, state);
+CREATE TABLE IF NOT EXISTS network_import_seen (
+  root TEXT NOT NULL REFERENCES network_import_jobs(root) ON DELETE CASCADE,
+  path TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  PRIMARY KEY(root, path)
+);
+CREATE TABLE IF NOT EXISTS network_photo_work (
+  path TEXT PRIMARY KEY REFERENCES photos(path) ON DELETE CASCADE ON UPDATE CASCADE,
+  root TEXT NOT NULL REFERENCES network_import_jobs(root) ON DELETE CASCADE,
+  generation INTEGER NOT NULL,
+  mtime INTEGER,
+  size INTEGER,
+  metadata_state TEXT NOT NULL DEFAULT 'pending',
+  thumbnail_state TEXT NOT NULL DEFAULT 'pending'
+);
+CREATE INDEX IF NOT EXISTS idx_network_work_pending ON network_photo_work(root, generation, metadata_state, thumbnail_state);
+CREATE INDEX IF NOT EXISTS idx_network_work_queue ON network_photo_work(root, generation)
+  WHERE metadata_state='pending' OR thumbnail_state='pending';
+CREATE TABLE IF NOT EXISTS network_import_pairs (
+  root TEXT NOT NULL REFERENCES network_import_jobs(root) ON DELETE CASCADE,
+  folder TEXT NOT NULL,
+  stem TEXT NOT NULL,
+  raw INTEGER NOT NULL DEFAULT 0,
+  jpeg INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY(root, folder, stem)
+);
 "#;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -189,3 +230,4 @@ include!("db/overlay_assets.rs");
 include!("db/tests.rs");
 
 include!("db/path_migration.rs");
+include!("db/network_import.rs");

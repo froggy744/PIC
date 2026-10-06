@@ -14,6 +14,7 @@ use crate::db::{Folder, Photo};
 use crate::photo_object::PhotoObject;
 
 mod photo_wall_layout;
+mod metadata_index;
 #[path = "grid/masonry_layout.rs"]
 mod masonry_layout;
 #[cfg(test)]

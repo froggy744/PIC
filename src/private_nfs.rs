@@ -6,6 +6,10 @@ use std::collections::HashMap;
 
 type Callback = extern "C" fn(*mut c_void, *const c_char, c_uint) -> c_int;
 unsafe extern "C" {
+    fn pic_nfs_scan(host:*const c_char,export_path:*const c_char,relative:*const c_char,
+        cb:extern "C" fn(*mut c_void,*const c_char,c_uint,u64,i64,c_int)->c_int,
+        ctx:*mut c_void,error:*mut c_char,cap:usize)->c_int;
+    fn pic_nfs_scan_close();
     fn pic_nfs_exports(host:*const c_char,cb:Callback,ctx:*mut c_void,error:*mut c_char,cap:usize)->c_int;
     fn pic_nfs_list(host:*const c_char, export_path:*const c_char, relative:*const c_char,
         cb:Callback,ctx:*mut c_void,error:*mut c_char,cap:usize)->c_int;
@@ -15,6 +19,26 @@ unsafe extern "C" {
     fn pic_nfs_stat(host:*const c_char, export_path:*const c_char, relative:*const c_char,
         size:*mut u64,mtime:*mut i64,is_dir:*mut c_int,error:*mut c_char,cap:usize)->c_int;
     fn pic_smb_free(data:*mut c_void);
+}
+pub fn close_scan_session() { unsafe { pic_nfs_scan_close(); } }
+
+pub fn visit_scan(uri:&str, visitor:&mut dyn FnMut(crate::network_shares::ScanEntry)->bool) -> anyhow::Result<()> {
+    let (host,path)=parsed(uri)?;
+    if path=="/" || path=="/mnt" || path=="/exports" {
+        for entry in list(uri)? {
+            if !visitor(crate::network_shares::ScanEntry {entry,metadata:None}) { break; }
+        }
+        return Ok(());
+    }
+    let (export,relative)=resolve(&host,&path)?;
+    let (host,export,relative)=(CString::new(host)?,CString::new(export)?,CString::new(relative)?);
+    let mut context=crate::network_shares::ScanVisitor {parent:uri,visitor,panicked:false};
+    let mut error=[0 as c_char;512];
+    let result=unsafe {pic_nfs_scan(host.as_ptr(),export.as_ptr(),relative.as_ptr(),crate::network_shares::receive_scan_entry,
+        &mut context as *mut _ as *mut c_void,error.as_mut_ptr(),error.len())};
+    anyhow::ensure!(!context.panicked,"network scan callback panicked");
+    anyhow::ensure!(result>=0,"{}",err(&error));
+    Ok(())
 }
 fn err(buffer:&[c_char])->String{ unsafe{CStr::from_ptr(buffer.as_ptr())}.to_string_lossy().into_owned() }
 fn encode(segment:&str)->String {

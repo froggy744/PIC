@@ -66,6 +66,43 @@ static void fail(char *error, size_t cap, const char *operation) {
     snprintf(error, cap, "%s: %s (errno=%d)", operation, strerror(errno), errno);
 }
 typedef int (*entry_callback)(void *context, const char *name, unsigned int kind);
+/* Discovery has a worker-owned context so a bounded streaming callback cannot
+ * hold the process-wide viewer lock while waiting for SQLite to catch up. */
+static _Thread_local SMBCCTX *scan_context = NULL;
+void pic_smb_scan_close(void) {
+    if (scan_context) smbc_free_context(scan_context, 1);
+    scan_context = NULL;
+}
+typedef int (*scan_callback)(void *, const char *, unsigned int, uint64_t, int64_t, int);
+int pic_smb_scan(const char *uri, scan_callback cb, void *context, char *error, size_t cap) {
+    if (!scan_context) {
+        scan_context = smbc_new_context();
+        if (!scan_context) { snprintf(error, cap, "smbc_new_context failed"); return -1; }
+        smbc_setFunctionAuthData(scan_context, guest_auth);
+        smbc_setTimeout(scan_context, 5000);
+        if (!smbc_init_context(scan_context)) {
+            fail(error, cap, "smbc_init_context"); pic_smb_scan_close(); return -1;
+        }
+    }
+    SMBCFILE *dir = smbc_getFunctionOpendir(scan_context)(scan_context, uri);
+    if (!dir) { fail(error, cap, "smbc_opendir"); pic_smb_scan_close(); return -1; }
+    const struct libsmb_file_info *entry;
+    struct stat st;
+    errno = 0;
+    while ((entry = smbc_getFunctionReaddirPlus2(scan_context)(scan_context, dir, &st))) {
+        if (!entry->name || !strcmp(entry->name, ".") || !strcmp(entry->name, "..")) continue;
+        unsigned int kind = S_ISDIR(st.st_mode) ? 7 : S_ISREG(st.st_mode) ? 8 : 0;
+        if (kind && cb(context, entry->name, kind, (uint64_t)st.st_size,
+                       (int64_t)st.st_mtime, st.st_mode != 0) != 0) { errno = 0; break; }
+        errno = 0;
+    }
+    int saved_errno = errno;
+    smbc_getFunctionClosedir(scan_context)(scan_context, dir);
+    if (saved_errno) {
+        errno = saved_errno; fail(error, cap, "smbc_readdirplus2"); pic_smb_scan_close(); return -1;
+    }
+    return 0;
+}
 int pic_smb_list(const char *uri, entry_callback cb, void *context, char *error, size_t cap) {
     pthread_mutex_lock(&lock);
     if (init_smb(error, cap)) { pthread_mutex_unlock(&lock); return -1; }

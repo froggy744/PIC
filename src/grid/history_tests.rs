@@ -242,3 +242,30 @@ fn history_grid_reuses_items_without_leaking_captions_into_other_views() {
     tile.bind_photo(&plain);
     assert!(!tile.imp().visual_loaded.get());
 }
+
+#[test]
+#[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+fn metadata_arriving_before_progressive_batches_survives_gallery_build() {
+    gtk::init().unwrap();
+    let connection=rusqlite::Connection::open_in_memory().unwrap();
+    connection.execute_batch(crate::db::SCHEMA).unwrap();
+    for id in 1..=4001 {
+        connection.execute("INSERT INTO photos(id,path) VALUES (?1,?2)",rusqlite::params![id,format!("/progressive-{id}.jpg")]).unwrap();
+    }
+    let photos=crate::db::photos(&connection,None,false,None).unwrap();
+    let gallery=Gallery::new(&[],180,|_|{},|_,_,_|{},|_,_,_,_|{},|_,_|{},|_|{});
+    gallery.replace(&photos);
+    let mut updated=photos[3000].clone();
+    updated.width=Some(6000);
+    updated.height=Some(4000);
+    updated.camera=Some("arrived before batch".into());
+    gallery.update_photo(&updated);
+    let context=glib::MainContext::default();
+    let deadline=std::time::Instant::now()+std::time::Duration::from_secs(5);
+    while gallery.stream_building.get() && std::time::Instant::now()<deadline {context.iteration(false);}
+    assert!(!gallery.stream_building.get());
+    let objects=gallery.current_photos.borrow();
+    let object=objects.iter().find(|photo|photo.id()==updated.id).unwrap();
+    assert_eq!(object.width(),6000);
+    assert_eq!(object.camera().as_deref(),Some("arrived before batch"));
+}

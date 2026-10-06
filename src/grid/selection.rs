@@ -507,15 +507,16 @@ impl Gallery {
     /// aperture). Updating only width/height leaves both the selected object
     /// and its infobar stale until the entire view is rebuilt.
     pub fn update_photo(&self, updated: &Photo) {
-        if self.layout() == PhotoLayout::PhotoWall {
-            self.sectioned_folder.invalidate_geometry();
+        if self.stream_building.get() {
+            self.pending_metadata.borrow_mut().insert(updated.id, updated.clone());
         }
-        if let Some(photo) = self
-            .current_photos
-            .borrow()
-            .iter()
-            .find(|photo| photo.id() == updated.id)
-        {
+        let photo=self.metadata_index.borrow_mut().photo(
+            &self.current_photos.borrow(),self.replace_generation.get(),updated.id);
+        if let Some(photo) = photo {
+            if self.layout()==PhotoLayout::PhotoWall &&
+                ((photo.width(),photo.height())!=(updated.width.unwrap_or_default(),updated.height.unwrap_or_default()) || photo.rotation()!=updated.rotation) {
+                self.sectioned_folder.invalidate_geometry();
+            }
             photo.set_from_photo(updated);
         }
     }

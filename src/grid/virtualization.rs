@@ -2008,6 +2008,8 @@ impl Gallery {
 
         let next_position = positions.iter().copied().min().unwrap_or(0);
 
+        self.metadata_index.borrow_mut().clear();
+
         self.current_photos
             .borrow_mut()
             .retain(|photo| !ids.contains(&photo.id()));
@@ -2192,6 +2194,7 @@ impl Gallery {
     }
 
     pub fn replace(&self, photos: &[Photo]) {
+        self.pending_metadata.borrow_mut().clear();
         if std::env::var_os("PICASA_TRACE").is_some() { eprintln!("PIC_NAV gallery_replace photos={}", photos.len()); }
         self.stable_zoom_anchor.set(None);
         self.zoom_anchor_restore_generation
@@ -2339,6 +2342,7 @@ impl Gallery {
         const BATCH_SIZE: usize = 2_000;
 
         let photos = Rc::new(photos);
+        let pending_metadata = self.pending_metadata.clone();
         let offset = Rc::new(Cell::new(0usize));
         let initialized = Rc::new(Cell::new(false));
         let store = self.store.clone();
@@ -2375,7 +2379,10 @@ impl Gallery {
             let end = (start + BATCH_SIZE).min(photos.len());
             let objects: Vec<PhotoObject> = photos[start..end]
                 .iter()
-                .map(PhotoObject::from_photo)
+                .map(|photo| {
+                    let updated = pending_metadata.borrow_mut().remove(&photo.id);
+                    PhotoObject::from_photo(updated.as_ref().unwrap_or(photo))
+                })
                 .collect();
             offset.set(end);
 

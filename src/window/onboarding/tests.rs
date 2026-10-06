@@ -1101,3 +1101,15 @@ fn wizard_hides_gallery_and_discovery_row_until_closed() {
     assert!(!owner.tips.borrow().as_ref().unwrap().widget().is_visible());
     parent.close();
 }
+#[test]
+fn network_progress_counts_pending_photos_once_before_geometry_is_ready() {
+    let mut tracker=ImportTracker::default();
+    tracker.start(ImportTicket {generation:42,root:"nfs://nas/photos".into()});
+    let event=ScanEvent::NetworkProgress {found:8,added:2,metadata_ready:0,previews_ready:0,catalog_complete:false};
+    assert!(tracker.event(42,&event));
+    assert!(tracker.event(42,&event));
+    assert_eq!(tracker.progress.indexed,2);
+    assert_eq!(tracker.progress.discovered,Some(8));
+    tracker.event(42,&ScanEvent::PhotosUpdated {photos:Vec::new()});
+    assert_eq!(tracker.progress.indexed,2);
+}

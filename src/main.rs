@@ -71,7 +71,8 @@ fn main() {
             gtk::IconTheme::for_display(&display).add_resource_path("/picrs/icons");
         }
         // Startup loads indexed rows and recovers missing cached previews.
-        // Folder discovery runs only through explicit import/refresh actions.
+        // Folder discovery starts from explicit import/refresh actions, or
+        // continuation of an unfinished import those actions authorized.
         let selected = db::initialize_library_manager();
         match selected.and_then(|library| {
             let existed = library.path.is_file();

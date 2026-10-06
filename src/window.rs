@@ -480,6 +480,7 @@ struct ScanJobState {
     generation: u64,
     kind: Option<ScanJobKind>,
     pending: VecDeque<String>,
+    resume_roots: std::collections::HashSet<String>,
     active: Option<scanner::ScanControl>,
     active_root: Option<String>,
     imported_total: usize,
@@ -488,6 +489,16 @@ struct ScanJobState {
 }
 
 impl ScanJobState {
+    fn enqueue_network_import(&mut self, root: String, resume: bool) -> bool {
+        if self.active_root.as_ref()==Some(&root) || self.pending.contains(&root) { return false; }
+        self.preempt_maintenance();
+        if self.kind.is_none() {
+            self.authorize_photo_scan(PhotoScanRequestReason::ImportFolder);
+        }
+        if resume { self.resume_roots.insert(root.clone()); }
+        self.pending.push_back(root);
+        true
+    }
     fn preempt_maintenance(&mut self) -> bool {
         if self.kind != Some(ScanJobKind::Maintenance) {
             return false;
@@ -499,6 +510,7 @@ impl ScanJobState {
         self.generation = self.generation.wrapping_add(1);
         self.kind = None;
         self.pending.clear();
+        self.resume_roots.clear();
         self.stop_requested = false;
         true
     }
@@ -514,6 +526,7 @@ impl ScanJobState {
         self.generation = self.generation.wrapping_add(1);
         self.kind = Some(kind);
         self.pending.clear();
+        self.resume_roots.clear();
         self.imported_total = 0;
         self.failed_total = 0;
         self.stop_requested = false;
@@ -526,9 +539,10 @@ fn spawn_tagged_scan(
     database: std::path::PathBuf,
     generation: u64,
     ui_sender: std::sync::mpsc::Sender<ScanUiEvent>,
+    resume: bool,
 ) -> scanner::ScanControl {
     let (scan_sender, scan_receiver) = std::sync::mpsc::channel();
-    let control = scanner::spawn_scan(root, database, scan_sender);
+    let control = scanner::spawn_scan_mode(root, database, scan_sender, resume);
     std::thread::spawn(move || {
         let mut terminal_seen = false;
         let mut indexed = 0usize;
@@ -790,6 +804,20 @@ mod photo_scan_authorization_tests {
             authorized_kind(PhotoScanRequestReason::ImportFolder),
             Some(ScanJobKind::Import)
         );
+    }
+
+    #[test]
+    fn adding_another_network_folder_preserves_the_active_import() {
+        let control=crate::scanner::ScanControl::default();
+        let mut job=ScanJobState {generation:9,kind:Some(ScanJobKind::Import),active:Some(control.clone()),
+            active_root:Some("nfs://nas/first".into()),..Default::default()};
+        assert!(job.enqueue_network_import("nfs://nas/second".into(),true));
+        assert!(!control.is_cancelled());
+        assert_eq!(job.generation,9);
+        assert_eq!(job.pending,std::collections::VecDeque::from(["nfs://nas/second".to_string()]));
+        assert!(job.resume_roots.contains("nfs://nas/second"));
+        assert!(!job.enqueue_network_import("nfs://nas/second".into(),true));
+        assert!(!job.enqueue_network_import("nfs://nas/first".into(),true));
     }
 }
 include!("window/search.rs");

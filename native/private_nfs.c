@@ -81,6 +81,7 @@ static struct nfs_context *open_session(const char *host, const char *export_pat
         }
         /* Disable endless reconnection during the initial connection probe. */
         nfs_set_autoreconnect(nfs, 0);
+        nfs_set_timeout(nfs, 5000);
         char session_detail[128];
         snprintf(session_detail, sizeof session_detail,
                  "version=%d uid=%ld gid=%ld source_port=libnfs_default",
@@ -171,6 +172,42 @@ int pic_nfs_list(const char *host, const char *export_path, const char *relative
     trace_stage("directory_list_complete", open_started, host, export_path, relative, detail);
     nfs_destroy_context(nfs);
     return count;
+}
+
+/* The discovery worker owns this session. Unlike picker listings, it streams
+ * attributes from READDIRPLUS and reuses its connection across directories. */
+static _Thread_local struct nfs_context *scan_session = NULL;
+static _Thread_local char scan_host[256] = {0};
+static _Thread_local char scan_export[4096] = {0};
+void pic_nfs_scan_close(void) {
+    if (scan_session) nfs_destroy_context(scan_session);
+    scan_session = NULL; scan_host[0] = 0; scan_export[0] = 0;
+}
+typedef int (*pic_scan_cb)(void *, const char *, unsigned int, uint64_t, int64_t, int);
+int pic_nfs_scan(const char *host, const char *export_path, const char *relative,
+                 pic_scan_cb cb, void *context, char *error, size_t cap) {
+    if (!scan_session || strcmp(scan_host, host) || strcmp(scan_export, export_path)) {
+        pic_nfs_scan_close();
+        scan_session = open_session(host, export_path, error, cap);
+        if (!scan_session) return -1;
+        snprintf(scan_host, sizeof scan_host, "%s", host);
+        snprintf(scan_export, sizeof scan_export, "%s", export_path);
+    }
+    struct nfsdir *dir = NULL;
+    if (nfs_opendir(scan_session, relative, &dir) != 0) {
+        err(error, cap, "nfs_opendir", scan_session);
+        pic_nfs_scan_close(); return -1;
+    }
+    struct nfsdirent *entry;
+    while ((entry = nfs_readdir(scan_session, dir))) {
+        if (!entry->name || !strcmp(entry->name, ".") || !strcmp(entry->name, "..")) continue;
+        unsigned int kind = (entry->mode & S_IFMT) == S_IFDIR ? 7 :
+                            (entry->mode & S_IFMT) == S_IFREG ? 8 : 0;
+        if (kind && cb(context, entry->name, kind, entry->size,
+                       (int64_t)entry->mtime.tv_sec, entry->mode != 0) != 0) break;
+    }
+    nfs_closedir(scan_session, dir);
+    return 0;
 }
 /* A libnfs context must never be used concurrently. Viewer reads run on
  * short-lived Rust threads, so thread-local storage caused every image read to

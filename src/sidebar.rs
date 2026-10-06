@@ -1442,6 +1442,37 @@ pub fn append_folder(
     let Some(state) = sidebar_state(scrolled) else {
         return;
     };
+    if crate::db::is_remote_path(&folder.path) {
+        let Some(list) = stored_widget::<gtk::ListBox>(scrolled, SHARE_LIST_KEY) else { return; };
+        // Persist additions in the tree cache immediately; coalesce visible
+        // rebuilding so a large directory batch produces one sidebar refresh.
+        unsafe {
+            if let Some(mut cache) = list.data::<Vec<Folder>>("picasa-folder-cache") {
+                let folders = cache.as_mut();
+                if let Some(existing) = folders.iter_mut().find(|item| item.id == folder.id) {
+                    *existing = folder.clone();
+                } else {
+                    if let Some(parent) = folders.iter_mut().find(|item| Some(item.id) == folder.parent_id) {
+                        parent.subfolder_count += 1;
+                    }
+                    folders.push(folder.clone());
+                }
+            } else {
+                list.set_data("picasa-folder-cache", vec![folder.clone()]);
+            }
+            if list.data::<bool>("picasa-network-append-scheduled").is_some_and(|flag| *flag.as_ref()) { return; }
+            list.set_data("picasa-network-append-scheduled", true);
+        }
+        let sidebar = scrolled.clone();
+        glib::timeout_add_local_once(std::time::Duration::from_millis(200), move || {
+            let folders = unsafe {
+                list.set_data("picasa-network-append-scheduled", false);
+                list.data::<Vec<Folder>>("picasa-folder-cache").map(|cache| cache.as_ref().clone()).unwrap_or_default()
+            };
+            refresh_network_shares(&sidebar, &folders, &state, &on_unavailable);
+        });
+        return;
+    }
     let Some(list) = stored_widget::<gtk::ListBox>(scrolled, FOLDER_LIST_KEY) else {
         return;
     };

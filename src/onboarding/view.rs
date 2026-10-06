@@ -89,7 +89,7 @@ impl StartupWizard {
         let dialog = adw::Dialog::new();
         dialog.set_title("Welcome to PIC");
         dialog.set_content_width(600);
-        dialog.set_content_height(520);
+        dialog.set_content_height(480);
         let shell = gtk::Box::new(gtk::Orientation::Vertical, 0);
         let header = adw::HeaderBar::new();
         header.add_css_class("flat");
@@ -114,7 +114,14 @@ impl StartupWizard {
         logo.set_pixel_size(64);
         logo.set_halign(gtk::Align::Center);
         branding.append(&heading);
-        branding.append(&logo);
+        logo.set_valign(gtk::Align::End);
+        logo.set_margin_bottom(21);
+        logo.add_css_class("welcome-camera");
+        let camera_style = gtk::CssProvider::new();
+        camera_style
+            .load_from_data(".welcome-camera { -gtk-icon-shadow: 0 2px 4px rgba(0, 0, 0, 0.24); }");
+        logo.style_context()
+            .add_provider(&camera_style, gtk::STYLE_PROVIDER_PRIORITY_APPLICATION);
         let photos_texture = gtk::gdk::Texture::from_bytes(&glib::Bytes::from_static(
             include_bytes!("../../images/onboarding/welcome-photos.png"),
         ))
@@ -129,7 +136,17 @@ impl StartupWizard {
         let photo_visual = adw::Clamp::new();
         photo_visual.set_maximum_size(340);
         photo_visual.set_tightening_threshold(280);
-        photo_visual.set_child(Some(&photos));
+        // Reserve room below the prints for the foreground camera, centred
+        // across the middle print's lower border.
+        let composition = gtk::Overlay::new();
+        let photo_canvas = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        photo_canvas.append(&photos);
+        let lower_space = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        lower_space.set_size_request(-1, 24);
+        photo_canvas.append(&lower_space);
+        composition.set_child(Some(&photo_canvas));
+        composition.add_overlay(&logo);
+        photo_visual.set_child(Some(&composition));
         photo_visual.set_margin_top(4);
         photo_visual.set_margin_bottom(4);
         content.append(&branding);
@@ -286,7 +303,7 @@ impl StartupWizard {
             };
             self.dialog.set_content_width(width.clamp(1, 600));
             let preferred_height = if self.page.get() == WizardPage::Welcome {
-                520
+                480
             } else {
                 400
             };

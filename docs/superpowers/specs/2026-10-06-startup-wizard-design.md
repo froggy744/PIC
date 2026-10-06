@@ -8,7 +8,7 @@ Help a new PIC user add their first folder, see photos promptly, and discover br
 
 Two main screens: Welcome → Adding photos → Library. Recovery, empty and error results reuse the import layout. No Next/Back/Finish steps or mandatory tips page.
 
-Welcome shows the PIC logo and a compact arrangement of photo prints. Copy: “Welcome to PIC”; “All your photos. One place. On your computer.” Actions: a centred Choose Photos Folder button and a smaller Skip for now link. A quiet preference checkbox sits at the bottom, with Skip for now immediately to its left. Tutorial opens the screenshot guide. The larger PIC logo is centred above the photo arrangement, below the Welcome title.
+Welcome shows the PIC logo and a compact arrangement of photo prints. Copy: “Welcome to PIC”; “All your photos. One place. On your computer.” Actions: a centred Choose Photos Folder button and a smaller Skip for now link. A quiet preference checkbox sits at the bottom, with Skip for now immediately to its left. Tutorial opens the screenshot guide. The PIC camera sits in front of all three photos, centred at the bottom edge of the middle print with half overlapping and half extending below, with a subtle shadow. It has no separate row above the photos.
 
 Adding photos shows folder name and a smaller wrapped path, Finding photos…, live discovered counts and unknown-total progress without invented percentages. Open Library becomes available after a usable indexed photo, never discovery alone. Progressive gallery updates continue behind the dialog. Opening the library closes the dialog without stopping scanning; the existing notification area explains that photos are still being added.
 
@@ -46,7 +46,7 @@ Add a direct Help button opening Welcome in the header; preserve the existing si
 
 ## Layout and accessibility
 
-Use a compact scrollable dialog with approximately 600×520 logical pixels for Welcome and 600×400 for a directly presented import screen as its preferred size, clamped to available parent space. No new main-window minimum width. At 1920×1080 and 1366×768, and a 360-pixel-wide app window, text wraps and all primary/skip/toggle controls remain reachable. Respect theme, keyboard traversal, Escape/close semantics and accessible labels. Bundle the Welcome photo arrangement and reuse the existing PIC logo. No new dependencies.
+Use a compact scrollable dialog with approximately 600×480 logical pixels for Welcome and 600×400 for a directly presented import screen as its preferred size, clamped to available parent space. No new main-window minimum width. At 1920×1080 and 1366×768, and a 360-pixel-wide app window, text wraps and all primary/skip/toggle controls remain reachable. Respect theme, keyboard traversal, Escape/close semantics and accessible labels. Bundle the Welcome photo arrangement and reuse the existing PIC logo. No new dependencies.
 
 ## Success criteria
 

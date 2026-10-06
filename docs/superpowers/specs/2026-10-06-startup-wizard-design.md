@@ -46,7 +46,7 @@ Add a direct Help button opening Welcome in the header; preserve the existing si
 
 ## Layout and accessibility
 
-Use a compact scrollable dialog with approximately 600×480 logical pixels for Welcome and 600×400 for a directly presented import screen as its preferred size, clamped to available parent space. No new main-window minimum width. At 1920×1080 and 1366×768, and a 360-pixel-wide app window, text wraps and all primary/skip/toggle controls remain reachable. Respect theme, keyboard traversal, Escape/close semantics and accessible labels. Bundle the Welcome photo arrangement and reuse the existing PIC logo. No new dependencies.
+Use a compact scrollable dialog with approximately 600×520 logical pixels for Welcome and 600×400 for a directly presented import screen as its preferred size, clamped to available parent space. No new main-window minimum width. At 1920×1080 and 1366×768, and a 360-pixel-wide app window, text wraps and all primary/skip/toggle controls remain reachable. Respect theme, keyboard traversal, Escape/close semantics and accessible labels. Display the Welcome photo arrangement at about 380 pixels wide, preserving its proportions, overlaps and rotations. Keep the 128-pixel PIC camera centred in front of the middle photo’s lower edge with a subtle shadow. Bundle the Welcome photo arrangement and reuse the existing PIC logo. No new dependencies.
 
 ## Success criteria
 

@@ -65,6 +65,10 @@ fn wizard_toggle_persists_without_closing() {
     );
     wizard.present();
     settle();
+    assert_eq!(
+        wizard.never_show.accessible_role(),
+        gtk::AccessibleRole::Checkbox
+    );
     assert!(!wizard.never_show.is_active());
     wizard.never_show.set_active(true);
     settle();
@@ -193,6 +197,31 @@ fn wizard_narrow_layout_keeps_controls_reachable() {
             parent.width()
         );
         assert!(wizard.never_show.grab_focus());
+        settle();
+        if let Ok(directory) = std::env::var("PIC_WIZARD_SCREENSHOTS") {
+            use gtk::gdk::prelude::PaintableExt;
+            let root = wizard
+                .never_show
+                .root()
+                .unwrap()
+                .downcast::<gtk::Window>()
+                .unwrap();
+            let snapshot = gtk::Snapshot::new();
+            gtk::WidgetPaintable::new(Some(&root)).snapshot(
+                &snapshot,
+                root.width() as f64,
+                root.height() as f64,
+            );
+            root.renderer()
+                .unwrap()
+                .render_texture(&snapshot.to_node().unwrap(), None)
+                .save_to_png(format!(
+                    "{directory}/welcome-{width}-{}.png",
+                    if dark { "dark" } else { "light" }
+                ))
+                .unwrap();
+        }
+
         wizard.set_page(WizardPage::Importing);
         wizard.set_progress(&WizardProgress {
             root: format!("/photos/{}/holiday", "long_directory_name".repeat(20)),

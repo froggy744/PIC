@@ -42,6 +42,12 @@ pub(crate) struct StartupWizard {
     running: Cell<bool>,
     indexed: Cell<usize>,
     library_has_photos: Cell<bool>,
+    header: adw::HeaderBar,
+    content: gtk::Box,
+    branding: gtk::Box,
+    logo: gtk::Image,
+    photo_visual: adw::Clamp,
+    welcome_spacer: gtk::Box,
     heading: gtk::Label,
     description: gtk::Label,
     folder: gtk::Label,
@@ -54,7 +60,7 @@ pub(crate) struct StartupWizard {
     pub(crate) open_library: gtk::Button,
     skip: gtk::Button,
     pub(crate) preference_row: gtk::Box,
-    pub(crate) never_show: gtk::Switch,
+    pub(crate) never_show: gtk::CheckButton,
     pub(crate) preference_error: gtk::Label,
 }
 fn label(text: &str) -> gtk::Label {
@@ -81,9 +87,11 @@ impl StartupWizard {
         let dialog = adw::Dialog::new();
         dialog.set_title("Getting started");
         dialog.set_content_width(600);
-        dialog.set_content_height(400);
+        dialog.set_content_height(480);
         let shell = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        shell.append(&adw::HeaderBar::new());
+        let header = adw::HeaderBar::new();
+        header.add_css_class("flat");
+        shell.append(&header);
         let content = gtk::Box::new(gtk::Orientation::Vertical, 12);
         for set in [
             gtk::prelude::WidgetExt::set_margin_start,
@@ -95,6 +103,34 @@ impl StartupWizard {
         }
         let heading = label("Welcome to PIC");
         heading.add_css_class("title-1");
+        let branding = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+        let logo_texture = gtk::gdk::Texture::from_bytes(&glib::Bytes::from_static(
+            include_bytes!("../../icon/pic-128.png"),
+        ))
+        .expect("bundled PIC logo is valid");
+        let logo = gtk::Image::from_paintable(Some(&logo_texture));
+        logo.set_pixel_size(38);
+        branding.append(&logo);
+        branding.append(&heading);
+        let photos_texture = gtk::gdk::Texture::from_bytes(&glib::Bytes::from_static(
+            include_bytes!("../../images/onboarding/welcome-photos.png"),
+        ))
+        .expect("bundled welcome photos are valid");
+        let photos = gtk::Picture::for_paintable(&photos_texture);
+        photos.set_can_shrink(true);
+        photos.set_content_fit(gtk::ContentFit::Contain);
+        photos.set_size_request(-1, 132);
+        photos.set_alternative_text(Some(
+            "Photo prints of wildflowers, a mountain lake and a beach.",
+        ));
+        let photo_visual = adw::Clamp::new();
+        photo_visual.set_maximum_size(340);
+        photo_visual.set_tightening_threshold(280);
+        photo_visual.set_child(Some(&photos));
+        photo_visual.set_margin_top(4);
+        photo_visual.set_margin_bottom(4);
+        content.append(&branding);
+        content.append(&photo_visual);
         let description = label("");
         let folder = label("");
         folder.add_css_class("heading");
@@ -106,33 +142,44 @@ impl StartupWizard {
         let progress = gtk::ProgressBar::new();
         let warning = label("");
         warning.add_css_class("error");
-        for child in [&heading, &description, &folder, &path, &progress_text] {
+        for child in [&description, &folder, &path, &progress_text] {
             content.append(child);
         }
         content.append(&progress);
         content.append(&warning);
         let choose = button("Choose Photos Folder");
         choose.add_css_class("suggested-action");
+        choose.add_css_class("pill");
         let retry = button("Continue adding photos");
         let open_library = button("Open Library");
         let skip = button("Skip for now");
         skip.add_css_class("flat");
+        skip.add_css_class("caption");
+        skip.add_css_class("dim-label");
         for child in [&choose, &retry, &open_library, &skip] {
             content.append(child);
         }
-        let preference_row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+        let welcome_spacer = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        welcome_spacer.set_vexpand(true);
+        content.append(&welcome_spacer);
+        let preference_row = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        preference_row.set_halign(gtk::Align::Center);
+        preference_row.set_margin_top(8);
         let preference_label = label("Don’t show this automatically again");
-        let never_show = gtk::Switch::new();
+        preference_label.add_css_class("caption");
+        preference_label.add_css_class("dim-label");
+        let never_show = gtk::CheckButton::new();
+        never_show.set_child(Some(&preference_label));
         never_show.set_valign(gtk::Align::Center);
         never_show.set_active(prefs.never_show);
         never_show.update_property(&[gtk::accessible::Property::Label(
             "Don’t show this automatically again",
         )]);
-        preference_row.append(&preference_label);
         preference_row.append(&never_show);
         content.append(&preference_row);
         let preference_error = label("");
         preference_error.add_css_class("error");
+        preference_error.add_css_class("caption");
         preference_error.set_visible(false);
         content.append(&preference_error);
         let scroll = gtk::ScrolledWindow::new();
@@ -156,6 +203,12 @@ impl StartupWizard {
             running: Cell::new(false),
             indexed: Cell::new(0),
             library_has_photos: Cell::new(false),
+            header,
+            content,
+            branding,
+            logo,
+            photo_visual,
+            welcome_spacer,
             heading,
             description,
             folder,
@@ -222,7 +275,13 @@ impl StartupWizard {
                 parent.default_height()
             };
             self.dialog.set_content_width(width.clamp(1, 600));
-            self.dialog.set_content_height(height.clamp(1, 400));
+            let preferred_height = if self.page.get() == WizardPage::Welcome {
+                480
+            } else {
+                400
+            };
+            self.dialog
+                .set_content_height(height.clamp(1, preferred_height));
             self.visible.set(true);
             self.dialog.present(Some(&parent));
         }
@@ -263,6 +322,38 @@ impl StartupWizard {
     fn refresh(&self) {
         let welcome = self.page.get() == WizardPage::Welcome;
         let mode = self.mode.get();
+        self.header.set_show_title(!welcome);
+        self.logo.set_visible(welcome);
+        self.photo_visual.set_visible(welcome);
+        self.welcome_spacer.set_visible(welcome);
+        self.content.set_spacing(if welcome { 8 } else { 12 });
+        self.content.set_margin_top(if welcome { 4 } else { 24 });
+        self.content
+            .set_margin_bottom(if welcome { 16 } else { 24 });
+        self.branding.set_halign(if welcome {
+            gtk::Align::Center
+        } else {
+            gtk::Align::Fill
+        });
+        self.heading.set_xalign(if welcome { 0.5 } else { 0.0 });
+        self.description.set_xalign(if welcome { 0.5 } else { 0.0 });
+        self.description.set_justify(if welcome {
+            gtk::Justification::Center
+        } else {
+            gtk::Justification::Left
+        });
+        self.choose.set_halign(if welcome {
+            gtk::Align::Center
+        } else {
+            gtk::Align::Fill
+        });
+        self.choose.set_margin_top(if welcome { 8 } else { 0 });
+        self.skip.set_halign(gtk::Align::Center);
+        if welcome {
+            self.choose.add_css_class("pill");
+        } else {
+            self.choose.remove_css_class("pill");
+        }
         self.heading.set_text(if welcome {
             "Welcome to PIC"
         } else {
@@ -273,11 +364,15 @@ impl StartupWizard {
                 ImportPresentation::Error => "Adding your photos",
             }
         });
-        self.description.set_text(if welcome { "Your photos stay on your computer. Choose a folder and PIC will build your photo library.\n\nYou can add more folders later." } else { match mode {
-            ImportPresentation::Recovery => "PIC was adding photos from:",
-            ImportPresentation::Empty => "PIC couldn’t find supported photos in this folder.",
-            _ => "You can start browsing as soon as photos are added.",
-        }});
+        self.description.set_text(if welcome {
+            "All your photos. One place. On your computer."
+        } else {
+            match mode {
+                ImportPresentation::Recovery => "PIC was adding photos from:",
+                ImportPresentation::Empty => "PIC couldn’t find supported photos in this folder.",
+                _ => "You can start browsing as soon as photos are added.",
+            }
+        });
         self.preference_row.set_visible(welcome);
         self.preference_error
             .set_visible(welcome && !self.preference_error.text().is_empty());

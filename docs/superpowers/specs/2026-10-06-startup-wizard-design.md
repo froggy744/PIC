@@ -8,7 +8,7 @@ Help a new PIC user add their first folder, see photos promptly, and discover br
 
 Two main screens: Welcome → Adding photos → Library. Recovery, empty and error results reuse the import layout. No Next/Back/Finish steps or mandatory tips page.
 
-Welcome copy: “Welcome to PIC”; “Your photos stay on your computer. Choose a folder and PIC will build your photo library.” Actions: Choose Photos Folder and Skip for now. Supporting copy: “You can add more folders later.”
+Welcome shows the PIC logo and a compact arrangement of photo prints. Copy: “Welcome to PIC”; “All your photos. One place. On your computer.” Actions: a centred Choose Photos Folder button and a smaller Skip for now link. A quiet preference checkbox sits at the bottom.
 
 Adding photos shows folder name and a smaller wrapped path, Finding photos…, live discovered counts and unknown-total progress without invented percentages. Open Library becomes available after a usable indexed photo, never discovery alone. Progressive gallery updates continue behind the dialog. Opening the library closes the dialog without stopping scanning; the existing notification area explains that photos are still being added.
 
@@ -18,7 +18,7 @@ Optional library card (never a wizard page): Welcome to PIC; “Double-click a p
 
 ## Never show again and persistence
 
-A switch labelled **Don’t show this automatically again** is visible only on Welcome, initially off for a new library. Its saved state is shown when reopened manually. Switching it persists immediately; turning it on does not close the current wizard. It suppresses subsequent automatic wizard launches and automatic onboarding tips, including after Skip, closing the app or a power outage. Turning it off permits automatic display only if onboarding is incomplete and the library remains eligible. Completion still prevents automatic display. Manual **Help → Getting started** always works and does not clear preferences or restart imports.
+A checkbox labelled **Don’t show this automatically again** is visible only on Welcome, initially off for a new library. Its saved state is shown when reopened manually. Changing it persists immediately; turning it on does not close the current wizard. It suppresses subsequent automatic wizard launches and automatic onboarding tips, including after Skip, closing the app or a power outage. Turning it off permits automatic display only if onboarding is incomplete and the library remains eligible. Completion still prevents automatic display. Manual **Help → Getting started** always works and does not clear preferences or restart imports.
 
 Use the existing library database settings; preferences are per library, matching existing application settings. No schema migration or new dependencies. Keys:
 - `onboarding-never-show`: `true` or `false`, default `false`.
@@ -26,7 +26,7 @@ Use the existing library database settings; preferences are per library, matchin
 - `onboarding-root`: selected canonical source reference, absent before selection.
 - `onboarding-tips-dismissed`: `true` or `false`, default `false`.
 
-Skip/window dismissal without the switch leaves onboarding incomplete; an eligible empty library can show Welcome on a later launch. Tips dismissal saves only `onboarding-tips-dismissed` during an active import so recovery stage/root survive outages. After successful import with usable photos, advance to Tips when an eligible undismissed card remains, otherwise Complete. Cancelled/failed scans retain recovery state. Persistence failures keep the switch at its last saved value, display an error and leave the library usable. Unreadable settings/counts suppress automatic display rather than assume the library is fresh.
+Skip/window dismissal without the checkbox leaves onboarding incomplete; an eligible empty library can show Welcome on a later launch. Tips dismissal saves only `onboarding-tips-dismissed` during an active import so recovery stage/root survive outages. After successful import with usable photos, advance to Tips when an eligible undismissed card remains, otherwise Complete. Cancelled/failed scans retain recovery state. Persistence failures keep the checkbox at its last saved value, display an error and leave the library usable. Unreadable settings/counts suppress automatic display rather than assume the library is fresh.
 
 ## Startup and recovery rules
 
@@ -46,7 +46,7 @@ Add a compact Help menu with Getting started in the header; preserve the existin
 
 ## Layout and accessibility
 
-Use a compact scrollable dialog with approximately 600×400 logical pixels as its preferred size, clamped to available parent space. No new main-window minimum width. At 1920×1080 and 1366×768, and a 360-pixel-wide app window, text wraps and all primary/skip/toggle controls remain reachable. Respect theme, keyboard traversal, Escape/close semantics and accessible labels. Do not add custom bitmap assets or dependencies.
+Use a compact scrollable dialog with approximately 600×480 logical pixels for Welcome and 600×400 for a directly presented import screen as its preferred size, clamped to available parent space. No new main-window minimum width. At 1920×1080 and 1366×768, and a 360-pixel-wide app window, text wraps and all primary/skip/toggle controls remain reachable. Respect theme, keyboard traversal, Escape/close semantics and accessible labels. Bundle the Welcome photo arrangement and reuse the existing PIC logo. No new dependencies.
 
 ## Success criteria
 

@@ -4310,35 +4310,9 @@ fn start_photo_export_single(
             })
         },
     );
-    let tips_host = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    content.prepend(&tips_host);
-    onboarding.install_tips_host(&tips_host);
     onboarding.install_library_surface(&main_stack);
     onboarding.install_library_surface(&info.root);
     onboarding.bind_scan_job(&scan_job);
-    {
-        let owner = Rc::downgrade(&onboarding);
-        lightbox.root.connect_visible_notify(move |root| {
-            if root.is_visible() {
-                if let Some(owner) = owner.upgrade() {
-                    owner.dismiss_library_tips();
-                }
-            }
-        });
-    }
-    {
-        let owner = Rc::downgrade(&onboarding);
-        main_stack.connect_visible_child_notify(move |stack| {
-            if matches!(
-                stack.visible_child_name().as_deref(),
-                Some("edit" | "collage")
-            ) {
-                if let Some(owner) = owner.upgrade() {
-                    owner.dismiss_library_tips();
-                }
-            }
-        });
-    }
     onboarding_slot.replace(Some(onboarding.clone()));
     let getting_started = gio::SimpleAction::new("getting-started", None);
     {

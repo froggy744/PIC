@@ -678,12 +678,9 @@ fn wizard_actual_window_recovery_import_and_library_card() {
         }
         None
     }
-    let got_it = find(window.upcast_ref(), "×").expect("dismiss control in discovery row");
-    assert!(got_it.is_mapped());
-    got_it.emit_clicked();
-    assert_eq!(
-        load_preferences(&check).unwrap().stage,
-        Some(OnboardingStage::Complete)
+    assert!(
+        find(window.upcast_ref(), "Take a tour").is_none(),
+        "gallery must not display the tour banner"
     );
     assert!(window.visible_dialog().is_none());
     window.close();

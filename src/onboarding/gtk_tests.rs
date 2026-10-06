@@ -18,14 +18,22 @@ fn settle() {
     }
 }
 fn parent() -> adw::ApplicationWindow {
+    parent_at(800, 600)
+}
+fn parent_at(width: i32, height: i32) -> adw::ApplicationWindow {
     adw::init().unwrap();
+    static NEXT_APP: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let app = adw::Application::builder()
-        .application_id("io.pic.OnboardingTests")
+        .application_id(format!(
+            "io.pic.OnboardingTests.Run{}",
+            NEXT_APP.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ))
         .flags(gio::ApplicationFlags::NON_UNIQUE)
         .build();
     app.register(None::<&gio::Cancellable>).unwrap();
     let window = adw::ApplicationWindow::new(&app);
-    window.set_default_size(800, 600);
+    window.set_resizable(false);
+    window.set_default_size(width, height);
     window.set_content(Some(&gtk::Box::new(gtk::Orientation::Vertical, 0)));
     window.present();
     settle();
@@ -136,12 +144,114 @@ fn wizard_repeated_present_uses_one_dialog() {
         callbacks(Rc::new(|_| Ok(()))),
     );
     wizard.present();
+    settle();
+    let root = wizard.open_library.root().unwrap();
+    let toplevels = gtk::Window::list_toplevels().len();
     wizard.present();
     settle();
-    assert_eq!(parent.dialogs().n_items(), 1);
+    assert_eq!(wizard.open_library.root().unwrap(), root);
+    assert_eq!(gtk::Window::list_toplevels().len(), toplevels);
+    assert!(parent.dialogs().n_items() <= 1);
     assert!(wizard.is_visible());
     wizard.close();
     settle();
     assert!(!wizard.is_visible());
     parent.close();
+}
+
+#[test]
+#[ignore = "requires GTK; run individually"]
+fn wizard_narrow_layout_keeps_controls_reachable() {
+    for (width, height, dark) in [
+        (1920, 1080, false),
+        (1366, 768, false),
+        (360, 640, false),
+        (1920, 1080, true),
+        (1366, 768, true),
+        (360, 640, true),
+    ] {
+        adw::init().unwrap();
+        adw::StyleManager::default().set_color_scheme(if dark {
+            adw::ColorScheme::ForceDark
+        } else {
+            adw::ColorScheme::ForceLight
+        });
+        let parent = parent_at(width, height);
+        let wizard = StartupWizard::new(
+            &parent,
+            &OnboardingPreferences::default(),
+            callbacks(Rc::new(|_| Ok(()))),
+        );
+        wizard.present();
+        settle();
+        assert!(
+            wizard.preference_row.width() <= parent.width(),
+            "preference width {} exceeds parent {} at target {width}",
+            wizard.preference_row.width(),
+            parent.width()
+        );
+        assert!(wizard.never_show.grab_focus());
+        wizard.set_page(WizardPage::Importing);
+        wizard.set_progress(&WizardProgress {
+            root: format!("/photos/{}/holiday", "long_directory_name".repeat(20)),
+            indexed: 1,
+            running: true,
+            ..Default::default()
+        });
+        settle();
+        assert!(wizard.open_library.is_sensitive());
+        assert!(wizard.open_library.grab_focus());
+        assert!(
+            wizard.open_library.width() <= parent.width(),
+            "action exceeds parent width"
+        );
+        settle();
+        // Dialog content may be reparented to a native window by libadwaita.
+        let dialog = wizard
+            .open_library
+            .root()
+            .unwrap()
+            .downcast::<gtk::Window>()
+            .unwrap()
+            .upcast::<gtk::Widget>();
+        let bounds = wizard.open_library.compute_bounds(&dialog).unwrap();
+        assert!(bounds.x() >= 0.0 && bounds.y() >= 0.0);
+        // The focus outline can extend a few pixels beyond the viewport;
+        // the action's label and click target must remain reachable.
+        let label_bounds = wizard
+            .open_library
+            .child()
+            .unwrap()
+            .compute_bounds(&dialog)
+            .unwrap();
+        assert!(
+            label_bounds.y() >= 0.0
+                && label_bounds.y() + label_bounds.height() <= dialog.height() as f32,
+            "focused action label is not reachable at {width}px"
+        );
+        assert!(bounds.y() + bounds.height() / 2.0 < dialog.height() as f32);
+        if let Ok(directory) = std::env::var("PIC_WIZARD_SCREENSHOTS") {
+            use gtk::gdk::prelude::PaintableExt;
+            let snapshot = gtk::Snapshot::new();
+            gtk::WidgetPaintable::new(Some(&dialog)).snapshot(
+                &snapshot,
+                dialog.width() as f64,
+                dialog.height() as f64,
+            );
+            let node = snapshot.to_node().unwrap();
+            parent
+                .renderer()
+                .unwrap()
+                .render_texture(&node, None)
+                .save_to_png(format!(
+                    "{directory}/wizard-{width}-{}.png",
+                    if dark { "dark" } else { "light" }
+                ))
+                .unwrap();
+        }
+        wizard.close();
+        settle();
+        parent.close();
+        settle();
+    }
 }

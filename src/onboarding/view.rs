@@ -5,12 +5,12 @@ use libadwaita as adw;
 use std::cell::Cell;
 use std::rc::Rc;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum WizardPage {
     Welcome,
     Importing,
 }
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ImportPresentation {
     Adding,
     Recovery,
@@ -58,6 +58,7 @@ pub(crate) struct StartupWizard {
 fn label(text: &str) -> gtk::Label {
     let label = gtk::Label::new(Some(text));
     label.set_wrap(true);
+    label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
     label.set_xalign(0.0);
     label.set_hexpand(true);
     label
@@ -135,7 +136,10 @@ impl StartupWizard {
         let scroll = gtk::ScrolledWindow::new();
         scroll.set_hscrollbar_policy(gtk::PolicyType::Never);
         scroll.set_vexpand(true);
-        scroll.set_child(Some(&content));
+        let viewport = gtk::Viewport::new(None::<&gtk::Adjustment>, None::<&gtk::Adjustment>);
+        viewport.set_scroll_to_focus(true);
+        viewport.set_child(Some(&content));
+        scroll.set_child(Some(&viewport));
         shell.append(&scroll);
         dialog.set_child(Some(&shell));
         let visible = Rc::new(Cell::new(false));
@@ -204,6 +208,18 @@ impl StartupWizard {
     }
     pub(crate) fn present(&self) {
         if let Some(parent) = self.parent.upgrade() {
+            let width = if parent.width() > 0 {
+                parent.width()
+            } else {
+                parent.default_width()
+            };
+            let height = if parent.height() > 0 {
+                parent.height()
+            } else {
+                parent.default_height()
+            };
+            self.dialog.set_content_width(width.clamp(1, 600));
+            self.dialog.set_content_height(height.clamp(1, 400));
             self.visible.set(true);
             self.dialog.present(Some(&parent));
         }
@@ -291,5 +307,54 @@ impl StartupWizard {
         self.progress.set_visible(!welcome && self.running.get());
         self.warning
             .set_visible(!welcome && !self.warning.text().is_empty());
+    }
+}
+
+pub(crate) struct GettingStartedTips {
+    root: gtk::Box,
+    error: gtk::Label,
+}
+impl GettingStartedTips {
+    pub(crate) fn new(on_finish: Rc<dyn Fn()>) -> Self {
+        let root = gtk::Box::new(gtk::Orientation::Vertical, 6);
+        root.add_css_class("card");
+        for set in [
+            gtk::prelude::WidgetExt::set_margin_start,
+            gtk::prelude::WidgetExt::set_margin_end,
+            gtk::prelude::WidgetExt::set_margin_top,
+            gtk::prelude::WidgetExt::set_margin_bottom,
+        ] {
+            set(&root, 12);
+        }
+        let title = label("Welcome to PIC");
+        title.add_css_class("heading");
+        root.append(&title);
+        for text in [
+            "Double-click a photo to open it.",
+            "Use the sidebar to browse folders and albums.",
+            "Right-click photos for more actions.",
+        ] {
+            root.append(&label(text));
+        }
+        let done = button("Got it");
+        done.set_halign(gtk::Align::Start);
+        done.connect_clicked(move |_| on_finish());
+        root.append(&done);
+        let error = label("");
+        error.add_css_class("error");
+        error.set_visible(false);
+        root.append(&error);
+        Self { root, error }
+    }
+    pub(crate) fn widget(&self) -> gtk::Widget {
+        self.root.clone().upcast()
+    }
+    pub(crate) fn dismiss(&self) {
+        self.root.set_visible(false);
+    }
+    pub(crate) fn show_error(&self, error: &str) {
+        self.error
+            .set_text(&format!("Could not save dismissal: {error}"));
+        self.error.set_visible(true);
     }
 }

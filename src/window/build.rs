@@ -3965,6 +3965,9 @@ fn start_photo_export_single(
     stop_scan.set_visible(false);
     right_header.pack_end(&stop_scan);
 
+    let onboarding_slot: Rc<RefCell<Option<Rc<onboarding::OnboardingCoordinator>>>> =
+        Rc::new(RefCell::new(None));
+
     let start_next_scan: Rc<dyn Fn()> = {
         let scan_job = scan_job.clone();
         let scan_sender = scan_sender.clone();
@@ -4215,49 +4218,145 @@ fn start_photo_export_single(
     #[cfg(target_os = "linux")]
     let parent_for_network = parent.clone();
 
-    import_folder_slot.replace(Some(Rc::new(move || {
-        let scan_job=scan_job_for_import.clone();
-        let start_next_scan=start_next_scan_for_import.clone();
-        let connection=connection_for_import.clone();
-        let sidebar_refresh=sidebar_refresh_for_import.clone();
-        let selected: Rc<dyn Fn(String)>=Rc::new(move |root: String| {
-            if let Err(error)=db::mark_import_root(&connection.borrow(),&root){
-                eprintln!("Could not register imported folder {root}: {error}");
-                return;
-            }
-            sidebar_refresh();
-            {
-                let mut job=scan_job.borrow_mut();
-                job.authorize_photo_scan(PhotoScanRequestReason::ImportFolder)
-                    .expect("import is an authorized scan reason");
-                job.pending.push_back(root);
-            }
-            start_next_scan();
-        });
-        let parent_for_local=parent.clone();
-        let selected_for_local=selected.clone();
-        // The Folders + button imports local folders only. Network shares are
-        // added through their own section below Folders.
-        //
-        // Use GTK4's asynchronous FileDialog rather than the deprecated
-        // FileChooserNative path. On AppImage/GTK 4.14 the legacy chooser can
-        // tear down its GtkFileSystemModel while updates are still thawing,
-        // producing repeated GTK_IS_FILE_SYSTEM_MODEL criticals.
-        let dialog = gtk::FileDialog::builder()
-            .title("Import Local Folder")
-            .accept_label("Import")
-            .modal(true)
-            .build();
-        dialog.select_folder(
-            Some(&parent_for_local),
-            None::<&gio::Cancellable>,
-            move |result| {
-                if let Ok(file) = result {
-                    selected_for_local(crate::source::reference(&file));
+    // Local imports and onboarding cross the same registration/scan boundary.
+    let selected_local_folder: Rc<dyn Fn(String)> = {
+        let owner_slot = Rc::downgrade(&onboarding_slot);
+        let connection = connection_for_import.clone();
+        let sidebar_refresh = sidebar_refresh_for_import.clone();
+        let scan_job = scan_job_for_import.clone();
+        let start_next_scan = start_next_scan_for_import.clone();
+        Rc::new(move |root: String| {
+            let owner = owner_slot.upgrade().and_then(|slot| slot.borrow().clone());
+            let owner = owner.as_ref().filter(|owner| owner.is_visible());
+            match onboarding::queue_local_import(&connection, &scan_job, &root, owner) {
+                Ok(true) => {
+                    sidebar_refresh();
+                    start_next_scan();
                 }
-            },
-        );
-    })));
+                Ok(false) => {}
+                Err(error) => {
+                    if let Some(owner) = owner {
+                        owner.import_error(&error);
+                    }
+                    eprintln!("Could not import folder {root}: {error}");
+                }
+            }
+        })
+    };
+    let choose_local_folder: Rc<dyn Fn()> = {
+        let parent = parent.downgrade();
+        let selected = selected_local_folder.clone();
+        let owner_slot = Rc::downgrade(&onboarding_slot);
+        Rc::new(move || {
+            let Some(parent) = parent.upgrade() else {
+                return;
+            };
+            let owner = owner_slot.upgrade().and_then(|slot| slot.borrow().clone());
+            let token = owner.as_ref().and_then(|owner| owner.picker_token());
+            let selected = selected.clone();
+            let dialog = gtk::FileDialog::builder()
+                .title("Import Local Folder")
+                .accept_label("Import")
+                .modal(true)
+                .build();
+            dialog.select_folder(Some(&parent), None::<&gio::Cancellable>, move |result| {
+                if let Some(token) = token {
+                    if !owner
+                        .as_ref()
+                        .is_some_and(|owner| owner.picker_result_is_current(token))
+                    {
+                        return;
+                    }
+                }
+                match result {
+                    Ok(file) => selected(crate::source::reference(&file)),
+                    Err(error) => {
+                        if let Some(owner) = owner.as_ref().filter(|_| token.is_some()) {
+                            owner.picker_cancelled();
+                            if !error.matches(gtk::DialogError::Dismissed)
+                                && !error.matches(gtk::DialogError::Cancelled)
+                            {
+                                owner.import_error(&error.to_string());
+                            }
+                        }
+                    }
+                }
+            });
+        })
+    };
+    import_folder_slot.replace(Some(choose_local_folder.clone()));
+    let onboarding = onboarding::OnboardingCoordinator::new(
+        &window,
+        connection.clone(),
+        choose_local_folder,
+        selected_local_folder,
+        {
+            let slot = library_navigation_slot.clone();
+            let panel = refresh_status_box.clone();
+            let label = refresh_status_label.clone();
+            let job = scan_job.clone();
+            Rc::new(move || {
+                if let Some(navigate) = slot.borrow().as_ref() {
+                    navigate(sidebar::SidebarFilter::All);
+                }
+                if job.borrow().kind == Some(ScanJobKind::Import) {
+                    label.set_text("Photos are still being added. You can start browsing now.");
+                    panel.set_visible(true);
+                }
+            })
+        },
+    );
+    let tips_host = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    content.prepend(&tips_host);
+    onboarding.install_tips_host(&tips_host);
+    {
+        let owner = Rc::downgrade(&onboarding);
+        lightbox.root.connect_visible_notify(move |root| {
+            if root.is_visible() {
+                if let Some(owner) = owner.upgrade() {
+                    owner.dismiss_library_tips();
+                }
+            }
+        });
+    }
+    {
+        let owner = Rc::downgrade(&onboarding);
+        main_stack.connect_visible_child_notify(move |stack| {
+            if matches!(
+                stack.visible_child_name().as_deref(),
+                Some("edit" | "collage")
+            ) {
+                if let Some(owner) = owner.upgrade() {
+                    owner.dismiss_library_tips();
+                }
+            }
+        });
+    }
+    onboarding_slot.replace(Some(onboarding.clone()));
+    let getting_started = gio::SimpleAction::new("getting-started", None);
+    {
+        let owner = Rc::downgrade(&onboarding);
+        getting_started.connect_activate(move |_, _| {
+            if let Some(owner) = owner.upgrade() {
+                owner.present_manually();
+            }
+        });
+    }
+    window.add_action(&getting_started);
+    {
+        let owner = Rc::downgrade(&onboarding);
+        let presented = Rc::new(Cell::new(false));
+        window.connect_map(move |_| {
+            if !presented.replace(true) {
+                let owner = owner.clone();
+                glib::idle_add_local_once(move || {
+                    if let Some(owner) = owner.upgrade() {
+                        owner.present_on_startup();
+                    }
+                });
+            }
+        });
+    }
 
     #[cfg(target_os="linux")]
     add_network_share_slot.replace(Some(Rc::new(move || {
@@ -4344,6 +4443,7 @@ fn start_photo_export_single(
         });
     });
 
+    let onboarding_for_switch = onboarding.clone();
     let gallery_for_events = gallery.clone();
     let lightbox_for_events = lightbox.clone();
     let connection_for_events = connection.clone();
@@ -4373,6 +4473,9 @@ fn start_photo_export_single(
     let mut last_sidebar_count_update = Instant::now();
 
     glib::timeout_add_local(Duration::from_millis(50), move || {
+        // Keep the callback slot alive for this window's event processing.
+        let _onboarding_lifetime = &onboarding_slot;
+        onboarding.scan_generation_changed(scan_job_for_events.borrow().generation);
         let ui_tick_started = Instant::now();
         // Drain event-triggered recovery requests once the current scan ends.
         // With no request, this checks only a flag and performs no disk probes.
@@ -4535,6 +4638,7 @@ fn start_photo_export_single(
             }
 
             let event = ui_event.event;
+            onboarding.scan_event(ui_event.generation, &event);
             match &event {
                 scanner::ScanEvent::Started { root } => {
                     
@@ -5009,6 +5113,7 @@ fn start_photo_export_single(
                 job.pending.clear();
                 job.stop_requested = true;
             }
+            onboarding_for_switch.library_changed();
             invalidate_pending_grid_navigation();
             invalidate_availability_refreshes();
             refresh_status_spinner.set_spinning(false);

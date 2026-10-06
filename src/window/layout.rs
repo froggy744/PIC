@@ -1002,6 +1002,16 @@
 
     let right_header = adw::HeaderBar::new();
     right_header.set_height_request(46);
+    let help_items = gio::Menu::new();
+    help_items.append(Some("Getting started"), Some("win.getting-started"));
+    let help = gtk::MenuButton::builder()
+        .icon_name("help-about-symbolic")
+        .tooltip_text("Help")
+        .menu_model(&help_items)
+        .build();
+    help.add_css_class("flat");
+    right_header.pack_end(&help);
+
     right_header.set_hexpand(true);
     right_header.set_show_start_title_buttons(!main_split.shows_sidebar());
     right_header.set_show_end_title_buttons(true);

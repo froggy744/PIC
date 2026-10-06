@@ -720,3 +720,173 @@ fn wizard_picker_cancel_restores_welcome_or_saved_recovery() {
     owner.close();
     parent.close();
 }
+
+#[test]
+#[ignore = "requires GTK; run individually"]
+fn wizard_state_write_failure_allows_retry_without_reopening() {
+    let parent = test_parent();
+    let connection = test_connection();
+    let job = Rc::new(RefCell::new(super::super::ScanJobState::default()));
+    let picked = Rc::new(Cell::new(0));
+    let count = picked.clone();
+    let owner_slot = Rc::new(RefCell::new(None::<Rc<OnboardingCoordinator>>));
+    let retry_owner = owner_slot.clone();
+    let retry_conn = connection.clone();
+    let retry_job = job.clone();
+    let owner = OnboardingCoordinator::new(
+        &parent,
+        connection.clone(),
+        Rc::new(move || count.set(count.get() + 1)),
+        Rc::new(move |root| {
+            queue_local_import(
+                &retry_conn,
+                &retry_job,
+                &root,
+                retry_owner.borrow().as_ref(),
+            )
+            .unwrap();
+        }),
+        Rc::new(|| {}),
+    );
+    owner_slot.replace(Some(owner.clone()));
+    owner.present_manually();
+    click(&parent, "Choose Photos Folder");
+    connection
+        .borrow()
+        .execute_batch("PRAGMA query_only=ON")
+        .unwrap();
+    let error = queue_local_import(&connection, &job, "/photos/new", Some(&owner)).unwrap_err();
+    owner.import_error(&error);
+    assert!(
+        owner.picker_token().is_none(),
+        "completed picker must not stay pending after a failed save"
+    );
+    assert_eq!(owner.tracker.borrow().progress.root, "/photos/new");
+    assert!(crate::db::imported_root_paths(&connection.borrow())
+        .unwrap()
+        .is_empty());
+    connection
+        .borrow()
+        .execute_batch("PRAGMA query_only=OFF")
+        .unwrap();
+    click(&parent, "Try again");
+    assert_eq!(job.borrow().generation, 1);
+    assert_eq!(
+        job.borrow().pending.front().map(String::as_str),
+        Some("/photos/new")
+    );
+    owner.close();
+    owner_slot.replace(None);
+    parent.close();
+}
+
+#[test]
+#[ignore = "requires GTK; run individually"]
+fn wizard_empty_root_does_not_count_photos_elsewhere_and_partial_retry_counts_its_root() {
+    let parent = test_parent();
+    let connection = test_connection();
+    connection.borrow().execute("INSERT INTO photos(path,width,height) VALUES('/elsewhere/a.jpg',100,100),('/photos/retry/a.jpg',100,100),('/photos/retry-sibling/b.jpg',100,100)", []).unwrap();
+    let owner = OnboardingCoordinator::new(
+        &parent,
+        connection.clone(),
+        Rc::new(|| {}),
+        Rc::new(|_| {}),
+        Rc::new(|| {}),
+    );
+    owner.present_manually();
+    owner.folder_selected("/photos/empty").unwrap();
+    owner.import_started(ImportTicket {
+        generation: 1,
+        root: "/photos/empty".into(),
+    });
+    assert_eq!(
+        owner.tracker.borrow().progress.indexed,
+        0,
+        "the selected root must not count existing photos elsewhere"
+    );
+    assert!(
+        owner
+            .wizard
+            .borrow()
+            .as_ref()
+            .unwrap()
+            .open_library
+            .is_sensitive(),
+        "existing library photos still permit browsing"
+    );
+    owner.scan_event(
+        1,
+        &ScanEvent::Finished {
+            imported: 0,
+            failed: 0,
+        },
+    );
+    assert_eq!(owner.tracker.borrow().mode, ImportPresentation::Empty);
+    assert_eq!(
+        load_preferences(&connection.borrow()).unwrap().stage,
+        Some(OnboardingStage::Importing)
+    );
+    owner.folder_selected("/photos/retry").unwrap();
+    owner.import_started(ImportTicket {
+        generation: 2,
+        root: "/photos/retry".into(),
+    });
+    assert_eq!(owner.tracker.borrow().progress.indexed, 1);
+    owner.scan_event(
+        2,
+        &ScanEvent::Finished {
+            imported: 0,
+            failed: 0,
+        },
+    );
+    assert_eq!(
+        load_preferences(&connection.borrow()).unwrap().stage,
+        Some(OnboardingStage::Tips)
+    );
+    owner.close();
+    parent.close();
+}
+
+#[test]
+#[ignore = "requires GTK; run individually"]
+fn wizard_recovery_reuses_ordinary_active_import_without_cancelling_or_requeueing() {
+    let parent = test_parent();
+    let connection = test_connection();
+    save_stage(
+        &connection.borrow(),
+        OnboardingStage::Importing,
+        Some("/photos"),
+    )
+    .unwrap();
+    let job = Rc::new(RefCell::new(super::super::ScanJobState::default()));
+    let owner = OnboardingCoordinator::new(
+        &parent,
+        connection.clone(),
+        Rc::new(|| {}),
+        Rc::new(|_| {}),
+        Rc::new(|| {}),
+    );
+    owner.bind_scan_job(&job);
+    owner.present_on_startup();
+    owner.enter_library();
+    assert!(queue_local_import(&connection, &job, "/photos", None).unwrap());
+    let control = crate::scanner::ScanControl::default();
+    {
+        let mut state = job.borrow_mut();
+        state.pending.pop_front();
+        state.active = Some(control.clone());
+        state.active_root = Some("/photos".into());
+    }
+    let generation = job.borrow().generation;
+    owner.present_manually();
+    assert!(
+        owner.is_running(),
+        "recovery must reflect the shared scan already adding this root"
+    );
+    assert!(!queue_local_import(&connection, &job, "/photos", Some(&owner)).unwrap());
+    assert_eq!(job.borrow().generation, generation);
+    assert!(!control.is_cancelled());
+    assert!(job.borrow().pending.is_empty());
+    owner.close();
+    parent.close();
+}

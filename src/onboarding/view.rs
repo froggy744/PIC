@@ -21,6 +21,7 @@ pub(crate) enum ImportPresentation {
 pub(crate) struct WizardProgress {
     pub root: String,
     pub indexed: usize,
+    pub library_has_photos: bool,
     pub discovered: Option<usize>,
     pub running: bool,
     pub warning: Option<String>,
@@ -40,6 +41,7 @@ pub(crate) struct StartupWizard {
     mode: Cell<ImportPresentation>,
     running: Cell<bool>,
     indexed: Cell<usize>,
+    library_has_photos: Cell<bool>,
     heading: gtk::Label,
     description: gtk::Label,
     folder: gtk::Label,
@@ -153,6 +155,7 @@ impl StartupWizard {
             mode: Cell::new(ImportPresentation::Adding),
             running: Cell::new(false),
             indexed: Cell::new(0),
+            library_has_photos: Cell::new(false),
             heading,
             description,
             folder,
@@ -242,6 +245,7 @@ impl StartupWizard {
     pub(crate) fn set_progress(&self, data: &WizardProgress) {
         self.running.set(data.running);
         self.indexed.set(data.indexed);
+        self.library_has_photos.set(data.library_has_photos);
         let name = crate::source::filename(&data.root);
         self.folder.set_text(&name);
         self.path.set_text(&data.root);
@@ -286,8 +290,11 @@ impl StartupWizard {
             .set_visible(welcome || (!self.running.get() && mode != ImportPresentation::Adding));
         self.skip.set_visible(welcome);
         self.open_library.set_visible(!welcome);
-        self.open_library
-            .set_sensitive(self.indexed.get() > 0 || mode != ImportPresentation::Adding);
+        self.open_library.set_sensitive(
+            self.indexed.get() > 0
+                || self.library_has_photos.get()
+                || mode != ImportPresentation::Adding,
+        );
         self.retry.set_visible(
             !welcome
                 && matches!(

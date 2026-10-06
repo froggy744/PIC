@@ -59,6 +59,20 @@ impl ImportTracker {
         self.successful = false;
         self.matching_root = true;
     }
+    fn finish(&mut self, failed: usize) {
+        self.progress.running = false;
+        self.successful = failed == 0 && self.progress.indexed > 0;
+        self.mode = if failed > 0 {
+            ImportPresentation::Error
+        } else if self.progress.indexed == 0 {
+            ImportPresentation::Empty
+        } else {
+            ImportPresentation::Adding
+        };
+        if failed > 0 && self.progress.warning.is_none() {
+            self.progress.warning = Some("Could not read some files".into());
+        }
+    }
     fn event(&mut self, generation: u64, event: &ScanEvent) -> bool {
         let Some(ticket) = &self.ticket else {
             return false;
@@ -87,20 +101,7 @@ impl ImportTracker {
             ScanEvent::Failed { error, .. } => {
                 self.progress.warning = Some(format!("Could not read some files: {error}"))
             }
-            ScanEvent::Finished { failed, .. } => {
-                self.progress.running = false;
-                self.successful = *failed == 0 && self.progress.indexed > 0;
-                self.mode = if *failed > 0 {
-                    ImportPresentation::Error
-                } else if self.progress.indexed == 0 {
-                    ImportPresentation::Empty
-                } else {
-                    ImportPresentation::Adding
-                };
-                if *failed > 0 && self.progress.warning.is_none() {
-                    self.progress.warning = Some("Could not read some files".into());
-                }
-            }
+            ScanEvent::Finished { failed, .. } => self.finish(*failed),
             ScanEvent::Cancelled { .. } => {
                 self.progress.running = false;
                 self.mode = ImportPresentation::Recovery;
@@ -127,6 +128,7 @@ pub(super) struct OnboardingCoordinator {
     tips_host: glib::WeakRef<gtk::Box>,
     tips: RefCell<Option<GettingStartedTips>>,
     self_weak: RefCell<std::rc::Weak<Self>>,
+    scan_job: RefCell<std::rc::Weak<RefCell<super::ScanJobState>>>,
 }
 impl OnboardingCoordinator {
     pub(super) fn new(
@@ -150,9 +152,13 @@ impl OnboardingCoordinator {
             tips_host: glib::WeakRef::new(),
             tips: RefCell::new(None),
             self_weak: RefCell::new(std::rc::Weak::new()),
+            scan_job: RefCell::new(std::rc::Weak::new()),
         });
         owner.self_weak.replace(Rc::downgrade(&owner));
         owner
+    }
+    pub(super) fn bind_scan_job(&self, job: &Rc<RefCell<super::ScanJobState>>) {
+        self.scan_job.replace(Rc::downgrade(job));
     }
     fn ensure_wizard(self: &Rc<Self>) -> Option<Rc<StartupWizard>> {
         if let Some(wizard) = self.wizard.borrow().as_ref() {
@@ -238,14 +244,9 @@ impl OnboardingCoordinator {
         }
     }
     pub(super) fn folder_selected(&self, root: &str) -> Result<(), String> {
-        save_stage(
-            &self.connection.borrow(),
-            OnboardingStage::Importing,
-            Some(root),
-        )
-        .map_err(|error| error.to_string())?;
+        // The chooser has completed even if saving this selection fails.
+        // Keep its runtime path so Try again can retry the same folder.
         self.pending_picker.set(None);
-        self.entered_library.set(false);
         self.tracker.replace(ImportTracker {
             progress: WizardProgress {
                 root: root.into(),
@@ -253,14 +254,61 @@ impl OnboardingCoordinator {
             },
             ..Default::default()
         });
+        save_stage(
+            &self.connection.borrow(),
+            OnboardingStage::Importing,
+            Some(root),
+        )
+        .map_err(|error| error.to_string())?;
+        self.entered_library.set(false);
         (self.browse)();
         self.render();
         Ok(())
     }
     pub(super) fn import_started(&self, ticket: ImportTicket) {
         self.tracker.borrow_mut().start(ticket);
-        self.tracker.borrow_mut().progress.indexed = self.usable_photos();
-        self.render();
+        self.refresh_indexed_counts();
+        if self.is_visible() {
+            self.render();
+        }
+    }
+    fn attach_active_root(&self, root: &str) -> bool {
+        let Some(job) = self.scan_job.borrow().upgrade() else {
+            return false;
+        };
+        let ticket = {
+            let job = job.borrow();
+            if job.kind != Some(super::ScanJobKind::Import)
+                || job.active.is_none()
+                || job.active_root.as_deref() != Some(root)
+            {
+                return false;
+            }
+            ImportTicket {
+                generation: job.generation,
+                root: root.into(),
+            }
+        };
+        if self.tracker.borrow().ticket.as_ref() != Some(&ticket) {
+            self.import_started(ticket);
+        }
+        true
+    }
+    fn reuse_matching_active_import(&self) -> bool {
+        let Some(job) = self.scan_job.borrow().upgrade() else {
+            return false;
+        };
+        let generation = job.borrow().generation;
+        self.scan_generation_changed(generation);
+        let Ok(prefs) = load_preferences(&self.connection.borrow()) else {
+            return false;
+        };
+        if prefs.stage != Some(OnboardingStage::Importing) {
+            return false;
+        }
+        prefs
+            .root
+            .is_some_and(|root| self.attach_active_root(&root))
     }
     pub(super) fn import_error(&self, message: &str) {
         let mut tracker = self.tracker.borrow_mut();
@@ -280,6 +328,34 @@ impl OnboardingCoordinator {
             )
             .unwrap_or(0) as usize
     }
+    fn usable_photos_in_root(&self, root: &str) -> usize {
+        if root.is_empty() {
+            return 0;
+        }
+        let separator = if root.contains("://") {
+            '/'
+        } else {
+            std::path::MAIN_SEPARATOR
+        };
+        let prefix = if root.ends_with(separator) {
+            root.to_string()
+        } else {
+            format!("{root}{separator}")
+        };
+        let upper = format!("{prefix}\u{10ffff}");
+        self.connection.borrow().query_row(
+            "SELECT COUNT(*) FROM photos WHERE trashed=0 AND width>0 AND height>0 AND (path=?1 OR (path>=?2 AND path<?3))",
+            rusqlite::params![root, prefix, upper], |row| row.get::<_, i64>(0),
+        ).unwrap_or(0) as usize
+    }
+    fn refresh_indexed_counts(&self) {
+        let root = self.tracker.borrow().progress.root.clone();
+        let indexed = self.usable_photos_in_root(&root);
+        let library_has_photos = self.usable_photos() > 0;
+        let mut tracker = self.tracker.borrow_mut();
+        tracker.progress.indexed = indexed;
+        tracker.progress.library_has_photos = library_has_photos;
+    }
     fn render(&self) {
         if let Some(wizard) = self.wizard.borrow().as_ref() {
             let tracker = self.tracker.borrow();
@@ -289,12 +365,18 @@ impl OnboardingCoordinator {
         }
     }
     fn resume(&self) {
+        self.reuse_matching_active_import();
         if self.is_running() {
             return;
         }
-        let root = load_preferences(&self.connection.borrow())
-            .ok()
-            .and_then(|prefs| prefs.root);
+        let selected_root = self.tracker.borrow().progress.root.clone();
+        let root = if selected_root.is_empty() {
+            load_preferences(&self.connection.borrow())
+                .ok()
+                .and_then(|prefs| prefs.root)
+        } else {
+            Some(selected_root)
+        };
         if let Some(root) = root {
             (self.continue_import)(root);
         } else if self.pending_picker.get().is_none() {
@@ -345,6 +427,7 @@ impl OnboardingCoordinator {
             return;
         }
         self.pending_picker.set(None);
+        self.reuse_matching_active_import();
         if self.is_running() {
             if let Some(wizard) = self.ensure_wizard() {
                 self.render();
@@ -362,6 +445,7 @@ impl OnboardingCoordinator {
         }
     }
     fn present_recovery(self: &Rc<Self>) {
+        self.reuse_matching_active_import();
         let Some(wizard) = self.ensure_wizard() else {
             return;
         };
@@ -372,8 +456,9 @@ impl OnboardingCoordinator {
                 .unwrap_or_default();
             self.tracker.replace(ImportTracker {
                 progress: WizardProgress {
+                    indexed: self.usable_photos_in_root(&root),
+                    library_has_photos: self.usable_photos() > 0,
                     root,
-                    indexed: self.usable_photos(),
                     ..Default::default()
                 },
                 mode: ImportPresentation::Recovery,
@@ -390,6 +475,9 @@ impl OnboardingCoordinator {
         }
     }
     pub(super) fn scan_event(&self, generation: u64, event: &ScanEvent) {
+        if matches!(event, ScanEvent::Started { .. }) {
+            self.reuse_matching_active_import();
+        }
         if !self.tracker.borrow_mut().event(generation, event) {
             return;
         }
@@ -402,7 +490,10 @@ impl OnboardingCoordinator {
                 | ScanEvent::Finished { .. }
                 | ScanEvent::Cancelled { .. }
         ) {
-            self.tracker.borrow_mut().progress.indexed = self.usable_photos();
+            self.refresh_indexed_counts();
+            if let ScanEvent::Finished { failed, .. } = event {
+                self.tracker.borrow_mut().finish(*failed);
+            }
         }
         if self.is_visible() {
             self.render();
@@ -511,10 +602,15 @@ pub(super) fn queue_local_import(
     owner: Option<&Rc<OnboardingCoordinator>>,
 ) -> Result<bool, String> {
     if let Some(owner) = owner {
+        owner.bind_scan_job(job);
+        owner.reuse_matching_active_import();
         if owner.is_running() {
             return Ok(false);
         }
         owner.folder_selected(root)?;
+        if owner.attach_active_root(root) {
+            return Ok(false);
+        }
     }
     crate::db::mark_import_root(&connection.borrow(), root).map_err(|error| error.to_string())?;
     let generation = {

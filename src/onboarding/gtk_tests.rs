@@ -110,6 +110,7 @@ fn wizard_preference_is_welcome_only_and_import_variations_allow_exit() {
         discovered: Some(327),
         running: true,
         warning: None,
+        library_has_photos: false,
     });
     assert!(!wizard.open_library.is_sensitive());
     assert!(wizard.progress_text.text().contains("327"));
@@ -128,6 +129,7 @@ fn wizard_preference_is_welcome_only_and_import_variations_allow_exit() {
         discovered: None,
         running: true,
         warning: None,
+        library_has_photos: false,
     });
     assert!(wizard.open_library.is_sensitive());
     assert!(!wizard.progress_text.text().contains('%'));

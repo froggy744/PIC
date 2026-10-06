@@ -3990,8 +3990,10 @@ fn start_photo_export_single(
                 scan_job.borrow_mut().kind = None;
                 return;
             };
-            let control = spawn_tagged_scan(root, database, generation, scan_sender.clone());
-            scan_job.borrow_mut().active = Some(control);
+            let control = spawn_tagged_scan(root.clone(), database, generation, scan_sender.clone());
+            let mut job = scan_job.borrow_mut();
+            job.active_root = Some(root);
+            job.active = Some(control);
         })
     };
 
@@ -4158,6 +4160,7 @@ fn start_photo_export_single(
             job.failed_total = 0;
             job.stop_requested = false;
             let control = scanner::ScanControl::default();
+            job.active_root = None;
             job.active = Some(control.clone());
             spawn_thumbnail_recovery(
                 photos,
@@ -4309,6 +4312,7 @@ fn start_photo_export_single(
     let tips_host = gtk::Box::new(gtk::Orientation::Vertical, 0);
     content.prepend(&tips_host);
     onboarding.install_tips_host(&tips_host);
+    onboarding.bind_scan_job(&scan_job);
     {
         let owner = Rc::downgrade(&onboarding);
         lightbox.root.connect_visible_notify(move |root| {
@@ -4500,6 +4504,7 @@ fn start_photo_export_single(
                             let mut job = scan_job_for_events.borrow_mut();
                             job.kind = None;
                             job.active = None;
+                            job.active_root = None;
                             job.pending.clear();
                             refresh_status_spinner_for_events.set_spinning(false);
                             stop_scan_for_events.set_visible(false);
@@ -4517,6 +4522,7 @@ fn start_photo_export_single(
                         let mut job = scan_job_for_events.borrow_mut();
                         job.kind = None;
                         job.active = None;
+                        job.active_root = None;
                         job.pending.clear();
                         refresh_status_spinner_for_events.set_spinning(false);
                         stop_scan_for_events.set_visible(false);
@@ -4533,6 +4539,7 @@ fn start_photo_export_single(
                         if job.stop_requested {
                             job.kind = None;
                             job.active = None;
+                            job.active_root = None;
                             job.pending.clear();
                             false
                         } else {
@@ -4574,6 +4581,7 @@ fn start_photo_export_single(
                         if !ok || job.stop_requested {
                             job.kind = None;
                             job.active = None;
+                            job.active_root = None;
                             job.pending.clear();
                             false
                         } else {
@@ -4854,6 +4862,7 @@ fn start_photo_export_single(
                     let (kind, has_more, total_imported, total_failed) = {
                         let mut job = scan_job_for_events.borrow_mut();
                         job.active = None;
+                        job.active_root = None;
                         job.imported_total += *imported;
                         job.failed_total += *failed;
                         (
@@ -4954,6 +4963,7 @@ fn start_photo_export_single(
                     let kind = {
                         let mut job = scan_job_for_events.borrow_mut();
                         job.active = None;
+                        job.active_root = None;
                         job.pending.clear();
                         job.imported_total += *imported;
                         let kind = job.kind;
@@ -5110,6 +5120,7 @@ fn start_photo_export_single(
                 }
                 job.generation = job.generation.wrapping_add(1);
                 job.kind = None;
+                job.active_root = None;
                 job.pending.clear();
                 job.stop_requested = true;
             }

@@ -77,7 +77,7 @@
 
 ## Task 2: Two-screen wizard presentation and preference
 
-**Interfaces:** Produce `WizardPage::{Welcome, Importing}`, `ImportPresentation::{Adding, Recovery, Empty, Error}` and `WizardProgress { root: String, indexed: usize, discovered: Option<usize>, running: bool, warning: Option<String> }`. Produce `WizardCallbacks { choose_folder: Rc<dyn Fn()>, continue_import: Rc<dyn Fn()>, open_library: Rc<dyn Fn()>, skip: Rc<dyn Fn()>, set_never_show: Rc<dyn Fn(bool) -> Result<(), String>> }`. Continue and Try again share `continue_import`; Choose another folder uses `choose_folder`. `StartupWizard::new(parent: &adw::ApplicationWindow, preferences: &OnboardingPreferences, callbacks: WizardCallbacks) -> Rc<StartupWizard>`; methods `present()`, `close()`, `set_page(WizardPage)`, `set_import_presentation(ImportPresentation)`, `set_progress(&WizardProgress)` and `is_visible() -> bool`. Tips completion belongs to the library card, not wizard callbacks.
+**Interfaces:** Produce `WizardPage::{Welcome, Importing}`, `ImportPresentation::{Adding, Recovery, Empty, Error}` and `WizardProgress { root: String, indexed: usize, library_has_photos: bool, discovered: Option<usize>, running: bool, warning: Option<String> }`. Produce `WizardCallbacks { choose_folder: Rc<dyn Fn()>, continue_import: Rc<dyn Fn()>, open_library: Rc<dyn Fn()>, skip: Rc<dyn Fn()>, set_never_show: Rc<dyn Fn(bool) -> Result<(), String>> }`. Continue and Try again share `continue_import`; Choose another folder uses `choose_folder`. `StartupWizard::new(parent: &adw::ApplicationWindow, preferences: &OnboardingPreferences, callbacks: WizardCallbacks) -> Rc<StartupWizard>`; methods `present()`, `close()`, `set_page(WizardPage)`, `set_import_presentation(ImportPresentation)`, `set_progress(&WizardProgress)` and `is_visible() -> bool`. Tips completion belongs to the library card, not wizard callbacks.
 
 - [x] Write GTK tests `wizard_toggle_persists_without_closing`, `wizard_toggle_write_failure_restores_saved_state`, `wizard_picker_cancel_returns_to_welcome`, `wizard_repeated_present_uses_one_dialog`, `wizard_preference_is_welcome_only`, and `wizard_uses_two_main_screens`. Assert the exact preference label, default false, immediate callback, error feedback, retained saved state, preference hidden in every import variation, no Tips page/step controls and close/Escape semantics. Closing/Escape during import closes the dialog without cancelling the background scan.
 - [x] Run each test in its own process: `cargo test TEST_NAME -- --ignored --test-threads=1`; observe failure before UI implementation.
@@ -120,8 +120,8 @@
 - [x] Run every new GTK case separately with a writable isolated `XDG_CACHE_HOME`; GTK initialization across different test threads requires separate processes. Use a temporary test library, never the user's live library.
 - [x] Run `cargo test -- --test-threads=1 --skip history_group_labels_bucket_by_edit_age_not_import_date` and `cargo build`; expect exit 0. Record the known date-sensitive exclusion explicitly; investigate any additional failures.
 - [x] Apply scoped rustfmt to new modules only, run `git diff --check`, inspect the final diff for unrelated changes, and record exact test outcomes in this plan.
-- [ ] Update the linked design's UX sections to match this revision, then review against both documents, especially persistence, scan ownership, outages and narrow-window behaviour. Verify the full visible flow is Welcome → Adding photos → Library, with recovery/empty/error inside the import layout and tips inside the library. Resolve material review findings and rerun affected checks.
-- [ ] Hand off the implemented branch with test evidence. Commit/push/merge according to the user's integration instructions at execution time; do not infer a new main push from previous feature pushes.
+- [x] Update the linked design's UX sections to match this revision, then review against both documents, especially persistence, scan ownership, outages and narrow-window behaviour. Verify the full visible flow is Welcome → Adding photos → Library, with recovery/empty/error inside the import layout and tips inside the library. Resolve material review findings and rerun affected checks.
+- [x] Hand off the implemented branch with test evidence. Commit/push/merge according to the user's integration instructions at execution time; do not infer a new main push from previous feature pushes.
 
 ## Execution note
 
@@ -132,8 +132,17 @@ This is a requested planning deliverable, not an implementation start. Recommend
 Tasks 3–5 are integrated in one commit because scan ownership, recovery and persistent background completion share one coordinator. Related named assertions are grouped into behavioral tests, with additional regressions for real main-window wiring, dialog close/picker invalidation, cancelled selection, superseded generations, root mismatch and retryable tips write failures.
 
 - Scanner/authorization suite: 38 passed, 3 ignored.
-- Full suite: 540 passed, 97 ignored; only `history_group_labels_bucket_by_edit_age_not_import_date` excluded as specified above.
-- All 17 onboarding GTK tests passed in individual processes with isolated writable cache directories; the real-window test uses isolated data/config/cache directories and a generated fixture photo.
+- Full suite: 540 passed, 100 ignored; only `history_group_labels_bucket_by_edit_age_not_import_date` excluded as specified above.
+- All 20 onboarding GTK tests passed in individual processes with isolated writable cache directories; the real-window test uses isolated data/config/cache directories and a generated fixture photo.
 - `cargo build` and `git diff --check`: exit 0. Existing repository warnings remain.
 - Layout checked at 1920×1080, 1366×768 and 360×640 in light and dark themes. Native dialog preferred dimensions are explicitly clamped to parent allocations; long path segments wrap; keyboard focus scrolls controls into view. Focus containment checks use the action label and central click area because GTK focus outlines extend beyond native content bounds.
-- Design UX already matches the revised two-screen flow. Whole-branch review pending; feature remains local on `feat/startup-wizard`.
+- Design UX already matches the revised two-screen flow. Whole-branch review identified three important recovery/counting issues; each was fixed with a regression observed failing first, then passing. No minor or declined-to-judge findings remain. Feature remains committed locally on `feat/startup-wizard`.
+
+
+### Final review fix evidence
+
+- Failed state writes: `wizard_state_write_failure_allows_retry_without_reopening` failed on a stale picker token, then passed. Completed selection clears the token and keeps its runtime root for Try again even when persistence fails.
+- Import counts: `wizard_empty_root_does_not_count_photos_elsewhere_and_partial_retry_counts_its_root` failed with 3 unrelated photos instead of 0, then passed. Indexed counts now use the selected root; a separate `library_has_photos` flag enables browsing existing photos. Empty roots retain Empty/recovery state; retries count existing photos in that root without double-counting other folders.
+- Shared active jobs: `wizard_recovery_reuses_ordinary_active_import_without_cancelling_or_requeueing` failed to reflect the active ordinary import, then passed. The shared scan job exposes its active root/generation; matching recovery attaches without cancellation, registration or reauthorization.
+- Final verification after all fixes: 20/20 GTK processes; scanner suite 38 passed; full suite 540 passed, 100 ignored, known date-sensitive history case excluded; `cargo build`, scoped rustfmt checks and `git diff --check` exit 0.
+- Local branch and outage ledger preserved. No remote push or main integration requested for this feature.

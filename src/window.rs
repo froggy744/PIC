@@ -481,6 +481,7 @@ struct ScanJobState {
     kind: Option<ScanJobKind>,
     pending: VecDeque<String>,
     active: Option<scanner::ScanControl>,
+    active_root: Option<String>,
     imported_total: usize,
     failed_total: usize,
     stop_requested: bool,
@@ -494,6 +495,7 @@ impl ScanJobState {
         if let Some(active) = self.active.take() {
             active.cancel();
         }
+        self.active_root = None;
         self.generation = self.generation.wrapping_add(1);
         self.kind = None;
         self.pending.clear();
@@ -508,6 +510,7 @@ impl ScanJobState {
         if let Some(previous) = self.active.take() {
             previous.cancel();
         }
+        self.active_root = None;
         self.generation = self.generation.wrapping_add(1);
         self.kind = Some(kind);
         self.pending.clear();

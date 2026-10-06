@@ -184,7 +184,7 @@ fn wizard_interrupted_import_does_not_enqueue_automatically_and_continue_queues_
     let tour = parent.visible_dialog().unwrap();
     assert_eq!(tour.title().as_str(), "Discover PIC");
     click(&parent, "Skip tour");
-    coordinator.present_manually();
+    coordinator.present_recovery();
     click(&parent, "Continue adding photos");
     coordinator.import_started(ImportTicket {
         generation: 4,
@@ -641,28 +641,52 @@ fn wizard_actual_window_recovery_import_and_library_card() {
     gtk4::prelude::WidgetExt::activate_action(&window, "win.getting-started", None).unwrap();
     assert_eq!(window.dialogs().n_items(), 1);
     click(&window, "Skip for now");
-    gtk::prelude::WidgetExt::activate_action(&window, "win.getting-started", None).unwrap();
-    click(&window, "Continue adding photos");
-    let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    while load_preferences(&check).unwrap().stage != Some(OnboardingStage::Tips)
-        && std::time::Instant::now() < until
-    {
-        settle_for(std::time::Duration::from_millis(20));
+    fn find_help(widget: &gtk::Widget) -> Option<gtk::Button> {
+        if let Some(button) = widget.downcast_ref::<gtk::Button>() {
+            if button.tooltip_text().as_deref() == Some("Help") {
+                return Some(button.clone());
+            }
+        }
+        let mut child = widget.first_child();
+        while let Some(current) = child {
+            if let Some(button) = find_help(&current) {
+                return Some(button);
+            }
+            child = current.next_sibling();
+        }
+        None
     }
+    let help = find_help(window.upcast_ref()).expect("Help must be a direct button");
+    help.emit_clicked();
+    assert_eq!(
+        window.visible_dialog().unwrap().title().as_str(),
+        "Welcome to PIC"
+    );
+    click(&window, "Tutorial");
+    assert_eq!(
+        window.visible_dialog().unwrap().title().as_str(),
+        "Discover PIC"
+    );
+    click(&window, "Skip tour");
+    settle_for(std::time::Duration::from_millis(300));
+    help.emit_clicked();
+    assert_eq!(
+        window.visible_dialog().unwrap().title().as_str(),
+        "Welcome to PIC"
+    );
+    click(&window, "Skip for now");
+    settle_for(std::time::Duration::from_millis(300));
     assert_eq!(
         load_preferences(&check).unwrap().stage,
-        Some(OnboardingStage::Tips)
+        Some(OnboardingStage::Importing)
     );
     assert_eq!(
         check
             .query_row("SELECT COUNT(*) FROM photos", [], |row| row
                 .get::<_, i64>(0))
             .unwrap(),
-        1
+        0
     );
-    assert_eq!(crate::db::imported_root_paths(&check).unwrap().len(), 1);
-    click(&window, "Open Library");
-    settle_for(std::time::Duration::from_millis(300));
     fn find(widget: &gtk4::Widget, text: &str) -> Option<gtk4::Button> {
         if let Some(button) = widget.downcast_ref::<gtk4::Button>() {
             if button.label().as_deref() == Some(text) {
@@ -721,7 +745,7 @@ fn wizard_picker_cancel_restores_welcome_or_saved_recovery() {
         Some("/missing/photos"),
     )
     .unwrap();
-    owner.present_manually();
+    owner.present_recovery();
     click(&parent, "Choose another folder");
     owner.picker_cancelled();
     assert!(!owner
@@ -909,13 +933,69 @@ fn wizard_recovery_reuses_ordinary_active_import_without_cancelling_or_requeuein
     let generation = job.borrow().generation;
     owner.present_manually();
     assert!(
+        owner
+            .wizard
+            .borrow()
+            .as_ref()
+            .unwrap()
+            .preference_row
+            .is_visible(),
+        "Help must show Welcome even during an active import"
+    );
+    assert!(
         owner.is_running(),
         "recovery must reflect the shared scan already adding this root"
+    );
+    owner.scan_event(generation, &ScanEvent::DiscoveryProgress { found: 5 });
+    assert!(
+        owner
+            .wizard
+            .borrow()
+            .as_ref()
+            .unwrap()
+            .preference_row
+            .is_visible(),
+        "background progress must not replace Help's Welcome screen"
     );
     assert!(!queue_local_import(&connection, &job, "/photos", Some(&owner)).unwrap());
     assert_eq!(job.borrow().generation, generation);
     assert!(!control.is_cancelled());
     assert!(job.borrow().pending.is_empty());
+    owner.scan_event(
+        generation,
+        &ScanEvent::Finished {
+            imported: 1,
+            failed: 0,
+        },
+    );
+    assert!(owner
+        .wizard
+        .borrow()
+        .as_ref()
+        .unwrap()
+        .preference_row
+        .is_visible());
+    fn find_choose(widget: &gtk::Widget) -> Option<gtk::Button> {
+        if let Some(button) = widget.downcast_ref::<gtk::Button>() {
+            if button.label().as_deref() == Some("Choose Photos Folder") {
+                return Some(button.clone());
+            }
+        }
+        let mut child = widget.first_child();
+        while let Some(current) = child {
+            if let Some(button) = find_choose(&current) {
+                return Some(button);
+            }
+            child = current.next_sibling();
+        }
+        None
+    }
+    assert!(
+        find_choose(parent.visible_dialog().unwrap().upcast_ref())
+            .unwrap()
+            .is_sensitive(),
+        "completed import must enable the Welcome folder button"
+    );
     owner.close();
     parent.close();
 }

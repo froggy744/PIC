@@ -456,26 +456,10 @@ impl OnboardingCoordinator {
         }
     }
     pub(super) fn present_manually(self: &Rc<Self>) {
-        if self.is_visible() {
-            if let Some(wizard) = self.wizard.borrow().as_ref() {
-                self.present_wizard(&wizard);
-            }
-            return;
-        }
         self.pending_picker.set(None);
         self.reuse_matching_active_import();
-        if self.is_running() {
-            if let Some(wizard) = self.ensure_wizard() {
-                self.render();
-                self.present_wizard(&wizard);
-            }
-            return;
-        }
-        let prefs = load_preferences(&self.connection.borrow()).ok();
-        if prefs.is_some_and(|prefs| prefs.stage == Some(OnboardingStage::Importing)) {
-            self.present_recovery();
-        } else if let Some(wizard) = self.ensure_wizard() {
-            self.pending_picker.set(None);
+        if let Some(wizard) = self.ensure_wizard() {
+            wizard.set_progress(&self.tracker.borrow().progress);
             wizard.set_page(WizardPage::Welcome);
             self.present_wizard(&wizard);
         }
@@ -504,10 +488,27 @@ impl OnboardingCoordinator {
         self.render();
         self.present_wizard(&wizard);
     }
+    fn update_visible_import(&self) {
+        let welcome = self
+            .wizard
+            .borrow()
+            .as_ref()
+            .is_some_and(|wizard| wizard.is_welcome());
+        if !self.is_visible() {
+            return;
+        }
+        if welcome {
+            if let Some(wizard) = self.wizard.borrow().as_ref() {
+                wizard.set_progress(&self.tracker.borrow().progress);
+            }
+        } else {
+            self.render();
+        }
+    }
     pub(super) fn scan_generation_changed(&self, generation: u64) {
         let changed = self.tracker.borrow_mut().superseded(generation);
-        if changed && self.is_visible() {
-            self.render();
+        if changed {
+            self.update_visible_import();
         }
     }
     pub(super) fn scan_event(&self, generation: u64, event: &ScanEvent) {
@@ -531,9 +532,7 @@ impl OnboardingCoordinator {
                 self.tracker.borrow_mut().finish(*failed);
             }
         }
-        if self.is_visible() {
-            self.render();
-        }
+        self.update_visible_import();
         if self.tracker.borrow().successful {
             self.persist_completion();
         }

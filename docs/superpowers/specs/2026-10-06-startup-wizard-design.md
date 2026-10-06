@@ -18,7 +18,7 @@ The main UI has no discovery or Take a tour banner. Tutorial on Welcome opens a 
 
 ## Never show again and persistence
 
-A checkbox labelled **Don’t show this automatically again** is visible only on Welcome, initially off for a new library. Its saved state is shown when reopened manually. Changing it persists immediately; turning it on does not close the current wizard. It suppresses subsequent automatic wizard launches, including after Skip, closing the app or a power outage. Turning it off restores automatic display on every startup, even after onboarding is complete or the library already contains photos. Manual **Help → Getting started** always works and does not clear preferences or restart imports.
+A checkbox labelled **Don’t show this automatically again** is visible only on Welcome, initially off for a new library. Its saved state is shown when reopened manually. Changing it persists immediately; turning it on does not close the current wizard. It suppresses subsequent automatic wizard launches, including after Skip, closing the app or a power outage. Turning it off restores automatic display on every startup, even after onboarding is complete or the library already contains photos. Manual **Help** always works and does not clear preferences or restart imports.
 
 Use the existing library database settings; preferences are per library, matching existing application settings. No schema migration or new dependencies. Keys:
 - `onboarding-never-show`: `true` or `false`, default `false`.
@@ -30,7 +30,7 @@ Skip/window dismissal without the checkbox permits the wizard to appear again on
 
 ## Startup and recovery rules
 
-Show the wizard at every startup unless `onboarding-never-show` is true. Existing photos, registered folders, completion and tips dismissal do not suppress it. Every saved stage opens Welcome on startup. Preserve unfinished imports and their selected roots; manual Getting started can still show recovery and an explicit Continue action. Welcome offers Tutorial instead of an import recovery action.
+Show the wizard at every startup unless `onboarding-never-show` is true. Existing photos, registered folders, completion and tips dismissal do not suppress it. Every saved stage opens Welcome on startup. Preserve unfinished imports and their selected roots; Help always opens Welcome, including during a running or unfinished import; background progress must not replace it. Welcome offers Tutorial instead of an import recovery action.
 
 After interrupted `importing`, use persisted root, current database contents and current scan state to reconstruct the page. Existing photos permit Open library. An idle interrupted import offers an explicit **Continue adding photos** action through the existing scan queue; never automatically enqueue a duplicate import merely because a wizard reopened. Do not claim an inactive scan is running. If the selected source is unavailable, show retry/choose-another actions. A saved tips stage opens Welcome on startup; the optional tips card remains available through the existing library flow.
 
@@ -42,7 +42,7 @@ A new focused `src/onboarding.rs` module owns the pure state model and persisten
 
 Reuse the folder-registration callback, `PhotoScanRequestReason::ImportFolder`, existing scan queue, `ScanUiEvent.generation` rejection, and progressive `PhotosIndexed` handling. An onboarding import ticket includes the generation and selected root; update wizard progress only for its matching job, never background maintenance or a superseding job. No new scanning engine, original copying, or cache regeneration logic.
 
-Add a compact Help menu with Getting started in the header; preserve the existing sidebar pin button and responsive toolbar. All callbacks use weak UI ownership or explicit disconnection on close.
+Add a direct Help button opening Welcome in the header; preserve the existing sidebar pin button and responsive toolbar. All callbacks use weak UI ownership or explicit disconnection on close.
 
 ## Layout and accessibility
 

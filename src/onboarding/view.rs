@@ -87,7 +87,7 @@ impl StartupWizard {
         callbacks: WizardCallbacks,
     ) -> Rc<Self> {
         let dialog = adw::Dialog::new();
-        dialog.set_title("Getting started");
+        dialog.set_title("Welcome to PIC");
         dialog.set_content_width(600);
         dialog.set_content_height(520);
         let shell = gtk::Box::new(gtk::Orientation::Vertical, 0);
@@ -306,6 +306,9 @@ impl StartupWizard {
     pub(crate) fn is_visible(&self) -> bool {
         self.visible.get()
     }
+    pub(crate) fn is_welcome(&self) -> bool {
+        self.page.get() == WizardPage::Welcome
+    }
     pub(crate) fn set_page(&self, page: WizardPage) {
         self.page.set(page);
         self.refresh();
@@ -335,6 +338,11 @@ impl StartupWizard {
     fn refresh(&self) {
         let welcome = self.page.get() == WizardPage::Welcome;
         let mode = self.mode.get();
+        self.dialog.set_title(if welcome {
+            "Welcome to PIC"
+        } else {
+            "Adding photos"
+        });
         self.header.set_show_title(!welcome);
         self.logo.set_visible(welcome);
         self.photo_visual.set_visible(welcome);
@@ -394,6 +402,7 @@ impl StartupWizard {
         } else {
             "Choose another folder"
         });
+        self.choose.set_sensitive(!self.running.get());
         self.choose
             .set_visible(welcome || (!self.running.get() && mode != ImportPresentation::Adding));
         self.skip.set_visible(welcome);

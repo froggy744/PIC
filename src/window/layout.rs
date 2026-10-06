@@ -1002,13 +1002,12 @@
 
     let right_header = adw::HeaderBar::new();
     right_header.set_height_request(46);
-    let help_items = gio::Menu::new();
-    help_items.append(Some("Getting started"), Some("win.getting-started"));
-    let help = gtk::MenuButton::builder()
+    let help = gtk::Button::builder()
         .icon_name("help-about-symbolic")
         .tooltip_text("Help")
-        .menu_model(&help_items)
+        .action_name("win.getting-started")
         .build();
+    help.update_property(&[gtk::accessible::Property::Label("Help")]);
     help.add_css_class("flat");
     right_header.pack_end(&help);
 

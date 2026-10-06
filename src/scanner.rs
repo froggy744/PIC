@@ -80,9 +80,15 @@ pub struct IndexedPhoto {
 
 /// Cooperative cancellation handle for an import and its thumbnail pass.
 #[derive(Clone, Default)]
-pub struct ScanControl(Arc<AtomicU8>);
+pub struct ScanControl(Arc<AtomicU8>, Option<Arc<AtomicU8>>);
 
 impl ScanControl {
+    /// Worker cleanup owns its own flag, while user cancellation propagates
+    /// immediately without waiting for the catalog writer to leave its scope.
+    pub fn child(&self) -> Self {
+        Self(Arc::new(AtomicU8::new(0)), Some(self.1.as_ref().unwrap_or(&self.0).clone()))
+    }
+
     pub fn cancel(&self) {
         self.0.store(1, Ordering::Release);
     }
@@ -99,6 +105,7 @@ impl ScanControl {
 
     pub fn is_cancelled(&self) -> bool {
         self.0.load(Ordering::Acquire)!=0
+            || self.1.as_ref().is_some_and(|parent| parent.load(Ordering::Acquire)!=0)
     }
 }
 
@@ -1474,6 +1481,19 @@ mod scan_lock_tests {
         assert!(lock.is_poisoned());
         drop(acquire_scan_lock(&lock));
         drop(acquire_scan_lock(&lock));
+    }
+
+    #[test]
+    fn parent_stop_reaches_workers_without_canceling_parent_on_worker_cleanup() {
+        let parent = ScanControl::default();
+        let worker = parent.child();
+        let sibling = parent.child();
+        worker.cancel();
+        assert!(worker.is_cancelled());
+        assert!(!parent.is_cancelled());
+        assert!(!sibling.is_cancelled());
+        parent.cancel();
+        assert!(sibling.is_cancelled());
     }
 
     #[test]

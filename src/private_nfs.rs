@@ -6,6 +6,7 @@ use std::collections::HashMap;
 
 type Callback = extern "C" fn(*mut c_void, *const c_char, c_uint) -> c_int;
 unsafe extern "C" {
+    fn pic_nfs_set_scan_cancel(callback: Option<extern "C" fn(*mut c_void)->c_int>, context:*mut c_void);
     fn pic_nfs_scan(host:*const c_char,export_path:*const c_char,relative:*const c_char,
         cb:extern "C" fn(*mut c_void,*const c_char,c_uint,u64,i64,c_int)->c_int,
         ctx:*mut c_void,error:*mut c_char,cap:usize)->c_int;
@@ -19,6 +20,23 @@ unsafe extern "C" {
     fn pic_nfs_stat(host:*const c_char, export_path:*const c_char, relative:*const c_char,
         size:*mut u64,mtime:*mut i64,is_dir:*mut c_int,error:*mut c_char,cap:usize)->c_int;
     fn pic_smb_free(data:*mut c_void);
+}
+
+/// The borrowed control stays alive on this thread until its scope is dropped.
+/// The Rc marker prevents transferring this thread-local registration.
+pub struct ScanReadCancellation<'a> {
+    _control: &'a crate::scanner::ScanControl,
+    _thread: std::marker::PhantomData<std::rc::Rc<()>>,
+}
+extern "C" fn scan_read_cancelled(context: *mut c_void) -> c_int {
+    unsafe { (&*(context as *const crate::scanner::ScanControl)).is_cancelled() as c_int }
+}
+pub fn cancel_scan_reads(control: &crate::scanner::ScanControl) -> ScanReadCancellation<'_> {
+    unsafe { pic_nfs_set_scan_cancel(Some(scan_read_cancelled), control as *const _ as *mut c_void); }
+    ScanReadCancellation { _control: control, _thread: std::marker::PhantomData }
+}
+impl Drop for ScanReadCancellation<'_> {
+    fn drop(&mut self) { unsafe { pic_nfs_set_scan_cancel(None, std::ptr::null_mut()); } }
 }
 pub fn close_scan_session() { unsafe { pic_nfs_scan_close(); } }
 
@@ -181,4 +199,29 @@ pub fn stat(uri: &str) -> anyhow::Result<crate::network_shares::Metadata> {
     let status=unsafe{pic_nfs_stat(h.as_ptr(),e.as_ptr(),r.as_ptr(),&mut size,&mut mtime,&mut dir,buffer.as_mut_ptr(),buffer.len())};
     if status<0 {anyhow::bail!("{}",err(&buffer));}
     Ok(crate::network_shares::Metadata{size,mtime:Some(mtime),is_dir:dir!=0})
+}
+
+#[cfg(test)]
+mod cancellation_tests {
+    use super::*;
+    #[test]
+    fn canceled_scan_read_exits_before_connecting_to_a_server() {
+        let parent=crate::scanner::ScanControl::default();
+        let worker=parent.child();
+        let _scope=cancel_scan_reads(&worker);
+        parent.cancel();
+        let host=CString::new("invalid.example").unwrap();
+        let export=CString::new("/").unwrap();
+        let relative=CString::new("/a.jpg").unwrap();
+        let mut bytes=std::ptr::null_mut();
+        let mut length=0;
+        let mut error=[0 as c_char;512];
+        let started=std::time::Instant::now();
+        let status=unsafe {pic_nfs_read(host.as_ptr(),export.as_ptr(),relative.as_ptr(),&mut bytes,&mut length,1024,error.as_mut_ptr(),error.len())};
+        assert!(status<0);
+        assert!(err(&error).contains("cancelled"));
+        assert!(bytes.is_null());
+        assert_eq!(length,0);
+        assert!(started.elapsed()<std::time::Duration::from_millis(200));
+    }
 }

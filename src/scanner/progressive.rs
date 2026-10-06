@@ -243,6 +243,7 @@ fn enrich(
     sender: &SyncSender<Enrichment>,
     ack: &Receiver<()>,
 ) -> Result<()> {
+    let _read_cancellation = crate::private_nfs::cancel_scan_reads(control);
     let connection = db::open_existing(database)?;
     while !control.is_cancelled() {
         // Observe completion before querying SQLite: observing it afterwards
@@ -276,6 +277,9 @@ fn enrich(
                     result.metadata_state = "ready".into();
                 }
                 Err(error) => {
+                    if control.is_cancelled() {
+                        break;
+                    }
                     if !source.available(root) {
                         send_bounded(sender, Enrichment::Offline, control);
                         return Ok(());
@@ -297,6 +301,9 @@ fn enrich(
                 Ok(true) => result.thumbnail_state = "ready".into(),
                 Ok(false) => result.thumbnail_state = "unsupported".into(),
                 Err(error) => {
+                    if control.is_cancelled() {
+                        break;
+                    }
                     if !source.available(root) {
                         send_bounded(sender, Enrichment::Offline, control);
                         return Ok(());
@@ -381,7 +388,7 @@ fn run_with_source(
     let (discovery_ack, discovery_ack_receiver) = mpsc::sync_channel(1);
     let (enrichment_sender, enrichment_receiver) = mpsc::sync_channel(1);
     let (enrichment_ack, enrichment_ack_receiver) = mpsc::sync_channel(1);
-    let worker_control = ScanControl::default();
+    let worker_control = control.child();
     let discovery_done = AtomicBool::new(false);
     let mut imported = connection.query_row(
         "SELECT added FROM network_import_jobs WHERE root=?1",
@@ -585,7 +592,9 @@ fn run_with_source(
                     send(events, ScanEvent::IndexingFinished { imported });
                 }
                 Ok(Discovery::Fatal(error)) => anyhow::bail!("network discovery: {error}"),
-                Err(mpsc::RecvTimeoutError::Disconnected) if !catalog_complete => {
+                Err(mpsc::RecvTimeoutError::Disconnected)
+                    if !catalog_complete && !control.is_cancelled() =>
+                {
                     anyhow::bail!("network discovery worker stopped unexpectedly")
                 }
                 Err(_) => {
@@ -631,6 +640,9 @@ fn run_with_source(
                 break;
             }
         }
+        // Stop workers before the final durable flush, rather than allowing
+        // discovery or enrichment to start another read while it commits.
+        worker_control.cancel();
         // Even Stop preserves records already emitted by discovery. The
         // current directory stays pending, so recovery can safely enumerate it.
         flush(

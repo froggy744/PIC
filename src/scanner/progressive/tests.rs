@@ -439,3 +439,56 @@ fn committed_subfolders_are_published_before_enrichment_finishes() {
         "child folder must be browsable while discovery is blocked"
     );
 }
+
+struct StopDuringMetadata {
+    control: ScanControl,
+    probes: AtomicUsize,
+    thumbnails: AtomicUsize,
+}
+impl Source for StopDuringMetadata {
+    fn available(&self, _: &str) -> bool {
+        self.probes.fetch_add(1, Ordering::Relaxed);
+        true
+    }
+    fn visit(&self, _: &str, _: &ScanControl, emit: &mut dyn FnMut(Record) -> bool) -> Result<()> {
+        emit(photo_record("nfs://nas/photos/a.jpg"));
+        Ok(())
+    }
+    fn metadata(&self, _: &db::NetworkWork) -> Result<db::PhotoMetadata> {
+        self.control.cancel();
+        anyhow::bail!("read cancelled")
+    }
+    fn thumbnail(&self, _: &db::NetworkWork) -> Result<bool> {
+        self.thumbnails.fetch_add(1, Ordering::Relaxed);
+        Ok(true)
+    }
+}
+#[test]
+fn stop_during_metadata_does_not_start_another_network_probe_or_thumbnail() {
+    let fixture = Fixture::new();
+    let control = ScanControl::default();
+    let source = Arc::new(StopDuringMetadata {
+        control: control.clone(),
+        probes: AtomicUsize::new(0),
+        thumbnails: AtomicUsize::new(0),
+    });
+    run_with_source(
+        "nfs://nas/photos",
+        &fixture.0,
+        None,
+        &control,
+        false,
+        source.clone(),
+    )
+    .unwrap();
+    assert_eq!(
+        source.probes.load(Ordering::Relaxed),
+        1,
+        "Stop must avoid an additional blocking availability RPC"
+    );
+    assert_eq!(source.thumbnails.load(Ordering::Relaxed), 0);
+    let connection = Connection::open(&fixture.0).unwrap();
+    assert!(db::resumable_network_imports(&connection)
+        .unwrap()
+        .is_empty());
+}

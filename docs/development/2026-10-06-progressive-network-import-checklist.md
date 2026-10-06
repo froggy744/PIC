@@ -272,3 +272,24 @@ display and was not executed in this environment. Other pre-existing ignored
 GTK/network/hardware tests retain their requirements. CPU affinity and a helper
 process are unnecessary for this implementation; worker scheduling stays with
 the operating system.
+
+
+## Stop responsiveness follow-up
+
+Stop now signals cancellation before saving paused state. Worker cancellation
+is linked to the user control, so discovery and enrichment see it immediately
+without waiting for the catalog writer's final commit. Cancelled reads do not
+start another availability probe or thumbnail. Expected worker-channel closure
+on Stop follows the normal cancellation/checkpoint path.
+
+The import's NFS read scope checks cancellation while waiting for the shared
+read lock and between 64 KiB read chunks. Cancellation discards partial image
+bytes, closes opened handles with a short cleanup timeout and invalidates the
+read context when needed. Viewer reads on other threads retain their own
+behavior. Queued progress events cannot overwrite “Stopping scan…”.
+
+Validation: 565 automated tests pass, 106 remain ignored. A native contention
+probe cancelled a worker in 10 ms while the read lock remained held. This
+measures lock-wait cancellation, not a live NAS RPC. An already-issued native
+network call or decoder operation must still return before the worker exits;
+cleanup timeout is not an exact wall-clock deadline because libnfs polls.

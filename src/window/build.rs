@@ -4096,6 +4096,11 @@ fn start_photo_export_single(
             // Stop means the whole current job. In particular, a library refresh
             // must not continue with the next queued folder after cancellation.
             job.stop_requested = true;
+            // Signal before SQLite persistence, which can wait for the writer.
+            if let Some(control) = job.active.as_ref() { control.cancel(); }
+            refresh_status_label.set_text(if matches!(job.kind, Some(ScanJobKind::Refresh | ScanJobKind::FolderRefresh)) {
+                "Stopping refresh…"
+            } else { "Stopping scan…" });
             for root in job.active_root.iter().chain(job.pending.iter()) {
                 if let Err(error)=db::pause_network_import(&connection.borrow(),root) {
                     eprintln!("Could not save stopped import {root}: {error}");
@@ -4103,12 +4108,6 @@ fn start_photo_export_single(
             }
             job.pending.clear();
             job.resume_roots.clear();
-            if matches!(job.kind, Some(ScanJobKind::Refresh | ScanJobKind::FolderRefresh)) {
-                refresh_status_label.set_text("Stopping refresh…");
-            }
-            if let Some(control) = job.active.as_ref() {
-                control.cancel();
-            }
         })
     };
     {
@@ -4605,11 +4604,11 @@ fn start_photo_export_single(
             }
         }
 
-        if !network_scan && priority_pending > 0 && thumbnail_total == 0 {
+        if !network_scan && !scan_job_for_events.borrow().stop_requested && priority_pending > 0 && thumbnail_total == 0 {
             refresh_status_label_for_events
                 .set_text(&format!("Creating visible thumbnails ({priority_pending} queued)"));
             refresh_status_box_for_events.set_visible(true);
-        } else if !network_scan && priority_completions > 0 && thumbnail_total == 0 {
+        } else if !network_scan && !scan_job_for_events.borrow().stop_requested && priority_completions > 0 && thumbnail_total == 0 {
             refresh_status_box_for_events.set_visible(false);
         }
         // Drain committed batches promptly, but cap both event count and wall
@@ -4645,6 +4644,14 @@ fn start_photo_export_single(
             }
 
             let event = ui_event.event;
+            if scan_job_for_events.borrow().stop_requested && !matches!(&event,
+                scanner::ScanEvent::Cancelled {..} | scanner::ScanEvent::Finished {..}
+                | scanner::ScanEvent::PhotosIndexed {..} | scanner::ScanEvent::PhotosUpdated {..}
+                | scanner::ScanEvent::FolderStarted {..} | scanner::ScanEvent::PhotosRemoved {..}
+                | scanner::ScanEvent::FoldersRemoved | scanner::ScanEvent::LibraryCountsChanged {..}
+                | scanner::ScanEvent::ThumbnailCreated {..}) {
+                continue;
+            }
             onboarding.scan_event(ui_event.generation, &event);
             match &event {
                 scanner::ScanEvent::Started { root } => {

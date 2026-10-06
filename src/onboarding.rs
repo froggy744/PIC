@@ -1,3 +1,4 @@
+pub(crate) mod view;
 use anyhow::Result;
 use rusqlite::Connection;
 
@@ -116,3 +117,6 @@ pub(crate) fn startup_decision(
 }
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod gtk_tests;

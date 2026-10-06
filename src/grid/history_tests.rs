@@ -21,7 +21,17 @@ fn history_group_labels_bucket_by_edit_age_not_import_date() {
     assert_eq!(history_group_label(noon(7)), "Earlier This Week");
 
     // Fixed timestamps that cannot fall into the rolling week/month buckets.
-    assert_eq!(history_group_label(noon(400)), "Aug 2025");
+    let august = Local
+        .from_local_datetime(
+            &chrono::NaiveDate::from_ymd_opt(2025, 8, 15)
+                .unwrap()
+                .and_hms_opt(12, 0, 0)
+                .unwrap(),
+        )
+        .single()
+        .unwrap()
+        .timestamp_millis();
+    assert_eq!(history_group_label(august), "Aug 2025");
     let last_year = Local
         .from_local_datetime(
             &chrono::NaiveDate::from_ymd_opt(2020, 6, 15)

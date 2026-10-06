@@ -374,6 +374,7 @@ fn navigation_step(current: usize, direction: i32, len: usize) -> usize {
 
 pub struct Lightbox {
     pub root: gtk::Overlay,
+    offline: Rc<OfflinePresentation>,
     backdrop: gtk::Box,
     picture: gtk::Picture,
     picture_viewport: gtk::ScrolledWindow,
@@ -415,4 +416,9 @@ pub struct Lightbox {
 // Structural split only: included files remain in this module scope.
 include!("lightbox/impl.rs");
 include!("lightbox/render.rs");
+include!("lightbox/offline.rs");
 include!("lightbox/tests.rs");
+
+#[cfg(test)]
+#[path = "lightbox/offline_tests.rs"]
+mod offline_tests;

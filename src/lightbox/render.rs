@@ -26,6 +26,9 @@ fn ensure_native_zoom_texture(
         }
     }
 
+    if !photo.original_available() {
+        return;
+    }
     if pending.replace(true) {
         return;
     }
@@ -150,6 +153,7 @@ fn show_photo(
     cache_hit: bool,
     navigation_ready: Option<Rc<Cell<bool>>>,
     navigation_settled: Option<Rc<dyn Fn()>>,
+    offline: Rc<OfflinePresentation>,
 ) {
     let navigation_started = std::time::Instant::now();
     let Some(photo) = photos.get(index) else {
@@ -157,7 +161,7 @@ fn show_photo(
     };
 
     // Decode a display-quality image off the GTK thread. Never display a
-    // thumbnail in the lightbox; keep the previous full-size image during
+    // thumbnail for online photos; keep the previous full-size image during
     // navigation and show a neutral backdrop on initial open.
     let path = photo.path();
     if png_uses_theme_background(&path) {
@@ -177,6 +181,29 @@ fn show_photo(
     ));
     if let Some(previous) = decode_cancel.borrow_mut().take() {
         previous.cancel();
+    }
+    offline.track(photo);
+    offline.retry_requested.set(false);
+    if photo.original_available() {
+        // Do not carry a different photo's offline thumbnail into an online
+        // load. A matching full-quality RAM cache has already replaced it.
+        if offline.badge.is_visible() && !cache_hit {
+            picture.set_paintable(gtk::gdk::Paintable::NONE);
+            picture.set_filename(Option::<&str>::None);
+            picture.set_size_request(1, 1);
+        }
+        offline.online();
+    } else {
+        offline.cached(!cache_hit);
+        if !cache_hit {
+            cancel_lightbox_prefetch_except(None);
+            VIEWER_FOREGROUND_GENERATION.store(0, Ordering::Release);
+            show_offline_preview(
+                picture, photo.clone(), root, zoom, generation,
+                expected_generation, offline, true, navigation_ready, navigation_settled,
+            );
+            return;
+        }
     }
     if cache_hit {
         viewer_trace(format!(
@@ -355,13 +382,13 @@ fn show_photo(
                 }
             }
             Err(_) => {
-                // A failed decode must not leave the previous photo visible.
-                // This is especially important when navigating from a valid
-                // image to a corrupt source: retaining the old paintable makes
-                // the viewer appear to open the wrong photo.
-                picture.set_paintable(gtk::gdk::Paintable::NONE);
-                picture.set_filename(Option::<&str>::None);
-                picture.set_size_request(1, 1);
+                show_offline_preview(
+                    &picture, photo, &root, zoom, generation,
+                    expected_generation, offline, false,
+                    navigation_ready_for_result, navigation_settled_for_result,
+                );
+                lease.release();
+                return;
             }
         }
         if let Some(navigation_ready) = navigation_ready_for_result {
@@ -790,6 +817,9 @@ fn prefetch_display_texture(
     let Some(photo) = photos.get(index) else {
         return;
     };
+    if !photo.original_available() {
+        return;
+    }
     if zoom < 0.0 {
         return;
     }

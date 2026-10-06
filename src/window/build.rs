@@ -680,6 +680,22 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         );
     })));
 
+    {
+        let connection = connection.clone();
+        let availability_refresh = availability_refresh.clone();
+        let lightbox_for_retry = Rc::downgrade(&lightbox);
+        lightbox.set_unavailable_handler(move |photo, anchor| {
+            let availability_refresh = availability_refresh.clone();
+            let lightbox_for_retry = lightbox_for_retry.clone();
+            let retry: Rc<dyn Fn()> = Rc::new(move || {
+                availability_refresh();
+                if let Some(lightbox) = lightbox_for_retry.upgrade() {
+                    lightbox.retry_current_original();
+                }
+            });
+            show_unavailable_dialog(&anchor, photo, connection.clone(), retry);
+        });
+    }
     configure_infobar_album_menu(&info.add_to_album, action_context.clone());
 
     // Destructive maintenance actions for the Settings → Library page. The

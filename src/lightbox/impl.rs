@@ -224,6 +224,7 @@ impl Lightbox {
             Rc::new(RefCell::new(None));
         let key_navigation_ready = Rc::new(Cell::new(true));
         let wheel_navigation = Rc::new(RefCell::new(WheelNavigationState::default()));
+        let offline = OfflinePresentation::new(&root, photos.clone(), index.clone());
         let photo_changed: PhotoChangedHandler = Rc::new(RefCell::new(None));
         let one_to_one_sync: OneToOneSyncHandler = Rc::new(RefCell::new(None));
         let zoom_sync: ZoomSyncHandler = Rc::new(RefCell::new(None));
@@ -292,8 +293,11 @@ impl Lightbox {
         let applied_for_visibility = applied_native_scale.clone();
         let picture_for_visibility = picture.clone();
         let viewport_for_visibility = picture_viewport.clone();
+        let offline_for_visibility = offline.clone();
         root.connect_visible_notify(move |root| {
             if !root.is_visible() {
+                offline_for_visibility.disconnect();
+                offline_for_visibility.online();
                 let mut child = root.first_child();
                 while let Some(widget) = child {
                     child = widget.next_sibling();
@@ -366,7 +370,9 @@ impl Lightbox {
                 .is_some_and(|picked| {
                     let mut current = Some(picked);
                     while let Some(widget) = current {
-                        if widget.has_css_class("photo-context-menu") {
+                        if widget.has_css_class("photo-context-menu")
+                            || widget.has_css_class("offline-badge")
+                        {
                             return true;
                         }
                         current = widget.parent();
@@ -540,6 +546,7 @@ impl Lightbox {
             Rc::new(RefCell::new(None));
 
         let wheel_dispatch: Rc<dyn Fn(usize, i32)> = {
+            let offline = offline.clone();
             let photos = photos.clone();
             let index = index.clone();
             let picture = picture.clone();
@@ -625,6 +632,7 @@ impl Lightbox {
                     cache_hit,
                     None,
                     Some(settled.clone()),
+                    offline.clone(),
                 );
                 schedule_lightbox_prefetch(
                     photos.clone(),
@@ -797,6 +805,7 @@ impl Lightbox {
         let applied_for_key = applied_native_scale.clone();
         let generation_for_key = load_generation.clone();
         let cancel_for_key = decode_cancel.clone();
+        let offline_for_key = offline.clone();
         let photo_changed_for_key = photo_changed.clone();
         let viewport_for_key = picture_viewport.clone();
         let native_texture_for_key = native_texture.clone();
@@ -941,6 +950,7 @@ impl Lightbox {
                         cache_hit,
                         Some(key_navigation_ready_for_key.clone()),
                         None,
+                        offline_for_key.clone(),
                     );
                     schedule_lightbox_prefetch(
                         photos_for_key.clone(),
@@ -967,7 +977,48 @@ impl Lightbox {
         });
         root.add_controller(key);
 
+        {
+            let offline = offline.clone();
+            let picture = picture.clone();
+            let photos = photos.clone();
+            let index = index.clone();
+            let zoom = zoom.clone();
+            let generation = load_generation.clone();
+            let cancel = decode_cancel.clone();
+            let viewport = picture_viewport.clone();
+            let native = native_texture.clone();
+            let cache = display_texture_cache.clone();
+            let ready = key_navigation_ready.clone();
+            let wheel = wheel_navigation.clone();
+            root.add_tick_callback(move |root, _| {
+                if root.is_visible() && offline.retry_requested.replace(false) {
+                    wheel.borrow_mut().cancel();
+                    let next = generation.get().wrapping_add(1);
+                    generation.set(next);
+                    show_photo(
+                        &picture,
+                        &photos.borrow(),
+                        index.get(),
+                        root,
+                        zoom.clone(),
+                        generation.clone(),
+                        next,
+                        cancel.clone(),
+                        &viewport,
+                        native.clone(),
+                        cache.clone(),
+                        false,
+                        false,
+                        Some(ready.clone()),
+                        None,
+                        offline.clone(),
+                    );
+                }
+                glib::ControlFlow::Continue
+            });
+        }
         Self {
+            offline,
             root,
             backdrop,
             picture,
@@ -994,6 +1045,10 @@ impl Lightbox {
             context_menu,
             collection_navigation,
         }
+    }
+
+    pub fn set_unavailable_handler(&self, handler: impl Fn(PhotoObject, gtk::Widget) + 'static) {
+        self.offline.unavailable.replace(Some(Box::new(handler)));
     }
 
     pub fn set_photo_changed_handler(&self, handler: impl Fn(PhotoObject) + 'static) {
@@ -1408,6 +1463,7 @@ impl Lightbox {
         // visible. Start the first full decode on its first allocated frame,
         // otherwise viewer_decode_target sees 0x0 and permanently uses the
         // fallback target until the user navigates.
+        let offline = self.offline.clone();
         let picture = self.picture.clone();
         let photos = self.photos.clone();
         let index = self.index.clone();
@@ -1458,6 +1514,7 @@ impl Lightbox {
                 cache_hit,
                 None,
                 None,
+                offline.clone(),
             );
             fit_picture(
                 &picture,
@@ -1706,6 +1763,7 @@ impl Lightbox {
             cache_hit,
             Some(self.key_navigation_ready.clone()),
             None,
+            self.offline.clone(),
         );
         schedule_lightbox_prefetch(
             self.photos.clone(),
@@ -1793,6 +1851,7 @@ impl Lightbox {
             cache_hit,
             None,
             None,
+            self.offline.clone(),
         );
         self.root.grab_focus();
     }
@@ -1849,6 +1908,27 @@ impl Lightbox {
         }
     }
 
+    /// Probe the current original again after an explicit Retry.
+    pub fn retry_current_original(&self) {
+        if !self.root.is_visible() {
+            return;
+        }
+        let Some(photo) = self.photos.borrow().get(self.index.get()).cloned() else {
+            return;
+        };
+        let expected_generation = self.load_generation.get();
+        let generation = self.load_generation.clone();
+        let root = self.root.clone();
+        let path = photo.path();
+        glib::MainContext::default().spawn_local(async move {
+            let available = gio::spawn_blocking(move || crate::source::file_available(&path)).await;
+            if root.is_visible() && generation.get() == expected_generation {
+                if let Ok(available) = available {
+                    photo.set_original_available(available);
+                }
+            }
+        });
+    }
     /// Re-decode the visible photo after presentation metadata such as the
     /// user's rotation changes. The current full image stays in place until
     /// its correctly rotated replacement is ready.
@@ -1874,6 +1954,7 @@ impl Lightbox {
             false,
             None,
             None,
+            self.offline.clone(),
         );
     }
 }

@@ -75,12 +75,26 @@ pub(super) fn build() -> adw::Dialog {
     stack.set_vexpand(true);
     stack.set_hhomogeneous(false);
     stack.set_vhomogeneous(false);
+    let heading_style = gtk::CssProvider::new();
+    heading_style.load_from_data(".tour-heading { font-size: 22px; font-weight: 700; }");
     for (index, (title, description)) in STEPS.iter().enumerate() {
         let page = gtk::Box::new(gtk::Orientation::Vertical, 12);
         let heading = gtk::Label::new(Some(title));
-        heading.add_css_class("title-2");
-        heading.set_xalign(0.0);
-        page.append(&heading);
+        heading.add_css_class("tour-heading");
+        heading
+            .style_context()
+            .add_provider(&heading_style, gtk::STYLE_PROVIDER_PRIORITY_APPLICATION);
+        heading.set_xalign(0.5);
+        let introduction = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+        introduction.set_halign(gtk::Align::Center);
+        introduction.append(&heading);
+        let copy = gtk::Label::new(Some(description));
+        copy.set_wrap(true);
+        copy.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+        copy.set_max_width_chars(44);
+        copy.set_xalign(0.0);
+        introduction.append(&copy);
+        page.append(&introduction);
         let texture = screenshot_texture(index);
         let picture = gtk::Picture::for_paintable(&texture);
         picture.set_can_shrink(true);
@@ -88,10 +102,6 @@ pub(super) fn build() -> adw::Dialog {
         picture.set_vexpand(true);
         picture.set_alternative_text(Some(&format!("PIC {title} screen")));
         page.append(&picture);
-        let copy = gtk::Label::new(Some(description));
-        copy.set_wrap(true);
-        copy.set_xalign(0.0);
-        page.append(&copy);
         let scroll = gtk::ScrolledWindow::new();
         scroll.set_hscrollbar_policy(gtk::PolicyType::Never);
         let viewport = gtk::Viewport::new(None::<&gtk::Adjustment>, None::<&gtk::Adjustment>);

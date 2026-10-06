@@ -614,6 +614,7 @@ struct PhotoActionContext {
 
 include!("window/operation_progress.rs");
 include!("window/build.rs");
+include!("window/startup.rs");
 
 /// Folder scrollbar-scrub sampling state.
 ///

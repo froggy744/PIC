@@ -89,11 +89,12 @@ glib::wrapper! {
 impl PhotoObject {
     /// Catalog axes already include EXIF orientation; only PIC rotation is applied here.
     pub fn photo_wall_aspect_ratio(&self) -> f64 {
-        let (width, height) = (self.width(), self.height());
+        let imp = self.imp();
+        let (width, height) = (imp.width.get(), imp.height.get());
         if width <= 0 || height <= 0 {
             return 1.0;
         }
-        if matches!(self.rotation().rem_euclid(360), 90 | 270) {
+        if matches!(imp.rotation.get().rem_euclid(360), 90 | 270) {
             height as f64 / width as f64
         } else {
             width as f64 / height as f64

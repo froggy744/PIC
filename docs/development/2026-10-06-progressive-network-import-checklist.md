@@ -293,3 +293,26 @@ probe cancelled a worker in 10 ms while the read lock remained held. This
 measures lock-wait cancellation, not a live NAS RPC. An already-issued native
 network call or decoder operation must still return before the worker exits;
 cleanup timeout is not an exact wall-clock deadline because libnfs polls.
+
+## Startup responsiveness follow-up
+
+The 2026-10-06 trace showed 174,540 catalog photos loaded, then automatic
+thumbnail recovery probed direct NFS/SMB files one by one before preparing
+recovery work. Startup recovery now skips direct network files; visible preview
+requests and resumable imports supply network work. Recovery checks cancellation
+between local-file probes.
+
+Startup gallery creation now uses the existing 2,000-photo progressive replace
+instead of repeatedly appending 500 photos and rebuilding cached grouping for
+the entire prefix. It restores the saved view after the progressive model is
+ready, and stops adding batches when navigation changes the active generation.
+Photo Wall aspect ratios read existing backing cells rather than repeated
+GObject property lookups; the ratios and rotation behavior are unchanged.
+
+The trace captured the GTK thread inside `photo_wall_aspect_ratio()` while it
+read properties for catalog-wide Photo Wall geometry. It also showed recovery
+issuing a stream of cached NFS export lookups. The 684 ms cold-start line only
+measures catalog query startup and excludes subsequent GTK model construction.
+A production `cargo build` passes after these changes. The two interactive GTK
+regression tests require display-driven execution; the large live NFS catalog
+was not benchmarked again after the changes.

@@ -154,7 +154,7 @@ fn spawn_thumbnail_recovery(
             .into_iter()
             .map(|photo| (photo.path, photo.mtime, photo.size_bytes))
             .collect();
-        let (mut ready, mut offline) = crate::thumbnail::recovery_items(items);
+        let (mut ready, mut offline) = crate::thumbnail::recovery_items_cancellable(items, || control.is_cancelled());
         ready.sort_by_key(|(path, _, _)| !startup_paths.contains(path));
         
         if !ready.is_empty() && !control.is_cancelled() {

@@ -1,35 +1,33 @@
 type RecoveryItem = (String, Option<i64>, Option<i64>);
 
-/// Use fresh source probes: a cached negative result can outlive a reconnect.
 pub fn recovery_items(items: Vec<RecoveryItem>) -> (Vec<RecoveryItem>, usize) {
+    recovery_items_cancellable(items, || false)
+}
+
+pub fn recovery_items_cancellable(
+    items: Vec<RecoveryItem>, cancelled: impl FnMut() -> bool,
+) -> (Vec<RecoveryItem>, usize) {
+    recovery_items_with_probe(items, cancelled, crate::source::file_available)
+}
+
+fn recovery_items_with_probe(
+    items: Vec<RecoveryItem>, mut cancelled: impl FnMut() -> bool,
+    mut available: impl FnMut(&str) -> bool,
+) -> (Vec<RecoveryItem>, usize) {
     let mut ready = Vec::new();
     let mut offline = 0;
     for item in items {
+        if cancelled() { break; }
         #[cfg(target_os = "linux")]
-        if crate::network_shares::private(&item.0)
-            && crate::image_format::uses(&item.0, crate::image_format::DecoderKind::Raw)
-            && !crate::image_format::for_path(&item.0)
-                .is_some_and(|format| format.id == "nikon_raw")
-        {
-            // No eager/automatic download of a full network RAW original.
+        if crate::network_shares::private(&item.0) {
+            // Visible preview requests and durable imports handle these files.
+            // Startup must not stat the entire NAS before displaying photos.
             continue;
         }
-        let Ok(destination) = cache_path(&item.0, item.1, item.2) else {
-            continue;
-        };
-        if existing_cache_path(&item.0, item.1, item.2)
-            .ok()
-            .flatten()
-            .is_some()
-            || known_decode_failure(&item.0, &destination)
-        {
-            continue;
-        }
-        if crate::source::file_available(&item.0) {
-            ready.push(item);
-        } else {
-            offline += 1;
-        }
+        let Ok(destination) = cache_path(&item.0, item.1, item.2) else { continue; };
+        if existing_cache_path(&item.0, item.1, item.2).ok().flatten().is_some()
+            || known_decode_failure(&item.0, &destination) { continue; }
+        if available(&item.0) { ready.push(item); } else { offline += 1; }
     }
     (ready, offline)
 }
@@ -136,5 +134,31 @@ mod recovery_tests {
         assert!(fixture.create().is_err());
         assert!(known_decode_failure(&fixture.item.0, &fixture.destination));
         assert_eq!(recovery_items(vec![fixture.item.clone()]), (vec![], 0));
+    }
+}
+
+#[cfg(test)]
+mod startup_recovery_tests {
+    use super::*;
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn automatic_recovery_does_not_probe_each_network_photo() {
+        let mut probes=0;
+        let items=vec![
+            ("nfs://offline.invalid/photos/a.jpg".into(),Some(1),Some(2)),
+            ("smb://offline.invalid/photos/b.jpg".into(),Some(1),Some(2)),
+        ];
+        let (ready,offline)=recovery_items_with_probe(items,||false,|_| { probes+=1; false });
+        assert_eq!(probes,0,"network previews belong to visible requests and durable imports");
+        assert!(ready.is_empty());
+        assert_eq!(offline,0,"deferring a network preview must not report an offline file");
+    }
+    #[test]
+    fn stopping_recovery_avoids_further_source_probes() {
+        let item=("/missing-startup-cancel-test.jpg".into(),Some(1),Some(2));
+        let mut probes=0;
+        let (ready,offline)=recovery_items_with_probe(vec![item],||true,|_| {probes+=1;true});
+        assert!(ready.is_empty());
+        assert_eq!((probes,offline),(0,0));
     }
 }

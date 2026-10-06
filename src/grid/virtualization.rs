@@ -2194,6 +2194,12 @@ impl Gallery {
     }
 
     pub fn replace(&self, photos: &[Photo]) {
+        self.replace_while_current(photos, Rc::new(|| true));
+    }
+
+    /// Navigation can invalidate a startup query before its next model batch.
+    pub fn replace_while_current(&self, photos: &[Photo], is_current: Rc<dyn Fn() -> bool>) {
+        if !is_current() { return; }
         self.pending_metadata.borrow_mut().clear();
         if std::env::var_os("PICASA_TRACE").is_some() { eprintln!("PIC_NAV gallery_replace photos={}", photos.len()); }
         self.stable_zoom_anchor.set(None);
@@ -2298,7 +2304,7 @@ impl Gallery {
         const PROGRESSIVE_REPLACE_THRESHOLD: usize = 1_000;
         if photos.len() > PROGRESSIVE_REPLACE_THRESHOLD {
 
-            self.replace_progressive(photos.to_vec(), generation);
+            self.replace_progressive(photos.to_vec(), generation, is_current);
             return;
         }
 
@@ -2334,6 +2340,7 @@ impl Gallery {
         &self,
         photos: Vec<Photo>,
         generation: u64,
+        is_current: Rc<dyn Fn() -> bool>,
     ) {
         // Larger batches finish the model build in far fewer main-loop hops.
         // Each hop is scheduled at idle priority, so with 500-photo batches a
@@ -2372,6 +2379,10 @@ impl Gallery {
 
         glib::idle_add_local(move || {
             if replace_generation.get() != generation {
+                return glib::ControlFlow::Break;
+            }
+            if !is_current() {
+                stream_building.set(false);
                 return glib::ControlFlow::Break;
             }
 

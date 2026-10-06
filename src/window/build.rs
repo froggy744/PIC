@@ -3787,8 +3787,6 @@ fn start_photo_export_single(
 
     let startup_gallery = gallery.clone();
     let startup_photos_for_idle = startup_photos.clone();
-    let startup_total = startup_photos_for_idle.len();
-    let mut startup_offset = 0usize;
     let startup_view_restored = Rc::new(Cell::new(false));
     let last_activated_for_restore = last_activated_photo_id.clone();
     let restore_startup_view: Rc<dyn Fn()> = {
@@ -3818,33 +3816,11 @@ fn start_photo_export_single(
         })
     };
     let startup_generation = REFRESH_GENERATION.load(std::sync::atomic::Ordering::Relaxed);
-    const STARTUP_BATCH_SIZE: usize = 500;
-    glib::idle_add_local(move || {
-        // A newer filter/navigation owns the grid, including while its query runs.
-        if REFRESH_GENERATION.load(std::sync::atomic::Ordering::Relaxed) != startup_generation {
-            return glib::ControlFlow::Break;
-        }
-        if startup_offset >= startup_total {
-            restore_startup_view();
-            return glib::ControlFlow::Break;
-        }
-
-        let end = (startup_offset + STARTUP_BATCH_SIZE).min(startup_total);
-        let batch = &startup_photos_for_idle[startup_offset..end];
-        if startup_offset == 0 {
-            startup_gallery.replace(batch);
-        } else {
-            startup_gallery.append_photos(batch);
-        }
-        startup_offset = end;
-
-        if startup_offset >= startup_total {
-            restore_startup_view();
-            glib::ControlFlow::Break
-        } else {
-            glib::ControlFlow::Continue
-        }
-    });
+    populate_startup_gallery(
+        startup_gallery, startup_photos_for_idle,
+        Rc::new(move || REFRESH_GENERATION.load(std::sync::atomic::Ordering::Relaxed) == startup_generation),
+        restore_startup_view,
+    );
 
     // Responsive sidebar transition.
     //

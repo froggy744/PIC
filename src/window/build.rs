@@ -2350,6 +2350,9 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     install_smooth_gallery_scroll(&albums_home, gallery.clone(), false);
     albums_view::connect_create_album(&albums_home, create_album.clone());
     let main_stack = gtk::Stack::new();
+    // Hidden pages must not impose a width on the active gallery. In
+    // particular, the Albums landing page has a wider introductory toolbar.
+    main_stack.set_hhomogeneous(false);
     main_stack.set_hexpand(true);
     main_stack.set_vexpand(true);
     main_stack.add_named(&photo_page, Some("photos"));

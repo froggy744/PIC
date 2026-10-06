@@ -794,3 +794,7 @@ include!("window/albums.rs");
 include!("window/photo_actions.rs");
 include!("window/library.rs");
 include!("window/print.rs");
+
+#[cfg(test)]
+#[path = "window/responsive_tests.rs"]
+mod responsive_window_tests;

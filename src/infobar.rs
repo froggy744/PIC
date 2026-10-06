@@ -274,8 +274,53 @@ impl InfoBar {
         actions.append(&import_photos);
         actions.append(&more);
         actions.append(&print);
+        // Move the same controls into a labelled drawer on compact windows.
+        // Reusing them preserves their signal handlers, sensitivity and menus.
+        let overflow = gtk::MenuButton::new();
+        overflow.set_icon_name("view-more-symbolic");
+        overflow.set_tooltip_text(Some("More photo actions"));
+        overflow.set_has_frame(false);
+        configure_action_button(&overflow);
+        overflow.add_css_class("photo-actions-overflow");
+        let overflow_popover = gtk::Popover::new();
+        let overflow_box = gtk::Box::new(gtk::Orientation::Vertical, 4);
+        overflow_box.set_margin_top(8);
+        overflow_box.set_margin_bottom(8);
+        overflow_box.set_margin_start(8);
+        overflow_box.set_margin_end(8);
+        let overflow_entries: Vec<(gtk::Widget, gtk::Box)> = [
+            (collage.clone().upcast(), "New collage"),
+            (add_to_album.clone().upcast(), "Add to Album"),
+            (one_to_one.clone().upcast(), "Show at 100%"),
+            (rotate.clone().upcast(), "Rotate clockwise"),
+            (export.clone().upcast(), "Export photo"),
+            (import_photos.clone().upcast(), "Import photos"),
+            (more.clone().upcast(), "Settings"),
+            (print.clone().upcast(), "Print photo"),
+        ]
+        .into_iter()
+        .map(|(control, title): (gtk::Widget, &str)| {
+            let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+            let label = gtk::Label::new(Some(title));
+            label.set_xalign(0.0);
+            row.append(&label);
+            overflow_box.append(&row);
+            if let Some(button) = control.downcast_ref::<gtk::Button>() {
+                let popover = overflow_popover.downgrade();
+                button.connect_clicked(move |_| {
+                    if let Some(popover) = popover.upgrade() {
+                        popover.popdown();
+                    }
+                });
+            }
+            (control, row)
+        })
+        .collect();
+        overflow_popover.set_child(Some(&overflow_box));
+        overflow.set_popover(Some(&overflow_popover));
+        overflow.set_visible(false);
+        actions.append(&overflow);
         root.append(&actions);
-
         // The action buttons are the controls that must always remain usable.
         // On narrow windows, reclaim space from optional metadata first, then
         // from filename/preview presentation. This prevents the bar's natural
@@ -293,29 +338,86 @@ impl InfoBar {
         let size_metric_for_resize = other_metrics_for_resize[2].clone();
         let aperture_metric_for_resize = aperture_metric.clone().expect("aperture metric exists");
         let has_aperture_for_resize = has_aperture.clone();
+        let actions_compact = Cell::new(false);
+        let edit_for_resize = edit.clone();
         root.add_tick_callback(move |bar, _| {
             let width = bar.width();
             if width > 0 {
-                // Reclaim horizontal space progressively as the window narrows.
-                // Keep the filename and action controls as the final compact state.
-                camera_metric_for_resize.set_visible(width >= 1280);
-                dimensions_metric_for_resize.set_visible(width >= 1180);
-                size_metric_for_resize.set_visible(width >= 1080);
-                aperture_metric_for_resize
-                    .set_visible(width >= 980 && has_aperture_for_resize.get());
-
-                let show_taken = has_photo_for_resize.get() && width >= 880;
-                details_for_resize.set_visible(show_taken);
-                if let Some(taken_metric) = details_for_resize.first_child() {
-                    taken_metric.set_visible(show_taken);
+                // Switch before the full row's minimum can trap the window
+                // above the sidebar's responsive threshold. Keep zoom and the
+                // three common photo controls directly available.
+                let compact = width < 900;
+                if actions_compact.replace(compact) != compact {
+                    overflow.popdown();
+                    let mut previous = edit_for_resize.clone().upcast::<gtk::Widget>();
+                    for (control, row) in &overflow_entries {
+                        if let Some(menu) = control.downcast_ref::<gtk::MenuButton>() {
+                            menu.popdown();
+                        }
+                        if compact {
+                            actions.remove(control);
+                            row.prepend(control);
+                        } else {
+                            row.remove(control);
+                            actions.insert_child_after(control, Some(&previous));
+                            previous = control.clone();
+                        }
+                    }
+                    overflow.set_visible(compact);
+                }
+                // Budget optional presentation against the controls that are
+                // actually visible. Width thresholds alone can trap a selected
+                // photo's long metadata above the next hide threshold.
+                let mut available = width - actions.measure(gtk::Orientation::Horizontal, -1).0 - 24;
+                let show_text = width >= 700 && available >= 156;
+                text_for_resize.set_visible(show_text);
+                if show_text {
+                    available -= 156;
                 }
 
-                text_for_resize.set_visible(true);
-                preview_for_resize.set_visible(width >= 880);
+                let show_taken = has_photo_for_resize.get() && width >= 880 && available >= 126;
+                details_for_resize.set_visible(show_taken);
+                if let Some(taken) = details_for_resize.first_child() {
+                    taken.set_visible(show_taken);
+                }
+                if show_taken {
+                    available -= 126;
+                }
+
+                let show_preview = width >= 880 && available >= 56;
+                preview_for_resize.set_visible(show_preview);
+                if show_preview {
+                    available -= 56;
+                }
+
+                // Retain the existing priority: camera disappears first and
+                // Taken remains the last metadata field on a compact bar.
+                for (metric, threshold, enabled) in [
+                    (
+                        &aperture_metric_for_resize,
+                        980,
+                        has_aperture_for_resize.get(),
+                    ),
+                    (&size_metric_for_resize, 1080, true),
+                    (&dimensions_metric_for_resize, 1180, true),
+                    (&camera_metric_for_resize, 1280, true),
+                ] {
+                    let mut required = metric.width_request().max(0);
+                    let mut child = metric.first_child();
+                    while let Some(label) = child {
+                        required = required.max(label.measure(gtk::Orientation::Horizontal, -1).0);
+                        child = label.next_sibling();
+                    }
+                    required += 28; // spacing inside the metadata row
+                    let show = show_taken && enabled && width >= threshold && available >= required;
+                    metric.set_visible(show);
+                    if show {
+                        available -= required;
+                    }
+                }
             }
             glib::ControlFlow::Continue
         });
-
         Self {
             root,
             preview,
@@ -660,3 +762,7 @@ mod layout_tests {
         gtk::style_context_remove_provider_for_display(&display, &base);
     }
 }
+
+#[cfg(test)]
+#[path = "infobar_responsive_tests.rs"]
+mod responsive_tests;

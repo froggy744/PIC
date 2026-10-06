@@ -1,0 +1,159 @@
+use adw::prelude::*;
+use gtk4 as gtk;
+use libadwaita as adw;
+
+const STEPS: [(&str, &str); 4] = [
+    ("Browse", "Use the sidebar to browse your folders. Double-click a photo to open it."),
+    ("Albums", "Create an album with the + beside Albums, then add your selected photos."),
+    ("Edit", "Select a photo and choose Edit. Adjust, crop or apply effects, then export your result."),
+    ("Collage", "Select several photos and choose the collage action. Pick a layout, adjust the spacing and export."),
+];
+
+const SCREENSHOTS: [(&str, &[u8]); 4] = [
+    (
+        "wiz-browse.jpg",
+        include_bytes!("../../screenshots/wiz-browse.jpg"),
+    ),
+    (
+        "wiz-albums.jpg",
+        include_bytes!("../../screenshots/wiz-albums.jpg"),
+    ),
+    (
+        "wiz-edit.jpg",
+        include_bytes!("../../screenshots/wiz-edit.jpg"),
+    ),
+    (
+        "wiz-collage.jpg",
+        include_bytes!("../../screenshots/wiz-collage.jpg"),
+    ),
+];
+
+fn screenshot_texture(index: usize) -> gtk::gdk::Texture {
+    let (filename, bundled) = SCREENSHOTS[index];
+    let mut candidates = vec![std::path::PathBuf::from("screenshots").join(filename)];
+    if let Ok(executable) = std::env::current_exe() {
+        if let Some(directory) = executable.parent() {
+            candidates.push(directory.join("screenshots").join(filename));
+        }
+    }
+    // Read on every tour opening, so replacing a JPEG needs no rebuild.
+    for path in candidates {
+        if path.is_file() {
+            match gtk::gdk::Texture::from_filename(&path) {
+                Ok(texture) => return texture,
+                Err(error) => {
+                    eprintln!("Could not load tour screenshot {}: {error}", path.display())
+                }
+            }
+        }
+    }
+    gtk::gdk::Texture::from_bytes(&glib::Bytes::from_static(bundled))
+        .expect("bundled tour screenshot is valid")
+}
+
+pub(crate) fn present(parent: &adw::ApplicationWindow) {
+    let dialog = build();
+    dialog.set_content_width(parent.width().clamp(1, 900));
+    dialog.set_content_height(parent.height().clamp(1, 650));
+    dialog.present(Some(parent));
+}
+
+pub(super) fn build() -> adw::Dialog {
+    let dialog = adw::Dialog::new();
+    dialog.set_title("Discover PIC");
+    let shell = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    shell.append(&adw::HeaderBar::new());
+    let content = gtk::Box::new(gtk::Orientation::Vertical, 16);
+    content.set_margin_start(24);
+    content.set_margin_end(24);
+    content.set_margin_bottom(24);
+    let route = gtk::Label::new(Some("Browse → Albums → Edit → Collage"));
+    route.set_wrap(true);
+    route.add_css_class("dim-label");
+    content.append(&route);
+    let stack = gtk::Stack::new();
+    stack.set_vexpand(true);
+    stack.set_hhomogeneous(false);
+    stack.set_vhomogeneous(false);
+    for (index, (title, description)) in STEPS.iter().enumerate() {
+        let page = gtk::Box::new(gtk::Orientation::Vertical, 12);
+        let heading = gtk::Label::new(Some(title));
+        heading.add_css_class("title-2");
+        heading.set_xalign(0.0);
+        page.append(&heading);
+        let texture = screenshot_texture(index);
+        let picture = gtk::Picture::for_paintable(&texture);
+        picture.set_can_shrink(true);
+        picture.set_content_fit(gtk::ContentFit::Contain);
+        picture.set_vexpand(true);
+        picture.set_alternative_text(Some(&format!("PIC {title} screen")));
+        page.append(&picture);
+        let copy = gtk::Label::new(Some(description));
+        copy.set_wrap(true);
+        copy.set_xalign(0.0);
+        page.append(&copy);
+        let scroll = gtk::ScrolledWindow::new();
+        scroll.set_hscrollbar_policy(gtk::PolicyType::Never);
+        let viewport = gtk::Viewport::new(None::<&gtk::Adjustment>, None::<&gtk::Adjustment>);
+        viewport.set_scroll_to_focus(true);
+        viewport.set_child(Some(&page));
+        scroll.set_child(Some(&viewport));
+        stack.add_named(&scroll, Some(title));
+    }
+    stack.set_visible_child_name("Browse");
+    content.append(&stack);
+    let controls = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    let previous = gtk::Button::with_label("Back");
+    previous.set_sensitive(false);
+    let position = gtk::Label::new(Some("1 of 4"));
+    position.set_hexpand(true);
+    let next = gtk::Button::with_label("Next");
+    next.add_css_class("suggested-action");
+    controls.append(&previous);
+    controls.append(&position);
+    controls.append(&next);
+    content.append(&controls);
+    let update = {
+        let previous = previous.clone();
+        let next = next.clone();
+        let position = position.clone();
+        move |stack: &gtk::Stack| {
+            let index = STEPS
+                .iter()
+                .position(|(title, _)| Some(*title) == stack.visible_child_name().as_deref())
+                .unwrap_or(0);
+            previous.set_sensitive(index > 0);
+            next.set_label(if index == 3 { "Done" } else { "Next" });
+            position.set_text(&format!("{} of 4", index + 1));
+        }
+    };
+    stack.connect_visible_child_notify(update);
+    let weak_stack = stack.downgrade();
+    previous.connect_clicked(move |_| {
+        if let Some(stack) = weak_stack.upgrade() {
+            let index = STEPS
+                .iter()
+                .position(|(title, _)| Some(*title) == stack.visible_child_name().as_deref())
+                .unwrap_or(0);
+            stack.set_visible_child_name(STEPS[index.saturating_sub(1)].0);
+        }
+    });
+    let weak_stack = stack.downgrade();
+    let weak_dialog = dialog.downgrade();
+    next.connect_clicked(move |_| {
+        if let Some(stack) = weak_stack.upgrade() {
+            let index = STEPS
+                .iter()
+                .position(|(title, _)| Some(*title) == stack.visible_child_name().as_deref())
+                .unwrap_or(0);
+            if index < 3 {
+                stack.set_visible_child_name(STEPS[index + 1].0);
+            } else if let Some(dialog) = weak_dialog.upgrade() {
+                dialog.close();
+            }
+        }
+    });
+    shell.append(&content);
+    dialog.set_child(Some(&shell));
+    dialog
+}

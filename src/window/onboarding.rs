@@ -126,6 +126,8 @@ pub(super) struct OnboardingCoordinator {
     pending_picker: Cell<Option<u64>>,
     entered_library: Cell<bool>,
     tips_host: glib::WeakRef<gtk::Box>,
+    library_surfaces: RefCell<Vec<(glib::WeakRef<gtk::Widget>, bool)>>,
+    library_hidden: Cell<bool>,
     tips: RefCell<Option<GettingStartedTips>>,
     self_weak: RefCell<std::rc::Weak<Self>>,
     scan_job: RefCell<std::rc::Weak<RefCell<super::ScanJobState>>>,
@@ -150,6 +152,8 @@ impl OnboardingCoordinator {
             pending_picker: Cell::new(None),
             entered_library: Cell::new(false),
             tips_host: glib::WeakRef::new(),
+            library_surfaces: RefCell::new(Vec::new()),
+            library_hidden: Cell::new(false),
             tips: RefCell::new(None),
             self_weak: RefCell::new(std::rc::Weak::new()),
             scan_job: RefCell::new(std::rc::Weak::new()),
@@ -211,6 +215,12 @@ impl OnboardingCoordinator {
                 }),
             },
         );
+        let weak = Rc::downgrade(self);
+        wizard.connect_closed(move || {
+            if let Some(owner) = weak.upgrade() {
+                owner.library_dialog_closed();
+            }
+        });
         self.wizard.replace(Some(wizard.clone()));
         Some(wizard)
     }
@@ -242,6 +252,37 @@ impl OnboardingCoordinator {
         if let Some(wizard) = self.wizard.borrow().as_ref() {
             wizard.close();
         }
+        self.library_dialog_closed();
+    }
+    pub(super) fn install_library_surface(&self, surface: &impl IsA<gtk::Widget>) {
+        self.library_surfaces
+            .borrow_mut()
+            .push((surface.as_ref().downgrade(), surface.as_ref().is_visible()));
+    }
+    fn present_wizard(&self, wizard: &StartupWizard) {
+        if !self.library_hidden.replace(true) {
+            for (surface, was_visible) in self.library_surfaces.borrow_mut().iter_mut() {
+                if let Some(surface) = surface.upgrade() {
+                    *was_visible = surface.is_visible();
+                    surface.set_visible(false);
+                }
+            }
+        }
+        if let Some(tips) = self.tips.borrow().as_ref() {
+            tips.widget().set_visible(false);
+        }
+        wizard.present();
+    }
+    fn library_dialog_closed(&self) {
+        if self.library_hidden.replace(false) {
+            for (surface, was_visible) in self.library_surfaces.borrow().iter() {
+                if let Some(surface) = surface.upgrade() {
+                    surface.set_visible(*was_visible);
+                }
+            }
+        }
+        self.entered_library.set(true);
+        self.show_tips_if_eligible();
     }
     pub(super) fn folder_selected(&self, root: &str) -> Result<(), String> {
         // The chooser has completed even if saving this selection fails.
@@ -395,34 +436,23 @@ impl OnboardingCoordinator {
     pub(super) fn present_on_startup(self: &Rc<Self>) {
         let decision = {
             let conn = self.connection.borrow();
-            load_preferences(&conn)
-                .and_then(|prefs| startup_facts(&conn).map(|facts| startup_decision(&prefs, facts)))
+            load_preferences(&conn).map(|prefs| startup_decision(&prefs))
         };
         match decision {
             Ok(StartupDecision::Welcome) => {
                 if let Some(wizard) = self.ensure_wizard() {
-                    if let Err(error) =
-                        save_stage(&self.connection.borrow(), OnboardingStage::Welcome, None)
-                    {
-                        eprintln!("Could not save onboarding state: {error}");
-                    }
                     wizard.set_page(WizardPage::Welcome);
-                    wizard.present();
+                    self.present_wizard(&wizard);
                 }
             }
             Ok(StartupDecision::RecoverImport) => self.present_recovery(),
-            Ok(StartupDecision::Tips) => {
-                self.entered_library.set(true);
-                (self.browse)();
-                self.show_tips_if_eligible();
-            }
             _ => {}
         }
     }
     pub(super) fn present_manually(self: &Rc<Self>) {
         if self.is_visible() {
             if let Some(wizard) = self.wizard.borrow().as_ref() {
-                wizard.present();
+                self.present_wizard(&wizard);
             }
             return;
         }
@@ -431,7 +461,7 @@ impl OnboardingCoordinator {
         if self.is_running() {
             if let Some(wizard) = self.ensure_wizard() {
                 self.render();
-                wizard.present();
+                self.present_wizard(&wizard);
             }
             return;
         }
@@ -441,7 +471,7 @@ impl OnboardingCoordinator {
         } else if let Some(wizard) = self.ensure_wizard() {
             self.pending_picker.set(None);
             wizard.set_page(WizardPage::Welcome);
-            wizard.present();
+            self.present_wizard(&wizard);
         }
     }
     fn present_recovery(self: &Rc<Self>) {
@@ -466,7 +496,7 @@ impl OnboardingCoordinator {
             });
         }
         self.render();
-        wizard.present();
+        self.present_wizard(&wizard);
     }
     pub(super) fn scan_generation_changed(&self, generation: u64) {
         let changed = self.tracker.borrow_mut().superseded(generation);
@@ -509,30 +539,38 @@ impl OnboardingCoordinator {
         self.tips_host.set(Some(host));
     }
     pub(super) fn show_tips_if_eligible(&self) {
-        if !self.entered_library.get() || self.tips.borrow().is_some() {
+        if !self.entered_library.get() || self.is_visible() {
             return;
         }
         let Ok(prefs) = load_preferences(&self.connection.borrow()) else {
             return;
         };
-        if prefs.never_show
-            || prefs.tips_dismissed
-            || prefs.stage == Some(OnboardingStage::Complete)
-        {
+        if prefs.never_show || prefs.tips_dismissed {
             return;
         }
-        if self.usable_photos() == 0 {
+        if let Some(tips) = self.tips.borrow().as_ref() {
+            tips.widget().set_visible(true);
             return;
         }
         let Some(host) = self.tips_host.upgrade() else {
             return;
         };
         let weak = self.self_weak.borrow().clone();
-        let tips = GettingStartedTips::new(Rc::new(move || {
-            if let Some(owner) = weak.upgrade() {
-                owner.dismiss_library_tips();
-            }
-        }));
+        let tour_owner = self.self_weak.borrow().clone();
+        let tips = GettingStartedTips::new(
+            Rc::new(move || {
+                if let Some(owner) = weak.upgrade() {
+                    owner.dismiss_library_tips();
+                }
+            }),
+            Rc::new(move || {
+                if let Some(owner) = tour_owner.upgrade() {
+                    if let Some(window) = owner.window.upgrade() {
+                        crate::onboarding::tour::present(&window);
+                    }
+                }
+            }),
+        );
         host.append(&tips.widget());
         self.tips.replace(Some(tips));
     }

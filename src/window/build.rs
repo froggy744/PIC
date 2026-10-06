@@ -2426,6 +2426,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     });
     // The shared viewer and its menus can cover either the gallery or Home.
     let page_overlay = gtk::Overlay::new();
+    page_overlay.set_vexpand(true);
     page_overlay.set_child(Some(&main_stack));
     page_overlay.add_overlay(&lightbox.root);
     context_menu_host.borrow_mut().replace(page_overlay.downgrade());
@@ -4312,6 +4313,8 @@ fn start_photo_export_single(
     let tips_host = gtk::Box::new(gtk::Orientation::Vertical, 0);
     content.prepend(&tips_host);
     onboarding.install_tips_host(&tips_host);
+    onboarding.install_library_surface(&main_stack);
+    onboarding.install_library_surface(&info.root);
     onboarding.bind_scan_job(&scan_job);
     {
         let owner = Rc::downgrade(&onboarding);

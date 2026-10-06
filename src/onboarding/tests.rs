@@ -9,86 +9,29 @@ fn database() -> Connection {
 }
 
 #[test]
-fn startup_only_automatically_opens_for_fresh_or_recorded_incomplete_setup() {
-    let fresh = StartupFacts {
-        has_photo_records: false,
-        has_folder_records: false,
-    };
-    let prefs = OnboardingPreferences::default();
-    assert_eq!(startup_decision(&prefs, fresh), StartupDecision::Welcome);
-    for facts in [
-        StartupFacts {
-            has_photo_records: true,
-            ..fresh
-        },
-        StartupFacts {
-            has_folder_records: true,
-            ..fresh
-        },
-    ] {
-        assert_eq!(startup_decision(&prefs, facts), StartupDecision::Hidden);
-    }
+fn startup_shows_wizard_until_never_show_is_saved() {
     for stage in [
-        OnboardingStage::Welcome,
-        OnboardingStage::Importing,
-        OnboardingStage::Tips,
-        OnboardingStage::Complete,
+        None,
+        Some(OnboardingStage::Welcome),
+        Some(OnboardingStage::Importing),
+        Some(OnboardingStage::Tips),
+        Some(OnboardingStage::Complete),
     ] {
-        let prefs = OnboardingPreferences {
-            stage: Some(stage),
-            never_show: true,
+        let mut prefs = OnboardingPreferences {
+            stage,
             ..Default::default()
         };
-        assert_eq!(startup_decision(&prefs, fresh), StartupDecision::Hidden);
+        let expected = if stage == Some(OnboardingStage::Importing) {
+            StartupDecision::RecoverImport
+        } else {
+            StartupDecision::Welcome
+        };
+        assert_eq!(startup_decision(&prefs), expected, "stage={stage:?}");
+        prefs.tips_dismissed = true;
+        assert_eq!(startup_decision(&prefs), expected);
+        prefs.never_show = true;
+        assert_eq!(startup_decision(&prefs), StartupDecision::Hidden);
     }
-    let prefs = OnboardingPreferences {
-        stage: Some(OnboardingStage::Importing),
-        ..Default::default()
-    };
-    assert_eq!(
-        startup_decision(&prefs, fresh),
-        StartupDecision::RecoverImport
-    );
-    let prefs = OnboardingPreferences {
-        stage: Some(OnboardingStage::Tips),
-        ..Default::default()
-    };
-    assert_eq!(
-        startup_decision(&prefs, fresh),
-        StartupDecision::RecoverImport
-    );
-    assert_eq!(
-        startup_decision(
-            &prefs,
-            StartupFacts {
-                has_photo_records: true,
-                ..fresh
-            }
-        ),
-        StartupDecision::Tips
-    );
-    assert_eq!(
-        startup_decision(
-            &OnboardingPreferences {
-                stage: Some(OnboardingStage::Complete),
-                ..Default::default()
-            },
-            fresh
-        ),
-        StartupDecision::Hidden
-    );
-}
-
-#[test]
-fn trashed_photos_and_registered_empty_folders_are_existing_libraries() {
-    let connection = database();
-    connection
-        .execute("INSERT INTO photos(path,trashed) VALUES('/gone.jpg',1)", [])
-        .unwrap();
-    assert!(startup_facts(&connection).unwrap().has_photo_records);
-    connection.execute("DELETE FROM photos", []).unwrap();
-    db::mark_import_root(&connection, "/offline/root").unwrap();
-    assert!(startup_facts(&connection).unwrap().has_folder_records);
 }
 
 #[test]

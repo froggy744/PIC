@@ -286,3 +286,188 @@ fn wizard_narrow_layout_keeps_controls_reachable() {
         settle();
     }
 }
+
+#[test]
+#[ignore = "requires GTK; run individually"]
+fn discovery_row_offers_tour_and_accessible_dismissal() {
+    libadwaita::init().unwrap();
+    let dismissed = Rc::new(Cell::new(false));
+    let toured = Rc::new(Cell::new(false));
+    let saved = dismissed.clone();
+    let tour = toured.clone();
+    let tips = GettingStartedTips::new(
+        Rc::new(move || saved.set(true)),
+        Rc::new(move || tour.set(true)),
+    );
+    let root = tips.widget().downcast::<gtk::Box>().unwrap();
+    let tour = find_button(root.upcast_ref(), "Take a tour").unwrap();
+    tour.emit_clicked();
+    assert!(toured.get());
+    assert!(!dismissed.get());
+    let dismiss = find_button(root.upcast_ref(), "×").unwrap();
+    assert_eq!(
+        dismiss.tooltip_text().as_deref(),
+        Some("Dismiss Discover PIC")
+    );
+    dismiss.emit_clicked();
+    assert!(dismissed.get());
+    for width in [1366, 360] {
+        let parent = parent_at(width, 600);
+        let host = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        let row = GettingStartedTips::new(Rc::new(|| {}), Rc::new(|| {}));
+        host.append(&row.widget());
+        let space = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        space.set_vexpand(true);
+        host.append(&space);
+        parent.set_content(Some(&host));
+        parent.present();
+        settle();
+        assert!(row.widget().width() <= parent.width());
+        assert!(row.widget().height() <= if width == 360 { 130 } else { 64 });
+        if let Ok(directory) = std::env::var("PIC_WIZARD_SCREENSHOTS") {
+            use gtk::gdk::prelude::PaintableExt;
+            let snapshot = gtk::Snapshot::new();
+            gtk::WidgetPaintable::new(Some(&parent)).snapshot(
+                &snapshot,
+                parent.width() as f64,
+                parent.height() as f64,
+            );
+            parent
+                .renderer()
+                .unwrap()
+                .render_texture(&snapshot.to_node().unwrap(), None)
+                .save_to_png(format!("{directory}/discovery-row-{width}.png"))
+                .unwrap();
+        }
+        parent.close();
+        settle();
+    }
+}
+
+fn find_button(widget: &gtk::Widget, text: &str) -> Option<gtk::Button> {
+    if let Some(button) = widget.downcast_ref::<gtk::Button>() {
+        if button.label().as_deref() == Some(text) {
+            return Some(button.clone());
+        }
+    }
+    let mut child = widget.first_child();
+    while let Some(current) = child {
+        if let Some(button) = find_button(&current, text) {
+            return Some(button);
+        }
+        child = current.next_sibling();
+    }
+    None
+}
+
+#[test]
+#[ignore = "requires GTK; run individually"]
+fn discovery_tour_navigates_browse_albums_edit_collage() {
+    let parent = parent_at(900, 650);
+    let dialog = super::tour::build();
+    let pictures = tour_pictures(&dialog.child().unwrap());
+    assert_eq!(pictures.len(), 4);
+    assert!(pictures.iter().all(|picture| picture.paintable().is_some()));
+    dialog.present(Some(&parent));
+    settle();
+    let root = dialog.upcast_ref::<gtk::Widget>();
+    let back = find_button(root, "Back").unwrap();
+    let next = find_button(root, "Next").unwrap();
+    assert!(!back.is_sensitive());
+    next.emit_clicked();
+    assert!(back.is_sensitive());
+    back.emit_clicked();
+    assert!(!back.is_sensitive());
+    for _ in 0..3 {
+        next.emit_clicked();
+    }
+    assert_eq!(next.label().as_deref(), Some("Done"));
+    back.emit_clicked();
+    assert_eq!(next.label().as_deref(), Some("Next"));
+    next.emit_clicked();
+    next.emit_clicked();
+    settle();
+    assert!(parent.visible_dialog().is_none());
+    parent.close();
+    for width in [900, 360] {
+        let parent = parent_at(width, 650);
+        let dialog = super::tour::build();
+        dialog.set_content_width(width);
+        dialog.set_content_height(600);
+        dialog.present(Some(&parent));
+        settle();
+        let next = find_button(dialog.upcast_ref(), "Next").unwrap();
+        for title in ["Browse", "Albums", "Edit", "Collage"] {
+            let pictures = tour_pictures(&dialog.child().unwrap());
+            let picture = pictures
+                .iter()
+                .find(|picture| {
+                    picture.alternative_text().as_deref() == Some(&format!("PIC {title} screen"))
+                })
+                .unwrap();
+            assert!(picture.is_mapped());
+            let root = picture.root().unwrap().downcast::<gtk::Window>().unwrap();
+            assert!(picture.width() <= root.width());
+            assert!(picture.height() > 0);
+            assert!(next.grab_focus());
+            settle();
+            if let Ok(directory) = std::env::var("PIC_WIZARD_SCREENSHOTS") {
+                use gtk::gdk::prelude::PaintableExt;
+                let snapshot = gtk::Snapshot::new();
+                gtk::WidgetPaintable::new(Some(&root)).snapshot(
+                    &snapshot,
+                    root.width() as f64,
+                    root.height() as f64,
+                );
+                root.renderer()
+                    .unwrap()
+                    .render_texture(&snapshot.to_node().unwrap(), None)
+                    .save_to_png(format!("{directory}/tour-{width}-{title}.png"))
+                    .unwrap();
+            }
+            next.emit_clicked();
+            settle();
+        }
+        parent.close();
+        settle();
+    }
+}
+
+fn tour_pictures(widget: &gtk::Widget) -> Vec<gtk::Picture> {
+    let mut pictures = Vec::new();
+    if let Some(picture) = widget.downcast_ref::<gtk::Picture>() {
+        pictures.push(picture.clone());
+    }
+    let mut child = widget.first_child();
+    while let Some(current) = child {
+        pictures.extend(tour_pictures(&current));
+        child = current.next_sibling();
+    }
+    pictures
+}
+
+#[test]
+#[ignore = "requires GTK; run individually"]
+fn discovery_tour_reload_uses_replacement_screenshot_without_rebuild() {
+    libadwaita::init().unwrap();
+    let previous_dir = std::env::current_dir().unwrap();
+    let base = std::env::temp_dir().join(format!("pic-tour-swap-{}", std::process::id()));
+    std::fs::create_dir_all(base.join("screenshots")).unwrap();
+    std::env::set_current_dir(&base).unwrap();
+    let path = base.join("screenshots/wiz-browse.jpg");
+    image::RgbImage::from_pixel(31, 17, image::Rgb([20, 90, 130]))
+        .save(&path)
+        .unwrap();
+    let dialog = super::tour::build();
+    let pictures = tour_pictures(&dialog.child().unwrap());
+    assert_eq!(pictures.len(), 4);
+    assert_eq!(pictures[0].paintable().unwrap().intrinsic_width(), 31);
+    image::RgbImage::from_pixel(43, 29, image::Rgb([120, 10, 100]))
+        .save(&path)
+        .unwrap();
+    let reopened = super::tour::build();
+    let pictures = tour_pictures(&reopened.child().unwrap());
+    assert_eq!(pictures[0].paintable().unwrap().intrinsic_width(), 43);
+    std::env::set_current_dir(previous_dir).unwrap();
+    std::fs::remove_dir_all(base).unwrap();
+}

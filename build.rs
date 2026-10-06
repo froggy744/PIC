@@ -7,7 +7,8 @@
 //! artwork. After each build this script mirrors the packaging layout by
 //! copying the current `themes/` and `images/` folders into the profile
 //! directory (for example `target/release`), keeping them in sync whenever
-//! their contents change.
+//! their contents change. The editable `screenshots/wiz-*.jpg` tour images
+//! are staged alongside those folders, without unrelated screenshots/videos.
 
 use std::env;
 use std::fs;
@@ -61,6 +62,7 @@ fn main() {
 
     println!("cargo:rerun-if-changed=themes");
     println!("cargo:rerun-if-changed=images");
+    println!("cargo:rerun-if-changed=screenshots");
 
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
     // OUT_DIR looks like <target>/<profile>/build/<pkg>-<hash>/out, so three
@@ -77,6 +79,16 @@ fn main() {
         let source = manifest_dir.join(folder);
         if source.is_dir() {
             stage_dir(&source, &profile_dir.join(folder));
+        }
+    }
+    let screenshots = profile_dir.join("screenshots");
+    fs::create_dir_all(&screenshots).expect("create runtime screenshot directory");
+    for entry in fs::read_dir(manifest_dir.join("screenshots")).expect("read tour screenshots") {
+        let entry = entry.expect("read screenshot entry");
+        let name = entry.file_name();
+        let name_text = name.to_string_lossy();
+        if name_text.starts_with("wiz-") && name_text.ends_with(".jpg") {
+            fs::copy(entry.path(), screenshots.join(&name)).expect("stage tour screenshot");
         }
     }
 }

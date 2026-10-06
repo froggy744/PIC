@@ -1,3 +1,4 @@
+pub(crate) mod tour;
 pub(crate) mod view;
 use anyhow::Result;
 use rusqlite::Connection;
@@ -26,17 +27,11 @@ pub(crate) struct OnboardingPreferences {
     pub root: Option<String>,
     pub tips_dismissed: bool,
 }
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct StartupFacts {
-    pub has_photo_records: bool,
-    pub has_folder_records: bool,
-}
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum StartupDecision {
     Hidden,
     Welcome,
     RecoverImport,
-    Tips,
 }
 
 pub(crate) fn load_preferences(connection: &Connection) -> Result<OnboardingPreferences> {
@@ -84,35 +79,13 @@ pub(crate) fn finish_onboarding(connection: &Connection) -> Result<()> {
     transaction.commit()?;
     Ok(())
 }
-pub(crate) fn startup_facts(connection: &Connection) -> Result<StartupFacts> {
-    Ok(StartupFacts {
-        has_photo_records: connection.query_row(
-            "SELECT EXISTS(SELECT 1 FROM photos)",
-            [],
-            |row| row.get(0),
-        )?,
-        has_folder_records: connection.query_row(
-            "SELECT EXISTS(SELECT 1 FROM folders)",
-            [],
-            |row| row.get(0),
-        )?,
-    })
-}
-pub(crate) fn startup_decision(
-    prefs: &OnboardingPreferences,
-    facts: StartupFacts,
-) -> StartupDecision {
-    if prefs.never_show || prefs.stage == Some(OnboardingStage::Complete) {
-        return StartupDecision::Hidden;
-    }
-    match prefs.stage {
-        Some(OnboardingStage::Importing) => StartupDecision::RecoverImport,
-        Some(OnboardingStage::Tips) if facts.has_photo_records && !prefs.tips_dismissed => {
-            StartupDecision::Tips
-        }
-        Some(OnboardingStage::Tips) => StartupDecision::RecoverImport,
-        _ if !facts.has_photo_records && !facts.has_folder_records => StartupDecision::Welcome,
-        _ => StartupDecision::Hidden,
+pub(crate) fn startup_decision(prefs: &OnboardingPreferences) -> StartupDecision {
+    if prefs.never_show {
+        StartupDecision::Hidden
+    } else if prefs.stage == Some(OnboardingStage::Importing) {
+        StartupDecision::RecoverImport
+    } else {
+        StartupDecision::Welcome
     }
 }
 #[cfg(test)]

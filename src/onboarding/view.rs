@@ -286,6 +286,9 @@ impl StartupWizard {
             self.dialog.present(Some(&parent));
         }
     }
+    pub(crate) fn connect_closed(&self, callback: impl Fn() + 'static) {
+        self.dialog.connect_closed(move |_| callback());
+    }
     pub(crate) fn close(&self) {
         self.visible.set(false);
         self.dialog.close();
@@ -417,35 +420,42 @@ pub(crate) struct GettingStartedTips {
     error: gtk::Label,
 }
 impl GettingStartedTips {
-    pub(crate) fn new(on_finish: Rc<dyn Fn()>) -> Self {
-        let root = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    pub(crate) fn new(on_finish: Rc<dyn Fn()>, on_tour: Rc<dyn Fn()>) -> Self {
+        let root = gtk::Box::new(gtk::Orientation::Horizontal, 12);
         root.add_css_class("card");
-        for set in [
-            gtk::prelude::WidgetExt::set_margin_start,
-            gtk::prelude::WidgetExt::set_margin_end,
-            gtk::prelude::WidgetExt::set_margin_top,
-            gtk::prelude::WidgetExt::set_margin_bottom,
-        ] {
-            set(&root, 12);
-        }
-        let title = label("Welcome to PIC");
-        title.add_css_class("heading");
-        root.append(&title);
-        for text in [
-            "Double-click a photo to open it.",
-            "Use the sidebar to browse folders and albums.",
-            "Right-click photos for more actions.",
-        ] {
-            root.append(&label(text));
-        }
-        let done = button("Got it");
-        done.set_halign(gtk::Align::Start);
-        done.connect_clicked(move |_| on_finish());
-        root.append(&done);
+        root.set_margin_start(12);
+        root.set_margin_end(12);
+        root.set_margin_top(8);
+        root.set_margin_bottom(8);
+        let copy = gtk::Box::new(gtk::Orientation::Vertical, 4);
+        copy.set_hexpand(true);
+        copy.set_valign(gtk::Align::Center);
+        copy.set_margin_start(16);
+        copy.set_margin_top(10);
+        copy.set_margin_bottom(10);
+        let description =
+            label("Discover PIC · Browse, create albums, edit photos and make collages.");
+        description.add_css_class("caption");
+        copy.append(&description);
         let error = label("");
         error.add_css_class("error");
+        error.add_css_class("caption");
         error.set_visible(false);
-        root.append(&error);
+        copy.append(&error);
+        root.append(&copy);
+        let tour = gtk::Button::with_label("Take a tour");
+        tour.add_css_class("flat");
+        tour.set_valign(gtk::Align::Center);
+        tour.connect_clicked(move |_| on_tour());
+        root.append(&tour);
+        let done = button("×");
+        done.add_css_class("flat");
+        done.set_valign(gtk::Align::Center);
+        done.set_margin_end(8);
+        done.set_tooltip_text(Some("Dismiss Discover PIC"));
+        done.update_property(&[gtk::accessible::Property::Label("Dismiss Discover PIC")]);
+        done.connect_clicked(move |_| on_finish());
+        root.append(&done);
         Self { root, error }
     }
     pub(crate) fn widget(&self) -> gtk::Widget {

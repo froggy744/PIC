@@ -529,6 +529,7 @@ fn wizard_tips_dismissal_write_failure_remains_retryable() {
     parent.set_content(Some(&host));
     owner.install_tips_host(&host);
     owner.present_on_startup();
+    owner.enter_library();
     connection
         .borrow()
         .execute_batch("PRAGMA query_only=ON")
@@ -646,7 +647,7 @@ fn wizard_actual_window_recovery_import_and_library_card() {
         }
         None
     }
-    let got_it = find(window.upcast_ref(), "Got it").expect("tips card in main library");
+    let got_it = find(window.upcast_ref(), "×").expect("dismiss control in discovery row");
     assert!(got_it.is_mapped());
     got_it.emit_clicked();
     assert_eq!(
@@ -888,5 +889,107 @@ fn wizard_recovery_reuses_ordinary_active_import_without_cancelling_or_requeuein
     assert!(!control.is_cancelled());
     assert!(job.borrow().pending.is_empty());
     owner.close();
+    parent.close();
+}
+
+#[test]
+#[ignore = "requires GTK; run individually"]
+fn wizard_completed_library_reopens_at_startup_until_checkbox_is_saved() {
+    let parent = test_parent();
+    let connection = test_connection();
+    connection
+        .borrow()
+        .execute("INSERT INTO photos(path) VALUES('/existing/photo.jpg')", [])
+        .unwrap();
+    crate::db::mark_import_root(&connection.borrow(), "/existing").unwrap();
+    finish_onboarding(&connection.borrow()).unwrap();
+    let make_owner = || {
+        OnboardingCoordinator::new(
+            &parent,
+            connection.clone(),
+            Rc::new(|| {}),
+            Rc::new(|_| {}),
+            Rc::new(|| {}),
+        )
+    };
+    let owner = make_owner();
+    owner.present_on_startup();
+    assert!(owner.is_visible());
+    assert_eq!(
+        load_preferences(&connection.borrow()).unwrap().stage,
+        Some(OnboardingStage::Complete)
+    );
+    click(&parent, "Skip for now");
+    assert!(!owner.is_visible());
+    drop(owner);
+    let owner = make_owner();
+    owner.present_on_startup();
+    assert!(owner.is_visible());
+    owner
+        .wizard
+        .borrow()
+        .as_ref()
+        .unwrap()
+        .never_show
+        .set_active(true);
+    assert!(load_preferences(&connection.borrow()).unwrap().never_show);
+    owner.close();
+    drop(owner);
+    let owner = make_owner();
+    owner.present_on_startup();
+    assert!(!owner.is_visible());
+    save_never_show(&connection.borrow(), false).unwrap();
+    owner.present_on_startup();
+    assert!(owner.is_visible());
+    owner.close();
+    parent.close();
+}
+
+#[test]
+#[ignore = "requires GTK; run individually"]
+fn wizard_hides_gallery_and_discovery_row_until_closed() {
+    let parent = test_parent();
+    let connection = test_connection();
+    connection
+        .borrow()
+        .execute("INSERT INTO photos(path) VALUES('/photos/a.jpg')", [])
+        .unwrap();
+    let host = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    let gallery = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    host.append(&gallery);
+    parent.set_content(Some(&host));
+    let owner = OnboardingCoordinator::new(
+        &parent,
+        connection,
+        Rc::new(|| {}),
+        Rc::new(|_| {}),
+        Rc::new(|| {}),
+    );
+    owner.install_tips_host(&host);
+    owner.install_library_surface(&gallery);
+    owner.present_on_startup();
+    assert!(!gallery.is_visible());
+    assert!(owner.tips.borrow().is_none());
+    click(&parent, "Skip for now");
+    assert!(gallery.is_visible());
+    assert!(owner.tips.borrow().as_ref().unwrap().widget().is_visible());
+    owner.present_manually();
+    let until = std::time::Instant::now() + std::time::Duration::from_millis(500);
+    while std::time::Instant::now() < until {
+        while glib::MainContext::default().pending() {
+            glib::MainContext::default().iteration(false);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(4));
+    }
+    assert!(owner.is_visible());
+    assert!(!gallery.is_visible());
+    assert!(!owner.tips.borrow().as_ref().unwrap().widget().is_visible());
+    owner.close();
+    assert!(gallery.is_visible());
+    assert!(owner.tips.borrow().as_ref().unwrap().widget().is_visible());
+    owner.dismiss_library_tips();
+    owner.present_manually();
+    owner.close();
+    assert!(!owner.tips.borrow().as_ref().unwrap().widget().is_visible());
     parent.close();
 }

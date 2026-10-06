@@ -30,7 +30,7 @@ Skip/window dismissal without the checkbox permits the wizard to appear again on
 
 ## Startup and recovery rules
 
-Show the wizard at every startup unless `onboarding-never-show` is true. Existing photos, registered folders, completion and tips dismissal do not suppress it. A saved importing stage opens recovery; all other stages open Welcome.
+Show the wizard at every startup unless `onboarding-never-show` is true. Existing photos, registered folders, completion and tips dismissal do not suppress it. Every saved stage opens Welcome on startup. For a saved importing stage with a root, offer a quiet Continue adding photos action on Welcome; preserve the selected root and require that action to resume. Manual Getting started can still show recovery.
 
 After interrupted `importing`, use persisted root, current database contents and current scan state to reconstruct the page. Existing photos permit Open library. An idle interrupted import offers an explicit **Continue adding photos** action through the existing scan queue; never automatically enqueue a duplicate import merely because a wizard reopened. Do not claim an inactive scan is running. If the selected source is unavailable, show retry/choose-another actions. A saved tips stage opens Welcome on startup; the optional tips card remains available through the existing library flow.
 

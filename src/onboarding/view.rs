@@ -40,6 +40,7 @@ pub(crate) struct StartupWizard {
     page: Cell<WizardPage>,
     mode: Cell<ImportPresentation>,
     running: Cell<bool>,
+    resume_available: Cell<bool>,
     indexed: Cell<usize>,
     library_has_photos: Cell<bool>,
     header: adw::HeaderBar,
@@ -201,6 +202,7 @@ impl StartupWizard {
             page: Cell::new(WizardPage::Welcome),
             mode: Cell::new(ImportPresentation::Adding),
             running: Cell::new(false),
+            resume_available: Cell::new(false),
             indexed: Cell::new(0),
             library_has_photos: Cell::new(false),
             header,
@@ -300,6 +302,10 @@ impl StartupWizard {
         self.page.set(page);
         self.refresh();
     }
+    pub(crate) fn set_resume_available(&self, available: bool) {
+        self.resume_available.set(available);
+        self.refresh();
+    }
     pub(crate) fn set_import_presentation(&self, mode: ImportPresentation) {
         self.mode.set(mode);
         self.refresh();
@@ -394,12 +400,25 @@ impl StartupWizard {
                 || mode != ImportPresentation::Adding,
         );
         self.retry.set_visible(
-            !welcome
-                && matches!(
-                    mode,
-                    ImportPresentation::Recovery | ImportPresentation::Error
-                ),
+            (welcome && self.resume_available.get())
+                || (!welcome
+                    && matches!(
+                        mode,
+                        ImportPresentation::Recovery | ImportPresentation::Error
+                    )),
         );
+        self.retry.set_halign(if welcome {
+            gtk::Align::Center
+        } else {
+            gtk::Align::Fill
+        });
+        if welcome {
+            self.retry.add_css_class("flat");
+            self.retry.add_css_class("caption");
+        } else {
+            self.retry.remove_css_class("flat");
+            self.retry.remove_css_class("caption");
+        }
         self.retry.set_sensitive(!self.running.get());
         self.retry.set_label(if mode == ImportPresentation::Error {
             "Try again"

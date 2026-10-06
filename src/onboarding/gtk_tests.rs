@@ -188,6 +188,7 @@ fn wizard_narrow_layout_keeps_controls_reachable() {
             &OnboardingPreferences::default(),
             callbacks(Rc::new(|_| Ok(()))),
         );
+        wizard.set_resume_available(true);
         wizard.present();
         settle();
         assert!(

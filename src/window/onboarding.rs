@@ -408,6 +408,7 @@ impl OnboardingCoordinator {
     fn resume(&self) {
         self.reuse_matching_active_import();
         if self.is_running() {
+            self.render();
             return;
         }
         let selected_root = self.tracker.borrow().progress.root.clone();
@@ -441,11 +442,16 @@ impl OnboardingCoordinator {
         match decision {
             Ok(StartupDecision::Welcome) => {
                 if let Some(wizard) = self.ensure_wizard() {
+                    let can_resume = load_preferences(&self.connection.borrow())
+                        .ok()
+                        .is_some_and(|prefs| {
+                            prefs.stage == Some(OnboardingStage::Importing) && prefs.root.is_some()
+                        });
+                    wizard.set_resume_available(can_resume);
                     wizard.set_page(WizardPage::Welcome);
                     self.present_wizard(&wizard);
                 }
             }
-            Ok(StartupDecision::RecoverImport) => self.present_recovery(),
             _ => {}
         }
     }
@@ -470,6 +476,7 @@ impl OnboardingCoordinator {
             self.present_recovery();
         } else if let Some(wizard) = self.ensure_wizard() {
             self.pending_picker.set(None);
+            wizard.set_resume_available(false);
             wizard.set_page(WizardPage::Welcome);
             self.present_wizard(&wizard);
         }

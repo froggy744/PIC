@@ -21,11 +21,7 @@ fn startup_shows_wizard_until_never_show_is_saved() {
             stage,
             ..Default::default()
         };
-        let expected = if stage == Some(OnboardingStage::Importing) {
-            StartupDecision::RecoverImport
-        } else {
-            StartupDecision::Welcome
-        };
+        let expected = StartupDecision::Welcome;
         assert_eq!(startup_decision(&prefs), expected, "stage={stage:?}");
         prefs.tips_dismissed = true;
         assert_eq!(startup_decision(&prefs), expected);

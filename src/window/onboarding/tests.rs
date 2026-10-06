@@ -155,6 +155,28 @@ fn wizard_interrupted_import_does_not_enqueue_automatically_and_continue_queues_
         Rc::new(|| {}),
     );
     coordinator.present_on_startup();
+    fn has_label(widget: &gtk::Widget, text: &str) -> bool {
+        if widget
+            .downcast_ref::<gtk::Label>()
+            .is_some_and(|label| label.text() == text)
+        {
+            return true;
+        }
+        let mut child = widget.first_child();
+        while let Some(current) = child {
+            if has_label(&current, text) {
+                return true;
+            }
+            child = current.next_sibling();
+        }
+        false
+    }
+    let dialog = parent.visible_dialog().unwrap();
+    assert!(has_label(dialog.upcast_ref(), "Welcome to PIC"));
+    assert!(has_label(
+        dialog.upcast_ref(),
+        "All your photos. One place. On your computer."
+    ));
     assert_eq!(queued.get(), 0);
     click(&parent, "Continue adding photos");
     coordinator.import_started(ImportTicket {

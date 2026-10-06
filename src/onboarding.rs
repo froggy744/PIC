@@ -31,7 +31,6 @@ pub(crate) struct OnboardingPreferences {
 pub(crate) enum StartupDecision {
     Hidden,
     Welcome,
-    RecoverImport,
 }
 
 pub(crate) fn load_preferences(connection: &Connection) -> Result<OnboardingPreferences> {
@@ -82,8 +81,6 @@ pub(crate) fn finish_onboarding(connection: &Connection) -> Result<()> {
 pub(crate) fn startup_decision(prefs: &OnboardingPreferences) -> StartupDecision {
     if prefs.never_show {
         StartupDecision::Hidden
-    } else if prefs.stage == Some(OnboardingStage::Importing) {
-        StartupDecision::RecoverImport
     } else {
         StartupDecision::Welcome
     }

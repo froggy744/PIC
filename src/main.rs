@@ -19,6 +19,7 @@ mod private_nfs;
 mod network_shares;
 #[cfg(target_os="linux")]
 mod network_picker;
+mod onboarding;
 mod photo_object;
 mod photo_texture;
 mod platform;

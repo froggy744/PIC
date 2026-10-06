@@ -432,38 +432,36 @@ impl Gallery {
         ));
     }
 }
+fn append_group_ranges_for(
+    current_photos: &Rc<RefCell<Vec<PhotoObject>>>,
+    group_mode: &Rc<Cell<GroupMode>>,
+    group_date: &Rc<Cell<GroupDate>>,
+    group_ranges: &Rc<RefCell<Vec<GroupRange>>>,
+    start: usize,
+) {
+    let mode = group_mode.get();
+    let date = group_date.get();
+    if mode == GroupMode::None { return; }
+    let photos = current_photos.borrow();
+    let mut ranges = group_ranges.borrow_mut();
+    for (index, photo) in photos.iter().enumerate().skip(start) {
+        let label = group_label(photo, mode, date);
+        let folder_id = if mode == GroupMode::Folder { photo.folder_id() } else { 0 };
+        match ranges.last_mut() {
+            Some(last) if last.label == label && last.folder_id == folder_id => last.end = index + 1,
+            _ => ranges.push(GroupRange { start: index, end: index + 1, label, folder_id }),
+        }
+    }
+}
+
 fn rebuild_group_ranges_for(
     current_photos: &Rc<RefCell<Vec<PhotoObject>>>,
     group_mode: &Rc<Cell<GroupMode>>,
     group_date: &Rc<Cell<GroupDate>>,
     group_ranges: &Rc<RefCell<Vec<GroupRange>>>,
 ) {
-    let mode = group_mode.get();
-    let date = group_date.get();
-    let photos = current_photos.borrow();
-    let mut ranges: Vec<GroupRange> = Vec::new();
-    if mode != GroupMode::None {
-        for (index, photo) in photos.iter().enumerate() {
-            let label = group_label(photo, mode, date);
-            let folder_id = if mode == GroupMode::Folder {
-                photo.folder_id()
-            } else {
-                0
-            };
-            match ranges.last_mut() {
-                Some(last) if last.label == label && last.folder_id == folder_id => {
-                    last.end = index + 1
-                }
-                _ => ranges.push(GroupRange {
-                    start: index,
-                    end: index + 1,
-                    label,
-                    folder_id,
-                }),
-            }
-        }
-    }
-    group_ranges.replace(ranges);
+    group_ranges.borrow_mut().clear();
+    append_group_ranges_for(current_photos, group_mode, group_date, group_ranges, 0);
 }
 
 fn update_group_header_for_index_for(

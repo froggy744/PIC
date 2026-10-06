@@ -209,7 +209,7 @@ pub fn create(path: &str, mtime: Option<i64>, size_bytes: Option<i64>) -> Result
 
 const DECODE_FAILURE_MARKER: &[u8] = b"thumbnail decode failed v2\n";
 
-fn known_decode_failure(path: &str, destination: &Path) -> bool {
+pub(crate) fn known_decode_failure(path: &str, destination: &Path) -> bool {
     !is_heif(path)
         && fs::read(destination.with_extension("failed"))
             .is_ok_and(|contents| contents == DECODE_FAILURE_MARKER)

@@ -269,3 +269,103 @@ fn metadata_arriving_before_progressive_batches_survives_gallery_build() {
     assert_eq!(object.width(),6000);
     assert_eq!(object.camera().as_deref(),Some("arrived before batch"));
 }
+
+#[test]
+#[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+fn large_gallery_reorder_yields_and_keeps_objects_metadata_and_latest_navigation() {
+    gtk::init().unwrap();
+    let connection = rusqlite::Connection::open_in_memory().unwrap();
+    connection.execute_batch(crate::db::SCHEMA).unwrap();
+    let count = std::env::var("PIC_TEST_GALLERY_PHOTOS").ok()
+        .and_then(|value| value.parse::<i64>().ok()).unwrap_or(4001).max(4001);
+    connection.execute_batch("BEGIN").unwrap();
+    for id in 1..=count {
+        connection.execute("INSERT INTO photos(id,path) VALUES (?1,?2)",
+            rusqlite::params![id, format!("/gallery-cooperative/{id}.jpg")]).unwrap();
+    }
+    connection.execute_batch("COMMIT").unwrap();
+    let mut photos = crate::db::photos(&connection, None, false, None).unwrap();
+    let gallery = Gallery::new(&[], 180, |_| {}, |_, _, _| {},
+        |_, _, _, _| {}, |_, _| {}, |_| {});
+    let context = glib::MainContext::default();
+    let settle = |gallery: &Gallery| {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while gallery.stream_building() && std::time::Instant::now() < deadline {
+            context.iteration(false);
+        }
+        assert!(!gallery.stream_building());
+    };
+    gallery.replace(&photos);
+    settle(&gallery);
+    let old_objects = gallery.photo_objects();
+    photos.reverse();
+    photos[0].rating = 4;
+    photos[0].favorite = true;
+    photos[0].rotation = 90;
+    let owned = photos.clone();
+    let replace_started = std::time::Instant::now();
+    gallery.replace_owned_while_current(owned, Rc::new(|| true));
+    eprintln!("GALLERY_CHECK photos={} dispatch_ms={}", count, replace_started.elapsed().as_millis());
+    assert!(gallery.stream_building(), "large same-set reorder must yield before mutating every object");
+    assert_eq!(gallery.photo_objects()[0], old_objects[0]);
+    settle(&gallery);
+    let reordered = gallery.photo_objects();
+    eprintln!("GALLERY_CHECK photos={} total_reorder_ms={}", count, replace_started.elapsed().as_millis());
+    assert_eq!(reordered[0], old_objects[count as usize - 1]);
+    assert_eq!(reordered[0].rating(), 4);
+    assert!(reordered[0].favorite());
+    assert_eq!(reordered[0].rotation(), 90);
+    assert_eq!(reordered.iter().map(|p| p.id()).collect::<Vec<_>>(),
+        photos.iter().map(|p| p.id).collect::<Vec<_>>());
+    let publications = Rc::new(Cell::new(0));
+    let publications_for_signal = publications.clone();
+    gallery.store.connect_items_changed(move |_, _, _, _| {
+        publications_for_signal.set(publications_for_signal.get() + 1);
+    });
+    gallery.replace_owned_while_current(photos.clone(), Rc::new(|| true));
+    assert!(gallery.stream_building());
+    settle(&gallery);
+    assert_eq!(publications.get(), 0, "unchanged catalog must not republish the store");
+    let valid = Rc::new(Cell::new(true));
+    let check = valid.clone();
+    photos.reverse();
+    gallery.replace_while_current(&photos, Rc::new(move || check.get()));
+    valid.set(false);
+    settle(&gallery);
+    assert_eq!(gallery.photo_objects()[0], reordered[0]);
+    // A newer small destination must win over every pending large-build batch.
+    gallery.replace(&photos);
+    gallery.replace(&photos[..1]);
+    while context.pending() { context.iteration(false); }
+    assert_eq!(gallery.photo_objects().len(), 1);
+    assert_eq!(gallery.photo_objects()[0].id(), photos[0].id);
+}
+
+#[test]
+#[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+fn progressive_gallery_regroups_when_already_published_metadata_changes() {
+    gtk::init().unwrap();
+    let connection = rusqlite::Connection::open_in_memory().unwrap();
+    connection.execute_batch(crate::db::SCHEMA).unwrap();
+    for id in 1..=4001 {
+        connection.execute("INSERT INTO photos(id,path) VALUES (?1,?2)",
+            rusqlite::params![id, format!("/late-group-metadata/{id}.jpg")]).unwrap();
+    }
+    let photos = crate::db::photos(&connection, None, false, None).unwrap();
+    let gallery = Gallery::new(&[], 180, |_| {}, |_, _, _| {}, |_, _, _, _| {}, |_, _| {}, |_| {});
+    gallery.set_grouping(GroupMode::Month, GroupDate::Taken);
+    gallery.replace(&photos);
+    let context = glib::MainContext::default();
+    while gallery.current_photos.borrow().is_empty() { context.iteration(false); }
+    assert!(gallery.stream_building());
+    let mut updated = photos[0].clone();
+    updated.taken_at = Some("2020-01-02 12:00:00".into());
+    gallery.update_photo(&updated);
+    while gallery.stream_building() { context.iteration(false); }
+    let ranges = gallery.group_ranges.borrow();
+    assert_eq!(ranges[0].label, "Jan 2020");
+    assert_eq!(ranges[0].start, 0);
+    assert_eq!(ranges[0].end, 1);
+    assert_eq!(ranges[1].label, "Unknown Date");
+    assert_eq!(ranges[1].end, photos.len());
+}

@@ -654,20 +654,10 @@ impl Gallery {
             visible.end..(visible.end + ahead).min(state.layout.rows.len())
         };
         let photos = self.current_photos.borrow();
-        let mut queued = 0;
-        for row in band {
-            for item in &state.layout.items[state.layout.rows[row].item_range.clone()] {
-                if queued >= budget {
-                    return queued;
-                }
-                if let Some(photo) = photos.get(item.photo_index) {
-                    if queue_photo_presentation_async(photo, false) {
-                        queued += 1;
-                    }
-                }
-            }
-        }
-        queued
+        queue_prefetch_photos(band.flat_map(|row| {
+            state.layout.items[state.layout.rows[row].item_range.clone()].iter()
+                .filter_map(|item| photos.get(item.photo_index))
+        }), budget)
     }
 }
 

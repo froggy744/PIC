@@ -63,10 +63,14 @@ mod startup_gallery_tests {
             Rc::new(move || target.set(target.get() + 1)),
         );
         let context = glib::MainContext::default();
-        context.iteration(false);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        // GTK setup can already have unrelated idle sources queued. Wait for
+        // the startup callback instead of assuming the first iteration runs it.
+        while !gallery.stream_building() && restored.get() == 0 && Instant::now() < deadline {
+            context.iteration(false);
+        }
         assert!(gallery.stream_building());
         assert_eq!(restored.get(), 0);
-        let deadline = Instant::now() + Duration::from_secs(5);
         while restored.get() == 0 && Instant::now() < deadline {
             context.iteration(false);
         }

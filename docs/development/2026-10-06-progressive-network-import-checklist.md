@@ -316,3 +316,30 @@ measures catalog query startup and excludes subsequent GTK model construction.
 A production `cargo build` passes after these changes. The two interactive GTK
 regression tests require display-driven execution; the large live NFS catalog
 was not benchmarked again after the changes.
+
+
+## Repeated preview cache misses follow-up
+
+The next trace contained 6,569 cache misses for six network photos without
+thumbnail generation. A checked source had a current decode-failure marker,
+which correctly suppressed generation but allowed display workers to probe its
+missing cache again on every viewport refresh. Display requests now delay
+missing-preview retries for one second and failed-preview retries for 30 seconds,
+with at most 1,024 retry entries. Changed fingerprints use new presentation keys.
+Targeted thumbnail completion clears the delay immediately for realized tiles.
+The persistent gallery frame callback resubmits visible previews when their
+retry deadline expires, even when no display worker is active. Wall-quality
+previews keep their existing separate retry protocol.
+The trace reports `skip reason=decode_failed` for confirmed failure markers.
+
+- [x] Regression: repeated requests are suppressed, expire, and stay bounded.
+- [x] Regression: a failed NFS preview avoids all display enqueue paths;
+  thumbnail notification removes the retry delay.
+- [x] Full suite: 570 passed, 108 ignored (including startup recovery tests).
+- [x] Independent review: retry wakeup issue addressed; no important issues remain.
+- [x] Recheck startup and Photo Wall jumps on the live library; see
+  `2026-10-06-network-gallery-responsiveness-checklist.md` for results and limits.
+
+The gallery responsiveness follow-up also passed 572 standard tests and eight
+explicit GTK checks, including 175,540-photo cooperative reorder and the live
+174,540-photo catalog. See the separate responsiveness checklist for details.

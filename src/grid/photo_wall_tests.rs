@@ -2138,3 +2138,97 @@ fn check_grid_lightbox_return(folder: bool) {
     assert_eq!(selected_positions(&gallery.selection), vec![far as u32]);
     window.close();
 }
+
+#[test]
+#[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+fn photo_wall_hidden_model_refresh_rebinds_tiles_on_remap() {
+    gtk::init().unwrap();
+    let connection = rusqlite::Connection::open_in_memory().unwrap();
+    connection.execute_batch(crate::db::SCHEMA).unwrap();
+    connection.execute_batch("INSERT INTO photos(id,path,width,height) VALUES
+        (1,'/hidden-wall/old.jpg',6000,4000),(2,'/hidden-wall/new.jpg',4000,6000)").unwrap();
+    let mut photos = crate::db::photos(&connection, None, false, None).unwrap();
+    photos.sort_by_key(|photo| photo.id);
+    let gallery = Rc::new(Gallery::new(&[], 180, |_| {}, |_, _, _| {},
+        |_, _, _, _| {}, |_, _| {}, |_| {}));
+    let scroll = gtk::ScrolledWindow::new();
+    scroll.set_child(Some(&gallery.folder_sectioned_root));
+    gallery.attach_sectioned_folder_scroll(&scroll);
+    let window = gtk::Window::builder().default_width(800).default_height(600).build();
+    window.set_child(Some(&scroll));
+    gallery.replace(&photos[..1]);
+    gallery.set_layout(PhotoLayout::PhotoWall);
+    window.present();
+    settle();
+    assert!(gallery.sectioned_folder.live_tiles.borrow().values()
+        .any(|tile| tile.tile.imp().photo.borrow().as_ref().is_some_and(|p| p.id() == 1)));
+    window.set_visible(false);
+    settle();
+    gallery.replace(&photos[1..]);
+    settle();
+    window.present();
+    settle();
+    assert!(gallery.sectioned_folder.live_tiles.borrow().values()
+        .any(|tile| tile.tile.imp().photo.borrow().as_ref().is_some_and(|p| p.id() == 2)));
+    assert!(gallery.sectioned_folder.live_tiles.borrow().values()
+        .all(|tile| tile.tile.imp().photo.borrow().as_ref().is_none_or(|p| p.id() != 1)));
+    window.close();
+}
+
+/// Opt-in smoke check against a real catalog. Reads photo/folder rows only;
+/// foreground preview workers may populate PIC's thumbnail cache.
+#[test]
+#[ignore = "requires GTK and PIC_TEST_CATALOG pointing to a real catalog"]
+fn live_network_wall_browsing_keeps_prefetch_bounded() {
+    gtk::init().unwrap();
+    let catalog = std::env::var("PIC_TEST_CATALOG").expect("set PIC_TEST_CATALOG");
+    let connection = rusqlite::Connection::open_with_flags(catalog,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+    let _ = crate::db::folders(&connection).unwrap();
+    let photos = crate::db::photos(&connection, None, false, None).unwrap();
+    let count = photos.len();
+    let gallery = Rc::new(Gallery::new(&[], 180, |_| {}, |_, _, _| {},
+        |_, _, _, _| {}, |_, _| {}, |_| {}));
+    let scroll = gtk::ScrolledWindow::builder().child(&gallery.folder_sectioned_root).build();
+    gallery.attach_sectioned_folder_scroll(&scroll);
+    gallery.set_layout(PhotoLayout::PhotoWall);
+    let window = gtk::Window::builder().default_width(1000).default_height(700)
+        .child(&scroll).build();
+    gallery.replace_owned_while_current(photos, Rc::new(|| true));
+    let context = glib::MainContext::default();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    while gallery.stream_building() && std::time::Instant::now() < deadline {
+        context.iteration(false);
+    }
+    assert!(!gallery.stream_building());
+    // Reproduce the window's immediate viewport targeting and persistent
+    // completion drain, rather than relying on tile binds alone.
+    let gallery_for_scroll = gallery.clone();
+    scroll.vadjustment().connect_value_changed(move |_| {
+        gallery_for_scroll.queue_visible_folder_cached_tiles_async(96);
+    });
+    let gallery_for_tick = gallery.clone();
+    scroll.add_tick_callback(move |_, _| {
+        gallery_for_tick.drain_thumbnail_display_completions();
+        glib::ControlFlow::Continue
+    });
+    window.present();
+    settle();
+    let adjustment = scroll.vadjustment();
+    for fraction in [0.0, 0.25, 0.75, 0.0] {
+        adjustment.set_value((adjustment.upper() - adjustment.page_size()).max(0.0) * fraction);
+        settle();
+        gallery.queue_visible_folder_cached_tiles_async(96);
+        gallery.prefetch_folder_cached_tiles(24, if fraction == 0.0 { -1.0 } else { 1.0 });
+        let jobs = crate::thumbnail::network_prefetch_queued_count();
+        assert!(jobs <= 8, "remote speculative queue exceeded its limit: {jobs}");
+        assert!(gallery.sectioned_folder.live_tiles.borrow().len() < 512);
+        for (&index, tile) in gallery.sectioned_folder.live_tiles.borrow().iter() {
+            let expected = gallery.current_photos.borrow()[index as usize].id();
+            assert_eq!(tile.tile.imp().photo.borrow().as_ref().unwrap().id(), expected);
+        }
+        eprintln!("LIVE_GALLERY_CHECK photos={} fraction={} realized={} remote_prefetch={}",
+            count, fraction, gallery.sectioned_folder.live_tiles.borrow().len(), jobs);
+    }
+    window.close();
+}

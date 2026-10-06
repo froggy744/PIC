@@ -583,6 +583,11 @@ impl PhotoWallLayout {
         if std::env::var_os("PICASA_TRACE").is_none() {
             return;
         }
+        eprintln!("PIC_WALL_LAYOUT viewport_width={} photos={} rows={} sections={} height={}",
+            self.viewport_width, self.items.len(), self.rows.len(), self.sections.len(), self.total_height);
+        if std::env::var_os("PICASA_TRACE_WALL_ROWS").is_none() {
+            return;
+        }
         for row in &self.rows {
             let tiles = &self.items[row.item_range.clone()];
             let row_width_sum: f64 = tiles.iter().map(|tile| tile.width).sum();

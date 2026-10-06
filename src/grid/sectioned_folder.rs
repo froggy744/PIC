@@ -309,6 +309,7 @@ struct SectionedFolderView {
     group_mode: Rc<Cell<GroupMode>>,
     wall_state: RefCell<PhotoWallState>,
     model_generation: Cell<u64>,
+    model_refresh_pending: Cell<bool>,
     layout_switch_generation: Cell<u64>,
     root: gtk::Fixed,
     spacer: gtk::Box,
@@ -407,6 +408,7 @@ impl SectionedFolderView {
             group_mode,
             wall_state: RefCell::new(PhotoWallState::default()),
             model_generation: Cell::new(0),
+            model_refresh_pending: Cell::new(false),
             layout_switch_generation: Cell::new(0),
             root,
             spacer,
@@ -736,6 +738,9 @@ impl SectionedFolderView {
         let last_width = Rc::new(Cell::new(0_i32));
         let last_width_for_tick = last_width.clone();
         scrolled.add_tick_callback(move |_, _| {
+            if this.model_refresh_pending.get() && this.is_wall() {
+                this.refresh_model();
+            }
             let width = scrolled_for_tick.width();
             if width > 0 && width != last_width_for_tick.get() {
                 last_width_for_tick.set(width);
@@ -1327,6 +1332,7 @@ impl SectionedFolderView {
     }
 
     fn refresh_model(self: &Rc<Self>) {
+        self.model_refresh_pending.set(false);
         self.clear_strip_layer();
         self.reflow_animation_generation
             .set(self.reflow_animation_generation.get().wrapping_add(1));

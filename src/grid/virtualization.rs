@@ -1497,18 +1497,8 @@ impl Gallery {
             indexes.extend((behind_start..first_visible).rev());
         }
 
-        let mut queued = 0usize;
-        for index in indexes {
-            if queued >= budget {
-                break;
-            }
-            let Some(photo) = photos.get(index) else {
-                continue;
-            };
-            if queue_photo_presentation_async(photo, false) {
-                queued += 1;
-            }
-        }
+        let queued = queue_prefetch_photos(
+            indexes.into_iter().filter_map(|index| photos.get(index)), budget);
         queued
     }
 
@@ -1831,18 +1821,8 @@ impl Gallery {
             indexes.extend((behind_start..first_visible).rev());
         }
 
-        let mut queued = 0usize;
-        for index in indexes {
-            if queued >= budget {
-                break;
-            }
-            let Some(photo) = photos.get(index) else {
-                continue;
-            };
-            if queue_photo_presentation_async(photo, false) {
-                queued += 1;
-            }
-        }
+        let queued = queue_prefetch_photos(
+            indexes.into_iter().filter_map(|index| photos.get(index)), budget);
 
         queued
     }
@@ -1856,7 +1836,8 @@ impl Gallery {
     /// updates the RAM LRU, and repaints currently realized matching tiles.
     pub fn drain_thumbnail_display_completions(&self) -> usize {
         let completions = crate::thumbnail_display::take_completions();
-        if completions.is_empty() {
+        let due_retries = crate::thumbnail_display::take_due_retry_keys();
+        if completions.is_empty() && due_retries.is_empty() {
             return 0;
         }
 
@@ -1904,6 +1885,11 @@ impl Gallery {
             let Some(key) = photo_presentation_key(&photo) else {
                 continue;
             };
+            if due_retries.contains(&key) && tile.is_mapped() {
+                if let Some(request) = photo_presentation_request(&photo, true) {
+                    crate::thumbnail_display::submit_latest_visible(request);
+                }
+            }
             if let Some(paintable) = loaded.get(&key) {
                 tile.apply_presentation_paintable(&key, paintable);
                 if let Some(frame) = tile.first_child().and_downcast::<gtk::Overlay>() {
@@ -2088,6 +2074,11 @@ impl Gallery {
                 .as_ref()
                 .is_some_and(|photo| paths.contains(&photo.path()));
             if matches {
+                if let Some(photo) = tile.imp().photo.borrow().as_ref() {
+                    if let Some(key) = photo_presentation_key(photo) {
+                        crate::thumbnail_display::invalidate_retry(&key);
+                    }
+                }
                 tile.refresh_thumbnail();
             }
         }
@@ -2199,8 +2190,19 @@ impl Gallery {
 
     /// Navigation can invalidate a startup query before its next model batch.
     pub fn replace_while_current(&self, photos: &[Photo], is_current: Rc<dyn Fn() -> bool>) {
+        self.replace_catalog(std::borrow::Cow::Borrowed(photos), is_current);
+    }
+
+    /// A database worker already owns its result; avoid cloning a whole
+    /// library on GTK before scheduling the cooperative comparison/build.
+    pub fn replace_owned_while_current(&self, photos: Vec<Photo>, is_current: Rc<dyn Fn() -> bool>) {
+        self.replace_catalog(std::borrow::Cow::Owned(photos), is_current);
+    }
+
+    fn replace_catalog(&self, photos: std::borrow::Cow<'_, [Photo]>, is_current: Rc<dyn Fn() -> bool>) {
         if !is_current() { return; }
         self.pending_metadata.borrow_mut().clear();
+        self.progressive_group_dirty.set(false);
         if std::env::var_os("PICASA_TRACE").is_some() { eprintln!("PIC_NAV gallery_replace photos={}", photos.len()); }
         self.stable_zoom_anchor.set(None);
         self.zoom_anchor_restore_generation
@@ -2211,21 +2213,14 @@ impl Gallery {
         // Callers such as folder navigation wait on this so they do not give
         // up while the virtualized Folder rows are still being constructed.
         self.stream_building.set(true);
+        if photos.len().max(self.current_photos.borrow().len()) > 1_000 {
+            self.replace_progressive(photos.into_owned(), generation, is_current);
+            return;
+        }
         let unchanged = {
             let current = self.current_photos.borrow();
             current.len() == photos.len()
-                && current.iter().zip(photos).all(|(object, photo)| {
-                    object.id() == photo.id
-                        && object.history_caption() == photo.history_caption
-                        && object.edited_at() == photo.edited_at
-                        && object.edit_recipe() == photo.edit_recipe
-                        && object.path() == photo.path
-                        && object.mtime() == photo.mtime.unwrap_or_default()
-                        && object.size_bytes() == photo.size_bytes.unwrap_or_default()
-                        && object.width() == photo.width.unwrap_or_default()
-                        && object.height() == photo.height.unwrap_or_default()
-                        && object.rotation() == photo.rotation
-                })
+                && current.iter().zip(photos.iter()).all(|(object, photo)| object.matches_catalog(photo))
         };
         if unchanged {
             // Entering Folder mode can intentionally clear the transient
@@ -2297,17 +2292,6 @@ impl Gallery {
             return;
         }
 
-        // Constructing tens of thousands of GObjects synchronously blocks
-        // GTK for several seconds. Keep the existing model semantics for
-        // normal refreshes, but let the main loop make progress between small
-        // batches for library-sized replacements.
-        const PROGRESSIVE_REPLACE_THRESHOLD: usize = 1_000;
-        if photos.len() > PROGRESSIVE_REPLACE_THRESHOLD {
-
-            self.replace_progressive(photos.to_vec(), generation, is_current);
-            return;
-        }
-
         if !self.collage_selection_mode.get() {
             (self.selected)(None);
         }
@@ -2350,8 +2334,14 @@ impl Gallery {
 
         let photos = Rc::new(photos);
         let pending_metadata = self.pending_metadata.clone();
+        let progressive_group_dirty = self.progressive_group_dirty.clone();
         let offset = Rc::new(Cell::new(0usize));
         let initialized = Rc::new(Cell::new(false));
+        let prepare_offset = Cell::new(0usize);
+        let prepared = Cell::new(false);
+        let unchanged = Cell::new(self.current_photos.borrow().len() == photos.len());
+        let existing = RefCell::new(HashMap::<i64, PhotoObject>::new());
+        let started = std::time::Instant::now();
         let store = self.store.clone();
         let selected = self.selected.clone();
         let current_photos = self.current_photos.clone();
@@ -2361,6 +2351,7 @@ impl Gallery {
         let group_mode = self.group_mode.clone();
         let group_date = self.group_date.clone();
         let group_ranges = self.group_ranges.clone();
+        let last_grouping = Cell::new((group_mode.get(), group_date.get()));
         let group_header = self.group_header.clone();
         let group_title = self.group_title.clone();
         let group_count = self.group_count.clone();
@@ -2386,13 +2377,56 @@ impl Gallery {
                 return glib::ControlFlow::Break;
             }
 
+            // Compare and index old objects in bounded batches before mutating
+            // the model. An unchanged query never republishes the entire store.
+            if !prepared.get() {
+                let current = current_photos.borrow();
+                let start = prepare_offset.get();
+                let end = (start + BATCH_SIZE).min(current.len());
+                for (index, object) in current.iter().enumerate().take(end).skip(start) {
+                    if !photos.get(index).is_some_and(|photo| object.matches_catalog(photo)) {
+                        unchanged.set(false);
+                    }
+                    existing.borrow_mut().insert(object.id(), object.clone());
+                }
+                prepare_offset.set(end);
+                if end < current.len() { return glib::ControlFlow::Continue; }
+                drop(current);
+                prepared.set(true);
+                if unchanged.get() && pending_metadata.borrow().is_empty() {
+                    if group_mode.get() == GroupMode::Folder && folder_store.n_items() == 0 {
+                        rebuild_group_ranges_for(&current_photos, &group_mode, &group_date, &group_ranges);
+                        if !crate::grid::folder_gridview_experiment_enabled() {
+                            rebuild_folder_rows_for(&current_photos, &group_ranges, &current_columns,
+                                &folder_order, &folder_catalog, &folder_store);
+                        }
+                        save_folder_cache_for(&folder_cache, &current_photos, &group_ranges,
+                            &current_columns, &folder_order);
+                        if crate::grid::sectioned_folder_view_enabled() { sectioned_folder.refresh_model(); }
+                    }
+                    if std::env::var_os("PICASA_TRACE").is_some() {
+                        eprintln!("PIC_NAV gallery_replace_complete kind=unchanged generation={} photos={} elapsed_ms={}",
+                            generation, photos.len(), started.elapsed().as_millis());
+                    }
+                    stream_building.set(false);
+                    return glib::ControlFlow::Break;
+                }
+            }
+
+            let batch_started = std::time::Instant::now();
             let start = offset.get();
             let end = (start + BATCH_SIZE).min(photos.len());
             let objects: Vec<PhotoObject> = photos[start..end]
                 .iter()
                 .map(|photo| {
                     let updated = pending_metadata.borrow_mut().remove(&photo.id);
-                    PhotoObject::from_photo(updated.as_ref().unwrap_or(photo))
+                    let photo = updated.as_ref().unwrap_or(photo);
+                    if let Some(object) = existing.borrow_mut().remove(&photo.id) {
+                        if !object.matches_catalog(photo) { object.set_from_photo(photo); }
+                        object
+                    } else {
+                        PhotoObject::from_photo(photo)
+                    }
                 })
                 .collect();
             offset.set(end);
@@ -2406,9 +2440,15 @@ impl Gallery {
             } else {
                 current_photos.borrow_mut().extend(objects.iter().cloned());
             }
-            // Publish matching ranges before ListStore notifies viewport listeners.
-            if sectioned_folder.is_wall() {
+            // Extend only the new suffix. Regrouping the whole prefix on each
+            // batch made large Folder/Wall builds quadratic.
+            let grouping = (group_mode.get(), group_date.get());
+            let grouping_changed = last_grouping.replace(grouping) != grouping;
+            let metadata_regroup = progressive_group_dirty.replace(false);
+            if first_batch || grouping_changed || metadata_regroup {
                 rebuild_group_ranges_for(&current_photos, &group_mode, &group_date, &group_ranges);
+            } else {
+                append_group_ranges_for(&current_photos, &group_mode, &group_date, &group_ranges, start);
             }
             if first_batch {
                 store.splice(0, store.n_items(), &objects);
@@ -2418,7 +2458,6 @@ impl Gallery {
 
 
             if end >= photos.len() {
-                rebuild_group_ranges_for(&current_photos, &group_mode, &group_date, &group_ranges);
                 if group_mode.get() == GroupMode::Folder {
                     if !crate::grid::folder_gridview_experiment_enabled() {
                         rebuild_folder_rows_for(
@@ -2497,9 +2536,17 @@ impl Gallery {
             } else if end >= photos.len() && !objects.is_empty() {
                 selection.select_item(0, true);
             }
+            if std::env::var_os("PICASA_TRACE").is_some() {
+                eprintln!("PIC_NAV gallery_replace_batch generation={} applied={} total={} elapsed_ms={}",
+                    generation, end, photos.len(), batch_started.elapsed().as_millis());
+            }
             if end < photos.len() {
                 glib::ControlFlow::Continue
             } else {
+                if std::env::var_os("PICASA_TRACE").is_some() {
+                    eprintln!("PIC_NAV gallery_replace_complete kind=batched generation={} photos={} elapsed_ms={}",
+                        generation, photos.len(), started.elapsed().as_millis());
+                }
 
                 // Folder rows (and therefore folder navigation targets) only
                 // exist once every batch has been applied.

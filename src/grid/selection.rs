@@ -513,6 +513,15 @@ impl Gallery {
         let photo=self.metadata_index.borrow_mut().photo(
             &self.current_photos.borrow(),self.replace_generation.get(),updated.id);
         if let Some(photo) = photo {
+            if self.stream_building.get() &&
+                (photo.taken_at() != updated.taken_at
+                    || photo.mtime() != updated.mtime.unwrap_or_default()
+                    || photo.edited_at() != updated.edited_at
+                    || photo.folder_id() != updated.folder_id.unwrap_or_default()
+                    || photo.folder_path() != updated.folder_path)
+            {
+                self.progressive_group_dirty.set(true);
+            }
             if self.layout()==PhotoLayout::PhotoWall &&
                 ((photo.width(),photo.height())!=(updated.width.unwrap_or_default(),updated.height.unwrap_or_default()) || photo.rotation()!=updated.rotation) {
                 self.sectioned_folder.invalidate_geometry();

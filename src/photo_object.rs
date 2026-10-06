@@ -87,6 +87,29 @@ glib::wrapper! {
 }
 
 impl PhotoObject {
+    /// Compare catalog state through backing fields during cooperative refresh.
+    /// Availability and decoded-preview state are maintained independently.
+    pub(crate) fn matches_catalog(&self, photo: &Photo) -> bool {
+        let imp = self.imp();
+        imp.id.get() == photo.id
+            && *imp.path.borrow() == photo.path
+            && *imp.history_caption.borrow() == photo.history_caption
+            && imp.edited_at.get() == photo.edited_at
+            && *imp.taken_at.borrow() == photo.taken_at
+            && *imp.camera.borrow() == photo.camera
+            && imp.aperture.get() == photo.aperture.unwrap_or_default()
+            && imp.width.get() == photo.width.unwrap_or_default()
+            && imp.height.get() == photo.height.unwrap_or_default()
+            && imp.mtime.get() == photo.mtime.unwrap_or_default()
+            && imp.size_bytes.get() == photo.size_bytes.unwrap_or_default()
+            && imp.rotation.get() == photo.rotation
+            && *imp.edit_recipe.borrow() == photo.edit_recipe
+            && imp.favorite.get() == photo.favorite
+            && imp.rating.get() == photo.rating
+            && imp.folder_id.get() == photo.folder_id.unwrap_or_default()
+            && *imp.folder_path.borrow() == photo.folder_path
+    }
+
     /// Catalog axes already include EXIF orientation; only PIC rotation is applied here.
     pub fn photo_wall_aspect_ratio(&self) -> f64 {
         let imp = self.imp();

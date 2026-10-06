@@ -217,12 +217,12 @@ fn refresh_grid_inner(
                     let restore_photo_anchor = viewport_anchor.as_ref().and_then(|anchor| {
                         surviving_viewport_anchor(&anchor.photos, &visible_photo_ids)
                     });
-                    gallery.replace(&photos);
-                    if std::env::var_os("PICASA_TRACE").is_some()
-                        && replace_started.elapsed() >= std::time::Duration::from_millis(20)
-                    {
+                    gallery.replace_owned_while_current(photos, Rc::new(move || {
+                        REFRESH_GENERATION.load(std::sync::atomic::Ordering::Relaxed) == generation
+                    }));
+                    if std::env::var_os("PICASA_TRACE").is_some() {
                         eprintln!(
-                            "PIC_SCAN_UI gallery_replace photos={count} elapsed_ms={}",
+                            "PIC_SCAN_UI gallery_replace filter={filter:?} generation={generation} photos={count} elapsed_ms={}",
                             replace_started.elapsed().as_millis()
                         );
                     }

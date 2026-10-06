@@ -49,6 +49,7 @@ pub struct Gallery {
     current_photos: Rc<RefCell<Vec<PhotoObject>>>,
     metadata_index: RefCell<metadata_index::CatalogObjectIndex>,
     pending_metadata: Rc<RefCell<HashMap<i64, Photo>>>,
+    progressive_group_dirty: Rc<Cell<bool>>,
     replace_generation: Rc<Cell<u64>>,
     // True while a progressive gallery replacement is still building batches.
     // Folder navigation relies on this to keep retrying until the virtualized
@@ -220,10 +221,13 @@ impl Gallery {
                     .model_generation
                     .set(surface.model_generation.get().wrapping_add(1));
                 surface.invalidate_geometry();
+                surface.model_refresh_pending.set(true);
                 let weak = Rc::downgrade(&surface);
                 glib::idle_add_local_once(move || {
                     if let Some(surface) = weak.upgrade() {
-                        if surface.is_wall() {
+                        // Hidden pages have no useful viewport yet. Geometry
+                        // stays invalid and the mapped surface's tick rebuilds it.
+                        if surface.is_wall() && surface.root.is_mapped() && surface.model_refresh_pending.get() {
                             surface.refresh_model();
                         }
                     }
@@ -851,6 +855,7 @@ impl Gallery {
             replace_generation: Rc::new(Cell::new(0)),
             metadata_index: RefCell::new(metadata_index::CatalogObjectIndex::default()),
             pending_metadata: Rc::new(RefCell::new(HashMap::new())),
+            progressive_group_dirty: Rc::new(Cell::new(false)),
             stream_building: Rc::new(Cell::new(false)),
             pending_folder_target: Rc::new(RefCell::new(None)),
             group_mode,

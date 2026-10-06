@@ -19,6 +19,74 @@ static DISPLAY_PENDING: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 static WALL_RETRIES: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
 static DISPLAY_COMPLETIONS: OnceLock<Mutex<Vec<DisplayCompletion>>> = OnceLock::new();
 
+#[derive(Default)]
+struct DisplayRetries(VecDeque<(String, std::time::Instant)>);
+
+impl DisplayRetries {
+    fn take_due(&mut self, now: std::time::Instant) -> HashSet<String> {
+        let mut due = HashSet::new();
+        self.0.retain(|(key, deadline)| {
+            if *deadline <= now {
+                due.insert(key.clone());
+                false
+            } else {
+                true
+            }
+        });
+        due
+    }
+
+    fn allowed(&mut self, key: &str, now: std::time::Instant) -> bool {
+        !self
+            .0
+            .iter()
+            .any(|(entry, deadline)| entry == key && *deadline > now)
+    }
+
+    fn record(&mut self, key: &str, outcome: &DisplayOutcome, now: std::time::Instant) {
+        self.0.retain(|(entry, _)| entry != key);
+        let seconds = match outcome {
+            DisplayOutcome::Missing => 1,
+            DisplayOutcome::Failed => 30,
+            DisplayOutcome::Loaded { .. } => return,
+        };
+        self.0.push_back((
+            key.to_owned(),
+            now + std::time::Duration::from_secs(seconds),
+        ));
+        while self.0.len() > DISPLAY_QUEUE_CAPACITY {
+            self.0.pop_front();
+        }
+    }
+}
+
+static DISPLAY_RETRIES: OnceLock<Mutex<DisplayRetries>> = OnceLock::new();
+
+fn display_retry_allowed(key: &str) -> bool {
+    DISPLAY_RETRIES
+        .get_or_init(|| Mutex::new(DisplayRetries::default()))
+        .lock()
+        .map(|mut retries| retries.allowed(key, std::time::Instant::now()))
+        .unwrap_or(true)
+}
+
+pub fn take_due_retry_keys() -> HashSet<String> {
+    DISPLAY_RETRIES
+        .get()
+        .and_then(|retries| retries.lock().ok())
+        .map(|mut retries| retries.take_due(std::time::Instant::now()))
+        .unwrap_or_default()
+}
+
+/// A newly created preview can be displayed immediately, without waiting for a retry.
+pub fn invalidate_retry(key: &str) {
+    if let Some(retries) = DISPLAY_RETRIES.get() {
+        if let Ok(mut retries) = retries.lock() {
+            retries.0.retain(|(entry, _)| entry != key);
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct DisplayRequest {
     pub key: String,
@@ -120,6 +188,9 @@ pub fn submit_latest_visible(mut request: DisplayRequest) -> bool {
 }
 
 fn submit_with_policy(request: DisplayRequest, newest_visible_first: bool) -> bool {
+    if !display_retry_allowed(&request.key) {
+        return false;
+    }
     let pending = DISPLAY_PENDING.get_or_init(|| Mutex::new(HashSet::new()));
     let Ok(mut pending) = pending.lock() else {
         return false;
@@ -269,6 +340,9 @@ pub fn replace_visible_requests(mut requests: Vec<DisplayRequest>) -> usize {
 
     let mut inserted = 0usize;
     for request in requests {
+        if !display_retry_allowed(&request.key) {
+            continue;
+        }
         // A background-prefetch request for the same thumbnail can be promoted
         // instead of decoded twice.
         if let Some(index) = jobs.iter().position(|job| job.key == request.key) {
@@ -347,6 +421,15 @@ fn worker_loop(queue: Arc<Queue>) {
         };
 
         let outcome = load_display_thumbnail(&request);
+        if let Ok(mut retries) = DISPLAY_RETRIES
+            .get_or_init(|| Mutex::new(DisplayRetries::default()))
+            .lock()
+        {
+            // Wall-quality previews already have their own wanted/retry queue.
+            if !is_wall_key(&request.key) {
+                retries.record(&request.key, &outcome, std::time::Instant::now());
+            }
+        }
         let completion = DisplayCompletion {
             key: request.key.clone(),
             outcome,
@@ -413,6 +496,15 @@ fn load_thumbnail_with_policy(request: &DisplayRequest, regenerate: bool) -> Dis
         }
         if !regenerate {
             return DisplayOutcome::Missing;
+        }
+        if crate::thumbnail::known_decode_failure(&request.source_path, &path) {
+            if std::env::var_os("PICASA_TRACE").is_some() {
+                eprintln!(
+                    "PIC_THUMBNAIL skip reason=decode_failed uri={}",
+                    request.source_path
+                );
+            }
+            return DisplayOutcome::Failed;
         }
         crate::thumbnail::request_priority(
             request.source_path.clone(),
@@ -506,6 +598,79 @@ fn crop_raw_cached_preview(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn expired_preview_retry_wakes_display_without_navigation() {
+        let now = std::time::Instant::now();
+        let mut retries = DisplayRetries::default();
+        retries.record("visible", &DisplayOutcome::Missing, now);
+        retries.record("other", &DisplayOutcome::Failed, now);
+        assert!(retries.take_due(now).is_empty());
+        assert_eq!(
+            retries.take_due(now + std::time::Duration::from_secs(1)),
+            HashSet::from(["visible".to_owned()])
+        );
+        assert!(retries
+            .take_due(now + std::time::Duration::from_secs(1))
+            .is_empty());
+        assert!(!retries.allowed("other", now));
+    }
+
+    #[test]
+    fn missing_preview_retries_are_bounded_and_expire() {
+        let now = std::time::Instant::now();
+        let mut retries = DisplayRetries::default();
+        retries.record("missing", &DisplayOutcome::Missing, now);
+        retries.record("failed", &DisplayOutcome::Failed, now);
+        for _ in 0..1000 {
+            assert!(!retries.allowed("missing", now));
+            assert!(!retries.allowed("failed", now));
+        }
+        assert!(retries.allowed("new-fingerprint", now));
+        assert!(retries.allowed("missing", now + std::time::Duration::from_secs(1)));
+        assert!(!retries.allowed("failed", now + std::time::Duration::from_secs(1)));
+        assert!(retries.allowed("failed", now + std::time::Duration::from_secs(30)));
+        for i in 0..2048 {
+            retries.record(&i.to_string(), &DisplayOutcome::Missing, now);
+        }
+        assert!(retries.0.len() <= DISPLAY_QUEUE_CAPACITY);
+    }
+
+    #[test]
+    fn failed_source_marker_does_not_schedule_generation_or_repeat_display_work() {
+        let source = format!(
+            "nfs://test.invalid/preview-failure-{}.jpg",
+            std::process::id()
+        );
+        let cached = crate::thumbnail::cache_path(&source, Some(123), Some(456)).unwrap();
+        std::fs::create_dir_all(cached.parent().unwrap()).unwrap();
+        let marker = cached.with_extension("failed");
+        std::fs::write(&marker, b"thumbnail decode failed v2\n").unwrap();
+        let request = request_for(
+            cached.to_string_lossy().into_owned(),
+            source,
+            123,
+            456,
+            0,
+            String::new(),
+            100,
+            100,
+            true,
+        );
+        let outcome = load_display_thumbnail(&request);
+        std::fs::remove_file(marker).unwrap();
+        assert!(matches!(outcome, DisplayOutcome::Failed));
+        DISPLAY_RETRIES
+            .get_or_init(|| Mutex::new(DisplayRetries::default()))
+            .lock()
+            .unwrap()
+            .record(&request.key, &outcome, std::time::Instant::now());
+        assert!(!submit(request.clone()));
+        assert!(!submit_latest_visible(request.clone()));
+        assert_eq!(replace_visible_requests(vec![request.clone()]), 0);
+        invalidate_retry(&request.key);
+        assert!(display_retry_allowed(&request.key));
+    }
 
     #[test]
     fn presentation_key_changes_with_visual_state() {

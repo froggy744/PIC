@@ -73,6 +73,62 @@ fn thumbnail_size() -> u32 {
 }
 
 const PRIORITY_QUEUE_CAPACITY: usize = 512;
+// Network prefetch is speculative; a scrollbar jump must not leave a library
+// of old reads competing with the destination's visible previews.
+const NETWORK_PREFETCH_CAPACITY: usize = 8;
+static NETWORK_PREFETCH_WANTED: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+
+pub(crate) fn private_network_preview(path: &str) -> bool {
+    #[cfg(target_os = "linux")]
+    { crate::network_shares::private(path) }
+    #[cfg(not(target_os = "linux"))]
+    { let _ = path; false }
+}
+
+#[cfg(test)]
+pub(crate) fn network_prefetch_queued_count() -> usize {
+    PRIORITY_QUEUE.get().and_then(|queue| queue.0.lock().ok()).map(|jobs| {
+        jobs.iter().filter(|job| private_network_preview(&job.0) && !job.6 && job.5.is_none()).count()
+    }).unwrap_or(0)
+}
+
+fn network_prefetch_has_capacity(jobs: &VecDeque<PriorityRequest>) -> bool {
+    jobs.iter().filter(|job| private_network_preview(&job.0) && !job.6 && job.5.is_none())
+        .count() < NETWORK_PREFETCH_CAPACITY
+}
+
+fn release_discarded_generation(jobs: Vec<PriorityRequest>) {
+    if let Some(pending) = PRIORITY_PENDING.get() {
+        if let Ok(mut pending) = pending.lock() {
+            release_discarded_generation_from(&mut pending, jobs);
+        }
+    }
+}
+
+fn release_discarded_generation_from(
+    pending: &mut HashMap<PathBuf, ThumbnailWorkState>, jobs: Vec<PriorityRequest>,
+) {
+    for job in jobs {
+        if pending.get(&job.3) == Some(&ThumbnailWorkState::Queued) { pending.remove(&job.3); }
+    }
+}
+
+pub(crate) fn retain_network_prefetch_paths(wanted: &HashSet<String>) {
+    let queue = priority_queue();
+    let mut jobs = queue.0.lock().expect("priority queue lock");
+    let mut allowed = NETWORK_PREFETCH_WANTED.get_or_init(|| Mutex::new(HashSet::new()))
+        .lock().expect("network prefetch lock");
+    *allowed = wanted.iter().take(NETWORK_PREFETCH_CAPACITY).cloned().collect();
+    let mut discarded = Vec::new();
+    jobs.retain(|job| {
+        let keep = !private_network_preview(&job.0) || job.6 || job.5.is_some()
+            || allowed.contains(&job.0);
+        if !keep { discarded.push(job.clone()); }
+        keep
+    });
+    release_discarded_generation(discarded);
+}
+
 // Visible requests must not queue behind the single bulk RAW worker. Keep a
 // small dedicated pool so several newly visible tiles can make progress while
 // background generation continues; cache-key deduplication still prevents
@@ -150,7 +206,15 @@ pub fn request_priority(path: String, mtime: Option<i64>, size_bytes: Option<i64
     let queue = priority_queue();
     let (jobs, wake) = &**queue;
     let mut jobs = jobs.lock().expect("priority queue lock");
+    let requested_visible = visible;
     let visible = current_generation_priority(&path, visible);
+    if private_network_preview(&path) && !visible {
+        let wanted = NETWORK_PREFETCH_WANTED.get_or_init(|| Mutex::new(HashSet::new()))
+            .lock().expect("network prefetch lock");
+        if requested_visible || !wanted.contains(&path) || !network_prefetch_has_capacity(&jobs) {
+            return;
+        }
+    }
     let pending = PRIORITY_PENDING.get_or_init(|| Mutex::new(HashMap::new()));
     let Ok(mut pending) = pending.lock() else {
         return;
@@ -309,6 +373,52 @@ mod wall_queue_tests {
     }
 
     #[test]
+    #[cfg(target_os = "linux")]
+    fn network_prefetch_budget_does_not_limit_visible_or_local_requests() {
+        let mut remote = job(false);
+        remote.0 = "nfs://nas/photos/prefetch.jpg".into();
+        remote.6 = false;
+        let mut jobs = VecDeque::from(vec![remote.clone(); NETWORK_PREFETCH_CAPACITY - 1]);
+        assert!(network_prefetch_has_capacity(&jobs));
+        jobs.push_back(remote.clone());
+        assert!(!network_prefetch_has_capacity(&jobs));
+        jobs[0].6 = true;
+        assert!(network_prefetch_has_capacity(&jobs));
+        let mut local = remote;
+        local.0 = "/photos/local.jpg".into();
+        jobs.extend(vec![local; 100]);
+        assert!(network_prefetch_has_capacity(&jobs));
+        let mut pending = HashMap::from([(PathBuf::from("generating"), ThumbnailWorkState::Generating),
+            (PathBuf::from("queued"), ThumbnailWorkState::Queued)]);
+        // Removal must only release queued ownership, never an in-flight read.
+        let mut dropped = job(false);
+        dropped.3 = PathBuf::from("queued");
+        let mut active = dropped.clone();
+        active.3 = PathBuf::from("generating");
+        release_discarded_generation_from(&mut pending, vec![dropped, active]);
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[&PathBuf::from("generating")], ThumbnailWorkState::Generating);
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn viewport_change_drops_queued_network_reads_but_keeps_current_and_local_work() {
+        let mut old_remote = job(false);
+        old_remote.0 = "nfs://nas/photos/old.jpg".into();
+        let mut current_remote = job(false);
+        current_remote.0 = "smb://nas/photos/current.jpg".into();
+        current_remote.6 = false;
+        let local = job(false);
+        let mut jobs = VecDeque::from([old_remote, local, current_remote]);
+        update_generation_visibility(&mut jobs, &HashMap::from([
+            ("smb://nas/photos/current.jpg".into(), 0)]));
+        assert_eq!(jobs.len(), 2);
+        assert_eq!(jobs[0].0, "smb://nas/photos/current.jpg");
+        assert!(jobs[0].6);
+        assert_eq!(jobs[1].0, "/absent.jpg");
+    }
+
+    #[test]
     fn viewport_change_demotes_old_generation_and_promotes_current_requests() {
         let mut old = job(false);
         old.0 = "/photo/old.dng".into();
@@ -365,13 +475,20 @@ mod wall_queue_tests {
 fn update_generation_visibility(
     jobs: &mut VecDeque<PriorityRequest>,
     wanted: &HashMap<String, usize>,
-) {
+) -> Vec<PriorityRequest> {
+    let mut discarded = Vec::new();
+    jobs.retain(|job| {
+        let keep = !private_network_preview(&job.0) || job.5.is_some() || wanted.contains_key(&job.0);
+        if !keep { discarded.push(job.clone()); }
+        keep
+    });
     for job in jobs.iter_mut() {
         job.6 = wanted.contains_key(&job.0);
     }
     jobs.make_contiguous().sort_by_key(|job| {
         wanted.get(&job.0).copied().unwrap_or(usize::MAX)
     });
+    discarded
 }
 
 fn generation_priority_for(
@@ -390,15 +507,20 @@ fn current_generation_priority(path: &str, requested: bool) -> bool {
 }
 
 /// Generation and cache presentation must agree about the current viewport.
-/// Keep old requests deduplicated, but demote them to prefetch priority.
+/// Drop queued remote reads from old viewports; local cache work can be demoted.
 pub fn retain_visible_generation_requests(requests: &[crate::thumbnail_display::DisplayRequest]) {
     let wanted: HashMap<String, usize> = requests.iter().enumerate()
         .map(|(index, request)| (request.source_path.clone(), index)).collect();
     let queue = priority_queue();
     let mut jobs = queue.0.lock().expect("priority queue lock");
-    update_generation_visibility(&mut jobs, &wanted);
-    *VISIBLE_GENERATION_WANTED.get_or_init(|| Mutex::new(None))
-        .lock().expect("generation viewport lock") = Some(wanted);
+    let mut current = VISIBLE_GENERATION_WANTED.get_or_init(|| Mutex::new(None))
+        .lock().expect("generation viewport lock");
+    if current.as_ref() != Some(&wanted) {
+        release_discarded_generation(update_generation_visibility(&mut jobs, &wanted));
+        NETWORK_PREFETCH_WANTED.get_or_init(|| Mutex::new(HashSet::new()))
+            .lock().expect("network prefetch lock").clear();
+        *current = Some(wanted);
+    }
     queue.1.notify_all();
 }
 

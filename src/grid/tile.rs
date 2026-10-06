@@ -117,6 +117,27 @@ fn queue_photo_presentation_async(photo: &PhotoObject, visible_priority: bool) -
     crate::thumbnail_display::submit(request)
 }
 
+/// Local cache warming can cover several screens. Remote originals get only
+/// a small current band, shared with the generator so late stale display
+/// completions cannot enqueue reads for an old viewport.
+fn queue_prefetch_photos<'a>(photos: impl Iterator<Item = &'a PhotoObject>, budget: usize) -> usize {
+    let photos = photos.collect::<Vec<_>>();
+    let wanted = photos.iter().map(|photo| photo.path())
+        .filter(|path| crate::thumbnail::private_network_preview(path))
+        .take(8).collect::<HashSet<_>>();
+    crate::thumbnail::retain_network_prefetch_paths(&wanted);
+    let mut queued = 0;
+    for photo in photos {
+        if queued >= budget { break; }
+        let path = photo.path();
+        if crate::thumbnail::private_network_preview(&path) && !wanted.contains(&path) {
+            continue;
+        }
+        if queue_photo_presentation_async(photo, false) { queued += 1; }
+    }
+    queued
+}
+
 const FILENAME_CAPTION_HEIGHT: i32 = 24;
 
 /// Row pitch that already surrounds every tile: 6 px of CSS padding/margin on

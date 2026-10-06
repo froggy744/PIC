@@ -3,10 +3,13 @@ use gtk4 as gtk;
 use libadwaita as adw;
 
 const STEPS: [(&str, &str); 4] = [
-    ("Browse", "Use the sidebar to browse your folders. Double-click a photo to open it."),
-    ("Albums", "Create an album with the + beside Albums, then add your selected photos."),
-    ("Edit", "Select a photo and choose Edit. Adjust, crop or apply effects, then export your result."),
-    ("Collage", "Select several photos and choose the collage action. Pick a layout, adjust the spacing and export."),
+    ("Browse", "Double-click a photo to open it."),
+    ("Albums", "Create an album, then add your selected photos."),
+    (
+        "Edit",
+        "Choose Edit to adjust a photo, then export your result.",
+    ),
+    ("Collage", "Select several photos to create a collage."),
 ];
 
 const SCREENSHOTS: [(&str, &[u8]); 4] = [
@@ -67,10 +70,7 @@ pub(super) fn build() -> adw::Dialog {
     content.set_margin_start(24);
     content.set_margin_end(24);
     content.set_margin_bottom(24);
-    let route = gtk::Label::new(Some("Browse → Albums → Edit → Collage"));
-    route.set_wrap(true);
-    route.add_css_class("dim-label");
-    content.append(&route);
+    content.set_margin_top(8);
     let stack = gtk::Stack::new();
     stack.set_vexpand(true);
     stack.set_hhomogeneous(false);
@@ -105,26 +105,35 @@ pub(super) fn build() -> adw::Dialog {
     let controls = gtk::Box::new(gtk::Orientation::Horizontal, 12);
     let previous = gtk::Button::with_label("Back");
     previous.set_sensitive(false);
-    let position = gtk::Label::new(Some("1 of 4"));
-    position.set_hexpand(true);
+    let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    spacer.set_hexpand(true);
     let next = gtk::Button::with_label("Next");
     next.add_css_class("suggested-action");
     controls.append(&previous);
-    controls.append(&position);
+    controls.append(&spacer);
     controls.append(&next);
     content.append(&controls);
+    let skip = gtk::Button::with_label("Skip tour");
+    skip.add_css_class("flat");
+    skip.add_css_class("caption");
+    skip.set_halign(gtk::Align::Center);
+    let weak_dialog = dialog.downgrade();
+    skip.connect_clicked(move |_| {
+        if let Some(dialog) = weak_dialog.upgrade() {
+            dialog.close();
+        }
+    });
+    content.append(&skip);
     let update = {
         let previous = previous.clone();
         let next = next.clone();
-        let position = position.clone();
         move |stack: &gtk::Stack| {
             let index = STEPS
                 .iter()
                 .position(|(title, _)| Some(*title) == stack.visible_child_name().as_deref())
                 .unwrap_or(0);
             previous.set_sensitive(index > 0);
-            next.set_label(if index == 3 { "Done" } else { "Next" });
-            position.set_text(&format!("{} of 4", index + 1));
+            next.set_label(if index == 3 { "Start browsing" } else { "Next" });
         }
     };
     stack.connect_visible_child_notify(update);

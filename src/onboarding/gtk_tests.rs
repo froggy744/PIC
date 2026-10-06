@@ -381,7 +381,7 @@ fn discovery_tour_navigates_browse_albums_edit_collage() {
     for _ in 0..3 {
         next.emit_clicked();
     }
-    assert_eq!(next.label().as_deref(), Some("Done"));
+    assert_eq!(next.label().as_deref(), Some("Start browsing"));
     back.emit_clicked();
     assert_eq!(next.label().as_deref(), Some("Next"));
     next.emit_clicked();
@@ -405,7 +405,11 @@ fn discovery_tour_navigates_browse_albums_edit_collage() {
                     picture.alternative_text().as_deref() == Some(&format!("PIC {title} screen"))
                 })
                 .unwrap();
-            assert!(picture.is_mapped());
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while !picture.is_mapped() && Instant::now() < deadline {
+                settle();
+            }
+            assert!(picture.is_mapped(), "{title} page did not map at {width}px");
             let root = picture.root().unwrap().downcast::<gtk::Window>().unwrap();
             assert!(picture.width() <= root.width());
             assert!(picture.height() > 0);
@@ -428,6 +432,17 @@ fn discovery_tour_navigates_browse_albums_edit_collage() {
             next.emit_clicked();
             settle();
         }
+        let skipped = super::tour::build();
+        skipped.present(Some(&parent));
+        settle();
+        find_button(skipped.upcast_ref(), "Next")
+            .unwrap()
+            .emit_clicked();
+        find_button(skipped.upcast_ref(), "Skip tour")
+            .unwrap()
+            .emit_clicked();
+        settle();
+        assert!(parent.visible_dialog().is_none());
         parent.close();
         settle();
     }

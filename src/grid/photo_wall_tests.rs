@@ -1635,6 +1635,326 @@ fn masonry_corners_follow_settings_and_filenames_stay_disabled() {
 
 #[test]
 #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+fn masonry_width_change_does_not_repack_after_idle() {
+    gtk::init().unwrap();
+    let gallery = Rc::new(Gallery::new(
+        &[],
+        100,
+        |_| {},
+        |_, _, _| {},
+        |_, _, _, _| {},
+        |_, _| {},
+        |_| {},
+    ));
+    let photos = (0..3_086)
+        .map(|i| {
+            glib::Object::builder::<PhotoObject>()
+                .property("id", i as i64 + 1)
+                .property("width", [2000_i64, 4000, 6000, 8000][i % 4])
+                .property("height", 4000_i64)
+                .build()
+        })
+        .collect::<Vec<_>>();
+    gallery.current_photos.replace(photos.clone());
+    gallery.store.splice(0, 0, &photos);
+    gallery.set_layout(PhotoLayout::Masonry);
+    let scroll = gtk::ScrolledWindow::builder()
+        .child(&gallery.folder_sectioned_root)
+        .build();
+    gallery.attach_sectioned_folder_scroll(&scroll);
+    let window = gtk::Window::builder()
+        .default_width(997)
+        .default_height(600)
+        .child(&scroll)
+        .build();
+    window.present();
+    settle();
+    let surface = &gallery.sectioned_folder;
+    let adjustment = scroll.vadjustment();
+    adjustment.set_value(surface.total_height.get() * 0.9);
+    settle();
+    let members = masonry_test_column_members(surface);
+    let context = glib::MainContext::default();
+    for width in [998, 701] {
+        window.set_default_size(width, 600);
+        let until = Instant::now() + std::time::Duration::from_secs(2);
+        while (scroll.width() != width || surface.geometry_width.get() != width)
+            && Instant::now() < until
+        {
+            while context.pending() {
+                context.iteration(false);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        assert_eq!(scroll.width(), width);
+        let generation = surface.wall_state.borrow().generation;
+        settle();
+        settle();
+        assert_eq!(
+            surface.wall_state.borrow().generation,
+            generation,
+            "idle resize rebuilt geometry"
+        );
+        assert_eq!(
+            masonry_test_column_members(surface),
+            members,
+            "idle resize reassigned photos"
+        );
+        assert_eq!(gallery.current_zoom_width(), 100);
+    }
+    window.close();
+    settle();
+}
+
+fn masonry_test_column_members(surface: &SectionedFolderView) -> Vec<(usize, usize)> {
+    let state = surface.wall_state.borrow();
+    let positions = state
+        .layout
+        .items
+        .iter()
+        .map(|item| item.x as i32)
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    let mut members = state
+        .layout
+        .items
+        .iter()
+        .map(|item| {
+            (
+                item.photo_index,
+                positions.binary_search(&(item.x as i32)).unwrap(),
+            )
+        })
+        .collect::<Vec<_>>();
+    members.sort_unstable();
+    members
+}
+
+struct MasonryResizeFrame {
+    width: i32,
+    geometry_width: i32,
+    viewport_error: f64,
+    tile_error: f64,
+    small_step_move: f64,
+    visible_count: usize,
+    covers_viewport: bool,
+    preserves_members: bool,
+}
+
+#[test]
+#[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+fn masonry_deep_scroll_resize_keeps_every_painted_column_in_sync() {
+    gtk::init().unwrap();
+    for count in [3_086, 20_000] {
+        for depth in [0.4, 0.9] {
+            check_masonry_resize_frames(count, depth);
+        }
+    }
+}
+
+fn check_masonry_resize_frames(count: usize, depth: f64) {
+    let gallery = Rc::new(Gallery::new(
+        &[],
+        100,
+        |_| {},
+        |_, _, _| {},
+        |_, _, _, _| {},
+        |_, _| {},
+        |_| {},
+    ));
+    // Cover flat Library/Photos and a collection with fixed folder headings.
+    if count == 20_000 {
+        gallery.group_mode.set(GroupMode::Folder);
+    }
+    let photos = (0..count)
+        .map(|i| {
+            glib::Object::builder::<PhotoObject>()
+                .property("id", i as i64 + 1)
+                .property("folder-id", (i / 1000) as i64 + 1)
+                .property("width", [2000_i64, 4000, 6000, 8000][i % 4])
+                .property("height", 4000_i64)
+                .build()
+        })
+        .collect::<Vec<_>>();
+    gallery.current_photos.replace(photos.clone());
+    gallery.store.splice(0, 0, &photos);
+    gallery.rebuild_group_ranges();
+    gallery.set_layout(PhotoLayout::Masonry);
+    gallery.selection.select_item(42, false);
+    let scroll = gtk::ScrolledWindow::builder()
+        .child(&gallery.folder_sectioned_root)
+        .build();
+    gallery.attach_sectioned_folder_scroll(&scroll);
+    let stack = gtk::Stack::new();
+    stack.add_named(&scroll, Some("photos"));
+    let gallery_for_width = gallery.clone();
+    stack.add_tick_callback(move |stack, _| {
+        gallery_for_width.update_width(stack.width());
+        glib::ControlFlow::Continue
+    });
+    let window = gtk::Window::builder()
+        .default_width(997)
+        .default_height(600)
+        .child(&stack)
+        .build();
+    window.present();
+    settle();
+    let surface = &gallery.sectioned_folder;
+    // Establish and paint the deep viewport before requesting any resize.
+    scroll
+        .vadjustment()
+        .set_value(surface.total_height.get() * depth);
+    settle();
+    let original = surface.wall_state.borrow().layout.clone();
+    let original_top = scroll.vadjustment().value();
+    let members = masonry_test_column_members(surface);
+    let members_for_frame = members.clone();
+    let reads = crate::source::original_read_count();
+    let samples = Rc::new(RefCell::new(Vec::<MasonryResizeFrame>::new()));
+    let samples_for_frame = samples.clone();
+    let previous = RefCell::new(None::<(i32, HashMap<usize, f64>)>);
+    let weak_surface = Rc::downgrade(surface);
+    let weak_scroll = scroll.downgrade();
+    let clock = window.frame_clock().unwrap();
+    let handler = clock.connect_after_paint(move |_| {
+        let (Some(surface), Some(scroll)) = (weak_surface.upgrade(), weak_scroll.upgrade()) else {
+            return;
+        };
+        let width = scroll.width();
+        let mut expected = original.clone();
+        let wanted = expected.resize_masonry(width, original_top).unwrap();
+        let root_bounds = surface.root.compute_bounds(&scroll).unwrap();
+        let viewport_error = (scroll.vadjustment().value() - wanted)
+            .abs()
+            .max((f64::from(root_bounds.y()) + wanted).abs());
+        let state = surface.wall_state.borrow();
+        let mut tile_error = 0.0_f64;
+        let mut visible = HashMap::new();
+        for (&index, tile) in surface.live_tiles.borrow().iter() {
+            let item = state.layout.item(index as usize).unwrap();
+            let bounds = tile.tile.compute_bounds(&surface.root).unwrap();
+            for delta in [
+                (f64::from(bounds.x()) - item.x).abs(),
+                (f64::from(bounds.y()) - item.y).abs(),
+                (f64::from(bounds.width()) - item.width).abs(),
+                (f64::from(bounds.height()) - item.height).abs(),
+            ] {
+                tile_error = tile_error.max(delta);
+            }
+            let painted = tile.tile.compute_bounds(&scroll).unwrap();
+            if painted.y() < scroll.height() as f32 && painted.y() + painted.height() > 0.0 {
+                visible.insert(index as usize, f64::from(painted.y()));
+            }
+        }
+        let small_step_move = previous
+            .borrow()
+            .as_ref()
+            .filter(|(old_width, _)| (width - old_width).abs() == 1)
+            .map(|(_, positions)| {
+                visible
+                    .iter()
+                    .filter_map(|(id, y)| positions.get(id).map(|old_y| (y - old_y).abs()))
+                    .fold(0.0, f64::max)
+            })
+            .unwrap_or(0.0);
+        let covers_viewport = expected
+            .visible_row_indices(wanted, wanted + scroll.vadjustment().page_size())
+            .into_iter()
+            .all(|row| {
+                surface
+                    .live_tiles
+                    .borrow()
+                    .contains_key(&(expected.items[row].photo_index as u32))
+            });
+        let visible_count = visible.len();
+        previous.replace(Some((width, visible)));
+        samples_for_frame.borrow_mut().push(MasonryResizeFrame {
+            width,
+            geometry_width: surface.geometry_width.get(),
+            viewport_error,
+            tile_error,
+            small_step_move,
+            visible_count,
+            covers_viewport,
+            preserves_members: masonry_test_column_members(&surface) == members_for_frame,
+        });
+    });
+    let context = glib::MainContext::default();
+    for (width, height) in [
+        (998, 600),
+        (999, 600),
+        (1000, 600),
+        (999, 600),
+        (998, 600),
+        (997, 600),
+        (997, 700),
+        (701, 550),
+        (1103, 600),
+        (997, 600),
+    ] {
+        let first_sample = samples.borrow().len();
+        window.set_default_size(width, height);
+        let until = Instant::now() + std::time::Duration::from_secs(2);
+        while Instant::now() < until
+            && !samples.borrow()[first_sample..]
+                .iter()
+                .any(|sample| sample.width == width)
+        {
+            while context.pending() {
+                context.iteration(false);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        assert_eq!(scroll.width(), width);
+        assert!(
+            samples.borrow().len() > first_sample,
+            "resize did not paint a frame"
+        );
+    }
+    settle();
+    clock.disconnect(handler);
+    let painted = samples.borrow();
+    assert!(painted.windows(2).any(|pair| pair[0].width < pair[1].width));
+    assert!(painted.windows(2).any(|pair| pair[0].width > pair[1].width));
+    for frame in painted.iter() {
+        assert_eq!(
+            frame.width, frame.geometry_width,
+            "painted width disagrees with geometry"
+        );
+        assert!(
+            frame.visible_count > 0 && frame.covers_viewport,
+            "painted an empty or incomplete viewport"
+        );
+        assert!(
+            frame.preserves_members,
+            "painted a transient column reassignment"
+        );
+        assert!(
+            frame.viewport_error < 2.0,
+            "count={count} depth={depth}: viewport error {}px",
+            frame.viewport_error
+        );
+        assert!(
+            frame.tile_error < 2.0,
+            "count={count} depth={depth}: tile allocation error {}px",
+            frame.tile_error
+        );
+        assert!(
+            frame.small_step_move <= 3.0,
+            "count={count} depth={depth}: one-pixel resize moved visible photos {}px",
+            frame.small_step_move
+        );
+    }
+    assert_eq!(masonry_test_column_members(surface), members);
+    assert_eq!(crate::source::original_read_count(), reads);
+    assert!(gallery.selection.is_selected(42));
+    window.close();
+    settle();
+}
+
+#[test]
+#[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
 fn masonry_resize_keeps_the_visible_photo_anchor() {
     gtk::init().unwrap();
     let gallery = Rc::new(Gallery::new(
@@ -1673,34 +1993,23 @@ fn masonry_resize_keeps_the_visible_photo_anchor() {
     let adjustment = scroll.vadjustment();
     adjustment.set_value((adjustment.upper() - adjustment.page_size()) * 0.4);
     settle();
-    let anchor = surface.wall_photo_for_y(adjustment.value()).unwrap();
-    let index = photos.iter().position(|p| p.id() == anchor.id()).unwrap();
-    let old_offset = surface.wall_state.borrow().layout.item(index).unwrap().y - adjustment.value();
-    surface.calculate_wall_geometry(surface.geometry_width.get() + 10);
-    let new_offset = surface.wall_state.borrow().layout.item(index).unwrap().y - adjustment.value();
+    let members = masonry_test_column_members(surface);
+    let original = surface.wall_state.borrow().layout.clone();
+    let mut expected = original.clone();
+    let old_value = adjustment.value();
+    let new_width = scroll.width() + 10;
+    let mapped = expected.resize_masonry(new_width, old_value).unwrap();
+    window.set_default_size(new_width, 600);
+    settle();
     assert!(
-        (new_offset - old_offset).abs() < 1.0,
-        "resize moved the visible photo: old_offset={old_offset}, new_offset={new_offset}"
+        (adjustment.value() - mapped).abs() < 2.0,
+        "resize lost the logical viewport position"
     );
-    let (center_photo, center_offset) = surface.capture_center_anchor().unwrap();
-    let center_index = photos.iter().position(|p| p.id() == center_photo).unwrap();
-    surface.wall_state.borrow_mut().masonry_resize_pending =
-        Some(Instant::now() - std::time::Duration::from_millis(200));
-    surface.poll_masonry_resize();
-    assert!(surface.wall_state.borrow().masonry_resize_pending.is_none());
     assert_eq!(surface.geometry_width.get(), scroll.width());
-    let after = surface
-        .wall_state
-        .borrow()
-        .layout
-        .item(center_index)
-        .unwrap()
-        .y
-        - adjustment.value();
-    assert!(
-        (after - center_offset).abs() < 1.0,
-        "settled resize lost its photo anchor"
-    );
+    assert_eq!(masonry_test_column_members(surface), members);
+    let generation = surface.wall_state.borrow().generation;
+    settle();
+    assert_eq!(surface.wall_state.borrow().generation, generation);
     window.close();
 }
 

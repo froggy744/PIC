@@ -31,6 +31,9 @@ impl MasonryLayout {
             .max(1.0) as usize;
         let columns = columns.min((content_width + MASONRY_GAP) / (MASONRY_GAP + 1));
         let available = content_width - (columns - 1) * MASONRY_GAP;
+        // All columns share one ideal scale. Their one-pixel horizontal
+        // remainder must not change hundreds of preceding image heights.
+        let ideal_width = available as f64 / columns as f64;
         let base = available / columns;
         let remainder = available - base * columns;
         let widths: Vec<_> = (0..columns)
@@ -50,17 +53,18 @@ impl MasonryLayout {
             column_x,
             ..Self::default()
         };
-        let mut y = 0.0;
+        let mut y = 0.0_f64;
         for (section, source) in sections.iter().enumerate() {
-            let header_y = y;
+            let header_y = y.round();
             let header = if source.header_height.is_finite() {
                 source.header_height.round().max(0.0)
             } else {
                 0.0
             };
             y += header;
-            let first_photo_y = y;
+            let first_photo_y = y.round();
             let mut bottoms = vec![y; columns];
+            let mut tops = vec![first_photo_y; columns];
             let start = layout.items.len();
             for photo_index in
                 source.photo_range.start.min(ratios.len())..source.photo_range.end.min(ratios.len())
@@ -75,17 +79,20 @@ impl MasonryLayout {
                     1.0
                 };
                 let width = widths[column] as f64;
-                let height = (width / ratio).round().max(1.0);
+                let ideal_height = (ideal_width / ratio).max(1.0);
+                let top = tops[column];
+                let height = (bottoms[column] + ideal_height).round() - top;
                 layout.items.push(PhotoWallItem {
                     photo_index,
                     section,
                     row: 0,
                     x: layout.column_x[column],
-                    y: bottoms[column],
+                    y: top,
                     width,
                     height,
                 });
-                bottoms[column] += height + gap;
+                tops[column] = top + height + gap;
+                bottoms[column] += ideal_height + gap;
             }
             if layout.items.len() > start {
                 y = bottoms.into_iter().fold(y, f64::max) - gap;
@@ -93,10 +100,10 @@ impl MasonryLayout {
             layout.sections.push(PhotoWallSectionBounds {
                 header_y,
                 first_photo_y,
-                end_y: y,
+                end_y: y.round(),
             });
         }
-        layout.total_height = y.max(1.0);
+        layout.total_height = y.round().max(1.0);
         layout
     }
 }
@@ -161,7 +168,7 @@ mod tests {
             assert!(tile.y >= bottoms[column]);
             assert!(
                 (tile.height * ratios[tile.photo_index] - tile.width).abs()
-                    <= ratios[tile.photo_index] * 0.5
+                    <= 1.0 + ratios[tile.photo_index]
             );
             bottoms[column] = tile.y + tile.height + MASONRY_GAP as f64;
         }

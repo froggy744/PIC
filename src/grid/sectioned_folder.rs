@@ -746,7 +746,6 @@ impl SectionedFolderView {
             if this.is_wall() && this.geometry_width.get() == 0 {
                 this.refresh();
             }
-            this.poll_masonry_resize();
             this.poll_wall_quality();
             glib::ControlFlow::Continue
         });
@@ -757,7 +756,6 @@ impl SectionedFolderView {
     fn invalidate_geometry(&self) {
         let generation = self.wall_state.borrow().generation.wrapping_add(1);
         self.wall_state.borrow_mut().generation = generation;
-        self.wall_state.borrow_mut().masonry_resize_pending = None;
         self.geometry_width.set(0);
         self.geometry_columns.set(0);
         self.geometry_row_height.set(0);

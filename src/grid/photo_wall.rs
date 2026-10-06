@@ -12,7 +12,6 @@ struct PhotoWallState {
     layout: photo_wall_layout::PhotoWallLayout,
     quality_gate: WallQualityGate,
     quality_attempted: HashSet<String>,
-    masonry_resize_pending: Option<Instant>,
 }
 
 impl SectionedFolderView {
@@ -39,9 +38,6 @@ impl SectionedFolderView {
             && !self.wall_state.borrow().layout.rows.is_empty()
         {
             if self.scale_wall_geometry(width) {
-                if self.layout_mode.get() == PhotoLayout::Masonry {
-                    self.wall_state.borrow_mut().masonry_resize_pending = Some(Instant::now());
-                }
                 return;
             }
         }
@@ -91,7 +87,6 @@ impl SectionedFolderView {
         let mut state = self.wall_state.borrow_mut();
         state.generation = state.generation.wrapping_add(1);
         state.layout = layout;
-        state.masonry_resize_pending = None;
         self.geometry_width.set(width);
         self.geometry_row_height.set(target + caption);
     }
@@ -154,43 +149,6 @@ impl SectionedFolderView {
             );
         }
         true
-    }
-
-    // Repack once after the drag stops, rather than swapping photos between
-    // columns on every frame. Zoom/model changes still repack immediately.
-    fn poll_masonry_resize(self: &Rc<Self>) {
-        const RESIZE_SETTLE: std::time::Duration = std::time::Duration::from_millis(150);
-        let settled = self.layout_mode.get() == PhotoLayout::Masonry
-            && self
-                .wall_state
-                .borrow()
-                .masonry_resize_pending
-                .is_some_and(|changed| changed.elapsed() >= RESIZE_SETTLE);
-        if !settled {
-            return;
-        }
-        self.wall_state.borrow_mut().masonry_resize_pending = None;
-        let anchor = self.capture_center_anchor();
-        self.invalidate_geometry();
-        self.refresh();
-        if let Some(scroll) = self.scroll.borrow().as_ref().cloned() {
-            let adjustment = scroll.vadjustment();
-            let page = adjustment.page_size();
-            adjustment.configure(
-                adjustment.value(),
-                adjustment.lower(),
-                self.total_height.get().ceil().max(page),
-                adjustment.step_increment(),
-                adjustment.page_increment(),
-                page,
-            );
-        }
-        if let Some((photo, offset)) = anchor {
-            self.restore_anchor(photo, offset);
-        }
-        if let Some(viewport) = self.root.parent().and_downcast::<gtk::Viewport>() {
-            viewport.size_allocate(&viewport.allocation(), viewport.allocated_baseline());
-        }
     }
 
     fn wall_vertical_neighbor(&self, index: u32, direction: i32) -> Option<u32> {

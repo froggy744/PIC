@@ -61,6 +61,32 @@ fn ratio(value: f64) -> f64 {
     }
 }
 
+// The first column supplies a stable logical point across successive widths.
+// Picking the first globally sorted overlapping tile can switch columns as
+// rounded edges move, accumulating viewport drift even on a round trip.
+enum MasonryAnchor {
+    Header {
+        section: usize,
+        offset: f64,
+    },
+    Photo {
+        photo: usize,
+        fraction: f64,
+    },
+    Gap {
+        photo: usize,
+        offset: f64,
+    },
+    Tail {
+        section: usize,
+        photo: usize,
+        fraction: f64,
+    },
+    End {
+        offset: f64,
+    },
+}
+
 // Allocate whole pixels by largest remainder, then accumulate those widths.
 // The optional one-pixel minimum only applies when the row has enough pixels.
 fn integer_widths(ratios: &[f64], available: i32) -> Vec<i32> {
@@ -166,8 +192,8 @@ impl PhotoWallLayout {
     }
 
     /// Resize existing columns without rerunning shortest-column placement.
-    /// Gaps stay fixed and integer allocations derive from original ratios.
-    /// Return the old top photo at its original viewport offset.
+    /// Gaps stay fixed; common ideal widths and cumulative shared edges keep
+    /// every column on the same scale. Return the mapped logical viewport top.
     pub fn resize_masonry(&mut self, viewport: i32, anchor_y: f64) -> Option<f64> {
         let gap = super::masonry_layout::MASONRY_GAP;
         let viewport = viewport.max(1) as usize;
@@ -178,6 +204,7 @@ impl PhotoWallLayout {
             return None;
         }
         let available = content - (columns - 1) * gap;
+        let ideal_width = available as f64 / columns as f64;
         let widths: Vec<_> = (0..columns)
             .map(|column| available / columns + usize::from(column < available % columns))
             .collect();
@@ -190,20 +217,66 @@ impl PhotoWallLayout {
                 left
             })
             .collect();
-        let anchor = self
-            .items
-            .iter()
-            .find(|item| item.y + item.height > anchor_y)
-            .map(|item| (item.photo_index, item.y - anchor_y));
+        let section = self
+            .sections
+            .partition_point(|bounds| bounds.end_y <= anchor_y);
+        let anchor = if let Some(bounds) = self.sections.get(section) {
+            if anchor_y < bounds.first_photo_y {
+                MasonryAnchor::Header {
+                    section,
+                    offset: anchor_y - bounds.header_y,
+                }
+            } else {
+                let reference = &self.masonry_columns[0];
+                let position = reference.partition_point(|&row| self.items[row].y <= anchor_y);
+                let item = position
+                    .checked_sub(1)
+                    .and_then(|p| reference.get(p))
+                    .map(|&row| &self.items[row]);
+                match item.filter(|item| item.section == section) {
+                    Some(item) if anchor_y < item.y + item.height => MasonryAnchor::Photo {
+                        photo: item.photo_index,
+                        fraction: (anchor_y - item.y) / item.height,
+                    },
+                    Some(item)
+                        if anchor_y <= item.y + item.height + gap as f64
+                            && reference
+                                .get(position)
+                                .is_some_and(|&row| self.items[row].section == section) =>
+                    {
+                        MasonryAnchor::Gap {
+                            photo: item.photo_index,
+                            offset: anchor_y - item.y - item.height,
+                        }
+                    }
+                    Some(item) => MasonryAnchor::Tail {
+                        section,
+                        photo: item.photo_index,
+                        fraction: (anchor_y - item.y - item.height)
+                            / (bounds.end_y - item.y - item.height),
+                    },
+                    None => MasonryAnchor::Header {
+                        section,
+                        offset: anchor_y - bounds.header_y,
+                    },
+                }
+            }
+        } else {
+            MasonryAnchor::End {
+                offset: anchor_y - self.total_height,
+            }
+        };
         let old_positions = &self.masonry_column_x;
-        let mut cursor = 0.0;
+        let mut cursor = 0.0_f64;
         let mut item_index = 0;
         for (section, bounds) in self.sections.iter_mut().enumerate() {
             let header = bounds.first_photo_y - bounds.header_y;
-            bounds.header_y = cursor;
+            bounds.header_y = cursor.round();
             cursor += header;
-            bounds.first_photo_y = cursor;
+            bounds.first_photo_y = cursor.round();
             let mut bottoms = vec![cursor; columns];
+            let mut tops = vec![bounds.first_photo_y; columns];
+            let section_start = item_index;
             while item_index < self.items.len() && self.items[item_index].section == section {
                 let item = &mut self.items[item_index];
                 item_index += 1;
@@ -211,28 +284,44 @@ impl PhotoWallLayout {
                     .partition_point(|&x| x <= item.x)
                     .saturating_sub(1);
                 item.x = positions[column];
-                item.y = bottoms[column];
+                item.y = tops[column];
                 item.width = widths[column] as f64;
-                item.height = (item.width / self.aspect_ratios[item.photo_index])
-                    .round()
-                    .max(1.0);
-                bottoms[column] += item.height + gap as f64;
+                let ideal_height = (ideal_width / self.aspect_ratios[item.photo_index]).max(1.0);
+                item.height = (bottoms[column] + ideal_height).round() - item.y;
+                tops[column] = item.y + item.height + gap as f64;
+                bottoms[column] += ideal_height + gap as f64;
             }
             cursor = bottoms.into_iter().fold(cursor, f64::max);
-            if cursor > bounds.first_photo_y {
+            if item_index > section_start {
                 cursor -= gap as f64;
             }
-            bounds.end_y = cursor;
+            bounds.end_y = cursor.round();
         }
-        self.total_height = cursor.max(1.0);
+        self.total_height = cursor.round().max(1.0);
         self.viewport_width = viewport as f64;
         self.masonry_column_x = positions;
         self.index_masonry_items();
-        Some(
-            anchor
-                .and_then(|(photo, offset)| self.item(photo).map(|item| item.y - offset))
-                .unwrap_or(anchor_y),
-        )
+        Some(match anchor {
+            MasonryAnchor::Header { section, offset } => self.sections[section].header_y + offset,
+            MasonryAnchor::Photo { photo, fraction } => {
+                let item = self.item(photo).unwrap();
+                item.y + item.height * fraction
+            }
+            MasonryAnchor::Gap { photo, offset } => {
+                let item = self.item(photo).unwrap();
+                item.y + item.height + offset
+            }
+            MasonryAnchor::Tail {
+                section,
+                photo,
+                fraction,
+            } => {
+                let item = self.item(photo).unwrap();
+                let bottom = item.y + item.height;
+                bottom + (self.sections[section].end_y - bottom) * fraction
+            }
+            MasonryAnchor::End { offset } => self.total_height + offset,
+        })
     }
 
     // Column entries have monotonically increasing tops and bottoms. Binary
@@ -261,8 +350,10 @@ impl PhotoWallLayout {
 
     pub fn masonry_vertical_neighbor(&self, photo_index: usize, direction: i32) -> Option<usize> {
         let item = self.item(photo_index)?;
-        let column_index = self.masonry_column_x
-            .partition_point(|&x| x <= item.x).saturating_sub(1);
+        let column_index = self
+            .masonry_column_x
+            .partition_point(|&x| x <= item.x)
+            .saturating_sub(1);
         let column = self.masonry_columns.get(column_index)?;
         let position = column.binary_search(&item.row).ok()?;
         let next = if direction < 0 {
@@ -820,6 +911,219 @@ mod tests {
 mod masonry_resize_tests {
     use super::*;
 
+    fn column_members(layout: &PhotoWallLayout) -> Vec<Vec<usize>> {
+        layout
+            .masonry_columns
+            .iter()
+            .map(|column| {
+                column
+                    .iter()
+                    .map(|&row| layout.items[row].photo_index)
+                    .collect()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn masonry_one_pixel_resize_moves_all_visible_columns_coherently() {
+        for count in [3_086, 20_000] {
+            let ratios = (0..count)
+                .map(|i| [0.5, 1.0, 1.5, 2.0][i % 4])
+                .collect::<Vec<_>>();
+            let sections = [PhotoWallSection {
+                photo_range: 0..count,
+                header_height: 0.0,
+            }];
+            let original = PhotoWallLayout::calculate_masonry(&ratios, &sections, 997, 100);
+            for depth in [0.0, 0.4, 0.9] {
+                let top = original.total_height * depth;
+                let visible = original.visible_row_indices(top, top + 600.0);
+                let mut resized = original.clone();
+                let mapped = resized.resize_masonry(998, top).unwrap();
+                assert_eq!(column_members(&resized), column_members(&original));
+                let worst = visible
+                    .iter()
+                    .map(|&row| {
+                        let item = &original.items[row];
+                        (resized.item(item.photo_index).unwrap().y - mapped - (item.y - top)).abs()
+                    })
+                    .fold(0.0, f64::max);
+                assert!(worst <= 3.0, "count={count} depth={depth}: one-pixel resize moved visible photos by {worst}px");
+            }
+        }
+    }
+
+    #[test]
+    fn masonry_repeated_resize_uses_ideal_edges_without_deep_drift() {
+        let ratios = (0..3_086)
+            .map(|i| [0.5, 1.0, 1.5, 2.0][i % 4])
+            .collect::<Vec<_>>();
+        let sections = (0..4)
+            .map(|section| PhotoWallSection {
+                photo_range: section * 772..((section + 1) * 772).min(ratios.len()),
+                header_height: 70.0,
+            })
+            .collect::<Vec<_>>();
+        let original = PhotoWallLayout::calculate_masonry(&ratios, &sections, 997, 100);
+        for depth in [0.4, 0.9] {
+            let mut resized = original.clone();
+            let top = original.total_height * depth;
+            let mut mapped = top;
+            for width in (997..=1103).chain((997..1103).rev()) {
+                mapped = resized.resize_masonry(width, mapped).unwrap();
+                assert_eq!(column_members(&resized), column_members(&original));
+                for section in &resized.sections {
+                    assert_eq!(section.first_photo_y - section.header_y, 70.0);
+                }
+                for column in &resized.masonry_columns {
+                    for pair in column.windows(2) {
+                        let a = &resized.items[pair[0]];
+                        let b = &resized.items[pair[1]];
+                        if a.section == b.section {
+                            assert_eq!(b.y - a.y - a.height, 8.0);
+                        }
+                    }
+                }
+            }
+            assert!(
+                (mapped - top).abs() < 2.0,
+                "deep resize round trip drifted by {}px",
+                mapped - top
+            );
+            for before in &original.items {
+                let after = resized.item(before.photo_index).unwrap();
+                assert_eq!(
+                    (after.x, after.y, after.width, after.height),
+                    (before.x, before.y, before.width, before.height)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn masonry_short_column_tail_maps_monotonically_and_round_trips() {
+        for (viewport, preferred, resized_width, ratio, point) in
+            [(224, 100, 124, 0.95, 174.0), (997, 500, 701, 0.98, 565.0)]
+        {
+            let ratios = [1.0, ratio, 1.0, 1.0];
+            let sections = [
+                PhotoWallSection {
+                    photo_range: 0..2,
+                    header_height: 70.0,
+                },
+                PhotoWallSection {
+                    photo_range: 2..4,
+                    header_height: 70.0,
+                },
+            ];
+            let original =
+                PhotoWallLayout::calculate_masonry(&ratios, &sections, viewport, preferred);
+            let boundary = original.sections[0].end_y;
+            let mut resized = original.clone();
+            let mapped = resized.resize_masonry(resized_width, point).unwrap();
+            let mut boundary_layout = original.clone();
+            let mapped_boundary = boundary_layout
+                .resize_masonry(resized_width, boundary)
+                .unwrap();
+            assert!(
+                mapped < mapped_boundary,
+                "tail point crossed its section boundary: {mapped} >= {mapped_boundary}"
+            );
+            let restored = resized.resize_masonry(viewport, mapped).unwrap();
+            assert!(
+                (restored - point).abs() < 1e-9,
+                "tail anchor drifted on reversal: {point} -> {mapped} -> {restored}"
+            );
+        }
+    }
+
+    #[test]
+    fn masonry_empty_sections_and_extreme_ratios_survive_resize() {
+        let ratios = [1.5, 1.0, 100.0, f64::NAN, 0.0, 0.0001];
+        let sections = [
+            PhotoWallSection {
+                photo_range: 0..1,
+                header_height: 0.0,
+            },
+            PhotoWallSection {
+                photo_range: 1..1,
+                header_height: 0.0,
+            },
+            PhotoWallSection {
+                photo_range: 1..3,
+                header_height: 70.0,
+            },
+            PhotoWallSection {
+                photo_range: 3..3,
+                header_height: 70.0,
+            },
+            PhotoWallSection {
+                photo_range: 3..6,
+                header_height: 0.0,
+            },
+        ];
+        let original = PhotoWallLayout::calculate_masonry(&ratios, &sections, 997, 100);
+        let mut resized = original.clone();
+        for width in [998, 1103, 701, 997] {
+            resized.resize_masonry(width, 0.0).unwrap();
+            for bounds in &resized.sections {
+                assert!(
+                    bounds.end_y >= bounds.first_photo_y,
+                    "empty section moved backwards"
+                );
+            }
+            for item in &resized.items {
+                assert!(item.height >= 1.0 && item.height.is_finite());
+                assert!(item.y + item.height <= resized.sections[item.section].end_y);
+                assert!(item.x + item.width <= width as f64 - 8.0);
+            }
+        }
+        for before in &original.items {
+            let after = resized.item(before.photo_index).unwrap();
+            assert_eq!(
+                (after.x, after.y, after.width, after.height),
+                (before.x, before.y, before.width, before.height)
+            );
+        }
+    }
+
+    #[test]
+    fn masonry_resize_maps_header_offsets_and_photo_fractions() {
+        let sections = [
+            PhotoWallSection {
+                photo_range: 0..100,
+                header_height: 70.0,
+            },
+            PhotoWallSection {
+                photo_range: 100..200,
+                header_height: 70.0,
+            },
+        ];
+        let original = PhotoWallLayout::calculate_masonry(&[0.5; 200], &sections, 997, 100);
+        let tile = &original.items[original.masonry_columns[0][6]];
+        let points = [
+            original.sections[1].header_y + 35.0,
+            tile.y + tile.height * 0.6,
+            tile.y + tile.height + 4.0,
+            original.total_height,
+        ];
+        for point in points {
+            let mut resized = original.clone();
+            let mapped = resized.resize_masonry(1103, point).unwrap();
+            if point == points[0] {
+                assert_eq!(mapped, resized.sections[1].header_y + 35.0);
+            } else if point == points[1] {
+                let after = resized.item(tile.photo_index).unwrap();
+                assert!((mapped - after.y - after.height * 0.6).abs() < 1e-9);
+            } else if point == points[2] {
+                let after = resized.item(tile.photo_index).unwrap();
+                assert_eq!(mapped, after.y + after.height + 4.0);
+            } else {
+                assert_eq!(mapped, resized.total_height);
+            }
+        }
+    }
+
     #[test]
     fn resizing_preserves_columns_gaps_aspects_and_round_trip_geometry() {
         let ratios = (0..2000)
@@ -847,8 +1151,9 @@ mod masonry_resize_tests {
             })
             .collect::<Vec<_>>();
         let photo = 0;
-        let offset = -13.0;
-        let mut anchor = layout.item(photo).unwrap().y - offset;
+        let fraction = 13.0 / layout.item(photo).unwrap().height;
+        let mut anchor =
+            layout.item(photo).unwrap().y + layout.item(photo).unwrap().height * fraction;
         for width in [992, 1103, 701, 997] {
             anchor = layout.resize_masonry(width, anchor).unwrap();
             assert_eq!(layout.masonry_columns.len(), original_columns.len());
@@ -867,14 +1172,15 @@ mod masonry_resize_tests {
                     }
                 }
             }
-            assert!((layout.item(photo).unwrap().y - anchor - offset).abs() < 1.0);
+            let item = layout.item(photo).unwrap();
+            assert!((item.y + item.height * fraction - anchor).abs() < 1.0);
             for item in &layout.items {
                 for value in [item.x, item.y, item.width, item.height] {
                     assert_eq!(value.fract(), 0.0);
                 }
-                assert_eq!(
-                    item.height,
-                    (item.width / ratios[item.photo_index]).round().max(1.0)
+                assert!(
+                    (item.width - item.height * ratios[item.photo_index]).abs()
+                        <= 1.0 + ratios[item.photo_index]
                 );
                 assert!(item.x >= 8.0 && item.x + item.width <= width as f64 - 8.0);
             }

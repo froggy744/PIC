@@ -178,6 +178,13 @@ fn wizard_interrupted_import_does_not_enqueue_automatically_and_continue_queues_
         "All your photos. One place. On your computer."
     ));
     assert_eq!(queued.get(), 0);
+    click(&parent, "Tutorial");
+    assert!(!coordinator.is_visible());
+    assert_eq!(queued.get(), 0, "tutorial must not resume an import");
+    let tour = parent.visible_dialog().unwrap();
+    assert_eq!(tour.title().as_str(), "Discover PIC");
+    click(&parent, "Skip tour");
+    coordinator.present_manually();
     click(&parent, "Continue adding photos");
     coordinator.import_started(ImportTicket {
         generation: 4,
@@ -633,6 +640,8 @@ fn wizard_actual_window_recovery_import_and_library_card() {
     );
     gtk4::prelude::WidgetExt::activate_action(&window, "win.getting-started", None).unwrap();
     assert_eq!(window.dialogs().n_items(), 1);
+    click(&window, "Skip for now");
+    gtk::prelude::WidgetExt::activate_action(&window, "win.getting-started", None).unwrap();
     click(&window, "Continue adding photos");
     let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
     while load_preferences(&check).unwrap().stage != Some(OnboardingStage::Tips)

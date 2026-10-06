@@ -29,6 +29,7 @@ pub(crate) struct WizardProgress {
 pub(crate) struct WizardCallbacks {
     pub choose_folder: Rc<dyn Fn()>,
     pub continue_import: Rc<dyn Fn()>,
+    pub tutorial: Rc<dyn Fn()>,
     pub open_library: Rc<dyn Fn()>,
     pub skip: Rc<dyn Fn()>,
     pub set_never_show: Rc<dyn Fn(bool) -> Result<(), String>>,
@@ -40,7 +41,6 @@ pub(crate) struct StartupWizard {
     page: Cell<WizardPage>,
     mode: Cell<ImportPresentation>,
     running: Cell<bool>,
-    resume_available: Cell<bool>,
     indexed: Cell<usize>,
     library_has_photos: Cell<bool>,
     header: adw::HeaderBar,
@@ -58,6 +58,7 @@ pub(crate) struct StartupWizard {
     warning: gtk::Label,
     choose: gtk::Button,
     retry: gtk::Button,
+    tutorial: gtk::Button,
     pub(crate) open_library: gtk::Button,
     skip: gtk::Button,
     pub(crate) preference_row: gtk::Box,
@@ -88,7 +89,7 @@ impl StartupWizard {
         let dialog = adw::Dialog::new();
         dialog.set_title("Getting started");
         dialog.set_content_width(600);
-        dialog.set_content_height(480);
+        dialog.set_content_height(520);
         let shell = gtk::Box::new(gtk::Orientation::Vertical, 0);
         let header = adw::HeaderBar::new();
         header.add_css_class("flat");
@@ -104,15 +105,16 @@ impl StartupWizard {
         }
         let heading = label("Welcome to PIC");
         heading.add_css_class("title-1");
-        let branding = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+        let branding = gtk::Box::new(gtk::Orientation::Vertical, 6);
         let logo_texture = gtk::gdk::Texture::from_bytes(&glib::Bytes::from_static(
             include_bytes!("../../icon/pic-128.png"),
         ))
         .expect("bundled PIC logo is valid");
         let logo = gtk::Image::from_paintable(Some(&logo_texture));
-        logo.set_pixel_size(38);
-        branding.append(&logo);
+        logo.set_pixel_size(64);
+        logo.set_halign(gtk::Align::Center);
         branding.append(&heading);
+        branding.append(&logo);
         let photos_texture = gtk::gdk::Texture::from_bytes(&glib::Bytes::from_static(
             include_bytes!("../../images/onboarding/welcome-photos.png"),
         ))
@@ -152,18 +154,21 @@ impl StartupWizard {
         choose.add_css_class("suggested-action");
         choose.add_css_class("pill");
         let retry = button("Continue adding photos");
+        let tutorial = gtk::Button::with_label("Tutorial");
+        tutorial.add_css_class("flat");
+        tutorial.set_halign(gtk::Align::Center);
         let open_library = button("Open Library");
         let skip = button("Skip for now");
         skip.add_css_class("flat");
         skip.add_css_class("caption");
         skip.add_css_class("dim-label");
-        for child in [&choose, &retry, &open_library, &skip] {
+        for child in [&choose, &tutorial, &retry, &open_library] {
             content.append(child);
         }
         let welcome_spacer = gtk::Box::new(gtk::Orientation::Vertical, 0);
         welcome_spacer.set_vexpand(true);
         content.append(&welcome_spacer);
-        let preference_row = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        let preference_row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
         preference_row.set_halign(gtk::Align::Center);
         preference_row.set_margin_top(8);
         let preference_label = label("Don’t show this automatically again");
@@ -176,6 +181,7 @@ impl StartupWizard {
         never_show.update_property(&[gtk::accessible::Property::Label(
             "Don’t show this automatically again",
         )]);
+        preference_row.append(&skip);
         preference_row.append(&never_show);
         content.append(&preference_row);
         let preference_error = label("");
@@ -202,7 +208,6 @@ impl StartupWizard {
             page: Cell::new(WizardPage::Welcome),
             mode: Cell::new(ImportPresentation::Adding),
             running: Cell::new(false),
-            resume_available: Cell::new(false),
             indexed: Cell::new(0),
             library_has_photos: Cell::new(false),
             header,
@@ -220,6 +225,7 @@ impl StartupWizard {
             warning,
             choose,
             retry,
+            tutorial,
             open_library,
             skip,
             preference_row,
@@ -228,6 +234,8 @@ impl StartupWizard {
         });
         let choose = callbacks.choose_folder;
         wizard.choose.connect_clicked(move |_| choose());
+        let tutorial = callbacks.tutorial;
+        wizard.tutorial.connect_clicked(move |_| tutorial());
         let retry = callbacks.continue_import;
         wizard.retry.connect_clicked(move |_| retry());
         let open = callbacks.open_library;
@@ -278,7 +286,7 @@ impl StartupWizard {
             };
             self.dialog.set_content_width(width.clamp(1, 600));
             let preferred_height = if self.page.get() == WizardPage::Welcome {
-                480
+                520
             } else {
                 400
             };
@@ -300,10 +308,6 @@ impl StartupWizard {
     }
     pub(crate) fn set_page(&self, page: WizardPage) {
         self.page.set(page);
-        self.refresh();
-    }
-    pub(crate) fn set_resume_available(&self, available: bool) {
-        self.resume_available.set(available);
         self.refresh();
     }
     pub(crate) fn set_import_presentation(&self, mode: ImportPresentation) {
@@ -393,6 +397,7 @@ impl StartupWizard {
         self.choose
             .set_visible(welcome || (!self.running.get() && mode != ImportPresentation::Adding));
         self.skip.set_visible(welcome);
+        self.tutorial.set_visible(welcome);
         self.open_library.set_visible(!welcome);
         self.open_library.set_sensitive(
             self.indexed.get() > 0
@@ -400,25 +405,12 @@ impl StartupWizard {
                 || mode != ImportPresentation::Adding,
         );
         self.retry.set_visible(
-            (welcome && self.resume_available.get())
-                || (!welcome
-                    && matches!(
-                        mode,
-                        ImportPresentation::Recovery | ImportPresentation::Error
-                    )),
+            !welcome
+                && matches!(
+                    mode,
+                    ImportPresentation::Recovery | ImportPresentation::Error
+                ),
         );
-        self.retry.set_halign(if welcome {
-            gtk::Align::Center
-        } else {
-            gtk::Align::Fill
-        });
-        if welcome {
-            self.retry.add_css_class("flat");
-            self.retry.add_css_class("caption");
-        } else {
-            self.retry.remove_css_class("flat");
-            self.retry.remove_css_class("caption");
-        }
         self.retry.set_sensitive(!self.running.get());
         self.retry.set_label(if mode == ImportPresentation::Error {
             "Try again"

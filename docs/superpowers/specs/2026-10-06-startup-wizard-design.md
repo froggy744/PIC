@@ -8,7 +8,7 @@ Help a new PIC user add their first folder, see photos promptly, and discover br
 
 Two main screens: Welcome → Adding photos → Library. Recovery, empty and error results reuse the import layout. No Next/Back/Finish steps or mandatory tips page.
 
-Welcome shows the PIC logo and a compact arrangement of photo prints. Copy: “Welcome to PIC”; “All your photos. One place. On your computer.” Actions: a centred Choose Photos Folder button and a smaller Skip for now link. A quiet preference checkbox sits at the bottom.
+Welcome shows the PIC logo and a compact arrangement of photo prints. Copy: “Welcome to PIC”; “All your photos. One place. On your computer.” Actions: a centred Choose Photos Folder button and a smaller Skip for now link. A quiet preference checkbox sits at the bottom, with Skip for now immediately to its left. Tutorial opens the screenshot guide. The larger PIC logo is centred above the photo arrangement, below the Welcome title.
 
 Adding photos shows folder name and a smaller wrapped path, Finding photos…, live discovered counts and unknown-total progress without invented percentages. Open Library becomes available after a usable indexed photo, never discovery alone. Progressive gallery updates continue behind the dialog. Opening the library closes the dialog without stopping scanning; the existing notification area explains that photos are still being added.
 
@@ -30,7 +30,7 @@ Skip/window dismissal without the checkbox permits the wizard to appear again on
 
 ## Startup and recovery rules
 
-Show the wizard at every startup unless `onboarding-never-show` is true. Existing photos, registered folders, completion and tips dismissal do not suppress it. Every saved stage opens Welcome on startup. For a saved importing stage with a root, offer a quiet Continue adding photos action on Welcome; preserve the selected root and require that action to resume. Manual Getting started can still show recovery.
+Show the wizard at every startup unless `onboarding-never-show` is true. Existing photos, registered folders, completion and tips dismissal do not suppress it. Every saved stage opens Welcome on startup. Preserve unfinished imports and their selected roots; manual Getting started can still show recovery and an explicit Continue action. Welcome offers Tutorial instead of an import recovery action.
 
 After interrupted `importing`, use persisted root, current database contents and current scan state to reconstruct the page. Existing photos permit Open library. An idle interrupted import offers an explicit **Continue adding photos** action through the existing scan queue; never automatically enqueue a duplicate import merely because a wizard reopened. Do not claim an inactive scan is running. If the selected source is unavailable, show retry/choose-another actions. A saved tips stage opens Welcome on startup; the optional tips card remains available through the existing library flow.
 
@@ -46,7 +46,7 @@ Add a compact Help menu with Getting started in the header; preserve the existin
 
 ## Layout and accessibility
 
-Use a compact scrollable dialog with approximately 600×480 logical pixels for Welcome and 600×400 for a directly presented import screen as its preferred size, clamped to available parent space. No new main-window minimum width. At 1920×1080 and 1366×768, and a 360-pixel-wide app window, text wraps and all primary/skip/toggle controls remain reachable. Respect theme, keyboard traversal, Escape/close semantics and accessible labels. Bundle the Welcome photo arrangement and reuse the existing PIC logo. No new dependencies.
+Use a compact scrollable dialog with approximately 600×520 logical pixels for Welcome and 600×400 for a directly presented import screen as its preferred size, clamped to available parent space. No new main-window minimum width. At 1920×1080 and 1366×768, and a 360-pixel-wide app window, text wraps and all primary/skip/toggle controls remain reachable. Respect theme, keyboard traversal, Escape/close semantics and accessible labels. Bundle the Welcome photo arrangement and reuse the existing PIC logo. No new dependencies.
 
 ## Success criteria
 

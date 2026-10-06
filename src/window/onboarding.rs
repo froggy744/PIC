@@ -173,6 +173,7 @@ impl OnboardingCoordinator {
         let weak = Rc::downgrade(self);
         let choose = weak.clone();
         let retry = weak.clone();
+        let tutorial = weak.clone();
         let open = weak.clone();
         let skip = weak.clone();
         let wizard = StartupWizard::new(
@@ -193,6 +194,11 @@ impl OnboardingCoordinator {
                 continue_import: Rc::new(move || {
                     if let Some(owner) = retry.upgrade() {
                         owner.resume();
+                    }
+                }),
+                tutorial: Rc::new(move || {
+                    if let Some(owner) = tutorial.upgrade() {
+                        owner.show_tour();
                     }
                 }),
                 open_library: Rc::new(move || {
@@ -442,12 +448,6 @@ impl OnboardingCoordinator {
         match decision {
             Ok(StartupDecision::Welcome) => {
                 if let Some(wizard) = self.ensure_wizard() {
-                    let can_resume = load_preferences(&self.connection.borrow())
-                        .ok()
-                        .is_some_and(|prefs| {
-                            prefs.stage == Some(OnboardingStage::Importing) && prefs.root.is_some()
-                        });
-                    wizard.set_resume_available(can_resume);
                     wizard.set_page(WizardPage::Welcome);
                     self.present_wizard(&wizard);
                 }
@@ -476,7 +476,6 @@ impl OnboardingCoordinator {
             self.present_recovery();
         } else if let Some(wizard) = self.ensure_wizard() {
             self.pending_picker.set(None);
-            wizard.set_resume_available(false);
             wizard.set_page(WizardPage::Welcome);
             self.present_wizard(&wizard);
         }
@@ -572,14 +571,18 @@ impl OnboardingCoordinator {
             }),
             Rc::new(move || {
                 if let Some(owner) = tour_owner.upgrade() {
-                    if let Some(window) = owner.window.upgrade() {
-                        crate::onboarding::tour::present(&window);
-                    }
+                    owner.show_tour();
                 }
             }),
         );
         host.append(&tips.widget());
         self.tips.replace(Some(tips));
+    }
+    fn show_tour(&self) {
+        self.close();
+        if let Some(window) = self.window.upgrade() {
+            crate::onboarding::tour::present(&window);
+        }
     }
     pub(super) fn dismiss_library_tips(&self) {
         if !self

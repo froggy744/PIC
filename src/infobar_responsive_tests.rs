@@ -12,6 +12,26 @@ fn settle() {
     }
 }
 
+fn menu_row_visible(menu: &gtk::Box, title: &str) -> Option<bool> {
+    let mut child = menu.first_child();
+    while let Some(widget) = child {
+        if let Some(row) = widget.downcast_ref::<gtk::Box>() {
+            let mut item = row.first_child();
+            while let Some(item_widget) = item {
+                if item_widget
+                    .downcast_ref::<gtk::Label>()
+                    .is_some_and(|label| label.text() == title)
+                {
+                    return Some(row.is_visible());
+                }
+                item = item_widget.next_sibling();
+            }
+        }
+        child = widget.next_sibling();
+    }
+    None
+}
+
 #[test]
 #[ignore = "requires a GTK display; run individually"]
 fn compact_toolbar_keeps_actions_usable_and_restores_wide_layout() {
@@ -93,9 +113,35 @@ fn compact_toolbar_keeps_actions_usable_and_restores_wide_layout() {
                     index < visible_count
                 );
             }
+            overflow.popup();
+            settle();
+            let menu_box = overflow
+                .popover()
+                .unwrap()
+                .child()
+                .unwrap()
+                .downcast::<gtk::Box>()
+                .unwrap();
+            for (index, title) in [
+                "Collage",
+                "Add to Album",
+                "100%",
+                "Rotate",
+                "Export",
+                "Import",
+                "Settings",
+                "Print",
+            ]
+            .iter()
+            .enumerate()
+            {
+                assert_eq!(
+                    menu_row_visible(&menu_box, title),
+                    Some(index >= visible_count),
+                    "menu visibility mismatch for {title} at {width}px"
+                );
+            }
             if visible_count < moved.len() {
-                overflow.popup();
-                settle();
                 for control in &moved {
                     assert!(
                         control.is_mapped(),
@@ -115,6 +161,7 @@ fn compact_toolbar_keeps_actions_usable_and_restores_wide_layout() {
                 settle();
                 assert!(!overflow.popover().unwrap().is_visible());
             } else {
+                overflow.popdown();
                 bar.import_photos.emit_clicked();
             }
         }

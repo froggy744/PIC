@@ -327,11 +327,13 @@ impl InfoBar {
         })
         .collect();
 
-        let append_separator = |box_: &gtk::Box| {
+        let mut group_separators = Vec::with_capacity(4);
+        let mut append_separator = |box_: &gtk::Box| {
             let separator = gtk::Separator::new(gtk::Orientation::Horizontal);
             separator.set_margin_start(4);
             separator.set_margin_end(4);
             box_.append(&separator);
+            group_separators.push(separator);
         };
         // Keep each row attached to its existing control while ordering the
         // popup into compact, easy-to-scan groups.
@@ -356,6 +358,7 @@ impl InfoBar {
             // Import, Print, Settings
             overflow_box.append(&overflow_entries[index].1);
         }
+        drop(append_separator);
         overflow_popover.set_child(Some(&overflow_box));
         overflow_popover.set_size_request(190, -1);
         overflow.set_popover(Some(&overflow_popover));
@@ -389,6 +392,7 @@ impl InfoBar {
         let show_only_menu_for_resize = show_only_menu.clone();
         let hide_buttons_option_for_resize = hide_buttons_option.clone();
         let grid_zoom_for_resize = grid_zoom.clone();
+        let group_separators_for_resize = group_separators;
         root.add_tick_callback(move |bar, _| {
             let width = bar.width();
             if width > 0 {
@@ -413,6 +417,7 @@ impl InfoBar {
                             menu.popdown();
                         }
                         let in_toolbar = !hide_all && index < 4 + visible_count;
+                        row.set_visible(!in_toolbar);
                         let parent = control.parent();
                         if in_toolbar {
                             if parent.as_ref() == Some(row.upcast_ref::<gtk::Widget>()) {
@@ -443,6 +448,25 @@ impl InfoBar {
                                 }
                             }
                         }
+                    }
+                    let visible_groups = [
+                        true,
+                        (1..=3).any(|index| overflow_entries[index].1.is_visible()),
+                        [5, 4]
+                            .iter()
+                            .any(|&index| overflow_entries[index].1.is_visible()),
+                        [6, 7, 8]
+                            .iter()
+                            .any(|&index| overflow_entries[index].1.is_visible()),
+                        [9, 11, 10]
+                            .iter()
+                            .any(|&index| overflow_entries[index].1.is_visible()),
+                    ];
+                    for (index, separator) in group_separators_for_resize.iter().enumerate() {
+                        separator.set_visible(
+                            visible_groups[index]
+                                && visible_groups[index + 1..].iter().any(|visible| *visible),
+                        );
                     }
                     overflow.set_visible(true);
                     hide_buttons_option_for_resize.set_active(hide_all);

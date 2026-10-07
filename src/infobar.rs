@@ -170,11 +170,6 @@ impl InfoBar {
         rating_popover.set_child(Some(&rating_box));
         rating.set_popover(Some(&rating_popover));
 
-        let rating_hover = gtk::EventControllerMotion::new();
-        let rating_for_hover = rating.clone();
-        rating_hover.connect_enter(move |_, _, _| rating_for_hover.popup());
-        rating.add_controller(rating_hover);
-
         let edit = gtk::Button::from_icon_name("document-edit-symbolic");
         configure_action_button(&edit);
         edit.set_tooltip_text(Some("Open or close photo editor"));
@@ -283,42 +278,90 @@ impl InfoBar {
         configure_action_button(&overflow);
         overflow.add_css_class("photo-actions-overflow");
         let overflow_popover = gtk::Popover::new();
-        let overflow_box = gtk::Box::new(gtk::Orientation::Vertical, 4);
-        overflow_box.set_margin_top(8);
-        overflow_box.set_margin_bottom(8);
-        overflow_box.set_margin_start(8);
-        overflow_box.set_margin_end(8);
+        let overflow_box = gtk::Box::new(gtk::Orientation::Vertical, 2);
+        overflow_box.set_margin_top(6);
+        overflow_box.set_margin_bottom(6);
+        overflow_box.set_margin_start(11);
+        overflow_box.set_margin_end(11);
+        overflow_box.add_css_class("photo-actions-menu");
+        let show_only_menu = Rc::new(Cell::new(false));
+        let hide_buttons_option = gtk::CheckButton::with_label("Menu only");
+        let show_only_menu_for_toggle = show_only_menu.clone();
+        hide_buttons_option.connect_toggled(move |check| {
+            show_only_menu_for_toggle.set(check.is_active());
+        });
+        overflow_box.append(&hide_buttons_option);
         let overflow_entries: Vec<(gtk::Widget, gtk::Box)> = [
-            (collage.clone().upcast(), "New collage"),
+            (grid_zoom.clone().upcast(), "Size"),
+            (favorite.clone().upcast(), "Favourites"),
+            (rating.clone().upcast(), "Rate"),
+            (edit.clone().upcast(), "Edit"),
+            (collage.clone().upcast(), "Collage"),
             (add_to_album.clone().upcast(), "Add to Album"),
-            (one_to_one.clone().upcast(), "Show at 100%"),
-            (rotate.clone().upcast(), "Rotate clockwise"),
-            (export.clone().upcast(), "Export photo"),
-            (import_photos.clone().upcast(), "Import photos"),
+            (one_to_one.clone().upcast(), "100%"),
+            (rotate.clone().upcast(), "Rotate"),
+            (export.clone().upcast(), "Export"),
+            (import_photos.clone().upcast(), "Import"),
             (more.clone().upcast(), "Settings"),
-            (print.clone().upcast(), "Print photo"),
+            (print.clone().upcast(), "Print"),
         ]
         .into_iter()
         .map(|(control, title): (gtk::Widget, &str)| {
             let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+            row.set_height_request(34);
+            row.add_css_class("photo-actions-menu-row");
             let label = gtk::Label::new(Some(title));
             label.set_xalign(0.0);
             row.append(&label);
-            overflow_box.append(&row);
-            if let Some(button) = control.downcast_ref::<gtk::Button>() {
-                let popover = overflow_popover.downgrade();
-                button.connect_clicked(move |_| {
-                    if let Some(popover) = popover.upgrade() {
-                        popover.popdown();
-                    }
-                });
+            if title != "Rotate" {
+                if let Some(button) = control.downcast_ref::<gtk::Button>() {
+                    let popover = overflow_popover.downgrade();
+                    button.connect_clicked(move |_| {
+                        if let Some(popover) = popover.upgrade() {
+                            popover.popdown();
+                        }
+                    });
+                }
             }
             (control, row)
         })
         .collect();
+
+        let append_separator = |box_: &gtk::Box| {
+            let separator = gtk::Separator::new(gtk::Orientation::Horizontal);
+            separator.set_margin_start(4);
+            separator.set_margin_end(4);
+            box_.append(&separator);
+        };
+        // Keep each row attached to its existing control while ordering the
+        // popup into compact, easy-to-scan groups.
+        overflow_box.append(&overflow_entries[0].1); // Size
+        append_separator(&overflow_box);
+        for index in [1, 2, 3] {
+            // Favourite, Rate, Edit
+            overflow_box.append(&overflow_entries[index].1);
+        }
+        append_separator(&overflow_box);
+        for index in [5, 4] {
+            // Add to Album, Collage
+            overflow_box.append(&overflow_entries[index].1);
+        }
+        append_separator(&overflow_box);
+        for index in [6, 7, 8] {
+            // 100%, Rotate, Export
+            overflow_box.append(&overflow_entries[index].1);
+        }
+        append_separator(&overflow_box);
+        for index in [9, 11, 10] {
+            // Import, Print, Settings
+            overflow_box.append(&overflow_entries[index].1);
+        }
         overflow_popover.set_child(Some(&overflow_box));
+        overflow_popover.set_size_request(190, -1);
         overflow.set_popover(Some(&overflow_popover));
-        overflow.set_visible(false);
+        // Keep the menu reachable even when every action fits in the row; it
+        // also contains the option to collapse the toolbar for metadata.
+        overflow.set_visible(true);
         actions.append(&overflow);
         root.append(&actions);
         // The action buttons are the controls that must always remain usable.
@@ -338,44 +381,84 @@ impl InfoBar {
         let size_metric_for_resize = other_metrics_for_resize[2].clone();
         let aperture_metric_for_resize = aperture_metric.clone().expect("aperture metric exists");
         let has_aperture_for_resize = has_aperture.clone();
-        let actions_compact = Cell::new(false);
-        let edit_for_resize = edit.clone();
+        // Reveal secondary actions progressively as the bar gains room. The
+        // old all-or-nothing 900px switch hid every secondary action on a
+        // window only slightly narrower than that threshold, even when the
+        // wide middle of the bar was visibly empty.
+        let visible_action_count = Cell::new((usize::MAX, false));
+        let show_only_menu_for_resize = show_only_menu.clone();
+        let hide_buttons_option_for_resize = hide_buttons_option.clone();
+        let grid_zoom_for_resize = grid_zoom.clone();
         root.add_tick_callback(move |bar, _| {
             let width = bar.width();
             if width > 0 {
-                // Switch before the full row's minimum can trap the window
-                // above the sidebar's responsive threshold. Keep zoom and the
-                // three common photo controls directly available.
-                let compact = width < 900;
-                if actions_compact.replace(compact) != compact {
+                // Keep zoom and the three common photo controls directly
+                // available. Promote secondary controls in pairs as the bar
+                // grows, while preserving the overflow drawer for the rest.
+                let visible_count = match width {
+                    0..=559 => 0,
+                    560..=639 => 2,
+                    640..=759 => 4,
+                    760..=899 => 6,
+                    900..=1199 => 6,
+                    _ => overflow_entries.len(),
+                };
+                let hide_all = show_only_menu_for_resize.get();
+                let state = (visible_count, hide_all);
+                if visible_action_count.replace(state) != state {
                     overflow.popdown();
-                    let mut previous = edit_for_resize.clone().upcast::<gtk::Widget>();
-                    for (control, row) in &overflow_entries {
+                    let mut previous: Option<gtk::Widget> = None;
+                    for (index, (control, row)) in overflow_entries.iter().enumerate() {
                         if let Some(menu) = control.downcast_ref::<gtk::MenuButton>() {
                             menu.popdown();
                         }
-                        if compact {
-                            actions.remove(control);
-                            row.prepend(control);
+                        let in_toolbar = !hide_all && index < 4 + visible_count;
+                        let parent = control.parent();
+                        if in_toolbar {
+                            if parent.as_ref() == Some(row.upcast_ref::<gtk::Widget>()) {
+                                row.remove(control);
+                                if index == 0 {
+                                    grid_zoom_for_resize.set_width_request(128);
+                                }
+                                actions.insert_child_after(control, previous.as_ref());
+                            } else if parent.is_none() {
+                                actions.insert_child_after(control, previous.as_ref());
+                            }
+                            previous = Some(control.clone());
                         } else {
-                            row.remove(control);
-                            actions.insert_child_after(control, Some(&previous));
-                            previous = control.clone();
+                            if parent.as_ref() == Some(actions.upcast_ref::<gtk::Widget>()) {
+                                actions.remove(control);
+                                if index == 0 {
+                                    grid_zoom_for_resize.set_width_request(100);
+                                    row.insert_child_after(control, row.first_child().as_ref());
+                                } else {
+                                    row.insert_child_after(control, None::<&gtk::Widget>);
+                                }
+                            } else if parent.is_none() {
+                                if index == 0 {
+                                    grid_zoom_for_resize.set_width_request(100);
+                                    row.insert_child_after(control, row.first_child().as_ref());
+                                } else {
+                                    row.insert_child_after(control, None::<&gtk::Widget>);
+                                }
+                            }
                         }
                     }
-                    overflow.set_visible(compact);
+                    overflow.set_visible(true);
+                    hide_buttons_option_for_resize.set_active(hide_all);
                 }
                 // Budget optional presentation against the controls that are
                 // actually visible. Width thresholds alone can trap a selected
                 // photo's long metadata above the next hide threshold.
-                let mut available = width - actions.measure(gtk::Orientation::Horizontal, -1).0 - 24;
-                let show_text = width >= 700 && available >= 156;
+                let mut available =
+                    width - actions.measure(gtk::Orientation::Horizontal, -1).0 - 24;
+                let show_text = available >= 156;
                 text_for_resize.set_visible(show_text);
                 if show_text {
                     available -= 156;
                 }
 
-                let show_taken = has_photo_for_resize.get() && width >= 880 && available >= 126;
+                let show_taken = has_photo_for_resize.get() && available >= 126;
                 details_for_resize.set_visible(show_taken);
                 if let Some(taken) = details_for_resize.first_child() {
                     taken.set_visible(show_taken);
@@ -409,7 +492,10 @@ impl InfoBar {
                         child = label.next_sibling();
                     }
                     required += 28; // spacing inside the metadata row
-                    let show = show_taken && enabled && width >= threshold && available >= required;
+                    let show = show_taken
+                        && enabled
+                        && (hide_all || width >= threshold)
+                        && available >= required;
                     metric.set_visible(show);
                     if show {
                         available -= required;

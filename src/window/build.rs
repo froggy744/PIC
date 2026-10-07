@@ -3915,10 +3915,18 @@ fn start_photo_export_single(
 
     let scan_job = Rc::new(RefCell::new(ScanJobState::default()));
     sidebar::bind_refresh_gate(&sidebar, &refresh);
+    // Keep cancellation reachable after the notification itself is dismissed.
+    let dismissed_stop = gtk::Button::with_label("Stop");
+    dismissed_stop.set_tooltip_text(Some("Stop background task"));
+    dismissed_stop.add_css_class("flat");
+    dismissed_stop.add_css_class("dismissed-task-stop");
+    dismissed_stop.set_visible(false);
+    right_header.pack_end(&dismissed_stop);
     {
         let job = scan_job.clone();
         let refresh = refresh.downgrade();
         let stop = refresh_status_stop.clone();
+        let dismissed_stop = dismissed_stop.clone();
         let progress = operation_progress.clone();
         // Includes preparation and cancellation acknowledgement, not merely
         // the time an individual folder worker is active.
@@ -3926,17 +3934,21 @@ fn start_photo_export_single(
             let Some(refresh) = refresh.upgrade() else {
                 return glib::ControlFlow::Break;
             };
-            let busy = job.borrow().kind.is_some();
+            let job = job.borrow();
+            let busy = job.kind.is_some();
             let exporting = progress.is_running();
             refresh.set_sensitive(!busy);
-            stop.set_sensitive(busy || exporting);
+            let can_stop = (busy && !job.stop_requested)
+                || (exporting && !progress.is_cancelled());
+            stop.set_sensitive(can_stop);
+            dismissed_stop.set_visible(progress.is_dismissed() && (busy || exporting));
+            dismissed_stop.set_sensitive(can_stop);
             glib::ControlFlow::Continue
         });
     }
-    let stop_scan = gtk::Button::from_icon_name("process-stop-symbolic");
-    stop_scan.set_tooltip_text(Some("Stop current scan"));
-    stop_scan.set_visible(false);
-    right_header.pack_end(&stop_scan);
+    // Scans and batch operations share the compact Stop control in the
+    // notification panel beside Search.
+    let stop_scan = operation_progress.stop().clone();
 
     let onboarding_slot: Rc<RefCell<Option<Rc<onboarding::OnboardingCoordinator>>>> =
         Rc::new(RefCell::new(None));
@@ -3978,6 +3990,7 @@ fn start_photo_export_single(
         let refresh_status_spinner = refresh_status_spinner.clone();
         let refresh_status_label = refresh_status_label.clone();
         let stop_scan = stop_scan.clone();
+        let operation_progress = operation_progress.clone();
         let refresh = refresh.clone();
         Rc::new(move |reason: PhotoScanRequestReason, path: String| {
             
@@ -3989,7 +4002,7 @@ fn start_photo_export_single(
                 
                 refresh_status_label.set_text("Refresh already running…");
                 refresh_status_spinner.set_spinning(true);
-                refresh_status_box.set_visible(true);
+                operation_progress.present();
                 stop_scan.set_visible(true);
                 return;
             }
@@ -4000,7 +4013,7 @@ fn start_photo_export_single(
             invalidate_availability_refreshes();
             refresh_status_label.set_text(&format!("Refreshing {}…", crate::source::filename(&path)));
             refresh_status_spinner.set_spinning(true);
-            refresh_status_box.set_visible(true);
+            operation_progress.present();
             stop_scan.set_visible(true);
             let generation = {
                 let mut job = scan_job.borrow_mut();
@@ -4082,20 +4095,24 @@ fn start_photo_export_single(
             job.resume_roots.clear();
         })
     };
-    {
-        let cancel = cancel_scan_job.clone();
-        stop_scan.connect_clicked(move |_| cancel());
-    }
-    {
+    let cancel_current: Rc<dyn Fn()> = {
         let cancel = cancel_scan_job.clone();
         let progress = operation_progress.clone();
-        refresh_status_stop.connect_clicked(move |_| {
+        Rc::new(move || {
             if progress.is_running() {
                 progress.request_cancel();
             } else {
                 cancel();
             }
-        });
+        })
+    };
+    {
+        let cancel = cancel_current.clone();
+        refresh_status_stop.connect_clicked(move |_| cancel());
+    }
+    {
+        let cancel = cancel_current.clone();
+        dismissed_stop.connect_clicked(move |_| cancel());
     }
 
     // Recover existing indexed photos at startup, on mount changes, or after
@@ -4113,6 +4130,7 @@ fn start_photo_export_single(
         let sender = scan_sender.clone();
         let requested = thumbnail_recovery_requested.clone();
         let reconnected_sources = reconnected_sources.clone();
+        let operation_progress = operation_progress.clone();
         Rc::new(move || {
             if scan_job.borrow().kind.is_some()
                 || (!requested.get() && reconnected_sources.borrow().pending.is_empty())
@@ -4142,6 +4160,10 @@ fn start_photo_export_single(
             let control = scanner::ScanControl::default();
             job.active_root = None;
             job.active = Some(control.clone());
+            operation_progress.label().set_text("Checking previews…");
+            operation_progress.spinner().set_spinning(true);
+            operation_progress.stop().set_visible(true);
+            operation_progress.present();
             spawn_thumbnail_recovery(
                 photos,
                 startup_paths.clone(),
@@ -4363,6 +4385,7 @@ fn start_photo_export_single(
     let refresh_status_spinner_for_click = refresh_status_spinner.clone();
     let refresh_status_label_for_click = refresh_status_label.clone();
     let stop_scan_for_refresh_click = stop_scan.clone();
+    let operation_progress_for_refresh_click = operation_progress.clone();
 
     refresh.connect_clicked(move |button| {
         
@@ -4389,7 +4412,7 @@ fn start_photo_export_single(
         recovery_requested_for_refresh.set(false);
         refresh_status_label_for_click.set_text("Refreshing library…");
         refresh_status_spinner_for_click.set_spinning(true);
-        refresh_status_box_for_click.set_visible(true);
+        operation_progress_for_refresh_click.present();
         stop_scan_for_refresh_click.set_visible(true);
         
 
@@ -4429,6 +4452,7 @@ fn start_photo_export_single(
     let scan_job_for_events = scan_job.clone();
     let start_next_scan_for_events = start_next_scan.clone();
     let stop_scan_for_events = stop_scan.clone();
+    let operation_progress_for_events = operation_progress.clone();
     let refresh_status_box_for_events = refresh_status_box.clone();
     let refresh_status_spinner_for_events = refresh_status_spinner.clone();
     let refresh_status_label_for_events = refresh_status_label.clone();
@@ -4480,10 +4504,7 @@ fn start_photo_export_single(
                             stop_scan_for_events.set_visible(false);
                             refresh_status_label_for_events.set_text("Could not read library folders");
                             refresh_status_box_for_events.set_visible(true);
-                            let panel = refresh_status_box_for_events.clone();
-                            glib::timeout_add_local_once(Duration::from_millis(3000), move || {
-                                panel.set_visible(false);
-                            });
+                            operation_progress_for_events.hide_after(Duration::from_millis(3000));
                             continue;
                         }
                     };
@@ -4498,10 +4519,7 @@ fn start_photo_export_single(
                         stop_scan_for_events.set_visible(false);
                         refresh_status_label_for_events.set_text("No library folders to refresh");
                         refresh_status_box_for_events.set_visible(true);
-                        let panel = refresh_status_box_for_events.clone();
-                        glib::timeout_add_local_once(Duration::from_millis(2500), move || {
-                            panel.set_visible(false);
-                        });
+                        operation_progress_for_events.hide_after(Duration::from_millis(2500));
                         continue;
                     }
                     let should_start = {
@@ -4524,10 +4542,7 @@ fn start_photo_export_single(
                         stop_scan_for_events.set_visible(false);
                         refresh_status_label_for_events.set_text("Library refresh stopped");
                         refresh_status_box_for_events.set_visible(true);
-                        let panel = refresh_status_box_for_events.clone();
-                        glib::timeout_add_local_once(Duration::from_millis(2500), move || {
-                            panel.set_visible(false);
-                        });
+                        operation_progress_for_events.hide_after(Duration::from_millis(2500));
                     }
                 }
                 RefreshPrepareEvent::FolderReady {
@@ -4567,10 +4582,7 @@ fn start_photo_export_single(
                         stop_scan_for_events.set_visible(false);
                         refresh_status_label_for_events.set_text("Folder refresh stopped");
                         refresh_status_box_for_events.set_visible(true);
-                        let panel = refresh_status_box_for_events.clone();
-                        glib::timeout_add_local_once(Duration::from_millis(2500), move || {
-                            panel.set_visible(false);
-                        });
+                        operation_progress_for_events.hide_after(Duration::from_millis(2500));
                     }
                 }
             }
@@ -4608,6 +4620,7 @@ fn start_photo_export_single(
 
             if displayed_generation != Some(ui_event.generation) {
                 displayed_generation = Some(ui_event.generation);
+                operation_progress_for_events.show_if_not_dismissed();
                 scan_count = 0;
                 thumbnail_total = 0;
                 failure_message_shown = false;
@@ -4671,7 +4684,8 @@ fn start_photo_export_single(
 
                 scanner::ScanEvent::NetworkProgress {found,added,metadata_ready,previews_ready,catalog_complete} => {
                     let phase=if *catalog_complete {"Finishing previews"}else{"Adding photos"};
-                    refresh_status_label_for_events.set_text(&format!("{phase} · Found {found} · Added {added} · Metadata {metadata_ready} · Previews {previews_ready}"));
+                    let (done, total) = if *catalog_complete { (*previews_ready, *found) } else { (*added, *found) };
+                    refresh_status_label_for_events.set_text(&format!("{phase} · {} / {}", crate::window::format_count(done), crate::window::format_count(total)));
                     refresh_status_box_for_events.set_visible(true);
                     refresh_status_spinner_for_events.set_spinning(true);
                 }
@@ -4880,9 +4894,20 @@ fn start_photo_export_single(
                     }
 
                     // An entirely offline (or already cached) pass did no work.
-                    // Leave it quiet while waiting for the next reconnect.
+                    // Report that check briefly, then leave it quiet until the
+                    // next reconnect. Clear both active markers so later work
+                    // can start normally.
                     if kind == Some(ScanJobKind::Maintenance) && thumbnail_total == 0 {
-                        scan_job_for_events.borrow_mut().kind = None;
+                        {
+                            let mut job = scan_job_for_events.borrow_mut();
+                            job.kind = None;
+                            job.active = None;
+                            job.active_root = None;
+                        }
+                        refresh_status_label_for_events.set_text("No previews need work");
+                        refresh_status_spinner_for_events.set_spinning(false);
+                        stop_scan_for_events.set_visible(false);
+                        operation_progress_for_events.hide_after(Duration::from_millis(2500));
                         continue;
                     }
 
@@ -4907,6 +4932,10 @@ fn start_photo_export_single(
                     stop_scan_for_events.set_visible(false);
                     refresh_status_spinner_for_events.set_spinning(false);
                     let message = match kind {
+                        Some(ScanJobKind::Import) if thumbnail_total > 0 && total_failed == 0 => {
+                            let completed = if total_imported > 0 { total_imported } else { thumbnail_total };
+                            format!("✓ Previews complete · {} photos", crate::window::format_count(completed))
+                        }
                         Some(ScanJobKind::Refresh) => {
                             if total_failed == 0 {
                                 format!("Library refresh complete · {total_imported} photos updated")
@@ -4951,10 +4980,7 @@ fn start_photo_export_single(
                     
                     refresh_status_label_for_events.set_text(&message);
                     refresh_status_box_for_events.set_visible(true);
-                    let panel = refresh_status_box_for_events.clone();
-                    glib::timeout_add_local_once(Duration::from_millis(2500), move || {
-                        panel.set_visible(false);
-                    });
+                    operation_progress_for_events.hide_after(Duration::from_millis(2500));
                 }
 
                 scanner::ScanEvent::Cancelled { imported } => {
@@ -4982,10 +5008,7 @@ fn start_photo_export_single(
                     
                     refresh_status_label_for_events.set_text(&message);
                     refresh_status_box_for_events.set_visible(true);
-                    let panel = refresh_status_box_for_events.clone();
-                    glib::timeout_add_local_once(Duration::from_millis(2500), move || {
-                        panel.set_visible(false);
-                    });
+                    operation_progress_for_events.hide_after(Duration::from_millis(2500));
                 }
             }
         }

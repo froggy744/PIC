@@ -1,9 +1,10 @@
 const PROGRESS_THROTTLE: Duration = Duration::from_millis(100);
 const FINISH_HIDE_AFTER: Duration = Duration::from_secs(4);
 /// Search entry floor in the header; the status row yields before this shrinks.
-const SEARCH_MIN_WIDTH: i32 = 220;
+const SEARCH_MIN_WIDTH: i32 = 300;
 /// `search_area` spacing between the entry and the status row.
-const SEARCH_GAP: i32 = 6;
+const SEARCH_GAP: i32 = 0;
+const STATUS_WIDTH: i32 = 350;
 
 /// The one status indicator (single row), embedded in the header title area
 /// beside the search entry.
@@ -28,32 +29,39 @@ const SEARCH_GAP: i32 = 6;
 pub struct OperationProgressUi {
     /// Parent of `root`; mounted in `search_area`. Hidden only by the space
     /// guard, never by operation call sites.
-    slot: gtk::Box,
+    slot: gtk::Revealer,
     root: gtk::Box,
     spinner: gtk::Spinner,
     label: gtk::Label,
     bar: gtk::ProgressBar,
     stop: gtk::Button,
+    dismiss: gtk::Button,
     last_paint: Cell<Option<Instant>>,
     last_done: Cell<usize>,
     hide_source: Cell<Option<glib::SourceId>>,
+    notice_generation: Cell<u64>,
     running: Cell<bool>,
     /// Space guard hid the bar; restore it when room returns if still running.
     bar_suppressed: Cell<bool>,
+    dismissed: Rc<Cell<bool>>,
     cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl OperationProgressUi {
     pub fn new() -> Rc<Self> {
-        let slot = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        let slot = gtk::Revealer::new();
+        slot.set_transition_type(gtk::RevealerTransitionType::SlideLeft);
+        slot.set_transition_duration(180);
         slot.set_valign(gtk::Align::Center);
-        slot.set_visible(true);
+        slot.set_reveal_child(false);
 
         let root = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        root.set_margin_start(6);
-        root.set_margin_end(6);
-        root.set_margin_top(2);
-        root.set_margin_bottom(2);
+        root.set_size_request(STATUS_WIDTH, -1);
+        root.add_css_class("operation-progress");
+        root.set_margin_start(0);
+        root.set_margin_end(0);
+        root.set_margin_top(1);
+        root.set_margin_bottom(1);
         root.set_valign(gtk::Align::Center);
         root.set_visible(false);
 
@@ -66,7 +74,8 @@ impl OperationProgressUi {
         label.set_ellipsize(gtk::pango::EllipsizeMode::End);
         // Cap the natural width so a long "n / total · filename" line never
         // claims header space the search entry needs.
-        label.set_max_width_chars(48);
+        label.set_max_width_chars(38);
+        label.set_hexpand(true);
         root.append(&label);
 
         // Inline fraction bar for batch ops only; hidden for plain refresh
@@ -77,12 +86,17 @@ impl OperationProgressUi {
         bar.set_visible(false);
         root.append(&bar);
 
-        let stop = gtk::Button::with_label("Stop");
+        let stop = gtk::Button::from_icon_name("media-playback-stop-symbolic");
         stop.set_tooltip_text(Some("Stop the current operation"));
         stop.add_css_class("flat");
         root.append(&stop);
 
-        slot.append(&root);
+        let dismiss = gtk::Button::from_icon_name("window-close-symbolic");
+        dismiss.set_tooltip_text(Some("Dismiss notification"));
+        dismiss.add_css_class("flat");
+        root.append(&dismiss);
+
+        slot.set_child(Some(&root));
 
         let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         Rc::new(Self {
@@ -92,17 +106,20 @@ impl OperationProgressUi {
             label,
             bar,
             stop,
+            dismiss,
             last_paint: Cell::new(None),
             last_done: Cell::new(0),
             hide_source: Cell::new(None),
+            notice_generation: Cell::new(0),
             running: Cell::new(false),
             bar_suppressed: Cell::new(false),
+            dismissed: Rc::new(Cell::new(false)),
             cancel,
         })
     }
 
     /// Outer wrapper mounted in the header; hide/show `root()` for operations.
-    pub fn slot(&self) -> &gtk::Box {
+    pub fn slot(&self) -> &gtk::Revealer {
         &self.slot
     }
 
@@ -126,6 +143,10 @@ impl OperationProgressUi {
         self.running.get()
     }
 
+    pub fn is_dismissed(&self) -> bool {
+        self.dismissed.get()
+    }
+
     /// Watch header space next to the search entry and degrade the status row
     /// before the entry would drop below its 220px floor. The operation itself
     /// is unaffected: hiding `slot` only changes what is drawn.
@@ -143,13 +164,15 @@ impl OperationProgressUi {
     /// Degradation ladder, re-evaluated every frame while the header lays out:
     /// full row → no bar → spinner + Stop only → hide the slot.
     fn apply_space_guard(&self, available: i32) {
+        if self.dismissed.get() {
+            self.slot.set_reveal_child(false);
+            return;
+        }
         // Idle: reset so the next operation starts with the full row.
         // Read the `visible` property (not `is_visible`) — the latter is false
         // whenever an ancestor such as `slot` is hidden.
         if !self.root.property::<bool>("visible") {
-            if !self.slot.is_visible() {
-                self.slot.set_visible(true);
-            }
+            self.slot.set_reveal_child(false);
             if !self.label.is_visible() {
                 self.label.set_visible(true);
             }
@@ -163,6 +186,13 @@ impl OperationProgressUi {
         }
 
         let budget = available.saturating_sub(SEARCH_MIN_WIDTH + SEARCH_GAP);
+        // GtkBox adds these margins to its measured minimum. Reserve them
+        // before setting the width request, or the panel exceeds its budget
+        // and the guard hides it even in an otherwise roomy header.
+        let content_budget =
+            budget.saturating_sub(self.root.margin_start() + self.root.margin_end());
+        self.root
+            .set_width_request(content_budget.min(STATUS_WIDTH).max(0));
 
         // What the operation wants right now (bar may have been suppressed).
         let bar_wanted = if self.bar_suppressed.get() {
@@ -180,9 +210,7 @@ impl OperationProgressUi {
         }
         self.bar_suppressed.set(false);
         if self.fits(budget) {
-            if !self.slot.is_visible() {
-                self.slot.set_visible(true);
-            }
+            self.slot.set_reveal_child(true);
             return;
         }
 
@@ -192,9 +220,7 @@ impl OperationProgressUi {
         }
         self.bar_suppressed.set(true);
         if self.fits(budget) {
-            if !self.slot.is_visible() {
-                self.slot.set_visible(true);
-            }
+            self.slot.set_reveal_child(true);
             return;
         }
 
@@ -203,16 +229,12 @@ impl OperationProgressUi {
             self.label.set_visible(false);
         }
         if self.fits(budget) {
-            if !self.slot.is_visible() {
-                self.slot.set_visible(true);
-            }
+            self.slot.set_reveal_child(true);
             return;
         }
 
         // Stage 4: no room even for spinner + Stop; hide the row only.
-        if self.slot.is_visible() {
-            self.slot.set_visible(false);
-        }
+        self.slot.set_reveal_child(false);
     }
 
     fn fits(&self, budget: i32) -> bool {
@@ -225,6 +247,50 @@ impl OperationProgressUi {
         self.stop.connect_clicked(move |_| callback());
     }
 
+    pub fn connect_dismiss(&self) {
+        let slot = self.slot.clone();
+        let dismissed = self.dismissed.clone();
+        self.dismiss.connect_clicked(move |_| {
+            dismissed.set(true);
+            slot.set_reveal_child(false);
+        });
+    }
+
+    pub fn present(&self) {
+        self.dismissed.set(false);
+        self.show_if_not_dismissed();
+    }
+
+    /// Reveal status for a newly observed job without overriding a dismissal
+    /// made while that job was already running.
+    pub fn show_if_not_dismissed(&self) {
+        self.cancel_hide();
+        self.notice_generation
+            .set(self.notice_generation.get().wrapping_add(1));
+        if self.dismissed.get() {
+            return;
+        }
+        self.slot.set_reveal_child(true);
+        self.root.set_visible(true);
+    }
+
+    pub fn hide_after(self: &Rc<Self>, delay: Duration) {
+        self.cancel_hide();
+        let generation = self.notice_generation.get();
+        let weak = Rc::downgrade(self);
+        let source = glib::timeout_add_local_once(delay, move || {
+            let Some(this) = weak.upgrade() else {
+                return;
+            };
+            if this.notice_generation.get() == generation {
+                this.root.set_visible(false);
+                this.slot.set_reveal_child(false);
+                this.hide_source.set(None);
+            }
+        });
+        self.hide_source.set(Some(source));
+    }
+
     /// Shared flag polled by background workers. Cleared by `begin`.
     pub fn cancel_flag(&self) -> std::sync::Arc<std::sync::atomic::AtomicBool> {
         self.cancel.clone()
@@ -235,8 +301,7 @@ impl OperationProgressUi {
             .store(true, std::sync::atomic::Ordering::Relaxed);
         if self.running.get() {
             self.stop.set_sensitive(false);
-            self.label
-                .set_text("Stopping…");
+            self.label.set_text("Stopping…");
         }
     }
 
@@ -262,11 +327,16 @@ impl OperationProgressUi {
 
     pub fn begin(&self, name: &str, total: usize) {
         self.cancel_hide();
+        self.dismissed.set(false);
+        self.slot.set_reveal_child(true);
         self.clear_cancel();
         self.running.set(true);
         let total = total.max(1);
-        self.label
-            .set_text(&format!("{name}    0 / {total}    0%"));
+        self.label.set_text(&format!(
+            "{name} · {} / {} · 0%",
+            format_count(0),
+            format_count(total)
+        ));
         self.bar.set_fraction(0.0);
         self.bar.set_visible(true);
         self.spinner.set_spinning(true);
@@ -298,7 +368,11 @@ impl OperationProgressUi {
             self.root.set_visible(true);
         }
         let percent = done * 100 / total;
-        let mut text = format!("{name}    {done} / {total}    {percent}%");
+        let mut text = format!(
+            "{name} · {} / {} · {percent}%",
+            format_count(done),
+            format_count(total)
+        );
         if !filename.is_empty() {
             text.push_str("    ");
             text.push_str(filename);
@@ -356,4 +430,16 @@ impl OperationProgressUi {
         });
         self.hide_source.set(Some(source));
     }
+}
+
+pub(crate) fn format_count(value: usize) -> String {
+    let digits = value.to_string();
+    let mut formatted = String::with_capacity(digits.len() + digits.len() / 3);
+    for (index, digit) in digits.chars().enumerate() {
+        if index > 0 && (digits.len() - index) % 3 == 0 {
+            formatted.push(',');
+        }
+        formatted.push(digit);
+    }
+    formatted
 }

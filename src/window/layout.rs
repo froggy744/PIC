@@ -238,24 +238,12 @@
         })
     }));
 
-    // Wrap the split view in an overlay so sidebar resizing can show a live
-    // preview divider without reallocating the actual sidebar/content panes.
-    // The real width is committed only when the drag finishes, keeping the
-    // GtkGridView completely stable during pointer motion.
+    // The overlay holds the hidden-sidebar hover target. Divider dragging
+    // resizes the split and its visible content directly.
     let main_surface = gtk::Overlay::new();
     main_surface.set_hexpand(true);
     main_surface.set_vexpand(true);
     main_surface.set_child(Some(&main_split));
-
-    let sidebar_resize_preview = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    sidebar_resize_preview.set_width_request(2);
-    sidebar_resize_preview.set_vexpand(true);
-    sidebar_resize_preview.set_halign(gtk::Align::Start);
-    sidebar_resize_preview.set_valign(gtk::Align::Fill);
-    sidebar_resize_preview.set_can_target(false);
-    sidebar_resize_preview.set_visible(false);
-    sidebar_resize_preview.add_css_class("sidebar-resize-preview");
-    main_surface.add_overlay(&sidebar_resize_preview);
 
     let folder_display_mode = sidebar::FolderDisplayMode::from_setting(
         db::setting(
@@ -821,15 +809,13 @@
         }
     });
 
-    // Keep resize geometry stable for the full drag gesture. Recomputing the
-    // starting width from sidebar_width_fraction() * the *current* split width
-    // on every motion made the denominator move while GTK was reallocating the
-    // two panes, which produced the visible jumping/jerking.
-    //
-    // Capture actual allocated pixels once at drag begin, then derive every
-    // subsequent fraction from that fixed geometry.
+    // GestureDrag offsets are local to the handle, which moves as the sidebar
+    // resizes. Convert each pointer position into the split's coordinates
+    // before comparing it with the press. Adding the raw offset to the initial
+    // width makes a stationary pointer alternate between two sidebar widths.
     let sidebar_drag_start_width = Rc::new(Cell::new(0.0f64));
-    let sidebar_drag_split_width = Rc::new(Cell::new(1.0f64));
+    let sidebar_drag_start_local = Rc::new(Cell::new((0.0f64, 0.0f64)));
+    let sidebar_drag_start_x = Rc::new(Cell::new(0.0f64));
     let sidebar_drag = gtk::GestureDrag::new();
     sidebar_drag.set_button(1);
     sidebar_drag.set_propagation_phase(gtk::PropagationPhase::Capture);
@@ -838,12 +824,34 @@
     let sidebar_shell_for_drag_begin = sidebar_shell.clone();
     let main_split_for_drag_begin = main_split.clone();
     let sidebar_drag_start_width_begin = sidebar_drag_start_width.clone();
-    let sidebar_drag_split_width_begin = sidebar_drag_split_width.clone();
+    let sidebar_drag_start_local_begin = sidebar_drag_start_local.clone();
+    let sidebar_drag_start_x_begin = sidebar_drag_start_x.clone();
     let sidebar_resize_active_for_begin = sidebar_resize_active.clone();
     let sidebar_layout_settle_for_drag_begin = sidebar_layout_settle.clone();
+    let sidebar_hover_freeze_generation_for_drag = sidebar_hover_freeze_generation.clone();
+    let sidebar_hover_layout_freeze_for_drag = sidebar_hover_layout_freeze.clone();
+    let sidebar_for_drag = sidebar.clone();
     let gallery_for_drag_begin = gallery.clone();
-    sidebar_drag.connect_drag_begin(move |_, _, _| {
+    sidebar_drag.connect_drag_begin(move |gesture, x, y| {
+        let Some(point) = gesture.widget().and_then(|handle| {
+            handle.compute_point(
+                &main_split_for_drag_begin,
+                &gtk::graphene::Point::new(x as f32, y as f32),
+            )
+        }) else {
+            gesture.set_state(gtk::EventSequenceState::Denied);
+            return;
+        };
         sidebar_layout_settle_for_drag_begin.borrow_mut().cancel();
+        // An explicit divider drag takes ownership of a temporary hover reveal.
+        // Otherwise mouse-leave can close the pane mid-drag and Photo Wall
+        // keeps using its pre-reveal width until the old timeout expires.
+        sidebar_hover_freeze_generation_for_drag.set(
+            sidebar_hover_freeze_generation_for_drag.get().wrapping_add(1),
+        );
+        sidebar_hover_layout_freeze_for_drag.set(false);
+        sidebar::clear_hover_open(&sidebar_for_drag);
+        gallery_for_drag_begin.set_photo_wall_width_frozen(false);
         sidebar_resize_active_for_begin.set(true);
         if gallery_for_drag_begin.using_sectioned_folder_view()
             && std::env::var_os("PICASA_TRACE").is_some()
@@ -852,69 +860,55 @@
         }
         sidebar_drag_start_width_begin
             .set(sidebar_shell_for_drag_begin.width().max(1) as f64);
-        sidebar_drag_split_width_begin
-            .set(main_split_for_drag_begin.width().max(1) as f64);
+        sidebar_drag_start_local_begin.set((x, y));
+        sidebar_drag_start_x_begin.set(f64::from(point.x()));
     });
 
-    // Keep the real split allocation unchanged during pointer motion. Instead
-    // move a 2px preview divider across the full window. This gives immediate
-    // resize feedback without making every GtkGridView cell reallocate.
-    let pending_sidebar_fraction = Rc::new(Cell::new(main_split.sidebar_width_fraction()));
-    let pending_sidebar_fraction_update = pending_sidebar_fraction.clone();
-    let pending_collapsed_width = Rc::new(Cell::new(collapsed_sidebar_width.get()));
-    let pending_collapsed_width_update = pending_collapsed_width.clone();
+    // Every gallery mode follows the real allocation during the drag. In
+    // compact mode only the overlaid sidebar changes width.
     let main_split_for_drag_update = main_split.clone();
     let sidebar_drag_start_width_update = sidebar_drag_start_width.clone();
-    let sidebar_drag_split_width_update = sidebar_drag_split_width.clone();
-    let sidebar_resize_preview_update = sidebar_resize_preview.clone();
-    let gallery_for_drag_update = gallery.clone();
-    sidebar_drag.connect_drag_update(move |_, offset_x, _| {
-        let split_width = sidebar_drag_split_width_update.get().max(1.0);
-        let target_width = (sidebar_drag_start_width_update.get() + offset_x)
+    let sidebar_drag_start_local_update = sidebar_drag_start_local.clone();
+    let sidebar_drag_start_x_update = sidebar_drag_start_x.clone();
+    let collapsed_sidebar_width_update = collapsed_sidebar_width.clone();
+    let sidebar_resize_active_for_update = sidebar_resize_active.clone();
+    sidebar_drag.connect_drag_update(move |gesture, offset_x, offset_y| {
+        if !sidebar_resize_active_for_update.get() {
+            return;
+        }
+        let (x, y) = sidebar_drag_start_local_update.get();
+        let Some(point) = gesture.widget().and_then(|handle| {
+            handle.compute_point(
+                &main_split_for_drag_update,
+                &gtk::graphene::Point::new(
+                    (x + offset_x) as f32,
+                    (y + offset_y) as f32,
+                ),
+            )
+        }) else { return; };
+        let split_width = f64::from(main_split_for_drag_update.width().max(1));
+        let delta = f64::from(point.x()) - sidebar_drag_start_x_update.get();
+        let target_width = (sidebar_drag_start_width_update.get() + delta)
             .clamp(SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH)
             .min(split_width * 0.70);
         if main_split_for_drag_update.is_collapsed() {
-            // Compact overlay keeps its cheap preview; changing max-sidebar
-            // width every pointer frame would animate the overlay itself.
-            pending_collapsed_width_update.set(target_width);
-            sidebar_resize_preview_update.set_margin_start(target_width.round() as i32 - 1);
-            sidebar_resize_preview_update.set_visible(true);
+            collapsed_sidebar_width_update.set(target_width);
+            main_split_for_drag_update.set_max_sidebar_width(target_width);
         } else {
             let fraction = (target_width / split_width).clamp(0.10, 0.70);
-            pending_sidebar_fraction_update.set(fraction);
-
-            if gallery_for_drag_update.using_sectioned_folder_view() {
-                // The new Folder renderer has bounded realized widgets and
-                // section geometry independent of model membership, so let the
-                // real split resize live. The gallery frame-clock observer
-                // animates column reflows as thresholds are crossed.
-                main_split_for_drag_update.set_sidebar_width_fraction(fraction);
-                sidebar_resize_preview_update.set_visible(false);
-            } else {
-                // Legacy GridView/ListView keeps the preview-only path because
-                // live allocation can churn row/grid layout.
-                sidebar_resize_preview_update
-                    .set_margin_start(target_width.round() as i32 - 1);
-                sidebar_resize_preview_update.set_visible(true);
-            }
+            main_split_for_drag_update.set_sidebar_width_fraction(fraction);
         }
     });
 
     let main_split_for_drag_end = main_split.clone();
-    let pending_sidebar_fraction_end = pending_sidebar_fraction.clone();
-    let pending_collapsed_width_end = pending_collapsed_width.clone();
     let collapsed_sidebar_width_for_end = collapsed_sidebar_width.clone();
     let connection_for_drag_end = connection.clone();
     let sidebar_resize_active_for_end = sidebar_resize_active.clone();
-    let sidebar_resize_preview_end = sidebar_resize_preview.clone();
     let gallery_for_sidebar_drag_end = gallery.clone();
     let gallery_surface_for_sidebar_drag_end = gallery_scroll_stack.clone();
     sidebar_drag.connect_drag_end(move |_, _, _| {
-        sidebar_resize_preview_end.set_visible(false);
         if main_split_for_drag_end.is_collapsed() {
-            let width = pending_collapsed_width_end.get();
-            collapsed_sidebar_width_for_end.set(width);
-            main_split_for_drag_end.set_max_sidebar_width(width);
+            let width = collapsed_sidebar_width_for_end.get();
             if let Err(error) = db::set_setting(
                 &connection_for_drag_end.borrow(),
                 SIDEBAR_COLLAPSED_WIDTH_SETTING_KEY,
@@ -922,9 +916,6 @@
             ) {
                 eprintln!("Could not save sidebar overlay width: {error}");
             }
-        } else {
-            main_split_for_drag_end
-                .set_sidebar_width_fraction(pending_sidebar_fraction_end.get());
         }
         sidebar_resize_active_for_end.set(false);
         if gallery_for_sidebar_drag_end.using_sectioned_folder_view()
@@ -936,17 +927,11 @@
             );
         }
 
-        // Wait until the split view has received its single final allocation,
-        // then perform exactly one responsive grid update.
-        let gallery = gallery_for_sidebar_drag_end.clone();
-        let surface = gallery_surface_for_sidebar_drag_end.clone();
-        glib::idle_add_local_once(move || {
-            let width = surface.width();
-            if width > 100 {
-                gallery.update_width(width);
-            }
-        });
+        // The frame observer consumes the final allocation as well; an idle
+        // callback could still see the old width and publish a stale layout.
     });
+    let sidebar_resize_active_for_cancel = sidebar_resize_active.clone();
+    sidebar_drag.connect_cancel(move |_, _| sidebar_resize_active_for_cancel.set(false));
     sidebar_resize_handle.add_controller(sidebar_drag);
 
     let main_split_for_hide = main_split.clone();

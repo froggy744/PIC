@@ -2203,10 +2203,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     // cannot pull the viewport backwards. Precision touchpads remain native.
     install_folder_smooth_gallery_scroll(&folder_scroll, gallery.clone());
 
-    // While the sidebar divider is being dragged, keep the gallery column
-    // count fixed. Otherwise every few pixels can cross a column threshold
-    // and repeatedly rebuild visible rows. Apply the final width once after
-    // the drag ends.
+    // Divider dragging publishes live allocations in every gallery mode.
     let sidebar_resize_active = Rc::new(Cell::new(false));
     // Temporary hover-autohide is presentation only. While that overlay is
     // sliding in or out, keep the gallery's logical width/column model frozen
@@ -2224,10 +2221,9 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let sidebar_layout_settle_for_tick = sidebar_layout_settle.clone();
     gallery_scroll_stack.add_tick_callback(move |surface, _clock| {
         gallery_for_resize.drain_thumbnail_display_completions();
-        let sectioned_live_resize = gallery_for_resize.using_sectioned_folder_view()
-            && sidebar_resize_active_for_tick.get()
+        let live_resize = sidebar_resize_active_for_tick.get()
             && !sidebar_hover_layout_freeze_for_tick.get();
-        if sectioned_live_resize
+        if live_resize
             || should_observe_width(
                 sidebar_resize_active_for_tick.get(),
                 sidebar_hover_layout_freeze_for_tick.get(),
@@ -2235,9 +2231,9 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         {
             let width = surface.width();
             if width > 100 {
-                if gallery_for_resize.using_sectioned_folder_view() {
-                    // Sectioned Folder mode only recomputes lightweight geometry;
-                    // it never rebuilds photo membership or row objects.
+                if live_resize || gallery_for_resize.using_sectioned_folder_view() {
+                    // Publish the current columns during divider dragging too,
+                    // so Photos Grid keeps fitting its newly allocated width.
                     gallery_for_resize.update_width(width);
                 } else if crate::grid::folder_gridview_experiment_enabled() {
                     // Gallery v2 has no column-sized Folder row model to

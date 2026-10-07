@@ -1,7 +1,7 @@
 const PROGRESS_THROTTLE: Duration = Duration::from_millis(100);
 const FINISH_HIDE_AFTER: Duration = Duration::from_secs(4);
 /// Search entry floor in the header; the status row yields before this shrinks.
-const SEARCH_MIN_WIDTH: i32 = 300;
+const SEARCH_MIN_WIDTH: i32 = 220;
 /// `search_area` spacing between the entry and the status row.
 const SEARCH_GAP: i32 = 0;
 const STATUS_WIDTH: i32 = 350;
@@ -20,7 +20,7 @@ const STATUS_WIDTH: i32 = 350;
 /// guard can hide the whole row without fighting those call sites.
 ///
 /// Narrow windows degrade the status row before the search entry drops below
-/// its 220px floor: full row → no progress bar → spinner + Stop only → hide
+/// its 220px floor: full row → no progress bar → spinner + Stop + Close only → hide
 /// the slot (the operation keeps running). See `watch_space`.
 ///
 /// Visual refreshes are throttled so a 4000-item batch does not redraw the
@@ -60,8 +60,8 @@ impl OperationProgressUi {
         root.add_css_class("operation-progress");
         root.set_margin_start(0);
         root.set_margin_end(0);
-        root.set_margin_top(1);
-        root.set_margin_bottom(1);
+        root.set_margin_top(0);
+        root.set_margin_bottom(0);
         root.set_valign(gtk::Align::Center);
         root.set_visible(false);
 
@@ -72,9 +72,11 @@ impl OperationProgressUi {
         let label = gtk::Label::new(Some("Refreshing library…"));
         label.set_xalign(0.0);
         label.set_ellipsize(gtk::pango::EllipsizeMode::End);
-        // Cap the natural width so a long "n / total · filename" line never
-        // claims header space the search entry needs.
-        label.set_max_width_chars(38);
+        // The row's width request sets its allocation, not the changing text.
+        // Keep the label's measured width tiny, then let hexpand fill the row
+        // and ellipsize within that allocation.
+        label.set_max_width_chars(1);
+        label.set_width_chars(1);
         label.set_hexpand(true);
         root.append(&label);
 
@@ -162,7 +164,7 @@ impl OperationProgressUi {
     }
 
     /// Degradation ladder, re-evaluated every frame while the header lays out:
-    /// full row → no bar → spinner + Stop only → hide the slot.
+    /// full row → no bar → spinner + Stop + Close only → hide the slot.
     fn apply_space_guard(&self, available: i32) {
         if self.dismissed.get() {
             self.slot.set_reveal_child(false);
@@ -224,7 +226,7 @@ impl OperationProgressUi {
             return;
         }
 
-        // Stage 3: spinner + Stop only.
+        // Stage 3: spinner + Stop + Close only.
         if self.label.is_visible() {
             self.label.set_visible(false);
         }
@@ -233,7 +235,7 @@ impl OperationProgressUi {
             return;
         }
 
-        // Stage 4: no room even for spinner + Stop; hide the row only.
+        // Stage 4: no room even for the controls; hide the row only.
         self.slot.set_reveal_child(false);
     }
 
@@ -332,8 +334,9 @@ impl OperationProgressUi {
         self.clear_cancel();
         self.running.set(true);
         let total = total.max(1);
+        self.label.set_tooltip_text(None);
         self.label.set_text(&format!(
-            "{name} · {} / {} · 0%",
+            "{name} · {} / {}",
             format_count(0),
             format_count(total)
         ));
@@ -380,7 +383,12 @@ impl OperationProgressUi {
         if failed > 0 {
             text.push_str(&format!("    ({failed} failed)"));
         }
-        self.label.set_text(&text);
+        self.label.set_tooltip_text(Some(&text));
+        self.label.set_text(&format!(
+            "{name} · {} / {}",
+            format_count(done),
+            format_count(total)
+        ));
         self.bar.set_fraction(done as f64 / total as f64);
         self.bar.set_visible(true);
     }
@@ -393,6 +401,7 @@ impl OperationProgressUi {
         self.cancel_hide();
         self.running.set(false);
         self.clear_cancel();
+        self.label.set_tooltip_text(None);
         self.label.set_text(summary);
         self.bar.set_fraction(1.0);
         self.bar.set_visible(false);
@@ -419,13 +428,19 @@ impl OperationProgressUi {
         self.bar.set_visible(false);
         self.spinner.set_spinning(false);
         self.stop.set_sensitive(false);
+        self.stop.set_visible(false);
+        self.label.set_tooltip_text(None);
         self.root.set_visible(true);
         self.last_paint.set(Some(Instant::now()));
         self.last_done.set(0);
         let weak_root = self.root.downgrade();
+        let weak_slot = self.slot.downgrade();
         let source = glib::timeout_add_local_once(FINISH_HIDE_AFTER, move || {
             if let Some(root) = weak_root.upgrade() {
                 root.set_visible(false);
+            }
+            if let Some(slot) = weak_slot.upgrade() {
+                slot.set_reveal_child(false);
             }
         });
         self.hide_source.set(Some(source));

@@ -68,6 +68,16 @@ pub(crate) fn install_foundation(display: &gtk::gdk::Display) {
         gtk::STYLE_PROVIDER_PRIORITY_APPLICATION + 10,
     );
 
+    // Structural rules must win over theme entry styling: there is only
+    // one Search/activity surface, including its keyboard focus ring.
+    let search_status = gtk::CssProvider::new();
+    search_status.load_from_data(include_str!("components/search_status.css"));
+    gtk::style_context_add_provider_for_display(
+        display,
+        &search_status,
+        gtk::STYLE_PROVIDER_PRIORITY_APPLICATION + 6,
+    );
+
     // Always loaded; rules only match while the main window carries the
     // "square-corners" class (Settings > Library). Priority sits above the
     // theme (+1) and album (+3) providers so border-radius: 0 wins.

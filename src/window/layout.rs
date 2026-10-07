@@ -1103,17 +1103,18 @@
     let search = gtk::SearchEntry::new();
     search.set_placeholder_text(Some("Search photos"));
     search.set_width_chars(18);
-    // Do not force a 320px minimum. The fixed minimum was wider than the
-    // available header centre area in smaller windows and pushed toolbar
-    // buttons outside the visible allocation.
-    search.set_size_request(300, -1);
+    search.set_max_width_chars(18);
+    // Keep Search usable while the status yields space in narrow windows.
+    search.set_size_request(220, -1);
     search.set_hexpand(true);
-    search.add_css_class("search-field");
+    search.add_css_class("unified-search-entry");
     search_entry_slot.replace(Some(search.clone()));
     let search_area = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     search_area.add_css_class("search-status-area");
+    // Theme the shared surface, rather than the editable half alone.
+    search_area.add_css_class("search-field");
     search_area.set_valign(gtk::Align::Center);
-    search_area.set_size_request(300, -1);
+    search_area.set_size_request(220, -1);
     search_area.set_hexpand(true);
     search_area.append(&search);
     // Refresh/export/batch status lives in the header title area beside the
@@ -1121,18 +1122,6 @@
     // The search entry keeps hexpand and its 220px floor; the status row
     // degrades (bar → label → all) before that floor is threatened.
     search_area.append(operation_progress.slot());
-    {
-        let area = search_area.clone();
-        operation_progress
-            .slot()
-            .connect_notify_local(Some("reveal-child"), move |slot, _| {
-                if slot.property::<bool>("reveal-child") {
-                    area.add_css_class("search-with-notification");
-                } else {
-                    area.remove_css_class("search-with-notification");
-                }
-            });
-    }
     operation_progress.watch_space(&search_area);
     operation_progress.connect_dismiss();
     let (suggestion_popover, suggestion_list) = folder_suggestion_popup(&search);

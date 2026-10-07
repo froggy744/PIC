@@ -1,0 +1,44 @@
+/* The selected theme styles .search-field on the shared outer container. */
+.search-status-area.search-field {
+  padding: 0;
+  min-height: 34px;
+  border-radius: 8px;
+}
+.search-status-area.search-field:focus-within {
+  outline: 2px solid alpha(@accent_bg_color, 0.65);
+  outline-offset: 0;
+}
+.search-status-area .unified-search-entry,
+.search-status-area .unified-search-entry:focus-within,
+.search-status-area .unified-search-entry text {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  outline: none;
+  min-height: 30px;
+}
+.search-status-area .unified-search-entry {
+  margin: 0;
+  padding: 0 10px;
+}
+.search-status-area .operation-progress {
+  background: transparent;
+  border: none;
+  border-left: 1px solid alpha(@theme_fg_color, 0.12);
+  border-radius: 0;
+  box-shadow: none;
+  min-height: 24px;
+  margin: 5px 0;
+  padding: 0 6px 0 10px;
+  font-size: 12px;
+}
+.search-status-area .operation-progress label {
+  font-feature-settings: "tnum";
+}
+.search-status-area .operation-progress button {
+  min-width: 24px;
+  min-height: 24px;
+  padding: 0;
+  border-radius: 6px;
+}

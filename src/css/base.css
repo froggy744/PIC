@@ -4,6 +4,7 @@
     .edit-toolbar-actions button.edit-toolbar-icon-only { padding: 2px 6px; }
     .edit-toolbar-actions separator { min-width: 1px; background: alpha(@theme_fg_color, 0.14); }
     .edit-panel-pages { background: @window_bg_color; }
+    paned.edit-body-paned > separator { min-width: 6px; background: transparent; border: 0; border-left: 1px solid alpha(@theme_fg_color, 0.28); box-shadow: none; }
     .edit-section-label { font-size: 11px; font-weight: 700; color: alpha(@theme_fg_color, 0.62); }
     .edit-adjustment-group { margin-bottom: 6px; }
     .edit-adjustment-row { margin-bottom: 3px; }

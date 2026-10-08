@@ -229,6 +229,7 @@ pub fn build(
     // sidebar. Users can drag the divider to give the controls or preview more
     // room instead of being locked to one fixed editing-panel width.
     let body = gtk::Paned::new(gtk::Orientation::Horizontal);
+    body.add_css_class("edit-body-paned");
     body.set_hexpand(true);
     body.set_vexpand(true);
     body.set_position(360);

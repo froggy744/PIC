@@ -7,11 +7,22 @@
     let lightbox_for_window_escape = lightbox.clone();
     let space_open_slot_for_key = space_open_slot.clone();
     let edit_space_slot_for_key = edit_space_slot.clone();
+    let edit_escape_slot_for_key = edit_escape_slot.clone();
     let one_to_one_for_key = info.one_to_one.clone();
     let space_toggle_in_progress_for_key = space_toggle_in_progress.clone();
     let search_popup_for_key = search_popup_slot.clone();
     let window_for_fullscreen_key = window.clone();
     window_escape.connect_key_pressed(move |_, key, _, _| {
+        if key == gtk::gdk::Key::Escape {
+            // The editor may leave focus in the infobar, outside its own key
+            // controller. Clone before invoking: closing clears this slot.
+            let escape_action = edit_escape_slot_for_key.borrow().clone();
+            if let Some(escape_action) = escape_action {
+                escape_action();
+                return glib::Propagation::Stop;
+            }
+        }
+
         // Escape dismisses the photo context menu before it closes the
         // lightbox or affects the gallery. This mirrors normal context-menu
         // behaviour and keeps one Escape press scoped to one UI layer.

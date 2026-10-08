@@ -28,6 +28,7 @@ pub struct EditEditor {
     one_to_one_sync: Rc<RefCell<Option<Box<dyn Fn(bool)>>>>,
     zoom_sync: Rc<RefCell<Option<Box<dyn Fn(f64, f64)>>>>,
     text_toggle: gtk::ToggleButton,
+    escape_action: Rc<dyn Fn()>,
 }
 
 impl EditEditor {
@@ -35,11 +36,10 @@ impl EditEditor {
         self.photo_id
     }
 
-    /// Relabels the toolbar Back button for the context the editor was
-    /// opened from (e.g. "Back to Collage").
+    /// Updates the icon-only Back button's tooltip for its return context.
     pub fn set_back_label(&self, label: &str, tooltip: &str) {
-        self.back_button.set_label(label);
-        self.back_button.set_tooltip_text(Some(tooltip));
+        self.back_button
+            .set_tooltip_text(Some(&format!("{label}: {tooltip}")));
     }
 
     pub fn zoom_in(&self) {
@@ -97,6 +97,10 @@ impl EditEditor {
     pub fn text_toggle_handle(&self) -> gtk::ToggleButton {
         self.text_toggle.clone()
     }
+
+    pub fn escape_action_handle(&self) -> Rc<dyn Fn()> {
+        self.escape_action.clone()
+    }
 }
 
 // Editor implementation fragments remain in this module so the split preserves
@@ -149,6 +153,15 @@ pub fn build(
     let text_toggle = gtk::ToggleButton::with_label("Text");
     text_toggle.set_group(Some(&tools_toggle));
     text_toggle.set_tooltip_text(Some("Place editable text layers on the photo"));
+    for button in [
+        &tools_toggle,
+        &filters_toggle,
+        &crop_toggle,
+        &overlays_toggle,
+        &text_toggle,
+    ] {
+        button.add_css_class("flat");
+    }
     panel_tabs.append(&tools_toggle);
     panel_tabs.append(&filters_toggle);
     panel_tabs.append(&crop_toggle);
@@ -160,77 +173,55 @@ pub fn build(
     toolbar_spacer.set_hexpand(true);
     toolbar.append(&toolbar_spacer);
 
-    let toolbar_actions = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+    let toolbar_actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     toolbar_actions.set_valign(gtk::Align::Center);
     toolbar_actions.add_css_class("edit-toolbar-actions");
     toolbar.append(&toolbar_actions);
 
-    let toolbar_icon_button = |icon_name| {
-        let button = gtk::Button::new();
-        let content = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-        content.append(&gtk::Image::from_icon_name(icon_name));
-        button.set_child(Some(&content));
-        button.add_css_class("text-button");
-        button.add_css_class("edit-toolbar-icon-only");
-        button.set_size_request(30, -1);
-        button
-    };
-    let toolbar_labeled_button = |icon_name, label| {
-        let button = gtk::Button::new();
-        let content = gtk::Box::new(gtk::Orientation::Horizontal, 5);
-        content.set_valign(gtk::Align::Center);
-        let icon = gtk::Image::from_icon_name(icon_name);
-        icon.set_pixel_size(14);
-        content.append(&icon);
-        content.append(&gtk::Label::new(Some(label)));
-        button.set_child(Some(&content));
-        button.add_css_class("text-button");
+    let toolbar_icon_button = |icon_name, tooltip| {
+        let button = gtk::Button::from_icon_name(icon_name);
+        button.add_css_class("flat");
+        button.add_css_class("edit-toolbar-icon-button");
+        button.set_tooltip_text(Some(tooltip));
         button
     };
     let append_action_separator = || {
         let separator = gtk::Separator::new(gtk::Orientation::Vertical);
         separator.set_valign(gtk::Align::Center);
-        separator.set_margin_start(6);
-        separator.set_margin_end(6);
-        separator.set_size_request(1, 26);
+        separator.add_css_class("edit-toolbar-divider");
         toolbar_actions.append(&separator);
     };
-    let back = toolbar_icon_button("go-previous-symbolic");
-    back.set_tooltip_text(Some("Close editor without saving"));
+    let back = toolbar_icon_button("go-previous-symbolic", "Close editor without saving");
+    back.add_css_class("edit-toolbar-back");
     toolbar_actions.append(&back);
 
-    let undo = toolbar_icon_button("edit-undo-symbolic");
-    undo.set_tooltip_text(Some("Undo"));
-    toolbar_actions.append(&undo);
-    let redo = toolbar_icon_button("edit-redo-symbolic");
-    redo.set_tooltip_text(Some("Redo"));
-    toolbar_actions.append(&redo);
+    let history_group = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    history_group.add_css_class("linked");
+    history_group.add_css_class("edit-history-group");
+    let undo = toolbar_icon_button("edit-undo-symbolic", "Undo");
+    let redo = toolbar_icon_button("edit-redo-symbolic", "Redo");
+    history_group.append(&undo);
+    history_group.append(&redo);
+    toolbar_actions.append(&history_group);
     append_action_separator();
 
-    let toolbar_zoom_out = gtk::Button::with_label("−");
-    toolbar_zoom_out.add_css_class("edit-toolbar-icon-only");
-    toolbar_zoom_out.set_size_request(30, -1);
-    toolbar_zoom_out.set_tooltip_text(Some("Zoom out (Ctrl + mouse wheel)"));
-    toolbar_actions.append(&toolbar_zoom_out);
-    let toolbar_zoom_in = gtk::Button::with_label("+");
-    toolbar_zoom_in.add_css_class("edit-toolbar-icon-only");
-    toolbar_zoom_in.set_size_request(30, -1);
-    toolbar_zoom_in.set_tooltip_text(Some("Zoom in (Ctrl + mouse wheel)"));
-    toolbar_actions.append(&toolbar_zoom_in);
-    append_action_separator();
-
-    let reset = toolbar_labeled_button("view-refresh-symbolic", "Reset");
-    reset.set_tooltip_text(Some("Reset all edits to the original"));
+    let reset = toolbar_icon_button("document-revert-symbolic", "Reset all edits to the original");
     toolbar_actions.append(&reset);
-    append_action_separator();
 
-    let export = toolbar_labeled_button("document-send-symbolic", "Export…");
-    export.set_tooltip_text(Some("Export the current edited photo (size and file type)"));
+    let export = toolbar_icon_button(
+        "document-send-symbolic",
+        "Export the current edited photo (size and file type)",
+    );
     toolbar_actions.append(&export);
     append_action_separator();
 
-    let done = toolbar_labeled_button("object-select-symbolic", "Done");
+    let done = gtk::Button::new();
+    let done_content = gtk::Box::new(gtk::Orientation::Horizontal, 5);
+    done_content.append(&gtk::Image::from_icon_name("object-select-symbolic"));
+    done_content.append(&gtk::Label::new(Some("Done")));
+    done.set_child(Some(&done_content));
     done.add_css_class("suggested-action");
+    done.add_css_class("edit-toolbar-done");
     toolbar_actions.append(&done);
     root.append(&toolbar);
 
@@ -1492,18 +1483,8 @@ pub fn build(
         })
     };
 
-    {
-        let zoom_out_action = zoom_out_action.clone();
-        toolbar_zoom_out.connect_clicked(move |_| zoom_out_action());
-    }
-    {
-        let zoom_in_action = zoom_in_action.clone();
-        toolbar_zoom_in.connect_clicked(move |_| zoom_in_action());
-    }
-
     // Track the pointer in viewport-local coordinates so Ctrl+wheel can keep
     // the image point under the cursor fixed while the picture is resized.
-    // Toolbar +/- deliberately keeps its existing centre-based behaviour.
     let canvas_pointer = Rc::new(Cell::new((f64::NAN, f64::NAN)));
     let canvas_motion = gtk::EventControllerMotion::new();
     {
@@ -1729,6 +1710,19 @@ pub fn build(
         })
     };
 
+    let escape_action: Rc<dyn Fn()> = {
+        let crop_overlay = crop_overlay.clone();
+        let cancel_crop = cancel_crop.clone();
+        let on_close = on_close.clone();
+        Rc::new(move || {
+            if crop_overlay.is_visible() {
+                cancel_crop();
+            } else {
+                on_close();
+            }
+        })
+    };
+
     let apply_crop: Rc<dyn Fn()> = {
         let session = session.clone();
         let crop_overlay = crop_overlay.clone();
@@ -1904,23 +1898,22 @@ pub fn build(
 
     {
         let apply_crop = apply_crop.clone();
-        let cancel_crop = cancel_crop.clone();
         let crop_overlay = crop_overlay.clone();
         let tools_toggle = tools_toggle.clone();
+        let escape_action = escape_action.clone();
         let key = gtk::EventControllerKey::new();
         key.set_propagation_phase(gtk::PropagationPhase::Capture);
         key.connect_key_pressed(move |_, key, _, _| {
-            if !crop_overlay.is_visible() {
-                return glib::Propagation::Proceed;
-            }
             match key {
-                gtk::gdk::Key::Return | gtk::gdk::Key::KP_Enter => {
+                gtk::gdk::Key::Return | gtk::gdk::Key::KP_Enter
+                    if crop_overlay.is_visible() =>
+                {
                     apply_crop();
                     tools_toggle.set_active(true);
                     glib::Propagation::Stop
                 }
                 gtk::gdk::Key::Escape => {
-                    cancel_crop();
+                    escape_action();
                     glib::Propagation::Stop
                 }
                 _ => glib::Propagation::Proceed,
@@ -2157,6 +2150,7 @@ pub fn build(
         one_to_one_sync,
         zoom_sync,
         text_toggle,
+        escape_action,
     }
 }
 

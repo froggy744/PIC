@@ -174,6 +174,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     // The actual open action is installed after Gallery exists.
     let space_open_slot: Rc<RefCell<Option<Rc<dyn Fn()>>>> = Rc::new(RefCell::new(None));
     let edit_space_slot: Rc<RefCell<Option<Rc<dyn Fn() -> bool>>>> = Rc::new(RefCell::new(None));
+    let edit_escape_slot: Rc<RefCell<Option<Rc<dyn Fn()>>>> = Rc::new(RefCell::new(None));
     let collection_navigation_slot: Rc<RefCell<Option<Rc<dyn Fn(i32)>>>> =
         Rc::new(RefCell::new(None));
     let search_popup_slot: Rc<RefCell<Option<gtk::Popover>>> = Rc::new(RefCell::new(None));
@@ -2560,6 +2561,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         let collage_editor = collage_editor.clone();
         let edit_page = edit_page.clone();
         let edit_editor = edit_editor.clone();
+        let edit_escape_slot = edit_escape_slot.clone();
         let collage_add_mode = collage_add_mode.clone();
         let collage_editing = collage_editing.clone();
         let gallery = gallery.clone();
@@ -2608,6 +2610,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             if visible.as_deref() != Some("edit")
                 && edit_editor.try_borrow().map(|editor| editor.is_some()).unwrap_or(false)
             {
+                edit_escape_slot.borrow_mut().take();
                 // Any exit from the photo editor ends the collage detour.
                 collage_editing.set(false);
                 while let Some(child) = edit_page.first_child() {
@@ -2628,6 +2631,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         let info = info.clone();
         let lightbox = lightbox.clone();
         let edit_space_slot = edit_space_slot.clone();
+        let edit_escape_slot = edit_escape_slot.clone();
         let collage_editing = collage_editing.clone();
         let collage_editor = collage_editor.clone();
         // Keep the shared slider synchronization handle available to the rest
@@ -2653,6 +2657,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 return;
             };
             edit_space_slot.borrow_mut().take();
+            edit_escape_slot.borrow_mut().take();
             lightbox.close();
             let library_scroll_y = gallery.scroll_position();
             while let Some(child) = edit_page.first_child() {
@@ -2667,6 +2672,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 let grid_zoom_syncing = grid_zoom_syncing_for_editor.clone();
                 let gallery = gallery.clone();
                 let edit_space_slot = edit_space_slot.clone();
+                let edit_escape_slot = edit_escape_slot.clone();
                 let edit_page = edit_page.clone();
                 let edit_editor = edit_editor.clone();
                 let collage_editing = collage_editing.clone();
@@ -2674,6 +2680,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 let connection = connection.clone();
                 Rc::new(move || {
                     edit_space_slot.borrow_mut().take();
+                    edit_escape_slot.borrow_mut().take();
                     one_to_one.set_active(false);
                     let returning_to_collage = collage_editing.get();
                     if returning_to_collage {
@@ -2773,6 +2780,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             if collage_editing.get() {
                 editor.set_back_label("Back to Collage", "Return to the collage");
             }
+            edit_escape_slot.replace(Some(editor.escape_action_handle()));
             edit_page.append(&editor.root);
             {
                 let text_toggle = editor.text_toggle_handle();

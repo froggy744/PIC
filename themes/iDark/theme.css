@@ -89,3 +89,24 @@ button.clear-action-button:active { background: #d2d2d2; }
 .lightbox-backdrop.standard-dark { background: #000000; }
 .lightbox-picture { background: transparent; }
 .lightbox-picture.photo-grid { background: #292929; }
+
+/* Editor top toolbar only. */
+.edit-panel-tabs.linked { border-radius: 10px; background: rgba(255,255,255,0.08); }
+.edit-panel-tabs.linked button.flat { min-height: 40px; padding: 0 16px; border: 0; border-radius: 0; background: rgba(255,255,255,0.08); background-image: none; box-shadow: none; color: #bec0c5; }
+.edit-panel-tabs.linked button.flat:first-child { border-radius: 10px 0 0 10px; }
+.edit-panel-tabs.linked button.flat:last-child { border-radius: 0 10px 10px 0; }
+.edit-panel-tabs.linked button.flat:hover { background: rgba(255,255,255,0.13); }
+.edit-panel-tabs.linked button.flat:checked, .edit-panel-tabs.linked button.flat:checked:hover { background: rgba(53,132,228,0.25); color: #9cc8ff; }
+.edit-toolbar-actions button.edit-toolbar-icon-button { min-width: 40px; min-height: 40px; padding: 0; border: 0; border-radius: 9px; background: rgba(255,255,255,0.07); background-image: none; box-shadow: none; color: #d8d9dd; }
+.edit-toolbar-actions button.edit-toolbar-icon-button:hover { background: rgba(255,255,255,0.13); }
+.edit-toolbar-actions button.edit-toolbar-icon-button:disabled { opacity: 0.35; }
+.edit-toolbar-actions button.edit-toolbar-back { margin-right: 10px; background: transparent; }
+.edit-toolbar-actions button.edit-toolbar-back:hover { background: rgba(255,255,255,0.09); }
+.edit-history-group.linked { border-radius: 10px; background: rgba(255,255,255,0.05); }
+.edit-history-group.linked button.edit-toolbar-icon-button { border-radius: 0; background: transparent; }
+.edit-history-group.linked button.edit-toolbar-icon-button:first-child { border-radius: 10px 0 0 10px; }
+.edit-history-group.linked button.edit-toolbar-icon-button:last-child { border-radius: 0 10px 10px 0; }
+.edit-history-group.linked button.edit-toolbar-icon-button:hover { background: rgba(255,255,255,0.10); }
+.edit-toolbar-actions separator.edit-toolbar-divider { min-width: 1px; min-height: 20px; margin: 0 6px; background: rgba(255,255,255,0.12); }
+.edit-toolbar-actions button.edit-toolbar-done { min-height: 40px; padding: 0 20px; border-radius: 999px; background: #3584e4; color: #ffffff; font-weight: 700; }
+.edit-toolbar-actions button.edit-toolbar-done:hover { background: #4993ed; }

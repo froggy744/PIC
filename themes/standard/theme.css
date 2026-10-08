@@ -153,3 +153,21 @@ window, .layout-left-column, .navigation-sidebar { background: @window_bg_color;
     .collage-tabs > button:checked:hover {
         background: alpha(@accent_bg_color, 0.85);
     }
+
+    /* The Standard theme follows the system light/dark preference. Override
+       the dark base theme's toolbar colors with adaptive GTK colors. */
+    .edit-panel-tabs.linked { background: alpha(@theme_fg_color, 0.08); }
+    .edit-panel-tabs.linked button.flat { background: alpha(@theme_fg_color, 0.08); color: @theme_fg_color; }
+    .edit-panel-tabs.linked button.flat:hover { background: alpha(@theme_fg_color, 0.13); }
+    .edit-panel-tabs.linked button.flat:checked,
+    .edit-panel-tabs.linked button.flat:checked:hover { background: alpha(@accent_bg_color, 0.20); color: @theme_fg_color; }
+    .edit-toolbar-actions button.edit-toolbar-icon-button { background: alpha(@theme_fg_color, 0.07); color: @theme_fg_color; }
+    .edit-toolbar-actions button.edit-toolbar-icon-button:hover { background: alpha(@theme_fg_color, 0.13); }
+    .edit-toolbar-actions button.edit-toolbar-back { background: transparent; }
+    .edit-toolbar-actions button.edit-toolbar-back:hover { background: alpha(@theme_fg_color, 0.09); }
+    .edit-history-group.linked { background: alpha(@theme_fg_color, 0.05); }
+    .edit-history-group.linked button.edit-toolbar-icon-button { background: transparent; }
+    .edit-history-group.linked button.edit-toolbar-icon-button:hover { background: alpha(@theme_fg_color, 0.10); }
+    .edit-toolbar-actions separator.edit-toolbar-divider { background: alpha(@theme_fg_color, 0.12); }
+    .edit-toolbar-actions button.edit-toolbar-done { background: @accent_bg_color; color: @accent_fg_color; }
+    .edit-toolbar-actions button.edit-toolbar-done:hover { background: alpha(@accent_bg_color, 0.85); }

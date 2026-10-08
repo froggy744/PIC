@@ -129,41 +129,109 @@ pub fn build(
     toolbar.set_margin_end(12);
     toolbar.add_css_class("toolbar");
 
-    let back = gtk::Button::from_icon_name("go-previous-symbolic");
+    let panel_tabs = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    panel_tabs.set_valign(gtk::Align::Center);
+    panel_tabs.add_css_class("linked");
+    panel_tabs.add_css_class("edit-panel-tabs");
+
+    let tools_toggle = gtk::ToggleButton::with_label("Tools");
+    tools_toggle.set_active(true);
+    tools_toggle.set_tooltip_text(Some("Show editing controls"));
+    let filters_toggle = gtk::ToggleButton::with_label("Filters");
+    filters_toggle.set_group(Some(&tools_toggle));
+    filters_toggle.set_tooltip_text(Some("Show one-tap photo filters"));
+    let crop_toggle = gtk::ToggleButton::with_label("Crop");
+    crop_toggle.set_group(Some(&tools_toggle));
+    crop_toggle.set_tooltip_text(Some("Crop, straighten and compose the photo"));
+    let overlays_toggle = gtk::ToggleButton::with_label("Overlays");
+    overlays_toggle.set_group(Some(&tools_toggle));
+    overlays_toggle.set_tooltip_text(Some("Place PNG/JPG logos, badges and banners on the photo"));
+    let text_toggle = gtk::ToggleButton::with_label("Text");
+    text_toggle.set_group(Some(&tools_toggle));
+    text_toggle.set_tooltip_text(Some("Place editable text layers on the photo"));
+    panel_tabs.append(&tools_toggle);
+    panel_tabs.append(&filters_toggle);
+    panel_tabs.append(&crop_toggle);
+    panel_tabs.append(&overlays_toggle);
+    panel_tabs.append(&text_toggle);
+    toolbar.append(&panel_tabs);
+
+    let toolbar_spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    toolbar_spacer.set_hexpand(true);
+    toolbar.append(&toolbar_spacer);
+
+    let toolbar_actions = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+    toolbar_actions.set_valign(gtk::Align::Center);
+    toolbar_actions.add_css_class("edit-toolbar-actions");
+    toolbar.append(&toolbar_actions);
+
+    let toolbar_icon_button = |icon_name| {
+        let button = gtk::Button::new();
+        let content = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        content.append(&gtk::Image::from_icon_name(icon_name));
+        button.set_child(Some(&content));
+        button.add_css_class("text-button");
+        button.add_css_class("edit-toolbar-icon-only");
+        button.set_size_request(30, -1);
+        button
+    };
+    let toolbar_labeled_button = |icon_name, label| {
+        let button = gtk::Button::new();
+        let content = gtk::Box::new(gtk::Orientation::Horizontal, 5);
+        content.set_valign(gtk::Align::Center);
+        let icon = gtk::Image::from_icon_name(icon_name);
+        icon.set_pixel_size(14);
+        content.append(&icon);
+        content.append(&gtk::Label::new(Some(label)));
+        button.set_child(Some(&content));
+        button.add_css_class("text-button");
+        button
+    };
+    let append_action_separator = || {
+        let separator = gtk::Separator::new(gtk::Orientation::Vertical);
+        separator.set_valign(gtk::Align::Center);
+        separator.set_margin_start(6);
+        separator.set_margin_end(6);
+        separator.set_size_request(1, 26);
+        toolbar_actions.append(&separator);
+    };
+    let back = toolbar_icon_button("go-previous-symbolic");
     back.set_tooltip_text(Some("Close editor without saving"));
-    toolbar.append(&back);
+    toolbar_actions.append(&back);
 
-    let title = gtk::Label::new(Some(&format!("Edit — {}", photo.filename())));
-    title.set_xalign(0.0);
-    title.set_hexpand(true);
-    title.add_css_class("title-3");
-    toolbar.append(&title);
-
-    let undo = gtk::Button::from_icon_name("edit-undo-symbolic");
+    let undo = toolbar_icon_button("edit-undo-symbolic");
     undo.set_tooltip_text(Some("Undo"));
-    toolbar.append(&undo);
-    let redo = gtk::Button::from_icon_name("edit-redo-symbolic");
+    toolbar_actions.append(&undo);
+    let redo = toolbar_icon_button("edit-redo-symbolic");
     redo.set_tooltip_text(Some("Redo"));
-    toolbar.append(&redo);
+    toolbar_actions.append(&redo);
+    append_action_separator();
 
     let toolbar_zoom_out = gtk::Button::with_label("−");
+    toolbar_zoom_out.add_css_class("edit-toolbar-icon-only");
+    toolbar_zoom_out.set_size_request(30, -1);
     toolbar_zoom_out.set_tooltip_text(Some("Zoom out (Ctrl + mouse wheel)"));
-    toolbar.append(&toolbar_zoom_out);
+    toolbar_actions.append(&toolbar_zoom_out);
     let toolbar_zoom_in = gtk::Button::with_label("+");
+    toolbar_zoom_in.add_css_class("edit-toolbar-icon-only");
+    toolbar_zoom_in.set_size_request(30, -1);
     toolbar_zoom_in.set_tooltip_text(Some("Zoom in (Ctrl + mouse wheel)"));
-    toolbar.append(&toolbar_zoom_in);
+    toolbar_actions.append(&toolbar_zoom_in);
+    append_action_separator();
 
-    let reset = gtk::Button::with_label("Reset");
+    let reset = toolbar_labeled_button("view-refresh-symbolic", "Reset");
     reset.set_tooltip_text(Some("Reset all edits to the original"));
-    toolbar.append(&reset);
+    toolbar_actions.append(&reset);
+    append_action_separator();
 
-    let export = gtk::Button::with_label("Export");
+    let export = toolbar_labeled_button("document-send-symbolic", "Export…");
     export.set_tooltip_text(Some("Export the current edited photo (size and file type)"));
-    toolbar.append(&export);
+    toolbar_actions.append(&export);
+    append_action_separator();
 
-    let done = gtk::Button::with_label("Done");
+    let done = toolbar_labeled_button("object-select-symbolic", "Done");
     done.add_css_class("suggested-action");
-    toolbar.append(&done);
+    toolbar_actions.append(&done);
     root.append(&toolbar);
 
     // The editor tools use a real split pane, matching the adjustable main
@@ -174,49 +242,31 @@ pub fn build(
     body.set_vexpand(true);
     body.set_position(360);
     body.set_resize_start_child(false);
-    body.set_shrink_start_child(false);
+    // Allow the divider to reduce the visible panel width. The Stack measures
+    // only its active page, and each panel's controls adapt within the viewport.
+    body.set_shrink_start_child(true);
     body.set_wide_handle(true);
     root.append(&body);
+    // Keep the inspector usable when the divider is dragged left; below this
+    // width its controls would be hidden by clipping. Respect the available
+    // window width when the preview pane is already at its minimum.
+    const MIN_EDIT_PANEL_WIDTH: i32 = 305;
+    body.connect_position_notify(|paned| {
+        let lower = paned.min_position();
+        let upper = paned.max_position();
+        let minimum = MIN_EDIT_PANEL_WIDTH.clamp(lower, upper);
+        if paned.position() < minimum {
+            paned.set_position(minimum);
+        }
+    });
 
     let sidebar = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    sidebar.set_width_request(320);
-
-    let panel_tabs = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-    panel_tabs.set_margin_top(12);
-    panel_tabs.set_margin_start(14);
-    panel_tabs.set_margin_end(14);
-    panel_tabs.set_margin_bottom(4);
-    panel_tabs.add_css_class("linked");
-    panel_tabs.add_css_class("edit-panel-tabs");
-
-    let tools_toggle = gtk::ToggleButton::with_label("Tools");
-    tools_toggle.set_active(true);
-    tools_toggle.set_hexpand(true);
-    tools_toggle.set_tooltip_text(Some("Show editing controls"));
-    let filters_toggle = gtk::ToggleButton::with_label("Filters");
-    filters_toggle.set_group(Some(&tools_toggle));
-    filters_toggle.set_hexpand(true);
-    filters_toggle.set_tooltip_text(Some("Show one-tap photo filters"));
-    let crop_toggle = gtk::ToggleButton::with_label("Crop");
-    crop_toggle.set_group(Some(&tools_toggle));
-    crop_toggle.set_hexpand(true);
-    crop_toggle.set_tooltip_text(Some("Crop, straighten and compose the photo"));
-    let overlays_toggle = gtk::ToggleButton::with_label("Overlays");
-    overlays_toggle.set_group(Some(&tools_toggle));
-    overlays_toggle.set_hexpand(true);
-    overlays_toggle.set_tooltip_text(Some("Place PNG/JPG logos, badges and banners on the photo"));
-    let text_toggle = gtk::ToggleButton::with_label("Text");
-    text_toggle.set_group(Some(&tools_toggle));
-    text_toggle.set_hexpand(true);
-    text_toggle.set_tooltip_text(Some("Place editable text layers on the photo"));
-    panel_tabs.append(&tools_toggle);
-    panel_tabs.append(&filters_toggle);
-    panel_tabs.append(&crop_toggle);
-    panel_tabs.append(&overlays_toggle);
-    panel_tabs.append(&text_toggle);
-    sidebar.append(&panel_tabs);
+    sidebar.set_hexpand(true);
+    sidebar.set_halign(gtk::Align::Fill);
 
     let tools_box = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    tools_box.set_hexpand(true);
+    tools_box.set_halign(gtk::Align::Fill);
     tools_box.set_margin_top(12);
     tools_box.set_margin_bottom(16);
     tools_box.set_margin_start(14);
@@ -245,28 +295,78 @@ pub fn build(
     let text_box = gtk::Box::new(gtk::Orientation::Vertical, 10);
     text_box.set_hexpand(true);
     text_box.set_vexpand(true);
+    text_box.set_halign(gtk::Align::Fill);
     text_box.set_margin_top(12);
     text_box.set_margin_bottom(16);
     text_box.set_margin_start(14);
     text_box.set_margin_end(14);
     let tools_scroll = gtk::ScrolledWindow::new();
+    tools_scroll.set_hexpand(true);
+    tools_scroll.set_halign(gtk::Align::Fill);
     tools_scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
     tools_scroll.set_child(Some(&tools_box));
     let filters_scroll = gtk::ScrolledWindow::new();
+    filters_scroll.set_hexpand(true);
+    filters_scroll.set_halign(gtk::Align::Fill);
     filters_scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
     filters_scroll.set_child(Some(&filters_box));
     let crop_scroll = gtk::ScrolledWindow::new();
+    crop_scroll.set_hexpand(true);
+    crop_scroll.set_halign(gtk::Align::Fill);
     crop_scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
     crop_scroll.set_child(Some(&crop_box));
     let overlays_scroll = gtk::ScrolledWindow::new();
+    overlays_scroll.set_hexpand(true);
+    overlays_scroll.set_halign(gtk::Align::Fill);
     overlays_scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
     overlays_scroll.set_child(Some(&overlays_box));
     let text_scroll = gtk::ScrolledWindow::new();
+    text_scroll.set_hexpand(true);
+    text_scroll.set_halign(gtk::Align::Fill);
+    text_scroll.set_direction(gtk::TextDirection::Ltr);
     text_scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+    text_scroll.set_min_content_width(1);
+    text_scroll.set_propagate_natural_width(false);
     text_scroll.set_child(Some(&text_box));
+    text_box.set_direction(gtk::TextDirection::Ltr);
+    let text_horizontal_adjustment = text_scroll.hadjustment();
+    text_horizontal_adjustment.connect_changed(|adjustment| {
+        adjustment.set_value(adjustment.lower());
+    });
+    text_horizontal_adjustment.connect_value_changed(|adjustment| {
+        let left = adjustment.lower();
+        if adjustment.value() > left {
+            adjustment.set_value(left);
+        }
+    });
+    // These panels have no horizontal scrollbar. If their contents briefly
+    // outmeasure the viewport during a resize, keep the viewport anchored at
+    // its left edge so section headings cannot scroll out of view.
+    for scroll in [
+        tools_scroll.clone(),
+        filters_scroll.clone(),
+        crop_scroll.clone(),
+        overlays_scroll.clone(),
+        text_scroll.clone(),
+    ] {
+        scroll.connect_notify_local(Some("width"), |scroll, _| {
+            // Width notification arrives before GTK recomputes the child and
+            // adjustment bounds. Reset after that layout pass or the old
+            // horizontal offset can leave the left side of controls clipped.
+            let scroll = scroll.clone();
+            glib::idle_add_local_once(move || {
+                let adjustment = scroll.hadjustment();
+                adjustment.set_value(adjustment.lower());
+            });
+        });
+    }
     let panel_stack = gtk::Stack::new();
     panel_stack.set_hexpand(true);
     panel_stack.set_vexpand(true);
+    panel_stack.set_halign(gtk::Align::Fill);
+    // Hidden panels such as Overlays/Text have wider natural controls; they
+    // must not impose their minimum width on the visible Tools page.
+    panel_stack.set_hhomogeneous(false);
     panel_stack.add_css_class("edit-panel-pages");
     panel_stack.add_named(&tools_scroll, Some("tools"));
     panel_stack.add_named(&filters_scroll, Some("filters"));
@@ -443,12 +543,8 @@ pub fn build(
     let filter_grid = gtk::FlowBox::new();
     filter_grid.set_row_spacing(10);
     filter_grid.set_column_spacing(6);
-    // Homogeneous tiles reflow cleanly as the inspector is resized: two
-    // columns at the default pane width, growing to three, four and five on
-    // wider panes and collapsing back to one when the pane is dragged narrow.
-    // The count is driven purely by the fixed tile minimum width, so no child
-    // ever requests a width derived from the current pane size and widening
-    // the inspector can never trap the divider.
+    // Compact square tiles reflow cleanly as the inspector is resized, from
+    // several columns on wide panes down to one when the divider moves left.
     filter_grid.set_homogeneous(true);
     filter_grid.set_min_children_per_line(1);
     filter_grid.set_max_children_per_line(5);
@@ -530,7 +626,7 @@ pub fn build(
     straighten.add_css_class("crop-straighten-scale");
     crop_box.append(&straighten_box);
 
-    let crop_action_row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    let crop_action_row = gtk::Box::new(gtk::Orientation::Vertical, 6);
     let apply_crop_button = gtk::Button::with_label("Apply Crop");
     apply_crop_button.set_hexpand(true);
     apply_crop_button.set_tooltip_text(Some("Commit the pending crop and return to the tools"));
@@ -2136,8 +2232,9 @@ mod panel_tests {
     }
 
     #[test]
-    fn filter_tiles_keep_a_compact_natural_width() {
-        assert_eq!(FILTER_TILE_WIDTH, 160);
+    fn filter_tiles_use_compact_square_previews() {
+        assert_eq!(FILTER_TILE_WIDTH, 88);
+        assert_eq!(FILTER_TILE_MIN_WIDTH, 88);
     }
 
     #[test]
@@ -2201,7 +2298,7 @@ mod panel_tests {
 
     #[test]
     #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
-    fn editor_uses_three_tab_sidebar_with_crop_workspace() {
+    fn editor_toolbar_has_tool_tabs_and_sidebar_keeps_crop_workspace() {
         if !gtk::is_initialized() {
             gtk::init().unwrap();
         }
@@ -2231,6 +2328,7 @@ mod panel_tests {
         settle_gtk();
 
         let toolbar = editor.root.first_child().unwrap();
+        let toolbar_widgets = descendants(&toolbar);
         let body = toolbar
             .next_sibling()
             .unwrap()
@@ -2238,7 +2336,7 @@ mod panel_tests {
             .unwrap();
         let sidebar = body.start_child().unwrap();
         let sidebar_widgets = descendants(&sidebar);
-        let buttons = sidebar_widgets
+        let buttons = toolbar_widgets
             .iter()
             .filter_map(|widget| widget.clone().downcast::<gtk::ToggleButton>().ok())
             .collect::<Vec<_>>();
@@ -2250,7 +2348,7 @@ mod panel_tests {
             .downcast::<gtk::Stack>()
             .unwrap();
 
-        // The filter grid must reflow responsively: two columns at the default
+        // The filter grid must reflow responsively: three columns at default
         // pane width, one when the pane is dragged narrow, up to five on wide
         // panes, with preview thumbnails that have a real visible height.
         let flow = sidebar_widgets
@@ -2261,7 +2359,7 @@ mod panel_tests {
         assert_eq!(flow.max_children_per_line(), 5);
         assert!(flow.is_homogeneous());
 
-        sidebar_widgets
+        toolbar_widgets
             .iter()
             .filter(|widget| {
                 widget
@@ -2305,8 +2403,8 @@ mod panel_tests {
         };
         assert_eq!(
             columns_at(360),
-            2,
-            "default pane width shows two columns (flowbox alloc was {:?})",
+            3,
+            "default pane width shows three compact columns (flowbox alloc was {:?})",
             flow.allocation()
         );
         assert!(
@@ -2330,8 +2428,8 @@ mod panel_tests {
         let (tile_min_width, tile_min_height) = tile_picture.size_request();
         assert_eq!(tile_min_width, FILTER_TILE_PREVIEW_WIDTH);
         assert!(
-            tile_min_height >= 100,
-            "preview needs a visible minimum height"
+            tile_min_height >= 80,
+            "preview needs a visible minimum height at the narrow tile width"
         );
         assert!(tile_picture.allocation().height() >= tile_min_height);
 

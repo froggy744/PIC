@@ -43,12 +43,10 @@ fn render_filter_thumbnails(
     rotation: i32,
     recipe: &EditRecipe,
 ) -> anyhow::Result<Vec<FilterThumbnailPixels>> {
-    // Decode at twice the on-screen tile preview size. The widget's fixed
-    // size_request (FILTER_TILE_PREVIEW_*) still owns the tile's natural size,
-    // so the larger decode cannot inflate the grid; ContentFit::Cover then
-    // minifies the texture ~2:1 with the GPU's mipmapped filtering, which is
-    // far crisper than displaying a 1x texture that the FlowBox cell (163px)
-    // would otherwise slightly upscale.
+    // Decode at twice the square on-screen preview size. The widget's fixed
+    // size_request (FILTER_TILE_PREVIEW_*) owns the tile's natural size, so the
+    // larger decode cannot inflate the grid; ContentFit::Cover then minifies
+    // the texture ~2:1 with the GPU's mipmapped filtering.
     let base = super::render::decode_base_for_viewer(
         path,
         rotation,
@@ -135,20 +133,17 @@ impl Controls {
 fn add_section_label(parent: &gtk::Box, text: &str) {
     let label = gtk::Label::new(Some(text));
     label.set_xalign(0.0);
+    label.set_hexpand(true);
     label.set_margin_top(8);
     label.add_css_class("heading");
     label.add_css_class("edit-section-label");
     parent.append(&label);
 }
 
-const FILTER_TILE_WIDTH: i32 = 160;
-// The preview frame paints a 2px border on each side, so the picture inside
-// must minimum-fit the remaining width at the default 4:3 thumbnail ratio.
-// Without a real minimum height the AspectFrame collapses to a 1px strip and
-// the thumbnails appear missing until the async paintable happens to arrive.
-const FILTER_TILE_FRAME_BORDER: i32 = 4;
-const FILTER_TILE_PREVIEW_WIDTH: i32 = FILTER_TILE_WIDTH - FILTER_TILE_FRAME_BORDER;
-const FILTER_TILE_PREVIEW_HEIGHT: i32 = FILTER_TILE_PREVIEW_WIDTH * 3 / 4;
+const FILTER_TILE_WIDTH: i32 = 88;
+const FILTER_TILE_MIN_WIDTH: i32 = FILTER_TILE_WIDTH;
+const FILTER_TILE_PREVIEW_WIDTH: i32 = FILTER_TILE_WIDTH - 4;
+const FILTER_TILE_PREVIEW_HEIGHT: i32 = FILTER_TILE_PREVIEW_WIDTH;
 // Tile previews decode at this multiple of their on-screen size and are then
 // CPU-downscaled to the exact tile box; see render_filter_thumbnails.
 const FILTER_TILE_SUPERSAMPLE: u32 = 2;
@@ -157,23 +152,17 @@ fn filter_tile(effect: FilterTileEffect) -> (gtk::ToggleButton, gtk::Picture) {
     let button = gtk::ToggleButton::new();
     button.add_css_class("filter-tile");
     button.set_tooltip_text(Some(effect.label()));
-    // A fixed compact minimum width is intentional. It drives how many
-    // homogeneous columns FlowBox can fit, but unlike the previous resize
-    // callback this request never grows when the pane grows, so it cannot make
-    // the inspector sticky after a resize.
     button.set_size_request(FILTER_TILE_WIDTH, -1);
-    button.set_halign(gtk::Align::Fill);
+    button.set_hexpand(false);
+    button.set_halign(gtk::Align::Start);
     button.set_valign(gtk::Align::Start);
 
     let content = gtk::Box::new(gtk::Orientation::Vertical, 5);
     content.set_hexpand(false);
     content.set_halign(gtk::Align::Fill);
 
-    // The picture owns the 4:3 tile geometry directly. Wrapping it in an
-    // AspectFrame would inflate the tile's minimum width (the frame enforces
-    // its ratio on the minimum measurement), collapsing the grid back to a
-    // single column at the default pane width. ContentFit::Cover already
-    // letterbox-crops any thumbnail into the 4:3 preview box.
+    // A square, compact preview keeps filter tiles from forcing the sidebar
+    // wider than the editing controls need.
     let picture = gtk::Picture::new();
     picture.set_content_fit(gtk::ContentFit::Cover);
     picture.set_can_shrink(true);

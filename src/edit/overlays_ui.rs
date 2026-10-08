@@ -1155,7 +1155,7 @@ fn build_overlays_panel(
     update_canvas_input: Rc<dyn Fn()>,
     overlays_toggle: gtk::ToggleButton,
 ) -> Rc<dyn Fn()> {
-    let action_row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    let action_row = gtk::Box::new(gtk::Orientation::Vertical, 6);
     let import = gtk::Button::with_label("Add Overlay");
     import.set_hexpand(true);
     import.set_tooltip_text(Some(
@@ -1192,11 +1192,12 @@ fn build_overlays_panel(
     fit_column.set_hexpand(true);
     add_section_label(&fit_column, "FIT");
     let fit_row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    let fit_width = gtk::Button::with_label("Fit to Width");
+    fit_row.add_css_class("edit-fit-row");
+    let fit_width = gtk::Button::with_label("Fit Width");
     fit_width.set_hexpand(true);
     fit_width.set_tooltip_text(Some("Stretch this overlay across the full photo width"));
     fit_width.add_css_class("crop-reset-button");
-    let fit_screen = gtk::Button::with_label("Fit to Screen");
+    let fit_screen = gtk::Button::with_label("Fit Screen");
     fit_screen.set_hexpand(true);
     fit_screen.set_tooltip_text(Some(
         "Scale this overlay down until it fits entirely inside the photo",
@@ -1204,47 +1205,55 @@ fn build_overlays_panel(
     fit_screen.add_css_class("crop-reset-button");
     fit_row.append(&fit_width);
     fit_row.append(&fit_screen);
-    fit_column.append(&fit_row);
-    let reset_placement = gtk::Button::with_label("Reset Placement");
+    let reset_placement = gtk::Button::with_label("Reset");
     reset_placement.set_hexpand(true);
     reset_placement.set_tooltip_text(Some("Centre this overlay and reset its position offsets"));
     reset_placement.add_css_class("crop-reset-button");
-    fit_column.append(&reset_placement);
-    let position_fit_row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-    position_fit_row.set_margin_top(10);
-    position_fit_row.append(&position_column);
-    position_fit_row.append(&fit_column);
-    selected_section.append(&position_fit_row);
+    fit_row.append(&reset_placement);
+    fit_column.append(&fit_row);
 
-    add_section_label(&selected_section, "OFFSET");
+    let offset_column = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    add_section_label(&offset_column, "OFFSET");
     let offset_x = gtk::SpinButton::with_range(-100000.0, 100000.0, 1.0);
     let offset_y = gtk::SpinButton::with_range(-100000.0, 100000.0, 1.0);
+    offset_x.set_hexpand(true);
+    offset_y.set_hexpand(true);
+    for spin in [&offset_x, &offset_y] {
+        spin.set_width_chars(3);
+        spin.set_max_width_chars(3);
+        spin.add_css_class("edit-offset-spin");
+    }
     offset_x.set_tooltip_text(Some(
         "Horizontal offset from the selected position, in photo pixels",
     ));
     offset_y.set_tooltip_text(Some(
         "Vertical offset from the selected position, in photo pixels",
     ));
-    let offset_row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-    offset_row.set_margin_top(4);
-    offset_row.set_margin_bottom(10);
+    let offset_row = gtk::Box::new(gtk::Orientation::Vertical, 4);
     let offset_cell_x = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    let offset_label_x = gtk::Label::new(Some("X offset"));
-    offset_label_x.set_xalign(0.0);
-    offset_label_x.set_hexpand(true);
     offset_cell_x.set_hexpand(true);
+    let offset_label_x = gtk::Label::new(Some("X"));
+    offset_label_x.set_xalign(0.0);
+    offset_label_x.set_width_chars(1);
     offset_cell_x.append(&offset_label_x);
     offset_cell_x.append(&offset_x);
     offset_row.append(&offset_cell_x);
     let offset_cell_y = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    let offset_label_y = gtk::Label::new(Some("Y offset"));
-    offset_label_y.set_xalign(0.0);
-    offset_label_y.set_hexpand(true);
     offset_cell_y.set_hexpand(true);
+    let offset_label_y = gtk::Label::new(Some("Y"));
+    offset_label_y.set_xalign(0.0);
+    offset_label_y.set_width_chars(1);
     offset_cell_y.append(&offset_label_y);
     offset_cell_y.append(&offset_y);
     offset_row.append(&offset_cell_y);
-    selected_section.append(&offset_row);
+    offset_column.append(&offset_row);
+
+    let position_offset_row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    position_offset_row.set_margin_top(10);
+    position_offset_row.append(&position_column);
+    position_offset_row.append(&offset_column);
+    selected_section.append(&position_offset_row);
+    selected_section.append(&fit_column);
 
     // Populate the list and control states from the recipe.
     let sync: Rc<dyn Fn()> = {
@@ -1284,6 +1293,9 @@ fn build_overlays_panel(
                 let label = gtk::Label::new(None);
                 label.set_xalign(0.0);
                 label.set_hexpand(true);
+                label.set_single_line_mode(true);
+                label.set_max_width_chars(24);
+                label.set_ellipsize(gtk::pango::EllipsizeMode::End);
                 let name = crate::db::overlay_asset(&connection, &overlay.asset)
                     .ok()
                     .flatten()

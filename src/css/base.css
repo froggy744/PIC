@@ -1,18 +1,21 @@
-.edit-panel-tabs { margin-bottom: 4px; }
+.edit-panel-tabs { margin-bottom: 0; }
     .edit-panel-tabs button { min-height: 34px; padding: 4px 10px; font-weight: 600; }
+    .edit-toolbar-actions button { min-width: 0; min-height: 26px; padding: 2px 7px; border-radius: 8px; }
+    .edit-toolbar-actions button.edit-toolbar-icon-only { padding: 2px 6px; }
+    .edit-toolbar-actions separator { min-width: 1px; background: alpha(@theme_fg_color, 0.14); }
     .edit-panel-pages { background: @window_bg_color; }
     .edit-section-label { font-size: 11px; font-weight: 700; color: alpha(@theme_fg_color, 0.62); }
     .edit-adjustment-group { margin-bottom: 6px; }
     .edit-adjustment-row { margin-bottom: 3px; }
     .edit-adjustment-value { font-variant-numeric: tabular-nums; min-width: 42px; }
-    .edit-adjustment-scale { margin-top: -2px; }
+    .edit-adjustment-scale { min-width: 0; margin-top: -2px; }
     .edit-preview { background: alpha(@theme_fg_color, 0.045); border: 1px solid alpha(@theme_fg_color, 0.07); border-radius: 10px; }
     .thumbnail-filename { font-size: 11px; }
     .edit-canvas-stage, .edit-canvas-stage viewport { background: transparent; }
     .crop-aspect-grid { margin-bottom: 4px; }
-    .crop-aspect-button { min-height: 32px; padding: 3px 8px; }
+    .crop-aspect-button { min-width: 0; min-height: 32px; padding: 3px 6px; }
     .crop-orientation-row { margin-bottom: 4px; }
-    .crop-orientation-row button { min-height: 32px; padding: 3px 8px; }
+    .crop-orientation-row button { min-width: 0; min-height: 32px; padding: 3px 6px; }
     .crop-straighten { margin-bottom: 2px; }
     .crop-straighten .edit-adjustment-row { margin-bottom: 0; }
     .crop-reset-button, .crop-apply-button { min-height: 32px; margin-top: 4px; }
@@ -20,11 +23,13 @@
     .overlay-list row { min-height: 34px; padding: 4px 8px; }
     .overlay-list row:selected { background: alpha(@accent_bg_color, 0.18); }
     .overlay-selected-section { margin-top: 4px; }
+    spinbutton.edit-offset-spin { min-width: 0; }
+    .edit-fit-row button { min-width: 0; padding: 3px 5px; font-size: 11px; }
     .overlay-anchor-row { margin-top: 2px; }
     .overlay-anchor-row button { min-height: 30px; padding: 3px 4px; font-size: 11px; }
     .text-position-grid { border-spacing: 0; }
     .text-position-grid button { min-width: 34px; min-height: 34px; margin: 0; padding: 0; border-radius: 0; }
-    button.text-colour-swatch { min-width: 12px; min-height: 30px; padding: 3px; border: 1px solid alpha(currentColor, 0.35); border-radius: 4px; }
+    button.text-colour-swatch { min-width: 0; min-height: 30px; padding: 0; border: 1px solid alpha(currentColor, 0.35); border-radius: 4px; }
     button.text-swatch-white { background-color: #ffffff; }
     button.text-swatch-black { background-color: #111111; }
     button.text-swatch-red { background-color: #f21f1f; }
@@ -40,6 +45,7 @@
     button.filter-tile:hover .filter-tile-preview { border-color: alpha(@theme_fg_color, 0.18); }
     button.filter-tile:checked .filter-tile-preview { border-color: @accent_bg_color; }
     .filter-tile-label { font-size: 11px; font-weight: 600; }
+    .text-font-picker { min-width: 0; }
 
 /* An untagged photo keeps the heart clickable, but its icon should read as inactive. */
 .favorite-btn:not(.active):not(:disabled) image {

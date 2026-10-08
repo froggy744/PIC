@@ -1,6 +1,16 @@
 // Editor fragment included by editor.rs. Provides the Text panel tab for
 // creating and editing text layers.
 
+fn font_family_display_name(name: &str) -> String {
+    let mut chars = name.chars();
+    let display = chars.by_ref().take(18).collect::<String>();
+    if chars.next().is_some() {
+        format!("{display}…")
+    } else {
+        display
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn build_text_panel(
     parent: &gtk::Box,
@@ -16,6 +26,8 @@ fn build_text_panel(
     use gtk::pango::prelude::*;
 
     let action_row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    action_row.set_hexpand(true);
+    action_row.set_halign(gtk::Align::Fill);
     let add_text = gtk::Button::with_label("Add Text");
     add_text.set_hexpand(true);
     add_text.set_tooltip_text(Some("Add a text layer on top of this photo"));
@@ -31,21 +43,38 @@ fn build_text_panel(
 
     add_section_label(parent, "TEXT LAYERS");
     let list = gtk::ListBox::new();
+    list.set_hexpand(true);
+    list.set_halign(gtk::Align::Fill);
     list.set_selection_mode(gtk::SelectionMode::Single);
     list.add_css_class("overlay-list");
     list.set_margin_bottom(6);
     parent.append(&list);
 
     let selected_section = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    selected_section.set_hexpand(true);
+    selected_section.set_halign(gtk::Align::Fill);
     selected_section.add_css_class("overlay-selected-section");
     parent.append(&selected_section);
 
     add_section_label(&selected_section, "TEXT CONTENT");
     let text_scroll = gtk::ScrolledWindow::new();
+    text_scroll.set_hexpand(true);
+    text_scroll.set_halign(gtk::Align::Fill);
+    text_scroll.set_direction(gtk::TextDirection::Ltr);
     text_scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
     text_scroll.set_min_content_height(76);
+    text_scroll.set_min_content_width(1);
+    text_scroll.set_propagate_natural_width(false);
+    text_scroll.connect_notify_local(Some("width"), |scroll, _| {
+        let scroll = scroll.clone();
+        glib::idle_add_local_once(move || {
+            let adjustment = scroll.hadjustment();
+            adjustment.set_value(adjustment.lower());
+        });
+    });
     let text_view = gtk::TextView::new();
     text_view.set_wrap_mode(gtk::WrapMode::WordChar);
+    text_view.set_size_request(1, -1);
     text_view.set_hexpand(true);
     text_view.set_top_margin(6);
     text_view.set_bottom_margin(6);
@@ -54,10 +83,14 @@ fn build_text_panel(
     text_scroll.set_child(Some(&text_view));
     selected_section.append(&text_scroll);
 
-    let font_row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    let font_row = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    font_row.set_hexpand(true);
+    font_row.set_halign(gtk::Align::Fill);
     font_row.set_margin_top(6);
     let font_combo = gtk::ComboBoxText::new();
     font_combo.set_hexpand(true);
+    font_combo.set_size_request(0, -1);
+    font_combo.add_css_class("text-font-picker");
     font_combo.set_tooltip_text(Some("Font family"));
     let font_map = pangocairo::FontMap::new();
     let mut families = font_map
@@ -67,28 +100,33 @@ fn build_text_panel(
         .collect::<Vec<_>>();
     families.sort_by_key(|name| name.to_lowercase());
     for family in &families {
-        font_combo.append(Some(family), family);
+        font_combo.append(Some(family), &font_family_display_name(family));
     }
     font_combo.set_active(Some(0));
     let size_spin = gtk::SpinButton::with_range(0.5, 50.0, 0.5);
+    size_spin.set_width_chars(4);
+    size_spin.set_max_width_chars(4);
     size_spin.set_tooltip_text(Some("Font size as a percentage of the photo height"));
     font_row.append(&font_combo);
-    font_row.append(&size_spin);
+    let size_row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    let size_label = gtk::Label::new(Some("Size"));
+    size_row.append(&size_label);
+    size_row.append(&size_spin);
+    font_row.append(&size_row);
     selected_section.append(&font_row);
 
-    let colour_row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    let colour_row = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    colour_row.set_hexpand(true);
+    colour_row.set_halign(gtk::Align::Fill);
     colour_row.set_margin_top(10);
-    let colour_label = gtk::Label::new(Some("Colour"));
-    colour_label.set_xalign(0.0);
-    colour_label.set_width_chars(6);
-    colour_label.set_halign(gtk::Align::Start);
     let colour_button = gtk::ColorDialogButton::new(Some(gtk::ColorDialog::new()));
     colour_button.set_tooltip_text(Some("Choose custom colour"));
     colour_button.set_rgba(&gtk::gdk::RGBA::new(1.0, 1.0, 1.0, 1.0));
-    colour_row.append(&colour_label);
-
     let colour_swatches = gtk::Box::new(gtk::Orientation::Horizontal, 4);
     colour_swatches.set_hexpand(true);
+    colour_swatches.set_halign(gtk::Align::Fill);
+    colour_swatches.set_homogeneous(true);
+    colour_swatches.add_css_class("text-colour-swatches");
     let mut swatch_buttons = Vec::new();
     for (name, class, color) in [
         ("White", "text-swatch-white", (1.0, 1.0, 1.0)),
@@ -101,7 +139,6 @@ fn build_text_panel(
         ("Purple", "text-swatch-purple", (0.68, 0.3, 0.88)),
     ] {
         let swatch = gtk::Button::new();
-        swatch.set_hexpand(true);
         swatch.set_size_request(0, 30);
         swatch.set_tooltip_text(Some(name));
         swatch.add_css_class("text-colour-swatch");
@@ -110,7 +147,6 @@ fn build_text_panel(
         swatch_buttons.push((swatch, color));
     }
     let custom_swatch = gtk::Button::new();
-    custom_swatch.set_hexpand(true);
     custom_swatch.set_size_request(0, 30);
     custom_swatch.set_tooltip_text(Some("Choose custom colour"));
     custom_swatch.add_css_class("text-colour-swatch");
@@ -121,7 +157,9 @@ fn build_text_panel(
     colour_swatches.append(&custom_swatch);
     selected_section.append(&colour_row);
 
-    let style_row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    let style_row = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    style_row.set_hexpand(true);
+    style_row.set_halign(gtk::Align::Fill);
     style_row.set_margin_top(10);
     let bold_button = gtk::ToggleButton::with_label("Bold");
     bold_button.set_hexpand(true);
@@ -134,9 +172,6 @@ fn build_text_panel(
     style_group.set_hexpand(true);
     style_group.append(&bold_button);
     style_group.append(&italic_button);
-    let style_separator = gtk::Separator::new(gtk::Orientation::Vertical);
-    style_separator.set_margin_start(4);
-    style_separator.set_margin_end(4);
     let align_group = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     align_group.add_css_class("linked");
     align_group.add_css_class("overlay-anchor-row");
@@ -158,7 +193,6 @@ fn build_text_panel(
         (TextAlign::Right, right_button),
     ];
     style_row.append(&style_group);
-    style_row.append(&style_separator);
     style_row.append(&align_group);
     selected_section.append(&style_row);
 
@@ -176,7 +210,8 @@ fn build_text_panel(
     fit_width.set_tooltip_text(Some("Scale text to span the photo width"));
     fit_width.add_css_class("crop-reset-button");
     let fit_row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    let reset_placement = gtk::Button::with_label("Reset Placement");
+    fit_row.add_css_class("edit-fit-row");
+    let reset_placement = gtk::Button::with_label("Reset");
     reset_placement.set_hexpand(true);
     reset_placement.set_tooltip_text(Some("Centre this text and reset its position offsets"));
     reset_placement.add_css_class("crop-reset-button");
@@ -186,43 +221,53 @@ fn build_text_panel(
     fit_screen.add_css_class("crop-reset-button");
     fit_row.append(&fit_width);
     fit_row.append(&fit_screen);
+    fit_row.append(&reset_placement);
     fit_column.append(&fit_row);
-    fit_column.append(&reset_placement);
-    let position_fit_row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-    position_fit_row.set_margin_top(10);
-    position_fit_row.append(&position_column);
-    position_fit_row.append(&fit_column);
-    selected_section.append(&position_fit_row);
 
-    add_section_label(&selected_section, "OFFSET");
+    let offset_column = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    add_section_label(&offset_column, "OFFSET");
     let offset_x = gtk::SpinButton::with_range(-100000.0, 100000.0, 1.0);
     let offset_y = gtk::SpinButton::with_range(-100000.0, 100000.0, 1.0);
+    offset_x.set_hexpand(true);
+    offset_y.set_hexpand(true);
+    for spin in [&offset_x, &offset_y] {
+        spin.set_width_chars(3);
+        spin.set_max_width_chars(3);
+        spin.add_css_class("edit-offset-spin");
+    }
     offset_x.set_tooltip_text(Some(
         "Horizontal offset from the selected position, in photo pixels",
     ));
     offset_y.set_tooltip_text(Some(
         "Vertical offset from the selected position, in photo pixels",
     ));
-    let offset_row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-    offset_row.set_margin_top(4);
-    offset_row.set_margin_bottom(10);
+    let offset_row = gtk::Box::new(gtk::Orientation::Vertical, 4);
     let offset_cell_x = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     offset_cell_x.set_hexpand(true);
-    let offset_label_x = gtk::Label::new(Some("X offset"));
+    let offset_label_x = gtk::Label::new(Some("X"));
     offset_label_x.set_xalign(0.0);
-    offset_label_x.set_hexpand(true);
+    offset_label_x.set_width_chars(1);
     offset_cell_x.append(&offset_label_x);
     offset_cell_x.append(&offset_x);
     offset_row.append(&offset_cell_x);
     let offset_cell_y = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     offset_cell_y.set_hexpand(true);
-    let offset_label_y = gtk::Label::new(Some("Y offset"));
+    let offset_label_y = gtk::Label::new(Some("Y"));
     offset_label_y.set_xalign(0.0);
-    offset_label_y.set_hexpand(true);
+    offset_label_y.set_width_chars(1);
     offset_cell_y.append(&offset_label_y);
     offset_cell_y.append(&offset_y);
     offset_row.append(&offset_cell_y);
-    selected_section.append(&offset_row);
+    offset_column.append(&offset_row);
+
+    let position_offset_row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    position_offset_row.set_hexpand(true);
+    position_offset_row.set_halign(gtk::Align::Fill);
+    position_offset_row.set_margin_top(10);
+    position_offset_row.append(&position_column);
+    position_offset_row.append(&offset_column);
+    selected_section.append(&position_offset_row);
+    selected_section.append(&fit_column);
 
     let sync: Rc<dyn Fn()> = {
         let session = session.clone();
@@ -268,6 +313,9 @@ fn build_text_panel(
                 let label = gtk::Label::new(None);
                 label.set_xalign(0.0);
                 label.set_hexpand(true);
+                label.set_single_line_mode(true);
+                label.set_max_width_chars(24);
+                label.set_ellipsize(gtk::pango::EllipsizeMode::End);
                 let first_line = layer.text.lines().next().unwrap_or("");
                 let mut preview = first_line.chars().take(40).collect::<String>();
                 if first_line.chars().count() > 40 {
@@ -303,7 +351,10 @@ fn build_text_panel(
                 }
                 font_combo.set_active_id(Some(&layer.font_family));
                 if font_combo.active_id().as_deref() != Some(layer.font_family.as_str()) {
-                    font_combo.append(Some(&layer.font_family), &layer.font_family);
+                    font_combo.append(
+                        Some(&layer.font_family),
+                        &font_family_display_name(&layer.font_family),
+                    );
                     font_combo.set_active_id(Some(&layer.font_family));
                 }
                 let (red, green, blue, alpha) = layer.color_rgba();

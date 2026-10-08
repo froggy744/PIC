@@ -3,13 +3,25 @@
 // three bytes per pixel even though the complete 4:2:0 preview occupies 1.5.
 // Read bounded RGB strips directly too, without preloading the RAW sensor data.
 fn dng_embedded_preview(path: &Path) -> Result<Option<DecodedThumbnailSource>> {
-    use rawler::formats::tiff::{GenericTiffReader, reader::TiffReader};
-
     let mut file = BufReader::new(fs::File::open(path)?);
     let file_size = file.get_ref().metadata()?.len();
+    dng_embedded_preview_from_reader(&mut file, file_size)
+}
+
+fn dng_embedded_preview_from_bytes(bytes: &[u8]) -> Result<Option<DecodedThumbnailSource>> {
+    let mut reader = Cursor::new(bytes);
+    dng_embedded_preview_from_reader(&mut reader, bytes.len() as u64)
+}
+
+fn dng_embedded_preview_from_reader<R: Read + Seek>(
+    file: &mut R,
+    file_size: u64,
+) -> Result<Option<DecodedThumbnailSource>> {
+    use rawler::formats::tiff::{GenericTiffReader, reader::TiffReader};
+
     // This reads TIFF metadata and seeks over sensor strips, without loading
     // the RAW pixel buffer or asking a decoder to develop it.
-    let tiff = GenericTiffReader::new(&mut file, 0, 0, Some(16), &[])?;
+    let tiff = GenericTiffReader::new(file, 0, 0, Some(16), &[])?;
     let root = tiff.root_ifd();
     let samsung = root
         .get_entry(271u16)
@@ -188,6 +200,21 @@ mod samsung_dng_preview_tests {
         let decoded = decode_raw_thumbnail(fixture.0.to_str().unwrap()).unwrap();
         assert_eq!(decoded.scale, "embedded Samsung NV21 preview");
         assert_eq!(decoded.image.get_pixel(0, 0).0, [255, 37, 128]);
+    }
+
+    #[test]
+    fn remote_dng_viewer_decodes_embedded_preview_from_memory() {
+        let fixture = Fixture::new(b"samsung\0", 24, false);
+        let bytes = fs::read(&fixture.0).unwrap();
+
+        let decoded = decode_remote_dng_for_viewer(
+            "nfs://example.invalid/share/photo.dng",
+            &bytes,
+        )
+        .unwrap();
+
+        assert_eq!((decoded.width(), decoded.height()), (4, 2));
+        assert_eq!(decoded.to_rgb8().get_pixel(0, 0).0, [255, 37, 128]);
     }
 
     #[test]

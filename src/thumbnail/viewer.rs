@@ -319,6 +319,53 @@ where
     Ok((image, target_width, target_height))
 }
 
+#[cfg(target_os = "linux")]
+fn decode_remote_dng_for_viewer(reference: &str, bytes: &[u8]) -> Result<DynamicImage> {
+    let embedded_failure = match dng_embedded_preview_from_bytes(bytes) {
+        Ok(Some(preview)) => return Ok(DynamicImage::ImageRgb8(preview.image)),
+        Ok(None) => None,
+        Err(error) => Some(format!("DNG embedded preview: {error:#}")),
+    };
+
+    rawler_decode(reference, "viewer_preview", || {
+        let rawfile = rawler::rawsource::RawSource::new_from_shared_vec(std::sync::Arc::new(
+            bytes.to_vec(),
+        ))
+        .with_path(Path::new("remote.dng"));
+        let decoder = rawler::get_decoder(&rawfile)?;
+        let params = rawler::decoders::RawDecodeParams::default();
+        let mut failures = Vec::new();
+        match decoder.preview_image(&rawfile, &params) {
+            Ok(Some(preview)) => return Ok(preview),
+            Ok(None) => failures.push("RAW decoder has no embedded preview".into()),
+            Err(error) => failures.push(format!("embedded preview: {error:#}")),
+        }
+        match decoder.full_image(&rawfile, &params) {
+            Ok(Some(full)) => return Ok(full),
+            Ok(None) => failures.push("RAW decoder has no full image".into()),
+            Err(error) => failures.push(format!("full image: {error:#}")),
+        }
+        let raw = match decoder.raw_image(&rawfile, &params, false) {
+            Ok(raw) => raw,
+            Err(error) => anyhow::bail!(
+                "{}; sensor decode: {error:#}",
+                failures.join("; ")
+            ),
+        };
+        rawler::imgop::develop::RawDevelop::default()
+            .develop_intermediate(&raw)
+            .context("failed to develop remote DNG sensor pixels")?
+            .to_dynamic_image()
+            .ok_or_else(|| anyhow::anyhow!("failed to convert remote DNG pixels to an image"))
+    })
+    .map_err(|error| {
+        anyhow::anyhow!(
+            "Remote DNG viewer strategies failed: {}; raw decode: {error:#}",
+            embedded_failure.as_deref().unwrap_or("embedded DNG preview unavailable")
+        )
+    })
+}
+
 pub fn decode_for_viewer_with_cancel<F>(
     reference: &str,
     viewport_width: u32,
@@ -333,7 +380,7 @@ where
     let mut source_read_ms = 0;
     check_viewer_cancelled(&cancelled, "before_orientation_metadata")?;
     // HEIF container transforms are applied by heif-oxide during decode.
-    let orientation = if is_heif(reference) || is_svg(reference) {
+    let mut orientation = if is_heif(reference) || is_svg(reference) {
         1
     } else {
         exif_orientation(reference)
@@ -343,32 +390,53 @@ where
     let (image, target_width, target_height) = if is_raw(reference) {
         #[cfg(target_os = "linux")]
         if crate::network_shares::private(reference) {
-            anyhow::ensure!(
-                is_nikon_raw(reference),
-                "Remote RAW preview is unsupported for this format; original was not downloaded"
-            );
-            check_viewer_cancelled(&cancelled, "before_remote_embedded_preview")?;
-            let bytes = remote_nef_embedded_jpeg(reference, true)?.ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Remote NEF has no embedded JPEG preview; original was not downloaded"
+            if is_nikon_raw(reference) {
+                check_viewer_cancelled(&cancelled, "before_remote_embedded_preview")?;
+                let bytes = remote_nef_embedded_jpeg(reference, true)?.ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Remote NEF has no embedded JPEG preview; original was not downloaded"
+                    )
+                })?;
+                check_viewer_cancelled(&cancelled, "after_remote_embedded_preview")?;
+                let (source_width, source_height) = jpeg_dimensions(&bytes)?;
+                let (target_width, target_height) = viewer_target_dimensions(
+                    source_width,
+                    source_height,
+                    orientation,
+                    viewport_width,
+                    viewport_height,
+                );
+                let decoded = decode_jpeg_turbo_with_target(&bytes, target_width, target_height)
+                    .or_else(|_| decode_with_image(&bytes))?;
+                (
+                    DynamicImage::ImageRgb8(decoded.image),
+                    target_width,
+                    target_height,
                 )
-            })?;
-            check_viewer_cancelled(&cancelled, "after_remote_embedded_preview")?;
-            let (source_width, source_height) = jpeg_dimensions(&bytes)?;
-            let (target_width, target_height) = viewer_target_dimensions(
-                source_width,
-                source_height,
-                orientation,
-                viewport_width,
-                viewport_height,
-            );
-            let decoded = decode_jpeg_turbo_with_target(&bytes, target_width, target_height)
-                .or_else(|_| decode_with_image(&bytes))?;
-            (
-                DynamicImage::ImageRgb8(decoded.image),
-                target_width,
-                target_height,
-            )
+            } else if is_dng(reference) {
+                check_viewer_cancelled(&cancelled, "before_remote_dng_read")?;
+                let source_started = std::time::Instant::now();
+                let bytes = read_viewer_source(reference, read_context)?;
+                source_read_ms += source_started.elapsed().as_millis();
+                check_viewer_cancelled(&cancelled, "after_remote_dng_read")?;
+                orientation = orientation_from_container(&mut Cursor::new(bytes.as_ref()));
+                let image = decode_remote_dng_for_viewer(reference, &bytes)?;
+                check_viewer_cancelled(&cancelled, "after_remote_dng_decode")?;
+                let source_width = image.width();
+                let source_height = image.height();
+                let (target_width, target_height) = viewer_target_dimensions(
+                    source_width,
+                    source_height,
+                    orientation,
+                    viewport_width,
+                    viewport_height,
+                );
+                (image, target_width, target_height)
+            } else {
+                anyhow::bail!(
+                    "Remote RAW preview is unsupported for this format; original was not downloaded"
+                );
+            }
         } else {
             decode_local_raw_for_viewer(
                 reference,
@@ -691,6 +759,25 @@ pub fn apply_orientation(image: DynamicImage, orientation: u16) -> DynamicImage 
 mod tests {
     use super::*;
     use std::cell::Cell;
+
+    #[test]
+    fn canceled_remote_dng_reaches_its_network_read_stage() {
+        let checks = Cell::new(0);
+        let error = decode_for_viewer_with_cancel(
+            "nfs://example.invalid/share/photo.dng",
+            800,
+            600,
+            None,
+            || {
+                let next = checks.get() + 1;
+                checks.set(next);
+                next >= 3
+            },
+        )
+        .expect_err("cancelled DNG request must stop before network I/O");
+
+        assert_eq!(error.to_string(), "cancelled at before_remote_dng_read");
+    }
 
     #[test]
     fn cancelled_remote_jpeg_stops_before_source_read() {

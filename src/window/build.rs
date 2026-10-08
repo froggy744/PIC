@@ -2297,10 +2297,23 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     context_menu_autohide.set_propagation_phase(gtk::PropagationPhase::Capture);
     let window_for_menu_autohide = window.clone();
     let lightbox_for_menu_autohide = lightbox.clone();
+    window.connect_is_active_notify(move |window| {
+        if !window.is_active() {
+            dismiss_active_photo_context_menu();
+        }
+    });
+    let lightbox_context_menu_click = gtk::GestureClick::new();
+    lightbox_context_menu_click.set_button(1);
+    lightbox_context_menu_click.set_propagation_phase(gtk::PropagationPhase::Capture);
+    lightbox_context_menu_click.connect_pressed(move |_, _, _, _| {
+        dismiss_active_photo_context_menu();
+    });
+    lightbox.root.add_controller(lightbox_context_menu_click);
     context_menu_autohide.connect_pressed(move |_, _, x, y| {
-        let inside_menu = window_for_menu_autohide
-            .pick(x, y, gtk::PickFlags::DEFAULT)
-            .is_some_and(|picked| photo_context_menu_contains(&picked));
+        let picked = window_for_menu_autohide.pick(x, y, gtk::PickFlags::DEFAULT);
+        let inside_menu = picked
+            .as_ref()
+            .is_some_and(photo_context_menu_contains);
         if !inside_menu && dismiss_active_photo_context_menu() {
             let root = lightbox_for_menu_autohide.root.clone();
             glib::idle_add_local_once(move || {
@@ -2425,6 +2438,14 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     page_overlay.set_vexpand(true);
     page_overlay.set_child(Some(&main_stack));
     page_overlay.add_overlay(&lightbox.root);
+    let action_menu_autohide = gtk::GestureClick::new();
+    action_menu_autohide.set_button(1);
+    action_menu_autohide.set_propagation_phase(gtk::PropagationPhase::Capture);
+    let info_for_action_menu_autohide = info.clone();
+    action_menu_autohide.connect_pressed(move |_, _, _, _| {
+        info_for_action_menu_autohide.dismiss_action_menus();
+    });
+    page_overlay.add_controller(action_menu_autohide);
     context_menu_host.borrow_mut().replace(page_overlay.downgrade());
     content.append(&page_overlay);
     content.append(&info.root);
@@ -3223,11 +3244,11 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let edit_editor_for_rotate = edit_editor.clone();
     let main_stack_for_rotate = main_stack.clone();
 
-    info.rotate.connect_clicked(move |_| {
+    let rotate_photo: Rc<dyn Fn(bool)> = Rc::new(move |counter_clockwise| {
         let Some(photo) = selected_for_rotate.borrow().clone() else {
             return;
         };
-        let rotation = (photo.rotation() + 90) % 360;
+        let rotation = (photo.rotation() + if counter_clockwise { 270 } else { 90 }) % 360;
 
         if let Err(error) = db::set_rotation(&db_for_rotate.borrow(), photo.id(), rotation) {
             eprintln!("Could not rotate photo: {error}");
@@ -3244,8 +3265,18 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 }
             }
         }
-        
     });
+    let rotate_photo_for_click = rotate_photo.clone();
+    info.rotate.connect_clicked(move |_| rotate_photo_for_click(false));
+    let rotate_right_click = gtk::GestureClick::new();
+    rotate_right_click.set_button(3);
+    rotate_right_click.set_propagation_phase(gtk::PropagationPhase::Capture);
+    let rotate_photo_for_right_click = rotate_photo;
+    rotate_right_click.connect_pressed(move |gesture, _, _, _| {
+        gesture.set_state(gtk::EventSequenceState::Claimed);
+        rotate_photo_for_right_click(true);
+    });
+    info.rotate.add_controller(rotate_right_click);
 
 fn show_photo_export_dialog(
     window: &gtk::Window,

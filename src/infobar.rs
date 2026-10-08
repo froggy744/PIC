@@ -28,6 +28,7 @@ pub struct InfoBar {
     pub import_photos: gtk::Button,
     pub more: gtk::Button,
     pub print: gtk::Button,
+    overflow_popover: gtk::Popover,
     pub grid_zoom: gtk::Scale,
     pub grid_zoom_reset: gtk::GestureClick,
     has_photo: Rc<Cell<bool>>,
@@ -148,6 +149,7 @@ impl InfoBar {
         rating.set_direction(gtk::ArrowType::Up);
 
         let rating_popover = gtk::Popover::new();
+        rating_popover.set_autohide(true);
         rating_popover.set_has_arrow(true);
         rating_popover.set_position(gtk::PositionType::Top);
         let rating_box = gtk::Box::new(gtk::Orientation::Horizontal, 2);
@@ -239,7 +241,7 @@ impl InfoBar {
 
         let rotate = gtk::Button::from_icon_name("object-rotate-right-symbolic");
         configure_action_button(&rotate);
-        rotate.set_tooltip_text(Some("Rotate clockwise"));
+        rotate.set_tooltip_text(Some("Rotate clockwise (right-click to rotate counter-clockwise)"));
 
         let export = gtk::Button::from_icon_name("document-save-symbolic");
         configure_action_button(&export);
@@ -278,6 +280,11 @@ impl InfoBar {
         configure_action_button(&overflow);
         overflow.add_css_class("photo-actions-overflow");
         let overflow_popover = gtk::Popover::new();
+        overflow_popover.set_autohide(true);
+        // Rate opens a child popover from inside this drawer. Closing that
+        // child (after choosing a star or clicking away) must also close the
+        // drawer so the next photo click is not trapped behind it.
+        overflow_popover.set_cascade_popdown(true);
         let overflow_box = gtk::Box::new(gtk::Orientation::Vertical, 2);
         overflow_box.set_margin_top(6);
         overflow_box.set_margin_bottom(6);
@@ -313,7 +320,7 @@ impl InfoBar {
             let label = gtk::Label::new(Some(title));
             label.set_xalign(0.0);
             row.append(&label);
-            if title != "Rotate" {
+            if title != "Rotate" && title != "Favourites" {
                 if let Some(button) = control.downcast_ref::<gtk::Button>() {
                     let popover = overflow_popover.downgrade();
                     button.connect_clicked(move |_| {
@@ -549,6 +556,7 @@ impl InfoBar {
             import_photos,
             more,
             print,
+            overflow_popover,
             grid_zoom,
             grid_zoom_reset,
             has_photo,
@@ -571,6 +579,13 @@ impl InfoBar {
 
     pub fn connect_clear_saved_views(&self, clear: impl Fn() + 'static) {
         self.clear_saved_views.connect_activate(move |_, _| clear());
+    }
+
+    pub fn dismiss_action_menus(&self) {
+        self.overflow_popover.popdown();
+        if let Some(popover) = self.rating.popover() {
+            popover.popdown();
+        }
     }
 
     pub fn set_collage_active(&self, active: bool) {

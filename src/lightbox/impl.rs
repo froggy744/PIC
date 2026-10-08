@@ -380,6 +380,10 @@ impl Lightbox {
                     false
                 });
 
+            if !inside_context_menu {
+                crate::window::dismiss_active_photo_context_menu();
+            }
+
             if !inside_picture && !inside_context_menu {
                 root_for_outside.set_visible(false);
                 gesture.set_state(gtk::EventSequenceState::Claimed);

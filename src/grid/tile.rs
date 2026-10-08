@@ -1182,6 +1182,7 @@ impl SquareTile {
         } else if let Some(child) = find_overlay_child(&frame, "favorite-badge") {
             child.set_visible(false);
         }
+        self.refresh_rating_indicator();
         let edited = !crate::edit::EditRecipe::decode(&bound.edit_recipe()).is_default();
         if edited {
             let badge = ensure_edited_badge(&frame);
@@ -1297,6 +1298,9 @@ impl SquareTile {
                     {
                         image.set_visible(false);
                     }
+                }
+                if current.has_css_class("rating-badge") {
+                    current.set_visible(false);
                 }
                 if let Some(button) = current.downcast_ref::<gtk::Button>() {
                     if button.has_css_class("offline-badge") {

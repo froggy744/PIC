@@ -22,7 +22,7 @@ fn ensure_context_menu_css(display: &gtk::gdk::Display) {
     CONTEXT_MENU_CSS_INSTALLED.with(|cell| cell.set(true));
 }
 
-fn dismiss_active_photo_context_menu() -> bool {
+pub(crate) fn dismiss_active_photo_context_menu() -> bool {
     ACTIVE_PHOTO_MENU.with(|active| {
         let Some(menu) = active.borrow_mut().take() else {
             return false;
@@ -524,7 +524,6 @@ fn show_photo_context_menu(
     let favorite_context = context.clone();
     let favorite_selection = selection_provider.clone();
     let favorite_photo = photo.clone();
-    let dismiss_menu_for_favorite = dismiss_menu.clone();
     favorite.connect_clicked(move |button| {
         let target = !favorite_photo.favorite();
         let ids = favorite_selection();
@@ -552,7 +551,6 @@ fn show_photo_context_menu(
                 .replace(Some(favorite_photo.clone()));
             favorite_context.info.set_photo(Some(&favorite_photo));
         }
-        dismiss_menu_for_favorite();
         if let Some(gallery) = favorite_context.gallery.borrow().upgrade() {
             if favorite_context.filter.get() == sidebar::SidebarFilter::Favorites && !target {
                 gallery.remove_photos(&ids);

@@ -469,18 +469,18 @@ fn trace_lightbox_geometry(
         )
     });
     zoom_trace(format!(
-        "geometry stage={stage} frame={:?} pointer_viewport={pointer:?} h={:.2}/{:.2}/{:.2}/{:.2} v={:.2}/{:.2}/{:.2}/{:.2} picture_alloc={:?} picture_req={:?} align={:?}/{:?} expand={}/{} shrink={} fit={:?} intrinsic={:?} picture_root={bounds:?} picture_scroll={:?} origin_plus_adjustment={:?} viewport={:?} viewport_alloc={:?} viewport_root={:?} scroll_alloc={:?} scroll_root={:?} root_alloc={:?} focus={focus:?} picture_flags={:?} scroll_flags={:?} scroll_to_focus={:?}",
+        "geometry stage={stage} frame={:?} pointer_viewport={pointer:?} h={:.2}/{:.2}/{:.2}/{:.2} v={:.2}/{:.2}/{:.2}/{:.2} picture_size={:?} picture_req={:?} align={:?}/{:?} expand={}/{} shrink={} fit={:?} intrinsic={:?} picture_root={bounds:?} picture_scroll={:?} origin_plus_adjustment={:?} viewport={:?} viewport_size={:?} viewport_root={:?} scroll_size={:?} scroll_root={:?} root_size={:?} focus={focus:?} picture_flags={:?} scroll_flags={:?} scroll_to_focus={:?}",
         root.frame_clock().map(|clock| clock.frame_counter()),
         h.value(), h.lower(), h.upper(), h.page_size(),
         v.value(), v.lower(), v.upper(), v.page_size(),
-        picture.allocation(), picture.size_request(), picture.halign(), picture.valign(),
+        (picture.width(), picture.height()), picture.size_request(), picture.halign(), picture.valign(),
         picture.hexpands(), picture.vexpands(), picture.can_shrink(), picture.content_fit(),
         picture_intrinsic_dimensions(picture), picture.compute_bounds(scroll),
         picture.compute_bounds(scroll).map(|b| (f64::from(b.x()) + h.value(), f64::from(b.y()) + v.value())),
         viewport.as_ref().map(|widget| widget.type_().name()),
-        viewport.as_ref().map(|widget| widget.allocation()),
+        viewport.as_ref().map(|widget| (widget.width(), widget.height())),
         viewport.as_ref().and_then(|widget| widget.compute_bounds(root)),
-        scroll.allocation(), scroll.compute_bounds(root), root.allocation(),
+        (scroll.width(), scroll.height()), scroll.compute_bounds(root), (root.width(), root.height()),
         picture.state_flags(), scroll.state_flags(),
         viewport.and_then(|widget| widget.downcast::<gtk::Viewport>().ok()).map(|viewport| viewport.is_scroll_to_focus()),
     ));

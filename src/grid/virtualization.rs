@@ -64,6 +64,7 @@ fn folder_chunk_size(columns: u32) -> usize {
 /// Exact vertical offset for a virtual Folder row. Folder mode deliberately
 /// gives every model row a fixed height, so we do not need GtkListView's
 /// estimated far-row position when restoring an anchor after a column change.
+#[cfg(test)]
 fn folder_row_offset(
     rows: &[FolderVirtualRow],
     target_row: usize,
@@ -97,6 +98,7 @@ pub(crate) struct FolderRowData {
     photo_ids: Vec<i64>,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct FolderVirtualRow {
     kind: FolderRowKind,
@@ -107,6 +109,7 @@ struct FolderVirtualRow {
 /// Folder mode uses a flat virtualized model: one lightweight header row plus
 /// fixed photo lines containing at most `columns` photos. GtkListView therefore
 /// virtualizes one stable-height visual line at a time.
+#[cfg(test)]
 fn folder_virtual_rows(ranges: &[GroupRange], chunk_size: usize) -> Vec<FolderVirtualRow> {
     let chunk_size = chunk_size.max(1);
     let mut rows = Vec::new();
@@ -2081,19 +2084,6 @@ impl Gallery {
                 }
                 tile.refresh_thumbnail();
             }
-        }
-    }
-
-    pub fn refresh_availability(&self) {
-        // State-only repaint. Actual source probing belongs to
-        // window::refresh_availability_ui, which performs it on a worker thread
-        // and feeds the result back through apply_availability().
-        let mut tiles = Vec::new();
-        collect_tiles(self.root.upcast_ref(), &mut tiles);
-        collect_tiles(self.folder_root.upcast_ref(), &mut tiles);
-        collect_tiles(self.folder_sectioned_root.upcast_ref(), &mut tiles);
-        for tile in tiles {
-            tile.refresh_availability();
         }
     }
 

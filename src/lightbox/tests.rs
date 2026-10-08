@@ -385,9 +385,12 @@ mod one_to_one_layout_regression {
         let v = lightbox.picture_viewport.vadjustment();
         eprintln!(
             "1:1 regression geometry: root={:?} scroll={:?} picture={:?} bounds={bounds:?} request={:?} h={}/{}/{}/{} v={}/{}/{}/{}",
-            lightbox.root.allocation(),
-            lightbox.picture_viewport.allocation(),
-            lightbox.picture.allocation(),
+            (lightbox.root.width(), lightbox.root.height()),
+            (
+                lightbox.picture_viewport.width(),
+                lightbox.picture_viewport.height()
+            ),
+            (lightbox.picture.width(), lightbox.picture.height()),
             lightbox.picture.size_request(),
             h.value(), h.lower(), h.upper(), h.page_size(),
             v.value(), v.lower(), v.upper(), v.page_size(),

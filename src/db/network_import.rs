@@ -9,7 +9,6 @@ pub struct NetworkJob {
 pub struct NetworkCatalogPhoto {
     pub photo: Photo,
     pub newly_discovered: bool,
-    pub pending: bool,
     pub metadata_delta: i64,
     pub preview_delta: i64,
 }
@@ -231,15 +230,14 @@ pub fn catalog_network_photo(
         })?,
     )?
     .context("network catalog row disappeared")?;
-    let (pending,metadata_ready,preview_ready) = connection.query_row(
-        "SELECT metadata_state='pending' OR thumbnail_state='pending',metadata_state='ready',thumbnail_state='ready'
-         FROM network_photo_work WHERE path=?1", [path], |row| Ok((row.get(0)?,row.get::<_,i64>(1)?,row.get::<_,i64>(2)?)),
+    let (metadata_ready,preview_ready) = connection.query_row(
+        "SELECT metadata_state='ready',thumbnail_state='ready'
+         FROM network_photo_work WHERE path=?1", [path], |row| Ok((row.get::<_,i64>(0)?,row.get::<_,i64>(1)?)),
     )?;
     let (previous_metadata, previous_preview) = previous_ready.unwrap_or_default();
     Ok(NetworkCatalogPhoto {
         photo,
         newly_discovered,
-        pending,
         metadata_delta: metadata_ready - previous_metadata,
         preview_delta: preview_ready - previous_preview,
     })
@@ -375,7 +373,7 @@ mod network_import_tests {
         let row =
             catalog_network_photo(&db, root, job.generation, path, folder, Some(10), Some(100))
                 .unwrap();
-        assert!(row.newly_discovered && row.pending);
+        assert!(row.newly_discovered);
         assert_eq!(photos(&db, None, false, None).unwrap().len(), 1);
         let old = next_network_work(&db, root, job.generation)
             .unwrap()

@@ -311,44 +311,40 @@ pub(super) fn page(
         let refresh = refresh.clone();
         let management = management.clone();
         open.connect_clicked(move |_| {
-            let chooser = gtk::FileChooserNative::new(
-                Some("Open PIC Database"),
-                Some(&parent),
-                gtk::FileChooserAction::Open,
-                Some("Open"),
-                Some("Cancel"),
-            );
             let filter = gtk::FileFilter::new();
             filter.set_name(Some("SQLite databases"));
             filter.add_pattern("*.db");
-            chooser.add_filter(&filter);
+            let filters = gio::ListStore::new::<gtk::FileFilter>();
+            filters.append(&filter);
+            let chooser = gtk::FileDialog::builder()
+                .title("Open PIC Database")
+                .accept_label("Open")
+                .filters(&filters)
+                .modal(true)
+                .build();
             let status = status.clone();
             let refresh = refresh.clone();
             let management = management.clone();
-            chooser.connect_response(move |chooser, response| {
-                if response == gtk::ResponseType::Accept {
-                    if let Some(path) = chooser.file().and_then(|file| file.path()) {
+            chooser.open(Some(&parent), None::<&gio::Cancellable>, move |result| {
+                if let Ok(file) = result {
+                    if let Some(path) = file.path() {
                         let display_name = file_stem(&path);
-                        match crate::db::add_existing_library(&path, &display_name, "").and_then(
-                            |library| {
+                        match crate::db::add_existing_library(&path, &display_name, "")
+                            .and_then(|library| {
                                 (management.switch_library)(&library.id)
                                     .map_err(anyhow::Error::msg)?;
                                 Ok(library)
-                            },
-                        ) {
+                            })
+                        {
                             Ok(library) => {
                                 status.set_text(&format!("Opened {}.", library.name));
                                 refresh();
                             }
-                            Err(error) => {
-                                status.set_text(&format!("Could not open database: {error:#}"))
-                            }
+                            Err(error) => status.set_text(&format!("Could not open database: {error:#}")),
                         }
                     }
                 }
-                chooser.destroy();
             });
-            chooser.show();
         });
     }
 
@@ -495,12 +491,6 @@ fn create_dialog(
     refresh: Rc<dyn Fn()>,
     management: DatabaseManagement,
 ) {
-    let dialog = gtk::Dialog::new();
-    dialog.set_title(Some("Create Database"));
-    dialog.set_transient_for(Some(parent));
-    dialog.set_modal(true);
-    dialog.add_button("Cancel", gtk::ResponseType::Cancel);
-    dialog.add_button("Create", gtk::ResponseType::Accept);
     let form = gtk::Box::new(gtk::Orientation::Vertical, 8);
     form.set_margin_top(16);
     form.set_margin_bottom(16);
@@ -512,28 +502,31 @@ fn create_dialog(
     description.set_placeholder_text(Some("Description (optional)"));
     form.append(&name);
     form.append(&description);
-    dialog.content_area().append(&form);
-    dialog.connect_response(move |dialog, response| {
-        if response == gtk::ResponseType::Accept {
-            let result = crate::db::suggested_library_path(&name.text())
-                .and_then(|path| {
-                    crate::db::create_library(&path, &name.text(), &description.text())
-                })
-                .and_then(|library| {
-                    (management.switch_library)(&library.id).map_err(anyhow::Error::msg)?;
-                    Ok(library)
-                });
-            match result {
-                Ok(library) => {
-                    status.set_text(&format!("Created {}.", library.name));
-                    refresh();
-                }
-                Err(error) => status.set_text(&format!("Could not create database: {error:#}")),
+    let dialog = adw::AlertDialog::builder()
+        .heading("Create Database")
+        .extra_child(&form)
+        .close_response("cancel")
+        .default_response("create")
+        .build();
+    dialog.add_response("cancel", "Cancel");
+    dialog.add_response("create", "Create");
+    dialog.set_response_appearance("create", adw::ResponseAppearance::Suggested);
+    dialog.connect_response(Some("create"), move |_, _| {
+        let result = crate::db::suggested_library_path(&name.text())
+            .and_then(|path| crate::db::create_library(&path, &name.text(), &description.text()))
+            .and_then(|library| {
+                (management.switch_library)(&library.id).map_err(anyhow::Error::msg)?;
+                Ok(library)
+            });
+        match result {
+            Ok(library) => {
+                status.set_text(&format!("Created {}.", library.name));
+                refresh();
             }
+            Err(error) => status.set_text(&format!("Could not create database: {error:#}")),
         }
-        dialog.close();
     });
-    dialog.show();
+    dialog.present(Some(parent));
 }
 
 fn restore_dialog(
@@ -542,20 +535,20 @@ fn restore_dialog(
     refresh: Rc<dyn Fn()>,
     management: DatabaseManagement,
 ) {
-    let chooser = gtk::FileChooserNative::new(
-        Some("Restore Database Backup"),
-        Some(parent),
-        gtk::FileChooserAction::Open,
-        Some("Restore"),
-        Some("Cancel"),
-    );
     let filter = gtk::FileFilter::new();
     filter.set_name(Some("PIC database backups"));
     filter.add_pattern("*.db");
-    chooser.add_filter(&filter);
-    chooser.connect_response(move |chooser, response| {
-        if response == gtk::ResponseType::Accept {
-            if let Some(backup_path) = chooser.file().and_then(|file| file.path()) {
+    let filters = gio::ListStore::new::<gtk::FileFilter>();
+    filters.append(&filter);
+    let chooser = gtk::FileDialog::builder()
+        .title("Restore Database Backup")
+        .accept_label("Restore")
+        .filters(&filters)
+        .modal(true)
+        .build();
+    chooser.open(Some(parent), None::<&gio::Cancellable>, move |result| {
+        if let Ok(file) = result {
+            if let Some(backup_path) = file.path() {
                 let restored_name = format!("Restored {}", file_stem(&backup_path));
                 status.set_text("Restoring database…");
                 let (sender, receiver) = std::sync::mpsc::channel();
@@ -602,9 +595,7 @@ fn restore_dialog(
                 });
             }
         }
-        chooser.destroy();
     });
-    chooser.show();
 }
 
 fn file_stem(path: &Path) -> String {

@@ -87,11 +87,6 @@ fn build_text_panel(
     font_row.set_hexpand(true);
     font_row.set_halign(gtk::Align::Fill);
     font_row.set_margin_top(6);
-    let font_combo = gtk::ComboBoxText::new();
-    font_combo.set_hexpand(true);
-    font_combo.set_size_request(0, -1);
-    font_combo.add_css_class("text-font-picker");
-    font_combo.set_tooltip_text(Some("Font family"));
     let font_map = pangocairo::FontMap::new();
     let mut families = font_map
         .list_families()
@@ -99,10 +94,18 @@ fn build_text_panel(
         .map(|family| family.name().to_string())
         .collect::<Vec<_>>();
     families.sort_by_key(|name| name.to_lowercase());
-    for family in &families {
-        font_combo.append(Some(family), &font_family_display_name(family));
-    }
-    font_combo.set_active(Some(0));
+    let font_labels = families
+        .iter()
+        .map(|family| font_family_display_name(family))
+        .collect::<Vec<_>>();
+    let font_model = gtk::StringList::new(&font_labels.iter().map(String::as_str).collect::<Vec<_>>());
+    let font_names = Rc::new(RefCell::new(families));
+    let font_combo = gtk::DropDown::new(Some(font_model.clone()), None::<&gtk::Expression>);
+    font_combo.set_hexpand(true);
+    font_combo.set_size_request(0, -1);
+    font_combo.add_css_class("text-font-picker");
+    font_combo.set_tooltip_text(Some("Font family"));
+    font_combo.set_selected(0);
     let size_spin = gtk::SpinButton::with_range(0.5, 50.0, 0.5);
     size_spin.set_width_chars(4);
     size_spin.set_max_width_chars(4);
@@ -277,6 +280,8 @@ fn build_text_panel(
         let selected_section = selected_section.clone();
         let text_view = text_view.clone();
         let font_combo = font_combo.clone();
+        let font_model = font_model.clone();
+        let font_names = font_names.clone();
         let colour_button = colour_button.clone();
         let size_spin = size_spin.clone();
         let bold_button = bold_button.clone();
@@ -349,14 +354,17 @@ fn build_text_panel(
                 for (align, button) in &align_buttons {
                     button.set_active(*align == layer.align);
                 }
-                font_combo.set_active_id(Some(&layer.font_family));
-                if font_combo.active_id().as_deref() != Some(layer.font_family.as_str()) {
-                    font_combo.append(
-                        Some(&layer.font_family),
-                        &font_family_display_name(&layer.font_family),
-                    );
-                    font_combo.set_active_id(Some(&layer.font_family));
-                }
+                let existing_font = font_names
+                    .borrow()
+                    .iter()
+                    .position(|name| name == &layer.font_family);
+                let font_index = existing_font.unwrap_or_else(|| {
+                    font_model.append(&font_family_display_name(&layer.font_family));
+                    let mut names = font_names.borrow_mut();
+                    names.push(layer.font_family.clone());
+                    names.len() - 1
+                });
+                font_combo.set_selected(font_index as u32);
                 let (red, green, blue, alpha) = layer.color_rgba();
                 colour_button.set_rgba(&gtk::gdk::RGBA::new(red, green, blue, alpha));
                 opacity_row.set_value(f64::from(layer.opacity));
@@ -510,17 +518,17 @@ fn build_text_panel(
         let syncing = syncing.clone();
         let update_history_buttons = update_history_buttons.clone();
         let redraw_canvas = redraw_canvas.clone();
-        font_combo.connect_changed(move |combo| {
+        let font_names = font_names.clone();
+        font_combo.connect_selected_notify(move |combo| {
             if syncing.get() {
                 return;
             }
             let Some(index) = selected.get() else {
                 return;
             };
-            let Some(family) = combo.active_id() else {
+            let Some(family) = font_names.borrow().get(combo.selected() as usize).cloned() else {
                 return;
             };
-            let family = family.to_string();
             session.borrow_mut().mutate(move |recipe| {
                 if let Some(layer) = recipe.text_layers.get_mut(index) {
                     layer.font_family = family.clone();

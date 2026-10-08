@@ -1,7 +1,7 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use adw::prelude::*;
 use gtk4 as gtk;
@@ -17,8 +17,6 @@ pub struct EditEditor {
     pub root: gtk::Box,
     photo_id: i64,
     back_button: gtk::Button,
-    zoom_in_action: Rc<dyn Fn()>,
-    zoom_out_action: Rc<dyn Fn()>,
     fit_action: Rc<dyn Fn()>,
     set_manual_zoom_action: Rc<dyn Fn(f64)>,
     current_fit_scale_action: Rc<dyn Fn() -> f64>,
@@ -40,14 +38,6 @@ impl EditEditor {
     pub fn set_back_label(&self, label: &str, tooltip: &str) {
         self.back_button
             .set_tooltip_text(Some(&format!("{label}: {tooltip}")));
-    }
-
-    pub fn zoom_in(&self) {
-        (self.zoom_in_action)();
-    }
-
-    pub fn zoom_out(&self) {
-        (self.zoom_out_action)();
     }
 
     pub fn fit(&self) {
@@ -84,12 +74,6 @@ impl EditEditor {
     /// so the shared infobar slider stays synchronized with +/- and Ctrl+wheel.
     pub fn set_zoom_sync_handler(&self, handler: impl Fn(f64, f64) + 'static) {
         self.zoom_sync.replace(Some(Box::new(handler)));
-    }
-
-    /// True while the sidebar Text tab is active. Space must not toggle
-    /// 1:1 in that section (text layers / in-field typing).
-    pub fn is_text_section_active(&self) -> bool {
-        self.text_toggle.is_active()
     }
 
     /// Shared handle to the Text tab toggle, for callers that need the
@@ -822,7 +806,6 @@ pub fn build(
                             target_width,
                             target_height,
                             recipe,
-                            interactive,
                             result_sender,
                         })
                         .is_err()
@@ -2140,8 +2123,6 @@ pub fn build(
         root,
         photo_id: photo.id(),
         back_button: back,
-        zoom_in_action,
-        zoom_out_action,
         fit_action,
         set_manual_zoom_action,
         current_fit_scale_action,
@@ -2184,12 +2165,12 @@ mod panel_tests {
         let Some(first) = flow.first_child() else {
             return 0;
         };
-        let row_y = first.allocation().y();
+        let row_y = first.compute_bounds(flow).unwrap().y();
         let mut count = 0;
         let mut child = Some(first);
         while let Some(widget) = child {
             child = widget.next_sibling();
-            if widget.allocation().y() == row_y {
+            if widget.compute_bounds(flow).unwrap().y() == row_y {
                 count += 1;
             }
         }
@@ -2300,7 +2281,7 @@ mod panel_tests {
         // Apply the same structural edit-panel CSS the real window installs,
         // so tile geometry matches production instead of stock theme padding.
         let edit_css = gtk::CssProvider::new();
-        edit_css.load_from_data(crate::window::EDIT_PANEL_CSS);
+        edit_css.load_from_string(crate::window::EDIT_PANEL_CSS);
         gtk::style_context_add_provider_for_display(
             &gtk::gdk::Display::default().unwrap(),
             &edit_css,
@@ -2372,7 +2353,7 @@ mod panel_tests {
         // can be slow on headless displays without a window manager; wait for
         // the grid to actually be laid out before asserting on its geometry.
         for _ in 0..100 {
-            if flow.allocation().width() > 0 {
+            if flow.width() > 0 {
                 break;
             }
             std::thread::sleep(Duration::from_millis(20));
@@ -2389,7 +2370,7 @@ mod panel_tests {
                 settle_gtk();
                 // The stack pages carry 14px side margins (matching the tab
                 // row), so the grid is 28px narrower than the paned position.
-                if (flow.allocation().width() - (position - 28)).abs() <= 8 {
+                if (flow.width() - (position - 28)).abs() <= 8 {
                     break;
                 }
                 std::thread::sleep(Duration::from_millis(10));
@@ -2400,7 +2381,7 @@ mod panel_tests {
             columns_at(360),
             3,
             "default pane width shows three compact columns (flowbox alloc was {:?})",
-            flow.allocation()
+            flow.width()
         );
         assert!(
             columns_at(540) >= 3,
@@ -2426,7 +2407,7 @@ mod panel_tests {
             tile_min_height >= 80,
             "preview needs a visible minimum height at the narrow tile width"
         );
-        assert!(tile_picture.allocation().height() >= tile_min_height);
+        assert!(tile_picture.height() >= tile_min_height);
 
         let top_level_tab_labels = buttons
             .iter()

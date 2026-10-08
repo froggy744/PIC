@@ -24,14 +24,6 @@ fn folder_navigation_scope(
 }
 
 impl Gallery {
-    /// Returns the currently selected thumbnail position when the grid has a
-    /// single active selection. Keyboard navigation uses this to decide when
-    /// Up/Down should cross into the adjacent folder.
-    pub fn selected_position(&self) -> Option<usize> {
-        let selected = self.selection.selection();
-        gtk::BitsetIter::init_first(&selected).map(|(_, position)| position as usize)
-    }
-
     pub fn scroll_position(&self) -> f64 {
         if self.using_virtual_photo_surface() {
             return self.sectioned_folder.scroll_position();
@@ -446,23 +438,6 @@ impl Gallery {
         });
         if folder_list_mode {
             self.focus_folder_tile(photo_id);
-        }
-    }
-
-    pub fn is_at_vertical_boundary(&self, direction: i32) -> bool {
-        let Some(position) = self.selected_position() else {
-            return false;
-        };
-        let item_count = self.store.n_items() as usize;
-        let columns = self.current_columns.get().max(1) as usize;
-        if item_count == 0 {
-            return false;
-        }
-
-        if direction < 0 {
-            position < columns
-        } else {
-            position.saturating_add(columns) >= item_count
         }
     }
 
@@ -1657,20 +1632,6 @@ fn folder_row_index_for_photo_id(root: &gtk::ListView, photo_id: i64) -> Option<
         if row.contains_photo(photo_id) {
             return Some(position);
         }
-    }
-    None
-}
-
-fn folder_id_from_named_ancestor(widget: &gtk::Widget) -> Option<i64> {
-    let mut current = Some(widget.clone());
-    while let Some(candidate) = current {
-        let name = candidate.widget_name();
-        if let Some(value) = name.as_str().strip_prefix("picasa-folder-row-") {
-            if let Ok(folder_id) = value.parse::<i64>() {
-                return Some(folder_id);
-            }
-        }
-        current = candidate.parent();
     }
     None
 }

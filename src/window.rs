@@ -25,6 +25,7 @@ pub(crate) mod theme;
 const THEME_SETTING_KEY: &str = "appearance-theme";
 
 /// Structural edit-mode styling shared by every visual theme.
+#[cfg(test)]
 pub(crate) const EDIT_PANEL_CSS: &str = crate::css::BASE;
 const SORT_FIELD_SETTING_KEY: &str = "photo-sort-field";
 const SORT_DIRECTION_SETTING_KEY: &str = "photo-sort-direction";
@@ -410,9 +411,11 @@ enum PhotoScanRequestReason {
     UserFolderRefresh,
     ManualLibraryRefresh,
     ImportFolder,
+    #[cfg(test)]
     FilesystemNotification,
     DebouncedWatchRefresh,
     AvailabilityUpdate,
+    #[cfg(test)]
     ProgrammaticSidebarSelection,
 }
 
@@ -425,9 +428,11 @@ impl PhotoScanRequestReason {
             // Raw filesystem signals never cross the scan boundary directly.
             // Only the coalesced/debounced watch request may start a targeted scan.
             Self::DebouncedWatchRefresh => Some(ScanJobKind::FolderRefresh),
-            Self::FilesystemNotification
-            | Self::AvailabilityUpdate
-            | Self::ProgrammaticSidebarSelection => None,
+            #[cfg(test)]
+            Self::FilesystemNotification => None,
+            Self::AvailabilityUpdate => None,
+            #[cfg(test)]
+            Self::ProgrammaticSidebarSelection => None,
         }
     }
 }

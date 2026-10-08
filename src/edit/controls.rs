@@ -141,6 +141,7 @@ fn add_section_label(parent: &gtk::Box, text: &str) {
 }
 
 const FILTER_TILE_WIDTH: i32 = 88;
+#[cfg(test)]
 const FILTER_TILE_MIN_WIDTH: i32 = FILTER_TILE_WIDTH;
 const FILTER_TILE_PREVIEW_WIDTH: i32 = FILTER_TILE_WIDTH - 4;
 const FILTER_TILE_PREVIEW_HEIGHT: i32 = FILTER_TILE_PREVIEW_WIDTH;

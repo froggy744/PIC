@@ -118,3 +118,19 @@ pub fn scan_hosts(prefix: Option<&str>) -> anyhow::Result<Vec<(String,String,u32
     if count<0 {anyhow::bail!("{}",c_error(&error));}
     Ok(results)
 }
+
+#[cfg(test)]
+mod scan_prefix_tests {
+    #[test]
+    fn invalid_subnet_prefix_is_rejected() {
+        let error = super::scan_hosts(Some("not.an.ip")).unwrap_err();
+        assert!(error.to_string().contains("Invalid subnet prefix"));
+    }
+
+    #[test]
+    fn overlong_subnet_prefix_is_rejected() {
+        let error = super::scan_hosts(Some("123456789012345678901234567890")).unwrap_err();
+        assert!(error.to_string().contains("Invalid subnet prefix"));
+    }
+
+}

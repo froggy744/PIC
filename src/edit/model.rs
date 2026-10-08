@@ -508,6 +508,7 @@ impl TextLayerSpec {
 
     /// Move the layer to a named photo position with the standard 3% margin,
     /// keeping content, formatting, size and opacity untouched.
+    #[cfg(test)]
     pub fn position_at(&mut self, anchor: OverlayAnchor) {
         let margin = Self::POSITION_MARGIN;
         self.anchor = anchor;
@@ -520,14 +521,6 @@ impl TextLayerSpec {
         };
         self.x = x;
         self.y = y;
-    }
-
-    pub fn reset_placement(&mut self) {
-        self.anchor = OverlayAnchor::Center;
-        self.x = 0.5;
-        self.y = 0.5;
-        self.opacity = 1.0;
-        self.visible = true;
     }
 
     pub fn color_rgba(&self) -> (f32, f32, f32, f32) {

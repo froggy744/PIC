@@ -215,7 +215,7 @@ fn metadata_from_css(css: &str) -> ThemeMetadata {
             }
             "window-controls" => {
                 metadata.window_controls = match value.to_ascii_lowercase().as_str() {
-                    "traffic-light" | "traffic-light" | "trafficlights" => {
+                    "traffic-light" | "trafficlights" => {
                         WindowControls::TrafficLight
                     }
                     "" | "native" => WindowControls::Native,
@@ -317,7 +317,7 @@ mod tests {
         provider.connect_parsing_error(move |_, _, error| {
             errors_for_signal.borrow_mut().push(error.to_string());
         });
-        provider.load_from_data(&css);
+        provider.load_from_string(&css);
         assert!(errors.borrow().is_empty(), "{:?}", errors.borrow());
     }
 

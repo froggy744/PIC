@@ -46,6 +46,7 @@ fn is_dng(path: &str) -> bool {
     crate::image_format::for_path(path).is_some_and(|format| format.id == "dng")
 }
 
+#[cfg(test)]
 fn decode_raw_thumbnail(reference: &str) -> Result<DecodedThumbnailSource> {
     decode_raw_thumbnail_with_max(reference, thumbnail_size())
 }
@@ -176,10 +177,6 @@ fn decode_raw_thumbnail_inner(reference: &str, max_edge: u32) -> Result<DecodedT
         "RAW thumbnail strategies failed: {}",
         failures.join("; ")
     ))
-}
-
-fn decode_dng_sensor_thumbnail(path: &Path) -> Result<DecodedThumbnailSource> {
-    decode_dng_sensor_thumbnail_with_max(path, thumbnail_size())
 }
 
 fn decode_dng_sensor_thumbnail_with_max(

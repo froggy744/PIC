@@ -1,5 +1,6 @@
 type RecoveryItem = (String, Option<i64>, Option<i64>);
 
+#[cfg(test)]
 pub fn recovery_items(items: Vec<RecoveryItem>) -> (Vec<RecoveryItem>, usize) {
     recovery_items_cancellable(items, || false)
 }

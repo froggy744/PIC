@@ -56,9 +56,6 @@ pub struct Gallery {
     // Folder rows actually exist, instead of stopping as soon as the backing
     // photo store contains the target id.
     stream_building: Rc<Cell<bool>>,
-    // Folder selected from search while the continuous stream is being built.
-    // Keep the target with the Gallery so clearing the search cannot drop it.
-    pending_folder_target: Rc<RefCell<Option<(i64, String)>>>,
     group_mode: Rc<Cell<GroupMode>>,
     group_date: Rc<Cell<GroupDate>>,
     group_ranges: Rc<RefCell<Vec<GroupRange>>>,
@@ -857,7 +854,6 @@ impl Gallery {
             pending_metadata: Rc::new(RefCell::new(HashMap::new())),
             progressive_group_dirty: Rc::new(Cell::new(false)),
             stream_building: Rc::new(Cell::new(false)),
-            pending_folder_target: Rc::new(RefCell::new(None)),
             group_mode,
             group_date,
             group_ranges,

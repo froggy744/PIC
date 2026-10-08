@@ -112,14 +112,14 @@ fn header_cell(text: &str, chars: Option<i32>, size: Option<i32>, expand: bool) 
 }
 
 pub fn open(parent: &gtk::Window, on_import: Rc<dyn Fn(String)>) {
-    let dialog=gtk::Dialog::with_buttons(
-        Some("Browse Network Photos"), Some(parent), gtk::DialogFlags::MODAL,
-        &[("Cancel",gtk::ResponseType::Cancel),("Import selected folder",gtk::ResponseType::Accept)]
-    );
+    let dialog=gtk::Window::new();
+    dialog.set_title(Some("Browse Network Photos"));
+    dialog.set_transient_for(Some(parent));
+    dialog.set_modal(true);
+    dialog.set_destroy_with_parent(true);
     dialog.set_default_size(760,520);
     dialog.set_resizable(true);
-    dialog.set_default_response(gtk::ResponseType::Accept);
-    let content=dialog.content_area();
+    let content=gtk::Box::new(gtk::Orientation::Vertical,8);
     content.set_spacing(8);
     content.set_margin_start(12);
     content.set_margin_end(12);
@@ -164,6 +164,16 @@ pub fn open(parent: &gtk::Window, on_import: Rc<dyn Fn(String)>) {
     status.set_xalign(0.0);
     status.set_wrap(true);
     content.append(&status);
+    let actions=gtk::Box::new(gtk::Orientation::Horizontal,8);
+    actions.set_halign(gtk::Align::End);
+    let cancel=gtk::Button::with_label("Cancel");
+    let import_selected=gtk::Button::with_label("Import selected folder");
+    import_selected.add_css_class("suggested-action");
+    actions.append(&cancel);
+    actions.append(&import_selected);
+    content.append(&actions);
+    dialog.set_default_widget(Some(&import_selected));
+    dialog.set_child(Some(&content));
 
     let current=Rc::new(RefCell::new(String::from("network:///")));
     let entries=Rc::new(RefCell::new(Vec::<Entry>::new()));
@@ -279,12 +289,15 @@ pub fn open(parent: &gtk::Window, on_import: Rc<dyn Fn(String)>) {
         }else {load_for_up(parent);}
     });
     let current_for_submit=current.clone();
-    dialog.connect_response(move |dlg,reply|{
-        if reply==gtk::ResponseType::Accept {
-            let uri=current_for_submit.borrow().clone();
-            if uri!="network:///" && network_shares::private(&uri) {on_import(uri);}
-        }
-        dlg.close();
+    let dialog_for_submit=dialog.downgrade();
+    import_selected.connect_clicked(move |_|{
+        let uri=current_for_submit.borrow().clone();
+        if uri!="network:///" && network_shares::private(&uri) {on_import(uri);}
+        if let Some(dialog)=dialog_for_submit.upgrade(){dialog.close();}
+    });
+    let dialog_for_cancel=dialog.downgrade();
+    cancel.connect_clicked(move |_|{
+        if let Some(dialog)=dialog_for_cancel.upgrade(){dialog.close();}
     });
     dialog.present();
     load("network:///".to_string());

@@ -312,7 +312,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 };
                 let pending_for_event = pending.clone();
                 let scan_root_for_event = scan_root.clone();
-                monitor.connect_changed(move |_, file, other_file, event| {
+                monitor.connect_changed(move |_, _, _, event| {
                     // Ignore metadata-only monitor noise. Content changes are
                     // coalesced below before they can authorize any scan.
                     if matches!(
@@ -3291,20 +3291,7 @@ fn show_photo_export_dialog(
     jobs: Vec<crate::edit::export_batch::ExportJob>,
     progress: Rc<OperationProgressUi>,
 ) {
-    let dialog = gtk::Dialog::new();
-    if jobs.len() == 1 {
-        dialog.set_title(Some("Export Photo"));
-    } else {
-        dialog.set_title(Some("Export Photos"));
-    }
-    dialog.set_transient_for(Some(window));
-    dialog.set_modal(true);
-    dialog.add_button("Cancel", gtk::ResponseType::Cancel);
-    let export_button = dialog.add_button("Export", gtk::ResponseType::Ok);
-    export_button.add_css_class("suggested-action");
-    dialog.set_default_response(gtk::ResponseType::Ok);
-
-    let content = dialog.content_area();
+    let content = gtk::Box::new(gtk::Orientation::Vertical, 12);
     content.set_spacing(12);
     content.set_margin_top(18);
     content.set_margin_bottom(6);
@@ -3344,17 +3331,25 @@ fn show_photo_export_dialog(
     grid.attach(&type_label, 0, size_row + 1, 1, 1);
     grid.attach(&file_type, 1, size_row + 1, 1, 1);
     content.append(&grid);
+    let dialog = adw::AlertDialog::builder()
+        .heading(if jobs.len() == 1 {
+            "Export Photo"
+        } else {
+            "Export Photos"
+        })
+        .extra_child(&content)
+        .close_response("cancel")
+        .default_response("export")
+        .build();
+    dialog.add_response("cancel", "Cancel");
+    dialog.add_response("export", "Export");
+    dialog.set_response_appearance("export", adw::ResponseAppearance::Suggested);
 
     {
-        let dialog_for_response = dialog.clone();
         let window = window.clone();
         let size = size.clone();
         let file_type = file_type.clone();
-        dialog.connect_response(move |_, response| {
-            if response != gtk::ResponseType::Ok {
-                dialog_for_response.destroy();
-                return;
-            }
+        dialog.connect_response(Some("export"), move |_, _| {
             let max_edge = match size.selected() {
                 1 => 3840,
                 2 => 2048,
@@ -3373,7 +3368,6 @@ fn show_photo_export_dialog(
                     job
                 })
                 .collect::<Vec<_>>();
-            dialog_for_response.destroy();
             choose_photo_export_destination(
                 &window,
                 jobs,
@@ -3383,7 +3377,7 @@ fn show_photo_export_dialog(
             );
         });
     }
-    dialog.show();
+    dialog.present(Some(window));
 }
 
 fn choose_photo_export_destination(
@@ -3394,45 +3388,47 @@ fn choose_photo_export_destination(
     progress: Rc<OperationProgressUi>,
 ) {
     let multiple = jobs.len() > 1;
-    let dialog = gtk::FileChooserNative::new(
-        Some(if multiple {
+    let dialog = gtk::FileDialog::builder()
+        .title(if multiple {
             "Export Photos to Folder"
         } else {
             "Export Photo"
-        }),
-        Some(window),
-        if multiple {
-            gtk::FileChooserAction::SelectFolder
-        } else {
-            gtk::FileChooserAction::Save
-        },
-        Some("Export"),
-        Some("Cancel"),
-    );
+        })
+        .accept_label("Export")
+        .modal(true)
+        .build();
     if !multiple {
         if let Some(job) = jobs.first() {
-            dialog.set_current_name(&job.file_name);
+            dialog.set_initial_name(Some(&job.file_name));
         }
     }
-    dialog.connect_response(move |dialog, response| {
-        if response == gtk::ResponseType::Accept {
-            if let Some(path) = dialog.file().and_then(|file| file.path()) {
-                if multiple {
-                    start_photo_export_folder(progress.clone(), jobs.clone(), path, max_edge, format);
-                } else if let Some(job) = jobs.first().cloned() {
-                    start_photo_export_single(progress.clone(), job, path, max_edge, format);
-                }
+    let on_file = Rc::new(move |file: gio::File| {
+        if let Some(path) = file.path() {
+            if multiple {
+                start_photo_export_folder(progress.clone(), jobs.clone(), path, max_edge, format);
+            } else if let Some(job) = jobs.first().cloned() {
+                start_photo_export_single(progress.clone(), job, path, max_edge, format);
             }
         }
-        dialog.destroy();
     });
-    dialog.show();
+    if multiple {
+        dialog.select_folder(Some(window), None::<&gio::Cancellable>, move |result| {
+            if let Ok(file) = result {
+                on_file(file);
+            }
+        });
+    } else {
+        dialog.save(Some(window), None::<&gio::Cancellable>, move |result| {
+            if let Ok(file) = result {
+                on_file(file);
+            }
+        });
+    }
 }
 
 enum ExportProgressMessage {
     Update {
         done: usize,
-        total: usize,
         filename: String,
         failed: usize,
     },
@@ -3511,10 +3507,9 @@ fn start_photo_export_folder(
             crate::edit::export_batch::default_export_quality(),
             format,
             |job| crate::edit::export_batch::render_job(job),
-            |done, total, filename, failed| {
+            |done, _total, filename, failed| {
                 let _ = sender.send(ExportProgressMessage::Update {
                     done,
-                    total,
                     filename: filename.to_string(),
                     failed,
                 });
@@ -3572,7 +3567,6 @@ fn start_photo_export_single(
         };
         let _ = sender.send(ExportProgressMessage::Update {
             done: 1,
-            total: 1,
             filename: file_name,
             failed: outcome.failed,
         });
@@ -3673,11 +3667,10 @@ fn start_photo_export_single(
         sidebar,
         thumbnail_recovery_requested,
         thumbnail_recovery_deferred,
-        reconnected_sources,
         sidebar_for_events,
         right_column,
         right_header,
-        search,
+        _search,
     ) = include!("layout.rs");
 
     // Window-level photo shortcuts own keys that must work regardless of
@@ -3874,7 +3867,6 @@ fn start_photo_export_single(
     let sidebar_breakpoint_transition = Rc::new(Cell::new(false));
     let sidebar_breakpoint_generation = Rc::new(Cell::new(0u64));
     {
-        let window_for_breakpoint = window.clone();
         let main_split_for_breakpoint = main_split.clone();
         let sidebar_for_breakpoint = sidebar.clone();
         let transition = sidebar_breakpoint_transition.clone();
@@ -4025,7 +4017,6 @@ fn start_photo_export_single(
     refresh_folder_slot.replace(Some({
         let scan_job = scan_job.clone();
         let refresh_prepare_sender = refresh_prepare_sender.clone();
-        let refresh_status_box = refresh_status_box.clone();
         let refresh_status_spinner = refresh_status_spinner.clone();
         let refresh_status_label = refresh_status_label.clone();
         let stop_scan = stop_scan.clone();
@@ -4168,25 +4159,17 @@ fn start_photo_export_single(
         let scan_job = scan_job.clone();
         let sender = scan_sender.clone();
         let requested = thumbnail_recovery_requested.clone();
-        let reconnected_sources = reconnected_sources.clone();
         let operation_progress = operation_progress.clone();
         Rc::new(move || {
-            if scan_job.borrow().kind.is_some()
-                || (!requested.get() && reconnected_sources.borrow().pending.is_empty())
-            {
+            if scan_job.borrow().kind.is_some() || !requested.get() {
                 return;
             }
             let Ok(mut photos) = db::photos(&connection.borrow(), None, false, None) else {
                 return;
             };
-            if !requested.get() {
-                let sources = reconnected_sources.borrow();
-                photos.retain(|photo| sources.includes(&photo.path));
-            }
             retain_enabled_formats(&connection.borrow(), &mut photos);
             requested.set(false);
-            reconnected_sources.borrow_mut().pending.clear();
-            // Unrelated mounts need no cache checks, worker, or progress UI.
+            // No enabled photos need no cache checks, worker, or progress UI.
             if photos.is_empty() {
                 return;
             }
@@ -4469,7 +4452,6 @@ fn start_photo_export_single(
                 .and_then(|database| db::open_existing(&database))
                 .and_then(|connection| db::imported_root_paths(&connection))
                 .map_err(|error| error.to_string());
-            let count = roots.as_ref().map(|roots| roots.len()).unwrap_or(0);
             
             let _ = sender.send(RefreshPrepareEvent::LibraryReady {
                 generation,
@@ -4721,7 +4703,7 @@ fn start_photo_export_single(
                     refresh_status_box_for_events.set_visible(true);
                 }
 
-                scanner::ScanEvent::NetworkProgress {found,added,metadata_ready,previews_ready,catalog_complete} => {
+                scanner::ScanEvent::NetworkProgress {found,added,metadata_ready: _metadata_ready,previews_ready,catalog_complete} => {
                     let phase=if *catalog_complete {"Finishing previews"}else{"Adding photos"};
                     let (done, total) = if *catalog_complete { (*previews_ready, *found) } else { (*added, *found) };
                     refresh_status_label_for_events.set_text(&format!("{phase} · {} / {}", crate::window::format_count(done), crate::window::format_count(total)));

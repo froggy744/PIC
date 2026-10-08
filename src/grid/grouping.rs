@@ -270,37 +270,6 @@ impl Gallery {
         true
     }
 
-    pub fn set_pending_folder_target(&self, folder_id: i64, folder_path: String) {
-        self.pending_folder_target
-            .replace(Some((folder_id, folder_path)));
-    }
-
-    pub fn clear_pending_folder_target(&self) {
-        self.pending_folder_target.replace(None);
-    }
-
-    pub fn has_pending_folder_target(&self) -> bool {
-        self.pending_folder_target.borrow().is_some()
-    }
-
-    /// Focus the search-selected folder only after its real Folder rows exist.
-    /// A cache restore makes those rows available immediately; a progressive
-    /// build makes them available once ranges and rows have been rebuilt.
-    pub fn try_focus_pending_folder(&self) -> bool {
-        if self.stream_building.get() || self.group_mode.get() != GroupMode::Folder {
-            return false;
-        }
-        let Some((folder_id, folder_path)) = self.pending_folder_target.borrow().clone() else {
-            return false;
-        };
-        if !self.scroll_to_folder(folder_id, &folder_path) {
-            return false;
-        }
-        self.pending_folder_target.replace(None);
-
-        true
-    }
-
     fn restore_folder_cache(&self) -> bool {
         let Some(cache) = self.folder_cache.borrow().clone() else {
             return false;
@@ -348,35 +317,6 @@ impl Gallery {
         if self.group_mode.get() == GroupMode::Folder {
             self.rebuild_folder_rows();
         }
-    }
-
-    /// Folder id at the leading visible row. This is intentionally cheaper
-    /// than `photo_for_visible_folder_row`: passive sidebar follow needs only
-    /// the row's folder identity, not a PhotoObject or a group-range scan.
-    pub fn visible_folder_id(&self) -> Option<i64> {
-        if self.group_mode.get() != GroupMode::Folder {
-            return None;
-        }
-        if crate::grid::sectioned_folder_view_enabled() {
-            return self
-                .sectioned_folder
-                .photo_for_scroll_position(self.sectioned_folder.scroll_position())
-                .map(|photo| photo.folder_id());
-        }
-        let width = self.folder_root.width().max(1) as f64;
-        for y in [4.0_f64, 20.0, 40.0, 64.0] {
-            let picked = self
-                .folder_root
-                .pick(width * 0.5, y, gtk::PickFlags::DEFAULT);
-            if let Some(folder_id) = picked
-                .as_ref()
-                .and_then(folder_id_from_named_ancestor)
-                .filter(|folder_id| *folder_id > 0)
-            {
-                return Some(folder_id);
-            }
-        }
-        None
     }
 
     fn photo_for_visible_folder_row(&self) -> Option<PhotoObject> {

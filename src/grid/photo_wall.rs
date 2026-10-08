@@ -10,7 +10,6 @@ pub enum PhotoLayout {
 struct PhotoWallState {
     generation: u64,
     layout: photo_wall_layout::PhotoWallLayout,
-    quality_gate: WallQualityGate,
     quality_attempted: HashSet<String>,
 }
 
@@ -575,7 +574,15 @@ impl Gallery {
                     .parent()
                     .and_downcast::<gtk::Viewport>()
                 {
-                    viewport.size_allocate(&viewport.allocation(), viewport.allocated_baseline());
+                    let (x, y) = viewport
+                        .parent()
+                        .and_then(|parent| viewport.compute_bounds(&parent))
+                        .map(|bounds| (bounds.x().round() as i32, bounds.y().round() as i32))
+                        .unwrap_or((0, 0));
+                    viewport.size_allocate(
+                        &gtk::Allocation::new(x, y, viewport.width(), viewport.height()),
+                        viewport.baseline(),
+                    );
                 }
             }
         }
@@ -661,12 +668,14 @@ impl Gallery {
     }
 }
 
+#[cfg(test)]
 #[derive(Default)]
 struct WallQualityGate {
     signature: Option<(u64, u64, u64, i32)>,
     stationary_since: Option<Instant>,
 }
 
+#[cfg(test)]
 impl WallQualityGate {
     fn ready(&mut self, signature: (u64, u64, u64, i32), now: Instant) -> bool {
         if self.signature != Some(signature) {
@@ -680,6 +689,7 @@ impl WallQualityGate {
     }
 }
 
+#[cfg(test)]
 fn wall_quality_needed(width: i32, height: i32, scale: i32) -> bool {
     width.max(height).max(0).saturating_mul(scale.max(1)) > 320
 }
@@ -694,7 +704,6 @@ impl SectionedFolderView {
             tile.tile.clear_wall_quality();
         }
         let mut state = self.wall_state.borrow_mut();
-        state.quality_gate = WallQualityGate::default();
         state.quality_attempted.clear();
     }
 

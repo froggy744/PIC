@@ -45,9 +45,9 @@ fn register_bundled_icons() {
 
 fn main() {
     use gio::prelude::*;
-    use gtk::prelude::*;
     use gtk4 as gtk;
     use libadwaita as adw;
+    use libadwaita::prelude::*;
 
     std::panic::set_hook(Box::new(|panic| {
         eprintln!("PICASA PANIC: {panic}");
@@ -101,22 +101,20 @@ fn main() {
                     .build();
                 recovery_parent.present();
 
-                let dialog = gtk::MessageDialog::builder()
-                    .transient_for(&recovery_parent)
-                    .modal(true)
-                    .message_type(gtk::MessageType::Error)
-                    .buttons(gtk::ButtonsType::None)
-                    .text("Could not open the photo library")
-                    .secondary_text(format!("{error:#}\n\nChoose another PIC database, create a new library, or close the app."))
+                let dialog = adw::AlertDialog::builder()
+                    .heading("Could not open the photo library")
+                    .body(format!("{error:#}\n\nChoose another PIC database, create a new library, or close the app."))
+                    .close_response("close")
                     .build();
-                dialog.add_button("Close", gtk::ResponseType::Close);
-                dialog.add_button("Create New Library", gtk::ResponseType::Other(1));
-                dialog.add_button("Choose Database…", gtk::ResponseType::Accept);
+                dialog.add_response("close", "Close");
+                dialog.add_response("create", "Create New Library");
+                dialog.add_response("choose", "Choose Database…");
+                dialog.set_response_appearance("choose", adw::ResponseAppearance::Suggested);
                 let application = application.clone();
-                dialog.connect_response(move |dialog, response| {
-                    dialog.close();
-
-                    if response == gtk::ResponseType::Other(1) {
+                let recovery_parent_for_response = recovery_parent.clone();
+                dialog.connect_response(None, move |_, response| {
+                    let recovery_parent = recovery_parent_for_response.clone();
+                    if response == "create" {
                         let result = db::suggested_library_path("Default Library")
                             .and_then(|path| db::create_library(&path, "Default Library", ""))
                             .and_then(|library| db::select_library(&library.id));
@@ -133,26 +131,27 @@ fn main() {
                         return;
                     }
 
-                    if response != gtk::ResponseType::Accept {
+                    if response != "choose" {
                         recovery_parent.close();
                         return;
                     }
-                    let chooser = gtk::FileChooserNative::new(
-                        Some("Open PIC Database"),
-                        Some(&recovery_parent),
-                        gtk::FileChooserAction::Open,
-                        Some("Open"),
-                        Some("Cancel"),
-                    );
                     let filter = gtk::FileFilter::new();
                     filter.set_name(Some("SQLite databases"));
                     filter.add_pattern("*.db");
-                    chooser.add_filter(&filter);
+                    let filters = gio::ListStore::new::<gtk::FileFilter>();
+                    filters.append(&filter);
+                    let chooser = gtk::FileDialog::builder()
+                        .title("Open PIC Database")
+                        .accept_label("Open")
+                        .filters(&filters)
+                        .modal(true)
+                        .build();
                     let application = application.clone();
-                    let recovery_parent = recovery_parent.clone();
-                    chooser.connect_response(move |chooser, response| {
-                        if response == gtk::ResponseType::Accept {
-                            if let Some(path) = chooser.file().and_then(|file| file.path()) {
+                    let recovery_parent_for_open = recovery_parent.clone();
+                    chooser.open(Some(&recovery_parent), None::<&gio::Cancellable>, move |result| {
+                        let recovery_parent = recovery_parent_for_open;
+                        if let Ok(file) = result {
+                            if let Some(path) = file.path() {
                                 let known = db::known_libraries()
                                     .ok()
                                     .and_then(|libraries| {
@@ -174,11 +173,9 @@ fn main() {
                                 }
                             }
                         }
-                        chooser.destroy();
                     });
-                    chooser.show();
                 });
-                dialog.present();
+                dialog.present(Some(&recovery_parent));
             }
         }
     });

@@ -27,7 +27,6 @@
             // destination is established. This also covers Folder-to-Folder
             // reuse, which otherwise would not bump the refresh generation.
             invalidate_pending_grid_navigation();
-            gallery.clear_pending_folder_target();
             let query = search_text.borrow().clone();
             cleared_query.replace(Some(query.clone()));
             if !exact_photo_target {
@@ -308,7 +307,7 @@
                     folder.id,
                     favorite,
                 ) {
-                    Ok(changed) => {
+                    Ok(_) => {
                         
                         refresh_photo_actions_grid(&context);
                         (context.on_unavailable)();
@@ -468,10 +467,6 @@
     // Reconnecting sources also resumes previews for already indexed photos.
     let thumbnail_recovery_requested = Rc::new(Cell::new(true));
     let thumbnail_recovery_deferred = Rc::new(Cell::new(false));
-    let reconnected_sources = Rc::new(RefCell::new(ReconnectedSources {
-        mounted: mounted_source_roots(),
-        ..Default::default()
-    }));
     let volume_monitor = gio::VolumeMonitor::get();
     let mount_refresh_pending = Rc::new(Cell::new(false));
     let schedule_mount_refresh: Rc<dyn Fn()> = {
@@ -494,17 +489,17 @@
         })
     };
     let schedule_mount_refresh_for_mount = schedule_mount_refresh.clone();
-    volume_monitor.connect_mount_added(move |_, mount| {
+    volume_monitor.connect_mount_added(move |_, _| {
         
         schedule_mount_refresh_for_mount();
     });
     let schedule_mount_refresh_for_unmount = schedule_mount_refresh.clone();
-    volume_monitor.connect_mount_removed(move |_, mount| {
+    volume_monitor.connect_mount_removed(move |_, _| {
         
         schedule_mount_refresh_for_unmount();
     });
     let schedule_mount_refresh_for_change = schedule_mount_refresh.clone();
-    volume_monitor.connect_mount_changed(move |_, mount| {
+    volume_monitor.connect_mount_changed(move |_, _| {
         
         schedule_mount_refresh_for_change();
     });
@@ -1677,7 +1672,6 @@
         sidebar,
         thumbnail_recovery_requested,
         thumbnail_recovery_deferred,
-        reconnected_sources,
         sidebar_for_events,
         right_column,
         right_header,

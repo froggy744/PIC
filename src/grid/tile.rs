@@ -1312,53 +1312,11 @@ impl SquareTile {
         }
     }
 
-    fn clear_photo(&self) {
-        self.unload_visual();
-        self.imp().photo.take();
-        self.imp().photo_index.set(None);
-        if let Some(frame) = self.first_child().and_downcast::<gtk::Overlay>() {
-            if let Some(picture) = frame.child().and_downcast::<gtk::Picture>() {
-                // A fast Folder scrollbar scrub unbinds/rebinds rows faster
-                // than thumbnail decodes can land. Blanking the paintable
-                // here would leave the recycled tile with nothing to show
-                // when bind_photo_folder_fast tries to keep the previous
-                // image as a transient backstop. The settle refresh clears
-                // any unresolved stale image once scrubbing stops; the
-                // completion drain validates presentation keys before
-                // applying, so no wrong image can persist on screen.
-                if !preserve_grid_paintable_during_motion() {
-                    picture.set_paintable(gtk::gdk::Paintable::NONE);
-                }
-                picture.set_tooltip_text(None);
-            }
-            for class_name in ["manual-selected", "folder-photo-selected"] {
-                frame.remove_css_class(class_name);
-            }
-            let mut child = frame.first_child();
-            while let Some(current) = child {
-                if let Some(image) = current.downcast_ref::<gtk::Image>() {
-                    if image.has_css_class("favorite-badge")
-                        || image.has_css_class("edited-badge")
-                        || image.has_css_class("selection-badge")
-                    {
-                        image.set_visible(false);
-                    }
-                }
-                if let Some(button) = current.downcast_ref::<gtk::Button>() {
-                    if button.has_css_class("offline-badge") {
-                        button.set_visible(false);
-                    }
-                }
-                child = current.next_sibling();
-            }
-        }
-    }
-
     fn set_manual_selected(&self, selected: bool) {
         let Some(frame) = self.first_child().and_downcast::<gtk::Overlay>() else {
             return;
         };
-        // `clear_photo` hides the selection badge when a tile is recycled.
+        // Recycling can hide the selection badge.
         // Opacity is the real on/off switch via CSS, so make the badge visible
         // again here or recycled tiles lose their indicator.
         if selected {

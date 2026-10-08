@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::rc::Rc;
 
 use gio::prelude::*;
@@ -12,10 +11,6 @@ pub(super) fn reveal_file(file: &gio::File) -> bool {
         .arg(path)
         .spawn()
         .is_ok()
-}
-
-pub(super) fn extra_mounted_roots() -> HashSet<String> {
-    HashSet::new()
 }
 
 pub(super) fn install_native_mount_monitor(

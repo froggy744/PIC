@@ -2,8 +2,7 @@
 //! The catalog writer owns commits and acknowledges durable directory ends.
 use super::{send, IndexedPhoto, ScanControl, ScanEvent};
 use crate::{db, thumbnail};
-use anyhow::{Context, Result};
-use gio::prelude::*;
+use anyhow::Result;
 use rusqlite::{params, Connection};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};

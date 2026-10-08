@@ -558,29 +558,6 @@ fn install_folder_smooth_gallery_scroll(
     scrolled.add_controller(controller);
 }
 
-fn install_gallery_zoom_scroll(scrolled: &gtk::ScrolledWindow, gallery: Rc<grid::Gallery>) {
-    // Folder mode deliberately leaves ordinary wheel/touchpad/scrollbar input
-    // entirely to GTK. Only Ctrl+wheel is intercepted for thumbnail zoom.
-    let controller = gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::VERTICAL);
-    controller.set_propagation_phase(gtk::PropagationPhase::Capture);
-    controller.connect_scroll(move |controller, _, dy| {
-        if !controller
-            .current_event_state()
-            .contains(gtk::gdk::ModifierType::CONTROL_MASK)
-        {
-            return glib::Propagation::Proceed;
-        }
-
-        if dy < 0.0 {
-            gallery.zoom_in();
-        } else if dy > 0.0 {
-            gallery.zoom_out();
-        }
-        glib::Propagation::Stop
-    });
-    scrolled.add_controller(controller);
-}
-
 fn open_in_folder_should_stop(building: bool, revealed: bool, attempt: u32) -> bool {
     (!building && revealed) || attempt >= 800
 }
@@ -614,6 +591,7 @@ fn can_reuse_folder_stream_for_destination(
     has_folder_target && folder_cache_available
 }
 
+#[cfg(test)]
 fn search_folder_focus_should_stop(
     still_on_target: bool,
     search_is_clear: bool,

@@ -119,3 +119,6 @@ popover.sidebar-section-tooltip-menu button.sidebar-section-tooltip-item:active 
   margin: -4px;
   border-radius: 9999px;
 }
+
+.tour-heading { font-size: 22px; font-weight: 700; }
+.welcome-camera { -gtk-icon-shadow: 0 2px 4px rgba(0, 0, 0, 0.24); }

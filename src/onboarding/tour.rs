@@ -75,15 +75,10 @@ pub(super) fn build() -> adw::Dialog {
     stack.set_vexpand(true);
     stack.set_hhomogeneous(false);
     stack.set_vhomogeneous(false);
-    let heading_style = gtk::CssProvider::new();
-    heading_style.load_from_data(".tour-heading { font-size: 22px; font-weight: 700; }");
     for (index, (title, description)) in STEPS.iter().enumerate() {
         let page = gtk::Box::new(gtk::Orientation::Vertical, 12);
         let heading = gtk::Label::new(Some(title));
         heading.add_css_class("tour-heading");
-        heading
-            .style_context()
-            .add_provider(&heading_style, gtk::STYLE_PROVIDER_PRIORITY_APPLICATION);
         heading.set_xalign(0.5);
         let introduction = gtk::Box::new(gtk::Orientation::Horizontal, 12);
         introduction.set_halign(gtk::Align::Center);

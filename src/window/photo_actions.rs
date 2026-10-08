@@ -13,7 +13,7 @@ fn ensure_context_menu_css(display: &gtk::gdk::Display) {
         return;
     }
     let css = gtk::CssProvider::new();
-    css.load_from_data(crate::css::PHOTO_CONTEXT_MENU);
+    css.load_from_string(crate::css::PHOTO_CONTEXT_MENU);
     gtk::style_context_add_provider_for_display(
         display,
         &css,
@@ -413,7 +413,7 @@ fn show_photo_context_menu(
     let album_popover = build_album_popover(
         context.clone(),
         selection_provider.clone(),
-        { dismiss_menu.clone() },
+        dismiss_menu.clone(),
         restore_album_view.clone(),
     );
     unfocus_submenu(&album_popover);

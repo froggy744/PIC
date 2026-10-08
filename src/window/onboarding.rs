@@ -468,6 +468,7 @@ impl OnboardingCoordinator {
             self.present_wizard(&wizard);
         }
     }
+    #[cfg(test)]
     fn present_recovery(self: &Rc<Self>) {
         self.reuse_matching_active_import();
         let Some(wizard) = self.ensure_wizard() else {
@@ -544,6 +545,7 @@ impl OnboardingCoordinator {
             self.show_tips_if_eligible();
         }
     }
+    #[cfg(test)]
     pub(super) fn install_tips_host(&self, host: &gtk::Box) {
         self.tips_host.set(Some(host));
     }

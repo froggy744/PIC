@@ -25,8 +25,6 @@ enum ImportMessage {
     Progress {
         done: usize,
         total: usize,
-        copied: usize,
-        skipped: usize,
         filename: String,
     },
     Done {
@@ -354,8 +352,6 @@ fn copy_photos(
                 let _ = sender.send(ImportMessage::Progress {
                     done: index + 1,
                     total,
-                    copied,
-                    skipped,
                     filename: filename.to_string_lossy().into_owned(),
                 });
                 continue;
@@ -379,8 +375,6 @@ fn copy_photos(
         let _ = sender.send(ImportMessage::Progress {
             done: index + 1,
             total,
-            copied,
-            skipped,
             filename: filename.to_string_lossy().into_owned(),
         });
     }
@@ -984,8 +978,6 @@ pub fn present(
                         Ok(ImportMessage::Progress {
                             done,
                             total,
-                            copied: _,
-                            skipped: _,
                             filename,
                         }) => {
                             progress.update("Importing photos", done, total, &filename, 0);

@@ -51,6 +51,7 @@ fn anchored_scroll_target(
     normalized * new_content + new_padding - pointer
 }
 
+#[cfg(test)]
 fn pointer_over_content(pointer: f64, viewport: f64, content: f64) -> bool {
     if !pointer.is_finite() || !viewport.is_finite() || !content.is_finite() {
         return false;

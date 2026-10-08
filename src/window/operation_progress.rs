@@ -158,7 +158,7 @@ impl OperationProgressUi {
             let Some(this) = weak.upgrade() else {
                 return glib::ControlFlow::Break;
             };
-            this.apply_space_guard(area.allocated_width());
+            this.apply_space_guard(area.width());
             glib::ControlFlow::Continue
         });
     }
@@ -242,11 +242,6 @@ impl OperationProgressUi {
     fn fits(&self, budget: i32) -> bool {
         let (min, ..) = self.root.measure(gtk::Orientation::Horizontal, -1);
         min <= budget
-    }
-
-    /// Fire `callback` when the user hits Stop on this notification bar.
-    pub fn connect_stop<C: Fn() + 'static>(&self, callback: C) {
-        self.stop.connect_clicked(move |_| callback());
     }
 
     pub fn connect_dismiss(&self) {

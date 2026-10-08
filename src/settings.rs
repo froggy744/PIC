@@ -39,7 +39,7 @@ impl SettingsWindow {
     /// from the newly selected library the next time Settings opens.
     pub fn reset(&self) {
         if let Some(window) = self.window.borrow().upgrade() {
-            window.hide();
+            window.set_visible(false);
             window.set_content(None::<&gtk::Widget>);
         }
         self.window.borrow_mut().set(None::<&adw::Window>);
@@ -84,14 +84,11 @@ impl SettingsWindow {
         window.set_modal(false);
         // Hide instead of destroy: closing settings must never depend on
         // widget teardown order, and reopening reuses the built pages.
-        {
-            let window_for_close = window.clone();
-            window.connect_close_request(move |window| {
-                crate::window::debug_log("SETTINGS: close requested -> hiding");
-                window.hide();
-                glib::Propagation::Stop
-            });
-        }
+        window.connect_close_request(move |window| {
+            crate::window::debug_log("SETTINGS: close requested -> hiding");
+            window.set_visible(false);
+            glib::Propagation::Stop
+        });
 
     let layout = gtk::Box::new(gtk::Orientation::Vertical, 0);
     layout.set_hexpand(true);
@@ -241,23 +238,23 @@ fn formats_page(
         );
     }
 
-    let pair_mode = gtk::ComboBoxText::new();
-    pair_mode.append(Some("both"), "Show both");
-    pair_mode.append(Some("jpeg"), "Prefer JPEG");
-    pair_mode.append(Some("raw"), "Prefer RAW");
-    pair_mode.set_active_id(Some(
-        crate::image_format::raw_jpeg_pair_mode(&connection.borrow()).key(),
-    ));
+    let pair_mode = gtk::DropDown::from_strings(&["Show both", "Prefer JPEG", "Prefer RAW"]);
+    let selected = match crate::image_format::raw_jpeg_pair_mode(&connection.borrow()).key() {
+        "jpeg" => 1,
+        "raw" => 2,
+        _ => 0,
+    };
+    pair_mode.set_selected(selected);
     pair_mode.set_valign(gtk::Align::Center);
     {
         let connection = connection.clone();
         let formats_changed = formats_changed.clone();
-        pair_mode.connect_changed(move |combo| {
-            let mode = combo
-                .active_id()
-                .as_deref()
-                .map(crate::image_format::RawJpegPairMode::from_key)
-                .unwrap_or(crate::image_format::RawJpegPairMode::Both);
+        pair_mode.connect_selected_notify(move |dropdown| {
+            let mode = match dropdown.selected() {
+                1 => crate::image_format::RawJpegPairMode::PreferJpeg,
+                2 => crate::image_format::RawJpegPairMode::PreferRaw,
+                _ => crate::image_format::RawJpegPairMode::Both,
+            };
             if let Err(error) =
                 crate::image_format::set_raw_jpeg_pair_mode(&connection.borrow(), mode)
             {
@@ -1025,22 +1022,17 @@ fn library_page(
 
 /// Destructive-action confirmation dialog parented to the settings window.
 fn confirm_destructive(parent: &adw::Window, title: &str, message: &str, action: Rc<dyn Fn()>) {
-    let dialog = gtk::MessageDialog::builder()
-        .transient_for(parent)
-        .modal(true)
-        .message_type(gtk::MessageType::Warning)
-        .buttons(gtk::ButtonsType::Cancel)
-        .text(title)
-        .secondary_text(message)
+    let dialog = adw::AlertDialog::builder()
+        .heading(title)
+        .body(message)
+        .close_response("cancel")
+        .default_response("cancel")
         .build();
-    dialog.add_button("Continue", gtk::ResponseType::Accept);
-    dialog.connect_response(move |dialog, response| {
-        if response == gtk::ResponseType::Accept {
-            action();
-        }
-        dialog.close();
-    });
-    dialog.present();
+    dialog.add_response("cancel", "Cancel");
+    dialog.add_response("continue", "Continue");
+    dialog.set_response_appearance("continue", adw::ResponseAppearance::Destructive);
+    dialog.connect_response(Some("continue"), move |_, _| action());
+    dialog.present(Some(parent));
 }
 
 /// Load the thumbnail cache statistics in the background and fill the Library

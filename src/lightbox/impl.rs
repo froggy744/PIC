@@ -1893,10 +1893,6 @@ impl Lightbox {
     /// which is a separate vec captured at `open()`. Without this, a paste
     /// that lands while the viewer is open re-renders the stale recipe until
     /// the photo is closed and reopened.
-    pub fn update_edit_recipe(&self, id: i64, recipe: &str) {
-        self.update_edit_recipes_batch(&[(id, recipe.to_string())]);
-    }
-
     pub fn update_edit_recipes_batch(&self, updates: &[(i64, String)]) {
         if updates.is_empty() {
             return;

@@ -19,93 +19,9 @@ fn invalidate_availability_refreshes() {
     AVAILABILITY_GENERATION.fetch_add(1, AtomicOrdering::Relaxed);
 }
 
-#[derive(Default)]
-struct ReconnectedSources {
-    mounted: std::collections::HashSet<String>,
-    pending: std::collections::HashSet<String>,
-}
-
-impl ReconnectedSources {
-    fn update(&mut self, mounted: std::collections::HashSet<String>) {
-        self.pending.extend(mounted.difference(&self.mounted).cloned());
-        // A drive may disappear again while recovery waits for another scan.
-        self.pending.retain(|root| mounted.contains(root));
-        self.mounted = mounted;
-    }
-
-    fn includes(&self, path: &str) -> bool {
-        let file = crate::source::file(path);
-        self.pending.iter().any(|root| {
-            let root = crate::source::file(root);
-            file.equal(&root) || file.has_prefix(&root)
-        })
-    }
-}
-
-fn mounted_source_roots() -> std::collections::HashSet<String> {
-    let mut roots = std::collections::HashSet::new();
-    for mount in gio::VolumeMonitor::get().mounts() {
-        let root = mount.root();
-        roots.insert(root.uri().to_string());
-        if let Some(path) = root.path() {
-            roots.insert(gio::File::for_path(path).uri().to_string());
-        }
-    }
-    roots.extend(crate::platform::extra_mounted_roots());
-    roots
-}
-
 #[cfg(test)]
-mod reconnect_tests {
+mod availability_tests {
     use super::*;
-
-    fn roots(paths: &[&str]) -> std::collections::HashSet<String> {
-        paths.iter().map(|path| path.to_string()).collect()
-    }
-
-    #[test]
-    fn unchanged_mounts_and_unmounts_do_not_request_recovery() {
-        let initial = roots(&["file:///", "file:///media/usb"]);
-        let mut sources = ReconnectedSources {
-            mounted: initial.clone(),
-            ..Default::default()
-        };
-        sources.update(initial.clone());
-        assert!(sources.pending.is_empty());
-        sources.update(roots(&["file:///"]));
-        assert!(sources.pending.is_empty());
-        sources.update(initial.clone());
-        assert_eq!(sources.pending, roots(&["file:///media/usb"]));
-        sources.pending.clear();
-        sources.update(initial);
-        assert!(sources.pending.is_empty());
-    }
-
-    #[test]
-    fn reconnect_scope_matches_path_components_and_uri_references() {
-        let mut sources = ReconnectedSources::default();
-        sources.update(roots(&["file:///media/usb", "smb://server/photos"]));
-        assert!(sources.includes("/media/usb/album/photo.jpg"));
-        assert!(sources.includes("file:///media/usb/album/photo.jpg"));
-        assert!(sources.includes("/media/usb"));
-        assert!(sources.includes("smb://server/photos/album/photo.jpg"));
-        assert!(!sources.includes("/media/usb-backup/photo.jpg"));
-        assert!(!sources.includes("/media/other/photo.jpg"));
-        assert!(!sources.includes("smb://server/photos-backup/photo.jpg"));
-        assert!(!sources.includes("smb://other/photos/photo.jpg"));
-    }
-
-    #[test]
-    fn queued_reconnects_accumulate_and_disconnected_drives_are_removed() {
-        let mut sources = ReconnectedSources::default();
-        sources.update(roots(&["file:///media/one"]));
-        sources.update(roots(&["file:///media/one", "file:///media/two"]));
-        assert_eq!(sources.pending.len(), 2);
-        sources.update(roots(&["file:///media/two"]));
-        assert_eq!(sources.pending, roots(&["file:///media/two"]));
-        sources.update(roots(&[]));
-        assert!(sources.pending.is_empty());
-    }
 
     #[test]
     fn availability_refresh_only_updates_folders_whose_state_changed() {

@@ -21,6 +21,7 @@
 #include <netdb.h>
 
 static int trace_enabled(void);
+static void fail(char *error, size_t cap, const char *operation);
 
 /* Default credentials when a server does not prompt for a login. Mirror what
  * smbclient -N and GNOME's accepted "cancel" do: the current OS account with
@@ -39,7 +40,7 @@ static void guest_auth(const char *server, const char *share, char *workgroup, i
     if (trace_enabled()) fprintf(stderr, "PIC_SMB_AUTH user=%s\n", username);
 }
 
-/* The legacy smbc_* API owns one process-wide client context. Keep calls
+/* The compatibility smbc_* API owns one process-wide client context. Keep calls
  * serialized because the context and its connection cache are not safe for
  * concurrent use; do not reinitialize it for each image read. */
 static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
@@ -52,9 +53,18 @@ static int trace_enabled(void) {
 static int init_smb(char *error, size_t cap) {
     if (!initialized) {
         if (trace_enabled()) fprintf(stderr, "PIC_SMB_CONNECT create_start\n");
-        if (smbc_init(guest_auth, 0) != 0) {
-            snprintf(error, cap, "smbc_init: %s", strerror(errno)); return -1;
+        SMBCCTX *context = smbc_new_context();
+        if (!context) {
+            fail(error, cap, "smbc_new_context"); return -1;
         }
+        smbc_setFunctionAuthData(context, guest_auth);
+        smbc_setDebug(context, 0);
+        if (!smbc_init_context(context)) {
+            fail(error, cap, "smbc_init_context");
+            smbc_free_context(context, 0);
+            return -1;
+        }
+        smbc_set_context(context);
         initialized = 1;
         if (trace_enabled()) fprintf(stderr, "PIC_SMB_CONNECT create_ok\n");
     } else if (trace_enabled()) {
@@ -135,6 +145,10 @@ int pic_smb_scan_hosts(const char *prefix, scan_host_callback cb, void *context,
                        char *error, size_t cap) {
     char base[24] = {0};
     if (prefix && prefix[0]) {
+        if (strlen(prefix) >= sizeof base - 1) {
+            snprintf(error, cap, "Invalid subnet prefix");
+            return -1;
+        }
         snprintf(base, sizeof base, "%s", prefix);
         size_t len = strlen(base);
         if (len && base[len - 1] != '.') {
@@ -160,6 +174,14 @@ int pic_smb_scan_hosts(const char *prefix, scan_host_callback cb, void *context,
             return -1;
         }
     }
+    char sample[32];
+    struct in_addr sample_addr;
+    int sample_len = snprintf(sample, sizeof sample, "%s1", base);
+    if (sample_len <= 0 || sample_len >= INET_ADDRSTRLEN ||
+        inet_pton(AF_INET, sample, &sample_addr) != 1) {
+        snprintf(error, cap, "Invalid subnet prefix");
+        return -1;
+    }
     if (trace_enabled()) fprintf(stderr, "PIC_SMB_SCAN start base=%s\n", base);
 
     int fds[254 * 2];
@@ -167,7 +189,7 @@ int pic_smb_scan_hosts(const char *prefix, scan_host_callback cb, void *context,
     int socket_port[254 * 2];
     int count = 0;
     for (int i = 1; i <= 254; i++) {
-        char ip[16];
+        char ip[32];
         snprintf(ip, sizeof ip, "%s%d", base, i);
         for (int p = 0; p < 2; p++) {
             int port = p == 0 ? 445 : 2049;
@@ -223,7 +245,7 @@ int pic_smb_scan_hosts(const char *prefix, scan_host_callback cb, void *context,
     int found = 0;
     for (int index = 1; index <= 254; index++) {
         if (!smb_up[index] && !nfs_up[index]) continue;
-        char ip[16];
+        char ip[32];
         snprintf(ip, sizeof ip, "%s%d", base, index);
         /* Best-effort PC name from reverse DNS (works for DHCP-registered
          * Windows hosts and mDNS-resolving .local/.lan names). */
@@ -232,12 +254,11 @@ int pic_smb_scan_hosts(const char *prefix, scan_host_callback cb, void *context,
         memset(&peer, 0, sizeof peer);
         peer.sin_family = AF_INET;
         peer.sin_port = 0;
-        if (inet_pton(AF_INET, ip, &peer.sin_addr) == 1) {
-            socklen_t peer_len = sizeof peer;
-            if (getnameinfo((struct sockaddr *)&peer, peer_len, hostname,
-                            sizeof hostname, NULL, 0, NI_NAMEREQD) != 0) {
-                hostname[0] = '\0';
-            }
+        if (inet_pton(AF_INET, ip, &peer.sin_addr) != 1) continue;
+        socklen_t peer_len = sizeof peer;
+        if (getnameinfo((struct sockaddr *)&peer, peer_len, hostname,
+                        sizeof hostname, NULL, 0, NI_NAMEREQD) != 0) {
+            hostname[0] = '\0';
         }
         /* Report one entry per open service: a host with both SMB and NFS
          * advertises shares AND exports. */

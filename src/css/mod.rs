@@ -43,7 +43,7 @@ pub(crate) fn resolve_runtime_dir(configured: &Path) -> PathBuf {
 
 pub(crate) fn install_foundation(display: &gtk::gdk::Display) {
     let base = gtk::CssProvider::new();
-    base.load_from_data(BASE);
+    base.load_from_string(BASE);
     gtk::style_context_add_provider_for_display(
         display,
         &base,
@@ -53,7 +53,7 @@ pub(crate) fn install_foundation(display: &gtk::gdk::Display) {
     // Wall geometry must win over theme frames (+1) and corner settings (+4).
     // These rules match Wall tiles only; Grid keeps the selected theme.
     let photo_wall = gtk::CssProvider::new();
-    photo_wall.load_from_data(PHOTO_WALL);
+    photo_wall.load_from_string(PHOTO_WALL);
     gtk::style_context_add_provider_for_display(
         display,
         &photo_wall,
@@ -61,7 +61,7 @@ pub(crate) fn install_foundation(display: &gtk::gdk::Display) {
     );
 
     let platform = gtk::CssProvider::new();
-    platform.load_from_data(PLATFORM);
+    platform.load_from_string(PLATFORM);
     gtk::style_context_add_provider_for_display(
         display,
         &platform,
@@ -71,7 +71,7 @@ pub(crate) fn install_foundation(display: &gtk::gdk::Display) {
     // Structural rules must win over theme entry styling: there is only
     // one Search/activity surface, including its keyboard focus ring.
     let search_status = gtk::CssProvider::new();
-    search_status.load_from_data(include_str!("components/search_status.css"));
+    search_status.load_from_string(include_str!("components/search_status.css"));
     gtk::style_context_add_provider_for_display(
         display,
         &search_status,
@@ -82,7 +82,7 @@ pub(crate) fn install_foundation(display: &gtk::gdk::Display) {
     // "square-corners" class (Settings > Library). Priority sits above the
     // theme (+1) and album (+3) providers so border-radius: 0 wins.
     let square_corners = gtk::CssProvider::new();
-    square_corners.load_from_data(SQUARE_CORNERS);
+    square_corners.load_from_string(SQUARE_CORNERS);
     gtk::style_context_add_provider_for_display(
         display,
         &square_corners,

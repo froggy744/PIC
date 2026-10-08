@@ -118,11 +118,6 @@ pub fn supported(path: &Path) -> bool {
     crate::image_format::supported(path)
 }
 
-pub fn scan(root: &str, events: Option<&Sender<ScanEvent>>) -> Result<usize> {
-    let database = db::active_database_path()?;
-    scan_with_control(root, &database, events, &ScanControl::default())
-}
-
 fn scan_with_control(
     root: &str,
     database: &Path,
@@ -559,10 +554,6 @@ fn root_is_available(root: &str) -> bool {
     } else {
         Path::new(root).is_dir()
     }
-}
-
-pub fn spawn_scan(root: String, database: PathBuf, events: Sender<ScanEvent>) -> ScanControl {
-    spawn_scan_mode(root, database, events, false)
 }
 
 pub fn spawn_scan_mode(root: String, database: PathBuf, events: Sender<ScanEvent>, resume: bool) -> ScanControl {

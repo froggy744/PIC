@@ -287,14 +287,6 @@ pub fn priority_pending_count() -> usize {
         .unwrap_or_default()
 }
 
-/// Keep bulk thumbnail work from competing with thumbnails currently needed
-/// by visible gallery tiles. Foreground workers do not call this gate.
-pub fn wait_for_priority_requests() {
-    while priority_pending_count() > 0 {
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
-}
-
 // Structural split only: included files remain in this module scope.
 include!("thumbnail/cache.rs");
 include!("thumbnail/maintenance.rs");

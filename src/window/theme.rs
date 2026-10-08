@@ -126,14 +126,6 @@ impl ThemeEngine {
         self.window_controls_hook.borrow_mut().replace(hook);
     }
 
-    pub(crate) fn active_window_controls(&self) -> WindowControls {
-        self.themes()
-            .iter()
-            .find(|theme| theme.id == self.active_id())
-            .map(|theme| theme.window_controls)
-            .unwrap_or_default()
-    }
-
     /// Apply the persisted theme before the window's first rendered frame.
     /// Loads the base theme beneath everything, then resolves the saved
     /// selection: saved id, else the default, else the first theme found.
@@ -149,7 +141,7 @@ impl ThemeEngine {
 
         if let Some(base) = themes.iter().find(|theme| theme.is_base) {
             let provider = gtk::CssProvider::new();
-            provider.load_from_data(base.css.as_str());
+            provider.load_from_string(base.css.as_str());
             gtk::style_context_add_provider_for_display(
                 &self.display,
                 &provider,
@@ -218,7 +210,7 @@ impl ThemeEngine {
         let selects_base = self.base_id.borrow().as_deref() == Some(theme.id.as_str());
         if !selects_base {
             let provider = gtk::CssProvider::new();
-            provider.load_from_data(theme.css.as_str());
+            provider.load_from_string(theme.css.as_str());
             gtk::style_context_add_provider_for_display(
                 &self.display,
                 &provider,

@@ -132,6 +132,7 @@ fn bookshelf_theme_for_appearance(appearance: AlbumAppearance) -> Option<Bookshe
     (!themes.is_empty()).then(|| themes[appearance.background_index % themes.len()].clone())
 }
 
+#[cfg(test)]
 fn bookshelf_background_path(directory: &Path, index: usize) -> Option<PathBuf> {
     let themes = bookshelf_themes_in(directory);
     (!themes.is_empty()).then(|| themes[index % themes.len()].image_path.clone())

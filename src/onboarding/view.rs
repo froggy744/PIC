@@ -120,11 +120,6 @@ impl StartupWizard {
         // Increase this bottom margin to move the camera upward.
         logo.set_margin_bottom(20);
         logo.add_css_class("welcome-camera");
-        let camera_style = gtk::CssProvider::new();
-        camera_style
-            .load_from_data(".welcome-camera { -gtk-icon-shadow: 0 2px 4px rgba(0, 0, 0, 0.24); }");
-        logo.style_context()
-            .add_provider(&camera_style, gtk::STYLE_PROVIDER_PRIORITY_APPLICATION);
         let photos_texture = gtk::gdk::Texture::from_bytes(&glib::Bytes::from_static(
             include_bytes!("../../images/onboarding/welcome-photos.png"),
         ))

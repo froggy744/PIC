@@ -367,7 +367,7 @@ mod tests {
         for card in &compact_cards {
             let cover = find_descendant_with_css_class(card.upcast_ref(), "album-cover").unwrap();
             assert_eq!(
-                card.allocated_width(),
+                card.width(),
                 cover.width_request(),
                 "compact album card must not grow beyond its cover"
             );
@@ -401,7 +401,7 @@ mod tests {
             assert_eq!(cover.width_request(), cards[0].width_request());
             assert_eq!(cover.height_request(), cover.width_request() * 2 / 3);
             assert_eq!(
-                card.allocated_width(),
+                card.width(),
                 cover.width_request(),
                 "album card must not grow beyond its cover"
             );
@@ -1519,7 +1519,7 @@ mod tests {
                 .unwrap()
                 .downcast::<gtk::Label>()
                 .unwrap();
-                let count_color = photo_count.style_context().color();
+                let count_color = photo_count.color();
                 assert!((count_color.red() - 58.0 / 255.0).abs() < 0.01);
                 assert!((count_color.green() - 33.0 / 255.0).abs() < 0.01);
                 assert!((count_color.blue() - 15.0 / 255.0).abs() < 0.01);

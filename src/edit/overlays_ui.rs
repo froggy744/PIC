@@ -1590,13 +1590,6 @@ fn build_overlays_panel(
         let overlays_toggle = overlays_toggle.clone();
         let preview_dimensions = preview_dimensions.clone();
         import.connect_clicked(move |button| {
-            let dialog = gtk::FileChooserNative::new(
-                Some("Import Overlay Image"),
-                Some(&parent_window),
-                gtk::FileChooserAction::Open,
-                Some("Import"),
-                Some("Cancel"),
-            );
             let filter = gtk::FileFilter::new();
             filter.set_name(Some("PNG and JPG images"));
             filter.add_pattern("*.png");
@@ -1605,7 +1598,14 @@ fn build_overlays_panel(
             filter.add_pattern("*.PNG");
             filter.add_pattern("*.JPG");
             filter.add_pattern("*.JPEG");
-            dialog.add_filter(&filter);
+            let filters = gio::ListStore::new::<gtk::FileFilter>();
+            filters.append(&filter);
+            let dialog = gtk::FileDialog::builder()
+                .title("Import Overlay Image")
+                .accept_label("Import")
+                .filters(&filters)
+                .modal(true)
+                .build();
 
             let session = session.clone();
             let connection = connection.clone();
@@ -1615,16 +1615,10 @@ fn build_overlays_panel(
             let overlays_toggle = overlays_toggle.clone();
             let preview_dimensions = preview_dimensions.clone();
             let button = button.clone();
-            dialog.connect_response(move |dialog, response| {
-                if response != gtk::ResponseType::Accept {
-                    dialog.destroy();
-                    return;
-                }
-                let Some(path) = dialog.file().and_then(|file| file.path()) else {
-                    dialog.destroy();
+            dialog.open(Some(&parent_window), None::<&gio::Cancellable>, move |result| {
+                let Some(path) = result.ok().and_then(|file| file.path()) else {
                     return;
                 };
-                dialog.destroy();
                 let session = session.clone();
                 let connection = connection.clone();
                 let selected = selected.clone();
@@ -1702,7 +1696,6 @@ fn build_overlays_panel(
                     glib::ControlFlow::Break
                 });
             });
-            dialog.show();
         });
     }
 

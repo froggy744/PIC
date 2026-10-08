@@ -1,31 +1,3 @@
-pub fn create_many(
-    items: &[(String, Option<i64>, Option<i64>)],
-    completed: impl Fn(&str) + Sync,
-) -> Vec<Result<PathBuf>> {
-    use rayon::prelude::*;
-
-    // A bounded pool avoids saturating the CPU and external disk at once.
-    // The default Rayon pool was starting too many full-resolution decodes,
-    // making each thumbnail slower instead of faster.
-    let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(thumbnail_worker_threads(items))
-        .build()
-        .expect("thumbnail worker pool should be constructible");
-    pool.install(|| {
-        items
-            .par_iter()
-            .map(|(path, mtime, size)| {
-                let wait_started = std::time::Instant::now();
-                wait_for_priority_requests();
-                if std::env::var_os("PICASA_TRACE").is_some() && wait_started.elapsed().as_micros() > 0 { eprintln!("PIC_THUMBNAIL queue_wait kind=background elapsed_us={} uri={}", wait_started.elapsed().as_micros(), path); }
-                let result = create(path, *mtime, *size);
-                completed(path);
-                result
-            })
-            .collect()
-    })
-}
-
 /// The current decode is allowed to complete, but no further source image is
 /// opened after cancellation. This keeps Stop responsive without leaving a
 /// half-written thumbnail (writes happen only at the end of `create`).
@@ -114,10 +86,6 @@ pub fn clear_cache() -> Result<()> {
         }
     }
     Ok(())
-}
-
-fn resize(source: image::RgbImage) -> Result<image::RgbImage> {
-    resize_with_max(source, thumbnail_size())
 }
 
 fn resize_with_max(source: image::RgbImage, max_edge: u32) -> Result<image::RgbImage> {

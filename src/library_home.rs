@@ -45,7 +45,7 @@ fn install_home_css(display: &gtk::gdk::Display) {
         return;
     }
     let provider = gtk::CssProvider::new();
-    provider.load_from_data(HOME_CSS);
+    provider.load_from_string(HOME_CSS);
     gtk::style_context_add_provider_for_display(
         display,
         &provider,
@@ -68,8 +68,6 @@ struct Snapshot {
 struct HomeSection {
     scroller: gtk::ScrolledWindow,
     track: gtk::Box,
-    prev: gtk::Button,
-    next: gtk::Button,
 }
 
 pub struct LibraryHome {
@@ -161,8 +159,6 @@ impl LibraryHome {
             sections.push(HomeSection {
                 scroller,
                 track,
-                prev,
-                next,
             });
         }
         let status = gtk::Label::new(Some("Loading library…"));

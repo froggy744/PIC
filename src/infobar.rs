@@ -853,7 +853,7 @@ mod layout_tests {
         gtk::init().unwrap();
         let display = gtk::gdk::Display::default().unwrap();
         let base = gtk::CssProvider::new();
-        base.load_from_data(&format!(
+        base.load_from_string(&format!(
             "{}\n{}",
             crate::css::BASE,
             include_str!("../themes/iDark/theme.css")
@@ -864,7 +864,7 @@ mod layout_tests {
             gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
         );
         let overlay = gtk::CssProvider::new();
-        overlay.load_from_data(include_str!("../themes/standard/theme.css"));
+        overlay.load_from_string(include_str!("../themes/standard/theme.css"));
         gtk::style_context_add_provider_for_display(
             &display,
             &overlay,

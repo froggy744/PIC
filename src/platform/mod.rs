@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::rc::Rc;
 
 use gio::prelude::*;
@@ -27,13 +26,6 @@ pub(crate) fn reveal_file(file: &gio::File) {
     if let Some(parent) = file.parent() {
         let _ = gio::AppInfo::launch_default_for_uri(&parent.uri(), None::<&gio::AppLaunchContext>);
     }
-}
-
-/// Additional mount roots that are not exposed by GIO's cross-platform
-/// VolumeMonitor. Linux supplements it with UnixMountEntry; other platforms
-/// need no extra probe here.
-pub(crate) fn extra_mounted_roots() -> HashSet<String> {
-    imp::extra_mounted_roots()
 }
 
 /// Install platform-only mount-change notifications and retain any native

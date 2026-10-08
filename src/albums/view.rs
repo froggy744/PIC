@@ -16,9 +16,11 @@ pub fn build(
         BOOKSHELF_THEME_DIRECTORY,
     )));
     background.load_from_string(&background_rules);
-    scrolled
-        .style_context()
-        .add_provider(&background, gtk::STYLE_PROVIDER_PRIORITY_APPLICATION + 2);
+    gtk::style_context_add_provider_for_display(
+        &scrolled.display(),
+        &background,
+        gtk::STYLE_PROVIDER_PRIORITY_APPLICATION + 2,
+    );
 
     let content = gtk::Box::new(gtk::Orientation::Vertical, 18);
     content.set_margin_start(32);
@@ -88,9 +90,6 @@ pub fn build(
     cards.set_vexpand(false);
     cards.set_valign(gtk::Align::Start);
     cards.add_css_class("albums-home-grid");
-    cards
-        .style_context()
-        .add_provider(&background, gtk::STYLE_PROVIDER_PRIORITY_APPLICATION + 2);
 
     let bookshelf_rows = gtk::Box::new(gtk::Orientation::Vertical, 0);
     bookshelf_rows.set_hexpand(true);

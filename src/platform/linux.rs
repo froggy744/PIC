@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::rc::Rc;
 
 use gio::prelude::*;
@@ -12,14 +11,6 @@ pub(super) fn reveal_file(file: &gio::File) -> bool {
         .arg(path)
         .spawn()
         .is_ok()
-}
-
-pub(super) fn extra_mounted_roots() -> HashSet<String> {
-    gio::UnixMountEntry::mounts()
-        .0
-        .into_iter()
-        .map(|mount| gio::File::for_path(mount.mount_path()).uri().to_string())
-        .collect()
 }
 
 pub(super) fn install_native_mount_monitor(

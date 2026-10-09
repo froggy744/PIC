@@ -8,7 +8,7 @@ This page covers changes since the `rc3` tag. RC4 focuses on importing and brows
 
 PIC indexes photos where they already live. Normal browsing, albums, ratings and editing recipes do not alter the originals; exporting an edit creates a new file.
 
-<img src="../../screenshots/all%20photos.jpg" alt="PIC photo library" width="900">
+<img src="https://raw.githubusercontent.com/froggy744/PIC/rc4/screenshots/all%20photos.jpg" alt="PIC photo library" width="900">
 
 ## What’s new since RC3
 
@@ -16,15 +16,15 @@ PIC indexes photos where they already live. Normal browsing, albums, ratings and
 
 The new camera and SD card import window detects mounted devices and shows a compact selection grid. You can select or deselect photos before importing, see copy progress in the main header, and continue using PIC while the copy hands off to the normal library scan. Stop remains available during that handoff.
 
-<img src="../../screenshots/import%20sdcard.jpg" alt="SD card import window showing photo selection and duplicate skipping" width="900">
+<img src="https://raw.githubusercontent.com/froggy744/PIC/rc4/screenshots/import%20sdcard.jpg" alt="SD card import window showing photo selection and duplicate skipping" width="900">
 
 ### A guided first start
 
 A welcome flow introduces the library and its main controls. It helps new users add photos and shows import progress without losing an active or resumable import. The welcome screen can be skipped or reopened from Help.
 
-<img src="../../screenshots/startup%20view.jpg" alt="PIC welcome screen with options to choose a photos folder or open the tutorial" width="900">
+<img src="https://raw.githubusercontent.com/froggy744/PIC/rc4/screenshots/startup%20view.jpg" alt="PIC welcome screen with options to choose a photos folder or open the tutorial" width="900">
 
-<img src="../../screenshots/wizard%20view.jpg" alt="Discover PIC guided tour showing the photo editor" width="900">
+<img src="https://raw.githubusercontent.com/froggy744/PIC/rc4/screenshots/wizard%20view.jpg" alt="Discover PIC guided tour showing the photo editor" width="900">
 
 ### Large network libraries remain usable while importing
 
@@ -36,7 +36,7 @@ Network RAW support has also grown: DNG previews can be generated from shares, o
 
 Masonry joins the regular Grid and Photo Wall layouts. It arranges photos at their natural proportions in staggered columns. PIC remembers the chosen layout separately for All Photos, Favourites, folders, albums and the other library sections. Resizing and returning from the viewer preserve the gallery position more reliably.
 
-<img src="../../screenshots/masonry%20view-new%20menu.jpg" alt="Masonry gallery with the photo actions menu open" width="900">
+<img src="https://raw.githubusercontent.com/froggy744/PIC/rc4/screenshots/masonry%20view-new%20menu.jpg" alt="Masonry gallery with the photo actions menu open" width="900">
 
 ### Clearer photo viewing and file problems
 

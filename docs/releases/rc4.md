@@ -8,8 +8,6 @@ This page covers changes since the `rc3` tag. RC4 focuses on importing and brows
 
 PIC indexes photos where they already live. Normal browsing, albums, ratings and editing recipes do not alter the originals; exporting an edit creates a new file.
 
-<img src="https://raw.githubusercontent.com/froggy744/PIC/rc4/screenshots/all%20photos.jpg" alt="PIC photo library" width="900">
-
 ## What’s new since RC3
 
 ### Import from a camera or SD card

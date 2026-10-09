@@ -110,7 +110,39 @@ pub struct Gallery {
     on_zoom_changed: Rc<dyn Fn(i32)>,
 }
 
+fn transition_source_in(
+    root: &gtk::Widget,
+    photo_id: i64,
+) -> Option<(gtk::Widget, gtk::gdk::Paintable)> {
+    let mut tiles = Vec::new();
+    collect_tiles(root, &mut tiles);
+    tiles.into_iter().find_map(|tile| {
+        let photo = tile.photo()?;
+        if !tile.is_mapped() || photo.id() != photo_id {
+            return None;
+        }
+        let paintable = tile.transition_paintable().or_else(|| {
+            photo_presentation_key(&photo).and_then(|key| folder_thumbnail_cache_get(&key))
+        })?;
+        Some((tile.upcast(), paintable))
+    })
+}
+
 impl Gallery {
+    /// Use the same visible thumbnail for keyboard and pointer viewer opens.
+    pub fn transition_source_for_photo(
+        &self,
+        photo_id: i64,
+    ) -> Option<(gtk::Widget, gtk::gdk::Paintable)> {
+        [
+            self.root.upcast_ref::<gtk::Widget>(),
+            self.folder_sectioned_root.upcast_ref::<gtk::Widget>(),
+            self.folder_root.upcast_ref::<gtk::Widget>(),
+        ]
+        .into_iter()
+        .find_map(|root| transition_source_in(root, photo_id))
+    }
+
     pub fn new(
         photos: &[Photo],
         initial_tile_width: i32,

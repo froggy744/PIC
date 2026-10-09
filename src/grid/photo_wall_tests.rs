@@ -14,6 +14,70 @@ fn settle() {
 
 #[test]
 #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+fn keyboard_open_uses_the_visible_thumbnail_in_all_gallery_layouts() {
+    gtk::init().unwrap();
+    let photo = glib::Object::builder::<PhotoObject>()
+        .property("id", 17_i64)
+        .property("path", "/virtual/keyboard-open.jpg")
+        .property("width", 800_i64)
+        .property("height", 600_i64)
+        .build();
+    photo.set_cached_thumbnail_path("/virtual/keyboard-open-thumb.jpg");
+    let pixels = vec![128_u8; 40 * 30 * 4];
+    let texture = gtk::gdk::MemoryTexture::new(
+        40, 30, gtk::gdk::MemoryFormat::R8g8b8a8,
+        &glib::Bytes::from_owned(pixels), 40 * 4,
+    );
+    folder_thumbnail_cache_insert(photo_presentation_key(&photo).unwrap(), texture.upcast());
+
+    let gallery = Rc::new(Gallery::new(
+        &[],
+        180,
+        |_| {},
+        |_, _, _| {},
+        |_, _, _, _| {},
+        |_, _| {},
+        |_| {},
+    ));
+    gallery.store.append(&photo);
+    gallery.current_photos.replace(vec![photo]);
+    let grid_scroll = gtk::ScrolledWindow::builder().child(&gallery.root).build();
+    let wall_scroll = gtk::ScrolledWindow::builder().child(&gallery.folder_sectioned_root).build();
+    gallery.attach_sectioned_folder_scroll(&wall_scroll);
+    let pages = gtk::Stack::new();
+    pages.add_named(&grid_scroll, Some("grid"));
+    pages.add_named(&wall_scroll, Some("wall"));
+    let window = gtk::Window::builder()
+        .default_width(900)
+        .default_height(650)
+        .child(&pages)
+        .build();
+    window.present();
+    settle();
+    assert!(
+        gallery.transition_source_for_photo(17).is_some(),
+        "Grid Space should have a thumbnail source"
+    );
+    assert!(gallery.transition_source_for_photo(18).is_none());
+
+    gallery.set_layout(PhotoLayout::PhotoWall);
+    pages.set_visible_child_name("wall");
+    settle();
+    assert!(
+        gallery.transition_source_for_photo(17).is_some(),
+        "Photo Wall Space should have a thumbnail source"
+    );
+    gallery.set_layout(PhotoLayout::Masonry);
+    settle();
+    assert!(
+        gallery.transition_source_for_photo(17).is_some(),
+        "Masonry Space should have a thumbnail source"
+    );
+    window.close();
+}
+
+#[test]
+#[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
 fn photo_wall_reuses_models_and_virtualizes_headerless_and_folder_collections() {
     gtk::init().unwrap();
     // Match application ordering: foundation first, then a theme at +1.

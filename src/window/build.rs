@@ -658,7 +658,8 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             if !photos[index].original_available() {
                 availability_refresh();
             }
-            lightbox.open(photos, index);
+            let source = gallery.transition_source_for_photo(selected_id);
+            lightbox.open_from_source(photos, index, source);
         })));
     }
 

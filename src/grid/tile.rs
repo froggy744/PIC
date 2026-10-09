@@ -1682,6 +1682,11 @@ impl SquareTile {
                 photo_presentation_key(&photo).zip(picture.paintable());
         }
         picture.set_paintable(Some(paintable));
+        picture.remove_css_class("missing-thumbnail");
+        if let Some(placeholder) = picture.next_sibling().and_downcast::<gtk::Image>() {
+            placeholder.set_visible(false);
+        }
+        photo.set_thumbnail_available(true);
         self.imp().visual_loaded.set(true);
         *self.imp().applied_visual_key.borrow_mut() = Some(key.to_owned());
         true

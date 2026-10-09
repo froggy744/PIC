@@ -1011,6 +1011,49 @@ fn photo_wall_quality_preserves_fallback_and_rejects_stale_results() {
 
 #[test]
 #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+fn photo_wall_quality_hides_startup_placeholder() {
+    gtk::init().unwrap();
+    let photo = glib::Object::builder::<PhotoObject>()
+        .property("id", 702_i64)
+        .property("path", "/offline/startup-photo.jpg")
+        .property("width", 1200_i64)
+        .property("height", 800_i64)
+        .build();
+    photo.set_cached_thumbnail_path("/offline/cache/startup-photo.jpg");
+    let picture = gtk::Picture::new();
+    picture.add_css_class("missing-thumbnail");
+    let frame = gtk::Overlay::new();
+    frame.set_child(Some(&picture));
+    let placeholder = gtk::Image::from_icon_name("image-x-generic-symbolic");
+    frame.add_overlay(&placeholder);
+    let tile = SquareTile::new(600, 400, &frame);
+    tile.add_css_class("photo-wall-tile");
+    tile.set_photo_deferred(&photo);
+    placeholder.set_visible(true);
+    picture.add_css_class("missing-thumbnail");
+
+    let request = crate::thumbnail_display::wall_request(
+        photo_presentation_request(&photo, false).unwrap(),
+    );
+    *tile.imp().wall_quality_key.borrow_mut() = Some(request.key.clone());
+    let texture = gtk::gdk::MemoryTexture::new(
+        2,
+        2,
+        gtk::gdk::MemoryFormat::R8g8b8a8,
+        &glib::Bytes::from_owned(vec![200u8; 16]),
+        8,
+    );
+    let paintable: gtk::gdk::Paintable = texture.upcast();
+
+    assert!(tile.apply_wall_quality(&request.key, &paintable));
+    assert!(picture.paintable().is_some());
+    assert!(!placeholder.is_visible(), "placeholder must not cover the loaded photo");
+    assert!(!picture.has_css_class("missing-thumbnail"));
+    assert!(photo.thumbnail_available());
+}
+
+#[test]
+#[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
 fn photo_wall_uses_canonical_cache_without_separate_wall_quality_requests() {
     gtk::init().unwrap();
     let gallery = Rc::new(Gallery::new(

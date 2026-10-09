@@ -1,4 +1,5 @@
 use std::cell::{Cell, RefCell};
+use std::io::Read;
 
 use glib::prelude::ObjectExt;
 use glib::subclass::prelude::*;
@@ -51,6 +52,8 @@ mod imp {
         pub folder_path: RefCell<Option<String>>,
         #[property(get, set)]
         pub original_available: Cell<bool>,
+        #[property(get, set)]
+        pub corrupt: Cell<bool>,
         // When the original was last probed for availability. Not a GObject
         // property; used to re-probe on rebind after a TTL so a drive that goes
         // offline without a mount event still gets its offline badge.
@@ -170,6 +173,7 @@ impl PhotoObject {
         // a large library model never stats photo originals.
         imp.original_available
             .set(crate::source::folder_available(photo.folder_id));
+        imp.corrupt.set(confirmed_corrupt_local_jpeg(&photo.path, photo.width, photo.height));
         *imp.cached_thumbnail_path.borrow_mut() =
             thumbnail::cache_path(&photo.path, photo.mtime, photo.size_bytes)
                 .ok()
@@ -177,6 +181,44 @@ impl PhotoObject {
         // The visible tile performs this inexpensive cache check lazily.
         imp.thumbnail_available.set(false);
         imp.original_checked_at.set(None);
+    }
+}
+
+pub(crate) fn confirmed_corrupt_local_jpeg(path: &str, width: Option<i64>, height: Option<i64>) -> bool {
+    if width.is_some() || height.is_some() || !path.starts_with('/') {
+        return false;
+    }
+    let extension = std::path::Path::new(path)
+        .extension()
+        .and_then(|extension| extension.to_str());
+    if !extension.is_some_and(|extension| matches!(extension.to_ascii_lowercase().as_str(), "jpg" | "jpeg")) {
+        return false;
+    }
+    let Ok(mut file) = std::fs::File::open(path) else { return false };
+    let mut header = [0u8; 16];
+    let Ok(length) = file.read(&mut header) else { return false };
+    if header[..length].starts_with(&[0xff, 0xd8, 0xff]) {
+        return false;
+    }
+    image::guess_format(&header[..length]).is_err()
+}
+
+#[cfg(test)]
+mod corrupt_file_tests {
+    use super::*;
+
+    #[test]
+    fn corrupt_badge_requires_an_existing_unrecognized_local_jpeg() {
+        let path = std::env::temp_dir().join(format!("pic-corrupt-probe-{}.jpg", std::process::id()));
+        std::fs::write(&path, b"not image data").unwrap();
+        let path = path.to_str().unwrap();
+        assert!(confirmed_corrupt_local_jpeg(path, None, None));
+        assert!(!confirmed_corrupt_local_jpeg(path, Some(100), Some(100)));
+        std::fs::write(path, [0xff, 0xd8, 0xff, 0xe0]).unwrap();
+        assert!(!confirmed_corrupt_local_jpeg(path, None, None));
+        std::fs::remove_file(path).unwrap();
+        assert!(!confirmed_corrupt_local_jpeg(path, None, None));
+        assert!(!confirmed_corrupt_local_jpeg("nfs://DietPi.local/photo.jpg", None, None));
     }
 }
 

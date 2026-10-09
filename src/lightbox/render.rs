@@ -184,6 +184,21 @@ fn show_photo(
     }
     offline.track(photo);
     offline.retry_requested.set(false);
+    if photo.original_available() && photo.corrupt() {
+        picture.set_paintable(gtk::gdk::Paintable::NONE);
+        picture.set_filename(Option::<&str>::None);
+        picture.set_size_request(1, 1);
+        cancel_lightbox_prefetch_except(None);
+        VIEWER_FOREGROUND_GENERATION.store(0, Ordering::Release);
+        offline.corrupt();
+        if let Some(navigation_ready) = navigation_ready {
+            navigation_ready.set(true);
+        }
+        if let Some(navigation_settled) = navigation_settled {
+            navigation_settled();
+        }
+        return;
+    }
     if photo.original_available() {
         // Do not carry a different photo's offline thumbnail into an online
         // load. A matching full-quality RAM cache has already replaced it.

@@ -1,6 +1,7 @@
 // Offline state belongs to the current lightbox photo, never to a texture.
 struct OfflinePresentation {
     badge: gtk::Button,
+    corrupt_badge: gtk::Label,
     notice: gtk::Label,
     retry_requested: Rc<Cell<bool>>,
     availability_revision: Rc<Cell<u64>>,
@@ -23,6 +24,17 @@ impl OfflinePresentation {
         badge.set_margin_start(16);
         badge.set_visible(false);
         root.add_overlay(&badge);
+
+        let corrupt_badge = gtk::Label::new(Some("Corrupt"));
+        corrupt_badge.add_css_class("osd");
+        corrupt_badge.add_css_class("corrupt-badge");
+        corrupt_badge.set_halign(gtk::Align::Start);
+        corrupt_badge.set_valign(gtk::Align::Start);
+        corrupt_badge.set_margin_top(16);
+        corrupt_badge.set_margin_start(16);
+        corrupt_badge.set_can_target(false);
+        corrupt_badge.set_visible(false);
+        root.add_overlay(&corrupt_badge);
 
         let notice = gtk::Label::new(None);
         notice.add_css_class("osd");
@@ -47,6 +59,7 @@ impl OfflinePresentation {
         });
         Rc::new(Self {
             badge,
+            corrupt_badge,
             notice,
             retry_requested: Rc::new(Cell::new(false)),
             availability_revision: Rc::new(Cell::new(0)),
@@ -89,11 +102,13 @@ impl OfflinePresentation {
 
     fn online(&self) {
         self.badge.set_visible(false);
+        self.corrupt_badge.set_visible(false);
         self.notice.set_visible(false);
     }
 
     fn cached(&self, thumbnail: bool) {
         self.badge.set_visible(true);
+        self.corrupt_badge.set_visible(false);
         self.notice.set_valign(gtk::Align::End);
         self.notice.set_label(if thumbnail {
             "Cached thumbnail — original unavailable"
@@ -105,9 +120,18 @@ impl OfflinePresentation {
 
     fn missing(&self) {
         self.badge.set_visible(true);
+        self.corrupt_badge.set_visible(false);
         self.notice.set_valign(gtk::Align::Center);
         self.notice
             .set_label("Original unavailable — no cached preview");
+        self.notice.set_visible(true);
+    }
+
+    fn corrupt(&self) {
+        self.badge.set_visible(false);
+        self.corrupt_badge.set_visible(true);
+        self.notice.set_valign(gtk::Align::Center);
+        self.notice.set_label("The original photo cannot be decoded");
         self.notice.set_visible(true);
     }
 }
@@ -250,6 +274,6 @@ fn apply_offline_preview_result(
             }
         }
         _ if known_offline => offline.missing(),
-        _ => offline.online(), // readable corrupt originals are not offline
+        _ => offline.corrupt(),
     }
 }

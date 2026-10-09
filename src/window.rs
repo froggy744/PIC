@@ -77,6 +77,7 @@ enum SortField {
     Name,
     FileSize,
     Dimensions,
+    Corrupt,
 }
 
 impl SortField {
@@ -88,6 +89,7 @@ impl SortField {
             Self::Name => "name",
             Self::FileSize => "file-size",
             Self::Dimensions => "dimensions",
+            Self::Corrupt => "corrupt",
         }
     }
 
@@ -98,6 +100,7 @@ impl SortField {
             "name" => Self::Name,
             "file-size" => Self::FileSize,
             "dimensions" => Self::Dimensions,
+            "corrupt" => Self::Corrupt,
             _ => Self::DateTaken,
         }
     }

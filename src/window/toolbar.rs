@@ -29,12 +29,14 @@
     let name_sort = gtk::CheckButton::with_label("Name");
     let file_size_sort = gtk::CheckButton::with_label("File size");
     let dimensions_sort = gtk::CheckButton::with_label("Dimensions");
+    let corrupt_sort = gtk::CheckButton::with_label("Corrupt");
     for button in [
         &date_added_sort,
         &rating_sort,
         &name_sort,
         &file_size_sort,
         &dimensions_sort,
+        &corrupt_sort,
     ] {
         button.set_group(Some(&date_taken_sort));
     }
@@ -45,6 +47,7 @@
         SortField::Name => name_sort.set_active(true),
         SortField::FileSize => file_size_sort.set_active(true),
         SortField::Dimensions => dimensions_sort.set_active(true),
+        SortField::Corrupt => corrupt_sort.set_active(true),
     }
     for button in [
         &date_taken_sort,
@@ -53,6 +56,7 @@
         &name_sort,
         &file_size_sort,
         &dimensions_sort,
+        &corrupt_sort,
     ] {
         sort_box.append(button);
     }
@@ -149,6 +153,7 @@
     connect_sort_field(&name_sort, SortField::Name);
     connect_sort_field(&file_size_sort, SortField::FileSize);
     connect_sort_field(&dimensions_sort, SortField::Dimensions);
+    connect_sort_field(&corrupt_sort, SortField::Corrupt);
 
     let connect_sort_direction = |button: &gtk::CheckButton, direction: SortDirection| {
         let sort = sort.clone();

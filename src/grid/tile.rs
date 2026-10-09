@@ -810,6 +810,26 @@ impl SquareTile {
             self.unload_visual();
         }
         self.imp().photo.replace(Some(photo.clone()));
+        if photo.corrupt() {
+            self.clear_corrupt_visual();
+        }
+    }
+
+    fn clear_corrupt_visual(&self) {
+        self.imp().visual_loaded.set(true);
+        self.imp().applied_visual_key.borrow_mut().take();
+        if let Some(photo) = self.imp().photo.borrow().as_ref() {
+            photo.set_thumbnail_available(false);
+        }
+        if let Some(frame) = self.first_child().and_downcast::<gtk::Overlay>() {
+            if let Some(picture) = frame.child().and_downcast::<gtk::Picture>() {
+                picture.set_paintable(gtk::gdk::Paintable::NONE);
+                picture.add_css_class("missing-thumbnail");
+                if let Some(placeholder) = picture.next_sibling().and_downcast::<gtk::Image>() {
+                    placeholder.set_visible(true);
+                }
+            }
+        }
     }
 
     fn apply_presentation_paintable(
@@ -822,6 +842,9 @@ impl SquareTile {
             return false;
         };
         if photo_presentation_key(&photo).as_deref() != Some(expected_key) {
+            return false;
+        }
+        if photo.corrupt() {
             return false;
         }
         if self
@@ -958,6 +981,11 @@ impl SquareTile {
                 child.set_visible(false);
             }
         }
+        if photo.corrupt() && !unavailable {
+            ensure_corrupt_badge(&frame).set_visible(true);
+        } else if let Some(child) = find_overlay_child(&frame, "corrupt-badge") {
+            child.set_visible(false);
+        }
 
         let favorite = self.imp().favorite_indicators_visible.get() && photo.favorite();
         if favorite {
@@ -1022,6 +1050,10 @@ impl SquareTile {
         let Some(photo) = self.imp().photo.borrow().as_ref().cloned() else {
             return;
         };
+        if photo.corrupt() {
+            self.clear_corrupt_visual();
+            return;
+        }
         let cache_hit = if let Some(key) = photo_presentation_key(&photo) {
             if let Some(paintable) = folder_thumbnail_cache_get(&key) {
                 self.apply_presentation_paintable(&key, &paintable);
@@ -1106,6 +1138,13 @@ impl SquareTile {
         let Some(picture) = frame.child().and_downcast::<gtk::Picture>() else {
             return;
         };
+        if bound.corrupt() {
+            self.clear_corrupt_visual();
+            self.refresh_badges_from_model();
+            return;
+        } else if let Some(child) = find_overlay_child(&frame, "corrupt-badge") {
+            child.set_visible(false);
+        }
 
         // RAM-only fast path. Never touch the filesystem from ListView bind,
         // but reuse a paintable that the settled-viewport loader has already
@@ -1215,6 +1254,9 @@ impl SquareTile {
         let Some(photo) = self.imp().photo.borrow().as_ref().cloned() else {
             return false;
         };
+        if photo.corrupt() {
+            return false;
+        }
         let Some(request) = photo_presentation_request(&photo, visible_priority) else {
             return false;
         };
@@ -1435,6 +1477,26 @@ fn ensure_edited_badge(frame: &gtk::Overlay) -> gtk::Image {
     badge.set_margin_start(8);
     badge.add_css_class("edited-badge");
     badge.set_tooltip_text(Some("Edited"));
+    badge.set_visible(false);
+    frame.add_overlay(&badge);
+    badge
+}
+
+fn ensure_corrupt_badge(frame: &gtk::Overlay) -> gtk::Label {
+    if let Some(existing) = find_overlay_child(frame, "corrupt-badge") {
+        if let Ok(label) = existing.downcast::<gtk::Label>() {
+            return label;
+        }
+    }
+    let badge = gtk::Label::new(Some("Corrupt"));
+    badge.add_css_class("corrupt-badge");
+    badge.add_css_class("osd");
+    badge.set_halign(gtk::Align::Start);
+    badge.set_valign(gtk::Align::Start);
+    badge.set_margin_top(8);
+    badge.set_margin_start(8);
+    badge.set_tooltip_text(Some("The original file cannot be decoded"));
+    badge.set_can_target(false);
     badge.set_visible(false);
     frame.add_overlay(&badge);
     badge

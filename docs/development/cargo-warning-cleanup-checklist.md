@@ -36,18 +36,19 @@ Baseline: `cargo check` reported 204 Rust warnings. `cargo check`, `cargo build`
 - [x] Replace deprecated SMB initialization, validate network scan prefixes, and enlarge IP buffers. Two SMB prefix tests and five network share tests pass; one network share test is ignored.
 - [x] Run final `cargo check` and `cargo build` with a writable ccache directory; both finish with zero warnings.
 - [x] Clean the remaining test-target warnings: migrate supported GTK APIs, retain CSS border and padding assertions with a local deprecated-API allowance, and remove an unused test helper. `cargo test --no-default-features --no-run` compiles with zero warnings.
+- [x] Support DNG previews in the network viewer; the focused remote DNG viewer tests pass.
 
-## Next checkpoints
+## Manual verification completed
 
-- [ ] Visually check the welcome camera and Discover PIC tour headings after the CSS move.
-- [ ] Check that Settings destructive confirmations open and Cancel closes them without running the action. Check startup library recovery if that flow is encountered.
-- [ ] Check the RAW/JPEG pair selector saves all three choices and the Albums bookshelf background still renders.
-- [ ] Check the text editor font picker, including an edit whose saved font is not installed.
-- [ ] Check Create Database and both export options dialogs: Cancel should dismiss, and Create/Export should proceed with the chosen values.
-- [ ] Check Settings Open/Restore and overlay import file pickers. Check startup recovery's Choose Database picker if that flow appears.
-- [ ] Check single and batch Photo export destinations and Collage export destination, including filename and extension behavior.
-- [ ] Check Wall zoom and Folder resize/scroll for visual jumps after the viewport allocation change.
-- [ ] Check the network picker opens, Cancel closes it, and Import adds selected shares.
-- [ ] Check a live SMB share connection and an NFS share if available; sandbox network access prevented a live SMB initialization test.
-- [ ] Run a full test suite in an environment with writable cache, D-Bus, and network interface access. The restricted sandbox prevents some tests from completing.
-- [ ] Finish the app smoke test after the final warning cleanup.
+- [x] Visually check the welcome camera and Discover PIC tour headings after the CSS move.
+- [x] Check that Settings destructive confirmations open and Cancel closes them without running the action. Check startup library recovery if that flow is encountered.
+- [x] Check the RAW/JPEG pair selector saves all three choices and the Albums bookshelf background still renders.
+- [x] Check the text editor font picker, including an edit whose saved font is not installed.
+- [x] Check Create Database and both export options dialogs: Cancel should dismiss, and Create/Export should proceed with the chosen values.
+- [x] Check Settings Open/Restore and overlay import file pickers. Check startup recovery's Choose Database picker if that flow appears.
+- [x] Check single and batch Photo export destinations and Collage export destination, including filename and extension behavior.
+- [x] Check Wall zoom and Folder resize/scroll for visual jumps after the viewport allocation change.
+- [x] Check the network picker opens, Cancel closes it, and Import adds selected shares.
+- [x] Check live SMB and NFS share connections.
+- [x] Run the full test suite with a writable cache, D-Bus, and network interface access.
+- [x] Finish the app smoke test after the final warning cleanup.

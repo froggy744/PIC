@@ -58,16 +58,7 @@ fn decode_raw_thumbnail_with_max(reference: &str, max_edge: u32) -> Result<Decod
 fn decode_raw_thumbnail_inner(reference: &str, max_edge: u32) -> Result<DecodedThumbnailSource> {
     #[cfg(target_os = "linux")]
     if crate::network_shares::private(reference) {
-        anyhow::ensure!(
-            is_nikon_raw(reference),
-            "Remote RAW preview is unsupported for this format; original was not downloaded"
-        );
-        let bytes = remote_nef_embedded_jpeg(reference, false)?.ok_or_else(|| {
-            anyhow::anyhow!(
-                "Remote NEF has no embedded JPEG thumbnail; original was not downloaded"
-            )
-        })?;
-        return decode_jpeg_turbo_with_max(&bytes, max_edge).or_else(|_| decode_with_image(&bytes));
+        return decode_remote_raw_thumbnail(reference, max_edge).map(|(image, _)| image);
     }
     let local_path = crate::source::materialize(reference)?;
     let mut failures = Vec::new();
@@ -320,9 +311,97 @@ where
 }
 
 #[cfg(target_os = "linux")]
+fn decode_remote_raw_thumbnail(reference: &str, max_edge: u32) -> Result<(DecodedThumbnailSource, u16)> {
+    if is_nikon_raw(reference) {
+        let bytes = remote_nef_embedded_jpeg(reference, false)?
+            .context("Remote NEF has no embedded JPEG thumbnail")?;
+        let decoded = decode_jpeg_turbo_with_max(&bytes, max_edge)
+            .or_else(|_| decode_with_image(&bytes))?;
+        return Ok((decoded, exif_orientation(reference)));
+    }
+
+    if is_dng(reference) {
+        let preview = rawler_decode(reference, "thumbnail_dng_range", || {
+            let mut reader = RemoteNefReader::open(reference)?;
+            let size = reader.size;
+            let Some(mut decoded) = dng_embedded_preview_from_reader_with_max(
+                &mut reader, size, max_edge,
+            )? else {
+                return Ok(None);
+            };
+            reader.seek(SeekFrom::Start(0))?;
+            let orientation = orientation_from_container(&mut reader);
+            decoded.image = resize_with_max(decoded.image, max_edge)?;
+            Ok(Some((decoded, orientation)))
+        });
+        if let Ok(Some(preview)) = preview {
+            return Ok(preview);
+        }
+        // Keep full-file recovery for DNGs without a directly readable preview.
+    }
+
+    // One dedicated worker bounds simultaneous downloads and sensor development.
+    // Blocking receive avoids Rayon callers stealing another task under the lock.
+    static POOL: OnceLock<Result<Mutex<rayon::ThreadPool>, rayon::ThreadPoolBuildError>> = OnceLock::new();
+    let pool = POOL.get_or_init(|| rayon::ThreadPoolBuilder::new()
+        .num_threads(1).build().map(Mutex::new));
+    let pool = pool.as_ref().map_err(|error| anyhow::anyhow!("{error}"))?
+        .lock().map_err(|_| anyhow::anyhow!("Remote RAW thumbnail pool poisoned"))?;
+    let reference = reference.to_owned();
+    let (send, receive) = std::sync::mpsc::sync_channel(1);
+    pool.spawn(move || {
+        let result = (|| {
+            let bytes = crate::source::read(&reference)?;
+            decode_remote_raw_thumbnail_bytes(&reference, &bytes, max_edge)
+        })();
+        let _ = send.send(result);
+    });
+    receive.recv().context("Remote RAW thumbnail worker disconnected")?
+}
+
+#[cfg(target_os = "linux")]
+fn decode_remote_raw_thumbnail_bytes(reference: &str, bytes: &[u8], max_edge: u32) -> Result<(DecodedThumbnailSource, u16)> {
+    let orientation = orientation_from_container(&mut Cursor::new(bytes));
+    let image = decode_remote_raw_image(reference, bytes, true)?;
+    let (source_width, source_height) = (image.width(), image.height());
+    Ok((DecodedThumbnailSource {
+        image: resize_with_max(image.into_rgb8(), max_edge)?,
+        source_width,
+        source_height,
+        scale: "remote RAW preview",
+    }, orientation))
+}
+
+#[cfg(target_os = "linux")]
 fn decode_remote_dng_for_viewer(reference: &str, bytes: &[u8]) -> Result<DynamicImage> {
-    let embedded_failure = match dng_embedded_preview_from_bytes(bytes) {
-        Ok(Some(preview)) => return Ok(DynamicImage::ImageRgb8(preview.image)),
+    decode_remote_raw_image(reference, bytes, false)
+}
+
+#[cfg(target_os = "linux")]
+fn decode_remote_raw_image(reference: &str, bytes: &[u8], thumbnail: bool) -> Result<DynamicImage> {
+    let required_dimensions = if !thumbnail && is_dng(reference) {
+        use rawler::formats::tiff::{GenericTiffReader, reader::TiffReader};
+        let mut reader = Cursor::new(bytes);
+        GenericTiffReader::new(&mut reader, 0, 0, Some(16), &[]).ok()
+            .and_then(|tiff| tiff.find_ifds_with_filter(|ifd| {
+                ifd.get_entry(254u16)
+                    .and_then(|entry| entry.get_u32(0).ok().flatten())
+                    .unwrap_or(0) == 0
+            }).into_iter().filter_map(|ifd| dng_ifd_dimensions(ifd).ok())
+                .max_by_key(|&(w, h)| u64::from(w) * u64::from(h)))
+    } else {
+        None
+    };
+    let sufficient = |width: u32, height: u32| required_dimensions
+        .is_none_or(|(w, h)| width >= w && height >= h);
+    let embedded_failure = match if is_dng(reference) {
+        dng_embedded_preview_from_bytes(bytes)
+    } else {
+        Ok(None)
+    } {
+        Ok(Some(preview)) if sufficient(preview.image.width(), preview.image.height()) =>
+            return Ok(DynamicImage::ImageRgb8(preview.image)),
+        Ok(Some(_)) => Some("embedded preview is smaller than the DNG sensor image".into()),
         Ok(None) => None,
         Err(error) => Some(format!("DNG embedded preview: {error:#}")),
     };
@@ -331,14 +410,22 @@ fn decode_remote_dng_for_viewer(reference: &str, bytes: &[u8]) -> Result<Dynamic
         let rawfile = rawler::rawsource::RawSource::new_from_shared_vec(std::sync::Arc::new(
             bytes.to_vec(),
         ))
-        .with_path(Path::new("remote.dng"));
+        .with_path(Path::new(reference));
         let decoder = rawler::get_decoder(&rawfile)?;
         let params = rawler::decoders::RawDecodeParams::default();
         let mut failures = Vec::new();
         match decoder.preview_image(&rawfile, &params) {
-            Ok(Some(preview)) => return Ok(preview),
+            Ok(Some(preview)) if sufficient(preview.width(), preview.height()) => return Ok(preview),
+            Ok(Some(_)) => failures.push("embedded preview is thumbnail-sized".into()),
             Ok(None) => failures.push("RAW decoder has no embedded preview".into()),
             Err(error) => failures.push(format!("embedded preview: {error:#}")),
+        }
+        if thumbnail {
+            match decoder.thumbnail_image(&rawfile, &params) {
+                Ok(Some(image)) => return Ok(image),
+                Ok(None) => failures.push("RAW decoder has no thumbnail".into()),
+                Err(error) => failures.push(format!("thumbnail: {error:#}")),
+            }
         }
         match decoder.full_image(&rawfile, &params) {
             Ok(Some(full)) => return Ok(full),
@@ -354,13 +441,13 @@ fn decode_remote_dng_for_viewer(reference: &str, bytes: &[u8]) -> Result<Dynamic
         };
         rawler::imgop::develop::RawDevelop::default()
             .develop_intermediate(&raw)
-            .context("failed to develop remote DNG sensor pixels")?
+            .context("failed to develop remote RAW sensor pixels")?
             .to_dynamic_image()
-            .ok_or_else(|| anyhow::anyhow!("failed to convert remote DNG pixels to an image"))
+            .ok_or_else(|| anyhow::anyhow!("failed to convert remote RAW pixels to an image"))
     })
     .map_err(|error| {
         anyhow::anyhow!(
-            "Remote DNG viewer strategies failed: {}; raw decode: {error:#}",
+            "Remote RAW strategies failed: {}; raw decode: {error:#}",
             embedded_failure.as_deref().unwrap_or("embedded DNG preview unavailable")
         )
     })

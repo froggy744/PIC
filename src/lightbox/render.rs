@@ -607,12 +607,14 @@ fn start_viewer_request(key: ViewerRequestKey, request: Arc<ViewerRequest>) {
             })
             .map_err(|error| Arc::from(error.to_string()));
             viewer_trace(format!(
-                "decode_done uri={} variant={}x{} elapsed_ms={} outcome={}",
+                "decode_done uri={} variant={}x{} elapsed_ms={} outcome={} decoded={}",
                 viewer_trace_uri(&worker_key.path),
                 worker_key.target_width,
                 worker_key.target_height,
                 started.elapsed().as_millis(),
                 if result.is_ok() { "ok" } else { "error" },
+                result.as_ref().map(|image| format!("{}x{}", image.width, image.height))
+                    .unwrap_or_else(|error: &Arc<str>| error.to_string()),
             ));
             finish_viewer_request(&worker_key, &request_for_worker, result);
         })

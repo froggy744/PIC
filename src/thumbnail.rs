@@ -17,6 +17,7 @@ use turbojpeg::{Decompressor, Image as TurboImage, PixelFormat, ScalingFactor};
 const NORMAL_THUMBNAIL_SIZE: u32 = 320;
 const HIGH_QUALITY_THUMBNAIL_SIZE: u32 = 640;
 const THUMBNAIL_CACHE_VERSION: &[u8] = b"picasa-thumb-v5-icc-srgb";
+const REMOTE_RAW_THUMBNAIL_CACHE_VERSION: &[u8] = b"picasa-thumb-v1-remote-raw";
 const RAW_THUMBNAIL_CACHE_VERSION: &[u8] = b"picasa-thumb-v6-generic-raw";
 const REMOTE_NEF_THUMBNAIL_CACHE_VERSION: &[u8] = b"picasa-thumb-v1-remote-nef-preview";
 const REMOTE_JPEG_THUMBNAIL_CACHE_VERSION: &[u8] = b"picasa-thumb-v2-remote-jpeg-icc-srgb";

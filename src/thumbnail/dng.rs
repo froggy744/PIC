@@ -17,6 +17,14 @@ fn dng_embedded_preview_from_reader<R: Read + Seek>(
     file: &mut R,
     file_size: u64,
 ) -> Result<Option<DecodedThumbnailSource>> {
+    dng_embedded_preview_from_reader_with_max(file, file_size, u32::MAX)
+}
+
+fn dng_embedded_preview_from_reader_with_max<R: Read + Seek>(
+    file: &mut R,
+    file_size: u64,
+    max_edge: u32,
+) -> Result<Option<DecodedThumbnailSource>> {
     use rawler::formats::tiff::{GenericTiffReader, reader::TiffReader};
 
     // This reads TIFF metadata and seeks over sensor strips, without loading
@@ -36,7 +44,36 @@ fn dng_embedded_preview_from_reader<R: Read + Seek>(
             .then(|| entry.get_u32(0).ok().flatten())
             .flatten()
     };
-    for preview in tiff.find_ifds_with_filter(|ifd| scalar(ifd, 254) == Some(1)) {
+    let mut previews = tiff.find_ifds_with_filter(|ifd| scalar(ifd, 254) == Some(1));
+    // IFD order is not a quality ranking: some DNGs list a thumbnail first.
+    previews.sort_by_key(|ifd| std::cmp::Reverse(
+        u64::from(scalar(ifd, 256).unwrap_or(0))
+            * u64::from(scalar(ifd, 257).unwrap_or(0)),
+    ));
+    for preview in previews {
+        // A reduced DNG IFD may hold a single lossy JPEG strip, even
+        // when its dimensions match the sensor (Samsung Expert RAW).
+        if scalar(preview, 259) == Some(7)
+            && scalar(preview, 277) == Some(3)
+            && matches!(scalar(preview, 262), Some(2 | 6))
+        {
+            if let (Some(offset), Some(length), Some(height)) = (
+                scalar(preview, 273), scalar(preview, 279), scalar(preview, 257),
+            ) {
+                if length > 0 && length <= 32 * 1024 * 1024
+                    && scalar(preview, 278) == Some(height)
+                    && u64::from(offset) + u64::from(length) <= file_size
+                {
+                    file.seek(SeekFrom::Start(u64::from(offset)))?;
+                    let mut bytes = vec![0; length as usize];
+                    file.read_exact(&mut bytes)?;
+                    if let Ok(mut decoded) = decode_jpeg_turbo_with_max(&bytes, max_edge) {
+                        decoded.scale = "embedded DNG JPEG preview";
+                        return Ok(Some(decoded));
+                    }
+                }
+            }
+        }
         if scalar(preview, 259) != Some(1)
             || scalar(preview, 277) != Some(3)
             || scalar(preview, 284) != Some(1)
@@ -126,6 +163,89 @@ fn dng_embedded_preview_from_reader<R: Read + Seek>(
 mod samsung_dng_preview_tests {
     use super::*;
 
+    #[test]
+    #[ignore = "requires PICASA_TEST_REMOTE_DNG on a live share"]
+    fn live_remote_dng_grid_preview() {
+        let reference = std::env::var("PICASA_TEST_REMOTE_DNG").unwrap();
+        let size = crate::network_shares::stat(&reference).unwrap().size;
+        let started = std::time::Instant::now();
+        let (decoded, orientation) = decode_remote_raw_thumbnail(&reference, 256).unwrap();
+        eprintln!("DNG grid: file_bytes={size} elapsed_ms={} dimensions={:?} orientation={orientation}",
+            started.elapsed().as_millis(), decoded.image.dimensions());
+        assert!(decoded.image.width() > 0);
+        let mut reader = RemoteNefReader::open(&reference).unwrap();
+        let started = std::time::Instant::now();
+        reader.seek(SeekFrom::Start(0)).unwrap();
+        let preview = dng_embedded_preview_from_reader(&mut reader, size).unwrap().unwrap();
+        eprintln!("DNG range preview: elapsed_ms={} dimensions={:?}",
+            started.elapsed().as_millis(), preview.image.dimensions());
+    }
+
+    #[test]
+    #[ignore = "requires PICASA_TEST_REMOTE_DNG on a live share"]
+    fn live_remote_dng_lightbox_quality() {
+        let reference = std::env::var("PICASA_TEST_REMOTE_DNG").unwrap();
+        for (width, height) in [(1920, 1080), (u32::MAX, u32::MAX)] {
+            let image = decode_for_viewer(&reference, width, height).unwrap();
+            eprintln!("Lightbox requested={width}x{height} decoded={:?}", image.dimensions());
+            assert!(image.width().max(image.height()) >= 1080 && image.width().min(image.height()) >= 768,
+                "lightbox returned thumbnail-sized pixels");
+            if width == u32::MAX {
+                assert!(image.width().max(image.height()) >= 3000, "native view did not load full preview");
+            }
+        }
+    }
+
+    #[test]
+    fn dng_jpeg_strip_preview_skips_sensor_pixels() {
+        let fixture = Fixture::new(b"samsung\0", 24, false);
+        let mut bytes = fs::read(&fixture.0).unwrap();
+        let preview_ifd = 58;
+        let entry_value = |index: usize| preview_ifd + 2 + index * 12 + 8;
+        let mut jpeg = Vec::new();
+        image::codecs::jpeg::JpegEncoder::new(&mut jpeg)
+            .encode(&[120; 24], 4, 2, image::ExtendedColorType::Rgb8).unwrap();
+        let pixels_offset = bytes.len() - 12;
+        bytes.truncate(pixels_offset);
+        bytes[entry_value(3)..entry_value(3) + 4].copy_from_slice(&8u32.to_le_bytes());
+        bytes[entry_value(4)..entry_value(4) + 4].copy_from_slice(&7u32.to_le_bytes());
+        bytes[entry_value(9)..entry_value(9) + 4].copy_from_slice(&(jpeg.len() as u32).to_le_bytes());
+        bytes.extend(jpeg);
+        let preview = dng_embedded_preview_from_bytes(&bytes).unwrap().unwrap();
+        assert_eq!(preview.image.dimensions(), (4, 2));
+        assert!(preview.image.get_pixel(0, 0)[0].abs_diff(120) <= 2);
+    }
+
+    #[test]
+    fn dng_lightbox_prefers_large_preview_over_first_thumbnail() {
+        let fixture = Fixture::new(b"samsung\0", 24, false);
+        let mut bytes = fs::read(&fixture.0).unwrap();
+        for (index, value) in [(3, 8u32), (5, 2)] {
+            let start = 58 + 2 + index * 12 + 8;
+            bytes[start..start + 4].copy_from_slice(&value.to_le_bytes());
+        }
+        bytes.extend([128u8; 12]);
+        // A second reduced IFD contains the display preview; the first is
+        // deliberately a tiny thumbnail, as seen in multi-preview DNGs.
+        let second = bytes.len() as u32;
+        let mut ifd = bytes[58..196].to_vec();
+        for (index, value) in [(1, 8u32), (2, 4), (3, 8), (5, 2),
+            (6, second + 138), (8, 4), (9, 96)] {
+            let start = 2 + index * 12 + 8;
+            ifd[start..start + 4].copy_from_slice(&value.to_le_bytes());
+        }
+        bytes.extend(ifd);
+        bytes.extend([180u8; 96]);
+        let offsets = bytes.len() as u32;
+        bytes.extend(58u32.to_le_bytes());
+        bytes.extend(second.to_le_bytes());
+        bytes[26..30].copy_from_slice(&2u32.to_le_bytes());
+        bytes[30..34].copy_from_slice(&offsets.to_le_bytes());
+        let decoded = decode_remote_dng_for_viewer(
+            "nfs://example.invalid/share/multiple.dng", &bytes).unwrap();
+        assert_eq!((decoded.width(), decoded.height()), (8, 4));
+    }
+
     struct Fixture(PathBuf);
 
     impl Fixture {
@@ -200,6 +320,82 @@ mod samsung_dng_preview_tests {
         let decoded = decode_raw_thumbnail(fixture.0.to_str().unwrap()).unwrap();
         assert_eq!(decoded.scale, "embedded Samsung NV21 preview");
         assert_eq!(decoded.image.get_pixel(0, 0).0, [255, 37, 128]);
+    }
+
+    #[test]
+    fn remote_raw_failed_cache_keys_are_retried() {
+        for scheme in ["nfs", "smb"] {
+            for extension in ["dng", "cr2", "cr3", "arw", "raf", "orf", "rw2", "pef", "srw"] {
+                let path = format!("{scheme}://example.invalid/share/photo.{extension}");
+                let mut old = blake3::Hasher::new();
+                old.update(path.as_bytes());
+                old.update(if extension == "dng" {
+                    DNG_THUMBNAIL_CACHE_VERSION
+                } else {
+                    RAW_THUMBNAIL_CACHE_VERSION
+                });
+                old.update(b"\0");
+                old.update(b"0");
+                old.update(b"\0");
+                old.update(b"0");
+                assert_ne!(cache_file_name(&path, None, None),
+                    format!("{}.jpg", old.finalize().to_hex()), "{path}");
+            }
+        }
+    }
+
+    #[test]
+    fn remote_dng_grid_decodes_and_scales_preview() {
+        let fixture = Fixture::new(b"samsung\0", 24, false);
+        let bytes = fs::read(&fixture.0).unwrap();
+        for scheme in ["nfs", "smb"] {
+            let (decoded, orientation) = decode_remote_raw_thumbnail_bytes(
+                &format!("{scheme}://example.invalid/share/photo.dng"), &bytes, 2,
+            ).unwrap();
+            assert_eq!((decoded.source_width, decoded.source_height), (4, 2));
+            assert_eq!(decoded.image.dimensions(), (2, 1));
+            assert_eq!(orientation, 1);
+        }
+    }
+
+    #[test]
+    fn remote_dng_grid_preserves_orientation_for_cache_writer() {
+        let fixture = Fixture::new(b"samsung\0", 24, false);
+        let mut bytes = fs::read(&fixture.0).unwrap();
+        let mut root = 4u16.to_le_bytes().to_vec();
+        root.extend_from_slice(&bytes[10..22]); // Make
+        root.extend_from_slice(&274u16.to_le_bytes()); // Orientation
+        root.extend_from_slice(&3u16.to_le_bytes()); // SHORT
+        root.extend_from_slice(&1u32.to_le_bytes());
+        root.extend_from_slice(&6u32.to_le_bytes()); // 90 degrees clockwise
+        root.extend_from_slice(&bytes[22..50]); // SubIFD, DNGVersion, next IFD
+        // Keep Samsung's short NV21 strip at EOF, as in the real layout.
+        let pixels = bytes.split_off(bytes.len() - 12);
+        let root_offset = bytes.len() as u32;
+        bytes[4..8].copy_from_slice(&root_offset.to_le_bytes());
+        bytes.extend(root);
+        let pixels_offset = bytes.len() as u32;
+        let strip_offset_value = 58 + 2 + 6 * 12 + 8;
+        bytes[strip_offset_value..strip_offset_value + 4]
+            .copy_from_slice(&pixels_offset.to_le_bytes());
+        bytes.extend(pixels);
+        let (decoded, orientation) = decode_remote_raw_thumbnail_bytes(
+            "nfs://example.invalid/share/portrait.dng", &bytes, 4,
+        ).unwrap();
+        assert_eq!(orientation, 6);
+        let oriented = apply_orientation(DynamicImage::ImageRgb8(decoded.image), orientation);
+        assert_eq!((oriented.width(), oriented.height()), (2, 4));
+        assert_eq!(oriented.to_rgb8().get_pixel(0, 0).0, [255, 37, 128]);
+    }
+
+    #[test]
+    fn remote_raw_grid_rejects_corrupt_data() {
+        for extension in ["dng", "cr2", "cr3", "arw", "raf", "orf", "rw2", "pef", "srw", "raw"] {
+            assert!(decode_remote_raw_thumbnail_bytes(
+                &format!("nfs://example.invalid/share/photo.{extension}"),
+                b"not a raw file", 128,
+            ).is_err());
+        }
     }
 
     #[test]

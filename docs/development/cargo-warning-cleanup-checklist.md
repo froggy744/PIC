@@ -52,3 +52,15 @@ Baseline: `cargo check` reported 204 Rust warnings. `cargo check`, `cargo build`
 - [x] Check live SMB and NFS share connections.
 - [x] Run the full test suite with a writable cache, D-Bus, and network interface access.
 - [x] Finish the app smoke test after the final warning cleanup.
+
+## Network RAW grid thumbnails (follow-up)
+
+- [x] Route network DNG and other registered RAW formats through in-memory preview decoding, with sensor development as a fallback.
+- [x] Preserve Nikon's existing embedded JPEG range reads.
+- [x] Read orientation from downloaded RAW bytes and serialize non-Nikon RAW thumbnail downloads/development.
+- [x] Change non-Nikon network RAW cache keys so previous failed thumbnails retry.
+- [x] Verify DNG preview sizing and orientation, corrupt RAW rejection, and cache invalidation; full suite: 576 passed, 116 ignored.
+- [ ] Test DNG and other camera RAW thumbnails in the app over NFS and SMB, including portrait orientation and scrolling.
+- [x] Optimize DNGs with embedded JPEG strips: read metadata and the preview via network ranges, and use scaled JPEG decoding.
+- [x] Verify the supplied DietPi DNG over live NFS: thumbnail generation fell from 823–1107 ms to 247 ms; the JPEG preview is 5.8 MB versus the 46.5 MB original. Full suite: 577 passed, 117 ignored.
+- [x] Fix lightbox DNG quality: select the largest embedded preview and develop sensor pixels when previews are smaller than the sensor image. Live NFS verification: S20 FE 20221225_123929.dng now opens at 3024×4032 instead of 384×512; the S25 DNG still opens at 5712×4284.

@@ -68,6 +68,8 @@ pub fn cache_file_name(path: &str, mtime: Option<i64>, size_bytes: Option<i64>) 
         REMOTE_NEF_THUMBNAIL_CACHE_VERSION
     } else if remote_jpeg(path) {
         REMOTE_JPEG_THUMBNAIL_CACHE_VERSION
+    } else if (path.starts_with("nfs://") || path.starts_with("smb://")) && is_raw(path) {
+        REMOTE_RAW_THUMBNAIL_CACHE_VERSION
     } else if is_dng(path) {
         DNG_THUMBNAIL_CACHE_VERSION
     } else if crate::image_format::uses(path, crate::image_format::DecoderKind::Raw) {
@@ -231,8 +233,20 @@ fn create_uncached_with_max(path: &str, destination: &PathBuf, max_edge: u32) ->
         fs::create_dir_all(parent)?;
     }
 
-    let mut remote_jpeg_orientation = None;
-    let source = if is_raw(path) {
+    let mut remote_source_orientation = None;
+    #[cfg(target_os = "linux")]
+    let remote_raw = if crate::network_shares::private(path) && is_raw(path) {
+        let (decoded, orientation) = decode_remote_raw_thumbnail(path, max_edge)?;
+        remote_source_orientation = Some(orientation);
+        Some(decoded.image)
+    } else {
+        None
+    };
+    #[cfg(not(target_os = "linux"))]
+    let remote_raw: Option<image::RgbImage> = None;
+    let source = if let Some(image) = remote_raw {
+        image
+    } else if is_raw(path) {
         decode_raw_thumbnail_with_max(path, max_edge)?.image
     } else {
         let bytes = crate::source::read(path)?;
@@ -242,7 +256,7 @@ fn create_uncached_with_max(path: &str, destination: &PathBuf, max_edge: u32) ->
                 // The original JPEG is already in memory for thumbnail
                 // decoding. Read its orientation from those bytes instead of
                 // issuing a second NFS/SMB metadata range request.
-                remote_jpeg_orientation = Some(jpeg_orientation_from_header(&bytes));
+                remote_source_orientation = Some(jpeg_orientation_from_header(&bytes));
             }
             let decoded = decode_jpeg_turbo_with_max(&bytes, max_edge)
                 .or_else(|_| decode_with_image(&bytes))?;
@@ -263,7 +277,7 @@ fn create_uncached_with_max(path: &str, destination: &PathBuf, max_edge: u32) ->
     let orientation = if is_heif(path) || is_svg(path) {
         1
     } else {
-        remote_jpeg_orientation.unwrap_or_else(|| exif_orientation(path))
+        remote_source_orientation.unwrap_or_else(|| exif_orientation(path))
     };
     let source = apply_orientation(DynamicImage::ImageRgb8(source), orientation).to_rgb8();
     let resized = resize_with_max(source, max_edge)?;

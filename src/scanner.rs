@@ -500,8 +500,10 @@ fn verify_scan_devices(connection: &Connection, folder_id: i64) -> Result<()> {
     {
         use std::os::unix::fs::MetadataExt;
         if let Some(saved) = db::setting(connection, &format!("scan-devices:{folder_id}"))? {
-            let devices: HashMap<String, u64> = serde_json::from_str(&saved)?;
-            for (path, device) in devices {
+            let devices: HashMap<String, ScanStorageIdentity> = serde_json::from_str(&saved)?;
+            #[cfg(target_os = "linux")]
+            let mounts = read_mounts()?;
+            for (path, identity) in devices {
                 let mut ancestor = Path::new(&path);
                 let metadata = loop {
                     match fs::metadata(ancestor) {
@@ -512,7 +514,18 @@ fn verify_scan_devices(connection: &Connection, folder_id: i64) -> Result<()> {
                         Err(error) => return Err(error.into()),
                     }
                 };
-                if metadata.dev() != device {
+                #[cfg(target_os = "linux")]
+                let matches = match identity {
+                    ScanStorageIdentity::Mount { mount, .. } => {
+                        mount_identity(ancestor, &mounts).is_some_and(|current| current == mount)
+                    }
+                    ScanStorageIdentity::Device(device) => metadata.dev() == device,
+                };
+                #[cfg(not(target_os = "linux"))]
+                let matches = match identity {
+                    ScanStorageIdentity::Mount { device, .. } | ScanStorageIdentity::Device(device) => metadata.dev() == device,
+                };
+                if !matches {
                     anyhow::bail!("scan storage changed or was unmounted: {path}");
                 }
             }
@@ -531,15 +544,91 @@ fn remember_scan_devices(
     {
         use std::os::unix::fs::MetadataExt;
         let mut devices = HashMap::new();
+        #[cfg(target_os = "linux")]
+        let mounts = read_mounts()?;
         for (path, _) in folders {
             if !path.contains("://") {
-                devices.insert(path.clone(), fs::metadata(path)?.dev());
+                let device = fs::metadata(path)?.dev();
+                #[cfg(target_os = "linux")]
+                let identity = ScanStorageIdentity::Mount {
+                    device,
+                    mount: mount_identity(Path::new(path), &mounts)
+                        .context("scan storage mount is unavailable")?,
+                };
+                #[cfg(not(target_os = "linux"))]
+                let identity = ScanStorageIdentity::Device(device);
+                devices.insert(path.clone(), identity);
             }
         }
         db::set_setting(connection, &format!("scan-devices:{folder_id}"), &serde_json::to_string(&devices)?)?;
     }
     let _ = (connection, folder_id, folders);
     Ok(())
+}
+
+#[cfg(unix)]
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(untagged)]
+enum ScanStorageIdentity {
+    Device(u64),
+    Mount { device: u64, mount: String },
+}
+
+#[cfg(target_os = "linux")]
+fn read_mounts() -> Result<Vec<(PathBuf, String)>> {
+    let data = fs::read_to_string("/proc/self/mountinfo")?;
+    let disk_ids = fs::read_dir("/dev/disk/by-uuid")
+        .ok()
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            Some((fs::canonicalize(entry.path()).ok()?, entry.file_name().to_string_lossy().into_owned()))
+        })
+        .collect::<HashMap<_, _>>();
+    let mut mounts = Vec::new();
+    for line in data.lines() {
+        let Some((fields, filesystem)) = line.split_once(" - ") else { continue };
+        let fields: Vec<_> = fields.split_whitespace().collect();
+        let filesystem: Vec<_> = filesystem.split_whitespace().collect();
+        if fields.len() < 5 || filesystem.len() < 2 { continue; }
+        let mount_path = PathBuf::from(unescape_mount_field(fields[4]));
+        let source = fs::canonicalize(filesystem[1]).ok()
+            .and_then(|path| disk_ids.get(&path).map(|uuid| format!("uuid:{uuid}")))
+            .unwrap_or_else(|| filesystem[1].to_string());
+        let identity = format!("{}|{}|{}|{}", filesystem[0], source, fields[3], fields[4]);
+        mounts.push((mount_path, identity));
+    }
+    Ok(mounts)
+}
+
+#[cfg(target_os = "linux")]
+fn unescape_mount_field(field: &str) -> String {
+    let mut result = Vec::with_capacity(field.len());
+    let bytes = field.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'\\' && index + 3 < bytes.len()
+            && bytes[index + 1..index + 4].iter().all(u8::is_ascii_digit)
+        {
+            if let Ok(value) = u8::from_str_radix(&field[index + 1..index + 4], 8) {
+                result.push(value);
+                index += 4;
+                continue;
+            }
+        }
+        result.push(bytes[index]);
+        index += 1;
+    }
+    String::from_utf8_lossy(&result).into_owned()
+}
+
+#[cfg(target_os = "linux")]
+fn mount_identity(path: &Path, mounts: &[(PathBuf, String)]) -> Option<String> {
+    mounts.iter()
+        .filter(|(mount_path, _)| path.starts_with(mount_path))
+        .max_by_key(|(mount_path, _)| mount_path.as_os_str().len())
+        .map(|(_, identity)| identity.clone())
 }
 
 fn root_is_available(root: &str) -> bool {
@@ -1247,6 +1336,30 @@ mod tests {
         assert!(scan_with_control(root_path, &database, None, &ScanControl::default()).is_err());
         assert!(db::folder_exists(&connection, child_id).unwrap());
         assert_eq!(connection.query_row("SELECT COUNT(*) FROM photos", [], |row| row.get::<_, i64>(0)).unwrap(), 1);
+        drop(connection);
+        fs::remove_dir_all(workspace).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn mount_identity_survives_device_number_change_and_rejects_other_storage() {
+        use std::os::unix::fs::MetadataExt;
+        let unique = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let workspace = std::env::temp_dir().join(format!("pic-mount-identity-{}-{unique}", std::process::id()));
+        fs::create_dir_all(&workspace).unwrap();
+        let database = workspace.join("catalog.db");
+        let connection = Connection::open(&database).unwrap();
+        connection.execute_batch(db::SCHEMA).unwrap();
+        let path = workspace.to_str().unwrap().to_string();
+        let folder_id = db::insert_folder(&connection, &path).unwrap();
+        let mount = mount_identity(&workspace, &read_mounts().unwrap()).unwrap();
+        let wrong_device = fs::metadata(&workspace).unwrap().dev().wrapping_add(1);
+        let identity = HashMap::from([(path.clone(), ScanStorageIdentity::Mount { device: wrong_device, mount: mount.clone() })]);
+        db::set_setting(&connection, &format!("scan-devices:{folder_id}"), &serde_json::to_string(&identity).unwrap()).unwrap();
+        verify_scan_devices(&connection, folder_id).unwrap();
+        let wrong_mount = HashMap::from([(path, ScanStorageIdentity::Mount { device: wrong_device, mount: format!("{mount}-other") })]);
+        db::set_setting(&connection, &format!("scan-devices:{folder_id}"), &serde_json::to_string(&wrong_mount).unwrap()).unwrap();
+        assert!(verify_scan_devices(&connection, folder_id).is_err());
         drop(connection);
         fs::remove_dir_all(workspace).unwrap();
     }

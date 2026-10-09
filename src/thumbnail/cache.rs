@@ -185,16 +185,22 @@ pub fn create(path: &str, mtime: Option<i64>, size_bytes: Option<i64>) -> Result
     if let Ok(mut entries) = in_flight.lock() {
         entries.remove(&destination);
     }
-    if result.as_ref().is_err_and(|error| {
-        !error
+    if let Err(error) = &result {
+        let source_available = !error
             .chain()
             .any(|cause| cause.is::<std::io::Error>() || cause.is::<glib::Error>())
-            && crate::source::file_available(path)
-    }) {
-        // Avoid retrying a known corrupt/unsupported source on every launch.
-        // The marker is keyed by the source fingerprint, so a changed file
-        // naturally gets a new cache key and can be attempted again.
-        let _ = fs::write(&failure_marker, DECODE_FAILURE_MARKER);
+            && crate::source::file_available(path);
+        if source_available {
+            // Avoid retrying a known corrupt/unsupported source on every launch.
+            // The marker is keyed by the source fingerprint, so a changed file
+            // naturally gets a new cache key and can be attempted again.
+            let _ = fs::write(&failure_marker, DECODE_FAILURE_MARKER);
+            if let Some(reason) = confirmed_decode_failure_reason(error) {
+                if let Err(report_error) = append_decode_issue(path, &reason) {
+                    eprintln!("Could not write thumbnail issue report: {report_error}");
+                }
+            }
+        }
     }
     if std::env::var_os("PICASA_TRACE").is_some() {
         match &result {
@@ -207,6 +213,62 @@ pub fn create(path: &str, mtime: Option<i64>, size_bytes: Option<i64>) -> Result
         }
     }
     result
+}
+
+fn confirmed_decode_failure_reason(error: &anyhow::Error) -> Option<String> {
+    for cause in error.chain() {
+        if let Some(error) = cause.downcast_ref::<image::ImageError>() {
+            if let image::ImageError::Decoding(_) = error {
+                return Some(format!("{error}"));
+            }
+            return None;
+        }
+        if let Some(error) = cause.downcast_ref::<rawler::RawlerError>() {
+            if let rawler::RawlerError::DecoderFailed(message) = error {
+                let message = message.to_ascii_lowercase();
+                if message.contains("i/o error") || message.contains("read error") {
+                    return None;
+                }
+                return Some(error.to_string());
+            }
+            return None;
+        }
+    }
+
+    let message = format!("{error:#}");
+    let lower = message.to_ascii_lowercase();
+    if lower.contains("unsupported")
+        || lower.contains("not supported")
+        || lower.contains("cannot be scaled")
+    {
+        return None;
+    }
+    ["turbojpeg pixel decode failed", "turbojpeg header decode failed", "invalid jpeg header"]
+        .iter()
+        .any(|prefix| lower.contains(prefix))
+        .then_some(message)
+}
+
+fn append_decode_issue(path: &str, reason: &str) -> std::io::Result<()> {
+    let report_path = std::env::temp_dir().join("pic-thumbnail-issues.log");
+    let mut report = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(report_path)?;
+    let clean = |value: &str| {
+        value
+            .replace('\\', "\\\\")
+            .replace('\t', "\\t")
+            .replace('\r', "\\r")
+            .replace('\n', "\\n")
+    };
+    writeln!(
+        report,
+        "{}\tdecode failure\t{}\t{}",
+        chrono::Local::now().to_rfc3339(),
+        clean(path),
+        clean(reason)
+    )
 }
 
 const DECODE_FAILURE_MARKER: &[u8] = b"thumbnail decode failed v2\n";

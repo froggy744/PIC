@@ -53,47 +53,6 @@ fn photo_context_menu_contains(widget: &gtk::Widget) -> bool {
     })
 }
 
-/// A submenu trigger inside the photo context menu: flat row, label and arrow,
-/// matching the other submenu entries.
-fn context_submenu_button(label: &str, css_class: &str) -> gtk::MenuButton {
-    let button = gtk::MenuButton::new();
-    button.set_focus_on_click(false);
-    button.set_focusable(false);
-    button.set_direction(gtk::ArrowType::None);
-    button.set_halign(gtk::Align::Fill);
-    button.add_css_class("flat");
-    button.add_css_class("photo-context-submenu");
-    button.add_css_class(css_class);
-    let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    let text = gtk::Label::new(Some(label));
-    text.set_xalign(0.0);
-    text.set_hexpand(true);
-    row.append(&text);
-    row.append(&gtk::Image::from_icon_name("pan-end-symbolic"));
-    button.set_child(Some(&row));
-    button
-}
-
-/// This submenu lives inside a mouse context menu. Keep its transient buttons
-/// from becoming the window focus: removing a focused submenu and parent menu
-/// makes GtkGridView focus its first item and scroll to top. The separately
-/// built infobar album menu remains keyboard-focusable.
-fn unfocus_submenu(popover: &gtk::Popover) {
-    popover.set_focusable(false);
-    let mut pending = popover.child().into_iter().collect::<Vec<_>>();
-    while let Some(widget) = pending.pop() {
-        if let Some(button) = widget.downcast_ref::<gtk::Button>() {
-            button.set_focus_on_click(false);
-            button.set_focusable(false);
-        }
-        let mut child = widget.first_child();
-        while let Some(descendant) = child {
-            child = descendant.next_sibling();
-            pending.push(descendant);
-        }
-    }
-}
-
 const BULK_RECIPE_CHUNK: usize = 64;
 
 enum BulkRecipePlan {
@@ -396,7 +355,7 @@ fn show_photo_context_menu(
     let selection_for_provider = selection_ids.clone();
     let selection_provider: Rc<dyn Fn() -> Vec<i64>> =
         Rc::new(move || selection_for_provider.clone());
-    let add_to_album = context_submenu_button("Add to Album", "photo-context-album");
+    let add_to_album = add_action("Add to Album");
     let album_scroll_y = context
         .gallery
         .borrow()
@@ -410,15 +369,20 @@ fn show_photo_context_menu(
             gallery.restore_context_view(album_photo_id, album_scroll_y);
         }
     });
-    let album_popover = build_album_popover(
-        context.clone(),
-        selection_provider.clone(),
-        dismiss_menu.clone(),
-        restore_album_view.clone(),
-    );
-    unfocus_submenu(&album_popover);
-    add_to_album.set_popover(Some(&album_popover));
-    menu.append(&add_to_album);
+    let album_context = context.clone();
+    let album_selection = selection_provider.clone();
+    let dismiss_for_album = dismiss_menu.clone();
+    add_to_album.connect_clicked(move |_| {
+        dismiss_for_album();
+        let context = album_context.clone();
+        let selected_ids = album_selection.clone();
+        let after_existing_album = restore_album_view.clone();
+        glib::idle_add_local_once(move || {
+            if let Some(window) = context.window.upgrade() {
+                show_album_chooser(window.upcast_ref(), context, selected_ids, after_existing_album);
+            }
+        });
+    });
 
     let collage_ids = selection_ids.clone();
     let collage = add_action("Create Collage…");
@@ -1710,6 +1674,36 @@ mod photo_actions_tests {
         main_loop.run();
     }
 
+    // Set GDK_BACKEND=x11 PIC_TEST_POINTER=1 to exercise real mouse input
+    // with xdotool instead of emitting the buttons' clicked signals.
+    fn pointer_click(window: &gtk::Window, widget: &gtk::Widget) {
+        let point = widget
+            .compute_point(
+                window,
+                &gtk::graphene::Point::new(
+                    widget.width() as f32 / 2.0,
+                    widget.height() as f32 / 2.0,
+                ),
+            )
+            .unwrap();
+        let output = std::process::Command::new("xdotool")
+            .args(["search", "--name", "PIC album pointer test"])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let id = String::from_utf8(output.stdout).unwrap();
+        assert!(std::process::Command::new("xdotool")
+            .args([
+                "mousemove", "--window", id.trim(),
+                &point.x().round().to_string(), &point.y().round().to_string(),
+                "click", "1",
+            ])
+            .status()
+            .unwrap()
+            .success());
+        settle_gtk_layout();
+    }
+
     fn find_action(root: &gtk::Widget, text: &str) -> Option<gtk::Button> {
         if let Some(button) = root.downcast_ref::<gtk::Button>() {
             let label = button.label().map(|label| label.to_string()).or_else(|| {
@@ -1797,8 +1791,7 @@ mod photo_actions_tests {
         assert!(scroll.max_content_height() > 0);
         let last_album = find_action(scroll.upcast_ref(), "Album 30")
             .expect("the final album must remain available inside the viewport");
-        unfocus_submenu(&popover);
-        assert!(!last_album.is_focusable());
+        assert!(last_album.is_sensitive());
 
         drop(popover);
         drop(connection);
@@ -1830,10 +1823,11 @@ mod photo_actions_tests {
         let photo_object = crate::photo_object::PhotoObject::from_photo(&photo);
 
         let overlay = gtk::Overlay::new();
-        let window = gtk::Window::builder()
+        let window = adw::ApplicationWindow::builder()
+            .title("PIC album pointer test")
             .default_width(640)
             .default_height(480)
-            .child(&overlay)
+            .content(&overlay)
             .build();
         window.present();
         settle_gtk_layout();
@@ -1861,7 +1855,7 @@ mod photo_actions_tests {
             open_edit: Rc::new(|_| {}),
             edit_clipboard: Rc::new(RefCell::new(None)),
             export: Rc::new(|| {}),
-            window: glib::WeakRef::new(),
+            window: window.upcast_ref::<gtk::Window>().downgrade(),
             context_menu_host: Rc::new(RefCell::new(Some(overlay.clone().downgrade()))),
             operation_progress: OperationProgressUi::new(),
         };
@@ -1915,7 +1909,37 @@ mod photo_actions_tests {
         let open_menu = menu();
         assert!(find_action(&open_menu, "Set as Album Cover").is_none());
         assert!(find_action(&open_menu, "Remove from Album").is_none());
-        dismiss_active_photo_context_menu();
+
+        // Exercise the trigger itself: it must close the context menu and
+        // present a rooted chooser before an album can be selected.
+        db::remove_photos_from_album(&connection.borrow(), album.id, &[1]).unwrap();
+        let trigger = find_action(&open_menu, "Add to Album").unwrap();
+        settle_gtk_layout();
+        if std::env::var_os("PIC_TEST_POINTER").is_some() {
+            pointer_click(window.upcast_ref(), trigger.upcast_ref());
+        } else {
+            trigger.emit_clicked();
+        }
+        settle_gtk_layout();
+        assert!(ACTIVE_PHOTO_MENU.with(|active| active.borrow().is_none()));
+        let chooser = window.visible_dialog().expect("album chooser is presented");
+        assert!(chooser.is_mapped());
+        let album_button = find_action(chooser.upcast_ref(), "Holiday").unwrap();
+        if std::env::var_os("PIC_TEST_POINTER").is_some() {
+            pointer_click(window.upcast_ref(), album_button.upcast_ref());
+        } else {
+            album_button.emit_clicked();
+        }
+        let membership: i64 = connection
+            .borrow()
+            .query_row(
+                "SELECT COUNT(*) FROM album_photos WHERE album_id = ?1 AND photo_id = 1",
+                [album.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(membership, 1);
+        assert!(ACTIVE_PHOTO_MENU.with(|active| active.borrow().is_none()));
 
         window.close();
         drop(connection);

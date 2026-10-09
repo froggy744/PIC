@@ -52,6 +52,50 @@ fn build_album_popover(
     after_existing_album: Rc<dyn Fn()>,
 ) -> gtk::Popover {
     let popover = gtk::Popover::new();
+    let weak_popover = popover.downgrade();
+    let dismiss: Rc<dyn Fn()> = Rc::new(move || {
+        if let Some(popover) = weak_popover.upgrade() {
+            popover.popdown();
+        }
+        dismiss_parent();
+    });
+    popover.set_child(Some(&build_album_choices(
+        context,
+        selected_ids,
+        dismiss,
+        after_existing_album,
+    )));
+    popover
+}
+
+fn show_album_chooser(
+    parent: &gtk::Widget,
+    context: PhotoActionContext,
+    selected_ids: Rc<dyn Fn() -> Vec<i64>>,
+    after_existing_album: Rc<dyn Fn()>,
+) {
+    let dialog = adw::AlertDialog::builder()
+        .heading("Add to Album")
+        .close_response("cancel")
+        .build();
+    dialog.add_response("cancel", "Cancel");
+    let weak_dialog = dialog.downgrade();
+    let dismiss: Rc<dyn Fn()> = Rc::new(move || {
+        if let Some(dialog) = weak_dialog.upgrade() {
+            dialog.close();
+        }
+    });
+    let choices = build_album_choices(context, selected_ids, dismiss, after_existing_album);
+    dialog.set_extra_child(Some(&choices));
+    dialog.present(Some(parent));
+}
+
+fn build_album_choices(
+    context: PhotoActionContext,
+    selected_ids: Rc<dyn Fn() -> Vec<i64>>,
+    dismiss: Rc<dyn Fn()>,
+    after_existing_album: Rc<dyn Fn()>,
+) -> gtk::ScrolledWindow {
     let menu = gtk::Box::new(gtk::Orientation::Vertical, 2);
     menu.set_margin_top(6);
     menu.set_margin_bottom(6);
@@ -63,16 +107,13 @@ fn build_album_popover(
     new_album.add_css_class("flat");
     let new_context = context.clone();
     let new_selection = selected_ids.clone();
-    let popover_for_new = popover.clone();
-    let dismiss_parent_for_new = dismiss_parent.clone();
+    let dismiss_for_new = dismiss.clone();
     new_album.connect_clicked(move |_| {
-        popover_for_new.popdown();
-        dismiss_parent_for_new();
+        dismiss_for_new();
         let parent: gtk::Widget = new_context.info.root.clone().upcast();
         let photo_ids = new_selection();
         let context = new_context.clone();
-        // Present after both nested popovers have finished closing. Otherwise
-        // the context-menu surface can remain above the modal and retain focus.
+        // Present after the chooser has closed and released its focus.
         glib::idle_add_local_once(move || {
             show_create_album_dialog(parent, photo_ids, context);
         });
@@ -89,12 +130,10 @@ fn build_album_popover(
         item.add_css_class("flat");
         let item_context = context.clone();
         let item_selection = selected_ids.clone();
-        let popover_for_item = popover.clone();
-        let dismiss_parent_for_item = dismiss_parent.clone();
+        let dismiss_for_item = dismiss.clone();
         let after_existing_album_for_item = after_existing_album.clone();
         item.connect_clicked(move |_| {
-            popover_for_item.popdown();
-            dismiss_parent_for_item();
+            dismiss_for_item();
             let ids = item_selection();
             if ids.is_empty() {
                 return;
@@ -120,8 +159,7 @@ fn build_album_popover(
     scroll.set_propagate_natural_height(true);
     scroll.set_max_content_height(360);
     scroll.set_child(Some(&menu));
-    popover.set_child(Some(&scroll));
-    popover
+    scroll
 }
 
 fn show_create_album_dialog(parent: gtk::Widget, photo_ids: Vec<i64>, context: PhotoActionContext) {

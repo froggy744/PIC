@@ -386,6 +386,12 @@ fn retain_enabled_formats(connection: &Connection, photos: &mut Vec<db::Photo>) 
 }
 
 fn apply_rating_filter(photos: &mut Vec<db::Photo>, filter: RatingFilter) {
+    if filter == RatingFilter::Corrupt {
+        photos.retain(|photo| crate::photo_object::confirmed_corrupt_local_jpeg(
+            &photo.path, photo.width, photo.height,
+        ));
+        return;
+    }
     if filter == RatingFilter::AllStars {
         photos.retain(|photo| (1..=5).contains(&photo.rating));
         return;
@@ -396,28 +402,10 @@ fn apply_rating_filter(photos: &mut Vec<db::Photo>, filter: RatingFilter) {
 }
 
 fn sort_photos(photos: &mut [db::Photo], sort: PhotoSort) {
-    let corrupt = corrupt_photo_ids(photos, sort.field);
-    photos.sort_by(|left, right| photo_ordering(left, right, sort, &corrupt));
+    photos.sort_by(|left, right| photo_ordering(left, right, sort));
 }
 
-fn corrupt_photo_ids(photos: &[db::Photo], field: SortField) -> std::collections::HashSet<i64> {
-    if field != SortField::Corrupt {
-        return std::collections::HashSet::new();
-    }
-    photos.iter()
-        .filter(|photo| crate::photo_object::confirmed_corrupt_local_jpeg(
-            &photo.path, photo.width, photo.height,
-        ))
-        .map(|photo| photo.id)
-        .collect()
-}
-
-fn photo_ordering(
-    left: &db::Photo,
-    right: &db::Photo,
-    sort: PhotoSort,
-    corrupt: &std::collections::HashSet<i64>,
-) -> Ordering {
+fn photo_ordering(left: &db::Photo, right: &db::Photo, sort: PhotoSort) -> Ordering {
     let ordering = match sort.field {
         SortField::DateTaken => compare_optional(
             left.taken_at.as_deref(),
@@ -443,10 +431,6 @@ fn photo_ordering(
             sort.direction,
         ),
         SortField::Rating => directed_ordering(left.rating.cmp(&right.rating), sort.direction),
-        SortField::Corrupt => directed_ordering(
-            corrupt.contains(&left.id).cmp(&corrupt.contains(&right.id)),
-            sort.direction,
-        ),
     };
 
     ordering.then_with(|| left.path.to_lowercase().cmp(&right.path.to_lowercase()))
@@ -462,7 +446,6 @@ fn sort_folder_stream(
     sort: PhotoSort,
     display_mode: sidebar::FolderDisplayMode,
 ) {
-    let corrupt = corrupt_photo_ids(photos, sort.field);
     let order = folder_stream_order(folders, display_mode);
     let rank = order
         .iter()
@@ -480,7 +463,7 @@ fn sort_folder_stream(
             .unwrap_or(usize::MAX);
         left_rank
             .cmp(&right_rank)
-            .then_with(|| photo_ordering(left, right, sort, &corrupt))
+            .then_with(|| photo_ordering(left, right, sort))
     });
 }
 
@@ -920,8 +903,8 @@ mod photo_action_tests {
     }
 
     #[test]
-    fn corrupt_sort_uses_the_same_status_as_the_badge() {
-        let directory = std::env::temp_dir().join(format!("pic-corrupt-sort-{}", std::process::id()));
+    fn corrupt_filter_uses_the_same_status_as_the_badge() {
+        let directory = std::env::temp_dir().join(format!("pic-corrupt-filter-{}", std::process::id()));
         std::fs::create_dir_all(&directory).unwrap();
         let good_path = directory.join("good.jpg");
         let bad_path = directory.join("bad.jpg");
@@ -932,10 +915,8 @@ mod photo_action_tests {
         let mut bad = photo(bad_path.to_str().unwrap(), None, None, None, None);
         bad.id = 2;
         let mut photos = vec![good, bad];
-        sort_photos(&mut photos, PhotoSort { field: SortField::Corrupt, direction: SortDirection::Descending });
-        assert_eq!(photos.iter().map(|photo| photo.id).collect::<Vec<_>>(), [2, 1]);
-        sort_photos(&mut photos, PhotoSort { field: SortField::Corrupt, direction: SortDirection::Ascending });
-        assert_eq!(photos.iter().map(|photo| photo.id).collect::<Vec<_>>(), [1, 2]);
+        apply_rating_filter(&mut photos, RatingFilter::Corrupt);
+        assert_eq!(photos.iter().map(|photo| photo.id).collect::<Vec<_>>(), [2]);
         std::fs::remove_dir_all(directory).unwrap();
     }
 

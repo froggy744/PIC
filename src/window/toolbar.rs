@@ -29,14 +29,12 @@
     let name_sort = gtk::CheckButton::with_label("Name");
     let file_size_sort = gtk::CheckButton::with_label("File size");
     let dimensions_sort = gtk::CheckButton::with_label("Dimensions");
-    let corrupt_sort = gtk::CheckButton::with_label("Corrupt");
     for button in [
         &date_added_sort,
         &rating_sort,
         &name_sort,
         &file_size_sort,
         &dimensions_sort,
-        &corrupt_sort,
     ] {
         button.set_group(Some(&date_taken_sort));
     }
@@ -47,7 +45,6 @@
         SortField::Name => name_sort.set_active(true),
         SortField::FileSize => file_size_sort.set_active(true),
         SortField::Dimensions => dimensions_sort.set_active(true),
-        SortField::Corrupt => corrupt_sort.set_active(true),
     }
     for button in [
         &date_taken_sort,
@@ -56,7 +53,6 @@
         &name_sort,
         &file_size_sort,
         &dimensions_sort,
-        &corrupt_sort,
     ] {
         sort_box.append(button);
     }
@@ -153,7 +149,6 @@
     connect_sort_field(&name_sort, SortField::Name);
     connect_sort_field(&file_size_sort, SortField::FileSize);
     connect_sort_field(&dimensions_sort, SortField::Dimensions);
-    connect_sort_field(&corrupt_sort, SortField::Corrupt);
 
     let connect_sort_direction = |button: &gtk::CheckButton, direction: SortDirection| {
         let sort = sort.clone();
@@ -254,10 +249,10 @@
     // Keep rating filtering independent from sorting. The filtered subset can
     // still be sorted by Date, Rating, Name, Size, or Dimensions.
     let rating_filter_button = gtk::MenuButton::new();
-    rating_filter_button.set_icon_name(if rating_filter.get() == RatingFilter::All {
-        "non-starred-symbolic"
-    } else {
-        "starred-symbolic"
+    rating_filter_button.set_icon_name(match rating_filter.get() {
+        RatingFilter::All => "non-starred-symbolic",
+        RatingFilter::Corrupt => "dialog-warning-symbolic",
+        _ => "starred-symbolic",
     });
     rating_filter_button.set_tooltip_text(Some(rating_filter.get().tooltip()));
 
@@ -268,7 +263,7 @@
     rating_filter_box.set_margin_start(8);
     rating_filter_box.set_margin_end(8);
 
-    let rating_filter_heading = gtk::Label::new(Some("Filter by rating"));
+    let rating_filter_heading = gtk::Label::new(Some("Filter photos"));
     rating_filter_heading.set_xalign(0.0);
     rating_filter_heading.add_css_class("heading");
     rating_filter_box.append(&rating_filter_heading);
@@ -281,6 +276,7 @@
     let rating_three = gtk::CheckButton::with_label("★★★ 3");
     let rating_four = gtk::CheckButton::with_label("★★★★ 4");
     let rating_five = gtk::CheckButton::with_label("★★★★★ 5");
+    let corrupt_filter = gtk::CheckButton::with_label("Corrupt");
     for button in [
         &rating_all_stars,
         &rating_unrated,
@@ -289,6 +285,7 @@
         &rating_three,
         &rating_four,
         &rating_five,
+        &corrupt_filter,
     ] {
         button.set_group(Some(&rating_clear));
     }
@@ -301,6 +298,7 @@
         RatingFilter::Three => rating_three.set_active(true),
         RatingFilter::Four => rating_four.set_active(true),
         RatingFilter::Five => rating_five.set_active(true),
+        RatingFilter::Corrupt => corrupt_filter.set_active(true),
     }
     for button in [
         &rating_clear,
@@ -311,6 +309,7 @@
         &rating_three,
         &rating_four,
         &rating_five,
+        &corrupt_filter,
     ] {
         rating_filter_box.append(button);
     }
@@ -328,10 +327,10 @@
                 return;
             }
             rating_filter.set(value);
-            rating_filter_button.set_icon_name(if value == RatingFilter::All {
-                "non-starred-symbolic"
-            } else {
-                "starred-symbolic"
+            rating_filter_button.set_icon_name(match value {
+                RatingFilter::All => "non-starred-symbolic",
+                RatingFilter::Corrupt => "dialog-warning-symbolic",
+                _ => "starred-symbolic",
             });
             rating_filter_button.set_tooltip_text(Some(value.tooltip()));
             if let Err(error) =
@@ -356,6 +355,7 @@
     connect_rating_filter(&rating_three, RatingFilter::Three);
     connect_rating_filter(&rating_four, RatingFilter::Four);
     connect_rating_filter(&rating_five, RatingFilter::Five);
+    connect_rating_filter(&corrupt_filter, RatingFilter::Corrupt);
 
     rating_filter_popover.set_child(Some(&rating_filter_box));
     rating_filter_button.set_popover(Some(&rating_filter_popover));

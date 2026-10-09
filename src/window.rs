@@ -77,7 +77,6 @@ enum SortField {
     Name,
     FileSize,
     Dimensions,
-    Corrupt,
 }
 
 impl SortField {
@@ -89,7 +88,6 @@ impl SortField {
             Self::Name => "name",
             Self::FileSize => "file-size",
             Self::Dimensions => "dimensions",
-            Self::Corrupt => "corrupt",
         }
     }
 
@@ -100,7 +98,6 @@ impl SortField {
             "name" => Self::Name,
             "file-size" => Self::FileSize,
             "dimensions" => Self::Dimensions,
-            "corrupt" => Self::Corrupt,
             _ => Self::DateTaken,
         }
     }
@@ -145,6 +142,7 @@ enum RatingFilter {
     Three,
     Four,
     Five,
+    Corrupt,
 }
 
 impl RatingFilter {
@@ -158,6 +156,7 @@ impl RatingFilter {
             Self::Three => "3",
             Self::Four => "4",
             Self::Five => "5",
+            Self::Corrupt => "corrupt",
         }
     }
 
@@ -170,6 +169,7 @@ impl RatingFilter {
             "3" => Self::Three,
             "4" => Self::Four,
             "5" => Self::Five,
+            "corrupt" => Self::Corrupt,
             _ => Self::All,
         }
     }
@@ -184,6 +184,7 @@ impl RatingFilter {
             Self::Three => Some(3),
             Self::Four => Some(4),
             Self::Five => Some(5),
+            Self::Corrupt => None,
         }
     }
 
@@ -197,6 +198,7 @@ impl RatingFilter {
             Self::Three => "Rating filter: 3 stars",
             Self::Four => "Rating filter: 4 stars",
             Self::Five => "Rating filter: 5 stars",
+            Self::Corrupt => "Filter: Corrupt photos",
         }
     }
 }

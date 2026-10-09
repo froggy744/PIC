@@ -466,7 +466,7 @@ fn reconcile_deleted_root(root: &str, database: &Path, events: Option<&Sender<Sc
         let Some(saved) = db::setting(&connection, &format!("scan-devices:{}", folder.id))? else {
             return Ok(false);
         };
-        let devices: HashMap<String, u64> = serde_json::from_str(&saved)?;
+        let devices: HashMap<String, ScanStorageIdentity> = serde_json::from_str(&saved)?;
         if !devices.contains_key(root) {
             return Ok(false);
         }

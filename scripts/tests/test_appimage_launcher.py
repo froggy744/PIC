@@ -12,7 +12,7 @@ SCRIPT = ROOT / 'scripts/PIC-build-linux-one-script.sh'
 class AppImageLauncherTests(unittest.TestCase):
     def test_appimage_and_flatpak_launchers_coexist(self):
         source = SCRIPT.read_text()
-        function = 'integrate_appimage_gnome() {' + source.split('integrate_appimage_gnome() {', 1)[1].split('\n}\n', 1)[0] + '\n}\n'
+        function = 'integrate_appimage_xdg() {' + source.split('integrate_appimage_xdg() {', 1)[1].split('\n}\n', 1)[0] + '\n}\n'
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             data = root / 'local data'
@@ -37,7 +37,7 @@ log() { :; }
 warn() { :; }
 have() { case "$1" in gio|python3) return 1;; *) command -v "$1" >/dev/null;; esac; }
 '''
-            command = helpers + function + '\nintegrate_appimage_gnome "$1" "$2"\n'
+            command = helpers + function + '\nintegrate_appimage_xdg "$1" "$2"\n'
             env = dict(os.environ, XDG_DATA_HOME=str(data), APP_ID='io.github.froggy744.PIC', ICON_EXT='png', PATH=f'{tools}:/usr/bin:/bin')
             result = subprocess.run(['bash', '-c', command, 'test', str(appimage), str(icon)], env=env, text=True, capture_output=True)
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -47,12 +47,12 @@ have() { case "$1" in gio|python3) return 1;; *) command -v "$1" >/dev/null;; es
             self.assertIn('Exec="' + str(appimage) + '" %F', launcher.read_text())
             self.assertIn('Icon=io.github.froggy744.PIC.AppImage', launcher.read_text())
             self.assertTrue((data / 'icons/hicolor/256x256/apps/io.github.froggy744.PIC.AppImage.png').is_file())
-            # A second run must preserve a user's edited AppImage launcher.
+            # A second run updates the AppImage-owned launcher while leaving Flatpak alone.
             launcher.write_text(launcher.read_text() + 'X-Test-User-Edit=true\n')
-            edited = launcher.read_bytes()
             result = subprocess.run(['bash', '-c', command, 'test', str(appimage), str(icon)], env=env, text=True, capture_output=True)
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(launcher.read_bytes(), edited)
+            self.assertNotIn('X-Test-User-Edit=true', launcher.read_text())
+            self.assertIn('Exec="' + str(appimage) + '" %F', launcher.read_text())
             self.assertEqual(flatpak_desktop.read_bytes(), original)
             appimage.unlink()
             # GNOME/GIO enumeration must still find Flatpak after the file is removed.

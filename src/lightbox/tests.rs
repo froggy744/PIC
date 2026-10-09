@@ -135,10 +135,10 @@ mod viewer_presentation_tests {
     }
 
     #[test]
-    fn metadata_unknown_preview_fills_the_viewer_while_decode_is_pending() {
+    fn metadata_unknown_small_photo_keeps_its_native_size_in_fit_mode() {
         assert_eq!(
             fitted_picture_dimensions(0, 0, 240, 320, 1036, 794, 0.0),
-            (596, 794)
+            (240, 320)
         );
     }
 
@@ -273,13 +273,12 @@ mod viewer_presentation_tests {
         let intrinsic = (214_i32, 320_i32);
         let viewport = (1663_i32, 937_i32);
 
-        let (source_width, source_height, native_valid) =
+        let (source_width, source_height, _) =
             presentation_source_dimensions(native.0, native.1, intrinsic.0, intrinsic.1, false);
         assert_eq!((source_width, source_height), (4016.0, 6016.0));
         let fit = presentation_fit_scale_from_source(
             source_width,
             source_height,
-            native_valid,
             viewport.0,
             viewport.1,
         );
@@ -444,6 +443,99 @@ mod one_to_one_layout_regression {
             );
         }
         window.close();
+    }
+}
+
+#[cfg(test)]
+mod one_to_one_quality_regression {
+    use super::*;
+
+    #[test]
+    #[ignore = "requires a GTK display"]
+    fn small_photo_stays_fit_when_one_to_one_is_requested() {
+        gtk::init().unwrap();
+        let path = std::env::temp_dir().join(format!(
+            "pic-small-one-to-one-{}.png", std::process::id()
+        ));
+        image::RgbaImage::from_pixel(640, 426, image::Rgba([120, 80, 40, 255]))
+            .save(&path).unwrap();
+        let photo: PhotoObject = glib::Object::builder::<PhotoObject>()
+            .property("id", 1_i64)
+            .property("path", path.to_string_lossy().as_ref())
+            .property("width", 0_i64)
+            .property("height", 0_i64)
+            .build();
+        photo.set_original_available(true);
+        let lightbox = Lightbox::new();
+        let window = gtk::Window::new();
+        window.set_default_size(1380, 1094);
+        window.set_child(Some(&lightbox.root));
+        window.present();
+        lightbox.open(vec![photo], 0);
+        let context = glib::MainContext::default();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while (picture_intrinsic_dimensions(&lightbox.picture) != (640, 426)
+            || lightbox.picture.size_request() != (640, 426))
+            && Instant::now() < deadline {
+            while context.pending() { context.iteration(false); }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(picture_intrinsic_dimensions(&lightbox.picture), (640, 426));
+        assert_eq!(lightbox.picture.size_request(), (640, 426),
+            "Fit must not enlarge the recovered preview to fill the lightbox");
+        lightbox.set_one_to_one(true);
+        assert!(!lightbox.one_to_one_active.get(),
+            "1:1 should remain off when the whole photo already fits");
+        assert_eq!(picture_intrinsic_dimensions(&lightbox.picture), (640, 426));
+        assert_eq!(lightbox.zoom.get(), 0.0);
+        window.close();
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    #[ignore = "requires a GTK display"]
+    fn one_to_one_waits_for_native_pixels() {
+        gtk::init().unwrap();
+        let path = std::env::temp_dir().join(format!(
+            "pic-one-to-one-quality-{}.png", std::process::id()
+        ));
+        image::RgbaImage::from_pixel(800, 600, image::Rgba([120, 80, 40, 255]))
+            .save(&path).unwrap();
+        let photo: PhotoObject = glib::Object::builder::<PhotoObject>()
+            .property("id", 1_i64)
+            .property("path", path.to_string_lossy().as_ref())
+            .property("width", 800_i64)
+            .property("height", 600_i64)
+            .build();
+        photo.set_original_available(true);
+        let lightbox = Lightbox::new();
+        let window = gtk::Window::new();
+        window.set_default_size(240, 180);
+        window.set_child(Some(&lightbox.root));
+        window.present();
+        lightbox.open(vec![photo], 0);
+        let context = glib::MainContext::default();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while (lightbox.picture.paintable().is_none()
+            || picture_intrinsic_dimensions(&lightbox.picture).0 >= 800)
+            && Instant::now() < deadline {
+            while context.pending() { context.iteration(false); }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(lightbox.picture.paintable().is_some());
+        assert!(picture_intrinsic_dimensions(&lightbox.picture).0 < 800);
+        lightbox.set_one_to_one(true);
+        assert!(lightbox.picture.paintable().is_none(),
+            "a fit-sized texture was exposed as the 1:1 image");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while picture_intrinsic_dimensions(&lightbox.picture) != (800, 600)
+            && Instant::now() < deadline {
+            while context.pending() { context.iteration(false); }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(picture_intrinsic_dimensions(&lightbox.picture), (800, 600));
+        window.close();
+        std::fs::remove_file(path).unwrap();
     }
 }
 

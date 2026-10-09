@@ -1286,6 +1286,27 @@ impl Lightbox {
         if self.one_to_one_active.get() == enabled {
             return;
         }
+        if enabled {
+            let photo_fits = self
+                .photos
+                .borrow()
+                .get(self.index.get())
+                .is_some_and(|photo| {
+                    photo_fits_lightbox(
+                        photo,
+                        &self.picture,
+                        self.picture_viewport.width(),
+                        self.picture_viewport.height(),
+                        self.picture_viewport.scale_factor(),
+                    )
+                });
+            if photo_fits {
+                if let Some(handler) = self.one_to_one_sync.borrow().as_ref() {
+                    handler(false);
+                }
+                return;
+            }
+        }
 
         self.one_to_one_active.set(enabled);
         if let Some(handler) = self.one_to_one_sync.borrow().as_ref() {
@@ -1342,6 +1363,11 @@ impl Lightbox {
                     return;
                 }
             }
+            // The fit texture has fewer pixels than the source. Keep 1:1
+            // empty until the native decode replaces it, so it is never
+            // presented as a full-resolution image.
+            self.picture.set_paintable(gtk::gdk::Paintable::NONE);
+            self.picture.set_size_request(1, 1);
         } else {
             // 1:1 off always returns to fit-to-window.
             self.set_zoom(0.0);
@@ -1491,7 +1517,7 @@ impl Lightbox {
                 return glib::ControlFlow::Continue;
             }
 
-            let (_fit_geometry_fixed, cache_hit) = prepare_navigation_photo(
+            let (preview_geometry_fixed, cache_hit) = prepare_navigation_photo(
                 &picture,
                 photos.borrow().get(index.get()),
                 root,
@@ -1510,11 +1536,10 @@ impl Lightbox {
                 &picture_viewport,
                 native_texture.clone(),
                 display_texture_cache.clone(),
-                // fit_picture below establishes the same final geometry used
-                // by the shared-element transition. Do not let a later decode
-                // re-fit from its intrinsic dimensions and make the real
-                // picture settle a second time after the 200 ms animation.
-                true,
+                // Keep existing geometry only when a matching cached preview
+                // or shared-element source established it. Without either,
+                // let the decoded image set its true native size on completion.
+                preview_geometry_fixed || source_for_first_frame.borrow().is_some(),
                 cache_hit,
                 None,
                 None,

@@ -64,3 +64,7 @@ Baseline: `cargo check` reported 204 Rust warnings. `cargo check`, `cargo build`
 - [x] Optimize DNGs with embedded JPEG strips: read metadata and the preview via network ranges, and use scaled JPEG decoding.
 - [x] Verify the supplied DietPi DNG over live NFS: thumbnail generation fell from 823–1107 ms to 247 ms; the JPEG preview is 5.8 MB versus the 46.5 MB original. Full suite: 577 passed, 117 ignored.
 - [x] Fix lightbox DNG quality: select the largest embedded preview and develop sensor pixels when previews are smaller than the sensor image. Live NFS verification: S20 FE 20221225_123929.dng now opens at 3024×4032 instead of 384×512; the S25 DNG still opens at 5712×4284.
+- [x] Prevent 1:1 mode from presenting a fit-sized texture while native pixels load; cache only native-request results as native textures. GTK regression test passes, S20 FE DNG verifies 3024×4032 native decode, full suite: 578 passed, 119 ignored.
+- [ ] Confirm in the app that 1:1 on a network DNG waits for and displays the native-size image.
+- [x] Keep the 1:1 control off when the source already fits within the lightbox viewport; verified the 640×426 recovered JPEG stays in Fit on a 1380×1094 viewer. Larger photos still load native pixels. Full suite: 578 passed, 120 ignored.
+- [x] Open photos in natural pixel size when they are smaller than the lightbox; fit larger photos down to the viewport. Recompute fit geometry after uncached images load. Verified 640×426 opens as 640×426 in a 1380×1055 viewport; full suite 578 passed and build succeeded.

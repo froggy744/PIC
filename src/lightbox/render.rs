@@ -317,7 +317,7 @@ fn show_photo(
                 // Never overwrite PhotoObject's source dimensions with the
                 // dimensions of a display-sized viewer decode. The original
                 // dimensions are what 1:1 mode needs to request native pixels.
-                if zoom.get() < 0.0 {
+                if target_width == u32::MAX && target_height == u32::MAX {
                     *native_texture.borrow_mut() = Some(NativeTextureCache {
                         path: cache_path.clone(),
                         rotation,
@@ -338,7 +338,7 @@ fn show_photo(
                     viewer_trace_uri(&cache_path),
                 ));
                 if zoom.get() >= 0.0 {
-                    if !fit_geometry_fixed {
+                    if zoom.get() == 0.0 || !fit_geometry_fixed {
                         fit_picture(
                             &picture,
                             std::slice::from_ref(&photo),
@@ -1016,7 +1016,6 @@ fn presentation_source_dimensions(
 fn presentation_fit_scale_from_source(
     source_width: f64,
     source_height: f64,
-    native_valid: bool,
     viewport_width: i32,
     viewport_height: i32,
 ) -> f64 {
@@ -1024,15 +1023,9 @@ fn presentation_fit_scale_from_source(
     let available_height = (viewport_height - VIEWER_PADDING).max(1) as f64;
     let fit_scale =
         (available_width / source_width.max(1.0)).min(available_height / source_height.max(1.0));
-    // Known native dimensions remain the hard cap, so small source images are
-    // never enlarged. Without metadata the texture is only a cached opening
-    // preview and is allowed to fill the viewer while the real decode runs.
-    if native_valid {
-        fit_scale.min(1.0)
-    } else {
-        fit_scale
-    }
-    .max(f64::EPSILON)
+    // Fit never enlarges the decoded image. If catalog dimensions are
+    // unknown, the paintable dimensions are the best available source size.
+    fit_scale.min(1.0).max(f64::EPSILON)
 }
 
 fn presentation_fit_scale(
@@ -1043,7 +1036,7 @@ fn presentation_fit_scale(
     intrinsic_height: i32,
 ) -> f64 {
     let (native_width, native_height) = presentation_native_dimensions(photo);
-    let (source_width, source_height, native_valid) = presentation_source_dimensions(
+    let (source_width, source_height, _) = presentation_source_dimensions(
         native_width,
         native_height,
         intrinsic_width,
@@ -1053,7 +1046,6 @@ fn presentation_fit_scale(
     presentation_fit_scale_from_source(
         source_width,
         source_height,
-        native_valid,
         viewport_width,
         viewport_height,
     )
@@ -1082,6 +1074,28 @@ fn presentation_native_dimensions_from_values(
     let recipe = crate::edit::EditRecipe::decode(edit_recipe);
     let (width, height) = crate::edit::render::estimated_output_dimensions(width, height, &recipe);
     (i64::from(width), i64::from(height))
+}
+
+fn photo_fits_lightbox(
+    photo: &PhotoObject,
+    picture: &gtk::Picture,
+    viewport_width: i32,
+    viewport_height: i32,
+    scale_factor: i32,
+) -> bool {
+    let native = presentation_native_dimensions(photo);
+    let known = native.0 > 0 && native.1 > 0;
+    let (width, height) = if known {
+        (native.0 as f64, native.1 as f64)
+    } else {
+        let (width, height) = picture_intrinsic_dimensions(picture);
+        (f64::from(width), f64::from(height))
+    };
+    let scale = f64::from(scale_factor.max(1));
+    let viewport_width = f64::from(viewport_width.max(1)) * scale;
+    let viewport_height = f64::from(viewport_height.max(1)) * scale;
+    let margin = if known { 1.0 } else { 0.9 };
+    width <= viewport_width * margin && height <= viewport_height * margin
 }
 
 fn presentation_native_dimensions(photo: &PhotoObject) -> (i64, i64) {
@@ -1344,14 +1358,19 @@ fn fit_picture(
         .as_ref()
         .map(gtk::gdk::Paintable::intrinsic_height)
         .unwrap_or(0);
-    // Fit-to-window does not need explicit pixel geometry. Let GtkPicture fill
-    // the viewport and let ContentFit::Contain do the presentation scaling.
-    // During a live window resize this avoids issuing a new size request for
-    // every single pixel of motion, which otherwise makes the texture
-    // repeatedly re-rasterise and visibly flicker.
+    let (native_width, native_height) = presentation_native_dimensions(photo);
+    let (fitted_width, fitted_height) = fitted_picture_dimensions(
+        native_width,
+        native_height,
+        intrinsic_width,
+        intrinsic_height,
+        viewport_width,
+        viewport_height,
+        zoom,
+    );
     if zoom == 0.0 {
         zoom_trace(format!(
-            "fit_mode source={source} viewport={}x{} picture_req={:?} alloc={}x{} intrinsic={}x{}",
+            "fit_mode source={source} viewport={}x{} picture_req={:?} alloc={}x{} intrinsic={}x{} target={}x{}",
             viewport_width,
             viewport_height,
             picture.size_request(),
@@ -1359,14 +1378,16 @@ fn fit_picture(
             picture.height(),
             intrinsic_width,
             intrinsic_height,
+            fitted_width,
+            fitted_height,
         ));
         picture.set_can_shrink(true);
-        picture.set_hexpand(true);
-        picture.set_vexpand(true);
-        picture.set_halign(gtk::Align::Fill);
-        picture.set_valign(gtk::Align::Fill);
-        if picture.size_request() != (1, 1) {
-            picture.set_size_request(1, 1);
+        picture.set_hexpand(false);
+        picture.set_vexpand(false);
+        picture.set_halign(gtk::Align::Center);
+        picture.set_valign(gtk::Align::Center);
+        if picture.size_request() != (fitted_width, fitted_height) {
+            picture.set_size_request(fitted_width, fitted_height);
         }
         return;
     }
@@ -1381,16 +1402,6 @@ fn fit_picture(
     picture.set_hexpand(false);
     picture.set_vexpand(false);
 
-    let (native_width, native_height) = presentation_native_dimensions(photo);
-    let (fitted_width, fitted_height) = fitted_picture_dimensions(
-        native_width,
-        native_height,
-        intrinsic_width,
-        intrinsic_height,
-        viewport_width,
-        viewport_height,
-        zoom,
-    );
     picture.set_halign(if fitted_width > viewport_width {
         gtk::Align::Start
     } else {
@@ -1455,7 +1466,7 @@ fn fitted_picture_dimensions(
     viewport_height: i32,
     zoom: f64,
 ) -> (i32, i32) {
-    let (source_width, source_height, native_valid) = presentation_source_dimensions(
+    let (source_width, source_height, _) = presentation_source_dimensions(
         native_width,
         native_height,
         intrinsic_width,
@@ -1465,7 +1476,6 @@ fn fitted_picture_dimensions(
     let fit_scale = presentation_fit_scale_from_source(
         source_width,
         source_height,
-        native_valid,
         viewport_width,
         viewport_height,
     );

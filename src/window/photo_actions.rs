@@ -488,6 +488,7 @@ fn show_photo_context_menu(
     let favorite_context = context.clone();
     let favorite_selection = selection_provider.clone();
     let favorite_photo = photo.clone();
+    let dismiss_for_favorite = dismiss_menu.clone();
     favorite.connect_clicked(move |button| {
         let target = !favorite_photo.favorite();
         let ids = favorite_selection();
@@ -503,13 +504,14 @@ fn show_photo_context_menu(
             }
         }
 
+        dismiss_for_favorite();
+        favorite_photo.set_favorite(target);
         let selected_id = favorite_context
             .selected_photo
             .borrow()
             .as_ref()
             .map(|selected| selected.id());
         if selected_id == Some(favorite_photo.id()) {
-            favorite_photo.set_favorite(target);
             favorite_context
                 .selected_photo
                 .replace(Some(favorite_photo.clone()));
@@ -1940,6 +1942,46 @@ mod photo_actions_tests {
             .unwrap();
         assert_eq!(membership, 1);
         assert!(ACTIVE_PHOTO_MENU.with(|active| active.borrow().is_none()));
+
+        // The lightbox can show a photo that is not the gallery selection.
+        // The clicked object must still change, and reopening the menu must
+        // offer the inverse action after the first click closes it.
+        let favorite_photo = crate::photo_object::PhotoObject::from_photo(
+            &db::photo(&connection.borrow(), 1).unwrap().unwrap(),
+        );
+        show_photo_context_menu(
+            favorite_photo.clone(),
+            overlay.clone().upcast(),
+            context_for(sidebar::SidebarFilter::All),
+            10.0,
+            10.0,
+        );
+        let favorite_button = find_action(&menu(), "Add to Favourites").unwrap();
+        settle_gtk_layout();
+        if std::env::var_os("PIC_TEST_POINTER").is_some() {
+            pointer_click(window.upcast_ref(), favorite_button.upcast_ref());
+        } else {
+            favorite_button.emit_clicked();
+        }
+        assert!(ACTIVE_PHOTO_MENU.with(|active| active.borrow().is_none()));
+        assert!(favorite_photo.favorite());
+        assert!(db::photo(&connection.borrow(), 1).unwrap().unwrap().favorite);
+        show_photo_context_menu(
+            favorite_photo,
+            overlay.clone().upcast(),
+            context_for(sidebar::SidebarFilter::All),
+            10.0,
+            10.0,
+        );
+        let remove_favorite = find_action(&menu(), "Remove from Favourites").unwrap();
+        settle_gtk_layout();
+        if std::env::var_os("PIC_TEST_POINTER").is_some() {
+            pointer_click(window.upcast_ref(), remove_favorite.upcast_ref());
+        } else {
+            remove_favorite.emit_clicked();
+        }
+        assert!(ACTIVE_PHOTO_MENU.with(|active| active.borrow().is_none()));
+        assert!(!db::photo(&connection.borrow(), 1).unwrap().unwrap().favorite);
 
         window.close();
         drop(connection);

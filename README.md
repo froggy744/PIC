@@ -4,7 +4,7 @@
 
 **Browse, organise, view and edit your photos on Linux — in the folders you already use.**
 
-[GitHub repository](https://github.com/froggy744/PIC) · [Getting started](docs/guides/getting-started.md) · [Build and install](docs/build/linux.md) · [RC3 release notes](docs/releases/rc3.md)
+[GitHub repository](https://github.com/froggy744/PIC) · [Getting started](docs/guides/getting-started.md) · [Build and install](docs/build/linux.md) · [RC4 release notes](docs/releases/rc4.md)
 
 <img src="screenshots/all%20photos.jpg" alt="PIC All Photos view with the folder sidebar and thumbnail grid" width="900">
 
@@ -20,17 +20,20 @@ PIC is designed to be **non-destructive**. It indexes and references photos in t
 
 Even with that design, software can contain bugs and storage, filesystem, network-share or hardware failures can occur. **Do not treat PIC or its database as a backup of your photos.** You are responsible for maintaining backups of important data.
 
-## What's current in RC3
+## What's current in RC4
 
-- **Photo Wall** fills rows with photos in their natural proportions, alongside the regular thumbnail grid.
+- **Grid, Photo Wall and Masonry** offer square tiles, fitted rows or staggered columns.
 - **Folder browsing** uses virtualised sections with folder headings, smoother resizing and restored selection and scroll positions.
 - **Five-star ratings** work on individual photos or selections, with rating filters and sorting.
 - **Multiple library databases**, database backups and a History view help keep collections organised.
 - **Shared zoom controls** resize thumbnails, zoom the viewer and adjust the editor. Native-resolution viewing loads higher-quality pixels when needed.
 - **Progressive imports and network browsing** keep large local, SMB and NFS collections usable while work continues in the background.
+- **Camera and SD card import** offers device detection, photo selection and progress that continues into library scanning.
+- **Masonry layout** adds staggered columns, and each library section remembers its chosen layout.
+- **Corrupt photo badges and filtering** identify local JPEGs whose contents cannot be recognized; the lightbox also explains failed original decoding.
 - **JPEG colour management** converts valid embedded ICC profiles, including ProPhoto RGB and Adobe RGB, to sRGB for thumbnails and the viewer. JPEGs without profiles keep the existing sRGB path; malformed profiles fall back safely.
 
-See the [RC3 release notes](docs/releases/rc3.md) for the wider changes since RC2.
+See the [RC4 release notes](docs/releases/rc4.md) for changes since RC3. RC4 is the final release candidate before the planned v1.0 release.
 
 ## Your library, your folders
 
@@ -44,9 +47,9 @@ Right-click a folder to refresh it, change whether it is watched, see statistics
 
 <img src="screenshots/watch%20folders.jpg" alt="Folder context menu with Refresh Folder and Stop Watching Folder actions" width="900">
 
-## Grid or Photo Wall
+## Grid, Photo Wall or Masonry
 
-Choose the regular grid for consistent thumbnail sizes, or use the view toggle in the bottom bar to switch to **Photo Wall**. Its rows preserve photo proportions, making mixed portrait and landscape collections easier to enjoy.
+Choose the regular grid for consistent thumbnail sizes, **Photo Wall** for fitted rows, or **Masonry** for staggered columns that preserve photo proportions. The bottom layout control switches between them, and PIC remembers your choice for each library section.
 
 <img src="screenshots/photo%20wall%20screen.jpg" alt="Photo Wall showing rows of portrait photos" width="900">
 
@@ -60,7 +63,7 @@ In **Settings → Interface**, choose filename visibility, portrait-thumbnail be
 
 Select a photo to see its name, date, camera, dimensions and file size in the bottom bar. Open it with a double-click, Enter or Space. Move through the current collection with the arrow keys or mouse wheel, switch between fit and **1:1** with Space, zoom with the slider or **Ctrl + wheel**, and drag to pan when zoomed in.
 
-The viewer starts with a preview and loads higher-quality image data in the background. Native-resolution decoding is used for close inspection rather than simply enlarging a fit-to-window preview. Closing the viewer returns you to your selected photo.
+The viewer decodes a display-sized image in the background. Native-resolution decoding is used for close inspection rather than simply enlarging the fitted image. Closing the viewer returns you to your selected photo.
 
 <img src="screenshots/portrait%20photo%20screen.jpg" alt="Portrait photographs in the regular thumbnail grid" width="900">
 
@@ -70,7 +73,7 @@ Embedded JPEG ICC profiles are applied before resizing or display, so colour-man
 
 Heart a photo to put it in **Favourites**. Create an album for a trip, project or collection; the same photo can belong to several albums without additional copies.
 
-Use the star control to give a photo **1–5 stars**, or rate the current selection with the number keys. **0** clears the rating. The toolbar's rating filter offers unrated photos, all starred photos or a particular star level, and the sort menu includes Rating.
+Use the star control to give a photo **1–5 stars**, or rate the current selection with the number keys. **0** clears the rating. The toolbar filter offers unrated photos, all starred photos, a particular star level and Corrupt photos; the sort menu includes Rating.
 
 <img src="screenshots/rations%20stars.jpg" alt="Photo viewer with the five-star rating control open" width="900">
 
@@ -188,7 +191,7 @@ PIC is release-candidate software under active development. Report problems thro
 
 PIC is an independent open-source project, not affiliated with, sponsored by or endorsed by Google or Apple.
 
-- [Release Candidate 3](docs/releases/rc3.md) · [Release Candidate 2](docs/releases/rc2.md)
+- [Release Candidate 4](docs/releases/rc4.md) · [Release Candidate 3](docs/releases/rc3.md) · [Release Candidate 2](docs/releases/rc2.md)
 - [Linux builds and installation](docs/build/linux.md) · [Portable NFS](docs/build/portable-nfs.md)
 - [Themes](docs/THEMES.md) · [Theme template](docs/theme-template/README.md)
 - [Development overview](docs/development/summary.md) · [Gallery architecture history](docs/GALLERY_V2.md)

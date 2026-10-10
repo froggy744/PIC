@@ -1413,6 +1413,10 @@ impl Lightbox {
         self.open_internal(photos, selected, None);
     }
 
+    pub fn current_photo(&self) -> Option<PhotoObject> {
+        self.photos.borrow().get(self.index.get()).cloned()
+    }
+
     pub fn open_from_source(
         &self,
         photos: Vec<PhotoObject>,

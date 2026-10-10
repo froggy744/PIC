@@ -303,6 +303,77 @@ fn update_folder_suggestions(
     }
 }
 
+fn update_photo_suggestions(
+    popover: &gtk::Popover,
+    list: &gtk::ListBox,
+    photos: &[db::Photo],
+    on_photo: Rc<dyn Fn(i64)>,
+) {
+    list.set_sensitive(true);
+    while let Some(child) = list.first_child() {
+        list.remove(&child);
+    }
+    for photo in photos {
+        let button = gtk::Button::new();
+        button.set_halign(gtk::Align::Fill);
+        button.set_focusable(false);
+        button.add_css_class("flat");
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        row.set_margin_start(8);
+        row.set_margin_end(8);
+        row.set_margin_top(5);
+        row.set_margin_bottom(5);
+        let object = crate::photo_object::PhotoObject::from_photo(photo);
+        if let Some(path) = object
+            .cached_thumbnail_path()
+            .filter(|path| std::path::Path::new(path).exists())
+        {
+            let preview = gtk::Picture::new();
+            preview.set_size_request(48, 48);
+            preview.set_content_fit(gtk::ContentFit::Cover);
+            preview.set_filename(Some(path));
+            row.append(&preview);
+        } else {
+            let preview = gtk::Image::from_icon_name("image-x-generic-symbolic");
+            preview.set_size_request(48, 48);
+            row.append(&preview);
+        }
+        let labels = gtk::Box::new(gtk::Orientation::Vertical, 1);
+        let name = std::path::Path::new(&photo.path)
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| photo.path.clone());
+        let title = gtk::Label::new(Some(&name));
+        title.set_xalign(0.0);
+        title.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+        labels.append(&title);
+        let path = gtk::Label::new(Some(&photo.path));
+        path.set_xalign(0.0);
+        path.add_css_class("dim-label");
+        path.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+        labels.append(&path);
+        labels.set_hexpand(true);
+        row.append(&labels);
+        button.set_child(Some(&row));
+        let id = photo.id;
+        let popover = popover.clone();
+        let on_photo = on_photo.clone();
+        button.connect_clicked(move |_| {
+            popover.popdown();
+            on_photo(id);
+        });
+        list.append(&button);
+    }
+    if let Some(first) = list.row_at_index(0) {
+        list.select_row(Some(&first));
+        if !popover.is_visible() {
+            popover.popup();
+        }
+    } else {
+        popover.popdown();
+    }
+}
+
 fn normalized_search_text(text: &str) -> String {
     text.chars()
         .map(|character| {

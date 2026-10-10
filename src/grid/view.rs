@@ -129,6 +129,11 @@ fn transition_source_in(
 }
 
 impl Gallery {
+    pub fn set_search_result_activation(&self, enabled: bool) {
+        self.root.set_single_click_activate(enabled);
+        self.sectioned_folder.search_single_click.set(enabled);
+    }
+
     /// Use the same visible thumbnail for keyboard and pointer viewer opens.
     pub fn transition_source_for_photo(
         &self,

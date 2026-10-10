@@ -162,6 +162,7 @@ struct SectionedFolderView {
     unavailable: Rc<dyn Fn(PhotoObject, gtk::Widget)>,
     collage_mode: Rc<Cell<bool>>,
     collage_ids: Rc<RefCell<HashSet<i64>>>,
+    search_single_click: Rc<Cell<bool>>,
     rubberband: gtk::DrawingArea,
     scroll: RefCell<Option<gtk::ScrolledWindow>>,
     geometry: RefCell<Vec<SectionedFolderGeometry>>,
@@ -258,6 +259,7 @@ impl SectionedFolderView {
             unavailable,
             collage_mode,
             collage_ids,
+            search_single_click: Rc::new(Cell::new(false)),
             rubberband,
             scroll: RefCell::new(None),
             geometry: RefCell::new(Vec::new()),
@@ -686,6 +688,7 @@ impl SectionedFolderView {
         let tile_for_click = tile.clone();
         let self_for_click_collage_mode = self.collage_mode.clone();
         let self_for_click_collage_ids = self.collage_ids.clone();
+        let view_search_single_click = self.search_single_click.clone();
         let self_for_click_columns = self.current_columns.clone();
         let self_for_click_ranges = self.group_ranges.clone();
         let self_for_click_preferred = self.keyboard_preferred_column.clone();
@@ -750,7 +753,9 @@ impl SectionedFolderView {
                 }
             }
 
-            if presses == 2 {
+            if presses == 2
+                || (presses == 1 && view_search_single_click.get() && !shift && !control)
+            {
                 let index = position as usize;
                 let source_paintable = tile_for_click.transition_paintable().or_else(|| {
                     let photos_ref = photos.borrow();

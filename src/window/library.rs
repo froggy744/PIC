@@ -2,6 +2,8 @@ use std::sync::mpsc::TryRecvError;
 
 static REFRESH_GENERATION: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(0);
+static APPLIED_REFRESH_GENERATION: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
 
 #[derive(Clone)]
 struct FolderViewportAnchor {
@@ -220,6 +222,10 @@ fn refresh_grid_inner(
                     gallery.replace_owned_while_current(photos, Rc::new(move || {
                         REFRESH_GENERATION.load(std::sync::atomic::Ordering::Relaxed) == generation
                     }));
+                    APPLIED_REFRESH_GENERATION.store(
+                        generation,
+                        std::sync::atomic::Ordering::Relaxed,
+                    );
                     if std::env::var_os("PICASA_TRACE").is_some() {
                         eprintln!(
                             "PIC_SCAN_UI gallery_replace filter={filter:?} generation={generation} photos={count} elapsed_ms={}",

@@ -59,6 +59,7 @@
             }
             suppressed.set(false);
             search_text.replace(String::new());
+            gallery.set_search_result_activation(false);
             lightbox.close();
             let cleared_query_for_timeout = cleared_query.clone();
             glib::timeout_add_local_once(Duration::from_millis(500), move || {
@@ -1343,21 +1344,14 @@
 
     
 
-    // The lightbox takes keyboard focus while it is open and covers the
-    // header, so the search entry cannot be clicked or receive typed input.
-    // Keep the existing search entry and handlers, but provide the standard
-    // shortcut to close the overlay and return focus to search.
+    // Ctrl+F also works when the viewer currently owns keyboard focus.
     let search_keyboard = gtk::EventControllerKey::new();
     search_keyboard.set_propagation_phase(gtk::PropagationPhase::Capture);
     let search_for_keyboard = search.clone();
-    let lightbox_for_search_keyboard = lightbox.clone();
     search_keyboard.connect_key_pressed(move |_, key, _, modifiers| {
         if key == gtk::gdk::Key::f
             && modifiers.contains(gtk::gdk::ModifierType::CONTROL_MASK)
         {
-            if lightbox_for_search_keyboard.root.is_visible() {
-                lightbox_for_search_keyboard.close();
-            }
             search_for_keyboard.grab_focus();
             glib::Propagation::Stop
         } else {
@@ -1467,6 +1461,8 @@
     let suggestion_popover_for_search = suggestion_popover.clone();
     let suggestion_list_for_search = suggestion_list.clone();
     let stack_for_home_search = main_stack.clone();
+    let lightbox_for_search = lightbox.clone();
+    let clear_search_after_photo = clear_search_after_result.clone();
 
     search.connect_search_changed(move |entry| {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -1487,6 +1483,7 @@
                 cleared_search_query_for_search.replace(None);
                 return;
             }
+            gallery_for_search.set_search_result_activation(!query.is_empty());
             // Folder suggestions come directly from the library database.
             // This is intentionally a lightweight lookup: do not call db::folders()
             // here because it also calculates recursive counts and availability.
@@ -1533,27 +1530,65 @@
                 }
             }
             
-            update_folder_suggestions(
-                &suggestion_popover_for_search,
-                &suggestion_list_for_search,
-                &folders_for_search,
-                &query,
-                Rc::new({
-                    let destination_click = destination_click_for_search.clone();
-                    let sidebar_selection = sidebar_selection_for_search.clone();
-                    move |folder_id| {
-                        // Use one authoritative Gallery navigation path.
-                        // destination_click owns cache restore/rebuild and the
-                        // grid scroll; do not queue a second pending scroll.
-                        destination_click(sidebar::SidebarFilter::Folder(folder_id));
-
-                        // The sidebar still needs to reveal/focus the row.
-                        if let Some(sidebar) = sidebar_selection.borrow().as_ref().cloned() {
-                            sidebar::scroll_to_folder(&sidebar, folder_id);
+            if lightbox_for_search.root.is_visible() && !query.is_empty() {
+                let mut photos = db::photos_limited(
+                    &connection_for_search.borrow(),
+                    None,
+                    false,
+                    Some(&query),
+                    24,
+                )
+                .unwrap_or_default();
+                retain_enabled_formats(&connection_for_search.borrow(), &mut photos);
+                update_photo_suggestions(
+                    &suggestion_popover_for_search,
+                    &suggestion_list_for_search,
+                    &photos,
+                    Rc::new({
+                        let connection = connection_for_search.clone();
+                        let lightbox = lightbox_for_search.clone();
+                        let clear_search = clear_search_after_photo.clone();
+                        let sort = sort_for_search.clone();
+                        let query = query.clone();
+                        move |photo_id| {
+                            let mut photos =
+                                db::photos(&connection.borrow(), None, false, Some(&query))
+                                    .unwrap_or_default();
+                            retain_enabled_formats(&connection.borrow(), &mut photos);
+                            sort_photos(&mut photos, sort.get());
+                            if let Some(index) = photos.iter().position(|photo| photo.id == photo_id) {
+                                let objects = photos
+                                    .iter()
+                                    .map(crate::photo_object::PhotoObject::from_photo)
+                                    .collect();
+                                lightbox.open(objects, index);
+                                clear_search();
+                            }
                         }
-                    }
-                }),
-            );
+                    }),
+                );
+            } else {
+                update_folder_suggestions(
+                    &suggestion_popover_for_search,
+                    &suggestion_list_for_search,
+                    &folders_for_search,
+                    &query,
+                    Rc::new({
+                        let destination_click = destination_click_for_search.clone();
+                        let sidebar_selection = sidebar_selection_for_search.clone();
+                        move |folder_id| {
+                            // Use one authoritative Gallery navigation path.
+                            // destination_click owns cache restore/rebuild and
+                            // the grid scroll; do not queue a second scroll.
+                            destination_click(sidebar::SidebarFilter::Folder(folder_id));
+
+                            if let Some(sidebar) = sidebar_selection.borrow().as_ref().cloned() {
+                                sidebar::scroll_to_folder(&sidebar, folder_id);
+                            }
+                        }
+                    }),
+                );
+            }
 
             if query.is_empty() {
                 refresh_grid(
@@ -1621,6 +1656,7 @@
             let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| source.remove()));
         }
         let query = entry.text().to_string();
+        gallery_for_activate.set_search_result_activation(!query.is_empty());
         search_text_for_activate.replace(query.clone());
 
         if suggestion_popover_for_activate.is_visible() {

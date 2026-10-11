@@ -105,7 +105,11 @@ stable variant, and can choose their own frame and cover photo from their menus.
 Each bookshelf folder supplies one repeating row image. Preferred names are
 `row.png`, `row.jpg`, `bookshelf.png`, `bookshelf.jpg`,
 `single-row-bookshelf.png` or `single-row-bookshelf.jpg`; otherwise the first
-sorted PNG/JPG is used. Optional `theme.conf` sets pixel geometry:
+sorted PNG/JPG is used. PIC measures the shelf line in the artwork itself — the
+strongest full-width horizontal edge whose band below stays one colour across
+the width (the shelf board) — and stands every album on it, so drop-in artwork
+needs no setup. Optional `theme.conf` overrides that measurement when the
+artwork's own edge is ambiguous:
 
 ```ini
 row_height=288

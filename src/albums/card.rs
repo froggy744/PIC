@@ -573,7 +573,10 @@ fn album_card(
         placeholder.set_valign(gtk::Align::Fill);
         placeholder.set_pixel_size(24);
         let skin = gtk::Picture::for_paintable(&frame.texture);
-        skin.set_content_fit(gtk::ContentFit::Contain);
+        // Fill, not Contain: the photo is inset from the frame's opening as a
+        // ratio of the cover box, so the frame must span the whole box. A
+        // letterboxed frame would leave the photo showing beside it.
+        skin.set_content_fit(gtk::ContentFit::Fill);
         skin.set_can_shrink(true);
         skin.set_size_request(1, 1);
         skin.set_halign(gtk::Align::Fill);
@@ -637,12 +640,12 @@ fn album_card(
 }
 
 fn photo_margins(opening: PhotoOpening, width: i32, height: i32) -> (i32, i32, i32, i32) {
-    // Round outward and add a pixel of underlap, so a frame's antialiased
-    // opening edge cannot show a seam around the photo.
+    // Round inward, so the photo stays inside the frame's transparent window
+    // and never shows over the frame art.
     (
-        ((width as f64 * opening.x).floor() as i32 - 1).max(0),
-        ((height as f64 * opening.y).floor() as i32 - 1).max(0),
-        ((width as f64 * (1.0 - opening.x - opening.width)).floor() as i32 - 1).max(0),
-        ((height as f64 * (1.0 - opening.y - opening.height)).floor() as i32 - 1).max(0),
+        (width as f64 * opening.x).ceil() as i32,
+        (height as f64 * opening.y).ceil() as i32,
+        (width as f64 * (1.0 - opening.x - opening.width)).ceil() as i32,
+        (height as f64 * (1.0 - opening.y - opening.height)).ceil() as i32,
     )
 }

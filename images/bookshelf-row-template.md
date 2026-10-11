@@ -7,6 +7,11 @@ Use [`bookshelf-row-template.svg`](bookshelf-row-template.svg) as the master for
 - Source canvas: **2172 × 724 px**.
 - App rendering size: **full available width × 288 logical px** per album row.
 - Shelf surface: **y = 590 px** in the source, rendered at **y = 235 px**.
+
+PIC measures the shelf line in exported artwork and uses it when it differs from
+the guide. Ship a `theme.conf` beside the image (`row_height`, `surface_y`) to
+pin the values instead — do that for artwork whose shelf edge is not a clean
+full-width line.
 - Album-safe region: **x = 136–2036 px, y = 20–590 px**.
 - The outer **136 px** on each side may be cropped, shifted, or stretched as the window changes width.
 - Keep the shelf continuous across the entire width. Do not place fixed uprights or unique ornaments near either side.

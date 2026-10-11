@@ -23,8 +23,8 @@ const BOOKSHELF_MIN_ROWS: usize = 3;
 const BOOKSHELF_COLUMN_GAP: i32 = 28;
 const BOOKSHELF_SIDE_PADDING: i32 = 28;
 const BOOKSHELF_MIN_CARD_WIDTH: i32 = 220;
-const BOOKSHELF_MAX_CARD_WIDTH: i32 = 280;
-const BOOKSHELF_CARD_FILL_RATIO: f64 = 0.78;
+const BOOKSHELF_MAX_CARD_WIDTH: i32 = 330;
+const BOOKSHELF_CARD_FILL_RATIO: f64 = 0.86;
 const BOOKSHELF_RUNTIME_KEY: &str = "picasa-bookshelf-runtime";
 const ALBUM_SIZE_KEY: &str = "albums-index-size";
 const ALBUM_SORT_KEY: &str = "albums-index-sort";
@@ -544,7 +544,7 @@ mod tests {
         ));
         std::fs::create_dir(&directory).unwrap();
         assert_eq!(
-            bookshelf_theme_geometry(&directory),
+            bookshelf_theme_geometry(&directory, &directory.join("row.png")),
             (BOOKSHELF_ROW_HEIGHT, BOOKSHELF_SURFACE_Y)
         );
         std::fs::write(
@@ -552,7 +552,49 @@ mod tests {
             "row_height=300\nsurface_y=246\n",
         )
         .unwrap();
-        assert_eq!(bookshelf_theme_geometry(&directory), (300, 246));
+        assert_eq!(bookshelf_theme_geometry(&directory, &directory.join("row.png")), (300, 246));
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn measures_the_shelf_surface_from_the_artwork() {
+        let directory = std::env::temp_dir().join(format!(
+            "pic-bookshelf-surface-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&directory).unwrap();
+        let (width, height, surface) = (400_usize, 200_usize, 160_usize);
+        // Book spines are one colour per column, so no row above the shelf is
+        // flat across the width and no row changes brightness. The board below
+        // is flat across the whole width, and its top edge spans the width.
+        let pixels: Vec<u8> = (0_usize..height).flat_map(|row| {
+            (0_usize..width).map(|column| {
+                let spine = if row < surface {
+                    40_usize + (column * 7_usize) % 180_usize
+                } else {
+                    200_usize
+                };
+                [spine as u8, spine as u8, spine as u8, 255_usize as u8]
+            }).flatten().collect::<Vec<u8>>()
+        }).collect();
+        let artwork = directory.join("row.png");
+        let Ok(mut file) = std::fs::File::create(&artwork) else {
+            panic!("could not write the test artwork");
+        };
+        use image::ImageEncoder;
+        image::codecs::png::PngEncoder::new(&mut file).write_image(
+            &pixels,
+            width as u32,
+            height as u32,
+            image::ExtendedColorType::Rgba8,
+        ).unwrap();
+
+        let (row_height, surface_y) = bookshelf_theme_geometry(&directory, &artwork);
+        assert_eq!((row_height, surface_y), (BOOKSHELF_ROW_HEIGHT, 230));
         std::fs::remove_dir_all(directory).unwrap();
     }
 
@@ -909,12 +951,12 @@ mod tests {
 
     #[test]
     fn responsive_bookshelf_cards_grow_on_wide_windows() {
-        assert_eq!(bookshelf_target_card_width(850, 3), 220);
-        assert_eq!(bookshelf_target_card_width(1120, 4), 220);
-        assert_eq!(bookshelf_target_card_width(1400, 5), 220);
+        assert_eq!(bookshelf_target_card_width(850, 3), 227);
+        assert_eq!(bookshelf_target_card_width(1120, 4), 229);
+        assert_eq!(bookshelf_target_card_width(1400, 5), 230);
         assert!(bookshelf_target_card_width(1760, 5) > 240);
         assert!(bookshelf_target_card_width(1760, 5) > 196);
-        assert_eq!(bookshelf_target_card_width(2200, 5), 280);
+        assert_eq!(bookshelf_target_card_width(2200, 5), 330);
     }
 
     #[test]
@@ -1263,7 +1305,7 @@ mod tests {
         let mut selections = Vec::new();
         for skin in [
             "vintage/blue-frame.png",
-            "white-panel/white-panel-frame.png",
+            "frame-light/frame-white-panel-frame.png",
         ] {
             db::set_album_cover_frame(&connection.borrow(), album.id, skin).unwrap();
             let albums = db::albums(&connection.borrow()).unwrap();
@@ -1355,12 +1397,20 @@ mod tests {
         let expected = [
             (
                 "standard/standard-frame.png",
-                (0.3569, 0.2715, 0.3157, 0.4160),
+                (0.3572, 0.2721, 0.3150, 0.4154),
             ),
-            ("vintage/blue-frame.png", (0.3569, 0.2715, 0.3157, 0.4160)),
+            ("vintage/blue-frame.png", (0.3572, 0.2721, 0.3150, 0.4154)),
             (
-                "white-panel/white-panel-frame.png",
-                (0.1826, 0.1060, 0.6273, 0.5400),
+                "frame-light/frame-white-panel-frame.png",
+                (0.2348, 0.0940, 0.5342, 0.8060),
+            ),
+            (
+                "leather/leather-panel-frame.png",
+                (0.3168, 0.2180, 0.3863, 0.4620),
+            ),
+            (
+                "clear-transparent/glossy-glass-frame.png",
+                (0.1284, 0.1284, 0.7775, 0.6499),
             ),
         ];
         for (relative, (x, y, width, height)) in expected {
@@ -1389,11 +1439,12 @@ mod tests {
     }
 
     #[test]
-    fn photo_margins_fill_the_opening_of_every_frame_family() {
+    fn photo_margins_keep_the_photo_inside_every_frame() {
         let root = Path::new("images/theme/album-covers");
         for relative in [
             "standard/standard-frame.png",
-            "white-panel/white-panel-frame.png",
+            "frame-light/frame-white-panel-frame.png",
+            "clear-transparent/glossy-glass-frame.png",
         ] {
             let opening = frame_photo_opening(&root.join(relative));
             for width in [100, 136, 220, 300] {
@@ -1405,25 +1456,27 @@ mod tests {
                 );
                 assert!(left + right < width && top + bottom < height, "{relative}");
 
-                // The photo rect must cover the opening without spilling over
-                // the opaque frame by more than a rounding pixel.
+                // The photo must stay inside the frame's window: never over the
+                // frame art, and never inset by more than one rounding pixel.
                 let opening_left = (opening.x * width as f64).floor() as i32;
                 let opening_top = (opening.y * height as f64).floor() as i32;
                 let opening_right = (width as f64 * (opening.x + opening.width)).ceil() as i32;
                 let opening_bottom = (height as f64 * (opening.y + opening.height)).ceil() as i32;
                 assert!(
-                    left <= opening_left && top <= opening_top,
-                    "{relative} at {width}"
-                );
-                assert!(width - right >= opening_right, "{relative} at {width}");
-                assert!(height - bottom >= opening_bottom, "{relative} at {width}");
-                assert!(
-                    opening_left - left <= 1 && opening_top - top <= 1,
-                    "{relative} at {width}"
+                    left >= opening_left && top >= opening_top,
+                    "photo over the frame at {relative} {width}"
                 );
                 assert!(
-                    width - right - opening_right <= 1 && height - bottom - opening_bottom <= 1,
-                    "{relative} at {width}"
+                    width - right <= opening_right && height - bottom <= opening_bottom,
+                    "photo over the frame at {relative} {width}"
+                );
+                assert!(
+                    left - opening_left <= 1 && top - opening_top <= 1,
+                    "photo inset too far at {relative} {width}"
+                );
+                assert!(
+                    opening_right - (width - right) <= 1 && opening_bottom - (height - bottom) <= 1,
+                    "photo inset too far at {relative} {width}"
                 );
             }
         }

@@ -46,28 +46,87 @@ fn bookshelf_theme_image_in(directory: &Path) -> Option<PathBuf> {
     images.into_iter().next()
 }
 
-fn bookshelf_theme_geometry(directory: &Path) -> (i32, i32) {
-    let config = directory.join("theme.conf");
-    let Ok(text) = std::fs::read_to_string(config) else {
-        return (BOOKSHELF_ROW_HEIGHT, BOOKSHELF_SURFACE_Y);
-    };
+/// The shelf line the artwork itself draws: the strongest full-width horizontal
+/// edge whose band below stays flat across the whole width. That band is the
+/// shelf board, and its top edge is where albums and books stand.
+///
+/// Returned as a ratio of the image height, because the row is drawn by
+/// stretching the whole canvas to `row_height`.
+fn shelf_surface_ratio(path: &Path) -> Option<f64> {
+    let decoded = image::open(path).ok()?.to_rgb8();
+    let (width, height) = decoded.dimensions();
+    if width < 8 || height < 8 {
+        return None;
+    }
+    let (width, height) = (width as usize, height as usize);
+
+    // Brightness scaled by 1000 keeps every comparison in whole numbers.
+    let luma: Vec<usize> = decoded.pixels()
+        .map(|pixel| 299 * pixel.0[0] as usize + 587 * pixel.0[1] as usize + 114 * pixel.0[2] as usize)
+        .collect();
+    if luma.len() < width * height {
+        return None;
+    }
+
+    // Sampling a few hundred columns keeps a full-width shelf line visible
+    // while decoding a page-sized photograph stays cheap enough to cache.
+    let step = (width / 400_usize).max(1_usize);
+    let columns = 1_usize + (width - 1_usize) / step;
+    let at = |y: usize, column: usize| luma[y * width + column * step];
+    let difference = |left: usize, right: usize|
+        left.saturating_sub(right).max(right.saturating_sub(left));
+
+    // edge[y - 1] counts the columns that change brightness at row y.
+    let edge: Vec<usize> = (1_usize..height).map(|y| {
+        (0_usize..columns).filter(|column|
+            difference(at(y, *column), at(y - 1_usize, *column)) > 24_000_usize
+        ).count()
+    }).collect();
+
+    // flat[y] counts the columns that match this row's own median colour.
+    let flat: Vec<usize> = (0_usize..height).map(|y| {
+        let mut row = (0_usize..columns).map(|column| at(y, column)).collect::<Vec<usize>>();
+        row.sort();
+        let median = row[columns / 2_usize];
+        row.iter().filter(|value| difference(**value, median) < 12_000_usize).count()
+    }).collect();
+
+    let band = 32_usize;
+    let candidate = (height * 2_usize / 5_usize..height.saturating_sub(band + 2_usize)).filter(|y| {
+        let below = &flat[(y + 2_usize).min(height)..(y + band).min(height)];
+        let steady = below.iter().filter(|value| *value * 100_usize >= columns * 85_usize).count();
+        steady * 5_usize >= below.len() * 4_usize
+            && edge[y - 1_usize] * 2_usize >= columns
+    }).max_by_key(|y| edge[y - 1_usize])?;
+    Some(candidate as f64 / height as f64)
+}
+
+/// Geometry for one folder-backed row theme: `theme.conf` wins, then the
+/// artwork's own shelf line, then the shipped defaults.
+fn bookshelf_theme_geometry(directory: &Path, image_path: &Path) -> (i32, i32) {
     let mut row_height = BOOKSHELF_ROW_HEIGHT;
-    let mut surface_y = BOOKSHELF_SURFACE_Y;
-    for line in text.lines() {
-        let Some((key, value)) = line.split_once('=') else {
-            continue;
-        };
-        let Ok(value) = value.trim().parse::<i32>() else {
-            continue;
-        };
-        match key.trim() {
-            "row_height" if value > 0 => row_height = value,
-            "surface_y" if value >= 0 => surface_y = value,
-            _ => {}
+    let mut configured: Option<i32> = None;
+    if let Ok(text) = std::fs::read_to_string(directory.join("theme.conf")) {
+        for line in text.lines() {
+            let Some((key, value)) = line.split_once('=') else {
+                continue;
+            };
+            let Ok(value) = value.trim().parse::<i32>() else {
+                continue;
+            };
+            match key.trim() {
+                "row_height" if value > 0 => row_height = value,
+                "surface_y" if value >= 0 => configured = Some(value),
+                _ => {}
+            }
         }
     }
-    surface_y = surface_y.clamp(0, row_height);
-    (row_height, surface_y)
+
+    let surface_y = configured
+        .or_else(|| shelf_surface_ratio(image_path)
+            .map(|ratio| (row_height as f64 * ratio).round() as i32))
+        .unwrap_or(BOOKSHELF_SURFACE_Y);
+    (row_height, surface_y.clamp(0, row_height))
 }
 
 fn bookshelf_themes_in(directory: &Path) -> Vec<BookshelfTheme> {
@@ -81,7 +140,7 @@ fn bookshelf_themes_in(directory: &Path) -> Vec<BookshelfTheme> {
                         .and_then(|name| name.to_str())
                         .unwrap_or("bookshelf")
                         .to_string();
-                    let (row_height, surface_y) = bookshelf_theme_geometry(&path);
+                    let (row_height, surface_y) = bookshelf_theme_geometry(&path, &image_path);
                     themes.push(BookshelfTheme {
                         id,
                         image_path,
@@ -292,17 +351,30 @@ fn resize_bookshelf_cards(rows: &gtk::Box, target_width: i32, theme: &BookshelfT
         }
 
         let scale_x = target_width as f64 / current_width as f64;
-        let target_height =
+        let mut card_width = target_width;
+        let mut target_height =
             ((current_height as f64 * scale_x).round() as i32).clamp(1, theme.surface_y.max(1));
+
+        let opening = unsafe { cover.data::<PhotoOpening>(FRAME_OPENING_KEY) }
+            .map(|opening| unsafe { *opening.as_ref() });
+        // A framed cover keeps its frame's aspect ratio: the photo is inset from
+        // the frame's own opening, so a squashed box would slide the photo under
+        // the frame art. Narrow the card instead of squashing it.
+        if opening.is_some() && target_height >= theme.surface_y.max(1) {
+            card_width = (
+                (current_width as f64 * target_height as f64 / current_height as f64).round() as i32
+            ).clamp(1, card_width);
+            target_height = (
+                current_height as f64 * card_width as f64 / current_width as f64
+            ).round().max(1.0) as i32;
+        }
 
         if let Some(picture) = find_descendant_with_css_class(cover.upcast_ref(), "thumbnail") {
             // Recompute from the original opening instead of rescaling rounded
             // margins, which can drift by a pixel after each resize.
-            if let Some(opening) = unsafe { cover.data::<PhotoOpening>(FRAME_OPENING_KEY) }
-                .map(|opening| unsafe { *opening.as_ref() })
-            {
+            if let Some(opening) = opening {
                 let (left, top, right, bottom) =
-                    photo_margins(opening, target_width, target_height);
+                    photo_margins(opening, card_width, target_height);
                 picture.set_margin_start(left);
                 picture.set_margin_top(top);
                 picture.set_margin_end(right);
@@ -310,16 +382,16 @@ fn resize_bookshelf_cards(rows: &gtk::Box, target_width: i32, theme: &BookshelfT
             }
         }
 
-        cover.set_width_request(target_width);
+        cover.set_width_request(card_width);
         cover.set_height_request(target_height);
-        cover.set_size_request(target_width, target_height);
+        cover.set_size_request(card_width, target_height);
 
-        card.set_width_request(target_width);
+        card.set_width_request(card_width);
         card.set_margin_top(bookshelf_card_margin_top(theme.surface_y, target_height));
 
         if let Some(content) = card.child() {
-            content.set_width_request(target_width);
-            content.set_size_request(target_width, -1);
+            content.set_width_request(card_width);
+            content.set_size_request(card_width, -1);
         }
     }
 }

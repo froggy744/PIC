@@ -1418,135 +1418,92 @@ fn show_properties_dialog(
     sections.set_valign(gtk::Align::Start);
     scroll.set_child(Some(&sections));
 
-    let top = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-    top.set_size_request(-1, 156);
-    let preview_frame = gtk::Frame::new(None);
-    preview_frame.set_size_request(150, 150);
-    preview_frame.set_overflow(gtk::Overflow::Hidden);
+    // Inspector layout: photo preview above compact metadata, never side-by-side.
+    let preview = gtk::Picture::new();
+    preview.set_content_fit(gtk::ContentFit::Contain);
+    preview.set_can_shrink(true);
+    preview.set_size_request(-1, 220);
+    preview.set_hexpand(true);
     if let Some(cache_path) = photo
         .cached_thumbnail_path()
         .filter(|path| std::path::Path::new(path).is_file())
     {
-        let preview = gtk::Picture::new();
         preview.set_filename(Some(&cache_path));
-        preview.set_content_fit(gtk::ContentFit::Contain);
-        preview.set_can_shrink(true);
-        preview.set_size_request(150, 150);
-        preview_frame.set_child(Some(&preview));
     } else {
-        let preview = gtk::Image::from_icon_name("image-x-generic-symbolic");
-        preview.set_pixel_size(48);
-        preview.set_size_request(150, 150);
-        preview_frame.set_child(Some(&preview));
+        preview.set_filename(None::<&str>);
     }
-    top.append(&preview_frame);
+    sections.append(&preview);
+
+    let filename = gtk::Label::new(Some(&photo.filename()));
+    filename.set_xalign(0.0);
+    filename.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+    filename.set_tooltip_text(Some(&path));
+    filename.add_css_class("title-4");
+    sections.append(&filename);
+    let summary = gtk::Label::new(Some(&format!(
+        "{}  ·  {}  ·  {}",
+        date,
+        dimensions,
+        crate::infobar::format_size(size)
+    )));
+    summary.set_xalign(0.0);
+    summary.set_wrap(true);
+    summary.add_css_class("dim-label");
+    sections.append(&summary);
+
+    let image_group = adw::PreferencesGroup::new();
+    image_group.set_title("File Information");
+    add_inspector_row(&image_group, "File name", &photo.filename());
+    add_inspector_row(&image_group, "Date taken", &date);
+    add_inspector_row(&image_group, "Dimensions", &dimensions);
+    add_inspector_row(&image_group, "File size", &crate::infobar::format_size(size));
+    add_inspector_row(&image_group, "File type", &file_type(&path));
+    add_inspector_row(&image_group, "Rotation", &format!("{rotation}°"));
+    add_inspector_row(&image_group, "Favourite", if favorite { "Yes" } else { "No" });
+    sections.append(&image_group);
 
     let camera_group = adw::PreferencesGroup::new();
     camera_group.set_title("Camera");
-    camera_group.set_hexpand(true);
-    let camera_details = gtk::Box::new(gtk::Orientation::Vertical, 5);
+    let mut camera_rows = 0;
     let camera_name = record
         .as_ref()
         .and_then(|item| item.camera.clone())
         .or_else(|| photo.camera());
     let lens_name = record.as_ref().and_then(|item| item.lens.clone());
-    let has_camera_text = camera_name.is_some() || lens_name.is_some();
-    if let Some(name) = camera_name {
-        camera_details.append(&prominent_property("Camera", &name));
+    if let Some(name) = camera_name.as_deref() {
+        add_inspector_row(&camera_group, "Camera", name);
+        camera_rows += 1;
     }
-    if let Some(name) = lens_name {
-        camera_details.append(&prominent_property("Lens", &name));
+    if let Some(name) = lens_name.as_deref() {
+        add_inspector_row(&camera_group, "Lens", name);
+        camera_rows += 1;
     }
     let camera_values = [
-        (
-            "Aperture",
-            record
-                .as_ref()
-                .and_then(|item| item.aperture)
-                .or_else(|| Some(photo.aperture()))
-                .and_then(format_aperture),
-        ),
-        (
-            "Shutter Speed",
-            record
-                .as_ref()
-                .and_then(|item| item.shutter_speed)
-                .and_then(format_shutter_speed),
-        ),
-        (
-            "ISO",
-            record
-                .as_ref()
-                .and_then(|item| item.iso)
-                .filter(|value| *value > 0)
-                .map(|value| format!("{value}")),
-        ),
-        (
-            "Focal Length",
-            record
-                .as_ref()
-                .and_then(|item| item.focal_length)
-                .and_then(format_focal_length),
-        ),
-        (
-            "Exposure Compensation",
-            record
-                .as_ref()
-                .and_then(|item| item.exposure_bias)
-                .and_then(format_exposure_bias),
-        ),
+        ("Aperture", record.as_ref().and_then(|item| item.aperture)
+            .or_else(|| Some(photo.aperture())).and_then(format_aperture)),
+        ("Shutter speed", record.as_ref().and_then(|item| item.shutter_speed)
+            .and_then(format_shutter_speed)),
+        ("ISO", record.as_ref().and_then(|item| item.iso)
+            .filter(|value| *value > 0).map(|value| value.to_string())),
+        ("Focal length", record.as_ref().and_then(|item| item.focal_length)
+            .and_then(format_focal_length)),
+        ("Exposure compensation", record.as_ref().and_then(|item| item.exposure_bias)
+            .and_then(format_exposure_bias)),
     ];
-    let available = camera_values
-        .iter()
-        .filter_map(|(label, value)| value.as_ref().map(|value| (*label, value.as_str())))
-        .collect::<Vec<_>>();
-    if !available.is_empty() {
-        camera_details.append(&metric_grid(&available, 2));
+    for (name, value) in &camera_values {
+        if let Some(value) = value.as_deref() {
+            add_inspector_row(&camera_group, name, value);
+            camera_rows += 1;
+        }
     }
-    if has_camera_text || !available.is_empty() {
-        add_boxed_properties(&camera_group, &camera_details);
-        top.append(&camera_group);
+    if camera_rows > 0 {
+        sections.append(&camera_group);
     }
-    sections.append(&top);
 
-    let image_group = adw::PreferencesGroup::new();
-    image_group.set_title("Image");
-    let image_values = [
-        ("Dimensions", dimensions),
-        ("File Type", file_type(&path)),
-        ("File Size", crate::infobar::format_size(size)),
-        ("Rotation", format!("{rotation}°")),
-        ("Favourite", if favorite { "Yes" } else { "No" }.into()),
-    ];
-    let image_values = image_values
-        .iter()
-        .map(|(label, value)| (*label, value.as_str()))
-        .collect::<Vec<_>>();
-    add_boxed_properties(&image_group, &metric_grid(&image_values, 3));
-    sections.append(&image_group);
-
-    let file_group = adw::PreferencesGroup::new();
-    file_group.set_title("File");
-    let file_grid = gtk::Grid::new();
-    file_grid.set_column_spacing(18);
-    file_grid.set_column_homogeneous(false);
-    file_grid.attach(&metric_block("Date Taken", &date), 0, 0, 1, 1);
-    let location = metric_block("Location", &path);
-    location.set_hexpand(true);
-    if let Some(value) = location
-        .last_child()
-        .and_then(|widget| widget.downcast::<gtk::Label>().ok())
-    {
-        value.set_selectable(true);
-        value.set_wrap(true);
-        value.set_wrap_mode(gtk::pango::WrapMode::Char);
-        value.set_ellipsize(gtk::pango::EllipsizeMode::None);
-        value.set_width_chars(1);
-        value.set_max_width_chars(40);
-    }
-    file_grid.attach(&location, 1, 0, 1, 1);
-    add_boxed_properties(&file_group, &file_grid);
-    sections.append(&file_group);
+    let location_group = adw::PreferencesGroup::new();
+    location_group.set_title("Location");
+    add_inspector_row(&location_group, "File path", &path);
+    sections.append(&location_group);
 
     DOCKED_PROPERTIES_PANEL.with(|slot| {
         if let Some(panel) = slot.borrow().as_ref() {
@@ -1556,6 +1513,15 @@ fn show_properties_dialog(
         }
     });
     DOCKED_PROPERTIES_CONTEXT.with(|slot| slot.replace(Some(context.clone())));
+}
+
+fn add_inspector_row(group: &adw::PreferencesGroup, name: &str, value: &str) {
+    let row = adw::ActionRow::new();
+    row.set_title(name);
+    row.set_subtitle(value);
+    row.set_subtitle_lines(3);
+    row.set_activatable(false);
+    group.add(&row);
 }
 
 fn add_boxed_properties(group: &adw::PreferencesGroup, child: &impl IsA<gtk::Widget>) {

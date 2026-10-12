@@ -2,6 +2,8 @@ use gio::prelude::{AppInfoExt, SettingsExt};
 
 thread_local! {
     static ACTIVE_PHOTO_MENU: RefCell<Option<gtk::Widget>> = RefCell::new(None);
+    static DOCKED_PROPERTIES_PANEL: RefCell<Option<gtk::Box>> = RefCell::new(None);
+    static DOCKED_PROPERTIES_CONTEXT: RefCell<Option<PhotoActionContext>> = RefCell::new(None);
     static CONTEXT_MENU_CSS_INSTALLED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
@@ -1341,8 +1343,20 @@ fn refresh_favorite_sidebar(context: &PhotoActionContext) {
     sidebar::refresh_library_counts(&sidebar, counts, &context.on_unavailable);
 }
 
+pub(crate) fn register_docked_properties_panel(panel: &gtk::Box) {
+    DOCKED_PROPERTIES_PANEL.with(|slot| slot.replace(Some(panel.clone())));
+    DOCKED_PROPERTIES_CONTEXT.with(|slot| slot.replace(None));
+}
+
+pub(crate) fn refresh_docked_properties(photo: Option<&crate::photo_object::PhotoObject>) {
+    let context = DOCKED_PROPERTIES_CONTEXT.with(|slot| slot.borrow().clone());
+    if let (Some(photo), Some(context)) = (photo, context) {
+        show_properties_dialog(photo.upcast_ref(), photo, &context);
+    }
+}
+
 fn show_properties_dialog(
-    parent: &gtk::Widget,
+    _parent: &gtk::Widget,
     photo: &crate::photo_object::PhotoObject,
     context: &PhotoActionContext,
 ) {
@@ -1386,6 +1400,17 @@ fn show_properties_dialog(
 
     let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
     let header = adw::HeaderBar::new();
+    header.set_title_widget(Some(&gtk::Label::new(Some("Properties"))));
+    let close = gtk::Button::from_icon_name("window-close-symbolic");
+    close.set_tooltip_text(Some("Close properties"));
+    close.add_css_class("flat");
+    close.connect_clicked(|_| {
+        DOCKED_PROPERTIES_PANEL.with(|slot| {
+            if let Some(panel) = slot.borrow().as_ref() { panel.set_visible(false); }
+        });
+        DOCKED_PROPERTIES_CONTEXT.with(|slot| slot.replace(None));
+    });
+    header.pack_end(&close);
     content.append(&header);
     let scroll = gtk::ScrolledWindow::new();
     scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
@@ -1529,13 +1554,14 @@ fn show_properties_dialog(
     add_boxed_properties(&file_group, &file_grid);
     sections.append(&file_group);
 
-    let dialog = adw::Dialog::builder()
-        .title(photo.filename())
-        .content_width(550)
-        .content_height(440)
-        .child(&content)
-        .build();
-    dialog.present(Some(parent));
+    DOCKED_PROPERTIES_PANEL.with(|slot| {
+        if let Some(panel) = slot.borrow().as_ref() {
+            while let Some(child) = panel.first_child() { panel.remove(&child); }
+            panel.append(&content);
+            panel.set_visible(true);
+        }
+    });
+    DOCKED_PROPERTIES_CONTEXT.with(|slot| slot.replace(Some(context.clone())));
 }
 
 fn add_boxed_properties(group: &adw::PreferencesGroup, child: &impl IsA<gtk::Widget>) {

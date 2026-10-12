@@ -5,6 +5,7 @@ thread_local! {
     static DOCKED_PROPERTIES_PANEL: RefCell<Option<gtk::Box>> = RefCell::new(None);
     static DOCKED_PROPERTIES_CONTEXT: RefCell<Option<PhotoActionContext>> = RefCell::new(None);
     static DOCKED_PROPERTIES_LIGHTBOX_VISIBLE: Cell<bool> = const { Cell::new(false) };
+    static INSPECTOR_CLOSE_CSS_INSTALLED: Cell<bool> = const { Cell::new(false) };
     static CONTEXT_MENU_CSS_INSTALLED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
@@ -1489,15 +1490,19 @@ fn show_properties_dialog(
     close.add_css_class("flat");
     close.add_css_class("pic-inspector-close");
     close.set_size_request(20, 20);
-    let close_css = gtk::CssProvider::new();
-    close_css.load_from_string(
+    INSPECTOR_CLOSE_CSS_INSTALLED.with(|installed| {
+      if !installed.replace(true) {
+        let close_css = gtk::CssProvider::new();
+        close_css.load_from_string(
         "button.pic-inspector-close { min-width: 20px; min-height: 20px;          padding: 0; margin: 0; border: 0; border-radius: 999px;          background-color: alpha(black, 0.55); color: white;          box-shadow: none; }          button.pic-inspector-close:hover { background-color: alpha(black, 0.75); }"
     );
-    if let Some(display) = gtk::gdk::Display::default() {
-        gtk::style_context_add_provider_for_display(
-            &display, &close_css, gtk::STYLE_PROVIDER_PRIORITY_APPLICATION
-        );
-    }
+        if let Some(display) = gtk::gdk::Display::default() {
+            gtk::style_context_add_provider_for_display(
+                &display, &close_css, gtk::STYLE_PROVIDER_PRIORITY_APPLICATION
+            );
+        }
+      }
+    });
     close.set_halign(gtk::Align::End);
     close.set_valign(gtk::Align::Start);
     close.set_margin_top(5);

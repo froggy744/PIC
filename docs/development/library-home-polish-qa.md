@@ -15,6 +15,8 @@ Branch: `feature/library-home-polish`
 - [ ] Album card click still navigates into the album.
 - [ ] Arrow buttons and View All/View History links still work.
 - [ ] Empty-state text works when no photos, favourites, edits or albums exist.
+- [ ] Window can be restored from maximized and resized narrower without snapping back to full monitor width.
+- [ ] Long horizontal photo preview rows do not impose a minimum window width; horizontal scrollbar remains hidden and left/right arrows still scroll.
 - [ ] Panel works at 1280px and narrower widths; summary doesn't conceal toolbar or content.
 - [ ] Light and dark themes show appropriate contrast.
 

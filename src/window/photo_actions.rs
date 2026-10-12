@@ -1547,18 +1547,44 @@ fn show_properties_dialog(
         sections.append(&camera_group);
     }
 
-    // A simple full-width path line; no extra boxed Location section.
-    let path_label = gtk::Label::new(Some("File path"));
-    path_label.set_xalign(0.0);
-    path_label.add_css_class("dim-label");
-    sections.append(&path_label);
-    let path_value = gtk::Label::new(Some(&path));
+    // Compact, unboxed location footer. Display readable spaces but copy
+    // the original URI/path exactly (including percent escapes).
+    let location_footer = gtk::Box::new(gtk::Orientation::Vertical, 3);
+    location_footer.set_margin_top(4);
+    let footer_header = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    let folder_icon = gtk::Image::from_icon_name("folder-symbolic");
+    folder_icon.add_css_class("dim-label");
+    footer_header.append(&folder_icon);
+    let location_title = gtk::Label::new(Some("FILE LOCATION"));
+    location_title.add_css_class("dim-label");
+    location_title.add_css_class("caption");
+    location_title.set_xalign(0.0);
+    location_title.set_hexpand(true);
+    footer_header.append(&location_title);
+    let copy_path = gtk::Button::from_icon_name("edit-copy-symbolic");
+    copy_path.add_css_class("flat");
+    copy_path.set_tooltip_text(Some("Copy full file path"));
+    let original_path = path.clone();
+    copy_path.connect_clicked(move |_| {
+        if let Some(display) = gtk::gdk::Display::default() {
+            display.clipboard().set_text(&original_path);
+        }
+    });
+    footer_header.append(&copy_path);
+    location_footer.append(&footer_header);
+
+    let readable_path = path.replace("%20", " ");
+    let path_value = gtk::Label::new(Some(&readable_path));
     path_value.set_xalign(0.0);
     path_value.set_hexpand(true);
     path_value.set_wrap(true);
     path_value.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+    path_value.set_width_chars(1);
     path_value.set_selectable(true);
-    sections.append(&path_value);
+    path_value.add_css_class("caption");
+    path_value.add_css_class("dim-label");
+    location_footer.append(&path_value);
+    sections.append(&location_footer);
 
     // Commit state before displaying it, so visibility notifications always
     // see a matching, live selection.

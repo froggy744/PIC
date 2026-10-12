@@ -848,16 +848,11 @@ fn show_photo_context_menu(
     });
 
     let photo_for_properties = photo.clone();
-    let anchor_for_properties = anchor.clone();
     let context_for_properties = context.clone();
     let dismiss_menu_for_properties = dismiss_menu.clone();
     properties.connect_clicked(move |_| {
         dismiss_menu_for_properties();
-        show_properties_dialog(
-            &anchor_for_properties,
-            &photo_for_properties,
-            &context_for_properties,
-        );
+        show_properties_dialog(&photo_for_properties, &context_for_properties);
     });
 
     let photo_for_delete = photo;
@@ -1351,12 +1346,11 @@ pub(crate) fn register_docked_properties_panel(panel: &gtk::Box) {
 pub(crate) fn refresh_docked_properties(photo: Option<&crate::photo_object::PhotoObject>) {
     let context = DOCKED_PROPERTIES_CONTEXT.with(|slot| slot.borrow().clone());
     if let (Some(photo), Some(context)) = (photo, context) {
-        show_properties_dialog(photo.upcast_ref(), photo, &context);
+        show_properties_dialog(photo, &context);
     }
 }
 
 fn show_properties_dialog(
-    _parent: &gtk::Widget,
     photo: &crate::photo_object::PhotoObject,
     context: &PhotoActionContext,
 ) {

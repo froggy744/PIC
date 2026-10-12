@@ -1255,6 +1255,40 @@ mod tests {
     use super::*;
 
     #[test]
+    fn excluded_subfolder_does_not_reappear_on_parent_refresh() {
+        let unique = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let workspace = std::env::temp_dir().join(format!("pic-exclude-{}-{unique}", std::process::id()));
+        let root = workspace.join("photos");
+        let ignored = root.join("ignored");
+        let kept = root.join("kept");
+        fs::create_dir_all(&ignored).unwrap();
+        fs::create_dir_all(&kept).unwrap();
+        let database = workspace.join("catalog.db");
+        let connection = Connection::open(&database).unwrap();
+        connection.execute_batch(db::SCHEMA).unwrap();
+        let root_path = root.to_str().unwrap();
+
+        scan_with_control(root_path, &database, None, &ScanControl::default()).unwrap();
+        let ignored_path = ignored.to_str().unwrap();
+        let ignored_id = db::folders(&connection).unwrap().into_iter()
+            .find(|folder| folder.path == ignored_path).unwrap().id;
+        db::exclude_folder(&connection, ignored_path).unwrap();
+        db::remove_folder(&connection, ignored_id).unwrap();
+
+        scan_with_control(root_path, &database, None, &ScanControl::default()).unwrap();
+        let paths = db::folders(&connection).unwrap().into_iter()
+            .map(|folder| folder.path).collect::<HashSet<_>>();
+        assert!(!paths.contains(ignored_path));
+        assert!(paths.contains(kept.to_str().unwrap()));
+
+        db::restore_excluded_folder(&connection, ignored_path).unwrap();
+        scan_with_control(root_path, &database, None, &ScanControl::default()).unwrap();
+        assert!(db::folders(&connection).unwrap().iter().any(|folder| folder.path == ignored_path));
+        drop(connection);
+        fs::remove_dir_all(workspace).unwrap();
+    }
+
+    #[test]
     fn refresh_removes_deleted_subfolders_but_keeps_existing_empty_folders() {
         let unique = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
         let workspace = std::env::temp_dir().join(format!("pic-refresh-{}-{unique}", std::process::id()));

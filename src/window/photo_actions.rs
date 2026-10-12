@@ -1624,7 +1624,9 @@ fn add_inspector_row(group: &adw::PreferencesGroup, name: &str, value: &str) {
 
     let detail = gtk::Label::new(Some(value));
     detail.set_hexpand(true);
-    detail.set_xalign(1.0);
+    // Camera and Lens are descriptive text, not right-aligned metrics.
+    // Start their values directly after the key and wrap to the left.
+    detail.set_xalign(if matches!(name, "Camera" | "Lens") { 0.0 } else { 1.0 });
     detail.set_valign(gtk::Align::Center);
     detail.set_wrap(true);
     detail.set_wrap_mode(gtk::pango::WrapMode::WordChar);

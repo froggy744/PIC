@@ -1484,9 +1484,20 @@ fn show_properties_dialog(
     close_icon.set_pixel_size(12);
     close.set_child(Some(&close_icon));
     close.set_tooltip_text(Some("Close properties"));
-    close.add_css_class("circular");
-    close.add_css_class("osd");
-    close.set_size_request(24, 24);
+    // Avoid libadwaita's circular/osd padding, which makes the background
+    // much bigger than the icon even with a small size request.
+    close.add_css_class("flat");
+    close.add_css_class("pic-inspector-close");
+    close.set_size_request(20, 20);
+    let close_css = gtk::CssProvider::new();
+    close_css.load_from_string(
+        "button.pic-inspector-close { min-width: 20px; min-height: 20px;          padding: 0; margin: 0; border: 0; border-radius: 999px;          background-color: alpha(black, 0.55); color: white;          box-shadow: none; }          button.pic-inspector-close:hover { background-color: alpha(black, 0.75); }"
+    );
+    if let Some(display) = gtk::gdk::Display::default() {
+        gtk::style_context_add_provider_for_display(
+            &display, &close_css, gtk::STYLE_PROVIDER_PRIORITY_APPLICATION
+        );
+    }
     close.set_halign(gtk::Align::End);
     close.set_valign(gtk::Align::Start);
     close.set_margin_top(5);

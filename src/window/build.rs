@@ -2470,7 +2470,8 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let gallery_band = gtk::Paned::new(gtk::Orientation::Horizontal);
     gallery_band.set_hexpand(true);
     gallery_band.set_vexpand(true);
-    gallery_band.set_wide_handle(true);
+    // Use the standard thin GTK divider, not the wide double-edge handle.
+    gallery_band.set_wide_handle(false);
     gallery_band.set_start_child(Some(&page_overlay));
     gallery_band.set_resize_start_child(true);
     gallery_band.set_shrink_start_child(false);

@@ -140,6 +140,11 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let selected_photo = Rc::new(RefCell::new(None));
 
     let lightbox = Rc::new(Lightbox::new());
+    // The inspector belongs to the gallery, never the fullscreen lightbox.
+    // Restore an already-open inspector when returning to the grid.
+    lightbox.root.connect_visible_notify(|root| {
+        set_docked_properties_lightbox_visible(root.is_visible());
+    });
     let info_for_lightbox = info.clone();
     let selected_photo_for_lightbox = selected_photo.clone();
     let last_activated_for_lightbox = last_activated_photo_id.clone();

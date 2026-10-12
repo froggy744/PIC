@@ -1343,6 +1343,15 @@ pub(crate) fn register_docked_properties_panel(panel: &gtk::Box) {
     DOCKED_PROPERTIES_CONTEXT.with(|slot| slot.replace(None));
 }
 
+pub(crate) fn set_docked_properties_lightbox_visible(lightbox_visible: bool) {
+    DOCKED_PROPERTIES_PANEL.with(|slot| {
+        if let Some(panel) = slot.borrow().as_ref() {
+            let has_properties = DOCKED_PROPERTIES_CONTEXT.with(|context| context.borrow().is_some());
+            panel.set_visible(!lightbox_visible && has_properties);
+        }
+    });
+}
+
 pub(crate) fn refresh_docked_properties(photo: Option<&crate::photo_object::PhotoObject>) {
     let context = DOCKED_PROPERTIES_CONTEXT.with(|slot| slot.borrow().clone());
     if let (Some(photo), Some(context)) = (photo, context) {
@@ -1516,11 +1525,31 @@ fn show_properties_dialog(
 }
 
 fn add_inspector_row(group: &adw::PreferencesGroup, name: &str, value: &str) {
-    let row = adw::ActionRow::new();
-    row.set_title(name);
-    row.set_subtitle(value);
-    row.set_subtitle_lines(3);
+    // A compact inspector row, rather than ActionRow's touch-sized
+    // title/subtitle layout. Long paths wrap without widening the dock.
+    let row = adw::PreferencesRow::new();
     row.set_activatable(false);
+    row.set_selectable(false);
+    let line = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    line.set_margin_start(10);
+    line.set_margin_end(10);
+    line.set_margin_top(5);
+    line.set_margin_bottom(5);
+    let key = gtk::Label::new(Some(name));
+    key.set_xalign(0.0);
+    key.set_valign(gtk::Align::Start);
+    key.set_width_chars(12);
+    key.add_css_class("dim-label");
+    line.append(&key);
+    let detail = gtk::Label::new(Some(value));
+    detail.set_hexpand(true);
+    detail.set_xalign(1.0);
+    detail.set_wrap(true);
+    detail.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+    detail.set_max_width_chars(22);
+    detail.set_selectable(true);
+    line.append(&detail);
+    row.set_child(Some(&line));
     group.add(&row);
 }
 

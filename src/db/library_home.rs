@@ -1,6 +1,9 @@
 pub const HOME_PREVIEW_LIMIT: i64 = 20;
 
 pub struct LibraryHomeData {
+    pub photo_count: i64,
+    pub favorite_count: i64,
+    pub folder_count: i64,
     pub added: Vec<Photo>,
     pub edited: Vec<Photo>,
     pub favorites: Vec<Photo>,
@@ -64,6 +67,9 @@ pub fn library_home_data(connection: &Connection) -> Result<LibraryHomeData> {
             })
             .collect::<Result<Vec<_>>>()?;
     Ok(LibraryHomeData {
+        photo_count: connection.query_row("SELECT COUNT(*) FROM photos WHERE trashed=0", [], |r| r.get(0))?,
+        favorite_count: connection.query_row("SELECT COUNT(*) FROM photos WHERE trashed=0 AND favorite=1", [], |r| r.get(0))?,
+        folder_count: connection.query_row("SELECT COUNT(*) FROM folders WHERE imported_root=1", [], |r| r.get(0))?,
         added,
         edited: history_photos_limited(connection, HOME_PREVIEW_LIMIT)?,
         favorites: photos_limited(connection, None, true, None, HOME_PREVIEW_LIMIT)?,
@@ -94,6 +100,9 @@ mod home_tests {
         c.execute("UPDATE photos SET trashed=1 WHERE id=100", [])
             .unwrap();
         let data = library_home_data(&c).unwrap();
+        assert_eq!(data.photo_count, 99);
+        assert_eq!(data.favorite_count, 99);
+        assert_eq!(data.folder_count, 0);
         assert_eq!(
             data.added.iter().map(|p| p.id).collect::<Vec<_>>(),
             (80..=99).rev().collect::<Vec<_>>()

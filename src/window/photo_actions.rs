@@ -1617,7 +1617,14 @@ fn add_inspector_row(group: &adw::PreferencesGroup, name: &str, value: &str) {
     let key = gtk::Label::new(Some(name));
     key.set_xalign(0.0);
     key.set_valign(gtk::Align::Center);
-    key.set_width_chars(11);
+    // Descriptive Camera/Lens values need a narrow label column; the
+    // generic 11-character column leaves an excessive gap at 260–300px.
+    if matches!(name, "Camera" | "Lens") {
+        key.set_width_chars(0);
+        key.set_size_request(60, -1);
+    } else {
+        key.set_width_chars(11);
+    }
     key.add_css_class("dim-label");
     key.add_css_class("caption");
     line.append(&key);

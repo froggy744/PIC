@@ -4375,7 +4375,7 @@ fn start_photo_export_single(
     let parent_for_network = parent.clone();
 
     // Local imports and onboarding cross the same registration/scan boundary.
-    let selected_local_folder: Rc<dyn Fn(String)> = {
+    let queue_explicit_local_import: Rc<dyn Fn(String)> = {
         let owner_slot = Rc::downgrade(&onboarding_slot);
         let connection = connection_for_import.clone();
         let sidebar_refresh = sidebar_refresh_for_import.clone();
@@ -4397,6 +4397,47 @@ fn start_photo_export_single(
                     eprintln!("Could not import folder {root}: {error}");
                 }
             }
+        })
+    };
+    let selected_local_folder: Rc<dyn Fn(String)> = {
+        let connection = connection_for_import.clone();
+        let parent = parent.clone();
+        let queue = queue_explicit_local_import.clone();
+        Rc::new(move |root: String| {
+            let exclusions = match db::excluded_folders(&connection.borrow()) {
+                Ok(rules) => rules,
+                Err(error) => {
+                    eprintln!("Could not read excluded folders: {error}");
+                    return;
+                }
+            };
+            let blocked = exclusions.into_iter().filter(|excluded| {
+                db::path_is_excluded(&root, std::slice::from_ref(excluded))
+            }).collect::<Vec<_>>();
+            if blocked.is_empty() {
+                queue(root);
+                return;
+            }
+            let dialog = adw::AlertDialog::builder()
+                .heading("This folder is excluded")
+                .body("You previously chose Remove & Exclude. Restore this folder to the library and import its photos?")
+                .close_response("cancel")
+                .build();
+            dialog.add_response("cancel", "Keep Excluded");
+            dialog.add_response("restore", "Restore & Import");
+            dialog.set_response_appearance("restore", adw::ResponseAppearance::Suggested);
+            let connection_for_restore = connection.clone();
+            let queue_for_restore = queue.clone();
+            dialog.connect_response(Some("restore"), move |_, _| {
+                for excluded in &blocked {
+                    if let Err(error) = db::restore_excluded_folder(&connection_for_restore.borrow(), excluded) {
+                        eprintln!("Could not restore excluded folder {excluded}: {error}");
+                        return;
+                    }
+                }
+                queue_for_restore(root.clone());
+            });
+            dialog.present(Some(&parent));
         })
     };
     let choose_local_folder: Rc<dyn Fn()> = {

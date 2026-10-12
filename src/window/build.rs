@@ -4549,7 +4549,7 @@ fn start_photo_export_single(
         let start_next_scan=start_next_scan_for_network.clone();
         let connection=connection_for_network.clone();
         let sidebar_refresh=sidebar_refresh_for_network.clone();
-        let selected: Rc<dyn Fn(String)>=Rc::new(move |root: String| {
+        let queue_network_import: Rc<dyn Fn(String)> = Rc::new(move |root: String| {
             if scan_job.borrow().active_root.as_ref()==Some(&root) || scan_job.borrow().pending.contains(&root) { return; }
             if let Err(error)=db::mark_import_root(&connection.borrow(),&root){
                 eprintln!("Could not register imported folder {root}: {error}");
@@ -4565,6 +4565,47 @@ fn start_photo_export_single(
             }
             start_next_scan();
         });
+        let selected: Rc<dyn Fn(String)> = {
+            let connection = connection_for_network.clone();
+            let parent = parent_for_network.clone();
+            let queue = queue_network_import.clone();
+            Rc::new(move |root: String| {
+                let rules = match db::excluded_folders(&connection.borrow()) {
+                    Ok(rules) => rules,
+                    Err(error) => {
+                        eprintln!("Could not read excluded folders: {error}");
+                        return;
+                    }
+                };
+                let blocked = rules.into_iter().filter(|excluded| {
+                    db::path_is_excluded(&root, std::slice::from_ref(excluded))
+                }).collect::<Vec<_>>();
+                if blocked.is_empty() {
+                    queue(root);
+                    return;
+                }
+                let dialog = adw::AlertDialog::builder()
+                    .heading("This network folder is excluded")
+                    .body("You previously chose Remove & Exclude. Restore this folder and import its photos?")
+                    .close_response("cancel")
+                    .build();
+                dialog.add_response("cancel", "Keep Excluded");
+                dialog.add_response("restore", "Restore & Import");
+                dialog.set_response_appearance("restore", adw::ResponseAppearance::Suggested);
+                let connection_for_restore = connection.clone();
+                let queue_for_restore = queue.clone();
+                dialog.connect_response(Some("restore"), move |_, _| {
+                    for excluded in &blocked {
+                        if let Err(error) = db::restore_excluded_folder(&connection_for_restore.borrow(), excluded) {
+                            eprintln!("Could not restore excluded folder {excluded}: {error}");
+                            return;
+                        }
+                    }
+                    queue_for_restore(root.clone());
+                });
+                dialog.present(Some(&parent));
+            })
+        };
         let parent_for_network=parent_for_network.clone();
         crate::network_picker::open(
             parent_for_network.upcast_ref::<gtk::Window>(),selected);

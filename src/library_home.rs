@@ -182,7 +182,7 @@ impl LibraryHome {
             heading.append(&label);
 
             let scroller = gtk::ScrolledWindow::new();
-            scroller.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Never);
+            scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Never);
             scroller.set_hexpand(true);
             scroller.set_kinetic_scrolling(true);
             scroller.add_css_class("home-section-row");
@@ -315,26 +315,47 @@ impl LibraryHome {
 fn wire_scroll_buttons(scroller: &gtk::ScrolledWindow, prev: &gtk::Button, next: &gtk::Button) {
     let hadj = scroller.hadjustment();
 
-    // No visual pan animation on Library Home. The arrow buttons jump by one
-    // deterministic page fraction; wheel/touchpad smooth scrolling elsewhere
-    // in the app is intentionally unaffected.
-    {
+    // Animate page movements with a smooth ease-in/out curve. The generation
+    // cancels a previous animation when the next arrow is clicked.
+    let generation = Rc::new(Cell::new(0u64));
+    let pan = {
         let hadj = hadj.clone();
-        prev.connect_clicked(move |_| {
+        let generation = generation.clone();
+        Rc::new(move |direction: f64| {
             let lower = hadj.lower();
             let upper = (hadj.upper() - hadj.page_size()).max(lower);
+            let start = hadj.value();
             let step = (hadj.page_size() * 0.75).max(160.0);
-            hadj.set_value((hadj.value() - step).clamp(lower, upper));
-        });
+            let end = (start + direction * step).clamp(lower, upper);
+            if (end - start).abs() < 0.5 { return; }
+            let sequence = generation.get().wrapping_add(1);
+            generation.set(sequence);
+            let begun = std::time::Instant::now();
+            let hadj = hadj.clone();
+            let generation = generation.clone();
+            glib::timeout_add_local(std::time::Duration::from_millis(16), move || {
+                if generation.get() != sequence {
+                    return glib::ControlFlow::Break;
+                }
+                let t = (begun.elapsed().as_secs_f64() / 0.28).min(1.0);
+                let eased = t * t * (3.0 - 2.0 * t);
+                let maximum = (hadj.upper() - hadj.page_size()).max(hadj.lower());
+                hadj.set_value((start + (end - start) * eased).clamp(hadj.lower(), maximum));
+                if t >= 1.0 {
+                    glib::ControlFlow::Break
+                } else {
+                    glib::ControlFlow::Continue
+                }
+            });
+        })
+    };
+    {
+        let pan = pan.clone();
+        prev.connect_clicked(move |_| pan(-1.0));
     }
     {
-        let hadj = hadj.clone();
-        next.connect_clicked(move |_| {
-            let lower = hadj.lower();
-            let upper = (hadj.upper() - hadj.page_size()).max(lower);
-            let step = (hadj.page_size() * 0.75).max(160.0);
-            hadj.set_value((hadj.value() + step).clamp(lower, upper));
-        });
+        let pan = pan.clone();
+        next.connect_clicked(move |_| pan(1.0));
     }
 
     let prev = prev.clone();
@@ -512,10 +533,14 @@ fn populate(sections: &[HomeSection], snapshot: &Snapshot, navigate: &Navigate, 
             });
             let gesture = gtk::GestureClick::new();
             gesture.set_button(1);
+            // GtkButton owns a click gesture; capture the double press before
+            // its internal handler can reset the click sequence.
+            gesture.set_propagation_phase(gtk::PropagationPhase::Capture);
             let open = open.clone();
             let objects = objects.clone();
-            gesture.connect_pressed(move |_, n_press, _, _| {
+            gesture.connect_pressed(move |gesture, n_press, _, _| {
                 if n_press == 2 {
+                    gesture.set_state(gtk::EventSequenceState::Claimed);
                     open(objects.clone(), position, index == 1);
                 }
             });

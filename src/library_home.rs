@@ -182,7 +182,12 @@ impl LibraryHome {
             heading.append(&label);
 
             let scroller = gtk::ScrolledWindow::new();
-            scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Never);
+            // NEVER makes the entire thumbnail track a minimum-size request,
+            // preventing the parent window from shrinking. EXTERNAL keeps
+            // horizontal scrolling but delegates the scrollbar to UI controls.
+            scroller.set_policy(gtk::PolicyType::External, gtk::PolicyType::Never);
+            scroller.set_propagate_natural_width(false);
+            scroller.set_min_content_width(1);
             scroller.set_hexpand(true);
             scroller.set_kinetic_scrolling(true);
             scroller.add_css_class("home-section-row");

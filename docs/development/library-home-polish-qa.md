@@ -9,7 +9,9 @@ Branch: `feature/library-home-polish`
 - [ ] Stats refresh when library content changes, and when switching libraries.
 - [ ] Recently Added, Recently Edited, Favourites and Albums previews still render.
 - [ ] Single-click on a photo preview highlights/selects the card but **does not** launch the lightbox.
-- [ ] Double-click on a photo preview opens the right photo in the viewer.
+- [ ] Double-click on a photo preview opens the right photo in the viewer (including rapid mouse double-click); single-click alone never opens.
+- [ ] Horizontal scrollbars are hidden beneath all Library Home sections; touchpad and arrow navigation still scroll.
+- [ ] Left/right buttons animate over ~280 ms with ease-in/out (including repeated quick clicks and window resizing).
 - [ ] Album card click still navigates into the album.
 - [ ] Arrow buttons and View All/View History links still work.
 - [ ] Empty-state text works when no photos, favourites, edits or albums exist.

@@ -1444,25 +1444,6 @@ fn show_properties_dialog(
         .unwrap_or_else(|| photo.favorite());
 
     let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    // Inspector toolbar, not a second window titlebar: no duplicated
-    // minimize, maximize or restore controls.
-    let header = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    header.set_margin_start(12);
-    header.set_margin_end(8);
-    header.set_margin_top(8);
-    header.set_margin_bottom(8);
-    let heading = gtk::Label::new(Some("Properties"));
-    heading.set_xalign(0.0);
-    heading.set_hexpand(true);
-    heading.add_css_class("heading");
-    header.append(&heading);
-    let close = gtk::Button::from_icon_name("window-close-symbolic");
-    close.set_tooltip_text(Some("Close properties"));
-    close.add_css_class("flat");
-    close.connect_clicked(|_| close_docked_properties());
-    header.append(&close);
-    content.append(&header);
-    content.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
     let scroll = gtk::ScrolledWindow::new();
     scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
     scroll.set_vexpand(true);
@@ -1496,7 +1477,20 @@ fn show_properties_dialog(
         missing.add_css_class("dim-label");
         preview_frame.set_child(Some(&missing));
     }
-    sections.append(&preview_frame);
+    let preview_overlay = gtk::Overlay::new();
+    preview_overlay.set_child(Some(&preview_frame));
+    let close = gtk::Button::from_icon_name("window-close-symbolic");
+    close.set_tooltip_text(Some("Close properties"));
+    close.set_accessible_role(gtk::AccessibleRole::Button);
+    close.add_css_class("circular");
+    close.add_css_class("osd");
+    close.set_halign(gtk::Align::End);
+    close.set_valign(gtk::Align::Start);
+    close.set_margin_top(6);
+    close.set_margin_end(6);
+    close.connect_clicked(|_| close_docked_properties());
+    preview_overlay.add_overlay(&close);
+    sections.append(&preview_overlay);
 
     let image_group = adw::PreferencesGroup::new();
     // No redundant heading above the file metadata rows.

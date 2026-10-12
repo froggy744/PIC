@@ -1674,65 +1674,6 @@ fn add_inspector_row(group: &adw::PreferencesGroup, name: &str, value: &str) {
     group.add(&row);
 }
 
-fn add_boxed_properties(group: &adw::PreferencesGroup, child: &impl IsA<gtk::Widget>) {
-    let row = adw::PreferencesRow::new();
-    row.set_activatable(false);
-    row.set_selectable(false);
-    let inset = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    inset.set_margin_start(12);
-    inset.set_margin_end(12);
-    inset.set_margin_top(8);
-    inset.set_margin_bottom(8);
-    inset.append(child);
-    row.set_child(Some(&inset));
-    group.add(&row);
-}
-
-fn metric_grid(values: &[(&str, &str)], columns: usize) -> gtk::Grid {
-    let grid = gtk::Grid::new();
-    grid.set_column_spacing(12);
-    grid.set_row_spacing(3);
-    grid.set_column_homogeneous(true);
-    for (index, (name, value)) in values.iter().enumerate() {
-        let column = (index % columns) as i32;
-        let row = (index / columns) as i32;
-        grid.attach(&metric_block(name, value), column, row, 1, 1);
-    }
-    grid
-}
-
-fn metric_block(title: &str, value: &str) -> gtk::Box {
-    let cell = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    cell.set_hexpand(true);
-    let title = gtk::Label::new(Some(title));
-    title.set_xalign(0.0);
-    title.set_ellipsize(gtk::pango::EllipsizeMode::End);
-    title.set_max_width_chars(22);
-    title.add_css_class("dim-label");
-    title.add_css_class("metric-key");
-    cell.append(&title);
-    let value = gtk::Label::new(Some(value));
-    value.set_xalign(0.0);
-    value.set_ellipsize(gtk::pango::EllipsizeMode::End);
-    value.set_max_width_chars(12);
-    value.add_css_class("metric-val");
-    value.add_css_class("title-4");
-    cell.append(&value);
-    cell
-}
-
-fn prominent_property(title: &str, value: &str) -> gtk::Box {
-    let cell = metric_block(title, value);
-    if let Some(value) = cell
-        .last_child()
-        .and_then(|widget| widget.downcast::<gtk::Label>().ok())
-    {
-        value.add_css_class("info-title");
-        value.set_max_width_chars(36);
-    }
-    cell
-}
-
 fn format_aperture(value: f64) -> Option<String> {
     (value.is_finite() && value > 0.0).then(|| {
         format!("f/{value:.1}")

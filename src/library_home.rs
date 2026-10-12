@@ -31,6 +31,22 @@ button.home-card {
 }
 .home-card-caption { font-size: 12px; }
 .home-card-caption-secondary { font-size: 11px; }
+.home-section {
+  border: 1px solid alpha(@borders, 0.55);
+  border-radius: 14px;
+  padding: 16px;
+  background: alpha(@card_bg_color, 0.65);
+}
+.home-summary {
+  border: 1px solid alpha(@borders, 0.55);
+  border-radius: 12px;
+  padding: 10px 14px;
+  background: alpha(@card_bg_color, 0.7);
+}
+.home-summary-value { font-size: 18px; font-weight: 700; }
+.home-summary-label { font-size: 11px; }
+.home-subtitle { font-size: 13px; }
+button.home-card.home-selected { background: alpha(@accent_bg_color, 0.14); }
 button.home-section-pan {
   min-width: 28px;
   min-height: 28px;
@@ -95,15 +111,58 @@ impl LibraryHome {
         root.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
         root.set_hexpand(true);
         root.set_vexpand(true);
-        let content = gtk::Box::new(gtk::Orientation::Vertical, 32);
+        let content = gtk::Box::new(gtk::Orientation::Vertical, 16);
         content.set_margin_top(24);
         content.set_margin_bottom(24);
         content.set_margin_start(28);
         content.set_margin_end(28);
+        let header = gtk::Box::new(gtk::Orientation::Horizontal, 16);
+        header.set_valign(gtk::Align::Center);
+        let identity = gtk::Box::new(gtk::Orientation::Vertical, 3);
+        identity.set_hexpand(true);
         let title = gtk::Label::new(Some("Library"));
         title.set_xalign(0.0);
         title.add_css_class("title-1");
-        content.append(&title);
+        identity.append(&title);
+        let subtitle = gtk::Label::new(Some("Your photos, organised and at your fingertips."));
+        subtitle.set_xalign(0.0);
+        subtitle.add_css_class("dim-label");
+        subtitle.add_css_class("home-subtitle");
+        identity.append(&subtitle);
+        header.append(&identity);
+
+        let summary = gtk::Box::new(gtk::Orientation::Horizontal, 16);
+        summary.add_css_class("home-summary");
+        summary.set_valign(gtk::Align::Center);
+        let mut summary_values = Vec::new();
+        for (index, (icon, label)) in [
+            ("image-x-generic-symbolic", "All Photos"),
+            ("emblem-favorite-symbolic", "Favourites"),
+            ("folder-symbolic", "Folders"),
+        ].into_iter().enumerate() {
+            if index > 0 {
+                summary.append(&gtk::Separator::new(gtk::Orientation::Vertical));
+            }
+            let stat = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+            let image = gtk::Image::from_icon_name(icon);
+            image.set_pixel_size(20);
+            stat.append(&image);
+            let labels = gtk::Box::new(gtk::Orientation::Vertical, 2);
+            let value = gtk::Label::new(Some("—"));
+            value.add_css_class("home-summary-value");
+            value.set_xalign(0.0);
+            labels.append(&value);
+            let caption = gtk::Label::new(Some(label));
+            caption.add_css_class("dim-label");
+            caption.add_css_class("home-summary-label");
+            caption.set_xalign(0.0);
+            labels.append(&caption);
+            stat.append(&labels);
+            summary.append(&stat);
+            summary_values.push(value);
+        }
+        header.append(&summary);
+        content.append(&header);
         let mut sections = Vec::new();
         for (title, action, destination) in [
             ("Recently Added", "View All", SidebarFilter::RecentlyAdded),
@@ -111,7 +170,8 @@ impl LibraryHome {
             ("Favourites", "View All", SidebarFilter::Favorites),
             ("Albums", "View All", SidebarFilter::Albums),
         ] {
-            let section = gtk::Box::new(gtk::Orientation::Vertical, 14);
+            let section = gtk::Box::new(gtk::Orientation::Vertical, 12);
+            section.add_css_class("home-section");
             let heading = gtk::Box::new(gtk::Orientation::Horizontal, 8);
             heading.set_valign(gtk::Align::Center);
             let label = gtk::Label::new(Some(title));
@@ -122,7 +182,12 @@ impl LibraryHome {
             heading.append(&label);
 
             let scroller = gtk::ScrolledWindow::new();
-            scroller.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Never);
+            // NEVER makes the entire thumbnail track a minimum-size request,
+            // preventing the parent window from shrinking. EXTERNAL keeps
+            // horizontal scrolling but delegates the scrollbar to UI controls.
+            scroller.set_policy(gtk::PolicyType::External, gtk::PolicyType::Never);
+            scroller.set_propagate_natural_width(false);
+            scroller.set_min_content_width(1);
             scroller.set_hexpand(true);
             scroller.set_kinetic_scrolling(true);
             scroller.add_css_class("home-section-row");
@@ -201,6 +266,13 @@ impl LibraryHome {
                 }
                 match result {
                     Ok(Some(snapshot)) => {
+                        for (value, count) in summary_values.iter().zip([
+                            snapshot.data.photo_count,
+                            snapshot.data.favorite_count,
+                            snapshot.data.folder_count,
+                        ]) {
+                            value.set_text(&count.to_string());
+                        }
                         populate(&sections, &snapshot, &navigate, &open);
                         status.set_visible(false);
                     }
@@ -248,26 +320,47 @@ impl LibraryHome {
 fn wire_scroll_buttons(scroller: &gtk::ScrolledWindow, prev: &gtk::Button, next: &gtk::Button) {
     let hadj = scroller.hadjustment();
 
-    // No visual pan animation on Library Home. The arrow buttons jump by one
-    // deterministic page fraction; wheel/touchpad smooth scrolling elsewhere
-    // in the app is intentionally unaffected.
-    {
+    // Animate page movements with a smooth ease-in/out curve. The generation
+    // cancels a previous animation when the next arrow is clicked.
+    let generation = Rc::new(Cell::new(0u64));
+    let pan = {
         let hadj = hadj.clone();
-        prev.connect_clicked(move |_| {
+        let generation = generation.clone();
+        Rc::new(move |direction: f64| {
             let lower = hadj.lower();
             let upper = (hadj.upper() - hadj.page_size()).max(lower);
+            let start = hadj.value();
             let step = (hadj.page_size() * 0.75).max(160.0);
-            hadj.set_value((hadj.value() - step).clamp(lower, upper));
-        });
+            let end = (start + direction * step).clamp(lower, upper);
+            if (end - start).abs() < 0.5 { return; }
+            let sequence = generation.get().wrapping_add(1);
+            generation.set(sequence);
+            let begun = std::time::Instant::now();
+            let hadj = hadj.clone();
+            let generation = generation.clone();
+            glib::timeout_add_local(std::time::Duration::from_millis(16), move || {
+                if generation.get() != sequence {
+                    return glib::ControlFlow::Break;
+                }
+                let t = (begun.elapsed().as_secs_f64() / 0.28).min(1.0);
+                let eased = t * t * (3.0 - 2.0 * t);
+                let maximum = (hadj.upper() - hadj.page_size()).max(hadj.lower());
+                hadj.set_value((start + (end - start) * eased).clamp(hadj.lower(), maximum));
+                if t >= 1.0 {
+                    glib::ControlFlow::Break
+                } else {
+                    glib::ControlFlow::Continue
+                }
+            });
+        })
+    };
+    {
+        let pan = pan.clone();
+        prev.connect_clicked(move |_| pan(-1.0));
     }
     {
-        let hadj = hadj.clone();
-        next.connect_clicked(move |_| {
-            let lower = hadj.lower();
-            let upper = (hadj.upper() - hadj.page_size()).max(lower);
-            let step = (hadj.page_size() * 0.75).max(160.0);
-            hadj.set_value((hadj.value() + step).clamp(lower, upper));
-        });
+        let pan = pan.clone();
+        next.connect_clicked(move |_| pan(1.0));
     }
 
     let prev = prev.clone();
@@ -431,9 +524,32 @@ fn populate(sections: &[HomeSection], snapshot: &Snapshot, navigate: &Navigate, 
                 card(&filename, None, image)
             };
             button.set_tooltip_text(Some(&filename));
+            // Single click only marks the card. Double click opens the viewer.
+            // This prevents an accidental lightbox transition while browsing.
+            let track = sections[index].track.clone();
+            let button_for_select = button.clone();
+            button.connect_clicked(move |_| {
+                let mut child = track.first_child();
+                while let Some(widget) = child {
+                    widget.remove_css_class("home-selected");
+                    child = widget.next_sibling();
+                }
+                button_for_select.add_css_class("home-selected");
+            });
+            let gesture = gtk::GestureClick::new();
+            gesture.set_button(1);
+            // GtkButton owns a click gesture; capture the double press before
+            // its internal handler can reset the click sequence.
+            gesture.set_propagation_phase(gtk::PropagationPhase::Capture);
             let open = open.clone();
             let objects = objects.clone();
-            button.connect_clicked(move |_| open(objects.clone(), position, index == 1));
+            gesture.connect_pressed(move |gesture, n_press, _, _| {
+                if n_press == 2 {
+                    gesture.set_state(gtk::EventSequenceState::Claimed);
+                    open(objects.clone(), position, index == 1);
+                }
+            });
+            button.add_controller(gesture);
             sections[index].track.append(&button);
         }
     }

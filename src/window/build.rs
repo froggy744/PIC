@@ -3381,6 +3381,9 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         }
         photo.set_rotation(rotation);
         info_rotate.set_photo(Some(&photo));
+        // The inspector is a snapshot of the selected photo's metadata;
+        // refresh it after the database and PhotoObject rotation are updated.
+        refresh_docked_properties(Some(&photo));
         gallery_for_rotate.refresh_thumbnails();
         lightbox_for_rotate.refresh_current();
         if main_stack_for_rotate.visible_child_name().as_deref() == Some("edit") {

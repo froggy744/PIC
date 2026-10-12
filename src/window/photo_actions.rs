@@ -1517,6 +1517,9 @@ fn show_properties_dialog(
         .and_then(|item| item.camera.clone())
         .or_else(|| photo.camera());
     let lens_name = record.as_ref().and_then(|item| item.lens.clone());
+    // Blank EXIF strings are not meaningful camera metadata.
+    let camera_name = camera_name.filter(|name| !name.trim().is_empty());
+    let lens_name = lens_name.filter(|name| !name.trim().is_empty());
     if let Some(name) = camera_name.as_deref() {
         add_inspector_row(&camera_group, "Camera", name);
         camera_rows += 1;
@@ -1537,13 +1540,16 @@ fn show_properties_dialog(
         ("Exposure", record.as_ref().and_then(|item| item.exposure_bias)
             .and_then(format_exposure_bias)),
     ];
-    for (name, value) in &camera_values {
-        if let Some(value) = value.as_deref() {
-            add_inspector_row(&camera_group, name, value);
-            camera_rows += 1;
+    // Exposure bias alone (often a default 0.0) is not proof that a
+    // wallpaper or other image has actual camera EXIF data.
+    let has_camera_data = camera_rows > 0
+        || camera_values[..4].iter().any(|(_, value)| value.is_some());
+    if has_camera_data {
+        for (name, value) in &camera_values {
+            if let Some(value) = value.as_deref() {
+                add_inspector_row(&camera_group, name, value);
+            }
         }
-    }
-    if camera_rows > 0 {
         sections.append(&camera_group);
     }
 

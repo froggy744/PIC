@@ -52,6 +52,9 @@ CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS excluded_folders (
+  path TEXT PRIMARY KEY NOT NULL
+);
 CREATE TABLE IF NOT EXISTS overlay_assets (
   hash TEXT PRIMARY KEY,
   width INTEGER NOT NULL,
@@ -217,6 +220,65 @@ pub struct SidebarCounts {
     pub photos: i64,
     pub favorites: i64,
     pub recently_added: i64,
+}
+
+/// Normalise only trailing directory separators. Do not lowercase paths:
+/// Linux paths are case-sensitive, and URI encoding must be preserved.
+pub fn exclusion_path(path: &str) -> String {
+    let path = path.trim();
+    if path == "/" { "/".into() } else { path.trim_end_matches('/').to_string() }
+}
+
+/// True for the excluded directory itself or one of its descendants, never
+/// for similar prefixes such as /Pictures/Private2.
+pub fn path_is_excluded(path: &str, excluded: &[String]) -> bool {
+    let normalized = exclusion_path(path);
+    excluded.iter().any(|entry| {
+        normalized == *entry
+            || (entry == "/" && normalized.starts_with('/'))
+            || normalized.strip_prefix(entry.as_str()).is_some_and(|tail| tail.starts_with('/'))
+    })
+}
+
+pub fn excluded_folders(connection: &Connection) -> Result<Vec<String>> {
+    let mut stmt = connection.prepare("SELECT path FROM excluded_folders ORDER BY path")?;
+    let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+}
+
+pub fn exclude_folder(connection: &Connection, path: &str) -> Result<()> {
+    connection.execute(
+        "INSERT OR IGNORE INTO excluded_folders(path) VALUES (?1)",
+        [exclusion_path(path)],
+    )?;
+    Ok(())
+}
+
+pub fn restore_excluded_folder(connection: &Connection, path: &str) -> Result<()> {
+    connection.execute("DELETE FROM excluded_folders WHERE path=?1", [exclusion_path(path)])?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod exclusion_tests {
+    use super::*;
+    #[test]
+    fn exclusion_is_directory_bounded() {
+        let paths = vec!["/Pictures/Private".to_string()];
+        assert!(path_is_excluded("/Pictures/Private/photo.jpg", &paths));
+        assert!(path_is_excluded("/Pictures/Private", &paths));
+        assert!(!path_is_excluded("/Pictures/Private2/photo.jpg", &paths));
+        assert!(!path_is_excluded("/Pictures", &paths));
+    }
+    #[test]
+    fn exclusion_persists_in_catalog() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch(SCHEMA).unwrap();
+        exclude_folder(&connection, "/Pictures/Private/").unwrap();
+        assert_eq!(excluded_folders(&connection).unwrap(), vec!["/Pictures/Private"]);
+        restore_excluded_folder(&connection, "/Pictures/Private").unwrap();
+        assert!(excluded_folders(&connection).unwrap().is_empty());
+    }
 }
 
 include!("db/core.rs");

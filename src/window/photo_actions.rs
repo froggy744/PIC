@@ -1479,14 +1479,18 @@ fn show_properties_dialog(
     }
     let preview_overlay = gtk::Overlay::new();
     preview_overlay.set_child(Some(&preview_frame));
-    let close = gtk::Button::from_icon_name("window-close-symbolic");
+    let close = gtk::Button::new();
+    let close_icon = gtk::Image::from_icon_name("window-close-symbolic");
+    close_icon.set_pixel_size(12);
+    close.set_child(Some(&close_icon));
     close.set_tooltip_text(Some("Close properties"));
     close.add_css_class("circular");
     close.add_css_class("osd");
+    close.set_size_request(24, 24);
     close.set_halign(gtk::Align::End);
     close.set_valign(gtk::Align::Start);
-    close.set_margin_top(6);
-    close.set_margin_end(6);
+    close.set_margin_top(5);
+    close.set_margin_end(5);
     close.connect_clicked(|_| close_docked_properties());
     preview_overlay.add_overlay(&close);
     sections.append(&preview_overlay);

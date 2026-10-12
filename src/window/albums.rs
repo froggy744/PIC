@@ -261,15 +261,27 @@ fn show_remove_folder_confirmation(
 ) {
     let dialog = adw::AlertDialog::builder()
         .heading(format!("Remove “{}” from the library?", folder.name))
-        .body("The folder and its indexed photos will be removed from the app. Files on disk will not be deleted.")
+        .body("Remove only allows future scans to re-import this folder. Remove & Exclude permanently ignores this folder and its subfolders. Original files are never deleted.")
         .close_response("cancel")
         .build();
     dialog.add_response("cancel", "Cancel");
-    dialog.add_response("remove", "Remove from Library");
+    dialog.add_response("remove", "Remove only");
+    dialog.add_response("exclude", "Remove & Exclude");
+    dialog.set_response_appearance("exclude", adw::ResponseAppearance::Destructive);
     dialog.set_response_appearance("remove", adw::ResponseAppearance::Destructive);
 
     let parent_for_response = parent.clone();
-    dialog.connect_response(Some("remove"), move |_, _| {
+    dialog.connect_response(None, move |_, response| {
+        if response != "remove" && response != "exclude" { return; }
+        let exclude = response == "exclude";
+        // Store the exclusion BEFORE removing the catalog row, so a parent
+        // refresh cannot rediscover the folder during the operation.
+        if exclude {
+            if let Err(error) = db::exclude_folder(&context.connection.borrow(), &folder.path) {
+                show_error(&parent_for_response, "Could not exclude folder", &error.to_string());
+                return;
+            }
+        }
         if let Err(error) = db::remove_folder(&context.connection.borrow(), folder.id) {
             show_error(
                 &parent_for_response,

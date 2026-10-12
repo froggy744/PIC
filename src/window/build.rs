@@ -2464,7 +2464,23 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     });
     page_overlay.add_controller(action_menu_autohide);
     context_menu_host.borrow_mut().replace(page_overlay.downgrade());
-    content.append(&page_overlay);
+    // Dock the inspector inside the photo/viewer band only. The shared
+    // bottom info bar is a sibling below this band and must never be
+    // covered or displaced sideways by Properties.
+    let gallery_band = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    gallery_band.set_hexpand(true);
+    gallery_band.set_vexpand(true);
+    gallery_band.append(&page_overlay);
+    let properties_panel = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    properties_panel.set_width_request(320);
+    properties_panel.set_size_request(320, -1);
+    properties_panel.set_vexpand(true);
+    properties_panel.set_overflow(gtk::Overflow::Hidden);
+    properties_panel.add_css_class("background");
+    properties_panel.set_visible(false);
+    gallery_band.append(&properties_panel);
+    register_docked_properties_panel(&properties_panel);
+    content.append(&gallery_band);
     content.append(&info.root);
     {
         let filter = filter.clone();

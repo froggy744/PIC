@@ -2486,6 +2486,18 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     gallery_band.set_resize_end_child(false);
     gallery_band.set_shrink_end_child(false);
     register_docked_properties_panel(&properties_panel);
+    // Opening the inspector via the context menu must return keyboard focus
+    // to the gallery, so arrows and other grid shortcuts still navigate.
+    let gallery_for_inspector_focus = gallery.clone();
+    let lightbox_for_inspector_focus = lightbox.clone();
+    properties_panel.connect_visible_notify(move |panel| {
+        if panel.is_visible() && !lightbox_for_inspector_focus.root.is_visible() {
+            let gallery = gallery_for_inspector_focus.clone();
+            glib::idle_add_local_once(move || {
+                gallery.grab_focus();
+            });
+        }
+    });
 
     // Initially show a 300px inspector. Unlike a fixed GtkBox allocation,
     // GtkPaned gives the user a native draggable divider.

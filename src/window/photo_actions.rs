@@ -1521,6 +1521,13 @@ fn show_properties_dialog(
     add_inspector_row(&image_group, "File type", &file_type(&path));
     add_inspector_row(&image_group, "Rotation", &format!("{rotation}°"));
     add_inspector_row(&image_group, "Favourite", if favorite { "Yes" } else { "No" });
+    let rating = record.as_ref().map(|item| item.rating).unwrap_or_else(|| photo.rating());
+    let rating_text = if rating > 0 {
+        format!("{} / 5", rating.clamp(1, 5))
+    } else {
+        "Unrated".to_string()
+    };
+    add_inspector_row(&image_group, "Rating", &rating_text);
     sections.append(&image_group);
 
     let camera_group = adw::PreferencesGroup::new();

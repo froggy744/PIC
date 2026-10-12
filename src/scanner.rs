@@ -150,7 +150,9 @@ fn scan_with_control(
     verify_scan_devices(&connection, folder_id)?;
     let indexed = db::photo_fingerprints(&connection)?;
     let root_file = crate::source::file(root);
-    let (mut files, mut discovered_folders) = collect_files(&root_file, events, control)?;
+    let (mut files, mut discovered_folders) = collect_files_filtered(&root_file, events, control, &excluded)?;
+    // Reload rules after enumeration: exclusions may have changed mid-scan.
+    let excluded = db::excluded_folders(&connection)?;
     // Excluded paths must never re-enter the catalog on a parent refresh.
     // Filter both photos and discovered folders before reconciliation.
     files.retain(|(file, _, folder)| {
@@ -719,6 +721,18 @@ fn collect_files(
     Vec<(gio::File, gio::FileInfo, String)>,
     Vec<(String, Option<String>)>,
 )> {
+    collect_files_filtered(root, events, control, &[])
+}
+
+fn collect_files_filtered(
+    root: &gio::File,
+    events: Option<&Sender<ScanEvent>>,
+    control: &ScanControl,
+    excluded: &[String],
+) -> Result<(
+    Vec<(gio::File, gio::FileInfo, String)>,
+    Vec<(String, Option<String>)>,
+)> {
     let root_path = crate::source::reference(root);
     let mut pending = vec![(root.clone(), root_path.clone(), None)];
     let mut files = Vec::new();
@@ -726,6 +740,7 @@ fn collect_files(
     let mut last_reported = 0usize;
     let mut last_report = std::time::Instant::now();
     while let Some((directory, folder_path, parent_path)) = pending.pop() {
+        if db::path_is_excluded(&folder_path, excluded) { continue; }
         if control.is_cancelled() {
             break;
         }
@@ -736,6 +751,7 @@ fn collect_files(
             for item in crate::network_shares::list(&folder_path)
                 .with_context(|| format!("could not list {folder_path}"))?
             {
+                if db::path_is_excluded(&item.uri, excluded) { continue; }
                 if control.is_cancelled() {
                     break;
                 }
@@ -774,6 +790,7 @@ fn collect_files(
                 break;
             }
             let child = enumerator.child(&info);
+            if db::path_is_excluded(&crate::source::reference(&child), excluded) { continue; }
             match info.file_type() {
                 gio::FileType::Directory => {
                     // Lightroom stores thousands of Smart Preview DNGs in

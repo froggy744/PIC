@@ -492,6 +492,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 return;
             }
             info_for_grid.set_photo(photo.as_ref());
+            refresh_docked_properties(photo.as_ref());
             selected_photo_for_grid.replace(photo);
         },
         {

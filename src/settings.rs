@@ -468,7 +468,7 @@ fn folders_page(
         let done = gtk::Button::with_label("Done");
         done.set_halign(gtk::Align::End);
         let dialog_for_done = dialog.clone();
-        done.connect_clicked(move |_| dialog_for_done.close());
+        done.connect_clicked(move |_| { dialog_for_done.close(); });
         content.append(&done);
         dialog.set_child(Some(&content));
         dialog.present(Some(button));

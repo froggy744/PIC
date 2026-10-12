@@ -4,6 +4,7 @@ thread_local! {
     static ACTIVE_PHOTO_MENU: RefCell<Option<gtk::Widget>> = RefCell::new(None);
     static DOCKED_PROPERTIES_PANEL: RefCell<Option<gtk::Box>> = RefCell::new(None);
     static DOCKED_PROPERTIES_CONTEXT: RefCell<Option<PhotoActionContext>> = RefCell::new(None);
+    static DOCKED_PROPERTIES_LIGHTBOX_VISIBLE: Cell<bool> = const { Cell::new(false) };
     static CONTEXT_MENU_CSS_INSTALLED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
@@ -1353,6 +1354,7 @@ fn close_docked_properties() {
 }
 
 pub(crate) fn set_docked_properties_lightbox_visible(lightbox_visible: bool) {
+    DOCKED_PROPERTIES_LIGHTBOX_VISIBLE.with(|flag| flag.set(lightbox_visible));
     DOCKED_PROPERTIES_PANEL.with(|slot| {
         if let Some(panel) = slot.borrow().as_ref() {
             let has_properties = DOCKED_PROPERTIES_CONTEXT.with(|context| context.borrow().is_some());
@@ -1527,7 +1529,7 @@ fn show_properties_dialog(
         if let Some(panel) = slot.borrow().as_ref() {
             while let Some(child) = panel.first_child() { panel.remove(&child); }
             panel.append(&content);
-            panel.set_visible(true);
+            panel.set_visible(!DOCKED_PROPERTIES_LIGHTBOX_VISIBLE.with(Cell::get));
         }
     });
 }

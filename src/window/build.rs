@@ -2467,19 +2467,37 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     // Dock the inspector inside the photo/viewer band only. The shared
     // bottom info bar is a sibling below this band and must never be
     // covered or displaced sideways by Properties.
-    let gallery_band = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    let gallery_band = gtk::Paned::new(gtk::Orientation::Horizontal);
     gallery_band.set_hexpand(true);
     gallery_band.set_vexpand(true);
-    gallery_band.append(&page_overlay);
+    gallery_band.set_wide_handle(true);
+    gallery_band.set_start_child(Some(&page_overlay));
+    gallery_band.set_resize_start_child(true);
+    gallery_band.set_shrink_start_child(false);
+
     let properties_panel = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    properties_panel.set_width_request(320);
-    properties_panel.set_size_request(320, -1);
+    properties_panel.set_width_request(260);
     properties_panel.set_vexpand(true);
     properties_panel.set_overflow(gtk::Overflow::Hidden);
     properties_panel.add_css_class("background");
     properties_panel.set_visible(false);
-    gallery_band.append(&properties_panel);
+    gallery_band.set_end_child(Some(&properties_panel));
+    gallery_band.set_resize_end_child(false);
+    gallery_band.set_shrink_end_child(false);
     register_docked_properties_panel(&properties_panel);
+
+    // Initially show a 300px inspector. Unlike a fixed GtkBox allocation,
+    // GtkPaned gives the user a native draggable divider.
+    let inspector_split_initialized = Rc::new(Cell::new(false));
+    let split_initialized = inspector_split_initialized.clone();
+    gallery_band.connect_map(move |split| {
+        if !split_initialized.replace(true) {
+            let width = split.width();
+            if width > 0 {
+                split.set_position((width - 300).max(320));
+            }
+        }
+    });
     content.append(&gallery_band);
     content.append(&info.root);
     {

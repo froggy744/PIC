@@ -401,9 +401,79 @@ fn folders_page(
         folders.clone(),
         expanded.clone(),
         automatic.clone(),
-        connection,
+        connection.clone(),
         folder_watch_changed,
     );
+
+    let exclusions = gtk::Button::with_label("Manage Excluded Folders…");
+    exclusions.set_halign(gtk::Align::Start);
+    exclusions.set_tooltip_text(Some("View or restore folders excluded from future scans"));
+    exclusions.connect_clicked(move |button| {
+        let dialog = adw::Dialog::builder()
+            .title("Excluded Folders")
+            .content_width(560)
+            .content_height(420)
+            .build();
+        let content = gtk::Box::new(gtk::Orientation::Vertical, 12);
+        content.set_margin_start(16);
+        content.set_margin_end(16);
+        content.set_margin_top(12);
+        content.set_margin_bottom(12);
+        let explanation = gtk::Label::new(Some(
+            "These folders and all their subfolders are ignored during future scans. Restore a folder to allow importing it again."
+        ));
+        explanation.set_xalign(0.0);
+        explanation.set_wrap(true);
+        content.append(&explanation);
+        let scroll = gtk::ScrolledWindow::new();
+        scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+        scroll.set_vexpand(true);
+        let list = gtk::Box::new(gtk::Orientation::Vertical, 6);
+        match crate::db::excluded_folders(&connection.borrow()) {
+            Ok(paths) if paths.is_empty() => {
+                list.append(&gtk::Label::new(Some("No excluded folders")));
+            }
+            Ok(paths) => {
+                for path in paths {
+                    let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+                    let label = gtk::Label::new(Some(&path));
+                    label.set_hexpand(true);
+                    label.set_xalign(0.0);
+                    label.set_wrap(true);
+                    label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+                    label.set_selectable(true);
+                    row.append(&label);
+                    let restore = gtk::Button::with_label("Restore");
+                    let connection = connection.clone();
+                    let list_for_restore = list.clone();
+                    let row_for_restore = row.clone();
+                    restore.connect_clicked(move |_| {
+                        match crate::db::restore_excluded_folder(&connection.borrow(), &path) {
+                            Ok(()) => list_for_restore.remove(&row_for_restore),
+                            Err(error) => eprintln!("Could not restore excluded folder: {error}"),
+                        }
+                    });
+                    row.append(&restore);
+                    list.append(&row);
+                }
+            }
+            Err(error) => {
+                list.append(&gtk::Label::new(Some(&format!(
+                    "Could not load excluded folders: {error}"
+                ))));
+            }
+        }
+        scroll.set_child(Some(&list));
+        content.append(&scroll);
+        let done = gtk::Button::with_label("Done");
+        done.set_halign(gtk::Align::End);
+        let dialog_for_done = dialog.clone();
+        done.connect_clicked(move |_| dialog_for_done.close());
+        content.append(&done);
+        dialog.set_child(Some(&content));
+        dialog.present(Some(button));
+    });
+    content.append(&exclusions);
 
     scroll_page(content)
 }

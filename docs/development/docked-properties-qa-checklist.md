@@ -21,6 +21,16 @@ Properties is a right-hand *gallery inspector*, not a modal dialog. It is mounte
 - [x] File path and other long text can wrap and be selected.
 - [x] Camera section stays hidden when there is no camera metadata.
 
+## User-verified on 2K display (2026-10-12)
+
+- [x] Metadata scrolling works.
+- [x] Closing Properties works.
+- [x] Opening lightbox hides metadata; returning restores it.
+- [x] Infobar is visible below the inspector after gallery-band fix.
+- [ ] Confirm new draggable divider actually resizes inspector and grid.
+- [ ] Confirm the compact 300px initial width on a 2K screen.
+- [ ] Confirm only one Close button and no duplicate minimize/maximize controls.
+
 ## Manual GUI regression checks — outstanding
 
 - [ ] `cargo fmt --all -- --check` and `cargo check` pass on Fedora with GTK4/libadwaita installed.

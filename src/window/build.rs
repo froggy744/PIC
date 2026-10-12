@@ -140,6 +140,11 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let selected_photo = Rc::new(RefCell::new(None));
 
     let lightbox = Rc::new(Lightbox::new());
+    // The inspector belongs to the gallery, never the fullscreen lightbox.
+    // Restore an already-open inspector when returning to the grid.
+    lightbox.root.connect_visible_notify(|root| {
+        set_docked_properties_lightbox_visible(root.is_visible());
+    });
     let info_for_lightbox = info.clone();
     let selected_photo_for_lightbox = selected_photo.clone();
     let last_activated_for_lightbox = last_activated_photo_id.clone();
@@ -492,6 +497,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 return;
             }
             info_for_grid.set_photo(photo.as_ref());
+            refresh_docked_properties(photo.as_ref());
             selected_photo_for_grid.replace(photo);
         },
         {
@@ -2458,7 +2464,54 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     });
     page_overlay.add_controller(action_menu_autohide);
     context_menu_host.borrow_mut().replace(page_overlay.downgrade());
-    content.append(&page_overlay);
+    // Dock the inspector inside the photo/viewer band only. The shared
+    // bottom info bar is a sibling below this band and must never be
+    // covered or displaced sideways by Properties.
+    let gallery_band = gtk::Paned::new(gtk::Orientation::Horizontal);
+    gallery_band.set_hexpand(true);
+    gallery_band.set_vexpand(true);
+    // Use the standard thin GTK divider, not the wide double-edge handle.
+    gallery_band.set_wide_handle(false);
+    gallery_band.set_start_child(Some(&page_overlay));
+    gallery_band.set_resize_start_child(true);
+    gallery_band.set_shrink_start_child(false);
+
+    let properties_panel = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    properties_panel.set_width_request(260);
+    properties_panel.set_vexpand(true);
+    properties_panel.set_overflow(gtk::Overflow::Hidden);
+    properties_panel.add_css_class("background");
+    properties_panel.set_visible(false);
+    gallery_band.set_end_child(Some(&properties_panel));
+    gallery_band.set_resize_end_child(false);
+    gallery_band.set_shrink_end_child(false);
+    register_docked_properties_panel(&properties_panel);
+    // Opening the inspector via the context menu must return keyboard focus
+    // to the gallery, so arrows and other grid shortcuts still navigate.
+    let gallery_for_inspector_focus = gallery.clone();
+    let lightbox_for_inspector_focus = lightbox.clone();
+    properties_panel.connect_visible_notify(move |panel| {
+        if panel.is_visible() && !lightbox_for_inspector_focus.root.is_visible() {
+            let gallery = gallery_for_inspector_focus.clone();
+            glib::idle_add_local_once(move || {
+                gallery.grab_focus();
+            });
+        }
+    });
+
+    // Initially show a 300px inspector. Unlike a fixed GtkBox allocation,
+    // GtkPaned gives the user a native draggable divider.
+    let inspector_split_initialized = Rc::new(Cell::new(false));
+    let split_initialized = inspector_split_initialized.clone();
+    gallery_band.connect_map(move |split| {
+        if !split_initialized.replace(true) {
+            let width = split.width();
+            if width > 0 {
+                split.set_position((width - 300).max(320));
+            }
+        }
+    });
+    content.append(&gallery_band);
     content.append(&info.root);
     {
         let filter = filter.clone();
@@ -3328,6 +3381,9 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         }
         photo.set_rotation(rotation);
         info_rotate.set_photo(Some(&photo));
+        // The inspector is a snapshot of the selected photo's metadata;
+        // refresh it after the database and PhotoObject rotation are updated.
+        refresh_docked_properties(Some(&photo));
         gallery_for_rotate.refresh_thumbnails();
         lightbox_for_rotate.refresh_current();
         if main_stack_for_rotate.visible_child_name().as_deref() == Some("edit") {

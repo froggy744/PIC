@@ -2,6 +2,10 @@ use gio::prelude::{AppInfoExt, SettingsExt};
 
 thread_local! {
     static ACTIVE_PHOTO_MENU: RefCell<Option<gtk::Widget>> = RefCell::new(None);
+    static DOCKED_PROPERTIES_PANEL: RefCell<Option<gtk::Box>> = RefCell::new(None);
+    static DOCKED_PROPERTIES_CONTEXT: RefCell<Option<PhotoActionContext>> = RefCell::new(None);
+    static DOCKED_PROPERTIES_LIGHTBOX_VISIBLE: Cell<bool> = const { Cell::new(false) };
+    static INSPECTOR_CLOSE_CSS_INSTALLED: Cell<bool> = const { Cell::new(false) };
     static CONTEXT_MENU_CSS_INSTALLED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
@@ -846,16 +850,11 @@ fn show_photo_context_menu(
     });
 
     let photo_for_properties = photo.clone();
-    let anchor_for_properties = anchor.clone();
     let context_for_properties = context.clone();
     let dismiss_menu_for_properties = dismiss_menu.clone();
     properties.connect_clicked(move |_| {
         dismiss_menu_for_properties();
-        show_properties_dialog(
-            &anchor_for_properties,
-            &photo_for_properties,
-            &context_for_properties,
-        );
+        show_properties_dialog(&photo_for_properties, &context_for_properties);
     });
 
     let photo_for_delete = photo;
@@ -1341,8 +1340,69 @@ fn refresh_favorite_sidebar(context: &PhotoActionContext) {
     sidebar::refresh_library_counts(&sidebar, counts, &context.on_unavailable);
 }
 
+pub(crate) fn register_docked_properties_panel(panel: &gtk::Box) {
+    DOCKED_PROPERTIES_PANEL.with(|slot| slot.replace(Some(panel.clone())));
+    DOCKED_PROPERTIES_CONTEXT.with(|slot| slot.replace(None));
+}
+
+fn close_docked_properties() {
+    DOCKED_PROPERTIES_CONTEXT.with(|slot| { slot.replace(None); });
+    DOCKED_PROPERTIES_PANEL.with(|slot| {
+        if let Some(panel) = slot.borrow().as_ref() {
+            panel.set_visible(false);
+        }
+    });
+}
+
+pub(crate) fn set_docked_properties_lightbox_visible(lightbox_visible: bool) {
+    DOCKED_PROPERTIES_LIGHTBOX_VISIBLE.with(|flag| flag.set(lightbox_visible));
+    DOCKED_PROPERTIES_PANEL.with(|slot| {
+        if let Some(panel) = slot.borrow().as_ref() {
+            let has_properties = DOCKED_PROPERTIES_CONTEXT.with(|context| context.borrow().is_some());
+            panel.set_visible(!lightbox_visible && has_properties);
+        }
+    });
+}
+
+pub(crate) fn refresh_docked_properties(photo: Option<&crate::photo_object::PhotoObject>) {
+    let context = DOCKED_PROPERTIES_CONTEXT.with(|slot| slot.borrow().clone());
+    match (photo, context) {
+        (Some(photo), Some(context)) => show_properties_dialog(photo, &context),
+        (None, Some(_)) => {
+            // Changing folders temporarily clears the grid selection.
+            // Keep the inspector open, but do not show stale photo metadata.
+            DOCKED_PROPERTIES_PANEL.with(|slot| {
+                if let Some(panel) = slot.borrow().as_ref() {
+                    while let Some(child) = panel.first_child() {
+                        panel.remove(&child);
+                    }
+                    let empty = gtk::Box::new(gtk::Orientation::Vertical, 12);
+                    empty.set_valign(gtk::Align::Center);
+                    empty.set_vexpand(true);
+                    empty.set_margin_start(20);
+                    empty.set_margin_end(20);
+                    let title = gtk::Label::new(Some("Properties"));
+                    title.add_css_class("heading");
+                    let hint = gtk::Label::new(Some("Select a photo to view its details"));
+                    hint.add_css_class("dim-label");
+                    hint.set_wrap(true);
+                    let close = gtk::Button::from_icon_name("window-close-symbolic");
+                    close.set_tooltip_text(Some("Close properties"));
+                    close.set_halign(gtk::Align::End);
+                    close.add_css_class("flat");
+                    close.connect_clicked(|_| close_docked_properties());
+                    empty.append(&close);
+                    empty.append(&title);
+                    empty.append(&hint);
+                    panel.append(&empty);
+                }
+            });
+        },
+        _ => {}
+    }
+}
+
 fn show_properties_dialog(
-    parent: &gtk::Widget,
     photo: &crate::photo_object::PhotoObject,
     context: &PhotoActionContext,
 ) {
@@ -1385,157 +1445,233 @@ fn show_properties_dialog(
         .unwrap_or_else(|| photo.favorite());
 
     let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    let header = adw::HeaderBar::new();
-    content.append(&header);
     let scroll = gtk::ScrolledWindow::new();
     scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
     scroll.set_vexpand(true);
     content.append(&scroll);
     let sections = gtk::Box::new(gtk::Orientation::Vertical, 6);
-    sections.set_margin_start(16);
-    sections.set_margin_end(16);
-    sections.set_margin_top(4);
+    sections.set_margin_start(12);
+    sections.set_margin_end(12);
+    sections.set_margin_top(8);
     sections.set_margin_bottom(8);
     sections.set_valign(gtk::Align::Start);
     scroll.set_child(Some(&sections));
 
-    let top = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-    top.set_size_request(-1, 156);
-    let preview_frame = gtk::Frame::new(None);
-    preview_frame.set_size_request(150, 150);
+    // Inspector layout: photo preview above compact metadata, never side-by-side.
+    // Use a fixed-height base child for the preview. GtkPicture's natural
+    // aspect-ratio requisition must NOT determine the inspector row height:
+    // portrait screenshots used to stretch it to hundreds of pixels.
+    let preview_frame = gtk::Overlay::new();
+    preview_frame.set_hexpand(true);
     preview_frame.set_overflow(gtk::Overflow::Hidden);
+    let preview_base = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    preview_base.set_size_request(-1, 170);
+    preview_frame.set_child(Some(&preview_base));
     if let Some(cache_path) = photo
         .cached_thumbnail_path()
         .filter(|path| std::path::Path::new(path).is_file())
     {
         let preview = gtk::Picture::new();
-        preview.set_filename(Some(&cache_path));
         preview.set_content_fit(gtk::ContentFit::Contain);
         preview.set_can_shrink(true);
-        preview.set_size_request(150, 150);
-        preview_frame.set_child(Some(&preview));
+        preview.set_hexpand(true);
+        preview.set_vexpand(true);
+        preview.set_filename(Some(&cache_path));
+        preview_frame.add_overlay(&preview);
     } else {
-        let preview = gtk::Image::from_icon_name("image-x-generic-symbolic");
-        preview.set_pixel_size(48);
-        preview.set_size_request(150, 150);
-        preview_frame.set_child(Some(&preview));
+        let missing = gtk::Image::from_icon_name("image-x-generic-symbolic");
+        missing.set_pixel_size(56);
+        missing.add_css_class("dim-label");
+        preview_frame.add_overlay(&missing);
     }
-    top.append(&preview_frame);
+    let preview_overlay = gtk::Overlay::new();
+    preview_overlay.set_child(Some(&preview_frame));
+    let close = gtk::Button::new();
+    let close_icon = gtk::Image::from_icon_name("window-close-symbolic");
+    close_icon.set_pixel_size(12);
+    close.set_child(Some(&close_icon));
+    close.set_tooltip_text(Some("Close properties"));
+    close.set_focus_on_click(false);
+    // Avoid libadwaita's circular/osd padding, which makes the background
+    // much bigger than the icon even with a small size request.
+    close.add_css_class("flat");
+    close.add_css_class("pic-inspector-close");
+    close.set_size_request(20, 20);
+    INSPECTOR_CLOSE_CSS_INSTALLED.with(|installed| {
+      if !installed.replace(true) {
+        let close_css = gtk::CssProvider::new();
+        close_css.load_from_string(
+        "button.pic-inspector-close { min-width: 20px; min-height: 20px;          padding: 0; margin: 0; border: 0; border-radius: 999px;          background-color: alpha(black, 0.55); color: white;          box-shadow: none; }          button.pic-inspector-close:hover { background-color: alpha(black, 0.75); }"
+    );
+        if let Some(display) = gtk::gdk::Display::default() {
+            gtk::style_context_add_provider_for_display(
+                &display, &close_css, gtk::STYLE_PROVIDER_PRIORITY_APPLICATION
+            );
+        }
+      }
+    });
+    close.set_halign(gtk::Align::End);
+    close.set_valign(gtk::Align::Start);
+    close.set_margin_top(5);
+    close.set_margin_end(5);
+    close.connect_clicked(|_| close_docked_properties());
+    preview_overlay.add_overlay(&close);
+    sections.append(&preview_overlay);
+
+    let image_group = adw::PreferencesGroup::new();
+    // No redundant heading above the file metadata rows.
+    add_inspector_row(&image_group, "File name", &photo.filename());
+    add_inspector_row(&image_group, "Date taken", &date);
+    add_inspector_row(&image_group, "Dimensions", &dimensions);
+    add_inspector_row(&image_group, "File size", &crate::infobar::format_size(size));
+    add_inspector_row(&image_group, "File type", &file_type(&path));
+    add_inspector_row(&image_group, "Rotation", &format!("{rotation}°"));
+    add_inspector_row(&image_group, "Favourite", if favorite { "Yes" } else { "No" });
+    let rating = record.as_ref().map(|item| item.rating).unwrap_or_else(|| photo.rating());
+    let rating_text = if rating > 0 {
+        format!("{} / 5", rating.clamp(1, 5))
+    } else {
+        "Unrated".to_string()
+    };
+    add_inspector_row(&image_group, "Rating", &rating_text);
+    sections.append(&image_group);
 
     let camera_group = adw::PreferencesGroup::new();
     camera_group.set_title("Camera");
-    camera_group.set_hexpand(true);
-    let camera_details = gtk::Box::new(gtk::Orientation::Vertical, 5);
+    let mut camera_rows = 0;
     let camera_name = record
         .as_ref()
         .and_then(|item| item.camera.clone())
         .or_else(|| photo.camera());
     let lens_name = record.as_ref().and_then(|item| item.lens.clone());
-    let has_camera_text = camera_name.is_some() || lens_name.is_some();
-    if let Some(name) = camera_name {
-        camera_details.append(&prominent_property("Camera", &name));
+    // Blank EXIF strings are not meaningful camera metadata.
+    let camera_name = camera_name.filter(|name| !name.trim().is_empty());
+    let lens_name = lens_name.filter(|name| !name.trim().is_empty());
+    if let Some(name) = camera_name.as_deref() {
+        add_inspector_row(&camera_group, "Camera", name);
+        camera_rows += 1;
     }
-    if let Some(name) = lens_name {
-        camera_details.append(&prominent_property("Lens", &name));
+    if let Some(name) = lens_name.as_deref() {
+        add_inspector_row(&camera_group, "Lens", name);
+        camera_rows += 1;
     }
     let camera_values = [
-        (
-            "Aperture",
-            record
-                .as_ref()
-                .and_then(|item| item.aperture)
-                .or_else(|| Some(photo.aperture()))
-                .and_then(format_aperture),
-        ),
-        (
-            "Shutter Speed",
-            record
-                .as_ref()
-                .and_then(|item| item.shutter_speed)
-                .and_then(format_shutter_speed),
-        ),
-        (
-            "ISO",
-            record
-                .as_ref()
-                .and_then(|item| item.iso)
-                .filter(|value| *value > 0)
-                .map(|value| format!("{value}")),
-        ),
-        (
-            "Focal Length",
-            record
-                .as_ref()
-                .and_then(|item| item.focal_length)
-                .and_then(format_focal_length),
-        ),
-        (
-            "Exposure Compensation",
-            record
-                .as_ref()
-                .and_then(|item| item.exposure_bias)
-                .and_then(format_exposure_bias),
-        ),
+        ("Aperture", record.as_ref().and_then(|item| item.aperture)
+            .or_else(|| Some(photo.aperture())).and_then(format_aperture)),
+        ("Shutter speed", record.as_ref().and_then(|item| item.shutter_speed)
+            .and_then(format_shutter_speed)),
+        ("ISO", record.as_ref().and_then(|item| item.iso)
+            .filter(|value| *value > 0).map(|value| value.to_string())),
+        ("Focal length", record.as_ref().and_then(|item| item.focal_length)
+            .and_then(format_focal_length)),
+        ("Exposure", record.as_ref().and_then(|item| item.exposure_bias)
+            .and_then(format_exposure_bias)),
     ];
-    let available = camera_values
-        .iter()
-        .filter_map(|(label, value)| value.as_ref().map(|value| (*label, value.as_str())))
-        .collect::<Vec<_>>();
-    if !available.is_empty() {
-        camera_details.append(&metric_grid(&available, 2));
+    // Exposure bias alone (often a default 0.0) is not proof that a
+    // wallpaper or other image has actual camera EXIF data.
+    let has_camera_data = camera_rows > 0
+        || camera_values[..4].iter().any(|(_, value)| value.is_some());
+    if has_camera_data {
+        for (name, value) in &camera_values {
+            if let Some(value) = value.as_deref() {
+                add_inspector_row(&camera_group, name, value);
+            }
+        }
+        sections.append(&camera_group);
     }
-    if has_camera_text || !available.is_empty() {
-        add_boxed_properties(&camera_group, &camera_details);
-        top.append(&camera_group);
+
+    // Compact, unboxed location footer. Display readable spaces but copy
+    // the original URI/path exactly (including percent escapes).
+    let location_footer = gtk::Box::new(gtk::Orientation::Vertical, 3);
+    location_footer.set_margin_top(4);
+    let footer_header = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    let folder_icon = gtk::Image::from_icon_name("folder-symbolic");
+    folder_icon.add_css_class("dim-label");
+    footer_header.append(&folder_icon);
+    let location_title = gtk::Label::new(Some("FILE LOCATION"));
+    location_title.add_css_class("dim-label");
+    location_title.add_css_class("caption");
+    location_title.set_xalign(0.0);
+    location_title.set_hexpand(true);
+    footer_header.append(&location_title);
+    let copy_path = gtk::Button::from_icon_name("edit-copy-symbolic");
+    copy_path.add_css_class("flat");
+    copy_path.set_focus_on_click(false);
+    copy_path.set_tooltip_text(Some("Copy full file path"));
+    let original_path = path.clone();
+    copy_path.connect_clicked(move |_| {
+        if let Some(display) = gtk::gdk::Display::default() {
+            display.clipboard().set_text(&original_path);
+        }
+    });
+    footer_header.append(&copy_path);
+    location_footer.append(&footer_header);
+
+    let readable_path = path.replace("%20", " ");
+    let path_value = gtk::Label::new(Some(&readable_path));
+    path_value.set_xalign(0.0);
+    path_value.set_hexpand(true);
+    path_value.set_wrap(true);
+    path_value.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+    path_value.set_width_chars(1);
+    path_value.set_selectable(false);
+    path_value.add_css_class("caption");
+    path_value.add_css_class("dim-label");
+    location_footer.append(&path_value);
+    sections.append(&location_footer);
+
+    // Commit state before displaying it, so visibility notifications always
+    // see a matching, live selection.
+    DOCKED_PROPERTIES_CONTEXT.with(|slot| slot.replace(Some(context.clone())));
+    DOCKED_PROPERTIES_PANEL.with(|slot| {
+        if let Some(panel) = slot.borrow().as_ref() {
+            while let Some(child) = panel.first_child() { panel.remove(&child); }
+            panel.append(&content);
+            panel.set_visible(!DOCKED_PROPERTIES_LIGHTBOX_VISIBLE.with(Cell::get));
+        }
+    });
+}
+
+fn add_inspector_row(group: &adw::PreferencesGroup, name: &str, value: &str) {
+    let row = adw::PreferencesRow::new();
+    row.set_activatable(false);
+    row.set_selectable(false);
+    let line = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    line.set_margin_start(10);
+    line.set_margin_end(10);
+    line.set_margin_top(4);
+    line.set_margin_bottom(4);
+
+    let key = gtk::Label::new(Some(name));
+    key.set_xalign(0.0);
+    key.set_valign(gtk::Align::Center);
+    // Descriptive Camera/Lens values need a narrow label column; the
+    // generic 11-character column leaves an excessive gap at 260–300px.
+    if matches!(name, "Camera" | "Lens") {
+        key.set_width_chars(0);
+        key.set_size_request(60, -1);
+    } else {
+        key.set_width_chars(11);
     }
-    sections.append(&top);
+    key.add_css_class("dim-label");
+    key.add_css_class("caption");
+    line.append(&key);
 
-    let image_group = adw::PreferencesGroup::new();
-    image_group.set_title("Image");
-    let image_values = [
-        ("Dimensions", dimensions),
-        ("File Type", file_type(&path)),
-        ("File Size", crate::infobar::format_size(size)),
-        ("Rotation", format!("{rotation}°")),
-        ("Favourite", if favorite { "Yes" } else { "No" }.into()),
-    ];
-    let image_values = image_values
-        .iter()
-        .map(|(label, value)| (*label, value.as_str()))
-        .collect::<Vec<_>>();
-    add_boxed_properties(&image_group, &metric_grid(&image_values, 3));
-    sections.append(&image_group);
+    let detail = gtk::Label::new(Some(value));
+    detail.set_hexpand(true);
+    // Camera and Lens are descriptive text, not right-aligned metrics.
+    // Start their values directly after the key and wrap to the left.
+    detail.set_xalign(if matches!(name, "Camera" | "Lens") { 0.0 } else { 1.0 });
+    detail.set_valign(gtk::Align::Center);
+    detail.set_wrap(true);
+    detail.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+    detail.set_max_width_chars(28);
+    detail.set_selectable(false);
+    detail.add_css_class("caption");
+    line.append(&detail);
 
-    let file_group = adw::PreferencesGroup::new();
-    file_group.set_title("File");
-    let file_grid = gtk::Grid::new();
-    file_grid.set_column_spacing(18);
-    file_grid.set_column_homogeneous(false);
-    file_grid.attach(&metric_block("Date Taken", &date), 0, 0, 1, 1);
-    let location = metric_block("Location", &path);
-    location.set_hexpand(true);
-    if let Some(value) = location
-        .last_child()
-        .and_then(|widget| widget.downcast::<gtk::Label>().ok())
-    {
-        value.set_selectable(true);
-        value.set_wrap(true);
-        value.set_wrap_mode(gtk::pango::WrapMode::Char);
-        value.set_ellipsize(gtk::pango::EllipsizeMode::None);
-        value.set_width_chars(1);
-        value.set_max_width_chars(40);
-    }
-    file_grid.attach(&location, 1, 0, 1, 1);
-    add_boxed_properties(&file_group, &file_grid);
-    sections.append(&file_group);
-
-    let dialog = adw::Dialog::builder()
-        .title(photo.filename())
-        .content_width(550)
-        .content_height(440)
-        .child(&content)
-        .build();
-    dialog.present(Some(parent));
+    row.set_child(Some(&line));
+    group.add(&row);
 }
 
 fn add_boxed_properties(group: &adw::PreferencesGroup, child: &impl IsA<gtk::Widget>) {

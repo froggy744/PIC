@@ -191,7 +191,15 @@ fn discover(
 ) -> Result<()> {
     let _session = DiscoverySession;
     let connection = db::open_existing(database)?;
+    let excluded = db::excluded_folders(&connection)?;
     while let Some((path, parent)) = db::next_network_directory(&connection, root)? {
+        if db::path_is_excluded(&path, &excluded) {
+            connection.execute(
+                "UPDATE network_import_dirs SET state='done' WHERE root=?1 AND path=?2",
+                params![root, path],
+            )?;
+            continue;
+        }
         if !send_bounded(
             sender,
             Discovery::Begin {
@@ -203,6 +211,9 @@ fn discover(
             return Ok(());
         }
         let result = source.visit(&path, control, &mut |record| {
+            if db::path_is_excluded(&record.path, &excluded) {
+                return true;
+            }
             send_bounded(
                 sender,
                 Discovery::Entry {
@@ -350,6 +361,9 @@ fn run_with_source(
         return Ok(0);
     }
     let connection = db::open_existing(database)?;
+    if db::path_is_excluded(root, &db::excluded_folders(&connection)?) {
+        return Ok(0);
+    }
     let folder_id = db::insert_folder(&connection, root)?;
     let job = db::start_network_job(&connection, root, resume)?;
     let available = source.available(root);
@@ -534,9 +548,13 @@ fn run_with_source(
                         &mut previews_ready,
                         events,
                     )?;
-                    let transaction = connection.unchecked_transaction()?;
-                    db::catalog_network_directory(&transaction, root, &path, parent.as_deref())?;
-                    transaction.commit()?;
+                    // Recheck at commit time: a user may exclude this folder
+                    // while discovery is in progress.
+                    if !db::path_is_excluded(&path, &db::excluded_folders(&connection)?) {
+                        let transaction = connection.unchecked_transaction()?;
+                        db::catalog_network_directory(&transaction, root, &path, parent.as_deref())?;
+                        transaction.commit()?;
+                    }
                 }
                 Ok(Discovery::Entry { folder, record }) => batch.push((folder, record)),
                 Ok(Discovery::End { path, error }) => {
@@ -739,9 +757,15 @@ fn flush(
         return Ok(());
     }
     let transaction = connection.unchecked_transaction()?;
+    let excluded = db::excluded_folders(&transaction)?;
     let mut photos = Vec::new();
     let mut folder_ids = Vec::new();
     for (folder, record) in batch.drain(..) {
+        if db::path_is_excluded(&record.path, &excluded)
+            || db::path_is_excluded(&folder, &excluded)
+        {
+            continue;
+        }
         if record.is_dir {
             let existing: bool = transaction.query_row(
                 "SELECT EXISTS(SELECT 1 FROM folders WHERE path=?1)",

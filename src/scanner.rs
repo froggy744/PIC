@@ -135,6 +135,11 @@ fn scan_with_control(
         anyhow::bail!("scan root is unavailable: {root}");
     }
     let connection = db::open_existing(database)?;
+    let excluded = db::excluded_folders(&connection)?;
+    if db::path_is_excluded(root, &excluded) {
+        send(events, ScanEvent::Finished { imported: 0, failed: 0 });
+        return Ok(0);
+    }
     let folder_id = db::insert_folder(&connection, root)?;
     let folder = db::folders(&connection)?
         .into_iter()
@@ -145,7 +150,16 @@ fn scan_with_control(
     verify_scan_devices(&connection, folder_id)?;
     let indexed = db::photo_fingerprints(&connection)?;
     let root_file = crate::source::file(root);
-    let (files, discovered_folders) = collect_files(&root_file, events, control)?;
+    let (mut files, mut discovered_folders) = collect_files_filtered(&root_file, events, control, &excluded)?;
+    // Reload rules after enumeration: exclusions may have changed mid-scan.
+    let excluded = db::excluded_folders(&connection)?;
+    // Excluded paths must never re-enter the catalog on a parent refresh.
+    // Filter both photos and discovered folders before reconciliation.
+    files.retain(|(file, _, folder)| {
+        !db::path_is_excluded(folder, &excluded)
+            && !db::path_is_excluded(&crate::source::reference(file), &excluded)
+    });
+    discovered_folders.retain(|(path, _)| !db::path_is_excluded(path, &excluded));
     let raw_jpeg_pair_counts = raw_jpeg_pair_counts(&files, &discovered_folders);
     if control.is_cancelled() {
         send(events, ScanEvent::Cancelled { imported: 0 });
@@ -707,6 +721,18 @@ fn collect_files(
     Vec<(gio::File, gio::FileInfo, String)>,
     Vec<(String, Option<String>)>,
 )> {
+    collect_files_filtered(root, events, control, &[])
+}
+
+fn collect_files_filtered(
+    root: &gio::File,
+    events: Option<&Sender<ScanEvent>>,
+    control: &ScanControl,
+    excluded: &[String],
+) -> Result<(
+    Vec<(gio::File, gio::FileInfo, String)>,
+    Vec<(String, Option<String>)>,
+)> {
     let root_path = crate::source::reference(root);
     let mut pending = vec![(root.clone(), root_path.clone(), None)];
     let mut files = Vec::new();
@@ -714,6 +740,7 @@ fn collect_files(
     let mut last_reported = 0usize;
     let mut last_report = std::time::Instant::now();
     while let Some((directory, folder_path, parent_path)) = pending.pop() {
+        if db::path_is_excluded(&folder_path, excluded) { continue; }
         if control.is_cancelled() {
             break;
         }
@@ -724,6 +751,7 @@ fn collect_files(
             for item in crate::network_shares::list(&folder_path)
                 .with_context(|| format!("could not list {folder_path}"))?
             {
+                if db::path_is_excluded(&item.uri, excluded) { continue; }
                 if control.is_cancelled() {
                     break;
                 }
@@ -762,6 +790,7 @@ fn collect_files(
                 break;
             }
             let child = enumerator.child(&info);
+            if db::path_is_excluded(&crate::source::reference(&child), excluded) { continue; }
             match info.file_type() {
                 gio::FileType::Directory => {
                     // Lightroom stores thousands of Smart Preview DNGs in
@@ -1224,6 +1253,40 @@ fn is_heif(path: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn excluded_subfolder_does_not_reappear_on_parent_refresh() {
+        let unique = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let workspace = std::env::temp_dir().join(format!("pic-exclude-{}-{unique}", std::process::id()));
+        let root = workspace.join("photos");
+        let ignored = root.join("ignored");
+        let kept = root.join("kept");
+        fs::create_dir_all(&ignored).unwrap();
+        fs::create_dir_all(&kept).unwrap();
+        let database = workspace.join("catalog.db");
+        let connection = Connection::open(&database).unwrap();
+        connection.execute_batch(db::SCHEMA).unwrap();
+        let root_path = root.to_str().unwrap();
+
+        scan_with_control(root_path, &database, None, &ScanControl::default()).unwrap();
+        let ignored_path = ignored.to_str().unwrap();
+        let ignored_id = db::folders(&connection).unwrap().into_iter()
+            .find(|folder| folder.path == ignored_path).unwrap().id;
+        db::exclude_folder(&connection, ignored_path).unwrap();
+        db::remove_folder(&connection, ignored_id).unwrap();
+
+        scan_with_control(root_path, &database, None, &ScanControl::default()).unwrap();
+        let paths = db::folders(&connection).unwrap().into_iter()
+            .map(|folder| folder.path).collect::<HashSet<_>>();
+        assert!(!paths.contains(ignored_path));
+        assert!(paths.contains(kept.to_str().unwrap()));
+
+        db::restore_excluded_folder(&connection, ignored_path).unwrap();
+        scan_with_control(root_path, &database, None, &ScanControl::default()).unwrap();
+        assert!(db::folders(&connection).unwrap().iter().any(|folder| folder.path == ignored_path));
+        drop(connection);
+        fs::remove_dir_all(workspace).unwrap();
+    }
 
     #[test]
     fn refresh_removes_deleted_subfolders_but_keeps_existing_empty_folders() {

@@ -135,6 +135,11 @@ fn scan_with_control(
         anyhow::bail!("scan root is unavailable: {root}");
     }
     let connection = db::open_existing(database)?;
+    let excluded = db::excluded_folders(&connection)?;
+    if db::path_is_excluded(root, &excluded) {
+        send(events, ScanEvent::Finished { imported: 0, failed: 0 });
+        return Ok(0);
+    }
     let folder_id = db::insert_folder(&connection, root)?;
     let folder = db::folders(&connection)?
         .into_iter()
@@ -145,7 +150,14 @@ fn scan_with_control(
     verify_scan_devices(&connection, folder_id)?;
     let indexed = db::photo_fingerprints(&connection)?;
     let root_file = crate::source::file(root);
-    let (files, discovered_folders) = collect_files(&root_file, events, control)?;
+    let (mut files, mut discovered_folders) = collect_files(&root_file, events, control)?;
+    // Excluded paths must never re-enter the catalog on a parent refresh.
+    // Filter both photos and discovered folders before reconciliation.
+    files.retain(|(file, _, folder)| {
+        !db::path_is_excluded(folder, &excluded)
+            && !db::path_is_excluded(&crate::source::reference(file), &excluded)
+    });
+    discovered_folders.retain(|(path, _)| !db::path_is_excluded(path, &excluded));
     let raw_jpeg_pair_counts = raw_jpeg_pair_counts(&files, &discovered_folders);
     if control.is_cancelled() {
         send(events, ScanEvent::Cancelled { imported: 0 });

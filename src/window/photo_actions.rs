@@ -1499,7 +1499,7 @@ fn show_properties_dialog(
     sections.append(&preview_frame);
 
     let image_group = adw::PreferencesGroup::new();
-    image_group.set_title("File Information");
+    // No redundant heading above the file metadata rows.
     add_inspector_row(&image_group, "File name", &photo.filename());
     add_inspector_row(&image_group, "Date taken", &date);
     add_inspector_row(&image_group, "Dimensions", &dimensions);

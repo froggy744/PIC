@@ -1485,6 +1485,7 @@ fn show_properties_dialog(
     close_icon.set_pixel_size(12);
     close.set_child(Some(&close_icon));
     close.set_tooltip_text(Some("Close properties"));
+    close.set_focus_on_click(false);
     // Avoid libadwaita's circular/osd padding, which makes the background
     // much bigger than the icon even with a small size request.
     close.add_css_class("flat");
@@ -1582,6 +1583,7 @@ fn show_properties_dialog(
     footer_header.append(&location_title);
     let copy_path = gtk::Button::from_icon_name("edit-copy-symbolic");
     copy_path.add_css_class("flat");
+    copy_path.set_focus_on_click(false);
     copy_path.set_tooltip_text(Some("Copy full file path"));
     let original_path = path.clone();
     copy_path.connect_clicked(move |_| {
@@ -1599,7 +1601,7 @@ fn show_properties_dialog(
     path_value.set_wrap(true);
     path_value.set_wrap_mode(gtk::pango::WrapMode::WordChar);
     path_value.set_width_chars(1);
-    path_value.set_selectable(true);
+    path_value.set_selectable(false);
     path_value.add_css_class("caption");
     path_value.add_css_class("dim-label");
     location_footer.append(&path_value);
@@ -1651,7 +1653,7 @@ fn add_inspector_row(group: &adw::PreferencesGroup, name: &str, value: &str) {
     detail.set_wrap(true);
     detail.set_wrap_mode(gtk::pango::WrapMode::WordChar);
     detail.set_max_width_chars(28);
-    detail.set_selectable(true);
+    detail.set_selectable(false);
     detail.add_css_class("caption");
     line.append(&detail);
 

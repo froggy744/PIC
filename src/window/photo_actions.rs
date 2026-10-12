@@ -1551,7 +1551,7 @@ fn show_properties_dialog(
             .filter(|value| *value > 0).map(|value| value.to_string())),
         ("Focal length", record.as_ref().and_then(|item| item.focal_length)
             .and_then(format_focal_length)),
-        ("Exposure compensation", record.as_ref().and_then(|item| item.exposure_bias)
+        ("Exposure", record.as_ref().and_then(|item| item.exposure_bias)
             .and_then(format_exposure_bias)),
     ];
     for (name, value) in &camera_values {
@@ -1564,10 +1564,18 @@ fn show_properties_dialog(
         sections.append(&camera_group);
     }
 
-    let location_group = adw::PreferencesGroup::new();
-    location_group.set_title("Location");
-    add_inspector_row(&location_group, "File path", &path);
-    sections.append(&location_group);
+    // A simple full-width path line; no extra boxed Location section.
+    let path_label = gtk::Label::new(Some("File path"));
+    path_label.set_xalign(0.0);
+    path_label.add_css_class("dim-label");
+    sections.append(&path_label);
+    let path_value = gtk::Label::new(Some(&path));
+    path_value.set_xalign(0.0);
+    path_value.set_hexpand(true);
+    path_value.set_wrap(true);
+    path_value.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+    path_value.set_selectable(true);
+    sections.append(&path_value);
 
     // Commit state before displaying it, so visibility notifications always
     // see a matching, live selection.

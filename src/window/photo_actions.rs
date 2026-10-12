@@ -1345,7 +1345,7 @@ pub(crate) fn register_docked_properties_panel(panel: &gtk::Box) {
     DOCKED_PROPERTIES_CONTEXT.with(|slot| slot.replace(None));
 }
 
-fn close_docked_properties() {
+pub(crate) fn close_docked_properties() {
     DOCKED_PROPERTIES_CONTEXT.with(|slot| { slot.replace(None); });
     DOCKED_PROPERTIES_PANEL.with(|slot| {
         if let Some(panel) = slot.borrow().as_ref() {

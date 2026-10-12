@@ -548,9 +548,13 @@ fn run_with_source(
                         &mut previews_ready,
                         events,
                     )?;
-                    let transaction = connection.unchecked_transaction()?;
-                    db::catalog_network_directory(&transaction, root, &path, parent.as_deref())?;
-                    transaction.commit()?;
+                    // Recheck at commit time: a user may exclude this folder
+                    // while discovery is in progress.
+                    if !db::path_is_excluded(&path, &db::excluded_folders(&connection)?) {
+                        let transaction = connection.unchecked_transaction()?;
+                        db::catalog_network_directory(&transaction, root, &path, parent.as_deref())?;
+                        transaction.commit()?;
+                    }
                 }
                 Ok(Discovery::Entry { folder, record }) => batch.push((folder, record)),
                 Ok(Discovery::End { path, error }) => {

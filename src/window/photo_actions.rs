@@ -1458,10 +1458,15 @@ fn show_properties_dialog(
     scroll.set_child(Some(&sections));
 
     // Inspector layout: photo preview above compact metadata, never side-by-side.
-    let preview_frame = gtk::Frame::new(None);
-    preview_frame.set_size_request(-1, 170);
+    // Use a fixed-height base child for the preview. GtkPicture's natural
+    // aspect-ratio requisition must NOT determine the inspector row height:
+    // portrait screenshots used to stretch it to hundreds of pixels.
+    let preview_frame = gtk::Overlay::new();
     preview_frame.set_hexpand(true);
     preview_frame.set_overflow(gtk::Overflow::Hidden);
+    let preview_base = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    preview_base.set_size_request(-1, 170);
+    preview_frame.set_child(Some(&preview_base));
     if let Some(cache_path) = photo
         .cached_thumbnail_path()
         .filter(|path| std::path::Path::new(path).is_file())
@@ -1469,14 +1474,15 @@ fn show_properties_dialog(
         let preview = gtk::Picture::new();
         preview.set_content_fit(gtk::ContentFit::Contain);
         preview.set_can_shrink(true);
-        preview.set_size_request(-1, 170);
-        preview_frame.set_child(Some(&preview));
+        preview.set_hexpand(true);
+        preview.set_vexpand(true);
         preview.set_filename(Some(&cache_path));
+        preview_frame.add_overlay(&preview);
     } else {
         let missing = gtk::Image::from_icon_name("image-x-generic-symbolic");
         missing.set_pixel_size(56);
         missing.add_css_class("dim-label");
-        preview_frame.set_child(Some(&missing));
+        preview_frame.add_overlay(&missing);
     }
     let preview_overlay = gtk::Overlay::new();
     preview_overlay.set_child(Some(&preview_frame));

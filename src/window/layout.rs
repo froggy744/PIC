@@ -647,7 +647,19 @@
     right_column.set_vexpand(true);
 
     main_split.set_sidebar(Some(&sidebar_shell));
-    main_split.set_content(Some(&right_column));
+    // Properties docks beside the gallery rather than obscuring it with a dialog.
+    let right_content = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    right_content.set_hexpand(true);
+    right_content.set_vexpand(true);
+    right_content.append(&right_column);
+    let properties_panel = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    properties_panel.set_width_request(320);
+    properties_panel.set_size_request(320, -1);
+    properties_panel.add_css_class("background");
+    properties_panel.set_visible(false);
+    right_content.append(&properties_panel);
+    register_docked_properties_panel(&properties_panel);
+    main_split.set_content(Some(&right_content));
     main_split.set_min_sidebar_width(SIDEBAR_MIN_WIDTH);
     main_split.set_max_sidebar_width(SIDEBAR_MAX_WIDTH);
     let saved_sidebar_fraction = numeric_setting::<f64>(

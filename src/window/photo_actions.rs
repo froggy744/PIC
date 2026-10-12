@@ -1367,7 +1367,36 @@ pub(crate) fn refresh_docked_properties(photo: Option<&crate::photo_object::Phot
     let context = DOCKED_PROPERTIES_CONTEXT.with(|slot| slot.borrow().clone());
     match (photo, context) {
         (Some(photo), Some(context)) => show_properties_dialog(photo, &context),
-        (None, Some(_)) => close_docked_properties(),
+        (None, Some(_)) => {
+            // Changing folders temporarily clears the grid selection.
+            // Keep the inspector open, but do not show stale photo metadata.
+            DOCKED_PROPERTIES_PANEL.with(|slot| {
+                if let Some(panel) = slot.borrow().as_ref() {
+                    while let Some(child) = panel.first_child() {
+                        panel.remove(&child);
+                    }
+                    let empty = gtk::Box::new(gtk::Orientation::Vertical, 12);
+                    empty.set_valign(gtk::Align::Center);
+                    empty.set_vexpand(true);
+                    empty.set_margin_start(20);
+                    empty.set_margin_end(20);
+                    let title = gtk::Label::new(Some("Properties"));
+                    title.add_css_class("heading");
+                    let hint = gtk::Label::new(Some("Select a photo to view its details"));
+                    hint.add_css_class("dim-label");
+                    hint.set_wrap(true);
+                    let close = gtk::Button::from_icon_name("window-close-symbolic");
+                    close.set_tooltip_text(Some("Close properties"));
+                    close.set_halign(gtk::Align::End);
+                    close.add_css_class("flat");
+                    close.connect_clicked(|_| close_docked_properties());
+                    empty.append(&close);
+                    empty.append(&title);
+                    empty.append(&hint);
+                    panel.append(&empty);
+                }
+            });
+        },
         _ => {}
     }
 }

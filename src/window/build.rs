@@ -2486,6 +2486,15 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     gallery_band.set_resize_end_child(false);
     gallery_band.set_shrink_end_child(false);
     register_docked_properties_panel(&properties_panel);
+    // Index pages are not photo grids: discard the inspector when navigating
+    // to Library Home or Albums Home. Folder-to-folder navigation intentionally
+    // keeps it open (including its empty selection state).
+    main_stack.connect_visible_child_notify(|stack| {
+        if matches!(stack.visible_child_name().as_deref(), Some("library" | "albums")) {
+            close_docked_properties();
+        }
+    });
+
     // Opening the inspector via the context menu must return keyboard focus
     // to the gallery, so arrows and other grid shortcuts still navigate.
     let gallery_for_inspector_focus = gallery.clone();

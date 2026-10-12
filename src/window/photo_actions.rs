@@ -1498,23 +1498,6 @@ fn show_properties_dialog(
     }
     sections.append(&preview_frame);
 
-    let filename = gtk::Label::new(Some(&photo.filename()));
-    filename.set_xalign(0.0);
-    filename.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
-    filename.set_tooltip_text(Some(&path));
-    filename.add_css_class("title-4");
-    sections.append(&filename);
-    let summary = gtk::Label::new(Some(&format!(
-        "{}  ·  {}  ·  {}",
-        date,
-        dimensions,
-        crate::infobar::format_size(size)
-    )));
-    summary.set_xalign(0.0);
-    summary.set_wrap(true);
-    summary.add_css_class("dim-label");
-    sections.append(&summary);
-
     let image_group = adw::PreferencesGroup::new();
     image_group.set_title("File Information");
     add_inspector_row(&image_group, "File name", &photo.filename());
@@ -1590,30 +1573,34 @@ fn show_properties_dialog(
 }
 
 fn add_inspector_row(group: &adw::PreferencesGroup, name: &str, value: &str) {
-    // A compact inspector row, rather than ActionRow's touch-sized
-    // title/subtitle layout. Long paths wrap without widening the dock.
     let row = adw::PreferencesRow::new();
     row.set_activatable(false);
     row.set_selectable(false);
     let line = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     line.set_margin_start(10);
     line.set_margin_end(10);
-    line.set_margin_top(5);
-    line.set_margin_bottom(5);
+    line.set_margin_top(4);
+    line.set_margin_bottom(4);
+
     let key = gtk::Label::new(Some(name));
     key.set_xalign(0.0);
-    key.set_valign(gtk::Align::Start);
-    key.set_width_chars(12);
+    key.set_valign(gtk::Align::Center);
+    key.set_width_chars(11);
     key.add_css_class("dim-label");
+    key.add_css_class("caption");
     line.append(&key);
+
     let detail = gtk::Label::new(Some(value));
     detail.set_hexpand(true);
     detail.set_xalign(1.0);
+    detail.set_valign(gtk::Align::Center);
     detail.set_wrap(true);
     detail.set_wrap_mode(gtk::pango::WrapMode::WordChar);
-    detail.set_max_width_chars(22);
+    detail.set_max_width_chars(28);
     detail.set_selectable(true);
+    detail.add_css_class("caption");
     line.append(&detail);
+
     row.set_child(Some(&line));
     group.add(&row);
 }

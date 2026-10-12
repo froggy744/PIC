@@ -713,6 +713,7 @@ fn send_library_counts(events: Option<&Sender<ScanEvent>>, connection: &Connecti
     }
 }
 
+#[cfg(test)]
 fn collect_files(
     root: &gio::File,
     events: Option<&Sender<ScanEvent>>,

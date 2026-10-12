@@ -7,6 +7,11 @@ use gtk4 as gtk;
 
 use crate::db::{Album, Folder, SidebarCounts};
 
+thread_local! {
+    static FOLDER_MENU_CSS_INSTALLED: Cell<bool> = const { Cell::new(false) };
+}
+
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SidebarFilter {
     Library,
@@ -2631,15 +2636,21 @@ fn add_folder_context_menu(list: &gtk::ListBox, row: &gtk::ListBoxRow, folder: &
         popover.add_css_class("pic-folder-context-menu");
         // Compact native menu, matching the photo context menu rather than
         // a large stack of centred GTK buttons.
-        let css = gtk::CssProvider::new();
-        css.load_from_string(
-            "popover.pic-folder-context-menu > contents { padding: 4px;              border-radius: 10px; }              popover.pic-folder-context-menu button.folder-context-action {              min-height: 28px; padding: 3px 10px; font-size: 12px;              border-radius: 6px; font-weight: normal; }              popover.pic-folder-context-menu button.folder-context-action label {              font-size: 12px; font-weight: normal; }"
-        );
-        if let Some(display) = gtk::gdk::Display::default() {
-            gtk::style_context_add_provider_for_display(
-                &display, &css, gtk::STYLE_PROVIDER_PRIORITY_APPLICATION
+        FOLDER_MENU_CSS_INSTALLED.with(|installed| {
+            if installed.get() {
+                return;
+            }
+            let css = gtk::CssProvider::new();
+            css.load_from_string(
+                "popover.pic-folder-context-menu > contents { padding: 4px; border-radius: 10px; }                  popover.pic-folder-context-menu button.folder-context-action {                  min-height: 28px; padding: 3px 10px; font-size: 12px;                  border-radius: 6px; font-weight: normal; }                  popover.pic-folder-context-menu button.folder-context-action label {                  font-size: 12px; font-weight: normal; }"
             );
-        }
+            if let Some(display) = gtk::gdk::Display::default() {
+                gtk::style_context_add_provider_for_display(
+                    &display, &css, gtk::STYLE_PROVIDER_PRIORITY_APPLICATION
+                );
+                installed.set(true);
+            }
+        });
         let menu = gtk::Box::new(gtk::Orientation::Vertical, 1);
         menu.set_size_request(228, -1);
         menu.set_margin_top(2);

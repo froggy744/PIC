@@ -2626,15 +2626,46 @@ fn add_folder_context_menu(list: &gtk::ListBox, row: &gtk::ListBoxRow, folder: &
     right_click.set_button(3);
     right_click.connect_pressed(move |gesture, _, _, _| {
         let popover = gtk::Popover::new();
-        popover.set_has_arrow(true);
+        popover.set_has_arrow(false);
         popover.set_parent(&row_for_menu);
-        let menu = gtk::Box::new(gtk::Orientation::Vertical, 2);
-        menu.set_margin_top(6);
-        menu.set_margin_bottom(6);
-        menu.set_margin_start(6);
-        menu.set_margin_end(6);
+        popover.add_css_class("pic-folder-context-menu");
+        // Compact native menu, matching the photo context menu rather than
+        // a large stack of centred GTK buttons.
+        let css = gtk::CssProvider::new();
+        css.load_from_string(
+            "popover.pic-folder-context-menu > contents { padding: 4px;              border-radius: 10px; }              popover.pic-folder-context-menu button.folder-context-action {              min-height: 28px; padding: 3px 10px; font-size: 12px;              border-radius: 6px; font-weight: normal; }              popover.pic-folder-context-menu button.folder-context-action label {              font-size: 12px; font-weight: normal; }"
+        );
+        if let Some(display) = gtk::gdk::Display::default() {
+            gtk::style_context_add_provider_for_display(
+                &display, &css, gtk::STYLE_PROVIDER_PRIORITY_APPLICATION
+            );
+        }
+        let menu = gtk::Box::new(gtk::Orientation::Vertical, 1);
+        menu.set_size_request(228, -1);
+        menu.set_margin_top(2);
+        menu.set_margin_bottom(2);
+        menu.set_margin_start(2);
+        menu.set_margin_end(2);
+        let compact_item = |label: &str| {
+            let button = gtk::Button::with_label(label);
+            button.add_css_class("flat");
+            button.add_css_class("folder-context-action");
+            button.set_halign(gtk::Align::Fill);
+            button.set_focus_on_click(false);
+            if let Some(text) = button.child().and_then(|w| w.downcast::<gtk::Label>().ok()) {
+                text.set_xalign(0.0);
+                text.set_halign(gtk::Align::Start);
+            }
+            button
+        };
+        let separator = || {
+            let line = gtk::Separator::new(gtk::Orientation::Horizontal);
+            line.set_margin_top(3);
+            line.set_margin_bottom(3);
+            line
+        };
 
-        let refresh_item = gtk::Button::with_label("Refresh folder");
+        let refresh_item = compact_item("Refresh folder");
         refresh_item.add_css_class("flat");
         refresh_item.set_sensitive(folder_for_menu.imported_root);
         if folder_for_menu.imported_root {
@@ -2661,7 +2692,7 @@ fn add_folder_context_menu(list: &gtk::ListBox, row: &gtk::ListBoxRow, folder: &
         });
         menu.append(&refresh_item);
 
-        let watch_item = gtk::Button::with_label(if folder_for_menu.watched {
+        let watch_item = compact_item(if folder_for_menu.watched {
             "Stop Watching Folder"
         } else {
             "Watch Folder"
@@ -2677,7 +2708,7 @@ fn add_folder_context_menu(list: &gtk::ListBox, row: &gtk::ListBoxRow, folder: &
         });
         menu.append(&watch_item);
 
-        let statistics_item = gtk::Button::with_label("Folder statistics");
+        let statistics_item = compact_item("Folder statistics");
         statistics_item.add_css_class("flat");
         let folder = folder_for_menu.clone();
         let statistics = statistics.clone();
@@ -2688,7 +2719,9 @@ fn add_folder_context_menu(list: &gtk::ListBox, row: &gtk::ListBoxRow, folder: &
         });
         menu.append(&statistics_item);
 
-        let remove_item = gtk::Button::with_label("Remove from Library");
+        menu.append(&separator());
+
+        let remove_item = compact_item("Remove from Library");
         remove_item.add_css_class("flat");
         remove_item.add_css_class("destructive-action");
         let folder = folder_for_menu.clone();
@@ -2700,7 +2733,9 @@ fn add_folder_context_menu(list: &gtk::ListBox, row: &gtk::ListBoxRow, folder: &
         });
         menu.append(&remove_item);
 
-        let add_favorites = gtk::Button::with_label("Add all photos to Favourites");
+        menu.append(&separator());
+
+        let add_favorites = compact_item("Add all to Favourites");
         add_favorites.add_css_class("flat");
         let folder = folder_for_menu.clone();
         let favorite_for_add = favorite.clone();
@@ -2711,7 +2746,7 @@ fn add_folder_context_menu(list: &gtk::ListBox, row: &gtk::ListBoxRow, folder: &
         });
         menu.append(&add_favorites);
 
-        let remove_favorites = gtk::Button::with_label("Remove all photos from Favourites");
+        let remove_favorites = compact_item("Remove all from Favourites");
         remove_favorites.add_css_class("flat");
         let folder = folder_for_menu.clone();
         let favorite = favorite.clone();

@@ -1343,6 +1343,15 @@ pub(crate) fn register_docked_properties_panel(panel: &gtk::Box) {
     DOCKED_PROPERTIES_CONTEXT.with(|slot| slot.replace(None));
 }
 
+fn close_docked_properties() {
+    DOCKED_PROPERTIES_CONTEXT.with(|slot| { slot.replace(None); });
+    DOCKED_PROPERTIES_PANEL.with(|slot| {
+        if let Some(panel) = slot.borrow().as_ref() {
+            panel.set_visible(false);
+        }
+    });
+}
+
 pub(crate) fn set_docked_properties_lightbox_visible(lightbox_visible: bool) {
     DOCKED_PROPERTIES_PANEL.with(|slot| {
         if let Some(panel) = slot.borrow().as_ref() {
@@ -1354,8 +1363,10 @@ pub(crate) fn set_docked_properties_lightbox_visible(lightbox_visible: bool) {
 
 pub(crate) fn refresh_docked_properties(photo: Option<&crate::photo_object::PhotoObject>) {
     let context = DOCKED_PROPERTIES_CONTEXT.with(|slot| slot.borrow().clone());
-    if let (Some(photo), Some(context)) = (photo, context) {
-        show_properties_dialog(photo, &context);
+    match (photo, context) {
+        (Some(photo), Some(context)) => show_properties_dialog(photo, &context),
+        (None, Some(_)) => close_docked_properties(),
+        _ => {}
     }
 }
 
@@ -1407,12 +1418,7 @@ fn show_properties_dialog(
     let close = gtk::Button::from_icon_name("window-close-symbolic");
     close.set_tooltip_text(Some("Close properties"));
     close.add_css_class("flat");
-    close.connect_clicked(|_| {
-        DOCKED_PROPERTIES_PANEL.with(|slot| {
-            if let Some(panel) = slot.borrow().as_ref() { panel.set_visible(false); }
-        });
-        DOCKED_PROPERTIES_CONTEXT.with(|slot| slot.replace(None));
-    });
+    close.connect_clicked(|_| close_docked_properties());
     header.pack_end(&close);
     content.append(&header);
     let scroll = gtk::ScrolledWindow::new();
@@ -1420,9 +1426,9 @@ fn show_properties_dialog(
     scroll.set_vexpand(true);
     content.append(&scroll);
     let sections = gtk::Box::new(gtk::Orientation::Vertical, 6);
-    sections.set_margin_start(16);
-    sections.set_margin_end(16);
-    sections.set_margin_top(4);
+    sections.set_margin_start(12);
+    sections.set_margin_end(12);
+    sections.set_margin_top(8);
     sections.set_margin_bottom(8);
     sections.set_valign(gtk::Align::Start);
     scroll.set_child(Some(&sections));
@@ -1431,7 +1437,7 @@ fn show_properties_dialog(
     let preview = gtk::Picture::new();
     preview.set_content_fit(gtk::ContentFit::Contain);
     preview.set_can_shrink(true);
-    preview.set_size_request(-1, 220);
+    preview.set_size_request(-1, 170);
     preview.set_hexpand(true);
     if let Some(cache_path) = photo
         .cached_thumbnail_path()
@@ -1514,6 +1520,9 @@ fn show_properties_dialog(
     add_inspector_row(&location_group, "File path", &path);
     sections.append(&location_group);
 
+    // Commit state before displaying it, so visibility notifications always
+    // see a matching, live selection.
+    DOCKED_PROPERTIES_CONTEXT.with(|slot| slot.replace(Some(context.clone())));
     DOCKED_PROPERTIES_PANEL.with(|slot| {
         if let Some(panel) = slot.borrow().as_ref() {
             while let Some(child) = panel.first_child() { panel.remove(&child); }
@@ -1521,7 +1530,6 @@ fn show_properties_dialog(
             panel.set_visible(true);
         }
     });
-    DOCKED_PROPERTIES_CONTEXT.with(|slot| slot.replace(Some(context.clone())));
 }
 
 fn add_inspector_row(group: &adw::PreferencesGroup, name: &str, value: &str) {

@@ -1481,7 +1481,6 @@ fn show_properties_dialog(
     preview_overlay.set_child(Some(&preview_frame));
     let close = gtk::Button::from_icon_name("window-close-symbolic");
     close.set_tooltip_text(Some("Close properties"));
-    close.set_accessible_role(gtk::AccessibleRole::Button);
     close.add_css_class("circular");
     close.add_css_class("osd");
     close.set_halign(gtk::Align::End);

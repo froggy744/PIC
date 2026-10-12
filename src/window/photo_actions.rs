@@ -1436,20 +1436,27 @@ fn show_properties_dialog(
     scroll.set_child(Some(&sections));
 
     // Inspector layout: photo preview above compact metadata, never side-by-side.
-    let preview = gtk::Picture::new();
-    preview.set_content_fit(gtk::ContentFit::Contain);
-    preview.set_can_shrink(true);
-    preview.set_size_request(-1, 170);
-    preview.set_hexpand(true);
+    let preview_frame = gtk::Frame::new(None);
+    preview_frame.set_size_request(-1, 170);
+    preview_frame.set_hexpand(true);
+    preview_frame.set_overflow(gtk::Overflow::Hidden);
     if let Some(cache_path) = photo
         .cached_thumbnail_path()
         .filter(|path| std::path::Path::new(path).is_file())
     {
+        let preview = gtk::Picture::new();
+        preview.set_content_fit(gtk::ContentFit::Contain);
+        preview.set_can_shrink(true);
+        preview.set_size_request(-1, 170);
+        preview_frame.set_child(Some(&preview));
         preview.set_filename(Some(&cache_path));
     } else {
-        preview.set_filename(None::<&str>);
+        let missing = gtk::Image::from_icon_name("image-x-generic-symbolic");
+        missing.set_pixel_size(56);
+        missing.add_css_class("dim-label");
+        preview_frame.set_child(Some(&missing));
     }
-    sections.append(&preview);
+    sections.append(&preview_frame);
 
     let filename = gtk::Label::new(Some(&photo.filename()));
     filename.set_xalign(0.0);

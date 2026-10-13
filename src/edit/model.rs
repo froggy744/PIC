@@ -724,6 +724,9 @@ pub struct EditRecipe {
     pub black_white: bool,
     pub sepia: bool,
     pub filter: super::filters::FilterPreset,
+    /// Selected creative filter strength: 0 = original, 1 = full preset.
+    /// Old recipes without this key retain their original full-strength look.
+    pub filter_amount: f32,
     pub sharpen: f32,
     pub clarity: f32,
     pub grain: f32,
@@ -752,6 +755,7 @@ impl Default for EditRecipe {
             black_white: false,
             sepia: false,
             filter: super::filters::FilterPreset::None,
+            filter_amount: 1.0,
             sharpen: 0.0,
             clarity: 0.0,
             grain: 0.0,
@@ -802,6 +806,7 @@ impl EditRecipe {
                 "bw" => recipe.black_white = flag(),
                 "sepia" => recipe.sepia = flag(),
                 "filter" => recipe.filter = super::filters::FilterPreset::decode(value),
+                "filteramount" => recipe.filter_amount = number().unwrap_or(1.0).clamp(0.0, 1.0),
                 "sharpen" => recipe.sharpen = number().unwrap_or(0.0).clamp(0.0, 1.0),
                 "clarity" => recipe.clarity = number().unwrap_or(0.0).clamp(-1.0, 1.0),
                 "grain" => recipe.grain = number().unwrap_or(0.0).clamp(0.0, 1.0),
@@ -818,7 +823,7 @@ impl EditRecipe {
             return String::new();
         }
         let mut encoded = format!(
-            "v=1|crop={:.5},{:.5},{:.5},{:.5}|straighten={:.4}|exposure={:.4}|contrast={:.4}|fill={:.4}|highlights={:.4}|shadows={:.4}|temp={:.4}|sat={:.4}|autocontrast={}|autocolor={}|bw={}|sepia={}|filter={}|sharpen={:.4}|clarity={:.4}|grain={:.4}",
+            "v=1|crop={:.5},{:.5},{:.5},{:.5}|straighten={:.4}|exposure={:.4}|contrast={:.4}|fill={:.4}|highlights={:.4}|shadows={:.4}|temp={:.4}|sat={:.4}|autocontrast={}|autocolor={}|bw={}|sepia={}|filter={}|filteramount={:.4}|sharpen={:.4}|clarity={:.4}|grain={:.4}",
             self.crop.left,
             self.crop.top,
             self.crop.right,
@@ -836,6 +841,7 @@ impl EditRecipe {
             self.black_white as u8,
             self.sepia as u8,
             self.filter.key(),
+            self.filter_amount,
             self.sharpen,
             self.clarity,
             self.grain,
@@ -996,6 +1002,7 @@ mod tests {
         recipe.auto_color = true;
         recipe.sepia = true;
         recipe.filter = FilterPreset::Valencia;
+        recipe.filter_amount = 0.42;
         recipe.sharpen = 0.4;
         recipe.clarity = 0.55;
         recipe.grain = 0.25;
@@ -1006,9 +1013,25 @@ mod tests {
         assert!(decoded.auto_color);
         assert!(decoded.sepia);
         assert_eq!(decoded.filter, FilterPreset::Valencia);
+        assert!((decoded.filter_amount - 0.42).abs() < 0.001);
         assert!((decoded.sharpen - 0.4).abs() < 0.001);
         assert!((decoded.clarity - 0.55).abs() < 0.001);
         assert!((decoded.grain - 0.25).abs() < 0.001);
+    }
+
+    #[test]
+    fn old_filter_recipes_remain_full_strength_and_amount_is_clamped() {
+        let old = EditRecipe::decode("v=1|filter=newspaper|exposure=0.2500");
+        assert_eq!(old.filter, FilterPreset::Newspaper);
+        assert_eq!(old.filter_amount, 1.0);
+        let zero = EditRecipe::decode("v=1|filter=old_photo|filteramount=-3");
+        assert_eq!(zero.filter_amount, 0.0);
+        let full = EditRecipe::decode("v=1|filter=old_photo|filteramount=9");
+        assert_eq!(full.filter_amount, 1.0);
+        let amount_without_filter = EditRecipe {
+            filter_amount: 0.4, ..EditRecipe::default()
+        };
+        assert!(amount_without_filter.is_default(), "An unused filter amount is not a photo edit");
     }
 
     #[test]

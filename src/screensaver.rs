@@ -558,6 +558,11 @@ impl Player {
         if self.count == 0 || self.switched_at.elapsed() < self.interval {
             return;
         }
+        // If the chosen collection has fewer photos than square positions,
+        // every photo is already visible: cycling would create duplicates.
+        if self.style != Style::IPhoto && self.count <= self.slots.len() {
+            return;
+        }
         if self.style == Style::IPhoto {
             for _ in 0..self.count {
                 let index = self.next % self.count;

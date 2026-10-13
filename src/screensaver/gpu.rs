@@ -3,6 +3,10 @@
 //! paintables and animates opacity/geometry, never repainting pixels in Cairo.
 use super::*;
 
+// 60 steps with per-frame CSS transform interpolation gives a smooth
+// GSK-composited flip without creating new thumbnails or touching the layout.
+const FLIP_STEPS: usize = 60;
+
 fn present(picture: &gtk::Picture, slot: &mut Option<(usize, u64)>,
            index: usize, player: &Player) -> bool {
     let Some(image) = player.frames.get(&index) else { return false };
@@ -14,19 +18,24 @@ fn present(picture: &gtk::Picture, slot: &mut Option<(usize, u64)>,
     true
 }
 
+/// Card-layer lifecycle: the visible base is always the stable current
+/// image, while the incoming texture exists only during Crossfade.
 struct Tile {
     frame: gtk::Overlay,
+    content: gtk::Overlay,
     back: gtk::Picture,
     front: gtk::Picture,
     back_version: Option<(usize, u64)>,
     front_version: Option<(usize, u64)>,
+    flip_step: Option<usize>,
 }
 impl Tile {
     fn new(square_mosaic: bool) -> Self {
         let frame = gtk::Overlay::new();
-        // Keep landscape photographs cropped to the square. This also
-        // prevents image content from painting outside an animated tile.
         frame.set_overflow(gtk::Overflow::Hidden);
+        let content = gtk::Overlay::new();
+        content.set_hexpand(true);
+        content.set_vexpand(true);
         let back = gtk::Picture::new();
         let front = gtk::Picture::new();
         for picture in [&back, &front] {
@@ -39,27 +48,69 @@ impl Tile {
             picture.set_vexpand(true);
             picture.set_can_shrink(true);
         }
-        frame.set_child(Some(&back));
-        frame.add_overlay(&front);
+        content.set_child(Some(&back));
+        content.add_overlay(&front);
+        frame.set_child(Some(&content));
         front.set_opacity(0.0);
         frame.add_css_class("screensaver-card");
-        Self { frame, back, front, back_version: None, front_version: None }
-    }
-    fn sync(&mut self, new_id: usize, old: Option<usize>, progress: f64, player: &Player) {
-        if let Some(old_id) = old.filter(|old_id| *old_id != new_id && progress < 1.0) {
-            // Retain the outgoing texture even if its index was evicted from
-            // the LRU. Never expose an empty/black layer during a fade.
-            let outgoing_ready = self.back_version.is_some_and(|(id,_)| id == old_id)
-                || present(&self.back, &mut self.back_version, old_id, player);
-            if outgoing_ready && present(&self.front, &mut self.front_version, new_id, player) {
-                self.front.set_opacity(progress);
-                return;
-            }
+        Self {
+            frame, content, back, front,
+            back_version: None, front_version: None, flip_step: None,
         }
-        if present(&self.back, &mut self.back_version, new_id, player) {
-            self.front.set_opacity(0.0);
+    }
+    fn clear_incoming(&mut self) {
+        self.front.set_opacity(0.0);
+        if self.front_version.take().is_some() {
             self.front.set_paintable(None::<&gtk::gdk::Paintable>);
-            self.front_version = None;
+        }
+    }
+    fn set_flip_step(&mut self, step: Option<usize>) {
+        if self.flip_step == step { return; }
+        if let Some(old) = self.flip_step {
+            self.content.remove_css_class(&format!("screensaver-flip-{old}"));
+        }
+        if let Some(new) = step {
+            self.content.add_css_class(&format!("screensaver-flip-{new}"));
+        }
+        self.flip_step = step;
+    }
+    fn sync(&mut self, new_id: usize, old: Option<usize>, progress: f64,
+        player: &Player, transition: PicasaTransition)
+    {
+        let fade = progress.clamp(0.0, 1.0);
+        let changing = old.filter(|old| *old != new_id && fade < 1.0);
+        match (transition, changing) {
+            (PicasaTransition::Crossfade, Some(outgoing)) => {
+                self.set_flip_step(None);
+                // Pin the outgoing texture on the lower layer. Both layers
+                // remain alive until the new photo is fully opaque.
+                let old_ready = self.back_version.is_some_and(|(id, _)| id == outgoing)
+                    || present(&self.back, &mut self.back_version, outgoing, player);
+                if old_ready && present(&self.front, &mut self.front_version, new_id, player) {
+                    self.front.set_opacity(fade);
+                    return;
+                }
+            }
+            (PicasaTransition::Flip, Some(outgoing)) => {
+                self.clear_incoming();
+                // A 180-degree card turn, seen from its narrow edge halfway.
+                // The image changes only while edge-on, never on an open card.
+                let showing = if fade < 0.5 { outgoing } else { new_id };
+                let valid = self.back_version.is_some_and(|(id, _)| id == showing)
+                    || present(&self.back, &mut self.back_version, showing, player);
+                if valid {
+                    let step = (fade * FLIP_STEPS as f64).round() as usize;
+                    self.set_flip_step(Some(step.min(FLIP_STEPS)));
+                    return;
+                }
+            }
+            _ => {}
+        }
+        // Cut: replace the base texture immediately when Player advances.
+        // Fade/flip: only commit it after the transition has finished.
+        if present(&self.back, &mut self.back_version, new_id, player) {
+            self.clear_incoming();
+            self.set_flip_step(None);
         }
     }
 }
@@ -220,12 +271,13 @@ impl SquareGrid {
 pub(super) struct Stage {
     pub root: gtk::Fixed,
     style: Style,
+    transition: PicasaTransition,
     tiles: Vec<Tile>,
     desired_tiles: usize,
     cinema: Option<Cinema>,
 }
 impl Stage {
-    pub fn new(style: Style, count: usize) -> Self {
+    pub fn new(style: Style, count: usize, transition: PicasaTransition) -> Self {
         let root = gtk::Fixed::new();
         root.set_hexpand(true);
         root.set_vexpand(true);
@@ -239,7 +291,7 @@ impl Stage {
         // before the fullscreen surface appears. Additional square tiles are
         // materialised in small frame-clock batches.
         let desired_tiles = if style == Style::IPhoto { 0 } else { count };
-        Self { root, style, tiles: Vec::new(), desired_tiles, cinema }
+        Self { root, style, transition, tiles: Vec::new(), desired_tiles, cinema }
     }
     fn add_tile(&mut self) {
         let slot = self.tiles.len();
@@ -294,7 +346,7 @@ impl Stage {
             }
             let old = player.fading_slot
                 .and_then(|(change_slot, old)| (change_slot == slot).then_some(old));
-            tile.sync(new_id, old, fade, player);
+            tile.sync(new_id, old, fade, player, self.transition);
         }
     }
 }
@@ -302,7 +354,7 @@ impl Stage {
 pub(super) fn install_css() {
     if let Some(display) = gtk::gdk::Display::default() {
         let provider = gtk::CssProvider::new();
-        provider.load_from_string(r#"
+        let mut css = String::from(r#"
           .screensaver-stage { background-color: #090b10; }
           .screensaver-cinema-frame { background-color: #090b10; }
           .screensaver-card { background-color: #171b21; }
@@ -317,7 +369,17 @@ pub(super) fn install_css() {
           .screensaver-angle-3 { transform: rotate(5deg); }
           .screensaver-angle-4 { transform: rotate(-4deg); }
           .screensaver-angle-5 { transform: rotate(4deg); }
+          .screensaver-card > overlay { transform-origin: 50% 50%; }
         "#);
+        // Precompile quantised compositor transforms once, never reparse
+        // a CSS stylesheet in the frame clock.
+        for step in 0..=FLIP_STEPS {
+            let factor = PicasaTransition::Flip.flip_width(step as f64 / FLIP_STEPS as f64);
+            css.push_str(&format!(
+                ".screensaver-flip-{step} {{ transform: scaleX({factor:.6}); }}\n"
+            ));
+        }
+        provider.load_from_string(&css);
         gtk::style_context_add_provider_for_display(
             &display, &provider, gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
         );

@@ -1344,6 +1344,44 @@ mod tests {
     use super::*;
 
     #[test]
+    fn last_screensaver_settings_round_trip_in_library_db() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch(
+            "CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);"
+        ).unwrap();
+        let prefs = Preferences {
+            style: Style::Floating,
+            source: Source::Album(42).key(),
+            seconds: 14,
+            shuffle: false,
+            shuffle_tiles: true,
+            mosaic_tiles: 24,
+            picasa_transition: PicasaTransition::Crossfade,
+            transition_ms: 1700,
+            captions: true,
+            clock: true,
+        };
+        prefs.save(&connection);
+        let restored = Preferences::load(&connection);
+        assert_eq!(restored.style, Style::Floating);
+        assert_eq!(restored.source, "album:42");
+        assert_eq!(restored.seconds, 14);
+        assert!(!restored.shuffle);
+        assert!(restored.shuffle_tiles);
+        assert_eq!(restored.mosaic_tiles, 24);
+        assert_eq!(restored.picasa_transition, PicasaTransition::Crossfade);
+        assert_eq!(restored.transition_ms, 1700);
+        assert!(restored.captions);
+        assert!(restored.clock);
+        let another = Preferences { clock: false, style: Style::Fade, ..prefs };
+        another.save(&connection);
+        let restored = Preferences::load(&connection);
+        assert_eq!(restored.style, Style::Fade);
+        assert!(!restored.clock);
+        assert!(restored.captions);
+    }
+
+    #[test]
     fn compact_style_picker_labels_and_previews_are_distinct() {
         let styles = Style::CHOICES;
         let mut labels = HashSet::new();

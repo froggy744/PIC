@@ -248,13 +248,14 @@ impl Stage {
             return;
         }
         let fade = smootherstep(player.progress());
+        let tile_count = self.tiles.len();
         let square_grid = if self.style == Style::Mosaic {
-            SquareGrid::fit(w, h, self.tiles.len())
+            SquareGrid::fit(w, h, tile_count)
         } else { None };
         for (slot, tile) in self.tiles.iter_mut().enumerate() {
             let Some(&new_id) = player.slots.get(slot) else { continue };
             let (x, y, tile_w, tile_h) = if let Some(grid) = square_grid {
-                let (x, y) = grid.position(slot, self.tiles.len());
+                let (x, y) = grid.position(slot, tile_count);
                 (x, y, grid.side, grid.side)
             } else {
                 let tw = (w * 0.29).min(h * 0.49);

@@ -565,6 +565,8 @@ struct Player {
     shuffle_tiles: bool,
     tile_order: Vec<usize>,
     preload_cursor: usize,
+    backfill_cursor: usize,
+    backfill_pending: HashSet<usize>,
     frames: HashMap<usize, Surface>,
     order: VecDeque<usize>,
     requested: HashSet<usize>,
@@ -596,6 +598,8 @@ impl Player {
             shuffle_tiles,
             tile_order,
             preload_cursor: 0,
+            backfill_cursor: slots.len(),
+            backfill_pending: HashSet::new(),
             frames: HashMap::new(),
             order: VecDeque::new(),
             requested: HashSet::new(),
@@ -606,8 +610,16 @@ impl Player {
     fn request(&mut self, index: usize, tx: &Sender<usize>) {
         if self.count == 0 { return; }
         let index = index % self.count;
+        // A loaded image or a known-bad source must not be repeatedly queued.
+        // requested stays set until its original upgrade completes, even
+        // when a cached preview arrives or another frame is evicted.
+        if self.frames.contains_key(&index) || self.failed.contains(&index) {
+            return;
+        }
         if self.requested.insert(index) {
-            let _ = tx.send(index);
+            if tx.send(index).is_err() {
+                self.requested.remove(&index);
+            }
         }
     }
     fn prefetch(&mut self, tx: &Sender<usize>) {
@@ -617,22 +629,36 @@ impl Player {
                 self.request((self.current + i) % self.count, tx);
             }
         } else {
-            // Queue every original tile once, then look for locally cached
-            // substitutes if network-only originals cannot be decoded.
-            // Work stays bounded per GTK frame for very large mosaics.
+            // Initial tiles are loaded once. A pending preview is NOT blank:
+            // the local cache worker and original worker may still finish.
             if self.preload_cursor < self.slots.len() {
-                let end = (self.preload_cursor + 24).min(self.slots.len());
+                let end = self.preload_cursor.saturating_add(24).min(self.slots.len());
                 for slot in self.preload_cursor..end {
                     self.request(self.slots[slot], tx);
                 }
                 self.preload_cursor = end;
-            } else if self.slots.iter().any(|id| !self.frames.contains_key(id)) {
-                // Cache scans are cheap and never touch the remote shares.
-                for _ in 0..16.min(self.count) {
-                    let candidate = self.preload_cursor % self.count;
-                    self.preload_cursor = self.preload_cursor.wrapping_add(1);
-                    self.request(candidate, tx);
+            }
+
+            // Look for substitutes only after a tile has definitively failed
+            // both cache and original decoding, never just because it is slow.
+            // Queue at most one candidate per failed slot, and wait for the
+            // result before requesting another. This avoids scanning entire
+            // libraries and flooding a stalled NFS share.
+            let blank_slots = self.slots.iter()
+                .filter(|id| self.failed.contains(id) && !self.frames.contains_key(id))
+                .count();
+            let mut available = blank_slots.saturating_sub(self.backfill_pending.len());
+            while available > 0 && self.backfill_cursor < self.count {
+                let index = self.backfill_cursor;
+                self.backfill_cursor += 1;
+                if self.slots.contains(&index) || self.requested.contains(&index)
+                    || self.frames.contains_key(&index) || self.failed.contains(&index)
+                {
+                    continue;
                 }
+                self.backfill_pending.insert(index);
+                self.request(index, tx);
+                available -= 1;
             }
             for i in 0..PREFETCH {
                 self.request((self.next + i) % self.count, tx);
@@ -640,6 +666,12 @@ impl Player {
         }
     }
     fn receive(&mut self, result: ImageResult) {
+        if result.high_quality {
+            // An original result (success or failure) completes the request.
+            // A cached result only completes the preview phase.
+            self.requested.remove(&result.index);
+            self.backfill_pending.remove(&result.index);
+        }
         let Some(pixels) = result.pixels else {
             // A missing local preview isn't a failed photo: the independent
             // original worker may still succeed. Only a failed original with
@@ -671,6 +703,7 @@ impl Player {
                 !self.frames.contains_key(id)
             }) {
                 self.slots[blank_slot] = result.index;
+                self.backfill_pending.remove(&result.index);
             }
         }
         self.order.retain(|index| *index != result.index);
@@ -686,7 +719,8 @@ impl Player {
             let Some(pos) = self.order.iter().position(|id| !protected(*id)) else { break };
             let Some(old) = self.order.remove(pos) else { break };
             self.frames.remove(&old);
-            self.requested.remove(&old);
+            // Do not clear requested: the original might still be decoding.
+            // Clearing it here requeues the same network RAW every frame.
         }
     }
         fn available(&self, index: usize) -> bool {

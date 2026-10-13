@@ -490,7 +490,13 @@ fn start_decode_worker(
                     _ => (2560, 1600),
                 };
                 let started = Instant::now();
-                let decoded = decode_original(photo, dimensions, &cancelled);
+                // Only the original worker may probe a source. In particular,
+                // a local-looking path can itself be a stalled NFS mount.
+                let decoded = if crate::source::cached_file_available(&photo.path) {
+                    decode_original(photo, dimensions, &cancelled)
+                } else {
+                    Err(anyhow::anyhow!("original is currently offline"))
+                };
                 if cancelled.load(Ordering::Relaxed) { break; }
                 if std::env::var_os("PIC_SCREENSAVER_TRACE").is_some() {
                     eprintln!(
@@ -529,9 +535,8 @@ fn start_decode_worker(
                 index, high_quality: false, pixels: cached,
             }).is_err() { break; }
 
-            // Source access never delays preview decoding. If the share is
-            // known offline from an earlier probe, retain the cached JPEG.
-            if !crate::source::cached_file_available(&photo.path) { continue; }
+            // Source availability checks belong to the other workers, not
+            // this cache-only path (even mount-backed local paths may block).
             if photo.path.contains("://") {
                 let _ = remote_tx.send(index);
             } else {

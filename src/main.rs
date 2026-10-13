@@ -29,6 +29,7 @@ mod settings;
 mod sidebar;
 mod smooth_scroll;
 mod source;
+mod startup_trace;
 mod thumbnail;
 mod thumbnail_display;
 mod window;
@@ -45,6 +46,7 @@ fn register_bundled_icons() {
 }
 
 fn main() {
+    startup_trace::start();
     use gio::prelude::*;
     use gtk4 as gtk;
     use libadwaita as adw;
@@ -59,12 +61,25 @@ fn main() {
     }));
 
     adw::init().expect("libadwaita initialization failed");
+    startup_trace::mark("adw_init_done", None);
     register_bundled_icons();
     let application = adw::Application::new(
         Some("io.github.froggy744.PIC"),
         gio::ApplicationFlags::default(),
     );
+    startup_trace::mark("application_created", None);
     application.connect_activate(|application| {
+        let activation_started = std::time::Instant::now();
+        startup_trace::mark("activation_start", None);
+        if let Some(window) = application
+            .windows()
+            .into_iter()
+            .find(|window| window.is::<adw::ApplicationWindow>())
+        {
+            startup_trace::mark("existing_window_present", Some(activation_started));
+            window.present();
+            return;
+        }
         // Make the bundled hicolor subset resolvable. Windows/macOS bundles
         // ship no system icon theme, so every symbolic icon would be blank
         // without this (Linux keeps using the system Adwaita theme).
@@ -75,6 +90,7 @@ fn main() {
         // Folder discovery starts from explicit import/refresh actions, or
         // continuation of an unfinished import those actions authorized.
         let selected = db::initialize_library_manager();
+        startup_trace::mark("library_manager_done", Some(activation_started));
         match selected.and_then(|library| {
             let existed = library.path.is_file();
             let connection = db::open(&library.path)?;
@@ -87,7 +103,14 @@ fn main() {
             }
             Ok(connection)
         }) {
-            Ok(connection) => window::build(application, connection).present(),
+            Ok(connection) => {
+                startup_trace::mark("database_open_done", Some(activation_started));
+                let window = window::build(application, connection);
+                startup_trace::mark("window_present_call", Some(activation_started));
+                startup_trace::begin_present();
+                window.present();
+                startup_trace::mark("window_present_return", startup_trace::present_started());
+            },
             Err(error) => {
                 eprintln!("Could not open photo library: {error:#}");
                 // Startup recovery needs an application-owned parent even though the
@@ -180,5 +203,6 @@ fn main() {
             }
         }
     });
+    startup_trace::mark("application_run_call", None);
     application.run();
 }

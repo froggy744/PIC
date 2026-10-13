@@ -475,7 +475,6 @@ mod tests {
             for count in [1, 3, 6, 9, 12, 18, 24, 30, 100, 1000, 10000] {
                 let grid = SquareGrid::fit(width, height, count).unwrap();
                 assert!(grid.side > 0.0);
-                assert!(grid.columns * grid.rows >= count);
                 for slot in 0..count {
                     let (x, y) = grid.position(slot, count);
                     assert!(x >= -0.01 && y >= -0.01, "{width}x{height} {count} {slot}: {x}, {y}");

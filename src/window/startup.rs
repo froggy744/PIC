@@ -7,10 +7,13 @@ fn populate_startup_gallery(
     restore: Rc<dyn Fn()>,
 ) {
     glib::idle_add_local_once(move || {
+        let populate_started = Instant::now();
+        crate::startup_trace::mark("gallery_population_start", None);
         if !is_current() {
             return;
         }
         gallery.replace_while_current(&photos, is_current.clone());
+        crate::startup_trace::mark("gallery_population_scheduled", Some(populate_started));
         glib::timeout_add_local(Duration::from_millis(20), move || {
             if !is_current() {
                 return glib::ControlFlow::Break;
@@ -19,6 +22,7 @@ fn populate_startup_gallery(
                 return glib::ControlFlow::Continue;
             }
             restore();
+            crate::startup_trace::mark("gallery_population_restored", Some(populate_started));
             glib::ControlFlow::Break
         });
     });

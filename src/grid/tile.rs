@@ -1524,6 +1524,34 @@ fn ensure_selection_badge(frame: &gtk::Overlay) -> gtk::Image {
 /// pixel aspect ratio does not match the camera image dimensions. GTK cannot
 /// crop bars that are already part of the cached pixels, so crop the small
 /// cached image before handing it to the normal Cover-rendered Picture.
+#[cfg(test)]
+mod raw_thumbnail_orientation_tests {
+    #[test]
+    fn cached_preview_axes_determine_portrait_and_rotated_landscape() {
+        assert_eq!(super::raw_display_dimensions(4032, 6040, 427, 640), (4032, 6040));
+        assert_eq!(super::raw_display_dimensions(4032, 6040, 640, 427), (6040, 4032));
+        assert_eq!(super::raw_display_dimensions(6040, 4032, 640, 427), (6040, 4032));
+        assert_eq!(super::raw_display_dimensions(6040, 4032, 427, 640), (4032, 6040));
+    }
+}
+
+fn raw_display_dimensions(
+    source_width: i64,
+    source_height: i64,
+    preview_width: u32,
+    preview_height: u32,
+) -> (i64, i64) {
+    let source_ratio = source_width as f64 / source_height as f64;
+    let preview_ratio = preview_width as f64 / preview_height as f64;
+    let direct = (preview_ratio / source_ratio).ln().abs();
+    let swapped = (preview_ratio * source_ratio).ln().abs();
+    if swapped < direct {
+        (source_height, source_width)
+    } else {
+        (source_width, source_height)
+    }
+}
+
 pub(crate) fn raw_cached_thumbnail(photo: &PhotoObject, path: &str) -> Option<gtk::gdk::Paintable> {
     let source_path = photo.path();
     if !crate::image_format::uses(&source_path, crate::image_format::DecoderKind::Raw) {
@@ -1550,15 +1578,12 @@ pub(crate) fn raw_cached_thumbnail(photo: &PhotoObject, path: &str) -> Option<gt
         return None;
     }
 
-    // Cached thumbnails have already had EXIF orientation applied during
-    // generation. Raw dimensions are reported in sensor orientation, so
-    // orientations 5-8 require the target axes to be swapped as well.
-    let orientation = crate::thumbnail::exif_orientation(&source_path);
-    let (display_width, display_height) = if matches!(orientation, 5..=8) {
-        (source_height, source_width)
-    } else {
-        (source_width, source_height)
-    };
+    // The cached preview already has EXIF orientation applied. Its axes tell
+    // us whether the sensor dimensions need swapping without reading the
+    // original RAW file (which may live on a slow network share).
+    let (display_width, display_height) = raw_display_dimensions(
+        source_width, source_height, image_width, image_height,
+    );
     let target_ratio = display_width as f64 / display_height as f64;
     let image_ratio = image_width as f64 / image_height as f64;
     if image_ratio > target_ratio {

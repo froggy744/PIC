@@ -1,16 +1,7 @@
-pub fn build(
-    albums: &[Album],
-    connection: Rc<RefCell<Connection>>,
-    thumbnail_width: i32,
-    on_album: Rc<dyn Fn(i64)>,
-    on_appearance_changed: Rc<dyn Fn()>,
-    open_theme_settings: Rc<dyn Fn()>,
-) -> gtk::ScrolledWindow {
-    let scrolled = gtk::ScrolledWindow::new();
-    scrolled.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
-    scrolled.set_hexpand(true);
-    scrolled.set_vexpand(true);
-
+fn install_bookshelf_background_css(scrolled: &gtk::ScrolledWindow) {
+    if scrolled.has_css_class("albums-background-css-loaded") {
+        return;
+    }
     let background = gtk::CssProvider::new();
     let background_rules = bookshelf_background_rules(&crate::css::resolve_runtime_dir(Path::new(
         BOOKSHELF_THEME_DIRECTORY,
@@ -21,6 +12,53 @@ pub fn build(
         &background,
         gtk::STYLE_PROVIDER_PRIORITY_APPLICATION + 2,
     );
+    scrolled.add_css_class("albums-background-css-loaded");
+}
+
+#[cfg(test)]
+pub fn build(
+    albums: &[Album],
+    connection: Rc<RefCell<Connection>>,
+    thumbnail_width: i32,
+    on_album: Rc<dyn Fn(i64)>,
+    on_appearance_changed: Rc<dyn Fn()>,
+    open_theme_settings: Rc<dyn Fn()>,
+) -> gtk::ScrolledWindow {
+    build_inner(albums, connection, thumbnail_width, on_album,
+        on_appearance_changed, open_theme_settings, false)
+}
+
+pub fn build_deferred(
+    connection: Rc<RefCell<Connection>>,
+    thumbnail_width: i32,
+    on_album: Rc<dyn Fn(i64)>,
+    on_appearance_changed: Rc<dyn Fn()>,
+    open_theme_settings: Rc<dyn Fn()>,
+) -> gtk::ScrolledWindow {
+    build_inner(&[], connection, thumbnail_width, on_album,
+        on_appearance_changed, open_theme_settings, true)
+}
+
+fn build_inner(
+    albums: &[Album],
+    connection: Rc<RefCell<Connection>>,
+    thumbnail_width: i32,
+    on_album: Rc<dyn Fn(i64)>,
+    on_appearance_changed: Rc<dyn Fn()>,
+    open_theme_settings: Rc<dyn Fn()>,
+    defer_initial: bool,
+) -> gtk::ScrolledWindow {
+    let album_started = std::time::Instant::now();
+    crate::startup_trace::mark("albums_build_enter", None);
+    let scrolled = gtk::ScrolledWindow::new();
+    scrolled.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+    scrolled.set_hexpand(true);
+    scrolled.set_vexpand(true);
+
+    if !defer_initial {
+        install_bookshelf_background_css(&scrolled);
+    }
+    crate::startup_trace::mark("albums_background_rules_done", Some(album_started));
 
     let content = gtk::Box::new(gtk::Orientation::Vertical, 18);
     content.set_margin_start(32);
@@ -138,18 +176,21 @@ pub fn build(
             }
         });
     }
-    refresh_presentation(&scrolled, &connection.borrow());
-
-    populate(
-        &cards,
-        &bookshelf_runtime,
-        &count,
-        albums,
-        connection.clone(),
-        thumbnail_width,
-        on_album.clone(),
-        on_appearance_changed.clone(),
-    );
+    if !defer_initial {
+        refresh_presentation(&scrolled, &connection.borrow());
+        crate::startup_trace::mark("albums_presentation_done", Some(album_started));
+        populate(
+            &cards,
+            &bookshelf_runtime,
+            &count,
+            albums,
+            connection.clone(),
+            thumbnail_width,
+            on_album.clone(),
+            on_appearance_changed.clone(),
+        );
+    }
+    crate::startup_trace::mark("albums_populate_done", Some(album_started));
 
     let runtime_for_resize = bookshelf_runtime.clone();
     let standard_cards = cards.clone();
@@ -261,6 +302,7 @@ pub fn refresh(
     on_album: Rc<dyn Fn(i64)>,
     on_appearance_changed: Rc<dyn Fn()>,
 ) {
+    install_bookshelf_background_css(scrolled);
     refresh_presentation(scrolled, &connection.borrow());
     // The ScrolledWindow may expose a GTK viewport around its content. Find
     // the existing widgets by their local CSS markers instead of assuming
@@ -357,6 +399,8 @@ fn populate(
     on_album: Rc<dyn Fn(i64)>,
     on_appearance_changed: Rc<dyn Fn()>,
 ) {
+    let populate_started = std::time::Instant::now();
+    crate::startup_trace::mark("albums_populate_enter", None);
     while let Some(child) = cards.first_child() {
         cards.remove(&child);
     }
@@ -438,6 +482,7 @@ fn populate(
                 })
             })
             .collect();
+    crate::startup_trace::mark("albums_frames_loaded", Some(populate_started));
     let framed = !frames.is_empty();
     cards.set_row_spacing(if standard {
         32

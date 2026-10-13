@@ -1179,29 +1179,39 @@ fn start_screensaver(parent: &adw::ApplicationWindow, slides: Vec<Slide>, prefs:
     stage.borrow().root.set_focusable(true);
     let stage_overlay = gtk::Overlay::new();
     stage_overlay.set_child(Some(&stage.borrow().root));
+
+    // A single footer owns both optional overlays. GtkCenterBox reserves a
+    // dedicated end slot for the clock instead of allowing a long centered
+    // filename to draw on top of it. It also keeps the clock consistently
+    // inset from the bottom/right edges on differently sized monitors.
+    let footer = gtk::CenterBox::new();
+    footer.set_halign(gtk::Align::Fill);
+    footer.set_valign(gtk::Align::End);
+    footer.set_margin_start(28);
+    footer.set_margin_end(30);
+    footer.set_margin_bottom(28);
+    footer.set_can_target(false);
+
     let caption = gtk::Label::new(None);
     caption.add_css_class("screensaver-caption");
     caption.set_halign(gtk::Align::Center);
-    caption.set_valign(gtk::Align::End);
-    caption.set_margin_bottom(26);
-    caption.set_margin_start(18);
-    caption.set_margin_end(18);
     caption.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+    caption.set_max_width_chars(48);
     caption.set_visible(false);
-    stage_overlay.add_overlay(&caption);
+    caption.set_can_target(false);
+    footer.set_center_widget(Some(&caption));
 
     let clock = gtk::Label::new(None);
     clock.add_css_class("screensaver-clock");
     clock.set_halign(gtk::Align::End);
-    clock.set_valign(gtk::Align::Start);
-    clock.set_margin_top(22);
-    clock.set_margin_end(24);
+    clock.set_margin_start(20);
     clock.set_can_target(false);
     clock.set_visible(prefs.clock);
     if prefs.clock {
         clock.set_label(&local_clock_text());
     }
-    stage_overlay.add_overlay(&clock);
+    footer.set_end_widget(Some(&clock));
+    stage_overlay.add_overlay(&footer);
     screen.set_child(Some(&stage_overlay));
 
     // Controller callbacks must not own the window they are attached to:

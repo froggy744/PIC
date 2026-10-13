@@ -1521,7 +1521,8 @@ fn wall_and_masonry_zoom_fade_without_flying_tiles() {
         assert!(!surface.reflow_active.get(),
             "wall zoom must not animate photo coordinates");
         for (&index, live) in surface.live_tiles.borrow().iter() {
-            let item = surface.wall_state.borrow().layout.item(index as usize).unwrap().clone();
+            let wall = surface.wall_state.borrow();
+            let item = wall.layout.item(index as usize).unwrap();
             assert_eq!(live.tile.presentation_offset(), (0.0, 0.0));
             assert_eq!(live.tile.width(), item.width as i32);
             assert_eq!(live.tile.height(), item.height as i32);

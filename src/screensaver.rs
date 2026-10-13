@@ -423,6 +423,37 @@ fn texture_pixels(image: image::RgbaImage) -> Pixels {
     Pixels { width: width as i32, height: height as i32, data: image.into_raw() }
 }
 
+/// Decode the already-generated local cache without touching the original.
+/// Remote NFS/SMB reads MUST NOT run on this worker: a reachable server with
+/// missing exports can block source reads indefinitely.
+fn decode_cached_preview(slide: &Slide) -> Option<Pixels> {
+    let path = thumbnail::existing_cache_path(
+        &slide.path, slide.mtime, slide.size_bytes,
+    ).ok().flatten()?;
+    let recipe = edit::EditRecipe::decode(&slide.edit_recipe);
+    edit::render::render_thumbnail(
+        path.to_str()?, slide.rotation, &recipe,
+    ).ok().map(texture_pixels)
+}
+
+fn decode_original(
+    slide: &Slide,
+    dimensions: (u32, u32),
+    cancelled: &AtomicBool,
+) -> anyhow::Result<Pixels> {
+    let decoded = thumbnail::decode_for_viewer_with_cancel(
+        &slide.path, dimensions.0, dimensions.1, None,
+        || cancelled.load(Ordering::Relaxed),
+    )?;
+    anyhow::ensure!(!cancelled.load(Ordering::Relaxed), "screensaver decode cancelled");
+    let recipe = edit::EditRecipe::decode(&slide.edit_recipe);
+    Ok(texture_pixels(edit::render::apply_recipe(
+        edit::render::apply_library_rotation(decoded, slide.rotation), &recipe,
+    )))
+}
+
+/// Keep cached previews responsive even when an in-flight remote RAW read is
+/// hung. Original upgrades run on separate local and network workers.
 fn start_decode_worker(
     slides: Vec<Slide>,
     style: Style,
@@ -431,83 +462,80 @@ fn start_decode_worker(
     results: mpsc::SyncSender<ImageResult>,
     cancelled: Arc<AtomicBool>,
 ) {
+    let slides = Arc::new(slides);
+    let (local_tx, local_rx) = mpsc::channel::<usize>();
+    let (remote_tx, remote_rx) = mpsc::channel::<usize>();
+
+    for (receiver, is_remote) in [(local_rx, false), (remote_rx, true)] {
+        let slides = Arc::clone(&slides);
+        let results = results.clone();
+        let cancelled = Arc::clone(&cancelled);
+        std::thread::spawn(move || {
+            while let Ok(index) = receiver.recv() {
+                if cancelled.load(Ordering::Relaxed) { break; }
+                let Some(photo) = slides.get(index) else { continue; };
+                let dimensions = match style {
+                    Style::Mosaic => {
+                        let edge = if mosaic_tiles <= 6 { 1536 }
+                            else if mosaic_tiles <= 12 { 1152 }
+                            else if mosaic_tiles <= 30 { 896 }
+                            else if mosaic_tiles <= 100 { 640 }
+                            else if mosaic_tiles <= 400 { 384 }
+                            else if mosaic_tiles <= 1600 { 192 }
+                            else if mosaic_tiles <= 6400 { 96 }
+                            else { 48 };
+                        (edge, edge)
+                    }
+                    Style::PicturePile => (1920, 1280),
+                    _ => (2560, 1600),
+                };
+                let started = Instant::now();
+                let decoded = decode_original(photo, dimensions, &cancelled);
+                if cancelled.load(Ordering::Relaxed) { break; }
+                if std::env::var_os("PIC_SCREENSAVER_TRACE").is_some() {
+                    eprintln!(
+                        "PIC_SCREEN decode kind=original network={is_remote} index={index} ok={} ms={}",
+                        decoded.is_ok(), started.elapsed().as_millis(),
+                    );
+                }
+                if let Err(error) = &decoded {
+                    eprintln!("PIC screensaver: original unavailable {}: {error}", photo.path);
+                }
+                if results.send(ImageResult {
+                    index,
+                    high_quality: true,
+                    pixels: decoded.ok(),
+                }).is_err() { break; }
+            }
+        });
+    }
+
+    // The preview worker never opens an original or tests an NFS mount.
+    // It can still fill the photo wall when the network decoder is stalled.
     std::thread::spawn(move || {
         while let Ok(index) = requests.recv() {
-            if cancelled.load(Ordering::Relaxed) {
-                break;
-            }
-            let Some(photo) = slides.get(index) else { continue };
-            let recipe = edit::EditRecipe::decode(&photo.edit_recipe);
-            // Decode at screen resolution first: a mosaic must never settle on
-            // an upscaled 160–400px gallery thumbnail. No GTK work on this thread.
-            // Maintain crisp tiles without allocating dozens of 2K textures
-            // when the user selects a dense square mosaic.
-            let dimensions = match style {
-                Style::Mosaic => {
-                    // Decode close to the tile resolution at high counts,
-                    // rather than keeping hundreds of full-resolution images.
-                    let edge = if mosaic_tiles <= 6 { 1536 }
-                        else if mosaic_tiles <= 12 { 1152 }
-                        else if mosaic_tiles <= 30 { 896 }
-                        else if mosaic_tiles <= 100 { 640 }
-                        else if mosaic_tiles <= 400 { 384 }
-                        else if mosaic_tiles <= 1600 { 192 }
-                        else if mosaic_tiles <= 6400 { 96 }
-                        else { 48 };
-                    (edge, edge)
-                }
-                Style::PicturePile => (1920, 1280),
-                _ => (2560, 1600),
-            };
-            // Reuse the lightbox decoder's cancellation checkpoints. This is
-            // important for remote/NFS images: closing the window must not
-            // leave the worker decoding an entire queued slideshow.
-            let rendered = (|| -> anyhow::Result<image::RgbaImage> {
-                let decoded = thumbnail::decode_for_viewer_with_cancel(
-                    &photo.path, dimensions.0, dimensions.1, None,
-                    || cancelled.load(Ordering::Relaxed),
-                )?;
-                anyhow::ensure!(
-                    !cancelled.load(Ordering::Relaxed),
-                    "screensaver decode cancelled",
+            if cancelled.load(Ordering::Relaxed) { break; }
+            let Some(photo) = slides.get(index) else { continue; };
+            let started = Instant::now();
+            let cached = decode_cached_preview(photo);
+            if cancelled.load(Ordering::Relaxed) { break; }
+            if std::env::var_os("PIC_SCREENSAVER_TRACE").is_some() {
+                eprintln!(
+                    "PIC_SCREEN decode kind=cache index={index} hit={} ms={}",
+                    cached.is_some(), started.elapsed().as_millis(),
                 );
-                Ok(edit::render::apply_recipe(
-                    edit::render::apply_library_rotation(decoded, photo.rotation),
-                    &recipe,
-                ))
-            })();
-            if cancelled.load(Ordering::Relaxed) {
-                break;
             }
-            match rendered {
-                Ok(image) => {
-                    if results.send(ImageResult {
-                        index, high_quality: true, pixels: Some(texture_pixels(image)),
-                    }).is_err() {
-                        break;
-                    }
-                }
-                Err(error) => {
-                    // Original is offline or cannot be decoded: cached previews
-                    // are preferable to missing a photograph altogether.
-                    let fallback = thumbnail::existing_cache_path(
-                        &photo.path, photo.mtime, photo.size_bytes,
-                    ).ok().flatten().and_then(|path| path.to_str().map(str::to_owned))
-                        .and_then(|path| edit::render::render_thumbnail(
-                            &path, photo.rotation, &recipe,
-                        ).ok());
-                    if cancelled.load(Ordering::Relaxed) {
-                        break;
-                    }
-                    if fallback.is_none() {
-                        eprintln!("PIC screensaver: cannot decode {}: {error}", photo.path);
-                    }
-                    if results.send(ImageResult {
-                        index, high_quality: false, pixels: fallback.map(texture_pixels),
-                    }).is_err() {
-                        break;
-                    }
-                }
+            if results.send(ImageResult {
+                index, high_quality: false, pixels: cached,
+            }).is_err() { break; }
+
+            // Source access never delays preview decoding. If the share is
+            // known offline from an earlier probe, retain the cached JPEG.
+            if !crate::source::cached_file_available(&photo.path) { continue; }
+            if photo.path.contains("://") {
+                let _ = remote_tx.send(index);
+            } else {
+                let _ = local_tx.send(index);
             }
         }
     });
@@ -584,14 +612,21 @@ impl Player {
                 self.request((self.current + i) % self.count, tx);
             }
         } else {
-            // Avoid cloning and scanning every Mosaic tile at each frame,
-            // which becomes costly when the user selects thousands of tiles.
-            // Incrementally queue a small batch of initial visible photos.
-            if !self.slots.is_empty() {
-                for _ in 0..32.min(self.slots.len()) {
-                    let index = self.slots[self.preload_cursor % self.slots.len()];
+            // Queue every original tile once, then look for locally cached
+            // substitutes if network-only originals cannot be decoded.
+            // Work stays bounded per GTK frame for very large mosaics.
+            if self.preload_cursor < self.slots.len() {
+                let end = (self.preload_cursor + 24).min(self.slots.len());
+                for slot in self.preload_cursor..end {
+                    self.request(self.slots[slot], tx);
+                }
+                self.preload_cursor = end;
+            } else if self.slots.iter().any(|id| !self.frames.contains_key(id)) {
+                // Cache scans are cheap and never touch the remote shares.
+                for _ in 0..16.min(self.count) {
+                    let candidate = self.preload_cursor % self.count;
                     self.preload_cursor = self.preload_cursor.wrapping_add(1);
-                    self.request(index, tx);
+                    self.request(candidate, tx);
                 }
             }
             for i in 0..PREFETCH {
@@ -601,7 +636,12 @@ impl Player {
     }
     fn receive(&mut self, result: ImageResult) {
         let Some(pixels) = result.pixels else {
-            self.failed.insert(result.index);
+            // A missing local preview isn't a failed photo: the independent
+            // original worker may still succeed. Only a failed original with
+            // no usable preview is considered unavailable.
+            if result.high_quality && !self.frames.contains_key(&result.index) {
+                self.failed.insert(result.index);
+            }
             return;
         };
         if self.frames.get(&result.index).is_some_and(|f| f.high_quality && !result.high_quality) {
@@ -617,6 +657,17 @@ impl Player {
             texture, high_quality: result.high_quality,
             revision: self.next_revision,
         });
+        self.failed.remove(&result.index);
+        if self.style != Style::IPhoto && !self.slots.contains(&result.index) {
+            // Replace a blank tile with the next successfully decoded image.
+            // This also handles the case where the original is offline but
+            // another photo in the library has a cached preview.
+            if let Some(blank_slot) = self.slots.iter().position(|id| {
+                !self.frames.contains_key(id)
+            }) {
+                self.slots[blank_slot] = result.index;
+            }
+        }
         self.order.retain(|index| *index != result.index);
         self.order.push_back(result.index);
         // Preserve every active tile plus a small prefetch margin.
@@ -672,6 +723,10 @@ impl Player {
         } else {
             for _ in 0..self.count {
                 let index = self.next % self.count;
+                if self.slots.contains(&index) {
+                    self.next = (index + 1) % self.count;
+                    continue;
+                }
                 if self.available(index) {
                     let step = self.changes % self.tile_order.len().max(1);
                     if self.shuffle_tiles && step == 0 && self.changes > 0 {

@@ -637,6 +637,12 @@ impl Player {
         self.frames.contains_key(&index)
     }
     fn update(&mut self, tx: &Sender<usize>) {
+        // Do not keep an obsolete outgoing image/slot alive after its fade.
+        // This also allows the LRU to release old GPU textures.
+        if self.progress() >= 1.0 {
+            self.previous = None;
+            self.fading_slot = None;
+        }
         self.prefetch(tx);
         if self.count == 0 || self.switched_at.elapsed() < self.interval {
             return;
@@ -704,13 +710,11 @@ fn smootherstep(t: f64) -> f64 {
 }
 
 fn cinematic_motion(_index: usize, progress: f64) -> (f64, f64) {
-    // A gentle zoom-in throughout every slide. Never alternate zoom-out,
-    // pan direction, or position (the oscillation felt like a pendulum).
-    // Keep the complete image within a single monitor at every frame.
-    // Zoom in towards 1:1 fit rather than enlarging the widget past the
-    // fullscreen viewport (which expanded the Wayland window geometry).
-    let zoom = 0.965 + smootherstep(progress) * 0.035;
-    (zoom, 0.0)
+    // Camera-like push-in with a subtle consistent upward drift.
+    // Motion is applied to the picture's GPU render node, not its widget
+    // geometry. The image remains clipped to a fixed single-monitor frame.
+    let eased = smootherstep(progress.clamp(0.0, 1.0));
+    (1.005 + 0.045 * eased, 0.35 - 0.70 * eased)
 }
 
 fn start_screensaver(parent: &adw::ApplicationWindow, slides: Vec<Slide>, prefs: Preferences) {
@@ -885,22 +889,19 @@ mod tests {
         assert_eq!(values, (0..100).collect::<Vec<_>>());
     }
     #[test]
-    fn cinematic_fit_stays_inside_window_bounds() {
-        for index in 0..8 {
+    fn cinematic_motion_pushes_in_without_direction_reversal() {
+        for photo_index in 0..8 {
+            let mut last_zoom = 0.0;
+            let mut last_vertical = f64::INFINITY;
             for step in 0..=100 {
-                let (zoom, _) = cinematic_motion(index, step as f64 / 100.0);
-                assert!((0.965..=1.0).contains(&zoom), "zoom escaped viewport: {zoom}");
+                let (zoom, drift) = cinematic_motion(photo_index, step as f64 / 100.0);
+                assert!((1.005..=1.05 + 1e-10).contains(&zoom));
+                assert!(zoom >= last_zoom);
+                assert!(drift <= last_vertical);
+                assert!(drift.abs() <= 0.36);
+                last_zoom = zoom;
+                last_vertical = drift;
             }
-        }
-    }
-    #[test]
-    fn cinematic_motion_always_zoom_in_without_lateral_shift() {
-        for index in 0..8 {
-            let (first_zoom, first_pan) = cinematic_motion(index, 0.0);
-            let (last_zoom, last_pan) = cinematic_motion(index, 1.0);
-            assert!(last_zoom > first_zoom);
-            assert_eq!(first_pan, 0.0);
-            assert_eq!(last_pan, 0.0);
         }
         assert_eq!(smootherstep(0.0), 0.0);
         assert_eq!(smootherstep(1.0), 1.0);

@@ -1,7 +1,7 @@
 //! Photo screensaver: a Picasa-inspired mosaic/picture pile and an iPhoto-inspired
 //! cinematic slideshow. Decode/rendering runs off the GTK thread. All original
 //! images and non-destructive edits remain untouched.
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::rc::Rc;
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -308,7 +308,7 @@ struct ImageResult {
 }
 fn cairo_pixels(image: image::RgbaImage) -> Pixels {
     let (width, height) = image.dimensions();
-    let mut data = Vec::with_capacity(image.len());
+    let mut data = Vec::with_capacity(image.as_raw().len());
     // Cairo ARgb32 native-endian premultiplied pixels (BGRA on little-endian).
     for rgba in image.pixels() {
         let a = u16::from(rgba[3]);

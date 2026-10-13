@@ -859,12 +859,18 @@ pub fn build(
                     let picture_scroll = picture_scroll.clone();
                     let canvas_zoom = canvas_zoom.clone();
                     let pending_one_to_one_anchor = pending_one_to_one_anchor.clone();
+                    let native_one_to_one = native_one_to_one.clone();
                     let crop_overlay = crop_overlay.clone();
                     let overlay_layer = overlay_layer.clone();
                     glib::timeout_add_local(Duration::from_millis(25), move || {
                         match receiver.try_recv() {
                             Ok(result) => {
-                                if generation.get() != current_generation {
+                                // A pending native refinement must never put
+                                // the canvas back into 1:1 after the user
+                                // presses Fit while the worker is rendering.
+                                if generation.get() != current_generation
+                                    || native_one_to_one.get() != native
+                                {
                                     return glib::ControlFlow::Break;
                                 }
                                 if !interactive {

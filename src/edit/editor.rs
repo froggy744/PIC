@@ -641,6 +641,8 @@ pub fn build(
     tools_box.append(&detail_box);
 
     let sharpen = add_slider(&detail_box, "Sharpen", 0.0, 1.0, 0.02, 2);
+    let clarity = add_slider(&detail_box, "Clarity", -1.0, 1.0, 0.02, 2);
+    let grain = add_slider(&detail_box, "Grain", 0.0, 1.0, 0.02, 2);
 
     let controls = Controls {
         straighten,
@@ -652,6 +654,8 @@ pub fn build(
         temperature,
         saturation,
         sharpen,
+        clarity,
+        grain,
         auto_contrast,
         auto_color,
         black_white,
@@ -708,6 +712,8 @@ pub fn build(
         &controls.temperature,
         &controls.saturation,
         &controls.sharpen,
+        &controls.clarity,
+        &controls.grain,
     ] {
         configure_scale_scroll(scale, &tools_scroll);
     }
@@ -1041,6 +1047,22 @@ pub fn build(
         queue_preview.clone(),
         update_history_buttons.clone(),
         |r, v| r.sharpen = v,
+    );
+    connect_scale(
+        &controls.clarity,
+        session.clone(),
+        syncing.clone(),
+        queue_preview.clone(),
+        update_history_buttons.clone(),
+        |r, v| r.clarity = v,
+    );
+    connect_scale(
+        &controls.grain,
+        session.clone(),
+        syncing.clone(),
+        queue_preview.clone(),
+        update_history_buttons.clone(),
+        |r, v| r.grain = v,
     );
 
     connect_toggle(

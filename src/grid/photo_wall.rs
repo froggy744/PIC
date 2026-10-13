@@ -525,6 +525,13 @@ impl Gallery {
         if width == self.tile_width.get() {
             return;
         }
+        if std::env::var_os("PICASA_TRACE").is_some() {
+            eprintln!(
+                "PIC_ZOOM_ANIM status=skipped mode={} reason=wall_geometry_path from={} to={} setting={}",
+                if self.layout() == PhotoLayout::Masonry { "masonry" } else { "photo_wall" },
+                self.tile_width.get(), width, self.zoom_animations_enabled.get(),
+            );
+        }
         let anchor = self.capture_view_anchor();
         self.sectioned_folder.cancel_scroll_animation();
         self.auto_default_zoom.set(false);

@@ -369,10 +369,17 @@
     screensaver.set_tooltip_text(Some("Photo screensaver · Picasa & iPhoto"));
     screensaver.add_css_class("flat");
     header_tools.append(&screensaver);
-    let parent_for_screensaver = window.clone();
+    let parent_for_screensaver = window.downgrade();
     let connection_for_screensaver = connection.clone();
+    let gallery_for_screensaver = gallery.clone();
     screensaver.connect_clicked(move |_| {
-        crate::screensaver::open(&parent_for_screensaver, connection_for_screensaver.clone());
+        if let Some(window) = parent_for_screensaver.upgrade() {
+            // Take a snapshot when Play is pressed, not when the toolbar is
+            // created. Preserve the actual selection without silently adding
+            // the most recently activated photo as a fallback.
+            let ids = gallery_for_screensaver.selected_photo_ids(None);
+            crate::screensaver::open(&window, connection_for_screensaver.clone(), ids);
+        }
     });
     right_header.pack_end(&header_tools);
 

@@ -25,49 +25,77 @@ const SHUFFLE_TILES_KEY: &str = "screensaver-shuffle-tiles";
 const MOSAIC_TILES_KEY: &str = "screensaver-mosaic-tiles";
 const PICASA_TRANSITION_KEY: &str = "screensaver-picasa-transition";
 const DEFAULT_MOSAIC_TILES: usize = 6;
-const PICTURE_PILE_SLOTS: usize = 6;
+const PICTURE_PILE_SLOTS: usize = 5;
+const FLOATING_SLOTS: usize = 6;
+const TRANSITION_KEY: &str = "screensaver-transition-ms";
+const CAPTION_KEY: &str = "screensaver-captions";
 const PREFETCH: usize = 3;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Style { Mosaic, PicturePile, IPhoto, Surprise }
+enum Style { Mosaic, Grid, PicturePile, Floating, IPhoto, Fade, Surprise }
 impl Style {
+    const CHOICES: [Self; 7] = [
+        Self::Mosaic, Self::Grid, Self::PicturePile, Self::Floating,
+        Self::IPhoto, Self::Fade, Self::Surprise,
+    ];
     fn from_saved(v: &str) -> Self {
-        match v { "pile" => Self::PicturePile, "iphoto" => Self::IPhoto,
-            "surprise" => Self::Surprise, _ => Self::Mosaic }
+        match v {
+            "grid" => Self::Grid,
+            "pile" => Self::PicturePile,
+            "floating" => Self::Floating,
+            "iphoto" => Self::IPhoto,
+            "fade" => Self::Fade,
+            "surprise" => Self::Surprise,
+            _ => Self::Mosaic,
+        }
     }
     fn key(self) -> &'static str {
-        match self { Self::Mosaic => "mosaic", Self::PicturePile => "pile",
-            Self::IPhoto => "iphoto", Self::Surprise => "surprise" }
+        match self {
+            Self::Mosaic => "mosaic", Self::Grid => "grid",
+            Self::PicturePile => "pile", Self::Floating => "floating",
+            Self::IPhoto => "iphoto", Self::Fade => "fade",
+            Self::Surprise => "surprise",
+        }
     }
     fn dropdown_index(self) -> u32 {
-        match self { Self::Mosaic => 0, Self::PicturePile => 1,
-            Self::IPhoto => 2, Self::Surprise => 3 }
+        Self::CHOICES.iter().position(|style| *style == self).unwrap_or(0) as u32
     }
     fn resolved(self) -> Self {
         if self != Self::Surprise { return self; }
-        match random_seed() % 3 { 0 => Self::Mosaic, 1 => Self::PicturePile, _ => Self::IPhoto }
+        Self::CHOICES[(random_seed() as usize % (Self::CHOICES.len() - 1))]
     }
+    fn single_photo(self) -> bool { matches!(self, Self::IPhoto | Self::Fade) }
+    fn configurable_tiles(self) -> bool { matches!(self, Self::Mosaic | Self::Grid | Self::Surprise) }
     fn label(self) -> &'static str {
         match self {
             Self::Mosaic => "Mosaic",
+            Self::Grid => "Changing Grid",
             Self::PicturePile => "Picture Pile",
+            Self::Floating => "Floating Prints",
             Self::IPhoto => "Ken Burns",
+            Self::Fade => "Fullscreen Fade",
             Self::Surprise => "Surprise Me",
         }
     }
     fn subtitle(self) -> &'static str {
         match self {
-            Self::Mosaic => "Tiled photo wall",
-            Self::PicturePile => "Scattered photo prints",
-            Self::IPhoto => "Slow pan and zoom",
-            Self::Surprise => "Random style each time",
+            Self::Mosaic => "Square Picasa photo wall",
+            Self::Grid => "Full-screen tiled gallery",
+            Self::PicturePile => "Layered scrapbook photographs",
+            Self::Floating => "Scattered framed pictures",
+            Self::IPhoto => "Cinematic pan and zoom",
+            Self::Fade => "Gentle full-screen slideshow",
+            Self::Surprise => "Random style on launch",
         }
     }
     fn icon(self) -> &'static str {
         match self {
             Self::Mosaic => "view-grid-symbolic",
+            Self::Grid => "view-grid-symbolic",
             Self::PicturePile => "view-paged-symbolic",
+            Self::Floating => "image-x-generic-symbolic",
             Self::IPhoto => "image-x-generic-symbolic",
+            Self::Fade => "view-fullscreen-symbolic",
             Self::Surprise => "media-playlist-shuffle-symbolic",
         }
     }
@@ -154,6 +182,8 @@ struct Preferences {
     shuffle_tiles: bool,
     mosaic_tiles: usize,
     picasa_transition: PicasaTransition,
+    transition_ms: u32,
+    captions: bool,
 }
 impl Preferences {
     fn load(connection: &Connection) -> Self {
@@ -167,6 +197,8 @@ impl Preferences {
             mosaic_tiles: setting(MOSAIC_TILES_KEY).parse::<usize>()
                 .ok().filter(|count| *count > 0).unwrap_or(DEFAULT_MOSAIC_TILES),
             picasa_transition: PicasaTransition::from_saved(&setting(PICASA_TRANSITION_KEY)),
+            transition_ms: setting(TRANSITION_KEY).parse::<u32>().unwrap_or(900).clamp(200, 2500),
+            captions: setting(CAPTION_KEY) == "true",
         }
     }
     fn save(&self, connection: &Connection) {
@@ -178,6 +210,8 @@ impl Preferences {
             (SHUFFLE_TILES_KEY, self.shuffle_tiles.to_string()),
             (MOSAIC_TILES_KEY, self.mosaic_tiles.to_string()),
             (PICASA_TRANSITION_KEY, self.picasa_transition.key().to_string()),
+            (TRANSITION_KEY, self.transition_ms.to_string()),
+            (CAPTION_KEY, self.captions.to_string()),
         ] {
             if let Err(error) = db::set_setting(connection, key, &value) {
                 eprintln!("PIC screensaver: could not save {key}: {error}");
@@ -193,6 +227,7 @@ struct Slide {
     size_bytes: Option<i64>,
     rotation: i32,
     edit_recipe: String,
+    caption: String,
 }
 impl From<db::Photo> for Slide {
     fn from(photo: db::Photo) -> Self {
@@ -202,6 +237,12 @@ impl From<db::Photo> for Slide {
             size_bytes: photo.size_bytes,
             rotation: photo.rotation,
             edit_recipe: photo.edit_recipe,
+            caption: {
+                let filename = crate::source::filename(&photo.path);
+                let date = photo.taken_at.as_deref().unwrap_or_default();
+                let date = date.get(..10).unwrap_or(date);
+                if date.is_empty() { filename } else { format!("{filename}  ·  {date}") }
+            },
         }
     }
 }
@@ -330,7 +371,7 @@ fn style_picker(initial: Style, on_change: impl Fn(Style) + 'static)
     options.set_margin_end(5);
     let checks: Rc<RefCell<Vec<gtk::Image>>> = Rc::new(RefCell::new(Vec::new()));
     let on_change: Rc<dyn Fn(Style)> = Rc::new(on_change);
-    for candidate in [Style::Mosaic, Style::PicturePile, Style::IPhoto, Style::Surprise] {
+    for candidate in Style::CHOICES {
         let option = gtk::Button::new();
         option.add_css_class("flat");
         option.set_tooltip_text(Some(candidate.subtitle()));
@@ -378,7 +419,12 @@ fn style_picker(initial: Style, on_change: impl Fn(Style) + 'static)
         });
         options.append(&option);
     }
-    popover.set_child(Some(&options));
+    let scroller = gtk::ScrolledWindow::new();
+    scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+    scroller.set_min_content_height(260);
+    scroller.set_max_content_height(420);
+    scroller.set_child(Some(&options));
+    popover.set_child(Some(&scroller));
     menu.set_popover(Some(&popover));
     (menu, chosen)
 }
@@ -452,13 +498,13 @@ pub fn open(parent: &adw::ApplicationWindow, connection: Rc<RefCell<Connection>>
     let mosaic_for_style = mosaic_tiles.clone();
     let shuffle_for_style = shuffle_tiles_button.clone();
     let (style_picker, style_selected) = style_picker(current.style, move |style| {
-        transition_for_style.set_sensitive(style != Style::IPhoto);
-        mosaic_for_style.set_sensitive(matches!(style, Style::Mosaic | Style::Surprise));
-        shuffle_for_style.set_sensitive(style != Style::IPhoto);
+        transition_for_style.set_sensitive(!style.single_photo());
+        mosaic_for_style.set_sensitive(style.configurable_tiles());
+        shuffle_for_style.set_sensitive(!style.single_photo());
     });
-    picasa_transition.set_sensitive(current.style != Style::IPhoto);
-    mosaic_tiles.set_sensitive(matches!(current.style, Style::Mosaic | Style::Surprise));
-    shuffle_tiles_button.set_sensitive(current.style != Style::IPhoto);
+    picasa_transition.set_sensitive(!current.style.single_photo());
+    mosaic_tiles.set_sensitive(current.style.configurable_tiles());
+    shuffle_tiles_button.set_sensitive(!current.style.single_photo());
     body.append(&field("Style", &style_picker));
 
     let source_names: Vec<String> = sources.iter().map(|(name, _)| name.clone()).collect();

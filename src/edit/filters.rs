@@ -22,10 +22,12 @@ pub enum FilterPreset {
     DreamGlow,
     Cinematic,
     GoldenHour,
+    OldPhoto,
+    Newspaper,
 }
 
 impl FilterPreset {
-    pub const ALL: [FilterPreset; 12] = [
+    pub const ALL: [FilterPreset; 14] = [
         FilterPreset::Clarendon,
         FilterPreset::Gingham,
         FilterPreset::Juno,
@@ -38,6 +40,8 @@ impl FilterPreset {
         Self::DreamGlow,
         Self::Cinematic,
         Self::GoldenHour,
+        Self::OldPhoto,
+        Self::Newspaper,
     ];
 
     pub fn label(self) -> &'static str {
@@ -55,6 +59,8 @@ impl FilterPreset {
             Self::DreamGlow => "Dream Glow",
             Self::Cinematic => "Cinematic",
             Self::GoldenHour => "Golden Hour",
+            Self::OldPhoto => "Old Photo",
+            Self::Newspaper => "Newspaper",
         }
     }
 
@@ -73,6 +79,8 @@ impl FilterPreset {
             Self::DreamGlow => "dream_glow",
             Self::Cinematic => "cinematic",
             Self::GoldenHour => "golden_hour",
+            Self::OldPhoto => "old_photo",
+            Self::Newspaper => "newspaper",
         }
     }
 
@@ -90,6 +98,8 @@ impl FilterPreset {
             "dream_glow" => Self::DreamGlow,
             "cinematic" => Self::Cinematic,
             "golden_hour" => Self::GoldenHour,
+            "old_photo" => Self::OldPhoto,
+            "newspaper" => Self::Newspaper,
             _ => Self::None,
         }
     }
@@ -224,7 +234,18 @@ fn params(preset: FilterPreset) -> FilterParams {
             contrast: 0.06,
             ..params(FilterPreset::None)
         },
-        FilterPreset::None | FilterPreset::PencilSketch => FilterParams {
+        FilterPreset::OldPhoto => FilterParams {
+            exposure: 1.04,
+            shadow_lift: 0.09,
+            tint: (1.10, 1.035, 0.88),
+            shadow_tone: (1.03, 0.97, 0.83),
+            highlight_tone: (1.08, 1.03, 0.89),
+            split_strength: 0.42,
+            saturation: 0.34,
+            contrast: -0.20,
+            vignette: 0.24,
+        },
+        FilterPreset::None | FilterPreset::PencilSketch | FilterPreset::Newspaper => FilterParams {
             exposure: 1.0,
             shadow_lift: 0.0,
             tint: (1.0, 1.0, 1.0),
@@ -247,6 +268,10 @@ pub fn apply_filter(image: &mut RgbaImage, preset: FilterPreset) {
     }
     if preset == FilterPreset::PencilSketch {
         apply_pencil_sketch(image);
+        return;
+    }
+    if preset == FilterPreset::Newspaper {
+        apply_newspaper(image);
         return;
     }
     let p = params(preset);
@@ -302,6 +327,7 @@ pub fn apply_filter(image: &mut RgbaImage, preset: FilterPreset) {
         FilterPreset::DisposableFilm => apply_grain(image, 0.035),
         FilterPreset::DigicamFlash => apply_grain(image, 0.012),
         FilterPreset::DreamGlow => apply_glow(image),
+        FilterPreset::OldPhoto => apply_grain(image, 0.075),
         _ => {}
     }
 }
@@ -330,8 +356,35 @@ fn apply_pencil_sketch(image: &mut RgbaImage) {
     }
 }
 
+/// Vintage press look: warm, lightly mottled newsprint with an ordered
+/// 4x4 halftone screen. The Bayer pattern is deterministic for previews,
+/// exports and repeated edits (no random noise or shifting frame-to-frame).
+fn apply_newspaper(image: &mut RgbaImage) {
+    const BAYER: [[u8; 4]; 4] = [
+        [0, 8, 2, 10],
+        [12, 4, 14, 6],
+        [3, 11, 1, 9],
+        [15, 7, 13, 5],
+    ];
+    for (x, y, pixel) in image.enumerate_pixels_mut() {
+        if pixel[3] == 0 {
+            continue;
+        }
+        let gray = (0.2126 * pixel[0] as f32
+            + 0.7152 * pixel[1] as f32 + 0.0722 * pixel[2] as f32) / 255.0;
+        let ink_coverage = (1.0 - gray).clamp(0.0, 1.0).powf(0.83);
+        let threshold = (BAYER[(y % 4) as usize][(x % 4) as usize] as f32 + 0.5) / 16.0;
+        let ink = ink_coverage >= threshold;
+        let paper = [231_u8, 220, 196];
+        let print = [36_u8, 34, 31];
+        for c in 0..3 {
+            pixel[c] = if ink { print[c] } else { paper[c] };
+        }
+    }
+}
+
 /// Fixed coordinate noise keeps redraws deterministic (no preview flicker).
-fn apply_grain(image: &mut RgbaImage, strength: f32) {
+pub(crate) fn apply_grain(image: &mut RgbaImage, strength: f32) {
     for (x, y, pixel) in image.enumerate_pixels_mut() {
         let mut hash = x.wrapping_mul(374761393) ^ y.wrapping_mul(668265263) ^ 0x9e3779b9;
         hash = (hash ^ (hash >> 13)).wrapping_mul(1274126177);

@@ -741,7 +741,7 @@ fn start_decode_worker(
                 if cancelled.load(Ordering::Relaxed) { break; }
                 let Some(photo) = slides.get(index) else { continue; };
                 let dimensions = match style {
-                    Style::Mosaic => {
+                    Style::Mosaic | Style::Grid => {
                         let edge = if mosaic_tiles <= 6 { 1536 }
                             else if mosaic_tiles <= 12 { 1152 }
                             else if mosaic_tiles <= 30 { 896 }
@@ -1121,6 +1121,10 @@ fn start_screensaver(parent: &adw::ApplicationWindow, slides: Vec<Slide>, prefs:
     let player = Rc::new(RefCell::new(Player::new(
         style, slides.len(), prefs.seconds, prefs.shuffle_tiles, prefs.mosaic_tiles,
     )));
+    player.borrow_mut().transition =
+        Duration::from_millis(prefs.transition_ms.clamp(200, 2500) as u64);
+    // Captions use catalog metadata and path basenames, never original EXIF.
+    let captions: Vec<String> = slides.iter().map(|slide| slide.caption.clone()).collect();
     let (request_tx, request_rx) = mpsc::channel::<usize>();
     // Bound decoded-frame buffering. Unbounded RGBA frames could consume
     // hundreds of MB while GTK was busy rendering/closing.
@@ -1144,7 +1148,19 @@ fn start_screensaver(parent: &adw::ApplicationWindow, slides: Vec<Slide>, prefs:
         style, player.borrow().slots.len(), prefs.picasa_transition,
     )));
     stage.borrow().root.set_focusable(true);
-    screen.set_child(Some(&stage.borrow().root));
+    let stage_overlay = gtk::Overlay::new();
+    stage_overlay.set_child(Some(&stage.borrow().root));
+    let caption = gtk::Label::new(None);
+    caption.add_css_class("screensaver-caption");
+    caption.set_halign(gtk::Align::Center);
+    caption.set_valign(gtk::Align::End);
+    caption.set_margin_bottom(26);
+    caption.set_margin_start(18);
+    caption.set_margin_end(18);
+    caption.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+    caption.set_visible(false);
+    stage_overlay.add_overlay(&caption);
+    screen.set_child(Some(&stage_overlay));
 
     // Controller callbacks must not own the window they are attached to:
     // a strong GtkWindow reference creates a cycle and leaves PIC waiting
@@ -1168,8 +1184,16 @@ fn start_screensaver(parent: &adw::ApplicationWindow, slides: Vec<Slide>, prefs:
     });
     let keys = gtk::EventControllerKey::new();
     let close_for_keys = request_exit.clone();
-    keys.connect_key_pressed(move |_, _, _, _| {
-        close_for_keys();
+    let play_for_keys = Rc::clone(&player);
+    keys.connect_key_pressed(move |_, key, _, _| {
+        if matches!(key, gtk::gdk::Key::space | gtk::gdk::Key::p | gtk::gdk::Key::P) {
+            let paused = play_for_keys.borrow_mut().pause_or_resume();
+            if std::env::var_os("PIC_SCREENSAVER_TRACE").is_some() {
+                eprintln!("PIC_SCREEN playback paused={paused}");
+            }
+        } else {
+            close_for_keys();
+        }
         glib::Propagation::Stop
     });
     screen.add_controller(keys);
@@ -1207,6 +1231,7 @@ fn start_screensaver(parent: &adw::ApplicationWindow, slides: Vec<Slide>, prefs:
         glib::Propagation::Proceed
     });
     let weak_screen = screen.downgrade();
+    let mut caption_last: Option<usize> = None;
     // The GTK frame clock drives composited fades at the display refresh
     // rate. A 50ms GLib timer was limited to ~20fps and caused visible steps.
     // The callback is owned by the fullscreen widget and naturally stops
@@ -1229,6 +1254,21 @@ fn start_screensaver(parent: &adw::ApplicationWindow, slides: Vec<Slide>, prefs:
             }
             player.update(&request_tx);
             stage.borrow_mut().sync(&player);
+            if prefs.captions {
+                // For a wall, show the newest tile's label; for fullscreen,
+                // show the current single photograph.
+                let active_id = if style.single_photo() { Some(player.current) }
+                    else { player.fading_slot.map(|(slot, _)| player.slots[slot]) };
+                if active_id != caption_last {
+                    caption_last = active_id;
+                    if let Some(text) = active_id.and_then(|id| captions.get(id)) {
+                        caption.set_label(text);
+                        caption.set_visible(true);
+                    } else {
+                        caption.set_visible(false);
+                    }
+                }
+            }
         }
         glib::ControlFlow::Continue
     });

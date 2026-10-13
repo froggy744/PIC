@@ -2041,9 +2041,31 @@ impl Lightbox {
         });
     }
     /// Re-decode the visible photo after presentation metadata such as the
-    /// user's rotation changes. The current full image stays in place until
-    /// its correctly rotated replacement is ready.
+    /// user's rotation changes. Geometry updates use the normal fit path.
     pub fn refresh_current(&self) {
+        self.refresh_current_with_geometry(false);
+    }
+
+    /// Called after applying a new edit recipe (not a rotation). In 1:1,
+    /// preserve the current pan when the edited native dimensions match
+    /// the displayed canvas; applying a filter must not jump to the centre.
+    pub fn refresh_current_after_edit(&self) {
+        let preserve = if self.zoom.get() < 0.0 {
+            self.photos.borrow().get(self.index.get()).is_some_and(|photo| {
+                let (w, h) = presentation_native_dimensions(photo);
+                let (request_w, request_h) = self.picture.size_request();
+                w > 0 && h > 0 && (w - i64::from(request_w)).abs() <= 1
+                    && (h - i64::from(request_h)).abs() <= 1
+            })
+        } else {
+            // For manual zoom, unchanged geometry should already be retained
+            // in show_photo (fit_geometry_fixed=true).
+            true
+        };
+        self.refresh_current_with_geometry(preserve);
+    }
+
+    fn refresh_current_with_geometry(&self, preserve_geometry: bool) {
         if !self.root.is_visible() || self.photos.borrow().is_empty() {
             return;
         }
@@ -2061,7 +2083,7 @@ impl Lightbox {
             &self.picture_viewport,
             self.native_texture.clone(),
             self.display_texture_cache.clone(),
-            false,
+            preserve_geometry,
             false,
             None,
             None,

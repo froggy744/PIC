@@ -6,6 +6,7 @@ use super::*;
 // 60 steps with per-frame CSS transform interpolation gives a smooth
 // GSK-composited flip without creating new thumbnails or touching the layout.
 const FLIP_STEPS: usize = 60;
+const KEN_STEPS: usize = 240;
 
 fn present(picture: &gtk::Picture, slot: &mut Option<(usize, u64)>,
            index: usize, player: &Player) -> bool {
@@ -115,6 +116,8 @@ impl Tile {
     }
 }
 
+/// Cinematic player uses two stable, full-viewport frames. Picture content
+/// moves only through GPU compositor CSS transforms, not GtkFixed geometry.
 struct Cinema {
     back_frame: gtk::Overlay,
     front_frame: gtk::Overlay,
@@ -122,6 +125,8 @@ struct Cinema {
     front: gtk::Picture,
     back_version: Option<(usize, u64)>,
     front_version: Option<(usize, u64)>,
+    back_motion_step: Option<usize>,
+    front_motion_step: Option<usize>,
 }
 impl Cinema {
     fn new(root: &gtk::Fixed) -> Self {
@@ -135,11 +140,9 @@ impl Cinema {
             picture.set_vexpand(true);
             picture.set_can_shrink(true);
         }
-        // Crossfade COMPLETE frames, including their letterbox background.
-        // Fading only the photograph leaves the previous photo visible in the
-        // margins until the final frame, producing a sudden apparent cut.
         for frame in [&back_frame, &front_frame] {
             frame.add_css_class("screensaver-cinema-frame");
+            frame.set_overflow(gtk::Overflow::Hidden);
         }
         back_frame.set_child(Some(&back));
         front_frame.set_child(Some(&front));
@@ -149,57 +152,60 @@ impl Cinema {
         Self {
             back_frame, front_frame, back, front,
             back_version: None, front_version: None,
+            back_motion_step: None, front_motion_step: None,
         }
     }
-    fn place(root: &gtk::Fixed, frame: &gtk::Overlay, w: f64, h: f64, zoom: f64) {
-        // Never request a child bigger than the actual fullscreen viewport.
-        // Otherwise GtkFixed propagates its enlarged natural size back to the
-        // toplevel, which can cause a fullscreen Wayland surface to expand
-        // across adjacent monitors. Zoom within 96.5–100% instead.
-        let zoom = zoom.clamp(0.965, 1.0);
-        let width = (w * zoom).round() as i32;
-        let height = (h * zoom).round() as i32;
-        if frame.width_request() != width || frame.height_request() != height {
-            frame.set_size_request(width, height);
+    fn stable_viewport(root: &gtk::Fixed, frame: &gtk::Overlay, w: f64, h: f64) {
+        // Do this only when the monitor resolution itself changes; never
+        // resize a photo container as part of the Ken Burns motion.
+        let iw = w.round() as i32;
+        let ih = h.round() as i32;
+        if frame.width_request() != iw || frame.height_request() != ih {
+            frame.set_size_request(iw, ih);
         }
-        let x = (w - width as f64) / 2.0;
-        let y = (h - height as f64) / 2.0;
         let (old_x, old_y) = root.child_position(frame);
-        if (old_x - x).abs() > 0.25 || (old_y - y).abs() > 0.25 {
-            root.move_(frame, x, y);
+        if old_x.abs() > 0.25 || old_y.abs() > 0.25 {
+            root.move_(frame, 0.0, 0.0);
         }
+    }
+    fn motion(picture: &gtk::Picture, previous: &mut Option<usize>, fraction: f64) {
+        let step = (fraction.clamp(0.0, 1.0) * KEN_STEPS as f64).round() as usize;
+        if *previous == Some(step) { return; }
+        if let Some(last) = previous {
+            picture.remove_css_class(&format!("screensaver-ken-{last}"));
+        }
+        picture.add_css_class(&format!("screensaver-ken-{step}"));
+        *previous = Some(step);
     }
     fn sync(&mut self, root: &gtk::Fixed, player: &Player, w: f64, h: f64) {
+        Self::stable_viewport(root, &self.back_frame, w, h);
+        Self::stable_viewport(root, &self.front_frame, w, h);
+
         let elapsed = player.switched_at.elapsed().as_secs_f64();
         let duration = player.interval.as_secs_f64().max(1.0);
-        let incoming_zoom = cinematic_motion(player.current, elapsed / duration).0;
+        let current_fraction = (elapsed / duration).clamp(0.0, 1.0);
         let fade = smootherstep(player.progress());
-        let transitioning = player.previous.filter(|old| *old != player.current && fade < 1.0);
-        if let Some(old) = transitioning {
-            // Old frame continues at its last zoom, independently from new.
-            let outgoing_ready = self.back_version.is_some_and(|(id, _)| id == old)
+        let outgoing = player.previous.filter(|old| *old != player.current && fade < 1.0);
+        if let Some(old) = outgoing {
+            let ready = self.back_version.is_some_and(|(id, _)| id == old)
                 || present(&self.back, &mut self.back_version, old, player);
-            if outgoing_ready
-                && present(&self.front, &mut self.front_version, player.current, player)
-            {
-                Self::place(root, &self.back_frame, w, h, cinematic_motion(old, 1.0).0);
-                Self::place(root, &self.front_frame, w, h, incoming_zoom);
-                self.back_frame.set_opacity(1.0);
-                // GPU blends two opaque frames: the old photo AND its margins
-                // fade naturally into the new photo AND its margins without a
-                // brightness dip in the overlapping image area.
+            if ready && present(&self.front, &mut self.front_version, player.current, player) {
+                // The old image holds its ending position until it disappears.
+                // The new image moves continuously from its starting position.
+                Self::motion(&self.back, &mut self.back_motion_step, 1.0);
+                Self::motion(&self.front, &mut self.front_motion_step, current_fraction);
                 self.front_frame.set_opacity(fade);
                 return;
             }
         }
-        // At 100% incoming opacity the back can switch to the same image,
-        // then the top can disappear. Both sides of the swap are identical.
+        // At fade completion, promote an identical current texture and its
+        // identical transform before removing the outgoing overlay.
         if present(&self.back, &mut self.back_version, player.current, player) {
-            Self::place(root, &self.back_frame, w, h, incoming_zoom);
-            self.back_frame.set_opacity(1.0);
+            Self::motion(&self.back, &mut self.back_motion_step, current_fraction);
             self.front_frame.set_opacity(0.0);
-            self.front.set_paintable(None::<&gtk::gdk::Paintable>);
-            self.front_version = None;
+            if self.front_version.take().is_some() {
+                self.front.set_paintable(None::<&gtk::gdk::Paintable>);
+            }
         }
     }
 }
@@ -377,6 +383,18 @@ pub(super) fn install_css() {
             let factor = PicasaTransition::Flip.flip_width(step as f64 / FLIP_STEPS as f64);
             css.push_str(&format!(
                 ".screensaver-flip-{step} {{ transform: scaleX({factor:.6}); }}\n"
+            ));
+        }
+        // Ken Burns uses a consistent gentle push-in and upward drift. The
+        // frame is stationary; transforms are composited by GSK, not laid out.
+        // Small increments (~240 per slide) avoid stepping at display refresh.
+        for step in 0..=KEN_STEPS {
+            let fraction = step as f64 / KEN_STEPS as f64;
+            let eased = smootherstep(fraction);
+            let scale = 1.005 + 0.045 * eased;
+            let y = 0.35 - 0.7 * eased;
+            css.push_str(&format!(
+                ".screensaver-ken-{step} {{ transform-origin: 50% 50%; transform: translate(0%, {y:.4}%) scale({scale:.6}); }}\n"
             ));
         }
         provider.load_from_string(&css);

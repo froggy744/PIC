@@ -51,6 +51,30 @@ impl Style {
         if self != Self::Surprise { return self; }
         match random_seed() % 3 { 0 => Self::Mosaic, 1 => Self::PicturePile, _ => Self::IPhoto }
     }
+    fn label(self) -> &'static str {
+        match self {
+            Self::Mosaic => "Mosaic",
+            Self::PicturePile => "Picture Pile",
+            Self::IPhoto => "Ken Burns",
+            Self::Surprise => "Surprise Me",
+        }
+    }
+    fn subtitle(self) -> &'static str {
+        match self {
+            Self::Mosaic => "Tiled photo wall",
+            Self::PicturePile => "Scattered photo prints",
+            Self::IPhoto => "Slow pan and zoom",
+            Self::Surprise => "Random style each time",
+        }
+    }
+    fn icon(self) -> &'static str {
+        match self {
+            Self::Mosaic => "view-grid-symbolic",
+            Self::PicturePile => "view-paged-symbolic",
+            Self::IPhoto => "image-x-generic-symbolic",
+            Self::Surprise => "media-playlist-shuffle-symbolic",
+        }
+    }
 }
 
 /// Picasa-specific tile transitions; iPhoto always uses its cinematic fade.
@@ -203,14 +227,164 @@ fn shuffle<T>(items: &mut [T]) {
 }
 
 fn field(label: &str, control: &impl IsA<gtk::Widget>) -> gtk::Box {
-    let line = gtk::Box::new(gtk::Orientation::Horizontal, 14);
+    let line = gtk::Box::new(gtk::Orientation::Horizontal, 9);
     let title = gtk::Label::new(Some(label));
     title.set_xalign(0.0);
-    title.set_width_chars(13);
+    title.set_width_chars(11);
     control.set_hexpand(true);
     line.append(&title);
     line.append(control);
     line
+}
+
+/// Small local, vector-only illustrations: no photo decoding or NFS I/O
+/// occurs while opening the style menu, even with an offline library.
+fn style_preview(style: Style) -> gtk::DrawingArea {
+    let area = gtk::DrawingArea::new();
+    area.set_content_width(66);
+    area.set_content_height(42);
+    area.set_draw_func(move |_, cr, _, _| {
+        let rect = |x: f64, y: f64, w: f64, h: f64, rgb: (f64, f64, f64)| {
+            cr.set_source_rgb(rgb.0, rgb.1, rgb.2);
+            cr.rectangle(x, y, w, h);
+            let _ = cr.fill();
+        };
+        let photo = |x: f64, y: f64, w: f64, h: f64, tint: usize| {
+            let sky = [
+                (0.42, 0.68, 0.80), (0.78, 0.61, 0.47),
+                (0.49, 0.66, 0.63), (0.57, 0.57, 0.79),
+            ][tint % 4];
+            let ground = [
+                (0.25, 0.42, 0.38), (0.55, 0.42, 0.28),
+                (0.29, 0.45, 0.37), (0.40, 0.38, 0.58),
+            ][tint % 4];
+            rect(x, y, w, h, sky);
+            rect(x, y + h * 0.64, w, h * 0.36, ground);
+            rect(x + w * 0.68, y + h * 0.16, w * 0.12, h * 0.13, (0.98, 0.86, 0.61));
+        };
+        rect(0.0, 0.0, 66.0, 42.0, (0.12, 0.16, 0.21));
+        match style {
+            Style::Mosaic => {
+                for row in 0..2 {
+                    for col in 0..3 {
+                        photo(3.0 + col as f64 * 21.0, 3.0 + row as f64 * 19.0,
+                            18.0, 16.0, row * 3 + col);
+                    }
+                }
+            }
+            Style::PicturePile => {
+                for (i, angle, x) in [(0, -0.15, 11.0), (1, 0.13, 23.0), (2, -0.08, 35.0)] {
+                    let _ = cr.save();
+                    cr.translate(x + 9.0, 20.0);
+                    cr.rotate(angle);
+                    rect(-10.0, -15.0, 22.0, 31.0, (0.95, 0.94, 0.89));
+                    photo(-8.0, -13.0, 18.0, 22.0, i);
+                    let _ = cr.restore();
+                }
+            }
+            Style::IPhoto => {
+                rect(5.0, 4.0, 56.0, 34.0, (0.84, 0.85, 0.83));
+                photo(7.0, 6.0, 52.0, 30.0, 0);
+                cr.set_source_rgba(1.0, 1.0, 1.0, 0.84);
+                cr.set_line_width(1.0);
+                cr.rectangle(13.5, 9.5, 39.0, 23.0);
+                let _ = cr.stroke();
+            }
+            Style::Surprise => {
+                photo(4.0, 5.0, 24.0, 15.0, 1);
+                photo(4.0, 22.0, 24.0, 15.0, 2);
+                let _ = cr.save();
+                cr.translate(45.0, 21.0);
+                cr.rotate(0.15);
+                rect(-13.0, -17.0, 27.0, 34.0, (0.95, 0.94, 0.89));
+                photo(-11.0, -15.0, 23.0, 27.0, 3);
+                let _ = cr.restore();
+            }
+        }
+    });
+    area
+}
+
+/// Compact style selector with miniature previews in its popover. Selection
+/// is stored in a Cell and propagated to related controls by the callback.
+fn style_picker(initial: Style, on_change: impl Fn(Style) + 'static)
+    -> (gtk::MenuButton, Rc<Cell<Style>>)
+{
+    let chosen = Rc::new(Cell::new(initial));
+    let menu = gtk::MenuButton::new();
+    menu.set_hexpand(true);
+    menu.set_tooltip_text(Some("Choose a screensaver presentation"));
+    let selected_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let selected_icon = gtk::Image::from_icon_name(initial.icon());
+    let selected_title = gtk::Label::new(Some(initial.label()));
+    selected_title.set_hexpand(true);
+    selected_title.set_xalign(0.0);
+    let arrow = gtk::Image::from_icon_name("pan-down-symbolic");
+    selected_row.append(&selected_icon);
+    selected_row.append(&selected_title);
+    selected_row.append(&arrow);
+    menu.set_child(Some(&selected_row));
+
+    let popover = gtk::Popover::new();
+    popover.set_has_arrow(false);
+    let options = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    options.set_margin_top(5);
+    options.set_margin_bottom(5);
+    options.set_margin_start(5);
+    options.set_margin_end(5);
+    let checks: Rc<RefCell<Vec<gtk::Image>>> = Rc::new(RefCell::new(Vec::new()));
+    let on_change: Rc<dyn Fn(Style)> = Rc::new(on_change);
+    for candidate in [Style::Mosaic, Style::PicturePile, Style::IPhoto, Style::Surprise] {
+        let option = gtk::Button::new();
+        option.add_css_class("flat");
+        option.set_tooltip_text(Some(candidate.subtitle()));
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, 11);
+        row.set_margin_top(3);
+        row.set_margin_bottom(3);
+        row.set_margin_start(5);
+        row.set_margin_end(5);
+        row.append(&style_preview(candidate));
+        let text = gtk::Box::new(gtk::Orientation::Vertical, 1);
+        text.set_valign(gtk::Align::Center);
+        text.set_hexpand(true);
+        let name = gtk::Label::new(Some(candidate.label()));
+        name.set_xalign(0.0);
+        let detail = gtk::Label::new(Some(candidate.subtitle()));
+        detail.set_xalign(0.0);
+        detail.add_css_class("dim-label");
+        detail.add_css_class("caption");
+        text.append(&name);
+        text.append(&detail);
+        row.append(&text);
+        let check = gtk::Image::from_icon_name("object-select-symbolic");
+        check.set_visible(candidate == initial);
+        row.append(&check);
+        checks.borrow_mut().push(check);
+        option.set_child(Some(&row));
+
+        let chosen = Rc::clone(&chosen);
+        let checks = Rc::clone(&checks);
+        let selected_title = selected_title.clone();
+        let selected_icon = selected_icon.clone();
+        let on_change = Rc::clone(&on_change);
+        let weak_popover = popover.downgrade();
+        option.connect_clicked(move |_| {
+            chosen.set(candidate);
+            selected_title.set_text(candidate.label());
+            selected_icon.set_icon_name(Some(candidate.icon()));
+            for (i, check) in checks.borrow().iter().enumerate() {
+                check.set_visible(i == candidate.dropdown_index() as usize);
+            }
+            on_change(candidate);
+            if let Some(popover) = weak_popover.upgrade() {
+                popover.popdown();
+            }
+        });
+        options.append(&option);
+    }
+    popover.set_child(Some(&options));
+    menu.set_popover(Some(&popover));
+    (menu, chosen)
 }
 
 /// Opens the settings/launch dialog without changing PIC's current viewer.
@@ -240,37 +414,56 @@ pub fn open(parent: &adw::ApplicationWindow, connection: Rc<RefCell<Connection>>
 
     let dialog = gtk::Window::builder()
         .title("PIC Screensaver")
-        .default_width(490)
+        .default_width(444)
         .resizable(false)
         .modal(true)
         .transient_for(parent)
         .build();
-    let body = gtk::Box::new(gtk::Orientation::Vertical, 16);
-    body.set_margin_top(24);
-    body.set_margin_bottom(24);
-    body.set_margin_start(24);
-    body.set_margin_end(24);
+    let body = gtk::Box::new(gtk::Orientation::Vertical, 10);
+    body.set_margin_top(18);
+    body.set_margin_bottom(18);
+    body.set_margin_start(18);
+    body.set_margin_end(18);
 
-    let heading = gtk::Label::new(Some("Your photographs, on display"));
+    let heading = gtk::Label::new(Some("Your photos on display"));
     heading.add_css_class("title-2");
     heading.set_xalign(0.0);
     body.append(&heading);
     let explanation = gtk::Label::new(Some(
-        "Choose a Picasa photo wall or an iPhoto cinematic slideshow.\nPress Esc or move the pointer to finish."
+        "Choose a style and collection. Press Esc or move the pointer to exit."
     ));
     explanation.set_xalign(0.0);
     explanation.set_wrap(true);
     explanation.add_css_class("dim-label");
     body.append(&explanation);
 
-    let style = gtk::DropDown::from_strings(&[
-        "Picasa · Mosaic",
-        "Picasa · Picture Pile",
-        "iPhoto · Cinematic Ken Burns",
-        "Surprise me · Random style on start",
-    ]);
-    style.set_selected(current.style.dropdown_index());
-    body.append(&field("Presentation", &style));
+    let picasa_transition = gtk::DropDown::from_strings(&["Flip", "Crossfade", "Cut"]);
+    picasa_transition.set_selected(current.picasa_transition.dropdown_index());
+    picasa_transition.set_tooltip_text(Some("Picasa Mosaic and Picture Pile only"));
+
+    // Keep large mosaic counts as integers; GTK spin adjustment uses f64.
+    let mosaic_tiles = gtk::Entry::new();
+    mosaic_tiles.set_text(&current.mosaic_tiles.to_string());
+    mosaic_tiles.set_width_chars(8);
+    mosaic_tiles.set_input_purpose(gtk::InputPurpose::Digits);
+    mosaic_tiles.set_tooltip_text(Some("Positive whole number of square mosaic tiles"));
+
+    let shuffle_tiles_button = gtk::CheckButton::with_label("Shuffle tiles");
+    shuffle_tiles_button.set_active(current.shuffle_tiles);
+    shuffle_tiles_button.set_tooltip_text(Some("Change tile positions in a shuffled order"));
+
+    let transition_for_style = picasa_transition.clone();
+    let mosaic_for_style = mosaic_tiles.clone();
+    let shuffle_for_style = shuffle_tiles_button.clone();
+    let (style_picker, style_selected) = style_picker(current.style, move |style| {
+        transition_for_style.set_sensitive(style != Style::IPhoto);
+        mosaic_for_style.set_sensitive(matches!(style, Style::Mosaic | Style::Surprise));
+        shuffle_for_style.set_sensitive(style != Style::IPhoto);
+    });
+    picasa_transition.set_sensitive(current.style != Style::IPhoto);
+    mosaic_tiles.set_sensitive(matches!(current.style, Style::Mosaic | Style::Surprise));
+    shuffle_tiles_button.set_sensitive(current.style != Style::IPhoto);
+    body.append(&field("Style", &style_picker));
 
     let source_names: Vec<String> = sources.iter().map(|(name, _)| name.clone()).collect();
     let names: Vec<&str> = source_names.iter().map(String::as_str).collect();
@@ -292,60 +485,26 @@ pub fn open(parent: &adw::ApplicationWindow, connection: Rc<RefCell<Connection>>
     duration.set_tooltip_text(Some("Seconds per photo or photo-wall change"));
     body.append(&field("Seconds per change", &duration));
 
-    let picasa_transition = gtk::DropDown::from_strings(&[
-        "Flip", "Crossfade", "Cut",
-    ]);
-    picasa_transition.set_selected(current.picasa_transition.dropdown_index());
-    picasa_transition.set_tooltip_text(Some(
-        "Picasa Mosaic and Picture Pile only. iPhoto keeps its cinematic transition.",
-    ));
-    picasa_transition.set_sensitive(style.selected() != 2);
-    let transition_for_style = picasa_transition.clone();
-    style.connect_selected_notify(move |dropdown| {
-        transition_for_style.set_sensitive(dropdown.selected() != 2);
-    });
-    body.append(&field("Picasa transition", &picasa_transition));
+    body.append(&field("Transition", &picasa_transition));
 
-    // An entry (rather than GtkSpinButton) avoids imposing an arbitrary
-    // maximum or losing large integer precision through its f64 adjustment.
-    let mosaic_tiles = gtk::Entry::new();
-    mosaic_tiles.set_text(&current.mosaic_tiles.to_string());
-    mosaic_tiles.set_width_chars(10);
-    mosaic_tiles.set_input_purpose(gtk::InputPurpose::Digits);
-    mosaic_tiles.set_tooltip_text(Some(
-        "Enter any positive whole number. Limited only by available photos and hardware; landscape photos crop to square tiles.",
-    ));
-    mosaic_tiles.set_sensitive(matches!(style.selected(), 0 | 3));
-    let mosaic_tiles_for_style = mosaic_tiles.clone();
-    style.connect_selected_notify(move |dropdown| {
-        mosaic_tiles_for_style.set_sensitive(matches!(dropdown.selected(), 0 | 3));
-    });
     body.append(&field("Mosaic tiles", &mosaic_tiles));
 
     let shuffle_row = gtk::Box::new(gtk::Orientation::Horizontal, 16);
-    let shuffle_button = gtk::CheckButton::with_label("Shuffle photographs");
+    let shuffle_button = gtk::CheckButton::with_label("Shuffle photos");
     shuffle_button.set_active(current.shuffle);
-    let shuffle_tiles_button = gtk::CheckButton::with_label("Shuffle tiles");
-    shuffle_tiles_button.set_active(current.shuffle_tiles);
-    shuffle_tiles_button.set_tooltip_text(Some(
-        "Replace mosaic and picture-pile positions in a shuffled order instead of left to right",
-    ));
-    shuffle_tiles_button.set_sensitive(style.selected() != 2);
-    let tiles_for_style = shuffle_tiles_button.clone();
-    style.connect_selected_notify(move |dropdown| {
-        tiles_for_style.set_sensitive(dropdown.selected() != 2);
-    });
     shuffle_row.append(&shuffle_button);
     shuffle_row.append(&shuffle_tiles_button);
     body.append(&shuffle_row);
 
     let notice = gtk::Label::new(None);
+    notice.set_visible(false);
     notice.set_wrap(true);
     notice.set_xalign(0.0);
     notice.add_css_class("dim-label");
     body.append(&notice);
 
     let footer = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    footer.set_margin_top(6);
     footer.set_halign(gtk::Align::End);
     let cancel = gtk::Button::with_label("Cancel");
     let start = gtk::Button::with_label("Start Screensaver");
@@ -372,11 +531,12 @@ pub fn open(parent: &adw::ApplicationWindow, connection: Rc<RefCell<Connection>>
             Ok(count) if count > 0 => count,
             _ => {
                 notice.set_text("Mosaic tiles must be a positive whole number.");
+                notice.set_visible(true);
                 return;
             }
         };
         let prefs = Preferences {
-            style: Style::from_dropdown(style.selected()),
+            style: style_selected.get(),
             source: photo_source.key(),
             seconds: duration.value_as_int().clamp(3, 30) as u32,
             shuffle: shuffle_button.is_active(),
@@ -388,11 +548,13 @@ pub fn open(parent: &adw::ApplicationWindow, connection: Rc<RefCell<Connection>>
             Ok(photos) => photos,
             Err(error) => {
                 notice.set_text(&format!("Could not load photos: {error}"));
+                notice.set_visible(true);
                 return;
             }
         };
         if photos.is_empty() {
             notice.set_text("This collection has no photos. Choose another source.");
+            notice.set_visible(true);
             return;
         }
         prefs.save(&connection.borrow());

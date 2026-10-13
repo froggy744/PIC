@@ -600,22 +600,23 @@ impl Gallery {
 
         self.begin_center_zoom_anchor();
 
-        // Slider input is already discrete (the existing 8-level ladder).
-        // Cancel wheel/click debounce and any in-flight animation, then apply
-        // exactly one reflow for the newly selected level. This prevents an
-        // old trailing timeout/animation from pulling the grid back after the
-        // thumb has moved on.
+        // Slider and Ctrl+wheel must commit through the same presentation
+        // settle. The old slider route called apply_tile_size directly,
+        // cancelling the current animation and visibly snapping the tiles.
+        // Discard a stale +/- debounce but retain the live visual scale so
+        // apply_zoom() can retarget from the current frame.
         if let Some(source) = self.zoom_reflow_source.borrow_mut().take() {
             source.remove();
         }
         self.pending_zoom_width.set(None);
-        self.zoom_animation_generation
-            .set(self.zoom_animation_generation.get().wrapping_add(1));
-        self.zoom_animation_layout_width.set(None);
-        set_grid_zoom_animation_active(false);
-        let generation = self.zoom_animation_generation.get();
-        self.apply_tile_size(width, true);
-        self.schedule_grid_zoom_anchor_restore(generation, true);
+        if std::env::var_os("PICASA_TRACE").is_some() {
+            eprintln!(
+                "PIC_ZOOM_ROUTE input=slider mode=grid width={} current={} animation_setting={} gtk_animations={}",
+                width, self.tile_width.get(), self.zoom_animations_enabled.get(),
+                self.root.settings().is_gtk_enable_animations(),
+            );
+        }
+        self.apply_zoom(width);
     }
 
     pub fn zoom_in(self: &Rc<Self>) {
@@ -804,6 +805,16 @@ impl Gallery {
                 "PIC_ZOOM_TRACE wheel_request requested={} snapped={} current={} pending_before={:?} columns={} anchor={:?}",
                 requested, width, self.tile_width.get(), self.pending_zoom_width.get(),
                 self.current_columns.get(), self.stable_zoom_anchor.get(),
+            );
+        }
+        if std::env::var_os("PICASA_TRACE").is_some() {
+            eprintln!(
+                "PIC_ZOOM_ROUTE input=ctrl_wheel mode={} width={} current={} animation_setting={} gtk_animations={}",
+                if self.using_virtual_photo_surface() { "folder_sectioned" }
+                else if self.layout() != PhotoLayout::Grid { "wall" }
+                else { "grid" },
+                width, self.tile_width.get(), self.zoom_animations_enabled.get(),
+                self.root.settings().is_gtk_enable_animations(),
             );
         }
         // Drop any trailing source left by +/- clicks so it cannot fire later

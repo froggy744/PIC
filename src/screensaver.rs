@@ -1018,9 +1018,17 @@ impl Player {
         if self.paused_at.is_some() || self.count == 0 || self.elapsed() < self.interval {
             return;
         }
-        // If the chosen collection has fewer photos than square positions,
-        // every photo is already visible: cycling would create duplicates.
+        // If every selected photo is already on screen, do not duplicate it
+        // in Mosaic/Grid/Floating. Picture Pile instead cycles one existing
+        // print to the front so a small scrapbook remains animated.
         if !self.style.single_photo() && self.count <= self.slots.len() {
+            if self.style == Style::PicturePile && !self.slots.is_empty() {
+                let slot = self.tile_order[self.changes % self.tile_order.len()];
+                let id = self.slots[slot];
+                self.fading_slot = Some((slot, id));
+                self.switched_at = Instant::now();
+                self.changes += 1;
+            }
             return;
         }
         if self.style.single_photo() {
@@ -1440,6 +1448,21 @@ mod tests {
         assert_eq!(smootherstep(0.0), 0.0);
         assert_eq!(smootherstep(1.0), 1.0);
     }
+    #[test]
+    fn picture_pile_reorders_when_all_photos_are_already_on_screen() {
+        let mut pile = Player::new(Style::PicturePile, 4, 3, false, 10);
+        let (tx, _rx) = mpsc::channel();
+        pile.switched_at -= Duration::from_secs(5);
+        pile.update(&tx);
+        assert_eq!(pile.changes, 1);
+        assert_eq!(pile.fading_slot, Some((0, 0)));
+        pile.switched_at -= Duration::from_secs(5);
+        pile.update(&tx);
+        assert_eq!(pile.changes, 2);
+        assert_eq!(pile.fading_slot, Some((1, 1)));
+        assert_eq!(pile.slots, vec![0, 1, 2, 3]);
+    }
+
     #[test]
     fn photo_interval_and_transition_timing_are_independent() {
         let mut player = Player::new(Style::Fade, 12, 15, false, 6);

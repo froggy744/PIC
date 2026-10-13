@@ -102,6 +102,8 @@ struct Controls {
     temperature: gtk::Scale,
     saturation: gtk::Scale,
     sharpen: gtk::Scale,
+    clarity: gtk::Scale,
+    grain: gtk::Scale,
     auto_contrast: gtk::ToggleButton,
     auto_color: gtk::ToggleButton,
     black_white: gtk::ToggleButton,
@@ -120,6 +122,8 @@ impl Controls {
         self.temperature.set_value(recipe.temperature as f64);
         self.saturation.set_value(recipe.saturation as f64);
         self.sharpen.set_value(recipe.sharpen as f64);
+        self.clarity.set_value(recipe.clarity as f64);
+        self.grain.set_value(recipe.grain as f64);
         self.auto_contrast.set_active(recipe.auto_contrast);
         self.auto_color.set_active(recipe.auto_color);
         self.black_white.set_active(recipe.black_white);

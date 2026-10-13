@@ -43,10 +43,6 @@ impl Style {
         match self { Self::Mosaic => 0, Self::PicturePile => 1,
             Self::IPhoto => 2, Self::Surprise => 3 }
     }
-    fn from_dropdown(v: u32) -> Self {
-        match v { 1 => Self::PicturePile, 2 => Self::IPhoto,
-            3 => Self::Surprise, _ => Self::Mosaic }
-    }
     fn resolved(self) -> Self {
         if self != Self::Surprise { return self; }
         match random_seed() % 3 { 0 => Self::Mosaic, 1 => Self::PicturePile, _ => Self::IPhoto }
@@ -483,7 +479,7 @@ pub fn open(parent: &adw::ApplicationWindow, connection: Rc<RefCell<Connection>>
     let duration = gtk::SpinButton::with_range(3.0, 30.0, 1.0);
     duration.set_value(current.seconds as f64);
     duration.set_tooltip_text(Some("Seconds per photo or photo-wall change"));
-    body.append(&field("Seconds per change", &duration));
+    body.append(&field("Duration (s)", &duration));
 
     body.append(&field("Transition", &picasa_transition));
 
@@ -1128,6 +1124,18 @@ fn start_screensaver(parent: &adw::ApplicationWindow, slides: Vec<Slide>, prefs:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn compact_style_picker_labels_and_previews_are_distinct() {
+        let styles = [Style::Mosaic, Style::PicturePile, Style::IPhoto, Style::Surprise];
+        let mut labels = HashSet::new();
+        for style in styles {
+            assert!(!style.label().is_empty());
+            assert!(!style.subtitle().is_empty());
+            assert!(!style.icon().is_empty());
+            assert!(labels.insert(style.label()));
+        }
+    }
 
     #[test]
     fn style_and_source_keys_are_stable() {

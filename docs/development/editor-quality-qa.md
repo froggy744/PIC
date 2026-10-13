@@ -42,7 +42,7 @@ Branch: `feature/editor-tone-clarity-grain`; PR: #177. No change to originals or
 - [x] Fix lightbox recipe-only refresh: compare the old/new crop and straightening recipe from the cached native texture; unchanged photo geometry swaps pixels without resetting 1:1 scroll.
 - [x] Add pure unit tests for draft canvas dimensions and re-anchor policy.
 - [x] Add ignored real-GTK regression test: pan in lightbox 1:1, paste an effect, verify scroll adjustments remain unchanged.
-- [ ] Headless CI passes updated GTK regression and editor render tests.
+- [x] Headless CI passed compilation, editor render/model/filter suites, pure native-preview geometry tests, and the Xvfb lightbox 1:1 pan regression (GitHub Actions run 38385214392).
 - [ ] Verify effects response, zoom/pan stability and final sharpness visually with real 24MP Nikon JPEG/NEF on Fedora.
 - [ ] Confirm no regressions in Fit mode, crop/rotate geometry changes, undo/redo, and export.
 

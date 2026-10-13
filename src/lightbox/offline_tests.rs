@@ -454,3 +454,77 @@ fn decode_failure_fallback_cannot_undo_a_later_reconnection() {
     let _ = std::fs::remove_file(cache);
     let _ = std::fs::remove_file(original);
 }
+
+#[test]
+#[ignore = "requires a GTK display and local image decode"]
+fn lightbox_one_to_one_recipe_refresh_preserves_panned_viewport() {
+    gtk::init().unwrap();
+    let path = std::env::temp_dir().join(format!(
+        "pic-lightbox-native-pan-{}.png",
+        std::process::id(),
+    ));
+    image::RgbImage::from_fn(1400, 950, |x, y| {
+        image::Rgb([(x % 255) as u8, (y % 255) as u8, 144])
+    })
+    .save(&path)
+    .unwrap();
+    let selected: PhotoObject = glib::Object::builder()
+        .property("id", 49001_i64)
+        .property("path", path.to_str().unwrap())
+        .property("width", 1400_i64)
+        .property("height", 950_i64)
+        .property("mtime", 1_i64)
+        .property("size-bytes", std::fs::metadata(&path).unwrap().len() as i64)
+        .property("original-available", true)
+        .build();
+    let lightbox = Lightbox::new();
+    let window = gtk::Window::builder()
+        .default_width(700)
+        .default_height(500)
+        .child(&lightbox.root)
+        .build();
+    window.present();
+    lightbox.open(vec![selected.clone()], 0);
+    settle();
+    lightbox.set_one_to_one(true);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline && lightbox.native_texture.borrow().is_none() {
+        settle();
+    }
+    assert!(lightbox.native_texture.borrow().is_some(), "native texture should load");
+    settle();
+    let hadj = lightbox.picture_viewport.hadjustment();
+    let vadj = lightbox.picture_viewport.vadjustment();
+    assert!(hadj.upper() > hadj.page_size());
+    assert!(vadj.upper() > vadj.page_size());
+    hadj.set_value(185.0);
+    vadj.set_value(120.0);
+    settle();
+    let before = (hadj.value(), vadj.value());
+    assert!(before.0 > 50.0 && before.1 > 50.0);
+
+    let mut recipe = crate::edit::EditRecipe::default();
+    recipe.fill_light = 0.45;
+    selected.set_edit_recipe(recipe.encode());
+    lightbox.refresh_current_after_edit();
+    let generation = lightbox.load_generation.get();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline
+        && lightbox.native_texture.borrow().as_ref()
+            .is_none_or(|cache| cache.edit_recipe != recipe.encode())
+    {
+        settle();
+    }
+    assert_eq!(lightbox.load_generation.get(), generation);
+    assert!(lightbox.native_texture.borrow().as_ref()
+        .is_some_and(|cache| cache.edit_recipe == recipe.encode()));
+    settle();
+    assert!((hadj.value() - before.0).abs() <= 1.0,
+        "1:1 filter edit should not move horizontal pan");
+    assert!((vadj.value() - before.1).abs() <= 1.0,
+        "1:1 filter edit should not move vertical pan");
+
+    lightbox.close();
+    window.close();
+    let _ = std::fs::remove_file(path);
+}

@@ -63,7 +63,7 @@ impl Style {
     }
     fn resolved(self) -> Self {
         if self != Self::Surprise { return self; }
-        Self::CHOICES[(random_seed() as usize % (Self::CHOICES.len() - 1))]
+        Self::CHOICES[random_seed() as usize % (Self::CHOICES.len() - 1)]
     }
     fn single_photo(self) -> bool { matches!(self, Self::IPhoto | Self::Fade) }
     fn configurable_tiles(self) -> bool { matches!(self, Self::Mosaic | Self::Grid | Self::Surprise) }

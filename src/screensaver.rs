@@ -22,9 +22,10 @@ const SOURCE_KEY: &str = "screensaver-source";
 const DURATION_KEY: &str = "screensaver-duration";
 const SHUFFLE_KEY: &str = "screensaver-shuffle";
 const SHUFFLE_TILES_KEY: &str = "screensaver-shuffle-tiles";
-const MOSAIC_SLOTS: usize = 6;
-// Retain the visible six mosaic tiles, outgoing frame and a few incoming slides.
-const MAX_FRAMES: usize = 12;
+const MOSAIC_TILES_KEY: &str = "screensaver-mosaic-tiles";
+const DEFAULT_MOSAIC_TILES: usize = 6;
+const MAX_MOSAIC_TILES: usize = 30;
+const PICTURE_PILE_SLOTS: usize = 6;
 const PREFETCH: usize = 3;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -91,6 +92,7 @@ struct Preferences {
     seconds: u32,
     shuffle: bool,
     shuffle_tiles: bool,
+    mosaic_tiles: usize,
 }
 impl Preferences {
     fn load(connection: &Connection) -> Self {
@@ -101,6 +103,8 @@ impl Preferences {
             seconds: setting(DURATION_KEY).parse::<u32>().unwrap_or(6).clamp(3, 30),
             shuffle: setting(SHUFFLE_KEY) != "false",
             shuffle_tiles: setting(SHUFFLE_TILES_KEY) != "false",
+            mosaic_tiles: setting(MOSAIC_TILES_KEY).parse::<usize>()
+                .unwrap_or(DEFAULT_MOSAIC_TILES).clamp(DEFAULT_MOSAIC_TILES, MAX_MOSAIC_TILES),
         }
     }
     fn save(&self, connection: &Connection) {
@@ -110,6 +114,7 @@ impl Preferences {
             (DURATION_KEY, self.seconds.to_string()),
             (SHUFFLE_KEY, self.shuffle.to_string()),
             (SHUFFLE_TILES_KEY, self.shuffle_tiles.to_string()),
+            (MOSAIC_TILES_KEY, self.mosaic_tiles.to_string()),
         ] {
             if let Err(error) = db::set_setting(connection, key, &value) {
                 eprintln!("PIC screensaver: could not save {key}: {error}");
@@ -244,6 +249,20 @@ pub fn open(parent: &adw::ApplicationWindow, connection: Rc<RefCell<Connection>>
     duration.set_tooltip_text(Some("Seconds per photo or photo-wall change"));
     body.append(&field("Seconds per change", &duration));
 
+    let mosaic_tiles = gtk::SpinButton::with_range(
+        DEFAULT_MOSAIC_TILES as f64, MAX_MOSAIC_TILES as f64, 1.0,
+    );
+    mosaic_tiles.set_value(current.mosaic_tiles as f64);
+    mosaic_tiles.set_tooltip_text(Some(
+        "6–30 square Mosaic tiles. Landscape photos are cropped to fill each square.",
+    ));
+    mosaic_tiles.set_sensitive(matches!(style.selected(), 0 | 3));
+    let mosaic_tiles_for_style = mosaic_tiles.clone();
+    style.connect_selected_notify(move |dropdown| {
+        mosaic_tiles_for_style.set_sensitive(matches!(dropdown.selected(), 0 | 3));
+    });
+    body.append(&field("Mosaic tiles", &mosaic_tiles));
+
     let shuffle_row = gtk::Box::new(gtk::Orientation::Horizontal, 16);
     let shuffle_button = gtk::CheckButton::with_label("Shuffle photographs");
     shuffle_button.set_active(current.shuffle);
@@ -296,6 +315,8 @@ pub fn open(parent: &adw::ApplicationWindow, connection: Rc<RefCell<Connection>>
             seconds: duration.value_as_int().clamp(3, 30) as u32,
             shuffle: shuffle_button.is_active(),
             shuffle_tiles: shuffle_tiles_button.is_active(),
+            mosaic_tiles: mosaic_tiles.value_as_int()
+                .clamp(DEFAULT_MOSAIC_TILES as i32, MAX_MOSAIC_TILES as i32) as usize,
         };
         let mut photos = match photo_source.photos(&connection.borrow()) {
             Ok(photos) => photos,
@@ -339,6 +360,7 @@ fn texture_pixels(image: image::RgbaImage) -> Pixels {
 fn start_decode_worker(
     slides: Vec<Slide>,
     style: Style,
+    mosaic_tiles: usize,
     requests: Receiver<usize>,
     results: mpsc::SyncSender<ImageResult>,
     cancelled: Arc<AtomicBool>,
@@ -352,10 +374,16 @@ fn start_decode_worker(
             let recipe = edit::EditRecipe::decode(&photo.edit_recipe);
             // Decode at screen resolution first: a mosaic must never settle on
             // an upscaled 160–400px gallery thumbnail. No GTK work on this thread.
-            let dimensions = if style == Style::Mosaic {
-                (1920, 1280)
-            } else {
-                (2560, 1600)
+            // Maintain crisp tiles without allocating dozens of 2K textures
+            // when the user selects a dense square mosaic.
+            let dimensions = match style {
+                Style::Mosaic => {
+                    let edge = if mosaic_tiles <= 6 { 1536 }
+                        else if mosaic_tiles <= 12 { 1152 } else { 896 };
+                    (edge, edge)
+                }
+                Style::PicturePile => (1920, 1280),
+                _ => (2560, 1600),
             };
             // Reuse the lightbox decoder's cancellation checkpoints. This is
             // important for remote/NFS images: closing the window must not
@@ -436,12 +464,13 @@ struct Player {
     next_revision: u64,
 }
 impl Player {
-    fn new(style: Style, count: usize, seconds: u32, shuffle_tiles: bool) -> Self {
-        let slots = if style == Style::IPhoto {
-            Vec::new()
-        } else {
-            (0..MOSAIC_SLOTS.min(count)).collect::<Vec<_>>()
+    fn new(style: Style, count: usize, seconds: u32, shuffle_tiles: bool, mosaic_tiles: usize) -> Self {
+        let desired_slots = match style {
+            Style::Mosaic => mosaic_tiles.clamp(DEFAULT_MOSAIC_TILES, MAX_MOSAIC_TILES),
+            Style::PicturePile => PICTURE_PILE_SLOTS,
+            _ => 0,
         };
+        let slots = (0..desired_slots.min(count)).collect::<Vec<_>>();
         let mut tile_order = (0..slots.len()).collect::<Vec<_>>();
         if shuffle_tiles {
             shuffle(&mut tile_order);
@@ -450,7 +479,7 @@ impl Player {
             style, count,
             interval: Duration::from_secs(seconds as u64),
             switched_at: Instant::now(),
-            next: if style == Style::IPhoto { 1 } else { MOSAIC_SLOTS.min(count) },
+            next: if style == Style::IPhoto { 1 } else { slots.len() },
             current: 0,
             previous: None,
             slots,
@@ -507,7 +536,9 @@ impl Player {
         });
         self.order.retain(|index| *index != result.index);
         self.order.push_back(result.index);
-        let max_frames = if self.style == Style::IPhoto { 5 } else { MAX_FRAMES };
+        // Preserve every active tile plus a small prefetch margin.
+        let max_frames = if self.style == Style::IPhoto { 5 }
+            else { self.slots.len() + PREFETCH + 2 };
         while self.frames.len() > max_frames {
             let protected = |id: usize| id == self.current
                 || self.previous == Some(id)
@@ -597,13 +628,15 @@ fn cinematic_motion(_index: usize, progress: f64) -> (f64, f64) {
 fn start_screensaver(parent: &adw::ApplicationWindow, slides: Vec<Slide>, prefs: Preferences) {
     if slides.is_empty() { return; }
     let style = prefs.style.resolved();
-    let player = Rc::new(RefCell::new(Player::new(style, slides.len(), prefs.seconds, prefs.shuffle_tiles)));
+    let player = Rc::new(RefCell::new(Player::new(
+        style, slides.len(), prefs.seconds, prefs.shuffle_tiles, prefs.mosaic_tiles,
+    )));
     let (request_tx, request_rx) = mpsc::channel::<usize>();
     // Bound decoded-frame buffering. Unbounded RGBA frames could consume
     // hundreds of MB while GTK was busy rendering/closing.
     let (result_tx, result_rx) = mpsc::sync_channel::<ImageResult>(2);
     let cancelled = Arc::new(AtomicBool::new(false));
-    start_decode_worker(slides, style, request_rx, result_tx, Arc::clone(&cancelled));
+    start_decode_worker(slides, style, prefs.mosaic_tiles, request_rx, result_tx, Arc::clone(&cancelled));
 
     // Fullscreen surfaces should be independent application windows on
     // Wayland, not transient dialogs attached to the main gallery. Closing
@@ -614,7 +647,7 @@ fn start_screensaver(parent: &adw::ApplicationWindow, slides: Vec<Slide>, prefs:
         .build();
     screen.set_application(parent.application().as_ref());
     gpu::install_css();
-    let stage = Rc::new(RefCell::new(gpu::Stage::new(style, player.borrow().count)));
+    let stage = Rc::new(RefCell::new(gpu::Stage::new(style, player.borrow().slots.len())));
     stage.borrow().root.set_focusable(true);
     screen.set_child(Some(&stage.borrow().root));
 
@@ -762,16 +795,33 @@ mod tests {
     }
     #[test]
     fn player_paces_changes() {
-        let player = Player::new(Style::IPhoto, 5, 6, true);
+        let player = Player::new(Style::IPhoto, 5, 6, true, DEFAULT_MOSAIC_TILES);
         assert_eq!(player.current, 0);
         assert_eq!(player.next, 1);
         assert_eq!(player.interval, Duration::from_secs(6));
-        assert_eq!(Player::new(Style::Mosaic, 20, 3, true).slots.len(), 6);
-        let ordered = Player::new(Style::Mosaic, 20, 3, false);
+        assert_eq!(Player::new(Style::Mosaic, 20, 3, true, DEFAULT_MOSAIC_TILES).slots.len(), 6);
+        let ordered = Player::new(Style::Mosaic, 20, 3, false, DEFAULT_MOSAIC_TILES);
         assert_eq!(ordered.tile_order, (0..6).collect::<Vec<_>>());
-        let shuffled = Player::new(Style::PicturePile, 20, 3, true);
+        let shuffled = Player::new(Style::PicturePile, 20, 3, true, DEFAULT_MOSAIC_TILES);
         let mut positions = shuffled.tile_order.clone();
         positions.sort_unstable();
         assert_eq!(positions, (0..6).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn mosaic_tile_count_affects_mosaic_not_picture_pile() {
+        for n in [6, 9, 12, 18, 24, 30] {
+            let mosaic = Player::new(Style::Mosaic, 100, 5, true, n);
+            assert_eq!(mosaic.slots.len(), n);
+            assert_eq!(mosaic.next, n);
+            assert_eq!(mosaic.tile_order.len(), n);
+            let pile = Player::new(Style::PicturePile, 100, 5, true, n);
+            assert_eq!(pile.slots.len(), PICTURE_PILE_SLOTS);
+        }
+        let few = Player::new(Style::Mosaic, 3, 5, false, 30);
+        assert_eq!(few.slots.len(), 3);
+        assert_eq!(few.next, 3);
+        assert_eq!(Player::new(Style::Mosaic, 100, 5, false, 1).slots.len(), 6);
+        assert_eq!(Player::new(Style::Mosaic, 100, 5, false, 100).slots.len(), 30);
     }
 }

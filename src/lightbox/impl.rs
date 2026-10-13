@@ -2058,9 +2058,8 @@ impl Lightbox {
                     && (h - i64::from(request_h)).abs() <= 1
             })
         } else {
-            // For manual zoom, unchanged geometry should already be retained
-            // in show_photo (fit_geometry_fixed=true).
-            true
+            // Keep fit/manual zoom and crop updates on their existing path.
+            false
         };
         self.refresh_current_with_geometry(preserve);
     }

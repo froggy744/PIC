@@ -665,7 +665,10 @@ fn start_screensaver(parent: &adw::ApplicationWindow, slides: Vec<Slide>, prefs:
     // hundreds of MB while GTK was busy rendering/closing.
     let (result_tx, result_rx) = mpsc::sync_channel::<ImageResult>(2);
     let cancelled = Arc::new(AtomicBool::new(false));
-    start_decode_worker(slides, style, prefs.mosaic_tiles, request_rx, result_tx, Arc::clone(&cancelled));
+    // Render at the resolution of tiles actually displayed, not just the
+    // requested count (e.g. 10,000 requested from a three-photo collection).
+    let active_mosaic_tiles = player.borrow().slots.len().max(1);
+    start_decode_worker(slides, style, active_mosaic_tiles, request_rx, result_tx, Arc::clone(&cancelled));
 
     // Fullscreen surfaces should be independent application windows on
     // Wayland, not transient dialogs attached to the main gallery. Closing

@@ -19,7 +19,8 @@ const SOURCE_KEY: &str = "screensaver-source";
 const DURATION_KEY: &str = "screensaver-duration";
 const SHUFFLE_KEY: &str = "screensaver-shuffle";
 const MOSAIC_SLOTS: usize = 6;
-const MAX_FRAMES: usize = 15;
+// Six on-screen mosaic tiles plus ten upcoming images and outgoing fade frames.
+const MAX_FRAMES: usize = 20;
 const PREFETCH: usize = 10;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

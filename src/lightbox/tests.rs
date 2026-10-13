@@ -447,6 +447,51 @@ mod one_to_one_layout_regression {
 }
 
 #[cfg(test)]
+mod lightbox_close_transition_regression {
+    use super::*;
+
+    #[test]
+    #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+    fn user_close_fades_then_resets_opacity_and_immediate_close_cancels_fade() {
+        gtk::init().unwrap();
+        let lightbox = Lightbox::new();
+        let window = gtk::Window::new();
+        window.set_default_size(640, 480);
+        window.set_child(Some(&lightbox.root));
+        window.present();
+        lightbox.root.set_visible(true);
+
+        let prepared = Rc::new(Cell::new(0_u32));
+        let prepared_for_handler = prepared.clone();
+        lightbox.set_close_prepare_handler(move || {
+            prepared_for_handler.set(prepared_for_handler.get() + 1);
+        });
+
+        lightbox.request_close();
+        lightbox.request_close(); // Repeated input must not start a second fade.
+        assert_eq!(prepared.get(), 1);
+
+        let context = glib::MainContext::default();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while lightbox.root.is_visible() && Instant::now() < deadline {
+            while context.pending() {
+                context.iteration(false);
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(!lightbox.root.is_visible(), "the fade must finish");
+        assert!((lightbox.root.opacity() - 1.0).abs() < f64::EPSILON);
+
+        lightbox.root.set_visible(true);
+        lightbox.request_close();
+        lightbox.close();
+        assert!(!lightbox.root.is_visible());
+        assert!((lightbox.root.opacity() - 1.0).abs() < f64::EPSILON);
+        window.close();
+    }
+}
+
+#[cfg(test)]
 mod one_to_one_quality_regression {
     use super::*;
 

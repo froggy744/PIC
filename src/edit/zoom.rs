@@ -132,6 +132,62 @@ fn one_to_one_scroll_target(
     }
 }
 
+/// The display canvas has a stable native size while draft textures use
+/// fewer pixels. A quick effect render must not resize the 1:1 canvas to
+/// the smaller texture's intrinsic dimensions.
+fn preview_display_dimensions(
+    old_dimensions: (i32, i32),
+    decoded_dimensions: (i32, i32),
+    native: bool,
+    native_draft: bool,
+) -> (i32, i32) {
+    if native && native_draft {
+        old_dimensions
+    } else {
+        decoded_dimensions
+    }
+}
+
+/// Only the FIRST entrance to 1:1 or an actual change of native geometry may
+/// move the scroll offsets; tone/colour/filter updates only replace pixels.
+fn native_preview_needs_reanchor(
+    old_dimensions: (i32, i32),
+    display_dimensions: (i32, i32),
+    entering_with_anchor: bool,
+) -> bool {
+    entering_with_anchor || old_dimensions != display_dimensions
+}
+
+#[cfg(test)]
+mod native_preview_geometry_tests {
+    use super::*;
+
+    #[test]
+    fn reduced_quality_filter_draft_keeps_full_size_canvas() {
+        let native = (4000, 3000);
+        let draft = (1600, 1200);
+        assert_eq!(preview_display_dimensions(native, draft, true, true), native);
+        assert!(!native_preview_needs_reanchor(native, native, false));
+    }
+
+    #[test]
+    fn native_refinement_does_not_recenter_unchanged_image() {
+        let native = (4000, 3000);
+        assert_eq!(preview_display_dimensions(native, native, true, false), native);
+        assert!(!native_preview_needs_reanchor(native, native, false));
+    }
+
+    #[test]
+    fn first_one_to_one_and_real_geometry_changes_still_reanchor() {
+        assert!(native_preview_needs_reanchor((1800, 1400), (4000, 3000), true));
+        assert!(native_preview_needs_reanchor((4000, 3000), (3600, 2800), false));
+        assert_eq!(
+            preview_display_dimensions((1800, 1400), (4000, 3000), true, false),
+            (4000, 3000)
+        );
+    }
+}
+
 fn apply_canvas_zoom(
     picture: &gtk::Picture,
     scroll: &gtk::ScrolledWindow,

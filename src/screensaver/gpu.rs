@@ -22,12 +22,19 @@ struct Tile {
     front_version: Option<(usize, u64)>,
 }
 impl Tile {
-    fn new() -> Self {
+    fn new(square_mosaic: bool) -> Self {
         let frame = gtk::Overlay::new();
+        // Keep landscape photographs cropped to the square. This also
+        // prevents image content from painting outside an animated tile.
+        frame.set_overflow(gtk::Overflow::Hidden);
         let back = gtk::Picture::new();
         let front = gtk::Picture::new();
         for picture in [&back, &front] {
-            picture.set_content_fit(gtk::ContentFit::Contain);
+            picture.set_content_fit(if square_mosaic {
+                gtk::ContentFit::Cover
+            } else {
+                gtk::ContentFit::Contain
+            });
             picture.set_hexpand(true);
             picture.set_vexpand(true);
             picture.set_can_shrink(true);
@@ -146,6 +153,59 @@ impl Cinema {
     }
 }
 
+/// Fit N square photos onto the current fullscreen monitor, using as much
+/// space as possible without ever stretching a tile. Incomplete last rows
+/// are centred to avoid a lopsided block.
+#[derive(Debug, Clone, Copy)]
+struct SquareGrid {
+    columns: usize,
+    rows: usize,
+    side: f64,
+    gap: f64,
+    top: f64,
+    width: f64,
+}
+impl SquareGrid {
+    fn fit(width: f64, height: f64, count: usize) -> Option<Self> {
+        if count == 0 || width < 2.0 || height < 2.0 { return None; }
+        let gap = (width.min(height) * 0.012).clamp(5.0, 18.0);
+        let mut best: Option<(Self, usize)> = None;
+        for cols in 1..=count {
+            let rows = count.div_ceil(cols);
+            let side = ((width - (cols + 1) as f64 * gap) / cols as f64)
+                .min((height - (rows + 1) as f64 * gap) / rows as f64);
+            if side <= 0.0 { continue; }
+            let empty = cols * rows - count;
+            let candidate = Self {
+                columns: cols,
+                rows,
+                side,
+                gap,
+                top: (height - (rows as f64 * side + (rows - 1) as f64 * gap)) * 0.5,
+                width,
+            };
+            let better = best.as_ref().is_none_or(|(previous, previous_empty)| {
+                side > previous.side + 0.5
+                    || ((side - previous.side).abs() <= 0.5 && empty < *previous_empty)
+            });
+            if better { best = Some((candidate, empty)); }
+        }
+        best.map(|(layout, _)| layout)
+    }
+    fn position(&self, slot: usize, count: usize) -> (f64, f64) {
+        let row = slot / self.columns;
+        let col = slot % self.columns;
+        let in_row = (count - row * self.columns).min(self.columns);
+        let row_width = in_row as f64 * self.side
+            + in_row.saturating_sub(1) as f64 * self.gap;
+        let left = (self.width - row_width) * 0.5;
+        (
+            left + col as f64 * (self.side + self.gap),
+            self.top + row as f64 * (self.side + self.gap),
+        )
+    }
+}
+
 pub(super) struct Stage {
     pub root: gtk::Fixed,
     style: Style,
@@ -165,8 +225,10 @@ impl Stage {
         } else { None };
         let mut tiles = Vec::new();
         if style != Style::IPhoto {
-            for slot in 0..MOSAIC_SLOTS.min(count) {
-                let tile = Tile::new();
+            // Count is already bounded by Player's active slots. Picture
+            // Pile always passes six; Mosaic passes the configured count.
+            for slot in 0..count {
+                let tile = Tile::new(style == Style::Mosaic);
                 if style == Style::PicturePile {
                     tile.frame.add_css_class("screensaver-print");
                     tile.frame.add_css_class(&format!("screensaver-angle-{slot}"));
@@ -186,14 +248,14 @@ impl Stage {
             return;
         }
         let fade = smootherstep(player.progress());
+        let square_grid = if self.style == Style::Mosaic {
+            SquareGrid::fit(w, h, self.tiles.len())
+        } else { None };
         for (slot, tile) in self.tiles.iter_mut().enumerate() {
             let Some(&new_id) = player.slots.get(slot) else { continue };
-            let (x, y, tile_w, tile_h) = if self.style == Style::Mosaic {
-                let margin = (w.min(h) * 0.017).max(8.0);
-                let tw = ((w - margin * 4.0) / 3.0).max(1.0);
-                let th = ((h - margin * 3.0) / 2.0).max(1.0);
-                (margin + (slot % 3) as f64 * (tw + margin),
-                 margin + (slot / 3) as f64 * (th + margin), tw, th)
+            let (x, y, tile_w, tile_h) = if let Some(grid) = square_grid {
+                let (x, y) = grid.position(slot, self.tiles.len());
+                (x, y, grid.side, grid.side)
             } else {
                 let tw = (w * 0.29).min(h * 0.49);
                 let th = tw * 0.79;
@@ -243,3 +305,34 @@ pub(super) fn install_css() {
         );
     }
 }
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mosaic_tiles_are_square_centered_and_within_monitor_bounds() {
+        for (width, height) in [(1920.0, 1080.0), (3840.0, 2160.0), (1080.0, 1920.0)] {
+            for count in [1, 3, 6, 9, 12, 18, 24, 30] {
+                let grid = SquareGrid::fit(width, height, count).unwrap();
+                assert!(grid.side > 0.0);
+                assert!(grid.columns * grid.rows >= count);
+                for slot in 0..count {
+                    let (x, y) = grid.position(slot, count);
+                    assert!(x >= -0.01 && y >= -0.01, "{width}x{height} {count} {slot}: {x}, {y}");
+                    assert!(x + grid.side <= width + 0.01);
+                    assert!(y + grid.side <= height + 0.01);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn classic_six_tiles_use_three_columns_two_rows_in_landscape() {
+        let grid = SquareGrid::fit(1920.0, 1080.0, 6).unwrap();
+        assert_eq!((grid.columns, grid.rows), (3, 2));
+        let (first_x, first_y) = grid.position(0, 6);
+        let (last_x, last_y) = grid.position(5, 6);
+        assert!(first_x < last_x && first_y < last_y);
+    }
+}
+

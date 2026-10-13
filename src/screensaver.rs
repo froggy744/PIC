@@ -922,6 +922,23 @@ mod tests {
     }
 
     #[test]
+    fn outgoing_frames_are_released_when_the_transition_finishes() {
+        let mut mosaic = Player::new(Style::Mosaic, 20, 12, false, 6);
+        mosaic.fading_slot = Some((2, 0));
+        mosaic.switched_at = Instant::now() - Duration::from_secs(3);
+        let (tx, _rx) = mpsc::channel();
+        mosaic.update(&tx);
+        assert!(mosaic.fading_slot.is_none());
+
+        let mut cinema = Player::new(Style::IPhoto, 8, 12, true, 6);
+        cinema.previous = Some(0);
+        cinema.current = 1;
+        cinema.switched_at = Instant::now() - Duration::from_secs(3);
+        cinema.update(&tx);
+        assert!(cinema.previous.is_none());
+    }
+
+    #[test]
     fn mosaic_tile_count_affects_mosaic_not_picture_pile() {
         for n in [1, 6, 9, 12, 18, 24, 30, 60, 100, 250, 1000] {
             let mosaic = Player::new(Style::Mosaic, 2000, 5, true, n);

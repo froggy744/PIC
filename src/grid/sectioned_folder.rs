@@ -1616,7 +1616,8 @@ impl SectionedFolderView {
             }
             if t >= 1.0 {
                 view.wall_zoom_active.set(false);
-                set_grid_zoom_animation_active(false);
+                view.wall_zoom_scale.set(1.0);
+                view.wall_zoom_opacity.set(1.0);
                 glib::ControlFlow::Break
             } else {
                 glib::ControlFlow::Continue

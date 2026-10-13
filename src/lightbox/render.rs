@@ -375,28 +375,41 @@ fn show_photo(
                     );
                 }
                 if zoom.get() < 0.0 {
-                    // The Fit preview was kept visible during decode. Only
-                    // make the picture non-shrinking when native pixels exist.
+                    // A recipe-only refresh must swap pixels in place. Calling
+                    // fit_centered_picture here used to recenter both scroll
+                    // adjustments after pasted effects, losing a 1:1 pan.
+                    // Geometry changes (rotate/crop or initial 1:1) still use
+                    // the existing fit-and-centre path.
                     picture.set_can_shrink(false);
-                    fit_centered_picture(
-                        &picture,
-                        &picture_viewport,
-                        std::slice::from_ref(&photo),
-                        0,
-                        root.width(),
-                        root.height(),
-                        -1.0,
-                        "one-to-one-decode",
-                    );
-                    picture.queue_resize();
-                    picture_viewport.queue_resize();
-                    trace_lightbox_after_paint(
-                        &root,
-                        &picture,
-                        &picture_viewport,
-                        "one_to_one_settled_decode",
-                        None,
-                    );
+                    if fit_geometry_fixed {
+                        picture.queue_draw();
+                        viewer_trace(format!(
+                            "one_to_one_edit_swap preserve_pan=true h={:.1} v={:.1} size={:?}",
+                            picture_viewport.hadjustment().value(),
+                            picture_viewport.vadjustment().value(),
+                            picture.size_request(),
+                        ));
+                    } else {
+                        fit_centered_picture(
+                            &picture,
+                            &picture_viewport,
+                            std::slice::from_ref(&photo),
+                            0,
+                            root.width(),
+                            root.height(),
+                            -1.0,
+                            "one-to-one-decode",
+                        );
+                        picture.queue_resize();
+                        picture_viewport.queue_resize();
+                        trace_lightbox_after_paint(
+                            &root,
+                            &picture,
+                            &picture_viewport,
+                            "one_to_one_settled_decode",
+                            None,
+                        );
+                    }
                 }
             }
             Err(_) => {

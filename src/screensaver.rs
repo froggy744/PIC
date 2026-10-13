@@ -952,6 +952,28 @@ mod tests {
     }
 
     #[test]
+    fn missing_cached_preview_does_not_mark_original_failed() {
+        let mut player = Player::new(Style::Mosaic, 12, 6, false, 6);
+        player.receive(ImageResult { index: 0, high_quality: false, pixels: None });
+        assert!(!player.failed.contains(&0));
+        player.receive(ImageResult { index: 0, high_quality: true, pixels: None });
+        assert!(player.failed.contains(&0));
+    }
+
+    #[test]
+    fn missing_mosaic_slots_prefetch_other_candidates() {
+        let mut player = Player::new(Style::Mosaic, 80, 6, false, 10);
+        let (tx, rx) = mpsc::channel();
+        player.prefetch(&tx);
+        assert_eq!(player.preload_cursor, 10);
+        player.prefetch(&tx);
+        assert!(player.preload_cursor > 10);
+        let requested: HashSet<usize> = rx.try_iter().collect();
+        assert!((0..10).all(|i| requested.contains(&i)));
+        assert!((10..20).any(|i| requested.contains(&i)));
+    }
+
+    #[test]
     fn shuffle_preserves_items() {
         let mut values: Vec<usize> = (0..100).collect();
         shuffle(&mut values);

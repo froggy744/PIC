@@ -1470,6 +1470,87 @@ fn photo_wall_integer_allocations_paint_every_pixel_including_final_row() {
 
 #[test]
 #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+fn wall_and_masonry_zoom_fade_without_flying_tiles() {
+    gtk::init().unwrap();
+    let gallery = Rc::new(Gallery::new(
+        &[],
+        160,
+        |_| {},
+        |_, _, _| {},
+        |_, _, _, _| {},
+        |_, _| {},
+        |_| {},
+    ));
+    let photos = (0..90_i64)
+        .map(|i| {
+            glib::Object::builder::<PhotoObject>()
+                .property("id", i + 1)
+                .property("width", if i % 3 == 0 { 4000_i64 } else { 6000_i64 })
+                .property("height", if i % 3 == 0 { 6000_i64 } else { 4000_i64 })
+                .build()
+        })
+        .collect::<Vec<_>>();
+    gallery.current_photos.replace(photos.clone());
+    gallery.store.splice(0, 0, &photos);
+
+    let scroll = gtk::ScrolledWindow::builder()
+        .child(&gallery.folder_sectioned_root)
+        .build();
+    gallery.attach_sectioned_folder_scroll(&scroll);
+    let window = gtk::Window::builder()
+        .default_width(1000)
+        .default_height(670)
+        .child(&scroll)
+        .build();
+    window.present();
+    settle();
+    gallery.set_zoom_animations_enabled(true);
+    assert!(scroll.is_mapped());
+
+    for layout in [PhotoLayout::PhotoWall, PhotoLayout::Masonry] {
+        gallery.set_layout(layout);
+        settle();
+        let surface = &gallery.sectioned_folder;
+
+        gallery.wheel_zoom_in();
+        assert!(surface.wall_zoom_active.get(),
+            "{layout:?} should animate after committing layout");
+        assert!(surface.wall_zoom_scale.get() < 1.0,
+            "zoom-in must grow inside each fixed tile");
+        assert!(surface.wall_zoom_opacity.get() < 1.0);
+        assert!(!surface.reflow_active.get(),
+            "wall zoom must not animate photo coordinates");
+        for (&index, live) in surface.live_tiles.borrow().iter() {
+            let item = surface.wall_state.borrow().layout.item(index as usize).unwrap().clone();
+            assert_eq!(live.tile.presentation_offset(), (0.0, 0.0));
+            assert_eq!(live.tile.width(), item.width as i32);
+            assert_eq!(live.tile.height(), item.height as i32);
+        }
+        settle();
+        assert!(!surface.wall_zoom_active.get());
+        for live in surface.live_tiles.borrow().values() {
+            assert!((live.tile.presentation_scale() - 1.0).abs() < 0.001);
+            assert!((live.tile.opacity() - 1.0).abs() < 0.001);
+        }
+
+        gallery.wheel_zoom_out();
+        assert!(surface.wall_zoom_active.get());
+        assert!(surface.wall_zoom_scale.get() > 1.0,
+            "zoom-out must shrink inside each fixed tile");
+        // Cancel mid-animation by switching off animations, then restore setting.
+        gallery.set_zoom_animations_enabled(false);
+        assert!(!surface.wall_zoom_active.get());
+        for live in surface.live_tiles.borrow().values() {
+            assert!((live.tile.presentation_scale() - 1.0).abs() < 0.001);
+            assert!((live.tile.opacity() - 1.0).abs() < 0.001);
+        }
+        gallery.set_zoom_animations_enabled(true);
+    }
+    window.close();
+}
+
+#[test]
+#[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
 fn photo_wall_ctrl_wheel_zoom_allocations_match_every_painted_frame() {
     gtk::init().unwrap();
     crate::css::install_foundation(&gtk::gdk::Display::default().unwrap());

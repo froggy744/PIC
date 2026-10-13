@@ -24,6 +24,7 @@ mod photo_object;
 mod photo_texture;
 mod platform;
 mod scanner;
+mod screensaver;
 mod settings;
 mod sidebar;
 mod smooth_scroll;

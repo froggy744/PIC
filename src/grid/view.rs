@@ -1059,6 +1059,14 @@ impl Gallery {
         }
 
         if !self.zoom_animations_enabled.get() || !self.root.settings().is_gtk_enable_animations() {
+            if std::env::var_os("PICASA_TRACE").is_some() {
+                eprintln!(
+                    "PIC_ZOOM_ANIM status=skipped mode=grid reason={} from={} to={}",
+                    if !self.zoom_animations_enabled.get() { "user_setting_disabled" }
+                    else { "gtk_animations_disabled" },
+                    from_width, to_width,
+                );
+            }
             set_grid_zoom_animation_active(false);
             return generation;
         }
@@ -1117,6 +1125,12 @@ impl Gallery {
         );
 
         if entries.is_empty() && column_entries.borrow().is_empty() {
+            if std::env::var_os("PICASA_TRACE").is_some() {
+                eprintln!(
+                    "PIC_ZOOM_ANIM status=skipped mode=grid reason=no_mapped_tiles from={} to={} columns={}=>{}",
+                    from_width, to_width, from_columns, to_columns,
+                );
+            }
             set_grid_zoom_animation_active(false);
             return generation;
         }

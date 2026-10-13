@@ -1566,6 +1566,10 @@ mod tests {
         let elapsed = player.elapsed();
         // Pretend the pause has lasted 5s. Presentation time should still
         // be near 450ms once playback resumes, rather than jumping slides.
+        // Advance the simulated clock by five seconds for *both* instants.
+        // In real playback Instant::now() advances while paused; moving
+        // only paused_at backwards would make switched_at appear in future.
+        player.switched_at -= Duration::from_secs(5);
         player.paused_at = Some(Instant::now() - Duration::from_secs(5));
         assert!(!player.pause_or_resume());
         let resumed = player.elapsed();

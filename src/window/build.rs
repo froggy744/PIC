@@ -3009,7 +3009,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let lightbox_close_prepared = Rc::new(Cell::new(false));
     {
         let gallery = gallery.clone();
-        let lightbox_for_prepare = lightbox.clone();
+        let lightbox_for_prepare = Rc::downgrade(&lightbox);
         let prepared = lightbox_close_prepared.clone();
         let pending_refresh = pending_search_return_refresh.clone();
         lightbox.set_close_prepare_handler(move || {
@@ -3017,7 +3017,10 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             if pending_refresh.get().is_some() {
                 return;
             }
-            if let Some(photo) = lightbox_for_prepare.current_photo() {
+            if let Some(photo) = lightbox_for_prepare
+                .upgrade()
+                .and_then(|lightbox| lightbox.current_photo())
+            {
                 prepared.set(gallery.restore_activated_photo(photo.id()));
             }
         });

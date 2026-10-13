@@ -671,7 +671,69 @@ mod tests {
         let output = apply_recipe(source, &recipe);
         let dark = output.get_pixel(2, 0)[0] as i16;
         let light = output.get_pixel(1, 0)[0] as i16;
-        assert!(light - dark > 80);
+        assert!(light - dark > 45, "contrast should improve useful range");
+        assert!(light - dark < 85, "auto contrast should not crush a narrow histogram");
+    }
+
+    #[test]
+    fn fill_shadows_and_highlights_affect_different_tonal_regions() {
+        let levels = [30_u8, 74, 145, 224];
+        let source = RgbaImage::from_fn(4, 1, |x, _| {
+            let y = levels[x as usize];
+            Rgba([y, y, y, 255])
+        });
+        let mut fill = EditRecipe::default();
+        fill.fill_light = 0.8;
+        let mut shadows = EditRecipe::default();
+        shadows.shadows = 0.8;
+        let mut highlights = EditRecipe::default();
+        highlights.highlights = -0.8;
+        let a = apply_recipe(source.clone(), &fill);
+        let b = apply_recipe(source.clone(), &shadows);
+        let c = apply_recipe(source.clone(), &highlights);
+        assert!(a.get_pixel(1, 0)[0] > source.get_pixel(1, 0)[0]);
+        assert!(b.get_pixel(0, 0)[0] > source.get_pixel(0, 0)[0]);
+        assert_ne!(a.as_raw(), b.as_raw(), "Fill and Shadows must be independent");
+        assert!(c.get_pixel(3, 0)[0] < source.get_pixel(3, 0)[0]);
+        assert!((c.get_pixel(0, 0)[0] as i16 - 30).abs() <= 2);
+    }
+
+    #[test]
+    fn clarity_changes_midtone_edges_without_changing_alpha() {
+        let source = RgbaImage::from_fn(96, 96, |x, _| {
+            let v = if x < 48 { 80 } else { 162 };
+            Rgba([v, v, v, 175])
+        });
+        let mut stronger = EditRecipe::default();
+        stronger.clarity = 1.0;
+        let output = apply_recipe(source.clone(), &stronger);
+        assert_ne!(output.as_raw(), source.as_raw());
+        assert_eq!(output.get_pixel(45, 42)[3], 175);
+        assert_eq!(output.get_pixel(70, 42)[0], 162);
+        stronger.clarity = -1.0;
+        let softened = apply_recipe(source.clone(), &stronger);
+        assert_ne!(output.as_raw(), softened.as_raw());
+    }
+
+    #[test]
+    fn grain_is_deterministic_and_preserves_alpha() {
+        let source = RgbaImage::from_pixel(40, 40, Rgba([128, 131, 136, 91]));
+        let mut recipe = EditRecipe::default();
+        recipe.grain = 0.75;
+        let first = apply_recipe(source.clone(), &recipe);
+        let second = apply_recipe(source.clone(), &recipe);
+        assert_eq!(first.as_raw(), second.as_raw());
+        assert_ne!(first.as_raw(), source.as_raw());
+        assert!(first.pixels().all(|p| p[3] == 91));
+    }
+
+    #[test]
+    fn auto_color_uses_neutrals_without_erasing_warm_colours() {
+        let cast = RgbaImage::from_pixel(30, 30, Rgba([137, 125, 114, 255]));
+        let mut recipe = EditRecipe::default();
+        recipe.auto_color = true;
+        let p = apply_recipe(cast, &recipe).get_pixel(0, 0).0;
+        assert!((p[0] as i16 - p[2] as i16).abs() < 23);
     }
 
     #[test]

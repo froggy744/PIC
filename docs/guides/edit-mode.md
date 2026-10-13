@@ -34,6 +34,8 @@ This is where the everyday corrections live, in three friendly groups:
 
 **Quick fixes** are on the Filters tab: Auto Contrast, Auto Colour, B&W, and Sepia. The automatic tools use conservative image-adaptive adjustments, not guaranteed exposure or white-balance recovery.
 
+**Filter Amount** sits immediately below Auto Contrast and Auto Colour. Adjust the strength of Newspaper, Old Photo, any named filter, B&W or Sepia from **0% (unfiltered) to 100% (full style)**. The slider is disabled while Original is selected. It affects only the creative filter, not Auto Contrast/Colour, Fill Light, Shadows or other manual tools. Amount is stored in the non-destructive recipe; older saved photos default to 100%.
+
 **Light:**
 - **Exposure** — brighten or darken the whole photo
 - **Contrast** — punchy or soft

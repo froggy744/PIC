@@ -515,6 +515,11 @@ pub fn build(
     auto_row.append(&auto_color);
     filters_box.append(&auto_row);
 
+    // Consistent with preset intensity controls: 100% is the existing full
+    // look, 0% leaves the creative filter unapplied. Manual tools stay intact.
+    let filter_amount = add_slider(&filters_box, "Filter Amount (%)", 0.0, 100.0, 1.0, 0);
+    filter_amount.set_tooltip_text(Some("Adjust the selected filter's strength (0–100%). Does not change Auto Contrast or Auto Colour."));
+
     add_section_label(&filters_box, "FILTERS");
     let filter_grid = gtk::FlowBox::new();
     filter_grid.set_row_spacing(10);
@@ -658,6 +663,7 @@ pub fn build(
         grain,
         auto_contrast,
         auto_color,
+        filter_amount,
         black_white,
         sepia,
         filters: filter_buttons,
@@ -717,6 +723,7 @@ pub fn build(
     ] {
         configure_scale_scroll(scale, &tools_scroll);
     }
+    configure_scale_scroll(&controls.filter_amount, &filters_scroll);
 
     let active_rotation_for_queue = active_rotation.clone();
     let queue_preview: Rc<dyn Fn()> = {
@@ -1065,6 +1072,15 @@ pub fn build(
         |r, v| r.grain = v,
     );
 
+    connect_scale(
+        &controls.filter_amount,
+        session.clone(),
+        syncing.clone(),
+        queue_preview.clone(),
+        update_history_buttons.clone(),
+        |recipe, percentage| recipe.filter_amount = (percentage / 100.0).clamp(0.0, 1.0),
+    );
+
     connect_toggle(
         &controls.auto_contrast,
         session.clone(),
@@ -1099,6 +1115,7 @@ pub fn build(
             .collect::<Vec<_>>();
         let queue_preview = queue_preview.clone();
         let update_history_buttons = update_history_buttons.clone();
+        let filter_amount_scale = controls.filter_amount.clone();
         controls.black_white.connect_toggled(move |button| {
             if syncing.get() {
                 return;
@@ -1123,6 +1140,7 @@ pub fn build(
                     recipe.sepia = false;
                 }
             });
+            filter_amount_scale.set_sensitive(active);
             update_history_buttons();
             queue_preview();
         });
@@ -1145,6 +1163,7 @@ pub fn build(
             .collect::<Vec<_>>();
         let queue_preview = queue_preview.clone();
         let update_history_buttons = update_history_buttons.clone();
+        let filter_amount_scale = controls.filter_amount.clone();
         controls.sepia.connect_toggled(move |button| {
             if syncing.get() {
                 return;
@@ -1169,6 +1188,7 @@ pub fn build(
                     recipe.black_white = false;
                 }
             });
+            filter_amount_scale.set_sensitive(active);
             update_history_buttons();
             queue_preview();
         });
@@ -1194,6 +1214,7 @@ pub fn build(
             .collect::<Vec<_>>();
         let queue_preview = queue_preview.clone();
         let update_history_buttons = update_history_buttons.clone();
+        let filter_amount_scale = controls.filter_amount.clone();
         button.connect_toggled(move |button| {
             if syncing.get() {
                 return;
@@ -1217,6 +1238,7 @@ pub fn build(
                 recipe.black_white = false;
                 recipe.sepia = false;
             });
+            filter_amount_scale.set_sensitive(active && preset != FilterPreset::None);
             update_history_buttons();
             queue_preview();
         });

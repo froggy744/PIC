@@ -317,52 +317,39 @@ fn apply_contrast_curve(value: f32, contrast: f32) -> f32 {
 }
 
 fn apply_auto_color(image: &mut RgbaImage) {
-    let mut sums = [0.0f64; 3];
-    let mut count = 0.0f64;
+    // Estimate a restrained neutral correction from low-chroma midtones only.
+    // Sampling saturated scenery/skin would mistake intentional colour for a
+    // cast; when the photo has no reliable neutrals, leave it untouched.
+    let mut sums = [0.0_f64; 3];
+    let mut count = 0.0_f64;
     let step = ((image.width() as u64 * image.height() as u64) / 200_000).max(1) as usize;
     for pixel in image.pixels().step_by(step) {
-        if pixel[3] < 16 {
-            continue;
-        }
-        let r = pixel[0] as f64;
-        let g = pixel[1] as f64;
-        let b = pixel[2] as f64;
+        if pixel[3] < 16 { continue; }
+        let [r, g, b] = [pixel[0] as f64, pixel[1] as f64, pixel[2] as f64];
         let luma = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255.0;
-        if !(0.06..=0.94).contains(&luma) {
-            continue;
-        }
-        sums[0] += r;
-        sums[1] += g;
-        sums[2] += b;
-        count += 1.0;
+        if !(0.07..=0.93).contains(&luma) { continue; }
+        let chroma = (r.max(g).max(b) - r.min(g).min(b)) / r.max(g).max(b).max(1.0);
+        if chroma > 0.32 { continue; }
+        let weight = (1.0 - chroma / 0.32).powi(2);
+        sums[0] += r * weight;
+        sums[1] += g * weight;
+        sums[2] += b * weight;
+        count += weight;
     }
-    if count <= 0.0 {
-        return;
-    }
+    if count < 0.5 { return; }
 
     let means = [sums[0] / count, sums[1] / count, sums[2] / count];
-    let gray = (means[0] + means[1] + means[2]) / 3.0;
-    let raw_gains = [
-        (gray / means[0].max(1.0)).clamp(0.80, 1.20),
-        (gray / means[1].max(1.0)).clamp(0.80, 1.20),
-        (gray / means[2].max(1.0)).clamp(0.80, 1.20),
-    ];
-    // Blend only part-way toward gray-world neutrality. This removes obvious
-    // casts without erasing deliberate warm/cool lighting.
-    let strength = 0.35;
+    let neutral = 0.2126 * means[0] + 0.7152 * means[1] + 0.0722 * means[2];
     let gains = [
-        1.0 + (raw_gains[0] - 1.0) * strength,
-        1.0 + (raw_gains[1] - 1.0) * strength,
-        1.0 + (raw_gains[2] - 1.0) * strength,
+        1.0 + ((neutral / means[0].max(1.0)).clamp(0.82, 1.22) - 1.0) * 0.65,
+        1.0 + ((neutral / means[1].max(1.0)).clamp(0.82, 1.22) - 1.0) * 0.65,
+        1.0 + ((neutral / means[2].max(1.0)).clamp(0.82, 1.22) - 1.0) * 0.65,
     ];
     image.as_mut().par_chunks_mut(4).for_each(|pixel| {
-        if pixel[3] < 16 {
-            return;
-        }
-        for channel in 0..3 {
-            pixel[channel] = (pixel[channel] as f64 * gains[channel])
-                .clamp(0.0, 255.0)
-                .round() as u8;
+        if pixel[3] < 16 { return; }
+        for c in 0..3 {
+            pixel[c] = (pixel[c] as f64 * gains[c])
+                .clamp(0.0, 255.0).round() as u8;
         }
     });
 }
@@ -372,71 +359,56 @@ fn apply_auto_contrast(image: &mut RgbaImage) {
     let step = ((image.width() as u64 * image.height() as u64) / 250_000).max(1) as usize;
     let mut samples = 0u64;
     for pixel in image.pixels().step_by(step) {
-        if pixel[3] < 16 {
-            continue;
-        }
-        let luma = rgb_luma(
-            pixel[0] as f32 / 255.0,
-            pixel[1] as f32 / 255.0,
-            pixel[2] as f32 / 255.0,
-        );
-        let bucket = (luma.clamp(0.0, 1.0) * 255.0).round() as usize;
+        if pixel[3] < 16 { continue; }
+        let bucket = rgb_luma(pixel[0] as f32, pixel[1] as f32, pixel[2] as f32)
+            .round().clamp(0.0, 255.0) as usize;
         histogram[bucket] += 1;
         samples += 1;
     }
-    if samples == 0 {
-        return;
-    }
+    if samples < 4 { return; }
 
-    // Ignore roughly the outer 1% of luminance samples so a single specular
-    // highlight or black pixel does not determine the entire correction.
+    // Robust percentile bounds: small specular reflections and individual
+    // dark pixels must not decide the whole photo's black/white points.
     let clip = if samples >= 100 {
         ((samples as f64 * 0.01).round() as u64).max(1)
-    } else {
-        0
-    };
-    let mut cumulative = 0u64;
+    } else { 0 };
+    let mut total = 0u64;
     let mut low = 0usize;
-    for (index, count) in histogram.iter().enumerate() {
-        cumulative += *count;
-        if cumulative > clip {
-            low = index;
-            break;
-        }
+    for (i, count) in histogram.iter().enumerate() {
+        total += *count;
+        if total > clip { low = i; break; }
     }
-    cumulative = 0;
+    total = 0;
     let mut high = 255usize;
-    for (index, count) in histogram.iter().enumerate().rev() {
-        cumulative += *count;
-        if cumulative > clip {
-            high = index;
-            break;
-        }
+    for (i, count) in histogram.iter().enumerate().rev() {
+        total += *count;
+        if total > clip { high = i; break; }
     }
-    if high <= low + 6 {
-        return;
-    }
-
+    if high <= low + 6 { return; }
     let low = low as f32 / 255.0;
     let high = high as f32 / 255.0;
-    let range = high - low;
+    let span = high - low;
+    // Protect compressed-histogram/low-light photographs from a huge global
+    // stretch. Anchor the contrast about scene luminance rather than forcing
+    // arbitrary percentile samples all the way to pure black or white.
+    let contrast = (0.85 / span).clamp(1.0, 3.2);
+    if contrast <= 1.001 { return; }
+    let pivot = (low + high) * 0.5;
+
     image.as_mut().par_chunks_mut(4).for_each(|pixel| {
-        if pixel[3] < 16 {
-            return;
+        if pixel[3] < 16 { return; }
+        let y = rgb_luma(
+            pixel[0] as f32, pixel[1] as f32, pixel[2] as f32,
+        ) / 255.0;
+        if y <= 0.0001 { return; }
+        let stretched = ((y - pivot) * contrast + pivot).clamp(0.012, 0.988);
+        let corrected = y + (stretched - y) * 0.75;
+        // Scale luminance uniformly to retain hue/chroma as far as possible,
+        // rather than adding an RGB offset that desaturates colour.
+        let gain = (corrected / y).clamp(0.2, 3.0);
+        for c in 0..3 {
+            pixel[c] = (pixel[c] as f32 * gain).clamp(0.0, 255.0).round() as u8;
         }
-        let r = pixel[0] as f32 / 255.0;
-        let g = pixel[1] as f32 / 255.0;
-        let b = pixel[2] as f32 / 255.0;
-        let original_luma = rgb_luma(r, g, b);
-        // Preserve a small amount of headroom at both ends instead of forcing
-        // the selected percentile range to absolute black and white.
-        let normalized = ((original_luma - low) / range).clamp(0.0, 1.0);
-        let stretched = 0.02 + normalized * 0.96;
-        let target_luma = original_luma + (stretched - original_luma) * 0.80;
-        let delta = target_luma - original_luma;
-        pixel[0] = ((r + delta).clamp(0.0, 1.0) * 255.0).round() as u8;
-        pixel[1] = ((g + delta).clamp(0.0, 1.0) * 255.0).round() as u8;
-        pixel[2] = ((b + delta).clamp(0.0, 1.0) * 255.0).round() as u8;
     });
 }
 

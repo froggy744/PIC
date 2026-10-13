@@ -2981,17 +2981,20 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             if let Some(editor) = edit_editor_for_one_to_one.borrow().as_ref() {
                 editor.set_one_to_one(enabled);
             }
-        } else if enabled && !lightbox_for_one_to_one.root.is_visible() {
-            if let Some(open_selected) = space_open_slot_for_one_to_one.borrow().as_ref() {
-                open_selected();
-            }
-            let lightbox = lightbox_for_one_to_one.clone();
-            glib::idle_add_local_once(move || {
-                if lightbox.root.is_visible() {
-                    lightbox.set_one_to_one(true);
-                    lightbox.root.grab_focus();
+        } else if !lightbox_for_one_to_one.root.is_visible() {
+            if enabled {
+                // The grid toolbar 1:1 control follows Space: first open the
+                // selected photo in Fit, then toggle native pixels on the next
+                // press while the viewer is visible.
+                if let Some(open_selected) = space_open_slot_for_one_to_one.borrow().as_ref() {
+                    open_selected();
                 }
-            });
+                // Reset even if no photo could be opened (e.g. no selection).
+                // The photo-changed callback may already have reset it.
+                if button.is_active() {
+                    button.set_active(false);
+                }
+            }
         } else {
             lightbox_for_one_to_one.set_one_to_one(enabled);
         }

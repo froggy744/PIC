@@ -424,6 +424,27 @@ mod tests {
     use super::*;
 
     #[test]
+    fn newspaper_and_old_photo_are_distinct_and_deterministic() {
+        let source = RgbaImage::from_fn(32, 32, |x, y| {
+            Rgba([(x * 6) as u8, (y * 6) as u8, 140, 177])
+        });
+        let mut newspaper = source.clone();
+        let mut newspaper_again = source.clone();
+        apply_filter(&mut newspaper, FilterPreset::Newspaper);
+        apply_filter(&mut newspaper_again, FilterPreset::Newspaper);
+        assert_eq!(newspaper.as_raw(), newspaper_again.as_raw());
+        assert_ne!(newspaper.as_raw(), source.as_raw());
+        assert!(newspaper.pixels().all(|p| p[3] == 177));
+        let mut vintage = source.clone();
+        apply_filter(&mut vintage, FilterPreset::OldPhoto);
+        assert_ne!(vintage.as_raw(), source.as_raw());
+        assert_ne!(vintage.as_raw(), newspaper.as_raw());
+        for preset in [FilterPreset::Newspaper, FilterPreset::OldPhoto] {
+            assert_eq!(FilterPreset::decode(preset.key()), preset);
+        }
+    }
+
+    #[test]
     fn none_preset_is_a_no_op() {
         let mut image = RgbaImage::from_pixel(4, 4, Rgba([120, 130, 140, 255]));
         let before = image.clone();

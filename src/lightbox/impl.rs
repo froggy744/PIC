@@ -230,19 +230,69 @@ impl Lightbox {
         let zoom_sync: ZoomSyncHandler = Rc::new(RefCell::new(None));
         let context_menu: ContextMenuHandler = Rc::new(RefCell::new(None));
         let collection_navigation: CollectionNavigationHandler = Rc::new(RefCell::new(None));
+        let close_prepare: Rc<RefCell<Option<Rc<dyn Fn()>>>> = Rc::new(RefCell::new(None));
+        let close_generation = Rc::new(Cell::new(0_u64));
+        let close_in_progress = Rc::new(Cell::new(false));
+        let close_requested: Rc<dyn Fn()> = {
+            let weak_root = root.downgrade();
+            let prepare = close_prepare.clone();
+            let generation = close_generation.clone();
+            let closing = close_in_progress.clone();
+            let load_generation = load_generation.clone();
+            let decode_cancel = decode_cancel.clone();
+            Rc::new(move || {
+                let Some(root) = weak_root.upgrade() else {
+                    return;
+                };
+                if !root.is_visible() || closing.replace(true) {
+                    return;
+                }
+                // A closing viewer must not apply a late decode or prefetch.
+                cancel_lightbox_prefetch();
+                load_generation.set(load_generation.get().wrapping_add(1));
+                if let Some(active) = decode_cancel.borrow_mut().take() {
+                    active.cancel();
+                }
+                // Prepare the selected grid tile while the viewer still covers it.
+                if let Some(prepare) = prepare.borrow().as_ref() {
+                    prepare();
+                }
+                if !root.is_visible() {
+                    closing.set(false);
+                    return;
+                }
+                if !root.is_mapped() || !root.settings().is_gtk_enable_animations() {
+                    root.set_visible(false);
+                    return;
+                }
+                let serial = generation.get().wrapping_add(1);
+                generation.set(serial);
+                let generation_for_tick = generation.clone();
+                let started = std::time::Instant::now();
+                root.add_tick_callback(move |root, _| {
+                    if !root.is_visible() || generation_for_tick.get() != serial {
+                        return glib::ControlFlow::Break;
+                    }
+                    const CLOSE_SECONDS: f64 = 0.16;
+                    let progress = (started.elapsed().as_secs_f64() / CLOSE_SECONDS).clamp(0.0, 1.0);
+                    let eased = progress * progress * (3.0 - 2.0 * progress);
+                    root.set_opacity(1.0 - eased);
+                    if progress >= 1.0 {
+                        root.set_visible(false);
+                        glib::ControlFlow::Break
+                    } else {
+                        glib::ControlFlow::Continue
+                    }
+                });
+            })
+        };
 
         let double_click = gtk::GestureClick::new();
         double_click.set_button(1);
-        let root_for_double = root.clone();
-        let generation_for_double = load_generation.clone();
-        let cancel_for_double = decode_cancel.clone();
+        let close_for_double = close_requested.clone();
         double_click.connect_pressed(move |gesture, n_press, _, _| {
             if n_press == 2 {
-                generation_for_double.set(generation_for_double.get().wrapping_add(1));
-                if let Some(active) = cancel_for_double.borrow_mut().take() {
-                    active.cancel();
-                }
-                root_for_double.set_visible(false);
+                close_for_double();
                 gesture.set_state(gtk::EventSequenceState::Claimed);
             }
         });
@@ -293,9 +343,17 @@ impl Lightbox {
         let applied_for_visibility = applied_native_scale.clone();
         let picture_for_visibility = picture.clone();
         let viewport_for_visibility = picture_viewport.clone();
+        let close_generation_for_visibility = close_generation.clone();
+        let close_in_progress_for_visibility = close_in_progress.clone();
         let offline_for_visibility = offline.clone();
         root.connect_visible_notify(move |root| {
             if !root.is_visible() {
+                // An aborted fade must never affect the next photo opening.
+                close_generation_for_visibility.set(
+                    close_generation_for_visibility.get().wrapping_add(1),
+                );
+                close_in_progress_for_visibility.set(false);
+                root.set_opacity(1.0);
                 offline_for_visibility.disconnect();
                 offline_for_visibility.online();
                 let mut child = root.first_child();
@@ -319,6 +377,7 @@ impl Lightbox {
         outside_click.set_propagation_phase(gtk::PropagationPhase::Capture);
 
         let root_for_outside = root.clone();
+        let close_for_outside = close_requested.clone();
         let picture_for_outside = picture.clone();
         let viewport_for_outside = picture_viewport.clone();
 
@@ -385,7 +444,7 @@ impl Lightbox {
             }
 
             if !inside_picture && !inside_context_menu {
-                root_for_outside.set_visible(false);
+                close_for_outside();
                 gesture.set_state(gtk::EventSequenceState::Claimed);
             }
         });
@@ -802,6 +861,7 @@ impl Lightbox {
         // Capture before focused children can consume the event, so Escape always closes the lightbox.
         key.set_propagation_phase(gtk::PropagationPhase::Capture);
         let root_for_escape = root.clone();
+        let close_for_escape = close_requested.clone();
         let picture_for_key = picture.clone();
         let photos_for_key = photos.clone();
         let index_for_key = index.clone();
@@ -823,7 +883,7 @@ impl Lightbox {
             if (key == gtk::gdk::Key::Escape || key == gtk::gdk::Key::BackSpace)
                 && root_for_escape.is_visible()
             {
-                root_for_escape.set_visible(false);
+                close_for_escape();
                 glib::Propagation::Stop
             } else if [gtk::gdk::Key::plus, gtk::gdk::Key::equal].contains(&key) {
                 let current = if zoom_for_key.get() <= 0.0 {
@@ -1048,7 +1108,19 @@ impl Lightbox {
             zoom_sync,
             context_menu,
             collection_navigation,
+            close_requested,
+            close_prepare,
+            close_generation,
+            close_in_progress,
         }
+    }
+
+    pub fn request_close(&self) {
+        (self.close_requested)();
+    }
+
+    pub fn set_close_prepare_handler(&self, handler: impl Fn() + 'static) {
+        self.close_prepare.replace(Some(Rc::new(handler)));
     }
 
     pub fn set_unavailable_handler(&self, handler: impl Fn(PhotoObject, gtk::Widget) + 'static) {
@@ -1433,6 +1505,11 @@ impl Lightbox {
         selected: usize,
         source: Option<(gtk::Widget, gtk::gdk::Paintable)>,
     ) {
+        // A rapid reopen invalidates an unfinished close-fade callback.
+        self.close_generation
+            .set(self.close_generation.get().wrapping_add(1));
+        self.close_in_progress.set(false);
+        self.root.set_opacity(1.0);
         self.photos.replace(photos);
 
         let len = self.photos.borrow().len();
@@ -1900,6 +1977,10 @@ impl Lightbox {
     }
 
     pub fn close(&self) {
+        // Programmatic closes remain immediate (navigation, edits, tests).
+        self.close_generation
+            .set(self.close_generation.get().wrapping_add(1));
+        self.close_in_progress.set(false);
         cancel_lightbox_prefetch();
         // Invalidate an in-flight full-resolution decode as well as hiding
         // the viewer. A late worker result must not repopulate a closed view.

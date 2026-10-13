@@ -285,6 +285,10 @@ pub(super) struct Stage {
     traced_change: Option<usize>,
     traced_settle: Option<usize>,
     last_tick: Option<Instant>,
+    synced_revision: Option<u64>,
+    synced_geometry: Option<(i32, i32, usize)>,
+    active_tile: Option<usize>,
+    synced_change: Option<usize>,
 }
 impl Stage {
     pub fn new(style: Style, count: usize, transition: PicasaTransition) -> Self {
@@ -308,6 +312,8 @@ impl Stage {
         Self {
             root, style, transition, tiles: Vec::new(), desired_tiles, cinema,
             trace, traced_change: None, traced_settle: None, last_tick: None,
+            synced_revision: None, synced_geometry: None,
+            active_tile: None, synced_change: None,
         }
     }
     fn add_tile(&mut self) {
@@ -364,11 +370,30 @@ impl Stage {
         }
         let fade = smootherstep(player.progress());
         let tile_count = self.desired_tiles;
-        let square_grid = if self.style == Style::Mosaic {
+        let geometry = (w.round() as i32, h.round() as i32, self.tiles.len());
+        let full_refresh = self.synced_revision != Some(player.next_revision)
+            || self.synced_geometry != Some(geometry);
+        let active_tile = player.fading_slot.map(|(slot, _)| slot);
+        let previous_active = self.active_tile;
+        let change_pending = self.synced_change != Some(player.changes);
+        if !full_refresh && !change_pending
+            && active_tile.is_none() && previous_active.is_none()
+        {
+            return; // Completely static mosaic: no GTK layout or GPU updates.
+        }
+        self.synced_revision = Some(player.next_revision);
+        self.synced_geometry = Some(geometry);
+        self.synced_change = Some(player.changes);
+        self.active_tile = active_tile;
+        let square_grid = if full_refresh && self.style == Style::Mosaic {
             SquareGrid::fit(w, h, tile_count)
         } else { None };
         for (slot, tile) in self.tiles.iter_mut().enumerate() {
+            if !full_refresh && active_tile != Some(slot) && previous_active != Some(slot) {
+                continue; // Only the changing tile needs an opacity update.
+            }
             let Some(&new_id) = player.slots.get(slot) else { continue };
+            if full_refresh {
             let (x, y, tile_w, tile_h) = if let Some(grid) = square_grid {
                 let (x, y) = grid.position(slot, tile_count);
                 (x, y, grid.side, grid.side)
@@ -389,6 +414,7 @@ impl Stage {
             let (old_x, old_y) = self.root.child_position(&tile.frame);
             if (old_x - x).abs() > 0.25 || (old_y - y).abs() > 0.25 {
                 self.root.move_(&tile.frame, x, y);
+            }
             }
             let old = player.fading_slot
                 .and_then(|(change_slot, old)| (change_slot == slot).then_some(old));

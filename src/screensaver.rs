@@ -231,18 +231,17 @@ struct Slide {
 }
 impl From<db::Photo> for Slide {
     fn from(photo: db::Photo) -> Self {
+        let filename = crate::source::filename(&photo.path);
+        let date = photo.taken_at.as_deref().unwrap_or_default();
+        let date = date.get(..10).unwrap_or(date);
+        let caption = if date.is_empty() { filename } else { format!("{filename}  ·  {date}") };
         Self {
             path: photo.path,
             mtime: photo.mtime,
             size_bytes: photo.size_bytes,
             rotation: photo.rotation,
             edit_recipe: photo.edit_recipe,
-            caption: {
-                let filename = crate::source::filename(&photo.path);
-                let date = photo.taken_at.as_deref().unwrap_or_default();
-                let date = date.get(..10).unwrap_or(date);
-                if date.is_empty() { filename } else { format!("{filename}  ·  {date}") }
-            },
+            caption,
         }
     }
 }
@@ -1231,7 +1230,7 @@ fn start_screensaver(parent: &adw::ApplicationWindow, slides: Vec<Slide>, prefs:
         glib::Propagation::Proceed
     });
     let weak_screen = screen.downgrade();
-    let mut caption_last: Option<usize> = None;
+    let caption_last = Cell::new(None::<usize>);
     // The GTK frame clock drives composited fades at the display refresh
     // rate. A 50ms GLib timer was limited to ~20fps and caused visible steps.
     // The callback is owned by the fullscreen widget and naturally stops
@@ -1259,8 +1258,8 @@ fn start_screensaver(parent: &adw::ApplicationWindow, slides: Vec<Slide>, prefs:
                 // show the current single photograph.
                 let active_id = if style.single_photo() { Some(player.current) }
                     else { player.fading_slot.map(|(slot, _)| player.slots[slot]) };
-                if active_id != caption_last {
-                    caption_last = active_id;
+                if active_id != caption_last.get() {
+                    caption_last.set(active_id);
                     if let Some(text) = active_id.and_then(|id| captions.get(id)) {
                         caption.set_label(text);
                         caption.set_visible(true);

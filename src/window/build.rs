@@ -3003,6 +3003,26 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         }
     });
 
+    // Prepare the correct grid selection behind an animated close. This lets
+    // GTK allocate and paint the destination while the lightbox still covers it.
+    // Programmatic closes and pending search refreshes keep the old safe path.
+    let lightbox_close_prepared = Rc::new(Cell::new(false));
+    {
+        let gallery = gallery.clone();
+        let lightbox_for_prepare = lightbox.clone();
+        let prepared = lightbox_close_prepared.clone();
+        let pending_refresh = pending_search_return_refresh.clone();
+        lightbox.set_close_prepare_handler(move || {
+            prepared.set(false);
+            if pending_refresh.get().is_some() {
+                return;
+            }
+            if let Some(photo) = lightbox_for_prepare.current_photo() {
+                prepared.set(gallery.restore_activated_photo(photo.id()));
+            }
+        });
+    }
+
     // Keep the UI state reset when the lightbox is closed through any path.
     // Restore the current photo into the shared gallery selection and focus the
     // view that is actually visible (GridView normally, Folder ListView while
@@ -3019,6 +3039,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         let return_generation = lightbox_return_generation.get().wrapping_add(1);
         lightbox_return_generation.set(return_generation);
         if root.is_visible() {
+            lightbox_close_prepared.set(false);
             // A previous Lightbox return may still be easing the Folder view.
             // Once the viewer opens, freeze the hidden gallery exactly where it
             // is so no stale scroll callback can keep moving it underneath us.
@@ -3027,6 +3048,11 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         }
 
         one_to_one_for_visibility.set_active(false);
+        if lightbox_close_prepared.replace(false) {
+            // Selection, viewport and tile focus were already staged during
+            // the fade; repeating the restore would create a second movement.
+            return;
+        }
 
         let gallery = gallery_for_lightbox_close.clone();
         let selected_photo = lightbox_for_lightbox_close.current_photo();

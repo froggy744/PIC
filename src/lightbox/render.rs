@@ -375,6 +375,9 @@ fn show_photo(
                     );
                 }
                 if zoom.get() < 0.0 {
+                    // The Fit preview was kept visible during decode. Only
+                    // make the picture non-shrinking when native pixels exist.
+                    picture.set_can_shrink(false);
                     fit_centered_picture(
                         &picture,
                         &picture_viewport,

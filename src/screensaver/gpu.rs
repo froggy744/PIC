@@ -106,6 +106,10 @@ impl Cinema {
             {
                 Self::place(root, &self.back, w, h, cinematic_motion(old, 1.0).0);
                 Self::place(root, &self.front, w, h, incoming_zoom);
+                // Both edges fade continuously, including letterboxed areas
+                // when portrait and landscape photos have different bounds.
+                // Otherwise the old photo can abruptly vanish in the margins.
+                self.back.set_opacity(1.0 - fade);
                 self.front.set_opacity(fade);
                 return;
             }
@@ -115,6 +119,7 @@ impl Cinema {
         // no hard cut, black flash or visible reset on the next frame.
         if present(&self.back, &mut self.back_version, player.current, player) {
             Self::place(root, &self.back, w, h, incoming_zoom);
+            self.back.set_opacity(1.0);
             self.front.set_opacity(0.0);
             self.front.set_paintable(None::<&gtk::gdk::Paintable>);
             self.front_version = None;

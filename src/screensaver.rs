@@ -15,6 +15,7 @@ use libadwaita as adw;
 use rusqlite::Connection;
 
 use crate::{db, edit, thumbnail};
+mod gpu;
 
 const STYLE_KEY: &str = "screensaver-style";
 const SOURCE_KEY: &str = "screensaver-source";
@@ -424,7 +425,9 @@ fn start_decode_worker(
 
 struct Surface {
     image: gtk::cairo::ImageSurface,
+    texture: gtk::gdk::Texture,
     high_quality: bool,
+    revision: u64,
 }
 struct Player {
     style: Style,
@@ -443,6 +446,7 @@ struct Player {
     order: VecDeque<usize>,
     requested: HashSet<usize>,
     failed: HashSet<usize>,
+    next_revision: u64,
 }
 impl Player {
     fn new(style: Style, count: usize, seconds: u32, shuffle_tiles: bool) -> Self {
@@ -467,6 +471,7 @@ impl Player {
             order: VecDeque::new(),
             requested: HashSet::new(),
             failed: HashSet::new(),
+            next_revision: 0,
         }
     }
     fn request(&mut self, index: usize, tx: &Sender<usize>) {
@@ -499,6 +504,16 @@ impl Player {
         if self.frames.get(&result.index).is_some_and(|f| f.high_quality && !result.high_quality) {
             return;
         }
+        // The existing Cairo-compatible BGRA buffer is also a native GDK
+        // premultiplied texture. GtkPicture hands it to GSK for GPU compositing.
+        #[cfg(target_endian = "little")]
+        let format = gtk::gdk::MemoryFormat::B8g8r8a8Premultiplied;
+        #[cfg(target_endian = "big")]
+        let format = gtk::gdk::MemoryFormat::A8r8g8b8Premultiplied;
+        let bytes = glib::Bytes::from_owned(pixels.data.clone());
+        let texture: gtk::gdk::Texture = gtk::gdk::MemoryTexture::new(
+            pixels.width, pixels.height, format, &bytes, pixels.width as usize * 4
+        ).upcast();
         if let Ok(image) = gtk::cairo::ImageSurface::create_for_data(
             pixels.data,
             gtk::cairo::Format::ARgb32,
@@ -506,8 +521,10 @@ impl Player {
             pixels.height,
             pixels.width * 4,
         ) {
+            self.next_revision = self.next_revision.wrapping_add(1);
             self.frames.insert(result.index, Surface {
-                image, high_quality: result.high_quality,
+                image, texture, high_quality: result.high_quality,
+                revision: self.next_revision,
             });
             self.order.retain(|index| *index != result.index);
             self.order.push_back(result.index);
@@ -734,15 +751,10 @@ fn start_screensaver(parent: &adw::ApplicationWindow, slides: Vec<Slide>, prefs:
         .decorated(false)
         .build();
     screen.set_application(parent.application().as_ref());
-    let canvas = gtk::DrawingArea::new();
-    canvas.set_hexpand(true);
-    canvas.set_vexpand(true);
-    canvas.set_focusable(true);
-    let drawing = player.clone();
-    canvas.set_draw_func(move |_, cr, w, h| {
-        drawing.borrow().draw(cr, w as f64, h as f64);
-    });
-    screen.set_child(Some(&canvas));
+    gpu::install_css();
+    let stage = Rc::new(RefCell::new(gpu::Stage::new(style, player.borrow().count)));
+    stage.borrow().root.set_focusable(true);
+    screen.set_child(Some(&stage.borrow().root));
 
     // Controller callbacks must not own the window they are attached to:
     // a strong GtkWindow reference creates a cycle and leaves PIC waiting
@@ -828,12 +840,11 @@ fn start_screensaver(parent: &adw::ApplicationWindow, slides: Vec<Slide>, prefs:
                 }
             }
             player.update(&request_tx);
+            stage.borrow_mut().sync(&player);
             received || player.style == Style::IPhoto
                 || player.switched_at.elapsed() < Duration::from_millis(1500)
         };
-        if needs_redraw {
-            canvas.queue_draw();
-        }
+        let _ = needs_redraw; // widgets update through GSK opacity/position nodes
         glib::ControlFlow::Continue
     });
     screen.present();

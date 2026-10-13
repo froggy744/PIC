@@ -507,10 +507,14 @@ fn install_folder_smooth_gallery_scroll(
         {
             remaining_for_scroll.set(0.0);
             active_for_scroll.set(false);
+            // Match All Photos: commit each wheel step immediately and let
+            // the gallery's frame-clock animation retarget on the next step.
+            // The former +/- request path used a 150 ms trailing debounce,
+            // making Folder Ctrl+wheel feel delayed or snap on release.
             if dy < 0.0 {
-                gallery.zoom_in();
+                gallery.wheel_zoom_in();
             } else if dy > 0.0 {
-                gallery.zoom_out();
+                gallery.wheel_zoom_out();
             }
             return glib::Propagation::Stop;
         }

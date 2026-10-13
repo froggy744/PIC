@@ -188,7 +188,7 @@ pub fn open(parent: &adw::ApplicationWindow, connection: Rc<RefCell<Connection>>
     }
     if let Ok(folders) = db::folders(&connection.borrow()) {
         sources.extend(
-            folders.into_iter().filter(|f| f.photo_count > 0)
+            folders.into_iter()
                 .map(|folder| (format!("Folder · {}", folder.name), Source::Folder(folder.id))),
         );
     }
@@ -519,6 +519,19 @@ impl Player {
     fn draw(&self, cr: &gtk::cairo::Context, width: f64, height: f64) {
         cr.set_source_rgb(0.045, 0.049, 0.059);
         let _ = cr.paint();
+        if self.frames.is_empty() {
+            cr.set_source_rgb(0.73, 0.75, 0.80);
+            cr.select_font_face("Sans", gtk::cairo::FontSlant::Normal, gtk::cairo::FontWeight::Normal);
+            cr.set_font_size(23.0);
+            cr.move_to((width - 300.0).max(20.0) / 2.0, height / 2.0);
+            let message = if self.failed.len() >= self.count {
+                "Cannot load photos from this source"
+            } else {
+                "Preparing your photos…"
+            };
+            let _ = cr.show_text(message);
+            return;
+        }
         if self.style == Style::IPhoto {
             self.draw_cinematic(cr, width, height);
         } else if (self.changes / MOSAIC_SLOTS) % 2 == 0 {
@@ -684,17 +697,25 @@ fn start_screensaver(parent: &adw::ApplicationWindow, slides: Vec<Slide>, prefs:
             return glib::ControlFlow::Break;
         };
         if !screen.is_visible() { return glib::ControlFlow::Break; }
-        {
+        let needs_redraw = {
             let mut player = player.borrow_mut();
+            let mut received = false;
             for _ in 0..16 {
                 match result_rx.try_recv() {
-                    Ok(result) => player.receive(result),
+                    Ok(result) => {
+                        player.receive(result);
+                        received = true;
+                    }
                     Err(_) => break,
                 }
             }
             player.update(&request_tx);
+            received || player.style == Style::IPhoto
+                || player.switched_at.elapsed() < Duration::from_millis(1500)
+        };
+        if needs_redraw {
+            canvas.queue_draw();
         }
-        canvas.queue_draw();
         glib::ControlFlow::Continue
     });
     screen.present();

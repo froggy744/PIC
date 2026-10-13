@@ -15,7 +15,7 @@ Scope: Picasa/iPhoto-inspired slideshow, no original-image mutations and no netw
 - [x] Keep cache-first workers, NFS isolation, fast application startup, bounded decoding memory
 - [x] Clock option: local-time HH:MM top-right overlay, updates each minute, persists on/off
 - [x] Preferences: last style, album/folder/source, slide hold duration, transition duration, shuffle, tile count, captions, clock saved in SQLite
-- [ ] Automated tests for style persistence, geometry, timing, card cycling, offline behaviour; compile in GitHub CI (latest checks running)
+- [x] Automated tests: style persistence, clock option, geometry, timing, card cycling and cache/offline regressions — cargo check passed, 23 screensaver tests passed (GitHub Actions run 38430307666)
 - [ ] Manual Fedora Wayland test (requires user workstation): all styles, 1 photo, 6 photos, 100 photos, NFS offline/online, 16:9 and portrait display
 - [ ] Merge to main only after user confirms visible UI and slideshow behaviour
 

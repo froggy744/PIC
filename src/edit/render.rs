@@ -131,9 +131,32 @@ fn crop_normalized(image: &RgbaImage, crop: CropRect) -> RgbaImage {
     image::imageops::crop_imm(image, x, y, crop_width, crop_height).to_image()
 }
 
+/// Composite a filter at a configurable intensity before manual tone tools.
+fn blend_filter_amount(image: &mut RgbaImage, original: &RgbaImage, amount: f32) {
+    let t = amount.clamp(0.0, 1.0);
+    image.as_mut().par_chunks_mut(4)
+        .zip(original.as_raw().par_chunks(4))
+        .for_each(|(processed, base)| {
+            for channel in 0..3 {
+                let value = base[channel] as f32
+                    + (processed[channel] as f32 - base[channel] as f32) * t;
+                processed[channel] = value.round().clamp(0.0, 255.0) as u8;
+            }
+            processed[3] = base[3];
+        });
+}
+
 pub(super) fn apply_tone(mut image: RgbaImage, recipe: &EditRecipe) -> RgbaImage {
-    if recipe.filter != filters::FilterPreset::None {
-        filters::apply_filter(&mut image, recipe.filter);
+    let filter_amount = recipe.filter_amount.clamp(0.0, 1.0);
+    if recipe.filter != filters::FilterPreset::None && filter_amount > 0.0 {
+        if filter_amount >= 1.0 {
+            // Keep the legacy 100% path identical, with no extra copy.
+            filters::apply_filter(&mut image, recipe.filter);
+        } else {
+            let unfiltered = image.clone();
+            filters::apply_filter(&mut image, recipe.filter);
+            blend_filter_amount(&mut image, &unfiltered, filter_amount);
+        }
     }
 
     if recipe.auto_color {
@@ -189,6 +212,9 @@ pub(super) fn apply_tone(mut image: RgbaImage, recipe: &EditRecipe) -> RgbaImage
             b = apply_contrast_curve(b, recipe.contrast);
         }
 
+        // B&W and Sepia tiles also respect Filter Amount; manual exposure,
+        // warmth, contrast and other tools remain independent of this value.
+        let pre_look = (r, g, b);
         if recipe.black_white {
             let y = rgb_luma(r, g, b).clamp(0.0, 1.0);
             r = y;
@@ -203,6 +229,11 @@ pub(super) fn apply_tone(mut image: RgbaImage, recipe: &EditRecipe) -> RgbaImage
             r = y * (1.0 + 0.080 * strength);
             g = y * (1.0 - 0.006 * strength);
             b = y * (1.0 - 0.180 * strength);
+        }
+        if (recipe.black_white || recipe.sepia) && filter_amount < 1.0 {
+            r = pre_look.0 + (r - pre_look.0) * filter_amount;
+            g = pre_look.1 + (g - pre_look.1) * filter_amount;
+            b = pre_look.2 + (b - pre_look.2) * filter_amount;
         }
         pixel.copy_from_slice(&[
             (r.clamp(0.0, 1.0) * 255.0).round() as u8,
@@ -537,6 +568,56 @@ pub fn save_export(
 mod tests {
     use super::*;
     use crate::edit::filters::FilterPreset;
+
+    #[test]
+    fn filter_amount_blends_only_creative_look_not_other_adjustments() {
+        let source = RgbaImage::from_fn(24, 24, |x, y| {
+            Rgba([(x * 9) as u8, (y * 8) as u8, 118, 196])
+        });
+        for preset in [FilterPreset::Newspaper, FilterPreset::OldPhoto, FilterPreset::Cinematic] {
+            let mut recipe = EditRecipe::default();
+            recipe.filter = preset;
+            recipe.exposure = 0.25;
+            recipe.filter_amount = 0.0;
+            let base = apply_recipe(source.clone(), &recipe);
+            recipe.filter_amount = 1.0;
+            let full = apply_recipe(source.clone(), &recipe);
+            recipe.filter_amount = 0.5;
+            let half = apply_recipe(source.clone(), &recipe);
+            assert_ne!(base.as_raw(), full.as_raw());
+            for ((base, full), mid) in base.pixels().zip(full.pixels()).zip(half.pixels()) {
+                for c in 0..3 {
+                    let lo = base[c].min(full[c]) as i16;
+                    let hi = base[c].max(full[c]) as i16;
+                    assert!((lo - 1..=hi + 1).contains(&(mid[c] as i16)),
+                        "{preset:?} midpoint should be between base and full look");
+                }
+                assert_eq!(mid[3], 196);
+            }
+        }
+    }
+
+    #[test]
+    fn bw_and_sepia_amount_zero_are_unfiltered_and_half_is_intermediate() {
+        let source = RgbaImage::from_pixel(6, 6, Rgba([190, 102, 54, 255]));
+        for preset in [FilterPreset::None] {
+            for (bw, sepia) in [(true, false), (false, true)] {
+                let mut recipe = EditRecipe::default();
+                recipe.filter = preset;
+                recipe.black_white = bw;
+                recipe.sepia = sepia;
+                recipe.filter_amount = 0.0;
+                assert_eq!(apply_recipe(source.clone(), &recipe), source);
+                recipe.filter_amount = 1.0;
+                let full = apply_recipe(source.clone(), &recipe);
+                recipe.filter_amount = 0.5;
+                let half = apply_recipe(source.clone(), &recipe);
+                assert_ne!(half, source);
+                assert_ne!(half, full);
+                assert_eq!(half.get_pixel(0, 0)[3], 255);
+            }
+        }
+    }
 
     #[test]
     fn crop_reduces_dimensions() {

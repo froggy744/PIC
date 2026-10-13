@@ -470,6 +470,7 @@ struct Player {
     changes: usize,
     shuffle_tiles: bool,
     tile_order: Vec<usize>,
+    preload_cursor: usize,
     frames: HashMap<usize, Surface>,
     order: VecDeque<usize>,
     requested: HashSet<usize>,
@@ -500,6 +501,7 @@ impl Player {
             changes: 0,
             shuffle_tiles,
             tile_order,
+            preload_cursor: 0,
             frames: HashMap::new(),
             order: VecDeque::new(),
             requested: HashSet::new(),
@@ -521,8 +523,15 @@ impl Player {
                 self.request((self.current + i) % self.count, tx);
             }
         } else {
-            for index in self.slots.clone() {
-                self.request(index, tx);
+            // Avoid cloning and scanning every Mosaic tile at each frame,
+            // which becomes costly when the user selects thousands of tiles.
+            // Incrementally queue a small batch of initial visible photos.
+            if !self.slots.is_empty() {
+                for _ in 0..32.min(self.slots.len()) {
+                    let index = self.slots[self.preload_cursor % self.slots.len()];
+                    self.preload_cursor = self.preload_cursor.wrapping_add(1);
+                    self.request(index, tx);
+                }
             }
             for i in 0..PREFETCH {
                 self.request((self.next + i) % self.count, tx);

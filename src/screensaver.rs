@@ -676,7 +676,11 @@ fn start_screensaver(parent: &adw::ApplicationWindow, slides: Vec<Slide>, prefs:
         glib::Propagation::Proceed
     });
     let weak_screen = screen.downgrade();
-    glib::timeout_add_local(Duration::from_millis(50), move || {
+    // The GTK frame clock drives composited fades at the display refresh
+    // rate. A 50ms GLib timer was limited to ~20fps and caused visible steps.
+    // The callback is owned by the fullscreen widget and naturally stops
+    // when that widget is no longer being presented.
+    screen.add_tick_callback(move |_, _| {
         if cancelled.load(Ordering::Relaxed) {
             return glib::ControlFlow::Break;
         }

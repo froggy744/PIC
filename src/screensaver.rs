@@ -1040,17 +1040,10 @@ impl Player {
         if self.paused_at.is_some() || self.count == 0 || self.elapsed() < self.interval {
             return;
         }
-        // If every selected photo is already on screen, do not duplicate it
-        // in Mosaic/Grid/Floating. Picture Pile instead cycles one existing
-        // print to the front so a small scrapbook remains animated.
+        // If every selected photo is already on screen, there is no new image
+        // to fade in. Keep the pile still instead of promoting the same photo
+        // again, which looks like a jump without an actual replacement.
         if !self.style.single_photo() && self.count <= self.slots.len() {
-            if self.style == Style::PicturePile && !self.slots.is_empty() {
-                let slot = self.tile_order[self.changes % self.tile_order.len()];
-                let id = self.slots[slot];
-                self.fading_slot = Some((slot, id));
-                self.switched_at = Instant::now();
-                self.changes += 1;
-            }
             return;
         }
         if self.style.single_photo() {
@@ -1543,17 +1536,17 @@ mod tests {
         assert_eq!(smootherstep(1.0), 1.0);
     }
     #[test]
-    fn picture_pile_reorders_when_all_photos_are_already_on_screen() {
+    fn picture_pile_does_not_reorder_an_existing_photo_when_all_are_on_screen() {
         let mut pile = Player::new(Style::PicturePile, 4, 3, false, 10);
         let (tx, _rx) = mpsc::channel();
         pile.switched_at -= Duration::from_secs(5);
         pile.update(&tx);
-        assert_eq!(pile.changes, 1);
-        assert_eq!(pile.fading_slot, Some((0, 0)));
+        assert_eq!(pile.changes, 0);
+        assert_eq!(pile.fading_slot, None);
         pile.switched_at -= Duration::from_secs(5);
         pile.update(&tx);
-        assert_eq!(pile.changes, 2);
-        assert_eq!(pile.fading_slot, Some((1, 1)));
+        assert_eq!(pile.changes, 0);
+        assert_eq!(pile.fading_slot, None);
         assert_eq!(pile.slots, vec![0, 1, 2, 3]);
     }
 

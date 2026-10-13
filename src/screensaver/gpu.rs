@@ -8,6 +8,32 @@ use super::*;
 const FLIP_STEPS: usize = 60;
 const KEN_STEPS: usize = 240;
 const FLOAT_STEPS: usize = 120;
+const PILE_TILT: [f64; 6] = [-2.0, 1.4, -1.4, 2.0, -1.8, 1.8];
+const FLOATING_TILT: [f64; 6] = [-0.8, 0.6, -0.6, 0.8, -0.5, 0.5];
+const FLOATING_DRIFT_X: f64 = 3.0;
+const FLOATING_DRIFT_Y: f64 = 2.5;
+const FLOATING_TILT_SWAY: f64 = 0.25;
+const PILE_ZOOM_STEPS: usize = 120;
+
+fn base_tilt(style: Style, slot: usize) -> f64 {
+    match style {
+        Style::PicturePile => PILE_TILT[slot % PILE_TILT.len()],
+        Style::Floating => FLOATING_TILT[slot % FLOATING_TILT.len()],
+        _ => 0.0,
+    }
+}
+
+fn pile_fade_scale(progress: f64) -> f64 {
+    1.03 - 0.03 * smootherstep(progress)
+}
+
+fn raise_to_top(root: &gtk::Fixed, child: &impl IsA<gtk::Widget>) {
+    // Reorder the existing GtkFixed child without detaching it. Removing and
+    // putting it back interrupts allocation while the replacement is fading.
+    let (x, y) = root.child_position(child);
+    child.insert_before(root, None::<&gtk::Widget>);
+    root.move_(child, x, y);
+}
 
 fn present(picture: &gtk::Picture, slot: &mut Option<(usize, u64)>,
            index: usize, player: &Player) -> bool {
@@ -31,6 +57,7 @@ struct Tile {
     front_version: Option<(usize, u64)>,
     flip_step: Option<usize>,
     drift_step: Option<(usize, usize)>,
+    pile_zoom_step: Option<usize>,
 }
 impl Tile {
     fn new(cover_photo: bool) -> Self {
@@ -59,7 +86,7 @@ impl Tile {
         Self {
             frame, content, back, front,
             back_version: None, front_version: None, flip_step: None,
-            drift_step: None,
+            drift_step: None, pile_zoom_step: None,
         }
     }
     fn clear_incoming(&mut self) {
@@ -78,6 +105,16 @@ impl Tile {
         }
         self.flip_step = step;
     }
+    fn set_pile_zoom_step(&mut self, step: Option<usize>) {
+        if self.pile_zoom_step == step { return; }
+        if let Some(old) = self.pile_zoom_step {
+            self.content.remove_css_class(&format!("screensaver-pile-zoom-{old}"));
+        }
+        if let Some(new) = step {
+            self.content.add_css_class(&format!("screensaver-pile-zoom-{new}"));
+        }
+        self.pile_zoom_step = step;
+    }
     fn drift(&mut self, slot: usize, phase: f64, floating: bool) {
         let direction = slot % 6;
         let step = (phase.clamp(0.0, 1.0) * FLOAT_STEPS as f64).round() as usize;
@@ -92,10 +129,14 @@ impl Tile {
         }
     }
     fn sync(&mut self, new_id: usize, old: Option<usize>, progress: f64,
-        player: &Player, transition: PicasaTransition)
+        player: &Player, transition: PicasaTransition, pile_fade_zoom: bool)
     {
         let fade = progress.clamp(0.0, 1.0);
         let changing = old.filter(|old| *old != new_id && fade < 1.0);
+        let zoom_step = (pile_fade_zoom && changing.is_some()).then(|| {
+            (fade * PILE_ZOOM_STEPS as f64).round() as usize
+        });
+        self.set_pile_zoom_step(zoom_step);
         match (transition, changing) {
             (PicasaTransition::Crossfade, Some(outgoing)) => {
                 self.set_flip_step(None);
@@ -375,10 +416,10 @@ fn print_rect(
             [(0.32, 0.30), (0.68, 0.32), (0.33, 0.71),
                 (0.68, 0.70)][slot % 4]
         } else {
-            // Four staggered photographs, plus a smaller top print.
-            // Do not let the centre one obscure half the other pictures.
-            [(0.32, 0.30), (0.68, 0.30), (0.29, 0.72),
-                (0.71, 0.72), (0.50, 0.51)][slot % 5]
+            // Four staggered photographs, plus a smaller centre print.
+            // Keep a little physical overlap while leaving each photo legible.
+            [(0.29, 0.30), (0.71, 0.30), (0.29, 0.72),
+                (0.71, 0.72), (0.50, 0.52)][slot % 5]
         }
     } else if count == 3 {
         if landscape {
@@ -401,16 +442,26 @@ fn print_rect(
 
     let pile = style == Style::PicturePile;
     let base_w = if pile {
-        width * if landscape { 0.26 } else { 0.43 }
+        width * if landscape { 0.27 } else { 0.43 }
+    } else if style == Style::Floating {
+        width * if landscape { 0.24 } else { 0.35 }
     } else {
         width * if landscape { 0.26 } else { 0.39 }
     };
-    let max_h = height * if pile { 0.38 } else if landscape { 0.34 } else { 0.25 };
+    let max_h = height * if pile {
+        0.34
+    } else if style == Style::Floating && landscape {
+        0.30
+    } else if landscape {
+        0.34
+    } else {
+        0.25
+    };
     let mut tile_w = base_w.min(max_h * ratio);
     let mut tile_h = tile_w / ratio;
     if pile && slot == 4 && count >= 5 {
-        tile_w *= 0.79;
-        tile_h *= 0.79;
+        tile_w *= 0.72;
+        tile_h *= 0.72;
     }
     // Allow for rotated corners, gentle floating transforms and shadows.
     let margin = (width.min(height) * 0.035).max(16.0);
@@ -581,15 +632,17 @@ impl Stage {
             }
             let old = player.fading_slot
                 .and_then(|(change_slot, old)| (change_slot == slot).then_some(old));
-            tile.sync(new_id, old, fade, player, self.transition);
+            tile.sync(
+                new_id, old, fade, player, self.transition,
+                self.style == Style::PicturePile
+                    && self.transition == PicasaTransition::Crossfade,
+            );
             if change_pending && active_tile == Some(slot)
                 && self.style == Style::PicturePile
             {
                 // Move the newly replaced print to the top of the stack.
                 // Without this, lower cards remain invisible behind others.
-                let (x, y) = self.root.child_position(&tile.frame);
-                self.root.remove(&tile.frame);
-                self.root.put(&tile.frame, x, y);
+                raise_to_top(&self.root, &tile.frame);
             }
         }
         self.animate_floating(player);
@@ -613,17 +666,17 @@ pub(super) fn install_css() {
           .screensaver-cinema-frame { background-color: #090b10; }
           .screensaver-card { background-color: #171b21; }
           .screensaver-print {
-            background-color: #f4f2eb;
-            border: 1px solid rgba(255,255,255,0.68);
-            padding: 5px 5px 12px 5px;
-            box-shadow: 0 10px 27px rgba(0,0,0,0.44);
+            background-color: transparent;
+            border: none;
+            padding: 0;
+            box-shadow: 0 8px 22px rgba(0,0,0,0.36);
           }
           .screensaver-floating {
-            background-color: #20252b;
-            border: 1px solid rgba(255,255,255,0.20);
-            border-radius: 7px;
-            padding: 2px;
-            box-shadow: 0 12px 28px rgba(0,0,0,0.47);
+            background-color: transparent;
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 3px;
+            padding: 1px;
+            box-shadow: 0 8px 20px rgba(0,0,0,0.28);
           }
           .screensaver-caption {
             background-color: rgba(0,0,0,0.64);
@@ -642,14 +695,22 @@ pub(super) fn install_css() {
             font-weight: 600;
             box-shadow: 0 7px 22px rgba(0,0,0,0.25);
           }
-          .screensaver-angle-0 { transform: rotate(-5deg); }
-          .screensaver-angle-1 { transform: rotate(3deg); }
-          .screensaver-angle-2 { transform: rotate(-3deg); }
-          .screensaver-angle-3 { transform: rotate(5deg); }
-          .screensaver-angle-4 { transform: rotate(-4deg); }
-          .screensaver-angle-5 { transform: rotate(4deg); }
           .screensaver-card > overlay { transform-origin: 50% 50%; }
         "#);
+        for slot in 0..PILE_TILT.len() {
+            css.push_str(&format!(
+                ".screensaver-angle-{slot} {{ transform: rotate({:.2}deg); }}\n",
+                base_tilt(Style::PicturePile, slot),
+            ));
+        }
+        // The current tile geometry is ready before the fade. Settle a clipped
+        // 3% overscan to the final fit while the incoming image becomes opaque.
+        for step in 0..=PILE_ZOOM_STEPS {
+            let scale = pile_fade_scale(step as f64 / PILE_ZOOM_STEPS as f64);
+            css.push_str(&format!(
+                ".screensaver-pile-zoom-{step} {{ transform: scale({scale:.6}); }}\n"
+            ));
+        }
         // Precompile quantised compositor transforms once, never reparse
         // a CSS stylesheet in the frame clock.
         for step in 0..=FLIP_STEPS {
@@ -658,15 +719,15 @@ pub(super) fn install_css() {
                 ".screensaver-flip-{step} {{ transform: scaleX({factor:.6}); }}\n"
             ));
         }
-        // Each floating print oscillates gently around its fixed scrapbook
-        // position. All transform values are CSS pixels, not percentages.
-        let tilt = [-5.0, 3.0, -3.0, 5.0, -4.0, 4.0];
+        // Each floating print oscillates gently around its gallery position.
+        // All transform values are CSS pixels, not percentages.
         for direction in 0..6 {
             for step in 0..=FLOAT_STEPS {
                 let t = step as f64 / FLOAT_STEPS as f64;
-                let x = 9.0 * (std::f64::consts::TAU * t).sin();
-                let y = 7.0 * (std::f64::consts::TAU * t).cos();
-                let angle = tilt[direction] + 1.0 * (std::f64::consts::TAU * t).sin();
+                let x = FLOATING_DRIFT_X * (std::f64::consts::TAU * t).sin();
+                let y = FLOATING_DRIFT_Y * (std::f64::consts::TAU * t).cos();
+                let angle = base_tilt(Style::Floating, direction)
+                    + FLOATING_TILT_SWAY * (std::f64::consts::TAU * t).sin();
                 css.push_str(&format!(
                     ".screensaver-float-{direction}-{step} {{ transform-origin: 50% 50%; transform: translate({x:.3}px, {y:.3}px) rotate({angle:.3}deg); }}\n"
                 ));
@@ -693,6 +754,37 @@ pub(super) fn install_css() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+    fn raising_a_print_preserves_its_parent_and_position() {
+        libadwaita::init().unwrap();
+        let root = gtk::Fixed::new();
+        let print = gtk::Overlay::new();
+        let other = gtk::Overlay::new();
+        root.put(&print, 37.0, 51.0);
+        root.put(&other, 90.0, 110.0);
+        let window = gtk::Window::builder()
+            .default_width(240)
+            .default_height(200)
+            .child(&root)
+            .build();
+        window.present();
+        while glib::MainContext::default().pending() {
+            glib::MainContext::default().iteration(false);
+        }
+        let parent_changes = Rc::new(Cell::new(0));
+        let changes = parent_changes.clone();
+        print.connect_parent_notify(move |_| changes.set(changes.get() + 1));
+        assert_eq!(root.child_position(&print), (37.0, 51.0));
+
+        raise_to_top(&root, &print);
+
+        assert_eq!(parent_changes.get(), 0, "raising a print must not detach it");
+        assert_eq!(print.parent().as_ref(), Some(&root.clone().upcast()));
+        assert_eq!(root.child_position(&print), (37.0, 51.0));
+        assert_eq!(root.last_child().as_ref(), Some(&print.clone().upcast()));
+    }
 
     #[test]
     fn grid_bounds_all_counts_and_aspects() {
@@ -742,12 +834,56 @@ mod tests {
     #[test]
     fn photo_prints_are_smaller_than_old_oversized_scrapbook() {
         let (_,_,tw,th) = print_rect(Style::PicturePile, 0, 5, 1.5, 1649., 927.);
-        assert!(tw < 430. && th < 340.);
+        assert!(tw < 550. && th < 370.);
         let (_,_,pw,ph) = print_rect(Style::PicturePile, 4, 5, 0.7, 1649., 927.);
         assert!(pw < 280. && ph < 400.);
         // Portraits are portrait-shaped cards, not a narrow image trapped
         // in a landscape rectangle filled by huge white side margins.
         assert!(pw < ph);
+    }
+
+    #[test]
+    fn picture_pile_keeps_overlap_small_enough_to_read_each_photo() {
+        let (w, h) = (1920., 1080.);
+        let photos: Vec<_> = (0..5)
+            .map(|slot| print_rect(Style::PicturePile, slot, 5, 1.5, w, h))
+            .collect();
+        let mut total_overlap = 0.0;
+        for (i, a) in photos.iter().enumerate() {
+            for b in photos.iter().skip(i + 1) {
+                let overlap_w = (a.0 + a.2).min(b.0 + b.2) - a.0.max(b.0);
+                let overlap_h = (a.1 + a.3).min(b.1 + b.3) - a.1.max(b.1);
+                if overlap_w > 0.0 && overlap_h > 0.0 {
+                    let overlap = overlap_w * overlap_h;
+                    total_overlap += overlap;
+                    assert!(overlap / a.2.mul_add(a.3, 0.0) < 0.05);
+                    assert!(overlap / b.2.mul_add(b.3, 0.0) < 0.05);
+                }
+            }
+        }
+        assert!(total_overlap > 0.0, "the pile should still overlap like a scrapbook");
+    }
+
+    #[test]
+    fn floating_rotation_is_gentler_than_picture_pile_rotation() {
+        let pile_max = (0..6).map(|slot| base_tilt(Style::PicturePile, slot).abs())
+            .fold(0.0, f64::max);
+        let floating_max = (0..6).map(|slot| base_tilt(Style::Floating, slot).abs())
+            .fold(0.0, f64::max) + FLOATING_TILT_SWAY;
+        assert!(pile_max > floating_max);
+        assert!(floating_max < 1.1);
+        assert!(FLOATING_DRIFT_X < 4.0 && FLOATING_DRIFT_Y < 4.0);
+    }
+
+    #[test]
+    fn picture_pile_fade_settles_from_103_percent_to_full_fit() {
+        assert!((pile_fade_scale(0.0) - 1.03).abs() < 1e-8);
+        assert!((pile_fade_scale(1.0) - 1.0).abs() < 1e-8);
+        let scales: Vec<_> = (0..=PILE_ZOOM_STEPS)
+            .map(|step| pile_fade_scale(step as f64 / PILE_ZOOM_STEPS as f64))
+            .collect();
+        assert!(scales.windows(2).all(|pair| pair[0] >= pair[1]));
+        assert!(scales.iter().all(|scale| (1.0..=1.03).contains(scale)));
     }
 
     #[test]

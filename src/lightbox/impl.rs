@@ -1315,7 +1315,9 @@ impl Lightbox {
         if let Some(handler) = self.zoom_sync.borrow().as_ref() {
             handler(if enabled { 1.0 } else { 0.0 });
         }
-        self.picture.set_can_shrink(!enabled);
+        // Keep the Fit preview at its existing size while native pixels load.
+        // On a cached hit (or after decode) it switches to non-shrinking 1:1.
+        self.picture.set_can_shrink(true);
         self.picture_viewport
             .set_cursor_from_name(if enabled { Some("grab") } else { None });
 
@@ -1340,6 +1342,7 @@ impl Lightbox {
                     && cache.rotation == rotation
                     && cache.edit_recipe == edit_recipe
                 {
+                    self.picture.set_can_shrink(false);
                     self.picture.set_paintable(Some(&cache.texture));
                     fit_centered_picture(
                         &self.picture,
@@ -1363,11 +1366,9 @@ impl Lightbox {
                     return;
                 }
             }
-            // The fit texture has fewer pixels than the source. Keep 1:1
-            // empty until the native decode replaces it, so it is never
-            // presented as a full-resolution image.
-            self.picture.set_paintable(gtk::gdk::Paintable::NONE);
-            self.picture.set_size_request(1, 1);
+            // Retain the Fit paintable and its geometry while the native decode
+            // runs. render.rs replaces both with the full-resolution image in
+            // the same main-thread completion, avoiding a blank intermediate frame.
         } else {
             // 1:1 off always returns to fit-to-window.
             self.set_zoom(0.0);

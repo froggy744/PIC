@@ -24,7 +24,6 @@ const SHUFFLE_KEY: &str = "screensaver-shuffle";
 const SHUFFLE_TILES_KEY: &str = "screensaver-shuffle-tiles";
 const MOSAIC_TILES_KEY: &str = "screensaver-mosaic-tiles";
 const DEFAULT_MOSAIC_TILES: usize = 6;
-const MAX_MOSAIC_TILES: usize = 30;
 const PICTURE_PILE_SLOTS: usize = 6;
 const PREFETCH: usize = 3;
 
@@ -104,7 +103,7 @@ impl Preferences {
             shuffle: setting(SHUFFLE_KEY) != "false",
             shuffle_tiles: setting(SHUFFLE_TILES_KEY) != "false",
             mosaic_tiles: setting(MOSAIC_TILES_KEY).parse::<usize>()
-                .unwrap_or(DEFAULT_MOSAIC_TILES).clamp(DEFAULT_MOSAIC_TILES, MAX_MOSAIC_TILES),
+                .ok().filter(|count| *count > 0).unwrap_or(DEFAULT_MOSAIC_TILES),
         }
     }
     fn save(&self, connection: &Connection) {
@@ -249,12 +248,14 @@ pub fn open(parent: &adw::ApplicationWindow, connection: Rc<RefCell<Connection>>
     duration.set_tooltip_text(Some("Seconds per photo or photo-wall change"));
     body.append(&field("Seconds per change", &duration));
 
-    let mosaic_tiles = gtk::SpinButton::with_range(
-        DEFAULT_MOSAIC_TILES as f64, MAX_MOSAIC_TILES as f64, 1.0,
-    );
-    mosaic_tiles.set_value(current.mosaic_tiles as f64);
+    // An entry (rather than GtkSpinButton) avoids imposing an arbitrary
+    // maximum or losing large integer precision through its f64 adjustment.
+    let mosaic_tiles = gtk::Entry::new();
+    mosaic_tiles.set_text(&current.mosaic_tiles.to_string());
+    mosaic_tiles.set_width_chars(10);
+    mosaic_tiles.set_input_purpose(gtk::InputPurpose::Digits);
     mosaic_tiles.set_tooltip_text(Some(
-        "6–30 square Mosaic tiles. Landscape photos are cropped to fill each square.",
+        "Enter any positive whole number. Limited only by available photos and hardware; landscape photos crop to square tiles.",
     ));
     mosaic_tiles.set_sensitive(matches!(style.selected(), 0 | 3));
     let mosaic_tiles_for_style = mosaic_tiles.clone();
@@ -309,14 +310,20 @@ pub fn open(parent: &adw::ApplicationWindow, connection: Rc<RefCell<Connection>>
         let Some((_, photo_source)) = sources.get(source_index) else {
             return;
         };
+        let requested_tiles = match mosaic_tiles.text().trim().parse::<usize>() {
+            Ok(count) if count > 0 => count,
+            _ => {
+                notice.set_text("Mosaic tiles must be a positive whole number.");
+                return;
+            }
+        };
         let prefs = Preferences {
             style: Style::from_dropdown(style.selected()),
             source: photo_source.key(),
             seconds: duration.value_as_int().clamp(3, 30) as u32,
             shuffle: shuffle_button.is_active(),
             shuffle_tiles: shuffle_tiles_button.is_active(),
-            mosaic_tiles: mosaic_tiles.value_as_int()
-                .clamp(DEFAULT_MOSAIC_TILES as i32, MAX_MOSAIC_TILES as i32) as usize,
+            mosaic_tiles: requested_tiles,
         };
         let mut photos = match photo_source.photos(&connection.borrow()) {
             Ok(photos) => photos,
@@ -378,8 +385,14 @@ fn start_decode_worker(
             // when the user selects a dense square mosaic.
             let dimensions = match style {
                 Style::Mosaic => {
+                    // Decode close to the tile resolution at high counts,
+                    // rather than keeping hundreds of full-resolution images.
                     let edge = if mosaic_tiles <= 6 { 1536 }
-                        else if mosaic_tiles <= 12 { 1152 } else { 896 };
+                        else if mosaic_tiles <= 12 { 1152 }
+                        else if mosaic_tiles <= 30 { 896 }
+                        else if mosaic_tiles <= 100 { 640 }
+                        else if mosaic_tiles <= 400 { 384 }
+                        else { 192 };
                     (edge, edge)
                 }
                 Style::PicturePile => (1920, 1280),
@@ -466,7 +479,7 @@ struct Player {
 impl Player {
     fn new(style: Style, count: usize, seconds: u32, shuffle_tiles: bool, mosaic_tiles: usize) -> Self {
         let desired_slots = match style {
-            Style::Mosaic => mosaic_tiles.clamp(DEFAULT_MOSAIC_TILES, MAX_MOSAIC_TILES),
+            Style::Mosaic => mosaic_tiles.max(1),
             Style::PicturePile => PICTURE_PILE_SLOTS,
             _ => 0,
         };
@@ -815,8 +828,8 @@ mod tests {
 
     #[test]
     fn mosaic_tile_count_affects_mosaic_not_picture_pile() {
-        for n in [6, 9, 12, 18, 24, 30] {
-            let mosaic = Player::new(Style::Mosaic, 100, 5, true, n);
+        for n in [1, 6, 9, 12, 18, 24, 30, 60, 100, 250, 1000] {
+            let mosaic = Player::new(Style::Mosaic, 2000, 5, true, n);
             assert_eq!(mosaic.slots.len(), n);
             assert_eq!(mosaic.next, n);
             assert_eq!(mosaic.tile_order.len(), n);
@@ -826,7 +839,8 @@ mod tests {
         let few = Player::new(Style::Mosaic, 3, 5, false, 30);
         assert_eq!(few.slots.len(), 3);
         assert_eq!(few.next, 3);
-        assert_eq!(Player::new(Style::Mosaic, 100, 5, false, 1).slots.len(), 6);
-        assert_eq!(Player::new(Style::Mosaic, 100, 5, false, 100).slots.len(), 30);
+        assert_eq!(Player::new(Style::Mosaic, 100, 5, false, 1).slots.len(), 1);
+        assert_eq!(Player::new(Style::Mosaic, 2000, 5, false, 1500).slots.len(), 1500);
+        assert_eq!(Player::new(Style::Mosaic, 100, 5, false, usize::MAX).slots.len(), 100);
     }
 }

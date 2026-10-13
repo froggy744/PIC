@@ -6,12 +6,14 @@ on:
       - feature/screensaver
     paths:
       - 'src/screensaver.rs'
+      - 'src/screensaver/**'
       - 'src/main.rs'
       - 'src/window/toolbar.rs'
       - '.github/workflows/screensaver-check.yml'
   pull_request:
     paths:
       - 'src/screensaver.rs'
+      - 'src/screensaver/**'
       - 'src/main.rs'
       - 'src/window/toolbar.rs'
       - '.github/workflows/screensaver-check.yml'
@@ -37,4 +39,4 @@ jobs:
       - name: Compile PIC
         run: cargo check --locked
       - name: Test screensaver
-        run: cargo test --locked screensaver::tests -- --test-threads=1
+        run: cargo test --locked screensaver:: -- --test-threads=1

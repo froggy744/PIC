@@ -619,22 +619,6 @@ impl Gallery {
         self.apply_zoom(width);
     }
 
-    pub fn zoom_in(self: &Rc<Self>) {
-        let base = self
-            .pending_zoom_width
-            .get()
-            .unwrap_or_else(|| self.tile_width.get());
-        self.request_zoom(next_zoom_level(base));
-    }
-
-    pub fn zoom_out(self: &Rc<Self>) {
-        let base = self
-            .pending_zoom_width
-            .get()
-            .unwrap_or_else(|| self.tile_width.get());
-        self.request_zoom(prev_zoom_level(base));
-    }
-
     /// Reset to the default view level: ~4 thumbnails per row for the current
     /// surface, matching the startup default for users who never picked a
     /// size. Falls back to the ladder level nearest the legacy fixed default

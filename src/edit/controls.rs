@@ -24,6 +24,10 @@ impl FilterTileEffect {
 
     fn recipe(self, base: &EditRecipe) -> EditRecipe {
         let mut recipe = base.clone();
+        // The picker is a catalogue of recognisable full-strength looks.
+        // Otherwise setting Amount to 0% makes every preview tile look
+        // identical, even though choosing a filter remains possible.
+        recipe.filter_amount = 1.0;
         recipe.filter = FilterPreset::None;
         recipe.black_white = false;
         recipe.sepia = false;

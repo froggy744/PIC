@@ -570,12 +570,14 @@ pub(super) fn install_css() {
             font-size: 13px;
           }
           .screensaver-clock {
-            color: white;
-            background-color: rgba(9,11,16,0.62);
-            padding: 7px 13px;
-            border-radius: 12px;
-            font-size: 22px;
+            color: rgba(250,251,255,0.96);
+            background-color: rgba(12,16,24,0.56);
+            border: 1px solid rgba(255,255,255,0.13);
+            border-radius: 17px;
+            padding: 10px 19px;
+            font-size: 34px;
             font-weight: 600;
+            box-shadow: 0 7px 22px rgba(0,0,0,0.25);
           }
           .screensaver-angle-0 { transform: rotate(-5deg); }
           .screensaver-angle-1 { transform: rotate(3deg); }

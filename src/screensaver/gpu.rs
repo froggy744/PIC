@@ -216,7 +216,6 @@ impl Cinema {
 #[derive(Debug, Clone, Copy)]
 struct SquareGrid {
     columns: usize,
-    rows: usize,
     side: f64,
     gap: f64,
     top: f64,
@@ -246,7 +245,6 @@ impl SquareGrid {
             let empty = cols * rows - count;
             let candidate = Self {
                 columns: cols,
-                rows,
                 side,
                 gap,
                 top: (height - (rows as f64 * side + (rows - 1) as f64 * gap)) * 0.5,
@@ -491,7 +489,8 @@ mod tests {
     #[test]
     fn classic_six_tiles_use_three_columns_two_rows_in_landscape() {
         let grid = SquareGrid::fit(1920.0, 1080.0, 6).unwrap();
-        assert_eq!((grid.columns, grid.rows), (3, 2));
+        assert_eq!(grid.columns, 3);
+        assert_eq!(6_usize.div_ceil(grid.columns), 2);
         let (first_x, first_y) = grid.position(0, 6);
         let (last_x, last_y) = grid.position(5, 6);
         assert!(first_x < last_x && first_y < last_y);

@@ -392,7 +392,9 @@ fn start_decode_worker(
                         else if mosaic_tiles <= 30 { 896 }
                         else if mosaic_tiles <= 100 { 640 }
                         else if mosaic_tiles <= 400 { 384 }
-                        else { 192 };
+                        else if mosaic_tiles <= 1600 { 192 }
+                        else if mosaic_tiles <= 6400 { 96 }
+                        else { 48 };
                     (edge, edge)
                 }
                 Style::PicturePile => (1920, 1280),

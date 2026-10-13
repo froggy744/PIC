@@ -37,4 +37,4 @@ jobs:
       - name: Compile PIC
         run: cargo check --locked
       - name: Test screensaver
-        run: cargo test --locked screensaver::tests -- --test-threads=1
+        run: cargo test --locked screensaver:: -- --test-threads=1

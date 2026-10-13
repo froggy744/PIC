@@ -895,11 +895,12 @@ pub fn build(
                                         // texture resolution*, not a different
                                         // photo size. The 1:1 canvas and pan
                                         // offsets must remain native-sized.
-                                        let display_dimensions = if native && !native_full {
-                                            old_dimensions
-                                        } else {
-                                            (width as i32, height as i32)
-                                        };
+                                        let display_dimensions = preview_display_dimensions(
+                                            old_dimensions,
+                                            (width as i32, height as i32),
+                                            native,
+                                            !native_full,
+                                        );
                                         preview_dimensions.set(display_dimensions);
                                         picture.set_paintable(Some(&texture));
                                         if native {
@@ -910,9 +911,11 @@ pub fn build(
                                             // edit recentered a panned photo.
                                             // Only move it for initial 1:1 or
                                             // a real crop/geometry size change.
-                                            if anchor.is_some()
-                                                || display_dimensions != old_dimensions
-                                            {
+                                            if native_preview_needs_reanchor(
+                                                old_dimensions,
+                                                display_dimensions,
+                                                anchor.is_some(),
+                                            ) {
                                                 apply_canvas_one_to_one(
                                                     &picture,
                                                     &picture_scroll,

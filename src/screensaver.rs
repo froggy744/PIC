@@ -587,7 +587,10 @@ fn smootherstep(t: f64) -> f64 {
 fn cinematic_motion(_index: usize, progress: f64) -> (f64, f64) {
     // A gentle zoom-in throughout every slide. Never alternate zoom-out,
     // pan direction, or position (the oscillation felt like a pendulum).
-    let zoom = 1.025 + smootherstep(progress) * 0.04;
+    // Keep the complete image within a single monitor at every frame.
+    // Zoom in towards 1:1 fit rather than enlarging the widget past the
+    // fullscreen viewport (which expanded the Wayland window geometry).
+    let zoom = 0.965 + smootherstep(progress) * 0.035;
     (zoom, 0.0)
 }
 
@@ -701,8 +704,18 @@ fn start_screensaver(parent: &adw::ApplicationWindow, slides: Vec<Slide>, prefs:
         }
         glib::ControlFlow::Continue
     });
+    // Fullscreen the same monitor that contains PIC's main window. Without
+    // an explicit output, compositors may place the independent window on a
+    // different monitor when multiple displays are connected.
+    if let Some(monitor) = parent.native()
+        .and_then(|native| native.surface())
+        .and_then(|surface| parent.display().monitor_at_surface(&surface))
+    {
+        screen.fullscreen_on_monitor(&monitor);
+    } else {
+        screen.fullscreen();
+    }
     screen.present();
-    screen.fullscreen();
 }
 
 #[cfg(test)]
@@ -725,6 +738,15 @@ mod tests {
         shuffle(&mut values);
         values.sort_unstable();
         assert_eq!(values, (0..100).collect::<Vec<_>>());
+    }
+    #[test]
+    fn cinematic_fit_stays_inside_window_bounds() {
+        for index in 0..8 {
+            for step in 0..=100 {
+                let (zoom, _) = cinematic_motion(index, step as f64 / 100.0);
+                assert!((0.965..=1.0).contains(&zoom), "zoom escaped viewport: {zoom}");
+            }
+        }
     }
     #[test]
     fn cinematic_motion_always_zoom_in_without_lateral_shift() {

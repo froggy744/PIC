@@ -995,16 +995,51 @@ mod tests {
     }
 
     #[test]
-    fn missing_mosaic_slots_prefetch_other_candidates() {
-        let mut player = Player::new(Style::Mosaic, 80, 6, false, 10);
+    fn mosaic_loading_does_not_scan_ahead_while_previews_are_pending() {
+        let mut player = Player::new(Style::Mosaic, 5400, 6, false, 10);
+        let (tx, rx) = mpsc::channel();
+        for _ in 0..200 { player.prefetch(&tx); }
+        let queued: Vec<usize> = rx.try_iter().collect();
+        assert_eq!(player.preload_cursor, 10);
+        assert_eq!(player.backfill_cursor, 10);
+        assert_eq!(queued.len(), 13);
+        assert_eq!(queued, (0..13).collect::<Vec<_>>());
+        assert!(player.backfill_pending.is_empty());
+    }
+
+    #[test]
+    fn failed_mosaic_tiles_backfill_one_request_at_a_time() {
+        let mut player = Player::new(Style::Mosaic, 5400, 6, false, 10);
         let (tx, rx) = mpsc::channel();
         player.prefetch(&tx);
-        assert_eq!(player.preload_cursor, 10);
+        assert_eq!(rx.try_iter().count(), 13);
+        // This tile is definitively unavailable (cache AND original failed).
+        player.receive(ImageResult { index: 3, high_quality: true, pixels: None });
+        for _ in 0..120 { player.prefetch(&tx); }
+        assert_eq!(rx.try_iter().collect::<Vec<_>>(), vec![13]);
+        assert_eq!(player.backfill_pending.len(), 1);
+        assert_eq!(player.backfill_cursor, 14);
+        // Once candidate 13 finishes without a preview, allow precisely one
+        // subsequent replacement request rather than a library-wide scan.
+        player.receive(ImageResult { index: 13, high_quality: true, pixels: None });
         player.prefetch(&tx);
-        assert!(player.preload_cursor > 10);
-        let requested: HashSet<usize> = rx.try_iter().collect();
-        assert!((0..10).all(|i| requested.contains(&i)));
-        assert!((10..20).any(|i| requested.contains(&i)));
+        assert_eq!(rx.try_iter().collect::<Vec<_>>(), vec![14]);
+    }
+
+    #[test]
+    fn original_upgrade_is_not_resubmitted_after_cache_phase() {
+        let mut player = Player::new(Style::Mosaic, 200, 6, false, 10);
+        let (tx, rx) = mpsc::channel();
+        player.request(107, &tx);
+        player.receive(ImageResult { index: 107, high_quality: false, pixels: None });
+        for _ in 0..100 { player.request(107, &tx); }
+        assert_eq!(rx.try_iter().collect::<Vec<_>>(), vec![107]);
+        assert!(player.requested.contains(&107));
+        player.receive(ImageResult { index: 107, high_quality: true, pixels: None });
+        assert!(!player.requested.contains(&107));
+        assert!(player.failed.contains(&107));
+        player.request(107, &tx);
+        assert_eq!(rx.try_iter().count(), 0);
     }
 
     #[test]

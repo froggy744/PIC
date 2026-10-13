@@ -32,25 +32,23 @@ The left panel has five tabs:
 
 This is where the everyday corrections live, in three friendly groups:
 
-**Basic fixes** — just click:
-- **Auto Contrast** — instantly normalises flat-looking photos
-- **Auto Colour** — fixes colour casts with one click
-- **B&W** — classic black & white
-- **Sepia** — warm vintage tone
+**Quick fixes** are on the Filters tab: Auto Contrast, Auto Colour, B&W, and Sepia. The automatic tools use conservative image-adaptive adjustments, not guaranteed exposure or white-balance recovery.
 
 **Light:**
 - **Exposure** — brighten or darken the whole photo
 - **Contrast** — punchy or soft
-- **Fill Light** — lift dark shadows without washing everything out
-- **Highlights** — recover bright skies
-- **Shadows** — deepen or open up the dark areas
+- **Fill Light** — broadly lift lower midtones using a luminance-preserving curve
+- **Highlights** — darken or brighten bright regions without affecting deep shadows
+- **Shadows** — independently open or deepen the darker tonal regions
 
 **Colour:**
 - **Saturation** — from gentle to vivid
 - **Warmth** — cooler blues or golden warmth
 
 **Detail:**
-- **Sharpen** — add crispness
+- **Sharpen** — enhance small-scale image edges
+- **Clarity** — increase or soften midtone local contrast without pushing all colours
+- **Grain** — add deterministic monochrome film texture; zero leaves the image unchanged
 
 **Geometry:**
 - **Straighten** — one slider to level a crooked horizon
@@ -59,7 +57,9 @@ Move any slider and the preview updates instantly. The little numbers next to ea
 
 ### 🎨 Filters — one-tap looks with live previews
 
-The Filters tab shows your photo as a grid of **live preview tiles** — every filter rendered on *your actual photo*, so what you see is exactly what you get. Try **Clarendon, Gingham, Juno, Lark, Valencia, Walden**, plus fun ones like **Pencil Sketch, Disposable Film, Digicam Flash, Dream Glow, Cinematic** and **Golden Hour**. Click a tile to apply it, click **Original** to go back to square one.
+The Filters tab shows your photo as a grid of **live preview tiles** — every filter rendered on *your actual photo*, so what you see is exactly what you get. Try **Clarendon, Gingham, Juno, Lark, Valencia, Walden**, plus fun ones like **Pencil Sketch, Disposable Film, Digicam Flash, Dream Glow, Cinematic** and **Golden Hour**, **Old Photo** (warm, faded film texture), and **Newspaper** (warm paper and ordered black-ink halftone). Click a tile to apply it, click **Original** to return to the unfiltered recipe.
+
+Filter looks, Clarity, Grain, Auto Contrast and Auto Colour all use the same non-destructive recipe for editing and export. Auto Contrast protects against extreme percentile stretches; Auto Colour uses near-neutral areas rather than neutralising intentional sunsets or colourful subjects.
 
 ### ✂️ Crop — trim and straighten
 

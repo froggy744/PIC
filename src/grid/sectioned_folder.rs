@@ -1401,7 +1401,23 @@ impl SectionedFolderView {
             || !self.root.is_mapped()
             || !self.root.settings().is_gtk_enable_animations()
         {
+            if std::env::var_os("PICASA_TRACE").is_some() {
+                eprintln!(
+                    "PIC_ZOOM_ANIM status=skipped mode=folder_sectioned reason={} from={} to={}",
+                    if !self.zoom_animations_enabled.get() { "user_setting_disabled" }
+                    else if !self.root.is_mapped() { "unmapped_surface" }
+                    else { "gtk_animations_disabled" },
+                    old_width, self.tile_width.get(),
+                );
+            }
             return;
+        }
+        if std::env::var_os("PICASA_TRACE").is_some() {
+            eprintln!(
+                "PIC_ZOOM_ANIM status=started mode=folder_sectioned from={} to={} tiles={} columns={}=>{}",
+                old_width, self.tile_width.get(), self.live_tiles.borrow().len(),
+                old_columns, self.current_columns.get(),
+            );
         }
 
         let new_columns = self.current_columns.get().max(1);

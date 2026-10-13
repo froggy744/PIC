@@ -156,15 +156,23 @@ pub(super) fn apply_tone(mut image: RgbaImage, recipe: &EditRecipe) -> RgbaImage
         g *= exposure;
         b *= exposure;
 
-        let luma = (0.2126 * r + 0.7152 * g + 0.0722 * b).clamp(0.0, 1.0);
-        let shadow_weight = (1.0 - luma).powi(2);
-        let highlight_weight = luma.powi(2);
-        let fill = recipe.fill_light * 0.45 * shadow_weight;
-        let shadows = recipe.shadows * 0.35 * shadow_weight;
-        let highlights = recipe.highlights * 0.35 * highlight_weight;
-        r += fill + shadows + highlights;
-        g += fill + shadows + highlights;
-        b += fill + shadows + highlights;
+        // Work on luminance, not three equal RGB offsets. Fill Light is a
+        // broad lower-midrange lift; Shadows concentrates on deeper tones;
+        // Highlights acts on the upper range. A shared gain retains colour
+        // ratios instead of washing dark areas grey.
+        if recipe.fill_light.abs() > 0.0001
+            || recipe.shadows.abs() > 0.0001
+            || recipe.highlights.abs() > 0.0001
+        {
+            let luma = rgb_luma(r, g, b);
+            if luma > 0.001 && luma < 1.0 {
+                let target = map_tone_regions(luma, recipe);
+                let gain = (target / luma).clamp(0.12, 5.0);
+                r *= gain;
+                g *= gain;
+                b *= gain;
+            }
+        }
 
         r *= 1.0 + temperature * 0.18;
         b *= 1.0 - temperature * 0.18;
@@ -204,6 +212,10 @@ pub(super) fn apply_tone(mut image: RgbaImage, recipe: &EditRecipe) -> RgbaImage
         ]);
     });
 
+    if recipe.clarity.abs() > 0.001 && image.width() > 2 && image.height() > 2 {
+        apply_clarity(&mut image, recipe.clarity);
+    }
+
     if recipe.sharpen > 0.001 && image.width() > 2 && image.height() > 2 {
         let blurred = image::imageops::blur(&image, 1.1);
         let amount = recipe.sharpen * 1.6;
@@ -221,7 +233,72 @@ pub(super) fn apply_tone(mut image: RgbaImage, recipe: &EditRecipe) -> RgbaImage
                 }
             });
     }
+    if recipe.grain > 0.001 {
+        filters::apply_grain(&mut image, recipe.grain * 0.24);
+    }
     image
+}
+
+/// Smooth transition between tonal regions (no abrupt masks or banding).
+fn smoothstep(low: f32, high: f32, y: f32) -> f32 {
+    let t = ((y - low) / (high - low)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+/// Parametric masked gamma curves preserve black/white anchors and keep
+/// exposure/fill/shadows/highlights distinct; no broad additive RGB wash.
+fn map_tone_regions(y: f32, recipe: &EditRecipe) -> f32 {
+    let y = y.clamp(0.0, 1.0);
+    let fill = y.powf(2.0_f32.powf(-recipe.fill_light * 1.15));
+    let shadows = y.powf(2.0_f32.powf(-recipe.shadows * 1.35));
+    let highlights = 1.0 - (1.0 - y).powf(2.0_f32.powf(recipe.highlights * 1.20));
+
+    let fill_mask = 1.0 - smoothstep(0.48, 0.93, y);
+    let shadow_mask = 1.0 - smoothstep(0.18, 0.61, y);
+    let highlight_mask = smoothstep(0.48, 0.87, y);
+    (y + (fill - y) * fill_mask * 0.95
+        + (shadows - y) * shadow_mask * 0.95
+        + (highlights - y) * highlight_mask * 0.92).clamp(0.0, 1.0)
+}
+
+/// Clarity is a broad local-contrast boost in luminance only, strongest in
+/// midtones. Downsample before Gaussian blur to keep 24MP+ exports tractable
+/// and to give previews and exports comparable scene-relative detail radius.
+fn apply_clarity(image: &mut RgbaImage, amount: f32) {
+    let (width, height) = image.dimensions();
+    if width < 3 || height < 3 {
+        return;
+    }
+    let luma = image::GrayImage::from_fn(width, height, |x, y| {
+        let p = image.get_pixel(x, y);
+        image::Luma([rgb_luma(
+            p[0] as f32, p[1] as f32, p[2] as f32,
+        ).round().clamp(0.0, 255.0) as u8])
+    });
+    let downsample = (width.max(height) as f32 / 1200.0).max(1.0);
+    let small_width = ((width as f32 / downsample).round() as u32).max(1);
+    let small_height = ((height as f32 / downsample).round() as u32).max(1);
+    let reduced = image::imageops::resize(
+        &luma, small_width, small_height, image::imageops::FilterType::Triangle,
+    );
+    let sigma = (small_width.min(small_height) as f32 * 0.008).clamp(1.5, 20.0);
+    let softened = image::imageops::blur(&reduced, sigma);
+    let local = image::imageops::resize(
+        &softened, width, height, image::imageops::FilterType::Triangle,
+    );
+    image.as_mut().par_chunks_mut(4).zip(local.as_raw().par_iter()).for_each(|(p, &blurred)| {
+        if p[3] == 0 {
+            return;
+        }
+        let y = rgb_luma(p[0] as f32, p[1] as f32, p[2] as f32) / 255.0;
+        let midtones = (4.0 * y * (1.0 - y)).clamp(0.0, 1.0);
+        let local_y = blurred as f32 / 255.0;
+        let detail = (y - local_y).clamp(-0.24, 0.24);
+        let delta = detail * midtones * amount * 1.85 * 255.0;
+        for channel in &mut p[0..3] {
+            *channel = (*channel as f32 + delta).round().clamp(0.0, 255.0) as u8;
+        }
+    });
 }
 
 fn rgb_luma(r: f32, g: f32, b: f32) -> f32 {

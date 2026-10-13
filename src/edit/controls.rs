@@ -106,6 +106,7 @@ struct Controls {
     grain: gtk::Scale,
     auto_contrast: gtk::ToggleButton,
     auto_color: gtk::ToggleButton,
+    filter_amount: gtk::Scale,
     black_white: gtk::ToggleButton,
     sepia: gtk::ToggleButton,
     filters: Vec<(FilterPreset, gtk::ToggleButton)>,
@@ -126,6 +127,10 @@ impl Controls {
         self.grain.set_value(recipe.grain as f64);
         self.auto_contrast.set_active(recipe.auto_contrast);
         self.auto_color.set_active(recipe.auto_color);
+        self.filter_amount.set_value((recipe.filter_amount * 100.0) as f64);
+        self.filter_amount.set_sensitive(
+            recipe.filter != FilterPreset::None || recipe.black_white || recipe.sepia
+        );
         self.black_white.set_active(recipe.black_white);
         self.sepia.set_active(recipe.sepia);
         for (preset, button) in &self.filters {

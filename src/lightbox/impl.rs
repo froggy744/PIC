@@ -2050,17 +2050,21 @@ impl Lightbox {
     /// preserve the current pan when the edited native dimensions match
     /// the displayed canvas; applying a filter must not jump to the centre.
     pub fn refresh_current_after_edit(&self) {
-        let preserve = if self.zoom.get() < 0.0 {
-            self.photos.borrow().get(self.index.get()).is_some_and(|photo| {
-                let (w, h) = presentation_native_dimensions(photo);
-                let (request_w, request_h) = self.picture.size_request();
-                w > 0 && h > 0 && (w - i64::from(request_w)).abs() <= 1
-                    && (h - i64::from(request_h)).abs() <= 1
-            })
-        } else {
-            // Keep fit/manual zoom and crop updates on their existing path.
-            false
-        };
+        let preserve = self.zoom.get() < 0.0 && self.photos.borrow()
+            .get(self.index.get()).is_some_and(|photo| {
+                // Compare the last actually displayed native recipe, not the
+                // catalog dimensions: embedded RAW previews can be smaller
+                // than their sensor metadata even at "1:1".
+                self.native_texture.borrow().as_ref().is_some_and(|cached| {
+                    if cached.path != photo.path() || cached.rotation != photo.rotation() {
+                        return false;
+                    }
+                    let before = crate::edit::EditRecipe::decode(&cached.edit_recipe);
+                    let after = crate::edit::EditRecipe::decode(&photo.edit_recipe());
+                    before.crop == after.crop
+                        && (before.straighten - after.straighten).abs() < 0.0001
+                })
+            });
         self.refresh_current_with_geometry(preserve);
     }
 

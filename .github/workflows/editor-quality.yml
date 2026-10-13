@@ -42,4 +42,6 @@ jobs:
         run: cargo test --locked native_preview_geometry_tests -- --test-threads=1
       - name: Test lightbox 1:1 recipe refresh preserves pan
         run: |
-          xvfb-run -a env GSK_RENDERER=cairo             cargo test --locked lightbox_one_to_one_recipe_refresh_preserves_panned_viewport               -- --ignored --test-threads=1
+          xvfb-run -a env GSK_RENDERER=cairo cargo test --locked \
+            lightbox_one_to_one_recipe_refresh_preserves_panned_viewport -- \
+            --ignored --test-threads=1

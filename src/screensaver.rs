@@ -29,6 +29,7 @@ const PICTURE_PILE_SLOTS: usize = 5;
 const FLOATING_SLOTS: usize = 6;
 const TRANSITION_KEY: &str = "screensaver-transition-ms";
 const CAPTION_KEY: &str = "screensaver-captions";
+const CLOCK_KEY: &str = "screensaver-clock";
 const PREFETCH: usize = 3;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -184,6 +185,7 @@ struct Preferences {
     picasa_transition: PicasaTransition,
     transition_ms: u32,
     captions: bool,
+    clock: bool,
 }
 impl Preferences {
     fn load(connection: &Connection) -> Self {
@@ -199,6 +201,7 @@ impl Preferences {
             picasa_transition: PicasaTransition::from_saved(&setting(PICASA_TRANSITION_KEY)),
             transition_ms: setting(TRANSITION_KEY).parse::<u32>().unwrap_or(900).clamp(200, 2500),
             captions: setting(CAPTION_KEY) == "true",
+            clock: setting(CLOCK_KEY) == "true",
         }
     }
     fn save(&self, connection: &Connection) {
@@ -212,6 +215,7 @@ impl Preferences {
             (PICASA_TRANSITION_KEY, self.picasa_transition.key().to_string()),
             (TRANSITION_KEY, self.transition_ms.to_string()),
             (CAPTION_KEY, self.captions.to_string()),
+            (CLOCK_KEY, self.clock.to_string()),
         ] {
             if let Err(error) = db::set_setting(connection, key, &value) {
                 eprintln!("PIC screensaver: could not save {key}: {error}");
@@ -244,6 +248,16 @@ impl From<db::Photo> for Slide {
             caption,
         }
     }
+}
+
+/// Read local time only when the displayed minute changes. The overlay is
+/// updated from the GTK frame clock, with no extra GLib timer or network I/O.
+fn local_clock_text() -> String {
+    glib::DateTime::now_local()
+        .ok()
+        .and_then(|date| date.format("%H:%M").ok())
+        .map(|text| text.to_string())
+        .unwrap_or_else(|| "--:--".to_string())
 }
 
 fn random_seed() -> u64 {
@@ -591,11 +605,18 @@ pub fn open(parent: &adw::ApplicationWindow, connection: Rc<RefCell<Connection>>
     shuffle_button.set_active(current.shuffle);
     shuffle_row.append(&shuffle_button);
     shuffle_row.append(&shuffle_tiles_button);
-    let captions_button = gtk::CheckButton::with_label("Caption");
-    captions_button.set_active(current.captions);
-    captions_button.set_tooltip_text(Some("Show filename and date, if known"));
-    shuffle_row.append(&captions_button);
     body.append(&shuffle_row);
+
+    let overlays_row = gtk::Box::new(gtk::Orientation::Horizontal, 16);
+    let captions_button = gtk::CheckButton::with_label("Photo captions");
+    captions_button.set_active(current.captions);
+    captions_button.set_tooltip_text(Some("Show photo filename and date from the library"));
+    let clock_button = gtk::CheckButton::with_label("Clock");
+    clock_button.set_active(current.clock);
+    clock_button.set_tooltip_text(Some("Show a discreet local-time clock in the top-right corner"));
+    overlays_row.append(&captions_button);
+    overlays_row.append(&clock_button);
+    body.append(&field("Overlays", &overlays_row));
 
     let notice = gtk::Label::new(None);
     notice.set_visible(false);
@@ -646,6 +667,7 @@ pub fn open(parent: &adw::ApplicationWindow, connection: Rc<RefCell<Connection>>
             picasa_transition: PicasaTransition::from_dropdown(picasa_transition.selected()),
             transition_ms: (transition_time.value() * 1000.0).round() as u32,
             captions: captions_button.is_active(),
+            clock: clock_button.is_active(),
         };
         let mut photos = match photo_source.photos(&connection.borrow()) {
             Ok(photos) => photos,
@@ -1167,6 +1189,19 @@ fn start_screensaver(parent: &adw::ApplicationWindow, slides: Vec<Slide>, prefs:
     caption.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
     caption.set_visible(false);
     stage_overlay.add_overlay(&caption);
+
+    let clock = gtk::Label::new(None);
+    clock.add_css_class("screensaver-clock");
+    clock.set_halign(gtk::Align::End);
+    clock.set_valign(gtk::Align::Start);
+    clock.set_margin_top(22);
+    clock.set_margin_end(24);
+    clock.set_can_target(false);
+    clock.set_visible(prefs.clock);
+    if prefs.clock {
+        clock.set_label(&local_clock_text());
+    }
+    stage_overlay.add_overlay(&clock);
     screen.set_child(Some(&stage_overlay));
 
     // Controller callbacks must not own the window they are attached to:
@@ -1239,6 +1274,9 @@ fn start_screensaver(parent: &adw::ApplicationWindow, slides: Vec<Slide>, prefs:
     });
     let weak_screen = screen.downgrade();
     let caption_last = Cell::new(None::<usize>);
+    let last_clock_minute = Cell::new(
+        SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs() / 60
+    );
     // The GTK frame clock drives composited fades at the display refresh
     // rate. A 50ms GLib timer was limited to ~20fps and caused visible steps.
     // The callback is owned by the fullscreen widget and naturally stops
@@ -1261,6 +1299,14 @@ fn start_screensaver(parent: &adw::ApplicationWindow, slides: Vec<Slide>, prefs:
             }
             player.update(&request_tx);
             stage.borrow_mut().sync(&player);
+            if prefs.clock {
+                let minute = SystemTime::now().duration_since(UNIX_EPOCH)
+                    .unwrap_or_default().as_secs() / 60;
+                if minute != last_clock_minute.get() {
+                    last_clock_minute.set(minute);
+                    clock.set_label(&local_clock_text());
+                }
+            }
             if prefs.captions {
                 // For a wall, show the newest tile's label; for fullscreen,
                 // show the current single photograph.

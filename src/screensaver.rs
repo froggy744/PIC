@@ -764,12 +764,22 @@ fn smootherstep(t: f64) -> f64 {
     t * t * (3.0 - 2.0 * t)
 }
 
-fn cinematic_motion(_index: usize, progress: f64) -> (f64, f64) {
-    // Camera-like push-in with a subtle consistent upward drift.
-    // Motion is applied to the picture's GPU render node, not its widget
-    // geometry. The image remains clipped to a fixed single-monitor frame.
+/// GPU camera movement in actual CSS pixels, never GTK's unsupported
+/// percentage translations. Four directions give individual photos variety.
+fn cinematic_motion(index: usize, progress: f64) -> (f64, f64, f64) {
     let eased = smootherstep(progress.clamp(0.0, 1.0));
-    (1.005 + 0.045 * eased, 0.35 - 0.70 * eased)
+    let scale = 1.08 + 0.08 * eased;
+    let (from_x, from_y, to_x, to_y) = match index % 4 {
+        0 => (-25.0, 20.0, 25.0, -20.0),
+        1 => (25.0, -20.0, -25.0, 20.0),
+        2 => (-28.0, -15.0, 28.0, 15.0),
+        _ => (28.0, 15.0, -28.0, -15.0),
+    };
+    (
+        scale,
+        from_x + (to_x - from_x) * eased,
+        from_y + (to_y - from_y) * eased,
+    )
 }
 
 fn start_screensaver(parent: &adw::ApplicationWindow, slides: Vec<Slide>, prefs: Preferences) {
@@ -944,18 +954,17 @@ mod tests {
         assert_eq!(values, (0..100).collect::<Vec<_>>());
     }
     #[test]
-    fn cinematic_motion_pushes_in_without_direction_reversal() {
+    fn cinematic_motion_uses_pixel_scale_and_varied_directions() {
         for photo_index in 0..8 {
-            let mut last_zoom = 0.0;
-            let mut last_vertical = f64::INFINITY;
-            for step in 0..=100 {
-                let (zoom, drift) = cinematic_motion(photo_index, step as f64 / 100.0);
-                assert!((1.005..=1.05 + 1e-10).contains(&zoom));
-                assert!(zoom >= last_zoom);
-                assert!(drift <= last_vertical);
-                assert!(drift.abs() <= 0.36);
-                last_zoom = zoom;
-                last_vertical = drift;
+            let (first_scale, first_x, first_y) = cinematic_motion(photo_index, 0.0);
+            let (last_scale, last_x, last_y) = cinematic_motion(photo_index, 1.0);
+            assert!((first_scale - 1.08).abs() < 1e-8);
+            assert!((last_scale - 1.16).abs() < 1e-8);
+            assert!(first_x != last_x || first_y != last_y);
+            for step in 0..100 {
+                let (scale, x, y) = cinematic_motion(photo_index, step as f64 / 100.0);
+                assert!((1.08..=1.16).contains(&scale));
+                assert!(x.abs() <= 28.1 && y.abs() <= 20.1);
             }
         }
         assert_eq!(smootherstep(0.0), 0.0);

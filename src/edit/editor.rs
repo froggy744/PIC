@@ -451,6 +451,12 @@ pub fn build(
     // decoded pixels without evicting the fast 1800x1400 editing base.
     let preview_base_cache: Arc<Mutex<Vec<PreviewBase>>> = Arc::new(Mutex::new(Vec::new()));
     let preview_worker = spawn_preview_worker(preview_base_cache.clone());
+    // Native 24MP rendering must never block the fast draft worker. Both
+    // workers share decoded bases, but have independent render queues.
+    let preview_native_worker = spawn_preview_worker(preview_base_cache.clone());
+    let full_native_next = Rc::new(Cell::new(false));
+    let native_refine_source: Rc<RefCell<Option<glib::SourceId>>> =
+        Rc::new(RefCell::new(None));
 
     // Drag-to-pan for the editing canvas. Keep this controller on the
     // stationary ScrolledWindow so pointer coordinates do not move with the
@@ -726,7 +732,7 @@ pub fn build(
     configure_scale_scroll(&controls.filter_amount, &filters_scroll);
 
     let active_rotation_for_queue = active_rotation.clone();
-    let queue_preview: Rc<dyn Fn()> = {
+    let schedule_preview: Rc<dyn Fn()> = {
         let session = session.clone();
         let picture = picture.clone();
         let status = status.clone();
@@ -742,6 +748,8 @@ pub fn build(
         let overlay_layer = overlay_layer.clone();
         let preview_debounce = preview_debounce.clone();
         let preview_worker = preview_worker.clone();
+        let preview_native_worker = preview_native_worker.clone();
+        let full_native_next = full_native_next.clone();
         Rc::new(move || {
             // Throttle, not debounce: the old code reset the timer on every
             // slider tick, so a continuous drag skipped every intermediate
@@ -767,6 +775,8 @@ pub fn build(
             let overlay_layer = overlay_layer.clone();
             let preview_debounce_for_fire = preview_debounce.clone();
             let preview_worker = preview_worker.clone();
+            let preview_native_worker = preview_native_worker.clone();
+            let full_native_next = full_native_next.clone();
             let active_rotation = active_rotation_for_queue.clone();
             let source = glib::timeout_add_local_once(
                 Duration::from_millis(PREVIEW_THROTTLE_MS),
@@ -783,7 +793,12 @@ pub fn build(
                     let path = photo.path();
                     let rotation = active_rotation.get();
                     let native = native_one_to_one.get();
-                    let (target_width, target_height) = if native {
+                    // 1:1 entry needs true native geometry. Subsequent tone/
+                    // filter adjustments start with a small quick-look texture,
+                    // then refine at the same widget geometry after idle.
+                    let native_full = native && (full_native_next.get()
+                        || pending_one_to_one_anchor.borrow().is_some());
+                    let (target_width, target_height) = if native_full {
                         let mut width = if photo.width() > 0 {
                             photo.width() as u32
                         } else {
@@ -798,20 +813,27 @@ pub fn build(
                             std::mem::swap(&mut width, &mut height);
                         }
                         (width, height)
+                    } else if native {
+                        (1600, 1200)
                     } else if interactive {
                         (1800 / 2, 1400 / 2)
                     } else {
                         (1800, 1400)
                     };
 
-                    if !interactive {
+                    if native && !native_full {
+                        // No spinner over the photo for a fast draft.
+                        busy.stop();
+                        busy.set_visible(false);
+                    } else if !interactive {
                         busy.set_visible(true);
                         busy.start();
                         status.set_text("Rendering preview…");
                     }
 
                     let (result_sender, receiver) = std::sync::mpsc::channel();
-                    if preview_worker
+                    let worker = if native_full { &preview_native_worker } else { &preview_worker };
+                    if worker
                         .send(PreviewJob {
                             generation: current_generation,
                             path,
@@ -862,18 +884,36 @@ pub fn build(
                                             &bytes,
                                             width as usize * 4,
                                         );
-                                        preview_dimensions.set((width as i32, height as i32));
+                                        let old_dimensions = preview_dimensions.get();
+                                        // A quick native draft is a *different
+                                        // texture resolution*, not a different
+                                        // photo size. The 1:1 canvas and pan
+                                        // offsets must remain native-sized.
+                                        let display_dimensions = if native && !native_full {
+                                            old_dimensions
+                                        } else {
+                                            (width as i32, height as i32)
+                                        };
+                                        preview_dimensions.set(display_dimensions);
                                         picture.set_paintable(Some(&texture));
                                         if native {
-                                            apply_canvas_one_to_one(
-                                                &picture,
-                                                &picture_scroll,
-                                                (width as i32, height as i32),
-                                            );
-
                                             let anchor =
                                                 pending_one_to_one_anchor.borrow_mut().take();
-                                            let picture_scroll_for_restore = picture_scroll.clone();
+                                            // Reapplying native sizing and the
+                                            // center fallback after EVERY tone
+                                            // edit recentered a panned photo.
+                                            // Only move it for initial 1:1 or
+                                            // a real crop/geometry size change.
+                                            if anchor.is_some()
+                                                || display_dimensions != old_dimensions
+                                            {
+                                                apply_canvas_one_to_one(
+                                                    &picture,
+                                                    &picture_scroll,
+                                                    display_dimensions,
+                                                );
+                                                let (width, height) = display_dimensions;
+                                                let picture_scroll_for_restore = picture_scroll.clone();
                                             let picture_scroll_for_tick = picture_scroll.clone();
                                             picture_scroll_for_restore.add_tick_callback(
                                                 move |_, _| {
@@ -939,6 +979,7 @@ pub fn build(
                                                     glib::ControlFlow::Break
                                                 },
                                             );
+                                            }
                                         } else {
                                             apply_canvas_zoom(
                                                 &picture,
@@ -976,6 +1017,46 @@ pub fn build(
                 },
             );
             preview_debounce.replace(Some(source));
+        })
+    };
+
+    // Fast paint first in native mode, sharp native pixels after the user
+    // pauses. Keep refinement off the UI thread and out of the draft lane.
+    // A pending cursor anchor means the user has JUST entered 1:1: the normal
+    // native request handles that transition, without a duplicate draft.
+    let queue_preview: Rc<dyn Fn()> = {
+        let schedule_preview = schedule_preview.clone();
+        let native_one_to_one = native_one_to_one.clone();
+        let pending_anchor = pending_one_to_one_anchor.clone();
+        let full_native_next = full_native_next.clone();
+        let native_refine_source = native_refine_source.clone();
+        let session = session.clone();
+        Rc::new(move || {
+            if let Some(source) = native_refine_source.borrow_mut().take() {
+                source.remove();
+            }
+            full_native_next.set(false);
+            schedule_preview();
+            if !native_one_to_one.get() || pending_anchor.borrow().is_some() {
+                return;
+            }
+            let schedule = schedule_preview.clone();
+            let native = native_one_to_one.clone();
+            let full = full_native_next.clone();
+            let session = session.clone();
+            let source_slot = native_refine_source.clone();
+            let source = glib::timeout_add_local(Duration::from_millis(240), move || {
+                if session.borrow().action_active() {
+                    return glib::ControlFlow::Continue;
+                }
+                source_slot.borrow_mut().take();
+                if native.get() {
+                    full.set(true);
+                    schedule();
+                }
+                glib::ControlFlow::Break
+            });
+            native_refine_source.replace(Some(source));
         })
     };
 

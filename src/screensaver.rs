@@ -479,11 +479,27 @@ pub fn open(parent: &adw::ApplicationWindow, connection: Rc<RefCell<Connection>>
     let duration = gtk::SpinButton::with_range(3.0, 30.0, 1.0);
     duration.set_value(current.seconds as f64);
     duration.set_tooltip_text(Some("Seconds per photo or photo-wall change"));
-    body.append(&field("Duration (s)", &duration));
+
+    // Keep duration and tile count together without increasing the dialog
+    // height or introducing another full-width settings row.
+    let timing_row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    let duration_group = gtk::Box::new(gtk::Orientation::Horizontal, 7);
+    duration_group.set_hexpand(true);
+    let duration_label = gtk::Label::new(Some("Duration"));
+    duration_group.append(&duration_label);
+    duration.set_hexpand(true);
+    duration_group.append(&duration);
+    let tiles_group = gtk::Box::new(gtk::Orientation::Horizontal, 7);
+    tiles_group.set_hexpand(true);
+    let tiles_label = gtk::Label::new(Some("Mosaic tiles"));
+    tiles_group.append(&tiles_label);
+    mosaic_tiles.set_hexpand(true);
+    tiles_group.append(&mosaic_tiles);
+    timing_row.append(&duration_group);
+    timing_row.append(&tiles_group);
+    body.append(&timing_row);
 
     body.append(&field("Transition", &picasa_transition));
-
-    body.append(&field("Mosaic tiles", &mosaic_tiles));
 
     let shuffle_row = gtk::Box::new(gtk::Orientation::Horizontal, 16);
     let shuffle_button = gtk::CheckButton::with_label("Shuffle photos");

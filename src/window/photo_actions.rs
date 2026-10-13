@@ -234,7 +234,7 @@ fn run_bulk_recipe_chunk(work: &mut BulkRecipeState) {
 
 fn finish_bulk_recipe(work: BulkRecipeState, name: &'static str, total: usize) {
     if let Some(lightbox) = work.context.lightbox.upgrade() {
-        lightbox.refresh_current();
+        lightbox.refresh_current_after_edit();
     }
     if work.touched_selected {
         let selected = work.context.selected_photo.borrow().as_ref().cloned();

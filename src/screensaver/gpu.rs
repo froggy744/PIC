@@ -125,8 +125,8 @@ struct Cinema {
     front: gtk::Picture,
     back_version: Option<(usize, u64)>,
     front_version: Option<(usize, u64)>,
-    back_motion_step: Option<usize>,
-    front_motion_step: Option<usize>,
+    back_motion_step: Option<(usize, usize)>,
+    front_motion_step: Option<(usize, usize)>,
 }
 impl Cinema {
     fn new(root: &gtk::Fixed) -> Self {
@@ -168,14 +168,17 @@ impl Cinema {
             root.move_(frame, 0.0, 0.0);
         }
     }
-    fn motion(picture: &gtk::Picture, previous: &mut Option<usize>, fraction: f64) {
+    fn motion(picture: &gtk::Picture, previous: &mut Option<(usize, usize)>,
+        fraction: f64, photo_id: usize)
+    {
         let step = (fraction.clamp(0.0, 1.0) * KEN_STEPS as f64).round() as usize;
-        if *previous == Some(step) { return; }
-        if let Some(last) = previous {
-            picture.remove_css_class(&format!("screensaver-ken-{last}"));
+        let direction = photo_id % 4;
+        if *previous == Some((direction, step)) { return; }
+        if let Some((old_dir, old_step)) = previous {
+            picture.remove_css_class(&format!("screensaver-ken-{old_dir}-{old_step}"));
         }
-        picture.add_css_class(&format!("screensaver-ken-{step}"));
-        *previous = Some(step);
+        picture.add_css_class(&format!("screensaver-ken-{direction}-{step}"));
+        *previous = Some((direction, step));
     }
     fn sync(&mut self, root: &gtk::Fixed, player: &Player, w: f64, h: f64) {
         Self::stable_viewport(root, &self.back_frame, w, h);
@@ -192,8 +195,8 @@ impl Cinema {
             if ready && present(&self.front, &mut self.front_version, player.current, player) {
                 // The old image holds its ending position until it disappears.
                 // The new image moves continuously from its starting position.
-                Self::motion(&self.back, &mut self.back_motion_step, 1.0);
-                Self::motion(&self.front, &mut self.front_motion_step, current_fraction);
+                Self::motion(&self.back, &mut self.back_motion_step, 1.0, old);
+                Self::motion(&self.front, &mut self.front_motion_step, current_fraction, player.current);
                 self.front_frame.set_opacity(fade);
                 return;
             }
@@ -201,7 +204,7 @@ impl Cinema {
         // At fade completion, promote an identical current texture and its
         // identical transform before removing the outgoing overlay.
         if present(&self.back, &mut self.back_version, player.current, player) {
-            Self::motion(&self.back, &mut self.back_motion_step, current_fraction);
+            Self::motion(&self.back, &mut self.back_motion_step, current_fraction, player.current);
             self.front_frame.set_opacity(0.0);
             if self.front_version.take().is_some() {
                 self.front.set_paintable(None::<&gtk::gdk::Paintable>);
@@ -449,15 +452,17 @@ pub(super) fn install_css() {
                 ".screensaver-flip-{step} {{ transform: scaleX({factor:.6}); }}\n"
             ));
         }
-        // Ken Burns uses a consistent gentle push-in and upward drift. The
-        // frame is stationary; transforms are composited by GSK, not laid out.
-        // Small increments (~240 per slide) avoid stepping at display refresh.
-        for step in 0..=KEN_STEPS {
-            let fraction = step as f64 / KEN_STEPS as f64;
-            let (scale, y) = cinematic_motion(0, fraction);
-            css.push_str(&format!(
-                ".screensaver-ken-{step} {{ transform-origin: 50% 50%; transform: translate(0%, {y:.4}%) scale({scale:.6}); }}\n"
-            ));
+        // GTK4's CSS transform parser rejects percentage translate() values.
+        // Use compositor-only pixel pans and a smooth push-in. The fixed
+        // fullscreen frames never relayout as individual photos move.
+        for direction in 0..4 {
+            for step in 0..=KEN_STEPS {
+                let fraction = step as f64 / KEN_STEPS as f64;
+                let (scale, x, y) = cinematic_motion(direction, fraction);
+                css.push_str(&format!(
+                    ".screensaver-ken-{direction}-{step} {{ transform-origin: 50% 50%; transform: translate({x:.3}px, {y:.3}px) scale({scale:.6}); }}\n"
+                ));
+            }
         }
         provider.load_from_string(&css);
         gtk::style_context_add_provider_for_display(

@@ -2,7 +2,6 @@
 //! All photos are decoded on a worker into RGBA8. The UI retains GdkTexture
 //! paintables and animates opacity/geometry, never repainting pixels in Cairo.
 use super::*;
-use gtk::prelude::*;
 
 fn present(picture: &gtk::Picture, slot: &mut Option<(usize, u64)>,
            index: usize, player: &Player) -> bool {

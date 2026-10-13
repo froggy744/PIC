@@ -709,7 +709,7 @@ fn start_screensaver(parent: &adw::ApplicationWindow, slides: Vec<Slide>, prefs:
     // different monitor when multiple displays are connected.
     if let Some(monitor) = parent.native()
         .and_then(|native| native.surface())
-        .and_then(|surface| parent.display().monitor_at_surface(&surface))
+        .and_then(|surface| gtk::prelude::WidgetExt::display(parent).monitor_at_surface(&surface))
     {
         screen.fullscreen_on_monitor(&monitor);
     } else {

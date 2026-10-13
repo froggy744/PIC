@@ -1,7 +1,7 @@
 //! Photo screensaver: a Picasa-inspired mosaic/picture pile and an iPhoto-inspired
 //! cinematic slideshow. Decode/rendering runs off the GTK thread. All original
 //! images and non-destructive edits remain untouched.
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -20,6 +20,7 @@ const STYLE_KEY: &str = "screensaver-style";
 const SOURCE_KEY: &str = "screensaver-source";
 const DURATION_KEY: &str = "screensaver-duration";
 const SHUFFLE_KEY: &str = "screensaver-shuffle";
+const SHUFFLE_TILES_KEY: &str = "screensaver-shuffle-tiles";
 const MOSAIC_SLOTS: usize = 6;
 // Retain the visible six mosaic tiles, outgoing frame and a few incoming slides.
 const MAX_FRAMES: usize = 12;
@@ -110,6 +111,7 @@ struct Preferences {
     source: String,
     seconds: u32,
     shuffle: bool,
+    shuffle_tiles: bool,
 }
 impl Preferences {
     fn load(connection: &Connection) -> Self {
@@ -119,6 +121,7 @@ impl Preferences {
             source: setting(SOURCE_KEY),
             seconds: setting(DURATION_KEY).parse::<u32>().unwrap_or(6).clamp(3, 30),
             shuffle: setting(SHUFFLE_KEY) != "false",
+            shuffle_tiles: setting(SHUFFLE_TILES_KEY) != "false",
         }
     }
     fn save(&self, connection: &Connection) {
@@ -127,6 +130,7 @@ impl Preferences {
             (SOURCE_KEY, self.source.clone()),
             (DURATION_KEY, self.seconds.to_string()),
             (SHUFFLE_KEY, self.shuffle.to_string()),
+            (SHUFFLE_TILES_KEY, self.shuffle_tiles.to_string()),
         ] {
             if let Err(error) = db::set_setting(connection, key, &value) {
                 eprintln!("PIC screensaver: could not save {key}: {error}");
@@ -260,9 +264,22 @@ pub fn open(parent: &adw::ApplicationWindow, connection: Rc<RefCell<Connection>>
     duration.set_tooltip_text(Some("Seconds per photo or photo-wall change"));
     body.append(&field("Seconds per change", &duration));
 
+    let shuffle_row = gtk::Box::new(gtk::Orientation::Horizontal, 16);
     let shuffle_button = gtk::CheckButton::with_label("Shuffle photographs");
     shuffle_button.set_active(current.shuffle);
-    body.append(&shuffle_button);
+    let shuffle_tiles_button = gtk::CheckButton::with_label("Shuffle tiles");
+    shuffle_tiles_button.set_active(current.shuffle_tiles);
+    shuffle_tiles_button.set_tooltip_text(Some(
+        "Replace mosaic and picture-pile positions in a shuffled order instead of left to right",
+    ));
+    shuffle_tiles_button.set_sensitive(style.selected() != 1);
+    let tiles_for_style = shuffle_tiles_button.clone();
+    style.connect_selected_notify(move |dropdown| {
+        tiles_for_style.set_sensitive(dropdown.selected() != 1);
+    });
+    shuffle_row.append(&shuffle_button);
+    shuffle_row.append(&shuffle_tiles_button);
+    body.append(&shuffle_row);
 
     let notice = gtk::Label::new(None);
     notice.set_wrap(true);
@@ -298,6 +315,7 @@ pub fn open(parent: &adw::ApplicationWindow, connection: Rc<RefCell<Connection>>
             source: photo_source.key(),
             seconds: duration.value_as_int().clamp(3, 30) as u32,
             shuffle: shuffle_button.is_active(),
+            shuffle_tiles: shuffle_tiles_button.is_active(),
         };
         let mut photos = match photo_source.photos(&connection.borrow()) {
             Ok(photos) => photos,
@@ -354,7 +372,7 @@ fn start_decode_worker(
     slides: Vec<Slide>,
     style: Style,
     requests: Receiver<usize>,
-    results: Sender<ImageResult>,
+    results: mpsc::SyncSender<ImageResult>,
     cancelled: Arc<AtomicBool>,
 ) {
     std::thread::spawn(move || {
@@ -440,13 +458,20 @@ struct Player {
     slots: Vec<usize>,
     fading_slot: Option<(usize, usize)>,
     changes: usize,
+    shuffle_tiles: bool,
+    tile_order: Vec<usize>,
     frames: HashMap<usize, Surface>,
     order: VecDeque<usize>,
     requested: HashSet<usize>,
     failed: HashSet<usize>,
 }
 impl Player {
-    fn new(style: Style, count: usize, seconds: u32) -> Self {
+    fn new(style: Style, count: usize, seconds: u32, shuffle_tiles: bool) -> Self {
+        let slots = (0..MOSAIC_SLOTS.min(count)).collect::<Vec<_>>();
+        let mut tile_order = (0..slots.len()).collect::<Vec<_>>();
+        if shuffle_tiles {
+            shuffle(&mut tile_order);
+        }
         Self {
             style, count,
             interval: Duration::from_secs(seconds as u64),
@@ -454,9 +479,11 @@ impl Player {
             next: if style == Style::IPhoto { 1 } else { MOSAIC_SLOTS.min(count) },
             current: 0,
             previous: None,
-            slots: (0..MOSAIC_SLOTS.min(count)).collect(),
+            slots,
             fading_slot: None,
             changes: 0,
+            shuffle_tiles,
+            tile_order,
             frames: HashMap::new(),
             order: VecDeque::new(),
             requested: HashSet::new(),
@@ -542,7 +569,13 @@ impl Player {
             for _ in 0..self.count {
                 let index = self.next % self.count;
                 if self.available(index) {
-                    let slot = self.changes % self.slots.len().max(1);
+                    let step = self.changes % self.tile_order.len().max(1);
+                    if self.shuffle_tiles && step == 0 && self.changes > 0 {
+                        // Refresh the permutation only after a complete pass:
+                        // every tile changes once before one changes again.
+                        shuffle(&mut self.tile_order);
+                    }
+                    let slot = self.tile_order[step];
                     let former = std::mem::replace(&mut self.slots[slot], index);
                     self.fading_slot = Some((slot, former));
                     self.next = (index + 1) % self.count;
@@ -691,21 +724,21 @@ fn smootherstep(t: f64) -> f64 {
     t * t * (3.0 - 2.0 * t)
 }
 
-fn cinematic_motion(index: usize, progress: f64) -> (f64, f64) {
-    let eased = smootherstep(progress);
-    let reversed = index % 2 == 1;
-    let direction = if reversed { -1.0 } else { 1.0 };
-    let zoom = if reversed { 1.105 - eased * 0.065 } else { 1.04 + eased * 0.065 };
-    let pan = direction * (-0.01 + 0.02 * eased);
-    (zoom, pan)
+fn cinematic_motion(_index: usize, progress: f64) -> (f64, f64) {
+    // A gentle zoom-in throughout every slide. Never alternate zoom-out,
+    // pan direction, or position (the oscillation felt like a pendulum).
+    let zoom = 1.025 + smootherstep(progress) * 0.04;
+    (zoom, 0.0)
 }
 
 fn start_screensaver(parent: &adw::ApplicationWindow, slides: Vec<Slide>, prefs: Preferences) {
     if slides.is_empty() { return; }
     let style = prefs.style.resolved();
-    let player = Rc::new(RefCell::new(Player::new(style, slides.len(), prefs.seconds)));
+    let player = Rc::new(RefCell::new(Player::new(style, slides.len(), prefs.seconds, prefs.shuffle_tiles)));
     let (request_tx, request_rx) = mpsc::channel::<usize>();
-    let (result_tx, result_rx) = mpsc::channel::<ImageResult>();
+    // Bound decoded-frame buffering. Unbounded RGBA frames could consume
+    // hundreds of MB while GTK was busy rendering/closing.
+    let (result_tx, result_rx) = mpsc::sync_channel::<ImageResult>(2);
     let cancelled = Arc::new(AtomicBool::new(false));
     start_decode_worker(slides, style, request_rx, result_tx, Arc::clone(&cancelled));
 
@@ -727,29 +760,40 @@ fn start_screensaver(parent: &adw::ApplicationWindow, slides: Vec<Slide>, prefs:
     // Controller callbacks must not own the window they are attached to:
     // a strong GtkWindow reference creates a cycle and leaves PIC waiting
     // for the old fullscreen window to be destroyed.
-    let keys = gtk::EventControllerKey::new();
-    let weak_for_keys = screen.downgrade();
-    keys.connect_key_pressed(move |_, _, _, _| {
-        if let Some(window) = weak_for_keys.upgrade() {
-            window.close();
+    // Key/mouse callbacks arrive inside GTK's event dispatch. Destruction
+    // of an active fullscreen surface in that stack can stall Wayland/GTK.
+    // Hide and cancel immediately, then close on the next idle iteration.
+    // All callback captures are weak; never keep the closed window alive.
+    let closing = Rc::new(Cell::new(false));
+    let weak_for_exit = screen.downgrade();
+    let cancel_for_exit = Arc::clone(&cancelled);
+    let request_exit: Rc<dyn Fn()> = Rc::new(move || {
+        if closing.replace(true) { return; }
+        cancel_for_exit.store(true, Ordering::Relaxed);
+        if let Some(window) = weak_for_exit.upgrade() {
+            window.set_visible(false);
+            glib::idle_add_local_once(move || {
+                window.close();
+            });
         }
+    });
+    let keys = gtk::EventControllerKey::new();
+    let close_for_keys = request_exit.clone();
+    keys.connect_key_pressed(move |_, _, _, _| {
+        close_for_keys();
         glib::Propagation::Stop
     });
     screen.add_controller(keys);
 
     let clicked = gtk::GestureClick::new();
-    let weak_for_click = screen.downgrade();
-    clicked.connect_pressed(move |_, _, _, _| {
-        if let Some(window) = weak_for_click.upgrade() {
-            window.close();
-        }
-    });
+    let close_for_click = request_exit.clone();
+    clicked.connect_pressed(move |_, _, _, _| close_for_click());
     screen.add_controller(clicked);
 
     let motion = gtk::EventControllerMotion::new();
     let origin = Rc::new(RefCell::new(None::<(f64, f64)>));
     let first_frame = Instant::now();
-    let weak_for_motion = screen.downgrade();
+    let close_for_motion = request_exit.clone();
     motion.connect_motion(move |_, x, y| {
         if first_frame.elapsed() < Duration::from_millis(850) {
             *origin.borrow_mut() = Some((x, y));
@@ -758,9 +802,7 @@ fn start_screensaver(parent: &adw::ApplicationWindow, slides: Vec<Slide>, prefs:
         let mut position = origin.borrow_mut();
         if let Some((ox, oy)) = *position {
             if (x - ox).hypot(y - oy) > 26.0 {
-                if let Some(window) = weak_for_motion.upgrade() {
-                    window.close();
-                }
+                close_for_motion();
             }
         } else {
             *position = Some((x, y));
@@ -776,7 +818,7 @@ fn start_screensaver(parent: &adw::ApplicationWindow, slides: Vec<Slide>, prefs:
         glib::Propagation::Proceed
     });
     let weak_screen = screen.downgrade();
-    glib::timeout_add_local(Duration::from_millis(33), move || {
+    glib::timeout_add_local(Duration::from_millis(50), move || {
         if cancelled.load(Ordering::Relaxed) {
             return glib::ControlFlow::Break;
         }
@@ -787,7 +829,9 @@ fn start_screensaver(parent: &adw::ApplicationWindow, slides: Vec<Slide>, prefs:
         let needs_redraw = {
             let mut player = player.borrow_mut();
             let mut received = false;
-            for _ in 0..16 {
+            // Large image surfaces are transferred incrementally; never
+            // monopolize the GTK thread with an entire decode backlog.
+            for _ in 0..2 {
                 match result_rx.try_recv() {
                     Ok(result) => {
                         player.receive(result);
@@ -830,20 +874,29 @@ mod tests {
         assert_eq!(values, (0..100).collect::<Vec<_>>());
     }
     #[test]
-    fn cinematic_motion_does_not_always_start_from_left() {
-        let (_, first_start) = cinematic_motion(0, 0.0);
-        let (_, second_start) = cinematic_motion(1, 0.0);
-        assert!(first_start < 0.0);
-        assert!(second_start > 0.0);
+    fn cinematic_motion_always_zoom_in_without_lateral_shift() {
+        for index in 0..8 {
+            let (first_zoom, first_pan) = cinematic_motion(index, 0.0);
+            let (last_zoom, last_pan) = cinematic_motion(index, 1.0);
+            assert!(last_zoom > first_zoom);
+            assert_eq!(first_pan, 0.0);
+            assert_eq!(last_pan, 0.0);
+        }
         assert_eq!(smootherstep(0.0), 0.0);
         assert_eq!(smootherstep(1.0), 1.0);
     }
     #[test]
     fn player_paces_changes() {
-        let player = Player::new(Style::IPhoto, 5, 6);
+        let player = Player::new(Style::IPhoto, 5, 6, true);
         assert_eq!(player.current, 0);
         assert_eq!(player.next, 1);
         assert_eq!(player.interval, Duration::from_secs(6));
-        assert_eq!(Player::new(Style::Picasa, 20, 3).slots.len(), 6);
+        assert_eq!(Player::new(Style::Picasa, 20, 3, true).slots.len(), 6);
+        let ordered = Player::new(Style::Picasa, 20, 3, false);
+        assert_eq!(ordered.tile_order, (0..6).collect::<Vec<_>>());
+        let shuffled = Player::new(Style::Picasa, 20, 3, true);
+        let mut positions = shuffled.tile_order.clone();
+        positions.sort_unstable();
+        assert_eq!(positions, (0..6).collect::<Vec<_>>());
     }
 }

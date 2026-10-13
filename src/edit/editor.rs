@@ -2226,6 +2226,7 @@ mod panel_tests {
         let mut base = EditRecipe::default();
         base.filter = FilterPreset::Clarendon;
         base.black_white = true;
+        base.filter_amount = 0.20;
         base.exposure = 0.4;
         base.saturation = 0.2;
 
@@ -2235,6 +2236,8 @@ mod panel_tests {
         assert_eq!(none.filter, FilterPreset::None);
         assert!(!none.black_white);
         assert!(!none.sepia);
+        assert_eq!(none.filter_amount, 1.0, "Picker previews must show full style");
+        assert_eq!(sepia.filter_amount, 1.0);
         assert!((none.exposure - 0.4).abs() < 0.001);
         assert!((none.saturation - 0.2).abs() < 0.001);
         assert_eq!(sepia.filter, FilterPreset::None);

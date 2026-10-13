@@ -83,7 +83,12 @@ impl Cinema {
         if picture.width_request() != width || picture.height_request() != height {
             picture.set_size_request(width, height);
         }
-        root.move_(picture, (w - width as f64) / 2.0, (h - height as f64) / 2.0);
+        let x = (w - width as f64) / 2.0;
+        let y = (h - height as f64) / 2.0;
+        let (old_x, old_y) = root.child_position(picture);
+        if (old_x - x).abs() > 0.25 || (old_y - y).abs() > 0.25 {
+            root.move_(picture, x, y);
+        }
     }
     fn sync(&mut self, root: &gtk::Fixed, player: &Player, w: f64, h: f64) {
         let elapsed = player.switched_at.elapsed().as_secs_f64();
@@ -177,7 +182,10 @@ impl Stage {
             if tile.frame.width_request() != iw || tile.frame.height_request() != ih {
                 tile.frame.set_size_request(iw, ih);
             }
-            self.root.move_(&tile.frame, x, y);
+            let (old_x, old_y) = self.root.child_position(&tile.frame);
+            if (old_x - x).abs() > 0.25 || (old_y - y).abs() > 0.25 {
+                self.root.move_(&tile.frame, x, y);
+            }
             let old = player.fading_slot
                 .and_then(|(change_slot, old)| (change_slot == slot).then_some(old));
             tile.sync(new_id, old, fade, player);

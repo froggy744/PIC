@@ -1459,6 +1459,7 @@ mod tests {
         let elapsed = player.elapsed();
         // Pretend the pause has lasted 5s. Presentation time should still
         // be near 450ms once playback resumes, rather than jumping slides.
+        player.switched_at -= Duration::from_secs(5);
         player.paused_at = Some(Instant::now() - Duration::from_secs(5));
         assert!(!player.pause_or_resume());
         let resumed = player.elapsed();

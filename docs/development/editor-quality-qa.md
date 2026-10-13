@@ -1,0 +1,36 @@
+# Editor: tonal-quality and filter validation (2026-10-13)
+
+Branch: `feature/editor-tone-clarity-grain`; PR: #177. No change to originals or edit database schema.
+
+## Findings / decisions
+
+1. Existing Fill Light and Shadows were additive RGB offsets using nearly the same shadow mask. They could flatten shadows, shift saturation, and amplify black noise.
+2. Replace them with different *luminance-masked parametric gamma curves*: Fill Light covers the lower-midrange, Shadows is concentrated in darker tones, and Highlights targets upper luminance. Apply a common RGB multiplier to retain relative channel balance.
+3. Replace aggressive percentile auto-stretch with 1%-trimmed luminance bounds, capped slope, bounded shoulder/headroom and an 0.75 blend. A narrow histogram must not be mapped to hard black and white.
+4. Auto Colour estimates channel gains from low-chroma midtone pixels only, blending modestly towards neutrality. An image containing only highly saturated/warm colours remains as shot instead of being forced grey.
+5. Add signed midtone local contrast (Clarity, -1..+1) using a downsampled Gaussian luminance guide, with a midtone-weighted residual. Keep Sharpen separate.
+6. Add deterministic monochrome Grain (0..1); same recipe and source dimensions give identical results across repeated renders.
+7. Add Old Photo (desaturation, sepia/warm tone, fade, vignette, grain) and Newspaper (warm paper and deterministic 4x4 ordered black-ink halftone) to the existing non-destructive filter palette.
+8. Do not imply Lightroom's proprietary RAW process is reproduced. PIC operates on its decoded display RGB pixels and cannot recreate sensor highlight data already clipped before decoding.
+
+## Project checklist
+
+- [x] Add Clarity and Grain to EditRecipe encode/decode/default/undo/sync.
+- [x] Add sliders under Edit > Tools > Detail.
+- [x] Separate Fill Light, Shadows, Highlights using targeted tonal curves.
+- [x] Rework Auto Contrast/Auto Colour to avoid colour/contrast exaggeration.
+- [x] Apply Clarity/Grain in the shared viewer/export/render path.
+- [x] Add Old Photo and Newspaper filter tiles and stable keys.
+- [x] Add unit tests for tone, colour, clarity, grain, filter persistence, alpha.
+- [x] Add GitHub Actions editor test workflow for the branch/PR.
+- [ ] Automated `cargo check --locked` completed successfully on CI.
+- [ ] CPU render, recipe, and filter regression suites completed successfully.
+- [ ] Visual review of difficult Nikon outdoor shadow/highlight and group images.
+- [ ] Preview/export parity, undo, filter switch, copy/paste and large-photo responsiveness confirmed.
+- [ ] Merge only after validation and approval.
+
+## Research references
+- Adobe: [Tone controls and tonal ranges](https://helpx.adobe.com/uk/lightroom-classic/desktop/help/tone-control-adjustment.html)
+- Adobe: [Highlights, Shadows, Clarity and image adjustments](https://helpx-origin.aws116.adobeitc.com/ie/lightroom-classic/help/apply-local-adjustments.html)
+- Adobe: [Clarity increases midtone local contrast](https://www.adobe.com/learn/lightroom-cc/web/apply-clarity-dehaze-sharpen-lightroom-cc)
+- Adobe: [Texture, Clarity and Grain editing controls](https://helpx.adobe.com/ie/lightroom/web/edit-photos/apply-effects/adjust-effects.html)

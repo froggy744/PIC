@@ -309,6 +309,26 @@ fn style_preview(style: Style) -> gtk::DrawingArea {
                     }
                 }
             }
+            Style::Grid => {
+                for row in 0..2 {
+                    for col in 0..3 {
+                        photo(col as f64 * 22.0, row as f64 * 21.0, 21.0, 20.0,
+                            row * 3 + col);
+                    }
+                }
+            }
+            Style::Floating => {
+                for (x, y, tilt, tint) in [(6., 4., -0.09, 0), (36., 3., 0.08, 1),
+                    (3., 22., 0.10, 2), (32., 21., -0.1, 3)]
+                {
+                    let _ = cr.save();
+                    cr.translate(x+13.,y+9.);
+                    cr.rotate(tilt);
+                    rect(-13., -9., 26., 18., (0.95,0.95,0.92));
+                    photo(-11., -7., 22., 14., tint);
+                    let _ = cr.restore();
+                }
+            }
             Style::PicturePile => {
                 for (i, angle, x) in [(0, -0.15, 11.0), (1, 0.13, 23.0), (2, -0.08, 35.0)] {
                     let _ = cr.save();
@@ -318,6 +338,11 @@ fn style_preview(style: Style) -> gtk::DrawingArea {
                     photo(-8.0, -13.0, 18.0, 22.0, i);
                     let _ = cr.restore();
                 }
+            }
+            Style::Fade => {
+                photo(2., 0., 62., 42., 2);
+                rect(9., 6., 48., 30., (0.22,0.27,0.33));
+                photo(11., 8., 44., 26., 0);
             }
             Style::IPhoto => {
                 rect(5.0, 4.0, 56.0, 34.0, (0.84, 0.85, 0.83));
@@ -545,13 +570,32 @@ pub fn open(parent: &adw::ApplicationWindow, connection: Rc<RefCell<Connection>>
     timing_row.append(&tiles_group);
     body.append(&timing_row);
 
-    body.append(&field("Transition", &picasa_transition));
+    // A second, independent monotonic timer controls the amount of each
+    // change. Do not tie animation duration to the photo hold interval.
+    let transition_time = gtk::SpinButton::with_range(0.2, 2.5, 0.1);
+    transition_time.set_digits(1);
+    transition_time.set_value(current.transition_ms as f64 / 1000.0);
+    transition_time.set_tooltip_text(Some("Seconds to blend/flip between photos"));
+    let timing_options = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    let transition_mode = field("Transition", &picasa_transition);
+    transition_mode.set_hexpand(true);
+    timing_options.append(&transition_mode);
+    let animation_time = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    let animation_label = gtk::Label::new(Some("Fade (s)"));
+    animation_time.append(&animation_label);
+    animation_time.append(&transition_time);
+    timing_options.append(&animation_time);
+    body.append(&timing_options);
 
     let shuffle_row = gtk::Box::new(gtk::Orientation::Horizontal, 16);
     let shuffle_button = gtk::CheckButton::with_label("Shuffle photos");
     shuffle_button.set_active(current.shuffle);
     shuffle_row.append(&shuffle_button);
     shuffle_row.append(&shuffle_tiles_button);
+    let captions_button = gtk::CheckButton::with_label("Caption");
+    captions_button.set_active(current.captions);
+    captions_button.set_tooltip_text(Some("Show filename and date, if known"));
+    shuffle_row.append(&captions_button);
     body.append(&shuffle_row);
 
     let notice = gtk::Label::new(None);
@@ -601,6 +645,8 @@ pub fn open(parent: &adw::ApplicationWindow, connection: Rc<RefCell<Connection>>
             shuffle_tiles: shuffle_tiles_button.is_active(),
             mosaic_tiles: requested_tiles,
             picasa_transition: PicasaTransition::from_dropdown(picasa_transition.selected()),
+            transition_ms: (transition_time.value() * 1000.0).round() as u32,
+            captions: captions_button.is_active(),
         };
         let mut photos = match photo_source.photos(&connection.borrow()) {
             Ok(photos) => photos,
@@ -775,7 +821,9 @@ struct Player {
     style: Style,
     count: usize,
     interval: Duration,
+    transition: Duration,
     switched_at: Instant,
+    paused_at: Option<Instant>,
     next: usize,
     current: usize,
     previous: Option<usize>,
@@ -796,8 +844,9 @@ struct Player {
 impl Player {
     fn new(style: Style, count: usize, seconds: u32, shuffle_tiles: bool, mosaic_tiles: usize) -> Self {
         let desired_slots = match style {
-            Style::Mosaic => mosaic_tiles.max(1),
+            Style::Mosaic | Style::Grid => mosaic_tiles.max(1),
             Style::PicturePile => PICTURE_PILE_SLOTS,
+            Style::Floating => FLOATING_SLOTS,
             _ => 0,
         };
         let slots = (0..desired_slots.min(count)).collect::<Vec<_>>();
@@ -808,8 +857,10 @@ impl Player {
         Self {
             style, count,
             interval: Duration::from_secs(seconds as u64),
+            transition: Duration::from_millis(900),
             switched_at: Instant::now(),
-            next: if style == Style::IPhoto { 1 } else { slots.len() },
+            paused_at: None,
+            next: if style.single_photo() { 1 } else { slots.len() },
             current: 0,
             previous: None,
             slots,
@@ -844,7 +895,7 @@ impl Player {
     }
     fn prefetch(&mut self, tx: &Sender<usize>) {
         if self.count == 0 { return; }
-        if self.style == Style::IPhoto {
+        if self.style.single_photo() {
             for i in 0..PREFETCH {
                 self.request((self.current + i) % self.count, tx);
             }
@@ -888,7 +939,7 @@ impl Player {
     // Only explicit substitutes can replace an initial tile, and only
     // after that tile has failed both cache and original decoding.
     fn failed_slot_for_backfill(&self, candidate: usize) -> Option<usize> {
-        if self.style == Style::IPhoto
+        if self.style.single_photo()
             || self.slots.contains(&candidate)
             || !self.backfill_pending.contains(&candidate)
         {
@@ -940,7 +991,7 @@ impl Player {
         self.order.retain(|index| *index != result.index);
         self.order.push_back(result.index);
         // Preserve every active tile plus a small prefetch margin.
-        let max_frames = if self.style == Style::IPhoto { 5 }
+        let max_frames = if self.style.single_photo() { 5 }
             else { self.slots.len() + PREFETCH + 2 };
         while self.frames.len() > max_frames {
             let protected = |id: usize| id == self.current
@@ -965,15 +1016,15 @@ impl Player {
             self.fading_slot = None;
         }
         self.prefetch(tx);
-        if self.count == 0 || self.switched_at.elapsed() < self.interval {
+        if self.paused_at.is_some() || self.count == 0 || self.elapsed() < self.interval {
             return;
         }
         // If the chosen collection has fewer photos than square positions,
         // every photo is already visible: cycling would create duplicates.
-        if self.style != Style::IPhoto && self.count <= self.slots.len() {
+        if !self.style.single_photo() && self.count <= self.slots.len() {
             return;
         }
-        if self.style == Style::IPhoto {
+        if self.style.single_photo() {
             for _ in 0..self.count {
                 let index = self.next % self.count;
                 if self.available(index) {
@@ -1021,9 +1072,21 @@ impl Player {
         }
         self.prefetch(tx);
     }
+    fn elapsed(&self) -> Duration {
+        self.paused_at.unwrap_or_else(Instant::now).duration_since(self.switched_at)
+    }
+    fn pause_or_resume(&mut self) -> bool {
+        if let Some(then) = self.paused_at.take() {
+            self.switched_at += then.elapsed();
+            false
+        } else {
+            self.paused_at = Some(Instant::now());
+            true
+        }
+    }
     fn progress(&self) -> f64 {
-        let fade = self.interval.as_secs_f64().min(1.4).max(0.4);
-        (self.switched_at.elapsed().as_secs_f64() / fade).clamp(0.0, 1.0)
+        (self.elapsed().as_secs_f64() / self.transition.as_secs_f64().max(0.2))
+            .clamp(0.0, 1.0)
     }
 
 }

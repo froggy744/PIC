@@ -331,21 +331,9 @@ struct ImageResult {
     high_quality: bool,
     pixels: Option<Pixels>,
 }
-fn cairo_pixels(image: image::RgbaImage) -> Pixels {
+fn texture_pixels(image: image::RgbaImage) -> Pixels {
     let (width, height) = image.dimensions();
-    let mut data = Vec::with_capacity(image.as_raw().len());
-    // Cairo ARgb32 native-endian premultiplied pixels (BGRA on little-endian).
-    for rgba in image.pixels() {
-        let a = u16::from(rgba[3]);
-        let r = ((u16::from(rgba[0]) * a + 127) / 255) as u8;
-        let g = ((u16::from(rgba[1]) * a + 127) / 255) as u8;
-        let b = ((u16::from(rgba[2]) * a + 127) / 255) as u8;
-        #[cfg(target_endian = "little")]
-        data.extend_from_slice(&[b, g, r, rgba[3]]);
-        #[cfg(target_endian = "big")]
-        data.extend_from_slice(&[rgba[3], r, g, b]);
-    }
-    Pixels { width: width as i32, height: height as i32, data }
+    Pixels { width: width as i32, height: height as i32, data: image.into_raw() }
 }
 
 fn start_decode_worker(
@@ -392,7 +380,7 @@ fn start_decode_worker(
             match rendered {
                 Ok(image) => {
                     if results.send(ImageResult {
-                        index, high_quality: true, pixels: Some(cairo_pixels(image)),
+                        index, high_quality: true, pixels: Some(texture_pixels(image)),
                     }).is_err() {
                         break;
                     }
@@ -413,7 +401,7 @@ fn start_decode_worker(
                         eprintln!("PIC screensaver: cannot decode {}: {error}", photo.path);
                     }
                     if results.send(ImageResult {
-                        index, high_quality: false, pixels: fallback.map(cairo_pixels),
+                        index, high_quality: false, pixels: fallback.map(texture_pixels),
                     }).is_err() {
                         break;
                     }
@@ -424,7 +412,6 @@ fn start_decode_worker(
 }
 
 struct Surface {
-    image: gtk::cairo::ImageSurface,
     texture: gtk::gdk::Texture,
     high_quality: bool,
     revision: u64,
@@ -450,7 +437,11 @@ struct Player {
 }
 impl Player {
     fn new(style: Style, count: usize, seconds: u32, shuffle_tiles: bool) -> Self {
-        let slots = (0..MOSAIC_SLOTS.min(count)).collect::<Vec<_>>();
+        let slots = if style == Style::IPhoto {
+            Vec::new()
+        } else {
+            (0..MOSAIC_SLOTS.min(count)).collect::<Vec<_>>()
+        };
         let mut tile_order = (0..slots.len()).collect::<Vec<_>>();
         if shuffle_tiles {
             shuffle(&mut tile_order);
@@ -504,44 +495,31 @@ impl Player {
         if self.frames.get(&result.index).is_some_and(|f| f.high_quality && !result.high_quality) {
             return;
         }
-        // The existing Cairo-compatible BGRA buffer is also a native GDK
-        // premultiplied texture. GtkPicture hands it to GSK for GPU compositing.
-        #[cfg(target_endian = "little")]
-        let format = gtk::gdk::MemoryFormat::B8g8r8a8Premultiplied;
-        #[cfg(target_endian = "big")]
-        let format = gtk::gdk::MemoryFormat::A8r8g8b8Premultiplied;
-        let bytes = glib::Bytes::from_owned(pixels.data.clone());
+        let bytes = glib::Bytes::from_owned(pixels.data);
         let texture: gtk::gdk::Texture = gtk::gdk::MemoryTexture::new(
-            pixels.width, pixels.height, format, &bytes, pixels.width as usize * 4
+            pixels.width, pixels.height, gtk::gdk::MemoryFormat::R8g8b8a8,
+            &bytes, pixels.width as usize * 4
         ).upcast();
-        if let Ok(image) = gtk::cairo::ImageSurface::create_for_data(
-            pixels.data,
-            gtk::cairo::Format::ARgb32,
-            pixels.width,
-            pixels.height,
-            pixels.width * 4,
-        ) {
-            self.next_revision = self.next_revision.wrapping_add(1);
-            self.frames.insert(result.index, Surface {
-                image, texture, high_quality: result.high_quality,
-                revision: self.next_revision,
-            });
-            self.order.retain(|index| *index != result.index);
-            self.order.push_back(result.index);
-            let max_frames = if self.style == Style::IPhoto { 5 } else { MAX_FRAMES };
-            while self.frames.len() > max_frames {
-                let protected = |id: usize| id == self.current
-                    || self.previous == Some(id)
-                    || self.slots.contains(&id)
-                    || self.fading_slot.is_some_and(|(_, old)| old == id);
-                let Some(pos) = self.order.iter().position(|id| !protected(*id)) else { break };
-                let Some(old) = self.order.remove(pos) else { break };
-                self.frames.remove(&old);
-                self.requested.remove(&old);
-            }
+        self.next_revision = self.next_revision.wrapping_add(1);
+        self.frames.insert(result.index, Surface {
+            texture, high_quality: result.high_quality,
+            revision: self.next_revision,
+        });
+        self.order.retain(|index| *index != result.index);
+        self.order.push_back(result.index);
+        let max_frames = if self.style == Style::IPhoto { 5 } else { MAX_FRAMES };
+        while self.frames.len() > max_frames {
+            let protected = |id: usize| id == self.current
+                || self.previous == Some(id)
+                || self.slots.contains(&id)
+                || self.fading_slot.is_some_and(|(_, old)| old == id);
+            let Some(pos) = self.order.iter().position(|id| !protected(*id)) else { break };
+            let Some(old) = self.order.remove(pos) else { break };
+            self.frames.remove(&old);
+            self.requested.remove(&old);
         }
     }
-    fn available(&self, index: usize) -> bool {
+        fn available(&self, index: usize) -> bool {
         self.frames.contains_key(&index)
     }
     fn update(&mut self, tx: &Sender<usize>) {
@@ -597,126 +575,7 @@ impl Player {
         let fade = self.interval.as_secs_f64().min(1.4).max(0.4);
         (self.switched_at.elapsed().as_secs_f64() / fade).clamp(0.0, 1.0)
     }
-    fn draw(&self, cr: &gtk::cairo::Context, width: f64, height: f64) {
-        cr.set_source_rgb(0.045, 0.049, 0.059);
-        let _ = cr.paint();
-        if self.frames.is_empty() {
-            cr.set_source_rgb(0.73, 0.75, 0.80);
-            cr.select_font_face("Sans", gtk::cairo::FontSlant::Normal, gtk::cairo::FontWeight::Normal);
-            cr.set_font_size(23.0);
-            cr.move_to((width - 300.0).max(20.0) / 2.0, height / 2.0);
-            let message = if self.failed.len() >= self.count {
-                "Cannot load photos from this source"
-            } else {
-                "Preparing your photos…"
-            };
-            let _ = cr.show_text(message);
-            return;
-        }
-        if self.style == Style::IPhoto {
-            self.draw_cinematic(cr, width, height);
-        } else if self.style == Style::Mosaic {
-            self.draw_mosaic(cr, width, height);
-        } else {
-            self.draw_pile(cr, width, height);
-        }
-    }
-    fn draw_cinematic(&self, cr: &gtk::cairo::Context, w: f64, h: f64) {
-        let elapsed = self.switched_at.elapsed().as_secs_f64();
-        let duration = self.interval.as_secs_f64();
-        // The outgoing photo stays at its final position while the incoming
-        // image fades in. Avoid snapping the old image back to the centre.
-        let fade = smootherstep(self.progress());
-        if let Some(previous) = self.previous {
-            if fade < 1.0 {
-                let (zoom, pan) = cinematic_motion(previous, 1.0);
-                self.draw_slide(cr, previous, (0.0, 0.0, w, h), zoom, pan, 1.0, false);
-            }
-        }
-        let (zoom, pan) = cinematic_motion(self.current, (elapsed / duration).clamp(0.0, 1.0));
-        self.draw_slide(cr, self.current, (0.0, 0.0, w, h),
-            zoom, pan, if self.previous.is_some() { fade } else { 1.0 }, false);
-    }
-    fn draw_slide(&self, cr: &gtk::cairo::Context, index: usize,
-        rect: (f64, f64, f64, f64), zoom: f64, pan: f64, alpha: f64, cover: bool
-    ) {
-        let Some(image) = self.frames.get(&index).map(|f| &f.image) else { return };
-        let (x, y, w, h) = rect;
-        if w <= 0.0 || h <= 0.0 { return; }
-        let iw = image.width() as f64;
-        let ih = image.height() as f64;
-        if iw < 1.0 || ih < 1.0 { return; }
-        let scale = if cover { (w / iw).max(h / ih) } else { (w / iw).min(h / ih) };
-        let scale = scale * zoom;
-        let dw = iw * scale;
-        let dh = ih * scale;
-        let dx = x + (w - dw) / 2.0 + pan * w;
-        let dy = y + (h - dh) / 2.0 - pan * h * 0.32;
-        let _ = cr.save();
-        cr.rectangle(x, y, w, h);
-        cr.clip();
-        cr.translate(dx, dy);
-        cr.scale(scale, scale);
-        if cr.set_source_surface(image, 0.0, 0.0).is_ok() {
-            let _ = cr.paint_with_alpha(alpha);
-        }
-        let _ = cr.restore();
-    }
-    fn draw_mosaic(&self, cr: &gtk::cairo::Context, w: f64, h: f64) {
-        let margin = (w.min(h) * 0.018).max(9.0);
-        let cw = (w - margin * 4.0) / 3.0;
-        let ch = (h - margin * 3.0) / 2.0;
-        let progress = smootherstep(self.progress());
-        for (slot, &index) in self.slots.iter().enumerate() {
-            let x = margin + (slot % 3) as f64 * (cw + margin);
-            let y = margin + (slot / 3) as f64 * (ch + margin);
-            cr.set_source_rgb(0.12, 0.13, 0.15);
-            cr.rectangle(x, y, cw, ch);
-            let _ = cr.fill();
-            if let Some((changed, old)) = self.fading_slot {
-                if changed == slot && progress < 1.0 {
-                    self.draw_slide(cr, old, (x, y, cw, ch), 1.03, 0.0, 1.0, true);
-                }
-            }
-            let alpha = if self.fading_slot.is_some_and(|(changed, _)| changed == slot) {
-                progress
-            } else { 1.0 };
-            self.draw_slide(cr, index, (x, y, cw, ch), 1.025, 0.0, alpha, true);
-        }
-    }
-    fn draw_pile(&self, cr: &gtk::cairo::Context, w: f64, h: f64) {
-        let tw = (w * 0.30).min(h * 0.50);
-        let th = tw * 0.76;
-        let progress = smootherstep(self.progress());
-        for (slot, &index) in self.slots.iter().enumerate() {
-            let column = slot % 3;
-            let row = slot / 3;
-            let cx = w * (0.18 + 0.32 * column as f64) + (slot as f64 * 13.0).sin() * w * 0.018;
-            let cy = h * (0.28 + 0.44 * row as f64) + (slot as f64 * 7.0).cos() * h * 0.020;
-            let angle = (slot as f64 * 2.3).sin() * 0.11;
-            let border = tw * 0.027;
-            let _ = cr.save();
-            cr.translate(cx, cy);
-            cr.rotate(angle);
-            cr.set_source_rgba(0.0, 0.0, 0.0, 0.38);
-            cr.rectangle(-tw / 2.0 + 7.0, -th / 2.0 + 9.0, tw + 2.0 * border, th + 2.0 * border);
-            let _ = cr.fill();
-            cr.set_source_rgb(0.96, 0.95, 0.92);
-            cr.rectangle(-tw / 2.0 - border, -th / 2.0 - border, tw + 2.0 * border, th + 2.0 * border);
-            let _ = cr.fill();
-            let rect = (-tw / 2.0, -th / 2.0, tw, th);
-            if let Some((changed, old)) = self.fading_slot {
-                if changed == slot && progress < 1.0 {
-                    self.draw_slide(cr, old, rect, 1.0, 0.0, 1.0, true);
-                }
-            }
-            let alpha = if self.fading_slot.is_some_and(|(changed, _)| changed == slot) {
-                progress
-            } else { 1.0 };
-            self.draw_slide(cr, index, rect, 1.0, 0.0, alpha, true);
-            let _ = cr.restore();
-        }
-    }
+
 }
 
 // Smooth start/finish and alternate pan directions per photograph.
@@ -825,26 +684,17 @@ fn start_screensaver(parent: &adw::ApplicationWindow, slides: Vec<Slide>, prefs:
             return glib::ControlFlow::Break;
         };
         if !screen.is_visible() { return glib::ControlFlow::Break; }
-        let needs_redraw = {
+        {
             let mut player = player.borrow_mut();
-            let mut received = false;
-            // Large image surfaces are transferred incrementally; never
-            // monopolize the GTK thread with an entire decode backlog.
             for _ in 0..2 {
                 match result_rx.try_recv() {
-                    Ok(result) => {
-                        player.receive(result);
-                        received = true;
-                    }
+                    Ok(result) => player.receive(result),
                     Err(_) => break,
                 }
             }
             player.update(&request_tx);
             stage.borrow_mut().sync(&player);
-            received || player.style == Style::IPhoto
-                || player.switched_at.elapsed() < Duration::from_millis(1500)
-        };
-        let _ = needs_redraw; // widgets update through GSK opacity/position nodes
+        }
         glib::ControlFlow::Continue
     });
     screen.present();

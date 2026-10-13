@@ -11,8 +11,8 @@ Branch: `feature/editor-tone-clarity-grain`; PR: #177. No change to originals or
 5. Add signed midtone local contrast (Clarity, -1..+1) using a downsampled Gaussian luminance guide, with a midtone-weighted residual. Keep Sharpen separate.
 6. Add deterministic monochrome Grain (0..1); same recipe and source dimensions give identical results across repeated renders.
 7. Add Old Photo (desaturation, sepia/warm tone, fade, vignette, grain) and Newspaper (warm paper and deterministic 4x4 ordered black-ink halftone) to the existing non-destructive filter palette.
-9. Add Filter Amount immediately below Auto Contrast/Auto Colour. Blend the selected creative look at 0–100% before manual tonal operations; leave automatic and manual corrections unaffected. Legacy recipes decode to full 100%. Keep filter chooser thumbnails at full strength.
-8. Do not imply Lightroom's proprietary RAW process is reproduced. PIC operates on its decoded display RGB pixels and cannot recreate sensor highlight data already clipped before decoding.
+8. Add Filter Amount immediately below Auto Contrast/Auto Colour. Blend the selected creative look at 0–100% before manual tonal operations; leave automatic and manual corrections unaffected. Legacy recipes decode to full 100%. Keep filter chooser thumbnails at full strength.
+9. Do not imply Lightroom's proprietary RAW process is reproduced. PIC operates on its decoded display RGB pixels and cannot recreate sensor highlight data already clipped before decoding.
 
 ## Project checklist
 

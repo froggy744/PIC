@@ -1,0 +1,40 @@
+name: Screensaver compile and tests
+
+on:
+  push:
+    branches:
+      - feature/screensaver
+    paths:
+      - 'src/screensaver.rs'
+      - 'src/main.rs'
+      - 'src/window/toolbar.rs'
+      - '.github/workflows/screensaver-check.yml'
+  pull_request:
+    paths:
+      - 'src/screensaver.rs'
+      - 'src/main.rs'
+      - 'src/window/toolbar.rs'
+      - '.github/workflows/screensaver-check.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  screensaver:
+    name: Screensaver Rust verification
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install GTK/Rust dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential clang mold cmake nasm pkg-config \
+            libgtk-4-dev libadwaita-1-dev libsmbclient-dev libnfs-dev \
+            librsvg2-common libgdk-pixbuf2.0-bin xvfb xauth
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Compile PIC
+        run: cargo check --locked
+      - name: Test screensaver
+        run: cargo test --locked screensaver::tests -- --test-threads=1

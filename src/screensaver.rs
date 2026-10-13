@@ -742,11 +742,14 @@ fn start_screensaver(parent: &adw::ApplicationWindow, slides: Vec<Slide>, prefs:
     let cancelled = Arc::new(AtomicBool::new(false));
     start_decode_worker(slides, style, request_rx, result_tx, Arc::clone(&cancelled));
 
+    // Fullscreen surfaces should be independent application windows on
+    // Wayland, not transient dialogs attached to the main gallery. Closing
+    // a fullscreen transient can confuse compositor focus and window teardown.
     let screen = gtk::Window::builder()
         .title("PIC Screensaver")
-        .transient_for(parent)
         .decorated(false)
         .build();
+    screen.set_application(parent.application().as_ref());
     let canvas = gtk::DrawingArea::new();
     canvas.set_hexpand(true);
     canvas.set_vexpand(true);

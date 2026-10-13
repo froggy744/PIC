@@ -1291,7 +1291,7 @@ mod tests {
 
     #[test]
     fn compact_style_picker_labels_and_previews_are_distinct() {
-        let styles = [Style::Mosaic, Style::PicturePile, Style::IPhoto, Style::Surprise];
+        let styles = Style::CHOICES;
         let mut labels = HashSet::new();
         for style in styles {
             assert!(!style.label().is_empty());
@@ -1307,6 +1307,11 @@ mod tests {
         assert_eq!(Style::from_saved("picasa"), Style::Mosaic);
         assert_eq!(Style::from_saved("pile"), Style::PicturePile);
         assert_eq!(Style::Surprise.key(), "surprise");
+        for style in Style::CHOICES {
+            assert_eq!(Style::from_saved(style.key()), style);
+            assert!(Style::CHOICES.contains(&style.resolved()));
+        }
+        assert!(!Style::Surprise.resolved().eq(&Style::Surprise));
         assert_eq!(Source::Selected(vec![1, 2]).key(), "selected");
         assert_eq!(Source::Album(42).key(), "album:42");
         assert_eq!(Source::Folder(3).key(), "folder:3");
@@ -1436,6 +1441,32 @@ mod tests {
         assert_eq!(smootherstep(1.0), 1.0);
     }
     #[test]
+    fn photo_interval_and_transition_timing_are_independent() {
+        let mut player = Player::new(Style::Fade, 12, 15, false, 6);
+        assert_eq!(player.interval, Duration::from_secs(15));
+        player.transition = Duration::from_millis(2000);
+        player.switched_at = Instant::now() - Duration::from_millis(1000);
+        let progress = player.progress();
+        assert!((0.45..0.55).contains(&progress));
+        assert!(player.elapsed() < player.interval);
+    }
+
+    #[test]
+    fn pause_freezes_and_resume_restores_player_timing() {
+        let mut player = Player::new(Style::IPhoto, 6, 6, false, 6);
+        player.switched_at = Instant::now() - Duration::from_millis(450);
+        assert!(player.pause_or_resume());
+        let elapsed = player.elapsed();
+        // Pretend the pause has lasted 5s. Presentation time should still
+        // be near 450ms once playback resumes, rather than jumping slides.
+        player.paused_at = Some(Instant::now() - Duration::from_secs(5));
+        assert!(!player.pause_or_resume());
+        let resumed = player.elapsed();
+        assert!(resumed.abs_diff(elapsed) < Duration::from_millis(100));
+        assert!(player.paused_at.is_none());
+    }
+
+    #[test]
     fn player_paces_changes() {
         let player = Player::new(Style::IPhoto, 5, 6, true, DEFAULT_MOSAIC_TILES);
         assert_eq!(player.current, 0);
@@ -1447,7 +1478,7 @@ mod tests {
         let shuffled = Player::new(Style::PicturePile, 20, 3, true, DEFAULT_MOSAIC_TILES);
         let mut positions = shuffled.tile_order.clone();
         positions.sort_unstable();
-        assert_eq!(positions, (0..6).collect::<Vec<_>>());
+        assert_eq!(positions, (0..PICTURE_PILE_SLOTS).collect::<Vec<_>>());
     }
 
     #[test]
@@ -1481,6 +1512,10 @@ mod tests {
         assert_eq!(few.slots.len(), 3);
         assert_eq!(few.next, 3);
         assert_eq!(Player::new(Style::Mosaic, 100, 5, false, 1).slots.len(), 1);
+        assert_eq!(Player::new(Style::Grid, 200, 5, false, 12).slots.len(), 12);
+        assert_eq!(Player::new(Style::Floating, 200, 5, false, 12).slots.len(), FLOATING_SLOTS);
+        assert!(Player::new(Style::Fade, 200, 5, false, 12).slots.is_empty());
+        assert_eq!(Player::new(Style::PicturePile, 200, 5, false, 12).slots.len(), PICTURE_PILE_SLOTS);
         assert_eq!(Player::new(Style::Mosaic, 2000, 5, false, 1500).slots.len(), 1500);
         assert_eq!(Player::new(Style::Mosaic, 100, 5, false, usize::MAX).slots.len(), 100);
     }

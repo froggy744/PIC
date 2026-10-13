@@ -525,11 +525,10 @@ impl Gallery {
         if width == self.tile_width.get() {
             return;
         }
-        // Calculate the final Wall/Masonry positions exactly once. Let the
-        // visible images softly scale/fade into those final cells; never
-        // interpolate X/Y coordinates or row/column membership per frame.
-        let from_width = self.tile_width.get();
-        let settle = self.sectioned_folder.prepare_wall_zoom_settle(width > from_width);
+        // Calculate final Wall/Masonry positions exactly once. Ease a clipped,
+        // fully opaque image from 103% to 100% within each destination cell;
+        // never interpolate X/Y or row/column membership.
+        let settle = self.sectioned_folder.prepare_wall_zoom_settle();
         let anchor = self.capture_view_anchor();
         self.sectioned_folder.cancel_scroll_animation();
         self.auto_default_zoom.set(false);

@@ -305,10 +305,29 @@ struct ChangingGrid {
 }
 impl ChangingGrid {
     fn fit(width: f64, height: f64, count: usize) -> Self {
-        let cols = ((count.max(1) as f64 * width / height).sqrt().ceil() as usize)
-            .clamp(1, count.max(1));
-        let rows = count.max(1).div_ceil(cols);
-        Self { cols, rows, gap: (width.min(height) * 0.004).clamp(2.0, 9.0) }
+        let count = count.max(1);
+        // Minimise empty positions and keep a photo-like cell aspect ratio.
+        // Do not expand the last few photos into giant tiles.
+        let ideal = ((count as f64 * width / (height * 1.4)).sqrt().round() as usize)
+            .clamp(1, count);
+        let from = ideal.saturating_sub(16).max(1);
+        let to = ideal.saturating_add(16).min(count);
+        let mut best = (f64::INFINITY, ideal, count.div_ceil(ideal));
+        for cols in from..=to {
+            let rows = count.div_ceil(cols);
+            let aspect = (width / cols as f64) / (height / rows as f64);
+            let empty = cols * rows - count;
+            let penalty = (empty as f64 / count as f64) * 8.0
+                + (aspect / 1.4).ln().abs() * 0.5;
+            if penalty < best.0 {
+                best = (penalty, cols, rows);
+            }
+        }
+        Self {
+            cols: best.1,
+            rows: best.2,
+            gap: (width.min(height) * 0.004).clamp(2.0, 9.0),
+        }
     }
     fn rect(self, slot: usize, count: usize, width: f64, height: f64)
         -> (f64, f64, f64, f64)
@@ -316,10 +335,11 @@ impl ChangingGrid {
         let row = slot / self.cols;
         let remaining = count.saturating_sub(row * self.cols);
         let cols_in_row = remaining.min(self.cols).max(1);
-        let cell_w = width / cols_in_row as f64;
+        let cell_w = width / self.cols as f64;
         let cell_h = height / self.rows as f64;
+        let left = (width - cols_in_row as f64 * cell_w) * 0.5;
         (
-            slot.saturating_sub(row * self.cols) as f64 * cell_w + self.gap,
+            left + (slot % self.cols) as f64 * cell_w + self.gap,
             row as f64 * cell_h + self.gap,
             (cell_w - 2.0 * self.gap).max(1.0),
             (cell_h - 2.0 * self.gap).max(1.0),
@@ -620,6 +640,18 @@ mod tests {
                     assert!(x+tw<=w+0.001 && y+th<=h+0.001);
                 }
             }
+        }
+    }
+
+    #[test]
+    fn changing_grid_keeps_last_row_tiles_a_consistent_size() {
+        for count in [5, 10, 23, 24, 99, 100, 101] {
+            let grid = ChangingGrid::fit(1920., 1080., count);
+            let first = grid.rect(0, count, 1920., 1080.);
+            let last = grid.rect(count - 1, count, 1920., 1080.);
+            assert!((first.2 - last.2).abs() < 0.01);
+            assert!((first.3 - last.3).abs() < 0.01);
+            assert!(last.0 + last.2 <= 1920.);
         }
     }
 

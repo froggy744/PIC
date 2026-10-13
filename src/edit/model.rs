@@ -725,6 +725,8 @@ pub struct EditRecipe {
     pub sepia: bool,
     pub filter: super::filters::FilterPreset,
     pub sharpen: f32,
+    pub clarity: f32,
+    pub grain: f32,
     /// Non-destructive image overlays, painted after crop, rotation and tone.
     /// Paint order follows vector order (later entries stack on top).
     pub overlays: Vec<OverlaySpec>,
@@ -751,6 +753,8 @@ impl Default for EditRecipe {
             sepia: false,
             filter: super::filters::FilterPreset::None,
             sharpen: 0.0,
+            clarity: 0.0,
+            grain: 0.0,
             overlays: Vec::new(),
             text_layers: Vec::new(),
         }
@@ -799,6 +803,8 @@ impl EditRecipe {
                 "sepia" => recipe.sepia = flag(),
                 "filter" => recipe.filter = super::filters::FilterPreset::decode(value),
                 "sharpen" => recipe.sharpen = number().unwrap_or(0.0).clamp(0.0, 1.0),
+                "clarity" => recipe.clarity = number().unwrap_or(0.0).clamp(-1.0, 1.0),
+                "grain" => recipe.grain = number().unwrap_or(0.0).clamp(0.0, 1.0),
                 "ov" => recipe.overlays = decode_overlays(value),
                 "tl" => recipe.text_layers = decode_text_layers(value),
                 _ => {}
@@ -812,7 +818,7 @@ impl EditRecipe {
             return String::new();
         }
         let mut encoded = format!(
-            "v=1|crop={:.5},{:.5},{:.5},{:.5}|straighten={:.4}|exposure={:.4}|contrast={:.4}|fill={:.4}|highlights={:.4}|shadows={:.4}|temp={:.4}|sat={:.4}|autocontrast={}|autocolor={}|bw={}|sepia={}|filter={}|sharpen={:.4}",
+            "v=1|crop={:.5},{:.5},{:.5},{:.5}|straighten={:.4}|exposure={:.4}|contrast={:.4}|fill={:.4}|highlights={:.4}|shadows={:.4}|temp={:.4}|sat={:.4}|autocontrast={}|autocolor={}|bw={}|sepia={}|filter={}|sharpen={:.4}|clarity={:.4}|grain={:.4}",
             self.crop.left,
             self.crop.top,
             self.crop.right,
@@ -831,6 +837,8 @@ impl EditRecipe {
             self.sepia as u8,
             self.filter.key(),
             self.sharpen,
+            self.clarity,
+            self.grain,
         );
         if !self.overlays.is_empty() {
             encoded.push_str("|ov=");
@@ -859,6 +867,8 @@ impl EditRecipe {
             && !self.sepia
             && self.filter == super::filters::FilterPreset::None
             && self.sharpen.abs() < 0.0001
+            && self.clarity.abs() < 0.0001
+            && self.grain.abs() < 0.0001
             && self.overlays.is_empty()
             && self.text_layers.is_empty()
     }
@@ -987,6 +997,8 @@ mod tests {
         recipe.sepia = true;
         recipe.filter = FilterPreset::Valencia;
         recipe.sharpen = 0.4;
+        recipe.clarity = 0.55;
+        recipe.grain = 0.25;
         let decoded = EditRecipe::decode(&recipe.encode());
         assert!((decoded.crop.left - 0.1).abs() < 0.001);
         assert!((decoded.exposure - 0.7).abs() < 0.001);
@@ -995,6 +1007,8 @@ mod tests {
         assert!(decoded.sepia);
         assert_eq!(decoded.filter, FilterPreset::Valencia);
         assert!((decoded.sharpen - 0.4).abs() < 0.001);
+        assert!((decoded.clarity - 0.55).abs() < 0.001);
+        assert!((decoded.grain - 0.25).abs() < 0.001);
     }
 
     #[test]

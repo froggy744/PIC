@@ -42,16 +42,27 @@
         // while the lightbox is open: type-to-search can focus the entry
         // under the viewer, and Space would otherwise toggle 1:1 instead of
         // inserting a space.
-        let typing = std::iter::successors(
-            gtk::prelude::RootExt::focus(&window_for_fullscreen_key),
-            |widget| widget.parent(),
-        )
-        .any(|widget| {
-            widget.is::<gtk::Editable>() || widget.is::<gtk::TextView>()
-        });
-        if typing && key != gtk::gdk::Key::F11 && key != gtk::gdk::Key::Escape {
+        let focused = gtk::prelude::RootExt::focus(&window_for_fullscreen_key);
+        let typing = std::iter::successors(focused.clone(), |widget| widget.parent())
+            .any(|widget| widget.is::<gtk::Editable>() || widget.is::<gtk::TextView>());
+        // SearchEntry can retain focus after gallery navigation. An empty
+        // search field must not swallow Space meant to open the selected photo.
+        // Non-empty search and other editors still accept typed spaces.
+        let empty_search_focused = std::iter::successors(focused, |widget| widget.parent())
+            .any(|widget| {
+                widget
+                    .downcast::<gtk::SearchEntry>()
+                    .ok()
+                    .is_some_and(|entry| entry.text().is_empty())
+            });
+        if typing
+            && key != gtk::gdk::Key::F11
+            && key != gtk::gdk::Key::Escape
+            && !(key == gtk::gdk::Key::space && empty_search_focused)
+        {
             return glib::Propagation::Proceed;
         }
+
         if (key == gtk::gdk::Key::Escape || key == gtk::gdk::Key::BackSpace)
             && lightbox_for_window_escape.root.is_visible()
         {

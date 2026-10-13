@@ -1470,7 +1470,7 @@ fn photo_wall_integer_allocations_paint_every_pixel_including_final_row() {
 
 #[test]
 #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
-fn wall_and_masonry_zoom_fade_without_flying_tiles() {
+fn wall_and_masonry_zoom_scale_without_gaps_or_flying_tiles() {
     gtk::init().unwrap();
     let gallery = Rc::new(Gallery::new(
         &[],
@@ -1515,9 +1515,12 @@ fn wall_and_masonry_zoom_fade_without_flying_tiles() {
         gallery.wheel_zoom_in();
         assert!(surface.wall_zoom_active.get(),
             "{layout:?} should animate after committing layout");
-        assert!(surface.wall_zoom_scale.get() < 1.0,
-            "zoom-in must grow inside each fixed tile");
-        assert!(surface.wall_zoom_opacity.get() < 1.0);
+        assert!((surface.wall_zoom_scale.get() - 1.03).abs() < 0.001,
+            "zoom-in must settle from 103% without exposing tile background");
+        for live in surface.live_tiles.borrow().values() {
+            assert!((live.tile.opacity() - 1.0).abs() < 0.001,
+                "zoom must remain fully opaque");
+        }
         assert!(!surface.reflow_active.get(),
             "wall zoom must not animate photo coordinates");
         for (&index, live) in surface.live_tiles.borrow().iter() {
@@ -1536,8 +1539,12 @@ fn wall_and_masonry_zoom_fade_without_flying_tiles() {
 
         gallery.wheel_zoom_out();
         assert!(surface.wall_zoom_active.get());
-        assert!(surface.wall_zoom_scale.get() > 1.0,
-            "zoom-out must shrink inside each fixed tile");
+        assert!((surface.wall_zoom_scale.get() - 1.03).abs() < 0.001,
+            "zoom-out must also settle from 103% to keep cells covered");
+        for live in surface.live_tiles.borrow().values() {
+            assert!((live.tile.opacity() - 1.0).abs() < 0.001,
+                "zoom-out must remain fully opaque");
+        }
         // Cancel mid-animation by switching off animations, then restore setting.
         gallery.set_zoom_animations_enabled(false);
         assert!(!surface.wall_zoom_active.get());

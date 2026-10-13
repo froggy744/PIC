@@ -168,9 +168,20 @@ struct SquareGrid {
 impl SquareGrid {
     fn fit(width: f64, height: f64, count: usize) -> Option<Self> {
         if count == 0 || width < 2.0 || height < 2.0 { return None; }
-        let gap = (width.min(height) * 0.012).clamp(5.0, 18.0);
+        // At high tile counts the gutters must shrink rather than consuming
+        // all of the viewport before we have enough rows/columns.
+        let gap = (width.min(height) * 0.012)
+            .min(18.0)
+            .min(width.min(height) / ((count as f64).sqrt() * 4.0));
         let mut best: Option<(Self, usize)> = None;
-        for cols in 1..=count {
+        // Near-square tiles reach maximum size with a column count close to
+        // sqrt(number_of_tiles * monitor_aspect_ratio). Checking a small
+        // neighbourhood is effectively O(1) even for 100,000+ tiles, unlike
+        // the old 1..count exhaustive layout search on every frame.
+        let ideal = ((count as f64 * width / height).sqrt() as usize).clamp(1, count);
+        let from = ideal.saturating_sub(12).max(1);
+        let to = ideal.saturating_add(12).min(count);
+        for cols in from..=to {
             let rows = count.div_ceil(cols);
             let side = ((width - (cols + 1) as f64 * gap) / cols as f64)
                 .min((height - (rows + 1) as f64 * gap) / rows as f64);
@@ -210,6 +221,7 @@ pub(super) struct Stage {
     pub root: gtk::Fixed,
     style: Style,
     tiles: Vec<Tile>,
+    desired_tiles: usize,
     cinema: Option<Cinema>,
 }
 impl Stage {
@@ -223,21 +235,22 @@ impl Stage {
         let cinema = if style == Style::IPhoto {
             Some(Cinema::new(&root))
         } else { None };
-        let mut tiles = Vec::new();
-        if style != Style::IPhoto {
-            // Count is already bounded by Player's active slots. Picture
-            // Pile always passes six; Mosaic passes the configured count.
-            for slot in 0..count {
-                let tile = Tile::new(style == Style::Mosaic);
-                if style == Style::PicturePile {
-                    tile.frame.add_css_class("screensaver-print");
-                    tile.frame.add_css_class(&format!("screensaver-angle-{slot}"));
-                }
-                root.put(&tile.frame, 0.0, 0.0);
-                tiles.push(tile);
-            }
+        // Avoid blocking GTK with the creation of thousands of overlays
+        // before the fullscreen surface appears. Additional square tiles are
+        // materialised in small frame-clock batches.
+        let desired_tiles = if style == Style::IPhoto { 0 } else { count };
+        Self { root, style, tiles: Vec::new(), desired_tiles, cinema }
+    }
+    fn add_tile(&mut self) {
+        let slot = self.tiles.len();
+        if slot >= self.desired_tiles { return; }
+        let tile = Tile::new(self.style == Style::Mosaic);
+        if self.style == Style::PicturePile {
+            tile.frame.add_css_class("screensaver-print");
+            tile.frame.add_css_class(&format!("screensaver-angle-{slot}"));
         }
-        Self { root, style, tiles, cinema }
+        self.root.put(&tile.frame, 0.0, 0.0);
+        self.tiles.push(tile);
     }
     pub fn sync(&mut self, player: &Player) {
         let w = self.root.width() as f64;
@@ -247,8 +260,12 @@ impl Stage {
             cinema.sync(&self.root, player, w, h);
             return;
         }
+        let pending = self.desired_tiles.saturating_sub(self.tiles.len());
+        for _ in 0..pending.min(48) {
+            self.add_tile();
+        }
         let fade = smootherstep(player.progress());
-        let tile_count = self.tiles.len();
+        let tile_count = self.desired_tiles;
         let square_grid = if self.style == Style::Mosaic {
             SquareGrid::fit(w, h, tile_count)
         } else { None };
@@ -313,7 +330,7 @@ mod tests {
     #[test]
     fn mosaic_tiles_are_square_centered_and_within_monitor_bounds() {
         for (width, height) in [(1920.0, 1080.0), (3840.0, 2160.0), (1080.0, 1920.0)] {
-            for count in [1, 3, 6, 9, 12, 18, 24, 30] {
+            for count in [1, 3, 6, 9, 12, 18, 24, 30, 100, 1000, 10000] {
                 let grid = SquareGrid::fit(width, height, count).unwrap();
                 assert!(grid.side > 0.0);
                 assert!(grid.columns * grid.rows >= count);

@@ -33,7 +33,7 @@ struct Tile {
     drift_step: Option<(usize, usize)>,
 }
 impl Tile {
-    fn new(square_mosaic: bool) -> Self {
+    fn new(cover_photo: bool) -> Self {
         let frame = gtk::Overlay::new();
         frame.set_overflow(gtk::Overflow::Hidden);
         let content = gtk::Overlay::new();
@@ -42,7 +42,7 @@ impl Tile {
         let back = gtk::Picture::new();
         let front = gtk::Picture::new();
         for picture in [&back, &front] {
-            picture.set_content_fit(if square_mosaic {
+            picture.set_content_fit(if cover_photo {
                 gtk::ContentFit::Cover
             } else {
                 gtk::ContentFit::Contain
@@ -347,40 +347,92 @@ impl ChangingGrid {
     }
 }
 
-/// Polaroid/Scrapbook or Floating Prints layouts. All frames stay safely
-/// inside the output after rotation. Overlaps are intentional for the pile.
-fn print_rect(style: Style, slot: usize, width: f64, height: f64) -> (f64, f64, f64, f64) {
+/// Return a postcard size that follows the image orientation, not a
+/// landscape-only rectangle. Oversized white margins with portrait photos
+/// were caused by fitting a tall image in a fixed wide GTK Picture.
+fn print_rect(
+    style: Style, slot: usize, count: usize, image_aspect: f64,
+    width: f64, height: f64,
+) -> (f64, f64, f64, f64) {
     let landscape = width >= height;
-    let (cx, cy) = match style {
-        Style::PicturePile if landscape => {
-            [(0.34, 0.34), (0.65, 0.36), (0.38, 0.65),
-             (0.64, 0.67), (0.50, 0.50)][slot % 5]
+    let ratio = image_aspect.clamp(0.60, 2.0);
+    let (cx, cy) = if count <= 1 {
+        (0.5, 0.50)
+    } else if count == 2 {
+        if landscape {
+            [(0.33, 0.50), (0.67, 0.50)][slot % 2]
+        } else {
+            [(0.50, 0.30), (0.50, 0.70)][slot % 2]
         }
-        Style::PicturePile => {
-            [(0.38, 0.28), (0.62, 0.32), (0.36, 0.62),
-             (0.65, 0.66), (0.51, 0.49)][slot % 5]
+    } else if style == Style::PicturePile {
+        if count == 3 {
+            if landscape {
+                [(0.29, 0.48), (0.71, 0.48), (0.50, 0.55)][slot % 3]
+            } else {
+                [(0.35, 0.34), (0.65, 0.36), (0.50, 0.70)][slot % 3]
+            }
+        } else if count == 4 {
+            [(0.32, 0.30), (0.68, 0.32), (0.33, 0.71),
+                (0.68, 0.70)][slot % 4]
+        } else {
+            // Four staggered photographs, plus a smaller top print.
+            // Do not let the centre one obscure half the other pictures.
+            [(0.32, 0.30), (0.68, 0.30), (0.29, 0.72),
+                (0.71, 0.72), (0.50, 0.51)][slot % 5]
         }
-        _ if landscape => {
-            [(0.19, 0.27), (0.50, 0.25), (0.81, 0.29),
-             (0.20, 0.73), (0.51, 0.75), (0.81, 0.71)][slot % 6]
+    } else if count == 3 {
+        if landscape {
+            [(0.18, 0.50), (0.50, 0.50), (0.82, 0.50)][slot % 3]
+        } else {
+            [(0.50, 0.19), (0.50, 0.50), (0.50, 0.81)][slot % 3]
         }
-        _ => {
-            [(0.29, 0.18), (0.71, 0.19), (0.29, 0.50),
-             (0.71, 0.51), (0.29, 0.82), (0.71, 0.81)][slot % 6]
-        }
-    };
-    let tile_w = if style == Style::PicturePile {
-        (width * if landscape { 0.35 } else { 0.57 }).min(height * 0.53)
+    } else if count == 4 {
+        [(0.27, 0.27), (0.73, 0.27), (0.27, 0.73),
+            (0.73, 0.73)][slot % 4]
+    } else if landscape {
+        // Floating Prints uses a clean 3x2 arrangement, not the
+        // overlapping Polaroid stack.
+        [(0.18, 0.28), (0.50, 0.28), (0.82, 0.28),
+            (0.18, 0.72), (0.50, 0.72), (0.82, 0.72)][slot % 6]
     } else {
-        (width * if landscape { 0.28 } else { 0.41 }).min(height * 0.39)
+        [(0.28, 0.18), (0.72, 0.18), (0.28, 0.50),
+            (0.72, 0.50), (0.28, 0.82), (0.72, 0.82)][slot % 6]
     };
-    let tile_w = tile_w.max(40.0);
-    let tile_h = tile_w * 0.77;
-    let margin = 18.0_f64.min(width.min(height) * 0.03);
-    let x = (width * cx - tile_w * 0.5).clamp(margin, (width - tile_w - margin).max(margin));
-    let y = (height * cy - tile_h * 0.5).clamp(margin, (height - tile_h - margin).max(margin));
+
+    let pile = style == Style::PicturePile;
+    let base_w = if pile {
+        width * if landscape { 0.26 } else { 0.43 }
+    } else {
+        width * if landscape { 0.26 } else { 0.39 }
+    };
+    let max_h = height * if pile { 0.38 } else if landscape { 0.34 } else { 0.25 };
+    let mut tile_w = base_w.min(max_h * ratio);
+    let mut tile_h = tile_w / ratio;
+    if pile && slot == 4 && count >= 5 {
+        tile_w *= 0.79;
+        tile_h *= 0.79;
+    }
+    // Allow for rotated corners, gentle floating transforms and shadows.
+    let margin = (width.min(height) * 0.035).max(16.0);
+    tile_w = tile_w.min((width - 2.0 * margin).max(1.0));
+    tile_h = tile_h.min((height - 2.0 * margin).max(1.0));
+    let x = (width * cx - tile_w * 0.5)
+        .clamp(margin, (width - tile_w - margin).max(margin));
+    let y = (height * cy - tile_h * 0.5)
+        .clamp(margin, (height - tile_h - margin).max(margin));
     (x, y, tile_w, tile_h)
 }
+
+/// Prefer the cached preview's native dimensions until the HQ original
+/// arrives. Both maintain the photo orientation; a texture replacement
+/// cannot force every photograph into a landscape-only picture widget.
+fn photo_aspect(player: &Player, index: usize) -> f64 {
+    player.frames.get(&index).map(|image| {
+        let h = image.texture.height().max(1) as f64;
+        image.texture.width().max(1) as f64 / h
+    }).unwrap_or(1.5)
+}
+
 
 pub(super) struct Stage {
     pub root: gtk::Fixed,
@@ -427,10 +479,12 @@ impl Stage {
     fn add_tile(&mut self) {
         let slot = self.tiles.len();
         if slot >= self.desired_tiles { return; }
-        let tile = Tile::new(matches!(self.style, Style::Mosaic | Style::Grid));
-        if matches!(self.style, Style::PicturePile | Style::Floating) {
+        let tile = Tile::new(true);
+        if self.style == Style::PicturePile {
             tile.frame.add_css_class("screensaver-print");
             tile.frame.add_css_class(&format!("screensaver-angle-{slot}"));
+        } else if self.style == Style::Floating {
+            tile.frame.add_css_class("screensaver-floating");
         }
         self.root.put(&tile.frame, 0.0, 0.0);
         self.tiles.push(tile);
@@ -512,7 +566,8 @@ impl Stage {
             } else if let Some(grid) = changing_grid {
                 grid.rect(slot, tile_count, w, h)
             } else {
-                print_rect(self.style, slot, w, h)
+                let aspect = photo_aspect(player, new_id);
+                print_rect(self.style, slot, tile_count, aspect, w, h)
             };
             let iw = tile_w.round() as i32;
             let ih = tile_h.round() as i32;
@@ -558,9 +613,17 @@ pub(super) fn install_css() {
           .screensaver-cinema-frame { background-color: #090b10; }
           .screensaver-card { background-color: #171b21; }
           .screensaver-print {
-            background-color: #f6f4ee;
-            padding: 9px 9px 20px 9px;
-            box-shadow: 0 10px 25px rgba(0,0,0,0.48);
+            background-color: #f4f2eb;
+            border: 1px solid rgba(255,255,255,0.68);
+            padding: 5px 5px 12px 5px;
+            box-shadow: 0 10px 27px rgba(0,0,0,0.44);
+          }
+          .screensaver-floating {
+            background-color: #20252b;
+            border: 1px solid rgba(255,255,255,0.20);
+            border-radius: 7px;
+            padding: 2px;
+            box-shadow: 0 12px 28px rgba(0,0,0,0.47);
           }
           .screensaver-caption {
             background-color: rgba(0,0,0,0.64);
@@ -658,14 +721,45 @@ mod tests {
     }
 
     #[test]
-    fn print_cards_stay_on_screen() {
-        for style in [Style::PicturePile,Style::Floating] {
-            for (w,h) in [(1920.,1080.),(1080.,1920.),(1024.,768.)] {
-                for i in 0..6 {
-                    let (x,y,tw,th)=print_rect(style,i,w,h);
-                    assert!(x>=0. && y>=0. && tw>0. && th>0.);
-                    assert!(x+tw<=w && y+th<=h, "{style:?} {w} {h} {i}");
+    fn print_cards_follow_photo_orientation_and_stay_on_screen() {
+        for style in [Style::PicturePile, Style::Floating] {
+            for (w,h) in [(1920.,1080.), (1080.,1920.), (1024.,768.)] {
+                for count in 1..=6 {
+                    for slot in 0..count {
+                        for ratio in [0.67, 1.0, 1.5, 1.85] {
+                            let (x,y,tw,th) = print_rect(style,slot,count,ratio,w,h);
+                            assert!(x>=0. && y>=0. && tw>0. && th>0.);
+                            assert!(x+tw<=w && y+th<=h, "{style:?} {w} {h} {slot}");
+                            assert!((tw / th - ratio).abs() < 0.002,
+                                "{style:?}: intended {ratio}, actual {}", tw/th);
+                        }
+                    }
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn photo_prints_are_smaller_than_old_oversized_scrapbook() {
+        let (_,_,tw,th) = print_rect(Style::PicturePile, 0, 5, 1.5, 1649., 927.);
+        assert!(tw < 430. && th < 340.);
+        let (_,_,pw,ph) = print_rect(Style::PicturePile, 4, 5, 0.7, 1649., 927.);
+        assert!(pw < 280. && ph < 400.);
+        // Portraits are portrait-shaped cards, not a narrow image trapped
+        // in a landscape rectangle filled by huge white side margins.
+        assert!(pw < ph);
+    }
+
+    #[test]
+    fn floating_cards_have_distinct_rows_and_no_rectangle_overlap() {
+        let (w,h) = (1920.,1080.);
+        let cards: Vec<_> = (0..6).map(|slot| {
+            print_rect(Style::Floating,slot,6,1.5,w,h)
+        }).collect();
+        for (i, a) in cards.iter().enumerate() {
+            for b in cards.iter().skip(i+1) {
+                assert!(a.0+a.2 <= b.0 || b.0+b.2 <= a.0
+                    || a.1+a.3 <= b.1 || b.1+b.3 <= a.1);
             }
         }
     }

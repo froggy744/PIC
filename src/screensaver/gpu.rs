@@ -281,6 +281,10 @@ pub(super) struct Stage {
     tiles: Vec<Tile>,
     desired_tiles: usize,
     cinema: Option<Cinema>,
+    trace: bool,
+    traced_change: Option<usize>,
+    traced_settle: Option<usize>,
+    last_tick: Option<Instant>,
 }
 impl Stage {
     pub fn new(style: Style, count: usize, transition: PicasaTransition) -> Self {
@@ -297,7 +301,14 @@ impl Stage {
         // before the fullscreen surface appears. Additional square tiles are
         // materialised in small frame-clock batches.
         let desired_tiles = if style == Style::IPhoto { 0 } else { count };
-        Self { root, style, transition, tiles: Vec::new(), desired_tiles, cinema }
+        let trace = std::env::var("PIC_SCREENSAVER_TRACE").is_ok_and(|v| v == "1");
+        if trace {
+            eprintln!("PIC_SCREEN init style={style:?} transition={transition:?} count={count}");
+        }
+        Self {
+            root, style, transition, tiles: Vec::new(), desired_tiles, cinema,
+            trace, traced_change: None, traced_settle: None, last_tick: None,
+        }
     }
     fn add_tile(&mut self) {
         let slot = self.tiles.len();
@@ -311,6 +322,35 @@ impl Stage {
         self.tiles.push(tile);
     }
     pub fn sync(&mut self, player: &Player) {
+        if self.trace {
+            let now = Instant::now();
+            if let Some(previous) = self.last_tick {
+                let ms = now.duration_since(previous).as_millis();
+                if ms >= 90 {
+                    eprintln!(
+                        "PIC_SCREEN frame_spike_ms={ms} style={:?} tiles={} loaded={} change={}",
+                        self.style, self.tiles.len(), player.frames.len(), player.changes,
+                    );
+                }
+            }
+            self.last_tick = Some(now);
+            if self.traced_change != Some(player.changes) {
+                self.traced_change = Some(player.changes);
+                eprintln!(
+                    "PIC_SCREEN phase=start style={:?} mode={:?} current={} previous={:?} replacing={:?} frames={} change={}",
+                    self.style, self.transition, player.current, player.previous,
+                    player.fading_slot, player.frames.len(), player.changes,
+                );
+            }
+            if player.progress() >= 1.0 && self.traced_settle != Some(player.changes) {
+                self.traced_settle = Some(player.changes);
+                eprintln!(
+                    "PIC_SCREEN phase=settled style={:?} current={} old_image={:?} old_tile={:?} frames={} change={}",
+                    self.style, player.current, player.previous,
+                    player.fading_slot, player.frames.len(), player.changes,
+                );
+            }
+        }
         let w = self.root.width() as f64;
         let h = self.root.height() as f64;
         if w < 2.0 || h < 2.0 { return; }
@@ -390,9 +430,7 @@ pub(super) fn install_css() {
         // Small increments (~240 per slide) avoid stepping at display refresh.
         for step in 0..=KEN_STEPS {
             let fraction = step as f64 / KEN_STEPS as f64;
-            let eased = smootherstep(fraction);
-            let scale = 1.005 + 0.045 * eased;
-            let y = 0.35 - 0.7 * eased;
+            let (scale, y) = cinematic_motion(0, fraction);
             css.push_str(&format!(
                 ".screensaver-ken-{step} {{ transform-origin: 50% 50%; transform: translate(0%, {y:.4}%) scale({scale:.6}); }}\n"
             ));

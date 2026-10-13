@@ -598,7 +598,7 @@ impl Player {
             shuffle_tiles,
             tile_order,
             preload_cursor: 0,
-            backfill_cursor: slots.len(),
+            backfill_cursor: desired_slots.min(count),
             backfill_pending: HashSet::new(),
             frames: HashMap::new(),
             order: VecDeque::new(),

@@ -184,6 +184,10 @@ struct SectionedFolderView {
     keyboard_preferred_column: Rc<Cell<Option<u32>>>,
     scroll_animation_generation: Cell<u64>,
     reflow_animation_generation: Cell<u64>,
+    // Wall/Masonry zoom changes layout once; only tile paint scales and fades.
+    wall_zoom_active: Cell<bool>,
+    wall_zoom_scale: Cell<f32>,
+    wall_zoom_opacity: Cell<f64>,
     reflow_active: Cell<bool>,
     preserve_headers_during_reflow: Cell<bool>,
 }
@@ -278,6 +282,9 @@ impl SectionedFolderView {
             keyboard_preferred_column: Rc::new(Cell::new(None)),
             scroll_animation_generation: Cell::new(0),
             reflow_animation_generation: Cell::new(0),
+            wall_zoom_active: Cell::new(false),
+            wall_zoom_scale: Cell::new(1.0),
+            wall_zoom_opacity: Cell::new(1.0),
             reflow_active: Cell::new(false),
             preserve_headers_during_reflow: Cell::new(false),
         });
@@ -978,7 +985,16 @@ impl SectionedFolderView {
                             item.height as i32,
                         );
                         tile.tile.set_content_fit(gtk::ContentFit::Cover);
-                        tile.tile.set_presentation_scale(1.0);
+                        // Refresh can run again during a scroll or allocation.
+                        // Do not erase an ongoing wall zoom's presentation;
+                        // geometry always remains the final fixed position.
+                        if self.wall_zoom_active.get() {
+                            tile.tile.set_presentation_scale(self.wall_zoom_scale.get());
+                            tile.tile.set_opacity(self.wall_zoom_opacity.get());
+                        } else {
+                            tile.tile.set_presentation_scale(1.0);
+                            tile.tile.set_opacity(1.0);
+                        }
                         tile.tile.set_presentation_offset(0.0, 0.0);
                         self.root.move_(&tile.tile, item.x, item.y);
                     }
@@ -1170,6 +1186,9 @@ impl SectionedFolderView {
 
     fn refresh_model(self: &Rc<Self>) {
         self.model_refresh_pending.set(false);
+        self.wall_zoom_active.set(false);
+        self.wall_zoom_scale.set(1.0);
+        self.wall_zoom_opacity.set(1.0);
         self.reflow_animation_generation
             .set(self.reflow_animation_generation.get().wrapping_add(1));
         set_grid_zoom_animation_active(false);
@@ -1501,11 +1520,119 @@ impl SectionedFolderView {
         });
     }
 
+    /// Prepare a paint-only settle *before* the one-time Wall/Masonry reflow.
+    /// No tile moves between its old and new coordinates: an ease-in/out
+    /// scale + subtle opacity fade makes the new fixed layout settle cleanly.
+    fn prepare_wall_zoom_settle(&self, zoom_in: bool) -> Option<u64> {
+        let generation = self.reflow_animation_generation.get().wrapping_add(1);
+        self.reflow_animation_generation.set(generation);
+
+        let enabled = self.zoom_animations_enabled.get()
+            && self.root.is_mapped()
+            && self.root.settings().is_gtk_enable_animations();
+        if !enabled {
+            self.wall_zoom_active.set(false);
+            self.wall_zoom_scale.set(1.0);
+            self.wall_zoom_opacity.set(1.0);
+            for entry in self.live_tiles.borrow().values() {
+                entry.tile.set_presentation_scale(1.0);
+                entry.tile.set_opacity(1.0);
+            }
+            if std::env::var_os("PICASA_TRACE").is_some() {
+                eprintln!(
+                    "PIC_ZOOM_ANIM status=skipped mode=wall reason={}",
+                    if !self.zoom_animations_enabled.get() { "user_setting_disabled" }
+                    else if !self.root.is_mapped() { "unmapped_surface" }
+                    else { "gtk_animations_disabled" },
+                );
+            }
+            return None;
+        }
+
+        // A short, bounded scale around each image's OWN centre. On a rapid
+        // Ctrl+wheel burst, carry the visible scale/opacity rather than
+        // restarting the fade from dark on every notch.
+        let scale = if self.wall_zoom_active.get() {
+            self.wall_zoom_scale.get()
+        } else if zoom_in {
+            0.95
+        } else {
+            1.05
+        };
+        let opacity = if self.wall_zoom_active.get() {
+            self.wall_zoom_opacity.get()
+        } else {
+            0.88
+        };
+        self.wall_zoom_scale.set(scale);
+        self.wall_zoom_opacity.set(opacity);
+        self.wall_zoom_active.set(true);
+        Some(generation)
+    }
+
+    /// Final geometry is already in place; only the presentation transform
+    /// changes during the 180 ms ease. Repeated zooms invalidate prior ticks.
+    fn start_wall_zoom_settle(self: &Rc<Self>, generation: Option<u64>) {
+        let Some(generation) = generation else {
+            return;
+        };
+        const DURATION_US: i64 = 180_000;
+        let from_scale = self.wall_zoom_scale.get();
+        let from_opacity = self.wall_zoom_opacity.get();
+        let weak = Rc::downgrade(self);
+        let started = Cell::new(None::<i64>);
+        if std::env::var_os("PICASA_TRACE").is_some() {
+            eprintln!(
+                "PIC_ZOOM_ANIM status=started mode={} tiles={} duration_ms=180 scale_from={:.3} opacity_from={:.3}",
+                if self.layout_mode.get() == PhotoLayout::Masonry { "masonry" } else { "photo_wall" },
+                self.live_tiles.borrow().len(), from_scale, from_opacity,
+            );
+        }
+        self.root.add_tick_callback(move |_, clock| {
+            let Some(view) = weak.upgrade() else {
+                return glib::ControlFlow::Break;
+            };
+            if view.reflow_animation_generation.get() != generation
+                || !view.wall_zoom_active.get()
+                || !view.is_wall()
+            {
+                return glib::ControlFlow::Break;
+            }
+            let start = started.get().unwrap_or_else(|| {
+                let now = clock.frame_time();
+                started.set(Some(now));
+                now
+            });
+            let t = (clock.frame_time().saturating_sub(start) as f64
+                / DURATION_US as f64).clamp(0.0, 1.0);
+            let eased = ease_in_out_cubic(t);
+            let scale = from_scale + (1.0 - from_scale) * eased as f32;
+            let opacity = from_opacity + (1.0 - from_opacity) * eased;
+            view.wall_zoom_scale.set(scale);
+            view.wall_zoom_opacity.set(opacity);
+            for entry in view.live_tiles.borrow().values() {
+                entry.tile.set_presentation_scale(scale);
+                entry.tile.set_opacity(opacity);
+            }
+            if t >= 1.0 {
+                view.wall_zoom_active.set(false);
+                set_grid_zoom_animation_active(false);
+                glib::ControlFlow::Break
+            } else {
+                glib::ControlFlow::Continue
+            }
+        });
+    }
+
     fn cancel_zoom_settle(&self) {
         self.reflow_animation_generation
             .set(self.reflow_animation_generation.get().wrapping_add(1));
+        self.wall_zoom_active.set(false);
+        self.wall_zoom_scale.set(1.0);
+        self.wall_zoom_opacity.set(1.0);
         for entry in self.live_tiles.borrow().values() {
             entry.tile.set_presentation_scale(1.0);
+            entry.tile.set_opacity(1.0);
         }
         set_grid_zoom_animation_active(false);
     }

@@ -665,7 +665,22 @@ impl Player {
             }
         }
     }
+    // Only explicit substitutes can replace an initial tile, and only
+    // after that tile has failed both cache and original decoding.
+    fn failed_slot_for_backfill(&self, candidate: usize) -> Option<usize> {
+        if self.style == Style::IPhoto
+            || self.slots.contains(&candidate)
+            || !self.backfill_pending.contains(&candidate)
+        {
+            return None;
+        }
+        self.slots.iter().position(|id| {
+            self.failed.contains(id) && !self.frames.contains_key(id)
+        })
+    }
     fn receive(&mut self, result: ImageResult) {
+        // Remember the candidate before completing its original request.
+        let replacement_slot = self.failed_slot_for_backfill(result.index);
         if result.high_quality {
             // An original result (success or failure) completes the request.
             // A cached result only completes the preview phase.
@@ -695,16 +710,12 @@ impl Player {
             revision: self.next_revision,
         });
         self.failed.remove(&result.index);
-        if self.style != Style::IPhoto && !self.slots.contains(&result.index) {
-            // Replace a blank tile with the next successfully decoded image.
-            // This also handles the case where the original is offline but
-            // another photo in the library has a cached preview.
-            if let Some(blank_slot) = self.slots.iter().position(|id| {
-                !self.frames.contains_key(id)
-            }) {
-                self.slots[blank_slot] = result.index;
-                self.backfill_pending.remove(&result.index);
-            }
+        if let Some(blank_slot) = replacement_slot {
+            // Never replace a tile merely because its decode is pending.
+            // In particular, ordinary look-ahead images (100, 101, 102 ...)
+            // must not displace the first 100 photos during mosaic startup.
+            self.slots[blank_slot] = result.index;
+            self.backfill_pending.remove(&result.index);
         }
         self.order.retain(|index| *index != result.index);
         self.order.push_back(result.index);
@@ -1024,6 +1035,30 @@ mod tests {
         player.receive(ImageResult { index: 13, high_quality: true, pixels: None });
         player.prefetch(&tx);
         assert_eq!(rx.try_iter().collect::<Vec<_>>(), vec![14]);
+    }
+
+    #[test]
+    fn lookahead_photo_cannot_displace_pending_mosaic_tile() {
+        let mut player = Player::new(Style::Mosaic, 250, 6, false, 100);
+        // Initial tiles 0..99 have not completed loading, but are not failed.
+        player.prefetch(&mpsc::channel().0);
+        assert_eq!(player.failed_slot_for_backfill(100), None);
+        assert_eq!(player.failed_slot_for_backfill(101), None);
+        assert_eq!(player.failed_slot_for_backfill(102), None);
+        assert_eq!(player.slots, (0..100).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn replacement_requires_real_failure_and_explicit_backfill() {
+        let mut player = Player::new(Style::Mosaic, 150, 6, false, 6);
+        // A speculative decode of photo 6 is not permission to change a tile.
+        player.failed.insert(2);
+        assert_eq!(player.failed_slot_for_backfill(6), None);
+        player.backfill_pending.insert(8);
+        assert_eq!(player.failed_slot_for_backfill(8), Some(2));
+        // A successful preview (if present) would protect the old tile.
+        player.failed.remove(&2);
+        assert_eq!(player.failed_slot_for_backfill(8), None);
     }
 
     #[test]

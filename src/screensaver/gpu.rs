@@ -59,6 +59,8 @@ impl Tile {
 }
 
 struct Cinema {
+    back_frame: gtk::Overlay,
+    front_frame: gtk::Overlay,
     back: gtk::Picture,
     front: gtk::Picture,
     back_version: Option<(usize, u64)>,
@@ -68,26 +70,41 @@ impl Cinema {
     fn new(root: &gtk::Fixed) -> Self {
         let back = gtk::Picture::new();
         let front = gtk::Picture::new();
+        let back_frame = gtk::Overlay::new();
+        let front_frame = gtk::Overlay::new();
         for picture in [&back, &front] {
             picture.set_content_fit(gtk::ContentFit::Contain);
+            picture.set_hexpand(true);
+            picture.set_vexpand(true);
             picture.set_can_shrink(true);
         }
-        front.set_opacity(0.0);
-        root.put(&back, 0.0, 0.0);
-        root.put(&front, 0.0, 0.0);
-        Self { back, front, back_version: None, front_version: None }
+        // Crossfade COMPLETE frames, including their letterbox background.
+        // Fading only the photograph leaves the previous photo visible in the
+        // margins until the final frame, producing a sudden apparent cut.
+        for frame in [&back_frame, &front_frame] {
+            frame.add_css_class("screensaver-cinema-frame");
+        }
+        back_frame.set_child(Some(&back));
+        front_frame.set_child(Some(&front));
+        front_frame.set_opacity(0.0);
+        root.put(&back_frame, 0.0, 0.0);
+        root.put(&front_frame, 0.0, 0.0);
+        Self {
+            back_frame, front_frame, back, front,
+            back_version: None, front_version: None,
+        }
     }
-    fn place(root: &gtk::Fixed, picture: &gtk::Picture, w: f64, h: f64, zoom: f64) {
+    fn place(root: &gtk::Fixed, frame: &gtk::Overlay, w: f64, h: f64, zoom: f64) {
         let width = (w * zoom).round() as i32;
         let height = (h * zoom).round() as i32;
-        if picture.width_request() != width || picture.height_request() != height {
-            picture.set_size_request(width, height);
+        if frame.width_request() != width || frame.height_request() != height {
+            frame.set_size_request(width, height);
         }
         let x = (w - width as f64) / 2.0;
         let y = (h - height as f64) / 2.0;
-        let (old_x, old_y) = root.child_position(picture);
+        let (old_x, old_y) = root.child_position(frame);
         if (old_x - x).abs() > 0.25 || (old_y - y).abs() > 0.25 {
-            root.move_(picture, x, y);
+            root.move_(frame, x, y);
         }
     }
     fn sync(&mut self, root: &gtk::Fixed, player: &Player, w: f64, h: f64) {
@@ -97,30 +114,28 @@ impl Cinema {
         let fade = smootherstep(player.progress());
         let transitioning = player.previous.filter(|old| *old != player.current && fade < 1.0);
         if let Some(old) = transitioning {
-            // The outgoing photograph stays at its LAST position; it must not
-            // snap back to the incoming photograph's starting zoom.
+            // Old frame continues at its last zoom, independently from new.
             let outgoing_ready = self.back_version.is_some_and(|(id, _)| id == old)
                 || present(&self.back, &mut self.back_version, old, player);
             if outgoing_ready
                 && present(&self.front, &mut self.front_version, player.current, player)
             {
-                Self::place(root, &self.back, w, h, cinematic_motion(old, 1.0).0);
-                Self::place(root, &self.front, w, h, incoming_zoom);
-                // Both edges fade continuously, including letterboxed areas
-                // when portrait and landscape photos have different bounds.
-                // Otherwise the old photo can abruptly vanish in the margins.
-                self.back.set_opacity(1.0 - fade);
-                self.front.set_opacity(fade);
+                Self::place(root, &self.back_frame, w, h, cinematic_motion(old, 1.0).0);
+                Self::place(root, &self.front_frame, w, h, incoming_zoom);
+                self.back_frame.set_opacity(1.0);
+                // GPU blends two opaque frames: the old photo AND its margins
+                // fade naturally into the new photo AND its margins without a
+                // brightness dip in the overlapping image area.
+                self.front_frame.set_opacity(fade);
                 return;
             }
         }
-        // Promote only AFTER the top picture has reached full opacity. At
-        // that moment both widgets display identical pixels and geometry:
-        // no hard cut, black flash or visible reset on the next frame.
+        // At 100% incoming opacity the back can switch to the same image,
+        // then the top can disappear. Both sides of the swap are identical.
         if present(&self.back, &mut self.back_version, player.current, player) {
-            Self::place(root, &self.back, w, h, incoming_zoom);
-            self.back.set_opacity(1.0);
-            self.front.set_opacity(0.0);
+            Self::place(root, &self.back_frame, w, h, incoming_zoom);
+            self.back_frame.set_opacity(1.0);
+            self.front_frame.set_opacity(0.0);
             self.front.set_paintable(None::<&gtk::gdk::Paintable>);
             self.front_version = None;
         }
@@ -203,6 +218,7 @@ pub(super) fn install_css() {
         let provider = gtk::CssProvider::new();
         provider.load_from_string(r#"
           .screensaver-stage { background-color: #090b10; }
+          .screensaver-cinema-frame { background-color: #090b10; }
           .screensaver-card { background-color: #171b21; }
           .screensaver-print {
             background-color: #f6f4ee;

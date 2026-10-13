@@ -28,7 +28,7 @@ impl Tile {
         let back = gtk::Picture::new();
         let front = gtk::Picture::new();
         for picture in [&back, &front] {
-            picture.set_content_fit(gtk::ContentFit::Cover);
+            picture.set_content_fit(gtk::ContentFit::Contain);
             picture.set_hexpand(true);
             picture.set_vexpand(true);
             picture.set_can_shrink(true);
@@ -95,6 +95,11 @@ impl Cinema {
         }
     }
     fn place(root: &gtk::Fixed, frame: &gtk::Overlay, w: f64, h: f64, zoom: f64) {
+        // Never request a child bigger than the actual fullscreen viewport.
+        // Otherwise GtkFixed propagates its enlarged natural size back to the
+        // toplevel, which can cause a fullscreen Wayland surface to expand
+        // across adjacent monitors. Zoom within 96.5–100% instead.
+        let zoom = zoom.clamp(0.965, 1.0);
         let width = (w * zoom).round() as i32;
         let height = (h * zoom).round() as i32;
         if frame.width_request() != width || frame.height_request() != height {
@@ -153,6 +158,8 @@ impl Stage {
         let root = gtk::Fixed::new();
         root.set_hexpand(true);
         root.set_vexpand(true);
+        // Clip nested images/rotated prints to this monitor's window bounds.
+        root.set_overflow(gtk::Overflow::Hidden);
         root.add_css_class("screensaver-stage");
         let cinema = if style == Style::IPhoto {
             Some(Cinema::new(&root))

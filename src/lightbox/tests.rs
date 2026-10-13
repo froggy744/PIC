@@ -524,9 +524,15 @@ mod one_to_one_quality_regression {
         }
         assert!(lightbox.picture.paintable().is_some());
         assert!(picture_intrinsic_dimensions(&lightbox.picture).0 < 800);
+        let fit_size = lightbox.picture.size_request();
         lightbox.set_one_to_one(true);
-        assert!(lightbox.picture.paintable().is_none(),
-            "a fit-sized texture was exposed as the 1:1 image");
+        assert!(lightbox.one_to_one_active.get());
+        assert!(lightbox.picture.paintable().is_some(),
+            "the Fit preview must remain visible until native pixels are ready");
+        assert_eq!(lightbox.picture.size_request(), fit_size,
+            "1:1 must not resize the fitted preview before native decode");
+        assert!(lightbox.picture.can_shrink(),
+            "the preview must stay fitted until native pixels arrive");
         let deadline = Instant::now() + Duration::from_secs(5);
         while picture_intrinsic_dimensions(&lightbox.picture) != (800, 600)
             && Instant::now() < deadline {
@@ -534,6 +540,12 @@ mod one_to_one_quality_regression {
             std::thread::sleep(Duration::from_millis(10));
         }
         assert_eq!(picture_intrinsic_dimensions(&lightbox.picture), (800, 600));
+        assert!(!lightbox.picture.can_shrink(),
+            "native texture must use non-shrinking 1:1 geometry");
+        lightbox.set_one_to_one(false);
+        lightbox.set_one_to_one(true);
+        assert!(lightbox.picture.paintable().is_some(),
+            "the second 1:1 activation must reuse the native texture without blanking");
         window.close();
         std::fs::remove_file(path).unwrap();
     }

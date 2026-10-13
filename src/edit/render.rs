@@ -294,9 +294,10 @@ fn apply_clarity(image: &mut RgbaImage, amount: f32) {
         let midtones = (4.0 * y * (1.0 - y)).clamp(0.0, 1.0);
         let local_y = blurred as f32 / 255.0;
         let detail = (y - local_y).clamp(-0.24, 0.24);
-        let delta = detail * midtones * amount * 1.85 * 255.0;
+        let target = (y + detail * midtones * amount * 1.85).clamp(0.0, 1.0);
+        let gain = (target / y.max(0.01)).clamp(0.25, 3.0);
         for channel in &mut p[0..3] {
-            *channel = (*channel as f32 + delta).round().clamp(0.0, 255.0) as u8;
+            *channel = (*channel as f32 * gain).round().clamp(0.0, 255.0) as u8;
         }
     });
 }

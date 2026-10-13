@@ -4,6 +4,8 @@
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -19,9 +21,9 @@ const SOURCE_KEY: &str = "screensaver-source";
 const DURATION_KEY: &str = "screensaver-duration";
 const SHUFFLE_KEY: &str = "screensaver-shuffle";
 const MOSAIC_SLOTS: usize = 6;
-// Six on-screen mosaic tiles plus ten upcoming images and outgoing fade frames.
-const MAX_FRAMES: usize = 20;
-const PREFETCH: usize = 10;
+// Retain the visible six mosaic tiles, outgoing frame and a few incoming slides.
+const MAX_FRAMES: usize = 12;
+const PREFETCH: usize = 3;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Style {
@@ -74,6 +76,7 @@ impl Style {
 enum Source {
     All,
     Favorites,
+    Selected(Vec<i64>),
     Album(i64),
     Folder(i64),
 }
@@ -82,6 +85,7 @@ impl Source {
         match self {
             Self::All => "all".into(),
             Self::Favorites => "favorites".into(),
+            Self::Selected(_) => "selected".into(),
             Self::Album(id) => format!("album:{id}"),
             Self::Folder(id) => format!("folder:{id}"),
         }
@@ -90,6 +94,10 @@ impl Source {
         match self {
             Self::All => db::photos(connection, None, false, None),
             Self::Favorites => db::photos(connection, None, true, None),
+            Self::Selected(ids) => ids.iter()
+                .map(|id| db::photo(connection, *id))
+                .collect::<anyhow::Result<Vec<_>>>()
+                .map(|rows| rows.into_iter().flatten().filter(|photo| !photo.trashed).collect()),
             Self::Album(id) => db::photos_in_album(connection, *id, None),
             Self::Folder(id) => db::photos(connection, Some(*id), false, None),
         }
@@ -175,12 +183,18 @@ fn field(label: &str, control: &impl IsA<gtk::Widget>) -> gtk::Box {
 }
 
 /// Opens the settings/launch dialog without changing PIC's current viewer.
-pub fn open(parent: &adw::ApplicationWindow, connection: Rc<RefCell<Connection>>) {
+pub fn open(parent: &adw::ApplicationWindow, connection: Rc<RefCell<Connection>>, selected_ids: Vec<i64>) {
     let current = Preferences::load(&connection.borrow());
     let mut sources = vec![
         ("All Photos".to_owned(), Source::All),
         ("Favourites".to_owned(), Source::Favorites),
     ];
+    if !selected_ids.is_empty() {
+        sources.insert(0, (
+            format!("Selected Photos ({})", selected_ids.len()),
+            Source::Selected(selected_ids),
+        ));
+    }
     if let Ok(albums) = db::albums(&connection.borrow()) {
         sources.extend(
             albums.into_iter().map(|album| (format!("Album · {}", album.name), Source::Album(album.id))),
@@ -229,9 +243,15 @@ pub fn open(parent: &adw::ApplicationWindow, connection: Rc<RefCell<Connection>>
     let source_names: Vec<String> = sources.iter().map(|(name, _)| name.clone()).collect();
     let names: Vec<&str> = source_names.iter().map(String::as_str).collect();
     let source = gtk::DropDown::from_strings(&names);
-    let selected = sources.iter()
-        .position(|(_, kind)| kind.key() == current.source)
-        .unwrap_or(0);
+    // Playing an explicit selection should default to precisely those images,
+    // even if the saved source was an album or All Photos.
+    let selected = if matches!(sources.first().map(|(_, kind)| kind), Some(Source::Selected(_))) {
+        0
+    } else {
+        sources.iter()
+            .position(|(_, kind)| kind.key() == current.source)
+            .unwrap_or(0)
+    };
     source.set_selected(selected as u32);
     body.append(&field("Photos", &source));
 
@@ -259,11 +279,15 @@ pub fn open(parent: &adw::ApplicationWindow, connection: Rc<RefCell<Connection>>
     footer.append(&start);
     body.append(&footer);
     dialog.set_child(Some(&body));
-    let dialog_for_cancel = dialog.clone();
-    cancel.connect_clicked(move |_| dialog_for_cancel.close());
+    let dialog_for_cancel = dialog.downgrade();
+    cancel.connect_clicked(move |_| {
+        if let Some(dialog) = dialog_for_cancel.upgrade() {
+            dialog.close();
+        }
+    });
 
     let parent = parent.clone();
-    let dialog_for_start = dialog.clone();
+    let dialog_for_start = dialog.downgrade();
     start.connect_clicked(move |_| {
         let source_index = source.selected() as usize;
         let Some((_, photo_source)) = sources.get(source_index) else {
@@ -291,7 +315,9 @@ pub fn open(parent: &adw::ApplicationWindow, connection: Rc<RefCell<Connection>>
             shuffle(&mut photos);
         }
         let slides = photos.into_iter().map(Slide::from).collect();
-        dialog_for_start.close();
+        if let Some(dialog) = dialog_for_start.upgrade() {
+            dialog.close();
+        }
         start_screensaver(&parent, slides, prefs);
     });
     dialog.present();
@@ -329,35 +355,29 @@ fn start_decode_worker(
     style: Style,
     requests: Receiver<usize>,
     results: Sender<ImageResult>,
+    cancelled: Arc<AtomicBool>,
 ) {
     std::thread::spawn(move || {
         while let Ok(index) = requests.recv() {
+            if cancelled.load(Ordering::Relaxed) {
+                break;
+            }
             let Some(photo) = slides.get(index) else { continue };
             let recipe = edit::EditRecipe::decode(&photo.edit_recipe);
-            let mut delivered = false;
-            if let Ok(Some(path)) = thumbnail::existing_cache_path(
-                &photo.path, photo.mtime, photo.size_bytes,
-            ) {
-                if let Some(path) = path.to_str() {
-                    if let Ok(image) = edit::render::render_thumbnail(path, photo.rotation, &recipe) {
-                        delivered = true;
-                        if results.send(ImageResult {
-                            index, high_quality: false, pixels: Some(cairo_pixels(image)),
-                        }).is_err() {
-                            break;
-                        }
-                    }
-                }
-            }
-            // A mosaic uses cache-quality images; cinematic photos are decoded
-            // at display resolution, with non-destructive edits applied.
-            if style == Style::Picasa && delivered {
-                continue;
-            }
-            let dimensions = if style == Style::Picasa { (1100, 900) } else { (2560, 1600) };
-            match edit::render::render_for_viewer(
+            // Decode at screen resolution first: a mosaic must never settle on
+            // an upscaled 160–400px gallery thumbnail. No GTK work on this thread.
+            let dimensions = if style == Style::Picasa {
+                (1920, 1280)
+            } else {
+                (2560, 1600)
+            };
+            let rendered = edit::render::render_for_viewer(
                 &photo.path, photo.rotation, &recipe, dimensions.0, dimensions.1,
-            ) {
+            );
+            if cancelled.load(Ordering::Relaxed) {
+                break;
+            }
+            match rendered {
                 Ok(image) => {
                     if results.send(ImageResult {
                         index, high_quality: true, pixels: Some(cairo_pixels(image)),
@@ -365,15 +385,27 @@ fn start_decode_worker(
                         break;
                     }
                 }
-                Err(error) if !delivered => {
-                    eprintln!("PIC screensaver: cannot decode {}: {error}", photo.path);
+                Err(error) => {
+                    // Original is offline or cannot be decoded: cached previews
+                    // are preferable to missing a photograph altogether.
+                    let fallback = thumbnail::existing_cache_path(
+                        &photo.path, photo.mtime, photo.size_bytes,
+                    ).ok().flatten().and_then(|path| path.to_str().map(str::to_owned))
+                        .and_then(|path| edit::render::render_thumbnail(
+                            &path, photo.rotation, &recipe,
+                        ).ok());
+                    if cancelled.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    if fallback.is_none() {
+                        eprintln!("PIC screensaver: cannot decode {}: {error}", photo.path);
+                    }
                     if results.send(ImageResult {
-                        index, high_quality: false, pixels: None,
+                        index, high_quality: false, pixels: fallback.map(cairo_pixels),
                     }).is_err() {
                         break;
                     }
                 }
-                Err(_) => {}
             }
         }
     });
@@ -459,7 +491,8 @@ impl Player {
             });
             self.order.retain(|index| *index != result.index);
             self.order.push_back(result.index);
-            while self.frames.len() > MAX_FRAMES {
+            let max_frames = if self.style == Style::IPhoto { 5 } else { MAX_FRAMES };
+            while self.frames.len() > max_frames {
                 let Some(old) = self.order.pop_front() else { break };
                 self.frames.remove(&old);
                 self.requested.remove(&old);
@@ -541,17 +574,20 @@ impl Player {
         }
     }
     fn draw_cinematic(&self, cr: &gtk::cairo::Context, w: f64, h: f64) {
-        let fade = self.progress();
+        let elapsed = self.switched_at.elapsed().as_secs_f64();
+        let duration = self.interval.as_secs_f64();
+        // The outgoing photo stays at its final position while the incoming
+        // image fades in. Avoid snapping the old image back to the centre.
+        let fade = smootherstep((elapsed / 1.6).clamp(0.0, 1.0));
         if let Some(previous) = self.previous {
             if fade < 1.0 {
-                self.draw_slide(cr, previous, (0.0, 0.0, w, h), 1.06, 0.0, 1.0, false);
+                let (zoom, pan) = cinematic_motion(previous, 1.0);
+                self.draw_slide(cr, previous, (0.0, 0.0, w, h), zoom, pan, 1.0, false);
             }
         }
-        let fraction = (self.switched_at.elapsed().as_secs_f64() / self.interval.as_secs_f64())
-            .clamp(0.0, 1.0);
+        let (zoom, pan) = cinematic_motion(self.current, (elapsed / duration).clamp(0.0, 1.0));
         self.draw_slide(cr, self.current, (0.0, 0.0, w, h),
-            1.0 + 0.08 * fraction, (fraction - 0.5) * 0.03,
-            if self.previous.is_some() { fade } else { 1.0 }, false);
+            zoom, pan, if self.previous.is_some() { fade } else { 1.0 }, false);
     }
     fn draw_slide(&self, cr: &gtk::cairo::Context, index: usize,
         rect: (f64, f64, f64, f64), zoom: f64, pan: f64, alpha: f64, cover: bool
@@ -635,13 +671,29 @@ impl Player {
     }
 }
 
+// Smooth start/finish and alternate pan directions per photograph.
+fn smootherstep(t: f64) -> f64 {
+    let t = t.clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+fn cinematic_motion(index: usize, progress: f64) -> (f64, f64) {
+    let eased = smootherstep(progress);
+    let reversed = index % 2 == 1;
+    let direction = if reversed { -1.0 } else { 1.0 };
+    let zoom = if reversed { 1.105 - eased * 0.065 } else { 1.04 + eased * 0.065 };
+    let pan = direction * (-0.01 + 0.02 * eased);
+    (zoom, pan)
+}
+
 fn start_screensaver(parent: &adw::ApplicationWindow, slides: Vec<Slide>, prefs: Preferences) {
     if slides.is_empty() { return; }
     let style = prefs.style.resolved();
     let player = Rc::new(RefCell::new(Player::new(style, slides.len(), prefs.seconds)));
     let (request_tx, request_rx) = mpsc::channel::<usize>();
     let (result_tx, result_rx) = mpsc::channel::<ImageResult>();
-    start_decode_worker(slides, style, request_rx, result_tx);
+    let cancelled = Arc::new(AtomicBool::new(false));
+    start_decode_worker(slides, style, request_rx, result_tx, Arc::clone(&cancelled));
 
     let screen = gtk::Window::builder()
         .title("PIC Screensaver")
@@ -658,23 +710,32 @@ fn start_screensaver(parent: &adw::ApplicationWindow, slides: Vec<Slide>, prefs:
     });
     screen.set_child(Some(&canvas));
 
+    // Controller callbacks must not own the window they are attached to:
+    // a strong GtkWindow reference creates a cycle and leaves PIC waiting
+    // for the old fullscreen window to be destroyed.
     let keys = gtk::EventControllerKey::new();
-    let screen_for_keys = screen.clone();
+    let weak_for_keys = screen.downgrade();
     keys.connect_key_pressed(move |_, _, _, _| {
-        screen_for_keys.close();
+        if let Some(window) = weak_for_keys.upgrade() {
+            window.close();
+        }
         glib::Propagation::Stop
     });
     screen.add_controller(keys);
 
     let clicked = gtk::GestureClick::new();
-    let screen_for_click = screen.clone();
-    clicked.connect_pressed(move |_, _, _, _| screen_for_click.close());
+    let weak_for_click = screen.downgrade();
+    clicked.connect_pressed(move |_, _, _, _| {
+        if let Some(window) = weak_for_click.upgrade() {
+            window.close();
+        }
+    });
     screen.add_controller(clicked);
 
     let motion = gtk::EventControllerMotion::new();
     let origin = Rc::new(RefCell::new(None::<(f64, f64)>));
     let first_frame = Instant::now();
-    let screen_for_motion = screen.clone();
+    let weak_for_motion = screen.downgrade();
     motion.connect_motion(move |_, x, y| {
         if first_frame.elapsed() < Duration::from_millis(850) {
             *origin.borrow_mut() = Some((x, y));
@@ -683,7 +744,9 @@ fn start_screensaver(parent: &adw::ApplicationWindow, slides: Vec<Slide>, prefs:
         let mut position = origin.borrow_mut();
         if let Some((ox, oy)) = *position {
             if (x - ox).hypot(y - oy) > 26.0 {
-                screen_for_motion.close();
+                if let Some(window) = weak_for_motion.upgrade() {
+                    window.close();
+                }
             }
         } else {
             *position = Some((x, y));
@@ -691,8 +754,18 @@ fn start_screensaver(parent: &adw::ApplicationWindow, slides: Vec<Slide>, prefs:
     });
     screen.add_controller(motion);
 
+    // Closing the window cancels queued work immediately. An in-flight RAW
+    // decode can finish naturally off-thread, but no further photo is decoded.
+    let cancel_on_close = Arc::clone(&cancelled);
+    screen.connect_close_request(move |_| {
+        cancel_on_close.store(true, Ordering::Relaxed);
+        glib::Propagation::Proceed
+    });
     let weak_screen = screen.downgrade();
     glib::timeout_add_local(Duration::from_millis(33), move || {
+        if cancelled.load(Ordering::Relaxed) {
+            return glib::ControlFlow::Break;
+        }
         let Some(screen) = weak_screen.upgrade() else {
             return glib::ControlFlow::Break;
         };
@@ -731,6 +804,7 @@ mod tests {
         assert_eq!(Style::from_saved("iphoto"), Style::IPhoto);
         assert_eq!(Style::from_saved("picasa"), Style::Picasa);
         assert_eq!(Style::Surprise.key(), "surprise");
+        assert_eq!(Source::Selected(vec![1, 2]).key(), "selected");
         assert_eq!(Source::Album(42).key(), "album:42");
         assert_eq!(Source::Folder(3).key(), "folder:3");
     }
@@ -740,6 +814,15 @@ mod tests {
         shuffle(&mut values);
         values.sort_unstable();
         assert_eq!(values, (0..100).collect::<Vec<_>>());
+    }
+    #[test]
+    fn cinematic_motion_does_not_always_start_from_left() {
+        let (_, first_start) = cinematic_motion(0, 0.0);
+        let (_, second_start) = cinematic_motion(1, 0.0);
+        assert!(first_start < 0.0);
+        assert!(second_start > 0.0);
+        assert_eq!(smootherstep(0.0), 0.0);
+        assert_eq!(smootherstep(1.0), 1.0);
     }
     #[test]
     fn player_paces_changes() {

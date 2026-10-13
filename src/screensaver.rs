@@ -27,49 +27,27 @@ const MAX_FRAMES: usize = 12;
 const PREFETCH: usize = 3;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Style {
-    Picasa,
-    IPhoto,
-    Surprise,
-}
+enum Style { Mosaic, PicturePile, IPhoto, Surprise }
 impl Style {
-    fn from_saved(s: &str) -> Self {
-        match s {
-            "iphoto" => Self::IPhoto,
-            "surprise" => Self::Surprise,
-            _ => Self::Picasa,
-        }
+    fn from_saved(v: &str) -> Self {
+        match v { "pile" => Self::PicturePile, "iphoto" => Self::IPhoto,
+            "surprise" => Self::Surprise, _ => Self::Mosaic }
     }
     fn key(self) -> &'static str {
-        match self {
-            Self::Picasa => "picasa",
-            Self::IPhoto => "iphoto",
-            Self::Surprise => "surprise",
-        }
+        match self { Self::Mosaic => "mosaic", Self::PicturePile => "pile",
+            Self::IPhoto => "iphoto", Self::Surprise => "surprise" }
     }
     fn dropdown_index(self) -> u32 {
-        match self {
-            Self::Picasa => 0,
-            Self::IPhoto => 1,
-            Self::Surprise => 2,
-        }
+        match self { Self::Mosaic => 0, Self::PicturePile => 1,
+            Self::IPhoto => 2, Self::Surprise => 3 }
     }
-    fn from_dropdown(index: u32) -> Self {
-        match index {
-            1 => Self::IPhoto,
-            2 => Self::Surprise,
-            _ => Self::Picasa,
-        }
+    fn from_dropdown(v: u32) -> Self {
+        match v { 1 => Self::PicturePile, 2 => Self::IPhoto,
+            3 => Self::Surprise, _ => Self::Mosaic }
     }
     fn resolved(self) -> Self {
-        if self != Self::Surprise {
-            return self;
-        }
-        if random_seed() & 1 == 0 {
-            Self::Picasa
-        } else {
-            Self::IPhoto
-        }
+        if self != Self::Surprise { return self; }
+        match random_seed() % 3 { 0 => Self::Mosaic, 1 => Self::PicturePile, _ => Self::IPhoto }
     }
 }
 
@@ -237,7 +215,8 @@ pub fn open(parent: &adw::ApplicationWindow, connection: Rc<RefCell<Connection>>
     body.append(&explanation);
 
     let style = gtk::DropDown::from_strings(&[
-        "Picasa · Mosaic & picture pile",
+        "Picasa · Mosaic",
+        "Picasa · Picture Pile",
         "iPhoto · Cinematic Ken Burns",
         "Surprise me · Random style on start",
     ]);
@@ -272,10 +251,10 @@ pub fn open(parent: &adw::ApplicationWindow, connection: Rc<RefCell<Connection>>
     shuffle_tiles_button.set_tooltip_text(Some(
         "Replace mosaic and picture-pile positions in a shuffled order instead of left to right",
     ));
-    shuffle_tiles_button.set_sensitive(style.selected() != 1);
+    shuffle_tiles_button.set_sensitive(style.selected() != 2);
     let tiles_for_style = shuffle_tiles_button.clone();
     style.connect_selected_notify(move |dropdown| {
-        tiles_for_style.set_sensitive(dropdown.selected() != 1);
+        tiles_for_style.set_sensitive(dropdown.selected() != 2);
     });
     shuffle_row.append(&shuffle_button);
     shuffle_row.append(&shuffle_tiles_button);
@@ -384,7 +363,7 @@ fn start_decode_worker(
             let recipe = edit::EditRecipe::decode(&photo.edit_recipe);
             // Decode at screen resolution first: a mosaic must never settle on
             // an upscaled 160–400px gallery thumbnail. No GTK work on this thread.
-            let dimensions = if style == Style::Picasa {
+            let dimensions = if style == Style::Mosaic {
                 (1920, 1280)
             } else {
                 (2560, 1600)
@@ -534,7 +513,12 @@ impl Player {
             self.order.push_back(result.index);
             let max_frames = if self.style == Style::IPhoto { 5 } else { MAX_FRAMES };
             while self.frames.len() > max_frames {
-                let Some(old) = self.order.pop_front() else { break };
+                let protected = |id: usize| id == self.current
+                    || self.previous == Some(id)
+                    || self.slots.contains(&id)
+                    || self.fading_slot.is_some_and(|(_, old)| old == id);
+                let Some(pos) = self.order.iter().position(|id| !protected(*id)) else { break };
+                let Some(old) = self.order.remove(pos) else { break };
                 self.frames.remove(&old);
                 self.requested.remove(&old);
             }
@@ -614,7 +598,7 @@ impl Player {
         }
         if self.style == Style::IPhoto {
             self.draw_cinematic(cr, width, height);
-        } else if (self.changes / MOSAIC_SLOTS) % 2 == 0 {
+        } else if self.style == Style::Mosaic {
             self.draw_mosaic(cr, width, height);
         } else {
             self.draw_pile(cr, width, height);
@@ -625,7 +609,7 @@ impl Player {
         let duration = self.interval.as_secs_f64();
         // The outgoing photo stays at its final position while the incoming
         // image fades in. Avoid snapping the old image back to the centre.
-        let fade = smootherstep((elapsed / 1.6).clamp(0.0, 1.0));
+        let fade = smootherstep(self.progress());
         if let Some(previous) = self.previous {
             if fade < 1.0 {
                 let (zoom, pan) = cinematic_motion(previous, 1.0);
@@ -665,7 +649,7 @@ impl Player {
         let margin = (w.min(h) * 0.018).max(9.0);
         let cw = (w - margin * 4.0) / 3.0;
         let ch = (h - margin * 3.0) / 2.0;
-        let progress = self.progress();
+        let progress = smootherstep(self.progress());
         for (slot, &index) in self.slots.iter().enumerate() {
             let x = margin + (slot % 3) as f64 * (cw + margin);
             let y = margin + (slot / 3) as f64 * (ch + margin);
@@ -686,7 +670,7 @@ impl Player {
     fn draw_pile(&self, cr: &gtk::cairo::Context, w: f64, h: f64) {
         let tw = (w * 0.30).min(h * 0.50);
         let th = tw * 0.76;
-        let progress = self.progress();
+        let progress = smootherstep(self.progress());
         for (slot, &index) in self.slots.iter().enumerate() {
             let column = slot % 3;
             let row = slot / 3;
@@ -863,7 +847,8 @@ mod tests {
     #[test]
     fn style_and_source_keys_are_stable() {
         assert_eq!(Style::from_saved("iphoto"), Style::IPhoto);
-        assert_eq!(Style::from_saved("picasa"), Style::Picasa);
+        assert_eq!(Style::from_saved("picasa"), Style::Mosaic);
+        assert_eq!(Style::from_saved("pile"), Style::PicturePile);
         assert_eq!(Style::Surprise.key(), "surprise");
         assert_eq!(Source::Selected(vec![1, 2]).key(), "selected");
         assert_eq!(Source::Album(42).key(), "album:42");
@@ -894,10 +879,10 @@ mod tests {
         assert_eq!(player.current, 0);
         assert_eq!(player.next, 1);
         assert_eq!(player.interval, Duration::from_secs(6));
-        assert_eq!(Player::new(Style::Picasa, 20, 3, true).slots.len(), 6);
-        let ordered = Player::new(Style::Picasa, 20, 3, false);
+        assert_eq!(Player::new(Style::Mosaic, 20, 3, true).slots.len(), 6);
+        let ordered = Player::new(Style::Mosaic, 20, 3, false);
         assert_eq!(ordered.tile_order, (0..6).collect::<Vec<_>>());
-        let shuffled = Player::new(Style::Picasa, 20, 3, true);
+        let shuffled = Player::new(Style::PicturePile, 20, 3, true);
         let mut positions = shuffled.tile_order.clone();
         positions.sort_unstable();
         assert_eq!(positions, (0..6).collect::<Vec<_>>());

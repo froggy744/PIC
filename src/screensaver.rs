@@ -23,6 +23,7 @@ const DURATION_KEY: &str = "screensaver-duration";
 const SHUFFLE_KEY: &str = "screensaver-shuffle";
 const SHUFFLE_TILES_KEY: &str = "screensaver-shuffle-tiles";
 const MOSAIC_TILES_KEY: &str = "screensaver-mosaic-tiles";
+const PICASA_TRANSITION_KEY: &str = "screensaver-picasa-transition";
 const DEFAULT_MOSAIC_TILES: usize = 6;
 const PICTURE_PILE_SLOTS: usize = 6;
 const PREFETCH: usize = 3;
@@ -49,6 +50,46 @@ impl Style {
     fn resolved(self) -> Self {
         if self != Self::Surprise { return self; }
         match random_seed() % 3 { 0 => Self::Mosaic, 1 => Self::PicturePile, _ => Self::IPhoto }
+    }
+}
+
+/// Picasa-specific tile transitions; iPhoto always uses its cinematic fade.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PicasaTransition { Flip, Crossfade, Cut }
+impl PicasaTransition {
+    fn from_saved(value: &str) -> Self {
+        match value {
+            "flip" => Self::Flip,
+            "cut" => Self::Cut,
+            _ => Self::Crossfade, // Existing screensavers retain old behaviour.
+        }
+    }
+    fn key(self) -> &'static str {
+        match self {
+            Self::Flip => "flip",
+            Self::Crossfade => "crossfade",
+            Self::Cut => "cut",
+        }
+    }
+    fn dropdown_index(self) -> u32 {
+        match self {
+            Self::Flip => 0,
+            Self::Crossfade => 1,
+            Self::Cut => 2,
+        }
+    }
+    fn from_dropdown(value: u32) -> Self {
+        match value {
+            0 => Self::Flip,
+            2 => Self::Cut,
+            _ => Self::Crossfade,
+        }
+    }
+    /// A two-sided horizontal card turn, edge-on at midpoint.
+    fn flip_width(self, progress: f64) -> f64 {
+        if self != Self::Flip { return 1.0; }
+        let eased = smootherstep(progress.clamp(0.0, 1.0));
+        ((std::f64::consts::PI * eased).cos()).abs().max(0.025)
     }
 }
 
@@ -92,6 +133,7 @@ struct Preferences {
     shuffle: bool,
     shuffle_tiles: bool,
     mosaic_tiles: usize,
+    picasa_transition: PicasaTransition,
 }
 impl Preferences {
     fn load(connection: &Connection) -> Self {
@@ -104,6 +146,7 @@ impl Preferences {
             shuffle_tiles: setting(SHUFFLE_TILES_KEY) != "false",
             mosaic_tiles: setting(MOSAIC_TILES_KEY).parse::<usize>()
                 .ok().filter(|count| *count > 0).unwrap_or(DEFAULT_MOSAIC_TILES),
+            picasa_transition: PicasaTransition::from_saved(&setting(PICASA_TRANSITION_KEY)),
         }
     }
     fn save(&self, connection: &Connection) {
@@ -114,6 +157,7 @@ impl Preferences {
             (SHUFFLE_KEY, self.shuffle.to_string()),
             (SHUFFLE_TILES_KEY, self.shuffle_tiles.to_string()),
             (MOSAIC_TILES_KEY, self.mosaic_tiles.to_string()),
+            (PICASA_TRANSITION_KEY, self.picasa_transition.key().to_string()),
         ] {
             if let Err(error) = db::set_setting(connection, key, &value) {
                 eprintln!("PIC screensaver: could not save {key}: {error}");
@@ -248,6 +292,20 @@ pub fn open(parent: &adw::ApplicationWindow, connection: Rc<RefCell<Connection>>
     duration.set_tooltip_text(Some("Seconds per photo or photo-wall change"));
     body.append(&field("Seconds per change", &duration));
 
+    let picasa_transition = gtk::DropDown::from_strings(&[
+        "Flip", "Crossfade", "Cut",
+    ]);
+    picasa_transition.set_selected(current.picasa_transition.dropdown_index());
+    picasa_transition.set_tooltip_text(Some(
+        "Picasa Mosaic and Picture Pile only. iPhoto keeps its cinematic transition.",
+    ));
+    picasa_transition.set_sensitive(style.selected() != 2);
+    let transition_for_style = picasa_transition.clone();
+    style.connect_selected_notify(move |dropdown| {
+        transition_for_style.set_sensitive(dropdown.selected() != 2);
+    });
+    body.append(&field("Picasa transition", &picasa_transition));
+
     // An entry (rather than GtkSpinButton) avoids imposing an arbitrary
     // maximum or losing large integer precision through its f64 adjustment.
     let mosaic_tiles = gtk::Entry::new();
@@ -324,6 +382,7 @@ pub fn open(parent: &adw::ApplicationWindow, connection: Rc<RefCell<Connection>>
             shuffle: shuffle_button.is_active(),
             shuffle_tiles: shuffle_tiles_button.is_active(),
             mosaic_tiles: requested_tiles,
+            picasa_transition: PicasaTransition::from_dropdown(picasa_transition.selected()),
         };
         let mut photos = match photo_source.photos(&connection.borrow()) {
             Ok(photos) => photos,
@@ -679,7 +738,9 @@ fn start_screensaver(parent: &adw::ApplicationWindow, slides: Vec<Slide>, prefs:
         .build();
     screen.set_application(parent.application().as_ref());
     gpu::install_css();
-    let stage = Rc::new(RefCell::new(gpu::Stage::new(style, player.borrow().slots.len())));
+    let stage = Rc::new(RefCell::new(gpu::Stage::new(
+        style, player.borrow().slots.len(), prefs.picasa_transition,
+    )));
     stage.borrow().root.set_focusable(true);
     screen.set_child(Some(&stage.borrow().root));
 
@@ -797,6 +858,25 @@ mod tests {
         assert_eq!(Source::Album(42).key(), "album:42");
         assert_eq!(Source::Folder(3).key(), "folder:3");
     }
+    #[test]
+    fn picasa_transition_persists_and_flip_has_edge_on_midpoint() {
+        assert_eq!(PicasaTransition::from_saved("flip"), PicasaTransition::Flip);
+        assert_eq!(PicasaTransition::from_saved("crossfade"), PicasaTransition::Crossfade);
+        assert_eq!(PicasaTransition::from_saved("cut"), PicasaTransition::Cut);
+        assert_eq!(PicasaTransition::from_saved("unknown"), PicasaTransition::Crossfade);
+        for (index, mode) in [(0, PicasaTransition::Flip), (1, PicasaTransition::Crossfade),
+                              (2, PicasaTransition::Cut)] {
+            assert_eq!(PicasaTransition::from_dropdown(index), mode);
+            assert_eq!(PicasaTransition::from_saved(mode.key()), mode);
+            assert_eq!(mode.dropdown_index(), index);
+        }
+        let flip = PicasaTransition::Flip;
+        assert_eq!(flip.flip_width(0.0), 1.0);
+        assert!(flip.flip_width(0.5) <= 0.026);
+        assert_eq!(flip.flip_width(1.0), 1.0);
+        assert_eq!(PicasaTransition::Cut.flip_width(0.5), 1.0);
+    }
+
     #[test]
     fn shuffle_preserves_items() {
         let mut values: Vec<usize> = (0..100).collect();

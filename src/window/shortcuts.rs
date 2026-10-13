@@ -67,7 +67,7 @@
             && lightbox_for_window_escape.root.is_visible()
         {
             
-            lightbox_for_window_escape.close();
+            lightbox_for_window_escape.request_close();
             glib::Propagation::Stop
         } else if key == gtk::gdk::Key::F11 {
             if window_for_fullscreen_key.is_fullscreen() {

@@ -411,6 +411,11 @@ pub struct Lightbox {
     zoom_sync: ZoomSyncHandler,
     context_menu: ContextMenuHandler,
     collection_navigation: CollectionNavigationHandler,
+    // Normal user closes fade out; programmatic close() remains immediate.
+    close_requested: Rc<dyn Fn()>,
+    close_prepare: Rc<RefCell<Option<Rc<dyn Fn()>>>>,
+    close_generation: Rc<Cell<u64>>,
+    close_in_progress: Rc<Cell<bool>>,
 }
 
 // Structural split only: included files remain in this module scope.

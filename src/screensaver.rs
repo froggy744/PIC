@@ -510,7 +510,7 @@ pub fn open(parent: &adw::ApplicationWindow, connection: Rc<RefCell<Connection>>
     heading.set_xalign(0.0);
     body.append(&heading);
     let explanation = gtk::Label::new(Some(
-        "Choose a style and collection. Press Esc or move the pointer to exit."
+        "Choose a style and photos. Esc or move to exit · Space to pause."
     ));
     explanation.set_xalign(0.0);
     explanation.set_wrap(true);

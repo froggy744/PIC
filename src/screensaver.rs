@@ -371,9 +371,23 @@ fn start_decode_worker(
             } else {
                 (2560, 1600)
             };
-            let rendered = edit::render::render_for_viewer(
-                &photo.path, photo.rotation, &recipe, dimensions.0, dimensions.1,
-            );
+            // Reuse the lightbox decoder's cancellation checkpoints. This is
+            // important for remote/NFS images: closing the window must not
+            // leave the worker decoding an entire queued slideshow.
+            let rendered = (|| -> anyhow::Result<image::RgbaImage> {
+                let decoded = thumbnail::decode_for_viewer_with_cancel(
+                    &photo.path, dimensions.0, dimensions.1, None,
+                    || cancelled.load(Ordering::Relaxed),
+                )?;
+                anyhow::ensure!(
+                    !cancelled.load(Ordering::Relaxed),
+                    "screensaver decode cancelled",
+                );
+                Ok(edit::render::apply_recipe(
+                    edit::render::apply_library_rotation(decoded, photo.rotation),
+                    &recipe,
+                ))
+            })();
             if cancelled.load(Ordering::Relaxed) {
                 break;
             }

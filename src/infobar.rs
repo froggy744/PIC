@@ -1,4 +1,4 @@
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::path::Path;
 use std::rc::Rc;
 
@@ -12,6 +12,12 @@ pub struct InfoBar {
     utilities: gtk::Box,
     preview: gtk::Image,
     metadata: gtk::Box,
+    metadata_stack: gtk::Stack,
+    selection_count: gtk::Label,
+    selection_thumbnails: gtk::Box,
+    selection_more: gtk::Label,
+    selection_remove: Rc<RefCell<Option<Rc<dyn Fn(i64)>>>>,
+    pub selection_clear: gtk::Button,
     filename: gtk::Label,
     details: gtk::Box,
     pub favorite: gtk::Button,
@@ -117,8 +123,43 @@ impl InfoBar {
         metadata_viewport.set_policy(gtk::PolicyType::External, gtk::PolicyType::Never);
         metadata_viewport.set_propagate_natural_width(false);
         metadata_viewport.set_hexpand(true);
-        metadata_viewport.set_child(Some(&metadata));
+        let metadata_stack = gtk::Stack::new();
+        metadata_stack.set_hexpand(true);
+        metadata_stack.set_hhomogeneous(false);
+        metadata_stack.add_named(&metadata, Some("photo"));
+
+        // A multi-selection replaces the metadata region, while the existing
+        // action toolbar stays in place. Keep a bounded strip of cached thumbs.
+        let selection_panel = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+        selection_panel.set_hexpand(true);
+        selection_panel.set_valign(gtk::Align::Center);
+        selection_panel.add_css_class("infobar-selection-mode");
+        let selection_count = gtk::Label::new(None);
+        selection_count.add_css_class("infobar-selection-count");
+        selection_count.set_xalign(0.0);
+        selection_count.set_single_line_mode(true);
+        selection_panel.append(&selection_count);
+        let selection_thumbnails = gtk::Box::new(gtk::Orientation::Horizontal, 5);
+        selection_thumbnails.set_valign(gtk::Align::Center);
+        let selection_scroll = gtk::ScrolledWindow::new();
+        selection_scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Never);
+        selection_scroll.set_propagate_natural_width(false);
+        selection_scroll.set_hexpand(true);
+        selection_scroll.set_child(Some(&selection_thumbnails));
+        selection_panel.append(&selection_scroll);
+        let selection_more = gtk::Label::new(None);
+        selection_more.add_css_class("dim-label");
+        selection_panel.append(&selection_more);
+        let selection_clear = gtk::Button::from_icon_name("edit-clear-all-symbolic");
+        selection_clear.set_tooltip_text(Some("Clear selected photos"));
+        selection_clear.add_css_class("flat");
+        selection_panel.append(&selection_clear);
+        metadata_stack.add_named(&selection_panel, Some("selection"));
+        metadata_stack.set_visible_child_name("photo");
+        metadata_viewport.set_child(Some(&metadata_stack));
         root.append(&metadata_viewport);
+        let selection_remove: Rc<RefCell<Option<Rc<dyn Fn(i64)>>>> =
+            Rc::new(RefCell::new(None));
         metadata.append(&preview);
 
         let text = gtk::Box::new(gtk::Orientation::Vertical, 2);
@@ -627,6 +668,12 @@ impl InfoBar {
             utilities,
             preview,
             metadata,
+            metadata_stack,
+            selection_count,
+            selection_thumbnails,
+            selection_more,
+            selection_remove,
+            selection_clear,
             filename,
             details,
             favorite,
@@ -650,6 +697,61 @@ impl InfoBar {
             has_photo,
             collage_active,
         }
+    }
+
+    /// The strip deliberately renders only the first few selected photos.
+    /// A +N indicator gives the rest of the count without constructing a huge
+    /// thumbnail list for Ctrl+A on a large library.
+    pub fn set_selected_photos(&self, count: usize, photos: &[PhotoObject]) {
+        if count <= 1 {
+            self.metadata_stack.set_visible_child_name("photo");
+            return;
+        }
+        self.selection_count.set_text(&format!(
+            "{} photos selected",
+            crate::window::format_count(count),
+        ));
+        while let Some(child) = self.selection_thumbnails.first_child() {
+            self.selection_thumbnails.remove(&child);
+        }
+        for photo in photos.iter().take(6) {
+            let button = gtk::Button::new();
+            button.add_css_class("infobar-selected-thumb");
+            button.set_tooltip_text(Some(&format!("Deselect {}", photo.filename())));
+            let thumbnail = gtk::Image::new();
+            thumbnail.set_pixel_size(38);
+            thumbnail.set_size_request(38, 38);
+            if let Some(path) = photo.cached_thumbnail_path().filter(|path| Path::new(path).is_file()) {
+                thumbnail.set_from_file(Some(&path));
+            } else {
+                thumbnail.set_icon_name(Some("image-x-generic-symbolic"));
+            }
+            button.set_child(Some(&thumbnail));
+            let id = photo.id();
+            let remove = self.selection_remove.clone();
+            button.connect_clicked(move |_| {
+                if let Some(remove) = remove.borrow().as_ref() {
+                    remove(id);
+                }
+            });
+            self.selection_thumbnails.append(&button);
+        }
+        let remaining = count.saturating_sub(photos.len().min(6));
+        self.selection_more.set_text(&if remaining > 0 {
+            format!("+{}", crate::window::format_count(remaining))
+        } else {
+            String::new()
+        });
+        self.selection_more.set_visible(remaining > 0);
+        self.metadata_stack.set_visible_child_name("selection");
+    }
+
+    pub fn connect_selected_thumbnail_unselect(&self, remove: impl Fn(i64) + 'static) {
+        self.selection_remove.replace(Some(Rc::new(remove)));
+    }
+
+    pub fn show_photo_metadata(&self) {
+        self.metadata_stack.set_visible_child_name("photo");
     }
 
     /// Synchronize a restored section without emitting a user layout change.

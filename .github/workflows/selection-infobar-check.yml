@@ -1,0 +1,32 @@
+name: Selection InfoBar compile and regressions
+
+on:
+  pull_request:
+    paths:
+      - 'src/infobar.rs'
+      - 'src/grid/selection.rs'
+      - 'src/window/build.rs'
+      - 'src/css/base.css'
+      - '.github/workflows/selection-infobar-check.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  selection-infobar:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install GTK and build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential clang mold cmake nasm pkg-config \
+            libgtk-4-dev libadwaita-1-dev libsmbclient-dev libnfs-dev \
+            librsvg2-common libgdk-pixbuf2.0-bin xvfb xauth
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Compile PIC
+        run: cargo check --locked
+      - name: Run Rust regression tests
+        run: cargo test --locked -- --test-threads=1

@@ -14,6 +14,7 @@ pub struct InfoBar {
     metadata: gtk::Box,
     metadata_stack: gtk::Stack,
     selection_count: gtk::Label,
+    selection_controls: gtk::Box,
     selection_thumbnails: gtk::Box,
     selection_rendered_ids: RefCell<Vec<i64>>,
     selection_remove: Rc<RefCell<Option<Rc<dyn Fn(i64)>>>>,
@@ -122,6 +123,10 @@ impl InfoBar {
         let metadata_viewport = gtk::ScrolledWindow::new();
         metadata_viewport.set_policy(gtk::PolicyType::External, gtk::PolicyType::Never);
         metadata_viewport.set_propagate_natural_width(false);
+        // The photo/selection content must yield all spare width to the
+        // fixed controls and actions, even with dozens of thumbnails.
+        metadata_viewport.set_min_content_width(1);
+        metadata_viewport.set_size_request(1, -1);
         metadata_viewport.set_hexpand(true);
         let metadata_stack = gtk::Stack::new();
         metadata_stack.set_hexpand(true);
@@ -134,8 +139,9 @@ impl InfoBar {
         selection_panel.set_hexpand(true);
         selection_panel.set_valign(gtk::Align::Center);
         selection_panel.add_css_class("infobar-selection-mode");
-        // The thumbnail strip owns all available flexible space. The only
-        // selection counter sits at the right, directly beside Clear.
+        // The thumbnail strip owns all flexible space. Counter and Clear must
+        // be siblings of the outer metadata viewport, never its scrollable
+        // children: otherwise long selections can push them out of view.
         let selection_thumbnails = gtk::Box::new(gtk::Orientation::Horizontal, 5);
         selection_thumbnails.set_valign(gtk::Align::Center);
         selection_thumbnails.set_halign(gtk::Align::Start);
@@ -144,24 +150,32 @@ impl InfoBar {
         selection_scroll.set_propagate_natural_width(false);
         selection_scroll.set_hexpand(true);
         selection_scroll.set_min_content_width(1);
+        selection_scroll.set_size_request(1, -1);
         selection_scroll.set_child(Some(&selection_thumbnails));
         selection_panel.append(&selection_scroll);
+        metadata_stack.add_named(&selection_panel, Some("selection"));
+        metadata_stack.set_visible_child_name("photo");
+        metadata_viewport.set_child(Some(&metadata_stack));
+        root.append(&metadata_viewport);
 
+        // A non-scrolling, fixed-size trailing group remains visible even if
+        // the thumbnail strip contains more items than fit the window.
+        let selection_controls = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        selection_controls.set_hexpand(false);
+        selection_controls.set_valign(gtk::Align::Center);
+        selection_controls.set_visible(false);
         let selection_count = gtk::Label::new(None);
         selection_count.add_css_class("infobar-selection-count");
         selection_count.set_xalign(1.0);
         selection_count.set_single_line_mode(true);
         selection_count.set_hexpand(false);
-        selection_panel.append(&selection_count);
+        selection_controls.append(&selection_count);
 
         let selection_clear = gtk::Button::from_icon_name("edit-clear-all-symbolic");
         selection_clear.set_tooltip_text(Some("Clear selected photos"));
         selection_clear.add_css_class("flat");
-        selection_panel.append(&selection_clear);
-        metadata_stack.add_named(&selection_panel, Some("selection"));
-        metadata_stack.set_visible_child_name("photo");
-        metadata_viewport.set_child(Some(&metadata_stack));
-        root.append(&metadata_viewport);
+        selection_controls.append(&selection_clear);
+        root.append(&selection_controls);
         let selection_remove: Rc<RefCell<Option<Rc<dyn Fn(i64)>>>> =
             Rc::new(RefCell::new(None));
         metadata.append(&preview);
@@ -674,6 +688,7 @@ impl InfoBar {
             metadata,
             metadata_stack,
             selection_count,
+            selection_controls,
             selection_thumbnails,
             selection_rendered_ids: RefCell::new(Vec::new()),
             selection_remove,
@@ -708,14 +723,12 @@ impl InfoBar {
     /// after the toolbar, count and Clear button.
     pub fn set_selected_photos(&self, count: usize, photos: &[PhotoObject]) {
         if count <= 1 {
-            self.metadata_stack.set_visible_child_name("photo");
+            self.show_photo_metadata();
             return;
         }
 
-        self.selection_count.set_text(&format!(
-            "{} selected",
-            crate::window::format_count(count),
-        ));
+        self.selection_count.set_text(&crate::window::format_count(count));
+        self.selection_controls.set_visible(true);
 
         // A selection of thousands only samples a bounded set of thumbnails.
         // When that sample has not changed, avoid repeated image decodes and
@@ -764,6 +777,7 @@ impl InfoBar {
 
     pub fn show_photo_metadata(&self) {
         self.metadata_stack.set_visible_child_name("photo");
+        self.selection_controls.set_visible(false);
     }
 
     /// Synchronize a restored section without emitting a user layout change.

@@ -46,9 +46,10 @@ impl InfoBar {
             gesture.set_state(gtk::EventSequenceState::Claimed);
             open();
         });
-        // The viewport is the metadata region; actions live outside it.
-        if let Some(viewport) = self.root.first_child() {
-            viewport.add_controller(gesture);
+        // Bind to the actual metadata content, not the expandable blank
+        // viewport space between metadata and photo action buttons.
+        if let Some(metadata) = self.root.first_child().and_then(|viewport| viewport.first_child()) {
+            metadata.add_controller(gesture);
         }
     }
 

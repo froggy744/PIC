@@ -28,7 +28,7 @@ pub const OVERLAY_DIR_ENV_VAR: &str = "PIC_OVERLAY_DIR";
 const ASSET_CACHE_CAPACITY: usize = 12;
 const SCALED_CACHE_CAPACITY: usize = 64;
 const MAX_OVERLAY_WIDTH: u32 = 4096;
-const MAX_OVERLAY_HEIGHT: u32 = 200;
+const MAX_OVERLAY_HEIGHT: u32 = 4096;
 
 fn overlay_trace() -> bool {
     std::env::var("PIC_OVERLAY_TRACE").is_ok_and(|value| value == "1")
@@ -449,9 +449,9 @@ mod tests {
 
     #[test]
     fn size_limits_for_overlay_import() {
-        assert!(prepare_overlay_bytes(&png_bytes(4096, 200, [0, 0, 0, 0]), "ok.png").is_ok());
-        assert!(prepare_overlay_bytes(&png_bytes(4097, 200, [0, 0, 0, 0]), "wide.png").is_err());
-        assert!(prepare_overlay_bytes(&png_bytes(4096, 201, [0, 0, 0, 0]), "tall.png").is_err());
+        assert!(prepare_overlay_bytes(&png_bytes(4096, 4096, [0, 0, 0, 0]), "ok.png").is_ok());
+        assert!(prepare_overlay_bytes(&png_bytes(4097, 4096, [0, 0, 0, 0]), "wide.png").is_err());
+        assert!(prepare_overlay_bytes(&png_bytes(4096, 4097, [0, 0, 0, 0]), "tall.png").is_err());
     }
 
     #[test]

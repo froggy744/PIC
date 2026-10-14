@@ -26,7 +26,7 @@ use super::model::EditRecipe;
 pub const OVERLAY_DIR_ENV_VAR: &str = "PIC_OVERLAY_DIR";
 
 const ASSET_CACHE_CAPACITY: usize = 12;
-const SCALED_CACHE_CAPACITY: usize = 12;
+const SCALED_CACHE_CAPACITY: usize = 64;
 const MAX_OVERLAY_WIDTH: u32 = 4096;
 const MAX_OVERLAY_HEIGHT: u32 = 200;
 
@@ -43,30 +43,50 @@ fn scaled_cache() -> &'static ScaledCache {
 fn resize_cached(hash: &str, source: &RgbaImage, width: u32, height: u32) -> Arc<RgbaImage> {
     let started = Instant::now();
     let key = (hash.to_owned(), width, height);
-    if let Ok(mut cache) = scaled_cache().lock() {
-        if let Some(index) = cache.iter().position(|(entry, _)| entry == &key) {
-            let entry = cache.remove(index);
-            let result = Arc::clone(&entry.1);
-            cache.push(entry);
-            if overlay_trace() {
-                eprintln!("PIC_OVERLAY resize cache=hit size={}x{} elapsed_us={}", width, height, started.elapsed().as_micros());
-            }
-            return result;
+    // Keep the lock until a resize finishes. Otherwise several thumbnail workers
+    // can miss the same key and simultaneously repeat an expensive Lanczos resize.
+    let mut cache = scaled_cache().lock().expect("scaled overlay cache poisoned");
+    if let Some(index) = cache.iter().position(|(entry, _)| entry == &key) {
+        let entry = cache.remove(index);
+        let result = Arc::clone(&entry.1);
+        cache.push(entry);
+        if overlay_trace() {
+            eprintln!("PIC_OVERLAY resize cache=hit size={}x{} elapsed_us={}", width, height, started.elapsed().as_micros());
         }
+        return result;
     }
+
+    // Downscaling a large source directly with Lanczos3 repeatedly visits many
+    // source pixels per output pixel. Generate a 2x intermediate using the
+    // thumbnail area sampler, then perform the final high-quality Lanczos step.
+    // Export-quality near-native-size overlays keep the original source.
+    let mut prescale = false;
     let result = Arc::new(if source.width() == width && source.height() == height {
         source.clone()
+    } else if source.width() > width.saturating_mul(3)
+        && source.height() > height.saturating_mul(3)
+    {
+        prescale = true;
+        let intermediate = image::imageops::thumbnail(
+            source,
+            width.saturating_mul(2).max(1),
+            height.saturating_mul(2).max(1),
+        );
+        image::imageops::resize(
+            &intermediate,
+            width,
+            height,
+            image::imageops::FilterType::Lanczos3,
+        )
     } else {
         image::imageops::resize(source, width, height, image::imageops::FilterType::Lanczos3)
     });
     if overlay_trace() {
-        eprintln!("PIC_OVERLAY resize cache=miss size={}x{} elapsed_us={}", width, height, started.elapsed().as_micros());
+        eprintln!("PIC_OVERLAY resize cache=miss size={}x{} prescale={} elapsed_us={}", width, height, prescale, started.elapsed().as_micros());
     }
-    if let Ok(mut cache) = scaled_cache().lock() {
-        cache.push((key, Arc::clone(&result)));
-        while cache.len() > SCALED_CACHE_CAPACITY {
-            cache.remove(0);
-        }
+    cache.push((key, Arc::clone(&result)));
+    while cache.len() > SCALED_CACHE_CAPACITY {
+        cache.remove(0);
     }
     result
 }

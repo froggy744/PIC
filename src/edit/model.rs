@@ -357,6 +357,7 @@ impl OverlaySpec {
     }
 
     /// Restore the default placement used when an overlay is first added.
+    #[cfg(test)]
     pub fn position_at(&mut self, anchor: OverlayAnchor) {
         let margin = Self::POSITION_MARGIN;
         self.anchor = anchor;

@@ -752,7 +752,8 @@ impl InfoBar {
                     .filter(|path| Path::new(path).is_file())
                     .and_then(|path| gdk_pixbuf::Pixbuf::from_file_at_scale(path, 38, 38, true).ok());
                 if let Some(pixbuf) = pixbuf {
-                    thumbnail.set_from_pixbuf(Some(&pixbuf));
+                    let texture = gtk::gdk::Texture::for_pixbuf(&pixbuf);
+                    thumbnail.set_paintable(Some(&texture));
                 } else {
                     thumbnail.set_icon_name(Some("image-x-generic-symbolic"));
                 }

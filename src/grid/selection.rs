@@ -574,6 +574,65 @@ impl Gallery {
         }
     }
 
+    /// Lightweight sample for the selection strip; never decode thousands of photos.
+    pub fn selected_photo_preview(&self, limit: usize) -> (usize, Vec<PhotoObject>) {
+        let selection = self.selection.selection();
+        let count = selection.size() as usize;
+        let mut preview = Vec::with_capacity(count.min(limit));
+        if let Some((iter, first)) = gtk::BitsetIter::init_first(&selection) {
+            let photos = self.current_photos.borrow();
+            for index in std::iter::once(first).chain(iter).take(limit) {
+                if let Some(photo) = photos.get(index as usize) {
+                    preview.push(photo.clone());
+                }
+            }
+        }
+        (count, preview)
+    }
+
+    /// Update the selection-mode InfoBar once per main-loop turn. The snapshot
+    /// is bounded so Ctrl+A in a large gallery never creates thousands of widgets.
+    pub fn connect_selection_preview_changed(
+        &self,
+        limit: usize,
+        changed: impl Fn(usize, Vec<PhotoObject>) + 'static,
+    ) {
+        let changed = Rc::new(changed);
+        let queued = Rc::new(Cell::new(false));
+        let current_photos = self.current_photos.clone();
+        self.selection.connect_selection_changed(move |selection, _, _| {
+            if queued.replace(true) {
+                return;
+            }
+            let selection = selection.clone();
+            let current_photos = current_photos.clone();
+            let changed = changed.clone();
+            let queued = queued.clone();
+            glib::idle_add_local_once(move || {
+                queued.set(false);
+                let selected = selection.selection();
+                let count = selected.size() as usize;
+                let mut preview = Vec::with_capacity(count.min(limit));
+                if let Some((iter, first)) = gtk::BitsetIter::init_first(&selected) {
+                    let photos = current_photos.borrow();
+                    for index in std::iter::once(first).chain(iter).take(limit) {
+                        if let Some(photo) = photos.get(index as usize) {
+                            preview.push(photo.clone());
+                        }
+                    }
+                }
+                changed(count, preview);
+            });
+        });
+    }
+
+    pub fn unselect_photo_by_id(&self, photo_id: i64) {
+        if let Some(position) = self.current_photos.borrow().iter().position(|photo| photo.id() == photo_id) {
+            self.selection.unselect_item(position as u32);
+            self.collage_selected_ids.borrow_mut().remove(&photo_id);
+        }
+    }
+
     pub fn set_collage_selection_mode(&self, active: bool) {
         self.collage_selection_mode.set(active);
         if !active {

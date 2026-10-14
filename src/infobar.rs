@@ -1,4 +1,4 @@
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::path::Path;
 use std::rc::Rc;
 
@@ -12,6 +12,13 @@ pub struct InfoBar {
     utilities: gtk::Box,
     preview: gtk::Image,
     metadata: gtk::Box,
+    metadata_stack: gtk::Stack,
+    selection_count: gtk::Label,
+    selection_controls: gtk::Box,
+    selection_thumbnails: gtk::Box,
+    selection_rendered_ids: RefCell<Vec<i64>>,
+    selection_remove: Rc<RefCell<Option<Rc<dyn Fn(i64)>>>>,
+    pub selection_clear: gtk::Button,
     filename: gtk::Label,
     details: gtk::Box,
     pub favorite: gtk::Button,
@@ -116,9 +123,61 @@ impl InfoBar {
         let metadata_viewport = gtk::ScrolledWindow::new();
         metadata_viewport.set_policy(gtk::PolicyType::External, gtk::PolicyType::Never);
         metadata_viewport.set_propagate_natural_width(false);
+        // The photo/selection content must yield all spare width to the
+        // fixed controls and actions, even with dozens of thumbnails.
+        metadata_viewport.set_min_content_width(1);
+        metadata_viewport.set_size_request(1, -1);
         metadata_viewport.set_hexpand(true);
-        metadata_viewport.set_child(Some(&metadata));
+        let metadata_stack = gtk::Stack::new();
+        metadata_stack.set_hexpand(true);
+        metadata_stack.set_hhomogeneous(false);
+        metadata_stack.add_named(&metadata, Some("photo"));
+
+        // A multi-selection replaces the metadata region, while the existing
+        // action toolbar stays in place. Keep a bounded strip of cached thumbs.
+        let selection_panel = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+        selection_panel.set_hexpand(true);
+        selection_panel.set_valign(gtk::Align::Center);
+        selection_panel.add_css_class("infobar-selection-mode");
+        // The thumbnail strip owns all flexible space. Counter and Clear must
+        // be siblings of the outer metadata viewport, never its scrollable
+        // children: otherwise long selections can push them out of view.
+        let selection_thumbnails = gtk::Box::new(gtk::Orientation::Horizontal, 5);
+        selection_thumbnails.set_valign(gtk::Align::Center);
+        selection_thumbnails.set_halign(gtk::Align::Start);
+        let selection_scroll = gtk::ScrolledWindow::new();
+        selection_scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Never);
+        selection_scroll.set_propagate_natural_width(false);
+        selection_scroll.set_hexpand(true);
+        selection_scroll.set_min_content_width(1);
+        selection_scroll.set_size_request(1, -1);
+        selection_scroll.set_child(Some(&selection_thumbnails));
+        selection_panel.append(&selection_scroll);
+        metadata_stack.add_named(&selection_panel, Some("selection"));
+        metadata_stack.set_visible_child_name("photo");
+        metadata_viewport.set_child(Some(&metadata_stack));
         root.append(&metadata_viewport);
+
+        // A non-scrolling, fixed-size trailing group remains visible even if
+        // the thumbnail strip contains more items than fit the window.
+        let selection_controls = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        selection_controls.set_hexpand(false);
+        selection_controls.set_valign(gtk::Align::Center);
+        selection_controls.set_visible(false);
+        let selection_count = gtk::Label::new(None);
+        selection_count.add_css_class("infobar-selection-count");
+        selection_count.set_xalign(1.0);
+        selection_count.set_single_line_mode(true);
+        selection_count.set_hexpand(false);
+        selection_controls.append(&selection_count);
+
+        let selection_clear = gtk::Button::from_icon_name("edit-clear-all-symbolic");
+        selection_clear.set_tooltip_text(Some("Clear selected photos"));
+        selection_clear.add_css_class("flat");
+        selection_controls.append(&selection_clear);
+        root.append(&selection_controls);
+        let selection_remove: Rc<RefCell<Option<Rc<dyn Fn(i64)>>>> =
+            Rc::new(RefCell::new(None));
         metadata.append(&preview);
 
         let text = gtk::Box::new(gtk::Orientation::Vertical, 2);
@@ -627,6 +686,13 @@ impl InfoBar {
             utilities,
             preview,
             metadata,
+            metadata_stack,
+            selection_count,
+            selection_controls,
+            selection_thumbnails,
+            selection_rendered_ids: RefCell::new(Vec::new()),
+            selection_remove,
+            selection_clear,
             filename,
             details,
             favorite,
@@ -650,6 +716,68 @@ impl InfoBar {
             has_photo,
             collage_active,
         }
+    }
+
+    /// Show a bounded strip of selected photos without reserving a fixed
+    /// six-thumbnail width. GtkScrolledWindow clips to the width left over
+    /// after the toolbar, count and Clear button.
+    pub fn set_selected_photos(&self, count: usize, photos: &[PhotoObject]) {
+        if count <= 1 {
+            self.show_photo_metadata();
+            return;
+        }
+
+        self.selection_count.set_text(&crate::window::format_count(count));
+        self.selection_controls.set_visible(true);
+
+        // A selection of thousands only samples a bounded set of thumbnails.
+        // When that sample has not changed, avoid repeated image decodes and
+        // Gtk widget churn just because the selected count changed.
+        let rendered_ids = photos.iter().map(PhotoObject::id).collect::<Vec<_>>();
+        let needs_refresh = self.selection_rendered_ids.borrow().as_slice() != rendered_ids.as_slice();
+        if needs_refresh {
+            while let Some(child) = self.selection_thumbnails.first_child() {
+                self.selection_thumbnails.remove(&child);
+            }
+            for photo in photos {
+                let button = gtk::Button::new();
+                button.add_css_class("infobar-selected-thumb");
+                button.set_tooltip_text(Some(&format!("Deselect {}", photo.filename())));
+                let thumbnail = gtk::Image::new();
+                thumbnail.set_pixel_size(38);
+                thumbnail.set_size_request(38, 38);
+                // GtkImage::pixel-size applies to icons, not file pixbufs.
+                // Decode at display size to preserve the InfoBar height.
+                let pixbuf = photo.cached_thumbnail_path()
+                    .filter(|path| Path::new(path).is_file())
+                    .and_then(|path| gdk_pixbuf::Pixbuf::from_file_at_scale(path, 38, 38, true).ok());
+                if let Some(pixbuf) = pixbuf {
+                    thumbnail.set_from_pixbuf(Some(&pixbuf));
+                } else {
+                    thumbnail.set_icon_name(Some("image-x-generic-symbolic"));
+                }
+                button.set_child(Some(&thumbnail));
+                let id = photo.id();
+                let remove = self.selection_remove.clone();
+                button.connect_clicked(move |_| {
+                    if let Some(remove) = remove.borrow().as_ref() {
+                        remove(id);
+                    }
+                });
+                self.selection_thumbnails.append(&button);
+            }
+            *self.selection_rendered_ids.borrow_mut() = rendered_ids;
+        }
+        self.metadata_stack.set_visible_child_name("selection");
+    }
+
+    pub fn connect_selected_thumbnail_unselect(&self, remove: impl Fn(i64) + 'static) {
+        self.selection_remove.replace(Some(Rc::new(remove)));
+    }
+
+    pub fn show_photo_metadata(&self) {
+        self.metadata_stack.set_visible_child_name("photo");
+        self.selection_controls.set_visible(false);
     }
 
     /// Synchronize a restored section without emitting a user layout change.
@@ -982,6 +1110,43 @@ mod layout_tests {
         assert!(preview.x() >= 16.0, "contents must retain their inset");
         gtk::style_context_remove_provider_for_display(&display, &overlay);
         gtk::style_context_remove_provider_for_display(&display, &base);
+    }
+
+    #[test]
+    #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+    fn selection_count_and_clear_stay_outside_the_thumbnail_scroller() {
+        gtk::init().unwrap();
+        let info = InfoBar::new();
+
+        // A long selection can never push these controls into the scrolling
+        // viewport. They are direct, non-expanding children of the root bar.
+        info.set_selected_photos(40, &[]);
+        assert_eq!(info.selection_count.text().as_str(), "40");
+        assert!(info.selection_controls.is_visible());
+        assert!(info.selection_clear.is_visible());
+        assert_eq!(
+            info.selection_controls.parent().unwrap(),
+            info.root.clone().upcast::<gtk::Widget>()
+        );
+        assert_eq!(
+            info.selection_count.parent().unwrap(),
+            info.selection_controls.clone().upcast::<gtk::Widget>()
+        );
+        assert_eq!(
+            info.selection_clear.parent().unwrap(),
+            info.selection_controls.clone().upcast::<gtk::Widget>()
+        );
+        assert_eq!(info.metadata_stack.visible_child_name().as_deref(), Some("selection"));
+
+        // Viewer/single selection restores photo metadata and frees the room.
+        info.show_photo_metadata();
+        assert!(!info.selection_controls.is_visible());
+        info.set_selected_photos(2, &[]);
+        assert_eq!(info.selection_count.text().as_str(), "2");
+        assert!(info.selection_controls.is_visible());
+        info.set_selected_photos(1, &[]);
+        assert!(!info.selection_controls.is_visible());
+        assert_eq!(info.metadata_stack.visible_child_name().as_deref(), Some("photo"));
     }
 }
 

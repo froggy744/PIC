@@ -124,3 +124,22 @@ popover.sidebar-section-tooltip-menu button.sidebar-section-tooltip-item:active 
 .welcome-camera { -gtk-icon-shadow: 0 2px 4px rgba(0, 0, 0, 0.24); }
 
 .photo-info-bar separator.infobar-group-separator { min-width: 1px; background: alpha(@theme_fg_color, 0.14); }
+
+/* The bottom InfoBar changes content for multi-photo selection, not height. */
+.infobar-selection-mode { min-height: 44px; }
+.infobar-selection-count { font-weight: 700; font-size: 12px; }
+button.infobar-selected-thumb {
+  min-width: 40px;
+  min-height: 40px;
+  padding: 1px;
+  border-radius: 5px;
+  background: alpha(@theme_fg_color, 0.07);
+}
+button.infobar-selected-thumb image {
+  min-width: 38px;
+  min-height: 38px;
+  border-radius: 4px;
+}
+button.infobar-selected-thumb:hover {
+  outline: 2px solid alpha(@accent_bg_color, 0.65);
+}

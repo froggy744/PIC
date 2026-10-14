@@ -14,8 +14,8 @@ class NetworkPaths(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             base = Path(temp)
             repo = base / 'checkout with spaces'
-            (repo / 'scripts').mkdir(parents=True)
-            for name in ('scripts/test-shares.sh', 'scripts/pic-smb-probe.c', 'pic-nfs-probe.c'):
+            (repo / 'scripts/diagnostics').mkdir(parents=True)
+            for name in ('scripts/test-shares.sh', 'scripts/diagnostics/pic-smb-probe.c', 'scripts/diagnostics/pic-nfs-probe.c'):
                 shutil.copy2(ROOT / name, repo / name)
             tools = base / 'tools'
             tools.mkdir()

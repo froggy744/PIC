@@ -25,12 +25,18 @@ const SHUFFLE_TILES_KEY: &str = "screensaver-shuffle-tiles";
 const MOSAIC_TILES_KEY: &str = "screensaver-mosaic-tiles";
 const PICASA_TRANSITION_KEY: &str = "screensaver-picasa-transition";
 const DEFAULT_MOSAIC_TILES: usize = 6;
+/// Largest count with hand-placed layouts in print_rect(); beyond these the
+/// prints are scattered over a computed grid so any tile count works.
 const PICTURE_PILE_SLOTS: usize = 5;
 const FLOATING_SLOTS: usize = 6;
+/// Picture Pile / Floating Prints are painted with shadows every frame, so the
+/// user-chosen tile count is capped (walls have no such cap).
+const PRINT_MAX_SLOTS: usize = 64;
 const TRANSITION_KEY: &str = "screensaver-transition-ms";
 const CAPTION_KEY: &str = "screensaver-captions";
 const CLOCK_KEY: &str = "screensaver-clock";
 const PREFETCH: usize = 3;
+const HQ_PATIENCE: Duration = Duration::from_secs(3);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Style { Mosaic, Grid, PicturePile, Floating, IPhoto, Fade, Surprise }
@@ -66,7 +72,9 @@ impl Style {
         Self::CHOICES[random_seed() as usize % (Self::CHOICES.len() - 1)]
     }
     fn single_photo(self) -> bool { matches!(self, Self::IPhoto | Self::Fade) }
-    fn configurable_tiles(self) -> bool { matches!(self, Self::Mosaic | Self::Grid | Self::Surprise) }
+    fn configurable_tiles(self) -> bool {
+        matches!(self, Self::Mosaic | Self::Grid | Self::PicturePile | Self::Floating | Self::Surprise)
+    }
     fn label(self) -> &'static str {
         match self {
             Self::Mosaic => "Mosaic",
@@ -526,7 +534,9 @@ pub fn open(parent: &adw::ApplicationWindow, connection: Rc<RefCell<Connection>>
     mosaic_tiles.set_text(&current.mosaic_tiles.to_string());
     mosaic_tiles.set_width_chars(8);
     mosaic_tiles.set_input_purpose(gtk::InputPurpose::Digits);
-    mosaic_tiles.set_tooltip_text(Some("Positive whole number of square mosaic tiles"));
+    mosaic_tiles.set_tooltip_text(Some(
+        "Positive whole number of photos on screen (Picture Pile and Floating Prints: up to 64)"
+    ));
 
     let shuffle_tiles_button = gtk::CheckButton::with_label("Shuffle tiles");
     shuffle_tiles_button.set_active(current.shuffle_tiles);
@@ -575,7 +585,7 @@ pub fn open(parent: &adw::ApplicationWindow, connection: Rc<RefCell<Connection>>
     duration_group.append(&duration);
     let tiles_group = gtk::Box::new(gtk::Orientation::Horizontal, 7);
     tiles_group.set_hexpand(true);
-    let tiles_label = gtk::Label::new(Some("Mosaic tiles"));
+    let tiles_label = gtk::Label::new(Some("Tiles"));
     tiles_group.append(&tiles_label);
     mosaic_tiles.set_hexpand(true);
     tiles_group.append(&mosaic_tiles);
@@ -652,7 +662,7 @@ pub fn open(parent: &adw::ApplicationWindow, connection: Rc<RefCell<Connection>>
         let requested_tiles = match mosaic_tiles.text().trim().parse::<usize>() {
             Ok(count) if count > 0 => count,
             _ => {
-                notice.set_text("Mosaic tiles must be a positive whole number.");
+                notice.set_text("Tiles must be a positive whole number.");
                 notice.set_visible(true);
                 return;
             }
@@ -773,7 +783,13 @@ fn start_decode_worker(
                             else { 48 };
                         (edge, edge)
                     }
-                    Style::PicturePile => (1920, 1280),
+                    Style::PicturePile | Style::Floating => {
+                        // Prints are small when there are many of them.
+                        if mosaic_tiles <= 6 { (1920, 1280) }
+                        else if mosaic_tiles <= 16 { (1280, 860) }
+                        else if mosaic_tiles <= 36 { (960, 640) }
+                        else { (640, 430) }
+                    }
                     _ => (2560, 1600),
                 };
                 let started = Instant::now();
@@ -866,8 +882,7 @@ impl Player {
     fn new(style: Style, count: usize, seconds: u32, shuffle_tiles: bool, mosaic_tiles: usize) -> Self {
         let desired_slots = match style {
             Style::Mosaic | Style::Grid => mosaic_tiles.max(1),
-            Style::PicturePile => PICTURE_PILE_SLOTS,
-            Style::Floating => FLOATING_SLOTS,
+            Style::PicturePile | Style::Floating => mosaic_tiles.clamp(1, PRINT_MAX_SLOTS),
             _ => 0,
         };
         let slots = (0..desired_slots.min(count)).collect::<Vec<_>>();
@@ -1026,8 +1041,17 @@ impl Player {
             // Clearing it here requeues the same network RAW every frame.
         }
     }
-        fn available(&self, index: usize) -> bool {
+    fn available(&self, index: usize) -> bool {
         self.frames.contains_key(&index)
+    }
+    /// May `index` replace a tile now? Walls and prints wait for the original
+    /// (or its definitive failure) so a tile never changes sharpness after it
+    /// appears; if the original is slow they fall back to the preview.
+    fn ready(&self, index: usize) -> bool {
+        let Some(frame) = self.frames.get(&index) else { return false };
+        frame.high_quality
+            || !self.requested.contains(&index)
+            || self.elapsed() > self.interval + HQ_PATIENCE
     }
     fn update(&mut self, tx: &Sender<usize>) {
         // Do not keep an obsolete outgoing image/slot alive after its fade.
@@ -1070,7 +1094,7 @@ impl Player {
                     self.next = (index + 1) % self.count;
                     continue;
                 }
-                if self.available(index) {
+                if self.ready(index) {
                     let step = self.changes % self.tile_order.len().max(1);
                     if self.shuffle_tiles && step == 0 && self.changes > 0 {
                         // Refresh the permutation only after a complete pass:
@@ -1284,7 +1308,7 @@ fn start_screensaver(parent: &adw::ApplicationWindow, slides: Vec<Slide>, prefs:
     // rate. A 50ms GLib timer was limited to ~20fps and caused visible steps.
     // The callback is owned by the fullscreen widget and naturally stops
     // when that widget is no longer being presented.
-    screen.add_tick_callback(move |_, _| {
+    screen.add_tick_callback(move |_, frame_clock| {
         if cancelled.load(Ordering::Relaxed) {
             return glib::ControlFlow::Break;
         }
@@ -1301,7 +1325,7 @@ fn start_screensaver(parent: &adw::ApplicationWindow, slides: Vec<Slide>, prefs:
                 }
             }
             player.update(&request_tx);
-            stage.borrow_mut().sync(&player);
+            stage.borrow_mut().sync(&player, frame_clock.frame_time());
             if prefs.clock {
                 let minute = SystemTime::now().duration_since(UNIX_EPOCH)
                     .unwrap_or_default().as_secs() / 60;
@@ -1512,6 +1536,28 @@ mod tests {
     }
 
     #[test]
+    fn picture_pile_waits_for_the_original_but_not_forever() {
+        let mut pile = Player::new(Style::PicturePile, 20, 3, false, 6);
+        let (tx, _rx) = mpsc::channel();
+        pile.request(7, &tx);
+        pile.receive(ImageResult { index: 7, high_quality: false, pixels: Some(Pixels { width: 1, height: 1, data: vec![0; 4] }) });
+        assert!(pile.available(7) && !pile.ready(7), "preview only: still waiting for the original");
+        pile.switched_at -= Duration::from_secs(7);
+        assert!(pile.ready(7), "slow original: fall back to the preview");
+        pile.switched_at = Instant::now();
+        pile.receive(ImageResult { index: 7, high_quality: false, pixels: None });
+        pile.receive(ImageResult { index: 7, high_quality: true, pixels: None });
+        assert!(pile.ready(7), "original failed for good: the preview is final");
+        let mosaic = {
+            let mut m = Player::new(Style::Mosaic, 20, 3, false, 6);
+            m.request(7, &tx);
+            m.receive(ImageResult { index: 7, high_quality: false, pixels: Some(Pixels { width: 1, height: 1, data: vec![0; 4] }) });
+            m
+        };
+        assert!(!mosaic.ready(7), "walls wait for the original too");
+    }
+
+    #[test]
     fn shuffle_preserves_items() {
         let mut values: Vec<usize> = (0..100).collect();
         shuffle(&mut values);
@@ -1592,7 +1638,7 @@ mod tests {
         let shuffled = Player::new(Style::PicturePile, 20, 3, true, DEFAULT_MOSAIC_TILES);
         let mut positions = shuffled.tile_order.clone();
         positions.sort_unstable();
-        assert_eq!(positions, (0..PICTURE_PILE_SLOTS).collect::<Vec<_>>());
+        assert_eq!(positions, (0..DEFAULT_MOSAIC_TILES).collect::<Vec<_>>());
     }
 
     #[test]
@@ -1620,16 +1666,18 @@ mod tests {
             assert_eq!(mosaic.next, n);
             assert_eq!(mosaic.tile_order.len(), n);
             let pile = Player::new(Style::PicturePile, 100, 5, true, n);
-            assert_eq!(pile.slots.len(), PICTURE_PILE_SLOTS);
+            assert_eq!(pile.slots.len(), n.clamp(1, PRINT_MAX_SLOTS));
         }
         let few = Player::new(Style::Mosaic, 3, 5, false, 30);
         assert_eq!(few.slots.len(), 3);
         assert_eq!(few.next, 3);
         assert_eq!(Player::new(Style::Mosaic, 100, 5, false, 1).slots.len(), 1);
         assert_eq!(Player::new(Style::Grid, 200, 5, false, 12).slots.len(), 12);
-        assert_eq!(Player::new(Style::Floating, 200, 5, false, 12).slots.len(), FLOATING_SLOTS);
+        assert_eq!(Player::new(Style::Floating, 200, 5, false, 12).slots.len(), 12);
+        assert_eq!(Player::new(Style::Floating, 200, 5, false, 5000).slots.len(), PRINT_MAX_SLOTS);
         assert!(Player::new(Style::Fade, 200, 5, false, 12).slots.is_empty());
-        assert_eq!(Player::new(Style::PicturePile, 200, 5, false, 12).slots.len(), PICTURE_PILE_SLOTS);
+        assert_eq!(Player::new(Style::PicturePile, 200, 5, false, 12).slots.len(), 12);
+        assert_eq!(Player::new(Style::PicturePile, 3, 5, false, 12).slots.len(), 3);
         assert_eq!(Player::new(Style::Mosaic, 2000, 5, false, 1500).slots.len(), 1500);
         assert_eq!(Player::new(Style::Mosaic, 100, 5, false, usize::MAX).slots.len(), 100);
     }

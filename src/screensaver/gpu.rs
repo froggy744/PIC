@@ -3,17 +3,18 @@
 //! paintables and animates opacity/geometry, never repainting pixels in Cairo.
 use super::*;
 
+mod pile;
+use pile::Pile;
+
 // 60 steps with per-frame CSS transform interpolation gives a smooth
 // GSK-composited flip without creating new thumbnails or touching the layout.
 const FLIP_STEPS: usize = 60;
 const KEN_STEPS: usize = 240;
-const FLOAT_STEPS: usize = 120;
 const PILE_TILT: [f64; 6] = [-2.0, 1.4, -1.4, 2.0, -1.8, 1.8];
 const FLOATING_TILT: [f64; 6] = [-0.8, 0.6, -0.6, 0.8, -0.5, 0.5];
 const FLOATING_DRIFT_X: f64 = 3.0;
 const FLOATING_DRIFT_Y: f64 = 2.5;
 const FLOATING_TILT_SWAY: f64 = 0.25;
-const PILE_ZOOM_STEPS: usize = 120;
 
 fn base_tilt(style: Style, slot: usize) -> f64 {
     match style {
@@ -21,18 +22,6 @@ fn base_tilt(style: Style, slot: usize) -> f64 {
         Style::Floating => FLOATING_TILT[slot % FLOATING_TILT.len()],
         _ => 0.0,
     }
-}
-
-fn pile_fade_scale(progress: f64) -> f64 {
-    1.03 - 0.03 * smootherstep(progress)
-}
-
-fn raise_to_top(root: &gtk::Fixed, child: &impl IsA<gtk::Widget>) {
-    // Reorder the existing GtkFixed child without detaching it. Removing and
-    // putting it back interrupts allocation while the replacement is fading.
-    let (x, y) = root.child_position(child);
-    child.insert_before(root, None::<&gtk::Widget>);
-    root.move_(child, x, y);
 }
 
 fn present(picture: &gtk::Picture, slot: &mut Option<(usize, u64)>,
@@ -56,8 +45,6 @@ struct Tile {
     back_version: Option<(usize, u64)>,
     front_version: Option<(usize, u64)>,
     flip_step: Option<usize>,
-    drift_step: Option<(usize, usize)>,
-    pile_zoom_step: Option<usize>,
 }
 impl Tile {
     fn new(cover_photo: bool) -> Self {
@@ -86,7 +73,6 @@ impl Tile {
         Self {
             frame, content, back, front,
             back_version: None, front_version: None, flip_step: None,
-            drift_step: None, pile_zoom_step: None,
         }
     }
     fn clear_incoming(&mut self) {
@@ -105,38 +91,11 @@ impl Tile {
         }
         self.flip_step = step;
     }
-    fn set_pile_zoom_step(&mut self, step: Option<usize>) {
-        if self.pile_zoom_step == step { return; }
-        if let Some(old) = self.pile_zoom_step {
-            self.content.remove_css_class(&format!("screensaver-pile-zoom-{old}"));
-        }
-        if let Some(new) = step {
-            self.content.add_css_class(&format!("screensaver-pile-zoom-{new}"));
-        }
-        self.pile_zoom_step = step;
-    }
-    fn drift(&mut self, slot: usize, phase: f64, floating: bool) {
-        let direction = slot % 6;
-        let step = (phase.clamp(0.0, 1.0) * FLOAT_STEPS as f64).round() as usize;
-        if self.drift_step == Some((direction, step)) { return; }
-        if let Some((old_dir, old_step)) = self.drift_step {
-            self.frame.remove_css_class(&format!("screensaver-float-{old_dir}-{old_step}"));
-        }
-        // Only Floating Prints drift. A resting scrapbook stays legible.
-        if floating {
-            self.frame.add_css_class(&format!("screensaver-float-{direction}-{step}"));
-            self.drift_step = Some((direction, step));
-        }
-    }
     fn sync(&mut self, new_id: usize, old: Option<usize>, progress: f64,
-        player: &Player, transition: PicasaTransition, pile_fade_zoom: bool)
+        player: &Player, transition: PicasaTransition)
     {
         let fade = progress.clamp(0.0, 1.0);
         let changing = old.filter(|old| *old != new_id && fade < 1.0);
-        let zoom_step = (pile_fade_zoom && changing.is_some()).then(|| {
-            (fade * PILE_ZOOM_STEPS as f64).round() as usize
-        });
-        self.set_pile_zoom_step(zoom_step);
         match (transition, changing) {
             (PicasaTransition::Crossfade, Some(outgoing)) => {
                 self.set_flip_step(None);
@@ -388,6 +347,44 @@ impl ChangingGrid {
     }
 }
 
+/// Layout for any number of prints beyond the hand-placed ones: a grid chosen
+/// to match the screen, every row centred, each print fitted into its cell by
+/// its own aspect ratio. Picture Pile prints are slightly irregular and
+/// overlap a little like a scrapbook; Floating Prints keep clear gaps.
+fn scatter_rect(
+    style: Style, slot: usize, count: usize, image_aspect: f64, width: f64, height: f64,
+) -> (f64, f64, f64, f64) {
+    let ratio = image_aspect.clamp(0.60, 2.0);
+    let margin = (width.min(height) * 0.035).max(16.0);
+    let (area_w, area_h) = ((width - 2.0 * margin).max(1.0), (height - 2.0 * margin).max(1.0));
+    let ideal = ((count as f64 * area_w / area_h).sqrt().round() as usize).clamp(1, count);
+    let mut best = (f64::INFINITY, ideal, count.div_ceil(ideal));
+    for cols in ideal.saturating_sub(3).max(1)..=(ideal + 3).min(count) {
+        let rows = count.div_ceil(cols);
+        let cell_aspect = (area_w / cols as f64) / (area_h / rows as f64);
+        let empty = (cols * rows - count) as f64 / count as f64;
+        let penalty = empty * 6.0 + (cell_aspect / 1.4).ln().abs();
+        if penalty < best.0 { best = (penalty, cols, rows); }
+    }
+    let (_, cols, rows) = best;
+    let (row, col) = (slot / cols, slot % cols);
+    let in_row = (count - row * cols).min(cols);
+    let (cell_w, cell_h) = (area_w / cols as f64, area_h / rows as f64);
+    let left = margin + (area_w - in_row as f64 * cell_w) * 0.5;
+    let pile = style == Style::PicturePile;
+    let fill = if pile { 0.96 } else { 0.84 };
+    let hash = (slot as u64).wrapping_add(1).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    let unit = |shift: u32| ((hash >> shift) % 1000) as f64 / 1000.0 - 0.5;
+    let wiggle = if pile { 0.10 } else { 0.0 };
+    let cx = left + (col as f64 + 0.5) * cell_w + unit(20) * wiggle * cell_w;
+    let cy = margin + (row as f64 + 0.5) * cell_h + unit(40) * wiggle * cell_h;
+    let tile_w = (cell_w * fill).min(cell_h * fill * ratio);
+    let tile_h = tile_w / ratio;
+    let x = (cx - tile_w * 0.5).clamp(margin, (width - tile_w - margin).max(margin));
+    let y = (cy - tile_h * 0.5).clamp(margin, (height - tile_h - margin).max(margin));
+    (x, y, tile_w, tile_h)
+}
+
 /// Return a postcard size that follows the image orientation, not a
 /// landscape-only rectangle. Oversized white margins with portrait photos
 /// were caused by fitting a tall image in a fixed wide GTK Picture.
@@ -395,6 +392,13 @@ fn print_rect(
     style: Style, slot: usize, count: usize, image_aspect: f64,
     width: f64, height: f64,
 ) -> (f64, f64, f64, f64) {
+    if count > match style {
+        Style::PicturePile => PICTURE_PILE_SLOTS,
+        Style::Floating => FLOATING_SLOTS,
+        _ => usize::MAX,
+    } {
+        return scatter_rect(style, slot, count, image_aspect, width, height);
+    }
     let landscape = width >= height;
     let ratio = image_aspect.clamp(0.60, 2.0);
     let (cx, cy) = if count <= 1 {
@@ -492,6 +496,7 @@ pub(super) struct Stage {
     tiles: Vec<Tile>,
     desired_tiles: usize,
     cinema: Option<Cinema>,
+    pile: Option<Pile>,
     trace: bool,
     traced_change: Option<usize>,
     traced_settle: Option<usize>,
@@ -515,13 +520,20 @@ impl Stage {
         // Avoid blocking GTK with the creation of thousands of overlays
         // before the fullscreen surface appears. Additional square tiles are
         // materialised in small frame-clock batches.
-        let desired_tiles = if style.single_photo() { 0 } else { count };
+        // Picture Pile and Floating Prints paint themselves in one custom
+        // widget (see pile.rs).
+        let pile = matches!(style, Style::PicturePile | Style::Floating).then(|| {
+            let pile = Pile::new(count, transition, style);
+            root.put(&pile.canvas, 0.0, 0.0);
+            pile
+        });
+        let desired_tiles = if style.single_photo() || pile.is_some() { 0 } else { count };
         let trace = std::env::var("PIC_SCREENSAVER_TRACE").is_ok_and(|v| v == "1");
         if trace {
             eprintln!("PIC_SCREEN init style={style:?} transition={transition:?} count={count}");
         }
         Self {
-            root, style, transition, tiles: Vec::new(), desired_tiles, cinema,
+            root, style, transition, tiles: Vec::new(), desired_tiles, cinema, pile,
             trace, traced_change: None, traced_settle: None, last_tick: None,
             synced_revision: None, synced_geometry: None,
             active_tile: None, synced_change: None,
@@ -531,16 +543,10 @@ impl Stage {
         let slot = self.tiles.len();
         if slot >= self.desired_tiles { return; }
         let tile = Tile::new(true);
-        if self.style == Style::PicturePile {
-            tile.frame.add_css_class("screensaver-print");
-            tile.frame.add_css_class(&format!("screensaver-angle-{slot}"));
-        } else if self.style == Style::Floating {
-            tile.frame.add_css_class("screensaver-floating");
-        }
         self.root.put(&tile.frame, 0.0, 0.0);
         self.tiles.push(tile);
     }
-    pub fn sync(&mut self, player: &Player) {
+    pub fn sync(&mut self, player: &Player, frame_time: i64) {
         if self.trace {
             let now = Instant::now();
             if let Some(previous) = self.last_tick {
@@ -577,6 +583,10 @@ impl Stage {
             cinema.sync(&self.root, player, w, h, self.style == Style::IPhoto);
             return;
         }
+        if let Some(pile) = self.pile.as_mut() {
+            pile.sync(player, w, h, frame_time);
+            return;
+        }
         let pending = self.desired_tiles.saturating_sub(self.tiles.len());
         for _ in 0..pending.min(48) {
             self.add_tile();
@@ -592,7 +602,6 @@ impl Stage {
         if !full_refresh && !change_pending
             && active_tile.is_none() && previous_active.is_none()
         {
-            self.animate_floating(player);
             return;
         }
         self.synced_revision = Some(player.next_revision);
@@ -632,28 +641,7 @@ impl Stage {
             }
             let old = player.fading_slot
                 .and_then(|(change_slot, old)| (change_slot == slot).then_some(old));
-            tile.sync(
-                new_id, old, fade, player, self.transition,
-                self.style == Style::PicturePile
-                    && self.transition == PicasaTransition::Crossfade,
-            );
-            if change_pending && active_tile == Some(slot)
-                && self.style == Style::PicturePile
-            {
-                // Move the newly replaced print to the top of the stack.
-                // Without this, lower cards remain invisible behind others.
-                raise_to_top(&self.root, &tile.frame);
-            }
-        }
-        self.animate_floating(player);
-    }
-    fn animate_floating(&mut self, player: &Player) {
-        if self.style != Style::Floating { return; }
-        let seconds = player.interval.as_secs_f64().max(1.0);
-        let time = player.elapsed().as_secs_f64();
-        for (index, tile) in self.tiles.iter_mut().enumerate() {
-            let phase = ((time / seconds) + index as f64 / 6.0).fract();
-            tile.drift(index, phase, true);
+            tile.sync(new_id, old, fade, player, self.transition);
         }
     }
 }
@@ -665,19 +653,6 @@ pub(super) fn install_css() {
           .screensaver-stage { background-color: #090b10; }
           .screensaver-cinema-frame { background-color: #090b10; }
           .screensaver-card { background-color: #171b21; }
-          .screensaver-print {
-            background-color: transparent;
-            border: none;
-            padding: 0;
-            box-shadow: 0 8px 22px rgba(0,0,0,0.36);
-          }
-          .screensaver-floating {
-            background-color: transparent;
-            border: 1px solid rgba(255,255,255,0.08);
-            border-radius: 3px;
-            padding: 1px;
-            box-shadow: 0 8px 20px rgba(0,0,0,0.28);
-          }
           .screensaver-caption {
             background-color: rgba(0,0,0,0.64);
             color: white;
@@ -697,20 +672,6 @@ pub(super) fn install_css() {
           }
           .screensaver-card > overlay { transform-origin: 50% 50%; }
         "#);
-        for slot in 0..PILE_TILT.len() {
-            css.push_str(&format!(
-                ".screensaver-angle-{slot} {{ transform: rotate({:.2}deg); }}\n",
-                base_tilt(Style::PicturePile, slot),
-            ));
-        }
-        // The current tile geometry is ready before the fade. Settle a clipped
-        // 3% overscan to the final fit while the incoming image becomes opaque.
-        for step in 0..=PILE_ZOOM_STEPS {
-            let scale = pile_fade_scale(step as f64 / PILE_ZOOM_STEPS as f64);
-            css.push_str(&format!(
-                ".screensaver-pile-zoom-{step} {{ transform: scale({scale:.6}); }}\n"
-            ));
-        }
         // Precompile quantised compositor transforms once, never reparse
         // a CSS stylesheet in the frame clock.
         for step in 0..=FLIP_STEPS {
@@ -718,20 +679,6 @@ pub(super) fn install_css() {
             css.push_str(&format!(
                 ".screensaver-flip-{step} {{ transform: scaleX({factor:.6}); }}\n"
             ));
-        }
-        // Each floating print oscillates gently around its gallery position.
-        // All transform values are CSS pixels, not percentages.
-        for direction in 0..6 {
-            for step in 0..=FLOAT_STEPS {
-                let t = step as f64 / FLOAT_STEPS as f64;
-                let x = FLOATING_DRIFT_X * (std::f64::consts::TAU * t).sin();
-                let y = FLOATING_DRIFT_Y * (std::f64::consts::TAU * t).cos();
-                let angle = base_tilt(Style::Floating, direction)
-                    + FLOATING_TILT_SWAY * (std::f64::consts::TAU * t).sin();
-                css.push_str(&format!(
-                    ".screensaver-float-{direction}-{step} {{ transform-origin: 50% 50%; transform: translate({x:.3}px, {y:.3}px) rotate({angle:.3}deg); }}\n"
-                ));
-            }
         }
         // GTK4's CSS transform parser rejects percentage translate() values.
         // Use compositor-only pixel pans and a smooth push-in. The fixed
@@ -754,37 +701,6 @@ pub(super) fn install_css() {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
-    fn raising_a_print_preserves_its_parent_and_position() {
-        libadwaita::init().unwrap();
-        let root = gtk::Fixed::new();
-        let print = gtk::Overlay::new();
-        let other = gtk::Overlay::new();
-        root.put(&print, 37.0, 51.0);
-        root.put(&other, 90.0, 110.0);
-        let window = gtk::Window::builder()
-            .default_width(240)
-            .default_height(200)
-            .child(&root)
-            .build();
-        window.present();
-        while glib::MainContext::default().pending() {
-            glib::MainContext::default().iteration(false);
-        }
-        let parent_changes = Rc::new(Cell::new(0));
-        let changes = parent_changes.clone();
-        print.connect_parent_notify(move |_| changes.set(changes.get() + 1));
-        assert_eq!(root.child_position(&print), (37.0, 51.0));
-
-        raise_to_top(&root, &print);
-
-        assert_eq!(parent_changes.get(), 0, "raising a print must not detach it");
-        assert_eq!(print.parent().as_ref(), Some(&root.clone().upcast()));
-        assert_eq!(root.child_position(&print), (37.0, 51.0));
-        assert_eq!(root.last_child().as_ref(), Some(&print.clone().upcast()));
-    }
 
     #[test]
     fn grid_bounds_all_counts_and_aspects() {
@@ -873,17 +789,6 @@ mod tests {
         assert!(pile_max > floating_max);
         assert!(floating_max < 1.1);
         assert!(FLOATING_DRIFT_X < 4.0 && FLOATING_DRIFT_Y < 4.0);
-    }
-
-    #[test]
-    fn picture_pile_fade_settles_from_103_percent_to_full_fit() {
-        assert!((pile_fade_scale(0.0) - 1.03).abs() < 1e-8);
-        assert!((pile_fade_scale(1.0) - 1.0).abs() < 1e-8);
-        let scales: Vec<_> = (0..=PILE_ZOOM_STEPS)
-            .map(|step| pile_fade_scale(step as f64 / PILE_ZOOM_STEPS as f64))
-            .collect();
-        assert!(scales.windows(2).all(|pair| pair[0] >= pair[1]));
-        assert!(scales.iter().all(|scale| (1.0..=1.03).contains(scale)));
     }
 
     #[test]

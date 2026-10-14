@@ -30,3 +30,5 @@ jobs:
         run: cargo check --locked
       - name: Run Rust regression tests
         run: cargo test --locked -- --test-threads=1
+      - name: Verify pinned InfoBar selection controls
+        run: xvfb-run -a env GSK_RENDERER=cairo cargo test --locked selection_count_and_clear_stay_outside_the_thumbnail_scroller -- --ignored --test-threads=1

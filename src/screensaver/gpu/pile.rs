@@ -37,6 +37,7 @@ const PILE_BORDER: f64 = 0.0085;
 /// A newly placed print starts this much larger (as if held above the table).
 pub(super) const PILE_LAND_SCALE: f64 = 1.04;
 /// ...and this many degrees off its resting angle.
+#[cfg(test)]
 pub(super) const PILE_LAND_TURN: f64 = 1.1;
 /// Initial photos drop in one after another instead of all at once.
 const PILE_STAGGER: f64 = 0.16;
@@ -70,6 +71,7 @@ pub(super) struct Pose {
     /// 1.0 = held above the table (soft, far shadow), 0.0 = lying flat.
     pub lift: f64,
 }
+#[cfg(test)]
 pub(super) fn landing_pose(progress: f64, direction: f64) -> Pose {
     landing_pose_with(progress, direction, PILE_LAND_SCALE, PILE_LAND_TURN)
 }
@@ -120,6 +122,7 @@ pub(super) struct Geometry {
 }
 /// Outer print rectangle (photo + paper border). The photo area keeps the
 /// photograph's own aspect ratio exactly, so nothing is cropped or stretched.
+#[cfg(test)]
 pub(super) fn pile_geometry(slot: usize, count: usize, aspect: f64, width: f64, height: f64)
     -> Geometry
 {
@@ -149,6 +152,7 @@ pub(super) fn print_geometry(
 
 #[derive(Clone, Debug)]
 pub(super) struct DrawCard<T> {
+    #[cfg(test)]
     pub id: usize,
     pub slot: usize,
     pub texture: T,
@@ -205,6 +209,7 @@ pub(super) struct Model<T> {
     dirty: bool,
 }
 impl<T: Clone + Aspect> Model<T> {
+    #[cfg(test)]
     pub fn new(count: usize, mode: PicasaTransition) -> Self {
         Self::with_style(count, mode, Style::PicturePile)
     }
@@ -332,6 +337,7 @@ impl<T: Clone + Aspect> Model<T> {
             (texture.clone(), smootherstep((self.clock - t0) / PILE_UPGRADE_SECS))
         });
         DrawCard {
+            #[cfg(test)]
             id: card.id,
             slot,
             texture: card.texture.clone(),

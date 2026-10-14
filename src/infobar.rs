@@ -111,7 +111,9 @@ impl InfoBar {
         // Keep enough room for a useful filename, but allow the bottom bar to
         // fit restored/narrow windows without pushing action buttons offscreen.
         text.set_width_request(100);
-        text.set_hexpand(true);
+        // Do not consume spare metadata width: the next visible metric should
+        // remain directly beside the filename instead of drifting right.
+        text.set_hexpand(false);
 
         // A small heading above the value keeps the file name grouped with the
         // other labelled metrics (Taken/Camera/Dimensions/Size) instead of
@@ -125,6 +127,7 @@ impl InfoBar {
         let filename = gtk::Label::new(Some("No photo selected"));
         filename.set_xalign(0.0);
         filename.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        filename.set_max_width_chars(32);
         filename.add_css_class("info-title");
         text.append(&filename);
 

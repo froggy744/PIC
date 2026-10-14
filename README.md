@@ -13,9 +13,9 @@ Browse, organise, edit and enjoy your photo collection on **Fedora and Ubuntu**.
 - Browse large collections with **Grid, Photo Wall and Masonry** views.
 - Organise photos with **folders, albums, favourites, ratings and search**.
 - Make **non-destructive edits**, apply filters and export finished photos.
-- Create **collages**, print photos and enjoy the photo viewer and screensaver.
+- Create **collages**, print photos and enjoy the photo viewer and **screensaver**.
 - Import from **cameras, SD cards and local folders**, or browse **SMB/NFS** shares.
-- Keep separate local library databases without moving your originals.
+- Manage **multiple photo databases** and **switch instantly between libraries**, without moving your originals.
 
 ## Download and install
 

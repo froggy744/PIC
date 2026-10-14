@@ -11,6 +11,7 @@ pub struct InfoBar {
     pub root: gtk::Box,
     utilities: gtk::Box,
     preview: gtk::Image,
+    metadata: gtk::Box,
     filename: gtk::Label,
     details: gtk::Box,
     pub favorite: gtk::Button,
@@ -48,9 +49,7 @@ impl InfoBar {
         });
         // Bind to the actual metadata content, not the expandable blank
         // viewport space between metadata and photo action buttons.
-        if let Some(metadata) = self.root.first_child().and_then(|viewport| viewport.first_child()) {
-            metadata.add_controller(gesture);
-        }
+        self.metadata.add_controller(gesture);
     }
 
     pub fn append_utility(&self, button: &gtk::Button) {
@@ -627,6 +626,7 @@ impl InfoBar {
             root,
             utilities,
             preview,
+            metadata,
             filename,
             details,
             favorite,

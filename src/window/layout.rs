@@ -257,6 +257,7 @@
     let initial_folder_order = folder_stream_order(&folders, folder_display_mode);
     gallery.set_folder_catalog(&folders, &initial_folder_order);
 
+    let sidebar_started = Instant::now();
     let sidebar = sidebar::build(
         &folders,
         &albums,
@@ -417,6 +418,7 @@
         },
         sidebar::SidebarVisibility::from_connection(&connection.borrow()),
     );
+    crate::startup_trace::mark("sidebar_widgets_done", Some(sidebar_started));
     {
         let gallery_for_tab = gallery.clone();
         sidebar::set_keyboard_grid_target(

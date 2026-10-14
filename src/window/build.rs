@@ -3,7 +3,32 @@ include!("navigation.rs");
 
 pub fn build(app: &adw::Application, connection: Connection) -> adw::ApplicationWindow {
     let build_started = Instant::now();
+    crate::startup_trace::mark("window_build_start", None);
     let window = adw::ApplicationWindow::new(app);
+    {
+        let first_tick = Rc::new(Cell::new(false));
+        let first_tick_for_map = first_tick.clone();
+        window.connect_map(move |window| {
+            let mapped_at = Instant::now();
+            crate::startup_trace::mark("window_map", crate::startup_trace::present_started());
+            if let Some(surface) = window.surface() {
+                let clock = surface.frame_clock();
+                let painted = Rc::new(Cell::new(false));
+                let painted_once = painted.clone();
+                clock.connect_after_paint(move |_| {
+                    if !painted_once.replace(true) {
+                        crate::startup_trace::mark("first_after_paint", Some(mapped_at));
+                    }
+                });
+            }
+            if !first_tick_for_map.replace(true) {
+                window.add_tick_callback(move |_, _| {
+                    crate::startup_trace::mark("first_frame_tick", Some(mapped_at));
+                    glib::ControlFlow::Break
+                });
+            }
+        });
+    }
     window.set_title(Some("PIC"));
     let connection = Rc::new(RefCell::new(connection));
     let saved_window_width = numeric_setting(&connection.borrow(), WINDOW_WIDTH_SETTING_KEY)
@@ -124,9 +149,10 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         sort_photos(&mut photos, sort.get());
     }
     let startup_photos = Rc::new(photos);
+    crate::startup_trace::mark("database_photos_sorted", Some(build_started));
     eprintln!(
-        "STARTUP cold_start_ms={} photos={} displayed={} folders={} albums={} scan=disabled rss_mb={}",
-        build_started.elapsed().as_millis(),
+        "PIC_STARTUP stage=library_counts elapsed_ms={} duration_ms=0 photos={} displayed={} folders={} albums={} scan=disabled rss_mb={}",
+        crate::startup_trace::elapsed_ms(),
         sidebar_counts.photos,
         startup_photos.len(),
         folders.len(),
@@ -487,6 +513,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         })
     };
 
+    let gallery_started = Instant::now();
     let gallery = Rc::new(grid::Gallery::new(
         &[],
         saved_grid_thumbnail_size.unwrap_or(DEFAULT_GRID_THUMBNAIL_SIZE),
@@ -578,6 +605,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             }
         },
     ));
+    crate::startup_trace::mark("gallery_widgets_done", Some(gallery_started));
     // No stored size (or only the untouched legacy default): adopt the
     // ~4-thumbnails-per-row view level on the first real layout.
     if saved_grid_thumbnail_size.is_none() {
@@ -642,6 +670,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     gallery.set_zoom_animations_enabled(db::zoom_animations_enabled(&connection.borrow()));
     gallery_for_actions.replace(Rc::downgrade(&gallery));
     apply_gallery_grouping(&gallery, filter.get(), sort.get(), group_mode.get(), true);
+    crate::startup_trace::mark("gallery_configured", Some(build_started));
 
     // Reuse the gallery model for the Space shortcut. Re-querying the database
     // and rebuilding the complete library model here blocked the GTK thread.
@@ -1618,6 +1647,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     // search entry) instead of its own row above the grid: appearing or
     // hiding it must never resize the photo grid.
     let refresh_status_box = operation_progress.root().clone();
+    crate::startup_trace::mark("actions_configured", Some(build_started));
     let refresh_status_spinner = operation_progress.spinner().clone();
     let refresh_status_label = operation_progress.label().clone();
     let refresh_status_stop = operation_progress.stop().clone();
@@ -1628,6 +1658,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     // GtkGridView remains the direct scrollable child for every non-Folder
     // view, preserving its existing virtualization and selection behavior.
     grid_scroll.set_child(Some(&gallery.root));
+    crate::startup_trace::mark("grid_scroll_attached", Some(build_started));
 
     let folder_scroll = gtk::ScrolledWindow::new();
     folder_scroll.set_vexpand(true);
@@ -2272,6 +2303,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         }
         glib::ControlFlow::Continue
     });
+    crate::startup_trace::mark("scroll_callbacks_connected", Some(build_started));
 
     {
         let gallery_for_mode = gallery.clone();
@@ -2289,6 +2321,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         });
         restore_section_layout(&connection.borrow(), &gallery, &info, initial_filter);
     }
+    crate::startup_trace::mark("initial_layout_restored", Some(build_started));
 
     let grid_surface = gtk::Box::new(gtk::Orientation::Vertical, 0);
     grid_surface.set_hexpand(true);
@@ -2365,28 +2398,65 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     // Clone for the theme engine: the original is captured by the layout.rs
     // include below.
     let theme_post_apply = album_theme_changed.clone();
-    let albums_home = albums_view::build(
-        if initial_filter == sidebar::SidebarFilter::Library {
-            &[]
-        } else {
-            &albums
-        },
+    let albums_started = Instant::now();
+    crate::startup_trace::mark("albums_widgets_start", None);
+    let open_album: Rc<dyn Fn(i64)> = {
+        let slot = album_home_click_slot.clone();
+        Rc::new(move |album_id| {
+            if let Some(open) = slot.borrow().as_ref() {
+                open(album_id);
+            }
+        })
+    };
+    let albums_home = albums_view::build_deferred(
         connection.clone(),
         grid_thumbnail_size,
-        {
-            let slot = album_home_click_slot.clone();
-            Rc::new(move |album_id| {
-                if let Some(open) = slot.borrow().as_ref() {
-                    open(album_id);
-                }
-            })
-        },
+        open_album.clone(),
         album_theme_changed.clone(),
         {
             let present_settings = present_settings.clone();
             Rc::new(move || present_settings(Some("themes")))
         },
     );
+    crate::startup_trace::mark("albums_widgets_done", Some(albums_started));
+    if initial_filter == sidebar::SidebarFilter::Albums {
+        let albums_home = albums_home.clone();
+        let albums = albums.clone();
+        let connection = connection.clone();
+        let on_album = open_album.clone();
+        let on_appearance_changed = album_theme_changed.clone();
+        let initialized = Rc::new(Cell::new(false));
+        window.connect_map(move |window| {
+            if initialized.replace(true) {
+                return;
+            }
+            if let Some(surface) = window.surface() {
+                let painted = Rc::new(Cell::new(false));
+                let painted_once = painted.clone();
+                let albums_home = albums_home.clone();
+                let albums = albums.clone();
+                let connection = connection.clone();
+                let on_album = on_album.clone();
+                let on_appearance_changed = on_appearance_changed.clone();
+                surface.frame_clock().connect_after_paint(move |_| {
+                    if painted_once.replace(true) {
+                        return;
+                    }
+                    let albums_home = albums_home.clone();
+                    let albums = albums.clone();
+                    let connection = connection.clone();
+                    let on_album = on_album.clone();
+                    let on_appearance_changed = on_appearance_changed.clone();
+                    glib::idle_add_local_once(move || {
+                        let started = Instant::now();
+                        albums_view::refresh(&albums_home, &albums, connection,
+                            grid_thumbnail_size, on_album, on_appearance_changed);
+                        crate::startup_trace::mark("initial_albums_populated", Some(started));
+                    });
+                });
+            }
+        });
+    }
     // Albums home is a separate ScrolledWindow, so it needs the same wheel
     // easing as the photo views. Ctrl+wheel must not zoom the hidden gallery.
     install_smooth_gallery_scroll(&albums_home, gallery.clone(), false);
@@ -2442,6 +2512,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             })
         },
     );
+    crate::startup_trace::mark("library_home_widgets_done", Some(build_started));
     main_stack.add_named(&library_home.root, Some("library"));
     main_stack.set_visible_child_name(if initial_filter == sidebar::SidebarFilter::Library {
         "library"
@@ -3822,6 +3893,7 @@ fn start_photo_export_single(
         print_photos(&window_for_print, &connection_for_print, requests);
     });
 
+    let layout_started = Instant::now();
     let (
         main_split,
         main_surface,
@@ -3833,6 +3905,7 @@ fn start_photo_export_single(
         right_header,
         _search,
     ) = include!("layout.rs");
+    crate::startup_trace::mark("layout_widgets_done", Some(layout_started));
 
     // Window-level photo shortcuts own keys that must work regardless of
     // whether the GridView, sectioned Folder renderer or Lightbox has focus.
@@ -3973,6 +4046,7 @@ fn start_photo_export_single(
     right_column.append(&content);
 
     window.set_content(Some(&main_surface));
+    crate::startup_trace::mark("widget_content_and_signals_done", Some(build_started));
 
     let startup_gallery = gallery.clone();
     let startup_photos_for_idle = startup_photos.clone();
@@ -5648,6 +5722,7 @@ fn start_photo_export_single(
         })
     });
 
+    crate::startup_trace::mark("window_build_done", Some(build_started));
     window
 }
 

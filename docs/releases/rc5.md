@@ -32,6 +32,10 @@ RC5 continues the performance work on **Grid, Photo Wall and Masonry** layouts, 
 
 Viewer controls, transitions and interactions have been refined. The photo overlay rendering path has also been optimised to avoid unnecessary repeated work.
 
+### Rust compiler warning cleanup
+
+The Rust codebase has undergone a compiler-warning cleanup, with outstanding warnings addressed for a cleaner build and easier maintenance.
+
 ### Interface and reliability refinements
 
 - Cleaner toolbars, photo actions and InfoBar presentation.

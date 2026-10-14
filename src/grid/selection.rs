@@ -574,6 +574,25 @@ impl Gallery {
         }
     }
 
+    /// Emit the count of explicitly selected photos in any gallery layout.
+    /// Coalesce large select-all/model rebuild operations into one idle update.
+    pub fn connect_selection_count_changed(&self, changed: impl Fn(usize) + 'static) {
+        let changed = Rc::new(changed);
+        let queued = Rc::new(Cell::new(false));
+        self.selection.connect_selection_changed(move |selection, _, _| {
+            if queued.replace(true) {
+                return;
+            }
+            let selection = selection.clone();
+            let changed = changed.clone();
+            let queued = queued.clone();
+            glib::idle_add_local_once(move || {
+                queued.set(false);
+                changed(selection.selection().size() as usize);
+            });
+        });
+    }
+
     pub fn set_collage_selection_mode(&self, active: bool) {
         self.collage_selection_mode.set(active);
         if !active {

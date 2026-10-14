@@ -14,6 +14,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::Instant;
 
 use anyhow::{Context, Result};
 use image::RgbaImage;
@@ -24,7 +25,70 @@ use super::model::EditRecipe;
 /// Overrides the managed overlay directory. Used by tests.
 pub const OVERLAY_DIR_ENV_VAR: &str = "PIC_OVERLAY_DIR";
 
-const ASSET_CACHE_CAPACITY: usize = 6;
+const ASSET_CACHE_CAPACITY: usize = 12;
+const SCALED_CACHE_CAPACITY: usize = 64;
+
+fn overlay_trace() -> bool {
+    std::env::var("PIC_OVERLAY_TRACE").is_ok_and(|value| value == "1")
+}
+
+type ScaledCache = Mutex<Vec<((String, u32, u32), Arc<RgbaImage>)>>;
+static SCALED_CACHE: OnceLock<ScaledCache> = OnceLock::new();
+fn scaled_cache() -> &'static ScaledCache {
+    SCALED_CACHE.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+fn resize_cached(hash: &str, source: &RgbaImage, width: u32, height: u32) -> Arc<RgbaImage> {
+    let started = Instant::now();
+    let key = (hash.to_owned(), width, height);
+    // Keep the lock until a resize finishes. Otherwise several thumbnail workers
+    // can miss the same key and simultaneously repeat an expensive Lanczos resize.
+    let mut cache = scaled_cache().lock().expect("scaled overlay cache poisoned");
+    if let Some(index) = cache.iter().position(|(entry, _)| entry == &key) {
+        let entry = cache.remove(index);
+        let result = Arc::clone(&entry.1);
+        cache.push(entry);
+        if overlay_trace() {
+            eprintln!("PIC_OVERLAY resize cache=hit size={}x{} elapsed_us={}", width, height, started.elapsed().as_micros());
+        }
+        return result;
+    }
+
+    // Downscaling a large source directly with Lanczos3 repeatedly visits many
+    // source pixels per output pixel. Generate a 2x intermediate using the
+    // thumbnail area sampler, then perform the final high-quality Lanczos step.
+    // Export-quality near-native-size overlays keep the original source.
+    let mut prescale = false;
+    let result = Arc::new(if source.width() == width && source.height() == height {
+        source.clone()
+    } else if source.width() > width.saturating_mul(3)
+        && source.height() > height.saturating_mul(3)
+    {
+        prescale = true;
+        let intermediate = image::imageops::thumbnail(
+            source,
+            width.saturating_mul(2).max(1),
+            height.saturating_mul(2).max(1),
+        );
+        image::imageops::resize(
+            &intermediate,
+            width,
+            height,
+            image::imageops::FilterType::Lanczos3,
+        )
+    } else {
+        image::imageops::resize(source, width, height, image::imageops::FilterType::Lanczos3)
+    });
+    if overlay_trace() {
+        eprintln!("PIC_OVERLAY resize cache=miss size={}x{} prescale={} elapsed_us={}", width, height, prescale, started.elapsed().as_micros());
+    }
+    cache.push((key, Arc::clone(&result)));
+    while cache.len() > SCALED_CACHE_CAPACITY {
+        cache.remove(0);
+    }
+    result
+}
+
 
 type AssetCache = Mutex<Vec<(String, Arc<RgbaImage>)>>;
 
@@ -83,10 +147,14 @@ pub fn prepare_overlay_bytes(
         Ok(image::ImageFormat::Jpeg) => "jpg",
         _ => anyhow::bail!("Only PNG and JPG overlay images are supported"),
     };
+    let started = Instant::now();
     let decoded = image::load_from_memory(bytes).context("could not decode the overlay image")?;
     let (width, height) = (decoded.width(), decoded.height());
     if width == 0 || height == 0 {
         anyhow::bail!("the overlay image is empty");
+    }
+    if overlay_trace() {
+        eprintln!("PIC_OVERLAY import_decode size={}x{} elapsed_us={}", width, height, started.elapsed().as_micros());
     }
     Ok(PreparedOverlay {
         hash: blake3::hash(bytes).to_hex().to_string(),
@@ -196,6 +264,7 @@ pub fn composite_overlays(mut image: RgbaImage, recipe: &EditRecipe) -> RgbaImag
     {
         return image;
     }
+    let started = Instant::now();
     let photo_width = image.width() as f32;
     let photo_height = image.height() as f32;
     for overlay in &recipe.overlays {
@@ -211,7 +280,7 @@ pub fn composite_overlays(mut image: RgbaImage, recipe: &EditRecipe) -> RgbaImag
         };
         let aspect = asset.width() as f32 / asset.height().max(1) as f32;
         let rect = overlay.rect(photo_width, photo_height, aspect);
-        blend_overlay(&mut image, &asset, rect, overlay.opacity);
+        blend_overlay(&mut image, &asset, rect, overlay.opacity, Some(&overlay.asset));
     }
     for layer in &recipe.text_layers {
         if !layer.visible || layer.opacity <= 0.001 {
@@ -228,7 +297,10 @@ pub fn composite_overlays(mut image: RgbaImage, recipe: &EditRecipe) -> RgbaImag
             raster.width() as f32 / photo_width,
             raster.height() as f32 / photo_height,
         );
-        blend_overlay(&mut image, &raster, rect, layer.opacity);
+        blend_overlay(&mut image, &raster, rect, layer.opacity, None);
+    }
+    if overlay_trace() {
+        eprintln!("PIC_OVERLAY composite overlays={} text={} size={}x{} elapsed_us={}", recipe.overlays.len(), recipe.text_layers.len(), image.width(), image.height(), started.elapsed().as_micros());
     }
     image
 }
@@ -240,7 +312,9 @@ fn blend_overlay(
     overlay: &RgbaImage,
     rect: super::model::NormRect,
     opacity: f32,
+    asset_hash: Option<&str>,
 ) {
+    let started = Instant::now();
     let base_width = base.width();
     let base_height = base.height();
     if base_width == 0 || base_height == 0 || rect.width <= 0.0 || rect.height <= 0.0 {
@@ -272,16 +346,13 @@ fn blend_overlay(
     // High-quality resize of the asset to the on-photo size once, then blend.
     let scaled_width = full_w.round().max(1.0) as u32;
     let scaled_height = full_h.round().max(1.0) as u32;
-    let scaled: RgbaImage = if overlay.width() == scaled_width && overlay.height() == scaled_height
-    {
-        overlay.clone()
-    } else {
-        image::imageops::resize(
-            overlay,
-            scaled_width,
-            scaled_height,
-            image::imageops::FilterType::Lanczos3,
-        )
+    let scaled: Arc<RgbaImage> = match asset_hash {
+        Some(hash) => resize_cached(hash, overlay, scaled_width, scaled_height),
+        None => Arc::new(if overlay.width() == scaled_width && overlay.height() == scaled_height {
+            overlay.clone()
+        } else {
+            image::imageops::resize(overlay, scaled_width, scaled_height, image::imageops::FilterType::Lanczos3)
+        }),
     };
 
     let scale_u = scaled.width() as f32 / full_w;
@@ -322,6 +393,9 @@ fn blend_overlay(
                     .clamp(0.0, 255.0) as u8;
             }
         });
+    if overlay_trace() {
+        eprintln!("PIC_OVERLAY blend dest={}x{} elapsed_us={}", x1-x0, y1-y0, started.elapsed().as_micros());
+    }
 }
 
 #[cfg(test)]

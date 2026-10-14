@@ -15,7 +15,7 @@ pub struct InfoBar {
     metadata_stack: gtk::Stack,
     selection_count: gtk::Label,
     selection_thumbnails: gtk::Box,
-    selection_more: gtk::Label,
+    selection_rendered_ids: RefCell<Vec<i64>>,
     selection_remove: Rc<RefCell<Option<Rc<dyn Fn(i64)>>>>,
     pub selection_clear: gtk::Button,
     filename: gtk::Label,
@@ -134,22 +134,26 @@ impl InfoBar {
         selection_panel.set_hexpand(true);
         selection_panel.set_valign(gtk::Align::Center);
         selection_panel.add_css_class("infobar-selection-mode");
-        let selection_count = gtk::Label::new(None);
-        selection_count.add_css_class("infobar-selection-count");
-        selection_count.set_xalign(0.0);
-        selection_count.set_single_line_mode(true);
-        selection_panel.append(&selection_count);
+        // The thumbnail strip owns all available flexible space. The only
+        // selection counter sits at the right, directly beside Clear.
         let selection_thumbnails = gtk::Box::new(gtk::Orientation::Horizontal, 5);
         selection_thumbnails.set_valign(gtk::Align::Center);
+        selection_thumbnails.set_halign(gtk::Align::Start);
         let selection_scroll = gtk::ScrolledWindow::new();
         selection_scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Never);
         selection_scroll.set_propagate_natural_width(false);
         selection_scroll.set_hexpand(true);
+        selection_scroll.set_min_content_width(1);
         selection_scroll.set_child(Some(&selection_thumbnails));
         selection_panel.append(&selection_scroll);
-        let selection_more = gtk::Label::new(None);
-        selection_more.add_css_class("dim-label");
-        selection_panel.append(&selection_more);
+
+        let selection_count = gtk::Label::new(None);
+        selection_count.add_css_class("infobar-selection-count");
+        selection_count.set_xalign(1.0);
+        selection_count.set_single_line_mode(true);
+        selection_count.set_hexpand(false);
+        selection_panel.append(&selection_count);
+
         let selection_clear = gtk::Button::from_icon_name("edit-clear-all-symbolic");
         selection_clear.set_tooltip_text(Some("Clear selected photos"));
         selection_clear.add_css_class("flat");
@@ -671,7 +675,7 @@ impl InfoBar {
             metadata_stack,
             selection_count,
             selection_thumbnails,
-            selection_more,
+            selection_rendered_ids: RefCell::new(Vec::new()),
             selection_remove,
             selection_clear,
             filename,
@@ -699,56 +703,57 @@ impl InfoBar {
         }
     }
 
-    /// The strip deliberately renders only the first few selected photos.
-    /// A +N indicator gives the rest of the count without constructing a huge
-    /// thumbnail list for Ctrl+A on a large library.
+    /// Show a bounded strip of selected photos without reserving a fixed
+    /// six-thumbnail width. GtkScrolledWindow clips to the width left over
+    /// after the toolbar, count and Clear button.
     pub fn set_selected_photos(&self, count: usize, photos: &[PhotoObject]) {
         if count <= 1 {
             self.metadata_stack.set_visible_child_name("photo");
             return;
         }
+
         self.selection_count.set_text(&format!(
-            "{} photos selected",
+            "{} selected",
             crate::window::format_count(count),
         ));
-        while let Some(child) = self.selection_thumbnails.first_child() {
-            self.selection_thumbnails.remove(&child);
-        }
-        for photo in photos.iter().take(6) {
-            let button = gtk::Button::new();
-            button.add_css_class("infobar-selected-thumb");
-            button.set_tooltip_text(Some(&format!("Deselect {}", photo.filename())));
-            let thumbnail = gtk::Image::new();
-            thumbnail.set_pixel_size(38);
-            thumbnail.set_size_request(38, 38);
-            // GtkImage::pixel-size applies to icons, not file pixbufs.
-            // Decode at the display size so a 200px cached thumbnail cannot
-            // increase the InfoBar's requested height or width.
-            let pixbuf = photo.cached_thumbnail_path()
-                .filter(|path| Path::new(path).is_file())
-                .and_then(|path| gdk_pixbuf::Pixbuf::from_file_at_scale(path, 38, 38, true).ok());
-            if let Some(pixbuf) = pixbuf {
-                thumbnail.set_from_pixbuf(Some(&pixbuf));
-            } else {
-                thumbnail.set_icon_name(Some("image-x-generic-symbolic"));
+
+        // A selection of thousands only samples a bounded set of thumbnails.
+        // When that sample has not changed, avoid repeated image decodes and
+        // Gtk widget churn just because the selected count changed.
+        let rendered_ids = photos.iter().map(PhotoObject::id).collect::<Vec<_>>();
+        if *self.selection_rendered_ids.borrow() != rendered_ids {
+            while let Some(child) = self.selection_thumbnails.first_child() {
+                self.selection_thumbnails.remove(&child);
             }
-            button.set_child(Some(&thumbnail));
-            let id = photo.id();
-            let remove = self.selection_remove.clone();
-            button.connect_clicked(move |_| {
-                if let Some(remove) = remove.borrow().as_ref() {
-                    remove(id);
+            for photo in photos {
+                let button = gtk::Button::new();
+                button.add_css_class("infobar-selected-thumb");
+                button.set_tooltip_text(Some(&format!("Deselect {}", photo.filename())));
+                let thumbnail = gtk::Image::new();
+                thumbnail.set_pixel_size(38);
+                thumbnail.set_size_request(38, 38);
+                // GtkImage::pixel-size applies to icons, not file pixbufs.
+                // Decode at display size to preserve the InfoBar height.
+                let pixbuf = photo.cached_thumbnail_path()
+                    .filter(|path| Path::new(path).is_file())
+                    .and_then(|path| gdk_pixbuf::Pixbuf::from_file_at_scale(path, 38, 38, true).ok());
+                if let Some(pixbuf) = pixbuf {
+                    thumbnail.set_from_pixbuf(Some(&pixbuf));
+                } else {
+                    thumbnail.set_icon_name(Some("image-x-generic-symbolic"));
                 }
-            });
-            self.selection_thumbnails.append(&button);
+                button.set_child(Some(&thumbnail));
+                let id = photo.id();
+                let remove = self.selection_remove.clone();
+                button.connect_clicked(move |_| {
+                    if let Some(remove) = remove.borrow().as_ref() {
+                        remove(id);
+                    }
+                });
+                self.selection_thumbnails.append(&button);
+            }
+            *self.selection_rendered_ids.borrow_mut() = rendered_ids;
         }
-        let remaining = count.saturating_sub(photos.len().min(6));
-        self.selection_more.set_text(&if remaining > 0 {
-            format!("+{}", crate::window::format_count(remaining))
-        } else {
-            String::new()
-        });
-        self.selection_more.set_visible(remaining > 0);
         self.metadata_stack.set_visible_child_name("selection");
     }
 

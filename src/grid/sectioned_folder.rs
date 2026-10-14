@@ -145,6 +145,7 @@ struct SectionedFolderView {
     root: gtk::Fixed,
     spacer: gtk::Box,
     current_photos: Rc<RefCell<Vec<PhotoObject>>>,
+    favorite_indicators_visible: Rc<Cell<bool>>,
     group_ranges: Rc<RefCell<Vec<GroupRange>>>,
     selection: gtk::MultiSelection,
     current_columns: Rc<Cell<u32>>,
@@ -194,6 +195,7 @@ struct SectionedFolderView {
 impl SectionedFolderView {
     fn new(
         current_photos: Rc<RefCell<Vec<PhotoObject>>>,
+        favorite_indicators_visible: Rc<Cell<bool>>,
         group_ranges: Rc<RefCell<Vec<GroupRange>>>,
         group_mode: Rc<Cell<GroupMode>>,
         selection: gtk::MultiSelection,
@@ -246,6 +248,7 @@ impl SectionedFolderView {
             root,
             spacer,
             current_photos,
+            favorite_indicators_visible,
             group_ranges,
             selection,
             current_columns,
@@ -933,6 +936,7 @@ impl SectionedFolderView {
                     } else {
                         gtk::ContentFit::Cover
                     });
+                tile.tile.set_favorite_indicator_visible(self.favorite_indicators_visible.get());
                 tile.tile.bind_photo_folder_fast(photo, index as usize);
                 tile.tile
                     .set_manual_selected(self.selection.is_selected(index));

@@ -1919,6 +1919,8 @@ impl Gallery {
     }
 
     pub fn set_favorite_indicators_visible(&self, visible: bool) {
+        // Bind paths also read this value when GTK creates or recycles a tile.
+        self.favorite_indicators_visible.set(visible);
         let mut tiles = Vec::new();
         collect_tiles(self.root.upcast_ref(), &mut tiles);
         collect_tiles(self.folder_root.upcast_ref(), &mut tiles);
@@ -2263,6 +2265,8 @@ impl Gallery {
                 self.selection.unselect_all();
             } else {
                 self.selection.select_item(0, true);
+                // A same-index reorder need not emit selection-changed.
+                (self.selected)(reordered.first().cloned());
             }
             if self.group_mode.get() != GroupMode::None {
                 self.rebuild_group_ranges();
@@ -2292,6 +2296,7 @@ impl Gallery {
             self.selection.unselect_all();
         } else {
             self.selection.select_item(0, true);
+            (self.selected)(objects.first().cloned());
         }
         if self.group_mode.get() != GroupMode::None {
             self.rebuild_group_ranges();
@@ -2520,6 +2525,7 @@ impl Gallery {
                 }
             } else if end >= photos.len() && !objects.is_empty() {
                 selection.select_item(0, true);
+                selected(current_photos.borrow().first().cloned());
             }
             if std::env::var_os("PICASA_TRACE").is_some() {
                 eprintln!("PIC_NAV gallery_replace_batch generation={} applied={} total={} elapsed_ms={}",

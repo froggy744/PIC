@@ -47,6 +47,7 @@ pub struct Gallery {
     tile_width: Rc<Cell<i32>>,
     tile_height: Rc<Cell<i32>>,
     current_photos: Rc<RefCell<Vec<PhotoObject>>>,
+    favorite_indicators_visible: Rc<Cell<bool>>,
     metadata_index: RefCell<metadata_index::CatalogObjectIndex>,
     pending_metadata: Rc<RefCell<HashMap<i64, Photo>>>,
     progressive_group_dirty: Rc<Cell<bool>>,
@@ -203,6 +204,7 @@ impl Gallery {
         group_header.append(&group_count);
 
         let current_photos = Rc::new(RefCell::new(Vec::<PhotoObject>::new()));
+        let favorite_indicators_visible = Rc::new(Cell::new(true));
 
         let factory = gtk::SignalListItemFactory::new();
         let tile_width_for_setup = tile_width.clone();
@@ -229,6 +231,7 @@ impl Gallery {
         let group_ranges = Rc::new(RefCell::new(Vec::new()));
         let sectioned_folder = SectionedFolderView::new(
             current_photos.clone(),
+            favorite_indicators_visible.clone(),
             group_ranges.clone(),
             group_mode.clone(),
             selection.clone(),
@@ -364,7 +367,8 @@ impl Gallery {
             list_item.set_child(Some(&tile));
         });
 
-        factory.connect_bind(|_, object| {
+        let favorite_indicators_for_grid_bind = favorite_indicators_visible.clone();
+        factory.connect_bind(move |_, object| {
             let Some(list_item) = object.downcast_ref::<gtk::ListItem>() else {
                 return;
             };
@@ -377,6 +381,7 @@ impl Gallery {
             tile.imp()
                 .photo_index
                 .set(Some(list_item.position() as usize));
+            tile.set_favorite_indicator_visible(favorite_indicators_for_grid_bind.get());
             tile.bind_photo(&photo);
         });
 
@@ -628,6 +633,7 @@ impl Gallery {
         let unavailable_for_folder_bind = unavailable.clone();
         let selected_ids_for_folder_bind = folder_selected_ids.clone();
         let show_file_names_for_folder_bind = show_file_names.clone();
+        let favorite_indicators_for_folder_bind = favorite_indicators_visible.clone();
 
         folder_factory.connect_bind(move |_, object| {
             let Some(list_item) = object.downcast_ref::<gtk::ListItem>() else {
@@ -773,6 +779,7 @@ impl Gallery {
                             tile_height_for_folder_bind.get(),
                         );
                         if let Some(photo) = row_photos.get(slot) {
+                            tile.set_favorite_indicator_visible(favorite_indicators_for_folder_bind.get());
                             if tile.opacity() != 1.0 {
                                 tile.set_opacity(1.0);
                             }
@@ -886,6 +893,7 @@ impl Gallery {
             tile_width,
             tile_height,
             current_photos,
+            favorite_indicators_visible,
             replace_generation: Rc::new(Cell::new(0)),
             metadata_index: RefCell::new(metadata_index::CatalogObjectIndex::default()),
             pending_metadata: Rc::new(RefCell::new(HashMap::new())),

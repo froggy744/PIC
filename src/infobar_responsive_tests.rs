@@ -314,17 +314,25 @@ fn adaptive_metadata_fills_space_without_constraining_resize() {
             let action_bounds = actions.compute_bounds(&bar.root).unwrap();
             assert!(action_bounds.x() >= 0.0);
             assert!(action_bounds.x() + action_bounds.width() <= bar.root.width() as f32 + 1.0);
-            let last_metadata = if bar.details.get_visible() {
-                bar.details.clone().upcast::<gtk::Widget>()
-            } else {
-                bar.filename.parent().unwrap()
-            };
-            let bounds = last_metadata.compute_bounds(&bar.root).unwrap();
-            let gap = action_bounds.x() - bounds.x() - bounds.width();
-            assert!(
-                (0.0..=20.0).contains(&gap),
-                "unused metadata gap {gap} at {width}"
-            );
+            // Metadata must pack beside the filename, not be pushed against
+            // the right-hand photo actions when there is surplus space.
+            if bar.details.get_visible() && bar.filename.parent().unwrap().get_visible() {
+                let filename_box = bar.filename.parent().unwrap();
+                let name_bounds = filename_box.compute_bounds(&bar.root).unwrap();
+                let mut metric = bar.details.first_child();
+                while let Some(child) = metric {
+                    if child.get_visible() {
+                        let bounds = child.compute_bounds(&bar.root).unwrap();
+                        let gap = bounds.x() - name_bounds.x() - name_bounds.width();
+                        assert!(
+                            (0.0..=24.0).contains(&gap),
+                            "metadata not left-packed: gap {gap} at {width}"
+                        );
+                        break;
+                    }
+                    metric = child.next_sibling();
+                }
+            }
             let mut child = bar.details.first_child();
             let mut previous_right = -1.0;
             let mut previous_y = None;

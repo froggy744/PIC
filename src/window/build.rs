@@ -611,26 +611,39 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     // of drawing a second, floating count on top of the gallery. This observes
     // the same model for Grid, Folder and Photo Wall.
     gallery.connect_selection_preview_changed(6, {
-        let info = info.clone();
-        let lightbox = lightbox.clone();
+        let info = Rc::downgrade(&info);
+        let lightbox = Rc::downgrade(&lightbox);
         move |count, photos| {
-            if !lightbox.root.is_visible() {
-                info.set_selected_photos(count, &photos);
+            if let (Some(info), Some(lightbox)) = (info.upgrade(), lightbox.upgrade()) {
+                if !lightbox.root.is_visible() {
+                    info.set_selected_photos(count, &photos);
+                }
             }
         }
     });
     info.connect_selected_thumbnail_unselect({
-        let gallery = gallery.clone();
-        move |photo_id| gallery.unselect_photo_by_id(photo_id)
+        let gallery = Rc::downgrade(&gallery);
+        move |photo_id| {
+            if let Some(gallery) = gallery.upgrade() {
+                gallery.unselect_photo_by_id(photo_id);
+            }
+        }
     });
     {
-        let gallery = gallery.clone();
-        info.selection_clear.connect_clicked(move |_| gallery.clear_keyboard_selection());
+        let gallery = Rc::downgrade(&gallery);
+        info.selection_clear.connect_clicked(move |_| {
+            if let Some(gallery) = gallery.upgrade() {
+                gallery.clear_keyboard_selection();
+            }
+        });
     }
     {
-        let gallery = gallery.clone();
-        let info = info.clone();
+        let gallery = Rc::downgrade(&gallery);
+        let info = Rc::downgrade(&info);
         lightbox.root.connect_visible_notify(move |root| {
+            let (Some(gallery), Some(info)) = (gallery.upgrade(), info.upgrade()) else {
+                return;
+            };
             if root.is_visible() {
                 info.show_photo_metadata();
             } else {

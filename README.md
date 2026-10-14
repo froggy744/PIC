@@ -1,197 +1,110 @@
 # PIC — Personal Image Catalogue
 
-*Inspired by Picasa and classic iPhoto.*
+### The Picasa / classic iPhoto-inspired photo manager for Linux
 
-**Browse, organise, view and edit your photos on Linux — in the folders you already use.**
+**Browse, organise, edit and enjoy your photos — without moving your originals or relying on the cloud.**
 
-[GitHub repository](https://github.com/froggy744/PIC) · [Getting started](docs/guides/getting-started.md) · [Build and install](docs/build/linux.md) · [RC4 release notes](docs/releases/rc4.md)
+[**Download the latest release**](https://github.com/froggy744/PIC/releases) · [Getting started](docs/guides/getting-started.md) · [Installation](docs/build/linux.md) · [Report an issue](https://github.com/froggy744/PIC/issues)
 
-<img src="screenshots/all%20photos.jpg" alt="PIC All Photos view with the folder sidebar and thumbnail grid" width="900">
+![PIC photo library showing the folder sidebar and thumbnail grid](screenshots/all%20photos.jpg)
 
-PIC is a local-first photo manager built with Rust, GTK4 and libadwaita. It brings together a fast photo library, folder and network browsing, ratings, albums, a large-photo viewer, practical editing, collages and printing.
+PIC is an independent, local-first photo manager built in **Rust, GTK4 and libadwaita**, with Fedora and Ubuntu as primary Linux targets. It brings the simplicity of classic photo organisers together with modern library browsing, practical editing, albums, collages and more.
 
-Your originals remain in their existing folders. Importing indexes them rather than moving or copying them; albums, ratings and editing recipes are stored in PIC's local library. Edited images are exported as new files.
+> **Release status:** PIC is currently release-candidate software. [Read the RC4 release notes](docs/releases/rc4.md). Back up important photos and your PIC catalogue before testing.
 
-## Important: back up your photos
+## Why PIC?
 
-PIC is a **personal passion project** and is still under active development. Before using it with an important photo collection, test it with temporary/sample files and make sure you have current backups of your photos and PIC library data.
+- **Your photos stay yours.** PIC indexes photos where they already live; importing does not move or duplicate them.
+- **Enjoy large collections.** Cached thumbnails, background work and Grid, Photo Wall and Masonry layouts make browsing comfortable.
+- **Organise without duplicate files.** Use folders, albums, favourites, ratings, search and separate library databases.
+- **Edit without changing originals.** Save adjustments as recipes and export finished images as new files.
+- **Work locally or on your network.** Browse removable storage, camera cards, mounted folders, SMB and NFS shares.
+- **Make something with your photos.** Create collages, print photos and use the viewer for close inspection.
 
-PIC is designed to be **non-destructive**. It indexes and references photos in their existing locations; the PIC database stores catalogue information such as albums, ratings and edit recipes. Normal PIC library operations do not delete your original photo files, and edited photos are exported as new files. Removing a folder or photo from PIC's catalogue removes the database reference, not the original file.
+## Explore PIC
 
-Even with that design, software can contain bugs and storage, filesystem, network-share or hardware failures can occur. **Do not treat PIC or its database as a backup of your photos.** You are responsible for maintaining backups of important data.
+### Browse the way you like
 
-## What's current in RC4
+Switch between **Grid**, **Photo Wall** and **Masonry**. Resize thumbnails, hide the sidebar and move through your real folder tree. PIC remembers layouts for library sections.
 
-- **Grid, Photo Wall and Masonry** offer square tiles, fitted rows or staggered columns.
-- **Folder browsing** uses virtualised sections with folder headings, smoother resizing and restored selection and scroll positions.
-- **Five-star ratings** work on individual photos or selections, with rating filters and sorting.
-- **Multiple library databases**, database backups and a History view help keep collections organised.
-- **Shared zoom controls** resize thumbnails, zoom the viewer and adjust the editor. Native-resolution viewing loads higher-quality pixels when needed.
-- **Progressive imports and network browsing** keep large local, SMB and NFS collections usable while work continues in the background.
-- **Camera and SD card import** offers device detection, photo selection and progress that continues into library scanning.
-- **Masonry layout** adds staggered columns, and each library section remembers its chosen layout.
-- **Corrupt photo badges and filtering** identify local JPEGs whose contents cannot be recognized; the lightbox also explains failed original decoding.
-- **JPEG colour management** converts valid embedded ICC profiles, including ProPhoto RGB and Adobe RGB, to sRGB for thumbnails and the viewer. JPEGs without profiles keep the existing sRGB path; malformed profiles fall back safely.
+![Photo Wall view with fitted photo rows](screenshots/photo%20wall%20screen.jpg)
 
-See the [RC4 release notes](docs/releases/rc4.md) for changes since RC3. RC4 is the final release candidate before the planned v1.0 release.
+### Keep your library organised
 
-## Your library, your folders
+Browse **All Photos**, **Favourites**, **Recently Added** and **History**. Create albums, apply 1–5 star ratings and search photos or folders. Separate catalogue databases let you manage different collections.
 
-Use **All Photos**, **Favourites**, **Recently Added** and **History** to explore your collection. Create albums without duplicating files, or browse the real folder tree in the sidebar. Search photo and folder names, then open a matching folder directly from the suggestions.
+![Folder-based photo browsing](screenshots/folders%20view.jpg)
 
-<img src="screenshots/folders%20view.jpg" alt="Folder view with a folder heading above its photos" width="900">
+### Make everyday edits
 
-Folder sections show where photos belong while keeping only the necessary tiles active. Thumbnail generation runs in the background and cached previews speed up return visits. Disconnected storage stays represented in the library with availability markers; opening or exporting the original requires that storage to be reachable.
+Adjust exposure, contrast, fill light, highlights, shadows, colour and sharpening. Crop, straighten, apply filters, add overlays or text, and use undo/redo. **Original photos remain untouched; export creates a new file.**
 
-Right-click a folder to refresh it, change whether it is watched, see statistics or remove it from the library. Removing its catalogue entry does not delete its original photos.
+![PIC edit mode with image effects](screenshots/effects%20screen.jpg)
 
-<img src="screenshots/watch%20folders.jpg" alt="Folder context menu with Refresh Folder and Stop Watching Folder actions" width="900">
+[Watch the short Edit Mode demonstration](screenshots/edit-mode.mp4)
 
-## Grid, Photo Wall or Masonry
+### Create collages and print
 
-Choose the regular grid for consistent thumbnail sizes, **Photo Wall** for fitted rows, or **Masonry** for staggered columns that preserve photo proportions. The bottom layout control switches between them, and PIC remembers your choice for each library section.
+Arrange selected photos into Grid, Mosaic or Smart Mosaic collages, adjust spacing and backgrounds, save projects and export high-resolution results. PIC also includes photo-printing layouts and previews.
 
-<img src="screenshots/photo%20wall%20screen.jpg" alt="Photo Wall showing rows of portrait photos" width="900">
+![PIC collage editor](screenshots/collages.jpg)
 
-Use the bottom zoom slider or **Ctrl + mouse wheel** to change thumbnail size. Hide the sidebar when you want more room for the photos.
+### Browse local drives and network shares
 
-<img src="screenshots/photo%20wall%20sidebar%20hidden.jpg" alt="Photo Wall filling the window with the sidebar hidden" width="900">
+Use existing folders, removable drives, camera/SD-card imports and **SMB/NFS** shares. Cached previews and offline indicators help you navigate collections even when a source is temporarily unavailable.
 
-In **Settings → Interface**, choose filename visibility, portrait-thumbnail behavior and optional **High quality thumbnails (640 px)** for Photo Wall on high-DPI displays. Normal thumbnails remain 320 px. Higher-quality previews are generated as needed; enabling the option does not require a synchronous rebuild of the entire library.
+![Network photo browser](screenshots/browse%20network.jpg)
 
-## View the details
+### Make it yours
 
-Select a photo to see its name, date, camera, dimensions and file size in the bottom bar. Open it with a double-click, Enter or Space. Move through the current collection with the arrow keys or mouse wheel, switch between fit and **1:1** with Space, zoom with the slider or **Ctrl + wheel**, and drag to pan when zoomed in.
+Choose appearance themes, thumbnail options and display settings to suit your workflow.
 
-The viewer decodes a display-sized image in the background. Native-resolution decoding is used for close inspection rather than simply enlarging the fitted image. Closing the viewer returns you to your selected photo.
+![PIC dark-themed photo library](screenshots/themed%20grid.jpg)
 
-<img src="screenshots/portrait%20photo%20screen.jpg" alt="Portrait photographs in the regular thumbnail grid" width="900">
+## Download and install
 
-Embedded JPEG ICC profiles are applied before resizing or display, so colour-managed JPEG thumbnails and viewer images share the same sRGB conversion. This applies to local and network JPEGs. EXIF orientation is preserved. The change does not extend ICC management to every supported image format.
+**Linux is PIC's primary platform**, especially Fedora and Ubuntu. Releases and packaging options are available from the [GitHub Releases page](https://github.com/froggy744/PIC/releases). PIC provides Flatpak and AppImage packaging; availability and installation requirements depend on the release.
 
-## Favourites, albums and ratings
+For build dependencies, Flatpak installation, optional AppImage builds and troubleshooting, see the [Linux installation guide](docs/build/linux.md).
 
-Heart a photo to put it in **Favourites**. Create an album for a trip, project or collection; the same photo can belong to several albums without additional copies.
+To build a Flatpak bundle from a source checkout:
 
-Use the star control to give a photo **1–5 stars**, or rate the current selection with the number keys. **0** clears the rating. The toolbar filter offers unrated photos, all starred photos, a particular star level and Corrupt photos; the sort menu includes Rating.
-
-<img src="screenshots/rations%20stars.jpg" alt="Photo viewer with the five-star rating control open" width="900">
-
-Ratings are stored in PIC's database and do not rewrite the image file. **Settings → Database** lets you create, open, rename, back up and restore separate libraries. Database backups contain catalogue metadata; back up your photo folders separately.
-
-## Practical, non-destructive editing
-
-Open **Edit Mode** from the pencil button or a photo's context menu. Use the five tabs — **Tools, Filters, Crop, Overlays and Text** — for everyday changes:
-
-- Auto Contrast, Auto Colour, black and white, and sepia.
-- Exposure, contrast, fill light, highlights, shadows, saturation, warmth and sharpening.
-- Live filter previews rendered from your photo.
-- Free or fixed-ratio crops, a composition grid and horizon straightening.
-- Image overlays and styled text with placement, size and opacity controls.
-- Undo, redo, reset, and copy/paste of edits between photos.
-
-<a href="https://raw.githubusercontent.com/froggy744/PIC/main/screenshots/edit-mode.mp4"><img src="screenshots/effects%20screen.jpg" alt="Download the Edit Mode video demonstration" width="900"></a>
-
-[Download Edit Mode in action (MP4, 20 seconds)](https://raw.githubusercontent.com/froggy744/PIC/main/screenshots/edit-mode.mp4).
-
-Edits are saved as recipes. Export renders a new image with the changes applied, leaving the source file intact. PIC is intended for practical photo adjustments; it is not a full professional RAW development suite.
-
-## Collages and printing
-
-Select several photos to create a **Grid, Mosaic or Smart Mosaic** collage. Adjust the arrangement, spacing, background and overall shape; shuffle, undo and redo; save a project to resume later; then export a high-resolution image.
-
-<img src="screenshots/collages.jpg" alt="Collage editor with Smart AI layout, portrait orientation, spacing controls and a five-photo preview" width="900">
-
-Print one or several photos with a page preview, paper size and orientation, fit or crop options, and per-page layouts.
-
-## Local drives and network shares
-
-Import folders from your computer, removable storage or the in-app **Browse Network Photos** dialog. PIC can discover and browse **SMB and NFS** shares with tree navigation, or open a supplied share URL. Registered shares appear in the sidebar.
-
-<img src="screenshots/browse%20network.jpg" alt="Browse Network Photos dialog showing discovered SMB and NFS servers" width="900">
-
-The Linux packages include direct SMB and NFS transports; a manually mounted share is also usable as a normal folder. Server availability and permissions still determine which originals can be read. See the [Folders guide](docs/guides/folders.md) and [portable NFS guide](docs/build/portable-nfs.md).
-
-## Make PIC comfortable
-
-Choose a theme in Settings, hide or reveal the sidebar, and adjust thumbnail presentation. The layout adapts as the window narrows, keeping more space available for photos.
-
-<img src="screenshots/themed%20grid.jpg" alt="PIC folder grid using a dark appearance theme" width="900">
-
-<img src="screenshots/settings%20screen.jpg" alt="Interface settings including portrait thumbnails, filenames and high-quality thumbnails" width="900">
-
-## Supported formats
-
-**Standard images:** JPEG, PNG, WebP, GIF, BMP, TIFF, AVIF and HEIC/HEIF.
-
-**Camera RAW:** NEF, NRW, CR2, CR3, ARW, DNG, RAF, ORF, RW2, PEF, SRW and RAW. Where available, PIC uses embedded camera previews for faster browsing. RAW support here is not a promise of full sensor-data development.
-
-Choose the visible formats in Settings. JPEG ICC conversion covers standalone JPEG decoding for thumbnails and viewing; other formats retain their existing colour behavior.
-
-## Keyboard and mouse
-
-| Where | Action | Control |
-| --- | --- | --- |
-| Grid | Move selection | Arrow keys |
-| Grid | Open selected photo | Enter or Space |
-| Grid | Resize thumbnails | Bottom zoom slider or Ctrl + wheel |
-| Grid | Select several photos | Ctrl + click |
-| Grid | Select all / clear selection | Ctrl+A / Ctrl+D; Folder view scopes selection to the active folder |
-| Grid / viewer | Rate / clear rating | 1–5 / 0, outside text fields |
-| Grid / viewer | Photo actions | Right-click |
-| Viewer | Previous / next | Left / Right or mouse wheel |
-| Viewer | Toggle fit / 1:1 | Space or the 1:1 control |
-| Viewer | Zoom | Bottom zoom slider, + / −, or Ctrl + wheel |
-| Viewer | Pan when zoomed in | Click and drag |
-| Viewer | Close | Esc or double-click |
-| Window | Toggle full screen | F11 |
-| Search | Open a selected folder suggestion | Enter |
-| Search | Clear search | Esc |
-
-Use Space or the 1:1 control for viewer magnification: the number keys are used for photo ratings.
-
-## User guides
-
-Start with [Getting started](docs/guides/getting-started.md), then use the focused guides:
-
-1. [Navigation](docs/guides/navigation.md) — the window, viewer, zoom and shortcuts.
-2. [Folders](docs/guides/folders.md) — local folders, watched folders, network shares and offline storage.
-3. [Library](docs/guides/library.md) — layouts, ratings, albums, search and databases.
-4. [Edit Mode](docs/guides/edit-mode.md) — adjustments, filters, overlays, text and export.
-5. [Crop Mode](docs/guides/crop-mode.md) — framing, aspect ratios and straightening.
-
-## Install and run
-
-**Flatpak is the primary Linux package.** The [Linux build guide](docs/build/linux.md) covers dependencies, installation, optional AppImage builds and troubleshooting.
-
-From the repository root, build the current checkout:
-
-```sh
+```bash
 ./scripts/PIC-build-linux-one-script.sh local --flatpak-only
 ```
 
-Install the generated bundle, replacing `REVISION` with its actual filename:
+To run a native development build after installing dependencies:
 
-```sh
-flatpak install --user --reinstall ./dist/PIC-1.0.0-REVISION-x86_64.flatpak
-flatpak run io.github.froggy744.PIC
-```
-
-For native development, after installing the required build dependencies:
-
-```sh
+```bash
 cargo run --release
 ```
 
-Windows support is experimental; Linux is the primary development and packaging target.
+Windows support is experimental.
 
-## Project and support
+## Supported photo formats
 
-PIC is release-candidate software under active development. Report problems through [GitHub Issues](https://github.com/froggy744/PIC/issues), including the action that failed, your distribution, the type of storage and relevant logs. Keep backups of both important originals and catalogue data.
+**Images:** JPEG, PNG, WebP, GIF, BMP, TIFF, AVIF, HEIC/HEIF.
 
-PIC is an independent open-source project, not affiliated with, sponsored by or endorsed by Google or Apple.
+**Camera RAW previews:** NEF, NRW, CR2, CR3, ARW, DNG, RAF, ORF, RW2, PEF, SRW and RAW.
 
-- [Release Candidate 4](docs/releases/rc4.md) · [Release Candidate 3](docs/releases/rc3.md) · [Release Candidate 2](docs/releases/rc2.md)
-- [Linux builds and installation](docs/build/linux.md) · [Portable NFS](docs/build/portable-nfs.md)
-- [Themes](docs/THEMES.md) · [Theme template](docs/theme-template/README.md)
-- [Development overview](docs/development/summary.md) · [Gallery architecture history](docs/GALLERY_V2.md)
+RAW support is primarily for browsing and embedded previews, **not a replacement for a professional RAW development application**. JPEG ICC colour management is supported for valid embedded profiles in thumbnails and viewing; coverage varies by format.
+
+## Get started
+
+[Getting started](docs/guides/getting-started.md) · [Navigation and shortcuts](docs/guides/navigation.md) · [Folders and network shares](docs/guides/folders.md) · [Library and albums](docs/guides/library.md) · [Editing](docs/guides/edit-mode.md) · [Cropping](docs/guides/crop-mode.md)
+
+Additional resources: [Themes](docs/THEMES.md) · [Linux build instructions](docs/build/linux.md) · [RC4 release notes](docs/releases/rc4.md) · [Development overview](docs/development/summary.md)
+
+## Your originals and backups
+
+PIC is designed for **non-destructive catalogue operations**: it references photos in their existing folders, stores albums, ratings and editing recipes in its own database, and exports edited images as separate files. Removing a photo or folder from the catalogue does not delete the original photo file.
+
+**PIC is not a backup solution.** Bugs, filesystem failures and storage problems can still cause data loss. Keep independent backups of both your original photos and PIC's catalogue database, and test release-candidate builds with sample data before relying on them.
+
+## Feedback and contributing
+
+PIC began as a personal project to bring the enjoyable Picasa/iPhoto-style photo experience to Fedora and Ubuntu. Feedback, reproducible bug reports and contributions are welcome via [GitHub Issues](https://github.com/froggy744/PIC/issues).
+
+When reporting a problem, include your Linux distribution, PIC release, what you did, what happened, whether the library is local or network-mounted, and relevant logs.
+
+PIC is an independent open-source project and is **not affiliated with, endorsed by or sponsored by Google or Apple**.

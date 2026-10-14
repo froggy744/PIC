@@ -34,6 +34,7 @@
             cleared_query.replace(Some(query.clone()));
             if !exact_photo_target {
                 open_in_folder_exact_target.set(None);
+                gallery.set_pending_open_in_folder_photo(None);
             }
             let folder_target = if let sidebar::SidebarFilter::Folder(folder_id) = new_filter {
                 folder_cache
@@ -192,6 +193,7 @@
         let search_close_waiting = search_close_waiting.clone();
         Rc::new(move |folder_id, photo_id| {
             exact_target.set(Some(photo_id));
+            gallery.set_pending_open_in_folder_photo(Some(photo_id));
             let required_refresh =
                 destination_click_with_target(sidebar::SidebarFilter::Folder(folder_id), true, false);
             let gallery = gallery.clone();
@@ -205,6 +207,7 @@
                 attempts_for_timer.set(attempt);
                 if exact_target_for_timer.get() != Some(photo_id) {
                     close_waiting.set(false);
+                    gallery.clear_pending_open_in_folder_photo(photo_id);
                     return glib::ControlFlow::Break;
                 }
                 // A scan can queue a newer refresh after folder navigation
@@ -226,6 +229,7 @@
                 };
 
                 if open_in_folder_should_stop(building, revealed, attempt) {
+                    gallery.clear_pending_open_in_folder_photo(photo_id);
                     if close_waiting.get() && std::env::var_os("PICASA_TRACE").is_some() {
                         eprintln!(
                             "PIC_NAV search_close_ready folder={} photo={} revealed={} elapsed_ms={}",

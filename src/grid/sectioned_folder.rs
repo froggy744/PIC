@@ -141,6 +141,9 @@ struct SectionedFolderView {
     wall_state: RefCell<PhotoWallState>,
     model_generation: Cell<u64>,
     model_refresh_pending: Cell<bool>,
+    // While Open in Folder builds its destination model, keep the old scroll
+    // position from realizing a second, immediately discarded set of tiles.
+    pending_exact_photo_reveal: Cell<Option<i64>>,
     layout_switch_generation: Cell<u64>,
     root: gtk::Fixed,
     spacer: gtk::Box,
@@ -244,6 +247,7 @@ impl SectionedFolderView {
             wall_state: RefCell::new(PhotoWallState::default()),
             model_generation: Cell::new(0),
             model_refresh_pending: Cell::new(false),
+            pending_exact_photo_reveal: Cell::new(None),
             layout_switch_generation: Cell::new(0),
             root,
             spacer,
@@ -818,6 +822,12 @@ impl SectionedFolderView {
         self.geometry_for_current_layout(width);
         self.spacer
             .set_size_request(width, self.total_height.get().ceil() as i32);
+
+        // The model and scroll extent still need to update so the exact jump
+        // can be clamped correctly. Bind tiles only after that jump is applied.
+        if self.pending_exact_photo_reveal.get().is_some() && !self.is_wall() {
+            return;
+        }
 
         let adjustment = scrolled.vadjustment();
         let top = (adjustment.value() - SECTIONED_OVERSCAN_PX).max(0.0);
@@ -2088,6 +2098,11 @@ impl SectionedFolderView {
         let upper = (adjustment.upper() - page).max(lower);
         let target = (row_center - page * 0.5).clamp(lower, upper);
         self.cancel_scroll_animation();
+        if target_photo.as_ref().is_some_and(|photo| {
+            self.pending_exact_photo_reveal.get() == Some(photo.0)
+        }) {
+            self.pending_exact_photo_reveal.set(None);
+        }
         adjustment.set_value(target);
         self.refresh();
         let centered = (adjustment.value() - target).abs() <= 1.0;
@@ -2229,6 +2244,19 @@ impl SectionedFolderView {
 
 
 impl Gallery {
+    pub fn set_pending_open_in_folder_photo(&self, photo_id: Option<i64>) {
+        let previous = self.sectioned_folder.pending_exact_photo_reveal.replace(photo_id);
+        if previous.is_some() && photo_id.is_none() {
+            self.sectioned_folder.refresh();
+        }
+    }
+
+    pub fn clear_pending_open_in_folder_photo(&self, photo_id: i64) {
+        if self.sectioned_folder.pending_exact_photo_reveal.get() == Some(photo_id) {
+            self.set_pending_open_in_folder_photo(None);
+        }
+    }
+
     pub fn attach_sectioned_folder_scroll(self: &Rc<Self>, scrolled: &gtk::ScrolledWindow) {
         self.sectioned_folder.attach_scroll(scrolled);
     }

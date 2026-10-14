@@ -195,6 +195,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             eprintln!("Could not save last activated photo: {error}");
         }
         info_for_lightbox.set_photo(Some(&photo));
+        info_for_lightbox.show_photo_metadata();
         // Navigating to another photo restores the viewer's normal fit state.
         info_for_lightbox.one_to_one.set_active(false);
         selected_photo_for_lightbox.replace(Some(photo));
@@ -606,6 +607,38 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         },
     ));
     crate::startup_trace::mark("gallery_widgets_done", Some(gallery_started));
+    // Multi-photo selection replaces metadata in the existing InfoBar instead
+    // of drawing a second, floating count on top of the gallery. This observes
+    // the same model for Grid, Folder and Photo Wall.
+    gallery.connect_selection_preview_changed(6, {
+        let info = info.clone();
+        let lightbox = lightbox.clone();
+        move |count, photos| {
+            if !lightbox.root.is_visible() {
+                info.set_selected_photos(count, &photos);
+            }
+        }
+    });
+    info.connect_selected_thumbnail_unselect({
+        let gallery = gallery.clone();
+        move |photo_id| gallery.unselect_photo_by_id(photo_id)
+    });
+    {
+        let gallery = gallery.clone();
+        info.selection_clear.connect_clicked(move |_| gallery.clear_keyboard_selection());
+    }
+    {
+        let gallery = gallery.clone();
+        let info = info.clone();
+        lightbox.root.connect_visible_notify(move |root| {
+            if root.is_visible() {
+                info.show_photo_metadata();
+            } else {
+                let (count, photos) = gallery.selected_photo_preview(6);
+                info.set_selected_photos(count, &photos);
+            }
+        });
+    }
     // No stored size (or only the untouched legacy default): adopt the
     // ~4-thumbnails-per-row view level on the first real layout.
     if saved_grid_thumbnail_size.is_none() {

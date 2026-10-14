@@ -721,8 +721,14 @@ impl InfoBar {
             let thumbnail = gtk::Image::new();
             thumbnail.set_pixel_size(38);
             thumbnail.set_size_request(38, 38);
-            if let Some(path) = photo.cached_thumbnail_path().filter(|path| Path::new(path).is_file()) {
-                thumbnail.set_from_file(Some(&path));
+            // GtkImage::pixel-size applies to icons, not file pixbufs.
+            // Decode at the display size so a 200px cached thumbnail cannot
+            // increase the InfoBar's requested height or width.
+            let pixbuf = photo.cached_thumbnail_path()
+                .filter(|path| Path::new(path).is_file())
+                .and_then(|path| gdk_pixbuf::Pixbuf::from_file_at_scale(path, 38, 38, true).ok());
+            if let Some(pixbuf) = pixbuf {
+                thumbnail.set_from_pixbuf(Some(&pixbuf));
             } else {
                 thumbnail.set_icon_name(Some("image-x-generic-symbolic"));
             }

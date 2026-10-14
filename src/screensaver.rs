@@ -72,9 +72,6 @@ impl Style {
         Self::CHOICES[random_seed() as usize % (Self::CHOICES.len() - 1)]
     }
     fn single_photo(self) -> bool { matches!(self, Self::IPhoto | Self::Fade) }
-    fn configurable_tiles(self) -> bool {
-        matches!(self, Self::Mosaic | Self::Grid | Self::PicturePile | Self::Floating | Self::Surprise)
-    }
     fn label(self) -> &'static str {
         match self {
             Self::Mosaic => "Mosaic",
@@ -95,17 +92,6 @@ impl Style {
             Self::IPhoto => "Cinematic pan and zoom",
             Self::Fade => "Gentle full-screen slideshow",
             Self::Surprise => "Random style on launch",
-        }
-    }
-    fn icon(self) -> &'static str {
-        match self {
-            Self::Mosaic => "view-grid-symbolic",
-            Self::Grid => "view-grid-symbolic",
-            Self::PicturePile => "view-paged-symbolic",
-            Self::Floating => "image-x-generic-symbolic",
-            Self::IPhoto => "image-x-generic-symbolic",
-            Self::Fade => "view-fullscreen-symbolic",
-            Self::Surprise => "media-playlist-shuffle-symbolic",
         }
     }
 }

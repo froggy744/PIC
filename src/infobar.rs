@@ -1111,6 +1111,43 @@ mod layout_tests {
         gtk::style_context_remove_provider_for_display(&display, &overlay);
         gtk::style_context_remove_provider_for_display(&display, &base);
     }
+
+    #[test]
+    #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+    fn selection_count_and_clear_stay_outside_the_thumbnail_scroller() {
+        gtk::init().unwrap();
+        let info = InfoBar::new();
+
+        // A long selection can never push these controls into the scrolling
+        // viewport. They are direct, non-expanding children of the root bar.
+        info.set_selected_photos(40, &[]);
+        assert_eq!(info.selection_count.text().as_str(), "40");
+        assert!(info.selection_controls.is_visible());
+        assert!(info.selection_clear.is_visible());
+        assert_eq!(
+            info.selection_controls.parent().unwrap(),
+            info.root.clone().upcast::<gtk::Widget>()
+        );
+        assert_eq!(
+            info.selection_count.parent().unwrap(),
+            info.selection_controls.clone().upcast::<gtk::Widget>()
+        );
+        assert_eq!(
+            info.selection_clear.parent().unwrap(),
+            info.selection_controls.clone().upcast::<gtk::Widget>()
+        );
+        assert_eq!(info.metadata_stack.visible_child_name().as_deref(), Some("selection"));
+
+        // Viewer/single selection restores photo metadata and frees the room.
+        info.show_photo_metadata();
+        assert!(!info.selection_controls.is_visible());
+        info.set_selected_photos(2, &[]);
+        assert_eq!(info.selection_count.text().as_str(), "2");
+        assert!(info.selection_controls.is_visible());
+        info.set_selected_photos(1, &[]);
+        assert!(!info.selection_controls.is_visible());
+        assert_eq!(info.metadata_stack.visible_child_name().as_deref(), Some("photo"));
+    }
 }
 
 #[cfg(test)]

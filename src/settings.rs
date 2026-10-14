@@ -8,6 +8,7 @@ use libadwaita::prelude::*;
 use rusqlite::Connection;
 
 mod database;
+pub(crate) mod menus;
 
 /// Destructive library maintenance actions. The settings window only owns the
 /// buttons and their confirmation dialogs; the behaviour lives in the main
@@ -26,6 +27,7 @@ pub struct DatabaseManagement {
 
 #[derive(Clone, Default)]
 pub struct SettingsWindow {
+    pub(crate) menu_controls: menus::MenuControls,
     window: Rc<RefCell<glib::WeakRef<adw::Window>>>,
     stack: Rc<RefCell<glib::WeakRef<gtk::Stack>>>,
     /// Rebuilds the Appearance section on the Themes page from a fresh scan
@@ -119,6 +121,8 @@ impl SettingsWindow {
             Some("interface"),
             "Interface",
         );
+
+        stack.add_titled(&self.menu_controls.page(connection.clone()), Some("menus"), "Menus");
 
         let (themes_page, refresh_appearance) = themes_page(theme_engine);
         self.refresh_appearance

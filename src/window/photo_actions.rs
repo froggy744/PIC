@@ -1683,7 +1683,7 @@ fn format_aperture(value: f64) -> Option<String> {
     })
 }
 
-fn format_shutter_speed(value: f64) -> Option<String> {
+pub(crate) fn format_shutter_speed(value: f64) -> Option<String> {
     if !value.is_finite() || value <= 0.0 {
         return None;
     }
@@ -1701,7 +1701,7 @@ fn format_decimal(value: f64) -> String {
         .to_string()
 }
 
-fn format_focal_length(value: f64) -> Option<String> {
+pub(crate) fn format_focal_length(value: f64) -> Option<String> {
     (value.is_finite() && value > 0.0).then(|| format!("{} mm", format_decimal(value)))
 }
 

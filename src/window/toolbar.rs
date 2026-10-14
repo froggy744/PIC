@@ -1,8 +1,6 @@
 {
     let refresh = gtk::Button::from_icon_name("view-refresh-symbolic");
     refresh.set_tooltip_text(Some("Refresh library"));
-    right_header.pack_end(&refresh);
-
 
     let sort_button = gtk::MenuButton::new();
     sort_button.set_icon_name(match sort.get().direction {
@@ -364,11 +362,11 @@
     header_tools.append(&sort_button);
     header_tools.append(&rating_filter_button);
     header_tools.append(&info.view_toggle);
-    header_tools.append(&settings);
+    info.append_menu_action(&settings, "Appearance");
     let screensaver = gtk::Button::from_icon_name("media-playback-start-symbolic");
     screensaver.set_tooltip_text(Some("Photo screensaver · Picasa & iPhoto"));
     screensaver.add_css_class("flat");
-    header_tools.append(&screensaver);
+    info.append_utility(&screensaver);
     let parent_for_screensaver = window.downgrade();
     let connection_for_screensaver = connection.clone();
     let gallery_for_screensaver = gallery.clone();
@@ -382,6 +380,42 @@
         }
     });
     right_header.pack_end(&header_tools);
+    info.append_menu_action(&refresh, "Refresh library");
+    let help = gtk::Button::builder()
+        .icon_name("help-about-symbolic")
+        .tooltip_text("Help")
+        .action_name("win.getting-started")
+        .build();
+    help.update_property(&[gtk::accessible::Property::Label("Help")]);
+    help.add_css_class("flat");
+    info.append_menu_action(&help, "Help");
+    for (id, title, widget) in [
+        ("sort", "Sort photos", sort_button.clone().upcast::<gtk::Widget>()),
+        ("filter", "Rating filter", rating_filter_button.clone().upcast()),
+        ("view", "Photo view", info.view_toggle.clone().upcast()),
+    ] {
+        menu_controls.register(&connection.borrow(), "Top bar", id, title, &widget);
+    }
+    for (id, title, widget) in [
+        ("zoom", "Thumbnail zoom", info.grid_zoom.clone().upcast::<gtk::Widget>()),
+        ("favorite", "Favourites", info.favorite.clone().upcast()),
+        ("rating", "Photo rating", info.rating.clone().upcast()),
+        ("edit", "Photo editor", info.edit.clone().upcast()),
+        ("collage", "Collage", info.collage.clone().upcast()),
+        ("album", "Add to Album", info.add_to_album.clone().upcast()),
+        ("actual_size", "100% zoom", info.one_to_one.clone().upcast()),
+        ("rotate", "Rotate", info.rotate.clone().upcast()),
+        ("export", "Export", info.export.clone().upcast()),
+        ("import", "Import from camera or SD card", info.import_photos.clone().upcast()),
+        ("print", "Print", info.print.clone().upcast()),
+        ("screensaver", "Screensaver", screensaver.clone().upcast()),
+        ("appearance", "Appearance", settings.clone().upcast()),
+        ("refresh", "Refresh library", refresh.clone().upcast()),
+        ("help", "Help", help.clone().upcast()),
+    ] {
+        menu_controls.register(&connection.borrow(), "Info card", id, title, &widget);
+    }
+
 
     refresh
 }

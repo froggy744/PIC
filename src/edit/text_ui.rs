@@ -916,45 +916,17 @@ fn build_text_position_grid(parent: &gtk::Box) -> Vec<((u8, u8), gtk::ToggleButt
 }
 
 fn text_grid_position(layer: &TextLayerSpec, photo_w: i32, photo_h: i32) -> (u8, u8, f64, f64) {
-    let photo_w = photo_w.max(1) as f64;
-    let photo_h = photo_h.max(1) as f64;
-    let Some(rect) = super::text_render::text_rect(layer, photo_w, photo_h) else {
-        return (1, 1, 0.0, 0.0);
-    };
-    let xs = [
-        f64::from(rect.left),
-        f64::from(rect.left + rect.width * 0.5),
-        f64::from(rect.right()),
-    ];
-    let ys = [
-        f64::from(rect.top),
-        f64::from(rect.top + rect.height * 0.5),
-        f64::from(rect.bottom()),
-    ];
+    let (col, row) = layer.anchor.grid_position();
     let targets = [
-        f64::from(TextLayerSpec::POSITION_MARGIN),
+        TextLayerSpec::POSITION_MARGIN,
         0.5,
-        1.0 - f64::from(TextLayerSpec::POSITION_MARGIN),
+        1.0 - TextLayerSpec::POSITION_MARGIN,
     ];
-    let col = (0..3)
-        .min_by(|a, b| {
-            (xs[*a] - targets[*a])
-                .abs()
-                .total_cmp(&(xs[*b] - targets[*b]).abs())
-        })
-        .unwrap_or(1);
-    let row = (0..3)
-        .min_by(|a, b| {
-            (ys[*a] - targets[*a])
-                .abs()
-                .total_cmp(&(ys[*b] - targets[*b]).abs())
-        })
-        .unwrap_or(1);
     (
-        ((col) as u8),
-        ((row) as u8),
-        (xs[col] - targets[col]) * photo_w,
-        (ys[row] - targets[row]) * photo_h,
+        col,
+        row,
+        f64::from(layer.x - targets[usize::from(col)]) * f64::from(photo_w.max(1)),
+        f64::from(layer.y - targets[usize::from(row)]) * f64::from(photo_h.max(1)),
     )
 }
 
@@ -966,32 +938,16 @@ fn place_text_grid(
     x_offset: f64,
     y_offset: f64,
 ) {
-    let photo_w = dims.0.max(1) as f64;
-    let photo_h = dims.1.max(1) as f64;
-    let (width, height) = super::text_render::measure_text_px(layer, photo_h)
-        .map(|metrics| {
-            (
-                metrics.width as f32 / photo_w as f32,
-                metrics.height as f32 / photo_h as f32,
-            )
-        })
-        .unwrap_or((0.0, 0.0));
-    let margin = TextLayerSpec::POSITION_MARGIN;
-    let target_x = [margin, 0.5, 1.0 - margin][usize::from(col.min(2))];
-    let target_y = [margin, 0.5, 1.0 - margin][usize::from(row.min(2))];
-    let left = match col {
-        0 => target_x,
-        1 => target_x - width * 0.5,
-        _ => target_x - width,
-    } + (x_offset / photo_w) as f32;
-    let top = match row {
-        0 => target_y,
-        1 => target_y - height * 0.5,
-        _ => target_y - height,
-    } + (y_offset / photo_h) as f32;
-    layer.anchor = super::model::OverlayAnchor::Center;
-    layer.x = left + width * 0.5;
-    layer.y = top + height * 0.5;
+    let col = col.min(2);
+    let row = row.min(2);
+    let targets = [
+        TextLayerSpec::POSITION_MARGIN,
+        0.5,
+        1.0 - TextLayerSpec::POSITION_MARGIN,
+    ];
+    layer.anchor = OverlayAnchor::from_grid(col, row);
+    layer.x = targets[usize::from(col)] + (x_offset / f64::from(dims.0.max(1))) as f32;
+    layer.y = targets[usize::from(row)] + (y_offset / f64::from(dims.1.max(1))) as f32;
 }
 
 fn add_text_opacity_slider(parent: &gtk::Box) -> gtk::Scale {
@@ -1052,6 +1008,28 @@ mod text_position_tests {
                     ),
                     (col, row)
                 );
+            }
+        }
+    }
+
+    #[test]
+    fn text_anchors_persist_when_pasted_to_portrait() {
+        for row in 0..3 {
+            for col in 0..3 {
+                let mut source = TextLayerSpec::new_default();
+                place_text_grid(&mut source, (6000, 4000), col, row, 0.0, 0.0);
+                let recipe = EditRecipe {
+                    text_layers: vec![source],
+                    ..Default::default()
+                };
+                let pasted = EditRecipe::decode(&recipe.encode());
+                let layer = &pasted.text_layers[0];
+                assert_eq!(layer.anchor, OverlayAnchor::from_grid(col, row));
+                let rect = super::super::text_render::text_rect(layer, 4000.0, 6000.0).unwrap();
+                let (ax, ay) = layer.anchor.factors();
+                let targets = [TextLayerSpec::POSITION_MARGIN, 0.5, 1.0 - TextLayerSpec::POSITION_MARGIN];
+                assert!((rect.left + rect.width * ax - targets[col as usize]).abs() < 1e-5);
+                assert!((rect.top + rect.height * ay - targets[row as usize]).abs() < 1e-5);
             }
         }
     }

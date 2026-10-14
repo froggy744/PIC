@@ -72,36 +72,75 @@ impl CropRect {
 
 /// Which point of an overlay's bounding box is pinned at `(x, y)`.
 ///
-/// The anchor makes a copied overlay land in the same visual corner of a
-/// destination photo regardless of that photo's aspect ratio: a logo stored
-/// with `BottomRight` at (0.95, 0.95) keeps its bottom-right corner near the
-/// bottom-right of every photo it is pasted onto.
+/// Anchors are saved with the edit recipe so pasted overlays remain pinned to
+/// the chosen edge/corner even when the destination photo's aspect changes.
+/// The historical five anchor codes are kept for existing library records.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OverlayAnchor {
     TopLeft,
+    TopCenter,
     TopRight,
+    CenterLeft,
     Center,
+    CenterRight,
     BottomLeft,
+    BottomCenter,
     BottomRight,
 }
 
 impl OverlayAnchor {
     #[cfg(test)]
-    pub const ALL: [OverlayAnchor; 5] = [
-        OverlayAnchor::TopLeft,
-        OverlayAnchor::TopRight,
-        OverlayAnchor::Center,
-        OverlayAnchor::BottomLeft,
-        OverlayAnchor::BottomRight,
+    pub const ALL: [OverlayAnchor; 9] = [
+        Self::TopLeft, Self::TopCenter, Self::TopRight,
+        Self::CenterLeft, Self::Center, Self::CenterRight,
+        Self::BottomLeft, Self::BottomCenter, Self::BottomRight,
     ];
 
-    /// Compact wire code used inside the edit-recipe string.
+    pub fn from_grid(col: u8, row: u8) -> Self {
+        match (col.min(2), row.min(2)) {
+            (0, 0) => Self::TopLeft,
+            (1, 0) => Self::TopCenter,
+            (2, 0) => Self::TopRight,
+            (0, 1) => Self::CenterLeft,
+            (1, 1) => Self::Center,
+            (2, 1) => Self::CenterRight,
+            (0, 2) => Self::BottomLeft,
+            (1, 2) => Self::BottomCenter,
+            _ => Self::BottomRight,
+        }
+    }
+
+    pub fn grid_position(self) -> (u8, u8) {
+        match self {
+            Self::TopLeft => (0, 0),
+            Self::TopCenter => (1, 0),
+            Self::TopRight => (2, 0),
+            Self::CenterLeft => (0, 1),
+            Self::Center => (1, 1),
+            Self::CenterRight => (2, 1),
+            Self::BottomLeft => (0, 2),
+            Self::BottomCenter => (1, 2),
+            Self::BottomRight => (2, 2),
+        }
+    }
+
+    /// Normalized point within the layer rectangle: left/centre/right and
+    /// top/middle/bottom. Used for both image and text geometry.
+    pub fn factors(self) -> (f32, f32) {
+        let (col, row) = self.grid_position();
+        (f32::from(col) * 0.5, f32::from(row) * 0.5)
+    }
+
     pub fn code(self) -> &'static str {
         match self {
             Self::TopLeft => "tl",
+            Self::TopCenter => "tc",
             Self::TopRight => "tr",
+            Self::CenterLeft => "cl",
             Self::Center => "c",
+            Self::CenterRight => "cr",
             Self::BottomLeft => "bl",
+            Self::BottomCenter => "bc",
             Self::BottomRight => "br",
         }
     }
@@ -109,21 +148,29 @@ impl OverlayAnchor {
     pub fn from_code(code: &str) -> Option<Self> {
         match code {
             "tl" => Some(Self::TopLeft),
+            "tc" => Some(Self::TopCenter),
             "tr" => Some(Self::TopRight),
+            "cl" => Some(Self::CenterLeft),
             "c" => Some(Self::Center),
+            "cr" => Some(Self::CenterRight),
             "bl" => Some(Self::BottomLeft),
+            "bc" => Some(Self::BottomCenter),
             "br" => Some(Self::BottomRight),
             _ => None,
         }
     }
 
-    #[allow(dead_code)] // The overlay UI now uses the nine-cell position grid.
+    #[allow(dead_code)]
     pub fn label(self) -> &'static str {
         match self {
             Self::TopLeft => "Top Left",
+            Self::TopCenter => "Top Centre",
             Self::TopRight => "Top Right",
+            Self::CenterLeft => "Centre Left",
             Self::Center => "Centre",
+            Self::CenterRight => "Centre Right",
             Self::BottomLeft => "Bottom Left",
+            Self::BottomCenter => "Bottom Centre",
             Self::BottomRight => "Bottom Right",
         }
     }
@@ -261,13 +308,8 @@ impl OverlaySpec {
         // Pixel height = pixel width / asset aspect; normalized height divides
         // that by the photo height.
         let height = width * photo_width / photo_height / aspect;
-        let (left, top) = match self.anchor {
-            OverlayAnchor::TopLeft => (self.x, self.y),
-            OverlayAnchor::TopRight => (self.x - width, self.y),
-            OverlayAnchor::Center => (self.x - width * 0.5, self.y - height * 0.5),
-            OverlayAnchor::BottomLeft => (self.x, self.y - height),
-            OverlayAnchor::BottomRight => (self.x - width, self.y - height),
-        };
+        let (ax, ay) = self.anchor.factors();
+        let (left, top) = (self.x - width * ax, self.y - height * ay);
         NormRect {
             left,
             top,
@@ -294,13 +336,8 @@ impl OverlaySpec {
             height: rect.height,
         };
         self.width = rect.width;
-        let (x, y) = match self.anchor {
-            OverlayAnchor::TopLeft => (rect.left, rect.top),
-            OverlayAnchor::TopRight => (rect.right(), rect.top),
-            OverlayAnchor::Center => (rect.left + rect.width * 0.5, rect.top + rect.height * 0.5),
-            OverlayAnchor::BottomLeft => (rect.left, rect.bottom()),
-            OverlayAnchor::BottomRight => (rect.right(), rect.bottom()),
-        };
+        let (ax, ay) = self.anchor.factors();
+        let (x, y) = (rect.left + rect.width * ax, rect.top + rect.height * ay);
         self.x = x;
         self.y = y;
     }
@@ -323,13 +360,9 @@ impl OverlaySpec {
     pub fn position_at(&mut self, anchor: OverlayAnchor) {
         let margin = Self::POSITION_MARGIN;
         self.anchor = anchor;
-        let (x, y) = match anchor {
-            OverlayAnchor::TopLeft => (margin, margin),
-            OverlayAnchor::TopRight => (1.0 - margin, margin),
-            OverlayAnchor::Center => (0.5, 0.5),
-            OverlayAnchor::BottomLeft => (margin, 1.0 - margin),
-            OverlayAnchor::BottomRight => (1.0 - margin, 1.0 - margin),
-        };
+        let (col, row) = anchor.grid_position();
+        let values = [margin, 0.5, 1.0 - margin];
+        let (x, y) = (values[usize::from(col)], values[usize::from(row)]);
         self.x = x;
         self.y = y;
     }
@@ -477,13 +510,8 @@ impl TextLayerSpec {
     /// Normalized bounding box for a measured box already expressed as photo
     /// fractions, anchored like `OverlaySpec::rect`.
     pub fn rect_with_size(&self, width: f32, height: f32) -> NormRect {
-        let (left, top) = match self.anchor {
-            OverlayAnchor::TopLeft => (self.x, self.y),
-            OverlayAnchor::TopRight => (self.x - width, self.y),
-            OverlayAnchor::Center => (self.x - width * 0.5, self.y - height * 0.5),
-            OverlayAnchor::BottomLeft => (self.x, self.y - height),
-            OverlayAnchor::BottomRight => (self.x - width, self.y - height),
-        };
+        let (ax, ay) = self.anchor.factors();
+        let (left, top) = (self.x - width * ax, self.y - height * ay);
         NormRect {
             left,
             top,
@@ -495,13 +523,8 @@ impl TextLayerSpec {
     /// Store the layer's anchor point so its bounding box lands exactly on
     /// `rect` (size is re-measured at render time, never stored here).
     pub fn set_position_from_rect(&mut self, rect: NormRect) {
-        let (x, y) = match self.anchor {
-            OverlayAnchor::TopLeft => (rect.left, rect.top),
-            OverlayAnchor::TopRight => (rect.right(), rect.top),
-            OverlayAnchor::Center => (rect.left + rect.width * 0.5, rect.top + rect.height * 0.5),
-            OverlayAnchor::BottomLeft => (rect.left, rect.bottom()),
-            OverlayAnchor::BottomRight => (rect.right(), rect.bottom()),
-        };
+        let (ax, ay) = self.anchor.factors();
+        let (x, y) = (rect.left + rect.width * ax, rect.top + rect.height * ay);
         self.x = x;
         self.y = y;
     }
@@ -512,13 +535,9 @@ impl TextLayerSpec {
     pub fn position_at(&mut self, anchor: OverlayAnchor) {
         let margin = Self::POSITION_MARGIN;
         self.anchor = anchor;
-        let (x, y) = match anchor {
-            OverlayAnchor::TopLeft => (margin, margin),
-            OverlayAnchor::TopRight => (1.0 - margin, margin),
-            OverlayAnchor::Center => (0.5, 0.5),
-            OverlayAnchor::BottomLeft => (margin, 1.0 - margin),
-            OverlayAnchor::BottomRight => (1.0 - margin, 1.0 - margin),
-        };
+        let (col, row) = anchor.grid_position();
+        let values = [margin, 0.5, 1.0 - margin];
+        let (x, y) = (values[usize::from(col)], values[usize::from(row)]);
         self.x = x;
         self.y = y;
     }

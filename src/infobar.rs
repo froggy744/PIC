@@ -721,7 +721,8 @@ impl InfoBar {
         // When that sample has not changed, avoid repeated image decodes and
         // Gtk widget churn just because the selected count changed.
         let rendered_ids = photos.iter().map(PhotoObject::id).collect::<Vec<_>>();
-        if *self.selection_rendered_ids.borrow() != rendered_ids {
+        let needs_refresh = self.selection_rendered_ids.borrow().as_slice() != rendered_ids.as_slice();
+        if needs_refresh {
             while let Some(child) = self.selection_thumbnails.first_child() {
                 self.selection_thumbnails.remove(&child);
             }

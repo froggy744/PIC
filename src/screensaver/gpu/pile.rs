@@ -38,8 +38,6 @@ const PILE_BORDER: f64 = 0.0085;
 pub(super) const PILE_LAND_SCALE: f64 = 1.04;
 /// ...and this many degrees off its resting angle.
 pub(super) const PILE_LAND_TURN: f64 = 1.1;
-/// Per-print random tilt added to the slot's resting angle (+/- degrees).
-pub(super) const PILE_WOBBLE: f64 = 0.6;
 /// Initial photos drop in one after another instead of all at once.
 const PILE_STAGGER: f64 = 0.16;
 /// Original-quality texture cross-fade time.
@@ -58,12 +56,6 @@ impl Aspect for gdk::Texture {
 
 fn lerp(a: f64, b: f64, t: f64) -> f64 { a + (b - a) * t }
 
-/// Deterministic per-photo tilt so the same photo always lands the same way.
-fn wobble(style: Style, id: usize) -> f64 {
-    if style != Style::PicturePile { return 0.0; }
-    let h = (id as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 40;
-    ((h % 1000) as f64 / 1000.0 - 0.5) * 2.0 * PILE_WOBBLE
-}
 fn land_direction(id: usize) -> f64 {
     if ((id.wrapping_mul(2_654_435_761) >> 5) & 1) == 0 { 1.0 } else { -1.0 }
 }
@@ -108,9 +100,9 @@ fn look(style: Style) -> Look {
         Look { paper: (0.955, 0.945, 0.915), radius: 2.0, shadow: 0.36, shadow_dy: 8.0, shadow_blur: 22.0 }
     }
 }
-/// Landing amplitude (scale, degrees): Floating Prints settle more gently.
+/// Landing amplitude (scale, degrees): Picture Pile stays level; Floating Prints settle gently.
 fn landing_amplitude(style: Style) -> (f64, f64) {
-    if style == Style::Floating { (1.02, 0.5) } else { (PILE_LAND_SCALE, PILE_LAND_TURN) }
+    if style == Style::Floating { (1.02, 0.5) } else { (PILE_LAND_SCALE, 0.0) }
 }
 /// The outgoing print stays fully opaque until the new one is (almost)
 /// opaque on top of it, then fades only where it sticks out.
@@ -345,7 +337,7 @@ impl<T: Clone + Aspect> Model<T> {
             texture: card.texture.clone(),
             upgrade,
             geometry,
-            angle: base_tilt(self.style, slot) + wobble(self.style, card.id),
+            angle: base_tilt(self.style, slot),
             scale_x: 1.0,
             scale_y: 1.0,
             opacity: 1.0,
@@ -380,8 +372,8 @@ impl<T: Clone + Aspect> Model<T> {
                     let mut draw = self.draw(shown, geometry, slot);
                     let width_factor = PicasaTransition::Flip.flip_width(progress);
                     draw.angle = lerp(
-                        base_tilt(self.style, slot) + wobble(self.style, old.id),
-                        base_tilt(self.style, slot) + wobble(self.style, card.id), m);
+                        base_tilt(self.style, slot),
+                        base_tilt(self.style, slot), m);
                     draw.scale_x = width_factor;
                     draw.shade = 0.35 * (1.0 - width_factor);
                     stack.push((state.z, draw));
@@ -723,8 +715,7 @@ mod tests {
                 for slot in 0..count {
                     for aspect in [0.5, 0.67, 1.0, 1.5, 1.85, 3.0] {
                         let g = pile_geometry(slot, count, aspect, w, h);
-                        let tilt = (base_tilt(Style::PicturePile, slot).abs() + PILE_WOBBLE
-                            + PILE_LAND_TURN).to_radians();
+                        let tilt = base_tilt(Style::PicturePile, slot).abs().to_radians();
                         let scale = PILE_LAND_SCALE;
                         // Rotated, landing-scaled bounding box.
                         let half_w = scale * (g.w * 0.5 * tilt.cos() + g.h * 0.5 * tilt.sin());

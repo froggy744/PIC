@@ -11,7 +11,6 @@ use cinema::Cinema;
 // 60 steps with per-frame CSS transform interpolation gives a smooth
 // GSK-composited flip without creating new thumbnails or touching the layout.
 const FLIP_STEPS: usize = 60;
-const PILE_TILT: [f64; 6] = [-2.0, 1.4, -1.4, 2.0, -1.8, 1.8];
 const FLOATING_TILT: [f64; 6] = [-0.8, 0.6, -0.6, 0.8, -0.5, 0.5];
 const FLOATING_DRIFT_X: f64 = 3.0;
 const FLOATING_DRIFT_Y: f64 = 2.5;
@@ -19,7 +18,7 @@ const FLOATING_TILT_SWAY: f64 = 0.25;
 
 fn base_tilt(style: Style, slot: usize) -> f64 {
     match style {
-        Style::PicturePile => PILE_TILT[slot % PILE_TILT.len()],
+        Style::PicturePile => 0.0,
         Style::Floating => FLOATING_TILT[slot % FLOATING_TILT.len()],
         _ => 0.0,
     }
@@ -671,12 +670,12 @@ mod tests {
     }
 
     #[test]
-    fn floating_rotation_is_gentler_than_picture_pile_rotation() {
+    fn picture_pile_is_level_while_floating_prints_keep_a_gentle_tilt() {
         let pile_max = (0..6).map(|slot| base_tilt(Style::PicturePile, slot).abs())
             .fold(0.0, f64::max);
         let floating_max = (0..6).map(|slot| base_tilt(Style::Floating, slot).abs())
             .fold(0.0, f64::max) + FLOATING_TILT_SWAY;
-        assert!(pile_max > floating_max);
+        assert_eq!(pile_max, 0.0);
         assert!(floating_max < 1.1);
         assert!(FLOATING_DRIFT_X < 4.0 && FLOATING_DRIFT_Y < 4.0);
     }

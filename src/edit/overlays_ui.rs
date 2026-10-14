@@ -102,6 +102,25 @@ fn resize_handle_point(rect: super::model::NormRect, anchor: OverlayAnchor) -> (
     )
 }
 
+/// True when the screen point sits within `radius` of the overlay's resize
+/// handle (the only handle; resize is aspect-locked around the anchor).
+fn hits_resize_handle(
+    display: (f64, f64, f64, f64),
+    rect: super::model::NormRect,
+    px: f64,
+    py: f64,
+    radius: f64,
+    anchor: OverlayAnchor,
+) -> bool {
+    let (x, y, w, h) = display;
+    let (handle_norm_x, handle_norm_y) = resize_handle_point(rect, anchor);
+    let handle_x = x + handle_norm_x as f64 * w;
+    let handle_y = y + handle_norm_y as f64 * h;
+    let dx = px - handle_x;
+    let dy = py - handle_y;
+    dx * dx + dy * dy <= radius * radius
+}
+
 /// Aspect-locked resize anchored at the rectangle's pinned corner: width
 /// follows the pointer, height is derived from the asset's pixel aspect and
 /// the photo's aspect, then both are clamped so the overlay stays inside the

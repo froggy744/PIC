@@ -743,6 +743,17 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         });
     }
     configure_infobar_album_menu(&info.add_to_album, action_context.clone());
+    // The same docked inspector used by the photo context menu is available
+    // directly from the infobar's metadata (right mouse button).
+    {
+        let selection = selected_photo.clone();
+        let context = action_context.clone();
+        info.connect_metadata_right_click(move || {
+            if let Some(photo) = selection.borrow().as_ref() {
+                show_properties_dialog(photo, &context);
+            }
+        });
+    }
 
     // Destructive maintenance actions for the Settings → Library page. The
     // settings window owns the buttons and confirmation dialogs; the actual

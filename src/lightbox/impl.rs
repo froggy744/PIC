@@ -231,11 +231,13 @@ impl Lightbox {
         let context_menu: ContextMenuHandler = Rc::new(RefCell::new(None));
         let collection_navigation: CollectionNavigationHandler = Rc::new(RefCell::new(None));
         let close_prepare: Rc<RefCell<Option<Rc<dyn Fn()>>>> = Rc::new(RefCell::new(None));
+        let close_ready: Rc<RefCell<Option<Rc<dyn Fn() -> bool>>>> = Rc::new(RefCell::new(None));
         let close_generation = Rc::new(Cell::new(0_u64));
         let close_in_progress = Rc::new(Cell::new(false));
         let close_requested: Rc<dyn Fn()> = {
             let weak_root = root.downgrade();
             let prepare = close_prepare.clone();
+            let ready = close_ready.clone();
             let generation = close_generation.clone();
             let closing = close_in_progress.clone();
             let load_generation = load_generation.clone();
@@ -261,20 +263,33 @@ impl Lightbox {
                     closing.set(false);
                     return;
                 }
-                if !root.is_mapped() || !root.settings().is_gtk_enable_animations() {
+                if !root.is_mapped() {
                     root.set_visible(false);
                     return;
                 }
                 let serial = generation.get().wrapping_add(1);
                 generation.set(serial);
                 let generation_for_tick = generation.clone();
-                let started = std::time::Instant::now();
+                let ready_for_tick = ready.clone();
+                let started = Cell::new(None::<std::time::Instant>);
                 root.add_tick_callback(move |root, _| {
                     if !root.is_visible() || generation_for_tick.get() != serial {
                         return glib::ControlFlow::Break;
                     }
+                    if !ready_for_tick.borrow().as_ref().is_none_or(|ready| ready()) {
+                        return glib::ControlFlow::Continue;
+                    }
+                    if !root.settings().is_gtk_enable_animations() {
+                        root.set_visible(false);
+                        return glib::ControlFlow::Break;
+                    }
+                    let start = started.get().unwrap_or_else(|| {
+                        let now = std::time::Instant::now();
+                        started.set(Some(now));
+                        now
+                    });
                     const CLOSE_SECONDS: f64 = 0.16;
-                    let progress = (started.elapsed().as_secs_f64() / CLOSE_SECONDS).clamp(0.0, 1.0);
+                    let progress = (start.elapsed().as_secs_f64() / CLOSE_SECONDS).clamp(0.0, 1.0);
                     let eased = progress * progress * (3.0 - 2.0 * progress);
                     root.set_opacity(1.0 - eased);
                     if progress >= 1.0 {
@@ -1110,6 +1125,7 @@ impl Lightbox {
             collection_navigation,
             close_requested,
             close_prepare,
+            close_ready,
             close_generation,
             close_in_progress,
         }
@@ -1121,6 +1137,10 @@ impl Lightbox {
 
     pub fn set_close_prepare_handler(&self, handler: impl Fn() + 'static) {
         self.close_prepare.replace(Some(Rc::new(handler)));
+    }
+
+    pub fn set_close_ready_handler(&self, handler: impl Fn() -> bool + 'static) {
+        self.close_ready.replace(Some(Rc::new(handler)));
     }
 
     pub fn set_unavailable_handler(&self, handler: impl Fn(PhotoObject, gtk::Widget) + 'static) {

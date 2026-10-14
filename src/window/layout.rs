@@ -2,7 +2,7 @@
     let main_split = adw::OverlaySplitView::new();
 
     let album_theme_changed_for_destination = album_theme_changed.clone();
-    let destination_click_with_target: Rc<dyn Fn(sidebar::SidebarFilter, bool, bool)> = {
+    let destination_click_with_target: Rc<dyn Fn(sidebar::SidebarFilter, bool, bool) -> Option<u64>> = {
         let search_entry = search_entry_slot.clone();
         let search_text = search_text.clone();
         let suppressed = search_suppressed.clone();
@@ -22,6 +22,9 @@
         let connection_for_albums = connection.clone();
         let album_home_click_slot = album_home_click_slot.clone();
         let open_in_folder_exact_target = open_in_folder_exact_target.clone();
+        let search_result_folder_on_close = search_result_folder_on_close.clone();
+        let search_close_waiting = search_close_waiting.clone();
+        let preserve_viewer = preserve_lightbox_during_search_return.clone();
         Rc::new(move |new_filter, exact_photo_target, center_folder_target| {
             // Cancel stale async refresh/folder-scroll work before this new
             // destination is established. This also covers Folder-to-Folder
@@ -60,7 +63,11 @@
             suppressed.set(false);
             search_text.replace(String::new());
             gallery.set_search_result_activation(false);
-            lightbox.close();
+            search_result_folder_on_close.set(false);
+            if !preserve_viewer.get() {
+                search_close_waiting.set(false);
+                lightbox.close();
+            }
             let cleared_query_for_timeout = cleared_query.clone();
             glib::timeout_add_local_once(Duration::from_millis(500), move || {
                 if cleared_query_for_timeout.borrow().as_deref() == Some(query.as_str()) {
@@ -82,7 +89,7 @@
             if new_filter == sidebar::SidebarFilter::Library {
                 gallery.set_selected_photo_ids(&[]);
                 main_stack.set_visible_child_name("library");
-                return;
+                return None;
             }
             if new_filter == sidebar::SidebarFilter::Albums {
                 main_stack.set_visible_child_name("albums");
@@ -101,7 +108,7 @@
                         album_theme_changed_for_destination.clone(),
                     );
                 }
-                return;
+                return None;
             }
             main_stack.set_visible_child_name("photos");
             // destination_click clears the search entry above, so History
@@ -111,7 +118,7 @@
                 FolderDestinationPlan::ReuseWithoutFolderScroll => {
                     // Open in Folder will select/scroll the exact photo below.
                     // Do not also queue the generic folder-header destination.
-                    return;
+                    return None;
                 }
                 FolderDestinationPlan::RefreshWithoutFolderScroll => {
                     // Load the continuous Folder stream, but deliberately omit
@@ -126,6 +133,7 @@
                         None,
                         None,
                     );
+                    Some(REFRESH_GENERATION.load(std::sync::atomic::Ordering::Relaxed))
                 }
                 FolderDestinationPlan::Normal => {
                     if let Some((folder_id, folder_path)) = folder_target {
@@ -135,7 +143,7 @@
                             gallery.scroll_to_folder(folder_id, &folder_path)
                         };
                         if reuse_folder_stream && revealed {
-                            return;
+                            return None;
                         }
                         refresh_grid_to_folder(
                             &connection,
@@ -147,8 +155,10 @@
                             folder_path,
                             center_folder_target,
                         );
+                        Some(REFRESH_GENERATION.load(std::sync::atomic::Ordering::Relaxed))
                     } else {
                         refresh_grid(&connection, new_filter, "", sort.get(), &gallery);
+                        Some(REFRESH_GENERATION.load(std::sync::atomic::Ordering::Relaxed))
                     }
                 }
             }
@@ -157,13 +167,17 @@
 
     let destination_click: Rc<dyn Fn(sidebar::SidebarFilter)> = {
         let destination_click_with_target = destination_click_with_target.clone();
-        Rc::new(move |new_filter| destination_click_with_target(new_filter, false, false))
+        Rc::new(move |new_filter| {
+            destination_click_with_target(new_filter, false, false);
+        })
     };
     library_navigation_slot.replace(Some(destination_click.clone()));
 
     let search_destination_click: Rc<dyn Fn(sidebar::SidebarFilter)> = {
         let destination_click_with_target = destination_click_with_target.clone();
-        Rc::new(move |new_filter| destination_click_with_target(new_filter, false, true))
+        Rc::new(move |new_filter| {
+            destination_click_with_target(new_filter, false, true);
+        })
     };
 
     album_home_click_slot.replace(Some({
@@ -175,17 +189,29 @@
         let sidebar_selection = sidebar_selection_slot.clone();
         let gallery = gallery.clone();
         let exact_target = open_in_folder_exact_target.clone();
+        let search_close_waiting = search_close_waiting.clone();
         Rc::new(move |folder_id, photo_id| {
             exact_target.set(Some(photo_id));
-            destination_click_with_target(sidebar::SidebarFilter::Folder(folder_id), true, false);
+            let required_refresh =
+                destination_click_with_target(sidebar::SidebarFilter::Folder(folder_id), true, false);
             let gallery = gallery.clone();
             let exact_target_for_timer = exact_target.clone();
+            let close_waiting = search_close_waiting.clone();
+            let started = std::time::Instant::now();
             let attempts = Rc::new(Cell::new(0u32));
             let attempts_for_timer = attempts.clone();
             glib::timeout_add_local(Duration::from_millis(25), move || {
                 let attempt = attempts_for_timer.get() + 1;
                 attempts_for_timer.set(attempt);
-                let building = gallery.stream_building();
+                if exact_target_for_timer.get() != Some(photo_id) {
+                    close_waiting.set(false);
+                    return glib::ControlFlow::Break;
+                }
+                let building = gallery.stream_building()
+                    || required_refresh.is_some_and(|generation| {
+                        APPLIED_REFRESH_GENERATION.load(std::sync::atomic::Ordering::Relaxed)
+                            < generation
+                    });
                 let revealed = if building {
                     false
                 } else {
@@ -193,6 +219,16 @@
                 };
 
                 if open_in_folder_should_stop(building, revealed, attempt) {
+                    if close_waiting.get() && std::env::var_os("PICASA_TRACE").is_some() {
+                        eprintln!(
+                            "PIC_NAV search_close_ready folder={} photo={} revealed={} elapsed_ms={}",
+                            folder_id,
+                            photo_id,
+                            revealed,
+                            started.elapsed().as_millis()
+                        );
+                    }
+                    close_waiting.set(false);
                     // Keep the exact target around long enough for the sidebar's
                     // own Tree-mode/ancestor expansion callbacks to settle.
                     // Those callbacks may reorder Folder rows, but will reassert
@@ -466,6 +502,7 @@
     };
     install_thumbnail_sidebar_focus(gallery.root.upcast_ref());
     install_thumbnail_sidebar_focus(gallery.folder_root.upcast_ref());
+    install_thumbnail_sidebar_focus(gallery.folder_sectioned_root.upcast_ref());
 
     // Reconnecting sources also resumes previews for already indexed photos.
     let thumbnail_recovery_requested = Rc::new(Cell::new(true));
@@ -1493,35 +1530,24 @@
                 stack_for_home_search.set_visible_child_name(
                     if query.is_empty() { "library" } else { "photos" },
                 );
-                gallery_for_search.set_grouping(grid::GroupMode::None, grid::GroupDate::Taken);
             }
             if !query.is_empty() {
                 gallery_for_search.cancel_progressive_build();
             }
-            // Search is a global results view even when it was started from a
-            // folder. Temporarily leave the Folder/History stream while text
-            // is active; clearing the query restores the grouped view.
-            if matches!(filter_for_search.get(), sidebar::SidebarFilter::Folder(_))
-                || filter_for_search.get() == sidebar::SidebarFilter::History
+            // Active search presents one global result stream, regardless of
+            // the sidebar destination where the query was entered.
+            apply_gallery_grouping(
+                &gallery_for_search,
+                filter_for_search.get(),
+                sort_for_search.get(),
+                group_mode_for_search.get(),
+                query.is_empty(),
+            );
+            if !query.is_empty()
+                && matches!(filter_for_search.get(), sidebar::SidebarFilter::Folder(_))
             {
-                if query.is_empty() {
-                    apply_gallery_grouping(
-                        &gallery_for_search,
-                        filter_for_search.get(),
-                        sort_for_search.get(),
-                        group_mode_for_search.get(),
-                        true,
-                    );
-                } else {
-                    gallery_for_search.set_grouping(
-                        grid::GroupMode::None,
-                        grid::GroupDate::Taken,
-                    );
-                    if matches!(filter_for_search.get(), sidebar::SidebarFilter::Folder(_)) {
-                        if let Some(sidebar) = sidebar_selection_for_search.borrow().as_ref() {
-                            sidebar::set_scroll_location(sidebar, None);
-                        }
-                    }
+                if let Some(sidebar) = sidebar_selection_for_search.borrow().as_ref() {
+                    sidebar::set_scroll_location(sidebar, None);
                 }
             }
             
@@ -1670,24 +1696,15 @@
             stack_for_home_activate.set_visible_child_name(
                 if query.is_empty() { "library" } else { "photos" },
             );
-            gallery_for_activate.set_grouping(grid::GroupMode::None, grid::GroupDate::Taken);
         }
         suggestion_popover_for_activate.popdown();
-        if matches!(filter_for_activate.get(), sidebar::SidebarFilter::Folder(_))
-            || filter_for_activate.get() == sidebar::SidebarFilter::History
-        {
-            if query.is_empty() {
-                apply_gallery_grouping(
-                    &gallery_for_activate,
-                    filter_for_activate.get(),
-                    sort_for_activate.get(),
-                    group_mode_for_activate.get(),
-                    true,
-                );
-            } else {
-                gallery_for_activate.set_grouping(grid::GroupMode::None, grid::GroupDate::Taken);
-            }
-        }
+        apply_gallery_grouping(
+            &gallery_for_activate,
+            filter_for_activate.get(),
+            sort_for_activate.get(),
+            group_mode_for_activate.get(),
+            query.is_empty(),
+        );
         refresh_grid(
             &connection_for_activate,
             filter_for_activate.get(),

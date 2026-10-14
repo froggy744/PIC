@@ -246,6 +246,11 @@ fn apply_gallery_grouping(
     mode: grid::GroupMode,
     search_is_empty: bool,
 ) {
+    if !search_is_empty {
+        gallery.set_favorite_indicators_visible(true);
+        gallery.set_grouping(grid::GroupMode::None, grid::GroupDate::Taken);
+        return;
+    }
     gallery.set_favorite_indicators_visible(filter != sidebar::SidebarFilter::Favorites);
 
     // Folder browsing is one continuous photo stream. Folder headers are real
@@ -255,15 +260,9 @@ fn apply_gallery_grouping(
         return;
     }
 
-    // History always buckets by last edit time. An active search replaces the
-    // stream with ordinary library photos that have no `edited_at`, so drop
-    // History grouping while the query is non-empty.
+    // History always buckets by last edit time outside global search.
     if filter == sidebar::SidebarFilter::History {
-        if search_is_empty {
-            gallery.set_grouping(grid::GroupMode::History, grid::GroupDate::Taken);
-        } else {
-            gallery.set_grouping(grid::GroupMode::None, grid::GroupDate::Taken);
-        }
+        gallery.set_grouping(grid::GroupMode::History, grid::GroupDate::Taken);
         return;
     }
 

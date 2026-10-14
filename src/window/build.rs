@@ -224,7 +224,9 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let search_suppressed = Rc::new(Cell::new(false));
     let cleared_search_query = Rc::new(RefCell::new(None::<String>));
     let search_debounce: Rc<RefCell<Option<glib::SourceId>>> = Rc::new(RefCell::new(None));
-    let pending_search_return_refresh = Rc::new(Cell::new(None::<u64>));
+    let search_result_folder_on_close = Rc::new(Cell::new(false));
+    let search_close_waiting = Rc::new(Cell::new(false));
+    let preserve_lightbox_during_search_return = Rc::new(Cell::new(false));
     let gallery_for_actions: Rc<RefCell<Weak<grid::Gallery>>> = Rc::new(RefCell::new(Weak::new()));
     let sidebar_for_unavailable: Rc<RefCell<Option<gtk::ScrolledWindow>>> =
         Rc::new(RefCell::new(None));
@@ -480,16 +482,16 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         saved_grid_thumbnail_size.unwrap_or(DEFAULT_GRID_THUMBNAIL_SIZE),
     ));
 
-    // Clearing search after opening a result must also restore the gallery's
-    // normal activation and contents before the viewer is closed.
+    // Clear the entry without rebuilding the previous sidebar view behind
+    // the viewer. Its close preparation will load the result's folder there.
     let clear_search_after_result: Rc<dyn Fn()> = {
         let search_entry = search_entry_slot.clone();
         let search_text = search_text.clone();
+        let suppressed = search_suppressed.clone();
         let debounce = search_debounce.clone();
         let gallery = gallery_for_actions.clone();
-        let pending_refresh = pending_search_return_refresh.clone();
+        let folder_on_close = search_result_folder_on_close.clone();
         let cleared_query = cleared_search_query.clone();
-        let filter = filter.clone();
         Rc::new(move || {
             if let Some(source) = debounce.borrow_mut().take() {
                 let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| source.remove()));
@@ -499,15 +501,11 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             }
             if let Some(entry) = search_entry.borrow().as_ref() {
                 if !entry.text().is_empty() {
+                    folder_on_close.set(true);
                     cleared_query.replace(None);
-                    if filter.get() != sidebar::SidebarFilter::Library {
-                        pending_refresh.set(Some(
-                            REFRESH_GENERATION.load(std::sync::atomic::Ordering::Relaxed) + 1,
-                        ));
-                    }
-                    // The normal empty-query handler restores the full grid (or
-                    // the library home) behind the still-open lightbox.
+                    suppressed.set(true);
                     entry.set_text("");
+                    suppressed.set(false);
                 }
             }
             search_text.replace(String::new());
@@ -3141,30 +3139,47 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         let gallery = gallery.clone();
         let lightbox_for_prepare = Rc::downgrade(&lightbox);
         let prepared = lightbox_close_prepared.clone();
-        let pending_refresh = pending_search_return_refresh.clone();
+        let folder_on_close = search_result_folder_on_close.clone();
+        let close_waiting = search_close_waiting.clone();
+        let preserve_viewer = preserve_lightbox_during_search_return.clone();
+        let navigate_to_folder = navigate_to_folder.clone();
         lightbox.set_close_prepare_handler(move || {
             prepared.set(false);
-            if pending_refresh.get().is_some() {
-                return;
-            }
             if let Some(photo) = lightbox_for_prepare
                 .upgrade()
                 .and_then(|lightbox| lightbox.current_photo())
             {
+                if folder_on_close.replace(false) && photo.folder_id() > 0 {
+                    if std::env::var_os("PICASA_TRACE").is_some() {
+                        eprintln!(
+                            "PIC_NAV search_close_prepare folder={} photo={}",
+                            photo.folder_id(),
+                            photo.id()
+                        );
+                    }
+                    close_waiting.set(true);
+                    preserve_viewer.set(true);
+                    navigate_to_folder(photo.folder_id(), photo.id());
+                    preserve_viewer.set(false);
+                    prepared.set(true);
+                    return;
+                }
                 prepared.set(gallery.restore_activated_photo(photo.id()));
             }
         });
     }
+    {
+        let close_waiting = search_close_waiting.clone();
+        lightbox.set_close_ready_handler(move || !close_waiting.get());
+    }
 
-    // Keep the UI state reset when the lightbox is closed through any path.
-    // Restore the current photo into the shared gallery selection and focus the
-    // view that is actually visible (GridView normally, Folder ListView while
-    // browsing the continuous Picasa-style Folder stream).
+    // Search results return to the current photo's folder on close. Other
+    // viewer closes restore the shared gallery selection and viewport.
     let one_to_one_for_visibility = info.one_to_one.clone();
     let gallery_for_lightbox_close = gallery.clone();
     let lightbox_for_lightbox_close = lightbox.clone();
     let search_entry_for_lightbox_close = search_entry_slot.clone();
-    let pending_refresh_for_lightbox_close = pending_search_return_refresh.clone();
+    let search_close_waiting_for_lightbox_close = search_close_waiting.clone();
     let filter_for_lightbox_close = filter.clone();
     let search_text_for_lightbox_close = search_text.clone();
     let lightbox_return_generation = Rc::new(Cell::new(0_u64));
@@ -3173,6 +3188,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         lightbox_return_generation.set(return_generation);
         if root.is_visible() {
             lightbox_close_prepared.set(false);
+            search_close_waiting_for_lightbox_close.set(false);
             // A previous Lightbox return may still be easing the Folder view.
             // Once the viewer opens, freeze the hidden gallery exactly where it
             // is so no stale scroll callback can keep moving it underneath us.
@@ -3190,15 +3206,12 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         let gallery = gallery_for_lightbox_close.clone();
         let selected_photo = lightbox_for_lightbox_close.current_photo();
         let search_entry = search_entry_for_lightbox_close.clone();
-        let pending_refresh = pending_refresh_for_lightbox_close.clone();
-        let expected_refresh = pending_refresh.get();
         let filter = filter_for_lightbox_close.clone();
         let filter_at_close = filter.get();
         let search_text = search_text_for_lightbox_close.clone();
         let query_at_close = search_text.borrow().clone();
         let return_generation_cell = lightbox_return_generation.clone();
         let root = root.downgrade();
-        let attempts = Cell::new(0_u16);
         glib::timeout_add_local(Duration::from_millis(25), move || {
             if return_generation_cell.get() != return_generation
                 || root.upgrade().is_none_or(|root| root.is_visible())
@@ -3215,32 +3228,11 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             {
                 return glib::ControlFlow::Break;
             }
-            let attempt = attempts.get() + 1;
-            attempts.set(attempt);
-            if let Some(expected_refresh) = expected_refresh {
-                if APPLIED_REFRESH_GENERATION.load(std::sync::atomic::Ordering::Relaxed)
-                    < expected_refresh
-                    || gallery.stream_building()
-                {
-                    return if attempt < 400 {
-                        glib::ControlFlow::Continue
-                    } else {
-                        glib::ControlFlow::Break
-                    };
-                }
+            if let Some(photo) = selected_photo.as_ref() {
+                gallery.restore_activated_photo(photo.id());
             }
-            let restored = selected_photo
-                .as_ref()
-                .is_some_and(|photo| gallery.restore_activated_photo(photo.id()));
-            if restored || expected_refresh.is_none() || attempt >= 400 {
-                if pending_refresh.get() == expected_refresh {
-                    pending_refresh.set(None);
-                }
-                gallery.grab_focus();
-                glib::ControlFlow::Break
-            } else {
-                glib::ControlFlow::Continue
-            }
+            gallery.grab_focus();
+            glib::ControlFlow::Break
         });
     });
 

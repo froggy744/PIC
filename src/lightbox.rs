@@ -414,6 +414,8 @@ pub struct Lightbox {
     // Normal user closes fade out; programmatic close() remains immediate.
     close_requested: Rc<dyn Fn()>,
     close_prepare: Rc<RefCell<Option<Rc<dyn Fn()>>>>,
+    // A destination can finish loading behind the opaque viewer before fade.
+    close_ready: Rc<RefCell<Option<Rc<dyn Fn() -> bool>>>>,
     close_generation: Rc<Cell<u64>>,
     close_in_progress: Rc<Cell<bool>>,
 }

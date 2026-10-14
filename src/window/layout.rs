@@ -207,10 +207,17 @@
                     close_waiting.set(false);
                     return glib::ControlFlow::Break;
                 }
+                // A scan can queue a newer refresh after folder navigation
+                // starts. Its old model may stop building before the new
+                // database result is applied, so wait for the latest refresh
+                // as well as this navigation's own result.
                 let building = gallery.stream_building()
                     || required_refresh.is_some_and(|generation| {
-                        APPLIED_REFRESH_GENERATION.load(std::sync::atomic::Ordering::Relaxed)
-                            < generation
+                        let applied = APPLIED_REFRESH_GENERATION
+                            .load(std::sync::atomic::Ordering::Relaxed);
+                        let latest = REFRESH_GENERATION
+                            .load(std::sync::atomic::Ordering::Relaxed);
+                        applied < generation || applied < latest
                     });
                 let revealed = if building {
                     false

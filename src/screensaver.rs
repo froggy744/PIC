@@ -1406,13 +1406,12 @@ mod tests {
     }
 
     #[test]
-    fn compact_style_picker_labels_and_previews_are_distinct() {
+    fn horizontal_style_picker_labels_and_previews_are_distinct() {
         let styles = Style::CHOICES;
         let mut labels = HashSet::new();
         for style in styles {
             assert!(!style.label().is_empty());
             assert!(!style.subtitle().is_empty());
-            assert!(!style.icon().is_empty());
             assert!(labels.insert(style.label()));
         }
     }

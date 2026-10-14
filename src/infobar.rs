@@ -9,10 +9,11 @@ use crate::photo_object::PhotoObject;
 
 pub struct InfoBar {
     pub root: gtk::Box,
+    utilities: gtk::Box,
     preview: gtk::Image,
+    metadata: gtk::Box,
     filename: gtk::Label,
     details: gtk::Box,
-    aperture_metric: gtk::Box,
     pub favorite: gtk::Button,
     pub rating: gtk::MenuButton,
     pub rating_buttons: Vec<gtk::Button>,
@@ -32,11 +33,60 @@ pub struct InfoBar {
     pub grid_zoom: gtk::Scale,
     pub grid_zoom_reset: gtk::GestureClick,
     has_photo: Rc<Cell<bool>>,
-    has_aperture: Rc<Cell<bool>>,
     collage_active: Rc<Cell<bool>>,
 }
 
 impl InfoBar {
+    /// Keep the screensaver independent of photo selection.
+    /// Open the existing photo properties inspector by right-clicking the
+    /// metadata region. Left clicks and action buttons remain unaffected.
+    pub fn connect_metadata_right_click(&self, open: impl Fn() + 'static) {
+        let gesture = gtk::GestureClick::new();
+        gesture.set_button(3);
+        gesture.connect_pressed(move |gesture, _, _, _| {
+            gesture.set_state(gtk::EventSequenceState::Claimed);
+            open();
+        });
+        // Bind to the actual metadata content, not the expandable blank
+        // viewport space between metadata and photo action buttons.
+        self.metadata.add_controller(gesture);
+    }
+
+    pub fn append_utility(&self, button: &gtk::Button) {
+        configure_action_button(button);
+        self.utilities.append(button);
+        self.utilities.set_visible(true);
+    }
+
+    pub fn append_menu_action(&self, button: &gtk::Button, title: &str) {
+        configure_action_button(button);
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        row.add_css_class("photo-actions-menu-row");
+        row.set_height_request(34);
+        row.append(button);
+        let label = gtk::Label::new(Some(title));
+        label.set_xalign(0.0);
+        row.append(&label);
+        let menu = self
+            .overflow_popover
+            .child()
+            .and_downcast::<gtk::Box>()
+            .unwrap();
+        menu.append(&row);
+        let row_for_visibility = row.downgrade();
+        button.connect_visible_notify(move |button| {
+            if let Some(row) = row_for_visibility.upgrade() {
+                row.set_visible(button.get_visible());
+            }
+        });
+        let popover = self.overflow_popover.downgrade();
+        button.connect_clicked(move |_| {
+            if let Some(popover) = popover.upgrade() {
+                popover.popdown();
+            }
+        });
+    }
+
     pub fn new() -> Self {
         let root = gtk::Box::new(gtk::Orientation::Horizontal, 16);
         root.set_height_request(58);
@@ -60,13 +110,24 @@ impl InfoBar {
         preview.set_overflow(gtk::Overflow::Hidden);
         preview.add_css_class("info-preview");
 
-        root.append(&preview);
+        // A shrinkable viewport keeps optional metadata from imposing a
+        // window minimum. Its allocated width is the exact metadata budget.
+        let metadata = gtk::Box::new(gtk::Orientation::Horizontal, 16);
+        let metadata_viewport = gtk::ScrolledWindow::new();
+        metadata_viewport.set_policy(gtk::PolicyType::External, gtk::PolicyType::Never);
+        metadata_viewport.set_propagate_natural_width(false);
+        metadata_viewport.set_hexpand(true);
+        metadata_viewport.set_child(Some(&metadata));
+        root.append(&metadata_viewport);
+        metadata.append(&preview);
 
         let text = gtk::Box::new(gtk::Orientation::Vertical, 2);
         text.set_valign(gtk::Align::Center);
         // Keep enough room for a useful filename, but allow the bottom bar to
         // fit restored/narrow windows without pushing action buttons offscreen.
-        text.set_width_request(140);
+        text.set_width_request(100);
+        // Do not consume spare metadata width: the next visible metric should
+        // remain directly beside the filename instead of drifting right.
         text.set_hexpand(false);
 
         // A small heading above the value keeps the file name grouped with the
@@ -81,24 +142,27 @@ impl InfoBar {
         let filename = gtk::Label::new(Some("No photo selected"));
         filename.set_xalign(0.0);
         filename.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        filename.set_max_width_chars(32);
         filename.add_css_class("info-title");
         text.append(&filename);
 
-        root.append(&text);
+        metadata.append(&text);
 
-        let details = gtk::Box::new(gtk::Orientation::Horizontal, 28);
-        details.set_hexpand(true);
+        let details = gtk::Box::new(gtk::Orientation::Horizontal, 16);
+        details.set_hexpand(false);
         details.set_valign(gtk::Align::Center);
         details.set_visible(false);
 
-        let mut other_metrics = Vec::<gtk::Box>::new();
-        let mut aperture_metric = None;
+        let mut metrics = Vec::<gtk::Box>::new();
         for (label, value) in [
             ("Taken", "—"),
             ("Camera", "—"),
             ("Dimensions", "—"),
             ("Size", "—"),
-            ("Aperture", "—"),
+            ("Aperture", ""),
+            ("ISO", ""),
+            ("Shutter Speed", ""),
+            ("Focal Length", ""),
         ] {
             let metric = gtk::Box::new(gtk::Orientation::Vertical, 1);
             let key = gtk::Label::new(Some(label));
@@ -110,28 +174,19 @@ impl InfoBar {
             val.set_xalign(0.0);
             val.set_ellipsize(gtk::pango::EllipsizeMode::End);
             val.add_css_class("metric-val");
+            if label == "Camera" {
+                val.set_max_width_chars(20);
+            }
 
             metric.append(&key);
             metric.append(&val);
             details.append(&metric);
-            if label == "Taken" {
-                // Fixed-width date column: the filename and the other metrics
-                // shrink first, so the date is never squeezed or ellipsized.
-                metric.set_width_request(110);
-            } else if label == "Aperture" {
-                aperture_metric = Some(metric.clone());
-            } else {
-                other_metrics.push(metric.clone());
-            }
+            metrics.push(metric);
         }
-        root.append(&details);
+        metadata.append(&details);
 
         let actions = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-        // Keep the action cluster anchored to the trailing edge when the
-        // optional preview, filename, or metadata is hidden. Without an
-        // expanding child, an empty/missing-thumbnail state makes the whole
-        // bottom bar's contents drift to the left.
-        actions.set_hexpand(true);
+        actions.set_hexpand(false);
         actions.set_halign(gtk::Align::End);
         actions.set_valign(gtk::Align::Center);
 
@@ -220,7 +275,7 @@ impl InfoBar {
         // values that are immediately rounded by the gallery and echoed back
         // into the same thumb during a drag.
         grid_zoom.set_round_digits(0);
-        grid_zoom.set_width_request(128);
+        grid_zoom.set_width_request(64);
         grid_zoom.set_hexpand(false);
         grid_zoom.set_valign(gtk::Align::Center);
         grid_zoom.set_tooltip_text(Some(
@@ -241,7 +296,9 @@ impl InfoBar {
 
         let rotate = gtk::Button::from_icon_name("object-rotate-right-symbolic");
         configure_action_button(&rotate);
-        rotate.set_tooltip_text(Some("Rotate clockwise (right-click to rotate counter-clockwise)"));
+        rotate.set_tooltip_text(Some(
+            "Rotate clockwise (right-click to rotate counter-clockwise)",
+        ));
 
         let export = gtk::Button::from_icon_name("document-save-symbolic");
         configure_action_button(&export);
@@ -276,6 +333,7 @@ impl InfoBar {
         let overflow = gtk::MenuButton::new();
         overflow.set_icon_name("view-more-symbolic");
         overflow.set_tooltip_text(Some("More photo actions"));
+        overflow.set_direction(gtk::ArrowType::Up);
         overflow.set_has_frame(false);
         configure_action_button(&overflow);
         overflow.add_css_class("photo-actions-overflow");
@@ -373,24 +431,29 @@ impl InfoBar {
         // also contains the option to collapse the toolbar for metadata.
         overflow.set_visible(true);
         actions.append(&overflow);
+        let utilities = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        utilities.set_valign(gtk::Align::Center);
+        utilities.set_visible(false);
+        actions.insert_child_after(&utilities, Some(&print));
+        let utility_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        utility_row.add_css_class("photo-actions-menu-row");
+        utility_row.append(&gtk::Label::new(Some("Screensaver")));
+        utility_row.set_visible(false);
+        overflow_box.append(&utility_row);
+        let utilities_for_resize = utilities.clone();
         root.append(&actions);
+        let zoom_separator = toolbar_separator();
+        actions.insert_child_after(&zoom_separator, Some(&grid_zoom));
         // The action buttons are the controls that must always remain usable.
         // On narrow windows, reclaim space from optional metadata first, then
         // from filename/preview presentation. This prevents the bar's natural
         // minimum width from making the application appear clipped.
         let has_photo = Rc::new(Cell::new(false));
-        let has_aperture = Rc::new(Cell::new(false));
         let collage_active = Rc::new(Cell::new(false));
         let has_photo_for_resize = has_photo.clone();
         let details_for_resize = details.clone();
         let text_for_resize = text.clone();
         let preview_for_resize = preview.clone();
-        let other_metrics_for_resize = other_metrics;
-        let camera_metric_for_resize = other_metrics_for_resize[0].clone();
-        let dimensions_metric_for_resize = other_metrics_for_resize[1].clone();
-        let size_metric_for_resize = other_metrics_for_resize[2].clone();
-        let aperture_metric_for_resize = aperture_metric.clone().expect("aperture metric exists");
-        let has_aperture_for_resize = has_aperture.clone();
         // Reveal secondary actions progressively as the bar gains room. The
         // old all-or-nothing 900px switch hid every secondary action on a
         // window only slightly narrower than that threshold, even when the
@@ -401,36 +464,71 @@ impl InfoBar {
         let grid_zoom_for_resize = grid_zoom.clone();
         let group_separators_for_resize = group_separators;
         root.add_tick_callback(move |bar, _| {
+            // Keep the open drawer stable while interacting with its controls.
+            // Reparenting during popup allocation can dismiss nested actions.
+            let hide_all = show_only_menu_for_resize.get();
+            let mode_changed = visible_action_count.get().1 != hide_all;
+            for (control, row) in &overflow_entries {
+                row.set_visible(
+                    control.get_visible() && control.parent().as_ref() == Some(row.upcast_ref()),
+                );
+            }
+            zoom_separator.set_visible(!hide_all && grid_zoom_for_resize.get_visible());
+            let screensaver_visible = utilities_for_resize
+                .first_child()
+                .is_some_and(|button| button.get_visible());
+            utilities_for_resize.set_visible(screensaver_visible);
+            utility_row.set_visible(hide_all && screensaver_visible);
+            let keep_menu_stable = overflow.is_active() && !mode_changed;
             let width = bar.width();
             if width > 0 {
                 // Keep zoom and the three common photo controls directly
                 // available. Promote secondary controls in pairs as the bar
                 // grows, while preserving the overflow drawer for the rest.
                 let visible_count = match width {
-                    0..=559 => 0,
-                    560..=639 => 2,
-                    640..=759 => 4,
-                    760..=899 => 6,
+                    ..=639 => 0,
+                    640..=759 => 2,
+                    760..=899 => 4,
                     900..=1199 => 6,
                     _ => overflow_entries.len(),
                 };
-                let hide_all = show_only_menu_for_resize.get();
                 let state = (visible_count, hide_all);
-                if visible_action_count.replace(state) != state {
-                    overflow.popdown();
+                if !keep_menu_stable && visible_action_count.replace(state) != state {
+                    if !mode_changed {
+                        overflow.popdown();
+                    }
+                    if hide_all {
+                        if utilities_for_resize.parent().as_ref() == Some(actions.upcast_ref()) {
+                            actions.remove(&utilities_for_resize);
+                            utility_row.prepend(&utilities_for_resize);
+                        }
+                    } else if utilities_for_resize.parent().as_ref()
+                        == Some(utility_row.upcast_ref())
+                    {
+                        utility_row.remove(&utilities_for_resize);
+                        actions.insert_child_after(
+                            &utilities_for_resize,
+                            overflow.prev_sibling().as_ref(),
+                        );
+                    }
+                    utility_row
+                        .set_visible(hide_all && utilities_for_resize.first_child().is_some());
                     let mut previous: Option<gtk::Widget> = None;
                     for (index, (control, row)) in overflow_entries.iter().enumerate() {
                         if let Some(menu) = control.downcast_ref::<gtk::MenuButton>() {
-                            menu.popdown();
+                            if menu.is_active() {
+                                menu.popdown();
+                            }
                         }
-                        let in_toolbar = !hide_all && index < 4 + visible_count;
-                        row.set_visible(!in_toolbar);
+                        // Import stays in the menu even when all photo controls fit.
+                        let in_toolbar = !hide_all && index != 9 && index < 4 + visible_count;
+                        row.set_visible(!in_toolbar && control.get_visible());
                         let parent = control.parent();
                         if in_toolbar {
                             if parent.as_ref() == Some(row.upcast_ref::<gtk::Widget>()) {
                                 row.remove(control);
                                 if index == 0 {
-                                    grid_zoom_for_resize.set_width_request(128);
+                                    grid_zoom_for_resize.set_width_request(64);
                                 }
                                 actions.insert_child_after(control, previous.as_ref());
                             } else if parent.is_none() {
@@ -441,14 +539,14 @@ impl InfoBar {
                             if parent.as_ref() == Some(actions.upcast_ref::<gtk::Widget>()) {
                                 actions.remove(control);
                                 if index == 0 {
-                                    grid_zoom_for_resize.set_width_request(100);
+                                    grid_zoom_for_resize.set_width_request(50);
                                     row.insert_child_after(control, row.first_child().as_ref());
                                 } else {
                                     row.insert_child_after(control, None::<&gtk::Widget>);
                                 }
                             } else if parent.is_none() {
                                 if index == 0 {
-                                    grid_zoom_for_resize.set_width_request(100);
+                                    grid_zoom_for_resize.set_width_request(50);
                                     row.insert_child_after(control, row.first_child().as_ref());
                                 } else {
                                     row.insert_child_after(control, None::<&gtk::Widget>);
@@ -458,16 +556,16 @@ impl InfoBar {
                     }
                     let visible_groups = [
                         true,
-                        (1..=3).any(|index| overflow_entries[index].1.is_visible()),
+                        (1..=3).any(|index| overflow_entries[index].1.get_visible()),
                         [5, 4]
                             .iter()
-                            .any(|&index| overflow_entries[index].1.is_visible()),
+                            .any(|&index| overflow_entries[index].1.get_visible()),
                         [6, 7, 8]
                             .iter()
-                            .any(|&index| overflow_entries[index].1.is_visible()),
+                            .any(|&index| overflow_entries[index].1.get_visible()),
                         [9, 11, 10]
                             .iter()
-                            .any(|&index| overflow_entries[index].1.is_visible()),
+                            .any(|&index| overflow_entries[index].1.get_visible()),
                     ];
                     for (index, separator) in group_separators_for_resize.iter().enumerate() {
                         separator.set_visible(
@@ -475,72 +573,62 @@ impl InfoBar {
                                 && visible_groups[index + 1..].iter().any(|visible| *visible),
                         );
                     }
+                    zoom_separator.set_visible(!hide_all && grid_zoom_for_resize.get_visible());
+                    if !hide_all {
+                        actions.reorder_child_after(&zoom_separator, Some(&grid_zoom_for_resize));
+                    }
                     overflow.set_visible(true);
                     hide_buttons_option_for_resize.set_active(hide_all);
                 }
-                // Budget optional presentation against the controls that are
-                // actually visible. Width thresholds alone can trap a selected
-                // photo's long metadata above the next hide threshold.
-                let mut available =
-                    width - actions.measure(gtk::Orientation::Horizontal, -1).0 - 24;
-                let show_text = available >= 156;
+                // GTK caches label measurements. Only eight small metrics are
+                // considered; no photo I/O or catalog queries run during resize.
+                let mut available = metadata_viewport.width();
+                let filename_minimum = 100;
+                let show_text = available >= filename_minimum;
                 text_for_resize.set_visible(show_text);
                 if show_text {
-                    available -= 156;
+                    available -= filename_minimum;
                 }
-
-                let show_taken = has_photo_for_resize.get() && available >= 126;
-                details_for_resize.set_visible(show_taken);
-                if let Some(taken) = details_for_resize.first_child() {
-                    taken.set_visible(show_taken);
-                }
-                if show_taken {
-                    available -= 126;
-                }
-
-                let show_preview = width >= 880 && available >= 56;
-                preview_for_resize.set_visible(show_preview);
-                if show_preview {
-                    available -= 56;
-                }
-
-                // Retain the existing priority: camera disappears first and
-                // Taken remains the last metadata field on a compact bar.
-                for (metric, threshold, enabled) in [
-                    (
-                        &aperture_metric_for_resize,
-                        980,
-                        has_aperture_for_resize.get(),
-                    ),
-                    (&size_metric_for_resize, 1080, true),
-                    (&dimensions_metric_for_resize, 1180, true),
-                    (&camera_metric_for_resize, 1280, true),
-                ] {
-                    let mut required = metric.width_request().max(0);
-                    let mut child = metric.first_child();
-                    while let Some(label) = child {
-                        required = required.max(label.measure(gtk::Orientation::Horizontal, -1).0);
-                        child = label.next_sibling();
-                    }
-                    required += 28; // spacing inside the metadata row
-                    let show = show_taken
-                        && enabled
-                        && (hide_all || width >= threshold)
-                        && available >= required;
+                let mut visible_metrics = 0;
+                // Taken is essential, then exposure fields, size/dimensions,
+                // and finally the longer camera name. Visual order stays fixed.
+                for index in [0, 4, 5, 6, 7, 3, 2, 1] {
+                    let metric = &metrics[index];
+                    let value = metric.last_child().and_downcast::<gtk::Label>().unwrap();
+                    let heading = metric.first_child().unwrap();
+                    let required = heading
+                        .measure(gtk::Orientation::Horizontal, -1)
+                        .1
+                        .max(value.measure(gtk::Orientation::Horizontal, -1).1);
+                    let gap = if show_text || visible_metrics > 0 {
+                        16
+                    } else {
+                        0
+                    };
+                    let show = has_photo_for_resize.get()
+                        && !value.text().is_empty()
+                        && available >= required + gap;
                     metric.set_visible(show);
                     if show {
-                        available -= required;
+                        metric.set_width_request(required);
+                        available -= required + gap;
+                        visible_metrics += 1;
                     }
                 }
+                details_for_resize.set_visible(visible_metrics > 0);
+                // Use surplus space for the thumbnail after useful metadata.
+                let show_preview = available >= 56;
+                preview_for_resize.set_visible(show_preview);
             }
             glib::ControlFlow::Continue
         });
         Self {
             root,
+            utilities,
             preview,
+            metadata,
             filename,
             details,
-            aperture_metric: aperture_metric.expect("aperture metric exists"),
             favorite,
             rating,
             rating_buttons,
@@ -560,7 +648,6 @@ impl InfoBar {
             grid_zoom,
             grid_zoom_reset,
             has_photo,
-            has_aperture,
             collage_active,
         }
     }
@@ -623,11 +710,10 @@ impl InfoBar {
     pub fn set_photo(&self, photo: Option<&PhotoObject>) {
         let Some(photo) = photo else {
             self.has_photo.set(false);
-            self.has_aperture.set(false);
             self.filename.set_text("No photo selected");
             self.preview.set_icon_name(Some("image-x-generic-symbolic"));
             self.details.set_visible(false);
-            set_metric_values(&self.details, ["—", "—", "—", "—", "—"]);
+            set_metric_values(&self.details, [""; 8]);
             self.favorite.set_sensitive(false);
             self.rating.set_sensitive(false);
             self.set_rating_presentation(0);
@@ -662,7 +748,6 @@ impl InfoBar {
             self.preview.set_icon_name(Some("image-x-generic-symbolic"));
         }
 
-        self.details.set_visible(self.root.width() >= 880);
         let dimensions = if photo.width() > 0 && photo.height() > 0 {
             format!("{} × {}", photo.width(), photo.height())
         } else {
@@ -677,10 +762,6 @@ impl InfoBar {
             .unwrap_or_else(|| "Unknown date".to_string());
         let formatted_date = format_date(&raw_date);
         let aperture = photo.aperture();
-        let has_aperture = aperture.is_finite() && aperture > 0.0;
-        self.has_aperture.set(has_aperture);
-        self.aperture_metric
-            .set_visible(has_aperture && self.root.width() >= 980);
 
         // The camera stays a metric beside Taken; the filename subtitle slot
         // that previously duplicated it now holds the actual file name.
@@ -692,6 +773,13 @@ impl InfoBar {
                 dimensions,
                 size,
                 format_aperture(aperture).unwrap_or_default(),
+                if photo.iso() > 0 {
+                    photo.iso().to_string()
+                } else {
+                    String::new()
+                },
+                crate::window::format_shutter_speed(photo.shutter_speed()).unwrap_or_default(),
+                crate::window::format_focal_length(photo.focal_length()).unwrap_or_default(),
             ],
         );
 
@@ -768,6 +856,14 @@ mod tests {
     }
 }
 
+fn toolbar_separator() -> gtk::Separator {
+    let separator = gtk::Separator::new(gtk::Orientation::Vertical);
+    separator.add_css_class("infobar-group-separator");
+    separator.set_valign(gtk::Align::Center);
+    separator.set_height_request(24);
+    separator
+}
+
 fn configure_action_button<W: IsA<gtk::Widget>>(button: &W) {
     let widget = button.upcast_ref::<gtk::Widget>();
     widget.set_size_request(34, 34);
@@ -796,6 +892,7 @@ fn set_metric_values<const N: usize>(details: &gtk::Box, values: [impl AsRef<str
         };
         if let Some(label) = metric.last_child().and_downcast::<gtk::Label>() {
             label.set_text(value.as_ref());
+            label.set_tooltip_text(Some(value.as_ref()));
         }
         child = child.and_then(|widget| widget.next_sibling());
     }

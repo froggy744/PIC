@@ -985,14 +985,6 @@
 
     let right_header = adw::HeaderBar::new();
     right_header.set_height_request(46);
-    let help = gtk::Button::builder()
-        .icon_name("help-about-symbolic")
-        .tooltip_text("Help")
-        .action_name("win.getting-started")
-        .build();
-    help.update_property(&[gtk::accessible::Property::Label("Help")]);
-    help.add_css_class("flat");
-    right_header.pack_end(&help);
 
     right_header.set_hexpand(true);
     right_header.set_show_start_title_buttons(!main_split.shows_sidebar());
@@ -1343,6 +1335,7 @@
     }
     // Keep the search field centered in the header.
     right_header.set_title_widget(Some(&search_area));
+    menu_controls.register(&connection.borrow(), "Top bar", "search", "Search", &search_area);
 
     
 

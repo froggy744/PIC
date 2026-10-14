@@ -743,6 +743,17 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         });
     }
     configure_infobar_album_menu(&info.add_to_album, action_context.clone());
+    // The same docked inspector used by the photo context menu is available
+    // directly from the infobar's metadata (right mouse button).
+    {
+        let selection = selected_photo.clone();
+        let context = action_context.clone();
+        info.connect_metadata_right_click(move || {
+            if let Some(photo) = selection.borrow().as_ref() {
+                show_properties_dialog(photo, &context);
+            }
+        });
+    }
 
     // Destructive maintenance actions for the Settings → Library page. The
     // settings window owns the buttons and confirmation dialogs; the actual
@@ -839,6 +850,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let switch_library_slot: Rc<RefCell<Option<Rc<dyn Fn(&str) -> Result<(), String>>>>> =
         Rc::new(RefCell::new(None));
     let settings_window = crate::settings::SettingsWindow::default();
+    let menu_controls = settings_window.menu_controls.clone();
     let settings_window_for_switch = settings_window.clone();
     let settings_parent = window.clone();
     let settings_surface = window.clone();
@@ -4027,7 +4039,7 @@ fn start_photo_export_single(
 
     // Appearance button: opens Settings → Themes, where the theme list is
     // built from the theme folders on disk. toolbar.rs appends the
-    // `settings` button to the header tools.
+    // `settings` button to the infobar utilities.
     let settings = crate::window::theme::appearance_button();
     theme_engine.set_appearance_button(&settings);
     // Theme switches redraw the albums home so covers pick up the palette.
@@ -5554,6 +5566,7 @@ fn start_photo_export_single(
             }
 
             connection.replace(new_connection);
+            settings_window.menu_controls.reload(&connection.borrow());
             folder_cache.replace(folders.clone());
             selected_photo.replace(None);
             info.set_photo(None);

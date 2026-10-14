@@ -31,6 +31,12 @@ mod imp {
         #[property(get, set)]
         pub aperture: Cell<f64>,
         #[property(get, set)]
+        pub iso: Cell<i64>,
+        #[property(get, set)]
+        pub shutter_speed: Cell<f64>,
+        #[property(get, set)]
+        pub focal_length: Cell<f64>,
+        #[property(get, set)]
         pub width: Cell<i64>,
         #[property(get, set)]
         pub height: Cell<i64>,
@@ -101,6 +107,9 @@ impl PhotoObject {
             && *imp.taken_at.borrow() == photo.taken_at
             && *imp.camera.borrow() == photo.camera
             && imp.aperture.get() == photo.aperture.unwrap_or_default()
+            && imp.iso.get() == photo.iso.unwrap_or_default()
+            && imp.shutter_speed.get() == photo.shutter_speed.unwrap_or_default()
+            && imp.focal_length.get() == photo.focal_length.unwrap_or_default()
             && imp.width.get() == photo.width.unwrap_or_default()
             && imp.height.get() == photo.height.unwrap_or_default()
             && imp.mtime.get() == photo.mtime.unwrap_or_default()
@@ -158,6 +167,9 @@ impl PhotoObject {
         *imp.taken_at.borrow_mut() = photo.taken_at.clone();
         *imp.camera.borrow_mut() = photo.camera.clone();
         imp.aperture.set(photo.aperture.unwrap_or_default());
+        imp.iso.set(photo.iso.unwrap_or_default());
+        imp.shutter_speed.set(photo.shutter_speed.unwrap_or_default());
+        imp.focal_length.set(photo.focal_length.unwrap_or_default());
         imp.width.set(photo.width.unwrap_or_default());
         imp.height.set(photo.height.unwrap_or_default());
         imp.size_bytes.set(photo.size_bytes.unwrap_or_default());
@@ -245,5 +257,46 @@ mod photo_wall_tests {
                 .build();
             assert!((photo.photo_wall_aspect_ratio() - expected).abs() < 1e-9);
         }
+    }
+}
+
+#[cfg(test)]
+mod exposure_metadata_tests {
+    use super::*;
+
+    #[test]
+    fn exposure_values_follow_catalog_updates() {
+        let connection = rusqlite::Connection::open_in_memory().unwrap();
+        connection.execute_batch(crate::db::SCHEMA).unwrap();
+        let metadata = crate::db::PhotoMetadata {
+            iso: Some(800),
+            shutter_speed: Some(0.004),
+            focal_length: Some(85.0),
+            ..Default::default()
+        };
+        let id = crate::db::upsert_photo(
+            &connection,
+            std::path::Path::new("/missing/infobar-test.jpg"),
+            None,
+            &metadata,
+        )
+        .unwrap();
+        let mut record = crate::db::photo(&connection, id).unwrap().unwrap();
+        let object = PhotoObject::from_photo(&record);
+        assert_eq!(object.iso(), 800);
+        assert_eq!(object.shutter_speed(), 0.004);
+        assert_eq!(object.focal_length(), 85.0);
+        assert!(object.matches_catalog(&record));
+        record.iso = Some(1600);
+        assert!(!object.matches_catalog(&record));
+        object.set_from_photo(&record);
+        record.shutter_speed = Some(0.008);
+        assert!(!object.matches_catalog(&record));
+        object.set_from_photo(&record);
+        record.focal_length = None;
+        assert!(!object.matches_catalog(&record));
+        object.set_from_photo(&record);
+        assert_eq!(object.focal_length(), 0.0);
+        assert!(object.matches_catalog(&record));
     }
 }

@@ -1402,7 +1402,7 @@ pub(crate) fn refresh_docked_properties(photo: Option<&crate::photo_object::Phot
     }
 }
 
-pub(crate) fn show_properties_dialog(
+fn show_properties_dialog(
     photo: &crate::photo_object::PhotoObject,
     context: &PhotoActionContext,
 ) {

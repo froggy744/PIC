@@ -95,32 +95,11 @@ fn screen_to_normalized(display: (f64, f64, f64, f64), px: f64, py: f64) -> (f64
 }
 
 fn resize_handle_point(rect: super::model::NormRect, anchor: OverlayAnchor) -> (f32, f32) {
-    match anchor {
-        OverlayAnchor::TopLeft => (rect.right(), rect.bottom()),
-        OverlayAnchor::TopRight => (rect.left, rect.bottom()),
-        OverlayAnchor::BottomLeft => (rect.right(), rect.top),
-        OverlayAnchor::BottomRight => (rect.left, rect.top),
-        OverlayAnchor::Center => (rect.right(), rect.bottom()),
-    }
-}
-
-/// True when the screen point sits within `radius` of the overlay's resize
-/// handle (the only handle; resize is aspect-locked around the anchor).
-fn hits_resize_handle(
-    display: (f64, f64, f64, f64),
-    rect: super::model::NormRect,
-    px: f64,
-    py: f64,
-    radius: f64,
-    anchor: OverlayAnchor,
-) -> bool {
-    let (x, y, w, h) = display;
-    let (handle_norm_x, handle_norm_y) = resize_handle_point(rect, anchor);
-    let handle_x = x + handle_norm_x as f64 * w;
-    let handle_y = y + handle_norm_y as f64 * h;
-    let dx = px - handle_x;
-    let dy = py - handle_y;
-    dx * dx + dy * dy <= radius * radius
+    let (ax, ay) = anchor.factors();
+    (
+        if ax > 0.5 { rect.left } else { rect.right() },
+        if ay > 0.5 { rect.top } else { rect.bottom() },
+    )
 }
 
 /// Aspect-locked resize anchored at the rectangle's pinned corner: width
@@ -145,35 +124,35 @@ fn resize_rect_from_anchor(
     let px = pointer_norm.0 as f32;
     let center_x = start.left + start.width * 0.5;
     let center_y = start.top + start.height * 0.5;
-    let max_width = match anchor {
-        OverlayAnchor::TopLeft | OverlayAnchor::BottomLeft => 1.0 - start.left,
-        OverlayAnchor::TopRight | OverlayAnchor::BottomRight => start.right(),
-        OverlayAnchor::Center => center_x.min(1.0 - center_x) * 2.0,
+    let (ax, ay) = anchor.factors();
+    let max_width = if ax == 0.0 {
+        1.0 - start.left
+    } else if ax == 1.0 {
+        start.right()
+    } else {
+        center_x.min(1.0 - center_x) * 2.0
     }
     .max(OverlaySpec::MIN_WIDTH);
-    let desired_width = match anchor {
-        OverlayAnchor::TopLeft | OverlayAnchor::BottomLeft => px - start.left,
-        OverlayAnchor::TopRight | OverlayAnchor::BottomRight => start.right() - px,
-        OverlayAnchor::Center => (px - center_x).abs() * 2.0,
+    let desired_width = if ax == 0.0 {
+        px - start.left
+    } else if ax == 1.0 {
+        start.right() - px
+    } else {
+        (px - center_x).abs() * 2.0
     }
     .clamp(OverlaySpec::MIN_WIDTH, max_width);
-    // Height in normalized units for a photo-width fraction `desired_width`.
     let height_for_width = desired_width * photo_w / photo_h / aspect;
-    let max_height = match anchor {
-        OverlayAnchor::TopLeft | OverlayAnchor::TopRight => 1.0 - start.top,
-        OverlayAnchor::BottomLeft | OverlayAnchor::BottomRight => start.bottom(),
-        OverlayAnchor::Center => center_y.min(1.0 - center_y) * 2.0,
+    let max_height = if ay == 0.0 {
+        1.0 - start.top
+    } else if ay == 1.0 {
+        start.bottom()
+    } else {
+        center_y.min(1.0 - center_y) * 2.0
     };
     let height = height_for_width.min(max_height).max(OverlaySpec::MIN_WIDTH);
-    // Re-derive width so a height-clamped size keeps the same pixel aspect.
     let width = (height * photo_h * aspect / photo_w).clamp(OverlaySpec::MIN_WIDTH, max_width);
-    let (left, top) = match anchor {
-        OverlayAnchor::TopLeft => (start.left, start.top),
-        OverlayAnchor::TopRight => (start.right() - width, start.top),
-        OverlayAnchor::BottomLeft => (start.left, start.bottom() - height),
-        OverlayAnchor::BottomRight => (start.right() - width, start.bottom() - height),
-        OverlayAnchor::Center => (center_x - width * 0.5, center_y - height * 0.5),
-    };
+    let left = start.left + start.width * ax - width * ax;
+    let top = start.top + start.height * ay - height * ay;
     super::model::NormRect {
         left,
         top,
@@ -293,34 +272,19 @@ fn overlay_norm_rect(
 fn overlay_grid_position(
     overlay: &OverlaySpec,
     dims: (i32, i32),
-    aspect: f32,
+    _aspect: f32,
 ) -> (u8, u8, f64, f64) {
-    let photo_w = dims.0.max(1) as f32;
-    let photo_h = dims.1.max(1) as f32;
-    let rect = overlay.rect(photo_w, photo_h, aspect);
-    let xs = [rect.left, rect.left + rect.width * 0.5, rect.right()];
-    let ys = [rect.top, rect.top + rect.height * 0.5, rect.bottom()];
+    let (col, row) = overlay.anchor.grid_position();
     let targets = [
         OverlaySpec::POSITION_MARGIN,
         0.5,
         1.0 - OverlaySpec::POSITION_MARGIN,
     ];
-    let nearest = |values: [f32; 3]| {
-        (0..3)
-            .min_by(|a, b| {
-                (values[*a] - targets[*a])
-                    .abs()
-                    .total_cmp(&(values[*b] - targets[*b]).abs())
-            })
-            .unwrap_or(1)
-    };
-    let col = nearest(xs);
-    let row = nearest(ys);
     (
-        col as u8,
-        row as u8,
-        f64::from(xs[col] - targets[col]) * f64::from(photo_w),
-        f64::from(ys[row] - targets[row]) * f64::from(photo_h),
+        col,
+        row,
+        f64::from(overlay.x - targets[usize::from(col)]) * f64::from(dims.0.max(1)),
+        f64::from(overlay.y - targets[usize::from(row)]) * f64::from(dims.1.max(1)),
     )
 }
 
@@ -341,44 +305,24 @@ fn reset_overlay_position(overlay: &mut OverlaySpec) {
 fn place_overlay_grid(
     overlay: &mut OverlaySpec,
     dims: (i32, i32),
-    aspect: f32,
+    _aspect: f32,
     col: u8,
     row: u8,
     x_offset: f64,
     y_offset: f64,
 ) {
-    let photo_w = dims.0.max(1) as f32;
-    let photo_h = dims.1.max(1) as f32;
-    let current = overlay.rect(photo_w, photo_h, aspect);
+    let photo_w = dims.0.max(1) as f64;
+    let photo_h = dims.1.max(1) as f64;
     let targets = [
         OverlaySpec::POSITION_MARGIN,
         0.5,
         1.0 - OverlaySpec::POSITION_MARGIN,
     ];
-    let col = usize::from(col.min(2));
-    let row = usize::from(row.min(2));
-    let left = match col {
-        0 => targets[col],
-        1 => targets[col] - current.width * 0.5,
-        _ => targets[col] - current.width,
-    } + (x_offset / f64::from(photo_w)) as f32;
-    let top = match row {
-        0 => targets[row],
-        1 => targets[row] - current.height * 0.5,
-        _ => targets[row] - current.height,
-    } + (y_offset / f64::from(photo_h)) as f32;
-    overlay.position_at(OverlayAnchor::Center);
-    overlay.set_rect(
-        super::model::NormRect {
-            left,
-            top,
-            width: current.width,
-            height: current.height,
-        },
-        photo_w,
-        photo_h,
-        aspect,
-    );
+    let col = col.min(2);
+    let row = row.min(2);
+    overlay.anchor = OverlayAnchor::from_grid(col, row);
+    overlay.x = targets[usize::from(col)] + (x_offset / photo_w) as f32;
+    overlay.y = targets[usize::from(row)] + (y_offset / photo_h) as f32;
 }
 
 fn text_norm_rect(
@@ -1764,6 +1708,36 @@ mod overlay_geometry_tests {
                 assert_eq!((actual_col, actual_row), (col, row));
                 assert!(x_offset.abs() < 1e-3);
                 assert!(y_offset.abs() < 1e-3);
+            }
+        }
+    }
+
+    #[test]
+    fn positions_survive_recipe_copy_between_landscape_and_portrait() {
+        let targets = [
+            OverlaySpec::POSITION_MARGIN,
+            0.5,
+            1.0 - OverlaySpec::POSITION_MARGIN,
+        ];
+        for row in 0..3u8 {
+            for col in 0..3u8 {
+                let mut source = OverlaySpec::new_centered("logo");
+                place_overlay_grid(&mut source, (6000, 4000), 2.0, col, row, 0.0, 0.0);
+                let recipe = super::super::model::EditRecipe {
+                    overlays: vec![source],
+                    ..Default::default()
+                };
+                let pasted = super::super::model::EditRecipe::decode(&recipe.encode());
+                let overlay = &pasted.overlays[0];
+                assert_eq!(overlay.anchor, OverlayAnchor::from_grid(col, row));
+                for (w, h) in [(6000.0, 4000.0), (4000.0, 6000.0), (3000.0, 3000.0)] {
+                    let rect = overlay.rect(w, h, 2.0);
+                    let (ax, ay) = overlay.anchor.factors();
+                    let x = rect.left + rect.width * ax;
+                    let y = rect.top + rect.height * ay;
+                    assert!((x - targets[col as usize]).abs() < 1e-5, "{col},{row} x={x}");
+                    assert!((y - targets[row as usize]).abs() < 1e-5, "{col},{row} y={y}");
+                }
             }
         }
     }

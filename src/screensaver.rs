@@ -860,6 +860,7 @@ struct Player {
     interval: Duration,
     transition: Duration,
     switched_at: Instant,
+    started: bool,
     paused_at: Option<Instant>,
     next: usize,
     current: usize,
@@ -895,6 +896,7 @@ impl Player {
             interval: Duration::from_secs(seconds as u64),
             transition: Duration::from_millis(900),
             switched_at: Instant::now(),
+            started: false,
             paused_at: None,
             next: if style.single_photo() { 1 } else { slots.len() },
             current: 0,
@@ -1061,6 +1063,22 @@ impl Player {
             self.fading_slot = None;
         }
         self.prefetch(tx);
+        if self.style.single_photo() && !self.started {
+            // Begin the first slide only when it can actually be displayed.
+            if !self.available(self.current) {
+                if !self.failed.contains(&self.current) { return; }
+                let Some(index) = (1..self.count)
+                    .map(|offset| (self.current + offset) % self.count)
+                    .find(|index| !self.failed.contains(index)) else { return; };
+                self.current = index;
+                self.next = (index + 1) % self.count;
+                self.request(index, tx);
+                if !self.available(index) { return; }
+            }
+            self.started = true;
+            self.switched_at = self.paused_at.unwrap_or_else(Instant::now);
+            return;
+        }
         if self.paused_at.is_some() || self.count == 0 || self.elapsed() < self.interval {
             return;
         }
@@ -1073,6 +1091,10 @@ impl Player {
         if self.style.single_photo() {
             for _ in 0..self.count {
                 let index = self.next % self.count;
+                if index == self.current {
+                    self.next = (index + 1) % self.count;
+                    continue;
+                }
                 if self.available(index) {
                     self.previous = Some(self.current);
                     self.current = index;
@@ -1624,6 +1646,59 @@ mod tests {
         let resumed = player.elapsed();
         assert!(resumed.abs_diff(elapsed) < Duration::from_millis(100));
         assert!(player.paused_at.is_none());
+    }
+
+    fn load_cinema_test_frame(player: &mut Player, index: usize) {
+        player.receive(ImageResult { index, high_quality: false,
+            pixels: Some(Pixels { width: 1, height: 1, data: vec![255; 4] }) });
+    }
+
+    #[test]
+    fn cinema_starts_its_interval_when_the_first_image_arrives() {
+        let mut player = Player::new(Style::IPhoto, 3, 6, false, 6);
+        let (tx, _rx) = mpsc::channel();
+        player.switched_at -= Duration::from_secs(20);
+        player.update(&tx);
+        assert!(!player.started);
+        load_cinema_test_frame(&mut player, 0);
+        load_cinema_test_frame(&mut player, 1);
+        player.update(&tx);
+        assert!(player.started);
+        assert_eq!(player.current, 0);
+        assert!(player.elapsed() < Duration::from_secs(1));
+        player.switched_at -= Duration::from_secs(7);
+        player.update(&tx);
+        assert_eq!(player.current, 1);
+    }
+
+    #[test]
+    fn cinema_does_not_restart_the_only_usable_photo() {
+        for count in [1, 4] {
+            let mut player = Player::new(Style::IPhoto, count, 6, false, 6);
+            let (tx, _rx) = mpsc::channel();
+            load_cinema_test_frame(&mut player, 0);
+            player.failed.extend(1..count);
+            player.update(&tx);
+            player.switched_at -= Duration::from_secs(7);
+            let before = player.switched_at;
+            for _ in 0..5 { player.update(&tx); }
+            assert_eq!(player.switched_at, before);
+            assert_eq!(player.changes, 0);
+            assert_eq!(player.previous, None);
+        }
+    }
+
+    #[test]
+    fn cinema_skips_failed_initial_photos_without_consuming_display_time() {
+        let mut player = Player::new(Style::IPhoto, 4, 6, false, 6);
+        let (tx, _rx) = mpsc::channel();
+        player.failed.extend([0, 1]);
+        player.switched_at -= Duration::from_secs(20);
+        load_cinema_test_frame(&mut player, 2);
+        player.update(&tx);
+        assert!(player.started);
+        assert_eq!(player.current, 2);
+        assert!(player.elapsed() < Duration::from_secs(1));
     }
 
     #[test]

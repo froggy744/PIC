@@ -5,11 +5,12 @@ use super::*;
 
 mod pile;
 use pile::Pile;
+mod cinema;
+use cinema::Cinema;
 
 // 60 steps with per-frame CSS transform interpolation gives a smooth
 // GSK-composited flip without creating new thumbnails or touching the layout.
 const FLIP_STEPS: usize = 60;
-const KEN_STEPS: usize = 240;
 const PILE_TILT: [f64; 6] = [-2.0, 1.4, -1.4, 2.0, -1.8, 1.8];
 const FLOATING_TILT: [f64; 6] = [-0.8, 0.6, -0.6, 0.8, -0.5, 0.5];
 const FLOATING_DRIFT_X: f64 = 3.0;
@@ -132,106 +133,7 @@ impl Tile {
     }
 }
 
-/// Cinematic player uses two stable, full-viewport frames. Picture content
-/// moves only through GPU compositor CSS transforms, not GtkFixed geometry.
-struct Cinema {
-    back_frame: gtk::Overlay,
-    front_frame: gtk::Overlay,
-    back: gtk::Picture,
-    front: gtk::Picture,
-    back_version: Option<(usize, u64)>,
-    front_version: Option<(usize, u64)>,
-    back_motion_step: Option<(usize, usize)>,
-    front_motion_step: Option<(usize, usize)>,
-}
-impl Cinema {
-    fn new(root: &gtk::Fixed) -> Self {
-        let back = gtk::Picture::new();
-        let front = gtk::Picture::new();
-        let back_frame = gtk::Overlay::new();
-        let front_frame = gtk::Overlay::new();
-        for picture in [&back, &front] {
-            picture.set_content_fit(gtk::ContentFit::Contain);
-            picture.set_hexpand(true);
-            picture.set_vexpand(true);
-            picture.set_can_shrink(true);
-        }
-        for frame in [&back_frame, &front_frame] {
-            frame.add_css_class("screensaver-cinema-frame");
-            frame.set_overflow(gtk::Overflow::Hidden);
-        }
-        back_frame.set_child(Some(&back));
-        front_frame.set_child(Some(&front));
-        front_frame.set_opacity(0.0);
-        root.put(&back_frame, 0.0, 0.0);
-        root.put(&front_frame, 0.0, 0.0);
-        Self {
-            back_frame, front_frame, back, front,
-            back_version: None, front_version: None,
-            back_motion_step: None, front_motion_step: None,
-        }
-    }
-    fn stable_viewport(root: &gtk::Fixed, frame: &gtk::Overlay, w: f64, h: f64) {
-        // Do this only when the monitor resolution itself changes; never
-        // resize a photo container as part of the Ken Burns motion.
-        let iw = w.round() as i32;
-        let ih = h.round() as i32;
-        if frame.width_request() != iw || frame.height_request() != ih {
-            frame.set_size_request(iw, ih);
-        }
-        let (old_x, old_y) = root.child_position(frame);
-        if old_x.abs() > 0.25 || old_y.abs() > 0.25 {
-            root.move_(frame, 0.0, 0.0);
-        }
-    }
-    fn motion(picture: &gtk::Picture, previous: &mut Option<(usize, usize)>,
-        fraction: f64, photo_id: usize)
-    {
-        let step = (fraction.clamp(0.0, 1.0) * KEN_STEPS as f64).round() as usize;
-        let direction = photo_id % 4;
-        if *previous == Some((direction, step)) { return; }
-        if let Some((old_dir, old_step)) = previous {
-            picture.remove_css_class(&format!("screensaver-ken-{old_dir}-{old_step}"));
-        }
-        picture.add_css_class(&format!("screensaver-ken-{direction}-{step}"));
-        *previous = Some((direction, step));
-    }
-    fn sync(&mut self, root: &gtk::Fixed, player: &Player, w: f64, h: f64, ken_burns: bool) {
-        Self::stable_viewport(root, &self.back_frame, w, h);
-        Self::stable_viewport(root, &self.front_frame, w, h);
 
-        let elapsed = player.elapsed().as_secs_f64();
-        let duration = player.interval.as_secs_f64().max(1.0);
-        let current_fraction = (elapsed / duration).clamp(0.0, 1.0);
-        let fade = smootherstep(player.progress());
-        let outgoing = player.previous.filter(|old| *old != player.current && fade < 1.0);
-        if let Some(old) = outgoing {
-            let ready = self.back_version.is_some_and(|(id, _)| id == old)
-                || present(&self.back, &mut self.back_version, old, player);
-            if ready && present(&self.front, &mut self.front_version, player.current, player) {
-                // The old image holds its ending position until it disappears.
-                // The new image moves continuously from its starting position.
-                if ken_burns {
-                    Self::motion(&self.back, &mut self.back_motion_step, 1.0, old);
-                    Self::motion(&self.front, &mut self.front_motion_step, current_fraction, player.current);
-                }
-                self.front_frame.set_opacity(fade);
-                return;
-            }
-        }
-        // At fade completion, promote an identical current texture and its
-        // identical transform before removing the outgoing overlay.
-        if present(&self.back, &mut self.back_version, player.current, player) {
-            if ken_burns {
-                Self::motion(&self.back, &mut self.back_motion_step, current_fraction, player.current);
-            }
-            self.front_frame.set_opacity(0.0);
-            if self.front_version.take().is_some() {
-                self.front.set_paintable(None::<&gtk::gdk::Paintable>);
-            }
-        }
-    }
-}
 
 /// Fit N square photos onto the current fullscreen monitor, using as much
 /// space as possible without ever stretching a tile. Incomplete last rows
@@ -580,7 +482,7 @@ impl Stage {
         let h = self.root.height() as f64;
         if w < 2.0 || h < 2.0 { return; }
         if let Some(cinema) = self.cinema.as_mut() {
-            cinema.sync(&self.root, player, w, h, self.style == Style::IPhoto);
+            cinema.sync(player, w, h, frame_time, self.style == Style::IPhoto);
             return;
         }
         if let Some(pile) = self.pile.as_mut() {
@@ -679,18 +581,6 @@ pub(super) fn install_css() {
             css.push_str(&format!(
                 ".screensaver-flip-{step} {{ transform: scaleX({factor:.6}); }}\n"
             ));
-        }
-        // GTK4's CSS transform parser rejects percentage translate() values.
-        // Use compositor-only pixel pans and a smooth push-in. The fixed
-        // fullscreen frames never relayout as individual photos move.
-        for direction in 0..4 {
-            for step in 0..=KEN_STEPS {
-                let fraction = step as f64 / KEN_STEPS as f64;
-                let (scale, x, y) = cinematic_motion(direction, fraction);
-                css.push_str(&format!(
-                    ".screensaver-ken-{direction}-{step} {{ transform-origin: 50% 50%; transform: translate({x:.3}px, {y:.3}px) scale({scale:.6}); }}\n"
-                ));
-            }
         }
         provider.load_from_string(&css);
         gtk::style_context_add_provider_for_display(

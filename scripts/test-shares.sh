@@ -4,8 +4,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SMB_SRC="$ROOT/scripts/pic-smb-probe.c"
-NFS_SRC="$ROOT/pic-nfs-probe.c"
+SMB_SRC="$ROOT/scripts/diagnostics/pic-smb-probe.c"
+NFS_SRC="$ROOT/scripts/diagnostics/pic-nfs-probe.c"
 BIN_DIR="${PIC_DIAGNOSTICS_BIN_DIR:-$ROOT/target/diagnostics}"
 SMB_BIN="${PIC_SMB_PROBE_BIN:-$BIN_DIR/pic-smb-probe}"
 NFS_BIN="${PIC_NFS_PROBE_BIN:-$BIN_DIR/pic-nfs-probe}"

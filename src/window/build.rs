@@ -610,7 +610,8 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     // Multi-photo selection replaces metadata in the existing InfoBar instead
     // of drawing a second, floating count on top of the gallery. This observes
     // the same model for Grid, Folder and Photo Wall.
-    gallery.connect_selection_preview_changed(6, {
+    const SELECTION_INFOBAR_PREVIEW_LIMIT: usize = 48;
+    gallery.connect_selection_preview_changed(SELECTION_INFOBAR_PREVIEW_LIMIT, {
         let info = Rc::downgrade(&info);
         let lightbox = Rc::downgrade(&lightbox);
         move |count, photos| {
@@ -647,7 +648,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             if root.is_visible() {
                 info.show_photo_metadata();
             } else {
-                let (count, photos) = gallery.selected_photo_preview(6);
+                let (count, photos) = gallery.selected_photo_preview(SELECTION_INFOBAR_PREVIEW_LIMIT);
                 info.set_selected_photos(count, &photos);
             }
         });

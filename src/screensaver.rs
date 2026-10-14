@@ -390,89 +390,58 @@ fn style_preview(style: Style) -> gtk::DrawingArea {
 
 /// Compact style selector with miniature previews in its popover. Selection
 /// is stored in a Cell and propagated to related controls by the callback.
+/// A directly visible horizontal gallery of the existing seven vector
+/// previews. Scrolling does not decode photographs or touch remote storage.
 fn style_picker(initial: Style, on_change: impl Fn(Style) + 'static)
-    -> (gtk::MenuButton, Rc<Cell<Style>>)
+    -> (gtk::ScrolledWindow, Rc<Cell<Style>>)
 {
     let chosen = Rc::new(Cell::new(initial));
-    let menu = gtk::MenuButton::new();
-    menu.set_hexpand(true);
-    menu.set_tooltip_text(Some("Choose a screensaver presentation"));
-    let selected_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    let selected_icon = gtk::Image::from_icon_name(initial.icon());
-    let selected_title = gtk::Label::new(Some(initial.label()));
-    selected_title.set_hexpand(true);
-    selected_title.set_xalign(0.0);
-    let arrow = gtk::Image::from_icon_name("pan-down-symbolic");
-    selected_row.append(&selected_icon);
-    selected_row.append(&selected_title);
-    selected_row.append(&arrow);
-    menu.set_child(Some(&selected_row));
+    let scroller = gtk::ScrolledWindow::new();
+    scroller.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Never);
+    scroller.set_propagate_natural_width(false);
+    scroller.set_hexpand(true);
+    scroller.set_min_content_height(104);
+    scroller.set_max_content_height(104);
+    scroller.set_tooltip_text(Some("Scroll horizontally to choose a screensaver style"));
 
-    let popover = gtk::Popover::new();
-    popover.set_has_arrow(false);
-    let options = gtk::Box::new(gtk::Orientation::Vertical, 2);
-    options.set_margin_top(5);
-    options.set_margin_bottom(5);
-    options.set_margin_start(5);
-    options.set_margin_end(5);
-    let checks: Rc<RefCell<Vec<gtk::Image>>> = Rc::new(RefCell::new(Vec::new()));
+    let cards = gtk::Box::new(gtk::Orientation::Horizontal, 7);
+    cards.set_margin_top(3);
+    cards.set_margin_bottom(6);
+    cards.set_margin_start(2);
+    cards.set_margin_end(2);
+    let buttons: Rc<RefCell<Vec<gtk::ToggleButton>>> = Rc::new(RefCell::new(Vec::new()));
     let on_change: Rc<dyn Fn(Style)> = Rc::new(on_change);
     for candidate in Style::CHOICES {
-        let option = gtk::Button::new();
-        option.add_css_class("flat");
-        option.set_tooltip_text(Some(candidate.subtitle()));
-        let row = gtk::Box::new(gtk::Orientation::Horizontal, 11);
-        row.set_margin_top(3);
-        row.set_margin_bottom(3);
-        row.set_margin_start(5);
-        row.set_margin_end(5);
-        row.append(&style_preview(candidate));
-        let text = gtk::Box::new(gtk::Orientation::Vertical, 1);
-        text.set_valign(gtk::Align::Center);
-        text.set_hexpand(true);
-        let name = gtk::Label::new(Some(candidate.label()));
-        name.set_xalign(0.0);
-        let detail = gtk::Label::new(Some(candidate.subtitle()));
-        detail.set_xalign(0.0);
-        detail.add_css_class("dim-label");
-        detail.add_css_class("caption");
-        text.append(&name);
-        text.append(&detail);
-        row.append(&text);
-        let check = gtk::Image::from_icon_name("object-select-symbolic");
-        check.set_visible(candidate == initial);
-        row.append(&check);
-        checks.borrow_mut().push(check);
-        option.set_child(Some(&row));
-
+        let card = gtk::ToggleButton::new();
+        card.set_size_request(110, 85);
+        card.set_active(candidate == initial);
+        card.set_tooltip_text(Some(candidate.subtitle()));
+        let content = gtk::Box::new(gtk::Orientation::Vertical, 5);
+        content.set_halign(gtk::Align::Center);
+        content.set_margin_top(6);
+        content.set_margin_bottom(6);
+        content.append(&style_preview(candidate));
+        let title = gtk::Label::new(Some(candidate.label()));
+        title.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        title.set_max_width_chars(14);
+        title.add_css_class("caption");
+        content.append(&title);
+        card.set_child(Some(&content));
+        buttons.borrow_mut().push(card.clone());
+        let buttons = Rc::clone(&buttons);
         let chosen = Rc::clone(&chosen);
-        let checks = Rc::clone(&checks);
-        let selected_title = selected_title.clone();
-        let selected_icon = selected_icon.clone();
         let on_change = Rc::clone(&on_change);
-        let weak_popover = popover.downgrade();
-        option.connect_clicked(move |_| {
+        card.connect_clicked(move |_| {
             chosen.set(candidate);
-            selected_title.set_text(candidate.label());
-            selected_icon.set_icon_name(Some(candidate.icon()));
-            for (i, check) in checks.borrow().iter().enumerate() {
-                check.set_visible(i == candidate.dropdown_index() as usize);
+            for (index, button) in buttons.borrow().iter().enumerate() {
+                button.set_active(index == candidate.dropdown_index() as usize);
             }
             on_change(candidate);
-            if let Some(popover) = weak_popover.upgrade() {
-                popover.popdown();
-            }
         });
-        options.append(&option);
+        cards.append(&card);
     }
-    let scroller = gtk::ScrolledWindow::new();
-    scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
-    scroller.set_min_content_height(260);
-    scroller.set_max_content_height(420);
-    scroller.set_child(Some(&options));
-    popover.set_child(Some(&scroller));
-    menu.set_popover(Some(&popover));
-    (menu, chosen)
+    scroller.set_child(Some(&cards));
+    (scroller, chosen)
 }
 
 /// Opens the settings/launch dialog without changing PIC's current viewer.
@@ -540,13 +509,17 @@ pub fn open(parent: &adw::ApplicationWindow, connection: Rc<RefCell<Connection>>
     let shuffle_for_style = shuffle_tiles_button.clone();
     let (style_picker, style_selected) = style_picker(current.style, move |style| {
         transition_for_style.set_sensitive(!style.single_photo());
-        mosaic_for_style.set_sensitive(style.configurable_tiles());
+        mosaic_for_style.set_sensitive(!style.single_photo());
         shuffle_for_style.set_sensitive(!style.single_photo());
     });
     picasa_transition.set_sensitive(!current.style.single_photo());
-    mosaic_tiles.set_sensitive(current.style.configurable_tiles());
+    mosaic_tiles.set_sensitive(!current.style.single_photo());
     shuffle_tiles_button.set_sensitive(!current.style.single_photo());
-    body.append(&field("Style", &style_picker));
+    let style_heading = gtk::Label::new(Some("Choose a style"));
+    style_heading.set_xalign(0.0);
+    style_heading.add_css_class("heading");
+    body.append(&style_heading);
+    body.append(&style_picker);
 
     let source_names: Vec<String> = sources.iter().map(|(name, _)| name.clone()).collect();
     let names: Vec<&str> = source_names.iter().map(String::as_str).collect();
@@ -567,16 +540,28 @@ pub fn open(parent: &adw::ApplicationWindow, connection: Rc<RefCell<Connection>>
     duration.set_value(current.seconds as f64);
     duration.set_tooltip_text(Some("Seconds per photo or photo-wall change"));
 
-    // The three daily-use controls stay visible in the compact dialog.
-    body.append(&field("Duration", &duration));
+    // Primary timing controls share one line; Tile count stays saved even
+    // for single-photo styles, but is insensitive when it has no effect.
+    let timing_row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    let duration_group = gtk::Box::new(gtk::Orientation::Horizontal, 7);
+    duration_group.set_hexpand(true);
+    duration_group.append(&gtk::Label::new(Some("Duration")));
+    duration.set_hexpand(true);
+    duration_group.append(&duration);
+    let tiles_group = gtk::Box::new(gtk::Orientation::Horizontal, 7);
+    tiles_group.set_hexpand(true);
+    tiles_group.append(&gtk::Label::new(Some("Tiles")));
+    mosaic_tiles.set_hexpand(true);
+    tiles_group.append(&mosaic_tiles);
+    timing_row.append(&duration_group);
+    timing_row.append(&tiles_group);
+    body.append(&timing_row);
 
     // Optional controls live in an inline, animated GTK Revealer. The child
     // widgets stay alive when hidden, so choices and existing save semantics
     // are identical to the old all-expanded settings form.
     let advanced = gtk::Box::new(gtk::Orientation::Vertical, 10);
     advanced.set_margin_top(8);
-    let tiles_group = field("Tiles", &mosaic_tiles);
-    advanced.append(&tiles_group);
 
     // A second, independent monotonic timer controls the amount of each
     // change. Do not tie animation duration to the photo hold interval.
@@ -621,7 +606,7 @@ pub fn open(parent: &adw::ApplicationWindow, connection: Rc<RefCell<Connection>>
     let advanced_toggle = gtk::ToggleButton::with_label("Advanced settings  ▾");
     advanced_toggle.add_css_class("flat");
     advanced_toggle.set_halign(gtk::Align::Fill);
-    advanced_toggle.set_tooltip_text(Some("Transitions, tiles, shuffle and overlays"));
+    advanced_toggle.set_tooltip_text(Some("Transitions, shuffle and overlays"));
     let reveal_for_toggle = revealer.clone();
     advanced_toggle.connect_toggled(move |button| {
         let expanded = button.is_active();

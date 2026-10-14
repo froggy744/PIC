@@ -513,17 +513,10 @@ pub fn open(parent: &adw::ApplicationWindow, connection: Rc<RefCell<Connection>>
     body.set_margin_start(18);
     body.set_margin_end(18);
 
-    let heading = gtk::Label::new(Some("Your photos on display"));
+    let heading = gtk::Label::new(Some("Screensaver"));
     heading.add_css_class("title-2");
     heading.set_xalign(0.0);
     body.append(&heading);
-    let explanation = gtk::Label::new(Some(
-        "Choose a style and photos. Esc or move to exit · Space to pause."
-    ));
-    explanation.set_xalign(0.0);
-    explanation.set_wrap(true);
-    explanation.add_css_class("dim-label");
-    body.append(&explanation);
 
     let picasa_transition = gtk::DropDown::from_strings(&["Flip", "Crossfade", "Cut"]);
     picasa_transition.set_selected(current.picasa_transition.dropdown_index());
@@ -574,24 +567,16 @@ pub fn open(parent: &adw::ApplicationWindow, connection: Rc<RefCell<Connection>>
     duration.set_value(current.seconds as f64);
     duration.set_tooltip_text(Some("Seconds per photo or photo-wall change"));
 
-    // Keep duration and tile count together without increasing the dialog
-    // height or introducing another full-width settings row.
-    let timing_row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-    let duration_group = gtk::Box::new(gtk::Orientation::Horizontal, 7);
-    duration_group.set_hexpand(true);
-    let duration_label = gtk::Label::new(Some("Duration"));
-    duration_group.append(&duration_label);
-    duration.set_hexpand(true);
-    duration_group.append(&duration);
-    let tiles_group = gtk::Box::new(gtk::Orientation::Horizontal, 7);
-    tiles_group.set_hexpand(true);
-    let tiles_label = gtk::Label::new(Some("Tiles"));
-    tiles_group.append(&tiles_label);
-    mosaic_tiles.set_hexpand(true);
-    tiles_group.append(&mosaic_tiles);
-    timing_row.append(&duration_group);
-    timing_row.append(&tiles_group);
-    body.append(&timing_row);
+    // The three daily-use controls stay visible in the compact dialog.
+    body.append(&field("Duration", &duration));
+
+    // Optional controls live in an inline, animated GTK Revealer. The child
+    // widgets stay alive when hidden, so choices and existing save semantics
+    // are identical to the old all-expanded settings form.
+    let advanced = gtk::Box::new(gtk::Orientation::Vertical, 10);
+    advanced.set_margin_top(8);
+    let tiles_group = field("Tiles", &mosaic_tiles);
+    advanced.append(&tiles_group);
 
     // A second, independent monotonic timer controls the amount of each
     // change. Do not tie animation duration to the photo hold interval.
@@ -608,14 +593,14 @@ pub fn open(parent: &adw::ApplicationWindow, connection: Rc<RefCell<Connection>>
     animation_time.append(&animation_label);
     animation_time.append(&transition_time);
     timing_options.append(&animation_time);
-    body.append(&timing_options);
+    advanced.append(&timing_options);
 
     let shuffle_row = gtk::Box::new(gtk::Orientation::Horizontal, 16);
     let shuffle_button = gtk::CheckButton::with_label("Shuffle photos");
     shuffle_button.set_active(current.shuffle);
     shuffle_row.append(&shuffle_button);
     shuffle_row.append(&shuffle_tiles_button);
-    body.append(&shuffle_row);
+    advanced.append(&shuffle_row);
 
     let overlays_row = gtk::Box::new(gtk::Orientation::Horizontal, 16);
     let captions_button = gtk::CheckButton::with_label("Photo captions");
@@ -626,7 +611,26 @@ pub fn open(parent: &adw::ApplicationWindow, connection: Rc<RefCell<Connection>>
     clock_button.set_tooltip_text(Some("Show a discreet local-time clock in the top-right corner"));
     overlays_row.append(&captions_button);
     overlays_row.append(&clock_button);
-    body.append(&field("Overlays", &overlays_row));
+    advanced.append(&field("Overlays", &overlays_row));
+
+    let revealer = gtk::Revealer::new();
+    revealer.set_transition_type(gtk::RevealerTransitionType::SlideDown);
+    revealer.set_transition_duration(210);
+    revealer.set_reveal_child(false);
+    revealer.set_child(Some(&advanced));
+    let advanced_toggle = gtk::ToggleButton::with_label("Advanced settings  ▾");
+    advanced_toggle.add_css_class("flat");
+    advanced_toggle.set_halign(gtk::Align::Fill);
+    advanced_toggle.set_tooltip_text(Some("Transitions, tiles, shuffle and overlays"));
+    let reveal_for_toggle = revealer.clone();
+    advanced_toggle.connect_toggled(move |button| {
+        let expanded = button.is_active();
+        reveal_for_toggle.set_reveal_child(expanded);
+        button.set_label(if expanded { "Advanced settings  ▴" }
+            else { "Advanced settings  ▾" });
+    });
+    body.append(&advanced_toggle);
+    body.append(&revealer);
 
     let notice = gtk::Label::new(None);
     notice.set_visible(false);

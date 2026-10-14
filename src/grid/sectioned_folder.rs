@@ -2189,6 +2189,42 @@ impl SectionedFolderView {
             tile.grab_focus();
         }
     }
+
+    fn photo_visible_before_scroll(&self, index: u32, photo_id: i64) -> bool {
+        let Some(scrolled) = self.scroll.borrow().as_ref().cloned() else {
+            return false;
+        };
+        let adjustment = scrolled.vadjustment();
+        let Some(row_top) = self.y_for_index(index) else {
+            return false;
+        };
+        let row_height = if self.is_wall() {
+            self.wall_state
+                .borrow()
+                .layout
+                .item(index as usize)
+                .map(|item| f64::from(item.height))
+                .unwrap_or(0.0)
+        } else {
+            f64::from(folder_line_height(
+                self.tile_height.get(),
+                self.show_file_names.get(),
+            ))
+        };
+        viewport_intersects_row(
+            row_top,
+            row_height,
+            adjustment.value(),
+            adjustment.page_size(),
+        ) && self.live_tiles.borrow().get(&index).is_some_and(|entry| {
+            entry.tile.is_mapped()
+                && entry
+                    .tile
+                    .photo()
+                    .as_ref()
+                    .is_some_and(|photo| photo.id() == photo_id)
+        })
+    }
 }
 
 

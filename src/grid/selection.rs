@@ -852,9 +852,16 @@ impl Gallery {
                 continue;
             }
             if self.using_virtual_photo_surface() {
+                // A newly recycled tile has not necessarily received its new
+                // GTK allocation yet. Focusing it on a deep jump can make
+                // GTK scroll back to the tile's previous location after our
+                // explicit reveal. Only move focus when it was already here.
+                let already_visible = self
+                    .sectioned_folder
+                    .photo_visible_before_scroll(position, photo_id);
                 self.selection.select_item(position, true);
                 let revealed = self.sectioned_folder.scroll_to_index_centered_now(position);
-                if revealed {
+                if revealed && already_visible {
                     self.sectioned_folder.focus_photo(photo_id);
                 }
                 return revealed;

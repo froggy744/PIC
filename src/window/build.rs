@@ -2350,6 +2350,31 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     grid_overlay.set_child(Some(&grid_surface));
     grid_overlay.add_overlay(&scrub_date_label);
 
+    // A persistent, non-interactive badge keeps selection visible across
+    // Grid, Folder and Photo Wall without consuming scrollable space.
+    let selected_count_label = gtk::Label::new(None);
+    selected_count_label.add_css_class("selection-count-indicator");
+    selected_count_label.set_halign(gtk::Align::Start);
+    selected_count_label.set_valign(gtk::Align::End);
+    selected_count_label.set_margin_start(16);
+    selected_count_label.set_margin_bottom(16);
+    selected_count_label.set_can_target(false);
+    selected_count_label.set_visible(false);
+    grid_overlay.add_overlay(&selected_count_label);
+    gallery.connect_selection_count_changed({
+        let selected_count_label = selected_count_label.clone();
+        move |count| {
+            if count > 0 {
+                selected_count_label.set_text(&format!(
+                    "{} {} selected",
+                    crate::window::format_count(count),
+                    if count == 1 { "photo" } else { "photos" },
+                ));
+            }
+            selected_count_label.set_visible(count > 0);
+        }
+    });
+
     // The context menu is a normal GtkOverlay child, so give it the
     // autohide behaviour GtkPopover used to provide. Any pointer press
     // outside the active menu dismisses it. Presses on menu buttons are

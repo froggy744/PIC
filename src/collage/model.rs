@@ -370,6 +370,9 @@ pub struct CollageProject {
     pub spacing: f32,
     pub seed: u64,
     pub items: Vec<CollageItem>,
+    /// Runtime-only Smart/Fit composition topology, invalidated by Shuffle,
+    /// changing photos, layout or canvas shape. Never included in drafts.
+    pub(super) cached_layout: Option<super::smart_mosaic::CachedLayout>,
 }
 
 impl CollageProject {
@@ -387,6 +390,7 @@ impl CollageProject {
             keep_photo_aspect: true,
             spacing: 0.018,
             seed: 1,
+            cached_layout: None,
             items: photos
                 .into_iter()
                 .enumerate()
@@ -454,7 +458,14 @@ impl CollageProject {
     }
 
     pub fn relayout(&mut self) {
+        self.cached_layout = None;
         crate::collage::layout::apply(self);
+    }
+
+    /// Change only the gutter sizes; keep Smart AI's chosen composition while
+    /// dragging Spacing. Unlike relayout(), this performs no global search.
+    pub fn relayout_spacing(&mut self) {
+        crate::collage::layout::apply_spacing(self);
     }
 
     pub fn base_aspect_ratio(&self) -> f32 {
@@ -601,6 +612,7 @@ impl CollageProject {
         self.spacing = draft.spacing;
         self.keep_photo_aspect = draft.keep_photo_aspect;
         self.seed = draft.seed;
+        self.cached_layout = None;
         let mut items: Vec<CollageItem> = draft
             .items
             .iter()
@@ -790,6 +802,7 @@ mod draft_tests {
             keep_photo_aspect: true,
             spacing: 0.0,
             seed: 1,
+            cached_layout: None,
             items: Vec::new(),
         };
         // No photos supplied: every draft entry refers to a missing photo,

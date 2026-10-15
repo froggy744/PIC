@@ -760,11 +760,22 @@ mod open_in_folder_retry_tests {
             ),
             None
         );
+        // Open in Folder must keep a snapshot while a new folder stream is
+        // built and the exact photo is selected. The caller adds an extra
+        // exact-photo readiness gate before revealing the destination.
         assert_eq!(
             sidebar_crossfade_target(
                 Destination::Library, Destination::Folder(1), true, false, false,
             ),
-            None
+            Some((true, true))
+        );
+        // Existing folder stream: no model replacement, but still wait for
+        // the exact photo to reach its destination viewport.
+        assert_eq!(
+            sidebar_crossfade_target(
+                Destination::Folder(1), Destination::Folder(2), true, true, true,
+            ),
+            Some((true, false))
         );
         assert_eq!(
             sidebar_crossfade_target(

@@ -3,6 +3,7 @@ use image::{DynamicImage, ImageEncoder, RgbaImage};
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::Path;
+use std::sync::OnceLock;
 
 use super::model::{Background, CollageProject};
 
@@ -68,17 +69,29 @@ pub fn export(project: &CollageProject, destination: &Path, options: &ExportOpti
     let mut items = project.items.iter().collect::<Vec<_>>();
     items.sort_by_key(|item| item.z);
     for item in items {
-        let tile_width = (item.width.max(0.01) * width as f32).ceil() as u32;
-        let tile_height = (item.height.max(0.01) * height as f32).ceil() as u32;
         let fraction = if project.round_corners {
             project.corner_radius.clamp(0.0, 0.5)
         } else {
             0.0
         };
-        // Use the same centered visible shape as the GTK preview. At maximum
-        // rounding rectangular tiles become square before the circle mask.
-        let (inset_x, inset_y, target_width, target_height) =
-            super::model::rounded_tile_bounds(tile_width, tile_height, fraction);
+        let geometry = super::model::tile_geometry(item, width, height, fraction);
+        let target_width = geometry.w;
+        let target_height = geometry.h;
+        if collage_trace_enabled() {
+            eprintln!(
+                "PIC_COLLAGE_TRACE export_tile id={} canvas={}x{} slot=({},{},{}x{}) visible=({},{},{}x{}) center=({:.2},{:.2}) shape={:.3} stroke={} color={:?} rotate={:.2} layout={:?} contain={}",
+                item.photo.id,
+                width, height,
+                geometry.slot_x, geometry.slot_y, geometry.slot_w, geometry.slot_h,
+                geometry.x, geometry.y, geometry.w, geometry.h,
+                geometry.x as f64 + geometry.w as f64 / 2.0,
+                geometry.y as f64 + geometry.h as f64 / 2.0,
+                fraction, border_thickness, project.border, item.rotation,
+                project.layout,
+                matches!(project.layout, super::model::LayoutKind::Mosaic | super::model::LayoutKind::SmartMosaic)
+                    && project.keep_photo_aspect,
+            );
+        }
         let decoded = match crate::thumbnail::decode_for_viewer(
             &item.photo.path,
             target_width.max(1),
@@ -143,10 +156,16 @@ pub fn export(project: &CollageProject, destination: &Path, options: &ExportOpti
         }
         // The visible shape stays centered in its original collage slot,
         // including when its image has a rotation-expanded bounding box.
-        let tile_x = (item.x * width as f32) as i64 + inset_x as i64;
-        let tile_y = (item.y * height as f32) as i64 + inset_y as i64;
-        let x = tile_x + (target_width as i64 - image.width() as i64) / 2;
-        let y = tile_y + (target_height as i64 - image.height() as i64) / 2;
+        let x = geometry.x + (geometry.w as i64 - image.width() as i64) / 2;
+        let y = geometry.y + (geometry.h as i64 - image.height() as i64) / 2;
+        if collage_trace_enabled() {
+            eprintln!(
+                "PIC_COLLAGE_TRACE export_composite id={} bitmap={}x{} dest=({},{}) expected_center=({:.2},{:.2})",
+                item.photo.id, image.width(), image.height(), x, y,
+                geometry.x as f64 + geometry.w as f64 / 2.0,
+                geometry.y as f64 + geometry.h as f64 / 2.0,
+            );
+        }
         image::imageops::overlay(&mut canvas, &image, x, y);
     }
     let parent = destination
@@ -199,6 +218,11 @@ pub fn export(project: &CollageProject, destination: &Path, options: &ExportOpti
 
 /// Match the GTK percentage-based rounding after the visible tile has been
 /// made square at full radius. The 2x2 samples soften the cutout edge.
+fn collage_trace_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var_os("PIC_COLLAGE_TRACE").is_some_and(|v| v != "0"))
+}
+
 fn round_corners(image: &mut RgbaImage, radius_ratio: f32) {
     let fraction = radius_ratio.clamp(0.0, 0.5);
     if fraction <= 0.0 {

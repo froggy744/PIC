@@ -759,6 +759,89 @@ pub fn build(
     }
 }
 
+/// Keep one radius class per widget so changing the slider or canvas size
+/// never needs to remove dozens of unused CSS classes.
+fn set_preview_corner_class(
+    widget: &impl IsA<gtk::Widget>,
+    previous: &Cell<i32>,
+    step: i32,
+) {
+    let old = previous.replace(step);
+    if old == step {
+        return;
+    }
+    if old > 0 {
+        widget.remove_css_class(&format!("collage-photo-radius-{old}"));
+    }
+    if step > 0 {
+        widget.add_css_class(&format!("collage-photo-radius-{step}"));
+    }
+}
+
+/// Vector-only pictograms based on the screensaver style previews.
+/// Their different shapes explain the layout before the user selects it.
+fn collage_layout_preview(kind: LayoutKind) -> gtk::DrawingArea {
+    let area = gtk::DrawingArea::new();
+    area.set_content_width(82);
+    area.set_content_height(49);
+    area.set_draw_func(move |_, cr, width, height| {
+        if width <= 0 || height <= 0 {
+            return;
+        }
+        cr.scale(width as f64 / 82.0, height as f64 / 49.0);
+        let rect = |x: f64, y: f64, w: f64, h: f64, rgb: (f64, f64, f64)| {
+            cr.set_source_rgb(rgb.0, rgb.1, rgb.2);
+            cr.rectangle(x, y, w, h);
+            let _ = cr.fill();
+        };
+        let photo = |x: f64, y: f64, w: f64, h: f64, tint: usize| {
+            let sky = [
+                (0.42, 0.68, 0.80),
+                (0.78, 0.61, 0.47),
+                (0.49, 0.66, 0.63),
+                (0.57, 0.57, 0.79),
+            ][tint % 4];
+            let ground = [
+                (0.25, 0.42, 0.38),
+                (0.55, 0.42, 0.28),
+                (0.29, 0.45, 0.37),
+                (0.40, 0.38, 0.58),
+            ][tint % 4];
+            rect(x, y, w, h, sky);
+            rect(x, y + h * 0.65, w, h * 0.35, ground);
+            rect(x + w * 0.70, y + h * 0.13, w * 0.12, h * 0.15, (0.98, 0.86, 0.61));
+        };
+        rect(0.0, 0.0, 82.0, 49.0, (0.16, 0.19, 0.24));
+        match kind {
+            LayoutKind::Mosaic => {
+                photo(2.0, 2.0, 32.0, 45.0, 0);
+                photo(36.0, 2.0, 44.0, 19.0, 1);
+                photo(36.0, 23.0, 21.0, 24.0, 2);
+                photo(59.0, 23.0, 21.0, 24.0, 3);
+            }
+            LayoutKind::SmartMosaic => {
+                photo(2.0, 2.0, 56.0, 29.0, 0);
+                photo(60.0, 2.0, 20.0, 45.0, 1);
+                photo(2.0, 33.0, 56.0, 14.0, 2);
+            }
+            LayoutKind::Grid => {
+                for row in 0..2 {
+                    for col in 0..3 {
+                        photo(
+                            2.0 + col as f64 * 27.0,
+                            2.0 + row as f64 * 24.0,
+                            25.0,
+                            21.0,
+                            row * 3 + col,
+                        );
+                    }
+                }
+            }
+        }
+    });
+    area
+}
+
 fn labelled_control_row(label_text: &str, control: &impl IsA<gtk::Widget>) -> gtk::Box {
     let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     let label = gtk::Label::new(Some(label_text));

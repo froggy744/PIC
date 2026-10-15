@@ -2690,6 +2690,8 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         let width = resize_width.clone();
         let local = resize_local.clone();
         let active = resize_active.clone();
+        let last_trace_width = inspector_trace_last_width.clone();
+        let trace_frames = inspector_trace_frames.clone();
         resize_gesture.connect_drag_begin(move |gesture, x, y| {
             let Some(point) = gesture.widget().and_then(|handle| {
                 handle.compute_point(&split, &gtk::graphene::Point::new(x as f32, y as f32))
@@ -2700,6 +2702,16 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             gallery.cancel_resize_flip();
             gallery.set_photo_wall_width_frozen(false);
             active.set(true);
+            last_trace_width.set(-1);
+            trace_frames.set(0);
+            if std::env::var_os("PIC_INSPECTOR_TRACE").is_some() {
+                eprintln!(
+                    "PIC_INSPECTOR_TRACE stage=drag_begin gallery_width={} panel_width={} scroll_y={:.1}",
+                    split.content().map(|child| child.width()).unwrap_or(0),
+                    panel.width(),
+                    gallery.scroll_position()
+                );
+            }
             origin.set(f64::from(point.x()));
             width.set(panel.width().max(280) as f64);
             local.set((x, y));

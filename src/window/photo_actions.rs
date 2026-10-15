@@ -54,6 +54,46 @@ pub(crate) fn dismiss_active_photo_context_menu() -> bool {
     })
 }
 
+/// Short, unobtrusive ease-in/ease-out for the shared context-menu surface.
+/// Hover dismissal fades away; action-triggered dismissal stays synchronous
+/// so a menu cannot intercept or obscure a newly opened viewer/dialog.
+fn fade_out_photo_context_menu(menu: &gtk::Widget) {
+    let is_active = ACTIVE_PHOTO_MENU.with(|active| {
+        active.borrow().as_ref().is_some_and(|current| current == menu)
+    });
+    if !is_active {
+        return;
+    }
+    let animate = gtk::Settings::default().is_none_or(|settings| {
+        settings.property::<bool>("gtk-enable-animations")
+    });
+    if !animate || !menu.is_mapped() {
+        dismiss_active_photo_context_menu();
+        return;
+    }
+    ACTIVE_PHOTO_MENU.with(|active| {
+        active.borrow_mut().take();
+    });
+    menu.set_can_target(false);
+    let started = std::time::Instant::now();
+    let menu_for_tick = menu.clone();
+    menu.add_tick_callback(move |_, _| {
+        let progress = (started.elapsed().as_secs_f64() / 0.110).clamp(0.0, 1.0);
+        let eased = progress * progress * (3.0 - 2.0 * progress);
+        menu_for_tick.set_opacity(1.0 - eased);
+        if progress < 1.0 {
+            return glib::ControlFlow::Continue;
+        }
+        if let Some(overlay) = menu_for_tick
+            .parent()
+            .and_then(|parent| parent.downcast::<gtk::Overlay>().ok())
+        {
+            overlay.remove_overlay(&menu_for_tick);
+        }
+        glib::ControlFlow::Break
+    });
+}
+
 fn photo_context_menu_contains(widget: &gtk::Widget) -> bool {
     ACTIVE_PHOTO_MENU.with(|active| {
         let active = active.borrow();
@@ -990,7 +1030,7 @@ fn show_photo_context_menu(
                 active.borrow().as_ref().is_some_and(|current| *current == departing)
             });
             if still_active {
-                dismiss_active_photo_context_menu();
+                fade_out_photo_context_menu(&departing);
             }
         });
         timer_for_leave.replace(Some(timer));
@@ -1005,6 +1045,24 @@ fn show_photo_context_menu(
 
     host.add_overlay(&menu_host);
     menu_host.set_visible(true);
+    // Fade in the existing menu without reflowing its rows or interfering with
+    // its scroller. Smoothstep matches PIC's other navigation transitions.
+    if gtk::Settings::default().is_some_and(|settings| {
+        settings.property::<bool>("gtk-enable-animations")
+    }) {
+        menu_host.set_opacity(0.0);
+        let started = std::time::Instant::now();
+        menu_host.add_tick_callback(move |widget, _| {
+            let progress = (started.elapsed().as_secs_f64() / 0.125).clamp(0.0, 1.0);
+            let eased = progress * progress * (3.0 - 2.0 * progress);
+            widget.set_opacity(eased);
+            if progress >= 1.0 {
+                glib::ControlFlow::Break
+            } else {
+                glib::ControlFlow::Continue
+            }
+        });
+    }
 }
 
 fn open_file_in_manager(file: &gio::File) {

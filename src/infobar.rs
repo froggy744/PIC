@@ -266,6 +266,7 @@ impl InfoBar {
         let rating_icon = gtk::Image::from_icon_name("non-starred-symbolic");
         rating_content.append(&rating_icon);
         let rating_value = gtk::Label::new(None);
+        rating_value.set_markup("<b>—</b>");
         rating_value.set_width_chars(3);
         rating_value.set_xalign(0.0);
         rating_content.append(&rating_value);

@@ -54,6 +54,9 @@ pub struct Gallery {
     replace_generation: Rc<Cell<u64>>,
     folder_presentation_generation: Cell<u64>,
     folder_presentation_root: RefCell<Option<gtk::Widget>>,
+    // Set only when a newly selected Grid/Wall/Masonry renderer has restored
+    // its viewport anchor. The transition overlay must not uncover a jump.
+    layout_presentation_settled_generation: Cell<u64>,
     // True while a progressive gallery replacement is still building batches.
     // Folder navigation relies on this to keep retrying until the virtualized
     // Folder rows actually exist, instead of stopping as soon as the backing
@@ -899,6 +902,7 @@ impl Gallery {
             replace_generation: Rc::new(Cell::new(0)),
             folder_presentation_generation: Cell::new(0),
             folder_presentation_root: RefCell::new(None),
+            layout_presentation_settled_generation: Cell::new(0),
             metadata_index: RefCell::new(metadata_index::CatalogObjectIndex::default()),
             pending_metadata: Rc::new(RefCell::new(HashMap::new())),
             progressive_group_dirty: Rc::new(Cell::new(false)),
@@ -929,6 +933,18 @@ impl Gallery {
         };
         gallery.replace(photos);
         gallery
+    }
+
+    /// True only after the destination renderer has applied the viewport
+    /// anchor for the current Grid/Photo Wall/Masonry layout generation.
+    pub(crate) fn layout_presentation_ready(&self, previous_generation: u64) -> bool {
+        let generation = self.sectioned_folder.layout_switch_generation.get();
+        generation != previous_generation
+            && self.layout_presentation_settled_generation.get() == generation
+    }
+
+    pub(crate) fn layout_presentation_generation(&self) -> u64 {
+        self.sectioned_folder.layout_switch_generation.get()
     }
 
     /// Generation used by the navigation presentation layer to avoid fading

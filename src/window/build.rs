@@ -2813,6 +2813,16 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             let start_scroll = gallery.scroll_position();
             let start_width = split.content().map(|child| child.width()).unwrap_or(0);
             let opening = split.shows_sidebar();
+            // Capture BEFORE the first animated width change. The sectioned
+            // layout's old photo/row offset is our stable visual reference.
+            let grid_anchor = gallery.capture_inspector_grid_anchor();
+            if std::env::var_os("PIC_INSPECTOR_TRACE").is_some() {
+                eprintln!(
+                    "PIC_INSPECTOR_TRACE stage=anchor_capture serial={} photo={:?} offset_y={:?} scroll_y={:.1}",
+                    serial, grid_anchor.map(|anchor| anchor.0),
+                    grid_anchor.map(|anchor| anchor.1), start_scroll
+                );
+            }
             gallery.set_photo_wall_width_frozen(true);
             if std::env::var_os("PIC_INSPECTOR_TRACE").is_some() {
                 eprintln!(
@@ -2855,6 +2865,48 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                             );
                         }
                         gallery.update_width(final_width);
+                        if let Some(anchor) = grid_anchor {
+                            // Existing per-column reflow may have chosen a
+                            // different centre row after GTK changed the
+                            // viewport width. Restore our *original* photo.
+                            let restored = gallery.restore_inspector_grid_anchor(anchor);
+                            if std::env::var_os("PIC_INSPECTOR_TRACE").is_some() {
+                                eprintln!(
+                                    "PIC_INSPECTOR_TRACE stage=anchor_restore serial={} photo={} offset_y={:.1} success={} error_y={:?} scroll_y={:.1}",
+                                    serial, anchor.0, anchor.1, restored,
+                                    gallery.inspector_grid_anchor_error(anchor),
+                                    gallery.scroll_position()
+                                );
+                            }
+                            // GtkScrolledWindow publishes its new scroll
+                            // extent on a subsequent frame. A one-shot check
+                            // corrects that late adjustment rather than
+                            // leaving the viewport displaced after close.
+                            let gallery_after_layout = gallery.clone();
+                            let generation_after_layout = generation.clone();
+                            glib::timeout_add_local_once(
+                                Duration::from_millis(55),
+                                move || {
+                                    if generation_after_layout.get() != serial {
+                                        return;
+                                    }
+                                    let residual = gallery_after_layout.inspector_grid_anchor_error(anchor);
+                                    let corrected = if residual.is_some_and(|err| err.abs() > 2.0) {
+                                        gallery_after_layout.restore_inspector_grid_anchor(anchor)
+                                    } else {
+                                        false
+                                    };
+                                    if std::env::var_os("PIC_INSPECTOR_TRACE").is_some() {
+                                        eprintln!(
+                                            "PIC_INSPECTOR_TRACE stage=anchor_settled serial={} photo={} error_before={:?} corrected={} error_after={:?} scroll_y={:.1}",
+                                            serial, anchor.0, residual, corrected,
+                                            gallery_after_layout.inspector_grid_anchor_error(anchor),
+                                            gallery_after_layout.scroll_position()
+                                        );
+                                    }
+                                },
+                            );
+                        }
                         if std::env::var_os("PIC_INSPECTOR_TRACE").is_some() {
                             eprintln!(
                                 "PIC_INSPECTOR_TRACE stage=grid_committed serial={} width={} scroll_after={:.1}",

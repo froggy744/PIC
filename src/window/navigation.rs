@@ -649,10 +649,11 @@ fn should_ignore_cleared_search_event(
 
 #[cfg(test)]
 mod open_in_folder_retry_tests {
+    use crate::sidebar;
     use super::{
         can_reuse_folder_stream_for_destination, folder_destination_plan,
-        open_in_folder_should_stop, search_folder_focus_should_stop, FolderDestinationPlan,
-        should_ignore_cleared_search_event, SEARCH_DEBOUNCE_MS,
+        open_in_folder_should_stop, search_folder_focus_should_stop, sidebar_crossfade_target,
+        FolderDestinationPlan, should_ignore_cleared_search_event, SEARCH_DEBOUNCE_MS,
     };
 
     #[test]

@@ -153,6 +153,8 @@ fn show_photo(
     cache_hit: bool,
     navigation_ready: Option<Rc<Cell<bool>>>,
     navigation_settled: Option<Rc<dyn Fn()>>,
+    opening_decode_result: Option<Rc<Cell<Option<bool>>>>,
+    opening_decode_ready: Option<Rc<RefCell<Option<Rc<dyn Fn()>>>>>,
     offline: Rc<OfflinePresentation>,
 ) {
     let navigation_started = std::time::Instant::now();
@@ -191,6 +193,7 @@ fn show_photo(
         cancel_lightbox_prefetch_except(None);
         VIEWER_FOREGROUND_GENERATION.store(0, Ordering::Release);
         offline.corrupt();
+        set_opening_decode_result(&opening_decode_result, &opening_decode_ready, false);
         if let Some(navigation_ready) = navigation_ready {
             navigation_ready.set(true);
         }
@@ -217,6 +220,7 @@ fn show_photo(
                 picture, photo.clone(), root, zoom, generation,
                 expected_generation, offline, true, navigation_ready, navigation_settled,
             );
+            set_opening_decode_result(&opening_decode_result, &opening_decode_ready, false);
             return;
         }
     }
@@ -231,6 +235,7 @@ fn show_photo(
             viewer_trace_uri(&path)
         ));
         cancel_lightbox_prefetch_except(None);
+        set_opening_decode_result(&opening_decode_result, &opening_decode_ready, true);
         VIEWER_FOREGROUND_GENERATION.store(0, Ordering::Release);
         if let Some(navigation_ready) = navigation_ready {
             navigation_ready.set(true);
@@ -283,6 +288,8 @@ fn show_photo(
     let display_texture_cache_for_result = display_texture_cache.clone();
     let navigation_ready_for_result = navigation_ready.clone();
     let navigation_settled_for_result = navigation_settled.clone();
+    let opening_decode_result_for_result = opening_decode_result.clone();
+    let opening_decode_ready_for_result = opening_decode_ready.clone();
     glib::MainContext::default().spawn_local(async move {
         let result = ViewerResultSlot::wait(request.result.clone()).await;
 
@@ -342,6 +349,11 @@ fn show_photo(
                 }
 
                 picture.set_paintable(Some(&texture));
+                set_opening_decode_result(
+                    &opening_decode_result_for_result,
+                    &opening_decode_ready_for_result,
+                    true,
+                );
                 viewer_trace(format!(
                     "display_apply elapsed_ms={} uri={}",
                     display_started.elapsed().as_millis(),
@@ -353,7 +365,7 @@ fn show_photo(
                     viewer_trace_uri(&cache_path),
                 ));
                 if zoom.get() >= 0.0 {
-                    if zoom.get() == 0.0 || !fit_geometry_fixed {
+                    if !fit_geometry_fixed {
                         fit_picture(
                             &picture,
                             std::slice::from_ref(&photo),
@@ -418,6 +430,11 @@ fn show_photo(
                     expected_generation, offline, false,
                     navigation_ready_for_result, navigation_settled_for_result,
                 );
+                set_opening_decode_result(
+                    &opening_decode_result_for_result,
+                    &opening_decode_ready_for_result,
+                    false,
+                );
                 lease.release();
                 return;
             }
@@ -430,6 +447,26 @@ fn show_photo(
         }
         lease.release();
     });
+}
+
+fn set_opening_decode_result(
+    result: &Option<Rc<Cell<Option<bool>>>>,
+    ready: &Option<Rc<RefCell<Option<Rc<dyn Fn()>>>>>,
+    decoded: bool,
+) {
+    lightbox_open_trace(format!(
+        "decode_result_ready decoded={decoded} callback_installed={}",
+        ready.as_ref().is_some_and(|slot| slot.borrow().is_some()),
+    ));
+    if let Some(result) = result.as_ref() {
+        result.set(Some(decoded));
+    }
+    if let Some(callback) = ready
+        .as_ref()
+        .and_then(|slot| slot.borrow().as_ref().cloned())
+    {
+        callback();
+    }
 }
 
 fn png_uses_theme_background(path: &str) -> bool {
@@ -455,6 +492,18 @@ fn viewer_trace(message: impl std::fmt::Display) {
         let elapsed = TRACE_STARTED.get_or_init(std::time::Instant::now).elapsed();
         eprintln!(
             "PIC_VIEWER t_ms={} tid={:?} {message}",
+            elapsed.as_millis(),
+            std::thread::current().id()
+        );
+    }
+}
+
+pub(crate) fn lightbox_open_trace(message: impl std::fmt::Display) {
+    if std::env::var_os("PIC_LIGHTBOX_OPEN_TRACE").is_some() {
+        static TRACE_STARTED: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+        let elapsed = TRACE_STARTED.get_or_init(std::time::Instant::now).elapsed();
+        eprintln!(
+            "PIC_LIGHTBOX_OPEN t_ms={} tid={:?} {message}",
             elapsed.as_millis(),
             std::thread::current().id()
         );
@@ -600,6 +649,13 @@ fn start_viewer_request(key: ViewerRequestKey, request: Arc<ViewerRequest>) {
                 worker_key.target_height,
                 queued.elapsed().as_millis(),
             ));
+            lightbox_open_trace(format!(
+                "decode_start uri={} variant={}x{} queue_ms={}",
+                viewer_trace_uri(&worker_key.path),
+                worker_key.target_width,
+                worker_key.target_height,
+                queued.elapsed().as_millis(),
+            ));
             let started = std::time::Instant::now();
             let recipe = crate::edit::EditRecipe::decode(&worker_key.edit_recipe);
             let lane_request = request_for_worker.clone();
@@ -639,6 +695,16 @@ fn start_viewer_request(key: ViewerRequestKey, request: Arc<ViewerRequest>) {
             .map_err(|error| Arc::from(error.to_string()));
             viewer_trace(format!(
                 "decode_done uri={} variant={}x{} elapsed_ms={} outcome={} decoded={}",
+                viewer_trace_uri(&worker_key.path),
+                worker_key.target_width,
+                worker_key.target_height,
+                started.elapsed().as_millis(),
+                if result.is_ok() { "ok" } else { "error" },
+                result.as_ref().map(|image| format!("{}x{}", image.width, image.height))
+                    .unwrap_or_else(|error: &Arc<str>| error.to_string()),
+            ));
+            lightbox_open_trace(format!(
+                "decode_complete uri={} variant={}x{} elapsed_ms={} outcome={} decoded={}",
                 viewer_trace_uri(&worker_key.path),
                 worker_key.target_width,
                 worker_key.target_height,

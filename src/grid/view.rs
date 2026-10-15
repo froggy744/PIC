@@ -52,6 +52,8 @@ pub struct Gallery {
     pending_metadata: Rc<RefCell<HashMap<i64, Photo>>>,
     progressive_group_dirty: Rc<Cell<bool>>,
     replace_generation: Rc<Cell<u64>>,
+    folder_presentation_generation: Cell<u64>,
+    folder_presentation_root: RefCell<Option<gtk::Widget>>,
     // True while a progressive gallery replacement is still building batches.
     // Folder navigation relies on this to keep retrying until the virtualized
     // Folder rows actually exist, instead of stopping as soon as the backing
@@ -895,6 +897,8 @@ impl Gallery {
             current_photos,
             favorite_indicators_visible,
             replace_generation: Rc::new(Cell::new(0)),
+            folder_presentation_generation: Cell::new(0),
+            folder_presentation_root: RefCell::new(None),
             metadata_index: RefCell::new(metadata_index::CatalogObjectIndex::default()),
             pending_metadata: Rc::new(RefCell::new(HashMap::new())),
             progressive_group_dirty: Rc::new(Cell::new(false)),
@@ -925,6 +929,46 @@ impl Gallery {
         };
         gallery.replace(photos);
         gallery
+    }
+
+    /// Keep a newly loaded Folder destination out of the painted gallery until
+    /// its header has a real position in GTK's published scroll extent.
+    pub(crate) fn hold_folder_destination(&self) -> u64 {
+        if let Some(previous) = self.folder_presentation_root.borrow_mut().take() {
+            previous.set_opacity(1.0);
+        }
+        let generation = self.folder_presentation_generation.get().wrapping_add(1);
+        self.folder_presentation_generation.set(generation);
+        let root = self.visible_root();
+        root.set_opacity(0.0);
+        self.folder_presentation_root.replace(Some(root));
+        crate::nav_transition_trace!(
+            "stage=folder_presentation_hold generation={generation} scroll={:.1}",
+            self.scroll_position(),
+        );
+        generation
+    }
+
+    pub(crate) fn reveal_folder_destination(&self, generation: u64) {
+        if self.folder_presentation_generation.get() != generation {
+            return;
+        }
+        if let Some(root) = self.folder_presentation_root.borrow_mut().take() {
+            root.set_opacity(1.0);
+            crate::nav_transition_trace!(
+                "stage=folder_presentation_reveal generation={generation} scroll={:.1}",
+                self.scroll_position(),
+            );
+        }
+    }
+
+    pub(crate) fn cancel_folder_destination_hold(&self) {
+        self.folder_presentation_generation
+            .set(self.folder_presentation_generation.get().wrapping_add(1));
+        if let Some(root) = self.folder_presentation_root.borrow_mut().take() {
+            root.set_opacity(1.0);
+            crate::nav_transition_trace!("stage=folder_presentation_cancel reason=superseded");
+        }
     }
 
     pub fn set_raw_jpeg_pair_folders(&self, folder_ids: HashSet<i64>) {

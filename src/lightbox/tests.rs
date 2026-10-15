@@ -691,3 +691,179 @@ mod wheel_quality_regression {
         std::fs::remove_file(path).unwrap();
     }
 }
+
+#[cfg(test)]
+mod opening_transition_regression {
+    use super::*;
+
+    fn transition(root: &gtk::Overlay) -> Option<OpeningTransitionImage> {
+        let mut child = root.first_child();
+        while let Some(widget) = child {
+            if let Ok(transition) = widget.clone().downcast::<OpeningTransitionImage>() {
+                return Some(transition);
+            }
+            child = widget.next_sibling();
+        }
+        None
+    }
+
+    fn has_transition(root: &gtk::Overlay) -> bool {
+        transition(root).is_some()
+    }
+
+    fn spin_until(label: &str, condition: impl Fn() -> bool) {
+        let context = glib::MainContext::default();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !condition() && Instant::now() < deadline {
+            while context.pending() {
+                context.iteration(false);
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(condition(), "timed out waiting for {label}");
+    }
+
+    #[test]
+    #[ignore = "requires a GTK display; run individually"]
+    fn source_thumbnail_remains_until_jpeg_and_png_decode_handoffs_finish() {
+        gtk::init().unwrap();
+        let context = glib::MainContext::default();
+        for (id, extension, format) in [
+            (1_i64, "jpg", image::ImageFormat::Jpeg),
+            (2_i64, "png", image::ImageFormat::Png),
+        ] {
+            let path = std::env::temp_dir().join(format!(
+                "pic-open-transition-{}-{id}.{extension}",
+                std::process::id()
+            ));
+            let thumbnail_path = std::env::temp_dir().join(format!(
+                "pic-open-transition-{}-{id}-thumbnail.jpg",
+                std::process::id()
+            ));
+            image::RgbImage::from_pixel(800, 600, image::Rgb([80, 130, 210]))
+                .save_with_format(&thumbnail_path, image::ImageFormat::Jpeg)
+                .unwrap();
+            if format == image::ImageFormat::Png {
+                image::RgbaImage::from_pixel(800, 600, image::Rgba([80, 130, 210, 0]))
+                    .save_with_format(&path, format)
+                    .unwrap();
+            } else {
+                image::RgbImage::from_pixel(800, 600, image::Rgb([80, 130, 210]))
+                    .save_with_format(&path, format)
+                    .unwrap();
+            }
+            let source_texture = gtk::gdk::Texture::from_filename(&thumbnail_path).unwrap();
+            let source_picture = gtk::Picture::for_paintable(&source_texture);
+            source_picture.set_size_request(200, 160);
+            source_picture.set_halign(gtk::Align::Center);
+            source_picture.set_valign(gtk::Align::Center);
+            let source = gtk::Box::new(gtk::Orientation::Vertical, 0);
+            source.set_size_request(260, 220);
+            source.set_halign(gtk::Align::Start);
+            source.set_valign(gtk::Align::Start);
+            source.append(&source_picture);
+            let source_scroll = gtk::ScrolledWindow::new();
+            source_scroll.set_policy(gtk::PolicyType::External, gtk::PolicyType::External);
+            source_scroll.set_size_request(160, 140);
+            source_scroll.set_halign(gtk::Align::Start);
+            source_scroll.set_valign(gtk::Align::Start);
+            source_scroll.set_child(Some(&source));
+            let gallery = gtk::Overlay::new();
+            gallery.set_child(Some(&source_scroll));
+
+            let photo: PhotoObject = glib::Object::builder::<PhotoObject>()
+                .property("id", id)
+                .property("path", path.to_string_lossy().as_ref())
+                .property("width", 800_i64)
+                .property("height", 600_i64)
+                .property("mtime", 1_i64)
+                .property("size-bytes", std::fs::metadata(&path).unwrap().len() as i64)
+                .property("original-available", true)
+                .build();
+            let lightbox = Lightbox::new();
+            gallery.add_overlay(&lightbox.root);
+            let window = gtk::Window::builder()
+                .default_width(640)
+                .default_height(480)
+                .child(&gallery)
+                .build();
+            window.present();
+            spin_until("mapped source thumbnail", || {
+                source.is_mapped() && source_scroll.is_mapped()
+            });
+            lightbox.root.set_visible(true);
+            spin_until("allocated transition source", || {
+                lightbox.root.width() > 0
+                    && source_scroll.width() > 0
+                    && source_picture.width() > 0
+            });
+            let horizontal = source_scroll.hadjustment();
+            let vertical = source_scroll.vadjustment();
+            horizontal.set_value((horizontal.upper() - horizontal.page_size()).max(0.0));
+            vertical.set_value((vertical.upper() - vertical.page_size()).max(0.0));
+            let (source_frame, source_clip, _) = lightbox_transition_source_geometry(
+                &source.clone().upcast(),
+                lightbox.root.upcast_ref(),
+            )
+            .expect("the nested thumbnail picture should provide source geometry");
+            let source_picture_bounds = source_picture
+                .compute_bounds(&lightbox.root)
+                .expect("the rendered thumbnail picture should have bounds");
+            assert_eq!(source_frame, source_picture_bounds);
+            assert!(source_clip.width() < source_frame.width());
+            assert!(source_clip.height() < source_frame.height());
+            lightbox.open_from_source(
+                vec![photo.clone()],
+                0,
+                Some((source.clone().upcast(), source_texture.clone().upcast())),
+            );
+
+            spin_until("opening transition overlay", || has_transition(&lightbox.root));
+            assert_eq!(lightbox.picture.opacity(), 0.0);
+            assert!(has_transition(&lightbox.root));
+            spin_until("decoded viewer texture", || lightbox.picture.paintable().is_some());
+            if let Some(transition) = transition(&lightbox.root) {
+                let (frame_width, frame_height) = transition.requested_frame_size();
+                assert!(frame_width > 0 && frame_height > 0);
+                assert!(transition.snapshot_count() > 0);
+                assert_eq!(lightbox.picture.opacity(), 0.0);
+            }
+            spin_until("decoded picture and completed handoff", || {
+                lightbox.picture.paintable().is_some()
+                    && lightbox.picture.opacity() >= 0.999
+                    && !has_transition(&lightbox.root)
+            });
+            assert!(lightbox.root.is_visible());
+
+            // A second opening of the same source exercises the decoded
+            // texture cache, then closes during motion to verify the old
+            // overlay is removed before the next opening can paint it.
+            lightbox.open_from_source(
+                vec![photo.clone()],
+                0,
+                Some((source.clone().upcast(), source_texture.clone().upcast())),
+            );
+            spin_until("cached opening transition", || has_transition(&lightbox.root));
+            lightbox.close();
+            assert!(!has_transition(&lightbox.root));
+            lightbox.open_from_source(
+                vec![photo],
+                0,
+                Some((source.clone().upcast(), source_texture.clone().upcast())),
+            );
+            spin_until("reopened cached transition", || has_transition(&lightbox.root));
+            spin_until("cached image handoff completion", || {
+                lightbox.picture.paintable().is_some()
+                    && lightbox.picture.opacity() >= 0.999
+                    && !has_transition(&lightbox.root)
+            });
+            assert!(lightbox.root.is_visible());
+            window.close();
+            while context.pending() {
+                context.iteration(false);
+            }
+            std::fs::remove_file(path).unwrap();
+            std::fs::remove_file(thumbnail_path).unwrap();
+        }
+    }
+}

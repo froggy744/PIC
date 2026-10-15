@@ -2196,12 +2196,25 @@ impl Gallery {
             .set(self.zoom_anchor_restore_generation.get().wrapping_add(1));
         let generation = self.replace_generation.get().wrapping_add(1);
         self.replace_generation.set(generation);
+        crate::nav_transition_trace!(
+            "stage=model_replace_start generation={generation} incoming_photos={} current_photos={} group={:?} progressive={} visible_root={:?}",
+            photos.len(),
+            self.current_photos.borrow().len(),
+            self.group_mode.get(),
+            photos.len().max(self.current_photos.borrow().len()) > 1_000,
+            self.active_zoom_root().widget_name(),
+        );
         // Assume a build is in progress until each completion path clears it.
         // Callers such as folder navigation wait on this so they do not give
         // up while the virtualized Folder rows are still being constructed.
         self.stream_building.set(true);
         if photos.len().max(self.current_photos.borrow().len()) > 1_000 {
-            self.replace_progressive(photos.into_owned(), generation, is_current);
+            self.replace_progressive(
+                photos.into_owned(),
+                generation,
+                is_current,
+                self.active_zoom_root(),
+            );
             return;
         }
         let unchanged = {
@@ -2221,6 +2234,16 @@ impl Gallery {
             }
 
             self.stream_building.set(false);
+            crate::nav_transition_trace!(
+                "stage=model_replace_complete generation={generation} kind=unchanged photos={}",
+                self.current_photos.borrow().len(),
+            );
+            Self::trace_navigation_first_destination_paint(
+                self.active_zoom_root(),
+                self.replace_generation.clone(),
+                generation,
+                self.current_photos.borrow().len(),
+            );
             return;
         }
 
@@ -2278,6 +2301,16 @@ impl Gallery {
             }
 
             self.stream_building.set(false);
+            crate::nav_transition_trace!(
+                "stage=model_replace_complete generation={generation} kind=reordered photos={}",
+                self.current_photos.borrow().len(),
+            );
+            Self::trace_navigation_first_destination_paint(
+                self.active_zoom_root(),
+                self.replace_generation.clone(),
+                generation,
+                self.current_photos.borrow().len(),
+            );
             return;
         }
 
@@ -2308,6 +2341,99 @@ impl Gallery {
         }
 
         self.stream_building.set(false);
+        crate::nav_transition_trace!(
+            "stage=model_replace_complete generation={generation} kind=replaced photos={}",
+            self.current_photos.borrow().len(),
+        );
+        Self::trace_navigation_first_destination_paint(
+            self.active_zoom_root(),
+            self.replace_generation.clone(),
+            generation,
+            self.current_photos.borrow().len(),
+        );
+    }
+
+    fn trace_navigation_first_destination_paint(
+        root: gtk::Widget,
+        replace_generation: Rc<Cell<u64>>,
+        generation: u64,
+        photo_count: usize,
+    ) {
+        if !crate::nav_transition_trace::enabled() {
+            return;
+        }
+        let weak_root = root.downgrade();
+        root.add_tick_callback(move |widget, _| {
+            if replace_generation.get() != generation {
+                crate::nav_transition_trace!(
+                    "stage=first_destination_paint_cancel generation={generation} reason=model_superseded current_generation={}",
+                    replace_generation.get(),
+                );
+                return glib::ControlFlow::Break;
+            }
+            if !widget.is_mapped() || !widget.is_visible() {
+                return glib::ControlFlow::Continue;
+            }
+            let Some(clock) = widget.frame_clock() else {
+                crate::nav_transition_trace!(
+                    "stage=first_destination_paint_unavailable generation={generation} reason=no_frame_clock"
+                );
+                return glib::ControlFlow::Break;
+            };
+            let signal = Rc::new(RefCell::new(None));
+            let signal_for_paint = signal.clone();
+            let weak_root_for_paint = weak_root.clone();
+            let replace_generation_for_paint = replace_generation.clone();
+            let handler = clock.connect_after_paint(move |clock| {
+                let Some(root) = weak_root_for_paint.upgrade() else {
+                    if let Some(handler) = signal_for_paint.borrow_mut().take() {
+                        clock.disconnect(handler);
+                    }
+                    return;
+                };
+                if replace_generation_for_paint.get() != generation {
+                    crate::nav_transition_trace!(
+                        "stage=first_destination_paint_cancel generation={generation} reason=model_superseded current_generation={}",
+                        replace_generation_for_paint.get(),
+                    );
+                    if let Some(handler) = signal_for_paint.borrow_mut().take() {
+                        clock.disconnect(handler);
+                    }
+                    return;
+                }
+                let mut ancestor = root.parent();
+                let mut scroll_state = None;
+                while let Some(widget) = ancestor {
+                    if let Ok(scrolled) = widget.clone().downcast::<gtk::ScrolledWindow>() {
+                        let adjustment = scrolled.vadjustment();
+                        scroll_state = Some((
+                            scrolled.width(),
+                            scrolled.height(),
+                            adjustment.value(),
+                            adjustment.upper(),
+                            adjustment.page_size(),
+                        ));
+                        break;
+                    }
+                    ancestor = widget.parent();
+                }
+                crate::nav_transition_trace!(
+                    "stage=first_destination_paint callback=gtk_after_paint generation={generation} photos={photo_count} widget={} mapped={} opacity={:.2} allocation={}x{} scroll={scroll_state:?} frame_time_us={} frame_counter={}",
+                    root.widget_name(),
+                    root.is_mapped(),
+                    root.opacity(),
+                    root.width(),
+                    root.height(),
+                    clock.frame_time(),
+                    clock.frame_counter(),
+                );
+                if let Some(handler) = signal_for_paint.borrow_mut().take() {
+                    clock.disconnect(handler);
+                }
+            });
+            signal.replace(Some(handler));
+            glib::ControlFlow::Break
+        });
     }
 
     fn replace_progressive(
@@ -2315,6 +2441,7 @@ impl Gallery {
         photos: Vec<Photo>,
         generation: u64,
         is_current: Rc<dyn Fn() -> bool>,
+        destination_root: gtk::Widget,
     ) {
         // Larger batches finish the model build in far fewer main-loop hops.
         // Each hop is scheduled at idle priority, so with 500-photo batches a
@@ -2355,15 +2482,24 @@ impl Gallery {
         let folder_cache = self.folder_cache.clone();
         let _folder_root = self.folder_root.clone();
         let replace_generation = self.replace_generation.clone();
+        let replace_generation_for_paint = replace_generation.clone();
         let stream_building = self.stream_building.clone();
         let sectioned_folder = self.sectioned_folder.clone();
+        let destination_root_for_paint = destination_root.clone();
 
         glib::idle_add_local(move || {
             if replace_generation.get() != generation {
+                crate::nav_transition_trace!(
+                    "stage=model_replace_cancel generation={generation} reason=superseded current_generation={}",
+                    replace_generation.get(),
+                );
                 return glib::ControlFlow::Break;
             }
             if !is_current() {
                 stream_building.set(false);
+                crate::nav_transition_trace!(
+                    "stage=model_replace_cancel generation={generation} reason=destination_stale"
+                );
                 return glib::ControlFlow::Break;
             }
 
@@ -2399,6 +2535,17 @@ impl Gallery {
                             generation, photos.len(), started.elapsed().as_millis());
                     }
                     stream_building.set(false);
+                    crate::nav_transition_trace!(
+                        "stage=model_replace_complete generation={generation} kind=unchanged photos={} elapsed_ms={}",
+                        photos.len(),
+                        started.elapsed().as_millis(),
+                    );
+                    Self::trace_navigation_first_destination_paint(
+                        destination_root_for_paint.clone(),
+                        replace_generation_for_paint.clone(),
+                        generation,
+                        photos.len(),
+                    );
                     return glib::ControlFlow::Break;
                 }
             }
@@ -2542,6 +2689,17 @@ impl Gallery {
                 // Folder rows (and therefore folder navigation targets) only
                 // exist once every batch has been applied.
                 stream_building.set(false);
+                crate::nav_transition_trace!(
+                    "stage=model_replace_complete generation={generation} kind=batched photos={} elapsed_ms={}",
+                    photos.len(),
+                    started.elapsed().as_millis(),
+                );
+                Self::trace_navigation_first_destination_paint(
+                    destination_root_for_paint.clone(),
+                    replace_generation_for_paint.clone(),
+                    generation,
+                    photos.len(),
+                );
                 glib::ControlFlow::Break
             }
         });

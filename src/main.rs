@@ -20,6 +20,7 @@ mod network_shares;
 #[cfg(target_os="linux")]
 mod network_picker;
 mod onboarding;
+mod nav_transition_trace;
 mod photo_object;
 mod photo_texture;
 mod platform;

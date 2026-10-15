@@ -5982,6 +5982,7 @@ fn start_photo_export_single(
             }
             onboarding_for_switch.library_changed();
             invalidate_pending_grid_navigation();
+            gallery.cancel_folder_destination_hold();
             invalidate_availability_refreshes();
             refresh_status_spinner.set_spinning(false);
             refresh_status_box.set_visible(false);

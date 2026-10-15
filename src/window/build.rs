@@ -2408,22 +2408,10 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     });
     crate::startup_trace::mark("scroll_callbacks_connected", Some(build_started));
 
-    {
-        let gallery_for_mode = gallery.clone();
-        let connection_for_mode = connection.clone();
-        let filter_for_mode = filter.clone();
-        info.connect_photo_layout(move |mode| {
-            gallery_for_mode.set_layout(mode);
-            if let Err(error) = save_section_layout(
-                &connection_for_mode.borrow(),
-                filter_for_mode.get(),
-                mode,
-            ) {
-                eprintln!("Could not save section photo layout: {error}");
-            }
-        });
-        restore_section_layout(&connection.borrow(), &gallery, &info, initial_filter);
-    }
+    // Restore the startup layout without a transition. The interactive
+    // Grid/Wall/Masonry selector is connected after page_overlay exists so
+    // layout changes can reuse the same retained-frame crossfade.
+    restore_section_layout(&connection.borrow(), &gallery, &info, initial_filter);
     crate::startup_trace::mark("initial_layout_restored", Some(build_started));
 
     let grid_surface = gtk::Box::new(gtk::Orientation::Vertical, 0);
@@ -2658,7 +2646,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             }
         })
     };
-    let nav_fade_begin: Rc<dyn Fn(bool, bool)> = {
+    let nav_fade_begin: Rc<dyn Fn(bool, bool, bool)> = {
         let page_overlay = page_overlay.clone();
         let main_stack = main_stack.clone();
         let source = nav_fade_source.clone();
@@ -2666,7 +2654,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         let gallery = gallery.clone();
         let sequence = nav_fade_sequence.clone();
         let active = nav_fade_overlay.clone();
-        Rc::new(move |folder_destination, photo_destination| {
+        Rc::new(move |folder_destination, photo_destination, layout_destination| {
             let next = sequence.get().wrapping_add(1);
             sequence.set(next);
             // Snapshot the full currently presented blend on a rapid
@@ -2721,6 +2709,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             active.replace(Some(outgoing.clone()));
 
             let previous_model_generation = gallery.navigation_model_generation();
+            let previous_layout_generation = gallery.layout_presentation_generation();
             let started = Instant::now();
             let fading = Rc::new(RefCell::new(None::<Instant>));
             let ready_frames = Cell::new(0_u8);
@@ -2739,7 +2728,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 // error-path safety net, not an animation delay.
                 if fading.borrow().is_none() && started.elapsed() > Duration::from_secs(6) {
                     crate::nav_transition_trace!(
-                        "stage=crossfade_timeout generation={next} folder={folder_destination} model={photo_destination}"
+                        "stage=crossfade_timeout generation={next} folder={folder_destination} model={photo_destination} layout={layout_destination}"
                     );
                     page_for_tick.remove_overlay(image);
                     active_for_tick.replace(None);
@@ -2753,7 +2742,9 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                     let folder_ready = !folder_destination
                         || (gallery_for_tick.visible_root().opacity() >= 0.99
                             && !gallery_for_tick.stream_building());
-                    if !model_ready || !folder_ready {
+                    let layout_ready = !layout_destination
+                        || gallery_for_tick.layout_presentation_ready(previous_layout_generation);
+                    if !model_ready || !folder_ready || !layout_ready {
                         ready_frames.set(0);
                         return glib::ControlFlow::Continue;
                     }
@@ -2765,7 +2756,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                     }
                     *fading.borrow_mut() = Some(now);
                     crate::nav_transition_trace!(
-                        "stage=crossfade_start generation={next} preparation_ms={} folder={folder_destination}",
+                        "stage=crossfade_start generation={next} preparation_ms={} folder={folder_destination} layout={layout_destination}",
                         started.elapsed().as_millis(),
                     );
                 }
@@ -2788,6 +2779,35 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             });
         })
     };
+    // The layout selector changes the renderer IN PLACE, including Masonry
+    // <-> Photo Wall where GtkStack never changes child. Reuse the same frozen
+    // outgoing viewport, then wait for the new layout's anchor restoration
+    // before fading it away. No model reload or thumbnail decode is needed.
+    {
+        let gallery_for_mode = gallery.clone();
+        let connection_for_mode = connection.clone();
+        let filter_for_mode = filter.clone();
+        let fade = nav_fade_begin.clone();
+        let cancel = nav_fade_cancel.clone();
+        let viewer = lightbox.clone();
+        info.connect_photo_layout(move |mode| {
+            if gallery_for_mode.layout() != mode {
+                if viewer.root.is_visible() {
+                    cancel();
+                } else {
+                    fade(false, false, true);
+                }
+                gallery_for_mode.set_layout(mode);
+            }
+            if let Err(error) = save_section_layout(
+                &connection_for_mode.borrow(),
+                filter_for_mode.get(),
+                mode,
+            ) {
+                eprintln!("Could not save section photo layout: {error}");
+            }
+        });
+    }
     // Edit and Collage are not sidebar destinations. An in-flight sidebar
     // fade must never cover either page if the user opens one immediately.
     {

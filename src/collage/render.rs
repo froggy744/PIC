@@ -123,6 +123,13 @@ pub fn export(project: &CollageProject, destination: &Path, options: &ExportOpti
             project.layout,
             super::model::LayoutKind::Mosaic | super::model::LayoutKind::SmartMosaic
         ) && project.keep_photo_aspect;
+        if collage_trace_enabled() {
+            eprintln!(
+                "PIC_COLLAGE_TRACE export_content id={} decoded={}x{} edited={}x{} target={}x{} contain={} library_rotation={}",
+                item.photo.id, source.width(), source.height(), source.width(), source.height(),
+                target_width, target_height, contain, item.photo.library_rotation
+            );
+        }
         // Contain builds a complete background-backed tile before rounding.
         // The alpha mask therefore affects the letterbox as well as the photo.
         let mut image = if contain {

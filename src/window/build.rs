@@ -2856,11 +2856,11 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     // Only photo-gallery pages can own a Properties pane. Library/Albums
     // index, Edit and Collage cannot reopen it through stale InfoBar selection.
     set_gallery_properties_allowed(
-        main_stack.visible_child_name().as_deref() == Some("photos"),
+        page_allows_gallery_properties(main_stack.visible_child_name().as_deref()),
     );
     main_stack.connect_visible_child_notify(|stack| {
         let page = stack.visible_child_name();
-        set_gallery_properties_allowed(page.as_deref() == Some("photos"));
+        set_gallery_properties_allowed(page_allows_gallery_properties(page.as_deref()));
         if std::env::var_os("PIC_INSPECTOR_TRACE").is_some() {
             eprintln!("PIC_INSPECTOR_TRACE stage=page_switch page={:?}", page.as_deref());
         }

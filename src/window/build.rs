@@ -2577,8 +2577,8 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     } else {
         "photos"
     });
-    // The gallery and both Properties panels share one overlay. The grid
-    // keeps its full width when a panel is shown, avoiding tile reflow.
+    // The gallery Properties panel reserves width through a right-hand split;
+    // only the fullscreen viewer and its own inspector are overlays.
     let page_overlay = gtk::Overlay::new();
     page_overlay.set_vexpand(true);
     page_overlay.set_child(Some(&main_stack));
@@ -2693,7 +2693,19 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     }
     {
         let active = resize_active.clone();
-        resize_gesture.connect_drag_end(move |_, _, _| active.set(false));
+        let split = properties_split.clone();
+        let gallery = gallery.clone();
+        resize_gesture.connect_drag_end(move |_, _, _| {
+            active.set(false);
+            if std::env::var_os("PICASA_TRACE").is_some() {
+                eprintln!(
+                    "PIC_INSPECTOR_LAYOUT stage=drag_end sidebar_width={} gallery_width={} scroll_y={:.1}",
+                    split.sidebar().map(|child| child.width()).unwrap_or(0),
+                    split.content().map(|child| child.width()).unwrap_or(0),
+                    gallery.scroll_position()
+                );
+            }
+        });
     }
     {
         let active = resize_active.clone();
@@ -2797,6 +2809,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         let gallery_for_trace = gallery.clone();
         let gallery_content_for_trace = page_overlay.clone();
         let inspector_for_trace = properties_panel.clone();
+        let split_for_trace = properties_split.clone();
         let lightbox_inspector_for_trace = lightbox_properties_panel.clone();
         let overlay_for_trace = gallery_overlay.clone();
         lightbox.root.connect_visible_notify(move |root| {
@@ -2810,7 +2823,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 overlay_for_trace.width(),
                 gallery_content_for_trace.width(),
                 inspector_for_trace.width(),
-                inspector_for_trace.is_visible(),
+                split_for_trace.shows_sidebar(),
                 lightbox_inspector_for_trace.is_visible(),
                 gallery_for_trace.scroll_position()
             );
@@ -2818,12 +2831,13 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 let gallery = gallery_for_trace.clone();
                 let gallery_content = gallery_content_for_trace.clone();
                 let inspector = inspector_for_trace.clone();
+                let split = split_for_trace.clone();
                 glib::timeout_add_local_once(Duration::from_millis(220), move || {
                     eprintln!(
                         "PIC_LIGHTBOX_LAYOUT stage=settled gallery_width={} inspector_width={} inspector_visible={} scroll_y={:.1}",
                         gallery_content.width(),
                         inspector.width(),
-                        inspector.is_visible(),
+                        split.shows_sidebar(),
                         gallery.scroll_position()
                     );
                 });

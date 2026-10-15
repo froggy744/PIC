@@ -15,6 +15,9 @@ use gtk4 as gtk;
 
 use crate::photo_object::PhotoObject;
 
+mod opening_transition;
+use opening_transition::OpeningTransitionImage;
+
 /// A cooperative decode used to be gated behind a single-permit Mutex, which
 /// serialized every navigation: a new photo's decode thread would block on
 /// the mutex until the *previous* photo's full decode finished, even though

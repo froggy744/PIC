@@ -363,6 +363,11 @@ impl Lightbox {
         let offline_for_visibility = offline.clone();
         root.connect_visible_notify(move |root| {
             if !root.is_visible() {
+                // The viewer now owns its context menu overlay. Dismiss it
+                // through the shared manager before tearing down viewer
+                // overlays, so an invisible menu cannot retain stale state
+                // when the next photo is opened.
+                crate::window::dismiss_active_photo_context_menu();
                 // An aborted fade must never affect the next photo opening.
                 close_generation_for_visibility.set(
                     close_generation_for_visibility.get().wrapping_add(1),
@@ -374,9 +379,13 @@ impl Lightbox {
                 let mut child = root.first_child();
                 while let Some(widget) = child {
                     child = widget.next_sibling();
-                    if widget.has_css_class("photo-context-menu") {
-                        widget.set_visible(false);
-                        widget.unparent();
+                    if widget.widget_name() == "lightbox-open-transition" {
+                        lightbox_open_trace("transition_cancel reason=lightbox_hidden");
+                        root.remove_overlay(&widget);
+                    } else if widget.has_css_class("photo-context-menu") {
+                        // Emergency cleanup of orphan menus must also update
+                        // GtkOverlay's own overlay-child tracking.
+                        root.remove_overlay(&widget);
                     }
                 }
                 one_to_one_for_visibility.set(false);
@@ -465,37 +474,43 @@ impl Lightbox {
         });
         root.add_controller(outside_click);
 
-        // Capture secondary clicks on the actual full-size event surface.
-        // The ScrolledWindow fills the lightbox and remains under the pointer
-        // over the image as well as the centre/bottom-centre area. Using the
-        // same widget for both the gesture coordinates and popover anchor
-        // avoids the dead zones caused by root/overlay coordinate mismatch.
+        // Capture on the stable fullscreen root, not just the ScrolledWindow:
+        // at fit size GTK may target an overlay child instead of the scroller.
+        // Root-local coordinates also match the menu's top-level host.
         let right_click = gtk::GestureClick::new();
         right_click.set_button(3);
         right_click.set_propagation_phase(gtk::PropagationPhase::Capture);
         let photos_for_context = photos.clone();
         let index_for_context = index.clone();
         let context_menu_for_context = context_menu.clone();
-        let viewport_for_context = picture_viewport.clone();
+        let root_for_context = root.clone();
         right_click.connect_pressed(move |gesture, _, x, y| {
-            let Some(photo) = photos_for_context
+            let photo = photos_for_context
                 .borrow()
                 .get(index_for_context.get())
-                .cloned()
-            else {
+                .cloned();
+            if std::env::var_os("PICASA_TRACE").is_some() {
+                eprintln!(
+                    "PIC_LIGHTBOX_CONTEXT stage=right_press photo={} handler={} mapped={} x={x:.1} y={y:.1}",
+                    photo.is_some(),
+                    context_menu_for_context.borrow().is_some(),
+                    root_for_context.is_mapped(),
+                );
+            }
+            let Some(photo) = photo else {
                 return;
             };
             if let Some(handler) = context_menu_for_context.borrow().as_ref() {
                 handler(
                     photo,
-                    viewport_for_context.clone().upcast::<gtk::Widget>(),
+                    root_for_context.clone().upcast::<gtk::Widget>(),
                     x,
                     y,
                 );
                 gesture.set_state(gtk::EventSequenceState::Claimed);
             }
         });
-        picture_viewport.add_controller(right_click);
+        root.add_controller(right_click);
 
         let picture_for_fit = picture.clone();
         let photos_for_fit = photos.clone();
@@ -710,6 +725,8 @@ impl Lightbox {
                     cache_hit,
                     None,
                     Some(settled.clone()),
+                    None,
+                    None,
                     offline.clone(),
                 );
                 schedule_lightbox_prefetch(
@@ -726,6 +743,13 @@ impl Lightbox {
         wheel_dispatch_slot.replace(Some(wheel_dispatch.clone()));
 
         scroll.connect_scroll(move |controller, _, dy| {
+            // The fullscreen viewer listens in capture phase for image zoom
+            // and photo navigation. When the shared context menu is open
+            // above the image, leave wheel and Ctrl+wheel events to its own
+            // GtkScrolledWindow; otherwise the menu appears stuck.
+            if crate::window::photo_context_menu_is_open() {
+                return glib::Propagation::Proceed;
+            }
             // Ctrl+wheel zooms the image; ordinary wheel keeps navigation.
             // The controller's modifier state is sampled on the GTK thread.
             if controller
@@ -1029,6 +1053,8 @@ impl Lightbox {
                         cache_hit,
                         Some(key_navigation_ready_for_key.clone()),
                         None,
+                        None,
+                        None,
                         offline_for_key.clone(),
                     );
                     schedule_lightbox_prefetch(
@@ -1089,6 +1115,8 @@ impl Lightbox {
                         false,
                         false,
                         Some(ready.clone()),
+                        None,
+                        None,
                         None,
                         offline.clone(),
                     );
@@ -1525,6 +1553,7 @@ impl Lightbox {
         selected: usize,
         source: Option<(gtk::Widget, gtk::gdk::Paintable)>,
     ) {
+        clear_opening_transition_overlays(&self.root);
         // A rapid reopen invalidates an unfinished close-fade callback.
         self.close_generation
             .set(self.close_generation.get().wrapping_add(1));
@@ -1555,6 +1584,15 @@ impl Lightbox {
         self.opening_fit_pending.set(true);
         let generation = self.load_generation.get().wrapping_add(1);
         self.load_generation.set(generation);
+        lightbox_open_trace(format!(
+            "request generation={generation} selected={} photos={} source_available={} source_dims={:?}",
+            self.index.get(),
+            len,
+            source.is_some(),
+            source.as_ref().map(|(_, paintable)| {
+                (paintable.intrinsic_width(), paintable.intrinsic_height())
+            }),
+        ));
 
         // Shared-element opens fade the backdrop in under the moving thumbnail.
         // Instant opens keep the established presentation unchanged.
@@ -1609,15 +1647,33 @@ impl Lightbox {
         let last_width_for_open = self.last_width.clone();
         let last_height_for_open = self.last_height.clone();
         let opening_fit_pending_for_open = self.opening_fit_pending.clone();
+        let opening_decode_result = Rc::new(Cell::new(None::<bool>));
+        let opening_decode_result_for_open = opening_decode_result.clone();
+        let opening_decode_ready = Rc::new(RefCell::new(None::<Rc<dyn Fn()>>));
+        let opening_decode_ready_for_open = opening_decode_ready.clone();
         let source_for_transition = Rc::new(RefCell::new(source));
         let source_for_first_frame = source_for_transition.clone();
         self.root.add_tick_callback(move |root, _| {
             if !root.is_visible() || current_generation.get() != generation {
+                lightbox_open_trace(format!(
+                    "allocation_cancel generation={generation} current={} visible={}",
+                    current_generation.get(),
+                    root.is_visible(),
+                ));
                 return glib::ControlFlow::Break;
             }
             if root.width() <= 0 || root.height() <= 0 {
                 return glib::ControlFlow::Continue;
             }
+            lightbox_open_trace(format!(
+                "allocated generation={generation} root={}x{} root_mapped={} picture={}x{} source_available={}",
+                root.width(),
+                root.height(),
+                root.is_mapped(),
+                picture.width(),
+                picture.height(),
+                source_for_first_frame.borrow().is_some(),
+            ));
 
             let (preview_geometry_fixed, cache_hit) = prepare_navigation_photo(
                 &picture,
@@ -1645,6 +1701,8 @@ impl Lightbox {
                 cache_hit,
                 None,
                 None,
+                Some(opening_decode_result_for_open.clone()),
+                Some(opening_decode_ready_for_open.clone()),
                 offline.clone(),
             );
             fit_picture(
@@ -1688,7 +1746,12 @@ impl Lightbox {
             if let Some((source_widget, source_paintable)) =
                 source_for_first_frame.borrow_mut().take()
             {
-                if let Some(source_bounds) = source_widget.compute_bounds(root) {
+                if let Some((source_bounds, source_clip, source_content_fit)) =
+                    lightbox_transition_source_geometry(
+                        &source_widget,
+                        root.upcast_ref::<gtk::Widget>(),
+                    )
+                {
                     let dest_width = picture.width_request().max(1);
                     let dest_height = picture.height_request().max(1);
                     if source_bounds.width() > 1.0
@@ -1702,120 +1765,312 @@ impl Lightbox {
                         // swap the decoded texture into the moving overlay as
                         // soon as it is available; the animated geometry is
                         // untouched.
-                        let png_transition = photos
-                            .borrow()
-                            .get(index.get())
-                            .is_some_and(|photo| png_uses_theme_background(&photo.path()));
-                        let decoded_swapped = Cell::new(false);
-                        let transition = gtk::Picture::for_paintable(&source_paintable);
-                        transition.set_can_shrink(true);
-                        transition.set_content_fit(gtk::ContentFit::Cover);
-                        if picture.has_css_class("photo-grid") {
-                            transition.add_css_class("photo-grid");
-                        }
-                        transition.set_halign(gtk::Align::Start);
-                        transition.set_valign(gtk::Align::Start);
-                        transition.set_can_target(false);
-                        transition.set_size_request(
+                        let transition = OpeningTransitionImage::new(
+                            source_paintable.clone(),
+                            source_content_fit,
                             source_bounds.width().round() as i32,
                             source_bounds.height().round() as i32,
                         );
-                        transition.set_margin_start(source_bounds.x().round().max(0.0) as i32);
-                        transition.set_margin_top(source_bounds.y().round().max(0.0) as i32);
-                        root.add_overlay(&transition);
-                        if png_transition {
-                            if let Some(decoded) = picture.paintable() {
-                                decoded_swapped.set(true);
-                                transition.set_paintable(Some(&decoded));
-                            }
+                        transition.set_widget_name("lightbox-open-transition");
+                        if picture.has_css_class("photo-grid") {
+                            transition.add_css_class("photo-grid");
                         }
-
+                        transition.set_halign(gtk::Align::Fill);
+                        transition.set_valign(gtk::Align::Fill);
+                        transition.set_hexpand(true);
+                        transition.set_vexpand(true);
+                        transition.set_can_target(false);
+                        transition.set_geometry(
+                            source_bounds.x() as f64,
+                            source_bounds.y() as f64,
+                            source_bounds.width().round() as i32,
+                            source_bounds.height().round() as i32,
+                            source_clip.x() as f64,
+                            source_clip.y() as f64,
+                            source_clip.width() as f64,
+                            source_clip.height() as f64,
+                        );
+                        root.add_overlay(&transition);
+                        root.set_measure_overlay(&transition, false);
                         let start_x = source_bounds.x() as f64;
                         let start_y = source_bounds.y() as f64;
                         let start_w = source_bounds.width() as f64;
                         let start_h = source_bounds.height() as f64;
+                        let viewport_bounds = picture_viewport
+                            .compute_bounds(root)
+                            .filter(|bounds| bounds.width() > 1.0 && bounds.height() > 1.0)
+                            .unwrap_or_else(|| {
+                                gtk::graphene::Rect::new(
+                                    0.0,
+                                    0.0,
+                                    root.width() as f32,
+                                    root.height() as f32,
+                                )
+                            });
                         let end_w = dest_width as f64;
                         let end_h = dest_height as f64;
-                        let end_x = (root.width() as f64 - end_w) * 0.5;
-                        let end_y = (root.height() as f64 - end_h) * 0.5;
-                        viewer_trace(format!(
-                            "open_transition start={start_x:.1},{start_y:.1} {start_w:.1}x{start_h:.1} end={end_x:.1},{end_y:.1} {end_w:.1}x{end_h:.1} root={}x{} picture_request={}x{}",
+                        let end_x = viewport_bounds.x() as f64
+                            + (viewport_bounds.width() as f64 - end_w) * 0.5;
+                        let end_y = viewport_bounds.y() as f64
+                            + (viewport_bounds.height() as f64 - end_h) * 0.5;
+                        let start_geometry = [
+                            start_x,
+                            start_y,
+                            start_w,
+                            start_h,
+                            source_clip.x() as f64,
+                            source_clip.y() as f64,
+                            source_clip.width() as f64,
+                            source_clip.height() as f64,
+                        ];
+                        let target_geometry = [
+                            end_x,
+                            end_y,
+                            end_w,
+                            end_h,
+                            viewport_bounds.x() as f64,
+                            viewport_bounds.y() as f64,
+                            viewport_bounds.width() as f64,
+                            viewport_bounds.height() as f64,
+                        ];
+                        let tween_state = Rc::new(RefCell::new((
+                            start_geometry,
+                            target_geometry,
+                            0.0_f64,
+                        )));
+                        lightbox_open_trace(format!(
+                            "overlay_created generation={generation} source_mapped={} source_visible={} source_frame={start_x:.1},{start_y:.1} {start_w:.1}x{start_h:.1} source_clip={:.1},{:.1} {:.1}x{:.1} source_content_fit={source_content_fit:?} source_dims={}x{} target={end_x:.1},{end_y:.1} {end_w:.1}x{end_h:.1} root={}x{} root_mapped={} picture_request={}x{} decode_result={:?}",
+                            source_widget.is_mapped(),
+                            source_widget.is_visible(),
+                            source_clip.x(),
+                            source_clip.y(),
+                            source_clip.width(),
+                            source_clip.height(),
+                            source_paintable.intrinsic_width(),
+                            source_paintable.intrinsic_height(),
                             root.width(),
                             root.height(),
+                            root.is_mapped(),
                             picture.width_request(),
                             picture.height_request(),
+                            opening_decode_result.get(),
                         ));
-                        let started = Instant::now();
+                        let started = Rc::new(Cell::new(None::<Instant>));
+                        let first_frame_logged = Rc::new(Cell::new(false));
+                        if let Some(clock) = root.frame_clock() {
+                            let started_after_paint = started.clone();
+                            let first_frame_logged_after_paint = first_frame_logged.clone();
+                            let weak_root = root.downgrade();
+                            let weak_transition = transition.downgrade();
+                            let generation_for_paint = current_generation.clone();
+                            let signal = Rc::new(RefCell::new(None));
+                            let signal_for_paint = signal.clone();
+                            let handler = clock.connect_after_paint(move |clock| {
+                                if let (Some(root), Some(transition)) =
+                                    (weak_root.upgrade(), weak_transition.upgrade())
+                                {
+                                    if root.is_visible()
+                                        && generation_for_paint.get() == generation
+                                        && !first_frame_logged_after_paint.replace(true)
+                                    {
+                                        started_after_paint.set(Some(Instant::now()));
+                                        lightbox_open_trace(format!(
+                                            "gtk_frame_after_paint generation={generation} transition={}x{} widget_snapshots={} source_bounds={}x{} frame_time_us={} frame_counter={}",
+                                            transition.width(),
+                                            transition.height(),
+                                            transition.snapshot_count(),
+                                            start_w.round() as i32,
+                                            start_h.round() as i32,
+                                            clock.frame_time(),
+                                            clock.frame_counter(),
+                                        ));
+                                    }
+                                }
+                                if let Some(handler) = signal_for_paint.borrow_mut().take() {
+                                    clock.disconnect(handler);
+                                }
+                            });
+                            signal.replace(Some(handler));
+                            clock.request_phase(gtk::gdk::FrameClockPhase::AFTER_PAINT);
+                        }
                         let picture_for_transition = picture.clone();
+                        let viewport_for_transition = picture_viewport.clone();
                         let backdrop = backdrop_for_transition.clone();
                         let root_for_transition = root.clone();
                         let generation_for_transition = current_generation.clone();
+                        let decode_result_for_transition = opening_decode_result.clone();
+                        let animation_finished = Rc::new(Cell::new(false));
+                        let handoff_started = Rc::new(Cell::new(false));
+                        let transition_completed = Rc::new(Cell::new(false));
+                        let tween_for_transition = tween_state.clone();
+                        let tick_count = Cell::new(0u32);
+                        let ready_result = opening_decode_result.clone();
+                        let ready_animation_finished = animation_finished.clone();
+                        let ready_handoff_started = handoff_started.clone();
+                        let ready_transition_completed = transition_completed.clone();
+                        let ready_generation = current_generation.clone();
+                        let ready_root = root.downgrade();
+                        let ready_transition = transition.downgrade();
+                        let ready_picture = picture.clone();
+                        let ready_callback: Rc<dyn Fn()> = Rc::new(move || {
+                            let Some(decoded) = ready_result.get() else {
+                                return;
+                            };
+                            let (Some(root), Some(transition)) =
+                                (ready_root.upgrade(), ready_transition.upgrade())
+                            else {
+                                return;
+                            };
+                            start_open_transition_handoff(
+                                transition,
+                                ready_picture.clone(),
+                                root,
+                                ready_generation.clone(),
+                                generation,
+                                decoded,
+                                ready_animation_finished.clone(),
+                                ready_handoff_started.clone(),
+                                ready_transition_completed.clone(),
+                            );
+                        });
+                        opening_decode_ready.replace(Some(ready_callback.clone()));
+                        if opening_decode_result.get().is_some() {
+                            ready_callback();
+                        }
+                        lightbox_open_trace(format!(
+                            "transition_start generation={generation} duration_ms=200 easing=cubic_out"
+                        ));
 
                         transition.add_tick_callback(move |transition, _| {
                             const OPEN_TRANSITION_MS: f64 = 200.0;
-                            let linear = (started.elapsed().as_secs_f64() * 1000.0
-                                / OPEN_TRANSITION_MS)
-                                .clamp(0.0, 1.0);
-                            let eased = 1.0 - (1.0 - linear).powi(3);
-
-                            let x = start_x + (end_x - start_x) * eased;
-                            let y = start_y + (end_y - start_y) * eased;
-                            let w = start_w + (end_w - start_w) * eased;
-                            let h = start_h + (end_h - start_h) * eased;
-                            transition.set_margin_start(x.round().max(0.0) as i32);
-                            transition.set_margin_top(y.round().max(0.0) as i32);
-                            transition.set_size_request(
-                                w.round().max(1.0) as i32,
-                                h.round().max(1.0) as i32,
-                            );
-                            backdrop.set_opacity(linear);
-
-                            if png_transition
-                                && !decoded_swapped.get()
-                                && generation_for_transition.get() == generation
+                            if !root_for_transition.is_visible()
+                                || generation_for_transition.get() != generation
                             {
-                                if let Some(decoded) = picture_for_transition.paintable() {
-                                    decoded_swapped.set(true);
-                                    transition.set_paintable(Some(&decoded));
-                                }
-                            }
-
-                            if linear >= 1.0 {
-                                // PNG thumbnails are cached as JPEG and cannot
-                                // preserve alpha. Hold the transition overlay at
-                                // its final geometry until the real RGBA viewer
-                                // texture arrives instead of exposing a blank
-                                // lightbox between animation and decode.
-                                if png_transition && !decoded_swapped.get() {
-                                    if generation_for_transition.get() != generation {
-                                        root_for_transition.remove_overlay(transition);
-                                        return glib::ControlFlow::Break;
-                                    }
-                                    return glib::ControlFlow::Continue;
-                                }
-
-                                // For non-PNG images, keep the existing source
-                                // thumbnail backstop if the full decode is still
-                                // pending. show_photo() replaces it when ready.
-                                if picture_for_transition.paintable().is_none() && !png_transition {
-                                    picture_for_transition
-                                        .set_paintable(transition.paintable().as_ref());
-                                }
-                                picture_for_transition.set_opacity(1.0);
-                                backdrop.set_opacity(1.0);
-                                viewer_trace(format!(
-                                    "open_transition complete picture_alloc={}x{} picture_request={}x{} source_backstop={}",
-                                    picture_for_transition.width(),
-                                    picture_for_transition.height(),
-                                    picture_for_transition.width_request(),
-                                    picture_for_transition.height_request(),
-                                    picture_for_transition.paintable().is_some(),
+                                lightbox_open_trace(format!(
+                                    "transition_cancel generation={generation} current={} visible={}",
+                                    generation_for_transition.get(),
+                                    root_for_transition.is_visible(),
                                 ));
                                 root_for_transition.remove_overlay(transition);
-                                glib::ControlFlow::Break
-                            } else {
-                                glib::ControlFlow::Continue
+                                return glib::ControlFlow::Break;
                             }
+                            let start = started.get().unwrap_or_else(|| {
+                                let now = Instant::now();
+                                started.set(Some(now));
+                                now
+                            });
+                            let linear = (start.elapsed().as_secs_f64() * 1000.0
+                                / OPEN_TRANSITION_MS).clamp(0.0, 1.0);
+                            let current_viewport = viewport_for_transition
+                                .compute_bounds(&root_for_transition)
+                                .filter(|bounds| bounds.width() > 1.0 && bounds.height() > 1.0)
+                                .unwrap_or_else(|| {
+                                    gtk::graphene::Rect::new(
+                                        0.0,
+                                        0.0,
+                                        root_for_transition.width() as f32,
+                                        root_for_transition.height() as f32,
+                                    )
+                                });
+                            let target_width = picture_for_transition.width_request().max(1) as f64;
+                            let target_height = picture_for_transition.height_request().max(1) as f64;
+                            let latest_target = [
+                                current_viewport.x() as f64
+                                    + (current_viewport.width() as f64 - target_width) * 0.5,
+                                current_viewport.y() as f64
+                                    + (current_viewport.height() as f64 - target_height) * 0.5,
+                                target_width,
+                                target_height,
+                                current_viewport.x() as f64,
+                                current_viewport.y() as f64,
+                                current_viewport.width() as f64,
+                                current_viewport.height() as f64,
+                            ];
+                            let mut state = tween_for_transition.borrow_mut();
+                            if open_geometry_changed(state.1, latest_target) {
+                                let (from, to, segment_start) = *state;
+                                let denominator = (1.0 - segment_start).max(f64::EPSILON);
+                                let segment_progress = ((linear - segment_start) / denominator)
+                                    .clamp(0.0, 1.0);
+                                let segment_eased = 1.0 - (1.0 - segment_progress).powi(3);
+                                state.0 = interpolate_open_geometry(from, to, segment_eased);
+                                state.1 = latest_target;
+                                state.2 = linear;
+                            }
+                            let (from, to, segment_start) = *state;
+                            drop(state);
+                            let denominator = (1.0 - segment_start).max(f64::EPSILON);
+                            let segment_progress = if linear >= 1.0 {
+                                1.0
+                            } else {
+                                ((linear - segment_start) / denominator).clamp(0.0, 1.0)
+                            };
+                            let segment_eased = 1.0 - (1.0 - segment_progress).powi(3);
+                            let geometry = interpolate_open_geometry(from, to, segment_eased);
+                            let [x, y, w, h, clip_x, clip_y, clip_width, clip_height] = geometry;
+                            transition.set_geometry(
+                                x,
+                                y,
+                                w.round().max(1.0) as i32,
+                                h.round().max(1.0) as i32,
+                                clip_x,
+                                clip_y,
+                                clip_width,
+                                clip_height,
+                            );
+                            if std::env::var_os("PIC_LIGHTBOX_OPEN_TRACE").is_some() {
+                                let tick = tick_count.get().wrapping_add(1);
+                                tick_count.set(tick);
+                                let (requested_width, requested_height) =
+                                    transition.requested_frame_size();
+                                let allocation_bounds = transition.compute_bounds(&root_for_transition);
+                                lightbox_open_trace(format!(
+                                    "gtk_animation_tick generation={generation} tick={tick} elapsed_ms={:.1} progress={linear:.3} position={x:.1},{y:.1} frame={w:.1}x{h:.1} allocation={}x{} allocation_bounds={:?} request={}x{} opacity={:.3}",
+                                    start.elapsed().as_secs_f64() * 1000.0,
+                                    transition.width(),
+                                    transition.height(),
+                                    allocation_bounds.map(|bounds| (bounds.x(), bounds.y(), bounds.width(), bounds.height())),
+                                    requested_width,
+                                    requested_height,
+                                    transition.opacity(),
+                                ));
+                            }
+                            backdrop.set_opacity(linear);
+                            if linear < 1.0 {
+                                return glib::ControlFlow::Continue;
+                            }
+
+                            // The thumbnail-to-decoded crossfade starts as soon
+                            // as decoding finishes and overlaps this geometry
+                            // animation. If decode is late, keep the thumbnail
+                            // at the destination until that same crossfade ends.
+                            animation_finished.set(true);
+                            backdrop.set_opacity(1.0);
+                            if let Some(decoded) = decode_result_for_transition.get() {
+                                start_open_transition_handoff(
+                                    transition.clone(),
+                                    picture_for_transition.clone(),
+                                    root_for_transition.clone(),
+                                    generation_for_transition.clone(),
+                                    generation,
+                                    decoded,
+                                    animation_finished.clone(),
+                                    handoff_started.clone(),
+                                    transition_completed.clone(),
+                                );
+                                if transition.handoff_complete() {
+                                    finish_open_transition(
+                                        transition.clone(),
+                                        picture_for_transition.clone(),
+                                        root_for_transition.clone(),
+                                        generation_for_transition.clone(),
+                                        generation,
+                                        decoded,
+                                        transition_completed.clone(),
+                                    );
+                                }
+                            }
+                            glib::ControlFlow::Break
                         });
                     } else {
                         picture.set_opacity(1.0);
@@ -1893,6 +2148,8 @@ impl Lightbox {
             fit_geometry_fixed,
             cache_hit,
             Some(self.key_navigation_ready.clone()),
+            None,
+            None,
             None,
             self.offline.clone(),
         );
@@ -1980,6 +2237,8 @@ impl Lightbox {
             self.display_texture_cache.clone(),
             fit_geometry_fixed,
             cache_hit,
+            None,
+            None,
             None,
             None,
             self.offline.clone(),
@@ -2110,7 +2369,193 @@ impl Lightbox {
             false,
             None,
             None,
+            None,
+            None,
             self.offline.clone(),
         );
     }
+}
+
+fn clear_opening_transition_overlays(root: &gtk::Overlay) {
+    let mut child = root.first_child();
+    while let Some(widget) = child {
+        child = widget.next_sibling();
+        if widget.widget_name() == "lightbox-open-transition" {
+            root.remove_overlay(&widget);
+        }
+    }
+}
+
+fn open_geometry_changed(previous: [f64; 8], latest: [f64; 8]) -> bool {
+    previous
+        .iter()
+        .zip(latest.iter())
+        .any(|(previous, latest)| (previous - latest).abs() > 1.0)
+}
+
+fn interpolate_open_geometry(from: [f64; 8], to: [f64; 8], progress: f64) -> [f64; 8] {
+    std::array::from_fn(|index| from[index] + (to[index] - from[index]) * progress)
+}
+
+fn lightbox_transition_source_geometry(
+    source_widget: &gtk::Widget,
+    root: &gtk::Widget,
+) -> Option<(gtk::graphene::Rect, gtk::graphene::Rect, gtk::ContentFit)> {
+    let mut pending = VecDeque::from([source_widget.clone()]);
+    let mut source_image = None;
+    let mut source_content_fit = gtk::ContentFit::Contain;
+    while let Some(widget) = pending.pop_front() {
+        if let Some(picture) = widget.downcast_ref::<gtk::Picture>() {
+            source_image = picture.compute_bounds(root);
+            source_content_fit = picture.content_fit();
+            break;
+        }
+        let mut child = widget.first_child();
+        while let Some(next) = child {
+            child = next.next_sibling();
+            pending.push_back(next);
+        }
+    }
+    let source_image = source_image.or_else(|| source_widget.compute_bounds(root))?;
+
+    let mut clip_bounds = None;
+    let mut ancestor = source_widget.parent();
+    while let Some(widget) = ancestor {
+        if let Some(scrolled) = widget.downcast_ref::<gtk::ScrolledWindow>() {
+            clip_bounds = scrolled
+                .child()
+                .and_then(|child| child.compute_bounds(root));
+            break;
+        }
+        ancestor = widget.parent();
+    }
+    let clip_bounds = clip_bounds.unwrap_or_else(|| {
+        gtk::graphene::Rect::new(0.0, 0.0, root.width() as f32, root.height() as f32)
+    });
+    let left = source_image.x().max(clip_bounds.x());
+    let top = source_image.y().max(clip_bounds.y());
+    let right = (source_image.x() + source_image.width())
+        .min(clip_bounds.x() + clip_bounds.width());
+    let bottom = (source_image.y() + source_image.height())
+        .min(clip_bounds.y() + clip_bounds.height());
+    if right <= left || bottom <= top {
+        return None;
+    }
+    Some((
+        source_image,
+        gtk::graphene::Rect::new(left, top, right - left, bottom - top),
+        source_content_fit,
+    ))
+}
+
+fn start_open_transition_handoff(
+    transition: OpeningTransitionImage,
+    picture: gtk::Picture,
+    root: gtk::Overlay,
+    generation: Rc<Cell<u64>>,
+    expected_generation: u64,
+    decoded: bool,
+    animation_finished: Rc<Cell<bool>>,
+    handoff_started: Rc<Cell<bool>>,
+    transition_completed: Rc<Cell<bool>>,
+) {
+    if handoff_started.replace(true) {
+        return;
+    }
+    if !root.is_visible() || generation.get() != expected_generation {
+        root.remove_overlay(&transition);
+        return;
+    }
+    let has_fade = picture
+        .paintable()
+        .is_some_and(|paintable| transition.begin_handoff(paintable));
+    lightbox_open_trace(format!(
+        "decode_handoff_start generation={expected_generation} decoded={decoded} overlap_animation={}",
+        !animation_finished.get(),
+    ));
+    if !has_fade {
+        if animation_finished.get() {
+            finish_open_transition(
+                transition,
+                picture,
+                root,
+                generation,
+                expected_generation,
+                decoded,
+                transition_completed,
+            );
+        }
+        return;
+    }
+    let started = Instant::now();
+    let animation_finished_for_tick = animation_finished.clone();
+    let transition_completed_for_tick = transition_completed.clone();
+    transition.add_tick_callback(move |transition, _| {
+        if !root.is_visible() || generation.get() != expected_generation {
+            lightbox_open_trace(format!(
+                "handoff_cancel generation={expected_generation} current={} visible={}",
+                generation.get(),
+                root.is_visible(),
+            ));
+            root.remove_overlay(transition);
+            return glib::ControlFlow::Break;
+        }
+        let linear = (started.elapsed().as_secs_f64() * 1000.0 / 90.0).clamp(0.0, 1.0);
+        let eased = 1.0 - (1.0 - linear).powi(3);
+        transition.set_handoff_progress(eased);
+        if linear >= 1.0 {
+            lightbox_open_trace(format!(
+                "decode_handoff_complete generation={expected_generation} elapsed_ms={:.1}",
+                started.elapsed().as_secs_f64() * 1000.0,
+            ));
+            if animation_finished_for_tick.get() {
+                finish_open_transition(
+                    transition.clone(),
+                    picture.clone(),
+                    root.clone(),
+                    generation.clone(),
+                    expected_generation,
+                    decoded,
+                    transition_completed_for_tick.clone(),
+                );
+            }
+            glib::ControlFlow::Break
+        } else {
+            glib::ControlFlow::Continue
+        }
+    });
+}
+
+fn finish_open_transition(
+    transition: OpeningTransitionImage,
+    picture: gtk::Picture,
+    root: gtk::Overlay,
+    generation: Rc<Cell<u64>>,
+    expected_generation: u64,
+    decoded: bool,
+    transition_completed: Rc<Cell<bool>>,
+) {
+    if transition_completed.replace(true)
+        || !root.is_visible()
+        || generation.get() != expected_generation
+    {
+        return;
+    }
+    if picture.paintable().is_none() {
+        // Keep the visible tile as a last-resort display surface for corrupt
+        // or unavailable originals; the root remains interactive afterward.
+        // The normal online path always hands off to the decoded texture.
+        let thumbnail = transition.current_paintable();
+        picture.set_paintable(thumbnail.as_ref());
+    }
+    picture.set_opacity(1.0);
+    root.remove_overlay(&transition);
+    lightbox_open_trace(format!(
+        "transition_complete generation={expected_generation} decoded={decoded} picture_alloc={}x{} picture_request={}x{} transition_snapshots={}",
+        picture.width(),
+        picture.height(),
+        picture.width_request(),
+        picture.height_request(),
+        transition.snapshot_count(),
+    ));
 }

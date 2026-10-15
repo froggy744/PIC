@@ -2408,22 +2408,10 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     });
     crate::startup_trace::mark("scroll_callbacks_connected", Some(build_started));
 
-    {
-        let gallery_for_mode = gallery.clone();
-        let connection_for_mode = connection.clone();
-        let filter_for_mode = filter.clone();
-        info.connect_photo_layout(move |mode| {
-            gallery_for_mode.set_layout(mode);
-            if let Err(error) = save_section_layout(
-                &connection_for_mode.borrow(),
-                filter_for_mode.get(),
-                mode,
-            ) {
-                eprintln!("Could not save section photo layout: {error}");
-            }
-        });
-        restore_section_layout(&connection.borrow(), &gallery, &info, initial_filter);
-    }
+    // Restore the startup layout without a transition. The interactive
+    // Grid/Wall/Masonry selector is connected after page_overlay exists so
+    // layout changes can reuse the same retained-frame crossfade.
+    restore_section_layout(&connection.borrow(), &gallery, &info, initial_filter);
     crate::startup_trace::mark("initial_layout_restored", Some(build_started));
 
     let grid_surface = gtk::Box::new(gtk::Orientation::Vertical, 0);
@@ -2458,8 +2446,18 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let lightbox_context_menu_click = gtk::GestureClick::new();
     lightbox_context_menu_click.set_button(1);
     lightbox_context_menu_click.set_propagation_phase(gtk::PropagationPhase::Capture);
-    lightbox_context_menu_click.connect_pressed(move |_, _, _, _| {
-        dismiss_active_photo_context_menu();
+    // The lightbox now owns its menu above the fullscreen photo. Capture
+    // clicks outside that menu, but allow events inside to reach its buttons;
+    // the old unconditional dismiss closed the menu before clicked handlers.
+    let root_for_context_dismiss = lightbox.root.clone();
+    lightbox_context_menu_click.connect_pressed(move |_, _, x, y| {
+        let inside_menu = root_for_context_dismiss
+            .pick(x, y, gtk::PickFlags::DEFAULT)
+            .as_ref()
+            .is_some_and(photo_context_menu_contains);
+        if !inside_menu {
+            dismiss_active_photo_context_menu();
+        }
     });
     lightbox.root.add_controller(lightbox_context_menu_click);
     context_menu_autohide.connect_pressed(move |_, _, x, y| {
@@ -2630,6 +2628,206 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     page_overlay.set_hexpand(true);
     page_overlay.set_vexpand(true);
     page_overlay.set_child(Some(&main_stack));
+    // Freeze the previously presented gallery before a sidebar destination
+    // replaces its model. GtkWidgetPaintable::current_image() is immutable:
+    // unlike a live WidgetPaintable it cannot redraw the new model underneath
+    // the outgoing image. Only one viewport-sized render node is retained.
+    // Keep the WidgetPaintable attached across frames so current_image() has
+    // the last GTK snapshot when a sidebar click arrives.
+    let nav_fade_source = gtk::WidgetPaintable::new(Some(&main_stack));
+    // During rapid supersession, freeze the actual blended viewport rather
+    // than restoring the first transition's original picture to full opacity.
+    let nav_fade_composite_source = gtk::WidgetPaintable::new(Some(&page_overlay));
+    let nav_fade_sequence = Rc::new(Cell::new(0_u64));
+    let nav_fade_overlay: Rc<RefCell<Option<gtk::Picture>>> =
+        Rc::new(RefCell::new(None));
+    // Non-gallery navigation (viewer/edit/collage/library switch) must never
+    // leave a snapshot over the new surface. Invalidate its tick generation
+    // before removing the GTK overlay.
+    let nav_fade_cancel: Rc<dyn Fn()> = {
+        let sequence = nav_fade_sequence.clone();
+        let active = nav_fade_overlay.clone();
+        let overlay = page_overlay.clone();
+        Rc::new(move || {
+            sequence.set(sequence.get().wrapping_add(1));
+            if let Some(previous) = active.borrow_mut().take() {
+                overlay.remove_overlay(&previous);
+                crate::nav_transition_trace!("stage=crossfade_cancel");
+            }
+        })
+    };
+    let nav_fade_begin: Rc<dyn Fn(bool, bool, bool)> = {
+        let page_overlay = page_overlay.clone();
+        let main_stack = main_stack.clone();
+        let source = nav_fade_source.clone();
+        let composite_source = nav_fade_composite_source.clone();
+        let gallery = gallery.clone();
+        let sequence = nav_fade_sequence.clone();
+        let active = nav_fade_overlay.clone();
+        Rc::new(move |folder_destination, photo_destination, layout_destination| {
+            let next = sequence.get().wrapping_add(1);
+            sequence.set(next);
+            // Snapshot the full currently presented blend on a rapid
+            // supersession. Reusing the original picture at full opacity would
+            // visibly jump backward halfway through an earlier crossfade.
+            let previous = active.borrow_mut().take();
+            let frozen = if let Some(ref previous) = previous {
+                let blended = composite_source.current_image();
+                if blended.intrinsic_width() > 1 && blended.intrinsic_height() > 1 {
+                    Some(blended)
+                } else {
+                    previous.paintable().map(|image| image.current_image())
+                }
+            } else if main_stack.is_mapped()
+                && main_stack.width() > 1
+                && main_stack.height() > 1
+                && matches!(
+                    main_stack.visible_child_name().as_deref(),
+                    Some("photos" | "library" | "albums")
+                )
+            {
+                Some(source.current_image())
+            } else {
+                None
+            };
+            if let Some(previous) = previous {
+                page_overlay.remove_overlay(&previous);
+            }
+            // GTK's animation setting also reflects the desktop's reduced-
+            // motion preference. Do not create or retain transition pictures
+            // when animations are disabled.
+            if gtk::Settings::default().is_some_and(|settings| {
+                !settings.property::<bool>("gtk-enable-animations")
+            }) {
+                crate::nav_transition_trace!("stage=crossfade_skip reason=animations_disabled");
+                return;
+            }
+            let Some(frozen) = frozen else {
+                return;
+            };
+            if frozen.intrinsic_width() <= 1 || frozen.intrinsic_height() <= 1 {
+                return;
+            }
+            let outgoing = gtk::Picture::for_paintable(&frozen);
+            outgoing.set_content_fit(gtk::ContentFit::Fill);
+            outgoing.set_hexpand(true);
+            outgoing.set_vexpand(true);
+            outgoing.set_halign(gtk::Align::Fill);
+            outgoing.set_valign(gtk::Align::Fill);
+            outgoing.set_can_target(false);
+            page_overlay.add_overlay(&outgoing);
+            active.replace(Some(outgoing.clone()));
+
+            let previous_model_generation = gallery.navigation_model_generation();
+            let previous_layout_generation = gallery.layout_presentation_generation();
+            let started = Instant::now();
+            let fading = Rc::new(RefCell::new(None::<Instant>));
+            let ready_frames = Cell::new(0_u8);
+            let sequence_for_tick = sequence.clone();
+            let page_for_tick = page_overlay.clone();
+            let gallery_for_tick = gallery.clone();
+            let active_for_tick = active.clone();
+            outgoing.add_tick_callback(move |image, _clock| {
+                if sequence_for_tick.get() != next {
+                    return glib::ControlFlow::Break;
+                }
+                let now = Instant::now();
+                // An empty/unavailable destination or failed DB request must
+                // not leave the old picture covering the application forever.
+                // Normal navigation completes much sooner; this is only an
+                // error-path safety net, not an animation delay.
+                if fading.borrow().is_none() && started.elapsed() > Duration::from_secs(6) {
+                    crate::nav_transition_trace!(
+                        "stage=crossfade_timeout generation={next} folder={folder_destination} model={photo_destination} layout={layout_destination}"
+                    );
+                    page_for_tick.remove_overlay(image);
+                    active_for_tick.replace(None);
+                    return glib::ControlFlow::Break;
+                }
+                if fading.borrow().is_none() {
+                    let model_ready = !photo_destination
+                        || (gallery_for_tick.navigation_model_generation()
+                            != previous_model_generation
+                            && !gallery_for_tick.stream_building());
+                    let folder_ready = !folder_destination
+                        || (gallery_for_tick.visible_root().opacity() >= 0.99
+                            && !gallery_for_tick.stream_building());
+                    let layout_ready = !layout_destination
+                        || gallery_for_tick.layout_presentation_ready(previous_layout_generation);
+                    if !model_ready || !folder_ready || !layout_ready {
+                        ready_frames.set(0);
+                        return glib::ControlFlow::Continue;
+                    }
+                    // The new model must survive a GTK frame before fading
+                    // away the outgoing image. No thumbnail decode is awaited.
+                    ready_frames.set(ready_frames.get().saturating_add(1));
+                    if ready_frames.get() < 2 {
+                        return glib::ControlFlow::Continue;
+                    }
+                    *fading.borrow_mut() = Some(now);
+                    crate::nav_transition_trace!(
+                        "stage=crossfade_start generation={next} preparation_ms={} folder={folder_destination} layout={layout_destination}",
+                        started.elapsed().as_millis(),
+                    );
+                }
+                let elapsed = fading.borrow().as_ref().unwrap().elapsed().as_secs_f64();
+                let t = (elapsed / 0.160).clamp(0.0, 1.0);
+                // Smoothstep: ease-in/ease-out, no layout or scroll animation.
+                let eased = t * t * (3.0 - 2.0 * t);
+                image.set_opacity(1.0 - eased);
+                if t >= 1.0 {
+                    page_for_tick.remove_overlay(image);
+                    active_for_tick.replace(None);
+                    crate::nav_transition_trace!(
+                        "stage=crossfade_complete generation={next} total_ms={}",
+                        started.elapsed().as_millis(),
+                    );
+                    glib::ControlFlow::Break
+                } else {
+                    glib::ControlFlow::Continue
+                }
+            });
+        })
+    };
+    // The layout selector changes the renderer IN PLACE, including Masonry
+    // <-> Photo Wall where GtkStack never changes child. Reuse the same frozen
+    // outgoing viewport, then wait for the new layout's anchor restoration
+    // before fading it away. No model reload or thumbnail decode is needed.
+    {
+        let gallery_for_mode = gallery.clone();
+        let connection_for_mode = connection.clone();
+        let filter_for_mode = filter.clone();
+        let fade = nav_fade_begin.clone();
+        let cancel = nav_fade_cancel.clone();
+        let viewer = lightbox.clone();
+        info.connect_photo_layout(move |mode| {
+            if gallery_for_mode.layout() != mode {
+                if viewer.root.is_visible() {
+                    cancel();
+                } else {
+                    fade(false, false, true);
+                }
+                gallery_for_mode.set_layout(mode);
+            }
+            if let Err(error) = save_section_layout(
+                &connection_for_mode.borrow(),
+                filter_for_mode.get(),
+                mode,
+            ) {
+                eprintln!("Could not save section photo layout: {error}");
+            }
+        });
+    }
+    // Edit and Collage are not sidebar destinations. An in-flight sidebar
+    // fade must never cover either page if the user opens one immediately.
+    {
+        let cancel = nav_fade_cancel.clone();
+        main_stack.connect_visible_child_notify(move |stack| {
+            if matches!(stack.visible_child_name().as_deref(), Some("edit" | "collage")) {
+                cancel();
+            }
+        });
+    }
     let action_menu_autohide = gtk::GestureClick::new();
     action_menu_autohide.set_button(1);
     action_menu_autohide.set_propagation_phase(gtk::PropagationPhase::Capture);
@@ -5938,6 +6136,7 @@ fn start_photo_export_single(
     });
 
     switch_library_slot.replace(Some({
+        let nav_fade_cancel = nav_fade_cancel.clone();
         let connection = connection.clone();
         let scan_job = scan_job.clone();
         let lightbox = lightbox.clone();
@@ -5981,7 +6180,9 @@ fn start_photo_export_single(
                 job.stop_requested = true;
             }
             onboarding_for_switch.library_changed();
+            nav_fade_cancel();
             invalidate_pending_grid_navigation();
+            gallery.cancel_folder_destination_hold();
             invalidate_availability_refreshes();
             refresh_status_spinner.set_spinning(false);
             refresh_status_box.set_visible(false);

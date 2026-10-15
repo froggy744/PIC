@@ -2080,10 +2080,34 @@ impl SectionedFolderView {
         };
 
         let adjustment = scrolled.vadjustment();
+        let page = adjustment.page_size();
+        if !self.root.is_mapped()
+            || !scrolled.is_mapped()
+            || page <= 0.0
+            || !sectioned_scroll_extent_is_ready(
+                self.total_height.get(),
+                page,
+                adjustment.upper(),
+            )
+        {
+            return false;
+        }
         let lower = adjustment.lower();
-        let upper = (adjustment.upper() - adjustment.page_size()).max(lower);
+        let upper = (adjustment.upper() - page).max(lower);
         adjustment.set_value(target.clamp(lower, upper));
         self.refresh();
+
+        let row_height = if header {
+            SECTIONED_HEADER_HEIGHT
+        } else {
+            f64::from(folder_line_height(
+                self.tile_height.get(),
+                self.show_file_names.get(),
+            ))
+        };
+        if !viewport_intersects_row(target, row_height, adjustment.value(), page) {
+            return false;
+        }
 
         if let Some(photo_id) = self
             .current_photos

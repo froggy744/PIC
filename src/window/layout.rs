@@ -1,6 +1,7 @@
 {
     let main_split = adw::OverlaySplitView::new();
 
+    let nav_request_sequence = Rc::new(Cell::new(0_u64));
     let album_theme_changed_for_destination = album_theme_changed.clone();
     let destination_click_with_target: Rc<dyn Fn(sidebar::SidebarFilter, bool, bool) -> Option<u64>> = {
         let search_entry = search_entry_slot.clone();
@@ -25,11 +26,28 @@
         let search_result_folder_on_close = search_result_folder_on_close.clone();
         let search_close_waiting = search_close_waiting.clone();
         let preserve_viewer = preserve_lightbox_during_search_return.clone();
+        let nav_request_sequence = nav_request_sequence.clone();
+        let nav_fade_begin = nav_fade_begin.clone();
+        let nav_fade_cancel = nav_fade_cancel.clone();
         Rc::new(move |new_filter, exact_photo_target, center_folder_target| {
+            let nav_request = if crate::nav_transition_trace::enabled() {
+                let next = nav_request_sequence.get().wrapping_add(1);
+                nav_request_sequence.set(next);
+                next
+            } else {
+                0
+            };
+            crate::nav_transition_trace!(
+                "stage=navigation_request id={nav_request} destination={new_filter:?} exact_photo={exact_photo_target} center_folder={center_folder_target} previous={:?} search_active={} preserve_lightbox={}",
+                filter.get(),
+                !search_text.borrow().is_empty(),
+                preserve_viewer.get(),
+            );
             // Cancel stale async refresh/folder-scroll work before this new
             // destination is established. This also covers Folder-to-Folder
             // reuse, which otherwise would not bump the refresh generation.
             invalidate_pending_grid_navigation();
+            gallery.cancel_folder_destination_hold();
             let query = search_text.borrow().clone();
             cleared_query.replace(Some(query.clone()));
             if !exact_photo_target {
@@ -53,6 +71,32 @@
                 folder_target.is_some(),
                 gallery.can_restore_folder_cache(),
             );
+            crate::nav_transition_trace!(
+                "stage=navigation_plan id={nav_request} destination={new_filter:?} folder_target={:?} reuse_folder_stream={reuse_folder_stream} stream_building={}",
+                folder_target.as_ref().map(|(id, _)| *id),
+                gallery.stream_building(),
+            );
+            // Capture the outgoing viewport before changing a Stack page,
+            // replacing a model OR reusing the continuous Folder stream.
+            // Reused Folder navigation has no new model generation to wait for;
+            // its destination is ready only after the header scroll settles.
+            if let Some((wait_for_folder, wait_for_model)) = sidebar_crossfade_target(
+                filter.get(),
+                new_filter,
+                exact_photo_target,
+                lightbox.root.is_visible(),
+                reuse_folder_stream,
+            ) {
+                crate::nav_transition_trace!(
+                    "stage=crossfade_route id={nav_request} folder={wait_for_folder} model={wait_for_model} reuse_folder_stream={reuse_folder_stream}",
+                );
+                nav_fade_begin(wait_for_folder, wait_for_model, false);
+            } else {
+                // Opening an exact photo, returning to the same destination,
+                // or navigating while the viewer is open supersedes any
+                // pending crossfade from an earlier sidebar click.
+                nav_fade_cancel();
+            }
 
             if let Some(source) = debounce.borrow_mut().take() {
                 source.remove();
@@ -144,6 +188,27 @@
                             gallery.scroll_to_folder(folder_id, &folder_path)
                         };
                         if reuse_folder_stream && revealed {
+                            crate::nav_transition_trace!(
+                                "stage=folder_reuse_scroll_complete id={nav_request} folder_id={folder_id} scroll={:.1}",
+                                gallery.scroll_position(),
+                            );
+                            return None;
+                        }
+                        if reuse_folder_stream && gallery.has_folder_navigation_target(folder_id) {
+                            let presentation_generation = gallery.hold_folder_destination();
+                            let generation =
+                                REFRESH_GENERATION.load(std::sync::atomic::Ordering::Relaxed);
+                            let gallery = gallery.clone();
+                            glib::idle_add_local_once(move || {
+                                scroll_gallery_to_folder_when_ready(
+                                    gallery,
+                                    folder_id,
+                                    folder_path,
+                                    generation,
+                                    center_folder_target,
+                                    presentation_generation,
+                                );
+                            });
                             return None;
                         }
                         refresh_grid_to_folder(

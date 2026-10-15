@@ -575,6 +575,29 @@ enum FolderDestinationPlan {
 
 const SEARCH_DEBOUNCE_MS: u64 = 120;
 
+/// Select the presentation prerequisites for a sidebar transition.
+/// First bool: wait for the Folder header/scroll reveal.
+/// Second bool: wait for a NEW photo model (false for Folder stream reuse).
+/// Keeping these separate is essential: Folder-to-Folder never replaces the
+/// model, so waiting for a new generation would freeze the outgoing snapshot.
+fn sidebar_crossfade_target(
+    previous: sidebar::SidebarFilter,
+    destination: sidebar::SidebarFilter,
+    exact_photo_target: bool,
+    viewer_visible: bool,
+    reuse_folder_stream: bool,
+) -> Option<(bool, bool)> {
+    if previous == destination || exact_photo_target || viewer_visible {
+        return None;
+    }
+    let folder_destination = matches!(destination, sidebar::SidebarFilter::Folder(_));
+    let new_photo_model = !matches!(
+        destination,
+        sidebar::SidebarFilter::Library | sidebar::SidebarFilter::Albums
+    ) && !reuse_folder_stream;
+    Some((folder_destination, new_photo_model))
+}
+
 fn folder_destination_plan(
     exact_photo_target: bool,
     reuse_folder_stream: bool,
@@ -626,10 +649,11 @@ fn should_ignore_cleared_search_event(
 
 #[cfg(test)]
 mod open_in_folder_retry_tests {
+    use crate::sidebar;
     use super::{
         can_reuse_folder_stream_for_destination, folder_destination_plan,
-        open_in_folder_should_stop, search_folder_focus_should_stop, FolderDestinationPlan,
-        should_ignore_cleared_search_event, SEARCH_DEBOUNCE_MS,
+        open_in_folder_should_stop, search_folder_focus_should_stop, sidebar_crossfade_target,
+        FolderDestinationPlan, should_ignore_cleared_search_event, SEARCH_DEBOUNCE_MS,
     };
 
     #[test]
@@ -679,6 +703,71 @@ mod open_in_folder_retry_tests {
         assert!(should_ignore_cleared_search_event(true, None, "marianne"));
         assert!(should_ignore_cleared_search_event(false, Some("marianne"), "marianne"));
         assert!(!should_ignore_cleared_search_event(false, Some("marianne"), "maria"));
+    }
+
+    #[test]
+    fn sidebar_crossfade_covers_gallery_and_folder_reuse() {
+        use sidebar::SidebarFilter as Destination;
+        // The regression: navigating within the continuous Folder stream
+        // must fade even though no model replacement happens.
+        assert_eq!(
+            sidebar_crossfade_target(
+                Destination::Folder(267), Destination::Folder(1), false, false, true,
+            ),
+            Some((true, false))
+        );
+        // Other photo destinations replace the gallery model.
+        for dest in [
+            Destination::All,
+            Destination::Favorites,
+            Destination::RecentlyAdded,
+            Destination::History,
+            Destination::Album(3),
+        ] {
+            assert_eq!(
+                sidebar_crossfade_target(Destination::Folder(1), dest, false, false, false),
+                Some((false, true)),
+            );
+        }
+        // The two home surfaces replace GTK Stack pages, not photo models.
+        assert_eq!(
+            sidebar_crossfade_target(
+                Destination::Folder(1), Destination::Library, false, false, false,
+            ),
+            Some((false, false))
+        );
+        assert_eq!(
+            sidebar_crossfade_target(
+                Destination::Library, Destination::Albums, false, false, false,
+            ),
+            Some((false, false))
+        );
+        // Entering a Folder from a different page must wait for its
+        // model AND the deferred scroll/header restoration.
+        assert_eq!(
+            sidebar_crossfade_target(
+                Destination::History, Destination::Folder(267), false, false, false,
+            ),
+            Some((true, true))
+        );
+        assert_eq!(
+            sidebar_crossfade_target(
+                Destination::Folder(1), Destination::Folder(1), false, false, true,
+            ),
+            None
+        );
+        assert_eq!(
+            sidebar_crossfade_target(
+                Destination::Library, Destination::Folder(1), true, false, false,
+            ),
+            None
+        );
+        assert_eq!(
+            sidebar_crossfade_target(
+                Destination::Library, Destination::Folder(1), false, true, false,
+            ),
+            None
+        );
     }
 
     #[test]

@@ -198,6 +198,12 @@ impl Gallery {
                             .is_some_and(|photo| photo.id() == photo_id);
                         if focused {
                             surface.restore_anchor(photo_id, offset);
+                            crate::nav_transition_trace!(
+                                "stage=scroll_restore_complete request={restore_generation} photo={photo_id} attempts=0 focused=true wall=true immediate=true value={:.1} upper={:.1} page={:.1}",
+                                adjustment.value(),
+                                adjustment.upper(),
+                                adjustment.page_size(),
+                            );
                             if std::env::var_os("PIC_GALLERY_RESTORE_TRACE").is_some() {
                                 eprintln!(
                                     "PIC_GALLERY_RESTORE stage=complete_visible photo={} request={} request_anchor={:.1} target={:?} value={:.1} upper={:.1} page={:.1} focus=true",
@@ -232,9 +238,34 @@ impl Gallery {
             let last_scroll_generation = Cell::new(surface.scroll_animation_generation.get());
             let last_scroll_value = Cell::new(surface.scroll_position());
             let trace = std::env::var_os("PIC_GALLERY_RESTORE_TRACE").is_some();
+            let nav_trace = crate::nav_transition_trace::enabled();
+            let scroll = if nav_trace || trace {
+                surface.scroll.borrow().as_ref().cloned()
+            } else {
+                None
+            };
+            let adjustment = scroll.as_ref().map(|scroll| scroll.vadjustment());
+            if nav_trace {
+                crate::nav_transition_trace!(
+                    "stage=scroll_restore_request request={} photo={} index={} wall={} layout_generation={} mapped={} root={}x{} scroll={}x{} offset={:?} total={:.1} upper={:.1} page={:.1} value={:.1}",
+                    restore_generation,
+                    photo_id,
+                    position,
+                    surface.is_wall(),
+                    layout_generation,
+                    surface.root.is_mapped(),
+                    surface.root.width(),
+                    surface.root.height(),
+                    scroll.as_ref().map_or(0, |scroll| scroll.width()),
+                    scroll.as_ref().map_or(0, |scroll| scroll.height()),
+                    viewport_offset,
+                    surface.total_height.get(),
+                    adjustment.as_ref().map_or(0.0, |adjustment| adjustment.upper()),
+                    adjustment.as_ref().map_or(0.0, |adjustment| adjustment.page_size()),
+                    adjustment.as_ref().map_or(0.0, |adjustment| adjustment.value()),
+                );
+            }
             if trace {
-                let scroll = surface.scroll.borrow().as_ref().cloned();
-                let adjustment = scroll.as_ref().map(|scroll| scroll.vadjustment());
                 eprintln!(
                     "PIC_GALLERY_RESTORE stage=request photo={} index={} wall={} request={} layout_generation={} mapped={} root={}x{} scroll={}x{} offset={:?} total={:.1} upper={:.1} page={:.1} value={:.1}",
                     photo_id,
@@ -261,6 +292,14 @@ impl Gallery {
                 if surface.layout_switch_generation.get() != layout_generation
                     || surface.photo_restore_generation.get() != restore_generation
                 {
+                    if nav_trace {
+                        crate::nav_transition_trace!(
+                            "stage=scroll_restore_cancel request={restore_generation} photo={photo_id} reason=superseded layout={} expected_layout={} current_request={}",
+                            surface.layout_switch_generation.get(),
+                            layout_generation,
+                            surface.photo_restore_generation.get(),
+                        );
+                    }
                     if trace {
                         eprintln!(
                             "PIC_GALLERY_RESTORE stage=cancelled photo={} reason=superseded layout={} expected_layout={} request={} current_request={}",
@@ -279,6 +318,11 @@ impl Gallery {
                     .iter()
                     .position(|photo| photo.id() == photo_id)
                 else {
+                    if nav_trace {
+                        crate::nav_transition_trace!(
+                            "stage=scroll_restore_cancel request={restore_generation} photo={photo_id} reason=target_missing"
+                        );
+                    }
                     if trace {
                         eprintln!(
                             "PIC_GALLERY_RESTORE stage=cancelled photo={} request={} reason=target_missing",
@@ -288,6 +332,11 @@ impl Gallery {
                     return glib::ControlFlow::Break;
                 };
                 if !surface.selection.is_selected(index as u32) {
+                    if nav_trace {
+                        crate::nav_transition_trace!(
+                            "stage=scroll_restore_cancel request={restore_generation} photo={photo_id} reason=selection_changed"
+                        );
+                    }
                     if trace {
                         eprintln!(
                             "PIC_GALLERY_RESTORE stage=cancelled photo={} request={} reason=selection_changed",
@@ -306,6 +355,13 @@ impl Gallery {
                 if scroll_generation == last_scroll_generation.get()
                     && (scroll_value - last_scroll_value.get()).abs() > 0.5
                 {
+                    if nav_trace {
+                        crate::nav_transition_trace!(
+                            "stage=scroll_restore_cancel request={restore_generation} photo={photo_id} reason=user_scroll previous={:.1} current={:.1}",
+                            last_scroll_value.get(),
+                            scroll_value,
+                        );
+                    }
                     if trace {
                         eprintln!(
                             "PIC_GALLERY_RESTORE stage=cancelled photo={} reason=user_scroll previous={:.1} current={:.1}",
@@ -382,6 +438,21 @@ impl Gallery {
                     true
                 };
                 if !wall_layout_ready {
+                    if nav_trace && attempts.get() == 1 {
+                        crate::nav_transition_trace!(
+                            "stage=scroll_restore_wait request={restore_generation} photo={photo_id} attempt={} wall={} ready={} root={}x{} scroll={}x{} upper={:.1} page={:.1} value={:.1}",
+                            attempts.get(),
+                            surface.is_wall(),
+                            wall_layout_ready,
+                            surface.root.width(),
+                            surface.root.height(),
+                            scroll.as_ref().map_or(0, |scroll| scroll.width()),
+                            scroll.as_ref().map_or(0, |scroll| scroll.height()),
+                            adjustment.as_ref().map_or(0.0, |adjustment| adjustment.upper()),
+                            adjustment.as_ref().map_or(0.0, |adjustment| adjustment.page_size()),
+                            adjustment.as_ref().map_or(0.0, |adjustment| adjustment.value()),
+                        );
+                    }
                     if trace {
                         eprintln!(
                             "PIC_GALLERY_RESTORE stage=wait_layout photo={} request={} attempt={} root={}x{} scroll={}x{} geometry_width={} geometry_generation={} target={:?} stable_frames={} ready={} upper={:.1} page={:.1} value={:.1}",
@@ -403,6 +474,12 @@ impl Gallery {
                         );
                     }
                     if attempts.get() >= 60 {
+                        if nav_trace {
+                            crate::nav_transition_trace!(
+                                "stage=scroll_restore_exhausted request={restore_generation} photo={photo_id} attempts={} reason=layout_not_stable",
+                                attempts.get(),
+                            );
+                        }
                         if trace {
                             eprintln!(
                                 "PIC_GALLERY_RESTORE stage=exhausted photo={} request={} attempts={} reason=layout_not_stable",
@@ -510,6 +587,15 @@ impl Gallery {
                                 focus_applied.set(true);
                             }
                             if !surface.is_wall() {
+                                if nav_trace {
+                                    crate::nav_transition_trace!(
+                                        "stage=scroll_restore_complete request={restore_generation} photo={photo_id} attempts={} focused=true value={:.1} upper={:.1} page={:.1}",
+                                        attempts.get(),
+                                        surface.scroll_position(),
+                                        adjustment.as_ref().map_or(0.0, |adjustment| adjustment.upper()),
+                                        adjustment.as_ref().map_or(0.0, |adjustment| adjustment.page_size()),
+                                    );
+                                }
                                 if trace {
                                     eprintln!(
                                         "PIC_GALLERY_RESTORE stage=complete photo={} request={} attempt={} focused_photo={:?} value={:.1}",
@@ -526,6 +612,16 @@ impl Gallery {
                                 && restored_layout_signature.get() == layout_signature
                                 && attempts.get() > restored_on_attempt.get()
                             {
+                                if nav_trace {
+                                    crate::nav_transition_trace!(
+                                        "stage=scroll_restore_complete request={restore_generation} photo={photo_id} attempts={} focused={} wall=true value={:.1} upper={:.1} page={:.1}",
+                                        attempts.get(),
+                                        has_focus,
+                                        surface.scroll_position(),
+                                        adjustment.as_ref().map_or(0.0, |adjustment| adjustment.upper()),
+                                        adjustment.as_ref().map_or(0.0, |adjustment| adjustment.page_size()),
+                                    );
+                                }
                                 if trace {
                                     eprintln!(
                                         "PIC_GALLERY_RESTORE stage=complete photo={} request={} attempt={} stable_frames={} target={:?} focused_photo={:?} value={:.1}",
@@ -1274,6 +1370,83 @@ impl Gallery {
             return true;
         }
         false
+    }
+
+    pub(crate) fn has_folder_navigation_target(&self, folder_id: i64) -> bool {
+        let scope = folder_navigation_scope(
+            self.folder_catalog
+                .borrow()
+                .iter()
+                .map(|folder| (folder.folder_id, folder.parent_id)),
+            folder_id,
+        );
+        self.current_photos
+            .borrow()
+            .iter()
+            .any(|photo| scope.contains(&photo.folder_id()))
+    }
+
+    pub(crate) fn legacy_folder_header_position(&self, folder_id: i64) -> Option<f64> {
+        let Some(target_row) = self.folder_header_row_for_target(folder_id) else {
+            return None;
+        };
+        let mut header_y = 0.0;
+        for position in 0..target_row {
+            let Some(row) = self
+                .folder_store
+                .item(position)
+                .and_downcast::<FolderRowObject>()
+            else {
+                return None;
+            };
+            header_y += f64::from(folder_model_row_height(
+                row.data().kind,
+                self.tile_height.get(),
+                self.show_file_names.get(),
+            ));
+        }
+        Some(header_y)
+    }
+
+    pub(crate) fn legacy_folder_header_in_view(&self, folder_id: i64) -> bool {
+        let Some(header_y) = self.legacy_folder_header_position(folder_id) else {
+            return false;
+        };
+        let Some(adjustment) = self.folder_root.vadjustment() else {
+            return false;
+        };
+        let page = adjustment.page_size();
+        if page <= 0.0 || !self.folder_root.is_mapped() {
+            return false;
+        }
+        adjustment.upper() + 1.0 >= header_y + FOLDER_HEADER_HEIGHT as f64
+            && viewport_intersects_row(
+                header_y,
+                FOLDER_HEADER_HEIGHT as f64,
+                adjustment.value(),
+                page,
+            )
+    }
+
+    pub(crate) fn align_legacy_folder_header(&self, folder_id: i64) -> bool {
+        let Some(header_y) = self.legacy_folder_header_position(folder_id) else {
+            return false;
+        };
+        let Some(adjustment) = self.folder_root.vadjustment() else {
+            return false;
+        };
+        let page = adjustment.page_size();
+        if page <= 0.0
+            || !self.folder_root.is_mapped()
+            || adjustment.upper() + 1.0 < header_y + FOLDER_HEADER_HEIGHT as f64
+        {
+            return false;
+        }
+        adjustment.set_value(header_y.clamp(
+            adjustment.lower(),
+            (adjustment.upper() - page).max(adjustment.lower()),
+        ));
+        self.legacy_folder_header_in_view(folder_id)
     }
 
     /// Scroll the continuous Folder stream to the folder's real header row

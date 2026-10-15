@@ -200,7 +200,11 @@ impl SectionedFolderView {
             .cloned()
     }
 
-    fn defer_restore_anchor(self: &Rc<Self>, anchor: ViewAnchor) {
+    fn defer_restore_anchor(
+        self: &Rc<Self>,
+        anchor: ViewAnchor,
+        on_complete: Option<Rc<dyn Fn()>>,
+    ) {
         let generation = self.wall_state.borrow().generation;
         let weak = Rc::downgrade(self);
         let attempts = Cell::new(0);
@@ -212,9 +216,17 @@ impl SectionedFolderView {
                 return glib::ControlFlow::Break;
             }
             attempts.set(attempts.get() + 1);
-            if surface.restore_anchor(anchor.photo_id, anchor.viewport_y_offset)
-                || attempts.get() >= 12
-            {
+            let restored = surface.restore_anchor(anchor.photo_id, anchor.viewport_y_offset);
+            if restored || attempts.get() >= 12 {
+                if !restored {
+                    crate::nav_transition_trace!(
+                        "stage=layout_anchor_restore_exhausted mode={:?} attempts={}",
+                        surface.layout_mode.get(), attempts.get(),
+                    );
+                }
+                if let Some(on_complete) = on_complete.as_ref() {
+                    on_complete();
+                }
                 glib::ControlFlow::Break
             } else {
                 glib::ControlFlow::Continue
@@ -335,12 +347,14 @@ impl Gallery {
         }
         let anchor = self.capture_view_anchor();
         let chosen_width = self.current_zoom_width();
-        self.sectioned_folder.layout_switch_generation.set(
-            self.sectioned_folder
-                .layout_switch_generation
-                .get()
-                .wrapping_add(1),
-        );
+        let layout_generation = self
+            .sectioned_folder
+            .layout_switch_generation
+            .get()
+            .wrapping_add(1);
+        self.sectioned_folder
+            .layout_switch_generation
+            .set(layout_generation);
         if let Some(source) = self.zoom_reflow_source.borrow_mut().take() {
             source.remove();
         }
@@ -392,30 +406,48 @@ impl Gallery {
         if let Some(changed) = self.folder_view_changed.borrow().as_ref() {
             changed(self.group_mode.get() == GroupMode::Folder);
         }
-        if let Some(anchor) = anchor {
-            // The destination can still be unallocated when the mode changes.
-            // Prepare geometry first, then capture its generation for restoration.
-            let model_generation = self.sectioned_folder.model_generation.get();
-            let weak = Rc::downgrade(self);
-            self.visible_root().add_tick_callback(move |root, _| {
-                let Some(gallery) = weak.upgrade() else {
-                    return glib::ControlFlow::Break;
-                };
-                if gallery.layout() != layout
-                    || gallery.sectioned_folder.model_generation.get() != model_generation
-                {
-                    return glib::ControlFlow::Break;
+        // Publish readiness only AFTER a destination renderer has completed
+        // its deferred scroll/anchor restoration, not just after set_layout()
+        // changes a mode flag. Stale generation callbacks cannot reveal a
+        // newer transition.
+        let weak_ready = Rc::downgrade(self);
+        let ready: Rc<dyn Fn()> = Rc::new(move || {
+            if let Some(gallery) = weak_ready.upgrade() {
+                if gallery.sectioned_folder.layout_switch_generation.get() == layout_generation {
+                    gallery.layout_presentation_settled_generation.set(layout_generation);
+                    crate::nav_transition_trace!(
+                        "stage=layout_presentation_ready generation={layout_generation} layout={:?} scroll={:.1}",
+                        gallery.layout(),
+                        gallery.scroll_position(),
+                    );
                 }
-                if !root.is_mapped() || root.width() <= 1 {
-                    return glib::ControlFlow::Continue;
-                }
-                if gallery.using_virtual_photo_surface() {
-                    gallery.sectioned_folder.refresh();
-                }
-                gallery.restore_view_anchor(anchor);
-                glib::ControlFlow::Break
-            });
-        }
+            }
+        });
+        let model_generation = self.sectioned_folder.model_generation.get();
+        let weak = Rc::downgrade(self);
+        self.visible_root().add_tick_callback(move |root, _| {
+            let Some(gallery) = weak.upgrade() else {
+                return glib::ControlFlow::Break;
+            };
+            if gallery.sectioned_folder.layout_switch_generation.get() != layout_generation
+                || gallery.layout() != layout
+                || gallery.sectioned_folder.model_generation.get() != model_generation
+            {
+                return glib::ControlFlow::Break;
+            }
+            if !root.is_mapped() || root.width() <= 1 || root.height() <= 1 {
+                return glib::ControlFlow::Continue;
+            }
+            if gallery.using_virtual_photo_surface() {
+                gallery.sectioned_folder.refresh();
+            }
+            if let Some(anchor) = anchor {
+                gallery.restore_view_anchor_with_notify(anchor, Some(ready.clone()));
+            } else {
+                ready();
+            }
+            glib::ControlFlow::Break
+        });
     }
 }
 
@@ -451,8 +483,16 @@ impl Gallery {
     }
 
     fn restore_view_anchor(self: &Rc<Self>, anchor: ViewAnchor) {
+        self.restore_view_anchor_with_notify(anchor, None);
+    }
+
+    fn restore_view_anchor_with_notify(
+        self: &Rc<Self>,
+        anchor: ViewAnchor,
+        on_complete: Option<Rc<dyn Fn()>>,
+    ) {
         if self.using_virtual_photo_surface() {
-            self.sectioned_folder.defer_restore_anchor(anchor);
+            self.sectioned_folder.defer_restore_anchor(anchor, on_complete);
             return;
         }
         let generation = self.sectioned_folder.wall_state.borrow().generation;
@@ -479,6 +519,9 @@ impl Gallery {
                         .map(|i| i as usize)
                 });
             let Some(index) = index else {
+                if let Some(on_complete) = on_complete.as_ref() {
+                    on_complete();
+                }
                 return glib::ControlFlow::Break;
             };
             let id = gallery.current_photos.borrow()[index].id();
@@ -487,6 +530,9 @@ impl Gallery {
                     .sectioned_folder
                     .restore_anchor(id, anchor.viewport_y_offset)
                 {
+                    if let Some(on_complete) = on_complete.as_ref() {
+                        on_complete();
+                    }
                     return glib::ControlFlow::Break;
                 }
             } else {
@@ -504,6 +550,9 @@ impl Gallery {
                             adjustment.lower(),
                             (adjustment.upper() - adjustment.page_size()).max(adjustment.lower()),
                         ));
+                        if let Some(on_complete) = on_complete.as_ref() {
+                            on_complete();
+                        }
                         return glib::ControlFlow::Break;
                     }
                 } else {
@@ -513,6 +562,13 @@ impl Gallery {
                 }
             }
             if attempts.get() >= 12 {
+                crate::nav_transition_trace!(
+                    "stage=layout_anchor_restore_exhausted mode={:?} attempts={}",
+                    gallery.layout(), attempts.get(),
+                );
+                if let Some(on_complete) = on_complete.as_ref() {
+                    on_complete();
+                }
                 glib::ControlFlow::Break
             } else {
                 glib::ControlFlow::Continue

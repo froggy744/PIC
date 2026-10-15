@@ -30,16 +30,26 @@ fn ensure_context_menu_css(display: &gtk::gdk::Display) {
     CONTEXT_MENU_CSS_INSTALLED.with(|cell| cell.set(true));
 }
 
+/// Shared menu state for the fullscreen viewer's capture-phase wheel router.
+/// Avoid duplicating menu ownership inside Lightbox.
+pub(crate) fn photo_context_menu_is_open() -> bool {
+    ACTIVE_PHOTO_MENU.with(|active| active.borrow().as_ref().is_some_and(|menu| menu.is_visible()))
+}
+
 pub(crate) fn dismiss_active_photo_context_menu() -> bool {
     ACTIVE_PHOTO_MENU.with(|active| {
         let Some(menu) = active.borrow_mut().take() else {
             return false;
         };
         menu.set_visible(false);
-        if menu.parent().is_some() {
+        // GtkOverlay owns its overlay children. Unparenting them directly
+        // bypasses GtkOverlay's child list, which can leave stale allocations
+        // or event targets when reopening the menu in the lightbox.
+        if let Some(overlay) = menu.parent().and_then(|parent| parent.downcast::<gtk::Overlay>().ok()) {
+            overlay.remove_overlay(&menu);
+        } else if menu.parent().is_some() {
             menu.unparent();
         }
-
         true
     })
 }
@@ -269,6 +279,27 @@ fn finish_bulk_recipe(work: BulkRecipeState, name: &'static str, total: usize) {
     }
 }
 
+/// The lightbox is a sibling overlay ABOVE the gallery/inspector split.
+/// A menu attached to the gallery's page_overlay still exists but is covered
+/// by the fullscreen viewer. Resolve the host from the click's actual widget
+/// ancestry; grid clicks continue using the original page overlay.
+fn photo_context_menu_host_for_anchor(
+    anchor: &gtk::Widget,
+    gallery_host: &gtk::Overlay,
+    lightbox_host: Option<&gtk::Overlay>,
+) -> gtk::Overlay {
+    if let Some(lightbox_host) = lightbox_host {
+        let lightbox_widget: gtk::Widget = lightbox_host.clone().upcast();
+        if lightbox_host.is_visible()
+            && std::iter::successors(Some(anchor.clone()), |widget| widget.parent())
+                .any(|widget| widget == lightbox_widget)
+        {
+            return lightbox_host.clone();
+        }
+    }
+    gallery_host.clone()
+}
+
 fn show_photo_context_menu(
     photo: crate::photo_object::PhotoObject,
     anchor: gtk::Widget,
@@ -276,12 +307,11 @@ fn show_photo_context_menu(
     x: f64,
     y: f64,
 ) {
-    // One stable context-menu host is shared by the grid and lightbox.
-    // The menu itself is a normal GtkOverlay child, not a GtkPopover.
-    // This avoids popup/grab/allocation races and recycled-tile parenting.
+    // The menu must belong to the actual topmost presentation surface:
+    // gallery for tile clicks, lightbox.root for a viewer right-click.
     dismiss_active_photo_context_menu();
 
-    let Some(host) = context
+    let Some(gallery_host) = context
         .context_menu_host
         .borrow()
         .as_ref()
@@ -289,6 +319,19 @@ fn show_photo_context_menu(
     else {
         return;
     };
+    let lightbox = context.lightbox.upgrade();
+    let host = photo_context_menu_host_for_anchor(
+        &anchor,
+        &gallery_host,
+        lightbox.as_ref().map(|lightbox| &lightbox.root),
+    );
+    crate::nav_transition_trace!(
+        "stage=photo_context_menu_host lightbox={} anchor={} host={} mapped={}",
+        host != gallery_host,
+        anchor.widget_name(),
+        host.widget_name(),
+        host.is_mapped(),
+    );
     let host_widget = host.clone().upcast::<gtk::Widget>();
     let click_point = if anchor == host_widget {
         gtk::graphene::Point::new(x as f32, y as f32)
@@ -884,7 +927,10 @@ fn show_photo_context_menu(
     menu_host.add_css_class("card");
     menu_host.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
     menu_host.set_has_frame(false);
-    menu_host.set_propagate_natural_height(true);
+    // Height is explicitly bounded below. Propagating the whole menu's
+    // natural height makes GtkOverlay allocate every action at once and can
+    // prevent the internal scroller from acquiring any vertical scroll range.
+    menu_host.set_propagate_natural_height(false);
     // A context menu should never expand into a near full-height panel.
     // Keep enough room for the common actions and scroll only the overflow.
     menu_host.set_max_content_height((host.height() - 32).clamp(1, 460));
@@ -898,10 +944,15 @@ fn show_photo_context_menu(
     // so the centring also follows dynamic items such as album actions.
     let (_, natural_width, _, _) = menu_host.measure(gtk::Orientation::Horizontal, -1);
     let measured_width = natural_width.max(1).min(host.width().max(1));
-    let (_, natural_height, _, _) = menu_host.measure(gtk::Orientation::Vertical, measured_width);
+    // Measure the CONTENT, not the GtkScrolledWindow: with
+    // propagate_natural_height=false, ScrolledWindow reports only its minimum
+    // (roughly two rows). Measuring that and setting it as the height request
+    // collapsed the context menu and made it almost impossible to scroll.
+    let (_, natural_height, _, _) = menu.measure(gtk::Orientation::Vertical, measured_width);
     let measured_height = natural_height
         .max(1)
         .min(menu_host.max_content_height().max(1));
+    menu_host.set_size_request(-1, measured_height);
 
     const MENU_EDGE_INSET: i32 = 4;
     let max_x = (host.width() - measured_width - MENU_EDGE_INSET).max(MENU_EDGE_INSET);
@@ -912,6 +963,39 @@ fn show_photo_context_menu(
         (click_point.y().round() as i32 - measured_height / 2).clamp(MENU_EDGE_INSET, max_y);
     menu_host.set_margin_start(menu_x);
     menu_host.set_margin_top(menu_y);
+
+    // Dismiss only after the pointer really leaves the shared menu.
+    // A short grace period avoids flicker at the edge or when moving over
+    // its scrolling content. Re-entering cancels the pending dismissal.
+    // Verify menu identity: an old timer must never close a newly opened menu.
+    let leave_timer: Rc<RefCell<Option<glib::SourceId>>> = Rc::new(RefCell::new(None));
+    let hover = gtk::EventControllerMotion::new();
+    let timer_for_enter = leave_timer.clone();
+    hover.connect_enter(move |_, _, _| {
+        if let Some(timer) = timer_for_enter.borrow_mut().take() {
+            timer.remove();
+        }
+    });
+    let timer_for_leave = leave_timer.clone();
+    let menu_for_leave = menu_host.clone().upcast::<gtk::Widget>();
+    hover.connect_leave(move |_| {
+        if let Some(timer) = timer_for_leave.borrow_mut().take() {
+            timer.remove();
+        }
+        let departing = menu_for_leave.clone();
+        let timer_slot = timer_for_leave.clone();
+        let timer = glib::timeout_add_local_once(Duration::from_millis(180), move || {
+            timer_slot.borrow_mut().take();
+            let still_active = ACTIVE_PHOTO_MENU.with(|active| {
+                active.borrow().as_ref().is_some_and(|current| *current == departing)
+            });
+            if still_active {
+                dismiss_active_photo_context_menu();
+            }
+        });
+        timer_for_leave.replace(Some(timer));
+    });
+    menu_host.add_controller(hover);
 
     let menu_widget = menu_host.clone().upcast::<gtk::Widget>();
     menu_to_hide.borrow_mut().replace(menu_widget.clone());
@@ -1901,6 +1985,69 @@ fn show_error(parent: &gtk::Widget, heading: &str, message: &str) {
 
 #[cfg(test)]
 mod photo_actions_tests {
+    #[test]
+    #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+    fn photo_context_menu_uses_visible_lightbox_overlay_not_covered_gallery() {
+        use gtk::prelude::*;
+
+        gtk::init().expect("GTK display needed");
+        let gallery = gtk::Overlay::new();
+        let grid_anchor = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        gallery.set_child(Some(&grid_anchor));
+
+        let lightbox = gtk::Overlay::new();
+        let viewer_anchor = gtk::ScrolledWindow::new();
+        lightbox.set_child(Some(&viewer_anchor));
+        lightbox.set_visible(false);
+
+        // Mirrors PIC: the lightbox is above the gallery split.
+        let surface = gtk::Overlay::new();
+        surface.set_child(Some(&gallery));
+        surface.add_overlay(&lightbox);
+        let window = gtk::Window::builder()
+            .default_width(640)
+            .default_height(480)
+            .child(&surface)
+            .build();
+        window.present();
+        settle_gtk_layout();
+
+        let grid_host = photo_context_menu_host_for_anchor(
+            grid_anchor.upcast_ref(),
+            &gallery,
+            Some(&lightbox),
+        );
+        assert_eq!(grid_host, gallery);
+        lightbox.set_visible(true);
+        settle_gtk_layout();
+
+        // Crucial regression: a lightbox menu on the gallery overlay is
+        // hidden underneath the fullscreen viewer.
+        let viewer_host = photo_context_menu_host_for_anchor(
+            viewer_anchor.upcast_ref(),
+            &gallery,
+            Some(&lightbox),
+        );
+        assert_eq!(viewer_host, lightbox);
+        let grid_host = photo_context_menu_host_for_anchor(
+            grid_anchor.upcast_ref(),
+            &gallery,
+            Some(&lightbox),
+        );
+        assert_eq!(grid_host, gallery);
+
+        lightbox.set_visible(false);
+        assert_eq!(
+            photo_context_menu_host_for_anchor(
+                viewer_anchor.upcast_ref(),
+                &gallery,
+                Some(&lightbox),
+            ),
+            gallery
+        );
+        window.close();
+    }
+
     use super::*;
 
     #[test]

@@ -126,8 +126,16 @@ fn refresh_grid_inner(
     if filter == sidebar::SidebarFilter::Albums
         || (filter == sidebar::SidebarFilter::Library && search.is_empty())
     {
+        gallery.cancel_folder_destination_hold();
         return;
     }
+
+    let presentation_generation = if folder_target.is_some() {
+        Some(gallery.hold_folder_destination())
+    } else {
+        gallery.cancel_folder_destination_hold();
+        None
+    };
 
     let pair_mode = crate::image_format::raw_jpeg_pair_mode(&connection.borrow());
     gallery.set_raw_jpeg_mode(pair_mode);
@@ -252,6 +260,7 @@ fn refresh_grid_inner(
                                 folder_path,
                                 generation,
                                 center_folder,
+                                presentation_generation.expect("folder destination has a hold"),
                             );
                         });
                     }
@@ -299,7 +308,12 @@ fn refresh_grid_inner(
                 }
                 glib::ControlFlow::Break
             }
-            Ok(None) | Err(TryRecvError::Disconnected) => glib::ControlFlow::Break,
+            Ok(None) | Err(TryRecvError::Disconnected) => {
+                if let Some(presentation_generation) = presentation_generation {
+                    gallery.reveal_folder_destination(presentation_generation);
+                }
+                glib::ControlFlow::Break
+            }
             Err(TryRecvError::Empty) => glib::ControlFlow::Continue,
         }
     });
@@ -313,19 +327,36 @@ fn scroll_gallery_to_folder_when_ready(
     folder_path: String,
     generation: u64,
     center_folder: bool,
+    presentation_generation: u64,
 ) {
+    let started = std::time::Instant::now();
+    crate::nav_transition_trace!(
+        "stage=folder_scroll_restore_request refresh_generation={generation} folder_id={folder_id} center={center_folder} path={folder_path:?} stream_building={}",
+        gallery.stream_building(),
+    );
+    let model_wait_logged = Rc::new(Cell::new(false));
+    let model_ready_logged = Rc::new(Cell::new(false));
     let total_attempts = Rc::new(Cell::new(0u32));
+    let legacy_scroll_requested = Rc::new(Cell::new(false));
     // Counts only the attempts made after the progressive stream finished.
     // While rows are still being built, the target folder may legitimately not
     // exist yet, so those attempts must not count toward giving up.
     let settled_attempts = Rc::new(Cell::new(0u32));
     let total_for_timer = total_attempts.clone();
     let settled_for_timer = settled_attempts.clone();
+    let legacy_scroll_requested_for_timer = legacy_scroll_requested.clone();
+    let model_wait_logged_for_timer = model_wait_logged.clone();
+    let model_ready_logged_for_timer = model_ready_logged.clone();
     glib::timeout_add_local(Duration::from_millis(25), move || {
         // A newer destination/refresh supersedes this timer. Without this
         // guard, an old Albums/Photos -> Folder transition can fire later and
         // pull the continuous Folder view back to the previous folder.
         if REFRESH_GENERATION.load(std::sync::atomic::Ordering::Relaxed) != generation {
+            crate::nav_transition_trace!(
+                "stage=folder_scroll_restore_cancel refresh_generation={generation} folder_id={folder_id} reason=superseded current_generation={}",
+                REFRESH_GENERATION.load(std::sync::atomic::Ordering::Relaxed),
+            );
+            gallery.reveal_folder_destination(presentation_generation);
             return glib::ControlFlow::Break;
         }
         total_for_timer.set(total_for_timer.get() + 1);
@@ -333,24 +364,96 @@ fn scroll_gallery_to_folder_when_ready(
         // while the progressive Folder stream is still being built starves that
         // very build, so wait for it to finish before scanning at all.
         if gallery.stream_building() {
+            if !model_wait_logged_for_timer.replace(true) {
+                crate::nav_transition_trace!(
+                    "stage=folder_scroll_restore_wait_model refresh_generation={generation} folder_id={folder_id} attempt={}",
+                    total_for_timer.get(),
+                );
+            }
             if total_for_timer.get() >= 1200 {
+                crate::nav_transition_trace!(
+                    "stage=folder_scroll_restore_exhausted refresh_generation={generation} folder_id={folder_id} reason=model_timeout attempts={}",
+                    total_for_timer.get(),
+                );
+                gallery.reveal_folder_destination(presentation_generation);
                 // Hard safety net (30 s) for a build that never completes.
                 glib::ControlFlow::Break
             } else {
                 glib::ControlFlow::Continue
             }
         } else {
-            let revealed = if center_folder {
-                gallery.scroll_to_folder_centered(folder_id, &folder_path)
+            if !model_ready_logged_for_timer.replace(true) {
+                crate::nav_transition_trace!(
+                    "stage=folder_scroll_restore_model_ready refresh_generation={generation} folder_id={folder_id} attempts={}",
+                    total_for_timer.get(),
+                );
+            }
+            let revealed = if gallery.using_virtual_photo_surface() {
+                if center_folder {
+                    gallery.scroll_to_folder_centered(folder_id, &folder_path)
+                } else {
+                    gallery.scroll_to_folder(folder_id, &folder_path)
+                }
             } else {
-                gallery.scroll_to_folder(folder_id, &folder_path)
+                // GtkListView::scroll_to queues its position change. Keep the
+                // presentation held until the requested header reaches the
+                // viewport; a successful call alone is too early.
+                if legacy_scroll_requested_for_timer.get()
+                    && gallery.legacy_folder_header_in_view(folder_id)
+                {
+                    true
+                } else {
+                    if !legacy_scroll_requested_for_timer.get() {
+                        if center_folder {
+                            gallery.scroll_to_folder_centered(folder_id, &folder_path);
+                        } else {
+                            gallery.scroll_to_folder(folder_id, &folder_path);
+                        }
+                        legacy_scroll_requested_for_timer.set(true);
+                    } else {
+                        gallery.align_legacy_folder_header(folder_id);
+                    }
+                    false
+                }
             };
             if revealed {
+                gallery.reveal_folder_destination(presentation_generation);
+                crate::nav_transition_trace!(
+                    "stage=folder_scroll_restore_complete refresh_generation={generation} folder_id={folder_id} attempts={} settled_attempts={} elapsed_ms={} value={:.1}",
+                    total_for_timer.get(),
+                    settled_for_timer.get(),
+                    started.elapsed().as_millis(),
+                    gallery.scroll_position(),
+                );
                 glib::ControlFlow::Break
             } else {
                 let settled = settled_for_timer.get() + 1;
                 settled_for_timer.set(settled);
+                if settled == 1 {
+                    crate::nav_transition_trace!(
+                        "stage=folder_scroll_restore_wait_target refresh_generation={generation} folder_id={folder_id} value={:.1} legacy_header_y={:?}",
+                        gallery.scroll_position(),
+                        (!gallery.using_virtual_photo_surface())
+                            .then(|| gallery.legacy_folder_header_position(folder_id)),
+                    );
+                }
+                if settled == 8 || settled == 16 {
+                    let adjustment = gallery.folder_root.vadjustment();
+                    crate::nav_transition_trace!(
+                        "stage=folder_scroll_restore_legacy_wait refresh_generation={generation} folder_id={folder_id} attempt={settled} mapped={} header_y={:?} value={:?} upper={:?} page={:?}",
+                        gallery.folder_root.is_mapped(),
+                        gallery.legacy_folder_header_position(folder_id),
+                        adjustment.as_ref().map(|adjustment| adjustment.value()),
+                        adjustment.as_ref().map(|adjustment| adjustment.upper()),
+                        adjustment.as_ref().map(|adjustment| adjustment.page_size()),
+                    );
+                }
                 if settled >= 240 {
+                    crate::nav_transition_trace!(
+                        "stage=folder_scroll_restore_exhausted refresh_generation={generation} folder_id={folder_id} reason=target_not_revealed attempts={} settled_attempts={settled}",
+                        total_for_timer.get(),
+                    );
+                    gallery.reveal_folder_destination(presentation_generation);
                     // Six seconds after the Folder stream is fully built is
                     // generous; a missing/empty folder leaves the position as-is.
                     glib::ControlFlow::Break
@@ -575,6 +678,7 @@ fn pixel_count(width: Option<i64>, height: Option<i64>) -> Option<i128> {
 
 #[cfg(test)]
 mod photo_action_tests {
+    use crate::grid;
     use super::{
         apply_rating_filter, folder_stream_order, sort_folder_stream, sort_photos,
         valid_file_name, wallpaper_layout, PhotoSort, RatingFilter, SortDirection, SortField,
@@ -590,6 +694,195 @@ mod photo_action_tests {
             Some((43, 116.0))
         );
         assert_eq!(super::surviving_viewport_anchor(&anchors, &[10, 90]), None);
+    }
+
+    fn check_folder_navigation_presentation(legacy: bool, layout: grid::PhotoLayout, rapid: bool) {
+        use super::*;
+
+        struct LegacyFolderListGuard(Option<std::ffi::OsString>);
+        impl Drop for LegacyFolderListGuard {
+            fn drop(&mut self) {
+                if let Some(value) = self.0.take() {
+                    std::env::set_var("PICASA_LEGACY_FOLDER_LIST", value);
+                } else {
+                    std::env::remove_var("PICASA_LEGACY_FOLDER_LIST");
+                }
+            }
+        }
+
+        gtk::init().unwrap();
+        let _legacy_guard = LegacyFolderListGuard(std::env::var_os("PICASA_LEGACY_FOLDER_LIST"));
+        if legacy {
+            std::env::set_var("PICASA_LEGACY_FOLDER_LIST", "1");
+        } else {
+            std::env::remove_var("PICASA_LEGACY_FOLDER_LIST");
+        }
+        let test_dir = std::env::temp_dir().join(format!(
+            "pic-folder-presentation-{}-{legacy}-{layout:?}-{rapid}",
+            std::process::id(),
+        ));
+        std::fs::create_dir_all(&test_dir).unwrap();
+        let connection = db::open(&test_dir.join("test.db")).unwrap();
+        connection
+            .execute_batch(
+                "INSERT INTO folders(id,path,name,parent_id,imported_root) VALUES
+                 (1,'/presentation/Before','Before',NULL,1),
+                 (2,'/presentation/Target','Target',NULL,1);
+                 WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<900)
+                 INSERT INTO photos(path,folder_id) SELECT printf('/presentation/Before/%04d.jpg',x),1 FROM n;
+                 WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<100)
+                 INSERT INTO photos(path,folder_id) SELECT printf('/presentation/Target/%04d.jpg',x),2 FROM n;",
+            )
+            .unwrap();
+        let connection = Rc::new(RefCell::new(connection));
+        let gallery = Rc::new(grid::Gallery::new(
+            &[], 180, |_| {}, |_, _, _| {}, |_, _, _, _| {}, |_, _| {}, |_| {},
+        ));
+        gallery.set_layout(layout);
+        let folders = db::folders(&connection.borrow()).unwrap();
+        gallery.set_folder_catalog(&folders, &[1, 2]);
+        gallery.set_grouping(grid::GroupMode::Folder, grid::GroupDate::Taken);
+        let root: gtk::Widget = if legacy {
+            gallery.folder_root.clone().upcast()
+        } else {
+            gallery.folder_sectioned_root.clone().upcast()
+        };
+        let scroll = gtk::ScrolledWindow::builder()
+            .child(&root)
+            .build();
+        gallery.attach_sectioned_folder_scroll(&scroll);
+        let window = gtk::Window::builder()
+            .default_width(900)
+            .default_height(600)
+            .child(&scroll)
+            .build();
+        window.present();
+        let context = glib::MainContext::default();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !scroll.is_mapped() && Instant::now() < deadline {
+            while context.pending() {
+                context.iteration(false);
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(scroll.is_mapped());
+
+        let started = Instant::now();
+        let first_paint = Rc::new(Cell::new(None::<(u128, f64, f64)>));
+        let first_visible_paint = Rc::new(Cell::new(None::<(u128, f64)>));
+        let first_paint_for_signal = first_paint.clone();
+        let first_visible_for_signal = first_visible_paint.clone();
+        let scroll_for_signal = scroll.clone();
+        let root_for_signal = gallery.visible_root();
+        window
+            .surface()
+            .unwrap()
+            .frame_clock()
+            .connect_after_paint(move |_| {
+                let adjustment = scroll_for_signal.vadjustment();
+                if first_paint_for_signal.get().is_none() && adjustment.upper() > 5_000.0 {
+                    first_paint_for_signal.set(Some((
+                        started.elapsed().as_millis(),
+                        adjustment.value(),
+                        root_for_signal.opacity(),
+                    )));
+                }
+                if first_visible_for_signal.get().is_none()
+                    && adjustment.upper() > 5_000.0
+                    && root_for_signal.opacity() >= 0.99
+                {
+                    first_visible_for_signal.set(Some((
+                        started.elapsed().as_millis(),
+                        adjustment.value(),
+                    )));
+                }
+            });
+        let sort = PhotoSort {
+            field: SortField::Name,
+            direction: SortDirection::Ascending,
+        };
+        if rapid {
+            refresh_grid_to_folder(
+                &connection,
+                sidebar::SidebarFilter::Folder(1),
+                "",
+                sort,
+                &gallery,
+                1,
+                "/presentation/Before".into(),
+                false,
+            );
+            assert_eq!(gallery.visible_root().opacity(), 0.0);
+        }
+        refresh_grid_to_folder(
+            &connection,
+            sidebar::SidebarFilter::Folder(2),
+            "",
+            sort,
+            &gallery,
+            2,
+            "/presentation/Target".into(),
+            false,
+        );
+        let deadline = Instant::now() + Duration::from_secs(8);
+        while (first_paint.get().is_none()
+            || first_visible_paint.get().is_none()
+            || gallery.scroll_position() < 5_000.0)
+            && Instant::now() < deadline
+        {
+            while context.pending() {
+                context.iteration(false);
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let (first_ms, first_value, first_opacity) =
+            first_paint.get().expect("destination model was never painted");
+        let (first_visible_ms, first_visible_value) = first_visible_paint
+            .get()
+            .expect("restored destination was never painted visibly");
+        let final_value = gallery.scroll_position();
+        eprintln!(
+            "folder presentation legacy={legacy} layout={layout:?} rapid={rapid}: first_after_paint_ms={first_ms} first_scroll={first_value:.1} first_opacity={first_opacity:.1} first_visible_after_paint_ms={first_visible_ms} first_visible_scroll={first_visible_value:.1} restored_ms={} restored_scroll={final_value:.1}",
+            started.elapsed().as_millis(),
+        );
+        assert!(first_visible_value - first_value > 1_000.0, "test did not catch the premature paint");
+        assert!(first_opacity < 0.01, "premature destination was visible");
+        assert!((first_visible_value - final_value).abs() < 1.0, "first visible viewport was not restored");
+        assert!(final_value > 5_000.0, "destination scroll was not restored");
+        assert_eq!(gallery.visible_root().opacity(), 1.0);
+        window.close();
+        drop(connection);
+        std::fs::remove_dir_all(test_dir).unwrap();
+    }
+
+    #[test]
+    #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+    fn folder_navigation_hides_unrestored_destination_paint() {
+        check_folder_navigation_presentation(false, grid::PhotoLayout::Grid, false);
+    }
+
+    #[test]
+    #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+    fn legacy_folder_navigation_hides_unrestored_destination_paint() {
+        check_folder_navigation_presentation(true, grid::PhotoLayout::Grid, false);
+    }
+
+    #[test]
+    #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+    fn photo_wall_folder_navigation_hides_unrestored_destination_paint() {
+        check_folder_navigation_presentation(false, grid::PhotoLayout::PhotoWall, false);
+    }
+
+    #[test]
+    #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+    fn masonry_folder_navigation_hides_unrestored_destination_paint() {
+        check_folder_navigation_presentation(false, grid::PhotoLayout::Masonry, false);
+    }
+
+    #[test]
+    #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+    fn rapid_folder_navigation_keeps_superseded_destination_hidden() {
+        check_folder_navigation_presentation(false, grid::PhotoLayout::Grid, true);
     }
 
     #[test]

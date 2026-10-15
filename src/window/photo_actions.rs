@@ -5,6 +5,7 @@ thread_local! {
     static DOCKED_PROPERTIES_PANEL: RefCell<Option<gtk::Box>> = RefCell::new(None);
     static DOCKED_PROPERTIES_SPLIT: RefCell<Option<adw::OverlaySplitView>> = RefCell::new(None);
     static DOCKED_PROPERTIES_CONTEXT: RefCell<Option<PhotoActionContext>> = RefCell::new(None);
+    static GALLERY_PROPERTIES_ALLOWED: Cell<bool> = const { Cell::new(false) };
     static LIGHTBOX_PROPERTIES_PANEL: RefCell<Option<gtk::Box>> = RefCell::new(None);
     static LIGHTBOX_PROPERTIES_CONTEXT: RefCell<Option<PhotoActionContext>> = RefCell::new(None);
     static LIGHTBOX_PROPERTIES_ACTIVE: Cell<bool> = const { Cell::new(false) };
@@ -1398,6 +1399,18 @@ pub(crate) fn close_docked_properties() {
     close_properties(PropertiesSurface::Gallery);
 }
 
+/// The Library and Albums index pages are not photo-selection surfaces.
+/// Keep this gate authoritative for InfoBar and photo-menu calls alike.
+pub(crate) fn set_gallery_properties_allowed(allowed: bool) {
+    GALLERY_PROPERTIES_ALLOWED.with(|state| state.set(allowed));
+    if !allowed {
+        close_docked_properties();
+    }
+    if std::env::var_os("PIC_INSPECTOR_TRACE").is_some() {
+        eprintln!("PIC_INSPECTOR_TRACE stage=page_allowed allowed={allowed}");
+    }
+}
+
 /// The two inspectors retain independent visibility. Closing the viewer
 /// discards only its overlay, leaving the gallery's selection untouched.
 pub(crate) fn set_lightbox_properties_active(active: bool) {
@@ -1431,6 +1444,14 @@ pub(crate) fn toggle_docked_properties(
     context: &PhotoActionContext,
 ) {
     let surface = active_properties_surface();
+    if surface == PropertiesSurface::Gallery
+        && !GALLERY_PROPERTIES_ALLOWED.with(Cell::get)
+    {
+        if std::env::var_os("PIC_INSPECTOR_TRACE").is_some() {
+            eprintln!("PIC_INSPECTOR_TRACE stage=ignored reason=index_page photo={}", photo.id());
+        }
+        return;
+    }
     let is_open = properties_open(surface);
     if is_open {
         close_properties(surface);
@@ -1455,6 +1476,9 @@ pub(crate) fn refresh_lightbox_properties(photo: &crate::photo_object::PhotoObje
 }
 
 pub(crate) fn refresh_docked_properties(photo: Option<&crate::photo_object::PhotoObject>) {
+    if !GALLERY_PROPERTIES_ALLOWED.with(Cell::get) {
+        return;
+    }
     let context = DOCKED_PROPERTIES_CONTEXT.with(|slot| slot.borrow().clone());
     if context.is_some() && std::env::var_os("PICASA_TRACE").is_some() {
         eprintln!(
@@ -1512,6 +1536,11 @@ fn show_properties_dialog_on(
     context: &PhotoActionContext,
     surface: PropertiesSurface,
 ) {
+    if surface == PropertiesSurface::Gallery
+        && !GALLERY_PROPERTIES_ALLOWED.with(Cell::get)
+    {
+        return;
+    }
     let record = db::photo(&context.connection.borrow(), photo.id())
         .ok()
         .flatten();

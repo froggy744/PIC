@@ -2640,6 +2640,21 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let nav_fade_sequence = Rc::new(Cell::new(0_u64));
     let nav_fade_overlay: Rc<RefCell<Option<gtk::Picture>>> =
         Rc::new(RefCell::new(None));
+    // Non-gallery navigation (viewer/edit/collage/library switch) must never
+    // leave a snapshot over the new surface. Invalidate its tick generation
+    // before removing the GTK overlay.
+    let nav_fade_cancel: Rc<dyn Fn()> = {
+        let sequence = nav_fade_sequence.clone();
+        let active = nav_fade_overlay.clone();
+        let overlay = page_overlay.clone();
+        Rc::new(move || {
+            sequence.set(sequence.get().wrapping_add(1));
+            if let Some(previous) = active.borrow_mut().take() {
+                overlay.remove_overlay(&previous);
+                crate::nav_transition_trace!("stage=crossfade_cancel");
+            }
+        })
+    };
     let nav_fade_begin: Rc<dyn Fn(bool, bool)> = {
         let page_overlay = page_overlay.clone();
         let main_stack = main_stack.clone();
@@ -2670,6 +2685,15 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             if let Some(previous) = previous {
                 page_overlay.remove_overlay(&previous);
             }
+            // GTK's animation setting also reflects the desktop's reduced-
+            // motion preference. Do not create or retain transition pictures
+            // when animations are disabled.
+            if gtk::Settings::default().is_some_and(|settings| {
+                !settings.property::<bool>("gtk-enable-animations")
+            }) {
+                crate::nav_transition_trace!("stage=crossfade_skip reason=animations_disabled");
+                return;
+            }
             let Some(frozen) = frozen else {
                 return;
             };
@@ -2699,6 +2723,18 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                     return glib::ControlFlow::Break;
                 }
                 let now = Instant::now();
+                // An empty/unavailable destination or failed DB request must
+                // not leave the old picture covering the application forever.
+                // Normal navigation completes much sooner; this is only an
+                // error-path safety net, not an animation delay.
+                if fading.borrow().is_none() && started.elapsed() > Duration::from_secs(6) {
+                    crate::nav_transition_trace!(
+                        "stage=crossfade_timeout generation={next} folder={folder_destination} model={photo_destination}"
+                    );
+                    page_for_tick.remove_overlay(image);
+                    active_for_tick.replace(None);
+                    return glib::ControlFlow::Break;
+                }
                 if fading.borrow().is_none() {
                     let model_ready = !photo_destination
                         || (gallery_for_tick.navigation_model_generation()
@@ -2742,6 +2778,16 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             });
         })
     };
+    // Edit and Collage are not sidebar destinations. An in-flight sidebar
+    // fade must never cover either page if the user opens one immediately.
+    {
+        let cancel = nav_fade_cancel.clone();
+        main_stack.connect_visible_child_notify(move |stack| {
+            if matches!(stack.visible_child_name().as_deref(), Some("edit" | "collage")) {
+                cancel();
+            }
+        });
+    }
     let action_menu_autohide = gtk::GestureClick::new();
     action_menu_autohide.set_button(1);
     action_menu_autohide.set_propagation_phase(gtk::PropagationPhase::Capture);

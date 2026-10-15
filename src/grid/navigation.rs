@@ -27,21 +27,6 @@ impl Gallery {
         let Some(row) = self.folder_row_index_for_photo(photo_id) else {
             return;
         };
-        let tile_height = self.tile_height.get();
-        let exact_offset = (0..row)
-            .filter_map(|position| {
-                self.folder_store
-                    .item(position)
-                    .and_downcast::<FolderRowObject>()
-            })
-            .map(|row| {
-                f64::from(folder_model_row_height(
-                    row.data().kind,
-                    tile_height,
-                    self.show_file_names.get(),
-                ))
-            })
-            .sum::<f64>();
         let root = self.folder_root.clone();
         let generation = self.folder_scroll_generation.clone();
         let request = generation.get().wrapping_add(1);
@@ -51,35 +36,45 @@ impl Gallery {
         let mode = self.group_mode.clone();
         let pending = self.folder_pending_reframe.clone();
         let reframe_photo = self.folder_reframe_photo.clone();
+        let trace = std::env::var_os("PIC_GALLERY_FOLDER_REFRAME_TRACE").is_some();
         glib::idle_add_local_once(move || {
             if generation.get() != request
                 || model_generation.get() != model_request
                 || mode.get() != GroupMode::Folder
             {
+                if trace {
+                    eprintln!(
+                        "PIC_FOLDER_REFRAME stage=cancel_idle request={} photo={} current_generation={} model_request={} current_model={} mode={:?}",
+                        request,
+                        photo_id,
+                        generation.get(),
+                        model_request,
+                        model_generation.get(),
+                        mode.get(),
+                    );
+                }
                 return;
             }
-            // Position the viewport from the exact model geometry instead of
-            // asking GtkListView to estimate a far, unrealized row. Header rows
-            // are compact while photo rows follow zoom, so summing the model
-            // row kinds above keeps the anchor deterministic.
-            if let Some(adjustment) = root.vadjustment() {
-                let upper = (adjustment.upper() - adjustment.page_size()).max(adjustment.lower());
-                adjustment.set_value(exact_offset.clamp(adjustment.lower(), upper));
-
-                // Exact virtual-row positioning succeeded. Do not run the old
-                // bounds-based settle loop afterwards: GTK can report transient
-                // tile bounds for a few frames after a rebuild, which causes the
-                // small visible "rebound" even though the exact anchor is already
-                // correct.
-                pending.set(false);
-                reframe_photo.set(None);
-                return;
+            // Ask GtkListView to realize the target row using its virtual
+            // geometry. Summed model heights drift from GTK's allocated row
+            // heights over deep lists, which can leave the target unbound after
+            // a column-count change. The frame callback aligns the realized
+            // tile once GTK publishes its actual bounds.
+            root.scroll_to(row, gtk::ListScrollFlags::NONE, None);
+            if trace {
+                let adjustment = root.vadjustment();
+                eprintln!(
+                    "PIC_FOLDER_REFRAME stage=scroll_to request={} photo={} row={} value={:.1} upper={:.1} page={:.1}",
+                    request,
+                    photo_id,
+                    row,
+                    adjustment.as_ref().map_or(-1.0, |value| value.value()),
+                    adjustment.as_ref().map_or(-1.0, |value| value.upper()),
+                    adjustment.as_ref().map_or(-1.0, |value| value.page_size()),
+                );
             }
-            // Exact positioning was unavailable. Fall back to the older
-            // allocation/bounds correction path below.
-            // An idle after another idle does NOT guarantee a GTK allocation.
-            // Wait for a frame to lay out the rebuilt/rebound rows before using
-            // their bounds; otherwise the old coordinates move us to another row.
+            // An idle after another idle does not guarantee a GTK allocation.
+            // Wait for frame ticks, then correct using the mapped tile bounds.
             let frames = Cell::new(0);
             let stable_frames = Cell::new(0);
             root.add_tick_callback(move |root_for_align, _| {
@@ -96,20 +91,47 @@ impl Gallery {
                 let mut tiles = Vec::new();
                 collect_tiles(root_for_align.upcast_ref(), &mut tiles);
                 let tile = tiles.into_iter().find(|tile| {
-                    tile.imp()
-                        .photo
-                        .borrow()
-                        .as_ref()
-                        .is_some_and(|photo| photo.id() == photo_id)
+                    tile.is_mapped()
+                        && tile.is_visible()
+                        && tile
+                            .imp()
+                            .photo
+                            .borrow()
+                            .as_ref()
+                            .is_some_and(|photo| photo.id() == photo_id)
                 });
                 let Some(tile) = tile else {
+                    if trace {
+                        eprintln!(
+                            "PIC_FOLDER_REFRAME stage=retry_missing request={} photo={} frame={}",
+                            request,
+                            photo_id,
+                            frames.get(),
+                        );
+                    }
+                    if frames.get() < 8 {
+                        return glib::ControlFlow::Continue;
+                    }
                     pending.set(false);
+                    reframe_photo.set(None);
                     return glib::ControlFlow::Break;
                 };
                 let Some(bounds) = tile.compute_bounds(root_for_align) else {
+                    if frames.get() < 8 {
+                        return glib::ControlFlow::Continue;
+                    }
                     pending.set(false);
+                    reframe_photo.set(None);
                     return glib::ControlFlow::Break;
                 };
+                if bounds.width() <= 0.0 || bounds.height() <= 0.0 {
+                    if frames.get() < 8 {
+                        return glib::ControlFlow::Continue;
+                    }
+                    pending.set(false);
+                    reframe_photo.set(None);
+                    return glib::ControlFlow::Break;
+                }
                 let Some(adjustment) = root_for_align.vadjustment() else {
                     pending.set(false);
                     return glib::ControlFlow::Break;
@@ -117,9 +139,30 @@ impl Gallery {
                 // Align the row, not the tile's six-pixel top margin. GTK may
                 // refine its estimated row heights for another frame after a
                 // splice; allow a bounded correction until the anchor settles.
-                let target = adjustment.value() + bounds.y() as f64 - tile.margin_top() as f64;
+                // GTK clips a tile that has reached the leading edge, so its
+                // reported bounds may be 0 while its top margin is still
+                // present. Never keep subtracting that margin from an already
+                // clipped tile; doing so walks the scroll position backwards
+                // on every frame during an overlapping reflow.
+                let visible_delta =
+                    (bounds.y() as f64 - f64::from(tile.margin_top())).max(0.0);
+                let target = adjustment.value() + visible_delta;
                 let upper = (adjustment.upper() - adjustment.page_size()).max(adjustment.lower());
                 let target = target.clamp(adjustment.lower(), upper);
+                if trace {
+                    eprintln!(
+                        "PIC_FOLDER_REFRAME stage=frame request={} photo={} frame={} bounds_y={:.1} target={:.1} value={:.1} upper={:.1} page={:.1} stable={}",
+                        request,
+                        photo_id,
+                        frames.get(),
+                        bounds.y(),
+                        target,
+                        adjustment.value(),
+                        adjustment.upper(),
+                        adjustment.page_size(),
+                        stable_frames.get(),
+                    );
+                }
                 if (target - adjustment.value()).abs() <= 1.0 {
                     stable_frames.set(stable_frames.get() + 1);
                 } else {

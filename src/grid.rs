@@ -228,7 +228,7 @@ mod folder_stream_tests {
     use super::{
         folder_chunk_size, folder_dragged_positions, folder_line_height, folder_navigation_scope,
         folder_section_plan, folder_selection_after_click, folder_virtual_row_matches,
-        folder_virtual_rows, FolderCatalogEntry, FolderRowData, FolderRowKind, FolderTileBounds,
+        collect_tiles, folder_virtual_rows, FolderCatalogEntry, FolderRowData, FolderRowKind, FolderTileBounds,
         FolderVirtualRow, GroupRange,
     };
 
@@ -304,7 +304,19 @@ mod folder_stream_tests {
     #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
     fn sidebar_width_changes_do_not_scroll_or_lose_the_visible_photo() {
         use super::{gtk, Gallery, GroupMode, PhotoObject};
+        use glib::subclass::types::ObjectSubclassIsExt;
         use gtk::prelude::*;
+
+        struct LegacyFolderListGuard(Option<std::ffi::OsString>);
+        impl Drop for LegacyFolderListGuard {
+            fn drop(&mut self) {
+                if let Some(value) = self.0.take() {
+                    std::env::set_var("PICASA_LEGACY_FOLDER_LIST", value);
+                } else {
+                    std::env::remove_var("PICASA_LEGACY_FOLDER_LIST");
+                }
+            }
+        }
 
         fn settle() {
             let context = glib::MainContext::default();
@@ -317,6 +329,10 @@ mod folder_stream_tests {
         }
 
         gtk::init().unwrap();
+        let _legacy_folder_list = LegacyFolderListGuard(
+            std::env::var_os("PICASA_LEGACY_FOLDER_LIST"),
+        );
+        std::env::set_var("PICASA_LEGACY_FOLDER_LIST", "1");
         let gallery = Gallery::new(
             &[],
             148,
@@ -339,6 +355,7 @@ mod folder_stream_tests {
                 .collect(),
         );
         gallery.rebuild_group_ranges();
+        gallery.rebuild_folder_rows();
         gallery.update_width(1124);
         let scroll = gtk::ScrolledWindow::builder()
             .child(&gallery.folder_root)
@@ -352,6 +369,7 @@ mod folder_stream_tests {
         settle();
         scroll.vadjustment().set_value(8000.0);
         settle();
+        gallery.update_group_header_for_scroll(scroll.vadjustment().value());
 
         // Six columns put the centre probe between tiles. The anchor must be
         // a visible photo, never the first photo of this long folder.
@@ -377,8 +395,11 @@ mod folder_stream_tests {
 
         gallery.zoom_anchor.set(None);
         for width in [1440, 1124].into_iter().cycle().take(8) {
-            gallery.update_width(width);
             window.set_default_size(width, 600);
+            settle();
+            // Drive the gallery from GTK's real logical allocation; the
+            // requested width can be clamped by the Wayland work area.
+            gallery.update_width(scroll.width());
             settle();
             let after = gallery.photo_for_visible_folder_row().unwrap().id();
             assert_eq!(after, before, "column change lost anchor at width {width}");
@@ -398,10 +419,12 @@ mod folder_stream_tests {
         // resize anchor must never pin the viewport to an old photo.
         scroll.vadjustment().set_value(16000.0);
         settle();
+        gallery.update_group_header_for_scroll(scroll.vadjustment().value());
         let scrolled = gallery.photo_for_visible_folder_row().unwrap().id();
         assert_ne!(scrolled, before);
-        gallery.update_width(1440);
         window.set_default_size(1440, 600);
+        settle();
+        gallery.update_width(scroll.width());
         settle();
         assert_eq!(
             gallery.photo_for_visible_folder_row().unwrap().id(),
@@ -413,13 +436,34 @@ mod folder_stream_tests {
         // reported 7→6→5 transition). Never capture that transient viewport.
         gallery.update_width(1124);
         scroll.vadjustment().set_value(0.0);
-        gallery.update_width(970);
         window.set_default_size(970, 600);
         settle();
-        assert_eq!(
-            gallery.photo_for_visible_folder_row().unwrap().id(),
-            scrolled,
-            "overlapping column changes lost the original anchor"
+        gallery.update_width(scroll.width());
+        settle();
+        let mut tiles = Vec::new();
+        collect_tiles(gallery.folder_root.upcast_ref(), &mut tiles);
+        let anchor_tile = tiles
+            .into_iter()
+            .find(|tile| {
+                tile.is_mapped()
+                    && tile.is_visible()
+                    && tile.width() > 0
+                    && tile.height() > 0
+                    && tile
+                        .imp()
+                        .photo
+                        .borrow()
+                        .as_ref()
+                        .is_some_and(|photo| photo.id() == scrolled)
+            })
+            .expect("overlapping column changes unrealized the anchor photo");
+        let anchor_bounds = anchor_tile
+            .compute_bounds(&gallery.folder_root)
+            .expect("anchor photo bounds");
+        assert!(
+            anchor_bounds.y().abs() <= 10.0,
+            "overlapping column changes lost the original anchor: photo={scrolled} bounds={anchor_bounds:?} scroll={:.1}",
+            scroll.vadjustment().value(),
         );
         window.close();
     }

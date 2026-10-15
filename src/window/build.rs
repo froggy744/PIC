@@ -3665,10 +3665,16 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             {
                 return glib::ControlFlow::Break;
             }
-            if let Some(photo) = selected_photo.as_ref() {
-                gallery.restore_activated_photo(photo.id());
+            let restoration_scheduled = selected_photo
+                .as_ref()
+                .is_some_and(|photo| gallery.restore_activated_photo(photo.id()));
+            // The virtual gallery's restore callback focuses the selected
+            // tile after its destination layout is allocated. Focusing the
+            // gallery container here makes GTK choose its first tile and
+            // scroll toward it, which can race and overwrite the return.
+            if !restoration_scheduled || !gallery.using_virtual_photo_surface() {
+                gallery.grab_focus();
             }
-            gallery.grab_focus();
             glib::ControlFlow::Break
         });
     });

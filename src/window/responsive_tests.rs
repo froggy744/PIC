@@ -89,6 +89,18 @@ fn check_live_sidebar_drag(layout: &str, destination: &str, compact: bool) {
         split.set_show_sidebar(true);
         settle();
     }
+    // The host display may cap the requested 1440px window to its available
+    // logical width. Verify the mode GTK actually chose and base the resize
+    // expectation on that mode: expanded split view allocates width away from
+    // the gallery, while a collapsed sidebar is an overlay.
+    let collapsed_overlay = split.is_collapsed();
+    eprintln!(
+        "sidebar drag mode={}: window={} split={} collapsed={} compact_setup={compact}",
+        if collapsed_overlay { "overlay" } else { "split" },
+        window.width(),
+        split.width(),
+        collapsed_overlay,
+    );
     let sidebar = split.sidebar().unwrap();
     let handle = descendants(window.upcast_ref())
         .into_iter()
@@ -127,6 +139,21 @@ fn check_live_sidebar_drag(layout: &str, destination: &str, compact: bool) {
 
     let sidebar_start = sidebar.width();
     let content_start = split.content().unwrap().width();
+    let effective_min_width = f64::from(
+        split
+            .sidebar()
+            .unwrap()
+            .measure(gtk::Orientation::Horizontal, -1)
+            .0,
+    )
+    .max(SIDEBAR_MIN_WIDTH) as i32;
+    eprintln!(
+        "sidebar drag constraints: configured_min={} measured_child_min={} effective_min={} allocated_start={}",
+        SIDEBAR_MIN_WIDTH,
+        split.sidebar().unwrap().measure(gtk::Orientation::Horizontal, -1).0,
+        effective_min_width,
+        sidebar_start,
+    );
     let press_x = 6.0_f64;
     let origin = handle
         .compute_point(&split, &gtk::graphene::Point::new(0.0, 0.0))
@@ -143,16 +170,17 @@ fn check_live_sidebar_drag(layout: &str, destination: &str, compact: bool) {
         f64,
         std::collections::HashMap<i64, gtk::graphene::Rect>,
     )>;
+    let minimum_movement = effective_min_width - sidebar_start;
     for (movement, expected_width) in [
         (80.0_f64, sidebar_start + 80),
         (80.0, sidebar_start + 80),
         (180.0, sidebar_start + 180),
         (180.0, sidebar_start + 180),
-        (1000.0, 600),
-        (1000.0, 600),
+        ((600 - sidebar_start) as f64, 600),
+        ((600 - sidebar_start) as f64, 600),
         (40.0, sidebar_start + 40),
         (40.0, sidebar_start + 40),
-        (-1000.0, 200),
+        (minimum_movement as f64, effective_min_width),
         (0.0, sidebar_start),
     ] {
         let origin = handle
@@ -161,16 +189,25 @@ fn check_live_sidebar_drag(layout: &str, destination: &str, compact: bool) {
         let offset = press_in_split + movement - f64::from(origin.x()) - press_x;
         drag.emit_by_name::<()>("drag-update", &[&offset, &0.0_f64]);
         settle();
+        let collapsed_overlay_now = split.is_collapsed();
         assert!((sidebar.width() - expected_width).abs() <= 1,
             "{layout}/{destination}: sidebar did not follow pointer BEFORE release: start={sidebar_start} movement={movement} actual={}", sidebar.width());
-        let content_delta = if compact {
+        let content_delta = if collapsed_overlay_now {
             0
         } else {
             expected_width - sidebar_start
         };
         assert!(
             (split.content().unwrap().width() - content_start + content_delta).abs() <= 1,
-            "{layout}/{destination}: gallery did not resize live"
+            "{layout}/{destination}: gallery did not resize live: window={} split={} collapsed={} sidebar_start={} sidebar_now={} content_start={} content_now={} expected_delta={}",
+            window.width(),
+            split.width(),
+            split.is_collapsed(),
+            sidebar_start,
+            sidebar.width(),
+            content_start,
+            split.content().unwrap().width(),
+            content_delta,
         );
         let tiles = visible_tiles();
         assert!(

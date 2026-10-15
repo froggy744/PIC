@@ -321,17 +321,23 @@ mod one_to_one_layout_regression {
     fn native_picture_is_centered_before_the_first_pointer_update() {
         gtk::init().unwrap();
         let lightbox = Lightbox::new();
-        let window = gtk::Window::new();
-        window.set_default_size(200, 120);
-        window.set_child(Some(&lightbox.root));
+        // Mount only the image viewport here. Wayland may choose a larger
+        // initial window than requested, so use a native image larger than
+        // the mapped viewport instead of assuming a 200x120 allocation.
+        lightbox.root.remove_overlay(&lightbox.picture_viewport);
+        lightbox.picture_viewport.set_size_request(200, 120);
+        let window = gtk::Window::builder()
+            .default_width(200)
+            .default_height(120)
+            .child(&lightbox.picture_viewport)
+            .build();
         window.present();
-        lightbox.root.set_visible(true);
         settle();
 
         let photo: PhotoObject = glib::Object::builder::<PhotoObject>()
             .property("id", 1_i64)
-            .property("width", 400_i64)
-            .property("height", 300_i64)
+            .property("width", 1200_i64)
+            .property("height", 800_i64)
             .build();
         let preview_bytes = glib::Bytes::from_owned(vec![0; 200 * 120 * 4]);
         let preview = gtk::gdk::MemoryTexture::new(
@@ -354,13 +360,13 @@ mod one_to_one_layout_regression {
         );
         settle();
 
-        let native_bytes = glib::Bytes::from_owned(vec![0; 400 * 300 * 4]);
+        let native_bytes = glib::Bytes::from_owned(vec![0; 1200 * 800 * 4]);
         let native = gtk::gdk::MemoryTexture::new(
-            400,
-            300,
+            1200,
+            800,
             gtk::gdk::MemoryFormat::R8g8b8a8,
             &native_bytes,
-            400 * 4,
+            1200 * 4,
         );
         lightbox.picture.set_paintable(Some(&native));
         lightbox.picture.set_can_shrink(false);
@@ -369,8 +375,8 @@ mod one_to_one_layout_regression {
             &lightbox.picture_viewport,
             std::slice::from_ref(&photo),
             0,
-            200,
-            120,
+            lightbox.picture_viewport.width(),
+            lightbox.picture_viewport.height(),
             -1.0,
             "test-one-to-one",
         );
@@ -398,10 +404,10 @@ mod one_to_one_layout_regression {
         assert!((bounds.y() + v.value() as f32).abs() < 1.0);
         // The window manager and window decorations determine the actual
         // content allocation; set_default_size does not guarantee 200×120.
-        assert!(h.page_size() < 400.0, "test must overflow horizontally");
-        assert!(v.page_size() < 300.0, "test must overflow vertically");
-        let expected_h = ((400.0 - h.page_size()) / 2.0).round_ties_even();
-        let expected_v = ((300.0 - v.page_size()) / 2.0).round_ties_even();
+        assert!(h.page_size() < 1200.0, "test must overflow horizontally");
+        assert!(v.page_size() < 800.0, "test must overflow vertically");
+        let expected_h = ((1200.0 - h.page_size()) / 2.0).round_ties_even();
+        let expected_v = ((800.0 - v.page_size()) / 2.0).round_ties_even();
         assert!((h.value() - expected_h).abs() < 1.0);
         assert!((v.value() - expected_v).abs() < 1.0);
 
@@ -415,8 +421,8 @@ mod one_to_one_layout_regression {
                 &lightbox.picture_viewport,
                 std::slice::from_ref(&photo),
                 0,
-                lightbox.root.width(),
-                lightbox.root.height(),
+                lightbox.picture_viewport.width(),
+                lightbox.picture_viewport.height(),
                 zoom,
                 "ctrl-wheel",
             );

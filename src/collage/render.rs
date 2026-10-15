@@ -64,8 +64,17 @@ pub fn export(project: &CollageProject, destination: &Path, options: &ExportOpti
     let mut items = project.items.iter().collect::<Vec<_>>();
     items.sort_by_key(|item| item.z);
     for item in items {
-        let target_width = (item.width.max(0.01) * width as f32).ceil() as u32;
-        let target_height = (item.height.max(0.01) * height as f32).ceil() as u32;
+        let tile_width = (item.width.max(0.01) * width as f32).ceil() as u32;
+        let tile_height = (item.height.max(0.01) * height as f32).ceil() as u32;
+        let fraction = if project.round_corners {
+            project.corner_radius.clamp(0.0, 0.5)
+        } else {
+            0.0
+        };
+        // Use the same centered visible shape as the GTK preview. At maximum
+        // rounding rectangular tiles become square before the circle mask.
+        let (inset_x, inset_y, target_width, target_height) =
+            super::model::rounded_tile_bounds(tile_width, tile_height, fraction);
         let decoded = match crate::thumbnail::decode_for_viewer(
             &item.photo.path,
             target_width.max(1),
@@ -110,14 +119,25 @@ pub fn export(project: &CollageProject, destination: &Path, options: &ExportOpti
         } else {
             cover(source, target_width, target_height)
         };
-        if item.rotation.abs() > 0.1 {
-            image = rotate(&image, item.rotation.to_radians(), background);
-        }
+        // Clip BEFORE rotating so circles stay circular rather than turning
+        // into an ellipse around a rotated rectangular bounding box.
         if project.round_corners {
-            round_corners(&mut image, project.corner_radius);
+            round_corners(&mut image, fraction);
         }
-        let x = (item.x * width as f32) as i64;
-        let y = (item.y * height as f32) as i64;
+        if item.rotation.abs() > 0.1 {
+            let rotate_bg = if project.round_corners {
+                image::Rgba([0, 0, 0, 0])
+            } else {
+                background
+            };
+            image = rotate(&image, item.rotation.to_radians(), rotate_bg);
+        }
+        // The visible shape stays centered in its original collage slot,
+        // including when its image has a rotation-expanded bounding box.
+        let tile_x = (item.x * width as f32) as i64 + inset_x as i64;
+        let tile_y = (item.y * height as f32) as i64 + inset_y as i64;
+        let x = tile_x + (target_width as i64 - image.width() as i64) / 2;
+        let y = tile_y + (target_height as i64 - image.height() as i64) / 2;
         image::imageops::overlay(&mut canvas, &image, x, y);
     }
     let parent = destination
@@ -168,8 +188,8 @@ pub fn export(project: &CollageProject, destination: &Path, options: &ExportOpti
     Ok(())
 }
 
-/// Match the GTK percentage-based rounding: 50% is circular for a square,
-/// or oval for a rectangular image. The 2x2 samples soften the cutout edge.
+/// Match the GTK percentage-based rounding after the visible tile has been
+/// made square at full radius. The 2x2 samples soften the cutout edge.
 fn round_corners(image: &mut RgbaImage, radius_ratio: f32) {
     let fraction = radius_ratio.clamp(0.0, 0.5);
     if fraction <= 0.0 {

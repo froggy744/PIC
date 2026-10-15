@@ -8,7 +8,7 @@ use libadwaita as adw;
 
 use super::model::{AspectRatio, Background, CollageOrientation, CollageProject, LayoutKind};
 
-const MAX_PREVIEW_CORNER_RADIUS: i32 = 48;
+const PREVIEW_CORNER_STEPS: i32 = 100;
 
 thread_local! {
     // Bumped on every preview rebuild so late decode results from an older
@@ -88,16 +88,20 @@ fn collage_css() -> String {
          .collage-dragging { opacity: 0.62; }\
          .collage-drop-target { border: 3px solid #4d9fdb; box-shadow: 0 0 0 3px alpha(#4d9fdb, 0.45), 0 3px 12px alpha(#000000, 0.35); }\
          .collage-photo-rounded { }\
-         .collage-layout-tile { min-height: 74px; padding: 8px 4px; border: 1px solid alpha(@theme_fg_color, 0.20); border-radius: 9px; }\
-         .collage-layout-tile:checked { border-color: #3584e4; background-color: alpha(#3584e4, 0.10); }\
+         button.collage-layout-tile { min-height: 74px; padding: 5px 3px; border: 1px solid alpha(@theme_fg_color, 0.17); border-radius: 8px; background-color: transparent; color: @theme_fg_color; box-shadow: none; }\
+         button.collage-layout-tile:checked { border: 2px solid #3584e4; background-color: alpha(#3584e4, 0.08); color: @theme_fg_color; box-shadow: none; }\
+         button.collage-layout-tile label { font-size: 11px; font-weight: normal; }\
+         button.collage-compact-choice { min-height: 28px; padding: 3px 6px; }\
+         button.collage-compact-choice label { font-weight: normal; font-size: 12px; }\
          .collage-shuffle { min-height: 28px; padding: 4px 8px; }\
          .collage-footer { border-top: 1px solid alpha(@theme_fg_color, 0.12); }\
          .collage-radius-row { margin-top: 2px; }\
          .collage-tabs button { min-height: 34px; padding: 4px 10px; }",
     );
-    for radius in 0..=MAX_PREVIEW_CORNER_RADIUS {
+    for radius in 0..=PREVIEW_CORNER_STEPS {
         css.push_str(&format!(
-            ".collage-photo-radius-{radius} {{ border-radius: {radius}px; }}"
+            ".collage-photo-radius-{radius} {{ border-radius: {}%; }}",
+            radius as f32 / 2.0
         ));
     }
     css
@@ -107,6 +111,8 @@ struct PreviewFrame {
     outer: gtk::Widget,
     inner: gtk::Fixed,
     photo: gtk::Frame,
+    outer_radius: Cell<i32>,
+    photo_radius: Cell<i32>,
 }
 
 /// Host-application hooks for tile interactions (threaded into
@@ -284,30 +290,34 @@ pub fn build(
     let mosaic_tile = gtk::ToggleButton::new();
     let smart_tile = gtk::ToggleButton::new();
     let grid_tile = gtk::ToggleButton::new();
-    for (tile, icon, title, tooltip) in [
+    // Like the screensaver selector, preview drawings are vector-only.
+    // Opening the picker never decodes photos or touches offline libraries.
+    for (tile, kind, title, tooltip) in [
         (
             &mosaic_tile,
-            "collage-mosaic-symbolic",
+            LayoutKind::Mosaic,
             "Mosaic",
             "Mosaic: varied tile sizes, no dominant photo",
         ),
         (
             &smart_tile,
-            "collage-smart-mosaic-symbolic",
+            LayoutKind::SmartMosaic,
             "Smart AI",
-            "Smart AI: analyses the selected photo thumbnails and chooses the strongest focal layout",
+            "Smart AI: analyses thumbnails for the strongest focal layout",
         ),
         (
             &grid_tile,
-            "collage-grid-symbolic",
+            LayoutKind::Grid,
             "Grid",
             "Grid: uniform tiles, photos crop to fill",
         ),
     ] {
-        let content = gtk::Box::new(gtk::Orientation::Vertical, 3);
+        let content = gtk::Box::new(gtk::Orientation::Vertical, 4);
         content.set_halign(gtk::Align::Center);
-        content.append(&gtk::Image::from_icon_name(icon));
-        content.append(&gtk::Label::new(Some(title)));
+        content.append(&collage_layout_preview(kind));
+        let label = gtk::Label::new(Some(title));
+        label.add_css_class("caption");
+        content.append(&label);
         tile.set_child(Some(&content));
         tile.set_tooltip_text(Some(tooltip));
         tile.add_css_class("collage-layout-tile");
@@ -330,14 +340,7 @@ pub fn build(
     add_section_label(&controls, "CANVAS");
     // Fit and Fill describe photo scaling separately from canvas orientation.
     // Grid always crops to fill, so neither scaling choice is editable there.
-    let fit_toggle = gtk::ToggleButton::new();
-    {
-        let fit_content = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-        fit_content.set_halign(gtk::Align::Center);
-        fit_content.append(&gtk::Image::from_icon_name("zoom-fit-best-symbolic"));
-        fit_content.append(&gtk::Label::new(Some("Fit")));
-        fit_toggle.set_child(Some(&fit_content));
-    }
+    let fit_toggle = gtk::ToggleButton::with_label("Fit");
     fit_toggle.set_tooltip_text(Some("Fit photos inside their tiles (keep aspect ratio)"));
     let fill_toggle = gtk::ToggleButton::with_label("Fill");
     fill_toggle.set_group(Some(&fit_toggle));
@@ -349,33 +352,18 @@ pub fn build(
     let scaling_enabled = !matches!(project.borrow().layout, LayoutKind::Grid);
     fit_toggle.set_sensitive(scaling_enabled);
     fill_toggle.set_sensitive(scaling_enabled);
-    let portrait_btn = gtk::ToggleButton::new();
-    {
-        let content = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-        content.set_halign(gtk::Align::Center);
-        content.append(&gtk::Image::from_icon_name(
-            "orientation-portrait-left-symbolic",
-        ));
-        content.append(&gtk::Label::new(Some("Portrait")));
-        portrait_btn.set_child(Some(&content));
-    }
+    let portrait_btn = gtk::ToggleButton::with_label("Portrait");
     portrait_btn.set_tooltip_text(Some("Portrait canvas"));
-    let landscape_btn = gtk::ToggleButton::new();
-    {
-        let content = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-        content.set_halign(gtk::Align::Center);
-        content.append(&gtk::Image::from_icon_name(
-            "orientation-landscape-symbolic",
-        ));
-        content.append(&gtk::Label::new(Some("Landscape")));
-        landscape_btn.set_child(Some(&content));
-    }
+    let landscape_btn = gtk::ToggleButton::with_label("Landscape");
     landscape_btn.set_tooltip_text(Some("Landscape canvas"));
     portrait_btn.set_group(Some(&landscape_btn));
     if matches!(project.borrow().orientation, CollageOrientation::Portrait) {
         portrait_btn.set_active(true);
     } else {
         landscape_btn.set_active(true);
+    }
+    for button in [&fit_toggle, &fill_toggle, &portrait_btn, &landscape_btn] {
+        button.add_css_class("collage-compact-choice");
     }
     let orientation_buttons = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     orientation_buttons.add_css_class("linked");
@@ -568,8 +556,11 @@ pub fn build(
 
     add_section_label(&controls, "APPEARANCE");
     // Zero is square; any positive radius enables rounded corners.
-    add_section_label(&controls, "ROUND CORNERS");
-    let corner_radius = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.0, 0.2, 0.005);
+    let corner_caption = gtk::Label::new(Some("Round corners"));
+    corner_caption.set_halign(gtk::Align::Start);
+    corner_caption.add_css_class("dim-label");
+    controls.append(&corner_caption);
+    let corner_radius = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.0, 0.5, 0.005);
     corner_radius.set_value(if project.borrow().round_corners {
         project.borrow().corner_radius as f64
     } else {
@@ -577,7 +568,7 @@ pub fn build(
     });
     corner_radius.set_digits(3);
     corner_radius.set_draw_value(false);
-    corner_radius.set_tooltip_text(Some("Corner radius: 0% is square, 20% is fully rounded"));
+    corner_radius.set_tooltip_text(Some("0% is square; 50% is circular (oval on rectangular tiles)"));
     corner_radius.set_hexpand(true);
     controls.append(&corner_radius);
     {
@@ -593,7 +584,10 @@ pub fn build(
         });
     }
 
-    add_section_label(&controls, "SPACING");
+    let spacing_caption = gtk::Label::new(Some("Spacing"));
+    spacing_caption.set_halign(gtk::Align::Start);
+    spacing_caption.add_css_class("dim-label");
+    controls.append(&spacing_caption);
     let spacing = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.0, 0.08, 0.002);
     spacing.set_value(project.borrow().spacing as f64);
     spacing.set_draw_value(false);
@@ -1132,6 +1126,8 @@ fn refresh_preview(
             outer: frame.upcast(),
             inner,
             photo: photo_frame,
+            outer_radius: Cell::new(0),
+            photo_radius: Cell::new(0),
         });
     }
 
@@ -1152,22 +1148,15 @@ fn update_geometry(
         let y = item.y * height;
         let w = (item.width * width).round().clamp(1.0, width) as i32;
         let h = (item.height * height).round().clamp(1.0, height) as i32;
-        for radius in 0..=MAX_PREVIEW_CORNER_RADIUS {
-            preview
-                .outer
-                .remove_css_class(&format!("collage-photo-radius-{radius}"));
-            preview
-                .photo
-                .remove_css_class(&format!("collage-photo-radius-{radius}"));
-        }
-        if project.round_corners {
-            let radius = (w.min(h) as f32 * project.corner_radius)
-                .round()
-                .clamp(0.0, MAX_PREVIEW_CORNER_RADIUS as f32) as i32;
-            preview
-                .outer
-                .add_css_class(&format!("collage-photo-radius-{radius}"));
-        }
+        // Percentage radii extend to 50%, giving circular square tiles and
+        // ellipses for rectangular tiles, without the old 48px ceiling.
+        let radius_step = if project.round_corners {
+            ((project.corner_radius.clamp(0.0, 0.5) * 200.0).round() as i32)
+                .clamp(0, PREVIEW_CORNER_STEPS)
+        } else {
+            0
+        };
+        set_preview_corner_class(&preview.outer, &preview.outer_radius, radius_step);
         preview.outer.set_size_request(w, h);
         let contain = matches!(project.layout, LayoutKind::Mosaic | LayoutKind::SmartMosaic)
             && project.keep_photo_aspect;
@@ -1193,14 +1182,11 @@ fn update_geometry(
             } else {
                 gtk::Overflow::Visible
             });
-        if project.round_corners && contain {
-            let radius = (photo_w.min(photo_h) as f32 * project.corner_radius)
-                .round()
-                .clamp(0.0, MAX_PREVIEW_CORNER_RADIUS as f32) as i32;
-            preview
-                .photo
-                .add_css_class(&format!("collage-photo-radius-{radius}"));
-        }
+        set_preview_corner_class(
+            &preview.photo,
+            &preview.photo_radius,
+            if contain { radius_step } else { 0 },
+        );
         canvas.move_(&preview.outer, x as f64, y as f64);
         if item.rotation.abs() > f32::EPSILON {
             let transform = gtk::gsk::Transform::new()
@@ -1323,7 +1309,7 @@ mod sizing_tests {
             if widget
                 .clone()
                 .downcast::<gtk::Label>()
-                .is_ok_and(|l| l.text() == "SPACING")
+                .is_ok_and(|l| l.text() == "Spacing")
             {
                 break widget
                     .next_sibling()

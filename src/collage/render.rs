@@ -124,6 +124,13 @@ pub fn export(project: &CollageProject, destination: &Path, options: &ExportOpti
         if project.round_corners {
             round_corners(&mut image, fraction);
         }
+        // The outline is drawn inside the clipped edge so it never spills
+        // into the neighbouring collage photo or changes tile placement.
+        if let Some(color) = project.border.rgb() {
+            let thickness =
+                super::model::border_pixels(target_width.min(target_height), project.border_width);
+            draw_photo_border(&mut image, fraction, color, thickness);
+        }
         if item.rotation.abs() > 0.1 {
             let rotate_bg = if project.round_corners {
                 image::Rgba([0, 0, 0, 0])
@@ -235,6 +242,71 @@ fn round_corners(image: &mut RgbaImage, radius_ratio: f32) {
     }
 }
 
+/// Draw an inset photo outline that follows straight, rounded and circular
+/// edges. Use the same normalized radius as the GTK preview. The existing
+/// alpha mask (if rounded) is preserved, including anti-aliased corner pixels.
+fn draw_photo_border(
+    image: &mut RgbaImage,
+    radius_ratio: f32,
+    color: [u8; 3],
+    thickness: u32,
+) {
+    let width = image.width();
+    let height = image.height();
+    if width == 0 || height == 0 {
+        return;
+    }
+    let inset = thickness.max(1).min(width.min(height) / 2);
+    if inset == 0 {
+        return;
+    }
+    let left = inset as f32;
+    let top = inset as f32;
+    let right = width as f32 - left;
+    let bottom = height as f32 - top;
+    let fraction = radius_ratio.clamp(0.0, 0.5);
+    let radius_x = (width as f32 * fraction - left).max(0.0);
+    let radius_y = (height as f32 * fraction - top).max(0.0);
+    for y in 0..height {
+        for x in 0..width {
+            if image.get_pixel(x, y).0[3] == 0 {
+                continue;
+            }
+            let mut interior_samples = 0u16;
+            for offset_y in [0.25f32, 0.75] {
+                for offset_x in [0.25f32, 0.75] {
+                    let px = x as f32 + offset_x;
+                    let py = y as f32 + offset_y;
+                    if px < left || px > right || py < top || py > bottom {
+                        continue;
+                    }
+                    let in_inner = if radius_x <= 0.0 || radius_y <= 0.0 {
+                        true
+                    } else {
+                        let center_x = px.clamp(left + radius_x, right - radius_x);
+                        let center_y = py.clamp(top + radius_y, bottom - radius_y);
+                        let dx = (px - center_x) / radius_x;
+                        let dy = (py - center_y) / radius_y;
+                        dx * dx + dy * dy <= 1.0
+                    };
+                    if in_inner {
+                        interior_samples += 1;
+                    }
+                }
+            }
+            if interior_samples == 4 {
+                continue;
+            }
+            let outline_samples = 4 - interior_samples;
+            let pixel = image.get_pixel_mut(x, y);
+            for (channel, outline_color) in color.into_iter().enumerate() {
+                pixel.0[channel] = ((pixel.0[channel] as u16 * interior_samples
+                    + outline_color as u16 * outline_samples + 2) / 4) as u8;
+            }
+        }
+    }
+}
+
 fn apply_library_rotation(source: DynamicImage, rotation: i32) -> DynamicImage {
     match rotation.rem_euclid(360) {
         90 => DynamicImage::ImageRgba8(image::imageops::rotate90(&source.to_rgba8())),
@@ -319,6 +391,37 @@ fn fit_inside_tile(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn border_none_is_unchanged_and_square_outline_stays_inside() {
+        let original = RgbaImage::from_pixel(80, 60, image::Rgba([10, 20, 30, 255]));
+        let mut bordered = original.clone();
+        draw_photo_border(&mut bordered, 0.0, [255, 255, 255], 3);
+        assert_eq!(bordered.get_pixel(0, 25).0, [255, 255, 255, 255]);
+        assert_eq!(bordered.get_pixel(40, 30).0, [10, 20, 30, 255]);
+        assert_eq!(bordered.get_pixel(40, 1).0, [255, 255, 255, 255]);
+        assert_eq!(original.get_pixel(0, 25).0, [10, 20, 30, 255]);
+    }
+
+    #[test]
+    fn black_circle_border_tracks_alpha_and_preserves_centre() {
+        let mut tile = RgbaImage::from_pixel(80, 80, image::Rgba([200, 100, 50, 255]));
+        round_corners(&mut tile, 0.5);
+        draw_photo_border(&mut tile, 0.5, [0, 0, 0], 4);
+        assert_eq!(tile.get_pixel(0, 0).0[3], 0);
+        assert_eq!(tile.get_pixel(40, 1).0, [0, 0, 0, 255]);
+        assert_eq!(tile.get_pixel(40, 40).0, [200, 100, 50, 255]);
+    }
+
+    #[test]
+    fn grey_outline_on_rounded_tile_has_no_square_corners() {
+        let mut tile = RgbaImage::from_pixel(80, 80, image::Rgba([255, 10, 10, 255]));
+        round_corners(&mut tile, 0.5);
+        draw_photo_border(&mut tile, 0.5, [136, 136, 136], 3);
+        assert_eq!(tile.get_pixel(0, 0).0[3], 0);
+        assert_eq!(tile.get_pixel(40, 1).0, [136, 136, 136, 255]);
+        assert_eq!(tile.get_pixel(40, 40).0, [255, 10, 10, 255]);
+    }
 
     #[test]
     fn full_radius_masks_square_tiles_as_circles() {

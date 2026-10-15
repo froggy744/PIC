@@ -931,6 +931,12 @@ impl Gallery {
         gallery
     }
 
+    /// Generation used by the navigation presentation layer to avoid fading
+    /// into a model before its replacement is published.
+    pub(crate) fn navigation_model_generation(&self) -> u64 {
+        self.replace_generation.get()
+    }
+
     /// Keep a newly loaded Folder destination out of the painted gallery until
     /// its header has a real position in GTK's published scroll extent.
     pub(crate) fn hold_folder_destination(&self) -> u64 {

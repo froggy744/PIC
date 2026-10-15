@@ -1401,6 +1401,10 @@ pub(crate) fn close_docked_properties() {
 
 /// The Library and Albums index pages are not photo-selection surfaces.
 /// Keep this gate authoritative for InfoBar and photo-menu calls alike.
+pub(crate) fn page_allows_gallery_properties(page: Option<&str>) -> bool {
+    page == Some("photos")
+}
+
 pub(crate) fn set_gallery_properties_allowed(allowed: bool) {
     GALLERY_PROPERTIES_ALLOWED.with(|state| state.set(allowed));
     if !allowed {
@@ -1889,6 +1893,15 @@ fn show_error(parent: &gtk::Widget, heading: &str, message: &str) {
 #[cfg(test)]
 mod photo_actions_tests {
     use super::*;
+
+    #[test]
+    fn library_and_album_indexes_do_not_allow_properties() {
+        assert!(page_allows_gallery_properties(Some("photos")));
+        for page in ["library", "albums", "edit", "collage"] {
+            assert!(!page_allows_gallery_properties(Some(page)));
+        }
+        assert!(!page_allows_gallery_properties(None));
+    }
 
     #[test]
     fn photographic_properties_values() {

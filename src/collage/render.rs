@@ -86,7 +86,9 @@ pub fn export(project: &CollageProject, destination: &Path, options: &ExportOpti
                 geometry.x, geometry.y, geometry.w, geometry.h,
                 geometry.x as f64 + geometry.w as f64 / 2.0,
                 geometry.y as f64 + geometry.h as f64 / 2.0,
-                fraction, border_thickness, project.border, item.rotation,
+                fraction,
+                if project.border.rgb().is_some() { border_thickness } else { 0 },
+                project.border, item.rotation,
                 project.layout,
                 matches!(project.layout, super::model::LayoutKind::Mosaic | super::model::LayoutKind::SmartMosaic)
                     && project.keep_photo_aspect,

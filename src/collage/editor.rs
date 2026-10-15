@@ -100,7 +100,15 @@ fn collage_css() -> String {
          .collage-footer { border-top: 1px solid alpha(@theme_fg_color, 0.12); }\
          paned.collage-editor-paned > separator { min-width: 6px; background: transparent; border: 0; border-left: 1px solid alpha(@theme_fg_color, 0.20); box-shadow: none; }\
          .collage-radius-row { margin-top: 2px; }\
-         .collage-tabs button { min-height: 34px; padding: 4px 10px; }",
+         .collage-tabs button { min-height: 34px; padding: 4px 10px; }\
+         button.collage-color-swatch { min-height: 29px; min-width: 24px; padding: 2px; margin: 0; border-radius: 6px; border: 2px solid alpha(@theme_fg_color, 0.26); box-shadow: none; transition: none; }\
+         button.collage-color-swatch.collage-swatch-none { background: alpha(@theme_fg_color, 0.09); color: @theme_fg_color; }\
+         button.collage-color-swatch.collage-swatch-white { background: #ffffff; }\
+         button.collage-color-swatch.collage-swatch-black { background: #000000; }\
+         button.collage-color-swatch.collage-swatch-light-grey { background: #eeeeee; }\
+         button.collage-color-swatch.collage-swatch-grey { background: #888888; }\
+         button.collage-color-swatch:checked { border: 3px solid #3584e4; box-shadow: 0 0 0 1px alpha(#3584e4, 0.6); }\
+         button.collage-color-swatch:focus-visible { outline: 2px solid #3584e4; outline-offset: 2px; }",
     );
     for radius in 0..=PREVIEW_CORNER_STEPS {
         css.push_str(&format!(
@@ -463,13 +471,16 @@ pub fn build(
         AspectRatio::Custom => 4,
     });
     aspect.set_tooltip_text(Some("Canvas aspect ratio"));
-    let background = gtk::DropDown::from_strings(&["White", "Black", "Light Grey"]);
-    background.set_selected(match project.borrow().background {
+    let (background, background_swatches) = colour_swatch_picker(&[
+        ("White background", "collage-swatch-white"),
+        ("Black background", "collage-swatch-black"),
+        ("Light grey background", "collage-swatch-light-grey"),
+    ]);
+    background_swatches[match project.borrow().background {
         Background::White => 0,
         Background::Black => 1,
         Background::LightGray => 2,
-    });
-    background.set_tooltip_text(Some("Canvas background"));
+    }].set_active(true);
     // Equal halves via a homogeneous grid, matching the edit panel's
     // aspect-preset grid geometry; each dropdown keeps a small title.
     let aspect_background_grid = gtk::Grid::new();
@@ -545,18 +556,23 @@ pub fn build(
         });
     }
 
-    {
+    for (index, button) in background_swatches.iter().enumerate() {
         let project = project.clone();
-        let refresh = refresh.clone();
-        background.connect_selected_notify(move |dropdown| {
-            project.borrow_mut().background = if dropdown.selected() == 1 {
-                Background::Black
-            } else if dropdown.selected() == 2 {
-                Background::LightGray
-            } else {
-                Background::White
+        let canvas = canvas.clone();
+        let frames = frames.clone();
+        button.connect_toggled(move |button| {
+            if !button.is_active() {
+                return;
+            }
+            let background = match index {
+                1 => Background::Black,
+                2 => Background::LightGray,
+                _ => Background::White,
             };
-            refresh();
+            project.borrow_mut().background = background;
+            // CSS-only change: do not destroy 12 photo widgets, lose textures,
+            // or schedule fresh thumbnail sharpening on a colour selection.
+            update_preview_background(&canvas, &frames, background);
         });
     }
 
@@ -617,15 +633,18 @@ pub fn build(
 
     // One compact border color selector; width becomes relevant only when a
     // color is chosen. Border is independent from the collage background.
-    let photo_border = gtk::DropDown::from_strings(&["None", "White", "Black", "Grey"]);
-    photo_border.set_selected(match project.borrow().border {
+    let (photo_border, border_swatches) = colour_swatch_picker(&[
+        ("No border", "collage-swatch-none"),
+        ("White border", "collage-swatch-white"),
+        ("Black border", "collage-swatch-black"),
+        ("Grey border", "collage-swatch-grey"),
+    ]);
+    border_swatches[match project.borrow().border {
         PhotoBorder::None => 0,
         PhotoBorder::White => 1,
         PhotoBorder::Black => 2,
         PhotoBorder::Grey => 3,
-    });
-    photo_border.set_hexpand(true);
-    photo_border.set_tooltip_text(Some("Outline around each photo, including circular photos"));
+    }].set_active(true);
     controls.append(&labelled_control_row("Photo border", &photo_border));
 
     let border_thickness = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.005, 0.04, 0.001);
@@ -640,17 +659,26 @@ pub fn build(
         let canvas = canvas.clone();
         let frames = frames.clone();
         let border_thickness = border_thickness.clone();
-        photo_border.connect_selected_notify(move |dropdown| {
-            let color = match dropdown.selected() {
-                1 => PhotoBorder::White,
-                2 => PhotoBorder::Black,
-                3 => PhotoBorder::Grey,
-                _ => PhotoBorder::None,
-            };
-            project.borrow_mut().border = color;
-            border_thickness.set_sensitive(color != PhotoBorder::None);
-            update_geometry(&canvas, &frames, &project.borrow());
-        });
+        for (index, button) in border_swatches.iter().enumerate() {
+            let project = project.clone();
+            let canvas = canvas.clone();
+            let frames = frames.clone();
+            let border_thickness = border_thickness.clone();
+            button.connect_toggled(move |button| {
+                if !button.is_active() {
+                    return;
+                }
+                let color = match index {
+                    1 => PhotoBorder::White,
+                    2 => PhotoBorder::Black,
+                    3 => PhotoBorder::Grey,
+                    _ => PhotoBorder::None,
+                };
+                project.borrow_mut().border = color;
+                border_thickness.set_sensitive(color != PhotoBorder::None);
+                update_geometry(&canvas, &frames, &project.borrow());
+            });
+        }
     }
     {
         let project = project.clone();
@@ -673,8 +701,9 @@ pub fn build(
         let aspect = aspect.clone();
         let custom_width = custom_width.clone();
         let custom_height = custom_height.clone();
-        let background = background.clone();
-        let photo_border = photo_border.clone();
+        let background_swatches = background_swatches.clone();
+        let border_swatches = border_swatches.clone();
+        let refresh = refresh.clone();
         let border_thickness = border_thickness.clone();
         let corner_radius = corner_radius.clone();
         let spacing = spacing.clone();
@@ -722,8 +751,8 @@ pub fn build(
             aspect.set_selected(aspect_index);
             custom_width.set_value(16.0);
             custom_height.set_value(9.0);
-            background.set_selected(0);
-            photo_border.set_selected(0);
+            background_swatches[0].set_active(true);
+            border_swatches[0].set_active(true);
             border_thickness.set_value(0.012);
             corner_radius.set_value(0.0);
             spacing.set_value(0.018);
@@ -731,6 +760,10 @@ pub fn build(
             aspect_frame.set_ratio(canvas_ratio);
             let mut project_data = project.borrow_mut();
             project_data.relayout();
+            drop(project_data);
+            // If the previous controls were already on their defaults, none
+            // of their toggled signals would request this final repaint.
+            refresh();
         });
     }
 
@@ -951,6 +984,56 @@ fn collage_layout_preview(kind: LayoutKind) -> gtk::DrawingArea {
         }
     });
     area
+}
+
+/// Compact GTK4 radio-like colour blocks. Only the colour is visible;
+/// descriptive hover tips and keyboard focus retain discoverability.
+fn colour_swatch_picker(options: &[(&str, &str)]) -> (gtk::Box, Vec<gtk::ToggleButton>) {
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 5);
+    row.set_hexpand(true);
+    row.set_homogeneous(true);
+    let mut buttons: Vec<gtk::ToggleButton> = Vec::with_capacity(options.len());
+    for &(tooltip, css_class) in options {
+        let button = gtk::ToggleButton::new();
+        button.add_css_class("collage-color-swatch");
+        button.add_css_class(css_class);
+        button.set_hexpand(true);
+        button.set_tooltip_text(Some(tooltip));
+        if let Some(first) = buttons.first() {
+            button.set_group(Some(first));
+        }
+        if css_class == "collage-swatch-none" {
+            button.set_child(Some(&gtk::Image::from_icon_name("edit-clear-symbolic")));
+        }
+        row.append(&button);
+        buttons.push(button);
+    }
+    (row, buttons)
+}
+
+/// The collage canvas and photo letterboxes share one background. Updating
+/// their classes in place preserves the photo widgets and sharper textures.
+fn update_preview_background(
+    canvas: &gtk::Fixed,
+    frames: &Rc<RefCell<Vec<PreviewFrame>>>,
+    background: Background,
+) {
+    let classes = ["collage-white", "collage-black", "collage-light-gray"];
+    let selected = match background {
+        Background::White => "collage-white",
+        Background::Black => "collage-black",
+        Background::LightGray => "collage-light-gray",
+    };
+    for class in classes {
+        canvas.remove_css_class(class);
+    }
+    canvas.add_css_class(selected);
+    for frame in frames.borrow().iter() {
+        for class in classes {
+            frame.outer.remove_css_class(class);
+        }
+        frame.outer.add_css_class(selected);
+    }
 }
 
 fn labelled_control_row(label_text: &str, control: &impl IsA<gtk::Widget>) -> gtk::Box {

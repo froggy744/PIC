@@ -177,6 +177,7 @@
                         &gallery,
                         None,
                         None,
+                        false, // First Folder load needs fresh, correctly ordered membership.
                     );
                     Some(REFRESH_GENERATION.load(std::sync::atomic::Ordering::Relaxed))
                 }

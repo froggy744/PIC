@@ -1938,6 +1938,69 @@ fn show_error(parent: &gtk::Widget, heading: &str, message: &str) {
 
 #[cfg(test)]
 mod photo_actions_tests {
+    #[test]
+    #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+    fn photo_context_menu_uses_visible_lightbox_overlay_not_covered_gallery() {
+        use gtk::prelude::*;
+
+        gtk::init().expect("GTK display needed");
+        let gallery = gtk::Overlay::new();
+        let grid_anchor = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        gallery.set_child(Some(&grid_anchor));
+
+        let lightbox = gtk::Overlay::new();
+        let viewer_anchor = gtk::ScrolledWindow::new();
+        lightbox.set_child(Some(&viewer_anchor));
+        lightbox.set_visible(false);
+
+        // Mirrors PIC: the lightbox is above the gallery split.
+        let surface = gtk::Overlay::new();
+        surface.set_child(Some(&gallery));
+        surface.add_overlay(&lightbox);
+        let window = gtk::Window::builder()
+            .default_width(640)
+            .default_height(480)
+            .child(&surface)
+            .build();
+        window.present();
+        settle_gtk_layout();
+
+        let grid_host = photo_context_menu_host_for_anchor(
+            grid_anchor.upcast_ref(),
+            &gallery,
+            Some(&lightbox),
+        );
+        assert_eq!(grid_host, gallery);
+        lightbox.set_visible(true);
+        settle_gtk_layout();
+
+        // Crucial regression: a lightbox menu on the gallery overlay is
+        // hidden underneath the fullscreen viewer.
+        let viewer_host = photo_context_menu_host_for_anchor(
+            viewer_anchor.upcast_ref(),
+            &gallery,
+            Some(&lightbox),
+        );
+        assert_eq!(viewer_host, lightbox);
+        let grid_host = photo_context_menu_host_for_anchor(
+            grid_anchor.upcast_ref(),
+            &gallery,
+            Some(&lightbox),
+        );
+        assert_eq!(grid_host, gallery);
+
+        lightbox.set_visible(false);
+        assert_eq!(
+            photo_context_menu_host_for_anchor(
+                viewer_anchor.upcast_ref(),
+                &gallery,
+                Some(&lightbox),
+            ),
+            gallery
+        );
+        window.close();
+    }
+
     use super::*;
 
     #[test]

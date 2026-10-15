@@ -4,7 +4,6 @@ thread_local! {
     static ACTIVE_PHOTO_MENU: RefCell<Option<gtk::Widget>> = RefCell::new(None);
     static DOCKED_PROPERTIES_PANEL: RefCell<Option<gtk::Box>> = RefCell::new(None);
     static DOCKED_PROPERTIES_CONTEXT: RefCell<Option<PhotoActionContext>> = RefCell::new(None);
-    static DOCKED_PROPERTIES_LIGHTBOX_VISIBLE: Cell<bool> = const { Cell::new(false) };
     static INSPECTOR_CLOSE_CSS_INSTALLED: Cell<bool> = const { Cell::new(false) };
     static CONTEXT_MENU_CSS_INSTALLED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
@@ -1354,18 +1353,14 @@ pub(crate) fn close_docked_properties() {
     });
 }
 
-pub(crate) fn set_docked_properties_lightbox_visible(lightbox_visible: bool) {
-    DOCKED_PROPERTIES_LIGHTBOX_VISIBLE.with(|flag| flag.set(lightbox_visible));
-    DOCKED_PROPERTIES_PANEL.with(|slot| {
-        if let Some(panel) = slot.borrow().as_ref() {
-            let has_properties = DOCKED_PROPERTIES_CONTEXT.with(|context| context.borrow().is_some());
-            panel.set_visible(!lightbox_visible && has_properties);
-        }
-    });
-}
-
 pub(crate) fn refresh_docked_properties(photo: Option<&crate::photo_object::PhotoObject>) {
     let context = DOCKED_PROPERTIES_CONTEXT.with(|slot| slot.borrow().clone());
+    if context.is_some() && std::env::var_os("PICASA_TRACE").is_some() {
+        eprintln!(
+            "PIC_INSPECTOR stage=refresh photo={} has_context=1",
+            photo.map(|photo| photo.id()).unwrap_or_default()
+        );
+    }
     match (photo, context) {
         (Some(photo), Some(context)) => show_properties_dialog(photo, &context),
         (None, Some(_)) => {
@@ -1627,7 +1622,18 @@ fn show_properties_dialog(
         if let Some(panel) = slot.borrow().as_ref() {
             while let Some(child) = panel.first_child() { panel.remove(&child); }
             panel.append(&content);
-            panel.set_visible(!DOCKED_PROPERTIES_LIGHTBOX_VISIBLE.with(Cell::get));
+            // The lightbox covers the complete gallery/inspector split. Leave
+            // this panel allocated beneath it so opening/closing the viewer
+            // never changes gallery width or reflows tiles mid-scroll restore.
+            panel.set_visible(true);
+            if std::env::var_os("PICASA_TRACE").is_some() {
+                eprintln!(
+                    "PIC_INSPECTOR stage=show photo={} visible={} panel_width={}",
+                    photo.id(),
+                    panel.is_visible(),
+                    panel.width()
+                );
+            }
         }
     });
 }

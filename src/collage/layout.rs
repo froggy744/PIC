@@ -18,6 +18,19 @@ pub fn apply(project: &mut CollageProject) {
     }
 }
 
+/// Lightweight slider path. Smart AI and Mosaic/Fit retain the winning
+/// split tree and change only its gutters. A fresh full solve is reserved for
+/// layout, canvas, Fit/Fill, selection changes and Shuffle.
+pub fn apply_spacing(project: &mut CollageProject) {
+    match project.layout {
+        LayoutKind::Grid => grid(project),
+        LayoutKind::Mosaic if !project.keep_photo_aspect => mosaic(project),
+        LayoutKind::Mosaic | LayoutKind::SmartMosaic => {
+            super::smart_mosaic::apply_spacing(project)
+        }
+    }
+}
+
 fn grid(project: &mut CollageProject) {
     let count = project.items.len().max(1);
     let columns = (count as f32).sqrt().ceil() as usize;
@@ -257,6 +270,7 @@ mod tests {
             keep_photo_aspect: true,
             spacing: 0.02,
             seed,
+            cached_layout: None,
             items: (0..count)
                 .map(|id| CollageItem {
                     photo: CollagePhoto {

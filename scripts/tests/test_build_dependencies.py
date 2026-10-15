@@ -97,7 +97,8 @@ class DependencyPreflightTests(unittest.TestCase):
             (self.bin / tool).symlink_to(stub)
         self.env = dict(os.environ, PATH=f"{self.bin}:/usr/bin:/bin", TEST_STATE=str(self.state),
                         PIC_BUILD_CACHE=str(self.root / "cache"),
-                        PIC_FLATPAK_STATE_DIR=str(self.root / "flatpak-state"))
+                        PIC_FLATPAK_STATE_DIR=str(self.root / "flatpak-state"),
+                        PIC_GNOME_RUNTIME="50", PIC_FDO_RUST_RUNTIME="25.08")
 
     def ready_host(self):
         (self.state / "host-ready").touch()
@@ -171,6 +172,21 @@ class DependencyPreflightTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertNotIn("[y/N]", result.stdout + result.stderr)
         self.assert_no_install()
+        calls = self.calls()
+        self.assertIn("org.gnome.Platform//50", calls)
+        self.assertIn("org.gnome.Sdk//50", calls)
+        self.assertIn("org.freedesktop.Sdk.Extension.rust-stable//25.08", calls)
+
+    def test_packager_defaults_to_the_supported_sdk_pair(self):
+        self.ready_all()
+        self.env.pop("PIC_GNOME_RUNTIME")
+        self.env.pop("PIC_FDO_RUST_RUNTIME")
+        result = self.run_check()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        calls = self.calls()
+        self.assertIn("org.gnome.Platform//50", calls)
+        self.assertIn("org.gnome.Sdk//50", calls)
+        self.assertIn("org.freedesktop.Sdk.Extension.rust-stable//25.08", calls)
 
     def test_appimage_only_does_not_require_flatpak(self):
         self.ready_all()

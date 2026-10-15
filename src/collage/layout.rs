@@ -615,6 +615,46 @@ mod tests {
     }
 
     #[test]
+    fn smart_and_mosaic_fit_spacing_changes_keep_original_composition() {
+        // Reproduces the Fedora trace: the old search changed the hero photo
+        // for a 0.0008 change in Spacing even though the canvas stayed 426x426.
+        for layout in [LayoutKind::SmartMosaic, LayoutKind::Mosaic] {
+            let mut project = smart_project(7, false);
+            project.layout = layout;
+            project.keep_photo_aspect = true;
+            project.relayout();
+            let original_order = project.items.iter().map(|item| item.photo.id).collect::<Vec<_>>();
+            let original_seed = project.seed;
+            let initial_topology = format!("{:?}", project.cached_layout);
+            assert!(project.cached_layout.is_some());
+            let mut previous_centers = project.items.iter().map(|item| {
+                (item.x + item.width / 2.0, item.y + item.height / 2.0)
+            }).collect::<Vec<_>>();
+            for step in 0..=80 {
+                project.spacing = step as f32 * 0.001;
+                project.relayout_spacing();
+                assert_eq!(project.seed, original_seed);
+                assert_eq!(format!("{:?}", project.cached_layout), initial_topology);
+                assert_eq!(project.items.iter().map(|item| item.photo.id).collect::<Vec<_>>(), original_order);
+                assert!(inside(&project), "out-of-bounds at spacing={}", project.spacing);
+                for (item, (last_x, last_y)) in project.items.iter().zip(&previous_centers) {
+                    let cx = item.x + item.width / 2.0;
+                    let cy = item.y + item.height / 2.0;
+                    assert!((cx - last_x).abs() < 0.025 && (cy - last_y).abs() < 0.025,
+                        "unexpected jump layout={layout:?} step={step}, photo={}", item.photo.id);
+                }
+                previous_centers = project.items.iter().map(|item| {
+                    (item.x + item.width / 2.0, item.y + item.height / 2.0)
+                }).collect();
+            }
+            // Explicit Shuffle remains the action that can choose a new
+            // composition; the saved optimisation cache is then replaced.
+            project.shuffle();
+            assert_ne!(format!("{:?}", project.cached_layout), initial_topology);
+        }
+    }
+
+    #[test]
     fn smart_mosaic_allows_limited_crop_when_no_crop_is_disabled() {
         let mut project = smart_project(8, false);
         project.keep_photo_aspect = false;

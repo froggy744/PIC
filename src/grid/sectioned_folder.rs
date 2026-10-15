@@ -412,7 +412,6 @@ impl SectionedFolderView {
                     base.extend(selected_positions(&view.selection));
                 }
                 view.rubberband.set_visible(false);
-                view.root.set_cursor_from_name(Some("crosshair"));
             });
         }
 
@@ -431,6 +430,8 @@ impl SectionedFolderView {
                     return;
                 };
                 gesture.set_state(gtk::EventSequenceState::Claimed);
+                // Keep the pointer on photo clicks; show crosshair only during a real drag.
+                view.root.set_cursor_from_name(Some("crosshair"));
                 let ex = sx + dx;
                 let ey = sy + dy;
                 let left = sx.min(ex);

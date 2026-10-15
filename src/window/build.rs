@@ -2580,6 +2580,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     // The gallery Properties panel reserves width through a right-hand split;
     // only the fullscreen viewer and its own inspector are overlays.
     let page_overlay = gtk::Overlay::new();
+    page_overlay.set_hexpand(true);
     page_overlay.set_vexpand(true);
     page_overlay.set_child(Some(&main_stack));
     let action_menu_autohide = gtk::GestureClick::new();

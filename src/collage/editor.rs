@@ -1617,6 +1617,33 @@ mod sizing_tests {
             // that the live canvas runs before painting each new allocation.
             update_geometry(&editor.canvas, &editor.frames, &editor.project.borrow());
             assert!(editor.canvas.width() > 0 && editor.canvas.height() > 0);
+            // Test the regression reported on Fedora: toggling a border may
+            // repaint over the photo but must never move, resize or rebuild a
+            // tile (CSS borders used to consume GtkFrame content space).
+            let baseline_tiles = editor.frames.borrow().iter().map(|frame| {
+                (frame.outer.width_request(), frame.outer.height_request())
+            }).collect::<Vec<_>>();
+            for color in [PhotoBorder::None, PhotoBorder::White, PhotoBorder::Black, PhotoBorder::Grey] {
+                {
+                    let mut data = editor.project.borrow_mut();
+                    data.border = color;
+                    data.border_width = 0.04;
+                }
+                update_geometry(&editor.canvas, &editor.frames, &editor.project.borrow());
+                for (frame, original) in editor.frames.borrow().iter().zip(&baseline_tiles) {
+                    assert_eq!(
+                        (frame.outer.width_request(), frame.outer.height_request()),
+                        *original, "border {:?} changed the frame size", color
+                    );
+                    assert_eq!(frame.border.width_request(), -1, "border overlay must not request a tile size");
+                }
+            }
+            {
+                let mut data = editor.project.borrow_mut();
+                data.border = PhotoBorder::Black;
+                data.border_width = 0.025;
+            }
+            update_geometry(&editor.canvas, &editor.frames, &editor.project.borrow());
             // Every tile, large or small, gets exactly the same pixel stroke
             // at this canvas allocation. It may scale when the canvas resizes.
             let frame_borders = editor.frames.borrow();

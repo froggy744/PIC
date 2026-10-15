@@ -88,7 +88,10 @@ fn collage_css() -> String {
          .collage-dragging { opacity: 0.62; }\
          .collage-drop-target { border: 3px solid #4d9fdb; box-shadow: 0 0 0 3px alpha(#4d9fdb, 0.45), 0 3px 12px alpha(#000000, 0.35); }\
          .collage-photo-rounded { }\
-         .collage-layout-tile { min-height: 54px; }\
+         .collage-layout-tile { min-height: 74px; padding: 8px 4px; border: 1px solid alpha(@theme_fg_color, 0.20); border-radius: 9px; }\
+         .collage-layout-tile:checked { border-color: #3584e4; background-color: alpha(#3584e4, 0.10); }\
+         .collage-shuffle { min-height: 28px; padding: 4px 8px; }\
+         .collage-footer { border-top: 1px solid alpha(@theme_fg_color, 0.12); }\
          .collage-radius-row { margin-top: 2px; }\
          .collage-tabs button { min-height: 34px; padding: 4px 10px; }",
     );
@@ -199,14 +202,28 @@ pub fn build(
     controls.set_margin_start(18);
     controls.set_margin_end(18);
 
+    // The header contains the only Reset action, kept visually secondary.
+    let reset_defaults = icon_label_button(
+        "view-refresh-symbolic",
+        "Reset",
+        "Restore default collage settings",
+    );
+    reset_defaults.add_css_class("flat");
     let heading = gtk::Label::new(Some("Collage"));
     heading.set_halign(gtk::Align::Start);
     heading.add_css_class("title-2");
-    controls.append(&heading);
     let status = gtk::Label::new(Some(&photo_count_text(project.borrow().items.len())));
     status.set_halign(gtk::Align::Start);
     status.add_css_class("dim-label");
-    controls.append(&status);
+    let heading_column = gtk::Box::new(gtk::Orientation::Vertical, 3);
+    heading_column.set_hexpand(true);
+    heading_column.append(&heading);
+    heading_column.append(&status);
+    let heading_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    heading_row.set_valign(gtk::Align::Start);
+    heading_row.append(&heading_column);
+    heading_row.append(&reset_defaults);
+    controls.append(&heading_row);
 
     let canvas = gtk::Fixed::new();
     canvas.set_hexpand(true);
@@ -248,9 +265,22 @@ pub fn build(
         });
     }
 
-    // Row 1 — layout: three equal tiles with icon over title, radio
-    // behaviour; edit-mode tab styling keeps every button row uniform.
-    add_section_label(&controls, "LAYOUT");
+    // Layout selection and its related Shuffle action share one header.
+    let layout_header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    layout_header.set_hexpand(true);
+    let layout_heading = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    layout_heading.set_hexpand(true);
+    add_section_label(&layout_heading, "LAYOUT");
+    layout_header.append(&layout_heading);
+    let shuffle = icon_label_button(
+        "media-playlist-shuffle-symbolic",
+        "Shuffle",
+        "Shuffle photo order",
+    );
+    shuffle.add_css_class("flat");
+    shuffle.add_css_class("collage-shuffle");
+    layout_header.append(&shuffle);
+    controls.append(&layout_header);
     let mosaic_tile = gtk::ToggleButton::new();
     let smart_tile = gtk::ToggleButton::new();
     let grid_tile = gtk::ToggleButton::new();
@@ -289,21 +319,17 @@ pub fn build(
         LayoutKind::SmartMosaic => smart_tile.set_active(true),
         LayoutKind::Grid => grid_tile.set_active(true),
     }
-    let layout_tiles = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-    layout_tiles.add_css_class("linked");
-    layout_tiles.add_css_class("collage-tabs");
-    // Homogeneous thirds so the layout tiles, the fit/orientation row and
-    // the bottom actions all align to the same three column edges.
+    let layout_tiles = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    // Independent outlined previews, rather than one wide segmented button.
     layout_tiles.set_homogeneous(true);
     for tile in [&mosaic_tile, &smart_tile, &grid_tile] {
         layout_tiles.append(tile);
     }
     controls.append(&layout_tiles);
 
-    // Row 2 — fit + orientation. Fit replaces the keep-photo-aspect
-    // checkbox; it stays visible but insensitive for Grid, which always
-    // crops photos to fill their tiles. Portrait/Landscape form a radio
-    // pair of labelled buttons (icon+label would not fit the column).
+    add_section_label(&controls, "CANVAS");
+    // Fit and Fill describe photo scaling separately from canvas orientation.
+    // Grid always crops to fill, so neither scaling choice is editable there.
     let fit_toggle = gtk::ToggleButton::new();
     {
         let fit_content = gtk::Box::new(gtk::Orientation::Horizontal, 6);
@@ -313,8 +339,16 @@ pub fn build(
         fit_toggle.set_child(Some(&fit_content));
     }
     fit_toggle.set_tooltip_text(Some("Fit photos inside their tiles (keep aspect ratio)"));
-    fit_toggle.set_active(project.borrow().keep_photo_aspect);
-    fit_toggle.set_sensitive(!matches!(project.borrow().layout, LayoutKind::Grid));
+    let fill_toggle = gtk::ToggleButton::with_label("Fill");
+    fill_toggle.set_group(Some(&fit_toggle));
+    if project.borrow().keep_photo_aspect {
+        fit_toggle.set_active(true);
+    } else {
+        fill_toggle.set_active(true);
+    }
+    let scaling_enabled = !matches!(project.borrow().layout, LayoutKind::Grid);
+    fit_toggle.set_sensitive(scaling_enabled);
+    fill_toggle.set_sensitive(scaling_enabled);
     let portrait_btn = gtk::ToggleButton::new();
     {
         let content = gtk::Box::new(gtk::Orientation::Horizontal, 6);
@@ -343,18 +377,23 @@ pub fn build(
     } else {
         landscape_btn.set_active(true);
     }
-    let fit_orientation_row = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-    fit_orientation_row.add_css_class("linked");
-    fit_orientation_row.add_css_class("collage-tabs");
-    fit_orientation_row.set_homogeneous(true);
-    for button in [&fit_toggle, &portrait_btn, &landscape_btn] {
-        fit_orientation_row.append(button);
-    }
-    controls.append(&fit_orientation_row);
+    let orientation_buttons = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    orientation_buttons.add_css_class("linked");
+    orientation_buttons.set_homogeneous(true);
+    orientation_buttons.append(&portrait_btn);
+    orientation_buttons.append(&landscape_btn);
+    controls.append(&labelled_control_row("Orientation", &orientation_buttons));
+    let scaling_buttons = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    scaling_buttons.add_css_class("linked");
+    scaling_buttons.set_homogeneous(true);
+    scaling_buttons.append(&fit_toggle);
+    scaling_buttons.append(&fill_toggle);
+    controls.append(&labelled_control_row("Photo scaling", &scaling_buttons));
     {
         let project = project.clone();
         let refresh = refresh.clone();
         let fit_toggle = fit_toggle.clone();
+        let fill_toggle = fill_toggle.clone();
         let apply_layout = Rc::new(move |layout_kind: LayoutKind| {
             {
                 let mut project_data = project.borrow_mut();
@@ -364,7 +403,9 @@ pub fn build(
                 project_data.layout = layout_kind;
                 project_data.relayout();
             }
-            fit_toggle.set_sensitive(!matches!(layout_kind, LayoutKind::Grid));
+            let scaling_enabled = !matches!(layout_kind, LayoutKind::Grid);
+            fit_toggle.set_sensitive(scaling_enabled);
+            fill_toggle.set_sensitive(scaling_enabled);
             refresh();
         });
         for (button, kind) in [
@@ -418,8 +459,7 @@ pub fn build(
         });
     }
 
-    // Row 3 — aspect ratio + background side by side, each with a small
-    // title above the dropdown.
+    // The canvas presets share a compact row under orientation and scaling.
     let aspect = gtk::DropDown::from_strings(&["Square 1:1", "4:3", "3:2", "16:9", "Custom"]);
     aspect.set_selected(match project.borrow().aspect {
         AspectRatio::Square => 0,
@@ -526,8 +566,8 @@ pub fn build(
         });
     }
 
-    // Zero is square; any positive radius enables rounded corners. Keeping
-    // this as one direct control avoids a second, conflicting on/off state.
+    add_section_label(&controls, "APPEARANCE");
+    // Zero is square; any positive radius enables rounded corners.
     add_section_label(&controls, "ROUND CORNERS");
     let corner_radius = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.0, 0.2, 0.005);
     corner_radius.set_value(if project.borrow().round_corners {
@@ -570,19 +610,14 @@ pub fn build(
         });
     }
 
-    // Bottom actions. Compact icon+label controls grouped right; Create is
-    // the one full-width accent button with Exit beside it.
-    let reset_defaults = icon_label_button(
-        "view-refresh-symbolic",
-        "Reset",
-        "Restore default collage settings",
-    );
+    // Reset stays in the header and restores settings and the Smart canvas.
     {
         let project = project.clone();
         let smart_tile = smart_tile.clone();
         let portrait_btn = portrait_btn.clone();
         let landscape_btn = landscape_btn.clone();
         let fit_toggle = fit_toggle.clone();
+        let fill_toggle = fill_toggle.clone();
         let aspect = aspect.clone();
         let custom_width = custom_width.clone();
         let custom_height = custom_height.clone();
@@ -627,6 +662,7 @@ pub fn build(
             // The tile handler skips no-op activations, so re-assert the
             // fit sensitivity explicitly (it may have been greyed by Grid).
             fit_toggle.set_sensitive(true);
+            fill_toggle.set_sensitive(true);
             aspect.set_selected(aspect_index);
             custom_width.set_value(16.0);
             custom_height.set_value(9.0);
@@ -640,22 +676,8 @@ pub fn build(
         });
     }
 
-    // Bottom actions share the top rows' look: one linked row of three
-    // equal-width blocks spanning the panel width.
-    let actions_row = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-    actions_row.add_css_class("linked");
-    actions_row.add_css_class("collage-tabs");
-    actions_row.set_homogeneous(true);
-    let add_photos = icon_label_button("list-add-symbolic", "Add", "Add photos from the library");
-    let shuffle = icon_label_button(
-        "media-playlist-shuffle-symbolic",
-        "Shuffle",
-        "Shuffle photo order",
-    );
-    actions_row.append(&reset_defaults);
-    actions_row.append(&add_photos);
-    actions_row.append(&shuffle);
-    controls.append(&actions_row);
+    // Shuffle lives beside Layout, while Add Photos and Exit live in the
+    // persistent footer below the scrollable settings.
     {
         let project = project.clone();
         let refresh = refresh.clone();
@@ -665,13 +687,6 @@ pub fn build(
         });
     }
 
-    // Create spans the first two thirds; Exit occupies the last third at
-    // exactly the same block size as Shuffle in the row above.
-    let primary_grid = gtk::Grid::new();
-    primary_grid.set_column_homogeneous(true);
-    primary_grid.set_column_spacing(6);
-    primary_grid.set_hexpand(true);
-    primary_grid.add_css_class("collage-tabs");
     let export = gtk::Button::with_label("Create Collage…");
     if saved_photo_id.get().is_some() {
         export.set_label("Save Collage…");
@@ -679,9 +694,29 @@ pub fn build(
     export.add_css_class("suggested-action");
     export.set_tooltip_text(Some("Render and export the collage as a JPEG"));
     let close = icon_label_button("application-exit-symbolic", "Exit", "Exit collage");
-    primary_grid.attach(&export, 0, 0, 2, 1);
-    primary_grid.attach(&close, 2, 0, 1, 1);
-    controls.append(&primary_grid);
+    let add_photos = icon_label_button(
+        "list-add-symbolic",
+        "Add Photos",
+        "Add photos from the library",
+    );
+    let footer_actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    footer_actions.set_homogeneous(true);
+    footer_actions.append(&add_photos);
+    footer_actions.append(&close);
+    export.set_hexpand(true);
+    let footer = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    footer.add_css_class("collage-footer");
+    footer.set_margin_top(0);
+    footer.set_margin_bottom(16);
+    footer.set_margin_start(0);
+    footer.set_margin_end(0);
+    let footer_content = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    footer_content.set_margin_top(12);
+    footer_content.set_margin_start(18);
+    footer_content.set_margin_end(18);
+    footer_content.append(&footer_actions);
+    footer_content.append(&export);
+    footer.append(&footer_content);
     {
         let project = project.clone();
         let parent = parent.clone();
@@ -693,17 +728,19 @@ pub fn build(
     add_photos.connect_clicked(move |_| on_add_photos());
     close.connect_clicked(move |_| on_close());
 
-    // The controls column is the collage editor's only min-height
-    // contributor. Wrap it in a scrolled window so short windows (e.g.
-    // 1366x768) never overflow the shared bottom bar; the column scrolls
-    // instead while remaining fully expanded when space allows.
+    // Only the settings scroll. Footer actions remain reachable when the
+    // window is short or the panel is narrow.
     let controls_scroll = gtk::ScrolledWindow::new();
     controls_scroll.set_hscrollbar_policy(gtk::PolicyType::Never);
     controls_scroll.set_vscrollbar_policy(gtk::PolicyType::Automatic);
     controls_scroll.set_propagate_natural_width(true);
-    controls_scroll.set_propagate_natural_height(true);
+    controls_scroll.set_propagate_natural_height(false);
+    controls_scroll.set_vexpand(true);
     controls_scroll.set_min_content_width(320);
     controls_scroll.set_child(Some(&controls));
+    let sidebar = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    sidebar.append(&controls_scroll);
+    sidebar.append(&footer);
     // Same adjustable split pane as the edit mode tools panel: users can
     // drag the divider to give the controls or the canvas more room, the
     // panel starts at the same 360px width and never shrinks below 320px.
@@ -714,7 +751,7 @@ pub fn build(
     body.set_resize_start_child(false);
     body.set_shrink_start_child(false);
     body.set_wide_handle(true);
-    body.set_start_child(Some(&controls_scroll));
+    body.set_start_child(Some(&sidebar));
     body.set_end_child(Some(&aspect_frame));
     root.append(&body);
     CollageEditor {
@@ -726,6 +763,16 @@ pub fn build(
         status,
         hooks,
     }
+}
+
+fn labelled_control_row(label_text: &str, control: &impl IsA<gtk::Widget>) -> gtk::Box {
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let label = gtk::Label::new(Some(label_text));
+    label.set_halign(gtk::Align::Start);
+    label.set_hexpand(true);
+    row.append(&label);
+    row.append(control);
+    row
 }
 
 fn add_section_label(parent: &gtk::Box, text: &str) {
@@ -1250,10 +1297,8 @@ mod sizing_tests {
             .iter()
             .map(|f| f.outer.clone())
             .collect::<Vec<_>>();
-        // The controls column lives in the start pane of the adjustable
-        // split, inside a ScrolledWindow (its tall minimum must not leak
-        // into the editor/window request). Descend through pane -> scroll
-        // -> viewport -> controls box to find the scale.
+        // The start pane contains a sidebar (scrolling settings and fixed
+        // footer). Find the spacing scale in the scrolling settings.
         let controls = editor
             .root
             .first_child()
@@ -1261,6 +1306,10 @@ mod sizing_tests {
             .downcast::<gtk::Paned>()
             .unwrap()
             .start_child()
+            .unwrap()
+            .downcast::<gtk::Box>()
+            .unwrap()
+            .first_child()
             .unwrap()
             .downcast::<gtk::ScrolledWindow>()
             .unwrap()

@@ -162,17 +162,115 @@ impl Gallery {
             self.selection.select_item(position as u32, true);
             surface.selection_anchor.set(Some(position as u32));
             surface.cancel_scroll_animation();
-            let generation = Cell::new(surface.scroll_animation_generation.get());
+            let restore_generation = surface.next_photo_restore_generation();
+            // A visible Photo Wall/Masonry target already has an allocated
+            // coordinate and a live tile. Preserve its captured viewport
+            // anchor synchronously so a later focus reveal cannot race a
+            // stale return callback or an unrelated pending allocation.
+            if surface.is_wall() {
+                if let (Some(offset), Some(scroll)) = (
+                    viewport_offset,
+                    surface.scroll.borrow().as_ref().cloned(),
+                ) {
+                    let adjustment = scroll.vadjustment();
+                    let extent_ready = surface.root.is_mapped()
+                        && scroll.is_mapped()
+                        && surface.geometry_width.get() == scroll.width()
+                        && adjustment.page_size() > 0.0
+                        && adjustment.upper() + 1.0 >= surface.total_height.get();
+                    let tile = surface
+                        .live_tiles
+                        .borrow()
+                        .get(&(position as u32))
+                        .map(|live| live.tile.clone());
+                    if extent_ready
+                        && tile.as_ref().is_some_and(|tile| tile.is_mapped() && tile.width() > 0)
+                        && surface.restore_anchor(photo_id, offset)
+                    {
+                        let tile = tile.unwrap();
+                        tile.grab_focus();
+                        let focused = surface
+                            .root
+                            .root()
+                            .and_then(|root| root.focus())
+                            .and_then(|widget| widget.downcast::<SquareTile>().ok())
+                            .and_then(|tile| tile.photo())
+                            .is_some_and(|photo| photo.id() == photo_id);
+                        if focused {
+                            surface.restore_anchor(photo_id, offset);
+                            if std::env::var_os("PIC_GALLERY_RESTORE_TRACE").is_some() {
+                                eprintln!(
+                                    "PIC_GALLERY_RESTORE stage=complete_visible photo={} request={} request_anchor={:.1} target={:?} value={:.1} upper={:.1} page={:.1} focus=true",
+                                    photo_id,
+                                    restore_generation,
+                                    offset,
+                                    surface.wall_state.borrow().layout.item(position),
+                                    adjustment.value(),
+                                    adjustment.upper(),
+                                    adjustment.page_size(),
+                                );
+                            }
+                            return true;
+                        }
+                    }
+                }
+            }
+            // Scroll animation cancellation is also used while GTK rebuilds
+            // Photo Wall/Masonry geometry after mapping or resizing. It must
+            // not cancel this return request: the target remains valid while
+            // that layout work publishes the destination scroll extent.
             let layout_generation = surface.layout_switch_generation.get();
             let weak = Rc::downgrade(&surface);
             let attempts = Cell::new(0_u8);
+            let restore_applied = Cell::new(false);
+            let focus_applied = Cell::new(false);
+            type RestoreLayoutSignature = (i32, i32, i32, i32, i32, u64, u64, u64, u64);
+            let last_layout_signature = Cell::new(None::<RestoreLayoutSignature>);
+            let stable_layout_frames = Cell::new(0_u8);
+            let restored_layout_signature = Cell::new(None::<RestoreLayoutSignature>);
+            let restored_on_attempt = Cell::new(0_u8);
+            let last_scroll_generation = Cell::new(surface.scroll_animation_generation.get());
+            let last_scroll_value = Cell::new(surface.scroll_position());
+            let trace = std::env::var_os("PIC_GALLERY_RESTORE_TRACE").is_some();
+            if trace {
+                let scroll = surface.scroll.borrow().as_ref().cloned();
+                let adjustment = scroll.as_ref().map(|scroll| scroll.vadjustment());
+                eprintln!(
+                    "PIC_GALLERY_RESTORE stage=request photo={} index={} wall={} request={} layout_generation={} mapped={} root={}x{} scroll={}x{} offset={:?} total={:.1} upper={:.1} page={:.1} value={:.1}",
+                    photo_id,
+                    position,
+                    surface.is_wall(),
+                    restore_generation,
+                    layout_generation,
+                    surface.root.is_mapped(),
+                    surface.root.width(),
+                    surface.root.height(),
+                    scroll.as_ref().map_or(0, |scroll| scroll.width()),
+                    scroll.as_ref().map_or(0, |scroll| scroll.height()),
+                    viewport_offset,
+                    surface.total_height.get(),
+                    adjustment.as_ref().map_or(0.0, |adjustment| adjustment.upper()),
+                    adjustment.as_ref().map_or(0.0, |adjustment| adjustment.page_size()),
+                    adjustment.as_ref().map_or(0.0, |adjustment| adjustment.value()),
+                );
+            }
             surface.root.add_tick_callback(move |_, _| {
                 let Some(surface) = weak.upgrade() else {
                     return glib::ControlFlow::Break;
                 };
                 if surface.layout_switch_generation.get() != layout_generation
-                    || surface.scroll_animation_generation.get() != generation.get()
+                    || surface.photo_restore_generation.get() != restore_generation
                 {
+                    if trace {
+                        eprintln!(
+                            "PIC_GALLERY_RESTORE stage=cancelled photo={} reason=superseded layout={} expected_layout={} request={} current_request={}",
+                            photo_id,
+                            surface.layout_switch_generation.get(),
+                            layout_generation,
+                            restore_generation,
+                            surface.photo_restore_generation.get(),
+                        );
+                    }
                     return glib::ControlFlow::Break;
                 }
                 let Some(index) = surface
@@ -181,40 +279,278 @@ impl Gallery {
                     .iter()
                     .position(|photo| photo.id() == photo_id)
                 else {
+                    if trace {
+                        eprintln!(
+                            "PIC_GALLERY_RESTORE stage=cancelled photo={} request={} reason=target_missing",
+                            photo_id, restore_generation,
+                        );
+                    }
                     return glib::ControlFlow::Break;
                 };
                 if !surface.selection.is_selected(index as u32) {
+                    if trace {
+                        eprintln!(
+                            "PIC_GALLERY_RESTORE stage=cancelled photo={} request={} reason=selection_changed",
+                            photo_id, restore_generation,
+                        );
+                    }
                     return glib::ControlFlow::Break;
                 }
+                // A geometry resize can cancel a scroll animation while the
+                // viewport is being allocated. Accept that generation change
+                // and continue waiting for the matching adjustment extent.
+                // A value change without such an internal operation is user
+                // scrolling; let the user's viewport take precedence.
+                let scroll_generation = surface.scroll_animation_generation.get();
+                let scroll_value = surface.scroll_position();
+                if scroll_generation == last_scroll_generation.get()
+                    && (scroll_value - last_scroll_value.get()).abs() > 0.5
+                {
+                    if trace {
+                        eprintln!(
+                            "PIC_GALLERY_RESTORE stage=cancelled photo={} reason=user_scroll previous={:.1} current={:.1}",
+                            photo_id,
+                            last_scroll_value.get(),
+                            scroll_value,
+                        );
+                    }
+                    surface.cancel_photo_restore();
+                    return glib::ControlFlow::Break;
+                }
+                last_scroll_generation.set(scroll_generation);
+                last_scroll_value.set(scroll_value);
                 attempts.set(attempts.get().saturating_add(1));
+                let scroll = surface.scroll.borrow().as_ref().cloned();
+                let adjustment = scroll.as_ref().map(|scroll| scroll.vadjustment());
+                let layout_signature = if surface.is_wall() {
+                    scroll.as_ref().zip(adjustment.as_ref()).map(|(scroll, adjustment)| {
+                        (
+                            surface.root.width(),
+                            surface.root.height(),
+                            scroll.width(),
+                            scroll.height(),
+                            surface.geometry_width.get(),
+                            surface.wall_state.borrow().generation,
+                            adjustment.upper().to_bits(),
+                            adjustment.page_size().to_bits(),
+                            surface.total_height.get().to_bits(),
+                        )
+                    })
+                } else {
+                    None
+                };
+                let wall_layout_ready = if surface.is_wall() {
+                    let ready = scroll.as_ref().zip(adjustment.as_ref()).is_some_and(
+                        |(scroll, adjustment)| {
+                            surface.root.is_mapped()
+                                && scroll.is_mapped()
+                                && surface.root.width() > 0
+                                && surface.root.width() == scroll.width()
+                                && surface.geometry_width.get() == scroll.width()
+                                && adjustment.page_size() > 0.0
+                                && adjustment.upper() + 1.0 >= surface.total_height.get()
+                        },
+                    );
+                    if let Some(signature) = layout_signature {
+                        if last_layout_signature.get() == Some(signature) {
+                            stable_layout_frames
+                                .set(stable_layout_frames.get().saturating_add(1));
+                        } else {
+                            if restore_applied.get()
+                                && restored_layout_signature.get() != Some(signature)
+                                && trace
+                            {
+                                eprintln!(
+                                    "PIC_GALLERY_RESTORE stage=reflow_after_restore photo={} request={} attempt={} previous={:?} current={:?}",
+                                    photo_id,
+                                    restore_generation,
+                                    attempts.get(),
+                                    restored_layout_signature.get(),
+                                    signature,
+                                );
+                            }
+                            last_layout_signature.set(Some(signature));
+                            stable_layout_frames.set(0);
+                            if restored_layout_signature.get() != Some(signature) {
+                                restore_applied.set(false);
+                                focus_applied.set(false);
+                            }
+                        }
+                    }
+                    ready && stable_layout_frames.get() >= 1
+                } else {
+                    true
+                };
+                if !wall_layout_ready {
+                    if trace {
+                        eprintln!(
+                            "PIC_GALLERY_RESTORE stage=wait_layout photo={} request={} attempt={} root={}x{} scroll={}x{} geometry_width={} geometry_generation={} target={:?} stable_frames={} ready={} upper={:.1} page={:.1} value={:.1}",
+                            photo_id,
+                            restore_generation,
+                            attempts.get(),
+                            surface.root.width(),
+                            surface.root.height(),
+                            scroll.as_ref().map_or(0, |scroll| scroll.width()),
+                            scroll.as_ref().map_or(0, |scroll| scroll.height()),
+                            surface.geometry_width.get(),
+                            surface.wall_state.borrow().generation,
+                            surface.wall_state.borrow().layout.item(index as usize).map(|item| (item.x, item.y, item.width, item.height)),
+                            stable_layout_frames.get(),
+                            scroll.as_ref().zip(adjustment.as_ref()).is_some_and(|(scroll, adjustment)| surface.root.is_mapped() && scroll.is_mapped() && surface.root.width() > 0 && surface.root.width() == scroll.width() && surface.geometry_width.get() == scroll.width() && adjustment.page_size() > 0.0 && adjustment.upper() + 1.0 >= surface.total_height.get()),
+                            adjustment.as_ref().map_or(0.0, |adjustment| adjustment.upper()),
+                            adjustment.as_ref().map_or(0.0, |adjustment| adjustment.page_size()),
+                            adjustment.as_ref().map_or(0.0, |adjustment| adjustment.value()),
+                        );
+                    }
+                    if attempts.get() >= 60 {
+                        if trace {
+                            eprintln!(
+                                "PIC_GALLERY_RESTORE stage=exhausted photo={} request={} attempts={} reason=layout_not_stable",
+                                photo_id, restore_generation, attempts.get(),
+                            );
+                        }
+                        return glib::ControlFlow::Break;
+                    }
+                    return glib::ControlFlow::Continue;
+                }
                 // Lightbox close may precede the destination allocation.
                 // Restore after mapping/extent publication, then focus the
                 // actual tile rather than leaving focus on the container.
-                let restored = surface.root.is_mapped()
-                    && if let Some(offset) = viewport_offset {
-                        surface.restore_anchor(photo_id, offset)
-                    } else {
-                        surface.scroll_to_index_centered_now(index as u32)
-                    };
+                let restore_was_needed = !restore_applied.get();
+                let restored = if !restore_was_needed {
+                    true
+                } else {
+                    surface.root.is_mapped()
+                        && if let Some(offset) = viewport_offset {
+                            surface.restore_anchor(photo_id, offset)
+                        } else {
+                            surface.scroll_to_index_centered_now(index as u32)
+                        }
+                };
+                if trace {
+                    let child = scroll.as_ref().and_then(|scroll| scroll.child());
+                    let target = surface
+                        .wall_state
+                        .borrow()
+                        .layout
+                        .item(index as usize)
+                        .map(|item| (item.x, item.y, item.width, item.height));
+                    let root_focus = surface
+                        .root
+                        .root()
+                        .and_then(|root| root.focus());
+                    let focused_photo = root_focus
+                        .and_then(|widget| widget.downcast::<SquareTile>().ok())
+                        .and_then(|tile| tile.photo())
+                        .map(|photo| photo.id());
+                    eprintln!(
+                        "PIC_GALLERY_RESTORE stage=attempt photo={} request={} attempt={} mapped={} restored={} wall={} root={}x{} scroll={}x{} child={}x{} geometry_width={} geometry_generation={} target={:?} focused_photo={:?} total={:.1} upper={:.1} page={:.1} value={:.1}",
+                        photo_id,
+                        restore_generation,
+                        attempts.get(),
+                        surface.root.is_mapped(),
+                        restored,
+                        surface.is_wall(),
+                        surface.root.width(),
+                        surface.root.height(),
+                        scroll.as_ref().map_or(0, |scroll| scroll.width()),
+                        scroll.as_ref().map_or(0, |scroll| scroll.height()),
+                        child.as_ref().map_or(0, |child| child.width()),
+                        child.as_ref().map_or(0, |child| child.height()),
+                        surface.geometry_width.get(),
+                        surface.wall_state.borrow().generation,
+                        target,
+                        focused_photo,
+                        surface.total_height.get(),
+                        adjustment.as_ref().map_or(0.0, |a| a.upper()),
+                        adjustment.as_ref().map_or(0.0, |a| a.page_size()),
+                        adjustment.as_ref().map_or(0.0, |a| a.value()),
+                    );
+                }
+                last_scroll_generation.set(surface.scroll_animation_generation.get());
+                last_scroll_value.set(surface.scroll_position());
                 if restored {
-                    generation.set(surface.scroll_animation_generation.get());
+                    restore_applied.set(true);
+                    if restore_was_needed {
+                        if let Some(signature) = layout_signature {
+                            restored_layout_signature.set(Some(signature));
+                        }
+                        restored_on_attempt.set(attempts.get());
+                    }
                     let tile = surface
                         .live_tiles
                         .borrow()
                         .get(&(index as u32))
                         .map(|live| live.tile.clone());
                     if let Some(tile) = tile {
-                        if tile.is_mapped() && tile.width() > 0 && tile.grab_focus() {
+                        let mut has_focus = surface
+                            .root
+                            .root()
+                            .and_then(|root| root.focus())
+                            .and_then(|widget| widget.downcast::<SquareTile>().ok())
+                            .and_then(|tile| tile.photo())
+                            .is_some_and(|photo| photo.id() == photo_id);
+                        if tile.is_mapped() && tile.width() > 0 && !has_focus {
+                            tile.grab_focus();
+                            has_focus = surface
+                                .root
+                                .root()
+                                .and_then(|root| root.focus())
+                                .and_then(|widget| widget.downcast::<SquareTile>().ok())
+                                .and_then(|tile| tile.photo())
+                                .is_some_and(|photo| photo.id() == photo_id);
+                        }
+                        if tile.is_mapped() && tile.width() > 0 && has_focus {
                             // GTK focus can reveal a clipped tile. Preserve the
                             // original viewport even for a partially visible row.
-                            if let Some(offset) = viewport_offset {
-                                surface.restore_anchor(photo_id, offset);
+                            if !focus_applied.get() {
+                                if let Some(offset) = viewport_offset {
+                                    surface.restore_anchor(photo_id, offset);
+                                }
+                                focus_applied.set(true);
                             }
-                            return glib::ControlFlow::Break;
+                            if !surface.is_wall() {
+                                if trace {
+                                    eprintln!(
+                                        "PIC_GALLERY_RESTORE stage=complete photo={} request={} attempt={} focused_photo={:?} value={:.1}",
+                                        photo_id,
+                                        restore_generation,
+                                        attempts.get(),
+                                        Some(photo_id),
+                                        surface.scroll_position(),
+                                    );
+                                }
+                                return glib::ControlFlow::Break;
+                            }
+                            if stable_layout_frames.get() >= 1
+                                && restored_layout_signature.get() == layout_signature
+                                && attempts.get() > restored_on_attempt.get()
+                            {
+                                if trace {
+                                    eprintln!(
+                                        "PIC_GALLERY_RESTORE stage=complete photo={} request={} attempt={} stable_frames={} target={:?} focused_photo={:?} value={:.1}",
+                                        photo_id,
+                                        restore_generation,
+                                        attempts.get(),
+                                        stable_layout_frames.get(),
+                                        surface.wall_state.borrow().layout.item(index as usize).map(|item| (item.x, item.y, item.width, item.height)),
+                                        Some(photo_id),
+                                        surface.scroll_position(),
+                                    );
+                                }
+                                return glib::ControlFlow::Break;
+                            }
                         }
                     }
                 }
                 if attempts.get() >= 60 {
+                    if trace {
+                        eprintln!(
+                            "PIC_GALLERY_RESTORE stage=exhausted photo={} attempts={}",
+                            photo_id,
+                            attempts.get(),
+                        );
+                    }
                     glib::ControlFlow::Break
                 } else {
                     glib::ControlFlow::Continue

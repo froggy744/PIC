@@ -187,6 +187,7 @@ struct SectionedFolderView {
     selection_anchor: Rc<Cell<Option<u32>>>,
     keyboard_preferred_column: Rc<Cell<Option<u32>>>,
     scroll_animation_generation: Cell<u64>,
+    photo_restore_generation: Cell<u64>,
     reflow_animation_generation: Cell<u64>,
     // Wall/Masonry zoom changes layout once; only tile paint scale animates.
     wall_zoom_active: Cell<bool>,
@@ -287,6 +288,7 @@ impl SectionedFolderView {
             selection_anchor: Rc::new(Cell::new(None)),
             keyboard_preferred_column: Rc::new(Cell::new(None)),
             scroll_animation_generation: Cell::new(0),
+            photo_restore_generation: Cell::new(0),
             reflow_animation_generation: Cell::new(0),
             wall_zoom_active: Cell::new(false),
             wall_zoom_scale: Cell::new(1.0),
@@ -1845,8 +1847,26 @@ impl SectionedFolderView {
     }
 
     fn cancel_scroll_animation(&self) {
+        let previous = self.scroll_animation_generation.get();
         self.scroll_animation_generation
-            .set(self.scroll_animation_generation.get().wrapping_add(1));
+            .set(previous.wrapping_add(1));
+        if std::env::var_os("PIC_GALLERY_RESTORE_TRACE").is_some() {
+            eprintln!(
+                "PIC_GALLERY_RESTORE stage=scroll_animation_cancel previous_generation={} generation={}",
+                previous,
+                self.scroll_animation_generation.get(),
+            );
+        }
+    }
+
+    fn next_photo_restore_generation(&self) -> u64 {
+        let generation = self.photo_restore_generation.get().wrapping_add(1);
+        self.photo_restore_generation.set(generation);
+        generation
+    }
+
+    fn cancel_photo_restore(&self) {
+        self.next_photo_restore_generation();
     }
 
     fn smooth_keep_index_in_center_zone(self: &Rc<Self>, index: u32) -> bool {
@@ -1897,12 +1917,33 @@ impl SectionedFolderView {
         let weak = Rc::downgrade(self);
         let started = Instant::now();
         const DURATION_MS: f64 = 190.0;
+        if std::env::var_os("PIC_GALLERY_RESTORE_TRACE").is_some() {
+            eprintln!(
+                "PIC_GALLERY_RESTORE stage=scroll_animation_start source={} generation={} index={} from={:.1} target={:.1} root={}x{} geometry_width={}",
+                source,
+                generation,
+                index,
+                start,
+                target,
+                self.root.width(),
+                self.root.height(),
+                self.geometry_width.get(),
+            );
+        }
 
         self.root.add_tick_callback(move |_, _| {
             let Some(view) = weak.upgrade() else {
                 return glib::ControlFlow::Break;
             };
             if view.scroll_animation_generation.get() != generation {
+                if std::env::var_os("PIC_GALLERY_RESTORE_TRACE").is_some() {
+                    eprintln!(
+                        "PIC_GALLERY_RESTORE stage=scroll_animation_cancelled source={} generation={} current_generation={}",
+                        source,
+                        generation,
+                        view.scroll_animation_generation.get(),
+                    );
+                }
                 return glib::ControlFlow::Break;
             }
 
@@ -2271,6 +2312,7 @@ impl Gallery {
     pub fn cancel_sectioned_folder_scroll_animation(&self) {
         if self.using_virtual_photo_surface() {
             self.sectioned_folder.cancel_scroll_animation();
+            self.sectioned_folder.cancel_photo_restore();
             if std::env::var_os("PICASA_TRACE").is_some() {
                 eprintln!("PIC_SECTIONED_SCROLL_CANCEL source=lightbox_open");
             }

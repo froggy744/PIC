@@ -32,6 +32,17 @@ fn menu_row_visible(menu: &gtk::Box, title: &str) -> Option<bool> {
     None
 }
 
+fn wait_for_mapped(widgets: &[gtk::Widget]) {
+    let context = glib::MainContext::default();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while widgets.iter().any(|widget| !widget.is_mapped()) && Instant::now() < deadline {
+        while context.pending() {
+            context.iteration(false);
+        }
+        std::thread::yield_now();
+    }
+}
+
 #[test]
 #[ignore = "requires a GTK display; run individually"]
 fn compact_toolbar_keeps_actions_usable_and_restores_wide_layout() {
@@ -128,7 +139,7 @@ fn compact_toolbar_keeps_actions_usable_and_restores_wide_layout() {
                 );
             }
             overflow.popup();
-            settle();
+            wait_for_mapped(&moved);
             let menu_box = overflow
                 .popover()
                 .unwrap()

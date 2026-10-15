@@ -12,6 +12,21 @@ fn settle() {
     }
 }
 
+fn wait_for_restore(predicate: impl Fn() -> bool) -> bool {
+    let context = glib::MainContext::default();
+    let deadline = Instant::now() + std::time::Duration::from_secs(3);
+    while Instant::now() < deadline {
+        if predicate() {
+            return true;
+        }
+        while context.pending() {
+            context.iteration(false);
+        }
+        std::thread::yield_now();
+    }
+    predicate()
+}
+
 #[test]
 #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
 fn keyboard_open_uses_the_visible_thumbnail_in_all_gallery_layouts() {
@@ -799,9 +814,28 @@ fn check_lightbox_return(layout: PhotoLayout) {
     // from the photo originally opened after navigating inside the viewer.
     let target = 1500;
     gallery.restore_activated_photo(objects[target].id());
-    gallery.grab_focus();
     window.present();
-    settle();
+    let returned_photo_id = objects[target].id();
+    assert!(
+        wait_for_restore(|| {
+            let state = gallery.sectioned_folder.wall_state.borrow();
+            let Some(item) = state.layout.item(target) else {
+                return false;
+            };
+            let adjustment = scroll.vadjustment();
+            let centered =
+                (item.y + item.height * 0.5 - adjustment.value() - adjustment.page_size() * 0.5)
+                    .abs()
+                    < 2.0;
+            let focused = gtk::prelude::RootExt::focus(&window)
+                .and_then(|widget| widget.downcast::<SquareTile>().ok())
+                .and_then(|tile| tile.photo())
+                .is_some_and(|photo| photo.id() == returned_photo_id);
+            centered && focused
+        }),
+        "returned photo {} was not centered and focused after GTK published the scroll extent",
+        returned_photo_id,
+    );
     assert_eq!(selected_positions(&gallery.selection), vec![target as u32]);
     let surface = &gallery.sectioned_folder;
     let state = surface.wall_state.borrow();
@@ -827,7 +861,6 @@ fn check_lightbox_return(layout: PhotoLayout) {
     settle();
     let target = 1200;
     gallery.restore_activated_photo(objects[target].id());
-    gallery.grab_focus();
     settle();
     assert_eq!(surface.wall_state.borrow().layout.sections.len(), 2);
     let focused = gtk::prelude::RootExt::focus(&window)
@@ -865,7 +898,6 @@ fn check_lightbox_return(layout: PhotoLayout) {
             settle();
             let before = adjustment.value();
             gallery.restore_activated_photo(objects[target].id());
-            gallery.grab_focus();
             settle();
             assert!(
                 (adjustment.value() - before).abs() < 1.0,

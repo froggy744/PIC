@@ -1469,6 +1469,11 @@ mod sizing_tests {
             })
             .collect();
         editor.project.borrow_mut().relayout();
+        {
+            let mut project = editor.project.borrow_mut();
+            project.border = PhotoBorder::Black;
+            project.border_width = 0.025;
+        }
         refresh_preview(
             &editor.canvas,
             &editor.frames,
@@ -1556,6 +1561,16 @@ mod sizing_tests {
             // that the live canvas runs before painting each new allocation.
             update_geometry(&editor.canvas, &editor.frames, &editor.project.borrow());
             assert!(editor.canvas.width() > 0 && editor.canvas.height() > 0);
+            // Every tile, large or small, gets exactly the same pixel stroke
+            // at this canvas allocation. It may scale when the canvas resizes.
+            let frame_borders = editor.frames.borrow();
+            let expected = frame_borders[0].border_class.get();
+            assert!(expected > 0, "black outline must be applied");
+            assert!(
+                frame_borders.iter().all(|frame| frame.border_class.get() == expected),
+                "different-sized collage photos must have identical border widths"
+            );
+            drop(frame_borders);
             for step in (0..=20).chain((0..20).rev()) {
                 spacing.set_value(step as f64 * 0.004);
                 toast.allocate(width, height, -1, None);

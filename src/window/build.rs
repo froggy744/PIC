@@ -2630,6 +2630,114 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     page_overlay.set_hexpand(true);
     page_overlay.set_vexpand(true);
     page_overlay.set_child(Some(&main_stack));
+    // Freeze the previously presented gallery before a sidebar destination
+    // replaces its model. GtkWidgetPaintable::current_image() is immutable:
+    // unlike a live WidgetPaintable it cannot redraw the new model underneath
+    // the outgoing image. Only one viewport-sized render node is retained.
+    let nav_fade_sequence = Rc::new(Cell::new(0_u64));
+    let nav_fade_overlay: Rc<RefCell<Option<gtk::Picture>>> =
+        Rc::new(RefCell::new(None));
+    let nav_fade_begin: Rc<dyn Fn(bool, bool)> = {
+        let page_overlay = page_overlay.clone();
+        let main_stack = main_stack.clone();
+        let gallery = gallery.clone();
+        let sequence = nav_fade_sequence.clone();
+        let active = nav_fade_overlay.clone();
+        Rc::new(move |folder_destination, photo_destination| {
+            let next = sequence.get().wrapping_add(1);
+            sequence.set(next);
+            // Rapid navigation retains the already frozen image rather than
+            // snapshotting a partly rebuilt or temporarily hidden destination.
+            let previous = active.borrow_mut().take();
+            let frozen = if let Some(ref previous) = previous {
+                previous.paintable().map(|image| image.current_image())
+            } else if main_stack.is_mapped()
+                && main_stack.width() > 1
+                && main_stack.height() > 1
+                && matches!(
+                    main_stack.visible_child_name().as_deref(),
+                    Some("photos" | "library" | "albums")
+                )
+            {
+                Some(gtk::WidgetPaintable::new(Some(&main_stack)).current_image())
+            } else {
+                None
+            };
+            if let Some(previous) = previous {
+                page_overlay.remove_overlay(&previous);
+            }
+            let Some(frozen) = frozen else {
+                return;
+            };
+            if frozen.intrinsic_width() <= 1 || frozen.intrinsic_height() <= 1 {
+                return;
+            }
+            let outgoing = gtk::Picture::for_paintable(&frozen);
+            outgoing.set_content_fit(gtk::ContentFit::Fill);
+            outgoing.set_hexpand(true);
+            outgoing.set_vexpand(true);
+            outgoing.set_halign(gtk::Align::Fill);
+            outgoing.set_valign(gtk::Align::Fill);
+            outgoing.set_can_target(false);
+            page_overlay.add_overlay(&outgoing);
+            active.replace(Some(outgoing.clone()));
+
+            let previous_model_generation = gallery.navigation_model_generation();
+            let started = Instant::now();
+            let fading = Rc::new(RefCell::new(None::<Instant>));
+            let mut ready_frames = 0_u8;
+            let sequence_for_tick = sequence.clone();
+            let page_for_tick = page_overlay.clone();
+            let gallery_for_tick = gallery.clone();
+            let active_for_tick = active.clone();
+            outgoing.add_tick_callback(move |image, _clock| {
+                if sequence_for_tick.get() != next {
+                    return glib::ControlFlow::Break;
+                }
+                let now = Instant::now();
+                if fading.borrow().is_none() {
+                    let model_ready = !photo_destination
+                        || (gallery_for_tick.navigation_model_generation()
+                            != previous_model_generation
+                            && !gallery_for_tick.stream_building());
+                    let folder_ready = !folder_destination
+                        || (gallery_for_tick.visible_root().opacity() >= 0.99
+                            && !gallery_for_tick.stream_building());
+                    if !model_ready || !folder_ready {
+                        ready_frames = 0;
+                        return glib::ControlFlow::Continue;
+                    }
+                    // The new model must survive a GTK frame before fading
+                    // away the outgoing image. No thumbnail decode is awaited.
+                    ready_frames += 1;
+                    if ready_frames < 2 {
+                        return glib::ControlFlow::Continue;
+                    }
+                    *fading.borrow_mut() = Some(now);
+                    crate::nav_transition_trace!(
+                        "stage=crossfade_start generation={next} preparation_ms={} folder={folder_destination}",
+                        started.elapsed().as_millis(),
+                    );
+                }
+                let elapsed = fading.borrow().as_ref().unwrap().elapsed().as_secs_f64();
+                let t = (elapsed / 0.160).clamp(0.0, 1.0);
+                // Smoothstep: ease-in/ease-out, no layout or scroll animation.
+                let eased = t * t * (3.0 - 2.0 * t);
+                image.set_opacity(1.0 - eased);
+                if t >= 1.0 {
+                    page_for_tick.remove_overlay(image);
+                    active_for_tick.replace(None);
+                    crate::nav_transition_trace!(
+                        "stage=crossfade_complete generation={next} total_ms={}",
+                        started.elapsed().as_millis(),
+                    );
+                    glib::ControlFlow::Break
+                } else {
+                    glib::ControlFlow::Continue
+                }
+            });
+        })
+    };
     let action_menu_autohide = gtk::GestureClick::new();
     action_menu_autohide.set_button(1);
     action_menu_autohide.set_propagation_phase(gtk::PropagationPhase::Capture);

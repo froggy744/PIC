@@ -3090,6 +3090,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             return;
         }
         photo.set_favorite(favorite);
+        refresh_lightbox_properties(&photo);
         if filter_for_favorite.get() == sidebar::SidebarFilter::Favorites && !favorite {
             gallery_for_favorite.remove_photos(&[photo.id()]);
             if lightbox_for_favorite.root.is_visible() {
@@ -3136,6 +3137,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             gallery_for_rating.update_ratings(&ids, target);
             photo.set_rating(target);
             info_for_rating.set_photo(Some(&photo));
+            refresh_lightbox_properties(&photo);
 
             // Rebuild only when this edit can change visible membership or
             // ordering. Otherwise rating remains a cheap in-place badge update.
@@ -4138,6 +4140,7 @@ fn start_photo_export_single(
                                 gallery_for_keys.update_ratings(&ids, rating);
                                 photo.set_rating(rating);
                                 info_for_keys.set_photo(Some(&photo));
+                                refresh_lightbox_properties(&photo);
 
                                 if rating_filter_for_keys.get() != RatingFilter::All
                                     || sort_for_keys.get().field == SortField::Rating

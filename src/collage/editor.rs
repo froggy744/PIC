@@ -1318,6 +1318,11 @@ fn update_geometry(
     if width < 1.0 || height < 1.0 {
         return; // Wait for the first real allocation; never invent a minimum.
     }
+    // One canvas-wide stroke width: every photo gets the same thickness,
+    // regardless of its individual tile dimensions.
+    let border_width_px =
+        super::model::border_pixels(width.min(height).round() as u32, project.border_width)
+            .min(18) as i32;
     for (item, preview) in project.items.iter().zip(frames.borrow().iter()) {
         let tile_x = item.x * width;
         let tile_y = item.y * height;
@@ -1348,7 +1353,7 @@ fn update_geometry(
             &preview.outer,
             &preview.border_class,
             project.border,
-            super::model::border_pixels(visible_w.min(visible_h), project.border_width).min(18) as i32,
+            border_width_px,
         );
         preview.outer.set_size_request(w, h);
         let contain = matches!(project.layout, LayoutKind::Mosaic | LayoutKind::SmartMosaic)

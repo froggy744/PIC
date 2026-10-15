@@ -166,11 +166,6 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let selected_photo = Rc::new(RefCell::new(None));
 
     let lightbox = Rc::new(Lightbox::new());
-    // The inspector belongs to the gallery, never the fullscreen lightbox.
-    // Restore an already-open inspector when returning to the grid.
-    lightbox.root.connect_visible_notify(|root| {
-        set_docked_properties_lightbox_visible(root.is_visible());
-    });
     let info_for_lightbox = info.clone();
     let selected_photo_for_lightbox = selected_photo.clone();
     let last_activated_for_lightbox = last_activated_photo_id.clone();
@@ -2578,11 +2573,12 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     } else {
         "photos"
     });
-    // The shared viewer and its menus can cover either the gallery or Home.
+    // Main-stack menus remain inside the gallery's portion of the split.
+    // The lightbox itself is overlaid over the *whole* gallery/inspector
+    // band below, so Properties can retain its layout allocation underneath.
     let page_overlay = gtk::Overlay::new();
     page_overlay.set_vexpand(true);
     page_overlay.set_child(Some(&main_stack));
-    page_overlay.add_overlay(&lightbox.root);
     let action_menu_autohide = gtk::GestureClick::new();
     action_menu_autohide.set_button(1);
     action_menu_autohide.set_propagation_phase(gtk::PropagationPhase::Capture);
@@ -2648,8 +2644,57 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             }
         }
     });
-    content.append(&gallery_band);
+    // Overlay the viewer over both children of GtkPaned, not just the
+    // gallery. Hiding/showing the docked inspector on lightbox transitions
+    // changed the gallery width and made virtual layouts jump on return.
+    let gallery_overlay = gtk::Overlay::new();
+    gallery_overlay.set_hexpand(true);
+    gallery_overlay.set_vexpand(true);
+    gallery_overlay.set_child(Some(&gallery_band));
+    gallery_overlay.add_overlay(&lightbox.root);
+    content.append(&gallery_overlay);
     content.append(&info.root);
+
+    // Low-volume, opt-in diagnostics for lightbox close/return geometry.
+    // Logs capture both transition endpoints and the settled viewport.
+    {
+        let gallery_for_trace = gallery.clone();
+        let split_for_trace = gallery_band.clone();
+        let inspector_for_trace = properties_panel.clone();
+        let overlay_for_trace = gallery_overlay.clone();
+        lightbox.root.connect_visible_notify(move |root| {
+            if std::env::var_os("PICASA_TRACE").is_none() {
+                return;
+            }
+            let stage = if root.is_visible() { "opened" } else { "hidden" };
+            eprintln!(
+                "PIC_LIGHTBOX_LAYOUT stage={} lightbox_width={} split_width={} gallery_width={} inspector_width={} inspector_visible={} split_position={} scroll_y={:.1}",
+                stage,
+                overlay_for_trace.width(),
+                split_for_trace.width(),
+                page_overlay.width(),
+                inspector_for_trace.width(),
+                inspector_for_trace.is_visible(),
+                split_for_trace.position(),
+                gallery_for_trace.scroll_position()
+            );
+            if !root.is_visible() {
+                let gallery = gallery_for_trace.clone();
+                let split = split_for_trace.clone();
+                let inspector = inspector_for_trace.clone();
+                glib::timeout_add_local_once(Duration::from_millis(220), move || {
+                    eprintln!(
+                        "PIC_LIGHTBOX_LAYOUT stage=settled split_width={} inspector_width={} inspector_visible={} split_position={} scroll_y={:.1}",
+                        split.width(),
+                        inspector.width(),
+                        inspector.is_visible(),
+                        split.position(),
+                        gallery.scroll_position()
+                    );
+                });
+            }
+        });
+    }
     {
         let filter = filter.clone();
         let search_text = search_text.clone();
@@ -3143,12 +3188,25 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         let close_waiting = search_close_waiting.clone();
         let preserve_viewer = preserve_lightbox_during_search_return.clone();
         let navigate_to_folder = navigate_to_folder.clone();
+        let inspector_for_prepare = properties_panel.clone();
+        let split_for_prepare = gallery_band.clone();
         lightbox.set_close_prepare_handler(move || {
             prepared.set(false);
             if let Some(photo) = lightbox_for_prepare
                 .upgrade()
                 .and_then(|lightbox| lightbox.current_photo())
             {
+                if std::env::var_os("PICASA_TRACE").is_some() {
+                    eprintln!(
+                        "PIC_LIGHTBOX_LAYOUT stage=prepare photo={} split_width={} inspector_width={} inspector_visible={} split_position={} scroll_y={:.1}",
+                        photo.id(),
+                        split_for_prepare.width(),
+                        inspector_for_prepare.width(),
+                        inspector_for_prepare.is_visible(),
+                        split_for_prepare.position(),
+                        gallery.scroll_position()
+                    );
+                }
                 if folder_on_close.replace(false) && photo.folder_id() > 0 {
                     if std::env::var_os("PICASA_TRACE").is_some() {
                         eprintln!(
@@ -3164,7 +3222,16 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                     prepared.set(true);
                     return;
                 }
-                prepared.set(gallery.restore_activated_photo(photo.id()));
+                let restored = gallery.restore_activated_photo(photo.id());
+                if std::env::var_os("PICASA_TRACE").is_some() {
+                    eprintln!(
+                        "PIC_LIGHTBOX_LAYOUT stage=restore_requested photo={} found={} scroll_y={:.1}",
+                        photo.id(),
+                        restored,
+                        gallery.scroll_position()
+                    );
+                }
+                prepared.set(restored);
             }
         });
     }

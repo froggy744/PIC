@@ -114,6 +114,7 @@ pub fn export(project: &CollageProject, destination: &Path, options: &ExportOpti
             DynamicImage::ImageRgba8(decoded),
             item.photo.library_rotation,
         );
+        let decoded_size = (source.width(), source.height());
         let recipe = crate::edit::EditRecipe::decode(&item.photo.edit_recipe);
         let source = DynamicImage::ImageRgba8(crate::edit::render::apply_recipe(
             source.to_rgba8(),
@@ -126,7 +127,7 @@ pub fn export(project: &CollageProject, destination: &Path, options: &ExportOpti
         if collage_trace_enabled() {
             eprintln!(
                 "PIC_COLLAGE_TRACE export_content id={} decoded={}x{} edited={}x{} target={}x{} contain={} library_rotation={}",
-                item.photo.id, source.width(), source.height(), source.width(), source.height(),
+                item.photo.id, decoded_size.0, decoded_size.1, source.width(), source.height(),
                 target_width, target_height, contain, item.photo.library_rotation
             );
         }

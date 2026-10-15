@@ -1425,6 +1425,13 @@ fn update_geometry(
         };
         let photo_x = (w - photo_w) / 2;
         let photo_y = (h - photo_h) / 2;
+        if should_log {
+            eprintln!(
+                "PIC_COLLAGE_TRACE preview_content id={} fit={} source_ratio={:.5} tile_ratio={:.5} photo=({},{},{}x{})",
+                item.photo.id, contain, source_ratio, tile_ratio,
+                photo_x, photo_y, photo_w, photo_h,
+            );
+        }
         preview.photo.set_size_request(photo_w, photo_h);
         preview
             .inner

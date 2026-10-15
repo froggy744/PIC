@@ -483,7 +483,8 @@ mod folder_stream_tests {
         // the native slide, commit the destination width once, then restore
         // the photo captured BEFORE the slide (never the selected-photo id).
         for width in [918, 1224, 918, 1224] {
-            let anchor = gallery.capture_inspector_grid_anchor()
+            let anchor = gallery
+                .capture_inspector_grid_anchor()
                 .expect("Folder Grid must provide a visible photo anchor");
             assert!(anchor.0 > 10, "must test deep into the folder");
             window.set_default_size(width, 650);
@@ -499,8 +500,10 @@ mod folder_stream_tests {
                 settle();
                 restored = gallery.restore_inspector_grid_anchor(anchor);
                 settle();
-                if restored && gallery.inspector_grid_anchor_error(anchor)
-                    .is_some_and(|error| error.abs() <= 2.0)
+                if restored
+                    && gallery
+                        .inspector_grid_anchor_error(anchor)
+                        .is_some_and(|error| error.abs() <= 2.0)
                 {
                     break;
                 }

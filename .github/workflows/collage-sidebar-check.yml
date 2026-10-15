@@ -32,7 +32,7 @@ jobs:
       - name: Compile PIC
         run: cargo check --locked
       - name: Run collage regression tests
-        run: cargo test --locked collage:: -- --test-threads=1
+        run: 'cargo test --locked collage:: -- --test-threads=1'
       - name: Verify footer stays visible on resize
         run: |
           xvfb-run -a env GSK_RENDERER=cairo cargo test --locked \

@@ -173,9 +173,39 @@ impl PhotoBorder {
     }
 }
 
-/// Relative stroke width, proportional to the photo tile's shorter side.
-pub(super) fn border_pixels(short_side: u32, fraction: f32) -> u32 {
-    ((short_side.max(1) as f32 * fraction.clamp(0.005, 0.04)).round() as u32).max(1)
+/// Resolve the same physical border width for every photo in a collage.
+///
+/// The slider stores a resolution-independent fraction of the **canvas**
+/// shortest side, never an individual tile. Preview and final export pass
+/// their respective canvas dimensions, so output borders scale with image
+/// resolution without looking thicker on large tiles or thinner on small ones.
+///
+/// The factor keeps the existing 0.005..0.04 slider range visually subtle.
+pub(super) fn border_pixels(canvas_short_side: u32, fraction: f32) -> u32 {
+    ((canvas_short_side.max(1) as f32 * fraction.clamp(0.005, 0.04) * 0.4).round() as u32).max(1)
+}
+
+#[cfg(test)]
+mod photo_border_tests {
+    use super::border_pixels;
+
+    #[test]
+    fn every_tile_uses_the_same_canvas_border_width() {
+        let canvas_width = border_pixels(600, 0.025);
+        // Sizes 40, 160 and 500 are deliberately irrelevant: the canvas
+        // determines the actual outline stroke for all three tiles.
+        for _tile_short_side in [40, 160, 500] {
+            assert_eq!(border_pixels(600, 0.025), canvas_width);
+        }
+        assert_eq!(canvas_width, 6);
+    }
+
+    #[test]
+    fn width_scales_with_export_resolution_and_slider() {
+        assert_eq!(border_pixels(600, 0.005), 1);
+        assert_eq!(border_pixels(600, 0.04), 10);
+        assert_eq!(border_pixels(2400, 0.025), 24);
+    }
 }
 
 /// Position and dimensions of the visible shape within its original collage

@@ -36,10 +36,14 @@ pub(crate) fn dismiss_active_photo_context_menu() -> bool {
             return false;
         };
         menu.set_visible(false);
-        if menu.parent().is_some() {
+        // GtkOverlay owns its overlay children. Unparenting them directly
+        // bypasses GtkOverlay's child list, which can leave stale allocations
+        // or event targets when reopening the menu in the lightbox.
+        if let Some(overlay) = menu.parent().and_then(|parent| parent.downcast::<gtk::Overlay>().ok()) {
+            overlay.remove_overlay(&menu);
+        } else if menu.parent().is_some() {
             menu.unparent();
         }
-
         true
     })
 }
@@ -269,6 +273,27 @@ fn finish_bulk_recipe(work: BulkRecipeState, name: &'static str, total: usize) {
     }
 }
 
+/// The lightbox is a sibling overlay ABOVE the gallery/inspector split.
+/// A menu attached to the gallery's page_overlay still exists but is covered
+/// by the fullscreen viewer. Resolve the host from the click's actual widget
+/// ancestry; grid clicks continue using the original page overlay.
+fn photo_context_menu_host_for_anchor(
+    anchor: &gtk::Widget,
+    gallery_host: &gtk::Overlay,
+    lightbox_host: Option<&gtk::Overlay>,
+) -> gtk::Overlay {
+    if let Some(lightbox_host) = lightbox_host {
+        let lightbox_widget: gtk::Widget = lightbox_host.clone().upcast();
+        if lightbox_host.is_visible()
+            && std::iter::successors(Some(anchor.clone()), |widget| widget.parent())
+                .any(|widget| widget == lightbox_widget)
+        {
+            return lightbox_host.clone();
+        }
+    }
+    gallery_host.clone()
+}
+
 fn show_photo_context_menu(
     photo: crate::photo_object::PhotoObject,
     anchor: gtk::Widget,
@@ -276,12 +301,11 @@ fn show_photo_context_menu(
     x: f64,
     y: f64,
 ) {
-    // One stable context-menu host is shared by the grid and lightbox.
-    // The menu itself is a normal GtkOverlay child, not a GtkPopover.
-    // This avoids popup/grab/allocation races and recycled-tile parenting.
+    // The menu must belong to the actual topmost presentation surface:
+    // gallery for tile clicks, lightbox.root for a viewer right-click.
     dismiss_active_photo_context_menu();
 
-    let Some(host) = context
+    let Some(gallery_host) = context
         .context_menu_host
         .borrow()
         .as_ref()
@@ -289,6 +313,19 @@ fn show_photo_context_menu(
     else {
         return;
     };
+    let lightbox = context.lightbox.upgrade();
+    let host = photo_context_menu_host_for_anchor(
+        &anchor,
+        &gallery_host,
+        lightbox.as_ref().map(|lightbox| &lightbox.root),
+    );
+    crate::nav_transition_trace!(
+        "stage=photo_context_menu_host lightbox={} anchor={} host={} mapped={}",
+        host != gallery_host,
+        anchor.widget_name(),
+        host.widget_name(),
+        host.is_mapped(),
+    );
     let host_widget = host.clone().upcast::<gtk::Widget>();
     let click_point = if anchor == host_widget {
         gtk::graphene::Point::new(x as f32, y as f32)

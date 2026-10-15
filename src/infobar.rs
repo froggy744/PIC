@@ -266,7 +266,7 @@ impl InfoBar {
         let rating_icon = gtk::Image::from_icon_name("non-starred-symbolic");
         rating_content.append(&rating_icon);
         let rating_value = gtk::Label::new(None);
-        rating_value.set_markup("<b>—</b>");
+        rating_value.set_visible(false);
         rating_value.set_width_chars(3);
         rating_value.set_xalign(0.0);
         rating_content.append(&rating_value);
@@ -840,6 +840,7 @@ impl InfoBar {
         }));
         self.rating_value
             .set_markup(&format!("<b>{}</b>", rating_label(rating)));
+        self.rating_value.set_visible(rating > 0);
         let tooltip = if rating == 0 {
             "Rate photo".to_string()
         } else {
@@ -957,7 +958,7 @@ impl InfoBar {
 
 fn rating_label(rating: i32) -> String {
     match rating.clamp(0, 5) {
-        0 => "—".to_string(),
+        0 => String::new(),
         value => format!("{value}/5"),
     }
 }
@@ -982,11 +983,11 @@ mod tests {
 
     #[test]
     fn numeric_rating_label_handles_unrated_and_out_of_range_values() {
-        assert_eq!(rating_label(0), "—");
+        assert_eq!(rating_label(0), "");
         assert_eq!(rating_label(1), "1/5");
         assert_eq!(rating_label(4), "4/5");
         assert_eq!(rating_label(5), "5/5");
-        assert_eq!(rating_label(-1), "—");
+        assert_eq!(rating_label(-1), "");
         assert_eq!(rating_label(9), "5/5");
     }
 
@@ -1155,13 +1156,15 @@ mod layout_tests {
         gtk::init().unwrap();
         let info = InfoBar::new();
         info.set_photo(None);
-        assert_eq!(info.rating_value.text().as_str(), "—");
+        assert_eq!(info.rating_value.text().as_str(), "");
+        assert!(!info.rating_value.is_visible());
         assert!(!info.rating.is_sensitive());
 
         let first: PhotoObject = glib::Object::new();
         first.set_rating(4);
         info.set_photo(Some(&first));
         assert_eq!(info.rating_value.text().as_str(), "4/5");
+        assert!(info.rating_value.is_visible());
         assert!(info.rating.is_sensitive());
 
         // Keyboard shortcuts and star-picker clicks both call set_photo
@@ -1173,7 +1176,8 @@ mod layout_tests {
         let second: PhotoObject = glib::Object::new();
         second.set_rating(0);
         info.set_photo(Some(&second));
-        assert_eq!(info.rating_value.text().as_str(), "—");
+        assert_eq!(info.rating_value.text().as_str(), "");
+        assert!(!info.rating_value.is_visible());
     }
 
     #[test]

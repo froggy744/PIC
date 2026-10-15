@@ -151,6 +151,33 @@ pub enum Background {
     LightGray,
 }
 
+/// Optional photo outline separate from the canvas background.
+/// None is the default for backwards-compatible projects.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PhotoBorder {
+    #[default]
+    None,
+    White,
+    Black,
+    Grey,
+}
+
+impl PhotoBorder {
+    pub fn rgb(self) -> Option<[u8; 3]> {
+        match self {
+            Self::None => None,
+            Self::White => Some([255, 255, 255]),
+            Self::Black => Some([0, 0, 0]),
+            Self::Grey => Some([136, 136, 136]),
+        }
+    }
+}
+
+/// Relative stroke width, proportional to the photo tile's shorter side.
+pub(super) fn border_pixels(short_side: u32, fraction: f32) -> u32 {
+    ((short_side.max(1) as f32 * fraction.clamp(0.005, 0.04)).round() as u32).max(1)
+}
+
 /// Position and dimensions of the visible shape within its original collage
 /// layout tile. Roundness progressively reduces only the longer dimension,
 /// keeping the composition centre fixed. At 50% every visible tile is square:
@@ -219,6 +246,8 @@ pub struct CollageProject {
     pub custom_aspect: f32,
     pub orientation: CollageOrientation,
     pub background: Background,
+    pub border: PhotoBorder,
+    pub border_width: f32,
     pub round_corners: bool,
     pub corner_radius: f32,
     pub layout: LayoutKind,
@@ -235,6 +264,8 @@ impl CollageProject {
             custom_aspect: 16.0 / 9.0,
             orientation: CollageOrientation::Landscape,
             background: Background::White,
+            border: PhotoBorder::None,
+            border_width: default_border_width(),
             round_corners: false,
             corner_radius: 0.06,
             layout: LayoutKind::SmartMosaic,
@@ -415,6 +446,8 @@ impl CollageProject {
             aspect: self.aspect,
             custom_aspect: self.custom_aspect,
             background: self.background,
+            border: self.border,
+            border_width: self.border_width,
             round_corners: self.round_corners,
             corner_radius: self.corner_radius,
             spacing: self.spacing,
@@ -446,6 +479,8 @@ impl CollageProject {
         self.aspect = draft.aspect;
         self.custom_aspect = draft.custom_aspect;
         self.background = draft.background;
+        self.border = draft.border;
+        self.border_width = draft.border_width.clamp(0.005, 0.04);
         self.round_corners = draft.round_corners;
         self.corner_radius = draft.corner_radius;
         self.spacing = draft.spacing;
@@ -491,6 +526,10 @@ fn collage_photo_from_object(photo: &PhotoObject) -> CollagePhoto {
 
 pub const COLLAGE_DRAFT_VERSION: u32 = 1;
 
+fn default_border_width() -> f32 {
+    0.012
+}
+
 /// Persisted snapshot of an in-progress collage; stored as JSON in the
 /// library's settings table so work survives leaving the collage editor.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -503,6 +542,10 @@ pub struct CollageDraft {
     pub aspect: AspectRatio,
     pub custom_aspect: f32,
     pub background: Background,
+    #[serde(default)]
+    pub border: PhotoBorder,
+    #[serde(default = "default_border_width")]
+    pub border_width: f32,
     pub round_corners: bool,
     pub corner_radius: f32,
     pub spacing: f32,
@@ -545,6 +588,8 @@ mod draft_tests {
             custom_aspect: 1.5,
             orientation: CollageOrientation::Portrait,
             background: Background::Black,
+            border: PhotoBorder::Grey,
+            border_width: 0.025,
             round_corners: true,
             corner_radius: 0.15,
             layout: LayoutKind::Grid,
@@ -579,6 +624,8 @@ mod draft_tests {
         assert_eq!(draft.layout, LayoutKind::Grid);
         assert_eq!(draft.orientation, CollageOrientation::Portrait);
         assert_eq!(draft.background, Background::Black);
+        assert_eq!(draft.border, PhotoBorder::Grey);
+        assert!((draft.border_width - 0.025).abs() < 1e-6);
         assert_eq!(draft.aspect, AspectRatio::Square);
         assert!((draft.custom_aspect - 1.5).abs() < 1e-6);
         assert!(draft.round_corners);
@@ -620,6 +667,8 @@ mod draft_tests {
             custom_aspect: 16.0 / 9.0,
             orientation: CollageOrientation::Landscape,
             background: Background::White,
+            border: PhotoBorder::None,
+            border_width: default_border_width(),
             round_corners: false,
             corner_radius: 0.0,
             layout: LayoutKind::Mosaic,
@@ -635,6 +684,8 @@ mod draft_tests {
         assert_eq!(project.layout, LayoutKind::Grid);
         assert_eq!(project.orientation, CollageOrientation::Portrait);
         assert_eq!(project.background, Background::LightGray);
+        assert_eq!(project.border, PhotoBorder::None);
+        assert!((project.border_width - default_border_width()).abs() < 1e-6);
         assert!(project.round_corners);
         assert!((project.spacing - 0.02).abs() < 1e-6);
         assert_eq!(project.seed, 9);

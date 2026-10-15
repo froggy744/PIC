@@ -29,6 +29,7 @@ def parse(log: str):
     current_canvas = None
     preview = {}
     export = {}
+    preview_at_export = None
     for line in log.splitlines():
         if match := RE_PREVIEW_CANVAS.search(line):
             current_canvas = tuple(map(int, match.groups()))
@@ -39,10 +40,14 @@ def parse(log: str):
                 preview[int(id_)] = (current_canvas, float(cx), float(cy),
                                      int(w), int(h), int(stroke))
         if match := RE_EXPORT_TILE.search(line):
+            if preview_at_export is None:
+                # Export can run on a worker while the user keeps editing.
+                # Freeze the preview snapshot associated with the export.
+                preview_at_export = preview.copy()
             id_, cw, ch, x, y, w, h, cx, cy, stroke = match.groups()
             export[int(id_)] = ((int(cw), int(ch)), float(cx), float(cy),
                                 int(w), int(h), int(stroke))
-    return preview, export
+    return (preview_at_export if preview_at_export is not None else preview), export
 
 
 def main():

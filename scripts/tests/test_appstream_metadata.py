@@ -27,7 +27,11 @@ class AppStreamMetadataTests(unittest.TestCase):
             url = urlsplit(screenshot.findtext('image'))
             self.assertEqual(url.scheme, 'https')
             self.assertEqual(url.netloc, 'raw.githubusercontent.com')
-            self.assertTrue((ROOT / unquote(url.path.split('/main/', 1)[1])).is_file())
+            parts = url.path.split('/')
+            self.assertEqual(parts[1:3], ['froggy744', 'PIC'])
+            self.assertRegex(parts[3], r'^[0-9a-f]{40}$')
+            relative_path = Path(*[unquote(part) for part in parts[4:]])
+            self.assertTrue((ROOT / relative_path).is_file())
 
     def test_packaging_overrides_identity_and_version_and_validates(self):
         source = SCRIPT.read_text()

@@ -67,6 +67,7 @@ find_or_make_icon() { ICON_EXT=png; touch "$1/$APP_ID.png"; }
                     env = dict(os.environ, PATH=f'{tools}:/usr/bin:/bin',
                                WORK_ROOT=str(Path(cache) / 'work'), FLATPAK_STATE_DIR=str(state),
                                APP_ID='io.github.froggy744.PIC', BIN_NAME='pic-rs', GNOME_RUNTIME='50',
+                               FDO_RUST_RUNTIME='25.08', REVISION='test-revision',
                                SKIP_TESTS='0', ONLINE='0', TEST_RESULT=str(result_path),
                                SOURCE_DIR=str(SCRIPT.parents[1]), VERSION='2.3.4')
                     result = subprocess.run(['bash', '-c', helpers + metainfo + function + '\nbuild_flatpak\n'],

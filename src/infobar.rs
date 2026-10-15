@@ -47,14 +47,14 @@ pub struct InfoBar {
 
 impl InfoBar {
     /// Keep the screensaver independent of photo selection.
-    /// Open the existing photo properties inspector by right-clicking the
+    /// Toggle the docked photo properties inspector by right-clicking the
     /// metadata region. Left clicks and action buttons remain unaffected.
-    pub fn connect_metadata_right_click(&self, open: impl Fn() + 'static) {
+    pub fn connect_metadata_right_click(&self, toggle: impl Fn() + 'static) {
         let gesture = gtk::GestureClick::new();
         gesture.set_button(3);
         gesture.connect_pressed(move |gesture, _, _, _| {
             gesture.set_state(gtk::EventSequenceState::Claimed);
-            open();
+            toggle();
         });
         // Bind to the actual metadata content, not the expandable blank
         // viewport space between metadata and photo action buttons.

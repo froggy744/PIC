@@ -783,14 +783,14 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         });
     }
     configure_infobar_album_menu(&info.add_to_album, action_context.clone());
-    // The same docked inspector used by the photo context menu is available
-    // directly from the infobar's metadata (right mouse button).
+    // Right-click on InfoBar metadata opens Properties; right-click again
+    // closes it, without opening the photo context menu.
     {
         let selection = selected_photo.clone();
         let context = action_context.clone();
         info.connect_metadata_right_click(move || {
             if let Some(photo) = selection.borrow().as_ref() {
-                show_properties_dialog(photo, &context);
+                toggle_docked_properties(photo, &context);
             }
         });
     }

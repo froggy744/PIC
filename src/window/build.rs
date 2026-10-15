@@ -2637,6 +2637,9 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     // Keep the WidgetPaintable attached across frames so current_image() has
     // the last GTK snapshot when a sidebar click arrives.
     let nav_fade_source = gtk::WidgetPaintable::new(Some(&main_stack));
+    // During rapid supersession, freeze the actual blended viewport rather
+    // than restoring the first transition's original picture to full opacity.
+    let nav_fade_composite_source = gtk::WidgetPaintable::new(Some(&page_overlay));
     let nav_fade_sequence = Rc::new(Cell::new(0_u64));
     let nav_fade_overlay: Rc<RefCell<Option<gtk::Picture>>> =
         Rc::new(RefCell::new(None));
@@ -2659,17 +2662,24 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         let page_overlay = page_overlay.clone();
         let main_stack = main_stack.clone();
         let source = nav_fade_source.clone();
+        let composite_source = nav_fade_composite_source.clone();
         let gallery = gallery.clone();
         let sequence = nav_fade_sequence.clone();
         let active = nav_fade_overlay.clone();
         Rc::new(move |folder_destination, photo_destination| {
             let next = sequence.get().wrapping_add(1);
             sequence.set(next);
-            // Rapid navigation retains the already frozen image rather than
-            // snapshotting a partly rebuilt or temporarily hidden destination.
+            // Snapshot the full currently presented blend on a rapid
+            // supersession. Reusing the original picture at full opacity would
+            // visibly jump backward halfway through an earlier crossfade.
             let previous = active.borrow_mut().take();
             let frozen = if let Some(ref previous) = previous {
-                previous.paintable().map(|image| image.current_image())
+                let blended = composite_source.current_image();
+                if blended.intrinsic_width() > 1 && blended.intrinsic_height() > 1 {
+                    Some(blended)
+                } else {
+                    previous.paintable().map(|image| image.current_image())
+                }
             } else if main_stack.is_mapped()
                 && main_stack.width() > 1
                 && main_stack.height() > 1

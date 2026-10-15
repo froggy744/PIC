@@ -249,6 +249,8 @@ mod tests {
             custom_aspect: 16.0 / 9.0,
             orientation: crate::collage::model::CollageOrientation::Landscape,
             background: crate::collage::model::Background::White,
+            border: crate::collage::model::PhotoBorder::None,
+            border_width: 0.012,
             round_corners: false,
             corner_radius: 0.06,
             layout,

@@ -587,7 +587,11 @@ fn sidebar_crossfade_target(
     viewer_visible: bool,
     reuse_folder_stream: bool,
 ) -> Option<(bool, bool)> {
-    if previous == destination || exact_photo_target || viewer_visible {
+    // Open in Folder is an exact-photo navigation, not a generic sidebar
+    // click. It still replaces the visible model when coming from All/Recent
+    // or search. Keep the outgoing gallery snapshot until the target photo
+    // has actually been scrolled into view (the caller supplies that gate).
+    if previous == destination || (viewer_visible && !exact_photo_target) {
         return None;
     }
     let folder_destination = matches!(destination, sidebar::SidebarFilter::Folder(_));

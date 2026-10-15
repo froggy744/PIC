@@ -95,6 +95,7 @@ fn collage_css() -> String {
          button.collage-compact-choice label { font-weight: normal; font-size: 12px; }\
          .collage-shuffle { min-height: 28px; padding: 4px 8px; }\
          .collage-footer { border-top: 1px solid alpha(@theme_fg_color, 0.12); }\
+         paned.collage-editor-paned > separator { min-width: 6px; background: transparent; border: 0; border-left: 1px solid alpha(@theme_fg_color, 0.20); box-shadow: none; }\
          .collage-radius-row { margin-top: 2px; }\
          .collage-tabs button { min-height: 34px; padding: 4px 10px; }",
     );
@@ -568,7 +569,7 @@ pub fn build(
     });
     corner_radius.set_digits(3);
     corner_radius.set_draw_value(false);
-    corner_radius.set_tooltip_text(Some("0% is square; 50% is circular (oval on rectangular tiles)"));
+    corner_radius.set_tooltip_text(Some("0% is square; 50% produces a true circular crop for every photo"));
     corner_radius.set_hexpand(true);
     controls.append(&corner_radius);
     {
@@ -744,6 +745,8 @@ pub fn build(
     body.set_position(360);
     body.set_resize_start_child(false);
     body.set_shrink_start_child(false);
+    // Keep a generous drag target but render just one visible separator line.
+    body.add_css_class("collage-editor-paned");
     body.set_wide_handle(true);
     body.set_start_child(Some(&sidebar));
     body.set_end_child(Some(&aspect_frame));
@@ -1227,18 +1230,30 @@ fn update_geometry(
         return; // Wait for the first real allocation; never invent a minimum.
     }
     for (item, preview) in project.items.iter().zip(frames.borrow().iter()) {
-        let x = item.x * width;
-        let y = item.y * height;
-        let w = (item.width * width).round().clamp(1.0, width) as i32;
-        let h = (item.height * height).round().clamp(1.0, height) as i32;
-        // Percentage radii extend to 50%, giving circular square tiles and
-        // ellipses for rectangular tiles, without the old 48px ceiling.
-        let radius_step = if project.round_corners {
-            ((project.corner_radius.clamp(0.0, 0.5) * 200.0).round() as i32)
-                .clamp(0, PREVIEW_CORNER_STEPS)
+        let tile_x = item.x * width;
+        let tile_y = item.y * height;
+        let tile_w = (item.width * width).round().clamp(1.0, width) as u32;
+        let tile_h = (item.height * height).round().clamp(1.0, height) as u32;
+        let fraction = if project.round_corners {
+            project.corner_radius.clamp(0.0, 0.5)
         } else {
-            0
+            0.0
         };
+        // Shrink only the long axis around each tile's centre, continuously.
+        // At 50% the visible frame is square and a 50% CSS radius is a circle.
+        let (inset_x, inset_y, visible_w, visible_h) =
+            super::model::rounded_tile_bounds(tile_w, tile_h, fraction);
+        let x = tile_x + inset_x as f32;
+        let y = tile_y + inset_y as f32;
+        let w = visible_w as i32;
+        let h = visible_h as i32;
+        let radius_step = ((fraction * 200.0).round() as i32)
+            .clamp(0, PREVIEW_CORNER_STEPS);
+        preview.outer.set_overflow(if radius_step > 0 {
+            gtk::Overflow::Hidden
+        } else {
+            gtk::Overflow::Visible
+        });
         set_preview_corner_class(&preview.outer, &preview.outer_radius, radius_step);
         preview.outer.set_size_request(w, h);
         let contain = matches!(project.layout, LayoutKind::Mosaic | LayoutKind::SmartMosaic)

@@ -18,7 +18,7 @@ mod photo_layout;
 use photo_layout::{clear_saved_layouts, restore_section_layout, save_section_layout};
 
 mod layout_settle;
-use layout_settle::{should_observe_width, WidthSettleGate};
+use layout_settle::{should_defer_inspector_folder_grid_reflow, should_observe_width, WidthSettleGate};
 
 pub(crate) mod theme;
 

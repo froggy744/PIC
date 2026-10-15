@@ -1353,6 +1353,30 @@ pub(crate) fn close_docked_properties() {
     });
 }
 
+/// Right-clicking the InfoBar metadata toggles the docked inspector.
+/// Only the InfoBar uses this; the photo context menu still opens Properties.
+pub(crate) fn toggle_docked_properties(
+    photo: &crate::photo_object::PhotoObject,
+    context: &PhotoActionContext,
+) {
+    let is_open = DOCKED_PROPERTIES_CONTEXT.with(|slot| slot.borrow().is_some())
+        && DOCKED_PROPERTIES_PANEL.with(|slot| {
+            slot.borrow().as_ref().is_some_and(|panel| panel.is_visible())
+        });
+    if is_open {
+        close_docked_properties();
+    } else {
+        show_properties_dialog(photo, context);
+    }
+    if std::env::var_os("PICASA_TRACE").is_some() {
+        eprintln!(
+            "PIC_INSPECTOR stage=infobar_toggle action={} photo={}",
+            if is_open { "close" } else { "open" },
+            photo.id()
+        );
+    }
+}
+
 pub(crate) fn refresh_docked_properties(photo: Option<&crate::photo_object::PhotoObject>) {
     let context = DOCKED_PROPERTIES_CONTEXT.with(|slot| slot.borrow().clone());
     if context.is_some() && std::env::var_os("PICASA_TRACE").is_some() {

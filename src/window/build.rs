@@ -2731,6 +2731,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             let page_for_tick = page_overlay.clone();
             let gallery_for_tick = gallery.clone();
             let active_for_tick = active.clone();
+            let exact_photo_revealed_for_tick = exact_photo_revealed.clone();
             outgoing.add_tick_callback(move |image, _clock| {
                 if sequence_for_tick.get() != next {
                     return glib::ControlFlow::Break;
@@ -2760,7 +2761,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                         || gallery_for_tick.layout_presentation_ready(previous_layout_generation);
                     // Do not expose the new gallery after its model replacement
                     // but before Open in Folder has reached the exact photo.
-                    let exact_ready = !exact_photo_destination || exact_photo_revealed.get();
+                    let exact_ready = !exact_photo_destination || exact_photo_revealed_for_tick.get();
                     if !model_ready || !folder_ready || !layout_ready || !exact_ready {
                         ready_frames.set(0);
                         return glib::ControlFlow::Continue;

@@ -489,21 +489,37 @@ mod folder_stream_tests {
             window.set_default_size(width, 650);
             settle();
             gallery.update_width(width);
-            assert!(gallery.restore_inspector_grid_anchor(anchor));
-            settle();
-            // Mimic the real one-shot post-extent correction.
-            if gallery.inspector_grid_anchor_error(anchor)
-                .is_some_and(|err| err.abs() > 2.0)
-            {
-                assert!(gallery.restore_inspector_grid_anchor(anchor));
+
+            // GTK allocates a resized Fixed/spacer and updates
+            // GtkScrolledWindow.vadjustment.upper() on later frames.
+            // A false return before the extent catches up is expected;
+            // retry just like the real Properties transition does.
+            let mut restored = false;
+            for _ in 0..20 {
                 settle();
+                restored = gallery.restore_inspector_grid_anchor(anchor);
+                settle();
+                if restored && gallery.inspector_grid_anchor_error(anchor)
+                    .is_some_and(|error| error.abs() <= 2.0)
+                {
+                    break;
+                }
             }
-            let displacement = gallery.inspector_grid_anchor_error(anchor)
-                .expect("captured photo must remain in the same library");
+            let displacement = gallery.inspector_grid_anchor_error(anchor);
+            let adjustment = scroll.vadjustment();
             assert!(
-                displacement.abs() <= 2.0,
-                "inspector width {width} moved photo {} by {displacement:.1}px",
-                anchor.0
+                restored,
+                "inspector width {width} never restored photo {}: requested_height={:.1} adjustment_upper={:.1} page={:.1} displacement={displacement:?}",
+                anchor.0,
+                gallery.sectioned_folder.total_height.get(),
+                adjustment.upper(), adjustment.page_size(),
+            );
+            assert!(
+                displacement.is_some_and(|err| err.abs() <= 2.0),
+                "inspector width {width} moved photo {} by {displacement:?} pixels (upper={:.1} desired_height={:.1})",
+                anchor.0,
+                adjustment.upper(),
+                gallery.sectioned_folder.total_height.get(),
             );
         }
         window.close();

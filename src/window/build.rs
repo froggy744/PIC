@@ -2309,6 +2309,10 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
 
     // Divider dragging publishes live allocations in every gallery mode.
     let sidebar_resize_active = Rc::new(Cell::new(false));
+    let inspector_resize_active = Rc::new(Cell::new(false));
+    let inspector_transition_active = Rc::new(Cell::new(false));
+    let inspector_trace_last_width = Rc::new(Cell::new(-1_i32));
+    let inspector_trace_frames = Rc::new(Cell::new(0_u16));
     // Temporary hover-autohide is presentation only. While that overlay is
     // sliding in or out, keep the gallery's logical width/column model frozen
     // so Folder mode does not rebuild rows just because the pointer touched
@@ -2321,15 +2325,44 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let sidebar_layout_settle = Rc::new(RefCell::new(WidthSettleGate::new(3)));
     let gallery_for_resize = gallery.clone();
     let sidebar_resize_active_for_tick = sidebar_resize_active.clone();
+    let inspector_resize_active_for_tick = inspector_resize_active.clone();
+    let inspector_transition_active_for_tick = inspector_transition_active.clone();
+    let inspector_trace_last_width_for_tick = inspector_trace_last_width.clone();
+    let inspector_trace_frames_for_tick = inspector_trace_frames.clone();
     let sidebar_hover_layout_freeze_for_tick = sidebar_hover_layout_freeze.clone();
     let sidebar_layout_settle_for_tick = sidebar_layout_settle.clone();
+    let inspector_trace_enabled = std::env::var_os("PIC_INSPECTOR_TRACE").is_some();
     gallery_scroll_stack.add_tick_callback(move |surface, _clock| {
         gallery_for_resize.drain_thumbnail_display_completions();
-        let live_resize = sidebar_resize_active_for_tick.get()
-            && !sidebar_hover_layout_freeze_for_tick.get();
+        let live_resize =
+            (sidebar_resize_active_for_tick.get() || inspector_resize_active_for_tick.get())
+                && !sidebar_hover_layout_freeze_for_tick.get();
+        if inspector_trace_enabled
+            && (inspector_resize_active_for_tick.get() || inspector_transition_active_for_tick.get())
+        {
+            let width = surface.width();
+            if inspector_trace_last_width_for_tick.replace(width) != width {
+                let samples = inspector_trace_frames_for_tick.get();
+                if samples < 90 {
+                    eprintln!(
+                        "PIC_INSPECTOR_TRACE stage=frame phase={} sample={} viewport_width={} gallery_root_width={} layout={:?} virtual={} scroll_y={:.1}",
+                        if inspector_resize_active_for_tick.get() { "drag" } else { "slide" },
+                        samples,
+                        width,
+                        gallery_for_resize.root.width(),
+                        gallery_for_resize.layout(),
+                        gallery_for_resize.using_sectioned_folder_view(),
+                        gallery_for_resize.scroll_position()
+                    );
+                } else if samples == 90 {
+                    eprintln!("PIC_INSPECTOR_TRACE stage=frame_limit reached=90");
+                }
+                inspector_trace_frames_for_tick.set(samples.saturating_add(1));
+            }
+        }
         if live_resize
             || should_observe_width(
-                sidebar_resize_active_for_tick.get(),
+                sidebar_resize_active_for_tick.get() || inspector_resize_active_for_tick.get(),
                 sidebar_hover_layout_freeze_for_tick.get(),
             )
         {
@@ -2644,7 +2677,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let resize_origin = Rc::new(Cell::new(0.0_f64));
     let resize_width = Rc::new(Cell::new(0.0_f64));
     let resize_local = Rc::new(Cell::new((0.0_f64, 0.0_f64)));
-    let resize_active = Rc::new(Cell::new(false));
+    let resize_active = inspector_resize_active.clone();
     let resize_gesture = gtk::GestureDrag::new();
     resize_gesture.set_button(1);
     resize_gesture.set_propagation_phase(gtk::PropagationPhase::Capture);

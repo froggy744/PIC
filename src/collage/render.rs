@@ -168,31 +168,48 @@ pub fn export(project: &CollageProject, destination: &Path, options: &ExportOpti
     Ok(())
 }
 
+/// Match the GTK percentage-based rounding: 50% is circular for a square,
+/// or oval for a rectangular image. The 2x2 samples soften the cutout edge.
 fn round_corners(image: &mut RgbaImage, radius_ratio: f32) {
-    let radius = (image.width().min(image.height()) as f32 * radius_ratio)
-        .round()
-        .max(1.0);
-    let radius_squared = radius * radius;
+    let fraction = radius_ratio.clamp(0.0, 0.5);
+    if fraction <= 0.0 {
+        return;
+    }
     let width = image.width() as f32;
     let height = image.height() as f32;
-
+    let radius_x = width * fraction;
+    let radius_y = height * fraction;
     for y in 0..image.height() {
+        let middle_y = y as f32 + 0.5;
+        let center_y = if middle_y < radius_y {
+            radius_y
+        } else if middle_y > height - radius_y {
+            height - radius_y
+        } else {
+            continue;
+        };
         for x in 0..image.width() {
-            let x = x as f32;
-            let y = y as f32;
-            let distance_squared = if x < radius && y < radius {
-                (radius - x) * (radius - x) + (radius - y) * (radius - y)
-            } else if x >= width - radius && y < radius {
-                (x - (width - radius - 1.0)).powi(2) + (radius - y).powi(2)
-            } else if x < radius && y >= height - radius {
-                (radius - x).powi(2) + (y - (height - radius - 1.0)).powi(2)
-            } else if x >= width - radius && y >= height - radius {
-                (x - (width - radius - 1.0)).powi(2) + (y - (height - radius - 1.0)).powi(2)
+            let middle_x = x as f32 + 0.5;
+            let center_x = if middle_x < radius_x {
+                radius_x
+            } else if middle_x > width - radius_x {
+                width - radius_x
             } else {
-                0.0
+                continue;
             };
-            if distance_squared > radius_squared {
-                image.get_pixel_mut(x as u32, y as u32).0[3] = 0;
+            let mut inside = 0u16;
+            for offset_y in [0.25f32, 0.75] {
+                for offset_x in [0.25f32, 0.75] {
+                    let dx = (x as f32 + offset_x - center_x) / radius_x;
+                    let dy = (y as f32 + offset_y - center_y) / radius_y;
+                    if dx * dx + dy * dy <= 1.0 {
+                        inside += 1;
+                    }
+                }
+            }
+            if inside < 4 {
+                let pixel = image.get_pixel_mut(x, y);
+                pixel.0[3] = ((pixel.0[3] as u16 * inside + 2) / 4) as u8;
             }
         }
     }
@@ -282,6 +299,27 @@ fn fit_inside_tile(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn full_radius_masks_square_tiles_as_circles() {
+        let mut tile = RgbaImage::from_pixel(80, 80, image::Rgba([200, 100, 50, 255]));
+        round_corners(&mut tile, 0.5);
+        assert_eq!(tile.get_pixel(0, 0).0[3], 0);
+        assert_eq!(tile.get_pixel(79, 79).0[3], 0);
+        assert_eq!(tile.get_pixel(40, 40).0[3], 255);
+        assert_eq!(tile.get_pixel(40, 1).0[3], 255);
+        assert_eq!(tile.get_pixel(8, 8).0[3], 0);
+    }
+
+    #[test]
+    fn full_radius_masks_rectangular_tiles_as_ovals() {
+        let mut tile = RgbaImage::from_pixel(80, 40, image::Rgba([200, 100, 50, 255]));
+        round_corners(&mut tile, 0.5);
+        assert_eq!(tile.get_pixel(0, 0).0[3], 0);
+        assert_eq!(tile.get_pixel(79, 39).0[3], 0);
+        assert_eq!(tile.get_pixel(40, 20).0[3], 255);
+        assert_eq!(tile.get_pixel(20, 0).0[3], 0);
+    }
 
     #[test]
     fn contain_rounds_the_complete_background_backed_tile() {

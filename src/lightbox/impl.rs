@@ -363,6 +363,11 @@ impl Lightbox {
         let offline_for_visibility = offline.clone();
         root.connect_visible_notify(move |root| {
             if !root.is_visible() {
+                // The viewer now owns its context menu overlay. Dismiss it
+                // through the shared manager before tearing down viewer
+                // overlays, so an invisible menu cannot retain stale state
+                // when the next photo is opened.
+                crate::window::dismiss_active_photo_context_menu();
                 // An aborted fade must never affect the next photo opening.
                 close_generation_for_visibility.set(
                     close_generation_for_visibility.get().wrapping_add(1),
@@ -378,8 +383,9 @@ impl Lightbox {
                         lightbox_open_trace("transition_cancel reason=lightbox_hidden");
                         root.remove_overlay(&widget);
                     } else if widget.has_css_class("photo-context-menu") {
-                        widget.set_visible(false);
-                        widget.unparent();
+                        // Emergency cleanup of orphan menus must also update
+                        // GtkOverlay's own overlay-child tracking.
+                        root.remove_overlay(&widget);
                     }
                 }
                 one_to_one_for_visibility.set(false);

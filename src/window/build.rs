@@ -166,6 +166,9 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let selected_photo = Rc::new(RefCell::new(None));
 
     let lightbox = Rc::new(Lightbox::new());
+    lightbox.root.connect_visible_notify(|root| {
+        set_lightbox_properties_active(root.is_visible());
+    });
     let info_for_lightbox = info.clone();
     let selected_photo_for_lightbox = selected_photo.clone();
     let last_activated_for_lightbox = last_activated_photo_id.clone();
@@ -191,6 +194,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         }
         info_for_lightbox.set_photo(Some(&photo));
         info_for_lightbox.show_photo_metadata();
+        refresh_lightbox_properties(&photo);
         // Navigating to another photo restores the viewer's normal fit state.
         info_for_lightbox.one_to_one.set_active(false);
         selected_photo_for_lightbox.replace(Some(photo));
@@ -2573,9 +2577,8 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     } else {
         "photos"
     });
-    // Main-stack menus remain inside the gallery's portion of the split.
-    // The lightbox itself is overlaid over the *whole* gallery/inspector
-    // band below, so Properties can retain its layout allocation underneath.
+    // The gallery and both Properties panels share one overlay. The grid
+    // keeps its full width when a panel is shown, avoiding tile reflow.
     let page_overlay = gtk::Overlay::new();
     page_overlay.set_vexpand(true);
     page_overlay.set_child(Some(&main_stack));
@@ -2588,28 +2591,38 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     });
     page_overlay.add_controller(action_menu_autohide);
     context_menu_host.borrow_mut().replace(page_overlay.downgrade());
-    // Dock the inspector inside the photo/viewer band only. The shared
-    // bottom info bar is a sibling below this band and must never be
-    // covered or displaced sideways by Properties.
-    let gallery_band = gtk::Paned::new(gtk::Orientation::Horizontal);
-    gallery_band.set_hexpand(true);
-    gallery_band.set_vexpand(true);
-    // Use the standard thin GTK divider, not the wide double-edge handle.
-    gallery_band.set_wide_handle(false);
-    gallery_band.set_start_child(Some(&page_overlay));
-    gallery_band.set_resize_start_child(true);
-    gallery_band.set_shrink_start_child(false);
+    // Overlay panels cover the right edge but do not participate in measuring
+    // the grid. GTK keeps the underlying gallery width and scroll geometry
+    // unchanged when either panel is opened or closed.
+    let gallery_overlay = gtk::Overlay::new();
+    gallery_overlay.set_hexpand(true);
+    gallery_overlay.set_vexpand(true);
+    gallery_overlay.set_child(Some(&page_overlay));
 
     let properties_panel = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    properties_panel.set_width_request(260);
+    properties_panel.set_width_request(300);
+    properties_panel.set_halign(gtk::Align::End);
+    properties_panel.set_valign(gtk::Align::Fill);
     properties_panel.set_vexpand(true);
     properties_panel.set_overflow(gtk::Overflow::Hidden);
     properties_panel.add_css_class("background");
     properties_panel.set_visible(false);
-    gallery_band.set_end_child(Some(&properties_panel));
-    gallery_band.set_resize_end_child(false);
-    gallery_band.set_shrink_end_child(false);
+    gallery_overlay.add_overlay(&properties_panel);
     register_docked_properties_panel(&properties_panel);
+
+    // The fullscreen viewer goes above the gallery's Properties overlay.
+    // Its *own* independently controlled panel goes above the photo, too.
+    gallery_overlay.add_overlay(&lightbox.root);
+    let lightbox_properties_panel = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    lightbox_properties_panel.set_width_request(300);
+    lightbox_properties_panel.set_halign(gtk::Align::End);
+    lightbox_properties_panel.set_valign(gtk::Align::Fill);
+    lightbox_properties_panel.set_vexpand(true);
+    lightbox_properties_panel.set_overflow(gtk::Overflow::Hidden);
+    lightbox_properties_panel.add_css_class("background");
+    lightbox_properties_panel.set_visible(false);
+    gallery_overlay.add_overlay(&lightbox_properties_panel);
+    register_lightbox_properties_panel(&lightbox_properties_panel);
     // Index pages and full-surface workspaces are not photo grids: close
     // the inspector on Library Home, Albums Home, Edit and Collage.
     // Folder-to-folder navigation intentionally keeps it open.
@@ -2632,26 +2645,6 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         }
     });
 
-    // Initially show a 300px inspector. Unlike a fixed GtkBox allocation,
-    // GtkPaned gives the user a native draggable divider.
-    let inspector_split_initialized = Rc::new(Cell::new(false));
-    let split_initialized = inspector_split_initialized.clone();
-    gallery_band.connect_map(move |split| {
-        if !split_initialized.replace(true) {
-            let width = split.width();
-            if width > 0 {
-                split.set_position((width - 300).max(320));
-            }
-        }
-    });
-    // Overlay the viewer over both children of GtkPaned, not just the
-    // gallery. Hiding/showing the docked inspector on lightbox transitions
-    // changed the gallery width and made virtual layouts jump on return.
-    let gallery_overlay = gtk::Overlay::new();
-    gallery_overlay.set_hexpand(true);
-    gallery_overlay.set_vexpand(true);
-    gallery_overlay.set_child(Some(&gallery_band));
-    gallery_overlay.add_overlay(&lightbox.root);
     content.append(&gallery_overlay);
     content.append(&info.root);
 
@@ -2659,8 +2652,9 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     // Logs capture both transition endpoints and the settled viewport.
     {
         let gallery_for_trace = gallery.clone();
-        let split_for_trace = gallery_band.clone();
+        let gallery_content_for_trace = page_overlay.clone();
         let inspector_for_trace = properties_panel.clone();
+        let lightbox_inspector_for_trace = lightbox_properties_panel.clone();
         let overlay_for_trace = gallery_overlay.clone();
         lightbox.root.connect_visible_notify(move |root| {
             if std::env::var_os("PICASA_TRACE").is_none() {
@@ -2668,27 +2662,25 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             }
             let stage = if root.is_visible() { "opened" } else { "hidden" };
             eprintln!(
-                "PIC_LIGHTBOX_LAYOUT stage={} lightbox_width={} split_width={} gallery_width={} inspector_width={} inspector_visible={} split_position={} scroll_y={:.1}",
+                "PIC_LIGHTBOX_LAYOUT stage={} overlay_width={} gallery_width={} inspector_width={} inspector_visible={} viewer_inspector_visible={} scroll_y={:.1}",
                 stage,
                 overlay_for_trace.width(),
-                split_for_trace.width(),
-                page_overlay.width(),
+                gallery_content_for_trace.width(),
                 inspector_for_trace.width(),
                 inspector_for_trace.is_visible(),
-                split_for_trace.position(),
+                lightbox_inspector_for_trace.is_visible(),
                 gallery_for_trace.scroll_position()
             );
             if !root.is_visible() {
                 let gallery = gallery_for_trace.clone();
-                let split = split_for_trace.clone();
+                let gallery_content = gallery_content_for_trace.clone();
                 let inspector = inspector_for_trace.clone();
                 glib::timeout_add_local_once(Duration::from_millis(220), move || {
                     eprintln!(
-                        "PIC_LIGHTBOX_LAYOUT stage=settled split_width={} inspector_width={} inspector_visible={} split_position={} scroll_y={:.1}",
-                        split.width(),
+                        "PIC_LIGHTBOX_LAYOUT stage=settled gallery_width={} inspector_width={} inspector_visible={} scroll_y={:.1}",
+                        gallery_content.width(),
                         inspector.width(),
                         inspector.is_visible(),
-                        split.position(),
                         gallery.scroll_position()
                     );
                 });
@@ -3189,7 +3181,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         let preserve_viewer = preserve_lightbox_during_search_return.clone();
         let navigate_to_folder = navigate_to_folder.clone();
         let inspector_for_prepare = properties_panel.clone();
-        let split_for_prepare = gallery_band.clone();
+        let gallery_for_prepare = gallery_overlay.clone();
         lightbox.set_close_prepare_handler(move || {
             prepared.set(false);
             if let Some(photo) = lightbox_for_prepare
@@ -3198,12 +3190,11 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             {
                 if std::env::var_os("PICASA_TRACE").is_some() {
                     eprintln!(
-                        "PIC_LIGHTBOX_LAYOUT stage=prepare photo={} split_width={} inspector_width={} inspector_visible={} split_position={} scroll_y={:.1}",
+                        "PIC_LIGHTBOX_LAYOUT stage=prepare photo={} gallery_width={} inspector_width={} inspector_visible={} scroll_y={:.1}",
                         photo.id(),
-                        split_for_prepare.width(),
+                        gallery_for_prepare.width(),
                         inspector_for_prepare.width(),
                         inspector_for_prepare.is_visible(),
-                        split_for_prepare.position(),
                         gallery.scroll_position()
                     );
                 }

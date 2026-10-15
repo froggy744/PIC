@@ -61,6 +61,10 @@ pub fn export(project: &CollageProject, destination: &Path, options: &ExportOpti
         Background::LightGray => image::Rgba([238, 238, 238, 255]),
     };
     let mut canvas = RgbaImage::from_pixel(width, height, background);
+    // Resolution-scaled but uniform across every photo in the collage.
+    // Matching the GTK preview, do not derive stroke width from each tile.
+    let border_thickness =
+        super::model::border_pixels(width.min(height), project.border_width);
     let mut items = project.items.iter().collect::<Vec<_>>();
     items.sort_by_key(|item| item.z);
     for item in items {
@@ -127,9 +131,7 @@ pub fn export(project: &CollageProject, destination: &Path, options: &ExportOpti
         // The outline is drawn inside the clipped edge so it never spills
         // into the neighbouring collage photo or changes tile placement.
         if let Some(color) = project.border.rgb() {
-            let thickness =
-                super::model::border_pixels(target_width.min(target_height), project.border_width);
-            draw_photo_border(&mut image, fraction, color, thickness);
+            draw_photo_border(&mut image, fraction, color, border_thickness);
         }
         if item.rotation.abs() > 0.1 {
             let rotate_bg = if project.round_corners {

@@ -18,6 +18,19 @@ pub fn apply(project: &mut CollageProject) {
     }
 }
 
+/// Lightweight slider path. Smart AI and Mosaic/Fit retain the winning
+/// split tree and change only its gutters. A fresh full solve is reserved for
+/// layout, canvas, Fit/Fill, selection changes and Shuffle.
+pub fn apply_spacing(project: &mut CollageProject) {
+    match project.layout {
+        LayoutKind::Grid => grid(project),
+        LayoutKind::Mosaic if !project.keep_photo_aspect => mosaic(project),
+        LayoutKind::Mosaic | LayoutKind::SmartMosaic => {
+            super::smart_mosaic::apply_spacing(project)
+        }
+    }
+}
+
 fn grid(project: &mut CollageProject) {
     let count = project.items.len().max(1);
     let columns = (count as f32).sqrt().ceil() as usize;
@@ -249,12 +262,15 @@ mod tests {
             custom_aspect: 16.0 / 9.0,
             orientation: crate::collage::model::CollageOrientation::Landscape,
             background: crate::collage::model::Background::White,
+            border: crate::collage::model::PhotoBorder::None,
+            border_width: 0.012,
             round_corners: false,
             corner_radius: 0.06,
             layout,
             keep_photo_aspect: true,
             spacing: 0.02,
             seed,
+            cached_layout: None,
             items: (0..count)
                 .map(|id| CollageItem {
                     photo: CollagePhoto {
@@ -596,6 +612,46 @@ mod tests {
         first.shuffle();
         assert_valid_smart_layout(&first);
         assert_ne!(before, geometry(&first));
+    }
+
+    #[test]
+    fn smart_and_mosaic_fit_spacing_changes_keep_original_composition() {
+        // Reproduces the Fedora trace: the old search changed the hero photo
+        // for a 0.0008 change in Spacing even though the canvas stayed 426x426.
+        for layout in [LayoutKind::SmartMosaic, LayoutKind::Mosaic] {
+            let mut project = smart_project(7, false);
+            project.layout = layout;
+            project.keep_photo_aspect = true;
+            project.relayout();
+            let original_order = project.items.iter().map(|item| item.photo.id).collect::<Vec<_>>();
+            let original_seed = project.seed;
+            let initial_topology = format!("{:?}", project.cached_layout);
+            assert!(project.cached_layout.is_some());
+            let mut previous_centers = project.items.iter().map(|item| {
+                (item.x + item.width / 2.0, item.y + item.height / 2.0)
+            }).collect::<Vec<_>>();
+            for step in 0..=80 {
+                project.spacing = step as f32 * 0.001;
+                project.relayout_spacing();
+                assert_eq!(project.seed, original_seed);
+                assert_eq!(format!("{:?}", project.cached_layout), initial_topology);
+                assert_eq!(project.items.iter().map(|item| item.photo.id).collect::<Vec<_>>(), original_order);
+                assert!(inside(&project), "out-of-bounds at spacing={}", project.spacing);
+                for (item, (last_x, last_y)) in project.items.iter().zip(&previous_centers) {
+                    let cx = item.x + item.width / 2.0;
+                    let cy = item.y + item.height / 2.0;
+                    assert!((cx - last_x).abs() < 0.025 && (cy - last_y).abs() < 0.025,
+                        "unexpected jump layout={layout:?} step={step}, photo={}", item.photo.id);
+                }
+                previous_centers = project.items.iter().map(|item| {
+                    (item.x + item.width / 2.0, item.y + item.height / 2.0)
+                }).collect();
+            }
+            // Explicit Shuffle remains the action that can choose a new
+            // composition; the saved optimisation cache is then replaced.
+            project.shuffle();
+            assert_ne!(format!("{:?}", project.cached_layout), initial_topology);
+        }
     }
 
     #[test]

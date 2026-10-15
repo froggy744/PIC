@@ -1,0 +1,40 @@
+name: Collage sidebar regression
+
+on:
+  pull_request:
+    paths:
+      - 'src/collage/editor.rs'
+      - '.github/workflows/collage-sidebar-check.yml'
+  push:
+    branches:
+      - feature/collage-sidebar-redesign
+    paths:
+      - 'src/collage/editor.rs'
+      - '.github/workflows/collage-sidebar-check.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  collage:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install GTK and build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential clang mold cmake nasm pkg-config \
+            libgtk-4-dev libadwaita-1-dev libsmbclient-dev libnfs-dev \
+            librsvg2-common libgdk-pixbuf2.0-bin xvfb xauth
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Compile PIC
+        run: cargo check --locked
+      - name: Run collage regression tests
+        run: 'cargo test --locked collage:: -- --test-threads=1'
+      - name: Verify footer stays visible on resize
+        run: |
+          xvfb-run -a env GSK_RENDERER=cairo cargo test --locked \
+            spacing_changes_do_not_propagate_preview_minimum_or_rebuild_tiles -- \
+            --ignored --test-threads=1

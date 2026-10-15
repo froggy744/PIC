@@ -151,6 +151,159 @@ pub enum Background {
     LightGray,
 }
 
+/// Optional photo outline separate from the canvas background.
+/// None is the default for backwards-compatible projects.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PhotoBorder {
+    #[default]
+    None,
+    White,
+    Black,
+    Grey,
+}
+
+impl PhotoBorder {
+    pub fn rgb(self) -> Option<[u8; 3]> {
+        match self {
+            Self::None => None,
+            Self::White => Some([255, 255, 255]),
+            Self::Black => Some([0, 0, 0]),
+            Self::Grey => Some([136, 136, 136]),
+        }
+    }
+}
+
+/// Resolve the same physical border width for every photo in a collage.
+///
+/// The slider stores a resolution-independent fraction of the **canvas**
+/// shortest side, never an individual tile. Preview and final export pass
+/// their respective canvas dimensions, so output borders scale with image
+/// resolution without looking thicker on large tiles or thinner on small ones.
+///
+/// The factor keeps the existing 0.005..0.04 slider range visually subtle.
+pub(super) fn border_pixels(canvas_short_side: u32, fraction: f32) -> u32 {
+    ((canvas_short_side.max(1) as f32 * fraction.clamp(0.005, 0.04) * 0.4).round() as u32).max(1)
+}
+
+#[cfg(test)]
+mod photo_border_tests {
+    use super::border_pixels;
+
+    #[test]
+    fn every_tile_uses_the_same_canvas_border_width() {
+        let canvas_width = border_pixels(600, 0.025);
+        // Sizes 40, 160 and 500 are deliberately irrelevant: the canvas
+        // determines the actual outline stroke for all three tiles.
+        for _tile_short_side in [40, 160, 500] {
+            assert_eq!(border_pixels(600, 0.025), canvas_width);
+        }
+        assert_eq!(canvas_width, 6);
+    }
+
+    #[test]
+    fn width_scales_with_export_resolution_and_slider() {
+        assert_eq!(border_pixels(600, 0.005), 1);
+        assert_eq!(border_pixels(600, 0.04), 10);
+        assert_eq!(border_pixels(2400, 0.025), 24);
+    }
+}
+
+/// Position and dimensions of the visible shape within its original collage
+/// layout tile. Roundness progressively reduces only the longer dimension,
+/// keeping the composition centre fixed. At 50% every visible tile is square:
+/// a 50% corner radius then clips it into a mathematically true circle.
+/// Coordinates use pixels and work identically in preview and final export.
+pub(super) fn rounded_tile_bounds(
+    width: u32,
+    height: u32,
+    corner_radius: f32,
+) -> (u32, u32, u32, u32) {
+    let width = width.max(1);
+    let height = height.max(1);
+    let side = width.min(height);
+    let progress = (corner_radius.clamp(0.0, 0.5) * 2.0) as f64;
+    let visible_width =
+        (width as f64 - (width - side) as f64 * progress).round() as u32;
+    let visible_height =
+        (height as f64 - (height - side) as f64 * progress).round() as u32;
+    let visible_width = visible_width.clamp(1, width);
+    let visible_height = visible_height.clamp(1, height);
+    (
+        (width - visible_width) / 2,
+        (height - visible_height) / 2,
+        visible_width,
+        visible_height,
+    )
+}
+
+#[cfg(test)]
+mod tile_geometry_tests {
+    use super::*;
+
+    #[test]
+    fn rectangle_and_circle_have_same_centre_for_any_canvas() {
+        let item = CollageItem {
+            photo: CollagePhoto {
+                id: 123, folder_id: None, path: String::new(),
+                filename: String::new(), thumbnail_path: None,
+                library_rotation: 0, edit_recipe: String::new(),
+                aspect_ratio: 1.5, visual_weight: 0.5,
+            },
+            x: 0.125, y: 0.25, width: 0.50, height: 0.20,
+            rotation: 0.0, z: 0,
+        };
+        for (cw, ch) in [(1000, 750), (1920, 1440)] {
+            let square = tile_geometry(&item, cw, ch, 0.0);
+            let circle = tile_geometry(&item, cw, ch, 0.5);
+            assert_eq!(square.x * 2 + square.w as i64, circle.x * 2 + circle.w as i64);
+            assert_eq!(square.y * 2 + square.h as i64, circle.y * 2 + circle.h as i64);
+            assert_eq!(circle.w, circle.h);
+            assert_eq!(square.x, square.slot_x);
+        }
+    }
+
+    #[test]
+    fn border_choice_does_not_affect_shared_geometry() {
+        let item = CollageItem {
+            photo: CollagePhoto {
+                id: 5, folder_id: None, path: String::new(),
+                filename: String::new(), thumbnail_path: None,
+                library_rotation: 0, edit_recipe: String::new(),
+                aspect_ratio: 1.5, visual_weight: 0.5,
+            },
+            x: 0.2, y: 0.1, width: 0.35, height: 0.3,
+            rotation: 0.0, z: 0,
+        };
+        let geometry = tile_geometry(&item, 1920, 1440, 0.15);
+        for _border in [PhotoBorder::None, PhotoBorder::White, PhotoBorder::Black, PhotoBorder::Grey] {
+            assert_eq!(tile_geometry(&item, 1920, 1440, 0.15), geometry);
+        }
+    }
+}
+
+#[cfg(test)]
+mod round_tile_tests {
+    use super::rounded_tile_bounds;
+
+    #[test]
+    fn no_rounding_keeps_original_layout_tile() {
+        assert_eq!(rounded_tile_bounds(300, 110, 0.0), (0, 0, 300, 110));
+        assert_eq!(rounded_tile_bounds(80, 200, 0.0), (0, 0, 80, 200));
+    }
+
+    #[test]
+    fn full_rounding_creates_true_circles_from_rectangular_tiles() {
+        assert_eq!(rounded_tile_bounds(300, 110, 0.5), (95, 0, 110, 110));
+        assert_eq!(rounded_tile_bounds(80, 200, 0.5), (0, 60, 80, 80));
+        assert_eq!(rounded_tile_bounds(140, 140, 0.5), (0, 0, 140, 140));
+    }
+
+    #[test]
+    fn intermediate_rounding_shrinks_only_longer_axis() {
+        assert_eq!(rounded_tile_bounds(300, 100, 0.25), (50, 0, 200, 100));
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct CollageItem {
     pub photo: CollagePhoto,
@@ -162,12 +315,54 @@ pub struct CollageItem {
     pub z: usize,
 }
 
+/// Shared, pixel-aligned tile position for the live GTK canvas and export.
+/// Both use the *same* rounding and centred inset so stroke never changes
+/// layout, and screenshots can be compared with exported pixel positions.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct TileGeometry {
+    pub slot_x: i64,
+    pub slot_y: i64,
+    pub slot_w: u32,
+    pub slot_h: u32,
+    pub x: i64,
+    pub y: i64,
+    pub w: u32,
+    pub h: u32,
+}
+
+pub(super) fn tile_geometry(
+    item: &CollageItem,
+    canvas_w: u32,
+    canvas_h: u32,
+    radius: f32,
+) -> TileGeometry {
+    let canvas_w = canvas_w.max(1);
+    let canvas_h = canvas_h.max(1);
+    let slot_x = (item.x * canvas_w as f32).round() as i64;
+    let slot_y = (item.y * canvas_h as f32).round() as i64;
+    let slot_w = (item.width * canvas_w as f32).round().clamp(1.0, canvas_w as f32) as u32;
+    let slot_h = (item.height * canvas_h as f32).round().clamp(1.0, canvas_h as f32) as u32;
+    let (inset_x, inset_y, w, h) = rounded_tile_bounds(slot_w, slot_h, radius);
+    TileGeometry {
+        slot_x,
+        slot_y,
+        slot_w,
+        slot_h,
+        x: slot_x + inset_x as i64,
+        y: slot_y + inset_y as i64,
+        w,
+        h,
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct CollageProject {
     pub aspect: AspectRatio,
     pub custom_aspect: f32,
     pub orientation: CollageOrientation,
     pub background: Background,
+    pub border: PhotoBorder,
+    pub border_width: f32,
     pub round_corners: bool,
     pub corner_radius: f32,
     pub layout: LayoutKind,
@@ -175,6 +370,9 @@ pub struct CollageProject {
     pub spacing: f32,
     pub seed: u64,
     pub items: Vec<CollageItem>,
+    /// Runtime-only Smart/Fit composition topology, invalidated by Shuffle,
+    /// changing photos, layout or canvas shape. Never included in drafts.
+    pub(super) cached_layout: Option<super::smart_mosaic::CachedLayout>,
 }
 
 impl CollageProject {
@@ -184,12 +382,15 @@ impl CollageProject {
             custom_aspect: 16.0 / 9.0,
             orientation: CollageOrientation::Landscape,
             background: Background::White,
+            border: PhotoBorder::None,
+            border_width: default_border_width(),
             round_corners: false,
             corner_radius: 0.06,
             layout: LayoutKind::SmartMosaic,
             keep_photo_aspect: true,
             spacing: 0.018,
             seed: 1,
+            cached_layout: None,
             items: photos
                 .into_iter()
                 .enumerate()
@@ -257,7 +458,14 @@ impl CollageProject {
     }
 
     pub fn relayout(&mut self) {
+        self.cached_layout = None;
         crate::collage::layout::apply(self);
+    }
+
+    /// Change only the gutter sizes; keep Smart AI's chosen composition while
+    /// dragging Spacing. Unlike relayout(), this performs no global search.
+    pub fn relayout_spacing(&mut self) {
+        crate::collage::layout::apply_spacing(self);
     }
 
     pub fn base_aspect_ratio(&self) -> f32 {
@@ -364,6 +572,8 @@ impl CollageProject {
             aspect: self.aspect,
             custom_aspect: self.custom_aspect,
             background: self.background,
+            border: self.border,
+            border_width: self.border_width,
             round_corners: self.round_corners,
             corner_radius: self.corner_radius,
             spacing: self.spacing,
@@ -395,11 +605,14 @@ impl CollageProject {
         self.aspect = draft.aspect;
         self.custom_aspect = draft.custom_aspect;
         self.background = draft.background;
+        self.border = draft.border;
+        self.border_width = draft.border_width.clamp(0.005, 0.04);
         self.round_corners = draft.round_corners;
         self.corner_radius = draft.corner_radius;
         self.spacing = draft.spacing;
         self.keep_photo_aspect = draft.keep_photo_aspect;
         self.seed = draft.seed;
+        self.cached_layout = None;
         let mut items: Vec<CollageItem> = draft
             .items
             .iter()
@@ -440,6 +653,10 @@ fn collage_photo_from_object(photo: &PhotoObject) -> CollagePhoto {
 
 pub const COLLAGE_DRAFT_VERSION: u32 = 1;
 
+fn default_border_width() -> f32 {
+    0.012
+}
+
 /// Persisted snapshot of an in-progress collage; stored as JSON in the
 /// library's settings table so work survives leaving the collage editor.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -452,6 +669,10 @@ pub struct CollageDraft {
     pub aspect: AspectRatio,
     pub custom_aspect: f32,
     pub background: Background,
+    #[serde(default)]
+    pub border: PhotoBorder,
+    #[serde(default = "default_border_width")]
+    pub border_width: f32,
     pub round_corners: bool,
     pub corner_radius: f32,
     pub spacing: f32,
@@ -494,12 +715,15 @@ mod draft_tests {
             custom_aspect: 1.5,
             orientation: CollageOrientation::Portrait,
             background: Background::Black,
+            border: PhotoBorder::Grey,
+            border_width: 0.025,
             round_corners: true,
             corner_radius: 0.15,
             layout: LayoutKind::Grid,
             keep_photo_aspect: false,
             spacing: 0.05,
             seed: 42,
+            cached_layout: None,
             items: vec![CollageItem {
                 photo: CollagePhoto {
                     id: 7,
@@ -528,6 +752,8 @@ mod draft_tests {
         assert_eq!(draft.layout, LayoutKind::Grid);
         assert_eq!(draft.orientation, CollageOrientation::Portrait);
         assert_eq!(draft.background, Background::Black);
+        assert_eq!(draft.border, PhotoBorder::Grey);
+        assert!((draft.border_width - 0.025).abs() < 1e-6);
         assert_eq!(draft.aspect, AspectRatio::Square);
         assert!((draft.custom_aspect - 1.5).abs() < 1e-6);
         assert!(draft.round_corners);
@@ -569,12 +795,15 @@ mod draft_tests {
             custom_aspect: 16.0 / 9.0,
             orientation: CollageOrientation::Landscape,
             background: Background::White,
+            border: PhotoBorder::None,
+            border_width: default_border_width(),
             round_corners: false,
             corner_radius: 0.0,
             layout: LayoutKind::Mosaic,
             keep_photo_aspect: true,
             spacing: 0.0,
             seed: 1,
+            cached_layout: None,
             items: Vec::new(),
         };
         // No photos supplied: every draft entry refers to a missing photo,
@@ -584,6 +813,8 @@ mod draft_tests {
         assert_eq!(project.layout, LayoutKind::Grid);
         assert_eq!(project.orientation, CollageOrientation::Portrait);
         assert_eq!(project.background, Background::LightGray);
+        assert_eq!(project.border, PhotoBorder::None);
+        assert!((project.border_width - default_border_width()).abs() < 1e-6);
         assert!(project.round_corners);
         assert!((project.spacing - 0.02).abs() < 1e-6);
         assert_eq!(project.seed, 9);

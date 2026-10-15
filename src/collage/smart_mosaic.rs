@@ -5,7 +5,7 @@ use super::model::CollageProject;
 const CANDIDATES: usize = 40;
 const REFINEMENTS: usize = 180;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 enum Node {
     Photo(usize),
     Split {
@@ -14,6 +14,14 @@ enum Node {
         vertical: bool,
         bias: f32,
     },
+}
+
+/// Runtime-only topology for smooth spacing changes. The project draft
+/// still stores final per-photo geometry and never serializes this cache.
+#[derive(Clone, Debug)]
+pub(super) struct CachedLayout {
+    nodes: Vec<Node>,
+    photo_count: usize,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -54,18 +62,54 @@ impl Score {
 }
 
 pub(super) fn apply(project: &mut CollageProject) {
+    project.cached_layout = None;
     if project.items.is_empty() {
         return;
     }
-    let mut best = (f32::INFINITY, Vec::new());
+    let mut best_score = f32::INFINITY;
+    let mut best_rectangles = Vec::new();
+    let mut best_nodes = Vec::new();
     for number in 0..CANDIDATES {
-        let (score, rectangles) = candidate(project, number);
-        if score < best.0 {
-            best = (score, rectangles);
+        let (score, rectangles, nodes) = candidate(project, number);
+        if score < best_score {
+            best_score = score;
+            best_rectangles = rectangles;
+            best_nodes = nodes;
         }
     }
+    // Changing a slider must not unexpectedly swap the hero photo.
+    project.cached_layout = Some(CachedLayout {
+        photo_count: project.items.len(),
+        nodes: best_nodes,
+    });
+    write_rectangles(project, best_rectangles);
+}
+
+/// Recompute only gaps in the winning composition, without the 40-by-180
+/// global search or any photo reassignment while the user adjusts spacing.
+pub(super) fn apply_spacing(project: &mut CollageProject) {
+    let rectangles = project
+        .cached_layout
+        .as_ref()
+        .filter(|cached| cached.photo_count == project.items.len() && !cached.nodes.is_empty())
+        .map(|cached| geometry(project, &cached.nodes));
+    if let Some(rectangles) = rectangles {
+        write_rectangles(project, rectangles);
+        if std::env::var("PIC_COLLAGE_TRACE").ok().is_some_and(|v| v != "0") {
+            eprintln!(
+                "PIC_COLLAGE_TRACE spacing_topology=reused layout={:?} spacing={:.4} photos={}",
+                project.layout, project.spacing, project.items.len()
+            );
+        }
+    } else {
+        // A restored legacy draft may not yet have a runtime topology.
+        apply(project);
+    }
+}
+
+fn write_rectangles(project: &mut CollageProject, rectangles: Vec<Rect>) {
     let ratio = project.effective_aspect_ratio();
-    for (index, (item, rect)) in project.items.iter_mut().zip(best.1).enumerate() {
+    for (index, (item, rect)) in project.items.iter_mut().zip(rectangles).enumerate() {
         item.x = rect.x / ratio;
         item.y = rect.y;
         item.width = (rect.w / ratio).min(1.0 - item.x);
@@ -97,7 +141,7 @@ fn random_index(state: &mut u64, count: usize) -> usize {
     ((next_unit(state) * count as f32) as usize).min(count - 1)
 }
 
-fn candidate(project: &CollageProject, number: usize) -> (f32, Vec<Rect>) {
+fn candidate(project: &CollageProject, number: usize) -> (f32, Vec<Rect>, Vec<Node>) {
     let count = project.items.len();
     let mut state = mixed_seed(project.seed, number as u64 + 1);
     let mut order = (0..count).collect::<Vec<_>>();
@@ -108,7 +152,7 @@ fn candidate(project: &CollageProject, number: usize) -> (f32, Vec<Rect>) {
     build_tree(&order, &mut tree, &mut state);
     let mut rectangles = geometry(project, &tree);
     let mut current = score(project, &rectangles).total(project.keep_photo_aspect);
-    let mut best = (current, rectangles.clone());
+    let mut best = (current, rectangles.clone(), tree.clone());
     if count == 1 {
         return best;
     }
@@ -146,7 +190,7 @@ fn candidate(project: &CollageProject, number: usize) -> (f32, Vec<Rect>) {
         rectangles = geometry(project, &proposal);
         let value = score(project, &rectangles).total(project.keep_photo_aspect);
         if value < best.0 {
-            best = (value, rectangles.clone());
+            best = (value, rectangles.clone(), proposal.clone());
         }
         // Seeded annealing escapes repeated rows/columns; always retain the
         // lowest score visited, never the last accepted (possibly worse) one.
@@ -429,7 +473,7 @@ mod tests {
         let mut minimum = f32::INFINITY;
         let mut unique = std::collections::HashSet::new();
         for number in 0..CANDIDATES {
-            let (value, rects) = candidate(&project, number);
+            let (value, rects, _nodes) = candidate(&project, number);
             assert_valid(&project, &rects);
             minimum = minimum.min(value);
             unique.insert(

@@ -1,19 +1,22 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::Duration;
+use std::sync::OnceLock;
 
 use adw::prelude::*;
 use gtk4 as gtk;
 use libadwaita as adw;
 
-use super::model::{AspectRatio, Background, CollageOrientation, CollageProject, LayoutKind};
+use super::model::{AspectRatio, Background, CollageOrientation, CollageProject, LayoutKind, PhotoBorder};
 
-const MAX_PREVIEW_CORNER_RADIUS: i32 = 48;
+const PREVIEW_CORNER_STEPS: i32 = 100;
 
 thread_local! {
     // Bumped on every preview rebuild so late decode results from an older
     // preview are discarded.
     static PREVIEW_GENERATION: Cell<u64> = const { Cell::new(0) };
+    // Trace a geometry snapshot only when something changes, never per GTK tick.
+    static LAST_GEOMETRY_TRACE: RefCell<Option<String>> = const { RefCell::new(None) };
     // The collage stylesheet is installed once per process; build() runs per
     // collage session and must not stack a new display provider each time.
     static COLLAGE_CSS_INSTALLED: Cell<bool> = const { Cell::new(false) };
@@ -83,18 +86,34 @@ fn collage_css() -> String {
          .collage-white { background: #ffffff; }\
          .collage-black { background: #000000; }\
          .collage-light-gray { background: #eeeeee; }\
-         .collage-photo { border: 1px solid alpha(@theme_fg_color, 0.18); border-radius: 0; box-shadow: 0 3px 12px alpha(#000000, 0.28); }\
+         .collage-photo { border: 0; border-radius: 0; box-shadow: 0 3px 12px alpha(#000000, 0.28); }\
          .collage-contained-photo { border: none; box-shadow: none; }\
          .collage-dragging { opacity: 0.62; }\
          .collage-drop-target { border: 3px solid #4d9fdb; box-shadow: 0 0 0 3px alpha(#4d9fdb, 0.45), 0 3px 12px alpha(#000000, 0.35); }\
          .collage-photo-rounded { }\
-         .collage-layout-tile { min-height: 54px; }\
+         button.collage-layout-tile { min-height: 74px; padding: 5px 3px; border: 1px solid alpha(@theme_fg_color, 0.17); border-radius: 8px; background-color: transparent; color: @theme_fg_color; box-shadow: none; }\
+         button.collage-layout-tile:checked { border: 2px solid #3584e4; background-color: alpha(#3584e4, 0.08); color: @theme_fg_color; box-shadow: none; }\
+         button.collage-layout-tile label { font-size: 11px; font-weight: normal; }\
+         button.collage-compact-choice { min-height: 28px; padding: 3px 6px; }\
+         button.collage-compact-choice label { font-weight: normal; font-size: 12px; }\
+         .collage-shuffle { min-height: 28px; padding: 4px 8px; }\
+         .collage-footer { border-top: 1px solid alpha(@theme_fg_color, 0.12); }\
+         paned.collage-editor-paned > separator { min-width: 6px; background: transparent; border: 0; border-left: 1px solid alpha(@theme_fg_color, 0.20); box-shadow: none; }\
          .collage-radius-row { margin-top: 2px; }\
-         .collage-tabs button { min-height: 34px; padding: 4px 10px; }",
+         .collage-tabs button { min-height: 34px; padding: 4px 10px; }\
+         button.collage-color-swatch { min-height: 29px; min-width: 24px; padding: 2px; margin: 0; border-radius: 6px; border: 2px solid alpha(@theme_fg_color, 0.26); box-shadow: none; transition: none; }\
+         button.collage-color-swatch.collage-swatch-none { background: alpha(@theme_fg_color, 0.09); color: @theme_fg_color; }\
+         button.collage-color-swatch.collage-swatch-white { background: #ffffff; }\
+         button.collage-color-swatch.collage-swatch-black { background: #000000; }\
+         button.collage-color-swatch.collage-swatch-light-grey { background: #eeeeee; }\
+         button.collage-color-swatch.collage-swatch-grey { background: #888888; }\
+         button.collage-color-swatch:checked { border: 3px solid #3584e4; box-shadow: 0 0 0 1px alpha(#3584e4, 0.6); }\
+         button.collage-color-swatch:focus-visible { outline: 2px solid #3584e4; outline-offset: 2px; }",
     );
-    for radius in 0..=MAX_PREVIEW_CORNER_RADIUS {
+    for radius in 0..=PREVIEW_CORNER_STEPS {
         css.push_str(&format!(
-            ".collage-photo-radius-{radius} {{ border-radius: {radius}px; }}"
+            ".collage-photo-radius-{radius} {{ border-radius: {}%; }}",
+            radius as f32 / 2.0
         ));
     }
     css
@@ -104,6 +123,10 @@ struct PreviewFrame {
     outer: gtk::Widget,
     inner: gtk::Fixed,
     photo: gtk::Frame,
+    outer_radius: Cell<i32>,
+    photo_radius: Cell<i32>,
+    border: gtk::DrawingArea,
+    border_px: Cell<i32>,
 }
 
 /// Host-application hooks for tile interactions (threaded into
@@ -199,14 +222,28 @@ pub fn build(
     controls.set_margin_start(18);
     controls.set_margin_end(18);
 
+    // The header contains the only Reset action, kept visually secondary.
+    let reset_defaults = icon_label_button(
+        "view-refresh-symbolic",
+        "Reset",
+        "Restore default collage settings",
+    );
+    reset_defaults.add_css_class("flat");
     let heading = gtk::Label::new(Some("Collage"));
     heading.set_halign(gtk::Align::Start);
     heading.add_css_class("title-2");
-    controls.append(&heading);
     let status = gtk::Label::new(Some(&photo_count_text(project.borrow().items.len())));
     status.set_halign(gtk::Align::Start);
     status.add_css_class("dim-label");
-    controls.append(&status);
+    let heading_column = gtk::Box::new(gtk::Orientation::Vertical, 3);
+    heading_column.set_hexpand(true);
+    heading_column.append(&heading);
+    heading_column.append(&status);
+    let heading_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    heading_row.set_valign(gtk::Align::Start);
+    heading_row.append(&heading_column);
+    heading_row.append(&reset_defaults);
+    controls.append(&heading_row);
 
     let canvas = gtk::Fixed::new();
     canvas.set_hexpand(true);
@@ -248,36 +285,53 @@ pub fn build(
         });
     }
 
-    // Row 1 — layout: three equal tiles with icon over title, radio
-    // behaviour; edit-mode tab styling keeps every button row uniform.
-    add_section_label(&controls, "LAYOUT");
+    // Layout selection and its related Shuffle action share one header.
+    let layout_header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    layout_header.set_hexpand(true);
+    let layout_heading = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    layout_heading.set_hexpand(true);
+    add_section_label(&layout_heading, "LAYOUT");
+    layout_header.append(&layout_heading);
+    let shuffle = icon_label_button(
+        "media-playlist-shuffle-symbolic",
+        "Shuffle",
+        "Shuffle photo order",
+    );
+    shuffle.add_css_class("flat");
+    shuffle.add_css_class("collage-shuffle");
+    layout_header.append(&shuffle);
+    controls.append(&layout_header);
     let mosaic_tile = gtk::ToggleButton::new();
     let smart_tile = gtk::ToggleButton::new();
     let grid_tile = gtk::ToggleButton::new();
-    for (tile, icon, title, tooltip) in [
+    // Like the screensaver selector, preview drawings are vector-only.
+    // Opening the picker never decodes photos or touches offline libraries.
+    for (tile, kind, title, tooltip) in [
         (
             &mosaic_tile,
-            "collage-mosaic-symbolic",
+            LayoutKind::Mosaic,
             "Mosaic",
             "Mosaic: varied tile sizes, no dominant photo",
         ),
         (
             &smart_tile,
-            "collage-smart-mosaic-symbolic",
+            LayoutKind::SmartMosaic,
             "Smart AI",
-            "Smart AI: analyses the selected photo thumbnails and chooses the strongest focal layout",
+            "Smart AI: analyses thumbnails for the strongest focal layout",
         ),
         (
             &grid_tile,
-            "collage-grid-symbolic",
+            LayoutKind::Grid,
             "Grid",
             "Grid: uniform tiles, photos crop to fill",
         ),
     ] {
-        let content = gtk::Box::new(gtk::Orientation::Vertical, 3);
+        let content = gtk::Box::new(gtk::Orientation::Vertical, 4);
         content.set_halign(gtk::Align::Center);
-        content.append(&gtk::Image::from_icon_name(icon));
-        content.append(&gtk::Label::new(Some(title)));
+        content.append(&collage_layout_preview(kind));
+        let label = gtk::Label::new(Some(title));
+        label.add_css_class("caption");
+        content.append(&label);
         tile.set_child(Some(&content));
         tile.set_tooltip_text(Some(tooltip));
         tile.add_css_class("collage-layout-tile");
@@ -289,53 +343,32 @@ pub fn build(
         LayoutKind::SmartMosaic => smart_tile.set_active(true),
         LayoutKind::Grid => grid_tile.set_active(true),
     }
-    let layout_tiles = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-    layout_tiles.add_css_class("linked");
-    layout_tiles.add_css_class("collage-tabs");
-    // Homogeneous thirds so the layout tiles, the fit/orientation row and
-    // the bottom actions all align to the same three column edges.
+    let layout_tiles = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    // Independent outlined previews, rather than one wide segmented button.
     layout_tiles.set_homogeneous(true);
     for tile in [&mosaic_tile, &smart_tile, &grid_tile] {
         layout_tiles.append(tile);
     }
     controls.append(&layout_tiles);
 
-    // Row 2 — fit + orientation. Fit replaces the keep-photo-aspect
-    // checkbox; it stays visible but insensitive for Grid, which always
-    // crops photos to fill their tiles. Portrait/Landscape form a radio
-    // pair of labelled buttons (icon+label would not fit the column).
-    let fit_toggle = gtk::ToggleButton::new();
-    {
-        let fit_content = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-        fit_content.set_halign(gtk::Align::Center);
-        fit_content.append(&gtk::Image::from_icon_name("zoom-fit-best-symbolic"));
-        fit_content.append(&gtk::Label::new(Some("Fit")));
-        fit_toggle.set_child(Some(&fit_content));
-    }
+    add_section_label(&controls, "CANVAS");
+    // Fit and Fill describe photo scaling separately from canvas orientation.
+    // Grid always crops to fill, so neither scaling choice is editable there.
+    let fit_toggle = gtk::ToggleButton::with_label("Fit");
     fit_toggle.set_tooltip_text(Some("Fit photos inside their tiles (keep aspect ratio)"));
-    fit_toggle.set_active(project.borrow().keep_photo_aspect);
-    fit_toggle.set_sensitive(!matches!(project.borrow().layout, LayoutKind::Grid));
-    let portrait_btn = gtk::ToggleButton::new();
-    {
-        let content = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-        content.set_halign(gtk::Align::Center);
-        content.append(&gtk::Image::from_icon_name(
-            "orientation-portrait-left-symbolic",
-        ));
-        content.append(&gtk::Label::new(Some("Portrait")));
-        portrait_btn.set_child(Some(&content));
+    let fill_toggle = gtk::ToggleButton::with_label("Fill");
+    fill_toggle.set_group(Some(&fit_toggle));
+    if project.borrow().keep_photo_aspect {
+        fit_toggle.set_active(true);
+    } else {
+        fill_toggle.set_active(true);
     }
+    let scaling_enabled = !matches!(project.borrow().layout, LayoutKind::Grid);
+    fit_toggle.set_sensitive(scaling_enabled);
+    fill_toggle.set_sensitive(scaling_enabled);
+    let portrait_btn = gtk::ToggleButton::with_label("Portrait");
     portrait_btn.set_tooltip_text(Some("Portrait canvas"));
-    let landscape_btn = gtk::ToggleButton::new();
-    {
-        let content = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-        content.set_halign(gtk::Align::Center);
-        content.append(&gtk::Image::from_icon_name(
-            "orientation-landscape-symbolic",
-        ));
-        content.append(&gtk::Label::new(Some("Landscape")));
-        landscape_btn.set_child(Some(&content));
-    }
+    let landscape_btn = gtk::ToggleButton::with_label("Landscape");
     landscape_btn.set_tooltip_text(Some("Landscape canvas"));
     portrait_btn.set_group(Some(&landscape_btn));
     if matches!(project.borrow().orientation, CollageOrientation::Portrait) {
@@ -343,18 +376,26 @@ pub fn build(
     } else {
         landscape_btn.set_active(true);
     }
-    let fit_orientation_row = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-    fit_orientation_row.add_css_class("linked");
-    fit_orientation_row.add_css_class("collage-tabs");
-    fit_orientation_row.set_homogeneous(true);
-    for button in [&fit_toggle, &portrait_btn, &landscape_btn] {
-        fit_orientation_row.append(button);
+    for button in [&fit_toggle, &fill_toggle, &portrait_btn, &landscape_btn] {
+        button.add_css_class("collage-compact-choice");
     }
-    controls.append(&fit_orientation_row);
+    let orientation_buttons = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    orientation_buttons.add_css_class("linked");
+    orientation_buttons.set_homogeneous(true);
+    orientation_buttons.append(&portrait_btn);
+    orientation_buttons.append(&landscape_btn);
+    controls.append(&labelled_control_row("Orientation", &orientation_buttons));
+    let scaling_buttons = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    scaling_buttons.add_css_class("linked");
+    scaling_buttons.set_homogeneous(true);
+    scaling_buttons.append(&fit_toggle);
+    scaling_buttons.append(&fill_toggle);
+    controls.append(&labelled_control_row("Photo scaling", &scaling_buttons));
     {
         let project = project.clone();
         let refresh = refresh.clone();
         let fit_toggle = fit_toggle.clone();
+        let fill_toggle = fill_toggle.clone();
         let apply_layout = Rc::new(move |layout_kind: LayoutKind| {
             {
                 let mut project_data = project.borrow_mut();
@@ -364,7 +405,9 @@ pub fn build(
                 project_data.layout = layout_kind;
                 project_data.relayout();
             }
-            fit_toggle.set_sensitive(!matches!(layout_kind, LayoutKind::Grid));
+            let scaling_enabled = !matches!(layout_kind, LayoutKind::Grid);
+            fit_toggle.set_sensitive(scaling_enabled);
+            fill_toggle.set_sensitive(scaling_enabled);
             refresh();
         });
         for (button, kind) in [
@@ -418,8 +461,7 @@ pub fn build(
         });
     }
 
-    // Row 3 — aspect ratio + background side by side, each with a small
-    // title above the dropdown.
+    // The canvas presets share a compact row under orientation and scaling.
     let aspect = gtk::DropDown::from_strings(&["Square 1:1", "4:3", "3:2", "16:9", "Custom"]);
     aspect.set_selected(match project.borrow().aspect {
         AspectRatio::Square => 0,
@@ -429,13 +471,16 @@ pub fn build(
         AspectRatio::Custom => 4,
     });
     aspect.set_tooltip_text(Some("Canvas aspect ratio"));
-    let background = gtk::DropDown::from_strings(&["White", "Black", "Light Grey"]);
-    background.set_selected(match project.borrow().background {
+    let (background, background_swatches) = colour_swatch_picker(&[
+        ("White background", "collage-swatch-white"),
+        ("Black background", "collage-swatch-black"),
+        ("Light grey background", "collage-swatch-light-grey"),
+    ]);
+    background_swatches[match project.borrow().background {
         Background::White => 0,
         Background::Black => 1,
         Background::LightGray => 2,
-    });
-    background.set_tooltip_text(Some("Canvas background"));
+    }].set_active(true);
     // Equal halves via a homogeneous grid, matching the edit panel's
     // aspect-preset grid geometry; each dropdown keeps a small title.
     let aspect_background_grid = gtk::Grid::new();
@@ -511,25 +556,33 @@ pub fn build(
         });
     }
 
-    {
+    for (index, button) in background_swatches.iter().enumerate() {
         let project = project.clone();
-        let refresh = refresh.clone();
-        background.connect_selected_notify(move |dropdown| {
-            project.borrow_mut().background = if dropdown.selected() == 1 {
-                Background::Black
-            } else if dropdown.selected() == 2 {
-                Background::LightGray
-            } else {
-                Background::White
+        let canvas = canvas.clone();
+        let frames = frames.clone();
+        button.connect_toggled(move |button| {
+            if !button.is_active() {
+                return;
+            }
+            let background = match index {
+                1 => Background::Black,
+                2 => Background::LightGray,
+                _ => Background::White,
             };
-            refresh();
+            project.borrow_mut().background = background;
+            // CSS-only change: do not destroy 12 photo widgets, lose textures,
+            // or schedule fresh thumbnail sharpening on a colour selection.
+            update_preview_background(&canvas, &frames, background);
         });
     }
 
-    // Zero is square; any positive radius enables rounded corners. Keeping
-    // this as one direct control avoids a second, conflicting on/off state.
-    add_section_label(&controls, "ROUND CORNERS");
-    let corner_radius = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.0, 0.2, 0.005);
+    add_section_label(&controls, "APPEARANCE");
+    // Zero is square; any positive radius enables rounded corners.
+    let corner_caption = gtk::Label::new(Some("Round corners"));
+    corner_caption.set_halign(gtk::Align::Start);
+    corner_caption.add_css_class("dim-label");
+    controls.append(&corner_caption);
+    let corner_radius = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.0, 0.5, 0.005);
     corner_radius.set_value(if project.borrow().round_corners {
         project.borrow().corner_radius as f64
     } else {
@@ -537,23 +590,31 @@ pub fn build(
     });
     corner_radius.set_digits(3);
     corner_radius.set_draw_value(false);
-    corner_radius.set_tooltip_text(Some("Corner radius: 0% is square, 20% is fully rounded"));
+    corner_radius.set_tooltip_text(Some("0% is square; 50% produces a true circular crop for every photo"));
     corner_radius.set_hexpand(true);
     controls.append(&corner_radius);
     {
         let project = project.clone();
-        let refresh = refresh.clone();
+        let canvas = canvas.clone();
+        let frames = frames.clone();
         corner_radius.connect_value_changed(move |scale| {
             let radius = scale.value() as f32;
-            let mut project_data = project.borrow_mut();
-            project_data.corner_radius = radius;
-            project_data.round_corners = radius > 0.0;
-            drop(project_data);
-            refresh();
+            {
+                let mut project_data = project.borrow_mut();
+                project_data.corner_radius = radius;
+                project_data.round_corners = radius > 0.0;
+            }
+            // Corner radius changes only clipping and geometry. Rebuilding all
+            // photo widgets here causes repeated thumbnail swaps and decode
+            // scheduling for each tiny slider movement.
+            update_geometry(&canvas, &frames, &project.borrow());
         });
     }
 
-    add_section_label(&controls, "SPACING");
+    let spacing_caption = gtk::Label::new(Some("Spacing"));
+    spacing_caption.set_halign(gtk::Align::Start);
+    spacing_caption.add_css_class("dim-label");
+    controls.append(&spacing_caption);
     let spacing = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.0, 0.08, 0.002);
     spacing.set_value(project.borrow().spacing as f64);
     spacing.set_draw_value(false);
@@ -565,28 +626,85 @@ pub fn build(
         spacing.connect_value_changed(move |scale| {
             let mut project = project.borrow_mut();
             project.spacing = scale.value() as f32;
-            project.relayout();
+            project.relayout_spacing();
             update_geometry(&canvas, &frames, &project);
         });
     }
 
-    // Bottom actions. Compact icon+label controls grouped right; Create is
-    // the one full-width accent button with Exit beside it.
-    let reset_defaults = icon_label_button(
-        "view-refresh-symbolic",
-        "Reset",
-        "Restore default collage settings",
-    );
+    // One compact border color selector; width becomes relevant only when a
+    // color is chosen. Border is independent from the collage background.
+    let (photo_border, border_swatches) = colour_swatch_picker(&[
+        ("No border", "collage-swatch-none"),
+        ("White border", "collage-swatch-white"),
+        ("Black border", "collage-swatch-black"),
+        ("Grey border", "collage-swatch-grey"),
+    ]);
+    border_swatches[match project.borrow().border {
+        PhotoBorder::None => 0,
+        PhotoBorder::White => 1,
+        PhotoBorder::Black => 2,
+        PhotoBorder::Grey => 3,
+    }].set_active(true);
+    controls.append(&labelled_control_row("Photo border", &photo_border));
+
+    let border_thickness = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.005, 0.04, 0.001);
+    border_thickness.set_value(project.borrow().border_width as f64);
+    border_thickness.set_draw_value(false);
+    border_thickness.set_hexpand(true);
+    border_thickness.set_tooltip_text(Some("Border thickness relative to each photo's size"));
+    border_thickness.set_sensitive(project.borrow().border != PhotoBorder::None);
+    controls.append(&labelled_control_row("Thickness", &border_thickness));
+    {
+        let project = project.clone();
+        let canvas = canvas.clone();
+        let frames = frames.clone();
+        let border_thickness = border_thickness.clone();
+        for (index, button) in border_swatches.iter().enumerate() {
+            let project = project.clone();
+            let canvas = canvas.clone();
+            let frames = frames.clone();
+            let border_thickness = border_thickness.clone();
+            button.connect_toggled(move |button| {
+                if !button.is_active() {
+                    return;
+                }
+                let color = match index {
+                    1 => PhotoBorder::White,
+                    2 => PhotoBorder::Black,
+                    3 => PhotoBorder::Grey,
+                    _ => PhotoBorder::None,
+                };
+                project.borrow_mut().border = color;
+                border_thickness.set_sensitive(color != PhotoBorder::None);
+                update_geometry(&canvas, &frames, &project.borrow());
+            });
+        }
+    }
+    {
+        let project = project.clone();
+        let canvas = canvas.clone();
+        let frames = frames.clone();
+        border_thickness.connect_value_changed(move |scale| {
+            project.borrow_mut().border_width = scale.value() as f32;
+            update_geometry(&canvas, &frames, &project.borrow());
+        });
+    }
+
+    // Reset stays in the header and restores settings and the Smart canvas.
     {
         let project = project.clone();
         let smart_tile = smart_tile.clone();
         let portrait_btn = portrait_btn.clone();
         let landscape_btn = landscape_btn.clone();
         let fit_toggle = fit_toggle.clone();
+        let fill_toggle = fill_toggle.clone();
         let aspect = aspect.clone();
         let custom_width = custom_width.clone();
         let custom_height = custom_height.clone();
-        let background = background.clone();
+        let background_swatches = background_swatches.clone();
+        let border_swatches = border_swatches.clone();
+        let refresh = refresh.clone();
+        let border_thickness = border_thickness.clone();
         let corner_radius = corner_radius.clone();
         let spacing = spacing.clone();
         let aspect_frame = aspect_frame.clone();
@@ -597,6 +715,8 @@ pub fn build(
                 project_data.layout = LayoutKind::SmartMosaic;
                 project_data.custom_aspect = 16.0 / 9.0;
                 project_data.background = Background::White;
+                project_data.border = PhotoBorder::None;
+                project_data.border_width = 0.012;
                 project_data.round_corners = false;
                 project_data.corner_radius = 0.0;
                 project_data.spacing = 0.018;
@@ -627,35 +747,28 @@ pub fn build(
             // The tile handler skips no-op activations, so re-assert the
             // fit sensitivity explicitly (it may have been greyed by Grid).
             fit_toggle.set_sensitive(true);
+            fill_toggle.set_sensitive(true);
             aspect.set_selected(aspect_index);
             custom_width.set_value(16.0);
             custom_height.set_value(9.0);
-            background.set_selected(0);
+            background_swatches[0].set_active(true);
+            border_swatches[0].set_active(true);
+            border_thickness.set_value(0.012);
             corner_radius.set_value(0.0);
             spacing.set_value(0.018);
             custom_ratio.set_visible(false);
             aspect_frame.set_ratio(canvas_ratio);
             let mut project_data = project.borrow_mut();
             project_data.relayout();
+            drop(project_data);
+            // If the previous controls were already on their defaults, none
+            // of their toggled signals would request this final repaint.
+            refresh();
         });
     }
 
-    // Bottom actions share the top rows' look: one linked row of three
-    // equal-width blocks spanning the panel width.
-    let actions_row = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-    actions_row.add_css_class("linked");
-    actions_row.add_css_class("collage-tabs");
-    actions_row.set_homogeneous(true);
-    let add_photos = icon_label_button("list-add-symbolic", "Add", "Add photos from the library");
-    let shuffle = icon_label_button(
-        "media-playlist-shuffle-symbolic",
-        "Shuffle",
-        "Shuffle photo order",
-    );
-    actions_row.append(&reset_defaults);
-    actions_row.append(&add_photos);
-    actions_row.append(&shuffle);
-    controls.append(&actions_row);
+    // Shuffle lives beside Layout, while Add Photos and Exit live in the
+    // persistent footer below the scrollable settings.
     {
         let project = project.clone();
         let refresh = refresh.clone();
@@ -665,13 +778,6 @@ pub fn build(
         });
     }
 
-    // Create spans the first two thirds; Exit occupies the last third at
-    // exactly the same block size as Shuffle in the row above.
-    let primary_grid = gtk::Grid::new();
-    primary_grid.set_column_homogeneous(true);
-    primary_grid.set_column_spacing(6);
-    primary_grid.set_hexpand(true);
-    primary_grid.add_css_class("collage-tabs");
     let export = gtk::Button::with_label("Create Collage…");
     if saved_photo_id.get().is_some() {
         export.set_label("Save Collage…");
@@ -679,9 +785,29 @@ pub fn build(
     export.add_css_class("suggested-action");
     export.set_tooltip_text(Some("Render and export the collage as a JPEG"));
     let close = icon_label_button("application-exit-symbolic", "Exit", "Exit collage");
-    primary_grid.attach(&export, 0, 0, 2, 1);
-    primary_grid.attach(&close, 2, 0, 1, 1);
-    controls.append(&primary_grid);
+    let add_photos = icon_label_button(
+        "list-add-symbolic",
+        "Add Photos",
+        "Add photos from the library",
+    );
+    let footer_actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    footer_actions.set_homogeneous(true);
+    footer_actions.append(&add_photos);
+    footer_actions.append(&close);
+    export.set_hexpand(true);
+    let footer = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    footer.add_css_class("collage-footer");
+    footer.set_margin_top(0);
+    footer.set_margin_bottom(16);
+    footer.set_margin_start(0);
+    footer.set_margin_end(0);
+    let footer_content = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    footer_content.set_margin_top(12);
+    footer_content.set_margin_start(18);
+    footer_content.set_margin_end(18);
+    footer_content.append(&footer_actions);
+    footer_content.append(&export);
+    footer.append(&footer_content);
     {
         let project = project.clone();
         let parent = parent.clone();
@@ -693,17 +819,19 @@ pub fn build(
     add_photos.connect_clicked(move |_| on_add_photos());
     close.connect_clicked(move |_| on_close());
 
-    // The controls column is the collage editor's only min-height
-    // contributor. Wrap it in a scrolled window so short windows (e.g.
-    // 1366x768) never overflow the shared bottom bar; the column scrolls
-    // instead while remaining fully expanded when space allows.
+    // Only the settings scroll. Footer actions remain reachable when the
+    // window is short or the panel is narrow.
     let controls_scroll = gtk::ScrolledWindow::new();
     controls_scroll.set_hscrollbar_policy(gtk::PolicyType::Never);
     controls_scroll.set_vscrollbar_policy(gtk::PolicyType::Automatic);
     controls_scroll.set_propagate_natural_width(true);
-    controls_scroll.set_propagate_natural_height(true);
+    controls_scroll.set_propagate_natural_height(false);
+    controls_scroll.set_vexpand(true);
     controls_scroll.set_min_content_width(320);
     controls_scroll.set_child(Some(&controls));
+    let sidebar = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    sidebar.append(&controls_scroll);
+    sidebar.append(&footer);
     // Same adjustable split pane as the edit mode tools panel: users can
     // drag the divider to give the controls or the canvas more room, the
     // panel starts at the same 360px width and never shrinks below 320px.
@@ -713,8 +841,10 @@ pub fn build(
     body.set_position(360);
     body.set_resize_start_child(false);
     body.set_shrink_start_child(false);
+    // Keep a generous drag target but render just one visible separator line.
+    body.add_css_class("collage-editor-paned");
     body.set_wide_handle(true);
-    body.set_start_child(Some(&controls_scroll));
+    body.set_start_child(Some(&sidebar));
     body.set_end_child(Some(&aspect_frame));
     root.append(&body);
     CollageEditor {
@@ -726,6 +856,194 @@ pub fn build(
         status,
         hooks,
     }
+}
+
+/// The border is painted as an overlay *above* the photo, never as a GTK
+/// CSS border. A CSS border consumes space in GtkFrame and shifts the child;
+/// this path uses a centred, inset stroke without changing geometry.
+fn draw_collage_border(
+    context: &gtk::cairo::Context,
+    width: i32,
+    height: i32,
+    color: PhotoBorder,
+    stroke: i32,
+    radius: f32,
+) {
+    let Some(rgb) = color.rgb() else { return; };
+    if width < 2 || height < 2 { return; }
+    let w = width as f64;
+    let h = height as f64;
+    let line = f64::from(stroke.max(1)).min((w.min(h) - 1.0).max(1.0));
+    let left = line / 2.0;
+    let top = line / 2.0;
+    let right = w - left;
+    let bottom = h - top;
+    let fraction = radius.clamp(0.0, 0.5) as f64;
+    let rx = (right - left) * fraction;
+    let ry = (bottom - top) * fraction;
+    let k = 0.552_284_749_830_793_6; // Cubic Bezier approximation of a quarter circle.
+    context.new_path();
+    context.move_to(left + rx, top);
+    context.line_to(right - rx, top);
+    context.curve_to(right - rx + rx * k, top, right, top + ry - ry * k, right, top + ry);
+    context.line_to(right, bottom - ry);
+    context.curve_to(right, bottom - ry + ry * k, right - rx + rx * k, bottom, right - rx, bottom);
+    context.line_to(left + rx, bottom);
+    context.curve_to(left + rx - rx * k, bottom, left, bottom - ry + ry * k, left, bottom - ry);
+    context.line_to(left, top + ry);
+    context.curve_to(left, top + ry - ry * k, left + rx - rx * k, top, left + rx, top);
+    context.close_path();
+    context.set_source_rgb(rgb[0] as f64 / 255.0, rgb[1] as f64 / 255.0, rgb[2] as f64 / 255.0);
+    context.set_line_width(line);
+    let _ = context.stroke();
+}
+
+fn collage_trace_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var("PIC_COLLAGE_TRACE").ok().is_some_and(|value| value != "0")
+    })
+}
+
+fn set_preview_corner_class(
+    widget: &impl IsA<gtk::Widget>,
+    previous: &Cell<i32>,
+    step: i32,
+) {
+    let old = previous.replace(step);
+    if old == step {
+        return;
+    }
+    if old > 0 {
+        widget.remove_css_class(&format!("collage-photo-radius-{old}"));
+    }
+    if step > 0 {
+        widget.add_css_class(&format!("collage-photo-radius-{step}"));
+    }
+}
+
+/// Vector-only pictograms based on the screensaver style previews.
+/// Their different shapes explain the layout before the user selects it.
+fn collage_layout_preview(kind: LayoutKind) -> gtk::DrawingArea {
+    let area = gtk::DrawingArea::new();
+    area.set_content_width(82);
+    area.set_content_height(49);
+    area.set_draw_func(move |_, cr, width, height| {
+        if width <= 0 || height <= 0 {
+            return;
+        }
+        cr.scale(width as f64 / 82.0, height as f64 / 49.0);
+        let rect = |x: f64, y: f64, w: f64, h: f64, rgb: (f64, f64, f64)| {
+            cr.set_source_rgb(rgb.0, rgb.1, rgb.2);
+            cr.rectangle(x, y, w, h);
+            let _ = cr.fill();
+        };
+        let photo = |x: f64, y: f64, w: f64, h: f64, tint: usize| {
+            let sky = [
+                (0.42, 0.68, 0.80),
+                (0.78, 0.61, 0.47),
+                (0.49, 0.66, 0.63),
+                (0.57, 0.57, 0.79),
+            ][tint % 4];
+            let ground = [
+                (0.25, 0.42, 0.38),
+                (0.55, 0.42, 0.28),
+                (0.29, 0.45, 0.37),
+                (0.40, 0.38, 0.58),
+            ][tint % 4];
+            rect(x, y, w, h, sky);
+            rect(x, y + h * 0.65, w, h * 0.35, ground);
+            rect(x + w * 0.70, y + h * 0.13, w * 0.12, h * 0.15, (0.98, 0.86, 0.61));
+        };
+        rect(0.0, 0.0, 82.0, 49.0, (0.16, 0.19, 0.24));
+        match kind {
+            LayoutKind::Mosaic => {
+                photo(2.0, 2.0, 32.0, 45.0, 0);
+                photo(36.0, 2.0, 44.0, 19.0, 1);
+                photo(36.0, 23.0, 21.0, 24.0, 2);
+                photo(59.0, 23.0, 21.0, 24.0, 3);
+            }
+            LayoutKind::SmartMosaic => {
+                photo(2.0, 2.0, 56.0, 29.0, 0);
+                photo(60.0, 2.0, 20.0, 45.0, 1);
+                photo(2.0, 33.0, 56.0, 14.0, 2);
+            }
+            LayoutKind::Grid => {
+                for row in 0..2 {
+                    for col in 0..3 {
+                        photo(
+                            2.0 + col as f64 * 27.0,
+                            2.0 + row as f64 * 24.0,
+                            25.0,
+                            21.0,
+                            row * 3 + col,
+                        );
+                    }
+                }
+            }
+        }
+    });
+    area
+}
+
+/// Compact GTK4 radio-like colour blocks. Only the colour is visible;
+/// descriptive hover tips and keyboard focus retain discoverability.
+fn colour_swatch_picker(options: &[(&str, &str)]) -> (gtk::Box, Vec<gtk::ToggleButton>) {
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 5);
+    row.set_hexpand(true);
+    row.set_homogeneous(true);
+    let mut buttons: Vec<gtk::ToggleButton> = Vec::with_capacity(options.len());
+    for &(tooltip, css_class) in options {
+        let button = gtk::ToggleButton::new();
+        button.add_css_class("collage-color-swatch");
+        button.add_css_class(css_class);
+        button.set_hexpand(true);
+        button.set_tooltip_text(Some(tooltip));
+        if let Some(first) = buttons.first() {
+            button.set_group(Some(first));
+        }
+        if css_class == "collage-swatch-none" {
+            button.set_child(Some(&gtk::Image::from_icon_name("edit-clear-symbolic")));
+        }
+        row.append(&button);
+        buttons.push(button);
+    }
+    (row, buttons)
+}
+
+/// The collage canvas and photo letterboxes share one background. Updating
+/// their classes in place preserves the photo widgets and sharper textures.
+fn update_preview_background(
+    canvas: &gtk::Fixed,
+    frames: &Rc<RefCell<Vec<PreviewFrame>>>,
+    background: Background,
+) {
+    let classes = ["collage-white", "collage-black", "collage-light-gray"];
+    let selected = match background {
+        Background::White => "collage-white",
+        Background::Black => "collage-black",
+        Background::LightGray => "collage-light-gray",
+    };
+    for class in classes {
+        canvas.remove_css_class(class);
+    }
+    canvas.add_css_class(selected);
+    for frame in frames.borrow().iter() {
+        for class in classes {
+            frame.outer.remove_css_class(class);
+        }
+        frame.outer.add_css_class(selected);
+    }
+}
+
+fn labelled_control_row(label_text: &str, control: &impl IsA<gtk::Widget>) -> gtk::Box {
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let label = gtk::Label::new(Some(label_text));
+    label.set_halign(gtk::Align::Start);
+    label.set_hexpand(true);
+    row.append(&label);
+    row.append(control);
+    row
 }
 
 fn add_section_label(parent: &gtk::Box, text: &str) {
@@ -834,6 +1152,25 @@ fn refresh_preview(
         inner.set_vexpand(true);
         let tile = gtk::Overlay::new();
         tile.set_child(Some(&inner));
+        // The overlay never contributes to layout and cannot consume pointer
+        // events; mouse drag and context actions continue to reach the frame.
+        let border = gtk::DrawingArea::new();
+        border.set_hexpand(true);
+        border.set_vexpand(true);
+        border.set_halign(gtk::Align::Fill);
+        border.set_valign(gtk::Align::Fill);
+        border.set_can_target(false);
+        let border_project = project.clone();
+        let border_canvas = canvas.clone();
+        border.set_draw_func(move |_, cr, width, height| {
+            let data = border_project.borrow();
+            let canvas_side = border_canvas.width().min(border_canvas.height()).max(1) as u32;
+            let stroke = super::model::border_pixels(canvas_side, data.border_width);
+            let radius = if data.round_corners { data.corner_radius } else { 0.0 };
+            draw_collage_border(cr, width, height, data.border, stroke as i32, radius);
+        });
+        tile.add_overlay(&border);
+        tile.set_measure_overlay(&border, false);
         let picture = gtk::Picture::new();
         // The containing frame is sized to the fitted rectangle in
         // update_geometry, so the picture itself can always cover it.
@@ -1085,6 +1422,10 @@ fn refresh_preview(
             outer: frame.upcast(),
             inner,
             photo: photo_frame,
+            outer_radius: Cell::new(0),
+            photo_radius: Cell::new(0),
+            border,
+            border_px: Cell::new(0),
         });
     }
 
@@ -1100,28 +1441,65 @@ fn update_geometry(
     if width < 1.0 || height < 1.0 {
         return; // Wait for the first real allocation; never invent a minimum.
     }
+    let border_px = super::model::border_pixels(
+        width.min(height).round() as u32, project.border_width
+    ) as i32;
+    // Log only when geometry inputs change, rather than every frame clock tick.
+    let trace_key = if collage_trace_enabled() {
+        Some(format!(
+            "{}x{} layout={:?} keep={} radius={} border={:?}/{} spacing={} items={:?}",
+            width as i32, height as i32, project.layout, project.keep_photo_aspect,
+            project.corner_radius, project.border, project.border_width, project.spacing,
+            project.items.iter().map(|item| (
+                item.photo.id, item.x.to_bits(), item.y.to_bits(),
+                item.width.to_bits(), item.height.to_bits(), item.rotation.to_bits()
+            )).collect::<Vec<_>>()
+        ))
+    } else { None };
+    let should_log = trace_key.as_ref().is_some_and(|key| LAST_GEOMETRY_TRACE.with(|last| {
+        let mut last = last.borrow_mut();
+        if last.as_ref() == Some(key) { false } else {
+            *last = Some(key.clone());
+            true
+        }
+    }));
+    if should_log {
+        eprintln!(
+            "PIC_COLLAGE_TRACE preview_canvas={}x{} layout={:?} keep={} border={:?} stroke={} radius={:.3} spacing={:.4} count={}",
+            width as i32, height as i32, project.layout, project.keep_photo_aspect,
+            project.border, border_px, project.corner_radius, project.spacing, project.items.len()
+        );
+    }
     for (item, preview) in project.items.iter().zip(frames.borrow().iter()) {
-        let x = item.x * width;
-        let y = item.y * height;
-        let w = (item.width * width).round().clamp(1.0, width) as i32;
-        let h = (item.height * height).round().clamp(1.0, height) as i32;
-        for radius in 0..=MAX_PREVIEW_CORNER_RADIUS {
-            preview
-                .outer
-                .remove_css_class(&format!("collage-photo-radius-{radius}"));
-            preview
-                .photo
-                .remove_css_class(&format!("collage-photo-radius-{radius}"));
-        }
-        if project.round_corners {
-            let radius = (w.min(h) as f32 * project.corner_radius)
-                .round()
-                .clamp(0.0, MAX_PREVIEW_CORNER_RADIUS as f32) as i32;
-            preview
-                .outer
-                .add_css_class(&format!("collage-photo-radius-{radius}"));
-        }
+        let fraction = if project.round_corners {
+            project.corner_radius.clamp(0.0, 0.5)
+        } else { 0.0 };
+        let g = super::model::tile_geometry(item, width as u32, height as u32, fraction);
+        let x = g.x as f64;
+        let y = g.y as f64;
+        let w = g.w as i32;
+        let h = g.h as i32;
+        let radius_step = ((fraction * 200.0).round() as i32)
+            .clamp(0, PREVIEW_CORNER_STEPS);
+        preview.outer.set_overflow(if radius_step > 0 {
+            gtk::Overflow::Hidden
+        } else {
+            gtk::Overflow::Visible
+        });
+        set_preview_corner_class(&preview.outer, &preview.outer_radius, radius_step);
         preview.outer.set_size_request(w, h);
+        preview.border_px.set(if project.border == PhotoBorder::None { 0 } else { border_px });
+        preview.border.queue_draw();
+        if should_log {
+            eprintln!(
+                "PIC_COLLAGE_TRACE preview_tile id={} slot=({},{},{}x{}) visible=({},{},{}x{}) center=({:.2},{:.2}) rounded={:.3} stroke={} rotate={:.2}",
+                item.photo.id, g.slot_x, g.slot_y, g.slot_w, g.slot_h,
+                g.x, g.y, g.w, g.h,
+                g.x as f64 + g.w as f64 / 2.0,
+                g.y as f64 + g.h as f64 / 2.0,
+                fraction, preview.border_px.get(), item.rotation
+            );
+        }
         let contain = matches!(project.layout, LayoutKind::Mosaic | LayoutKind::SmartMosaic)
             && project.keep_photo_aspect;
         let source_ratio = item.photo.aspect_ratio.max(0.01);
@@ -1135,6 +1513,13 @@ fn update_geometry(
         };
         let photo_x = (w - photo_w) / 2;
         let photo_y = (h - photo_h) / 2;
+        if should_log {
+            eprintln!(
+                "PIC_COLLAGE_TRACE preview_content id={} fit={} source_ratio={:.5} tile_ratio={:.5} photo=({},{},{}x{})",
+                item.photo.id, contain, source_ratio, tile_ratio,
+                photo_x, photo_y, photo_w, photo_h,
+            );
+        }
         preview.photo.set_size_request(photo_w, photo_h);
         preview
             .inner
@@ -1146,15 +1531,12 @@ fn update_geometry(
             } else {
                 gtk::Overflow::Visible
             });
-        if project.round_corners && contain {
-            let radius = (photo_w.min(photo_h) as f32 * project.corner_radius)
-                .round()
-                .clamp(0.0, MAX_PREVIEW_CORNER_RADIUS as f32) as i32;
-            preview
-                .photo
-                .add_css_class(&format!("collage-photo-radius-{radius}"));
-        }
-        canvas.move_(&preview.outer, x as f64, y as f64);
+        set_preview_corner_class(
+            &preview.photo,
+            &preview.photo_radius,
+            if contain { radius_step } else { 0 },
+        );
+        canvas.move_(&preview.outer, x, y);
         if item.rotation.abs() > f32::EPSILON {
             let transform = gtk::gsk::Transform::new()
                 .translate(&gtk::graphene::Point::new(w as f32 / 2.0, h as f32 / 2.0))
@@ -1238,6 +1620,11 @@ mod sizing_tests {
             })
             .collect();
         editor.project.borrow_mut().relayout();
+        {
+            let mut project = editor.project.borrow_mut();
+            project.border = PhotoBorder::Black;
+            project.border_width = 0.025;
+        }
         refresh_preview(
             &editor.canvas,
             &editor.frames,
@@ -1250,10 +1637,8 @@ mod sizing_tests {
             .iter()
             .map(|f| f.outer.clone())
             .collect::<Vec<_>>();
-        // The controls column lives in the start pane of the adjustable
-        // split, inside a ScrolledWindow (its tall minimum must not leak
-        // into the editor/window request). Descend through pane -> scroll
-        // -> viewport -> controls box to find the scale.
+        // The start pane contains a sidebar (scrolling settings and fixed
+        // footer). Find the spacing scale in the scrolling settings.
         let controls = editor
             .root
             .first_child()
@@ -1261,6 +1646,10 @@ mod sizing_tests {
             .downcast::<gtk::Paned>()
             .unwrap()
             .start_child()
+            .unwrap()
+            .downcast::<gtk::Box>()
+            .unwrap()
+            .first_child()
             .unwrap()
             .downcast::<gtk::ScrolledWindow>()
             .unwrap()
@@ -1274,7 +1663,7 @@ mod sizing_tests {
             if widget
                 .clone()
                 .downcast::<gtk::Label>()
-                .is_ok_and(|l| l.text() == "SPACING")
+                .is_ok_and(|l| l.text() == "Spacing")
             {
                 break widget
                     .next_sibling()
@@ -1303,12 +1692,63 @@ mod sizing_tests {
             "collage editor minimum width {min_width} must fit a 1366px window"
         );
         let baseline = toast.measure(gtk::Orientation::Vertical, 1200).0;
-        for (width, height) in [(1200, 800), (900, 720), (1400, 850)] {
+        let footer = editor
+            .root
+            .first_child()
+            .unwrap()
+            .downcast::<gtk::Paned>()
+            .unwrap()
+            .start_child()
+            .unwrap()
+            .downcast::<gtk::Box>()
+            .unwrap()
+            .last_child()
+            .expect("fixed collage action footer");
+        for (width, height) in [(1200, 800), (900, 720), (1400, 850), (900, 560)] {
             toast.allocate(width, height, -1, None);
+            assert!(footer.height() > 0, "collage footer must stay visible");
+            assert!(footer.height() <= height, "collage footer must fit");
             // Manual allocation has no frame clock; perform the resize tick
             // that the live canvas runs before painting each new allocation.
             update_geometry(&editor.canvas, &editor.frames, &editor.project.borrow());
             assert!(editor.canvas.width() > 0 && editor.canvas.height() > 0);
+            // Test the regression reported on Fedora: toggling a border may
+            // repaint over the photo but must never move, resize or rebuild a
+            // tile (CSS borders used to consume GtkFrame content space).
+            let baseline_tiles = editor.frames.borrow().iter().map(|frame| {
+                (frame.outer.width_request(), frame.outer.height_request())
+            }).collect::<Vec<_>>();
+            for color in [PhotoBorder::None, PhotoBorder::White, PhotoBorder::Black, PhotoBorder::Grey] {
+                {
+                    let mut data = editor.project.borrow_mut();
+                    data.border = color;
+                    data.border_width = 0.04;
+                }
+                update_geometry(&editor.canvas, &editor.frames, &editor.project.borrow());
+                for (frame, original) in editor.frames.borrow().iter().zip(&baseline_tiles) {
+                    assert_eq!(
+                        (frame.outer.width_request(), frame.outer.height_request()),
+                        *original, "border {:?} changed the frame size", color
+                    );
+                    assert_eq!(frame.border.width_request(), -1, "border overlay must not request a tile size");
+                }
+            }
+            {
+                let mut data = editor.project.borrow_mut();
+                data.border = PhotoBorder::Black;
+                data.border_width = 0.025;
+            }
+            update_geometry(&editor.canvas, &editor.frames, &editor.project.borrow());
+            // Every tile, large or small, gets exactly the same pixel stroke
+            // at this canvas allocation. It may scale when the canvas resizes.
+            let frame_borders = editor.frames.borrow();
+            let expected = frame_borders[0].border_px.get();
+            assert!(expected > 0, "black outline must be applied");
+            assert!(
+                frame_borders.iter().all(|frame| frame.border_px.get() == expected),
+                "different-sized collage photos must have identical border widths"
+            );
+            drop(frame_borders);
             for step in (0..=20).chain((0..20).rev()) {
                 spacing.set_value(step as f64 * 0.004);
                 toast.allocate(width, height, -1, None);

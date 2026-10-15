@@ -2634,12 +2634,16 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     // replaces its model. GtkWidgetPaintable::current_image() is immutable:
     // unlike a live WidgetPaintable it cannot redraw the new model underneath
     // the outgoing image. Only one viewport-sized render node is retained.
+    // Keep the WidgetPaintable attached across frames so current_image() has
+    // the last GTK snapshot when a sidebar click arrives.
+    let nav_fade_source = gtk::WidgetPaintable::new(Some(&main_stack));
     let nav_fade_sequence = Rc::new(Cell::new(0_u64));
     let nav_fade_overlay: Rc<RefCell<Option<gtk::Picture>>> =
         Rc::new(RefCell::new(None));
     let nav_fade_begin: Rc<dyn Fn(bool, bool)> = {
         let page_overlay = page_overlay.clone();
         let main_stack = main_stack.clone();
+        let source = nav_fade_source.clone();
         let gallery = gallery.clone();
         let sequence = nav_fade_sequence.clone();
         let active = nav_fade_overlay.clone();
@@ -2659,7 +2663,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                     Some("photos" | "library" | "albums")
                 )
             {
-                Some(gtk::WidgetPaintable::new(Some(&main_stack)).current_image())
+                Some(source.current_image())
             } else {
                 None
             };

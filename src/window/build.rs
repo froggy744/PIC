@@ -6096,6 +6096,7 @@ fn start_photo_export_single(
     });
 
     switch_library_slot.replace(Some({
+        let nav_fade_cancel = nav_fade_cancel.clone();
         let connection = connection.clone();
         let scan_job = scan_job.clone();
         let lightbox = lightbox.clone();
@@ -6139,6 +6140,7 @@ fn start_photo_export_single(
                 job.stop_requested = true;
             }
             onboarding_for_switch.library_changed();
+            nav_fade_cancel();
             invalidate_pending_grid_navigation();
             gallery.cancel_folder_destination_hold();
             invalidate_availability_refreshes();

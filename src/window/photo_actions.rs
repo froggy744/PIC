@@ -30,6 +30,12 @@ fn ensure_context_menu_css(display: &gtk::gdk::Display) {
     CONTEXT_MENU_CSS_INSTALLED.with(|cell| cell.set(true));
 }
 
+/// Shared menu state for the fullscreen viewer's capture-phase wheel router.
+/// Avoid duplicating menu ownership inside Lightbox.
+pub(crate) fn photo_context_menu_is_open() -> bool {
+    ACTIVE_PHOTO_MENU.with(|active| active.borrow().as_ref().is_some_and(|menu| menu.is_visible()))
+}
+
 pub(crate) fn dismiss_active_photo_context_menu() -> bool {
     ACTIVE_PHOTO_MENU.with(|active| {
         let Some(menu) = active.borrow_mut().take() else {
@@ -921,7 +927,10 @@ fn show_photo_context_menu(
     menu_host.add_css_class("card");
     menu_host.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
     menu_host.set_has_frame(false);
-    menu_host.set_propagate_natural_height(true);
+    // Height is explicitly bounded below. Propagating the whole menu's
+    // natural height makes GtkOverlay allocate every action at once and can
+    // prevent the internal scroller from acquiring any vertical scroll range.
+    menu_host.set_propagate_natural_height(false);
     // A context menu should never expand into a near full-height panel.
     // Keep enough room for the common actions and scroll only the overflow.
     menu_host.set_max_content_height((host.height() - 32).clamp(1, 460));
@@ -939,6 +948,10 @@ fn show_photo_context_menu(
     let measured_height = natural_height
         .max(1)
         .min(menu_host.max_content_height().max(1));
+    // GtkOverlay doesn't automatically clamp a ScrolledWindow to its
+    // max-content-height when the child asks for more space; give the menu a
+    // concrete viewport height so its v-adjustment can actually scroll.
+    menu_host.set_size_request(-1, measured_height);
 
     const MENU_EDGE_INSET: i32 = 4;
     let max_x = (host.width() - measured_width - MENU_EDGE_INSET).max(MENU_EDGE_INSET);

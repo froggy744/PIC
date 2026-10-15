@@ -2747,9 +2747,9 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             ) {
                 eprintln!("Could not save Properties panel width: {error}");
             }
-            if std::env::var_os("PICASA_TRACE").is_some() {
+            if std::env::var_os("PIC_INSPECTOR_TRACE").is_some() {
                 eprintln!(
-                    "PIC_INSPECTOR_LAYOUT stage=drag_end sidebar_width={} gallery_width={} scroll_y={:.1}",
+                    "PIC_INSPECTOR_TRACE stage=drag_end sidebar_width={} gallery_width={} scroll_y={:.1}",
                     split.sidebar().map(|child| child.width()).unwrap_or(0),
                     split.content().map(|child| child.width()).unwrap_or(0),
                     gallery.scroll_position()
@@ -2770,25 +2770,63 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     // implicit scroll-to-focused-tile and can visibly jump the viewport.
     {
         let gallery = gallery.clone();
+        let active = inspector_transition_active.clone();
+        let last_width = inspector_trace_last_width.clone();
+        let frames = inspector_trace_frames.clone();
         let generation = Rc::new(Cell::new(0_u64));
         properties_split.connect_show_sidebar_notify(move |split| {
+            // Resize transitions are not photo zooms or model changes.
             gallery.cancel_resize_flip();
             let serial = generation.get().wrapping_add(1);
             generation.set(serial);
+            active.set(true);
+            last_width.set(-1);
+            frames.set(0);
+            let started = Instant::now();
+            let start_scroll = gallery.scroll_position();
+            let start_width = split.content().map(|child| child.width()).unwrap_or(0);
+            let opening = split.shows_sidebar();
             gallery.set_photo_wall_width_frozen(true);
-            if std::env::var_os("PICASA_TRACE").is_some() {
+            if std::env::var_os("PIC_INSPECTOR_TRACE").is_some() {
                 eprintln!(
-                    "PIC_INSPECTOR_LAYOUT stage=transition open={} gallery_width={} scroll_y={:.1}",
-                    split.shows_sidebar(),
-                    split.content().map(|child| child.width()).unwrap_or(0),
-                    gallery.scroll_position()
+                    "PIC_INSPECTOR_TRACE stage=begin serial={} open={} split_width={} gallery_width={} panel_width={} scroll_y={:.1} layout={:?} virtual={} collapsed={}",
+                    serial,
+                    opening,
+                    split.width(),
+                    start_width,
+                    split.sidebar().map(|child| child.width()).unwrap_or(0),
+                    start_scroll,
+                    gallery.layout(),
+                    gallery.using_sectioned_folder_view(),
+                    split.is_collapsed()
                 );
             }
             let gallery = gallery.clone();
+            let split = split.clone();
             let generation = generation.clone();
+            let active = active.clone();
             glib::timeout_add_local_once(Duration::from_millis(400), move || {
-                if generation.get() == serial {
-                    gallery.set_photo_wall_width_frozen(false);
+                if generation.get() != serial {
+                    return;
+                }
+                gallery.set_photo_wall_width_frozen(false);
+                active.set(false);
+                if std::env::var_os("PIC_INSPECTOR_TRACE").is_some() {
+                    let scroll = gallery.scroll_position();
+                    let end_width = split.content().map(|child| child.width()).unwrap_or(0);
+                    eprintln!(
+                        "PIC_INSPECTOR_TRACE stage=end serial={} open={} elapsed_ms={} split_width={} gallery_width={} gallery_delta={} panel_width={} scroll_y={:.1} scroll_delta={:.1} collapsed={}",
+                        serial,
+                        opening,
+                        started.elapsed().as_millis(),
+                        split.width(),
+                        end_width,
+                        end_width - start_width,
+                        split.sidebar().map(|child| child.width()).unwrap_or(0),
+                        scroll,
+                        scroll - start_scroll,
+                        split.is_collapsed()
+                    );
                 }
             });
         });
@@ -2838,7 +2876,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         let page_for_trace = page_overlay.clone();
         let panel_for_trace = properties_panel.clone();
         properties_split.connect_show_sidebar_notify(move |split| {
-            if std::env::var_os("PICASA_TRACE").is_none() {
+            if std::env::var_os("PIC_INSPECTOR_TRACE").is_none() {
                 return;
             }
             let opened = split.shows_sidebar();
@@ -2847,7 +2885,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             let panel = panel_for_trace.clone();
             glib::timeout_add_local_once(Duration::from_millis(420), move || {
                 eprintln!(
-                    "PIC_INSPECTOR_LAYOUT stage=settled open={} gallery_width={} panel_width={} scroll_y={:.1}",
+                    "PIC_INSPECTOR_TRACE stage=settled open={} gallery_width={} panel_width={} scroll_y={:.1}",
                     opened,
                     page.width(),
                     panel.width(),

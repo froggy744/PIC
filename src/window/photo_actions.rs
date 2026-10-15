@@ -1750,6 +1750,60 @@ mod photo_actions_tests {
         assert_eq!(format_shutter_speed(f64::NAN), None);
     }
 
+    #[test]
+    #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+    fn lightbox_overlay_preserves_inspector_and_gallery_width() {
+        gtk::init().unwrap();
+
+        let gallery = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        gallery.set_hexpand(true);
+        let inspector = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        inspector.set_size_request(260, -1);
+        let split = gtk::Paned::new(gtk::Orientation::Horizontal);
+        split.set_start_child(Some(&gallery));
+        split.set_end_child(Some(&inspector));
+        split.set_resize_start_child(true);
+        split.set_resize_end_child(false);
+        split.set_shrink_end_child(false);
+
+        // Match build.rs: lightbox covers the Paned, rather than living in
+        // the gallery child, and the inspector stays allocated underneath.
+        let overlay = gtk::Overlay::new();
+        overlay.set_child(Some(&split));
+        let viewer = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        viewer.set_hexpand(true);
+        viewer.set_vexpand(true);
+        viewer.set_visible(false);
+        overlay.add_overlay(&viewer);
+        let window = gtk::Window::builder()
+            .default_width(1200)
+            .default_height(700)
+            .child(&overlay)
+            .build();
+        window.present();
+        settle_gtk_layout();
+        split.set_position(900);
+        settle_gtk_layout();
+
+        let width_before = gallery.width();
+        let inspector_before = inspector.width();
+        assert!(width_before > 0);
+        assert!(inspector_before > 0);
+
+        viewer.set_visible(true);
+        settle_gtk_layout();
+        assert_eq!(gallery.width(), width_before);
+        assert_eq!(inspector.width(), inspector_before);
+        assert!(inspector.is_visible());
+
+        viewer.set_visible(false);
+        settle_gtk_layout();
+        assert_eq!(gallery.width(), width_before);
+        assert_eq!(inspector.width(), inspector_before);
+        assert!(inspector.is_visible());
+        window.close();
+    }
+
     fn settle_gtk_layout() {
         let main_loop = gtk::glib::MainLoop::new(None, false);
         let loop_to_quit = main_loop.clone();

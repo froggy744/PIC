@@ -944,13 +944,14 @@ fn show_photo_context_menu(
     // so the centring also follows dynamic items such as album actions.
     let (_, natural_width, _, _) = menu_host.measure(gtk::Orientation::Horizontal, -1);
     let measured_width = natural_width.max(1).min(host.width().max(1));
-    let (_, natural_height, _, _) = menu_host.measure(gtk::Orientation::Vertical, measured_width);
+    // Measure the CONTENT, not the GtkScrolledWindow: with
+    // propagate_natural_height=false, ScrolledWindow reports only its minimum
+    // (roughly two rows). Measuring that and setting it as the height request
+    // collapsed the context menu and made it almost impossible to scroll.
+    let (_, natural_height, _, _) = menu.measure(gtk::Orientation::Vertical, measured_width);
     let measured_height = natural_height
         .max(1)
         .min(menu_host.max_content_height().max(1));
-    // GtkOverlay doesn't automatically clamp a ScrolledWindow to its
-    // max-content-height when the child asks for more space; give the menu a
-    // concrete viewport height so its v-adjustment can actually scroll.
     menu_host.set_size_request(-1, measured_height);
 
     const MENU_EDGE_INSET: i32 = 4;

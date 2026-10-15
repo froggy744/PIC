@@ -2878,34 +2878,51 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                                     gallery.scroll_position()
                                 );
                             }
-                            // GtkScrolledWindow publishes its new scroll
-                            // extent on a subsequent frame. A one-shot check
-                            // corrects that late adjustment rather than
-                            // leaving the viewport displaced after close.
+                            // The sectioned surface calculates its new geometry
+                            // synchronously, but GtkScrolledWindow may not yet
+                            // have published the matching adjustment.upper().
+                            // A failed restore means "extent not ready", NOT
+                            // that it is safe to abandon the captured photo.
+                            // Retry for a few allocated frames; cancel stale
+                            // retries if the panel is toggled again.
                             let gallery_after_layout = gallery.clone();
                             let generation_after_layout = generation.clone();
-                            glib::timeout_add_local_once(
-                                Duration::from_millis(55),
-                                move || {
-                                    if generation_after_layout.get() != serial {
-                                        return;
-                                    }
-                                    let residual = gallery_after_layout.inspector_grid_anchor_error(anchor);
-                                    let corrected = if residual.is_some_and(|err| err.abs() > 2.0) {
-                                        gallery_after_layout.restore_inspector_grid_anchor(anchor)
-                                    } else {
-                                        false
-                                    };
-                                    if std::env::var_os("PIC_INSPECTOR_TRACE").is_some() {
-                                        eprintln!(
-                                            "PIC_INSPECTOR_TRACE stage=anchor_settled serial={} photo={} error_before={:?} corrected={} error_after={:?} scroll_y={:.1}",
-                                            serial, anchor.0, residual, corrected,
-                                            gallery_after_layout.inspector_grid_anchor_error(anchor),
-                                            gallery_after_layout.scroll_position()
-                                        );
-                                    }
-                                },
-                            );
+                            let mut tries: u8 = 0;
+                            glib::timeout_add_local(Duration::from_millis(16), move || {
+                                if generation_after_layout.get() != serial
+                                    || gallery_after_layout.layout() != grid::PhotoLayout::Grid
+                                    || !gallery_after_layout.using_sectioned_folder_view()
+                                {
+                                    return glib::ControlFlow::Break;
+                                }
+                                tries = tries.saturating_add(1);
+                                let residual = gallery_after_layout
+                                    .inspector_grid_anchor_error(anchor);
+                                let corrected = if !restored
+                                    || residual.is_some_and(|err| err.abs() > 2.0)
+                                {
+                                    gallery_after_layout.restore_inspector_grid_anchor(anchor)
+                                } else {
+                                    true
+                                };
+                                let after = gallery_after_layout.inspector_grid_anchor_error(anchor);
+                                let complete = corrected
+                                    && after.is_some_and(|err| err.abs() <= 2.0);
+                                if std::env::var_os("PIC_INSPECTOR_TRACE").is_some()
+                                    && (complete || tries >= 20 || tries == 1)
+                                {
+                                    eprintln!(
+                                        "PIC_INSPECTOR_TRACE stage=anchor_settled serial={} photo={} attempt={} error_before={:?} corrected={} error_after={:?} scroll_y={:.1}",
+                                        serial, anchor.0, tries, residual, corrected, after,
+                                        gallery_after_layout.scroll_position()
+                                    );
+                                }
+                                if complete || tries >= 20 {
+                                    glib::ControlFlow::Break
+                                } else {
+                                    glib::ControlFlow::Continue
+                                }
+                            });
                         }
                         if std::env::var_os("PIC_INSPECTOR_TRACE").is_some() {
                             eprintln!(

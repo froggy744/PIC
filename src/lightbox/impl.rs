@@ -743,6 +743,13 @@ impl Lightbox {
         wheel_dispatch_slot.replace(Some(wheel_dispatch.clone()));
 
         scroll.connect_scroll(move |controller, _, dy| {
+            // The fullscreen viewer listens in capture phase for image zoom
+            // and photo navigation. When the shared context menu is open
+            // above the image, leave wheel and Ctrl+wheel events to its own
+            // GtkScrolledWindow; otherwise the menu appears stuck.
+            if crate::window::photo_context_menu_is_open() {
+                return glib::Propagation::Proceed;
+            }
             // Ctrl+wheel zooms the image; ordinary wheel keeps navigation.
             // The controller's modifier state is sampled on the GTK thread.
             if controller

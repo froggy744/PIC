@@ -964,6 +964,39 @@ fn show_photo_context_menu(
     menu_host.set_margin_start(menu_x);
     menu_host.set_margin_top(menu_y);
 
+    // Dismiss only after the pointer really leaves the shared menu.
+    // A short grace period avoids flicker at the edge or when moving over
+    // its scrolling content. Re-entering cancels the pending dismissal.
+    // Verify menu identity: an old timer must never close a newly opened menu.
+    let leave_timer: Rc<RefCell<Option<glib::SourceId>>> = Rc::new(RefCell::new(None));
+    let hover = gtk::EventControllerMotion::new();
+    let timer_for_enter = leave_timer.clone();
+    hover.connect_enter(move |_, _, _| {
+        if let Some(timer) = timer_for_enter.borrow_mut().take() {
+            timer.remove();
+        }
+    });
+    let timer_for_leave = leave_timer.clone();
+    let menu_for_leave = menu_host.clone().upcast::<gtk::Widget>();
+    hover.connect_leave(move |_| {
+        if let Some(timer) = timer_for_leave.borrow_mut().take() {
+            timer.remove();
+        }
+        let departing = menu_for_leave.clone();
+        let timer_slot = timer_for_leave.clone();
+        let timer = glib::timeout_add_local_once(Duration::from_millis(180), move || {
+            timer_slot.borrow_mut().take();
+            let still_active = ACTIVE_PHOTO_MENU.with(|active| {
+                active.borrow().as_ref().is_some_and(|current| *current == departing)
+            });
+            if still_active {
+                dismiss_active_photo_context_menu();
+            }
+        });
+        timer_for_leave.replace(Some(timer));
+    });
+    menu_host.add_controller(hover);
+
     let menu_widget = menu_host.clone().upcast::<gtk::Widget>();
     menu_to_hide.borrow_mut().replace(menu_widget.clone());
     ACTIVE_PHOTO_MENU.with(|active| {

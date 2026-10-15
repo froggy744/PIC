@@ -151,6 +151,57 @@ pub enum Background {
     LightGray,
 }
 
+/// Position and dimensions of the visible shape within its original collage
+/// layout tile. Roundness progressively reduces only the longer dimension,
+/// keeping the composition centre fixed. At 50% every visible tile is square:
+/// a 50% corner radius then clips it into a mathematically true circle.
+/// Coordinates use pixels and work identically in preview and final export.
+pub(super) fn rounded_tile_bounds(
+    width: u32,
+    height: u32,
+    corner_radius: f32,
+) -> (u32, u32, u32, u32) {
+    let width = width.max(1);
+    let height = height.max(1);
+    let side = width.min(height);
+    let progress = (corner_radius.clamp(0.0, 0.5) * 2.0) as f64;
+    let visible_width =
+        (width as f64 - (width - side) as f64 * progress).round() as u32;
+    let visible_height =
+        (height as f64 - (height - side) as f64 * progress).round() as u32;
+    let visible_width = visible_width.clamp(1, width);
+    let visible_height = visible_height.clamp(1, height);
+    (
+        (width - visible_width) / 2,
+        (height - visible_height) / 2,
+        visible_width,
+        visible_height,
+    )
+}
+
+#[cfg(test)]
+mod round_tile_tests {
+    use super::rounded_tile_bounds;
+
+    #[test]
+    fn no_rounding_keeps_original_layout_tile() {
+        assert_eq!(rounded_tile_bounds(300, 110, 0.0), (0, 0, 300, 110));
+        assert_eq!(rounded_tile_bounds(80, 200, 0.0), (0, 0, 80, 200));
+    }
+
+    #[test]
+    fn full_rounding_creates_true_circles_from_rectangular_tiles() {
+        assert_eq!(rounded_tile_bounds(300, 110, 0.5), (95, 0, 110, 110));
+        assert_eq!(rounded_tile_bounds(80, 200, 0.5), (0, 60, 80, 80));
+        assert_eq!(rounded_tile_bounds(140, 140, 0.5), (0, 0, 140, 140));
+    }
+
+    #[test]
+    fn intermediate_rounding_shrinks_only_longer_axis() {
+        assert_eq!(rounded_tile_bounds(300, 100, 0.25), (50, 0, 200, 100));
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct CollageItem {
     pub photo: CollagePhoto,

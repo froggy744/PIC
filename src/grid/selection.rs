@@ -1921,9 +1921,7 @@ fn install_folder_root_input(
             HashSet::new()
         };
         state.last.clear();
-        drop(state);
-        root_for_begin.set_cursor_from_name(Some("crosshair"));
-    });
+        drop(state);    });
 
     let root_for_update = folder_root.clone();
     let selection_for_update = selection.clone();
@@ -1940,6 +1938,8 @@ fn install_folder_root_input(
             return;
         }
         gesture.set_state(gtk::EventSequenceState::Claimed);
+        // Keep the pointer on photo clicks; show crosshair only during a real drag.
+        root_for_update.set_cursor_from_name(Some("crosshair"));
         {
             // Build the id -> model-position map only once a real drag starts,
             // so ordinary clicks never pay for a 66k-entry hash map.

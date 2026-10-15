@@ -2648,6 +2648,35 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     content.append(&gallery_overlay);
     content.append(&info.root);
 
+    // Verify that neither panel changes the grid's layout width or scroll
+    // anchor. Emit just two snapshots per toggle, never per render frame.
+    {
+        let gallery_for_trace = gallery.clone();
+        let page_for_trace = page_overlay.clone();
+        properties_panel.connect_visible_notify(move |panel| {
+            if std::env::var_os("PICASA_TRACE").is_none() {
+                return;
+            }
+            let state = if panel.is_visible() { "open" } else { "closed" };
+            eprintln!(
+                "PIC_INSPECTOR_LAYOUT stage={} gallery_width={} panel_width={} scroll_y={:.1}",
+                state,
+                page_for_trace.width(),
+                panel.width(),
+                gallery_for_trace.scroll_position()
+            );
+            let gallery = gallery_for_trace.clone();
+            let page = page_for_trace.clone();
+            glib::timeout_add_local_once(Duration::from_millis(120), move || {
+                eprintln!(
+                    "PIC_INSPECTOR_LAYOUT stage=settled gallery_width={} scroll_y={:.1}",
+                    page.width(),
+                    gallery.scroll_position()
+                );
+            });
+        });
+    }
+
     // Low-volume, opt-in diagnostics for lightbox close/return geometry.
     // Logs capture both transition endpoints and the settled viewport.
     {
@@ -3255,6 +3284,12 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         }
 
         one_to_one_for_visibility.set_active(false);
+        // Selection may have been restored while the lightbox still covered
+        // the grid. Keep an already-open gallery inspector on the returned
+        // photo rather than leaving the metadata from the pre-view selection.
+        if let Some(photo) = lightbox_for_lightbox_close.current_photo() {
+            refresh_docked_properties(Some(&photo));
+        }
         if lightbox_close_prepared.replace(false) {
             // Selection, viewport and tile focus were already staged during
             // the fade; repeating the restore would create a second movement.

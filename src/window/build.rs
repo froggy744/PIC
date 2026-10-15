@@ -2689,7 +2689,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             let previous_model_generation = gallery.navigation_model_generation();
             let started = Instant::now();
             let fading = Rc::new(RefCell::new(None::<Instant>));
-            let mut ready_frames = 0_u8;
+            let ready_frames = Cell::new(0_u8);
             let sequence_for_tick = sequence.clone();
             let page_for_tick = page_overlay.clone();
             let gallery_for_tick = gallery.clone();
@@ -2708,13 +2708,13 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                         || (gallery_for_tick.visible_root().opacity() >= 0.99
                             && !gallery_for_tick.stream_building());
                     if !model_ready || !folder_ready {
-                        ready_frames = 0;
+                        ready_frames.set(0);
                         return glib::ControlFlow::Continue;
                     }
                     // The new model must survive a GTK frame before fading
                     // away the outgoing image. No thumbnail decode is awaited.
-                    ready_frames += 1;
-                    if ready_frames < 2 {
+                    ready_frames.set(ready_frames.get().saturating_add(1));
+                    if ready_frames.get() < 2 {
                         return glib::ControlFlow::Continue;
                     }
                     *fading.borrow_mut() = Some(now);

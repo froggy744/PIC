@@ -77,6 +77,17 @@ mod folder_stream_tests {
         use super::{gtk, Gallery, GroupMode, PhotoObject};
         use gtk::prelude::*;
 
+        struct LegacyFolderListGuard(Option<std::ffi::OsString>);
+        impl Drop for LegacyFolderListGuard {
+            fn drop(&mut self) {
+                if let Some(value) = self.0.take() {
+                    std::env::set_var("PICASA_LEGACY_FOLDER_LIST", value);
+                } else {
+                    std::env::remove_var("PICASA_LEGACY_FOLDER_LIST");
+                }
+            }
+        }
+
         fn settle() {
             let context = glib::MainContext::default();
             for _ in 0..30 {
@@ -88,6 +99,10 @@ mod folder_stream_tests {
         }
 
         gtk::init().unwrap();
+        let _legacy_folder_list = LegacyFolderListGuard(
+            std::env::var_os("PICASA_LEGACY_FOLDER_LIST"),
+        );
+        std::env::set_var("PICASA_LEGACY_FOLDER_LIST", "1");
         let gallery = Gallery::new(
             &[],
             148,

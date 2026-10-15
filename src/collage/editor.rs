@@ -613,6 +613,53 @@ pub fn build(
         });
     }
 
+    // One compact border color selector; width becomes relevant only when a
+    // color is chosen. Border is independent from the collage background.
+    let photo_border = gtk::DropDown::from_strings(&["None", "White", "Black", "Grey"]);
+    photo_border.set_selected(match project.borrow().border {
+        PhotoBorder::None => 0,
+        PhotoBorder::White => 1,
+        PhotoBorder::Black => 2,
+        PhotoBorder::Grey => 3,
+    });
+    photo_border.set_hexpand(true);
+    photo_border.set_tooltip_text(Some("Outline around each photo, including circular photos"));
+    controls.append(&labelled_control_row("Photo border", &photo_border));
+
+    let border_thickness = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.005, 0.04, 0.001);
+    border_thickness.set_value(project.borrow().border_width as f64);
+    border_thickness.set_draw_value(false);
+    border_thickness.set_hexpand(true);
+    border_thickness.set_tooltip_text(Some("Border thickness relative to each photo's size"));
+    border_thickness.set_sensitive(project.borrow().border != PhotoBorder::None);
+    controls.append(&labelled_control_row("Thickness", &border_thickness));
+    {
+        let project = project.clone();
+        let canvas = canvas.clone();
+        let frames = frames.clone();
+        let border_thickness = border_thickness.clone();
+        photo_border.connect_selected_notify(move |dropdown| {
+            let color = match dropdown.selected() {
+                1 => PhotoBorder::White,
+                2 => PhotoBorder::Black,
+                3 => PhotoBorder::Grey,
+                _ => PhotoBorder::None,
+            };
+            project.borrow_mut().border = color;
+            border_thickness.set_sensitive(color != PhotoBorder::None);
+            update_geometry(&canvas, &frames, &project.borrow());
+        });
+    }
+    {
+        let project = project.clone();
+        let canvas = canvas.clone();
+        let frames = frames.clone();
+        border_thickness.connect_value_changed(move |scale| {
+            project.borrow_mut().border_width = scale.value() as f32;
+            update_geometry(&canvas, &frames, &project.borrow());
+        });
+    }
+
     // Reset stays in the header and restores settings and the Smart canvas.
     {
         let project = project.clone();
@@ -625,6 +672,8 @@ pub fn build(
         let custom_width = custom_width.clone();
         let custom_height = custom_height.clone();
         let background = background.clone();
+        let photo_border = photo_border.clone();
+        let border_thickness = border_thickness.clone();
         let corner_radius = corner_radius.clone();
         let spacing = spacing.clone();
         let aspect_frame = aspect_frame.clone();
@@ -635,6 +684,8 @@ pub fn build(
                 project_data.layout = LayoutKind::SmartMosaic;
                 project_data.custom_aspect = 16.0 / 9.0;
                 project_data.background = Background::White;
+                project_data.border = PhotoBorder::None;
+                project_data.border_width = 0.012;
                 project_data.round_corners = false;
                 project_data.corner_radius = 0.0;
                 project_data.spacing = 0.018;
@@ -670,6 +721,8 @@ pub fn build(
             custom_width.set_value(16.0);
             custom_height.set_value(9.0);
             background.set_selected(0);
+            photo_border.set_selected(0);
+            border_thickness.set_value(0.012);
             corner_radius.set_value(0.0);
             spacing.set_value(0.018);
             custom_ratio.set_visible(false);

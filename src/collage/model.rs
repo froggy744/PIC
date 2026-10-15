@@ -723,6 +723,7 @@ mod draft_tests {
             keep_photo_aspect: false,
             spacing: 0.05,
             seed: 42,
+            cached_layout: None,
             items: vec![CollageItem {
                 photo: CollagePhoto {
                     id: 7,

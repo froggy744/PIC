@@ -90,7 +90,7 @@
                 crate::nav_transition_trace!(
                     "stage=crossfade_route id={nav_request} folder={wait_for_folder} model={wait_for_model} reuse_folder_stream={reuse_folder_stream}",
                 );
-                nav_fade_begin(wait_for_folder, wait_for_model);
+                nav_fade_begin(wait_for_folder, wait_for_model, false);
             } else {
                 // Opening an exact photo, returning to the same destination,
                 // or navigating while the viewer is open supersedes any

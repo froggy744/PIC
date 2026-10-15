@@ -1,6 +1,7 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::Duration;
+use std::sync::OnceLock;
 
 use adw::prelude::*;
 use gtk4 as gtk;
@@ -14,6 +15,8 @@ thread_local! {
     // Bumped on every preview rebuild so late decode results from an older
     // preview are discarded.
     static PREVIEW_GENERATION: Cell<u64> = const { Cell::new(0) };
+    // Trace a geometry snapshot only when something changes, never per GTK tick.
+    static LAST_GEOMETRY_TRACE: RefCell<Option<String>> = const { RefCell::new(None) };
     // The collage stylesheet is installed once per process; build() runs per
     // collage session and must not stack a new display provider each time.
     static COLLAGE_CSS_INSTALLED: Cell<bool> = const { Cell::new(false) };
@@ -105,13 +108,6 @@ fn collage_css() -> String {
             radius as f32 / 2.0
         ));
     }
-    for (index, color) in [(1, "#ffffff"), (2, "#000000"), (3, "#888888")] {
-        for thickness in 1..=18 {
-            css.push_str(&format!(
-                ".collage-border-{index}-{thickness} {{ border: {thickness}px solid {color}; }}"
-            ));
-        }
-    }
     css
 }
 
@@ -121,7 +117,8 @@ struct PreviewFrame {
     photo: gtk::Frame,
     outer_radius: Cell<i32>,
     photo_radius: Cell<i32>,
-    border_class: Cell<i32>,
+    border: gtk::DrawingArea,
+    border_px: Cell<i32>,
 }
 
 /// Host-application hooks for tile interactions (threaded into
@@ -823,33 +820,51 @@ pub fn build(
     }
 }
 
-/// Keep one radius class per widget so changing the slider or canvas size
-/// never needs to remove dozens of unused CSS classes.
-/// Update only the outline class that changed, with no image redecoding.
-/// A border is inset within the frame and follows the current rounded shape.
-fn set_preview_border_class(
-    widget: &impl IsA<gtk::Widget>,
-    previous: &Cell<i32>,
+/// The border is painted as an overlay *above* the photo, never as a GTK
+/// CSS border. A CSS border consumes space in GtkFrame and shifts the child;
+/// this path uses a centred, inset stroke without changing geometry.
+fn draw_collage_border(
+    context: &gtk::cairo::Context,
+    width: i32,
+    height: i32,
     color: PhotoBorder,
-    thickness: i32,
+    stroke: i32,
+    radius: f32,
 ) {
-    let color_id = match color {
-        PhotoBorder::None => 0,
-        PhotoBorder::White => 1,
-        PhotoBorder::Black => 2,
-        PhotoBorder::Grey => 3,
-    };
-    let key = if color_id == 0 { 0 } else { color_id * 20 + thickness.clamp(1, 18) };
-    let old = previous.replace(key);
-    if old == key {
-        return;
-    }
-    if old > 0 {
-        widget.remove_css_class(&format!("collage-border-{}-{}", old / 20, old % 20));
-    }
-    if key > 0 {
-        widget.add_css_class(&format!("collage-border-{color_id}-{}", key % 20));
-    }
+    let Some(rgb) = color.rgb() else { return; };
+    if width < 2 || height < 2 { return; }
+    let w = width as f64;
+    let h = height as f64;
+    let line = f64::from(stroke.max(1)).min((w.min(h) - 1.0).max(1.0));
+    let left = line / 2.0;
+    let top = line / 2.0;
+    let right = w - left;
+    let bottom = h - top;
+    let fraction = radius.clamp(0.0, 0.5) as f64;
+    let rx = (right - left) * fraction;
+    let ry = (bottom - top) * fraction;
+    let k = 0.552_284_749_830_793_6; // Cubic Bezier approximation of a quarter circle.
+    context.new_path();
+    context.move_to(left + rx, top);
+    context.line_to(right - rx, top);
+    context.curve_to(right - rx + rx * k, top, right, top + ry - ry * k, right, top + ry);
+    context.line_to(right, bottom - ry);
+    context.curve_to(right, bottom - ry + ry * k, right - rx + rx * k, bottom, right - rx, bottom);
+    context.line_to(left + rx, bottom);
+    context.curve_to(left + rx - rx * k, bottom, left, bottom - ry + ry * k, left, bottom - ry);
+    context.line_to(left, top + ry);
+    context.curve_to(left, top + ry - ry * k, left + rx - rx * k, top, left + rx, top);
+    context.close_path();
+    context.set_source_rgb(rgb[0] as f64 / 255.0, rgb[1] as f64 / 255.0, rgb[2] as f64 / 255.0);
+    context.set_line_width(line);
+    let _ = context.stroke();
+}
+
+fn collage_trace_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var("PIC_COLLAGE_TRACE").ok().is_some_and(|value| value != "0")
+    })
 }
 
 fn set_preview_corner_class(
@@ -1049,6 +1064,25 @@ fn refresh_preview(
         inner.set_vexpand(true);
         let tile = gtk::Overlay::new();
         tile.set_child(Some(&inner));
+        // The overlay never contributes to layout and cannot consume pointer
+        // events; mouse drag and context actions continue to reach the frame.
+        let border = gtk::DrawingArea::new();
+        border.set_hexpand(true);
+        border.set_vexpand(true);
+        border.set_halign(gtk::Align::Fill);
+        border.set_valign(gtk::Align::Fill);
+        border.set_can_target(false);
+        let border_project = project.clone();
+        let border_canvas = canvas.clone();
+        border.set_draw_func(move |_, cr, width, height| {
+            let data = border_project.borrow();
+            let canvas_side = border_canvas.width().min(border_canvas.height()).max(1) as u32;
+            let stroke = super::model::border_pixels(canvas_side, data.border_width);
+            let radius = if data.round_corners { data.corner_radius } else { 0.0 };
+            draw_collage_border(cr, width, height, data.border, stroke as i32, radius);
+        });
+        tile.add_overlay(&border);
+        tile.set_measure_overlay(&border, false);
         let picture = gtk::Picture::new();
         // The containing frame is sized to the fitted rectangle in
         // update_geometry, so the picture itself can always cover it.
@@ -1302,7 +1336,8 @@ fn refresh_preview(
             photo: photo_frame,
             outer_radius: Cell::new(0),
             photo_radius: Cell::new(0),
-            border_class: Cell::new(0),
+            border,
+            border_px: Cell::new(0),
         });
     }
 
@@ -1318,29 +1353,44 @@ fn update_geometry(
     if width < 1.0 || height < 1.0 {
         return; // Wait for the first real allocation; never invent a minimum.
     }
-    // One canvas-wide stroke width: every photo gets the same thickness,
-    // regardless of its individual tile dimensions.
-    let border_width_px =
-        super::model::border_pixels(width.min(height).round() as u32, project.border_width)
-            .min(18) as i32;
+    let border_px = super::model::border_pixels(
+        width.min(height).round() as u32, project.border_width
+    ) as i32;
+    // Log only when geometry inputs change, rather than every frame clock tick.
+    let trace_key = if collage_trace_enabled() {
+        Some(format!(
+            "{}x{} layout={:?} keep={} radius={} border={:?}/{} spacing={} items={:?}",
+            width as i32, height as i32, project.layout, project.keep_photo_aspect,
+            project.corner_radius, project.border, project.border_width, project.spacing,
+            project.items.iter().map(|item| (
+                item.photo.id, item.x.to_bits(), item.y.to_bits(),
+                item.width.to_bits(), item.height.to_bits(), item.rotation.to_bits()
+            )).collect::<Vec<_>>()
+        ))
+    } else { None };
+    let should_log = trace_key.as_ref().is_some_and(|key| LAST_GEOMETRY_TRACE.with(|last| {
+        let mut last = last.borrow_mut();
+        if last.as_ref() == Some(key) { false } else {
+            *last = Some(key.clone());
+            true
+        }
+    }));
+    if should_log {
+        eprintln!(
+            "PIC_COLLAGE_TRACE preview_canvas={}x{} layout={:?} keep={} border={:?} stroke={} radius={:.3} spacing={:.4} count={}",
+            width as i32, height as i32, project.layout, project.keep_photo_aspect,
+            project.border, border_px, project.corner_radius, project.spacing, project.items.len()
+        );
+    }
     for (item, preview) in project.items.iter().zip(frames.borrow().iter()) {
-        let tile_x = item.x * width;
-        let tile_y = item.y * height;
-        let tile_w = (item.width * width).round().clamp(1.0, width) as u32;
-        let tile_h = (item.height * height).round().clamp(1.0, height) as u32;
         let fraction = if project.round_corners {
             project.corner_radius.clamp(0.0, 0.5)
-        } else {
-            0.0
-        };
-        // Shrink only the long axis around each tile's centre, continuously.
-        // At 50% the visible frame is square and a 50% CSS radius is a circle.
-        let (inset_x, inset_y, visible_w, visible_h) =
-            super::model::rounded_tile_bounds(tile_w, tile_h, fraction);
-        let x = tile_x + inset_x as f32;
-        let y = tile_y + inset_y as f32;
-        let w = visible_w as i32;
-        let h = visible_h as i32;
+        } else { 0.0 };
+        let g = super::model::tile_geometry(item, width as u32, height as u32, fraction);
+        let x = g.x as f64;
+        let y = g.y as f64;
+        let w = g.w as i32;
+        let h = g.h as i32;
         let radius_step = ((fraction * 200.0).round() as i32)
             .clamp(0, PREVIEW_CORNER_STEPS);
         preview.outer.set_overflow(if radius_step > 0 {
@@ -1349,13 +1399,19 @@ fn update_geometry(
             gtk::Overflow::Visible
         });
         set_preview_corner_class(&preview.outer, &preview.outer_radius, radius_step);
-        set_preview_border_class(
-            &preview.outer,
-            &preview.border_class,
-            project.border,
-            border_width_px,
-        );
         preview.outer.set_size_request(w, h);
+        preview.border_px.set(if project.border == PhotoBorder::None { 0 } else { border_px });
+        preview.border.queue_draw();
+        if should_log {
+            eprintln!(
+                "PIC_COLLAGE_TRACE preview_tile id={} slot=({},{},{}x{}) visible=({},{},{}x{}) center=({:.2},{:.2}) rounded={:.3} stroke={} rotate={:.2}",
+                item.photo.id, g.slot_x, g.slot_y, g.slot_w, g.slot_h,
+                g.x, g.y, g.w, g.h,
+                g.x as f64 + g.w as f64 / 2.0,
+                g.y as f64 + g.h as f64 / 2.0,
+                fraction, preview.border_px.get(), item.rotation
+            );
+        }
         let contain = matches!(project.layout, LayoutKind::Mosaic | LayoutKind::SmartMosaic)
             && project.keep_photo_aspect;
         let source_ratio = item.photo.aspect_ratio.max(0.01);
@@ -1385,7 +1441,7 @@ fn update_geometry(
             &preview.photo_radius,
             if contain { radius_step } else { 0 },
         );
-        canvas.move_(&preview.outer, x as f64, y as f64);
+        canvas.move_(&preview.outer, x, y);
         if item.rotation.abs() > f32::EPSILON {
             let transform = gtk::gsk::Transform::new()
                 .translate(&gtk::graphene::Point::new(w as f32 / 2.0, h as f32 / 2.0))
@@ -1564,10 +1620,10 @@ mod sizing_tests {
             // Every tile, large or small, gets exactly the same pixel stroke
             // at this canvas allocation. It may scale when the canvas resizes.
             let frame_borders = editor.frames.borrow();
-            let expected = frame_borders[0].border_class.get();
+            let expected = frame_borders[0].border_px.get();
             assert!(expected > 0, "black outline must be applied");
             assert!(
-                frame_borders.iter().all(|frame| frame.border_class.get() == expected),
+                frame_borders.iter().all(|frame| frame.border_px.get() == expected),
                 "different-sized collage photos must have identical border widths"
             );
             drop(frame_borders);

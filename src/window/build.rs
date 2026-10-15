@@ -2733,9 +2733,10 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     // The Gallery's width observer and WidthSettleGate already handle
     // sidebar-style animated allocation. Freeze justified wall layout
     // during the slide, then consume only the final width/scroll anchor.
+    // Do not move focus on reveal: grabbing the GridView triggers GTK's
+    // implicit scroll-to-focused-tile and can visibly jump the viewport.
     {
         let gallery = gallery.clone();
-        let lightbox = lightbox.clone();
         let generation = Rc::new(Cell::new(0_u64));
         properties_split.connect_show_sidebar_notify(move |split| {
             gallery.cancel_resize_flip();
@@ -2749,10 +2750,6 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                     split.content().map(|child| child.width()).unwrap_or(0),
                     gallery.scroll_position()
                 );
-            }
-            if split.shows_sidebar() && !lightbox.root.is_visible() {
-                let gallery = gallery.clone();
-                glib::idle_add_local_once(move || gallery.grab_focus());
             }
             let gallery = gallery.clone();
             let generation = generation.clone();
@@ -2785,9 +2782,16 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     // Index pages and full-surface workspaces are not photo grids: close
     // the inspector on Library Home, Albums Home, Edit and Collage.
     // Folder-to-folder navigation intentionally keeps it open.
+    // Only photo-gallery pages can own a Properties pane. Library/Albums
+    // index, Edit and Collage cannot reopen it through stale InfoBar selection.
+    set_gallery_properties_allowed(
+        main_stack.visible_child_name().as_deref() == Some("photos"),
+    );
     main_stack.connect_visible_child_notify(|stack| {
-        if matches!(stack.visible_child_name().as_deref(), Some("library" | "albums" | "edit" | "collage")) {
-            close_docked_properties();
+        let page = stack.visible_child_name();
+        set_gallery_properties_allowed(page.as_deref() == Some("photos"));
+        if std::env::var_os("PIC_INSPECTOR_TRACE").is_some() {
+            eprintln!("PIC_INSPECTOR_TRACE stage=page_switch page={:?}", page.as_deref());
         }
     });
 

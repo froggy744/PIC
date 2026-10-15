@@ -90,7 +90,7 @@
                 crate::nav_transition_trace!(
                     "stage=crossfade_route id={nav_request} folder={wait_for_folder} model={wait_for_model} reuse_folder_stream={reuse_folder_stream}",
                 );
-                nav_fade_begin(wait_for_folder, wait_for_model, false);
+                nav_fade_begin(wait_for_folder, wait_for_model, false, exact_photo_target);
             } else {
                 // Opening an exact photo, returning to the same destination,
                 // or navigating while the viewer is open supersedes any
@@ -255,14 +255,18 @@
         let sidebar_selection = sidebar_selection_slot.clone();
         let gallery = gallery.clone();
         let exact_target = open_in_folder_exact_target.clone();
+        let revealed_for_navigation = open_in_folder_revealed.clone();
         let search_close_waiting = search_close_waiting.clone();
         Rc::new(move |folder_id, photo_id| {
+            // Reset before starting a new destination fade, never after.
+            revealed_for_navigation.set(false);
             exact_target.set(Some(photo_id));
             gallery.set_pending_open_in_folder_photo(Some(photo_id));
             let required_refresh =
                 destination_click_with_target(sidebar::SidebarFilter::Folder(folder_id), true, false);
             let gallery = gallery.clone();
             let exact_target_for_timer = exact_target.clone();
+            let reveal_for_timer = revealed_for_navigation.clone();
             let close_waiting = search_close_waiting.clone();
             let started = std::time::Instant::now();
             let attempts = Rc::new(Cell::new(0u32));
@@ -294,6 +298,13 @@
                 };
 
                 if open_in_folder_should_stop(building, revealed, attempt) {
+                    if revealed {
+                        reveal_for_timer.set(true);
+                        crate::nav_transition_trace!(
+                            "stage=exact_photo_reveal folder={folder_id} photo={photo_id} attempts={attempt} elapsed_ms={}",
+                            started.elapsed().as_millis(),
+                        );
+                    }
                     gallery.clear_pending_open_in_folder_photo(photo_id);
                     if close_waiting.get() && std::env::var_os("PICASA_TRACE").is_some() {
                         eprintln!(

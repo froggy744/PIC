@@ -1373,6 +1373,9 @@ pub(crate) fn register_lightbox_properties_panel(panel: &gtk::Box) {
 }
 
 fn close_properties(surface: PropertiesSurface) {
+    if std::env::var_os("PIC_INSPECTOR_TRACE").is_some() {
+        eprintln!("PIC_INSPECTOR_TRACE stage=close surface={surface:?}");
+    }
     match surface {
         PropertiesSurface::Gallery => {
             DOCKED_PROPERTIES_CONTEXT.with(|slot| { slot.replace(None); });
@@ -1462,9 +1465,9 @@ pub(crate) fn toggle_docked_properties(
     } else {
         show_properties_dialog_on(photo, context, surface);
     }
-    if std::env::var_os("PICASA_TRACE").is_some() {
+    if std::env::var_os("PIC_INSPECTOR_TRACE").is_some() {
         eprintln!(
-            "PIC_INSPECTOR stage=infobar_toggle surface={surface:?} action={} photo={}",
+            "PIC_INSPECTOR_TRACE stage=infobar_toggle surface={surface:?} action={} photo={}",
             if is_open { "close" } else { "open" },
             photo.id()
         );
@@ -1777,6 +1780,12 @@ fn show_properties_dialog_on(
         }
         panel.append(&content);
         panel.set_visible(true);
+        if std::env::var_os("PIC_INSPECTOR_TRACE").is_some() {
+            eprintln!(
+                "PIC_INSPECTOR_TRACE stage=photo_content surface={surface:?} photo={} panel_width={}",
+                photo.id(), panel.width()
+            );
+        }
         if surface == PropertiesSurface::Gallery {
             DOCKED_PROPERTIES_SPLIT.with(|slot| {
                 if let Some(split) = slot.borrow().as_ref() {

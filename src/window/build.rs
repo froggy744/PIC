@@ -2446,8 +2446,18 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let lightbox_context_menu_click = gtk::GestureClick::new();
     lightbox_context_menu_click.set_button(1);
     lightbox_context_menu_click.set_propagation_phase(gtk::PropagationPhase::Capture);
-    lightbox_context_menu_click.connect_pressed(move |_, _, _, _| {
-        dismiss_active_photo_context_menu();
+    // The lightbox now owns its menu above the fullscreen photo. Capture
+    // clicks outside that menu, but allow events inside to reach its buttons;
+    // the old unconditional dismiss closed the menu before clicked handlers.
+    let root_for_context_dismiss = lightbox.root.clone();
+    lightbox_context_menu_click.connect_pressed(move |_, _, x, y| {
+        let inside_menu = root_for_context_dismiss
+            .pick(x, y, gtk::PickFlags::DEFAULT)
+            .as_ref()
+            .is_some_and(photo_context_menu_contains);
+        if !inside_menu {
+            dismiss_active_photo_context_menu();
+        }
     });
     lightbox.root.add_controller(lightbox_context_menu_click);
     context_menu_autohide.connect_pressed(move |_, _, x, y| {

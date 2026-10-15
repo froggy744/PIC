@@ -1292,6 +1292,16 @@ mod photo_action_tests {
         gallery.replace(&photos);
         gallery.set_grouping(grid::GroupMode::None, grid::GroupDate::Taken);
         assert!(gallery.can_restore_folder_cache());
+        // A plain view switch must retain the previous Folder stream for
+        // Open in Folder, even though the newly displayed view uses another
+        // photo model. This is the previously unconditional invalidation.
+        refresh_grid_for_navigation(
+            &connection,
+            sidebar::SidebarFilter::RecentlyAdded,
+            PhotoSort { field: SortField::Name, direction: SortDirection::Ascending },
+            &gallery,
+        );
+        assert!(gallery.can_restore_folder_cache());
         db::set_setting(&connection.borrow(), RATING_FILTER_SETTING_KEY, "unrated").unwrap();
         // Changing the filter on a non-photo page must invalidate the hidden cache too.
         refresh_grid(&connection, sidebar::SidebarFilter::Albums, "",

@@ -433,6 +433,9 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     // Open in Folder keeps this exact target alive briefly so a sidebar
     // Tree-mode reorder cannot replace it with a generic folder-header scroll.
     let open_in_folder_exact_target: Rc<Cell<Option<i64>>> = Rc::new(Cell::new(None));
+    // Exact-photo navigation has its own readiness requirement: the new
+    // folder model alone is NOT ready until the chosen image is visible.
+    let open_in_folder_revealed: Rc<Cell<bool>> = Rc::new(Cell::new(false));
     let navigate_to_folder: Rc<dyn Fn(i64, i64)> = {
         let slot = folder_navigation_slot.clone();
         Rc::new(move |folder_id, photo_id| {
@@ -2656,7 +2659,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             }
         })
     };
-    let nav_fade_begin: Rc<dyn Fn(bool, bool, bool)> = {
+    let nav_fade_begin: Rc<dyn Fn(bool, bool, bool, bool)> = {
         let page_overlay = page_overlay.clone();
         let main_stack = main_stack.clone();
         let source = nav_fade_source.clone();
@@ -2664,7 +2667,8 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         let gallery = gallery.clone();
         let sequence = nav_fade_sequence.clone();
         let active = nav_fade_overlay.clone();
-        Rc::new(move |folder_destination, photo_destination, layout_destination| {
+        let exact_photo_revealed = open_in_folder_revealed.clone();
+        Rc::new(move |folder_destination, photo_destination, layout_destination, exact_photo_destination| {
             let next = sequence.get().wrapping_add(1);
             sequence.set(next);
             // Snapshot the full currently presented blend on a rapid
@@ -2754,7 +2758,10 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                             && !gallery_for_tick.stream_building());
                     let layout_ready = !layout_destination
                         || gallery_for_tick.layout_presentation_ready(previous_layout_generation);
-                    if !model_ready || !folder_ready || !layout_ready {
+                    // Do not expose the new gallery after its model replacement
+                    // but before Open in Folder has reached the exact photo.
+                    let exact_ready = !exact_photo_destination || exact_photo_revealed.get();
+                    if !model_ready || !folder_ready || !layout_ready || !exact_ready {
                         ready_frames.set(0);
                         return glib::ControlFlow::Continue;
                     }
@@ -2805,7 +2812,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 if viewer.root.is_visible() {
                     cancel();
                 } else {
-                    fade(false, false, true);
+                    fade(false, false, true, false);
                 }
                 gallery_for_mode.set_layout(mode);
             }

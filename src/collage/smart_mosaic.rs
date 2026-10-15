@@ -473,7 +473,7 @@ mod tests {
         let mut minimum = f32::INFINITY;
         let mut unique = std::collections::HashSet::new();
         for number in 0..CANDIDATES {
-            let (value, rects) = candidate(&project, number);
+            let (value, rects, _nodes) = candidate(&project, number);
             assert_valid(&project, &rects);
             minimum = minimum.min(value);
             unique.insert(

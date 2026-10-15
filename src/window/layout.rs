@@ -223,7 +223,10 @@
                         );
                         Some(REFRESH_GENERATION.load(std::sync::atomic::Ordering::Relaxed))
                     } else {
-                        refresh_grid(&connection, new_filter, "", sort.get(), &gallery);
+                        // Switching views is not a scan or filter mutation:
+                        // retain the previously built Folder stream for the
+                        // next exact-photo Open in Folder navigation.
+                        refresh_grid_for_navigation(&connection, new_filter, sort.get(), &gallery);
                         Some(REFRESH_GENERATION.load(std::sync::atomic::Ordering::Relaxed))
                     }
                 }

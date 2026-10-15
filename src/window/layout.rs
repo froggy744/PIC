@@ -28,6 +28,7 @@
         let preserve_viewer = preserve_lightbox_during_search_return.clone();
         let nav_request_sequence = nav_request_sequence.clone();
         let nav_fade_begin = nav_fade_begin.clone();
+        let nav_fade_cancel = nav_fade_cancel.clone();
         Rc::new(move |new_filter, exact_photo_target, center_folder_target| {
             let nav_request = if crate::nav_transition_trace::enabled() {
                 let next = nav_request_sequence.get().wrapping_add(1);
@@ -90,6 +91,11 @@
                     "stage=crossfade_route id={nav_request} folder={wait_for_folder} model={wait_for_model} reuse_folder_stream={reuse_folder_stream}",
                 );
                 nav_fade_begin(wait_for_folder, wait_for_model);
+            } else {
+                // Opening an exact photo, returning to the same destination,
+                // or navigating while the viewer is open supersedes any
+                // pending crossfade from an earlier sidebar click.
+                nav_fade_cancel();
             }
 
             if let Some(source) = debounce.borrow_mut().take() {

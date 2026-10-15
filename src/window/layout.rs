@@ -27,6 +27,7 @@
         let search_close_waiting = search_close_waiting.clone();
         let preserve_viewer = preserve_lightbox_during_search_return.clone();
         let nav_request_sequence = nav_request_sequence.clone();
+        let nav_fade_begin = nav_fade_begin.clone();
         Rc::new(move |new_filter, exact_photo_target, center_folder_target| {
             let nav_request = if crate::nav_transition_trace::enabled() {
                 let next = nav_request_sequence.get().wrapping_add(1);
@@ -74,6 +75,20 @@
                 folder_target.as_ref().map(|(id, _)| *id),
                 gallery.stream_building(),
             );
+            // Capture the outgoing gallery before changing Stack pages or
+            // replacing the active photo model. Folder-stream reuse keeps its
+            // native scroll navigation rather than an unnecessary crossfade.
+            if new_filter != filter.get()
+                && !reuse_folder_stream
+                && !exact_photo_target
+                && !lightbox.root.is_visible()
+            {
+                let photos_page = !matches!(
+                    new_filter,
+                    sidebar::SidebarFilter::Library | sidebar::SidebarFilter::Albums
+                );
+                nav_fade_begin(folder_target.is_some(), photos_page);
+            }
 
             if let Some(source) = debounce.borrow_mut().take() {
                 source.remove();

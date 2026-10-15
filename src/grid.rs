@@ -441,7 +441,7 @@ mod folder_stream_tests {
         }
 
         gtk::init().unwrap();
-        let gallery = Gallery::new(
+        let gallery = std::rc::Rc::new(Gallery::new(
             &[],
             148,
             |_| {},
@@ -449,7 +449,7 @@ mod folder_stream_tests {
             |_, _, _, _| {},
             |_, _| {},
             |_| {},
-        );
+        ));
         gallery.group_mode.set(GroupMode::Folder);
         gallery.current_photos.replace(
             (1..=1200_i64)

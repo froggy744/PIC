@@ -1352,8 +1352,22 @@ mod sizing_tests {
             "collage editor minimum width {min_width} must fit a 1366px window"
         );
         let baseline = toast.measure(gtk::Orientation::Vertical, 1200).0;
-        for (width, height) in [(1200, 800), (900, 720), (1400, 850)] {
+        let footer = editor
+            .root
+            .first_child()
+            .unwrap()
+            .downcast::<gtk::Paned>()
+            .unwrap()
+            .start_child()
+            .unwrap()
+            .downcast::<gtk::Box>()
+            .unwrap()
+            .last_child()
+            .expect("fixed collage action footer");
+        for (width, height) in [(1200, 800), (900, 720), (1400, 850), (900, 560)] {
             toast.allocate(width, height, -1, None);
+            assert!(footer.height() > 0, "collage footer must stay visible");
+            assert!(footer.height() <= height, "collage footer must fit");
             // Manual allocation has no frame clock; perform the resize tick
             // that the live canvas runs before painting each new allocation.
             update_geometry(&editor.canvas, &editor.frames, &editor.project.borrow());

@@ -1862,29 +1862,35 @@ mod photo_actions_tests {
 
     #[test]
     #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
-    fn lightbox_overlay_preserves_inspector_and_gallery_width() {
+    fn properties_overlays_never_resize_gallery() {
         gtk::init().unwrap();
 
+        // Match the hierarchy in window/build.rs. GTK must never shrink the
+        // gallery when an overlay inspector is toggled in either mode.
         let gallery = gtk::Box::new(gtk::Orientation::Vertical, 0);
         gallery.set_hexpand(true);
-        let inspector = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        inspector.set_size_request(260, -1);
-        let split = gtk::Paned::new(gtk::Orientation::Horizontal);
-        split.set_start_child(Some(&gallery));
-        split.set_end_child(Some(&inspector));
-        split.set_resize_start_child(true);
-        split.set_resize_end_child(false);
-        split.set_shrink_end_child(false);
-
-        // Match build.rs: lightbox covers the Paned, rather than living in
-        // the gallery child, and the inspector stays allocated underneath.
+        gallery.set_vexpand(true);
         let overlay = gtk::Overlay::new();
-        overlay.set_child(Some(&split));
+        overlay.set_child(Some(&gallery));
+        let make_panel = || {
+            let panel = gtk::Box::new(gtk::Orientation::Vertical, 0);
+            panel.set_width_request(300);
+            panel.set_halign(gtk::Align::End);
+            panel.set_valign(gtk::Align::Fill);
+            panel.set_vexpand(true);
+            panel.set_visible(false);
+            panel
+        };
+        let grid_inspector = make_panel();
+        overlay.add_overlay(&grid_inspector);
         let viewer = gtk::Box::new(gtk::Orientation::Vertical, 0);
         viewer.set_hexpand(true);
         viewer.set_vexpand(true);
         viewer.set_visible(false);
         overlay.add_overlay(&viewer);
+        let viewer_inspector = make_panel();
+        overlay.add_overlay(&viewer_inspector);
+
         let window = gtk::Window::builder()
             .default_width(1200)
             .default_height(700)
@@ -1892,25 +1898,29 @@ mod photo_actions_tests {
             .build();
         window.present();
         settle_gtk_layout();
-        split.set_position(900);
-        settle_gtk_layout();
-
         let width_before = gallery.width();
-        let inspector_before = inspector.width();
-        assert!(width_before > 0);
-        assert!(inspector_before > 0);
+        assert!(width_before > 300, "gallery must start at full width");
 
-        viewer.set_visible(true);
+        grid_inspector.set_visible(true);
         settle_gtk_layout();
-        assert_eq!(gallery.width(), width_before);
-        assert_eq!(inspector.width(), inspector_before);
-        assert!(inspector.is_visible());
+        assert_eq!(gallery.width(), width_before, "grid reflowed on open");
+        assert_eq!(grid_inspector.width(), 300);
+        grid_inspector.set_visible(false);
+        settle_gtk_layout();
+        assert_eq!(gallery.width(), width_before, "grid reflowed on close");
 
+        grid_inspector.set_visible(true);
+        viewer.set_visible(true);
+        viewer_inspector.set_visible(true);
+        settle_gtk_layout();
+        assert_eq!(gallery.width(), width_before, "viewer changed grid geometry");
+        assert_eq!(viewer.width(), width_before, "viewer zoom viewport shrank");
+        assert!(grid_inspector.is_visible(), "gallery state must remain independent");
+        viewer_inspector.set_visible(false);
         viewer.set_visible(false);
         settle_gtk_layout();
-        assert_eq!(gallery.width(), width_before);
-        assert_eq!(inspector.width(), inspector_before);
-        assert!(inspector.is_visible());
+        assert_eq!(gallery.width(), width_before, "viewer close shifted grid");
+        assert!(grid_inspector.is_visible(), "gallery inspector was lost");
         window.close();
     }
 

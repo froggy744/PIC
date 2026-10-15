@@ -587,7 +587,11 @@ fn sidebar_crossfade_target(
     viewer_visible: bool,
     reuse_folder_stream: bool,
 ) -> Option<(bool, bool)> {
-    if previous == destination || exact_photo_target || viewer_visible {
+    // Open in Folder is an exact-photo navigation, not a generic sidebar
+    // click. It still replaces the visible model when coming from All/Recent
+    // or search. Keep the outgoing gallery snapshot until the target photo
+    // has actually been scrolled into view (the caller supplies that gate).
+    if previous == destination || (viewer_visible && !exact_photo_target) {
         return None;
     }
     let folder_destination = matches!(destination, sidebar::SidebarFilter::Folder(_));
@@ -756,11 +760,22 @@ mod open_in_folder_retry_tests {
             ),
             None
         );
+        // Open in Folder must keep a snapshot while a new folder stream is
+        // built and the exact photo is selected. The caller adds an extra
+        // exact-photo readiness gate before revealing the destination.
         assert_eq!(
             sidebar_crossfade_target(
                 Destination::Library, Destination::Folder(1), true, false, false,
             ),
-            None
+            Some((true, true))
+        );
+        // Existing folder stream: no model replacement, but still wait for
+        // the exact photo to reach its destination viewport.
+        assert_eq!(
+            sidebar_crossfade_target(
+                Destination::Folder(1), Destination::Folder(2), true, true, true,
+            ),
+            Some((true, false))
         );
         assert_eq!(
             sidebar_crossfade_target(

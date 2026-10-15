@@ -1,3 +1,27 @@
+// A renderer switch must be newer than the captured source, and the
+// destination viewport must have completed its deferred anchor restoration.
+fn layout_transition_ready(
+    previous_generation: u64,
+    active_generation: u64,
+    settled_generation: u64,
+) -> bool {
+    active_generation != previous_generation && active_generation == settled_generation
+}
+
+#[cfg(test)]
+mod layout_presentation_tests {
+    use super::layout_transition_ready;
+
+    #[test]
+    fn layout_crossfade_requires_new_mode_and_settled_anchor() {
+        assert!(!layout_transition_ready(3, 3, 3)); // old renderer
+        assert!(!layout_transition_ready(3, 4, 3)); // new renderer not anchored
+        assert!(!layout_transition_ready(3, 5, 4)); // superseded restoration
+        assert!(layout_transition_ready(3, 4, 4)); // destination ready
+        assert!(layout_transition_ready(4, 5, 5)); // rapid switch ready
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ZoomAnchorKind {
     Pointer,
@@ -939,8 +963,11 @@ impl Gallery {
     /// anchor for the current Grid/Photo Wall/Masonry layout generation.
     pub(crate) fn layout_presentation_ready(&self, previous_generation: u64) -> bool {
         let generation = self.sectioned_folder.layout_switch_generation.get();
-        generation != previous_generation
-            && self.layout_presentation_settled_generation.get() == generation
+        layout_transition_ready(
+            previous_generation,
+            generation,
+            self.layout_presentation_settled_generation.get(),
+        )
     }
 
     pub(crate) fn layout_presentation_generation(&self) -> u64 {

@@ -1446,7 +1446,7 @@ fn properties_open(surface: PropertiesSurface) -> bool {
 
 /// The InfoBar is shared by the gallery and the viewer, so route its
 /// right-click toggle to whichever surface is currently visible.
-pub(crate) fn toggle_docked_properties(
+fn toggle_docked_properties(
     photo: &crate::photo_object::PhotoObject,
     context: &PhotoActionContext,
 ) {

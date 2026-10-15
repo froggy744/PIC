@@ -2645,6 +2645,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     {
         let split = properties_split.clone();
         let gallery = gallery.clone();
+        let panel = properties_panel.clone();
         let origin = resize_origin.clone();
         let width = resize_width.clone();
         let local = resize_local.clone();
@@ -2660,7 +2661,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             gallery.set_photo_wall_width_frozen(false);
             active.set(true);
             origin.set(f64::from(point.x()));
-            width.set(properties_panel.width().max(280) as f64);
+            width.set(panel.width().max(280) as f64);
             local.set((x, y));
         });
     }
@@ -2761,45 +2762,29 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         }
     });
 
-    // Opening the inspector via the context menu must return keyboard focus
-    // to the gallery, so arrows and other grid shortcuts still navigate.
-    let gallery_for_inspector_focus = gallery.clone();
-    let lightbox_for_inspector_focus = lightbox.clone();
-    properties_panel.connect_visible_notify(move |panel| {
-        if panel.is_visible() && !lightbox_for_inspector_focus.root.is_visible() {
-            let gallery = gallery_for_inspector_focus.clone();
-            glib::idle_add_local_once(move || {
-                gallery.grab_focus();
-            });
-        }
-    });
-
     content.append(&gallery_overlay);
     content.append(&info.root);
 
-    // Verify that neither panel changes the grid's layout width or scroll
-    // anchor. Emit just two snapshots per toggle, never per render frame.
+    // One snapshot after the native split animation settles; unlike the
+    // previous overlay the gallery must occupy only the remaining width.
     {
         let gallery_for_trace = gallery.clone();
         let page_for_trace = page_overlay.clone();
-        properties_panel.connect_visible_notify(move |panel| {
+        let panel_for_trace = properties_panel.clone();
+        properties_split.connect_show_sidebar_notify(move |split| {
             if std::env::var_os("PICASA_TRACE").is_none() {
                 return;
             }
-            let state = if panel.is_visible() { "open" } else { "closed" };
-            eprintln!(
-                "PIC_INSPECTOR_LAYOUT stage={} gallery_width={} panel_width={} scroll_y={:.1}",
-                state,
-                page_for_trace.width(),
-                panel.width(),
-                gallery_for_trace.scroll_position()
-            );
+            let opened = split.shows_sidebar();
             let gallery = gallery_for_trace.clone();
             let page = page_for_trace.clone();
-            glib::timeout_add_local_once(Duration::from_millis(120), move || {
+            let panel = panel_for_trace.clone();
+            glib::timeout_add_local_once(Duration::from_millis(420), move || {
                 eprintln!(
-                    "PIC_INSPECTOR_LAYOUT stage=settled gallery_width={} scroll_y={:.1}",
+                    "PIC_INSPECTOR_LAYOUT stage=settled open={} gallery_width={} panel_width={} scroll_y={:.1}",
+                    opened,
                     page.width(),
+                    panel.width(),
                     gallery.scroll_position()
                 );
             });

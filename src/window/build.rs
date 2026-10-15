@@ -2360,6 +2360,20 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 inspector_trace_frames_for_tick.set(samples.saturating_add(1));
             }
         }
+        // Folder Grid has a sectioned, virtualized row model. Rebuilding it
+        // at each intermediary inspector width re-anchors the same photo
+        // multiple times (e.g. 5->4->3 columns), causing large visible jumps.
+        // Keep that grid's column geometry fixed during the native split slide;
+        // the show-sidebar settle handler commits the final width once.
+        // Photo Wall/Masonry and ordinary resize gestures are unchanged.
+        if should_defer_inspector_folder_grid_reflow(
+            inspector_transition_active_for_tick.get(),
+            gallery_for_resize.layout() == grid::PhotoLayout::Grid,
+            gallery_for_resize.using_sectioned_folder_view(),
+        ) && !inspector_resize_active_for_tick.get()
+        {
+            return glib::ControlFlow::Continue;
+        }
         if live_resize
             || should_observe_width(
                 sidebar_resize_active_for_tick.get() || inspector_resize_active_for_tick.get(),
@@ -2783,6 +2797,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     {
         let gallery = gallery.clone();
         let active = inspector_transition_active.clone();
+        let gallery_scroll_for_settle = gallery_scroll_stack.clone();
         let last_width = inspector_trace_last_width.clone();
         let frames = inspector_trace_frames.clone();
         let generation = Rc::new(Cell::new(0_u64));
@@ -2815,6 +2830,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             }
             let gallery = gallery.clone();
             let split = split.clone();
+            let scroll_surface = gallery_scroll_for_settle.clone();
             let generation = generation.clone();
             let active = active.clone();
             glib::timeout_add_local_once(Duration::from_millis(400), move || {
@@ -2822,6 +2838,31 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                     return;
                 }
                 gallery.set_photo_wall_width_frozen(false);
+                if should_defer_inspector_folder_grid_reflow(
+                    true,
+                    gallery.layout() == grid::PhotoLayout::Grid,
+                    gallery.using_sectioned_folder_view(),
+                ) {
+                    // One deterministic column reflow after the slide. The
+                    // sectioned view's centre/header anchor preservation then
+                    // runs once, rather than on each intermediate width.
+                    let final_width = scroll_surface.width();
+                    if final_width > 100 {
+                        if std::env::var_os("PIC_INSPECTOR_TRACE").is_some() {
+                            eprintln!(
+                                "PIC_INSPECTOR_TRACE stage=grid_commit serial={} width={} scroll_before={:.1}",
+                                serial, final_width, gallery.scroll_position()
+                            );
+                        }
+                        gallery.update_width(final_width);
+                        if std::env::var_os("PIC_INSPECTOR_TRACE").is_some() {
+                            eprintln!(
+                                "PIC_INSPECTOR_TRACE stage=grid_committed serial={} width={} scroll_after={:.1}",
+                                serial, final_width, gallery.scroll_position()
+                            );
+                        }
+                    }
+                }
                 active.set(false);
                 if std::env::var_os("PIC_INSPECTOR_TRACE").is_some() {
                     let scroll = gallery.scroll_position();

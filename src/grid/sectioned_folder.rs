@@ -1779,6 +1779,13 @@ impl SectionedFolderView {
             adjustment.page_size(),
             adjustment.upper(),
         ) {
+            if std::env::var_os("PIC_INSPECTOR_TRACE").is_some() {
+                eprintln!(
+                    "PIC_INSPECTOR_TRACE stage=anchor_deferred reason=scroll_extent photo={} desired_height={:.1} adjustment_upper={:.1} page={:.1} columns={}",
+                    photo_id, self.total_height.get(), adjustment.upper(),
+                    adjustment.page_size(), self.current_columns.get()
+                );
+            }
             return false;
         }
         let upper = (adjustment.upper() - adjustment.page_size()).max(adjustment.lower());

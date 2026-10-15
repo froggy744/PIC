@@ -6,7 +6,7 @@ use adw::prelude::*;
 use gtk4 as gtk;
 use libadwaita as adw;
 
-use super::model::{AspectRatio, Background, CollageOrientation, CollageProject, LayoutKind};
+use super::model::{AspectRatio, Background, CollageOrientation, CollageProject, LayoutKind, PhotoBorder};
 
 const PREVIEW_CORNER_STEPS: i32 = 100;
 
@@ -83,7 +83,7 @@ fn collage_css() -> String {
          .collage-white { background: #ffffff; }\
          .collage-black { background: #000000; }\
          .collage-light-gray { background: #eeeeee; }\
-         .collage-photo { border: 1px solid alpha(@theme_fg_color, 0.18); border-radius: 0; box-shadow: 0 3px 12px alpha(#000000, 0.28); }\
+         .collage-photo { border: 0; border-radius: 0; box-shadow: 0 3px 12px alpha(#000000, 0.28); }\
          .collage-contained-photo { border: none; box-shadow: none; }\
          .collage-dragging { opacity: 0.62; }\
          .collage-drop-target { border: 3px solid #4d9fdb; box-shadow: 0 0 0 3px alpha(#4d9fdb, 0.45), 0 3px 12px alpha(#000000, 0.35); }\
@@ -105,6 +105,13 @@ fn collage_css() -> String {
             radius as f32 / 2.0
         ));
     }
+    for (index, color) in [(1, "#ffffff"), (2, "#000000"), (3, "#888888")] {
+        for thickness in 1..=18 {
+            css.push_str(&format!(
+                ".collage-border-{index}-{thickness} {{ border: {thickness}px solid {color}; }}"
+            ));
+        }
+    }
     css
 }
 
@@ -114,6 +121,7 @@ struct PreviewFrame {
     photo: gtk::Frame,
     outer_radius: Cell<i32>,
     photo_radius: Cell<i32>,
+    border_class: Cell<i32>,
 }
 
 /// Host-application hooks for tile interactions (threaded into
@@ -764,6 +772,33 @@ pub fn build(
 
 /// Keep one radius class per widget so changing the slider or canvas size
 /// never needs to remove dozens of unused CSS classes.
+/// Update only the outline class that changed, with no image redecoding.
+/// A border is inset within the frame and follows the current rounded shape.
+fn set_preview_border_class(
+    widget: &impl IsA<gtk::Widget>,
+    previous: &Cell<i32>,
+    color: PhotoBorder,
+    thickness: i32,
+) {
+    let color_id = match color {
+        PhotoBorder::None => 0,
+        PhotoBorder::White => 1,
+        PhotoBorder::Black => 2,
+        PhotoBorder::Grey => 3,
+    };
+    let key = if color_id == 0 { 0 } else { color_id * 20 + thickness.clamp(1, 18) };
+    let old = previous.replace(key);
+    if old == key {
+        return;
+    }
+    if old > 0 {
+        widget.remove_css_class(&format!("collage-border-{}-{}", old / 20, old % 20));
+    }
+    if key > 0 {
+        widget.add_css_class(&format!("collage-border-{color_id}-{}", key % 20));
+    }
+}
+
 fn set_preview_corner_class(
     widget: &impl IsA<gtk::Widget>,
     previous: &Cell<i32>,
@@ -1214,6 +1249,7 @@ fn refresh_preview(
             photo: photo_frame,
             outer_radius: Cell::new(0),
             photo_radius: Cell::new(0),
+            border_class: Cell::new(0),
         });
     }
 
@@ -1255,6 +1291,12 @@ fn update_geometry(
             gtk::Overflow::Visible
         });
         set_preview_corner_class(&preview.outer, &preview.outer_radius, radius_step);
+        set_preview_border_class(
+            &preview.outer,
+            &preview.border_class,
+            project.border,
+            super::model::border_pixels(visible_w.min(visible_h), project.border_width).min(18) as i32,
+        );
         preview.outer.set_size_request(w, h);
         let contain = matches!(project.layout, LayoutKind::Mosaic | LayoutKind::SmartMosaic)
             && project.keep_photo_aspect;

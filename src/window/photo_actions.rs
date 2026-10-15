@@ -3,6 +3,7 @@ use gio::prelude::{AppInfoExt, SettingsExt};
 thread_local! {
     static ACTIVE_PHOTO_MENU: RefCell<Option<gtk::Widget>> = RefCell::new(None);
     static DOCKED_PROPERTIES_PANEL: RefCell<Option<gtk::Box>> = RefCell::new(None);
+    static DOCKED_PROPERTIES_SPLIT: RefCell<Option<adw::OverlaySplitView>> = RefCell::new(None);
     static DOCKED_PROPERTIES_CONTEXT: RefCell<Option<PhotoActionContext>> = RefCell::new(None);
     static LIGHTBOX_PROPERTIES_PANEL: RefCell<Option<gtk::Box>> = RefCell::new(None);
     static LIGHTBOX_PROPERTIES_CONTEXT: RefCell<Option<PhotoActionContext>> = RefCell::new(None);
@@ -1356,8 +1357,12 @@ fn active_properties_surface() -> PropertiesSurface {
     }
 }
 
-pub(crate) fn register_docked_properties_panel(panel: &gtk::Box) {
+pub(crate) fn register_docked_properties_panel(
+    panel: &gtk::Box,
+    split: &adw::OverlaySplitView,
+) {
     DOCKED_PROPERTIES_PANEL.with(|slot| slot.replace(Some(panel.clone())));
+    DOCKED_PROPERTIES_SPLIT.with(|slot| slot.replace(Some(split.clone())));
     DOCKED_PROPERTIES_CONTEXT.with(|slot| slot.replace(None));
 }
 
@@ -1370,9 +1375,11 @@ fn close_properties(surface: PropertiesSurface) {
     match surface {
         PropertiesSurface::Gallery => {
             DOCKED_PROPERTIES_CONTEXT.with(|slot| { slot.replace(None); });
-            DOCKED_PROPERTIES_PANEL.with(|slot| {
-                if let Some(panel) = slot.borrow().as_ref() {
-                    panel.set_visible(false);
+            // Keep the inspector child allocated. OverlaySplitView animates the
+            // actual content width without covering or hiding thumbnails.
+            DOCKED_PROPERTIES_SPLIT.with(|slot| {
+                if let Some(split) = slot.borrow().as_ref() {
+                    split.set_show_sidebar(false);
                 }
             });
         }
@@ -1404,8 +1411,8 @@ fn properties_open(surface: PropertiesSurface) -> bool {
     match surface {
         PropertiesSurface::Gallery => {
             DOCKED_PROPERTIES_CONTEXT.with(|slot| slot.borrow().is_some())
-                && DOCKED_PROPERTIES_PANEL.with(|slot| {
-                    slot.borrow().as_ref().is_some_and(|panel| panel.is_visible())
+                && DOCKED_PROPERTIES_SPLIT.with(|slot| {
+                    slot.borrow().as_ref().is_some_and(|split| split.shows_sidebar())
                 })
         }
         PropertiesSurface::Lightbox => {
@@ -1737,6 +1744,13 @@ fn show_properties_dialog_on(
         }
         panel.append(&content);
         panel.set_visible(true);
+        if surface == PropertiesSurface::Gallery {
+            DOCKED_PROPERTIES_SPLIT.with(|slot| {
+                if let Some(split) = slot.borrow().as_ref() {
+                    split.set_show_sidebar(true);
+                }
+            });
+        }
         if std::env::var_os("PICASA_TRACE").is_some() {
             eprintln!(
                 "PIC_INSPECTOR stage=show surface={surface:?} photo={} visible={} panel_width={}",

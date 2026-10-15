@@ -1877,7 +1877,7 @@ mod photo_actions_tests {
     #[test]
     #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
     fn gallery_properties_split_resizes_content_without_covering_thumbnails() {
-        gtk::init().unwrap();
+        adw::init().unwrap();
 
         // The right-hand inspector uses the same structural animated split
         // as the left sidebar. Opening it must subtract its allocated width
@@ -1936,16 +1936,28 @@ mod photo_actions_tests {
         );
         let reduced_width = gallery.width();
 
+        // Like the main sidebar, divider resizing changes the content width
+        // without changing the selected destination or overlay allocation.
+        split.set_sidebar_width_fraction(0.4);
+        for _ in 0..8 {
+            settle_gtk_layout();
+        }
+        assert!(
+            gallery.width() < reduced_width - 30,
+            "drag-width update failed to resize the content"
+        );
+        let resized_width = gallery.width();
+
         // Opening and closing the lightbox must not reallocate the grid.
         viewer.set_visible(true);
         viewer_inspector.set_visible(true);
         settle_gtk_layout();
-        assert_eq!(gallery.width(), reduced_width);
+        assert_eq!(gallery.width(), resized_width);
         assert_eq!(viewer.width(), overlay.width());
         viewer_inspector.set_visible(false);
         viewer.set_visible(false);
         settle_gtk_layout();
-        assert_eq!(gallery.width(), reduced_width);
+        assert_eq!(gallery.width(), resized_width);
         assert!(split.shows_sidebar(), "gallery inspector state was lost");
 
         split.set_show_sidebar(false);

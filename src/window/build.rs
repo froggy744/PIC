@@ -2591,27 +2591,156 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     });
     page_overlay.add_controller(action_menu_autohide);
     context_menu_host.borrow_mut().replace(page_overlay.downgrade());
-    // Overlay panels cover the right edge but do not participate in measuring
-    // the grid. GTK keeps the underlying gallery width and scroll geometry
-    // unchanged when either panel is opened or closed.
-    let gallery_overlay = gtk::Overlay::new();
-    gallery_overlay.set_hexpand(true);
-    gallery_overlay.set_vexpand(true);
-    gallery_overlay.set_child(Some(&page_overlay));
+    // Match the main left sidebar: a native AdwOverlaySplitView sliding in
+    // from the RIGHT. Unlike a GtkOverlay panel it reserves real gallery
+    // space, so not a single photo tile can be hidden behind Properties.
+    // Keep this expanded; a compact window must still lay out the grid beside
+    // the inspector rather than silently switching to overlay mode.
+    let properties_split = adw::OverlaySplitView::new();
+    properties_split.set_sidebar_position(gtk::PackType::End);
+    properties_split.set_pin_sidebar(true);
+    properties_split.set_collapsed(false);
+    properties_split.set_enable_show_gesture(false);
+    properties_split.set_enable_hide_gesture(false);
+    properties_split.set_min_sidebar_width(280.0);
+    properties_split.set_max_sidebar_width(520.0);
+    properties_split.set_sidebar_width_fraction(0.25);
+    properties_split.set_content(Some(&page_overlay));
 
     let properties_panel = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    properties_panel.set_width_request(300);
-    properties_panel.set_halign(gtk::Align::End);
-    properties_panel.set_valign(gtk::Align::Fill);
+    properties_panel.set_width_request(280);
+    properties_panel.set_hexpand(true);
     properties_panel.set_vexpand(true);
     properties_panel.set_overflow(gtk::Overflow::Hidden);
     properties_panel.add_css_class("background");
-    properties_panel.set_visible(false);
-    gallery_overlay.add_overlay(&properties_panel);
-    register_docked_properties_panel(&properties_panel);
+    // Never toggle child visibility: the split owns the slide animation.
+    let properties_shell = gtk::Overlay::new();
+    properties_shell.set_hexpand(true);
+    properties_shell.set_vexpand(true);
+    properties_shell.set_child(Some(&properties_panel));
 
-    // The fullscreen viewer goes above the gallery's Properties overlay.
-    // Its *own* independently controlled panel goes above the photo, too.
+    // Reuse the sidebar's capture-phase, split-coordinate resize pattern.
+    // Pointer coordinates are converted to the stationary split, not the
+    // moving handle, so resizing never oscillates at a fixed mouse position.
+    let properties_resize_handle = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    properties_resize_handle.set_width_request(12);
+    properties_resize_handle.set_halign(gtk::Align::Start);
+    properties_resize_handle.set_valign(gtk::Align::Fill);
+    properties_resize_handle.set_vexpand(true);
+    properties_resize_handle.set_cursor_from_name(Some("col-resize"));
+    properties_resize_handle.add_css_class("pic-properties-resize-handle");
+    properties_shell.add_overlay(&properties_resize_handle);
+    properties_split.set_sidebar(Some(&properties_shell));
+    properties_split.set_show_sidebar(false);
+    register_docked_properties_panel(&properties_panel, &properties_split);
+
+    let resize_origin = Rc::new(Cell::new(0.0_f64));
+    let resize_width = Rc::new(Cell::new(0.0_f64));
+    let resize_local = Rc::new(Cell::new((0.0_f64, 0.0_f64)));
+    let resize_active = Rc::new(Cell::new(false));
+    let resize_gesture = gtk::GestureDrag::new();
+    resize_gesture.set_button(1);
+    resize_gesture.set_propagation_phase(gtk::PropagationPhase::Capture);
+    resize_gesture.set_exclusive(true);
+    {
+        let split = properties_split.clone();
+        let gallery = gallery.clone();
+        let origin = resize_origin.clone();
+        let width = resize_width.clone();
+        let local = resize_local.clone();
+        let active = resize_active.clone();
+        resize_gesture.connect_drag_begin(move |gesture, x, y| {
+            let Some(point) = gesture.widget().and_then(|handle| {
+                handle.compute_point(&split, &gtk::graphene::Point::new(x as f32, y as f32))
+            }) else {
+                gesture.set_state(gtk::EventSequenceState::Denied);
+                return;
+            };
+            gallery.cancel_resize_flip();
+            gallery.set_photo_wall_width_frozen(false);
+            active.set(true);
+            origin.set(f64::from(point.x()));
+            width.set(properties_panel.width().max(280) as f64);
+            local.set((x, y));
+        });
+    }
+    {
+        let split = properties_split.clone();
+        let origin = resize_origin.clone();
+        let width = resize_width.clone();
+        let local = resize_local.clone();
+        let active = resize_active.clone();
+        resize_gesture.connect_drag_update(move |gesture, dx, dy| {
+            if !active.get() {
+                return;
+            }
+            let (x, y) = local.get();
+            let Some(point) = gesture.widget().and_then(|handle| {
+                handle.compute_point(
+                    &split,
+                    &gtk::graphene::Point::new((x + dx) as f32, (y + dy) as f32),
+                )
+            }) else {
+                return;
+            };
+            let total = f64::from(split.width().max(1));
+            let target = (width.get() + origin.get() - f64::from(point.x()))
+                .clamp(280.0, 520.0)
+                .min(total * 0.55);
+            split.set_sidebar_width_fraction((target / total).clamp(0.1, 0.7));
+        });
+    }
+    {
+        let active = resize_active.clone();
+        resize_gesture.connect_drag_end(move |_, _, _| active.set(false));
+    }
+    {
+        let active = resize_active.clone();
+        resize_gesture.connect_cancel(move |_, _| active.set(false));
+    }
+    properties_resize_handle.add_controller(resize_gesture);
+
+    // The Gallery's width observer and WidthSettleGate already handle
+    // sidebar-style animated allocation. Freeze justified wall layout
+    // during the slide, then consume only the final width/scroll anchor.
+    {
+        let gallery = gallery.clone();
+        let lightbox = lightbox.clone();
+        let generation = Rc::new(Cell::new(0_u64));
+        properties_split.connect_show_sidebar_notify(move |split| {
+            gallery.cancel_resize_flip();
+            let serial = generation.get().wrapping_add(1);
+            generation.set(serial);
+            gallery.set_photo_wall_width_frozen(true);
+            if std::env::var_os("PICASA_TRACE").is_some() {
+                eprintln!(
+                    "PIC_INSPECTOR_LAYOUT stage=transition open={} gallery_width={} scroll_y={:.1}",
+                    split.shows_sidebar(),
+                    split.content().map(|child| child.width()).unwrap_or(0),
+                    gallery.scroll_position()
+                );
+            }
+            if split.shows_sidebar() && !lightbox.root.is_visible() {
+                let gallery = gallery.clone();
+                glib::idle_add_local_once(move || gallery.grab_focus());
+            }
+            let gallery = gallery.clone();
+            let generation = generation.clone();
+            glib::timeout_add_local_once(Duration::from_millis(400), move || {
+                if generation.get() == serial {
+                    gallery.set_photo_wall_width_frozen(false);
+                }
+            });
+        });
+    }
+
+    let gallery_overlay = gtk::Overlay::new();
+    gallery_overlay.set_hexpand(true);
+    gallery_overlay.set_vexpand(true);
+    gallery_overlay.set_child(Some(&properties_split));
+
+    // The fullscreen viewer covers the actual split, and uses its own
+    // independent overlay inspector without altering lightbox zoom or pan.
     gallery_overlay.add_overlay(&lightbox.root);
     let lightbox_properties_panel = gtk::Box::new(gtk::Orientation::Vertical, 0);
     lightbox_properties_panel.set_width_request(300);

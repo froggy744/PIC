@@ -579,14 +579,19 @@ pub fn build(
     controls.append(&corner_radius);
     {
         let project = project.clone();
-        let refresh = refresh.clone();
+        let canvas = canvas.clone();
+        let frames = frames.clone();
         corner_radius.connect_value_changed(move |scale| {
             let radius = scale.value() as f32;
-            let mut project_data = project.borrow_mut();
-            project_data.corner_radius = radius;
-            project_data.round_corners = radius > 0.0;
-            drop(project_data);
-            refresh();
+            {
+                let mut project_data = project.borrow_mut();
+                project_data.corner_radius = radius;
+                project_data.round_corners = radius > 0.0;
+            }
+            // Corner radius changes only clipping and geometry. Rebuilding all
+            // photo widgets here causes repeated thumbnail swaps and decode
+            // scheduling for each tiny slider movement.
+            update_geometry(&canvas, &frames, &project.borrow());
         });
     }
 
@@ -605,7 +610,7 @@ pub fn build(
         spacing.connect_value_changed(move |scale| {
             let mut project = project.borrow_mut();
             project.spacing = scale.value() as f32;
-            project.relayout();
+            project.relayout_spacing();
             update_geometry(&canvas, &frames, &project);
         });
     }

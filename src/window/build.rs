@@ -2605,7 +2605,13 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     properties_split.set_enable_hide_gesture(false);
     properties_split.set_min_sidebar_width(280.0);
     properties_split.set_max_sidebar_width(520.0);
-    properties_split.set_sidebar_width_fraction(0.25);
+    let inspector_fraction = numeric_setting::<f64>(
+        &connection.borrow(),
+        PROPERTIES_WIDTH_FRACTION_SETTING_KEY,
+    )
+    .unwrap_or(0.25)
+    .clamp(0.10, 0.55);
+    properties_split.set_sidebar_width_fraction(inspector_fraction);
     properties_split.set_content(Some(&page_overlay));
 
     let properties_panel = gtk::Box::new(gtk::Orientation::Vertical, 0);
@@ -2696,8 +2702,18 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         let active = resize_active.clone();
         let split = properties_split.clone();
         let gallery = gallery.clone();
+        let connection = connection.clone();
         resize_gesture.connect_drag_end(move |_, _, _| {
-            active.set(false);
+            if !active.replace(false) {
+                return;
+            }
+            if let Err(error) = db::set_setting(
+                &connection.borrow(),
+                PROPERTIES_WIDTH_FRACTION_SETTING_KEY,
+                &split.sidebar_width_fraction().to_string(),
+            ) {
+                eprintln!("Could not save Properties panel width: {error}");
+            }
             if std::env::var_os("PICASA_TRACE").is_some() {
                 eprintln!(
                     "PIC_INSPECTOR_LAYOUT stage=drag_end sidebar_width={} gallery_width={} scroll_y={:.1}",

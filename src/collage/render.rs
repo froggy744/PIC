@@ -220,7 +220,9 @@ pub fn export(project: &CollageProject, destination: &Path, options: &ExportOpti
 /// made square at full radius. The 2x2 samples soften the cutout edge.
 fn collage_trace_enabled() -> bool {
     static ENABLED: OnceLock<bool> = OnceLock::new();
-    *ENABLED.get_or_init(|| std::env::var_os("PIC_COLLAGE_TRACE").is_some_and(|v| v != "0"))
+    *ENABLED.get_or_init(|| {
+        std::env::var("PIC_COLLAGE_TRACE").ok().is_some_and(|value| value != "0")
+    })
 }
 
 fn round_corners(image: &mut RgbaImage, radius_ratio: f32) {

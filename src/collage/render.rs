@@ -332,13 +332,18 @@ mod tests {
     }
 
     #[test]
-    fn full_radius_masks_rectangular_tiles_as_ovals() {
-        let mut tile = RgbaImage::from_pixel(80, 40, image::Rgba([200, 100, 50, 255]));
+    fn full_rounding_rectangular_slot_produces_a_circle_not_an_oval() {
+        let (offset_x, offset_y, width, height) =
+            super::super::model::rounded_tile_bounds(80, 40, 0.5);
+        assert_eq!((offset_x, offset_y, width, height), (20, 0, 40, 40));
+        let mut tile =
+            RgbaImage::from_pixel(width, height, image::Rgba([200, 100, 50, 255]));
         round_corners(&mut tile, 0.5);
         assert_eq!(tile.get_pixel(0, 0).0[3], 0);
-        assert_eq!(tile.get_pixel(79, 39).0[3], 0);
-        assert_eq!(tile.get_pixel(40, 20).0[3], 255);
-        assert_eq!(tile.get_pixel(20, 0).0[3], 0);
+        assert_eq!(tile.get_pixel(39, 39).0[3], 0);
+        assert_eq!(tile.get_pixel(20, 20).0[3], 255);
+        assert_eq!(tile.get_pixel(1, 20).0[3], 255);
+        assert_eq!(tile.get_pixel(10, 0).0[3], 0);
     }
 
     #[test]

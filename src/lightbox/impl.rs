@@ -474,37 +474,43 @@ impl Lightbox {
         });
         root.add_controller(outside_click);
 
-        // Capture secondary clicks on the actual full-size event surface.
-        // The ScrolledWindow fills the lightbox and remains under the pointer
-        // over the image as well as the centre/bottom-centre area. Using the
-        // same widget for both the gesture coordinates and popover anchor
-        // avoids the dead zones caused by root/overlay coordinate mismatch.
+        // Capture on the stable fullscreen root, not just the ScrolledWindow:
+        // at fit size GTK may target an overlay child instead of the scroller.
+        // Root-local coordinates also match the menu's top-level host.
         let right_click = gtk::GestureClick::new();
         right_click.set_button(3);
         right_click.set_propagation_phase(gtk::PropagationPhase::Capture);
         let photos_for_context = photos.clone();
         let index_for_context = index.clone();
         let context_menu_for_context = context_menu.clone();
-        let viewport_for_context = picture_viewport.clone();
+        let root_for_context = root.clone();
         right_click.connect_pressed(move |gesture, _, x, y| {
-            let Some(photo) = photos_for_context
+            let photo = photos_for_context
                 .borrow()
                 .get(index_for_context.get())
-                .cloned()
-            else {
+                .cloned();
+            if std::env::var_os("PICASA_TRACE").is_some() {
+                eprintln!(
+                    "PIC_LIGHTBOX_CONTEXT stage=right_press photo={} handler={} mapped={} x={x:.1} y={y:.1}",
+                    photo.is_some(),
+                    context_menu_for_context.borrow().is_some(),
+                    root_for_context.is_mapped(),
+                );
+            }
+            let Some(photo) = photo else {
                 return;
             };
             if let Some(handler) = context_menu_for_context.borrow().as_ref() {
                 handler(
                     photo,
-                    viewport_for_context.clone().upcast::<gtk::Widget>(),
+                    root_for_context.clone().upcast::<gtk::Widget>(),
                     x,
                     y,
                 );
                 gesture.set_state(gtk::EventSequenceState::Claimed);
             }
         });
-        picture_viewport.add_controller(right_click);
+        root.add_controller(right_click);
 
         let picture_for_fit = picture.clone();
         let photos_for_fit = photos.clone();

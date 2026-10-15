@@ -58,7 +58,21 @@ fn refresh_grid(
             prepare_started.elapsed().as_millis()
         );
     }
-    refresh_grid_inner(connection, filter, search, sort, gallery, folder_target, None);
+    refresh_grid_inner(connection, filter, search, sort, gallery, folder_target, None, false);
+}
+
+/// Navigating between already indexed views is not a data mutation. Keep the
+/// last full Folder stream cached so "Open in Folder" can return to its exact
+/// photo without rebuilding every PhotoObject. Data/scan/filter refreshes still
+/// enter through refresh_grid() and invalidate stale folder membership.
+fn refresh_grid_for_navigation(
+    connection: &Rc<RefCell<Connection>>,
+    filter: sidebar::SidebarFilter,
+    sort: PhotoSort,
+    gallery: &Rc<grid::Gallery>,
+) {
+    debug_assert!(!matches!(filter, sidebar::SidebarFilter::Folder(_)));
+    refresh_grid_inner(connection, filter, "", sort, gallery, None, None, true);
 }
 
 fn refresh_grid_preserving_folder_viewport(
@@ -82,7 +96,7 @@ fn refresh_grid_preserving_folder_viewport(
             anchor.as_ref().map_or(0.0, |anchor| anchor.scroll_y),
         );
     }
-    refresh_grid_inner(connection, filter, search, sort, gallery, None, anchor);
+    refresh_grid_inner(connection, filter, search, sort, gallery, None, anchor, false);
 }
 
 fn refresh_grid_to_folder(
@@ -103,6 +117,7 @@ fn refresh_grid_to_folder(
         gallery,
         Some((folder_id, folder_path, center_folder)),
         None,
+        false,
     );
 }
 
@@ -114,9 +129,18 @@ fn refresh_grid_inner(
     gallery: &Rc<grid::Gallery>,
     folder_target: Option<(i64, String, bool)>,
     viewport_anchor: Option<FolderViewportAnchor>,
+    retain_folder_cache: bool,
 ) {
-    // Cached Folder membership belongs to the previous query/filter.
-    gallery.invalidate_folder_cache();
+    // A navigation-only model change must not discard the cached continuous
+    // Folder stream. Any real data/filter/search refresh still invalidates it.
+    if !retain_folder_cache {
+        gallery.invalidate_folder_cache();
+    } else {
+        crate::nav_transition_trace!(
+            "stage=folder_cache_retained destination={filter:?} eligible={}",
+            gallery.can_restore_folder_cache()
+        );
+    }
     let rating_filter = RatingFilter::from_key(
         &db::setting(&connection.borrow(), RATING_FILTER_SETTING_KEY)
             .ok()

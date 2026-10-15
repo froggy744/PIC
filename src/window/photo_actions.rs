@@ -4,6 +4,9 @@ thread_local! {
     static ACTIVE_PHOTO_MENU: RefCell<Option<gtk::Widget>> = RefCell::new(None);
     static DOCKED_PROPERTIES_PANEL: RefCell<Option<gtk::Box>> = RefCell::new(None);
     static DOCKED_PROPERTIES_CONTEXT: RefCell<Option<PhotoActionContext>> = RefCell::new(None);
+    static LIGHTBOX_PROPERTIES_PANEL: RefCell<Option<gtk::Box>> = RefCell::new(None);
+    static LIGHTBOX_PROPERTIES_CONTEXT: RefCell<Option<PhotoActionContext>> = RefCell::new(None);
+    static LIGHTBOX_PROPERTIES_ACTIVE: Cell<bool> = const { Cell::new(false) };
     static INSPECTOR_CLOSE_CSS_INSTALLED: Cell<bool> = const { Cell::new(false) };
     static CONTEXT_MENU_CSS_INSTALLED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
@@ -1339,41 +1342,108 @@ fn refresh_favorite_sidebar(context: &PhotoActionContext) {
     sidebar::refresh_library_counts(&sidebar, counts, &context.on_unavailable);
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PropertiesSurface {
+    Gallery,
+    Lightbox,
+}
+
+fn active_properties_surface() -> PropertiesSurface {
+    if LIGHTBOX_PROPERTIES_ACTIVE.with(Cell::get) {
+        PropertiesSurface::Lightbox
+    } else {
+        PropertiesSurface::Gallery
+    }
+}
+
 pub(crate) fn register_docked_properties_panel(panel: &gtk::Box) {
     DOCKED_PROPERTIES_PANEL.with(|slot| slot.replace(Some(panel.clone())));
     DOCKED_PROPERTIES_CONTEXT.with(|slot| slot.replace(None));
 }
 
-pub(crate) fn close_docked_properties() {
-    DOCKED_PROPERTIES_CONTEXT.with(|slot| { slot.replace(None); });
-    DOCKED_PROPERTIES_PANEL.with(|slot| {
-        if let Some(panel) = slot.borrow().as_ref() {
-            panel.set_visible(false);
-        }
-    });
+pub(crate) fn register_lightbox_properties_panel(panel: &gtk::Box) {
+    LIGHTBOX_PROPERTIES_PANEL.with(|slot| slot.replace(Some(panel.clone())));
+    LIGHTBOX_PROPERTIES_CONTEXT.with(|slot| slot.replace(None));
 }
 
-/// Right-clicking the InfoBar metadata toggles the docked inspector.
-/// Only the InfoBar uses this; the photo context menu still opens Properties.
+fn close_properties(surface: PropertiesSurface) {
+    match surface {
+        PropertiesSurface::Gallery => {
+            DOCKED_PROPERTIES_CONTEXT.with(|slot| { slot.replace(None); });
+            DOCKED_PROPERTIES_PANEL.with(|slot| {
+                if let Some(panel) = slot.borrow().as_ref() {
+                    panel.set_visible(false);
+                }
+            });
+        }
+        PropertiesSurface::Lightbox => {
+            LIGHTBOX_PROPERTIES_CONTEXT.with(|slot| { slot.replace(None); });
+            LIGHTBOX_PROPERTIES_PANEL.with(|slot| {
+                if let Some(panel) = slot.borrow().as_ref() {
+                    panel.set_visible(false);
+                }
+            });
+        }
+    }
+}
+
+pub(crate) fn close_docked_properties() {
+    close_properties(PropertiesSurface::Gallery);
+}
+
+/// The two inspectors retain independent visibility. Closing the viewer
+/// discards only its overlay, leaving the gallery's selection untouched.
+pub(crate) fn set_lightbox_properties_active(active: bool) {
+    LIGHTBOX_PROPERTIES_ACTIVE.with(|flag| flag.set(active));
+    if !active {
+        close_properties(PropertiesSurface::Lightbox);
+    }
+}
+
+fn properties_open(surface: PropertiesSurface) -> bool {
+    match surface {
+        PropertiesSurface::Gallery => {
+            DOCKED_PROPERTIES_CONTEXT.with(|slot| slot.borrow().is_some())
+                && DOCKED_PROPERTIES_PANEL.with(|slot| {
+                    slot.borrow().as_ref().is_some_and(|panel| panel.is_visible())
+                })
+        }
+        PropertiesSurface::Lightbox => {
+            LIGHTBOX_PROPERTIES_CONTEXT.with(|slot| slot.borrow().is_some())
+                && LIGHTBOX_PROPERTIES_PANEL.with(|slot| {
+                    slot.borrow().as_ref().is_some_and(|panel| panel.is_visible())
+                })
+        }
+    }
+}
+
+/// The InfoBar is shared by the gallery and the viewer, so route its
+/// right-click toggle to whichever surface is currently visible.
 pub(crate) fn toggle_docked_properties(
     photo: &crate::photo_object::PhotoObject,
     context: &PhotoActionContext,
 ) {
-    let is_open = DOCKED_PROPERTIES_CONTEXT.with(|slot| slot.borrow().is_some())
-        && DOCKED_PROPERTIES_PANEL.with(|slot| {
-            slot.borrow().as_ref().is_some_and(|panel| panel.is_visible())
-        });
+    let surface = active_properties_surface();
+    let is_open = properties_open(surface);
     if is_open {
-        close_docked_properties();
+        close_properties(surface);
     } else {
-        show_properties_dialog(photo, context);
+        show_properties_dialog_on(photo, context, surface);
     }
     if std::env::var_os("PICASA_TRACE").is_some() {
         eprintln!(
-            "PIC_INSPECTOR stage=infobar_toggle action={} photo={}",
+            "PIC_INSPECTOR stage=infobar_toggle surface={surface:?} action={} photo={}",
             if is_open { "close" } else { "open" },
             photo.id()
         );
+    }
+}
+
+/// Viewer navigation changes only the visible lightbox inspector content.
+pub(crate) fn refresh_lightbox_properties(photo: &crate::photo_object::PhotoObject) {
+    let context = LIGHTBOX_PROPERTIES_CONTEXT.with(|slot| slot.borrow().clone());
+    if let Some(context) = context {
+        show_properties_dialog_on(photo, &context, PropertiesSurface::Lightbox);
     }
 }
 
@@ -1386,7 +1456,9 @@ pub(crate) fn refresh_docked_properties(photo: Option<&crate::photo_object::Phot
         );
     }
     match (photo, context) {
-        (Some(photo), Some(context)) => show_properties_dialog(photo, &context),
+        (Some(photo), Some(context)) => {
+            show_properties_dialog_on(photo, &context, PropertiesSurface::Gallery);
+        },
         (None, Some(_)) => {
             // Changing folders temporarily clears the grid selection.
             // Keep the inspector open, but do not show stale photo metadata.
@@ -1424,6 +1496,14 @@ pub(crate) fn refresh_docked_properties(photo: Option<&crate::photo_object::Phot
 fn show_properties_dialog(
     photo: &crate::photo_object::PhotoObject,
     context: &PhotoActionContext,
+) {
+    show_properties_dialog_on(photo, context, active_properties_surface());
+}
+
+fn show_properties_dialog_on(
+    photo: &crate::photo_object::PhotoObject,
+    context: &PhotoActionContext,
+    surface: PropertiesSurface,
 ) {
     let record = db::photo(&context.connection.borrow(), photo.id())
         .ok()
@@ -1533,7 +1613,7 @@ fn show_properties_dialog(
     close.set_valign(gtk::Align::Start);
     close.set_margin_top(5);
     close.set_margin_end(5);
-    close.connect_clicked(|_| close_docked_properties());
+    close.connect_clicked(move |_| close_properties(surface));
     preview_overlay.add_overlay(&close);
     sections.append(&preview_overlay);
 
@@ -1639,27 +1719,33 @@ fn show_properties_dialog(
     location_footer.append(&path_value);
     sections.append(&location_footer);
 
-    // Commit state before displaying it, so visibility notifications always
-    // see a matching, live selection.
-    DOCKED_PROPERTIES_CONTEXT.with(|slot| slot.replace(Some(context.clone())));
-    DOCKED_PROPERTIES_PANEL.with(|slot| {
-        if let Some(panel) = slot.borrow().as_ref() {
-            while let Some(child) = panel.first_child() { panel.remove(&child); }
-            panel.append(&content);
-            // The lightbox covers the complete gallery/inspector split. Leave
-            // this panel allocated beneath it so opening/closing the viewer
-            // never changes gallery width or reflows tiles mid-scroll restore.
-            panel.set_visible(true);
-            if std::env::var_os("PICASA_TRACE").is_some() {
-                eprintln!(
-                    "PIC_INSPECTOR stage=show photo={} visible={} panel_width={}",
-                    photo.id(),
-                    panel.is_visible(),
-                    panel.width()
-                );
-            }
+    // Both panels use the same metadata widgets but have independent state.
+    // Their overlay allocation never changes the thumbnail grid dimensions.
+    let panel = match surface {
+        PropertiesSurface::Gallery => {
+            DOCKED_PROPERTIES_CONTEXT.with(|slot| slot.replace(Some(context.clone())));
+            DOCKED_PROPERTIES_PANEL.with(|slot| slot.borrow().clone())
         }
-    });
+        PropertiesSurface::Lightbox => {
+            LIGHTBOX_PROPERTIES_CONTEXT.with(|slot| slot.replace(Some(context.clone())));
+            LIGHTBOX_PROPERTIES_PANEL.with(|slot| slot.borrow().clone())
+        }
+    };
+    if let Some(panel) = panel {
+        while let Some(child) = panel.first_child() {
+            panel.remove(&child);
+        }
+        panel.append(&content);
+        panel.set_visible(true);
+        if std::env::var_os("PICASA_TRACE").is_some() {
+            eprintln!(
+                "PIC_INSPECTOR stage=show surface={surface:?} photo={} visible={} panel_width={}",
+                photo.id(),
+                panel.is_visible(),
+                panel.width()
+            );
+        }
+    }
 }
 
 fn add_inspector_row(group: &adw::PreferencesGroup, name: &str, value: &str) {

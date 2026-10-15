@@ -75,19 +75,21 @@
                 folder_target.as_ref().map(|(id, _)| *id),
                 gallery.stream_building(),
             );
-            // Capture the outgoing gallery before changing Stack pages or
-            // replacing the active photo model. Folder-stream reuse keeps its
-            // native scroll navigation rather than an unnecessary crossfade.
-            if new_filter != filter.get()
-                && !reuse_folder_stream
-                && !exact_photo_target
-                && !lightbox.root.is_visible()
-            {
-                let photos_page = !matches!(
-                    new_filter,
-                    sidebar::SidebarFilter::Library | sidebar::SidebarFilter::Albums
+            // Capture the outgoing viewport before changing a Stack page,
+            // replacing a model OR reusing the continuous Folder stream.
+            // Reused Folder navigation has no new model generation to wait for;
+            // its destination is ready only after the header scroll settles.
+            if let Some((wait_for_folder, wait_for_model)) = sidebar_crossfade_target(
+                filter.get(),
+                new_filter,
+                exact_photo_target,
+                lightbox.root.is_visible(),
+                reuse_folder_stream,
+            ) {
+                crate::nav_transition_trace!(
+                    "stage=crossfade_route id={nav_request} folder={wait_for_folder} model={wait_for_model} reuse_folder_stream={reuse_folder_stream}",
                 );
-                nav_fade_begin(folder_target.is_some(), photos_page);
+                nav_fade_begin(wait_for_folder, wait_for_model);
             }
 
             if let Some(source) = debounce.borrow_mut().take() {
@@ -180,6 +182,10 @@
                             gallery.scroll_to_folder(folder_id, &folder_path)
                         };
                         if reuse_folder_stream && revealed {
+                            crate::nav_transition_trace!(
+                                "stage=folder_reuse_scroll_complete id={nav_request} folder_id={folder_id} scroll={:.1}",
+                                gallery.scroll_position(),
+                            );
                             return None;
                         }
                         if reuse_folder_stream && gallery.has_folder_navigation_target(folder_id) {

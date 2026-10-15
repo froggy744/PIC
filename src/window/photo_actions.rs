@@ -3,8 +3,12 @@ use gio::prelude::{AppInfoExt, SettingsExt};
 thread_local! {
     static ACTIVE_PHOTO_MENU: RefCell<Option<gtk::Widget>> = RefCell::new(None);
     static DOCKED_PROPERTIES_PANEL: RefCell<Option<gtk::Box>> = RefCell::new(None);
+    static DOCKED_PROPERTIES_SPLIT: RefCell<Option<adw::OverlaySplitView>> = RefCell::new(None);
     static DOCKED_PROPERTIES_CONTEXT: RefCell<Option<PhotoActionContext>> = RefCell::new(None);
-    static DOCKED_PROPERTIES_LIGHTBOX_VISIBLE: Cell<bool> = const { Cell::new(false) };
+    static GALLERY_PROPERTIES_ALLOWED: Cell<bool> = const { Cell::new(false) };
+    static LIGHTBOX_PROPERTIES_PANEL: RefCell<Option<gtk::Box>> = RefCell::new(None);
+    static LIGHTBOX_PROPERTIES_CONTEXT: RefCell<Option<PhotoActionContext>> = RefCell::new(None);
+    static LIGHTBOX_PROPERTIES_ACTIVE: Cell<bool> = const { Cell::new(false) };
     static INSPECTOR_CLOSE_CSS_INSTALLED: Cell<bool> = const { Cell::new(false) };
     static CONTEXT_MENU_CSS_INSTALLED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
@@ -1340,34 +1344,159 @@ fn refresh_favorite_sidebar(context: &PhotoActionContext) {
     sidebar::refresh_library_counts(&sidebar, counts, &context.on_unavailable);
 }
 
-pub(crate) fn register_docked_properties_panel(panel: &gtk::Box) {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PropertiesSurface {
+    Gallery,
+    Lightbox,
+}
+
+fn active_properties_surface() -> PropertiesSurface {
+    if LIGHTBOX_PROPERTIES_ACTIVE.with(Cell::get) {
+        PropertiesSurface::Lightbox
+    } else {
+        PropertiesSurface::Gallery
+    }
+}
+
+pub(crate) fn register_docked_properties_panel(
+    panel: &gtk::Box,
+    split: &adw::OverlaySplitView,
+) {
     DOCKED_PROPERTIES_PANEL.with(|slot| slot.replace(Some(panel.clone())));
+    DOCKED_PROPERTIES_SPLIT.with(|slot| slot.replace(Some(split.clone())));
     DOCKED_PROPERTIES_CONTEXT.with(|slot| slot.replace(None));
 }
 
-pub(crate) fn close_docked_properties() {
-    DOCKED_PROPERTIES_CONTEXT.with(|slot| { slot.replace(None); });
-    DOCKED_PROPERTIES_PANEL.with(|slot| {
-        if let Some(panel) = slot.borrow().as_ref() {
-            panel.set_visible(false);
-        }
-    });
+pub(crate) fn register_lightbox_properties_panel(panel: &gtk::Box) {
+    LIGHTBOX_PROPERTIES_PANEL.with(|slot| slot.replace(Some(panel.clone())));
+    LIGHTBOX_PROPERTIES_CONTEXT.with(|slot| slot.replace(None));
 }
 
-pub(crate) fn set_docked_properties_lightbox_visible(lightbox_visible: bool) {
-    DOCKED_PROPERTIES_LIGHTBOX_VISIBLE.with(|flag| flag.set(lightbox_visible));
-    DOCKED_PROPERTIES_PANEL.with(|slot| {
-        if let Some(panel) = slot.borrow().as_ref() {
-            let has_properties = DOCKED_PROPERTIES_CONTEXT.with(|context| context.borrow().is_some());
-            panel.set_visible(!lightbox_visible && has_properties);
+fn close_properties(surface: PropertiesSurface) {
+    if std::env::var_os("PIC_INSPECTOR_TRACE").is_some() {
+        eprintln!("PIC_INSPECTOR_TRACE stage=close surface={surface:?}");
+    }
+    match surface {
+        PropertiesSurface::Gallery => {
+            DOCKED_PROPERTIES_CONTEXT.with(|slot| { slot.replace(None); });
+            // Keep the inspector child allocated. OverlaySplitView animates the
+            // actual content width without covering or hiding thumbnails.
+            DOCKED_PROPERTIES_SPLIT.with(|slot| {
+                if let Some(split) = slot.borrow().as_ref() {
+                    split.set_show_sidebar(false);
+                }
+            });
         }
-    });
+        PropertiesSurface::Lightbox => {
+            LIGHTBOX_PROPERTIES_CONTEXT.with(|slot| { slot.replace(None); });
+            LIGHTBOX_PROPERTIES_PANEL.with(|slot| {
+                if let Some(panel) = slot.borrow().as_ref() {
+                    panel.set_visible(false);
+                }
+            });
+        }
+    }
+}
+
+pub(crate) fn close_docked_properties() {
+    close_properties(PropertiesSurface::Gallery);
+}
+
+/// The Library and Albums index pages are not photo-selection surfaces.
+/// Keep this gate authoritative for InfoBar and photo-menu calls alike.
+pub(crate) fn page_allows_gallery_properties(page: Option<&str>) -> bool {
+    page == Some("photos")
+}
+
+pub(crate) fn set_gallery_properties_allowed(allowed: bool) {
+    GALLERY_PROPERTIES_ALLOWED.with(|state| state.set(allowed));
+    if !allowed {
+        close_docked_properties();
+    }
+    if std::env::var_os("PIC_INSPECTOR_TRACE").is_some() {
+        eprintln!("PIC_INSPECTOR_TRACE stage=page_allowed allowed={allowed}");
+    }
+}
+
+/// The two inspectors retain independent visibility. Closing the viewer
+/// discards only its overlay, leaving the gallery's selection untouched.
+pub(crate) fn set_lightbox_properties_active(active: bool) {
+    LIGHTBOX_PROPERTIES_ACTIVE.with(|flag| flag.set(active));
+    if !active {
+        close_properties(PropertiesSurface::Lightbox);
+    }
+}
+
+fn properties_open(surface: PropertiesSurface) -> bool {
+    match surface {
+        PropertiesSurface::Gallery => {
+            DOCKED_PROPERTIES_CONTEXT.with(|slot| slot.borrow().is_some())
+                && DOCKED_PROPERTIES_SPLIT.with(|slot| {
+                    slot.borrow().as_ref().is_some_and(|split| split.shows_sidebar())
+                })
+        }
+        PropertiesSurface::Lightbox => {
+            LIGHTBOX_PROPERTIES_CONTEXT.with(|slot| slot.borrow().is_some())
+                && LIGHTBOX_PROPERTIES_PANEL.with(|slot| {
+                    slot.borrow().as_ref().is_some_and(|panel| panel.is_visible())
+                })
+        }
+    }
+}
+
+/// The InfoBar is shared by the gallery and the viewer, so route its
+/// right-click toggle to whichever surface is currently visible.
+fn toggle_docked_properties(
+    photo: &crate::photo_object::PhotoObject,
+    context: &PhotoActionContext,
+) {
+    let surface = active_properties_surface();
+    if surface == PropertiesSurface::Gallery
+        && !GALLERY_PROPERTIES_ALLOWED.with(Cell::get)
+    {
+        if std::env::var_os("PIC_INSPECTOR_TRACE").is_some() {
+            eprintln!("PIC_INSPECTOR_TRACE stage=ignored reason=index_page photo={}", photo.id());
+        }
+        return;
+    }
+    let is_open = properties_open(surface);
+    if is_open {
+        close_properties(surface);
+    } else {
+        show_properties_dialog_on(photo, context, surface);
+    }
+    if std::env::var_os("PIC_INSPECTOR_TRACE").is_some() {
+        eprintln!(
+            "PIC_INSPECTOR_TRACE stage=infobar_toggle surface={surface:?} action={} photo={}",
+            if is_open { "close" } else { "open" },
+            photo.id()
+        );
+    }
+}
+
+/// Viewer navigation changes only the visible lightbox inspector content.
+pub(crate) fn refresh_lightbox_properties(photo: &crate::photo_object::PhotoObject) {
+    let context = LIGHTBOX_PROPERTIES_CONTEXT.with(|slot| slot.borrow().clone());
+    if let Some(context) = context {
+        show_properties_dialog_on(photo, &context, PropertiesSurface::Lightbox);
+    }
 }
 
 pub(crate) fn refresh_docked_properties(photo: Option<&crate::photo_object::PhotoObject>) {
+    if !GALLERY_PROPERTIES_ALLOWED.with(Cell::get) {
+        return;
+    }
     let context = DOCKED_PROPERTIES_CONTEXT.with(|slot| slot.borrow().clone());
+    if context.is_some() && std::env::var_os("PICASA_TRACE").is_some() {
+        eprintln!(
+            "PIC_INSPECTOR stage=refresh photo={} has_context=1",
+            photo.map(|photo| photo.id()).unwrap_or_default()
+        );
+    }
     match (photo, context) {
-        (Some(photo), Some(context)) => show_properties_dialog(photo, &context),
+        (Some(photo), Some(context)) => {
+            show_properties_dialog_on(photo, &context, PropertiesSurface::Gallery);
+        },
         (None, Some(_)) => {
             // Changing folders temporarily clears the grid selection.
             // Keep the inspector open, but do not show stale photo metadata.
@@ -1406,6 +1535,19 @@ fn show_properties_dialog(
     photo: &crate::photo_object::PhotoObject,
     context: &PhotoActionContext,
 ) {
+    show_properties_dialog_on(photo, context, active_properties_surface());
+}
+
+fn show_properties_dialog_on(
+    photo: &crate::photo_object::PhotoObject,
+    context: &PhotoActionContext,
+    surface: PropertiesSurface,
+) {
+    if surface == PropertiesSurface::Gallery
+        && !GALLERY_PROPERTIES_ALLOWED.with(Cell::get)
+    {
+        return;
+    }
     let record = db::photo(&context.connection.borrow(), photo.id())
         .ok()
         .flatten();
@@ -1514,7 +1656,7 @@ fn show_properties_dialog(
     close.set_valign(gtk::Align::Start);
     close.set_margin_top(5);
     close.set_margin_end(5);
-    close.connect_clicked(|_| close_docked_properties());
+    close.connect_clicked(move |_| close_properties(surface));
     preview_overlay.add_overlay(&close);
     sections.append(&preview_overlay);
 
@@ -1620,16 +1762,46 @@ fn show_properties_dialog(
     location_footer.append(&path_value);
     sections.append(&location_footer);
 
-    // Commit state before displaying it, so visibility notifications always
-    // see a matching, live selection.
-    DOCKED_PROPERTIES_CONTEXT.with(|slot| slot.replace(Some(context.clone())));
-    DOCKED_PROPERTIES_PANEL.with(|slot| {
-        if let Some(panel) = slot.borrow().as_ref() {
-            while let Some(child) = panel.first_child() { panel.remove(&child); }
-            panel.append(&content);
-            panel.set_visible(!DOCKED_PROPERTIES_LIGHTBOX_VISIBLE.with(Cell::get));
+    // Both panels use the same metadata widgets but have independent state.
+    // Their overlay allocation never changes the thumbnail grid dimensions.
+    let panel = match surface {
+        PropertiesSurface::Gallery => {
+            DOCKED_PROPERTIES_CONTEXT.with(|slot| slot.replace(Some(context.clone())));
+            DOCKED_PROPERTIES_PANEL.with(|slot| slot.borrow().clone())
         }
-    });
+        PropertiesSurface::Lightbox => {
+            LIGHTBOX_PROPERTIES_CONTEXT.with(|slot| slot.replace(Some(context.clone())));
+            LIGHTBOX_PROPERTIES_PANEL.with(|slot| slot.borrow().clone())
+        }
+    };
+    if let Some(panel) = panel {
+        while let Some(child) = panel.first_child() {
+            panel.remove(&child);
+        }
+        panel.append(&content);
+        panel.set_visible(true);
+        if std::env::var_os("PIC_INSPECTOR_TRACE").is_some() {
+            eprintln!(
+                "PIC_INSPECTOR_TRACE stage=photo_content surface={surface:?} photo={} panel_width={}",
+                photo.id(), panel.width()
+            );
+        }
+        if surface == PropertiesSurface::Gallery {
+            DOCKED_PROPERTIES_SPLIT.with(|slot| {
+                if let Some(split) = slot.borrow().as_ref() {
+                    split.set_show_sidebar(true);
+                }
+            });
+        }
+        if std::env::var_os("PICASA_TRACE").is_some() {
+            eprintln!(
+                "PIC_INSPECTOR stage=show surface={surface:?} photo={} visible={} panel_width={}",
+                photo.id(),
+                panel.is_visible(),
+                panel.width()
+            );
+        }
+    }
 }
 
 fn add_inspector_row(group: &adw::PreferencesGroup, name: &str, value: &str) {
@@ -1732,6 +1904,15 @@ mod photo_actions_tests {
     use super::*;
 
     #[test]
+    fn library_and_album_indexes_do_not_allow_properties() {
+        assert!(page_allows_gallery_properties(Some("photos")));
+        for page in ["library", "albums", "edit", "collage"] {
+            assert!(!page_allows_gallery_properties(Some(page)));
+        }
+        assert!(!page_allows_gallery_properties(None));
+    }
+
+    #[test]
     fn photographic_properties_values() {
         assert_eq!(format_aperture(4.0).as_deref(), Some("f/4"));
         assert_eq!(format_shutter_speed(0.001).as_deref(), Some("1/1000 s"));
@@ -1742,6 +1923,103 @@ mod photo_actions_tests {
         assert_eq!(format_exposure_bias(0.0).as_deref(), Some("+0.0 EV"));
         assert_eq!(format_aperture(0.0), None);
         assert_eq!(format_shutter_speed(f64::NAN), None);
+    }
+
+    #[test]
+    #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+    fn gallery_properties_split_resizes_content_without_covering_thumbnails() {
+        adw::init().unwrap();
+
+        // The right-hand inspector uses the same structural animated split
+        // as the left sidebar. Opening it must subtract its allocated width
+        // from the gallery, not paint over the existing thumbnails.
+        let gallery = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        gallery.set_hexpand(true);
+        gallery.set_vexpand(true);
+        let inspector = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        inspector.set_width_request(280);
+        let split = adw::OverlaySplitView::new();
+        split.set_sidebar_position(gtk::PackType::End);
+        split.set_pin_sidebar(true);
+        split.set_collapsed(false);
+        split.set_min_sidebar_width(280.0);
+        split.set_max_sidebar_width(520.0);
+        split.set_sidebar_width_fraction(0.25);
+        split.set_content(Some(&gallery));
+        split.set_sidebar(Some(&inspector));
+        split.set_show_sidebar(false);
+
+        let overlay = gtk::Overlay::new();
+        overlay.set_child(Some(&split));
+        let viewer = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        viewer.set_hexpand(true);
+        viewer.set_vexpand(true);
+        viewer.set_visible(false);
+        overlay.add_overlay(&viewer);
+        let viewer_inspector = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        viewer_inspector.set_width_request(300);
+        viewer_inspector.set_halign(gtk::Align::End);
+        viewer_inspector.set_valign(gtk::Align::Fill);
+        viewer_inspector.set_visible(false);
+        overlay.add_overlay(&viewer_inspector);
+
+        let window = gtk::Window::builder()
+            .default_width(1200)
+            .default_height(700)
+            .child(&overlay)
+            .build();
+        window.present();
+        for _ in 0..10 {
+            settle_gtk_layout();
+        }
+        let full_width = gallery.width();
+        assert!(full_width > 700, "gallery must start at full width");
+
+        split.set_show_sidebar(true);
+        for _ in 0..10 {
+            settle_gtk_layout();
+        }
+        assert!(split.shows_sidebar());
+        assert!(
+            gallery.width() < full_width - 200,
+            "inspector covered tiles instead of resizing gallery: before={full_width} after={}",
+            gallery.width()
+        );
+        let reduced_width = gallery.width();
+
+        // Like the main sidebar, divider resizing changes the content width
+        // without changing the selected destination or overlay allocation.
+        split.set_sidebar_width_fraction(0.4);
+        for _ in 0..8 {
+            settle_gtk_layout();
+        }
+        assert!(
+            gallery.width() < reduced_width - 30,
+            "drag-width update failed to resize the content"
+        );
+        let resized_width = gallery.width();
+
+        // Opening and closing the lightbox must not reallocate the grid.
+        viewer.set_visible(true);
+        viewer_inspector.set_visible(true);
+        settle_gtk_layout();
+        assert_eq!(gallery.width(), resized_width);
+        assert_eq!(viewer.width(), overlay.width());
+        viewer_inspector.set_visible(false);
+        viewer.set_visible(false);
+        settle_gtk_layout();
+        assert_eq!(gallery.width(), resized_width);
+        assert!(split.shows_sidebar(), "gallery inspector state was lost");
+
+        split.set_show_sidebar(false);
+        for _ in 0..10 {
+            settle_gtk_layout();
+        }
+        assert!(
+            (gallery.width() - full_width).abs() < 3,
+            "closing inspector did not restore the full gallery width"
+        );
+        window.close();
     }
 
     fn settle_gtk_layout() {

@@ -70,6 +70,17 @@ pub(super) fn should_observe_width(divider_drag_active: bool, hover_overlay_acti
     !divider_drag_active && !hover_overlay_active
 }
 
+/// Only the virtualized Folder Grid uses a column-dependent vertical row
+/// model. Coalesce inspector slides there; never change Photo Wall/Masonry or
+/// interfere with ordinary gallery/window resizing.
+pub(super) fn should_defer_inspector_folder_grid_reflow(
+    inspector_transition_active: bool,
+    is_grid: bool,
+    is_sectioned_folder: bool,
+) -> bool {
+    inspector_transition_active && is_grid && is_sectioned_folder
+}
+
 #[cfg(test)]
 mod tests {
     use super::WidthSettleGate;
@@ -106,6 +117,15 @@ mod tests {
         assert!(gate.observe(900));
         assert!(gate.observe(880));
     }
+    #[test]
+    fn inspector_slide_coalesces_only_folder_grid() {
+        use super::should_defer_inspector_folder_grid_reflow as defer;
+        assert!(defer(true, true, true), "Folder Grid must settle once");
+        assert!(!defer(false, true, true), "ordinary resize remains live");
+        assert!(!defer(true, false, true), "Photo Wall/Masonry stays live");
+        assert!(!defer(true, true, false), "regular GtkGridView stays live");
+    }
+
     #[test]
     fn hover_overlay_freezes_width_reflow() {
         assert!(!super::should_observe_width(false, true));

@@ -1296,6 +1296,19 @@ impl Gallery {
         if width == old_width && columns == old_columns && !tile_size_changed {
             return;
         }
+        if (columns != old_columns || tile_size_changed)
+            && std::env::var_os("PIC_INSPECTOR_TRACE").is_some()
+        {
+            eprintln!(
+                "PIC_INSPECTOR_TRACE stage=grid_columns old_columns={} new_columns={} old_width={} new_width={} tile_size_changed={} scroll_y={:.1}",
+                old_columns,
+                columns,
+                old_width,
+                width,
+                tile_size_changed,
+                self.scroll_position()
+            );
+        }
         self.last_layout_width.set(width);
         let folder_mode = self.group_mode.get() == GroupMode::Folder;
         let sectioned_folder_mode =

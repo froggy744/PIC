@@ -24,6 +24,52 @@ fn folder_navigation_scope(
 }
 
 impl Gallery {
+    /// Capture a *photo identity and viewport Y offset*, not a scroll-bar
+    /// number. Changing Folder Grid's columns changes every later row's
+    /// absolute Y coordinate, so the scrollbar alone cannot preserve focus.
+    pub(crate) fn capture_inspector_grid_anchor(&self) -> Option<(i64, f64)> {
+        if self.layout() != PhotoLayout::Grid
+            || self.group_mode.get() != GroupMode::Folder
+            || !sectioned_folder_view_enabled()
+        {
+            return None;
+        }
+        self.sectioned_folder.capture_center_anchor()
+    }
+
+    /// Restore the same visual photo at the same viewport-relative Y after
+    /// the inspector's final width is committed. Does not change selection,
+    /// keyboard focus, or photo membership.
+    pub(crate) fn restore_inspector_grid_anchor(
+        self: &Rc<Self>,
+        anchor: (i64, f64),
+    ) -> bool {
+        if self.layout() != PhotoLayout::Grid
+            || self.group_mode.get() != GroupMode::Folder
+            || !sectioned_folder_view_enabled()
+        {
+            return false;
+        }
+        self.sectioned_folder.restore_anchor(anchor.0, anchor.1)
+    }
+
+    /// Signed displacement in screen pixels of the captured photo row.
+    /// A stable reveal/close settles at approximately zero, even though
+    /// the absolute scroll offset may change by thousands of pixels.
+    pub(crate) fn inspector_grid_anchor_error(&self, anchor: (i64, f64)) -> Option<f64> {
+        if self.layout() != PhotoLayout::Grid
+            || self.group_mode.get() != GroupMode::Folder
+            || !sectioned_folder_view_enabled()
+        {
+            return None;
+        }
+        let index = self.current_photos.borrow()
+            .iter()
+            .position(|photo| photo.id() == anchor.0)?;
+        let y = self.sectioned_folder.y_for_index(index as u32)?;
+        Some(y - self.sectioned_folder.scroll_position() - anchor.1)
+    }
+
     pub fn scroll_position(&self) -> f64 {
         if self.using_virtual_photo_surface() {
             return self.sectioned_folder.scroll_position();

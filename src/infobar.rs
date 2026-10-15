@@ -23,6 +23,8 @@ pub struct InfoBar {
     details: gtk::Box,
     pub favorite: gtk::Button,
     pub rating: gtk::MenuButton,
+    rating_icon: gtk::Image,
+    rating_value: gtk::Label,
     pub rating_buttons: Vec<gtk::Button>,
     pub edit: gtk::Button,
     pub collage: gtk::Button,
@@ -45,14 +47,14 @@ pub struct InfoBar {
 
 impl InfoBar {
     /// Keep the screensaver independent of photo selection.
-    /// Open the existing photo properties inspector by right-clicking the
+    /// Toggle the docked photo properties inspector by right-clicking the
     /// metadata region. Left clicks and action buttons remain unaffected.
-    pub fn connect_metadata_right_click(&self, open: impl Fn() + 'static) {
+    pub fn connect_metadata_right_click(&self, toggle: impl Fn() + 'static) {
         let gesture = gtk::GestureClick::new();
         gesture.set_button(3);
         gesture.connect_pressed(move |gesture, _, _, _| {
             gesture.set_state(gtk::EventSequenceState::Claimed);
-            open();
+            toggle();
         });
         // Bind to the actual metadata content, not the expandable blank
         // viewport space between metadata and photo action buttons.
@@ -255,7 +257,20 @@ impl InfoBar {
         favorite.set_tooltip_text(Some("Add to Favourites"));
 
         let rating = gtk::MenuButton::new();
-        rating.set_icon_name("non-starred-symbolic");
+        // Keep the rating visible in the InfoBar (including lightbox) without
+        // requiring a hover tooltip or opening the star picker.
+        let rating_content = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+        rating_content.set_valign(gtk::Align::Center);
+        rating_content.set_margin_start(4);
+        rating_content.set_margin_end(4);
+        let rating_icon = gtk::Image::from_icon_name("non-starred-symbolic");
+        rating_content.append(&rating_icon);
+        let rating_value = gtk::Label::new(None);
+        rating_value.set_visible(false);
+        rating_value.set_width_chars(3);
+        rating_value.set_xalign(0.0);
+        rating_content.append(&rating_value);
+        rating.set_child(Some(&rating_content));
         rating.set_has_frame(false);
         configure_action_button(&rating);
         rating.add_css_class("rating-btn");
@@ -697,6 +712,8 @@ impl InfoBar {
             details,
             favorite,
             rating,
+            rating_icon,
+            rating_value,
             rating_buttons,
             edit,
             collage,
@@ -816,11 +833,14 @@ impl InfoBar {
 
     fn set_rating_presentation(&self, rating: i32) {
         let rating = rating.clamp(0, 5);
-        self.rating.set_icon_name(if rating == 0 {
+        self.rating_icon.set_icon_name(Some(if rating == 0 {
             "non-starred-symbolic"
         } else {
             "starred-symbolic"
-        });
+        }));
+        self.rating_value
+            .set_markup(&format!("<b>{}</b>", rating_label(rating)));
+        self.rating_value.set_visible(rating > 0);
         let tooltip = if rating == 0 {
             "Rate photo".to_string()
         } else {
@@ -936,6 +956,13 @@ impl InfoBar {
     }
 }
 
+fn rating_label(rating: i32) -> String {
+    match rating.clamp(0, 5) {
+        0 => String::new(),
+        value => format!("{value}/5"),
+    }
+}
+
 fn edit_button_sensitive(has_photo: bool, collage_active: bool) -> bool {
     has_photo && !collage_active
 }
@@ -952,7 +979,17 @@ fn format_aperture(value: f64) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{edit_button_sensitive, format_aperture, format_date};
+    use super::{edit_button_sensitive, format_aperture, format_date, rating_label};
+
+    #[test]
+    fn numeric_rating_label_handles_unrated_and_out_of_range_values() {
+        assert_eq!(rating_label(0), "");
+        assert_eq!(rating_label(1), "1/5");
+        assert_eq!(rating_label(4), "4/5");
+        assert_eq!(rating_label(5), "5/5");
+        assert_eq!(rating_label(-1), "");
+        assert_eq!(rating_label(9), "5/5");
+    }
 
     #[test]
     fn edit_is_disabled_while_collage_is_active() {
@@ -1111,6 +1148,36 @@ mod layout_tests {
         assert!(preview.x() >= 16.0, "contents must retain their inset");
         gtk::style_context_remove_provider_for_display(&display, &overlay);
         gtk::style_context_remove_provider_for_display(&display, &base);
+    }
+
+    #[test]
+    #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+    fn rating_indicator_updates_when_lightbox_photo_changes() {
+        gtk::init().unwrap();
+        let info = InfoBar::new();
+        info.set_photo(None);
+        assert_eq!(info.rating_value.text().as_str(), "");
+        assert!(!info.rating_value.is_visible());
+        assert!(!info.rating.is_sensitive());
+
+        let first: PhotoObject = glib::Object::new();
+        first.set_rating(4);
+        info.set_photo(Some(&first));
+        assert_eq!(info.rating_value.text().as_str(), "4/5");
+        assert!(info.rating_value.is_visible());
+        assert!(info.rating.is_sensitive());
+
+        // Keyboard shortcuts and star-picker clicks both call set_photo
+        // after saving a new rating; the number must reflect that immediately.
+        first.set_rating(2);
+        info.set_photo(Some(&first));
+        assert_eq!(info.rating_value.text().as_str(), "2/5");
+
+        let second: PhotoObject = glib::Object::new();
+        second.set_rating(0);
+        info.set_photo(Some(&second));
+        assert_eq!(info.rating_value.text().as_str(), "");
+        assert!(!info.rating_value.is_visible());
     }
 
     #[test]

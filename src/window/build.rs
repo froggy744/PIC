@@ -166,10 +166,8 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let selected_photo = Rc::new(RefCell::new(None));
 
     let lightbox = Rc::new(Lightbox::new());
-    // The inspector belongs to the gallery, never the fullscreen lightbox.
-    // Restore an already-open inspector when returning to the grid.
     lightbox.root.connect_visible_notify(|root| {
-        set_docked_properties_lightbox_visible(root.is_visible());
+        set_lightbox_properties_active(root.is_visible());
     });
     let info_for_lightbox = info.clone();
     let selected_photo_for_lightbox = selected_photo.clone();
@@ -196,6 +194,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         }
         info_for_lightbox.set_photo(Some(&photo));
         info_for_lightbox.show_photo_metadata();
+        refresh_lightbox_properties(&photo);
         // Navigating to another photo restores the viewer's normal fit state.
         info_for_lightbox.one_to_one.set_active(false);
         selected_photo_for_lightbox.replace(Some(photo));
@@ -788,14 +787,14 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         });
     }
     configure_infobar_album_menu(&info.add_to_album, action_context.clone());
-    // The same docked inspector used by the photo context menu is available
-    // directly from the infobar's metadata (right mouse button).
+    // Right-click on InfoBar metadata opens Properties; right-click again
+    // closes it, without opening the photo context menu.
     {
         let selection = selected_photo.clone();
         let context = action_context.clone();
         info.connect_metadata_right_click(move || {
             if let Some(photo) = selection.borrow().as_ref() {
-                show_properties_dialog(photo, &context);
+                toggle_docked_properties(photo, &context);
             }
         });
     }
@@ -2310,6 +2309,10 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
 
     // Divider dragging publishes live allocations in every gallery mode.
     let sidebar_resize_active = Rc::new(Cell::new(false));
+    let inspector_resize_active = Rc::new(Cell::new(false));
+    let inspector_transition_active = Rc::new(Cell::new(false));
+    let inspector_trace_last_width = Rc::new(Cell::new(-1_i32));
+    let inspector_trace_frames = Rc::new(Cell::new(0_u16));
     // Temporary hover-autohide is presentation only. While that overlay is
     // sliding in or out, keep the gallery's logical width/column model frozen
     // so Folder mode does not rebuild rows just because the pointer touched
@@ -2322,15 +2325,58 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let sidebar_layout_settle = Rc::new(RefCell::new(WidthSettleGate::new(3)));
     let gallery_for_resize = gallery.clone();
     let sidebar_resize_active_for_tick = sidebar_resize_active.clone();
+    let inspector_resize_active_for_tick = inspector_resize_active.clone();
+    let inspector_transition_active_for_tick = inspector_transition_active.clone();
+    let inspector_trace_last_width_for_tick = inspector_trace_last_width.clone();
+    let inspector_trace_frames_for_tick = inspector_trace_frames.clone();
     let sidebar_hover_layout_freeze_for_tick = sidebar_hover_layout_freeze.clone();
     let sidebar_layout_settle_for_tick = sidebar_layout_settle.clone();
+    let inspector_trace_enabled = std::env::var_os("PIC_INSPECTOR_TRACE").is_some();
     gallery_scroll_stack.add_tick_callback(move |surface, _clock| {
         gallery_for_resize.drain_thumbnail_display_completions();
-        let live_resize = sidebar_resize_active_for_tick.get()
-            && !sidebar_hover_layout_freeze_for_tick.get();
+        let live_resize =
+            (sidebar_resize_active_for_tick.get() || inspector_resize_active_for_tick.get())
+                && !sidebar_hover_layout_freeze_for_tick.get();
+        if inspector_trace_enabled
+            && (inspector_resize_active_for_tick.get() || inspector_transition_active_for_tick.get())
+        {
+            let width = surface.width();
+            if inspector_trace_last_width_for_tick.replace(width) != width {
+                let samples = inspector_trace_frames_for_tick.get();
+                if samples < 90 {
+                    eprintln!(
+                        "PIC_INSPECTOR_TRACE stage=frame phase={} sample={} viewport_width={} gallery_root_width={} layout={:?} virtual={} scroll_y={:.1}",
+                        if inspector_resize_active_for_tick.get() { "drag" } else { "slide" },
+                        samples,
+                        width,
+                        gallery_for_resize.root.width(),
+                        gallery_for_resize.layout(),
+                        gallery_for_resize.using_sectioned_folder_view(),
+                        gallery_for_resize.scroll_position()
+                    );
+                } else if samples == 90 {
+                    eprintln!("PIC_INSPECTOR_TRACE stage=frame_limit reached=90");
+                }
+                inspector_trace_frames_for_tick.set(samples.saturating_add(1));
+            }
+        }
+        // Folder Grid has a sectioned, virtualized row model. Rebuilding it
+        // at each intermediary inspector width re-anchors the same photo
+        // multiple times (e.g. 5->4->3 columns), causing large visible jumps.
+        // Keep that grid's column geometry fixed during the native split slide;
+        // the show-sidebar settle handler commits the final width once.
+        // Photo Wall/Masonry and ordinary resize gestures are unchanged.
+        if should_defer_inspector_folder_grid_reflow(
+            inspector_transition_active_for_tick.get(),
+            gallery_for_resize.layout() == grid::PhotoLayout::Grid,
+            gallery_for_resize.using_sectioned_folder_view(),
+        ) && !inspector_resize_active_for_tick.get()
+        {
+            return glib::ControlFlow::Continue;
+        }
         if live_resize
             || should_observe_width(
-                sidebar_resize_active_for_tick.get(),
+                sidebar_resize_active_for_tick.get() || inspector_resize_active_for_tick.get(),
                 sidebar_hover_layout_freeze_for_tick.get(),
             )
         {
@@ -2578,11 +2624,12 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     } else {
         "photos"
     });
-    // The shared viewer and its menus can cover either the gallery or Home.
+    // The gallery Properties panel reserves width through a right-hand split;
+    // only the fullscreen viewer and its own inspector are overlays.
     let page_overlay = gtk::Overlay::new();
+    page_overlay.set_hexpand(true);
     page_overlay.set_vexpand(true);
     page_overlay.set_child(Some(&main_stack));
-    page_overlay.add_overlay(&lightbox.root);
     let action_menu_autohide = gtk::GestureClick::new();
     action_menu_autohide.set_button(1);
     action_menu_autohide.set_propagation_phase(gtk::PropagationPhase::Capture);
@@ -2592,64 +2639,425 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     });
     page_overlay.add_controller(action_menu_autohide);
     context_menu_host.borrow_mut().replace(page_overlay.downgrade());
-    // Dock the inspector inside the photo/viewer band only. The shared
-    // bottom info bar is a sibling below this band and must never be
-    // covered or displaced sideways by Properties.
-    let gallery_band = gtk::Paned::new(gtk::Orientation::Horizontal);
-    gallery_band.set_hexpand(true);
-    gallery_band.set_vexpand(true);
-    // Use the standard thin GTK divider, not the wide double-edge handle.
-    gallery_band.set_wide_handle(false);
-    gallery_band.set_start_child(Some(&page_overlay));
-    gallery_band.set_resize_start_child(true);
-    gallery_band.set_shrink_start_child(false);
+    // Match the main left sidebar: a native AdwOverlaySplitView sliding in
+    // from the RIGHT. Unlike a GtkOverlay panel it reserves real gallery
+    // space, so not a single photo tile can be hidden behind Properties.
+    // Keep this expanded; a compact window must still lay out the grid beside
+    // the inspector rather than silently switching to overlay mode.
+    let properties_split = adw::OverlaySplitView::new();
+    properties_split.set_sidebar_position(gtk::PackType::End);
+    properties_split.set_pin_sidebar(true);
+    properties_split.set_collapsed(false);
+    properties_split.set_enable_show_gesture(false);
+    properties_split.set_enable_hide_gesture(false);
+    properties_split.set_min_sidebar_width(280.0);
+    properties_split.set_max_sidebar_width(520.0);
+    let inspector_fraction = numeric_setting::<f64>(
+        &connection.borrow(),
+        PROPERTIES_WIDTH_FRACTION_SETTING_KEY,
+    )
+    .unwrap_or(0.25)
+    .clamp(0.10, 0.55);
+    properties_split.set_sidebar_width_fraction(inspector_fraction);
+    properties_split.set_content(Some(&page_overlay));
 
     let properties_panel = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    properties_panel.set_width_request(260);
+    properties_panel.set_width_request(280);
+    properties_panel.set_hexpand(true);
     properties_panel.set_vexpand(true);
     properties_panel.set_overflow(gtk::Overflow::Hidden);
     properties_panel.add_css_class("background");
-    properties_panel.set_visible(false);
-    gallery_band.set_end_child(Some(&properties_panel));
-    gallery_band.set_resize_end_child(false);
-    gallery_band.set_shrink_end_child(false);
-    register_docked_properties_panel(&properties_panel);
+    // Never toggle child visibility: the split owns the slide animation.
+    let properties_shell = gtk::Overlay::new();
+    properties_shell.set_hexpand(true);
+    properties_shell.set_vexpand(true);
+    properties_shell.set_child(Some(&properties_panel));
+
+    // Reuse the sidebar's capture-phase, split-coordinate resize pattern.
+    // Pointer coordinates are converted to the stationary split, not the
+    // moving handle, so resizing never oscillates at a fixed mouse position.
+    let properties_resize_handle = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    properties_resize_handle.set_width_request(12);
+    properties_resize_handle.set_halign(gtk::Align::Start);
+    properties_resize_handle.set_valign(gtk::Align::Fill);
+    properties_resize_handle.set_vexpand(true);
+    properties_resize_handle.set_cursor_from_name(Some("col-resize"));
+    properties_resize_handle.add_css_class("pic-properties-resize-handle");
+    properties_shell.add_overlay(&properties_resize_handle);
+    properties_split.set_sidebar(Some(&properties_shell));
+    properties_split.set_show_sidebar(false);
+    register_docked_properties_panel(&properties_panel, &properties_split);
+
+    let resize_origin = Rc::new(Cell::new(0.0_f64));
+    let resize_width = Rc::new(Cell::new(0.0_f64));
+    let resize_local = Rc::new(Cell::new((0.0_f64, 0.0_f64)));
+    let resize_active = inspector_resize_active.clone();
+    let resize_gesture = gtk::GestureDrag::new();
+    resize_gesture.set_button(1);
+    resize_gesture.set_propagation_phase(gtk::PropagationPhase::Capture);
+    resize_gesture.set_exclusive(true);
+    {
+        let split = properties_split.clone();
+        let gallery = gallery.clone();
+        let panel = properties_panel.clone();
+        let origin = resize_origin.clone();
+        let width = resize_width.clone();
+        let local = resize_local.clone();
+        let active = resize_active.clone();
+        let last_trace_width = inspector_trace_last_width.clone();
+        let trace_frames = inspector_trace_frames.clone();
+        resize_gesture.connect_drag_begin(move |gesture, x, y| {
+            let Some(point) = gesture.widget().and_then(|handle| {
+                handle.compute_point(&split, &gtk::graphene::Point::new(x as f32, y as f32))
+            }) else {
+                gesture.set_state(gtk::EventSequenceState::Denied);
+                return;
+            };
+            gallery.cancel_resize_flip();
+            gallery.set_photo_wall_width_frozen(false);
+            active.set(true);
+            last_trace_width.set(-1);
+            trace_frames.set(0);
+            if std::env::var_os("PIC_INSPECTOR_TRACE").is_some() {
+                eprintln!(
+                    "PIC_INSPECTOR_TRACE stage=drag_begin gallery_width={} panel_width={} scroll_y={:.1}",
+                    split.content().map(|child| child.width()).unwrap_or(0),
+                    panel.width(),
+                    gallery.scroll_position()
+                );
+            }
+            origin.set(f64::from(point.x()));
+            width.set(panel.width().max(280) as f64);
+            local.set((x, y));
+        });
+    }
+    {
+        let split = properties_split.clone();
+        let origin = resize_origin.clone();
+        let width = resize_width.clone();
+        let local = resize_local.clone();
+        let active = resize_active.clone();
+        resize_gesture.connect_drag_update(move |gesture, dx, dy| {
+            if !active.get() {
+                return;
+            }
+            let (x, y) = local.get();
+            let Some(point) = gesture.widget().and_then(|handle| {
+                handle.compute_point(
+                    &split,
+                    &gtk::graphene::Point::new((x + dx) as f32, (y + dy) as f32),
+                )
+            }) else {
+                return;
+            };
+            let total = f64::from(split.width().max(1));
+            let target = (width.get() + origin.get() - f64::from(point.x()))
+                .clamp(280.0, 520.0)
+                .min(total * 0.55);
+            split.set_sidebar_width_fraction((target / total).clamp(0.1, 0.7));
+        });
+    }
+    {
+        let active = resize_active.clone();
+        let split = properties_split.clone();
+        let gallery = gallery.clone();
+        let connection = connection.clone();
+        resize_gesture.connect_drag_end(move |_, _, _| {
+            if !active.replace(false) {
+                return;
+            }
+            if let Err(error) = db::set_setting(
+                &connection.borrow(),
+                PROPERTIES_WIDTH_FRACTION_SETTING_KEY,
+                &split.sidebar_width_fraction().to_string(),
+            ) {
+                eprintln!("Could not save Properties panel width: {error}");
+            }
+            if std::env::var_os("PIC_INSPECTOR_TRACE").is_some() {
+                eprintln!(
+                    "PIC_INSPECTOR_TRACE stage=drag_end sidebar_width={} gallery_width={} scroll_y={:.1}",
+                    split.sidebar().map(|child| child.width()).unwrap_or(0),
+                    split.content().map(|child| child.width()).unwrap_or(0),
+                    gallery.scroll_position()
+                );
+            }
+        });
+    }
+    {
+        let active = resize_active.clone();
+        resize_gesture.connect_cancel(move |_, _| active.set(false));
+    }
+    properties_resize_handle.add_controller(resize_gesture);
+
+    // The Gallery's width observer and WidthSettleGate already handle
+    // sidebar-style animated allocation. Freeze justified wall layout
+    // during the slide, then consume only the final width/scroll anchor.
+    // Do not move focus on reveal: grabbing the GridView triggers GTK's
+    // implicit scroll-to-focused-tile and can visibly jump the viewport.
+    {
+        let gallery = gallery.clone();
+        let active = inspector_transition_active.clone();
+        let gallery_scroll_for_settle = gallery_scroll_stack.clone();
+        let last_width = inspector_trace_last_width.clone();
+        let frames = inspector_trace_frames.clone();
+        let generation = Rc::new(Cell::new(0_u64));
+        properties_split.connect_show_sidebar_notify(move |split| {
+            // Resize transitions are not photo zooms or model changes.
+            gallery.cancel_resize_flip();
+            let serial = generation.get().wrapping_add(1);
+            generation.set(serial);
+            active.set(true);
+            last_width.set(-1);
+            frames.set(0);
+            let started = Instant::now();
+            let start_scroll = gallery.scroll_position();
+            let start_width = split.content().map(|child| child.width()).unwrap_or(0);
+            let opening = split.shows_sidebar();
+            // Capture BEFORE the first animated width change. The sectioned
+            // layout's old photo/row offset is our stable visual reference.
+            let grid_anchor = gallery.capture_inspector_grid_anchor();
+            if std::env::var_os("PIC_INSPECTOR_TRACE").is_some() {
+                eprintln!(
+                    "PIC_INSPECTOR_TRACE stage=anchor_capture serial={} photo={:?} offset_y={:?} scroll_y={:.1}",
+                    serial, grid_anchor.map(|anchor| anchor.0),
+                    grid_anchor.map(|anchor| anchor.1), start_scroll
+                );
+            }
+            gallery.set_photo_wall_width_frozen(true);
+            if std::env::var_os("PIC_INSPECTOR_TRACE").is_some() {
+                eprintln!(
+                    "PIC_INSPECTOR_TRACE stage=begin serial={} open={} split_width={} gallery_width={} panel_width={} scroll_y={:.1} layout={:?} virtual={} collapsed={}",
+                    serial,
+                    opening,
+                    split.width(),
+                    start_width,
+                    split.sidebar().map(|child| child.width()).unwrap_or(0),
+                    start_scroll,
+                    gallery.layout(),
+                    gallery.using_sectioned_folder_view(),
+                    split.is_collapsed()
+                );
+            }
+            let gallery = gallery.clone();
+            let split = split.clone();
+            let scroll_surface = gallery_scroll_for_settle.clone();
+            let generation = generation.clone();
+            let active = active.clone();
+            glib::timeout_add_local_once(Duration::from_millis(400), move || {
+                if generation.get() != serial {
+                    return;
+                }
+                gallery.set_photo_wall_width_frozen(false);
+                if should_defer_inspector_folder_grid_reflow(
+                    true,
+                    gallery.layout() == grid::PhotoLayout::Grid,
+                    gallery.using_sectioned_folder_view(),
+                ) {
+                    // One deterministic column reflow after the slide. The
+                    // sectioned view's centre/header anchor preservation then
+                    // runs once, rather than on each intermediate width.
+                    let final_width = scroll_surface.width();
+                    if final_width > 100 {
+                        if std::env::var_os("PIC_INSPECTOR_TRACE").is_some() {
+                            eprintln!(
+                                "PIC_INSPECTOR_TRACE stage=grid_commit serial={} width={} scroll_before={:.1}",
+                                serial, final_width, gallery.scroll_position()
+                            );
+                        }
+                        gallery.update_width(final_width);
+                        if let Some(anchor) = grid_anchor {
+                            // Existing per-column reflow may have chosen a
+                            // different centre row after GTK changed the
+                            // viewport width. Restore our *original* photo.
+                            let restored = gallery.restore_inspector_grid_anchor(anchor);
+                            if std::env::var_os("PIC_INSPECTOR_TRACE").is_some() {
+                                eprintln!(
+                                    "PIC_INSPECTOR_TRACE stage=anchor_restore serial={} photo={} offset_y={:.1} success={} error_y={:?} scroll_y={:.1}",
+                                    serial, anchor.0, anchor.1, restored,
+                                    gallery.inspector_grid_anchor_error(anchor),
+                                    gallery.scroll_position()
+                                );
+                            }
+                            // The sectioned surface calculates its new geometry
+                            // synchronously, but GtkScrolledWindow may not yet
+                            // have published the matching adjustment.upper().
+                            // A failed restore means "extent not ready", NOT
+                            // that it is safe to abandon the captured photo.
+                            // Retry for a few allocated frames; cancel stale
+                            // retries if the panel is toggled again.
+                            let gallery_after_layout = gallery.clone();
+                            let generation_after_layout = generation.clone();
+                            let mut tries: u8 = 0;
+                            glib::timeout_add_local(Duration::from_millis(16), move || {
+                                if generation_after_layout.get() != serial
+                                    || gallery_after_layout.layout() != grid::PhotoLayout::Grid
+                                    || !gallery_after_layout.using_sectioned_folder_view()
+                                {
+                                    return glib::ControlFlow::Break;
+                                }
+                                tries = tries.saturating_add(1);
+                                let residual = gallery_after_layout
+                                    .inspector_grid_anchor_error(anchor);
+                                let corrected = if !restored
+                                    || residual.is_some_and(|err| err.abs() > 2.0)
+                                {
+                                    gallery_after_layout.restore_inspector_grid_anchor(anchor)
+                                } else {
+                                    true
+                                };
+                                let after = gallery_after_layout.inspector_grid_anchor_error(anchor);
+                                let complete = corrected
+                                    && after.is_some_and(|err| err.abs() <= 2.0);
+                                if std::env::var_os("PIC_INSPECTOR_TRACE").is_some()
+                                    && (complete || tries >= 20 || tries == 1)
+                                {
+                                    eprintln!(
+                                        "PIC_INSPECTOR_TRACE stage=anchor_settled serial={} photo={} attempt={} error_before={:?} corrected={} error_after={:?} scroll_y={:.1}",
+                                        serial, anchor.0, tries, residual, corrected, after,
+                                        gallery_after_layout.scroll_position()
+                                    );
+                                }
+                                if complete || tries >= 20 {
+                                    glib::ControlFlow::Break
+                                } else {
+                                    glib::ControlFlow::Continue
+                                }
+                            });
+                        }
+                        if std::env::var_os("PIC_INSPECTOR_TRACE").is_some() {
+                            eprintln!(
+                                "PIC_INSPECTOR_TRACE stage=grid_committed serial={} width={} scroll_after={:.1}",
+                                serial, final_width, gallery.scroll_position()
+                            );
+                        }
+                    }
+                }
+                active.set(false);
+                if std::env::var_os("PIC_INSPECTOR_TRACE").is_some() {
+                    let scroll = gallery.scroll_position();
+                    let end_width = split.content().map(|child| child.width()).unwrap_or(0);
+                    eprintln!(
+                        "PIC_INSPECTOR_TRACE stage=end serial={} open={} elapsed_ms={} split_width={} gallery_width={} gallery_delta={} panel_width={} scroll_y={:.1} scroll_delta={:.1} collapsed={}",
+                        serial,
+                        opening,
+                        started.elapsed().as_millis(),
+                        split.width(),
+                        end_width,
+                        end_width - start_width,
+                        split.sidebar().map(|child| child.width()).unwrap_or(0),
+                        scroll,
+                        scroll - start_scroll,
+                        split.is_collapsed()
+                    );
+                }
+            });
+        });
+    }
+
+    let gallery_overlay = gtk::Overlay::new();
+    gallery_overlay.set_hexpand(true);
+    gallery_overlay.set_vexpand(true);
+    gallery_overlay.set_child(Some(&properties_split));
+
+    // The fullscreen viewer covers the actual split, and uses its own
+    // independent overlay inspector without altering lightbox zoom or pan.
+    gallery_overlay.add_overlay(&lightbox.root);
+    let lightbox_properties_panel = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    lightbox_properties_panel.set_width_request(300);
+    lightbox_properties_panel.set_halign(gtk::Align::End);
+    lightbox_properties_panel.set_valign(gtk::Align::Fill);
+    lightbox_properties_panel.set_vexpand(true);
+    lightbox_properties_panel.set_overflow(gtk::Overflow::Hidden);
+    lightbox_properties_panel.add_css_class("background");
+    lightbox_properties_panel.set_visible(false);
+    gallery_overlay.add_overlay(&lightbox_properties_panel);
+    register_lightbox_properties_panel(&lightbox_properties_panel);
     // Index pages and full-surface workspaces are not photo grids: close
     // the inspector on Library Home, Albums Home, Edit and Collage.
     // Folder-to-folder navigation intentionally keeps it open.
+    // Only photo-gallery pages can own a Properties pane. Library/Albums
+    // index, Edit and Collage cannot reopen it through stale InfoBar selection.
+    set_gallery_properties_allowed(
+        page_allows_gallery_properties(main_stack.visible_child_name().as_deref()),
+    );
     main_stack.connect_visible_child_notify(|stack| {
-        if matches!(stack.visible_child_name().as_deref(), Some("library" | "albums" | "edit" | "collage")) {
-            close_docked_properties();
+        let page = stack.visible_child_name();
+        set_gallery_properties_allowed(page_allows_gallery_properties(page.as_deref()));
+        if std::env::var_os("PIC_INSPECTOR_TRACE").is_some() {
+            eprintln!("PIC_INSPECTOR_TRACE stage=page_switch page={:?}", page.as_deref());
         }
     });
 
-    // Opening the inspector via the context menu must return keyboard focus
-    // to the gallery, so arrows and other grid shortcuts still navigate.
-    let gallery_for_inspector_focus = gallery.clone();
-    let lightbox_for_inspector_focus = lightbox.clone();
-    properties_panel.connect_visible_notify(move |panel| {
-        if panel.is_visible() && !lightbox_for_inspector_focus.root.is_visible() {
-            let gallery = gallery_for_inspector_focus.clone();
-            glib::idle_add_local_once(move || {
-                gallery.grab_focus();
-            });
-        }
-    });
-
-    // Initially show a 300px inspector. Unlike a fixed GtkBox allocation,
-    // GtkPaned gives the user a native draggable divider.
-    let inspector_split_initialized = Rc::new(Cell::new(false));
-    let split_initialized = inspector_split_initialized.clone();
-    gallery_band.connect_map(move |split| {
-        if !split_initialized.replace(true) {
-            let width = split.width();
-            if width > 0 {
-                split.set_position((width - 300).max(320));
-            }
-        }
-    });
-    content.append(&gallery_band);
+    content.append(&gallery_overlay);
     content.append(&info.root);
+
+    // One snapshot after the native split animation settles; unlike the
+    // previous overlay the gallery must occupy only the remaining width.
+    {
+        let gallery_for_trace = gallery.clone();
+        let page_for_trace = page_overlay.clone();
+        let panel_for_trace = properties_panel.clone();
+        properties_split.connect_show_sidebar_notify(move |split| {
+            if std::env::var_os("PIC_INSPECTOR_TRACE").is_none() {
+                return;
+            }
+            let opened = split.shows_sidebar();
+            let gallery = gallery_for_trace.clone();
+            let page = page_for_trace.clone();
+            let panel = panel_for_trace.clone();
+            glib::timeout_add_local_once(Duration::from_millis(420), move || {
+                eprintln!(
+                    "PIC_INSPECTOR_TRACE stage=settled open={} gallery_width={} panel_width={} scroll_y={:.1}",
+                    opened,
+                    page.width(),
+                    panel.width(),
+                    gallery.scroll_position()
+                );
+            });
+        });
+    }
+
+    // Low-volume, opt-in diagnostics for lightbox close/return geometry.
+    // Logs capture both transition endpoints and the settled viewport.
+    {
+        let gallery_for_trace = gallery.clone();
+        let gallery_content_for_trace = page_overlay.clone();
+        let inspector_for_trace = properties_panel.clone();
+        let split_for_trace = properties_split.clone();
+        let lightbox_inspector_for_trace = lightbox_properties_panel.clone();
+        let overlay_for_trace = gallery_overlay.clone();
+        lightbox.root.connect_visible_notify(move |root| {
+            if std::env::var_os("PICASA_TRACE").is_none() {
+                return;
+            }
+            let stage = if root.is_visible() { "opened" } else { "hidden" };
+            eprintln!(
+                "PIC_LIGHTBOX_LAYOUT stage={} overlay_width={} gallery_width={} inspector_width={} inspector_visible={} viewer_inspector_visible={} scroll_y={:.1}",
+                stage,
+                overlay_for_trace.width(),
+                gallery_content_for_trace.width(),
+                inspector_for_trace.width(),
+                split_for_trace.shows_sidebar(),
+                lightbox_inspector_for_trace.is_visible(),
+                gallery_for_trace.scroll_position()
+            );
+            if !root.is_visible() {
+                let gallery = gallery_for_trace.clone();
+                let gallery_content = gallery_content_for_trace.clone();
+                let inspector = inspector_for_trace.clone();
+                let split = split_for_trace.clone();
+                glib::timeout_add_local_once(Duration::from_millis(220), move || {
+                    eprintln!(
+                        "PIC_LIGHTBOX_LAYOUT stage=settled gallery_width={} inspector_width={} inspector_visible={} scroll_y={:.1}",
+                        gallery_content.width(),
+                        inspector.width(),
+                        split.shows_sidebar(),
+                        gallery.scroll_position()
+                    );
+                });
+            }
+        });
+    }
     {
         let filter = filter.clone();
         let search_text = search_text.clone();
@@ -3024,6 +3432,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             return;
         }
         photo.set_favorite(favorite);
+        refresh_lightbox_properties(&photo);
         if filter_for_favorite.get() == sidebar::SidebarFilter::Favorites && !favorite {
             gallery_for_favorite.remove_photos(&[photo.id()]);
             if lightbox_for_favorite.root.is_visible() {
@@ -3070,6 +3479,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             gallery_for_rating.update_ratings(&ids, target);
             photo.set_rating(target);
             info_for_rating.set_photo(Some(&photo));
+            refresh_lightbox_properties(&photo);
 
             // Rebuild only when this edit can change visible membership or
             // ordering. Otherwise rating remains a cheap in-place badge update.
@@ -3143,12 +3553,24 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         let close_waiting = search_close_waiting.clone();
         let preserve_viewer = preserve_lightbox_during_search_return.clone();
         let navigate_to_folder = navigate_to_folder.clone();
+        let inspector_for_prepare = properties_panel.clone();
+        let gallery_for_prepare = gallery_overlay.clone();
         lightbox.set_close_prepare_handler(move || {
             prepared.set(false);
             if let Some(photo) = lightbox_for_prepare
                 .upgrade()
                 .and_then(|lightbox| lightbox.current_photo())
             {
+                if std::env::var_os("PICASA_TRACE").is_some() {
+                    eprintln!(
+                        "PIC_LIGHTBOX_LAYOUT stage=prepare photo={} gallery_width={} inspector_width={} inspector_visible={} scroll_y={:.1}",
+                        photo.id(),
+                        gallery_for_prepare.width(),
+                        inspector_for_prepare.width(),
+                        inspector_for_prepare.is_visible(),
+                        gallery.scroll_position()
+                    );
+                }
                 if folder_on_close.replace(false) && photo.folder_id() > 0 {
                     if std::env::var_os("PICASA_TRACE").is_some() {
                         eprintln!(
@@ -3164,7 +3586,16 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                     prepared.set(true);
                     return;
                 }
-                prepared.set(gallery.restore_activated_photo(photo.id()));
+                let restored = gallery.restore_activated_photo(photo.id());
+                if std::env::var_os("PICASA_TRACE").is_some() {
+                    eprintln!(
+                        "PIC_LIGHTBOX_LAYOUT stage=restore_requested photo={} found={} scroll_y={:.1}",
+                        photo.id(),
+                        restored,
+                        gallery.scroll_position()
+                    );
+                }
+                prepared.set(restored);
             }
         });
     }
@@ -3197,6 +3628,12 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         }
 
         one_to_one_for_visibility.set_active(false);
+        // Selection may have been restored while the lightbox still covered
+        // the grid. Keep an already-open gallery inspector on the returned
+        // photo rather than leaving the metadata from the pre-view selection.
+        if let Some(photo) = lightbox_for_lightbox_close.current_photo() {
+            refresh_docked_properties(Some(&photo));
+        }
         if lightbox_close_prepared.replace(false) {
             // Selection, viewport and tile focus were already staged during
             // the fade; repeating the restore would create a second movement.
@@ -4045,6 +4482,7 @@ fn start_photo_export_single(
                                 gallery_for_keys.update_ratings(&ids, rating);
                                 photo.set_rating(rating);
                                 info_for_keys.set_photo(Some(&photo));
+                                refresh_lightbox_properties(&photo);
 
                                 if rating_filter_for_keys.get() != RatingFilter::All
                                     || sort_for_keys.get().field == SortField::Rating

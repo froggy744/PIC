@@ -425,6 +425,110 @@ mod folder_stream_tests {
     }
 
     #[test]
+    #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+    fn folder_grid_inspector_reveal_preserves_visible_photo_row() {
+        use super::{gtk, Gallery, GroupMode, PhotoObject};
+        use gtk::prelude::*;
+
+        fn settle() {
+            let context = glib::MainContext::default();
+            for _ in 0..24 {
+                while context.pending() {
+                    context.iteration(false);
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+        }
+
+        gtk::init().unwrap();
+        let gallery = std::rc::Rc::new(Gallery::new(
+            &[],
+            148,
+            |_| {},
+            |_, _, _| {},
+            |_, _, _, _| {},
+            |_, _| {},
+            |_| {},
+        ));
+        gallery.group_mode.set(GroupMode::Folder);
+        gallery.current_photos.replace(
+            (1..=1200_i64)
+                .map(|id| {
+                    glib::Object::builder::<PhotoObject>()
+                        .property("id", id)
+                        .property("folder-id", 1_i64)
+                        .property("original-available", true)
+                        .build()
+                })
+                .collect(),
+        );
+        gallery.rebuild_group_ranges();
+        let scroll = gtk::ScrolledWindow::builder()
+            .child(&gallery.folder_sectioned_root)
+            .build();
+        gallery.attach_sectioned_folder_scroll(&scroll);
+        let window = gtk::Window::builder()
+            .default_width(1224)
+            .default_height(650)
+            .child(&scroll)
+            .build();
+        window.present();
+        settle();
+        gallery.update_width(1224);
+        settle();
+        scroll.vadjustment().set_value(12000.0);
+        settle();
+
+        // Exactly the inspector path: keep the existing columns throughout
+        // the native slide, commit the destination width once, then restore
+        // the photo captured BEFORE the slide (never the selected-photo id).
+        for width in [918, 1224, 918, 1224] {
+            let anchor = gallery
+                .capture_inspector_grid_anchor()
+                .expect("Folder Grid must provide a visible photo anchor");
+            assert!(anchor.0 > 10, "must test deep into the folder");
+            window.set_default_size(width, 650);
+            settle();
+            gallery.update_width(width);
+
+            // GTK allocates a resized Fixed/spacer and updates
+            // GtkScrolledWindow.vadjustment.upper() on later frames.
+            // A false return before the extent catches up is expected;
+            // retry just like the real Properties transition does.
+            let mut restored = false;
+            for _ in 0..20 {
+                settle();
+                restored = gallery.restore_inspector_grid_anchor(anchor);
+                settle();
+                if restored
+                    && gallery
+                        .inspector_grid_anchor_error(anchor)
+                        .is_some_and(|error| error.abs() <= 2.0)
+                {
+                    break;
+                }
+            }
+            let displacement = gallery.inspector_grid_anchor_error(anchor);
+            let adjustment = scroll.vadjustment();
+            assert!(
+                restored,
+                "inspector width {width} never restored photo {}: requested_height={:.1} adjustment_upper={:.1} page={:.1} displacement={displacement:?}",
+                anchor.0,
+                gallery.sectioned_folder.total_height.get(),
+                adjustment.upper(), adjustment.page_size(),
+            );
+            assert!(
+                displacement.is_some_and(|err| err.abs() <= 2.0),
+                "inspector width {width} moved photo {} by {displacement:?} pixels (upper={:.1} desired_height={:.1})",
+                anchor.0,
+                adjustment.upper(),
+                gallery.sectioned_folder.total_height.get(),
+            );
+        }
+        window.close();
+    }
+
+    #[test]
     fn exact_folder_row_offset_uses_header_and_photo_heights() {
         let rows = vec![
             FolderVirtualRow {

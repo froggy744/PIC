@@ -18,7 +18,9 @@ mod photo_layout;
 use photo_layout::{clear_saved_layouts, restore_section_layout, save_section_layout};
 
 mod layout_settle;
-use layout_settle::{should_observe_width, WidthSettleGate};
+use layout_settle::{
+    should_defer_inspector_folder_grid_reflow, should_observe_width, WidthSettleGate,
+};
 
 pub(crate) mod theme;
 
@@ -41,6 +43,7 @@ const WINDOW_WIDTH_SETTING_KEY: &str = "window-width";
 const WINDOW_HEIGHT_SETTING_KEY: &str = "window-height";
 const WINDOW_MAXIMIZED_SETTING_KEY: &str = "window-maximized";
 const SIDEBAR_WIDTH_FRACTION_SETTING_KEY: &str = "sidebar-width-fraction";
+const PROPERTIES_WIDTH_FRACTION_SETTING_KEY: &str = "properties-width-fraction";
 const SIDEBAR_COLLAPSED_WIDTH_SETTING_KEY: &str = "sidebar-collapsed-width";
 const SIDEBAR_MIN_WIDTH: f64 = 200.0;
 const SIDEBAR_MAX_WIDTH: f64 = 600.0;

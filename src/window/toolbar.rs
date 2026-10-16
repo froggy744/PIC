@@ -248,7 +248,7 @@
     // still be sorted by Date, Rating, Name, Size, or Dimensions.
     let rating_filter_button = gtk::MenuButton::new();
     rating_filter_button.set_icon_name(match rating_filter.get() {
-        RatingFilter::All => "non-starred-symbolic",
+        RatingFilter::All => "starred-symbolic",
         RatingFilter::Corrupt => "dialog-warning-symbolic",
         _ => "starred-symbolic",
     });
@@ -326,7 +326,7 @@
             }
             rating_filter.set(value);
             rating_filter_button.set_icon_name(match value {
-                RatingFilter::All => "non-starred-symbolic",
+                RatingFilter::All => "starred-symbolic",
                 RatingFilter::Corrupt => "dialog-warning-symbolic",
                 _ => "starred-symbolic",
             });

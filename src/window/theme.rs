@@ -300,10 +300,10 @@ impl ThemeEngine {
         if !selects_base {
             let provider = gtk::CssProvider::new();
             provider.load_from_string(theme.css.as_str());
-            // PIC owns a scoped editor-toolbar palette. Place that overlay
-            // above the shared toolbar defaults without changing precedence
-            // for other themes.
-            let priority = if theme.id == "PIC" {
+            // PIC and PIC2 own scoped editor-toolbar palettes. Place those
+            // overlays above the shared toolbar defaults without changing
+            // precedence for other themes.
+            let priority = if matches!(theme.id.as_str(), "PIC" | "PIC2") {
                 gtk::STYLE_PROVIDER_PRIORITY_APPLICATION + 3
             } else {
                 gtk::STYLE_PROVIDER_PRIORITY_APPLICATION + 1

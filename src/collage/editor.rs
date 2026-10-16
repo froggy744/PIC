@@ -107,7 +107,7 @@ fn collage_css() -> String {
          button.collage-color-swatch.collage-swatch-black { background: #000000; }\
          button.collage-color-swatch.collage-swatch-light-grey { background: #eeeeee; }\
          button.collage-color-swatch.collage-swatch-grey { background: #888888; }\
-         button.collage-color-swatch:checked { border: 3px solid #3584e4; box-shadow: 0 0 0 1px alpha(#3584e4, 0.6); }\
+         button.collage-color-swatch:checked { border: 1px solid #3584e4; box-shadow: 0 0 0 1px alpha(#3584e4, 0.6); }\
          button.collage-color-swatch:focus-visible { outline: 2px solid #3584e4; outline-offset: 2px; }",
     );
     for radius in 0..=PREVIEW_CORNER_STEPS {

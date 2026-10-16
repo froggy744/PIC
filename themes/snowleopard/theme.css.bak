@@ -1,0 +1,653 @@
+/* picasa-theme
+   version: 1
+   name: Snow Leopard
+   dark: false
+   color-scheme: theme
+   mode: overlay
+   window-controls: native
+*/
+
+/* ==========================================================================
+   SNOW LEOPARD — Classic Mac OS X Aqua style for PIC
+   Inspired by the B00merang-Project OS-X-Leopard GTK theme.
+
+   Key visual traits:
+   • Pale blue-white surfaces, light grey toolbars
+   • Glossy blue "gel" gradients for selection and default buttons
+   • Rounded corners everywhere (10–14px)
+   • Soft inner shadows for depth on buttons and inputs
+   • Dark slate text on light backgrounds
+   • No traffic-light dots (native window buttons)
+   • Pinstripe sidebar with subtle vertical stripes
+   • White-framed photo tiles with soft drop shadows
+   • Segmented control toggles with glossy appearance
+
+   Install: copy this folder to ~/.config/pic/themes/snowleopard/
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   1. COLOR PALETTE — Aqua blues, light surfaces, slate text
+   -------------------------------------------------------------------------- */
+
+@define-color accent_bg_color #3366CC;       /* Aqua blue highlight        */
+@define-color accent_fg_color #FFFFFF;
+@define-color accent_color #3366CC;
+
+@define-color window_bg_color #EEF0F5;       /* main background            */
+@define-color view_bg_color #F6F7FA;         /* photo grid area            */
+@define-color headerbar_bg_color #DDE1E8;    /* toolbars / headerbar       */
+@define-color card_bg_color #FFFFFF;
+@define-color dialog_bg_color #EEF0F5;
+@define-color popover_bg_color #F8F9FC;
+
+@define-color theme_fg_color #2E3138;        /* dark slate text            */
+@define-color theme_dim_color #8A9099;       /* secondary / muted text     */
+
+@define-color ap_line #B5BAC2;               /* metal edge / divider lines */
+@define-color ap_dim #7A808A;                /* secondary text             */
+@define-color ap_emboss alpha(#FFFFFF, 0.80);/* emboss highlight           */
+@define-color ap_blue_top #B0D4F5;           /* glossy blue top            */
+@define-color ap_blue_bot #2B66D0;           /* glossy blue bottom         */
+@define-color ap_select_bg #3366CC;          /* sidebar / row selection    */
+
+/* --------------------------------------------------------------------------
+   2. SURFACES — pinstripe sidebar, brushed-metal toolbars
+   -------------------------------------------------------------------------- */
+
+window, .layout-left-column, .navigation-sidebar {
+    background: @window_bg_color;
+    color: @theme_fg_color;
+}
+
+.layout-left-column {
+    background-color: #E9ECF3;
+    /* Aqua pinstripes — subtle vertical stripes on sidebar */
+    background-image: repeating-linear-gradient(to bottom,
+        rgba(255,255,255,0.70) 0px, rgba(255,255,255,0.70) 2px,
+        rgba(223,227,238,0.50) 2px, rgba(223,227,238,0.50) 4px);
+    border-right: 1px solid @ap_line;
+}
+
+.layout-left-header, .layout-right-header {
+    background-color: @headerbar_bg_color;
+    background-image: linear-gradient(to bottom, #EAECEF 0%, #D8DCE4 50%, #C8CCD4 100%);
+    border-bottom: 1px solid @ap_line;
+    box-shadow: inset 0 1px 0 alpha(#FFFFFF, 0.70);
+    color: @theme_fg_color;
+}
+
+.app-title {
+    color: @theme_fg_color;
+    text-shadow: 0 1px 0 @ap_emboss;
+    font-weight: 700;
+}
+
+/* --------------------------------------------------------------------------
+   3. BUTTONS — light gel; glossy blue for checked/default
+   -------------------------------------------------------------------------- */
+
+    .layout-left-header button,
+    .layout-right-header button,
+    .photo-action-button,
+    .section-more-btn,
+    .favorite-btn,
+    button.clear-action-button {
+        color: @theme_fg_color;
+        border-radius: 12px;
+        background-color: #E4E7EE;
+        background-image: linear-gradient(to bottom,
+            #FFFFFF 0%, #F0F2F6 50%, #D5D8DE 51%, #E1E4EA 100%);
+        border: 1px solid #A0A6B0;
+        box-shadow:
+            inset 0 1px 0 alpha(#FFFFFF, 0.85),
+            0 1px 1px alpha(#000000, 0.10);
+        text-shadow: 0 1px 0 @ap_emboss;
+    }
+
+    .layout-left-header button:hover,
+    .layout-right-header button:hover,
+    .photo-action-button:hover,
+    .section-more-btn:hover,
+    .favorite-btn:hover,
+    button.clear-action-button:hover {
+        background-image: linear-gradient(to bottom,
+            #FFFFFF 0%, #F6F8FC 50%, #DDE1E8 51%, #E8EBF1 100%);
+        border-color: #8E949E;
+    }
+
+    .layout-left-header button:active,
+    .layout-right-header button:active,
+    .photo-action-button:active,
+    .section-more-btn:active,
+    .favorite-btn:active,
+    button.clear-action-button:active {
+        background-image: linear-gradient(to bottom, #C8CCD4, #D8DBE2);
+        box-shadow: inset 0 1px 3px alpha(#000000, 0.22);
+    }
+
+    .layout-left-header button:checked,
+    .layout-right-header button:checked,
+    .photo-action-button:checked,
+    .one-to-one-btn:checked {
+        color: @accent_fg_color;
+        background-image: linear-gradient(to bottom,
+            @ap_blue_top 0%, #5AA5F5 50%, @ap_blue_bot 51%, #4090E8 100%);
+        border-color: #1D55B5;
+        box-shadow:
+            inset 0 1px 0 alpha(#FFFFFF, 0.55),
+            0 1px 2px alpha(#0A2E6B, 0.30);
+        text-shadow: 0 -1px 0 alpha(#0A2E6B, 0.50);
+    }
+
+    .photo-action-button:disabled,
+    .photo-info-bar button:disabled {
+        opacity: 0.40;
+    }
+
+    /* Default / suggested buttons — glossy Aqua blue gel pill */
+    button.suggested-action,
+    .suggested-action {
+        color: @accent_fg_color;
+        border-radius: 9999px;
+        background-image: linear-gradient(to bottom,
+            @ap_blue_top 0%, #5AA5F5 50%, @ap_blue_bot 51%, #4090E8 100%);
+        border: 1px solid #1D55B5;
+        box-shadow:
+            inset 0 1px 0 alpha(#FFFFFF, 0.55),
+            0 1px 3px alpha(#0A2E6B, 0.35);
+        text-shadow: 0 -1px 0 alpha(#0A2E6B, 0.50);
+    }
+
+    button.suggested-action:hover {
+        background-image: linear-gradient(to bottom,
+            #C0D8F5 0%, #6AB0F8 50%, #3A84EA 51%, #50A0F0 100%);
+    }
+
+    button.suggested-action:active {
+        background-image: linear-gradient(to bottom, @ap_blue_bot, #4090E8);
+        box-shadow: inset 0 1px 4px alpha(#0A2E6B, 0.50);
+    }
+
+/* --------------------------------------------------------------------------
+   4. SEARCH FIELD — white inset pill
+   -------------------------------------------------------------------------- */
+
+    .search-field {
+        min-height: 28px;
+        border-radius: 14px;
+        background: #FFFFFF;
+        border: 1px solid #A3A8B2;
+        color: @theme_fg_color;
+        box-shadow:
+            inset 0 1px 3px alpha(#000000, 0.12),
+            0 1px 0 alpha(#FFFFFF, 0.80);
+    }
+
+    .search-field:focus-within {
+        box-shadow:
+            inset 0 1px 3px alpha(#000000, 0.10),
+            0 0 0 3px alpha(@accent_bg_color, 0.40);
+    }
+
+    .search-field image { color: @ap_dim; }
+    .search-field entry {
+        background: transparent;
+        color: @theme_fg_color;
+        caret-color: @accent_bg_color;
+        box-shadow: none;
+    }
+
+/* --------------------------------------------------------------------------
+   5. PHOTO GRID — pale light table, white-framed thumbnails
+   -------------------------------------------------------------------------- */
+
+    .photo-grid { background: @view_bg_color; }
+    .group-heading-bar { background: transparent; padding: 0; }
+    .section-heading-box { margin-top: 16px; margin-bottom: 8px; }
+    .section-heading {
+        color: @theme_fg_color;
+        font-size: 14px;
+        font-weight: 700;
+        text-shadow: 0 1px 0 @ap_emboss;
+    }
+    .section-count { font-size: 12px; color: @ap_dim; }
+
+    .photo-frame { box-shadow: none; }
+    .photo-tile {
+        border-radius: 3px;
+        border: 3px solid #FFFFFF;
+        background: #FFFFFF;
+        box-shadow: 0 1px 4px alpha(#1B2A4A, 0.30);
+    }
+    .photo-tile:hover {
+        border-color: #FFFFFF;
+        box-shadow:
+            0 0 0 2px alpha(@accent_bg_color, 0.40),
+            0 2px 8px alpha(#1B2A4A, 0.35);
+    }
+    .thumbnail { border-radius: 1px; }
+    .missing-thumbnail { background: #E0E3EB; }
+
+    /* Selection: Aqua-blue frame */
+    .folder-photo-selected.photo-tile {
+        border-color: @accent_bg_color;
+        box-shadow: 0 0 0 1px #1D55B5, 0 3px 10px alpha(#1B2A4A, 0.35);
+    }
+    .folder-photo-selected .selection-badge { opacity: 1; }
+    gridview.section-grid > child:selected .photo-tile,
+    gridview.section-grid > item:selected .photo-tile {
+        border-color: @accent_bg_color;
+        box-shadow: 0 0 0 1px #1D55B5, 0 3px 10px alpha(#1B2A4A, 0.35);
+    }
+
+    .selection-badge {
+        color: @accent_fg_color;
+        background-image: linear-gradient(to bottom,
+            @ap_blue_top 0%, #5AA5F5 50%, @ap_blue_bot 51%, #4090E8 100%);
+        box-shadow: 0 1px 3px alpha(#0A2E6B, 0.45);
+    }
+
+    .offline-badge, .sidebar-offline-badge {
+        border-radius: 9999px;
+        color: #3A2A00;
+        background: #F2C14E;
+        font-weight: 700;
+    }
+
+/* --------------------------------------------------------------------------
+   6. FOLDER CONTENT VIEW
+   -------------------------------------------------------------------------- */
+
+    listview.folder-stream {
+        background: transparent;
+        padding: 0 20px 24px 20px;
+    }
+
+    listview.folder-stream > row,
+    listview.folder-stream > row:hover,
+    listview.folder-stream > row:selected,
+    listview.folder-stream > row:focus,
+    listview.folder-stream > row:active {
+        padding: 0; margin: 0;
+        background: transparent; background-image: none;
+        outline: none; box-shadow: none;
+    }
+
+    .folder-section-header { background: transparent; }
+    .folder-section-title {
+        color: @theme_fg_color;
+        font-weight: 700;
+        font-size: 13px;
+        text-shadow: 0 1px 0 @ap_emboss;
+    }
+    .folder-section-count { color: @ap_dim; font-size: 12px; }
+    .folder-section-icon { color: #6A707A; }
+    .folder-section-separator { margin-top: 7px; opacity: 0.8; background: #C8CCD4; }
+    .folder-photo-row { background: transparent; }
+
+    gridview.section-grid > child,
+    gridview.section-grid > item,
+    gridview.section-grid > child:hover,
+    gridview.section-grid > child:selected,
+    gridview.section-grid > child:focus,
+    gridview.section-grid > child:active,
+    gridview.section-grid > item:hover,
+    gridview.section-grid > item:selected,
+    gridview.section-grid > item:focus,
+    gridview.section-grid > item:active {
+        padding: 6px; margin: 0;
+        background: transparent; background-image: none;
+        outline: none; box-shadow: none;
+    }
+
+    .folder-photo-flow > flowboxchild,
+    .folder-photo-flow > flowboxchild:hover,
+    .folder-photo-flow > flowboxchild:focus,
+    .folder-photo-flow > flowboxchild:active,
+    .folder-photo-flow > flowboxchild:selected {
+        padding: 6px; margin: 0; min-height: 0;
+        background: transparent; background-image: none;
+        outline: none; box-shadow: none;
+    }
+
+/* --------------------------------------------------------------------------
+   7. ALBUMS HOME
+   -------------------------------------------------------------------------- */
+
+    .albums-home-grid > flowboxchild {
+        padding: 0; margin: 0; min-height: 0;
+    }
+    button.album-card {
+        min-width: 0; padding: 0; margin: 0;
+        background: transparent; background-image: none;
+        border: none; box-shadow: none;
+    }
+    button.album-card:hover,
+    button.album-card:focus,
+    button.album-card:active {
+        background: transparent; background-image: none;
+        box-shadow: none;
+    }
+
+.albums-index-title {
+    font-size: 22px;
+    font-weight: 700;
+    text-shadow: 0 1px 0 @ap_emboss;
+}
+
+    .plain-album-cover {
+        border-radius: 3px;
+        border: 3px solid #FFFFFF;
+        background: #FFFFFF;
+        box-shadow: 0 1px 4px alpha(#1B2A4A, 0.30);
+    }
+    .plain-album-cover .thumbnail { border-radius: 1px; }
+    .albums-standard > flowboxchild {
+        padding: 0; margin: 0; min-height: 0;
+        background: transparent; box-shadow: none;
+    }
+    .albums-standard button.album-card {
+        color: inherit;
+        min-width: 0; padding: 0; margin: 0;
+        border: none; border-radius: 6px;
+        background: transparent; background-image: none;
+        box-shadow: none;
+    }
+    .albums-standard button.album-card:hover .album-cover {
+        border-color: #7FB2F5;
+    }
+    .albums-standard button.album-card:hover {
+        background: alpha(@accent_bg_color, 0.06);
+    }
+    .albums-standard button.album-card:focus-visible {
+        outline: 2px solid @accent_bg_color;
+        outline-offset: 3px;
+    }
+    .albums-standard .album-name { font-weight: 600; font-size: 13px; }
+    .albums-standard .album-photo-count {
+        font-size: 12px; color: @ap_dim;
+    }
+
+.albums-bookshelf-photo-count { color: #3a210f; }
+button.album-card.framed-album-card { color: #302014; }
+button.album-card.framed-album-card:hover { opacity: 0.90; }
+
+/* --------------------------------------------------------------------------
+   8. SIDEBAR — Aqua source list
+   -------------------------------------------------------------------------- */
+
+    .navigation-sidebar row {
+        color: @theme_fg_color;
+        border-radius: 4px;
+        margin: 0 4px;
+    }
+    .navigation-sidebar row:hover {
+        background: alpha(@accent_bg_color, 0.07);
+    }
+    .navigation-sidebar row:selected {
+        color: @accent_fg_color;
+        font-weight: 700;
+        background-image: linear-gradient(to bottom,
+            @ap_blue_top 0%, #5AA5F5 50%, @ap_blue_bot 51%, #4090E8 100%);
+        box-shadow:
+            inset 0 1px 0 alpha(#FFFFFF, 0.50),
+            0 0 0 1px #1D55B5;
+        text-shadow: 0 -1px 0 alpha(#0A2E6B, 0.45);
+    }
+    /* Scroll-follow folder marker */
+    .navigation-sidebar row.sidebar-scroll-location {
+        color: @accent_fg_color;
+        font-weight: 700;
+        background-image: linear-gradient(to bottom,
+            @ap_blue_top 0%, #5AA5F5 50%, @ap_blue_bot 51%, #4090E8 100%);
+        box-shadow:
+            inset 0 1px 0 alpha(#FFFFFF, 0.50),
+            0 0 0 1px #1D55B5;
+        text-shadow: 0 -1px 0 alpha(#0A2E6B, 0.45);
+    }
+    .navigation-sidebar row.sidebar-scroll-location .folder-count,
+    .navigation-sidebar row.sidebar-scroll-location .sidebar-count,
+    .navigation-sidebar row:selected .folder-count,
+    .navigation-sidebar row:selected .sidebar-count {
+        color: alpha(#FFFFFF, 0.90);
+    }
+    .navigation-sidebar .heading { color: #8A9099; }
+    .navigation-sidebar .sidebar-section-heading { margin-top: 8px; padding-top: 0; }
+    .navigation-sidebar .sidebar-section-heading-title {
+        color: #6F7480;
+        font-size: inherit;
+        font-weight: 700;
+        letter-spacing: 0.4px;
+        text-shadow: 0 1px 0 @ap_emboss;
+    }
+    .navigation-sidebar .folder-count { color: @ap_dim; }
+    .folder-disclosure { opacity: 0.70; }
+    .sidebar-count {
+        min-width: 38px;
+        font-variant-numeric: tabular-nums;
+        color: @ap_dim;
+    }
+
+/* --------------------------------------------------------------------------
+   9. SEGMENTED TOGGLES
+   -------------------------------------------------------------------------- */
+
+    .crop-aspect-button,
+    .crop-orientation-row button,
+    .collage-layout-tile,
+    .collage-tabs > button {
+        border-radius: 4px;
+        color: @theme_fg_color;
+        background-image: linear-gradient(to bottom,
+            #FFFFFF 0%, #F0F2F6 50%, #D5D8DE 51%, #E1E4EA 100%);
+        border: 1px solid #A0A6B0;
+        box-shadow: inset 0 1px 0 alpha(#FFFFFF, 0.85);
+        text-shadow: 0 1px 0 @ap_emboss;
+    }
+    .crop-aspect-button:hover,
+    .crop-orientation-row button:hover,
+    .collage-layout-tile:hover,
+    .collage-tabs > button:hover {
+        background-image: linear-gradient(to bottom, #FFFFFF, #E4E7EC);
+    }
+    .crop-aspect-button:checked,
+    .crop-orientation-row button:checked,
+    .collage-layout-tile:checked,
+    .collage-tabs > button:checked {
+        color: @accent_fg_color;
+        background-image: linear-gradient(to bottom,
+            @ap_blue_top 0%, #5AA5F5 50%, @ap_blue_bot 51%, #4090E8 100%);
+        border-color: #1D55B5;
+        box-shadow: inset 0 1px 0 alpha(#FFFFFF, 0.50);
+        text-shadow: 0 -1px 0 alpha(#0A2E6B, 0.45);
+    }
+    .crop-aspect-button:checked:hover,
+    .crop-orientation-row button:checked:hover,
+    .collage-layout-tile:checked:hover,
+    .collage-tabs > button:checked:hover {
+        background-image: linear-gradient(to bottom,
+            #C0D8F5 0%, #6AB0F8 50%, #3A84EA 51%, #50A0F0 100%);
+    }
+
+/* --------------------------------------------------------------------------
+   10. SLIDERS — gel knob on a light groove
+   -------------------------------------------------------------------------- */
+
+    scale trough {
+        background-color: #D3D6DD;
+        background-image: none;
+        border: 1px solid #A3A8B2;
+        border-radius: 3px;
+        min-height: 4px;
+        box-shadow:
+            inset 0 1px 2px alpha(#000000, 0.18),
+            0 1px 0 alpha(#FFFFFF, 0.70);
+    }
+    scale trough highlight, scale highlight {
+        background-color: #A0A8B4;
+        background-image: linear-gradient(to bottom, #B8BDC7, #8E95A1);
+        border: none;
+        border-radius: 3px;
+    }
+    scale slider,
+    scale:hover slider,
+    scale:focus slider,
+    scale:active slider {
+        min-width: 15px; min-height: 15px;
+        border-radius: 9999px;
+        background-color: #E4E7EE;
+        background-image: linear-gradient(to bottom,
+            #FFFFFF 0%, #EEF0F4 50%, #CDD0D6 51%, #E0E3E9 100%);
+        border: 1px solid #8A9098;
+        box-shadow:
+            inset 0 1px 0 alpha(#FFFFFF, 0.85),
+            0 1px 3px alpha(#000000, 0.25);
+        outline: none;
+    }
+    scale slider:hover { border-color: #6F757F; }
+
+/* --------------------------------------------------------------------------
+   11. INFO BAR — flat metal strip, edge to edge
+   -------------------------------------------------------------------------- */
+
+    .photo-info-bar {
+        margin: 0;
+        border: none;
+        border-radius: 0;
+        background-color: #DDDDE2;
+        background-image: none;
+        color: @theme_fg_color;
+        box-shadow:
+            -80px 0 0 0 #DDDDE2,
+            80px 0 0 0 #DDDDE2;
+    }
+    .info-preview {
+        border-radius: 2px;
+        background: #FFFFFF;
+        border: 1px solid #B5BAC2;
+    }
+    .info-title, .metric-val { color: @theme_fg_color; }
+    .metric-key,
+    .navigation-sidebar .dim-label,
+    .photo-info-bar .dim-label { color: @ap_dim; }
+
+/* --------------------------------------------------------------------------
+   12. CONTEXT MENU — Aqua style menu
+   -------------------------------------------------------------------------- */
+
+    .photo-context-menu viewport,
+    .photo-context-menu scrolledwindow,
+    .photo-context-menu box {
+        background: transparent; background-image: none;
+    }
+    .photo-context-menu {
+        background-color: @popover_bg_color;
+        background-image: none;
+        border: 1px solid #A3A8B2;
+        border-radius: 6px;
+        box-shadow: 0 8px 24px alpha(#1B2A4A, 0.30);
+    }
+    .photo-context-menu button {
+        color: @theme_fg_color;
+        min-height: 28px;
+        padding: 4px 12px;
+        border-radius: 3px;
+        background: transparent;
+        background-image: none;
+        border: none;
+        box-shadow: none;
+        text-shadow: none;
+    }
+    .photo-context-menu button:hover {
+        color: @accent_fg_color;
+        background-image: linear-gradient(to bottom,
+            @ap_blue_top 0%, #5AA5F5 50%, @ap_blue_bot 51%, #4090E8 100%);
+    }
+    .photo-context-item,
+    .photo-context-submenu > button {
+        color: @theme_fg_color;
+        background: transparent;
+        border: none;
+        box-shadow: none;
+    }
+    .photo-context-item:hover,
+    .photo-context-submenu > button:hover {
+        color: @accent_fg_color;
+        background-image: linear-gradient(to bottom,
+            @ap_blue_top 0%, #5AA5F5 50%, @ap_blue_bot 51%, #4090E8 100%);
+    }
+    .photo-context-item:disabled {
+        background: transparent;
+        opacity: 0.40;
+    }
+    .photo-context-separator { background: #C8CCD4; }
+
+/* --------------------------------------------------------------------------
+   13. MISC — badges, favourites, scrub date, dialogs
+   -------------------------------------------------------------------------- */
+
+    .favorite-btn:not(.active):not(:disabled) image {
+        color: @theme_fg_color;
+    }
+    .favorite-btn.active, .favorite-btn.active image {
+        color: #E0354F;
+    }
+    .favorite-badge { color: #E0354F; }
+    .edited-badge { color: #6A707A; }
+
+    .scroll-scrub-date {
+        padding: 6px 12px;
+        border-radius: 9999px;
+        background: alpha(@popover_bg_color, 0.96);
+        border: 1px solid #A3A8B2;
+        color: @theme_fg_color;
+        font-weight: 700;
+        box-shadow: 0 4px 12px alpha(#1B2A4A, 0.28);
+    }
+
+    headerbar, .titlebar {
+        background-color: @headerbar_bg_color;
+        background-image: linear-gradient(to bottom, #EAECEF, #C8CCD4);
+        border-bottom: 1px solid @ap_line;
+        box-shadow: inset 0 1px 0 alpha(#FFFFFF, 0.70);
+        color: @theme_fg_color;
+    }
+
+    list.boxed-list, .boxed-list, .card {
+        background-color: #FFFFFF;
+        background-image: none;
+        color: @theme_fg_color;
+        border: 1px solid #C3C6CD;
+        border-radius: 6px;
+        box-shadow: 0 1px 2px alpha(#1B2A4A, 0.10);
+    }
+    list.boxed-list > row, .boxed-list > row {
+        background: transparent;
+        color: @theme_fg_color;
+        border-bottom: 1px solid #E3E6EC;
+    }
+    list.boxed-list > row:hover, .boxed-list > row:hover {
+        background: alpha(@accent_bg_color, 0.06);
+    }
+
+    switch {
+        border-radius: 9999px;
+        background-color: alpha(#9BAFC0, 0.20);
+        border: 1px solid #B5BAC2;
+        box-shadow: inset 0 1px 2px alpha(#000000, 0.08);
+    }
+    switch:checked {
+        background-color: @accent_bg_color;
+        border-color: #1D55B5;
+    }
+    switch slider {
+        border-radius: 9999px;
+        background: #FFFFFF;
+        border: 1px solid #B5BAC2;
+        box-shadow: 0 1px 3px alpha(#000000, 0.18);
+    }
+
+    check, radio {
+        min-width: 14px;
+        min-height: 14px;
+    }

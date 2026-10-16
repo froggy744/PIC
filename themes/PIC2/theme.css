@@ -1,0 +1,726 @@
+/* picasa-theme
+   version: 1.2
+   name: PIC2
+   dark: false
+   color-scheme: theme
+   mode: overlay
+   window-controls: native
+*/
+
+/* PIC Pro: graphite-blue chrome, light neutral content, and a single restrained
+   steel-blue accent. Depth comes from hairlines and soft highlights, not from
+   saturated colour. */
+
+/* ---- Palette ---- */
+@define-color pic_bar_color #2f3842;
+@define-color pic_bar_top #38434f;
+@define-color pic_bar_bottom #2b343d;
+@define-color pic_bar_surface #25313b;
+@define-color pic_bar_inset #1c252d;
+@define-color pic_bar_hover #33424f;
+@define-color pic_bar_text #f5f6f7;
+@define-color pic_bar_muted #aebac4;
+
+@define-color pic_background_color #e9eaeb;
+@define-color pic_background_surface #f3f4f5;
+@define-color pic_background_control #e3e7eb;
+@define-color pic_background_hover #d7dfe5;
+@define-color pic_background_border #c6cbd0;
+
+/* Controls on light surfaces */
+@define-color pic_ctl_top #f8f9fa;
+@define-color pic_ctl_bottom #e3e7eb;
+@define-color pic_ctl_hover_top #fdfdfe;
+@define-color pic_ctl_hover_bottom #e9edf1;
+@define-color pic_ctl_active #d2d9e0;
+
+/* One accent: steel blue. Primary actions are this; "selected" is the deep navy. */
+@define-color pic_button_color #3a76bd;
+@define-color pic_accent_top #4a85cb;
+@define-color pic_accent_bottom #2f68ae;
+@define-color pic_button_primary_hover #4a85cb;
+@define-color pic_button_selected #24456e;
+@define-color pic_sel_top #2c5890;
+@define-color pic_sel_bottom #223f66;
+@define-color pic_menu_hover #2f5f9e;
+@define-color pic_danger_top #cf5560;
+@define-color pic_danger_bottom #b43d49;
+
+@define-color pic_button_hover #3a4856;
+@define-color pic_background_selected_hover #c6d5e2;
+@define-color pic_button_text #ffffff;
+@define-color pic_focus #6aa3e8;
+@define-color pic_text_color #22272b;
+@define-color pic_text_muted #626f7a;
+
+/* GTK/libadwaita semantic colours */
+@define-color accent_bg_color @pic_button_color;
+@define-color accent_fg_color @pic_button_text;
+@define-color accent_color @pic_button_color;
+@define-color window_bg_color @pic_background_color;
+@define-color view_bg_color @pic_background_surface;
+@define-color headerbar_bg_color @pic_bar_color;
+@define-color theme_fg_color @pic_text_color;
+
+window { background: @pic_background_color; color: @pic_text_color; }
+
+/* ---- Tooltips & scrollbars ---- */
+tooltip.background, tooltip {
+    background: #1b232b;
+    color: @pic_bar_text;
+    border-radius: 6px;
+    box-shadow: 0 2px 8px alpha(black, 0.35), inset 0 0 0 1px alpha(white, 0.08);
+}
+tooltip label { color: @pic_bar_text; }
+scrollbar slider {
+    min-width: 3px;
+    min-height: 3px;
+    margin: 0;
+    border: 1px solid transparent;
+    border-radius: 999px;
+    background: alpha(@pic_text_color, 0.32);
+    background-clip: padding-box;
+}
+scrollbar slider:hover { background: alpha(@pic_text_color, 0.52); background-clip: padding-box; }
+scrollbar slider:active { background: alpha(@pic_text_color, 0.68); background-clip: padding-box; }
+
+/* ---- Header and title bars ---- */
+.layout-left-header, .layout-right-header {
+    background-color: @pic_bar_color;
+    background-image: linear-gradient(to bottom, @pic_bar_top, @pic_bar_bottom);
+    color: @pic_bar_text;
+    border: none;
+    box-shadow: inset 0 1px 0 alpha(white, 0.06), inset 0 -1px 0 alpha(black, 0.38);
+}
+.layout-left-header button, .layout-right-header button {
+    color: @pic_bar_text;
+    background: transparent;
+    background-image: none;
+    border: none;
+    border-radius: 6px;
+    box-shadow: none;
+}
+.layout-left-header button:hover, .layout-right-header button:hover {
+    background: alpha(white, 0.09);
+    color: @pic_button_text;
+}
+.layout-left-header button:active, .layout-right-header button:active { background: alpha(black, 0.25); }
+.layout-left-header button:focus-visible, .layout-right-header button:focus-visible {
+    outline: 2px solid alpha(@pic_focus, 0.85);
+    outline-offset: -2px;
+}
+.app-title { color: @pic_bar_text; font-weight: 700; text-shadow: none; }
+
+/* ---- Sidebar ---- */
+.layout-left-column, .navigation-sidebar {
+    background: @pic_bar_surface;
+    color: @pic_bar_text;
+}
+.layout-left-column { border: none; box-shadow: inset -1px 0 0 alpha(black, 0.38); }
+.navigation-sidebar row {
+    color: @pic_bar_text;
+    border-radius: 6px;
+}
+.navigation-sidebar row:hover {
+    background: alpha(white, 0.07);
+    color: @pic_button_text;
+}
+.navigation-sidebar row:selected,
+.navigation-sidebar row.sidebar-scroll-location {
+    background-color: @pic_button_selected;
+    background-image: linear-gradient(to bottom, @pic_sel_top, @pic_sel_bottom);
+    color: @pic_button_text;
+    box-shadow: inset 0 1px 0 alpha(white, 0.14), inset 0 0 0 1px alpha(black, 0.28);
+}
+.navigation-sidebar row:focus-visible {
+    outline: 2px solid alpha(@pic_focus, 0.85);
+    outline-offset: -2px;
+}
+.navigation-sidebar .heading,
+.navigation-sidebar .dim-label,
+.navigation-sidebar .folder-count,
+.navigation-sidebar .sidebar-section-heading-title,
+.folder-disclosure,
+.sidebar-count { color: @pic_bar_muted; opacity: 1; }
+.navigation-sidebar .sidebar-section-heading-title { font-weight: 700; }
+.sidebar-count { font-variant-numeric: tabular-nums; }
+.navigation-sidebar row:selected .sidebar-count,
+.navigation-sidebar row:selected .folder-count { color: alpha(white, 0.75); }
+
+/* Search: dark, inset, with a soft focus halo */
+.search-field {
+    min-height: 34px;
+    border-radius: 8px;
+    border: none;
+    background: @pic_bar_inset;
+    box-shadow: inset 0 1px 3px alpha(black, 0.45), inset 0 0 0 1px alpha(white, 0.07);
+    color: @pic_bar_text;
+}
+.search-field:focus-within {
+    box-shadow: inset 0 1px 3px alpha(black, 0.45), inset 0 0 0 1px alpha(@pic_focus, 0.9), 0 0 0 3px alpha(@pic_focus, 0.25);
+}
+.search-field image { color: @pic_bar_muted; }
+.search-field entry {
+    background: transparent;
+    color: @pic_bar_text;
+    caret-color: @pic_bar_text;
+    box-shadow: none;
+}
+
+/* ---- Light gallery, albums, photo tiles ---- */
+.photo-grid, .albums-home-grid { background: @pic_background_surface; color: @pic_text_color; }
+.group-heading-bar { background: transparent; padding: 0; }
+.section-heading-box { margin-top: 14px; margin-bottom: 7px; }
+.section-heading, .folder-section-title {
+    color: @pic_text_color;
+    font-weight: 700;
+    text-shadow: none;
+}
+.group-heading-bar .dim-label { color: @pic_text_muted; opacity: 0.9; }
+.folder-section-count, .folder-section-icon { color: @pic_text_muted; }
+.folder-section-separator { background: @pic_background_border; }
+.section-more-btn {
+    color: @pic_text_color;
+    border: none;
+    border-radius: 6px;
+    box-shadow: none;
+}
+.section-more-btn:hover { background: @pic_background_hover; color: @pic_text_color; }
+.section-more-btn:focus-visible { outline: 2px solid alpha(@pic_focus, 0.9); outline-offset: 1px; }
+.photo-frame { box-shadow: none; }
+.photo-tile {
+    border: 2px solid transparent;
+    border-radius: 5px;
+    background: @pic_background_control;
+    box-shadow: 0 1px 3px alpha(black, 0.2);
+}
+.thumbnail { border-radius: 2px; }
+.missing-thumbnail { background: @pic_background_control; }
+.photo-tile:hover { border-color: alpha(@pic_button_color, 0.55); box-shadow: 0 2px 6px alpha(black, 0.26); }
+.folder-photo-selected.photo-tile,
+gridview.section-grid > child:selected .photo-tile,
+gridview.section-grid > item:selected .photo-tile {
+    border-color: @pic_button_color;
+    box-shadow: 0 0 0 1px alpha(black, 0.18), 0 2px 8px alpha(@pic_button_color, 0.35);
+}
+.folder-photo-selected .selection-badge { opacity: 1; }
+.selection-badge {
+    color: @pic_button_text;
+    background-color: @pic_button_color;
+    background-image: linear-gradient(to bottom, @pic_accent_top, @pic_accent_bottom);
+    box-shadow: 0 1px 2px alpha(black, 0.35);
+}
+listview.folder-stream { background: transparent; padding: 0 20px 24px 20px; }
+listview.folder-stream > row,
+listview.folder-stream > row:hover,
+listview.folder-stream > row:selected,
+listview.folder-stream > row:focus,
+listview.folder-stream > row:active {
+    padding: 0;
+    margin: 0;
+    background: transparent;
+    background-image: none;
+    outline: none;
+    box-shadow: none;
+}
+.folder-section-header, .folder-photo-row { background: transparent; }
+gridview.section-grid > child,
+gridview.section-grid > item,
+gridview.section-grid > child:selected,
+gridview.section-grid > item:selected {
+    background: transparent;
+    box-shadow: none;
+}
+.photo-tile:focus-visible,
+gridview.section-grid > child:focus-visible .photo-tile,
+gridview.section-grid > item:focus-visible .photo-tile {
+    outline: 2px solid alpha(@pic_focus, 0.9);
+    outline-offset: 2px;
+}
+
+/* ---- Edit / collage panel surfaces ---- */
+.edit-panel-pages, .edit-body-paned, .edit-preview,
+.edit-adjustment-group, .overlay-list,
+.collage-editor-paned, .collage-footer {
+    background-color: @pic_background_color;
+    color: @pic_text_color;
+}
+.edit-preview, .overlay-list {
+    border: 1px solid @pic_background_border;
+    border-radius: 6px;
+    box-shadow: inset 0 1px 2px alpha(black, 0.06);
+}
+.edit-section-label { color: @pic_text_muted; font-weight: 700; }
+.overlay-list row:selected { background: alpha(@pic_button_color, 0.18); }
+paned.edit-body-paned > separator,
+paned.collage-editor-paned > separator { background: transparent; border: none; box-shadow: none; }
+
+/* ---- Info / action bar ---- */
+.photo-info-bar {
+    background-color: @pic_bar_color;
+    background-image: linear-gradient(to bottom, @pic_bar_bottom, @pic_bar_color);
+    color: @pic_bar_text;
+    border: none;
+    box-shadow: inset 0 1px 0 alpha(black, 0.4), inset 0 2px 0 alpha(white, 0.04);
+}
+.info-preview {
+    background: @pic_bar_surface;
+    border-radius: 5px;
+    border: none;
+    box-shadow: 0 0 0 1px alpha(black, 0.35), 0 1px 3px alpha(black, 0.35);
+}
+.info-title, .metric-val { color: @pic_bar_text; }
+.metric-key, .photo-info-bar .dim-label { color: @pic_bar_muted; opacity: 1; }
+.photo-info-bar .photo-action-button {
+    color: @pic_bar_text;
+    background: transparent;
+    background-image: none;
+    border: none;
+    border-radius: 6px;
+    box-shadow: none;
+}
+.photo-info-bar .photo-action-button:hover { background: alpha(white, 0.09); color: @pic_button_text; }
+.photo-info-bar .photo-action-button:active { background: alpha(black, 0.25); }
+.photo-info-bar .photo-action-button:checked {
+    background-color: @pic_button_selected;
+    background-image: linear-gradient(to bottom, @pic_sel_top, @pic_sel_bottom);
+    color: @pic_button_text;
+    box-shadow: inset 0 1px 0 alpha(white, 0.14), inset 0 0 0 1px alpha(black, 0.28);
+}
+.photo-info-bar button:focus-visible { outline: 2px solid alpha(@pic_focus, 0.85); outline-offset: -2px; }
+.photo-info-bar separator.infobar-group-separator { background: transparent; }
+
+/* ---- Sliders (light surfaces) ---- */
+scale trough {
+    min-height: 4px;
+    min-width: 4px;
+    border-radius: 2px;
+    background: alpha(@pic_text_color, 0.16);
+    box-shadow: inset 0 1px 1px alpha(black, 0.12);
+}
+scale highlight {
+    border-radius: 2px;
+    background: @pic_button_color;
+    background-image: none;
+}
+scale slider {
+    min-width: 16px;
+    min-height: 16px;
+    margin: -6px;
+    border-radius: 50%;
+    border: none;
+    background-color: #f4f5f6;
+    background-image: linear-gradient(to bottom, #ffffff, #e7eaed);
+    box-shadow: 0 0 0 1px alpha(black, 0.28), 0 1px 3px alpha(black, 0.3);
+}
+scale slider:hover { background-image: linear-gradient(to bottom, #ffffff, #eff1f3); }
+scale slider:active { background-image: linear-gradient(to bottom, #e3e7ea, #d7dce0); }
+scale:focus-visible slider { box-shadow: 0 0 0 1px alpha(black, 0.28), 0 0 0 3px alpha(@pic_focus, 0.5); }
+scale:disabled { opacity: 0.45; }
+
+/* Sliders on the dark bars */
+.photo-info-bar scale trough, .edit-mode-toolbar scale trough, .layout-left-header scale trough {
+    background: alpha(white, 0.2);
+    box-shadow: inset 0 1px 1px alpha(black, 0.35);
+}
+.photo-info-bar scale highlight, .edit-mode-toolbar scale highlight, .layout-left-header scale highlight {
+    background: #6aa3e8;
+}
+
+/* ---- Switches, checks, radios, progress ---- */
+switch {
+    border-radius: 999px;
+    background: alpha(@pic_text_color, 0.2);
+    box-shadow: inset 0 1px 2px alpha(black, 0.2);
+    color: transparent;
+}
+switch:checked { background: @pic_button_color; box-shadow: inset 0 1px 2px alpha(black, 0.25); }
+switch slider {
+    border-radius: 50%;
+    margin: 2px;
+    background: #ffffff;
+    box-shadow: 0 1px 3px alpha(black, 0.4);
+}
+check, radio {
+    border-radius: 4px;
+    background: @pic_ctl_top;
+    box-shadow: inset 0 0 0 1px alpha(black, 0.28);
+}
+radio { border-radius: 50%; }
+check:checked, radio:checked {
+    background: @pic_button_color;
+    color: @pic_button_text;
+    box-shadow: inset 0 0 0 1px alpha(black, 0.25);
+}
+progressbar trough { border-radius: 3px; min-height: 6px; background: alpha(@pic_text_color, 0.16); }
+progressbar progress { border-radius: 3px; background: @pic_button_color; }
+
+/* ---- Buttons: secondary (light surfaces) ----
+   Soft vertical gradient, hairline edge, top highlight. */
+.crop-aspect-button, .crop-orientation-row button,
+.crop-action-row button.crop-apply-button, .crop-action-row button.crop-reset-button,
+.collage-layout-tile, .collage-tabs > button,
+.collage-compact-choice, .edit-fit-row button,
+.overlay-anchor-row button, .quick-fix-row button,
+button.clear-action-button,
+.collage-footer button,
+.edit-panel-pages button.pill,
+dropdown > button, combobox button {
+    color: @pic_text_color;
+    background-color: @pic_background_control;
+    background-image: linear-gradient(to bottom, @pic_ctl_top, @pic_ctl_bottom);
+    border: none;
+    border-radius: 6px;
+    box-shadow: inset 0 0 0 1px alpha(black, 0.13), inset 0 1px 0 alpha(white, 0.85), 0 1px 1px alpha(black, 0.06);
+}
+.crop-aspect-button:hover, .crop-orientation-row button:hover,
+.crop-action-row button.crop-apply-button:hover, .crop-action-row button.crop-reset-button:hover,
+.collage-layout-tile:hover, .collage-tabs > button:hover,
+.collage-compact-choice:hover, .edit-fit-row button:hover,
+.overlay-anchor-row button:hover, .quick-fix-row button:hover,
+button.clear-action-button:hover,
+.collage-footer button:hover,
+dropdown > button:hover, combobox button:hover {
+    background-image: linear-gradient(to bottom, @pic_ctl_hover_top, @pic_ctl_hover_bottom);
+    color: @pic_text_color;
+}
+.crop-aspect-button:active, .crop-orientation-row button:active,
+.crop-action-row button.crop-apply-button:active, .crop-action-row button.crop-reset-button:active,
+.collage-layout-tile:active, .collage-tabs > button:active,
+.collage-compact-choice:active, .edit-fit-row button:active,
+.overlay-anchor-row button:active, .quick-fix-row button:active,
+button.clear-action-button:active,
+.collage-footer button:active,
+dropdown > button:active, combobox button:active {
+    color: @pic_text_color;
+    background-image: none;
+    background-color: @pic_ctl_active;
+    box-shadow: inset 0 0 0 1px alpha(black, 0.18), inset 0 1px 3px alpha(black, 0.18);
+}
+
+/* Selected / toggled state: deep navy, inset. Covers every toggle group,
+   including the collage Orientation and Photo scaling rows. */
+.crop-aspect-button:checked, .crop-orientation-row button:checked,
+.collage-layout-tile:checked, .collage-tabs > button:checked,
+.collage-compact-choice:checked, .collage-compact-choice.active, .collage-compact-choice.selected,
+.edit-fit-row button:checked, .edit-fit-row button.active,
+.overlay-anchor-row button:checked, .quick-fix-row button:checked,
+.one-to-one-btn:checked, .photo-action-button:checked,
+.collage-footer button:checked {
+    color: @pic_button_text;
+    background-color: @pic_button_selected;
+    background-image: linear-gradient(to bottom, @pic_sel_top, @pic_sel_bottom);
+    border: none;
+    box-shadow: inset 0 0 0 1px alpha(black, 0.3), inset 0 1px 0 alpha(white, 0.14);
+}
+.crop-aspect-button:checked:hover, .crop-orientation-row button:checked:hover,
+.collage-layout-tile:checked:hover, .collage-tabs > button:checked:hover,
+.collage-compact-choice:checked:hover, .edit-fit-row button:checked:hover,
+.overlay-anchor-row button:checked:hover, .quick-fix-row button:checked:hover,
+.one-to-one-btn:checked:hover, .photo-action-button:checked:hover {
+    background-image: linear-gradient(to bottom, #346298, #284a73);
+}
+.crop-aspect-button:disabled, .crop-orientation-row button:disabled,
+.collage-layout-tile:disabled, .collage-tabs > button:disabled,
+.collage-compact-choice:disabled, .edit-fit-row button:disabled { opacity: 0.45; }
+.crop-action-row button:disabled { opacity: 0.45; }
+.crop-aspect-button:focus-visible, .crop-orientation-row button:focus-visible,
+.collage-layout-tile:focus-visible, .collage-tabs > button:focus-visible,
+.collage-compact-choice:focus-visible, .edit-fit-row button:focus-visible,
+.overlay-anchor-row button:focus-visible, .quick-fix-row button:focus-visible,
+.collage-footer button:focus-visible, button.clear-action-button:focus-visible {
+    outline: 2px solid alpha(@pic_focus, 0.9);
+    outline-offset: 1px;
+}
+
+/* ---- Buttons: primary ---- */
+button.suggested-action,
+button.crop-apply-button,
+.edit-mode-toolbar .edit-toolbar-actions button.edit-toolbar-done,
+.collage-footer button.suggested-action,
+.collage-footer button.collage-create-button,
+.collage-footer > button:last-child {
+    color: @pic_button_text;
+    background-color: @pic_button_color;
+    background-image: linear-gradient(to bottom, @pic_accent_top, @pic_accent_bottom);
+    border: none;
+    border-radius: 6px;
+    font-weight: 600;
+    box-shadow: inset 0 0 0 1px alpha(black, 0.28), inset 0 1px 0 alpha(white, 0.22), 0 1px 2px alpha(black, 0.18);
+}
+button.suggested-action:hover,
+button.crop-apply-button:hover,
+.edit-mode-toolbar .edit-toolbar-actions button.edit-toolbar-done:hover,
+.collage-footer button.suggested-action:hover,
+.collage-footer button.collage-create-button:hover,
+.collage-footer > button:last-child:hover {
+    color: @pic_button_text;
+    background-image: linear-gradient(to bottom, #5592d6, #3a76bd);
+}
+button.suggested-action:active,
+button.crop-apply-button:active,
+.edit-mode-toolbar .edit-toolbar-actions button.edit-toolbar-done:active,
+.collage-footer button.suggested-action:active,
+.collage-footer > button:last-child:active {
+    color: @pic_button_text;
+    background-image: none;
+    background-color: #2a5a99;
+    box-shadow: inset 0 0 0 1px alpha(black, 0.35), inset 0 1px 3px alpha(black, 0.3);
+}
+button.suggested-action:disabled,
+button.crop-apply-button:disabled,
+.collage-footer > button:last-child:disabled {
+    color: @pic_text_muted;
+    background-color: @pic_background_control;
+    background-image: none;
+    box-shadow: inset 0 0 0 1px alpha(black, 0.1);
+}
+button.suggested-action:focus-visible, button.crop-apply-button:focus-visible,
+.collage-footer > button:last-child:focus-visible {
+    outline: 2px solid alpha(@pic_focus, 0.9);
+    outline-offset: 2px;
+}
+
+/* Destructive actions read as destructive, in a muted red. */
+button.destructive-action {
+    color: @pic_button_text;
+    background-color: @pic_danger_bottom;
+    background-image: linear-gradient(to bottom, @pic_danger_top, @pic_danger_bottom);
+    border: none;
+    border-radius: 6px;
+    box-shadow: inset 0 0 0 1px alpha(black, 0.28), inset 0 1px 0 alpha(white, 0.2);
+}
+button.destructive-action:hover { background-image: linear-gradient(to bottom, #d96670, #bf4854); }
+button.destructive-action:active { background-image: none; background-color: #a2343f; }
+button.destructive-action:disabled { color: @pic_text_muted; background-image: none; background-color: @pic_background_control; }
+
+/* ---- Collage panel ---- */
+.collage-editor-paned button.flat {
+    min-height: 28px;
+    padding: 3px 6px;
+    color: @pic_text_color;
+    background-color: @pic_background_control;
+    background-image: linear-gradient(to bottom, @pic_ctl_top, @pic_ctl_bottom);
+    border: none;
+    border-radius: 6px;
+    box-shadow: inset 0 0 0 1px alpha(black, 0.13), inset 0 1px 0 alpha(white, 0.85), 0 1px 1px alpha(black, 0.06);
+    font-size: 12px;
+    font-weight: 400;
+}
+.collage-editor-paned button.flat:hover {
+    background-image: linear-gradient(to bottom, @pic_ctl_hover_top, @pic_ctl_hover_bottom);
+}
+.collage-editor-paned button.flat:active {
+    background-image: none;
+    background-color: @pic_ctl_active;
+    box-shadow: inset 0 0 0 1px alpha(black, 0.18), inset 0 1px 3px alpha(black, 0.18);
+}
+.collage-editor-paned button.flat:focus-visible { outline: 2px solid alpha(@pic_focus, 0.9); outline-offset: 1px; }
+
+/* Linked segmented groups (Orientation, Photo scaling): one continuous control */
+.collage-editor-paned .linked > button.collage-compact-choice { border-radius: 0; }
+.collage-editor-paned .linked > button.collage-compact-choice:first-child { border-radius: 6px 0 0 6px; }
+.collage-editor-paned .linked > button.collage-compact-choice:last-child { border-radius: 0 6px 6px 0; }
+.collage-editor-paned .linked > button.collage-compact-choice:only-child { border-radius: 6px; }
+.collage-editor-paned .linked > button.collage-compact-choice { min-width: 68px; }
+
+button.collage-layout-tile:checked {
+    color: @pic_button_text;
+    background-color: @pic_button_selected;
+    background-image: linear-gradient(to bottom, @pic_sel_top, @pic_sel_bottom);
+    border: none;
+    box-shadow: inset 0 0 0 1px alpha(black, 0.3), inset 0 1px 0 alpha(white, 0.14);
+}
+button.collage-layout-tile:checked:focus-visible { outline: 2px solid alpha(@pic_focus, 0.9); }
+
+/* Colour swatches: hairline edge; selected gets a gap ring */
+button.collage-color-swatch {
+    border: none;
+    border-radius: 6px;
+    background-image: none;
+    box-shadow: inset 0 0 0 1px alpha(black, 0.25);
+}
+button.collage-color-swatch:hover { box-shadow: inset 0 0 0 1px alpha(black, 0.4); }
+button.collage-color-swatch:checked {
+    border: none;
+    box-shadow: inset 0 0 0 1px alpha(black, 0.25), 0 0 0 1px @pic_button_color;
+}
+button.collage-color-swatch:focus-visible { outline: 2px solid alpha(@pic_focus, 0.9); outline-offset: 3px; }
+
+.collage-footer {
+    background: @pic_background_color;
+    color: @pic_text_color;
+    border: none;
+}
+
+/* ---- Editor toolbar (dark) ---- */
+.edit-mode-toolbar {
+    background-color: @pic_bar_color;
+    background-image: linear-gradient(to bottom, @pic_bar_top, @pic_bar_bottom);
+    color: @pic_bar_text;
+    border: none;
+    border-radius: 6px;
+    box-shadow: inset 0 1px 0 alpha(white, 0.06), 0 1px 0 alpha(black, 0.25);
+}
+.edit-mode-toolbar .edit-panel-tabs {
+    padding: 2px;
+    border-radius: 7px;
+    background: @pic_bar_inset;
+    box-shadow: inset 0 1px 3px alpha(black, 0.45);
+}
+.edit-mode-toolbar .edit-panel-tabs > button.flat {
+    min-height: 32px;
+    color: @pic_bar_muted;
+    background: transparent;
+    background-image: none;
+    border: none;
+    border-radius: 5px;
+    box-shadow: none;
+}
+.edit-mode-toolbar .edit-panel-tabs > button.flat label,
+.edit-mode-toolbar .edit-panel-tabs > button.flat image { color: inherit; }
+.edit-mode-toolbar .edit-panel-tabs > button.flat:hover {
+    background: alpha(white, 0.08);
+    color: @pic_button_text;
+}
+.edit-mode-toolbar .edit-panel-tabs > button.flat:checked,
+.edit-mode-toolbar .edit-panel-tabs > button.flat:checked:hover {
+    color: @pic_button_text;
+    background-color: @pic_button_selected;
+    background-image: linear-gradient(to bottom, @pic_sel_top, @pic_sel_bottom);
+    box-shadow: inset 0 1px 0 alpha(white, 0.14), 0 1px 2px alpha(black, 0.35);
+}
+.edit-mode-toolbar .edit-panel-tabs > button.flat:focus-visible {
+    outline: 2px solid alpha(@pic_focus, 0.85);
+    outline-offset: -2px;
+}
+.edit-mode-toolbar .edit-panel-tabs > button.flat:disabled { opacity: 0.45; }
+.edit-mode-toolbar .edit-toolbar-actions button.edit-toolbar-icon-button {
+    color: @pic_bar_text;
+    background: transparent;
+    background-image: none;
+    border: none;
+    border-radius: 6px;
+    box-shadow: none;
+}
+.edit-mode-toolbar .edit-toolbar-actions button.edit-toolbar-icon-button:hover { background: alpha(white, 0.09); color: @pic_button_text; }
+.edit-mode-toolbar .edit-toolbar-actions button.edit-toolbar-icon-button:active { background: alpha(black, 0.25); }
+.edit-mode-toolbar .edit-toolbar-actions button.edit-toolbar-icon-button:disabled { opacity: 0.4; }
+.edit-mode-toolbar .edit-toolbar-actions button.edit-toolbar-icon-button:focus-visible { outline: 2px solid alpha(@pic_focus, 0.85); }
+.edit-mode-toolbar .edit-toolbar-actions button.edit-toolbar-done {
+    border-radius: 4px;
+}
+.edit-mode-toolbar .edit-history-group.linked {
+    padding: 2px;
+    border-radius: 7px;
+    background: @pic_bar_inset;
+    box-shadow: inset 0 1px 3px alpha(black, 0.45);
+}
+.edit-mode-toolbar .edit-history-group.linked button.edit-toolbar-icon-button { border-radius: 5px; }
+
+/* ---- Text fields on light surfaces ---- */
+.edit-panel-pages entry, .collage-editor-paned entry, .settings-window entry,
+dialog entry, spinbutton {
+    min-height: 30px;
+    color: @pic_text_color;
+    background: #ffffff;
+    border: none;
+    border-radius: 6px;
+    box-shadow: inset 0 0 0 1px alpha(black, 0.18), inset 0 1px 2px alpha(black, 0.08);
+}
+.edit-panel-pages entry:focus-within, .collage-editor-paned entry:focus-within,
+.settings-window entry:focus-within, dialog entry:focus-within, spinbutton:focus-within {
+    box-shadow: inset 0 0 0 1px @pic_button_color, 0 0 0 3px alpha(@pic_focus, 0.35);
+}
+
+/* ---- Menus, popovers, dialogs ---- */
+popover > contents {
+    background: @pic_background_surface;
+    color: @pic_text_color;
+    border-radius: 10px;
+    box-shadow: 0 10px 28px alpha(black, 0.3), 0 0 0 1px alpha(black, 0.16);
+}
+popover modelbutton, popover row { border-radius: 5px; }
+popover modelbutton:hover, popover row:hover, popover row:selected {
+    background: @pic_menu_hover;
+    color: @pic_button_text;
+}
+.photo-context-menu, .photo-context-menu viewport,
+.photo-actions-menu, .photo-actions-menu > contents,
+.settings-window, .settings-page, dialog > box {
+    background: @pic_background_color;
+    color: @pic_text_color;
+}
+.photo-context-menu {
+    border: none;
+    border-radius: 10px;
+    padding: 4px;
+    box-shadow: 0 10px 28px alpha(black, 0.3), 0 0 0 1px alpha(black, 0.16);
+}
+.album-context-menu > contents,
+.pic-folder-context-menu > contents,
+.sidebar-section-tooltip-menu > contents,
+.photo-actions-popover > contents {
+    border: none;
+    border-radius: 10px;
+    box-shadow: 0 10px 28px alpha(black, 0.3), 0 0 0 1px alpha(black, 0.16);
+}
+.photo-actions-menu { background: transparent; border: none; box-shadow: none; }
+.photo-actions-menu .photo-action-button image { opacity: 1; }
+.photo-actions-popover > contents { background: @pic_background_color; padding: 0; }
+.photo-context-menu button { color: @pic_text_color; border: none; border-radius: 5px; box-shadow: none; }
+.photo-context-menu button:hover,
+.photo-context-menu .photo-context-item:hover,
+.photo-context-menu .photo-context-submenu > button:hover,
+.album-context-menu button:hover,
+.pic-folder-context-menu button.folder-context-action:hover,
+.sidebar-section-tooltip-menu button.sidebar-section-tooltip-item:hover {
+    background: @pic_menu_hover;
+    background-color: @pic_menu_hover;
+    color: @pic_button_text;
+}
+.settings-window headerbar {
+    background-color: @pic_bar_color;
+    background-image: linear-gradient(to bottom, @pic_bar_top, @pic_bar_bottom);
+    color: @pic_bar_text;
+}
+.settings-window headerbar label { color: @pic_bar_text; }
+.settings-window .heading, .settings-window .title-1, .settings-window .title-2,
+.settings-window .title-3, .settings-window .title-4 { color: @pic_text_color; }
+.settings-window .dim-label { color: @pic_text_muted; opacity: 1; }
+.scroll-scrub-date {
+    padding: 7px 12px;
+    background: @pic_background_color;
+    color: @pic_text_color;
+    border-radius: 6px;
+    box-shadow: 0 2px 8px alpha(black, 0.28), 0 0 0 1px alpha(black, 0.12);
+}
+
+/* ---- Status and media badges ---- */
+.offline-badge, .sidebar-offline-badge {
+    color: #322600;
+    background: #f2c14e;
+    border-radius: 4px;
+}
+.favorite-btn.active, .favorite-btn.active image, .favorite-badge { color: #ce4551; }
+.edited-badge { color: @pic_text_muted; }
+
+/* ---- Album cards: image-led ---- */
+.albums-home-grid > flowboxchild { padding: 0; margin: 0; min-height: 0; }
+button.album-card {
+    min-width: 0;
+    padding: 0;
+    margin: 0;
+    background: transparent;
+    background-image: none;
+    border: none;
+    border-radius: 6px;
+    box-shadow: none;
+}
+button.album-card:hover, button.album-card:active {
+    background: transparent;
+    background-image: none;
+    border: none;
+    box-shadow: none;
+}
+button.album-card:focus-visible { outline: 2px solid alpha(@pic_focus, 0.9); outline-offset: 2px; }

@@ -1,0 +1,853 @@
+/* picasa-theme
+   version: 1
+   name: Snow Leopard
+   dark: false
+   color-scheme: theme
+   mode: overlay
+   window-controls: native
+*/
+
+/* ==========================================================================
+   SNOW LEOPARD — classic Mac OS X Aqua look for PIC
+   Colours and gradients are taken straight from the stylesheet of the
+   B00merang-Project OS-X-Leopard GTK theme (gtk-4.0/gtk.css), not guessed.
+
+   What makes it Leopard (and what was wrong before):
+   • Neutral greys. No blue/lavender tint in the surfaces any more.
+   • Dark brushed-metal title bar and a dark bottom bar.
+   • Buttons are white glossy "gloss band" buttons with a grey border.
+   • Pressed / checked / selected-toggle buttons are DARK GREY with white
+     text (never blue). Blue gel is kept only for the default action
+     button (Done, Apply Crop, ...) and for selection highlights.
+   • Sliders: dark inset groove with a light-blue gel knob.
+   • Traffic-light window buttons (images embedded below).
+
+   Easy tweaks: change the @define-color lines in section 1.
+   Install: copy this folder to ~/.config/pic/themes/snowleopard/
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   1. COLOR PALETTE
+   -------------------------------------------------------------------------- */
+
+@define-color accent_bg_color #2563AE;       /* Leopard selection blue     */
+@define-color accent_fg_color #FFFFFF;
+@define-color accent_color #2563AE;
+
+@define-color window_bg_color #E4E4E4;       /* panels, dialogs            */
+@define-color view_bg_color #DADADA;         /* photo grid area            */
+@define-color headerbar_bg_color #B9B6BB;    /* title bar (average)        */
+@define-color card_bg_color #FFFFFF;
+@define-color dialog_bg_color #E4E4E4;
+@define-color popover_bg_color #FFFFFF;
+@define-color sidebar_bg #D8DDE6;            /* source list                */
+
+@define-color theme_fg_color #000000;
+@define-color theme_dim_color #777777;
+
+@define-color ap_line #928E95;               /* title bar bottom edge      */
+@define-color ap_border #8A8A8A;             /* button / control edge      */
+@define-color ap_divider #A6A6A6;            /* panel dividers             */
+@define-color ap_dim #6F6F6F;                /* secondary text             */
+@define-color ap_emboss alpha(#FFFFFF, 0.75);/* white text emboss          */
+@define-color ap_sel_top #3990F9;            /* list / menu selection      */
+@define-color ap_sel_bot #1C75E1;
+
+/* --------------------------------------------------------------------------
+   2. SURFACES — neutral greys, metal title bar
+   -------------------------------------------------------------------------- */
+
+window, .navigation-sidebar {
+    background: @window_bg_color;
+    color: @theme_fg_color;
+}
+
+window.csd, window.background.csd {
+    border-radius: 4px 4px 0 0;
+    box-shadow: 0 10px 15px 1px alpha(#000000, 0.30), 0 0 0 1px alpha(#000000, 0.25);
+}
+.layout-left-header  { border-top-left-radius: 4px; border-top-right-radius: 0; }
+.layout-right-header { border-top-right-radius: 4px; border-top-left-radius: 0; }
+headerbar, .titlebar { border-radius: 4px 4px 0 0; }
+
+.layout-left-column {
+    background-color: @sidebar_bg;
+    background-image: none;
+    color: @theme_fg_color;
+    border-right: 1px solid @ap_divider;
+}
+.layout-left-column .navigation-sidebar { background: transparent; }
+
+.layout-left-header, .layout-right-header {
+    background-color: @headerbar_bg_color;
+    background-image: linear-gradient(to bottom, #CAC7CB, #A9A5AB);
+    border-bottom: 1px solid @ap_line;
+    box-shadow: inset 0 1px 0 alpha(#FFFFFF, 0.45);
+    color: @theme_fg_color;
+}
+
+.app-title {
+    color: @theme_fg_color;
+    text-shadow: 0 1px 0 @ap_emboss;
+    font-weight: 700;
+}
+
+/* --------------------------------------------------------------------------
+   3. BUTTONS
+   Normal  = white glossy button, grey border
+   Pressed / checked = dark grey, white text (NOT blue)
+   Default action    = blue gel pill
+   -------------------------------------------------------------------------- */
+
+/* --- 3a. every plain button (Reset, Export, - / +, dialogs, ...) -------- */
+button {
+    color: #000000;
+    border: 1px solid #7E7E7E;
+    border-radius: 4px;
+    background-color: #E2E2E2;
+    background-image: linear-gradient(to bottom,
+        #F6F6F6 0%, #E8E8E8 48%, #D4D4D4 52%, #DEDEDE 100%);
+    box-shadow: 0 1px 2px 0 alpha(#000000, 0.30);
+    text-shadow: none;
+    -gtk-icon-shadow: none;
+}
+button:hover {
+    background-image: linear-gradient(to bottom,
+        #FBFBFB 0%, #EFEFEF 48%, #DCDCDC 52%, #E6E6E6 100%);
+}
+button:active,
+button:checked {
+    color: #FFFFFF;
+    border-color: #4F4F4F;
+    background-color: #757575;
+    background-image: linear-gradient(to bottom, #686868 0%, #7A7A7A 50%, #888888 100%);
+    box-shadow:
+        inset 0 2px 3px 1px alpha(#000000, 0.45),
+        0 1px 0 alpha(#FFFFFF, 0.55);
+    text-shadow: 0 -1px 0 alpha(#000000, 0.55);
+}
+button:checked:hover {
+    background-image: linear-gradient(to bottom, #707070 0%, #828282 50%, #909090 100%);
+}
+button:disabled { opacity: 0.45; }
+
+/* segmented groups (Tools | Filters | Crop ...) */
+.linked > button { border-radius: 0; }
+.linked > button:first-child { border-radius: 4px 0 0 4px; }
+.linked > button:last-child  { border-radius: 0 4px 4px 0; }
+.linked > button:only-child  { border-radius: 4px; }
+.linked > button:not(:first-child) { border-left-width: 0; }
+
+/* sidebar chevrons / plus buttons stay flat */
+.navigation-sidebar button,
+.sidebar-section-heading button,
+.folder-disclosure {
+    border: none;
+    background-color: transparent;
+    background-image: none;
+    box-shadow: none;
+    color: inherit;
+}
+
+/* --- 3b. title-bar buttons: lighter textured buttons -------------------- */
+.layout-left-header button,
+.layout-right-header button,
+headerbar button {
+    color: #000000;
+    border-radius: 4px;
+    border: 1px solid #7A7A7A;
+    background-color: #D8D8D8;
+    background-image: linear-gradient(to bottom, #F6F6F6, #BBBBBB);
+    box-shadow: 0 1px 0 alpha(#FFFFFF, 0.35);
+    text-shadow: 0 1px 0 @ap_emboss;
+}
+.layout-left-header button:hover,
+.layout-right-header button:hover,
+headerbar button:hover {
+    background-image: linear-gradient(to bottom, #FFFFFF, #C9C9C9);
+}
+.layout-left-header button:active,
+.layout-right-header button:active,
+.layout-left-header button:checked,
+.layout-right-header button:checked,
+headerbar button:active,
+headerbar button:checked {
+    color: #FFFFFF;
+    border-color: #4A4A4A;
+    background-color: #6E6E6E;
+    background-image: linear-gradient(to bottom, #5F5F5F, #7B7B7B);
+    box-shadow:
+        inset 0 2px 3px 1px alpha(#000000, 0.45),
+        0 1px 0 alpha(#FFFFFF, 0.35);
+    text-shadow: 0 -1px 0 alpha(#000000, 0.55);
+}
+
+/* --- 3c. info-bar buttons: FLAT, dark grey only while pressed ---------- */
+.photo-action-button,
+.photo-info-bar button,
+.one-to-one-btn,
+.favorite-btn {
+    color: @theme_fg_color;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    background-color: transparent;
+    background-image: none;
+    box-shadow: none;
+    text-shadow: none;
+}
+.photo-action-button:hover,
+.photo-info-bar button:hover,
+.one-to-one-btn:hover,
+.favorite-btn:hover {
+    border-color: transparent;
+    background-color: transparent;
+    background-image: none;
+    box-shadow: none;
+}
+.photo-action-button:active,
+.photo-action-button:checked,
+.photo-info-bar button:active,
+.photo-info-bar button:checked,
+.one-to-one-btn:active,
+.one-to-one-btn:checked,
+.favorite-btn:active {
+    color: #FFFFFF;
+    border-color: #4F4F4F;
+    background-color: #757575;
+    background-image: linear-gradient(to bottom, #686868 0%, #7A7A7A 50%, #888888 100%);
+    box-shadow: inset 0 2px 3px 1px alpha(#000000, 0.45);
+    text-shadow: 0 -1px 0 alpha(#000000, 0.55);
+}
+.photo-action-button:disabled,
+.photo-info-bar button:disabled {
+    opacity: 0.40;
+}
+
+/* other framed content buttons */
+.section-more-btn,
+button.clear-action-button {
+    color: @theme_fg_color;
+    border-radius: 4px;
+    border: 1px solid #7E7E7E;
+    background-color: #E2E2E2;
+    background-image: linear-gradient(to bottom,
+        #F6F6F6 0%, #E8E8E8 48%, #D4D4D4 52%, #DEDEDE 100%);
+    box-shadow: 0 1px 2px 0 alpha(#000000, 0.30);
+    text-shadow: none;
+}
+.section-more-btn:active,
+button.clear-action-button:active {
+    color: #FFFFFF;
+    border-color: #4F4F4F;
+    background-color: #757575;
+    background-image: linear-gradient(to bottom, #686868 0%, #7A7A7A 50%, #888888 100%);
+    box-shadow: inset 0 2px 3px 1px alpha(#000000, 0.45);
+}
+
+/* --- 3d. default / suggested action: Aqua blue gel pill ----------------- */
+button.suggested-action,
+.suggested-action {
+    color: #FFFFFF;
+    border-radius: 4px;
+    border: 1px solid #2B5FA8;
+    background-color: #5B9BEB;
+    background-image: linear-gradient(to bottom,
+        #A6CCFB 0%, #5F9FEE 45%, #3F83E0 50%, #6FADF3 100%);
+    box-shadow:
+        inset 0 1px 0 alpha(#FFFFFF, 0.55),
+        0 1px 2px 0 alpha(#000000, 0.30);
+    text-shadow: 0 -1px 0 alpha(#0A2E6B, 0.55);
+}
+button.suggested-action:hover {
+    background-image: linear-gradient(to bottom,
+        #B6D6FC 0%, #70AEF4 45%, #4F91E8 50%, #7FBAF6 100%);
+}
+button.suggested-action:active,
+button.suggested-action:checked {
+    border-color: #24508A;
+    background-color: #3866A2;
+    background-image: linear-gradient(to bottom, #3866A2, #4C82CC);
+    box-shadow: inset 0 2px 3px 1px alpha(#0A2E6B, 0.55);
+}
+
+/* --------------------------------------------------------------------------
+   4. SEARCH FIELD — white inset pill with Aqua focus ring
+   -------------------------------------------------------------------------- */
+
+    .search-field {
+        min-height: 28px;
+        border-radius: 14px;
+        background: #FFFFFF;
+        border: 1px solid #8F8F8F;
+        color: @theme_fg_color;
+        box-shadow:
+            inset 0 1px 3px alpha(#000000, 0.30),
+            0 1px 0 alpha(#FFFFFF, 0.60);
+    }
+
+    .search-field:focus-within {
+        border-color: #5B8FD0;
+        box-shadow:
+            inset 0 1px 3px alpha(#000000, 0.25),
+            0 0 0 3px alpha(#92C3FF, 0.90);
+    }
+
+    .search-field image { color: @ap_dim; }
+    .search-field entry {
+        background: transparent;
+        color: @theme_fg_color;
+        caret-color: @theme_fg_color;
+        box-shadow: none;
+    }
+
+/* --------------------------------------------------------------------------
+   5. PHOTO GRID — grey light table, white-framed thumbnails
+   -------------------------------------------------------------------------- */
+
+    .photo-grid { background: @view_bg_color; }
+    .group-heading-bar { background: transparent; padding: 0; }
+    .section-heading-box { margin-top: 16px; margin-bottom: 8px; }
+    .section-heading {
+        color: @theme_fg_color;
+        font-size: 14px;
+        font-weight: 700;
+        text-shadow: 0 1px 0 @ap_emboss;
+    }
+    .section-count { font-size: 12px; color: @ap_dim; }
+
+    .photo-frame { box-shadow: none; }
+    .photo-tile {
+        border-radius: 2px;
+        border: 3px solid #FFFFFF;
+        background: #FFFFFF;
+        box-shadow: 0 1px 4px alpha(#000000, 0.40);
+    }
+    .photo-tile:hover {
+        border-color: #FFFFFF;
+        box-shadow:
+            0 0 0 2px alpha(@accent_bg_color, 0.45),
+            0 2px 8px alpha(#000000, 0.45);
+    }
+    .thumbnail { border-radius: 1px; }
+    .missing-thumbnail { background: #C6C6C6; }
+
+    /* Selection: Leopard blue frame */
+    .folder-photo-selected.photo-tile {
+        border-color: @accent_bg_color;
+        box-shadow: 0 0 0 1px #1A4A8C, 0 3px 10px alpha(#000000, 0.45);
+    }
+    .folder-photo-selected .selection-badge { opacity: 1; }
+    gridview.section-grid > child:selected .photo-tile,
+    gridview.section-grid > item:selected .photo-tile {
+        border-color: @accent_bg_color;
+        box-shadow: 0 0 0 1px #1A4A8C, 0 3px 10px alpha(#000000, 0.45);
+    }
+
+    .selection-badge {
+        color: @accent_fg_color;
+        background-image: linear-gradient(to bottom, @ap_sel_top, @ap_sel_bot);
+        box-shadow: 0 1px 3px alpha(#000000, 0.45);
+    }
+
+    .offline-badge, .sidebar-offline-badge {
+        border-radius: 9999px;
+        color: #3A2A00;
+        background: #F2C14E;
+        font-weight: 700;
+    }
+
+/* --------------------------------------------------------------------------
+   6. FOLDER CONTENT VIEW
+   -------------------------------------------------------------------------- */
+
+    listview.folder-stream {
+        background: transparent;
+        padding: 0 20px 24px 20px;
+    }
+
+    listview.folder-stream > row,
+    listview.folder-stream > row:hover,
+    listview.folder-stream > row:selected,
+    listview.folder-stream > row:focus,
+    listview.folder-stream > row:active {
+        padding: 0; margin: 0;
+        background: transparent; background-image: none;
+        outline: none; box-shadow: none;
+    }
+
+    .folder-section-header { background: transparent; }
+    .folder-section-title {
+        color: @theme_fg_color;
+        font-weight: 700;
+        font-size: 13px;
+        text-shadow: 0 1px 0 @ap_emboss;
+    }
+    .folder-section-count { color: @ap_dim; font-size: 12px; }
+    .folder-section-icon { color: #5A5A5A; }
+    .folder-section-separator { margin-top: 7px; opacity: 0.8; background: #A6A6A6; }
+    .folder-photo-row { background: transparent; }
+
+    gridview.section-grid > child,
+    gridview.section-grid > item,
+    gridview.section-grid > child:hover,
+    gridview.section-grid > child:selected,
+    gridview.section-grid > child:focus,
+    gridview.section-grid > child:active,
+    gridview.section-grid > item:hover,
+    gridview.section-grid > item:selected,
+    gridview.section-grid > item:focus,
+    gridview.section-grid > item:active {
+        padding: 6px; margin: 0;
+        background: transparent; background-image: none;
+        outline: none; box-shadow: none;
+    }
+
+    .folder-photo-flow > flowboxchild,
+    .folder-photo-flow > flowboxchild:hover,
+    .folder-photo-flow > flowboxchild:focus,
+    .folder-photo-flow > flowboxchild:active,
+    .folder-photo-flow > flowboxchild:selected {
+        padding: 6px; margin: 0; min-height: 0;
+        background: transparent; background-image: none;
+        outline: none; box-shadow: none;
+    }
+
+/* --------------------------------------------------------------------------
+   7. ALBUMS HOME
+   -------------------------------------------------------------------------- */
+
+    .albums-home-grid > flowboxchild {
+        padding: 0; margin: 0; min-height: 0;
+    }
+    button.album-card {
+        min-width: 0; padding: 0; margin: 0;
+        background: transparent; background-image: none;
+        border: none; box-shadow: none;
+    }
+    button.album-card:hover,
+    button.album-card:focus,
+    button.album-card:active {
+        background: transparent; background-image: none;
+        box-shadow: none;
+    }
+
+.albums-index-title {
+    font-size: 22px;
+    font-weight: 700;
+    text-shadow: 0 1px 0 @ap_emboss;
+}
+
+    .plain-album-cover {
+        border-radius: 2px;
+        border: 3px solid #FFFFFF;
+        background: #FFFFFF;
+        box-shadow: 0 1px 4px alpha(#000000, 0.40);
+    }
+    .plain-album-cover .thumbnail { border-radius: 1px; }
+    .albums-standard > flowboxchild {
+        padding: 0; margin: 0; min-height: 0;
+        background: transparent; box-shadow: none;
+    }
+    .albums-standard button.album-card {
+        color: inherit;
+        min-width: 0; padding: 0; margin: 0;
+        border: none; border-radius: 4px;
+        background: transparent; background-image: none;
+        box-shadow: none;
+    }
+    .albums-standard button.album-card:hover .album-cover {
+        border-color: #7FB2F5;
+    }
+    .albums-standard button.album-card:hover {
+        background: alpha(#000000, 0.05);
+    }
+    .albums-standard button.album-card:focus-visible {
+        outline: 2px solid @accent_bg_color;
+        outline-offset: 3px;
+    }
+    .albums-standard .album-name { font-weight: 600; font-size: 13px; }
+    .albums-standard .album-photo-count {
+        font-size: 12px; color: @ap_dim;
+    }
+
+.albums-bookshelf-photo-count { color: #3a210f; }
+button.album-card.framed-album-card { color: #302014; }
+button.album-card.framed-album-card:hover { opacity: 0.90; }
+
+/* --------------------------------------------------------------------------
+   8. SIDEBAR — Leopard source list (blue gradient selection)
+   -------------------------------------------------------------------------- */
+
+    .navigation-sidebar row {
+        color: @theme_fg_color;
+        border-radius: 3px;
+        margin: 0 4px;
+    }
+    .navigation-sidebar row:hover {
+        background: transparent;
+    }
+    .navigation-sidebar row:selected {
+        color: @accent_fg_color;
+        background-color: @accent_bg_color;
+        background-image: linear-gradient(to bottom, @ap_sel_top, @ap_sel_bot);
+        box-shadow: none;
+        text-shadow: 0 -1px 0 alpha(#000000, 0.35);
+    }
+    /* Scroll-follow folder marker */
+    .navigation-sidebar row.sidebar-scroll-location {
+        color: @accent_fg_color;
+        background-color: @accent_bg_color;
+        background-image: linear-gradient(to bottom, @ap_sel_top, @ap_sel_bot);
+        box-shadow: none;
+        text-shadow: 0 -1px 0 alpha(#000000, 0.35);
+    }
+    .navigation-sidebar row.sidebar-scroll-location .folder-count,
+    .navigation-sidebar row.sidebar-scroll-location .sidebar-count,
+    .navigation-sidebar row:selected .folder-count,
+    .navigation-sidebar row:selected .sidebar-count {
+        color: alpha(#FFFFFF, 0.90);
+    }
+    .navigation-sidebar .heading { color: #6B7686; }
+    .navigation-sidebar .sidebar-section-heading { margin-top: 8px; padding-top: 0; }
+    .navigation-sidebar .sidebar-section-heading-title {
+        color: #6B7686;
+        font-size: inherit;
+        font-weight: 700;
+        letter-spacing: 0.4px;
+        text-shadow: 0 1px 0 @ap_emboss;
+    }
+    .navigation-sidebar .folder-count { color: @ap_dim; }
+    .folder-disclosure { opacity: 0.70; }
+    .sidebar-count {
+        min-width: 38px;
+        font-variant-numeric: tabular-nums;
+        color: @ap_dim;
+    }
+
+/* --------------------------------------------------------------------------
+   9. SEGMENTED TOGGLES (crop ratios, orientation, collage tabs)
+   Unselected = glossy white. Selected = DARK GREY, white text.
+   -------------------------------------------------------------------------- */
+
+    .crop-aspect-button,
+    .crop-orientation-row button,
+    .collage-layout-tile,
+    .collage-tabs > button {
+        border-radius: 4px;
+        color: @theme_fg_color;
+        border: 1px solid #7E7E7E;
+        background-color: #FFFFFF;
+        background-image: linear-gradient(to bottom,
+            #F6F6F6 0%, #E8E8E8 48%, #D4D4D4 52%, #DEDEDE 100%);
+        box-shadow: 0 1px 2px 0 alpha(#000000, 0.30);
+        text-shadow: none;
+    }
+    .crop-aspect-button:hover,
+    .crop-orientation-row button:hover,
+    .collage-layout-tile:hover,
+    .collage-tabs > button:hover {
+        background-image: linear-gradient(to bottom,
+            #FBFBFB 0%, #EFEFEF 48%, #DCDCDC 52%, #E6E6E6 100%);
+    }
+    .crop-aspect-button:checked,
+    .crop-orientation-row button:checked,
+    .collage-layout-tile:checked,
+    .collage-tabs > button:checked {
+        color: #FFFFFF;
+        border-color: #4F4F4F;
+        background-color: #757575;
+        background-image: linear-gradient(to bottom, #686868 0%, #7A7A7A 50%, #888888 100%);
+        box-shadow:
+            inset 0 2px 3px 1px alpha(#000000, 0.45),
+            0 1px 0 alpha(#FFFFFF, 0.55);
+        text-shadow: 0 -1px 0 alpha(#000000, 0.55);
+    }
+    .crop-aspect-button:checked:hover,
+    .crop-orientation-row button:checked:hover,
+    .collage-layout-tile:checked:hover,
+    .collage-tabs > button:checked:hover {
+        background-image: linear-gradient(to bottom, #707070 0%, #828282 50%, #909090 100%);
+    }
+
+/* --------------------------------------------------------------------------
+   10. SLIDERS — dark inset groove, light-blue gel knob (as in Leopard)
+   -------------------------------------------------------------------------- */
+
+    scale trough {
+        background-color: alpha(#000000, 0.18);
+        background-image: none;
+        border: 1px solid #2563AE;
+        border-left-color: #C0C0C0;
+        border-right-color: #C0C0C0;
+        border-bottom-color: #CBCBCB;
+        border-radius: 4px;
+        min-height: 5px;
+        box-shadow: inset 0 2px 3px 0 alpha(#000000, 0.50);
+    }
+    scale trough highlight, scale highlight {
+        background-color: transparent;
+        background-image: none;
+        border: none;
+        border-radius: 4px;
+    }
+    scale slider,
+    scale:hover slider,
+    scale:focus slider,
+    scale:active slider {
+        min-width: 16px; min-height: 16px;
+        border-radius: 9999px;
+        background-color: #689DD3;
+        background-image: linear-gradient(to bottom,
+            #FFFFFF 0%, #95B9DF 50%, #689DD3 51%, #D0FAFF 100%);
+        border: 1px solid #2563AE;
+        border-left-color: #385F92;
+        border-right-color: #385F92;
+        border-bottom-color: #24416B;
+        box-shadow: 0 1px 2px alpha(#000000, 0.30);
+        outline: none;
+    }
+    scale slider:disabled {
+        background-color: #E1E1E1;
+        background-image: none;
+        border-color: #A6A6A6;
+    }
+
+    /* Every slider, including the zoom slider in the info bar, uses ONE look.
+       The :not() chain only raises priority so app-specific rules can't override it. */
+    window scale:not(.zz1):not(.zz2):not(.zz3) trough {
+        background-color: alpha(#000000, 0.18);
+        background-image: none;
+        border: 1px solid #2563AE;
+        border-left-color: #C0C0C0;
+        border-right-color: #C0C0C0;
+        border-bottom-color: #CBCBCB;
+        border-radius: 4px;
+        min-height: 5px;
+        box-shadow: inset 0 2px 3px 0 alpha(#000000, 0.50);
+    }
+    window scale:not(.zz1):not(.zz2):not(.zz3) trough fill,
+    window scale:not(.zz1):not(.zz2):not(.zz3) trough highlight {
+        background-color: transparent;
+        background-image: none;
+        border: none;
+        box-shadow: none;
+    }
+    window scale:not(.zz1):not(.zz2):not(.zz3) slider {
+        min-width: 16px; min-height: 16px;
+        border-radius: 9999px;
+        background-color: #689DD3;
+        background-image: linear-gradient(to bottom,
+            #FFFFFF 0%, #95B9DF 50%, #689DD3 51%, #D0FAFF 100%);
+        border: 1px solid #2563AE;
+        border-left-color: #385F92;
+        border-right-color: #385F92;
+        border-bottom-color: #24416B;
+        box-shadow: 0 1px 2px alpha(#000000, 0.30);
+        outline: none;
+    }
+
+/* --------------------------------------------------------------------------
+   11. INFO BAR — dark metal strip, edge to edge
+   -------------------------------------------------------------------------- */
+
+    .photo-info-bar {
+        margin: 0;
+        border: none;
+        border-radius: 0;
+        background-color: #CACACA;
+        background-image: none;
+        color: @theme_fg_color;
+        box-shadow:
+            0 -1px 0 0 #8E8E8E,
+            -80px 0 0 0 #CACACA,
+            80px 0 0 0 #CACACA;
+    }
+    .info-preview {
+        border-radius: 2px;
+        background: #FFFFFF;
+        border: 1px solid #8A8A8A;
+    }
+    .info-title, .metric-val { color: @theme_fg_color; }
+    .metric-key,
+    .navigation-sidebar .dim-label,
+    .photo-info-bar .dim-label { color: @ap_dim; }
+
+/* --------------------------------------------------------------------------
+   12. CONTEXT MENU — white Aqua menu, blue gradient hover
+   -------------------------------------------------------------------------- */
+
+    .photo-context-menu viewport,
+    .photo-context-menu scrolledwindow,
+    .photo-context-menu box {
+        background: transparent; background-image: none;
+    }
+    .photo-context-menu {
+        background-color: @popover_bg_color;
+        background-image: none;
+        border: 1px solid #A6A6A6;
+        border-radius: 4px;
+        box-shadow: 0 8px 24px alpha(#000000, 0.35);
+    }
+    .photo-context-menu button {
+        color: @theme_fg_color;
+        min-height: 28px;
+        padding: 4px 12px;
+        border-radius: 0;
+        background: transparent;
+        background-image: none;
+        border: none;
+        box-shadow: none;
+        text-shadow: none;
+    }
+    .photo-context-menu button:hover {
+        color: @accent_fg_color;
+        background-color: @accent_bg_color;
+        background-image: linear-gradient(to bottom, @ap_sel_top, @ap_sel_bot);
+    }
+    .photo-context-item,
+    .photo-context-submenu > button {
+        color: @theme_fg_color;
+        background: transparent;
+        border: none;
+        box-shadow: none;
+    }
+    .photo-context-item:hover,
+    .photo-context-submenu > button:hover {
+        color: @accent_fg_color;
+        background-color: @accent_bg_color;
+        background-image: linear-gradient(to bottom, @ap_sel_top, @ap_sel_bot);
+    }
+    .photo-context-item:disabled {
+        background: transparent;
+        opacity: 0.40;
+    }
+    .photo-context-separator { background: #D5D5D5; }
+
+/* --------------------------------------------------------------------------
+   13. MISC — badges, favourites, scrub date, dialogs, switches, progress
+   -------------------------------------------------------------------------- */
+
+    .favorite-btn:not(.active):not(:disabled) image {
+        color: @theme_fg_color;
+    }
+    .favorite-btn.active, .favorite-btn.active image {
+        color: #E0354F;
+    }
+    .favorite-badge { color: #E0354F; }
+    .edited-badge { color: #5A5A5A; }
+
+    .scroll-scrub-date {
+        padding: 6px 12px;
+        border-radius: 4px;
+        background: alpha(#FFFFFF, 0.96);
+        border: 1px solid #8A8A8A;
+        color: @theme_fg_color;
+        font-weight: 700;
+        box-shadow: 0 4px 12px alpha(#000000, 0.30);
+    }
+
+    headerbar, .titlebar {
+        background-color: @headerbar_bg_color;
+        background-image: linear-gradient(to bottom, #CAC7CB, #A9A5AB);
+        border-bottom: 1px solid @ap_line;
+        box-shadow: inset 0 1px 0 alpha(#FFFFFF, 0.45);
+        color: @theme_fg_color;
+    }
+
+    list.boxed-list, .boxed-list, .card {
+        background-color: #FFFFFF;
+        background-image: none;
+        color: @theme_fg_color;
+        border: 1px solid #B5B5B5;
+        border-radius: 4px;
+        box-shadow: 0 1px 2px alpha(#000000, 0.12);
+    }
+    list.boxed-list > row, .boxed-list > row {
+        background: transparent;
+        color: @theme_fg_color;
+        border-bottom: 1px solid #E1E1E1;
+    }
+    list.boxed-list > row:hover, .boxed-list > row:hover {
+        background: alpha(#000000, 0.04);
+    }
+
+    /* switches: square Leopard style, blue when on */
+    switch {
+        border-radius: 4px;
+        background-color: #FFFFFF;
+        border: 1px solid #A6A6A6;
+        box-shadow: inset 0 2px 3px alpha(#000000, 0.18);
+    }
+    switch:checked {
+        background-color: #2491EC;
+        background-image: linear-gradient(to bottom, #2491EC 50%, #71B4EE);
+        border-color: #2563AE;
+    }
+    switch slider {
+        border-radius: 4px;
+        background-color: #FFFFFF;
+        background-image: linear-gradient(to bottom, #E6E6E6, #FFFFFF);
+        border: 1px solid #A6A6A6;
+        box-shadow: 0 1px 2px alpha(#000000, 0.25);
+    }
+
+    check, radio {
+        min-width: 14px;
+        min-height: 14px;
+    }
+
+    /* progress bars: Aqua striped blue on a white groove */
+    progressbar > trough {
+        border-radius: 0;
+        border: 1px solid #A1A1A1;
+        background-color: #BEBEBE;
+        background-image: linear-gradient(to bottom, #FFFFFF 15%, #EDEDED 40%, #FFFFFF 75%);
+    }
+    progressbar > trough > progress {
+        border-radius: 0;
+        border: none;
+        background-color: #2563AE;
+        background-image: linear-gradient(to top,
+            #B9EDFF, #7DB8FF 40%, #53A1FF 60%, #BCDAFF 80%);
+        box-shadow: 0 -1px #2B5DBE;
+    }
+
+/* --------------------------------------------------------------------------
+   14. WINDOW CONTROLS — Leopard traffic lights (images embedded in this file)
+   Order/side is set by your desktop, not the theme. To get the Mac order
+   (close, minimise, maximise) on the left:
+     gsettings set org.gnome.desktop.wm.preferences button-layout 'close,minimize,maximize:'
+   Delete this whole section to go back to the normal round buttons.
+   -------------------------------------------------------------------------- */
+
+    windowcontrols button.close,
+    windowcontrols button.minimize,
+    windowcontrols button.maximize {
+        padding: 0;
+        min-width: 20px;
+        min-height: 20px;
+        border: none;
+        border-radius: 0;
+        color: transparent;
+        background-color: transparent;
+        background-size: 20px 20px;
+        background-position: center;
+        background-repeat: no-repeat;
+        box-shadow: none;
+        text-shadow: none;
+        -gtk-icon-shadow: none;
+    }
+    windowcontrols button.close          { background-image: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAAAXNSR0IArs4c6QAAAAZiS0dEAP8A/wD/oL2nkwAAAAlwSFlzAAAN1wAADdcBQiibeAAAAAd0SU1FB9gKARMZAqvbnjsAAAL3SURBVDjL5ZTLi9tVFMe/53fu/d37y++X3yOZ1HEmjU412qptrNZaHxspIgg+qnUjQkEQcaFSBReiG/8AoS6krkRcuNLipgvdCBZsfbSdhhHEx9gopo9MZtKZJvPL5N7rQhdjmWC34tmd14fz4Bzgfyc0znEPEAw8PE8O93mEOx0g4XDKEr6Cxbungd5VA++WuEsRHQ5ZbLlZst/Y0eCoUqFT331rz3QWVpdHo/O5cS8eN/j8yly+0rBX4o6I+ejOQE8diLR/f6PB25/YL+p7H+TG9DTdNnuSDXPStfbRGrvmvMFP6/PFeuUpIOAweK8uRfHxMPAAQJVKFMxsofShhz3TXXAF7eMx7VMkODy5Ojy0L189cQTobljhrkQfKCn19JNpUWopwULAraw4jiIats66xY8+NG5lGSwEalpRy5iCUdyfHawd2xD4yNYbX7t+lN+yrRgSCwYLBkvG6PeWy5uzDms5PCZ4cPAFIx8ZHqWZ/2Vn6YMNW1ar/e2bA+35Wv21MaXBcUxUiECC4YyBG/TJXuo5OxigGo3w6+XL9bEzLAZa6lEOqXyACFwuk5dk8MKQSEg4Y2D7K85KSabbcSrPESvtrWf8Q6ncVG/1nbW+UlBJCpVmUKUy+ZVN8DddA79SgSpNkMoyqCRF3xlMzNTaY4HZ5urcIpncsAe/GJGMY4g0gcxKJCcqJEtlkmkKGcfwopA6dm2YzVw3NxZ47yuvf6qmrj3XXLxguVAAFwISYQROU3C5TJwk4DAEhwWa7y87ZEln9wsHPxkLTKZqx/a8+uaRLtuluYW2hWQIrSC0hshKEEEAT/l0dumim++2L93+3EtHJ3fs+mzsUohozTl3WPoyPn3orQdONL+uVvtbdUqWxHDgeq151/6xmS9cvHBu58tvfFHf98w7RDT411t2ztWGy73937//9p7eD2cmB61fpqy1XlCdacc3bDt/67MHj+uJyY+J6Oer/jbOOQlgN4AqgOm/Y/8A8BuAb4go/28+2D8BnEUCvT583yoAAAAASUVORK5CYII="); }
+    windowcontrols button.close:hover    { background-image: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAADPElEQVR42tXUW2gTWRgH8O/MZGaSZpqkbbKbtGlLjLWX1DbUut7FG4iIVEV98d4+KKhQ2V2fXFCXlYUFURDxbVmXVRFERLxWRcQrtRdrW2w1rTFaG5M0SXOZzExmjiddH3wYqQ8+6MDHXL7//OCc4RsEX/lA3y84B8AgULADYZhHIZiBARjA0KUieAgqnOgGiH8xOIuBmRxCJ420bkolQ7P1dfU0b7Ohro4nak84kklks0FRwXseKdA2KbiUgQaWpq969By/Qs/QthoPKmpaS+vdFSjV3an6jx9T2iQZt6czKRErm2+LcPWz4HqyTNpiuFvB6DyrjQaqL5LkZi1fItu2NNOWFauo8Jl/lWu7dtOeIl68lc7gzowUEMczsy8AjGmCW8z6FjPHHdlo5rnB0SiXe1Zo4sHbvD3Ludzo8W/76bHx5ES2xlEono0n5JAs//HPWPpPTXB/fdUZezTctNRionL3vjdhTiFfgmfZiWBSkoAiV26nVcz1H8YS8DLP+ODw81dLNMHfK8t660CdWmvO/7/J6cE/9IaTstmJIKPTgauhVsLjcawKAviSKbiXEkKH/KFSTfCod9pAdVYsry6wkA4CusiKRl762UQ6RYII8o1GKG70SjgWA2UsjIejMWgX5Mgvg4ESTfC/DSvb8vp65s1xOChkyINgZJxLCmlg83niIxATCeANBK2aKinhEO4c9kHQ4ezddv1+oyZ45ecdR0evX9q6vKTMEEEsJ2RlYC0FULFgYRbpDTB484ZOikUhT8eAvdAkXXvaIZrmL7rQdPL0Vk0w9ta/+PL2tSeKYtHyuXWNdEBUWJfXKyOrDSEjj3A6hYdu3dSVlxbL/X1P1YFwcGTZ8VN7HfUzL2qCGGNm6MbFg48PtG5z2UsLpk9voNkfSwBZf0C5wmTflFAQfP1dau+zjnhNS+u52s07fyXbIXx2UghaFrhzZV/3sUOLjYhyOt1VesuUSkqXb4b462H87sUzMRJ6P1rV0nqnYs2mvwg2OOks51ApEV/X//eR2fGBHrvweqhYVVXK4HS9M7mrg57mvY/0Vvt5gvkmneVPl09OP5Fykir5mB0hFSDVTjBR671v/wf7AbiFTyQfgS1NAAAAAElFTkSuQmCC"); }
+    windowcontrols button.close:active   { background-image: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAADKklEQVR42tWUWUhUURjHv3PPeO/ccZyxccklvTpOLi1CaiGYmIZZtC9oUGFgy5MPkQlBFEZBELQTRRQEQSAt1EuUYWlUkpXlTK4pTpOW5aw6y53lns7UPPRwxR56qAN/Ps75/ucH55zvOwj+8kD/L7AAgPcxsBcRKGEQFBKAKCDQJSF4CRJc7AFw/jFwkQIWswhd4jHWZykwm5c3D0frdOiDsVvqtdt97mBoXJRIfVcIWmYEliigIArjB9kcqy7nFFg3NxvNWrEKc0IG8nwwSaPXr4WeBYLkvVd0+0loxws/PJgWuJoeE2uU7RlReH4Vr2SejTu5qsqyQNzmGqxZtpyx3b8Tam48iEtna8XnXpGYxIBFnBKLHwLYZIGbY7i6GJY9tUETzXV8nuDCa/EMA6V764JsmoBaDx3G3yXpp3dpWoJ43zUVsAWDx285vCdkgfV5WTcTnfb1JVo1E56/HfrC+WnURowOKjb8YFnJYjj/xukGM8+/uDD0uUIW2KBPMeUCMeRoon8lWQ5M7wc5TySvosovLfSTqUki+Xxgdnug0yN+PztqTZMFHpmn7zeERMGg1dAMAhyrQx/bOllbxKijMqyr9BOXC0IOG7E4XdAtBq3HhsdSZYHn1lS0KAf6SgoTExmkVMLIq3ecI4BAFXF5aDHGsgT0Kyv9kt1KjBYzTCQmm/a3vS6SBV7fve3Mt/bHtWVJKbxlaISbcvuAj+VhYe2eIOKU0H3lvMLr8ECMiofMogJ/W69RVC8uvrvrxr1aWaDp1cvy1oY9F2NdTqEoNx8PGLvZvI3VAUSLGqmiEfF6SM/Vy4qc8orA4ECPNGyfGFt69PS+opVr78kCzWZz1Kf2R01dp5t2piekzMrJXYDZ+CR6eXEI6eIRofcmWSfAPGiS+vuNzrk1dc05m7YfEATBO22nUGj6WMeTxp5rZ8tVgOYkCQalNl3PYHUMTI5ayLeRPtFutX7N2lr3NLNq40kKG5ixl8PQgHtyy2DzlWLXcF+Sb/RTCpEkRpmc9kUtGMazq3d1cLqE2xQ2NGMv/358GpZQzaFKjXjHqCxUnRQmyu379z/YH6srSSRQrLKkAAAAAElFTkSuQmCC"); }
+    windowcontrols button.close:backdrop { background-image: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAABmJLR0QA/wD/AP+gvaeTAAAACXBIWXMAAA3XAAAN1wFCKJt4AAAAB3RJTUUH4gQLEhkhfRL/sAAAAqFJREFUOMvllM1LG0EYxp93dvZ7N8kGXJpEm0RM6VL0UMRjwJuX1UutF/9JwVPBk4cihApiIbKgklghIZCY3VDc7O704AdWTOu1dOBheJ+Z+fHO1wv8d43+MMZt2/5IRAsA3tzP7WVZdsU5/zYajW5fDXQcp6Kq6oamafmFhQVpbW2N5XI5HB0diXa7nUwmk0kcx1+Gw+HF87XSc6NSqZR1Xf/seZ7l+z5vNpvUbDbZ6uoqLS8vU7FYZFmWqePx+J1hGL0oikYzgfPz89xxnE+e59kbGxtM13W4rkv1ep0ajQaFYYheryeWlpYoSRI2mUzmVVX9Ph6PkxeB9Xp9pVAofNjc3GSmaUJRFGRZBk3TcHNzgyAIMiEEFEVBtVqlTqcjCyGmvV7v6vHgnwIXFxfrxWKRua776DHG0O/3xWAwEJIkIZ/PI01TAIDneZKmafWTk5OvLwIBzNVqNTJN8y59SYIsy+Ccg4gghECSJJhOp0jTFLVaDefn58XfnsbTwLZtpus6HoCKokBRFEiSRIyxB6CYTqeI4xiGYcCyLJoJLJfL4zAMc5Zl0UN2sizTswwpSRIRxzGiKEKpVIpmAl3XHZydnZUAcMuywDl/FGMMWZYhTVMkyd2ldrvdxHXdwVMGexrs7u4GmqZFh4eHwjRNmKZJhmFA13Xouk73PQzDoOPjY2RZ9nNnZ6c9Ezg3N9fZ3t4OgiC4PTg4EIwxaJoGVVUfJcsyWq2WaLVat77vB41G42LmlokoFUJ845wre3t7b/v9vr2yssKr1SrJsiyur69xenqaXF5eRltbW5319fUWESV//ctCiHwYhu/39/cr3W7XHA6HlhCCHMeJyuXyxPf9H4VCoU1Eo1dXGyGEBKAEIAfAvrfDe10TUfpvFthfObYMDFW3BNgAAAAASUVORK5CYII="); }
+
+    windowcontrols button.minimize          { background-image: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAAAXNSR0IArs4c6QAAAAZiS0dEAP8A/wD/oL2nkwAAAAlwSFlzAAAN1wAADdcBQiibeAAAAAd0SU1FB9gKARMbJqXuGGgAAALqSURBVDjL5dRNaFRXFAfw/3n3vfs+Z95MomkymcwkGmPiRwwS60cC7cL6sVIxoItuRJHiQil0U9C1OwUXIi7cddWiEMWlLYWIGkzaYiI2JmriJJNAMs6UyXy9904XUZmIQ91K7/Jczo97D+cc4H93qNbF6Ris5TK+I0YfgO0ABAOjAO5bAa5dzyD7yeCJBuwhoqumoSbidZresa1HNd16PBsZDqZmMoV8sTwP8Jkbafz6Ya74MHAyji+lFIOdCafxYG9Y79nTKzq+OSra+vaK9vYmSvpjqseKm8l7h7c5PDL6D17UBL+Pw5SOfWtjmxPb37dGmCEddkuHEtr0leJ2H1C87DT7cw+D9qRNZU+RuWXe1e16Pz3OoPRRcHfMOhWN6MeOHGxWrbABaUsoWGbVDJGXecXF8V98VRQhbYlE0qHJV8tOpUTZh4veg3eGWg02JFv2JdYWtPpmt+oPGmhxyA+WBBlOwDDqwH4ZNoCuLldOTEf34e+pyx8Fyc9vSa6Pkt1gv8V0kBYiCBMgAXBA8AvgSo7hl9DaEcXEy/mN1cYq0LQt1bAlpG2tNICMEDQXEBZBEUDgA36BUdEJlTcszSwMy1BrgvWJdTNLmddNUOXKq6QLaBGC6gCkAuwBXp6gEIN8LC0WUNeSTAFT7w2lGow0x8cW5vOlYhmAdAhaaAXVowSjnqBHCTIMyBAqrFMqlStHYvEn1cYqsP/EhVtk16WHh54HUC1AswmaDWhhQEYJWhjQHEA16a/RWYYMLez+9oebNUG3IfH7zmM/DqZmstmRofGg4iuAIgEhsVJLHT4LevrHZPD86VSu59DZO2tbu+/VrCERlZj5mpCa82Tw4te523eb451bjUi8k4TMci49yalnf5YW517PbR84/9uG/uNXiKj0n7PMzK2l/NLA+N1Lu7KzY18UM9NNjICsaDIdauxKbz5w7oHuNv5MRC8/edswswSwA0ALgNjb8CyAGQCPiKjyeS7YfwHuwv127rxgygAAAABJRU5ErkJggg=="); }
+    windowcontrols button.minimize:hover    { background-image: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAADF0lEQVR42tXUW0gUYRQA4PPP7H1d3VHUZS+lLcralmSllpYWLWUJbWTQhS4UdIHwIcmHCorooctLRdAFKnqwCIwoMCozLXXLBDfLLrrVJrq6m6h522bX3dm/sybUw4Q99FADhxnOnPk4M/9/hsBfPsj/C25JBjUIsIdSyMeiedFaCvASrx1SAheu9sPoH4M7EmERsOS8Ui4xGTipzJKVJZHHxkNHS7Pg9gwFvgXGvRGge6/54MmU4C4j5DIMW5VmUKsXWpQMN2M20c5bzSqSU8mYqynieXRZeNHBR9q7/f5wSFh72QsNvwX342uGOZXDbFSm27I5JppTzVjAcLmbWM2sFcxg41Wh7/7JcDRf7xyi7zv9nwSBzzv3EUZEwTKrem+cRnZ8o90oU8rZiRwjjwGVZRXLxhqI/3WlEB720Gg+GIrAjTue8YEB/shZF39aFDxRZLmTksSvWG4z/cyzUiASJRDCEkoFCuEAUGF84lZtnYd2dLO1h2o+FYuDNqOrcEnCtLnzddB45ZlcymGBmgBhJwuwt8g3NAcB8rfnBdta+6D6oa/nYJ3XLAqetae7Cwri9HNyjOC49VjOaBFToiP5sWeiIA0gOoh7qcQWbHP2Qk31F1/Zvc8pomBFaVG9Lq4ne1nxTAIsSjKOgBRVSQxWokpxPcJ+gNAwhfEB+rSqlXb1xbdsvVi7SBS8d2rnxa/tNRtKtuUoFHGJiMUjGo/nWAKMDFvDbxcaoRAaoqFRL1Reqg7EpOTftB+u2C0KjvV9Xnn3aMkZox5MBXYbC7IEgiCAlIt2TEDgEfuK3Q2Cs65BaH/l8RSVXy9NSLU+EAUppYoPjbeOOW8c2JyWlaHNXFzIStSJk10iipjA94Or+bnQ5mgczlxzoMKydPNBQkjwt5OCqNnddLv8bdWpQo1WpTekz1JwpgyGkaphxOemPe2twQGvt9daXPbEnLf+JGLuKWcZ0dTgaP+6dw/O5A73vtHxQ106TBIVN92n0WX4rKv2Nck1SZWIdU45y7+guAqQg2HE0E+mezG6MZoRC4k99+//YL8DOW83JCvJ0qsAAAAASUVORK5CYII="); }
+    windowcontrols button.minimize:active   { background-image: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAADF0lEQVR42tXUTUwTQRQA4De73e2Wlm4F1KWhFGwF/8GggNIA/mGM0SghRo0HDyom6MGD0XDRxBijxvgTI5yIB40EDmqiRqOQWkAUVEhERbRVQNtaEGmhsm13O06rMR6W4MGDTvYlMy+zX+btzCyCv9zQ/wuWp4AWorAXYygik/JiczFAF+m3qRDUNIzA2B+DW5LBBhS6xLG0SeAZ1rpgvorVGcD5olse8ATEiVDEgwFXNQ6BfUpweyoUUIi+lSFotHlWjuLT5yD9wjW0OsWEgq6uqLflmtzlEqNO90RQkuTyeh+0TAruIWXKvKbNnMpl2XJ4KpbTpC+m+NxNtDa7mBrtbJC/2GukWP5JTwC/G/zmlKPi8ssfIKAI7s5KqErUMic2lqWyHBv3gGK1oLGuoGmdgL713palAKmWtLCE4eY9T/jrqHikziWeVQQPl1pupCWLa4ttxl95xOnVSKWN97EUBIhMhLAciY8ftXuw0003n27tX68M2lL7CgsN6QsWzYAHhzrUjIAAGcgk5ufEKHnI3obdGFYfzw/1vhoGx8OhT6fafRZF8GjZLFdBfqJxXq4A9ostapSCgCKLw8yPMxMHRTImVZfuKw719nyGVsew91jzYIYieH5nqWN6ondp0arZROIAWANCTCKLWP5HyWE/kHMZAWkMQ3gUP256id1fDM8OXHlkUwQvV2+r9b9r3bquIpdT65MQqEi9jAEBoyO1szGRfMNxDFIAS+M+uH3VISaYltTvOnO9UhF8/bxt3f1zleeEmWAqKLPRwExDZJUAKh4BzSGQRYL5Y6uDnvYO2fna87Gk8sL+nKLVdxXB/v5+7n3nnWM9N0/uyJxvNczJL6RVmqR46XGUYLI4Au+7n8u9Tzv9c9dWXbEs21xtNptDk94UgloGuu4e7GuqLdHpOePMzGyON1opSpUA40MD2Ot8Ffrq87mzVu6ym/M2nCSYa8q7TNDMcHCk4q29rmDs8xtBDHwSyG4gjk/z6qZbvQR7zGqTGwn2Ycq7/BtKdgHySaSRMP5Mu0kMkuggWETpvX//B/sd5Ss5JEoWzPYAAAAASUVORK5CYII="); }
+    windowcontrols button.minimize:backdrop { background-image: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAABmJLR0QA/wD/AP+gvaeTAAAACXBIWXMAAA3XAAAN1wFCKJt4AAAAB3RJTUUH4gQLEhktdKSzmwAAAqFJREFUOMvllM1LG0EYxp93dvZ7N8kGXJpEm0RM6VL0UMRjwJuX1UutF/9JwVPBk4cihApiIbKgklghIZCY3VDc7O704AdWTOu1dOBheJ+Z+fHO1wv8d43+MMZt2/5IRAsA3tzP7WVZdsU5/zYajW5fDXQcp6Kq6oamafmFhQVpbW2N5XI5HB0diXa7nUwmk0kcx1+Gw+HF87XSc6NSqZR1Xf/seZ7l+z5vNpvUbDbZ6uoqLS8vU7FYZFmWqePx+J1hGL0oikYzgfPz89xxnE+e59kbGxtM13W4rkv1ep0ajQaFYYheryeWlpYoSRI2mUzmVVX9Ph6PkxeB9Xp9pVAofNjc3GSmaUJRFGRZBk3TcHNzgyAIMiEEFEVBtVqlTqcjCyGmvV7v6vHgnwIXFxfrxWKRua776DHG0O/3xWAwEJIkIZ/PI01TAIDneZKmafWTk5OvLwIBzNVqNTJN8y59SYIsy+Ccg4gghECSJJhOp0jTFLVaDefn58XfnsbTwLZtpus6HoCKokBRFEiSRIyxB6CYTqeI4xiGYcCyLJoJLJfL4zAMc5Zl0UN2sizTswwpSRIRxzGiKEKpVIpmAl3XHZydnZUAcMuywDl/FGMMWZYhTVMkyd2ldrvdxHXdwVMGexrs7u4GmqZFh4eHwjRNmKZJhmFA13Xouk73PQzDoOPjY2RZ9nNnZ6c9Ezg3N9fZ3t4OgiC4PTg4EIwxaJoGVVUfJcsyWq2WaLVat77vB41G42LmlokoFUJ845wre3t7b/v9vr2yssKr1SrJsiyur69xenqaXF5eRltbW5319fUWESV//ctCiHwYhu/39/cr3W7XHA6HlhCCHMeJyuXyxPf9H4VCoU1Eo1dXGyGEBKAEIAfAvrfDe10TUfpvFthfObYMDFW3BNgAAAAASUVORK5CYII="); }
+
+    windowcontrols button.maximize          { background-image: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAAAXNSR0IArs4c6QAAAAZiS0dEAP8A/wD/oL2nkwAAAAlwSFlzAAAN1wAADdcBQiibeAAAAAd0SU1FB9gKARMaJSX8eJMAAALzSURBVDjL5dTPb1RVFAfw73n33Xvffb/mzdAy7YzTUvlhiwlOjNCKICRGNCwpJi504YaEpSEm7nTvwsSY9A9wiQSNcY0JSY2EYAjaVmih9sdDKm2HoZ1503mvh4VoKnYiW+PZ3XPu/eTkJOcC/7ugjpUu+I7GWYtwmIEXH1++tskYT1oYw32sPTUYPYejJGlMG7sclaWqvlC1Qy/C1R+vZvH0atJqpDGnfLb2Cy4/+Vb8o7GXcET74mLvoFccfM1XIyOHxJsvj4oj1ddF394u62F+0gasqJVkp5we/r4RY64j2H0cXr7gflXa6/UMHY4s40gM7By0qn3HrOHdJ63f6rd4ZvnKZnGXIWZSWYoRu5x+0ZhFe1vw2eHgjB/J0QOvFG1jNLRS2MjW2dMhxbWbPH7nQpYhgVYKXSWXastJYAuu3Z/IfvjTsLeC/f3PvGH5dVmIwr9ytpCYWvous0iQbTPngwLSrAUAKA2sqcZq4cQUbn+2LZiqh/v7yiGFngsAkMKBkSFJ4cAigU3OqJ0laLbr3M4SFEshzTRWhrYafwP9vBGe78B3XRAIniqQI3PQwqXHIFpZg5O2pvWNFfb8OoK8ER3Bys49CxvpXE/ouiSFC08W4Ng50rYPQRIZt9FK1yhJbdZtws10jsvduxaAO9uDvYXKxPW7kweUkjp0cmRkBGPn4YiQhKWQbW4gyRTLlMBJi2rN9da+7uqNrYa19fDO0Q+/Njq69/P8bQ69AIHxKXACBE4OobODAieHwPkjfyueZ6NzS+8d++h8R7AUDFx6e/iDbxdXlh9cn51iLRVc7cAoA1/lYZSBkoomFqd5emn2wVuHzl2s5PZc7jhDImoy85iylblw45Pjq81vSs+Xq7o/GiRp1XixPsM/xdeSuBbH7x78+NKrA6c/J6L2v+4yM++uJ7+f+nLi05H5+mRxuflrLwDsMP13K+HQvdH974/nnO7zRDT31L8NM2sABwFUAJQAMIBFAAsArjzZ2X8nHgHHhAq5tCVOBgAAAABJRU5ErkJggg=="); }
+    windowcontrols button.maximize:hover    { background-image: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAADIklEQVR42tXTfUhTURQA8HPf9va2OddaW6Vz6jLnzD5GGUiWCFHRF1FWFhRSRLWkqKgIKqN/Eok+KEr8I0UMQbIioz8KK0lbUaaFq7Scw49N05zr5bb3tvfebRsSFbMi+qcLB8479/KD8+49CP7xQv8xqAGFlAILgWABBpg7drhFwGBlWCiFTzD6x6AqDRYhEpVSMrFOpSMl5jlmsTJGBc2tzbyrc4RhfZwLc9ji6YDG34KaTFhIkqJbWoM8Rm+WEkadGWUbV4viJhiQre+JUNd8le99xQiDXT4vx/FrPzVD07igNhdiVAr5M42Omp4yTxnZy9BlE9b6djKc7yzYwdc8L+HCub3lCx7s8b+nff4FQw3gjQrOzI8tlMpFxeacKRJSIorUZGQs3KlwUeE8f7cpMDzqxOGcCwrQ+niAHaX9J9pr2YtRwZVH0usIBb0kfVb8t7pCKacqL3VE8oK9acB4eZbj2ch3u60f+0YkD+rPda2KCi47ntCZaIhNSNJPhvLSDkqsFAGS/PibcQADR/Ow3ZLGdvcOgb3T7XxYPJASFcw7m+rQJyjiknVTobSyjSLkBCgkxLdD4V5HAwIIPgH2FMxmHc5+cHR7Bm4fcSRHBfdXLW8MED2ZmekmRIrkEEOqkVpmkFysuRzZ35dfCL6gO8hwn7E36MbPbK0YB7Qvr2x7tDAqWHJ3Z9nr/vubVmRlUUqpBsnISSATT0QVN8oit2zZeJhjeBr7uRFMMx/hZuM9xqjNrj655polKuiku1YU3V53YbJGol9mXkxIRWokE6mhvPp8BNyz9VQI9GA/74aGNw1CZ5+zt2j19V2JqtSHUUGMsaz+Q/XpqhdFm+dNm63KMeUSClIDFDERUYQasYIbe7lheGpvEqzvmzwbzEcrlxq3HEMIBcedlBBqfOyoPXij7UyuOlYZn6EzU0kqE0ES8lAHdmxztTAuj8uVl3HoUY5hfXEI6/nl6I2hKTQztK727fmsXvrdlGF/d1y4PkmW1K9Xpn/Mm3HAOkGqvf4zNi44hoanY34o9KGIH3s1zlD0heL5923+Efi365+DXwF6k0Qk6vcqrgAAAABJRU5ErkJggg=="); }
+    windowcontrols button.maximize:active   { background-image: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAADF0lEQVR42tXTW0hTYRwA8P8527m4neY2LbfpnM61amZQWHnrJkVqRc16qB4rKosIopeoXuvJiCBEIsgeoqtiwoyiu5llRq2U8lJua3Oa1lxHd862c762JVFxLIle+uAP/+//ffzgu/wx+McD+49BLTAUCVU4BkUIYMHE5uciglY+DDXwCdgpgyozLMEIrIakZekqHUHmzrHJGYUKnJ1OYbB/lAuHBB+KoqrgO3j4R1A7D0rkcllDipFW6nNp3KyzYfnZK2Uzphmxt/5n4i3nJWGgkxOH3dyYIAj2T05omRRMKQClSpnUptGRFlMek1iz6vLxrpceIp7bV1cKTS9qovHc9XoMjXi5bjbEFY20wZgkOGudci+VJDtuW5RKEqQsUaPlDNxrGqbiednGrHBg3I/ieTQiQueTj/wYyx3tc4RPSYKluy3XcSW7yjIr7XudIEjK0ehJ5BXrjYBE4KNCODHv6x5CoVHidssZ91pJcNk+fa8hU5mRrk+F+mv9lFwlA4z8+ZpRGEE0KEDlxizeOzACrv6At/X0xxxJsPxI9nuDXqHP0E2Hizd6KVyBA0Pi3zfFz8qGRRDHRdhSNpP3+IfA4w36bx7zZEmC208ufxjBffl5lhyMwJNAQagxhkwlrz5qSKxvKrZDROAjvPAFjUcC6Hl3J4KwtuP8wcclkuChc1tru4YebC6dv4BiKA1GExqgZcmYo+3yt1cu3hblBRZxwihiuWFobr/PmbX5F07saKiSBJ92tVRU39x5MlVDGpfmFuMUrsZomRqaH9QlwA0r9sXAYAwMQFvPY7F/wO/Zv7JmV+HcZXckQZfLldTyvvFYvbN6S17mbPXinEJcIdcCiSdjVCx4cRSFhM/Q4WoXO961B9bY9tQtNdsPm0ymyKSdEkOtTzyOA81vaperGcZgTbNR6ckWnMBo8LNu9HbwFTcYHPKVW3feXWysOB7D3L9tvQk0h+VHKh09Zwt8bG/aZ+6DPl7X0BkDBsYyWD5ze+s0KuXKr9ik4AQa746FsTDGwjDxa7yx+BC/7h+POSXwb8c/B78C16pCJGO18kMAAAAASUVORK5CYII="); }
+    windowcontrols button.maximize:backdrop { background-image: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAABmJLR0QA/wD/AP+gvaeTAAAACXBIWXMAAA3XAAAN1wFCKJt4AAAAB3RJTUUH4gQLEhknlHFahQAAAqFJREFUOMvllM1LG0EYxp93dvZ7N8kGXJpEm0RM6VL0UMRjwJuX1UutF/9JwVPBk4cihApiIbKgklghIZCY3VDc7O704AdWTOu1dOBheJ+Z+fHO1wv8d43+MMZt2/5IRAsA3tzP7WVZdsU5/zYajW5fDXQcp6Kq6oamafmFhQVpbW2N5XI5HB0diXa7nUwmk0kcx1+Gw+HF87XSc6NSqZR1Xf/seZ7l+z5vNpvUbDbZ6uoqLS8vU7FYZFmWqePx+J1hGL0oikYzgfPz89xxnE+e59kbGxtM13W4rkv1ep0ajQaFYYheryeWlpYoSRI2mUzmVVX9Ph6PkxeB9Xp9pVAofNjc3GSmaUJRFGRZBk3TcHNzgyAIMiEEFEVBtVqlTqcjCyGmvV7v6vHgnwIXFxfrxWKRua776DHG0O/3xWAwEJIkIZ/PI01TAIDneZKmafWTk5OvLwIBzNVqNTJN8y59SYIsy+Ccg4gghECSJJhOp0jTFLVaDefn58XfnsbTwLZtpus6HoCKokBRFEiSRIyxB6CYTqeI4xiGYcCyLJoJLJfL4zAMc5Zl0UN2sizTswwpSRIRxzGiKEKpVIpmAl3XHZydnZUAcMuywDl/FGMMWZYhTVMkyd2ldrvdxHXdwVMGexrs7u4GmqZFh4eHwjRNmKZJhmFA13Xouk73PQzDoOPjY2RZ9nNnZ6c9Ezg3N9fZ3t4OgiC4PTg4EIwxaJoGVVUfJcsyWq2WaLVat77vB41G42LmlokoFUJ845wre3t7b/v9vr2yssKr1SrJsiyur69xenqaXF5eRltbW5319fUWESV//ctCiHwYhu/39/cr3W7XHA6HlhCCHMeJyuXyxPf9H4VCoU1Eo1dXGyGEBKAEIAfAvrfDe10TUfpvFthfObYMDFW3BNgAAAAASUVORK5CYII="); }

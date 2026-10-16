@@ -366,11 +366,13 @@ fn scroll_gallery_to_folder_when_ready(
     // While rows are still being built, the target folder may legitimately not
     // exist yet, so those attempts must not count toward giving up.
     let settled_attempts = Rc::new(Cell::new(0u32));
+    let unmapped_reveal_logged = Rc::new(Cell::new(false));
     let total_for_timer = total_attempts.clone();
     let settled_for_timer = settled_attempts.clone();
     let legacy_scroll_requested_for_timer = legacy_scroll_requested.clone();
     let model_wait_logged_for_timer = model_wait_logged.clone();
     let model_ready_logged_for_timer = model_ready_logged.clone();
+    let unmapped_reveal_logged_for_timer = unmapped_reveal_logged.clone();
     glib::timeout_add_local(Duration::from_millis(25), move || {
         // A newer destination/refresh supersedes this timer. Without this
         // guard, an old Albums/Photos -> Folder transition can fire later and
@@ -409,6 +411,22 @@ fn scroll_gallery_to_folder_when_ready(
             if !model_ready_logged_for_timer.replace(true) {
                 crate::nav_transition_trace!(
                     "stage=folder_scroll_restore_model_ready refresh_generation={generation} folder_id={folder_id} attempts={}",
+                    total_for_timer.get(),
+                );
+            }
+            // A folder view can be temporarily unmapped while GTK switches
+            // presentation surfaces. Its scroll adjustment then has no
+            // published extent, so waiting for the header to enter the
+            // viewport cannot succeed. Show the completed filtered model
+            // immediately and keep trying to restore the destination in the
+            // background as the view becomes mapped.
+            if !gallery.using_virtual_photo_surface()
+                && !gallery.folder_root.is_mapped()
+                && !unmapped_reveal_logged_for_timer.replace(true)
+            {
+                gallery.reveal_folder_destination(presentation_generation);
+                crate::nav_transition_trace!(
+                    "stage=folder_scroll_restore_early_reveal refresh_generation={generation} folder_id={folder_id} reason=legacy_view_unmapped attempts={}",
                     total_for_timer.get(),
                 );
             }

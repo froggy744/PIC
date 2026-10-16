@@ -1,0 +1,826 @@
+/* picasa-theme
+   version: 1.3
+   name: Terminal
+   dark: true
+   color-scheme: theme
+   mode: overlay
+   window-controls: native
+*/
+
+/* Terminal: phosphor-green text on near-black panels, monospace labels,
+   square controls, and crisp one-pixel dividers. */
+
+/* ---- Palette ---- */
+@define-color pic_bar_color #080e0a;
+@define-color pic_bar_top #080e0a;
+@define-color pic_bar_bottom #080e0a;
+@define-color pic_bar_surface #0b120d;
+@define-color pic_bar_inset #050a07;
+@define-color pic_bar_hover #162b1b;
+@define-color pic_bar_text #b9f4c7;
+@define-color pic_bar_muted #78a985;
+
+@define-color pic_background_color #080e0a;
+@define-color pic_background_surface #0b120d;
+@define-color pic_background_control #102015;
+@define-color pic_background_hover #193320;
+@define-color pic_background_border #31583a;
+
+/* Controls on dark surfaces */
+@define-color pic_ctl_top #102015;
+@define-color pic_ctl_bottom #102015;
+@define-color pic_ctl_hover_top #1b3824;
+@define-color pic_ctl_hover_bottom #1b3824;
+@define-color pic_ctl_active #24492d;
+
+/* Terminal phosphor green */
+@define-color pic_button_color #72e498;
+@define-color pic_accent_top #72e498;
+@define-color pic_accent_bottom #72e498;
+@define-color pic_button_primary_hover #a0f7b5;
+@define-color pic_button_selected #21442b;
+@define-color pic_sel_top #21442b;
+@define-color pic_sel_bottom #21442b;
+@define-color pic_menu_hover #21442b;
+@define-color pic_danger_top #d7776b;
+@define-color pic_danger_bottom #ad5349;
+
+@define-color pic_button_hover #1b3824;
+@define-color pic_background_selected_hover #2b5535;
+@define-color pic_button_text #b9f4c7;
+@define-color pic_button_ink #061109;
+@define-color pic_focus #a0f7b5;
+@define-color pic_text_color #b9f4c7;
+@define-color pic_text_muted #78a985;
+
+/* GTK/libadwaita semantic colours */
+@define-color accent_bg_color @pic_button_color;
+@define-color accent_fg_color @pic_button_ink;
+@define-color accent_color @pic_button_color;
+@define-color window_bg_color @pic_background_color;
+@define-color view_bg_color @pic_background_surface;
+@define-color headerbar_bg_color @pic_bar_color;
+@define-color theme_fg_color @pic_text_color;
+
+window { background: @pic_background_color; color: @pic_text_color; }
+
+/* ---- Tooltips & scrollbars ---- */
+tooltip.background, tooltip {
+    background: #050a07;
+    color: @pic_bar_text;
+    border-radius: 0;
+    box-shadow: none;
+}
+tooltip label { color: @pic_bar_text; }
+scrollbar slider {
+    min-width: 4px;
+    min-height: 4px;
+    margin: 0;
+    border: 1px solid transparent;
+    border-radius: 0;
+    background: alpha(@pic_text_color, 0.22);
+    background-clip: padding-box;
+}
+scrollbar slider:hover { background: alpha(@pic_text_color, 0.40); background-clip: padding-box; }
+scrollbar slider:active { background: alpha(@pic_text_color, 0.55); background-clip: padding-box; }
+
+/* ---- Header and title bars ---- */
+.layout-left-header, .layout-right-header {
+    background-color: @pic_bar_color;
+    background-image: none;
+    color: @pic_bar_text;
+    border: none;
+    box-shadow: none;
+}
+.layout-left-header button, .layout-right-header button {
+    color: @pic_bar_text;
+    background: transparent;
+    background-image: none;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+}
+.layout-left-header button:hover, .layout-right-header button:hover {
+    background: @pic_bar_hover;
+    color: @pic_button_text;
+}
+.layout-left-header button:active, .layout-right-header button:active { background: @pic_ctl_active; }
+.layout-left-header button:focus-visible, .layout-right-header button:focus-visible {
+    outline: 2px solid alpha(@pic_focus, 0.8);
+    outline-offset: -2px;
+}
+.app-title { color: @pic_bar_text; font-weight: 700; text-shadow: none; }
+
+/* ---- Sidebar ---- */
+.layout-left-column, .navigation-sidebar {
+    background: @pic_bar_surface;
+    color: @pic_bar_text;
+}
+.layout-left-column { border: none; box-shadow: none; }
+.navigation-sidebar row {
+    color: @pic_bar_text;
+    border-radius: 0;
+}
+.navigation-sidebar row:hover {
+    background: @pic_bar_hover;
+    color: @pic_button_text;
+}
+.navigation-sidebar row:selected,
+.navigation-sidebar row.sidebar-scroll-location {
+    background-color: @pic_button_selected;
+    background-image: none;
+    color: @pic_button_text;
+    box-shadow: none;
+}
+.navigation-sidebar row:focus-visible {
+    outline: 2px solid alpha(@pic_focus, 0.8);
+    outline-offset: -2px;
+}
+.navigation-sidebar .heading,
+.navigation-sidebar .dim-label,
+.navigation-sidebar .folder-count,
+.navigation-sidebar .sidebar-section-heading-title,
+.folder-disclosure,
+.sidebar-count { color: @pic_bar_muted; opacity: 1; }
+.navigation-sidebar .sidebar-section-heading-title { font-weight: 700; }
+.sidebar-count { font-variant-numeric: tabular-nums; }
+.navigation-sidebar row:selected .sidebar-count,
+.navigation-sidebar row:selected .folder-count { color: @pic_bar_text; }
+
+/* Search command field */
+.search-field {
+    min-height: 34px;
+    border-radius: 0;
+    border: none;
+    background: @pic_bar_inset;
+    box-shadow: none;
+    color: @pic_bar_text;
+}
+.search-field:focus-within {
+    box-shadow: none;
+}
+.search-field image { color: @pic_bar_muted; }
+.search-field entry {
+    background: transparent;
+    color: @pic_bar_text;
+    caret-color: @pic_bar_text;
+    box-shadow: none;
+}
+
+/* ---- Gallery, albums, photo tiles ---- */
+.photo-grid, .albums-home-grid { background: @pic_background_surface; color: @pic_text_color; }
+.lightbox-backdrop,
+.lightbox-backdrop.standard-light,
+.lightbox-backdrop.standard-dark,
+.lightbox-picture.photo-grid { background: @pic_background_surface; }
+.group-heading-bar { background: transparent; padding: 0; }
+.section-heading-box { margin-top: 14px; margin-bottom: 7px; }
+.section-heading, .folder-section-title {
+    color: @pic_text_color;
+    font-weight: 700;
+    text-shadow: none;
+}
+.group-heading-bar .dim-label { color: @pic_text_muted; opacity: 0.9; }
+.folder-section-count, .folder-section-icon { color: @pic_text_muted; }
+.folder-section-separator { background: @pic_background_border; }
+.section-more-btn {
+    color: @pic_text_color;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+}
+.section-more-btn:hover { background: @pic_background_hover; color: @pic_text_color; }
+.section-more-btn:focus-visible { outline: 2px solid alpha(@pic_focus, 0.85); outline-offset: 1px; }
+.photo-frame { box-shadow: none; }
+.photo-tile {
+    border: 2px solid transparent;
+    border-radius: 0;
+    background: @pic_background_control;
+    box-shadow: none;
+}
+.thumbnail { border-radius: 0; }
+.missing-thumbnail { background: @pic_background_control; }
+.photo-tile:hover { border-color: alpha(@pic_button_color, 0.5); box-shadow: none; }
+.folder-photo-selected.photo-tile,
+gridview.section-grid > child:selected .photo-tile,
+gridview.section-grid > item:selected .photo-tile {
+    border-color: @pic_button_color;
+    box-shadow: none;
+}
+.folder-photo-selected .selection-badge { opacity: 1; }
+.selection-badge {
+    color: @pic_button_ink;
+    background-color: @pic_button_color;
+    background-image: none;
+    box-shadow: none;
+}
+listview.folder-stream { background: transparent; padding: 0 20px 24px 20px; }
+listview.folder-stream > row,
+listview.folder-stream > row:hover,
+listview.folder-stream > row:selected,
+listview.folder-stream > row:focus,
+listview.folder-stream > row:active {
+    padding: 0;
+    margin: 0;
+    background: transparent;
+    background-image: none;
+    outline: none;
+    box-shadow: none;
+}
+.folder-section-header, .folder-photo-row { background: transparent; }
+gridview.section-grid > child,
+gridview.section-grid > item,
+gridview.section-grid > child:selected,
+gridview.section-grid > item:selected {
+    background: transparent;
+    box-shadow: none;
+}
+.photo-tile:focus-visible,
+gridview.section-grid > child:focus-visible .photo-tile,
+gridview.section-grid > item:focus-visible .photo-tile {
+    outline: 2px solid alpha(@pic_focus, 0.85);
+    outline-offset: 2px;
+}
+
+/* ---- Edit / collage panel surfaces ---- */
+.edit-panel-pages, .edit-body-paned, .edit-preview,
+.edit-adjustment-group, .overlay-list,
+.collage-editor-paned, .collage-footer {
+    background-color: @pic_background_color;
+    color: @pic_text_color;
+}
+.edit-preview, .overlay-list {
+    border: 1px solid @pic_background_border;
+    border-radius: 0;
+    box-shadow: none;
+}
+.edit-section-label { color: @pic_text_muted; font-weight: 700; }
+.overlay-list row:selected { background: alpha(@pic_button_color, 0.2); }
+paned.edit-body-paned > separator,
+paned.collage-editor-paned > separator { background: transparent; border: none; box-shadow: none; }
+
+/* ---- Info / action bar ---- */
+.photo-info-bar {
+    background-color: @pic_bar_color;
+    background-image: none;
+    color: @pic_bar_text;
+    border: none;
+    box-shadow: none;
+}
+.info-preview {
+    background: @pic_bar_surface;
+    border-radius: 0;
+    border: none;
+    box-shadow: none;
+}
+.info-title, .metric-val { color: @pic_bar_text; }
+.metric-key, .photo-info-bar .dim-label { color: @pic_bar_muted; opacity: 1; }
+.photo-info-bar .photo-action-button {
+    color: @pic_bar_text;
+    background: transparent;
+    background-image: none;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+}
+.photo-info-bar .photo-action-button:hover { background: @pic_bar_hover; color: @pic_button_text; }
+.photo-info-bar .photo-action-button:active { background: @pic_ctl_active; }
+.photo-info-bar .photo-action-button:checked {
+    background-color: @pic_button_selected;
+    background-image: none;
+    color: @pic_button_text;
+    box-shadow: none;
+}
+.photo-info-bar button:focus-visible { outline: 2px solid alpha(@pic_focus, 0.8); outline-offset: -2px; }
+.photo-info-bar separator.infobar-group-separator { background: transparent; }
+
+/* ---- Sliders ---- */
+scale trough {
+    min-height: 4px;
+    min-width: 4px;
+    border-radius: 0;
+    background: alpha(@pic_text_color, 0.14);
+    box-shadow: none;
+}
+scale highlight {
+    border-radius: 0;
+    background: @pic_button_color;
+    background-image: none;
+}
+scale slider {
+    min-width: 16px;
+    min-height: 16px;
+    margin: -6px;
+    border-radius: 0;
+    border: none;
+    background-color: @pic_button_color;
+    background-image: none;
+    box-shadow: none;
+}
+scale slider:hover { background-image: none; }
+scale slider:active { background-image: none; }
+scale:focus-visible slider { box-shadow: none; }
+scale:disabled { opacity: 0.4; }
+
+/* Sliders on dark bars */
+.photo-info-bar scale trough, .edit-mode-toolbar scale trough, .layout-left-header scale trough {
+    background: alpha(white, 0.15);
+    box-shadow: none;
+}
+.photo-info-bar scale highlight, .edit-mode-toolbar scale highlight, .layout-left-header scale highlight {
+    background: @pic_button_color;
+}
+
+/* ---- Switches, checks, radios, progress ---- */
+switch {
+    border-radius: 0;
+    background: alpha(@pic_text_color, 0.18);
+    box-shadow: none;
+    color: transparent;
+}
+switch:checked { background: @pic_button_color; box-shadow: none; }
+switch slider {
+    border-radius: 0;
+    margin: 2px;
+    background: @pic_button_color;
+    box-shadow: none;
+}
+check, radio {
+    border-radius: 0;
+    background: @pic_ctl_top;
+    box-shadow: none;
+}
+radio { border-radius: 0; }
+check:checked, radio:checked {
+    background: @pic_button_color;
+    color: @pic_button_ink;
+    box-shadow: none;
+}
+progressbar trough { border-radius: 0; min-height: 6px; background: alpha(@pic_text_color, 0.14); }
+progressbar progress { border-radius: 0; background: @pic_button_color; }
+
+/* ---- Buttons: secondary ---- */
+.crop-aspect-button, .crop-orientation-row button,
+.crop-action-row button.crop-apply-button, .crop-action-row button.crop-reset-button,
+.collage-layout-tile, .collage-tabs > button,
+.collage-compact-choice, .edit-fit-row button,
+.overlay-anchor-row button, .quick-fix-row button,
+button.clear-action-button,
+.collage-footer button,
+.edit-panel-pages button.pill,
+dropdown > button, combobox button {
+    color: @pic_text_color;
+    background-color: @pic_background_control;
+    background-image: none;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+}
+.crop-aspect-button:hover, .crop-orientation-row button:hover,
+.crop-action-row button.crop-apply-button:hover, .crop-action-row button.crop-reset-button:hover,
+.collage-layout-tile:hover, .collage-tabs > button:hover,
+.collage-compact-choice:hover, .edit-fit-row button:hover,
+.overlay-anchor-row button:hover, .quick-fix-row button:hover,
+button.clear-action-button:hover,
+.collage-footer button:hover,
+dropdown > button:hover, combobox button:hover {
+    background-image: none;
+    color: @pic_text_color;
+}
+.crop-aspect-button:active, .crop-orientation-row button:active,
+.crop-action-row button.crop-apply-button:active, .crop-action-row button.crop-reset-button:active,
+.collage-layout-tile:active, .collage-tabs > button:active,
+.collage-compact-choice:active, .edit-fit-row button:active,
+.overlay-anchor-row button:active, .quick-fix-row button:active,
+button.clear-action-button:active,
+.collage-footer button:active,
+dropdown > button:active, combobox button:active {
+    color: @pic_text_color;
+    background-image: none;
+    background-color: @pic_ctl_active;
+    box-shadow: none;
+}
+
+/* Selected / toggled state */
+.crop-aspect-button:checked, .crop-orientation-row button:checked,
+.collage-layout-tile:checked, .collage-tabs > button:checked,
+.collage-compact-choice:checked, .collage-compact-choice.active, .collage-compact-choice.selected,
+.edit-fit-row button:checked, .edit-fit-row button.active,
+.overlay-anchor-row button:checked, .quick-fix-row button:checked,
+.one-to-one-btn:checked, .photo-action-button:checked,
+.collage-footer button:checked {
+    color: @pic_button_text;
+    background-color: @pic_button_selected;
+    background-image: none;
+    border: none;
+    box-shadow: none;
+}
+.crop-aspect-button:checked:hover, .crop-orientation-row button:checked:hover,
+.collage-layout-tile:checked:hover, .collage-tabs > button:checked:hover,
+.collage-compact-choice:checked:hover, .edit-fit-row button:checked:hover,
+.overlay-anchor-row button:checked:hover, .quick-fix-row button:checked:hover,
+.one-to-one-btn:checked:hover, .photo-action-button:checked:hover {
+    background-image: none;
+}
+.crop-aspect-button:disabled, .crop-orientation-row button:disabled,
+.collage-layout-tile:disabled, .collage-tabs > button:disabled,
+.collage-compact-choice:disabled, .edit-fit-row button:disabled { opacity: 0.4; }
+.crop-action-row button:disabled { opacity: 0.4; }
+.crop-aspect-button:focus-visible, .crop-orientation-row button:focus-visible,
+.collage-layout-tile:focus-visible, .collage-tabs > button:focus-visible,
+.collage-compact-choice:focus-visible, .edit-fit-row button:focus-visible,
+.overlay-anchor-row button:focus-visible, .quick-fix-row button:focus-visible,
+.collage-footer button:focus-visible, button.clear-action-button:focus-visible {
+    outline: 2px solid alpha(@pic_focus, 0.85);
+    outline-offset: 1px;
+}
+
+/* ---- Buttons: primary ---- */
+button.suggested-action,
+button.crop-apply-button,
+.edit-mode-toolbar .edit-toolbar-actions button.edit-toolbar-done,
+.collage-footer button.suggested-action,
+.collage-footer button.collage-create-button,
+.collage-footer > button:last-child {
+    color: @pic_button_ink;
+    background-color: @pic_button_color;
+    background-image: none;
+    border: none;
+    border-radius: 0;
+    font-weight: 600;
+    box-shadow: none;
+}
+button.suggested-action:hover,
+button.crop-apply-button:hover,
+.edit-mode-toolbar .edit-toolbar-actions button.edit-toolbar-done:hover,
+.collage-footer button.suggested-action:hover,
+.collage-footer button.collage-create-button:hover,
+.collage-footer > button:last-child:hover {
+    color: @pic_button_ink;
+    background-color: @pic_button_primary_hover;
+    background-image: none;
+}
+button.suggested-action:active,
+button.crop-apply-button:active,
+.edit-mode-toolbar .edit-toolbar-actions button.edit-toolbar-done:active,
+.collage-footer button.suggested-action:active,
+.collage-footer > button:last-child:active {
+    color: @pic_button_ink;
+    background-image: none;
+    background-color: @pic_button_color;
+    box-shadow: none;
+}
+button.suggested-action:disabled,
+button.crop-apply-button:disabled,
+.collage-footer > button:last-child:disabled {
+    color: @pic_text_muted;
+    background-color: @pic_background_control;
+    background-image: none;
+    box-shadow: none;
+}
+button.suggested-action:focus-visible, button.crop-apply-button:focus-visible,
+.collage-footer > button:last-child:focus-visible {
+    outline: 2px solid alpha(@pic_focus, 0.85);
+    outline-offset: 2px;
+}
+
+/* Destructive */
+button.destructive-action {
+    color: @pic_button_ink;
+    background-color: @pic_danger_bottom;
+    background-image: none;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+}
+button.destructive-action:hover { background-image: none; background-color: @pic_danger_top; }
+button.destructive-action:active { background-image: none; background-color: #a03842; }
+button.destructive-action:disabled { color: @pic_text_muted; background-image: none; background-color: @pic_background_control; }
+
+/* ---- Collage panel ---- */
+.collage-editor-paned button.flat {
+    min-height: 28px;
+    padding: 3px 6px;
+    color: @pic_text_color;
+    background-color: @pic_background_control;
+    background-image: none;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+    font-size: 12px;
+    font-weight: 400;
+}
+.collage-editor-paned button.flat:hover {
+    background-image: none;
+}
+.collage-editor-paned button.flat:active {
+    background-image: none;
+    background-color: @pic_ctl_active;
+    box-shadow: none;
+}
+.collage-editor-paned button.flat:focus-visible { outline: 2px solid alpha(@pic_focus, 0.85); outline-offset: 1px; }
+
+/* Linked segmented groups */
+.collage-editor-paned .linked > button.collage-compact-choice { border-radius: 0; }
+.collage-editor-paned .linked > button.collage-compact-choice:first-child { border-radius: 0; }
+.collage-editor-paned .linked > button.collage-compact-choice:last-child { border-radius: 0; }
+.collage-editor-paned .linked > button.collage-compact-choice:only-child { border-radius: 0; }
+.collage-editor-paned .linked > button.collage-compact-choice { min-width: 68px; }
+
+button.collage-layout-tile:checked {
+    color: @pic_button_text;
+    background-color: @pic_button_selected;
+    background-image: none;
+    border: none;
+    box-shadow: none;
+}
+button.collage-layout-tile:checked:focus-visible { outline: 2px solid alpha(@pic_focus, 0.85); }
+
+/* Colour swatches */
+button.collage-color-swatch {
+    border: none;
+    border-radius: 0;
+    background-image: none;
+    box-shadow: none;
+}
+button.collage-color-swatch:hover { box-shadow: none; }
+button.collage-color-swatch:checked {
+    border: none;
+    box-shadow: none;
+}
+button.collage-color-swatch:focus-visible { outline: 2px solid alpha(@pic_focus, 0.85); outline-offset: 3px; }
+
+.collage-footer {
+    background: @pic_background_color;
+    color: @pic_text_color;
+    border: none;
+}
+
+/* ---- Editor toolbar ---- */
+.edit-mode-toolbar {
+    background-color: @pic_bar_color;
+    background-image: none;
+    color: @pic_bar_text;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+}
+.edit-mode-toolbar .edit-panel-tabs {
+    padding: 2px;
+    border-radius: 0;
+    background: @pic_bar_inset;
+    box-shadow: none;
+}
+.edit-mode-toolbar .edit-panel-tabs > button.flat {
+    min-height: 32px;
+    color: @pic_bar_muted;
+    background: transparent;
+    background-image: none;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+}
+.edit-mode-toolbar .edit-panel-tabs > button.flat label,
+.edit-mode-toolbar .edit-panel-tabs > button.flat image { color: inherit; }
+.edit-mode-toolbar .edit-panel-tabs > button.flat:hover {
+    background: @pic_bar_hover;
+    color: @pic_button_text;
+}
+.edit-mode-toolbar .edit-panel-tabs > button.flat:checked,
+.edit-mode-toolbar .edit-panel-tabs > button.flat:checked:hover {
+    color: @pic_button_text;
+    background-color: @pic_button_selected;
+    background-image: none;
+    box-shadow: none;
+}
+.edit-mode-toolbar .edit-panel-tabs > button.flat:focus-visible {
+    outline: 2px solid alpha(@pic_focus, 0.8);
+    outline-offset: -2px;
+}
+.edit-mode-toolbar .edit-panel-tabs > button.flat:disabled { opacity: 0.4; }
+.edit-mode-toolbar .edit-toolbar-actions button.edit-toolbar-icon-button {
+    color: @pic_bar_text;
+    background: transparent;
+    background-image: none;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+}
+.edit-mode-toolbar .edit-toolbar-actions button.edit-toolbar-icon-button:hover { background: @pic_bar_hover; color: @pic_button_text; }
+.edit-mode-toolbar .edit-toolbar-actions button.edit-toolbar-icon-button:active { background: @pic_ctl_active; }
+.edit-mode-toolbar .edit-toolbar-actions button.edit-toolbar-icon-button:disabled { opacity: 0.35; }
+.edit-mode-toolbar .edit-toolbar-actions button.edit-toolbar-icon-button:focus-visible { outline: 2px solid alpha(@pic_focus, 0.8); }
+.edit-mode-toolbar .edit-toolbar-actions button.edit-toolbar-done {
+    border-radius: 0;
+}
+.edit-mode-toolbar .edit-history-group.linked {
+    padding: 2px;
+    border-radius: 0;
+    background: @pic_bar_inset;
+    box-shadow: none;
+}
+.edit-mode-toolbar .edit-history-group.linked button.edit-toolbar-icon-button { border-radius: 0; }
+
+/* ---- Text fields ---- */
+.edit-panel-pages entry, .collage-editor-paned entry, .settings-window entry,
+dialog entry, spinbutton {
+    min-height: 30px;
+    color: @pic_text_color;
+    background: @pic_bar_inset;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+}
+.edit-panel-pages entry:focus-within, .collage-editor-paned entry:focus-within,
+.settings-window entry:focus-within, dialog entry:focus-within, spinbutton:focus-within {
+    box-shadow: none;
+}
+
+/* ---- Menus, popovers, dialogs ---- */
+popover > contents {
+    background: @pic_background_surface;
+    color: @pic_text_color;
+    border-radius: 0;
+    box-shadow: none;
+}
+popover modelbutton, popover row { border-radius: 0; }
+popover modelbutton:hover, popover row:hover, popover row:selected {
+    background: @pic_menu_hover;
+    color: @pic_button_text;
+}
+.photo-context-menu, .photo-context-menu viewport,
+.photo-actions-menu, .photo-actions-menu > contents,
+.settings-window, .settings-page, dialog > box {
+    background: @pic_background_color;
+    color: @pic_text_color;
+}
+.photo-context-menu {
+    border: none;
+    border-radius: 0;
+    padding: 4px;
+    box-shadow: none;
+}
+.album-context-menu > contents,
+.pic-folder-context-menu > contents,
+.sidebar-section-tooltip-menu > contents,
+.photo-actions-popover > contents {
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+}
+.photo-actions-menu { background: transparent; border: none; box-shadow: none; }
+.photo-actions-menu .photo-action-button image { opacity: 1; }
+.photo-actions-popover > contents { background: @pic_background_color; padding: 0; }
+.photo-actions-menu .photo-actions-menu-row button.photo-action-button,
+.photo-actions-menu .photo-actions-menu-row menubutton > button {
+    color: @pic_text_color;
+    background: transparent;
+    background-image: none;
+    border: none;
+    box-shadow: none;
+}
+.photo-actions-menu .photo-actions-menu-row button.photo-action-button:hover,
+.photo-actions-menu .photo-actions-menu-row menubutton > button:hover {
+    color: @pic_text_color;
+    background: @pic_background_hover;
+}
+.photo-actions-menu .photo-actions-menu-row button.photo-action-button:checked {
+    color: @pic_button_text;
+    background: @pic_button_selected;
+}
+.photo-context-menu button { color: @pic_text_color; border: none; border-radius: 0; box-shadow: none; }
+.photo-context-menu button:hover,
+.photo-context-menu .photo-context-item:hover,
+.photo-context-menu .photo-context-submenu > button:hover,
+.album-context-menu button:hover,
+.pic-folder-context-menu button.folder-context-action:hover,
+.sidebar-section-tooltip-menu button.sidebar-section-tooltip-item:hover {
+    background: @pic_menu_hover;
+    background-color: @pic_menu_hover;
+    color: @pic_button_text;
+}
+.settings-window headerbar {
+    background-color: @pic_bar_color;
+    background-image: none;
+    color: @pic_bar_text;
+}
+.settings-window headerbar label { color: @pic_bar_text; }
+.settings-window .heading, .settings-window .title-1, .settings-window .title-2,
+.settings-window .title-3, .settings-window .title-4 { color: @pic_text_color; }
+.settings-window .dim-label { color: @pic_text_muted; opacity: 1; }
+.scroll-scrub-date {
+    padding: 7px 12px;
+    background: @pic_background_color;
+    color: @pic_text_color;
+    border-radius: 0;
+    box-shadow: none;
+}
+
+/* ---- Status and media badges ---- */
+.offline-badge, .sidebar-offline-badge {
+    color: #191207;
+    background: #f1bc72;
+    border-radius: 0;
+}
+.favorite-btn.active, .favorite-btn.active image, .favorite-badge { color: #f1bc72; }
+.edited-badge { color: @pic_text_muted; }
+
+/* ---- Album cards ---- */
+.albums-home-grid > flowboxchild { padding: 0; margin: 0; min-height: 0; }
+button.album-card {
+    min-width: 0;
+    padding: 0;
+    margin: 0;
+    background: transparent;
+    background-image: none;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+}
+button.album-card:hover, button.album-card:active {
+    background: transparent;
+    background-image: none;
+    border: none;
+    box-shadow: none;
+}
+button.album-card:focus-visible { outline: 2px solid alpha(@pic_focus, 0.85); outline-offset: 2px; }
+
+/* ---- Terminal finish ---- */
+window, .settings-window, dialog, popover, tooltip {
+    font-family: monospace;
+}
+.layout-left-header, .layout-right-header, .photo-info-bar,
+.edit-mode-toolbar, .settings-window headerbar {
+    border-bottom: 1px solid @pic_background_border;
+}
+.layout-left-column { border-right: 1px solid @pic_background_border; }
+.navigation-sidebar row:selected,
+.navigation-sidebar row.sidebar-scroll-location {
+    color: @pic_bar_text;
+    border-left: 2px solid @pic_button_color;
+}
+.navigation-sidebar row:selected image,
+.navigation-sidebar row.sidebar-scroll-location image { color: @pic_bar_text; }
+.search-field, .edit-panel-pages entry, .collage-editor-paned entry,
+.settings-window entry, dialog entry, spinbutton {
+    border: 1px solid @pic_background_border;
+}
+.search-field:focus-within, .edit-panel-pages entry:focus-within,
+.collage-editor-paned entry:focus-within, .settings-window entry:focus-within,
+dialog entry:focus-within, spinbutton:focus-within { border-color: @pic_focus; }
+.photo-tile { border: 1px solid @pic_background_border; }
+.photo-tile:hover { border-color: @pic_focus; }
+.folder-photo-selected.photo-tile,
+gridview.section-grid > child:selected .photo-tile,
+gridview.section-grid > item:selected .photo-tile { border: 2px solid @pic_button_color; }
+.crop-aspect-button, .crop-orientation-row button,
+.crop-action-row button.crop-apply-button, .crop-action-row button.crop-reset-button,
+.collage-layout-tile, .collage-tabs > button, .collage-compact-choice,
+.edit-fit-row button, .overlay-anchor-row button, .quick-fix-row button,
+button.clear-action-button, .collage-footer button,
+.edit-panel-pages button.pill, dropdown > button, combobox button,
+button.suggested-action, button.destructive-action {
+    border: 1px solid @pic_background_border;
+}
+button.suggested-action, button.crop-apply-button,
+.edit-mode-toolbar .edit-toolbar-actions button.edit-toolbar-done,
+.collage-footer button.suggested-action,
+.collage-footer button.collage-create-button,
+.collage-footer > button:last-child { border-color: @pic_button_color; }
+.crop-aspect-button:hover, .crop-orientation-row button:hover,
+.collage-layout-tile:hover, .collage-tabs > button:hover,
+.collage-compact-choice:hover, .edit-fit-row button:hover,
+.overlay-anchor-row button:hover, .quick-fix-row button:hover,
+button.clear-action-button:hover, .collage-footer button:hover,
+dropdown > button:hover, combobox button:hover {
+    background-color: @pic_background_hover;
+}
+.crop-aspect-button:checked, .crop-orientation-row button:checked,
+.collage-layout-tile:checked, .collage-tabs > button:checked,
+.collage-compact-choice:checked, .collage-compact-choice.active,
+.collage-compact-choice.selected, .edit-fit-row button:checked,
+.edit-fit-row button.active, .overlay-anchor-row button:checked,
+.quick-fix-row button:checked, .one-to-one-btn:checked,
+.photo-action-button:checked, .collage-footer button:checked {
+    color: @pic_bar_text;
+    border-color: @pic_button_color;
+}
+.crop-aspect-button:checked:hover, .crop-orientation-row button:checked:hover,
+.collage-layout-tile:checked:hover, .collage-tabs > button:checked:hover,
+.collage-compact-choice:checked:hover, .edit-fit-row button:checked:hover,
+.overlay-anchor-row button:checked:hover, .quick-fix-row button:checked:hover,
+.one-to-one-btn:checked:hover, .photo-action-button:checked:hover {
+    background-color: @pic_background_selected_hover;
+}
+.photo-info-bar .photo-action-button:checked,
+.edit-mode-toolbar .edit-panel-tabs > button.flat:checked,
+.edit-mode-toolbar .edit-panel-tabs > button.flat:checked:hover {
+    color: @pic_bar_text;
+}
+.scale slider, scale slider, switch slider { background-color: @pic_button_color; }
+scale slider:hover { background-color: @pic_button_primary_hover; }
+scale slider:active { background-color: @pic_button_selected; }
+.photo-context-menu, popover > contents,
+.album-context-menu > contents, .pic-folder-context-menu > contents,
+.sidebar-section-tooltip-menu > contents,
+.photo-actions-popover > contents { border: 1px solid @pic_background_border; }

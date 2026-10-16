@@ -1,13 +1,19 @@
 # PIC GUI test report
 
-- Overall: **INCOMPLETE**
-- Commit: `9e85469ca620fbcfe8e80710d104f9ad66a76605`
+- Overall: **COMPLETE**
+- Commit under test: `aec9f2b` (the tested source tree matches this commit)
 - Display: Xvfb `:2` (1600×1000×24), GTK backend X11, Cairo renderer
 - Application binary: `/home/peet/PIC/target/release/pic-rs`
-- Artifact directory: `reports/gui-tests/20261016T045227Z-14560`
+- Artifact directory: `reports/gui-tests/20261016T050224Z-33159`
 - PIC process: exited during cleanup
-- Counts: 36 PASS, 2 FAIL, 0 BLOCKED, 0 NOT TESTED
+- Counts: 38 PASS, 0 FAIL, 0 BLOCKED, 0 NOT TESTED
 - Data/config: generated test photos and isolated XDG directories under this run directory
+
+## Regression fixes verified
+
+- **Edit Undo/Redo:** slider drags changed the recipe while the Undo toolbar remained disabled until the pointer-release callback. The edit session now treats a changed active slider action as undoable, and refreshes the history controls while slider values change. Single and multiple tool Undo/Redo GUI sequences returned to the expected rendered pixels (all measured center-pixel deltas: 0). The original generated photo SHA-256 remained unchanged after save/reopen.
+- **Collage preview/export:** preview sized a photo frame to a fitted rectangle and positioned it inside a `GtkFixed`; the allocated preview did not honor that offset consistently, while export centered the fitted pixels. Preview and export now use centered aspect-fit geometry on the full tile, with a shared resolution-independent fit calculation. The two normalized photo geometry comparisons had a maximum error of `0.0118` (under the `0.02` tolerance) at a 683×683 normalized canvas; export was a valid, nonblank 3840×3840 JPEG.
+- The GUI harness now rebuilds the default release binary before testing, preventing stale `target/release/pic-rs` from being mistaken for the current source. An explicit `PIC_GUI_APP` still selects a caller-provided binary.
 
 ## Test matrix
 
@@ -32,7 +38,7 @@
 | Gallery right-click opens photo context menu | Right-click the photo and capture the open context menu | Right-click displays photo actions | Context menu visible; screenshot=09-photo-context-menu.png | PASS |
 | Photo editor opens | Choose Edit Photo and verify editor controls and source-image canvas | Edit Photo action opens the selected image and adjustment controls | PIC window title='PIC'; editor split-divider pixels=700; source image bounds=(779, 317, 1502, 739); screenshot=10-photo-editor.png | PASS |
 | Editor exposure adjustment | Move the Exposure slider and compare rendered image pixels | Exposure interaction changes preview pixels | preview center RGB delta=203; screenshot=11-editor-exposure-adjusted.png | PASS |
-| Editor Undo/Redo sequences | Undo and redo single and multiple adjustment tool changes and compare rendered pixels | Single and multiple tool edits undo and redo independently in order | single undo delta=203, single redo delta=0; contrast undo delta=46, exposure undo delta=209, two-step redo delta=0; sequence_errors=['Timed out waiting for Undo to restore the baseline preview', 'Timed out waiting for first Undo to remove only Contrast', 'Timed out waiting for second Undo to remove Exposure']; screenshots=11a-editor-undo.png, 11a-editor-redo.png, 11a-editor-multiple-adjustments.png, 11a-editor-undo-contrast.png, 11a-editor-undo-exposure.png, 11a-editor-redo-multiple.png | FAIL |
+| Editor Undo/Redo sequences | Undo and redo single and multiple adjustment tool changes and compare rendered pixels | Single and multiple tool edits undo and redo independently in order | single undo delta=0, single redo delta=0; contrast undo delta=0, exposure undo delta=0, two-step redo delta=0; sequence_errors=[]; screenshots=11a-editor-undo.png, 11a-editor-redo.png, 11a-editor-multiple-adjustments.png, 11a-editor-undo-contrast.png, 11a-editor-undo-exposure.png, 11a-editor-redo-multiple.png | PASS |
 | Editor Reset | Change Exposure, click Reset, and compare preview pixels with the original render | Reset all edits restores the original rendered pixels | preview center RGB delta from original=0; screenshot=11b-editor-reset.png | PASS |
 | Editor filters panel | Click Filters and capture the resulting controls | Filters tab displays filter controls | Filters screenshot=12-editor-filters.png | PASS |
 | Editor save, reopen data and original safety | Save a nonzero recipe, query SQLite, and compare source SHA-256 | Done persists nonzero edits in the catalog while preserving the source file | saved recipe='v=1/crop=0.00000,0.00000,1.00000,1.00000/straighten=0.0000/exposure=0.9221/contrast=0.0000/fill=0.0000/highlights=0.0000'; original SHA-256 unchanged=True; screenshot=13-gallery-after-editor.png | PASS |
@@ -43,11 +49,11 @@
 | Collage export options | Click Create Collage and inspect the export settings dialog | Export options are shown before choosing a destination | Options dialog screenshot=16a-collage-export-options.png | PASS |
 | Collage export destination chooser | Click Export and choose the temporary output path | Save chooser accepts an isolated output path | Save chooser screenshot=16b-collage-export-destination.png | PASS |
 | Collage export image validation | Open the saved image and verify format, dimensions, and pixel variance | Exported image opens, is nonblank, and has expected dimensions | rc6-collage.jpg: JPEG (3840, 3840), expected (3840, 3840) | PASS |
-| Collage preview/export consistency | Compare normalized preview canvas pixels with exported pixels | Each photo has matching normalized x/y position and width/height | normalized max geometry error=0.3103953147877013; preview boxes=[(1, 0, 481, 280), (1, 288, 264, 683)]; export boxes=[(107, 8, 575, 281), (213, 290, 470, 675)]; canvas=(683, 683); screenshots=16-collage-preview.png, export=rc6-collage.jpg | FAIL |
+| Collage preview/export consistency | Compare normalized preview canvas pixels with exported pixels | Each photo has matching normalized x/y position and width/height | normalized max geometry error=0.01171303074670571; preview boxes=[(102, 0, 583, 280), (0, 0, 683, 683)]; export boxes=[(107, 8, 575, 281), (0, 0, 683, 683)]; canvas=(683, 683); screenshots=16-collage-preview.png, export=rc6-collage.jpg | PASS |
 | Collage Exit action | Exit the collage editor and verify gallery return | Exit returns from collage editor to gallery | Post-collage screenshot=17-gallery-after-collage.png | PASS |
 | Gallery layout control interaction | Open the layout control and capture its changed state | Layout button visibly changes gallery layout or presents layout choices | Layout control response screenshot=19-gallery-layout-control.png | PASS |
 | Screensaver setup | Open style controls and start playback through the GUI | Play control opens screensaver style settings | Setup controls shown; screenshot=20-screensaver-setup.png | PASS |
-| Screensaver window and fullscreen geometry | Query the visible screensaver X11 window geometry | Screensaver window is visible and covers the X11 display | window=4195132; geometry=1600x1000; screenshot=21-screensaver-running.png; wm=Openbox | PASS |
+| Screensaver window and fullscreen geometry | Query the visible screensaver X11 window geometry | Screensaver window is visible and covers the X11 display | window=4195104; geometry=1600x1000; screenshot=21-screensaver-running.png; wm=Openbox | PASS |
 | Screensaver photo playback and transition | Capture the slideshow before and after its configured interval | A different generated image appears after the configured interval | Transition screenshot=21a-screensaver-transition.png | PASS |
 | Screensaver keyboard exit | Press Escape and capture return to the main window | Escape exits screensaver and returns to PIC | Returned to PIC; screenshot=22-screensaver-keyboard-exit.png | PASS |
 | Screensaver mouse exit | Restart playback, move/click the mouse, and verify dismissal | Mouse input exits screensaver and returns to PIC | Mouse input dismissed fullscreen screensaver and returned to PIC; setup=23-screensaver-setup-again.png; screenshot=24-screensaver-mouse-exit.png | PASS |
@@ -68,12 +74,3 @@ GTK/resource/startup scan: no matched critical errors
 - Screensaver fullscreen assertions used X11 window manager: `Openbox`; geometry and transitions are measured only when its test cases pass.
 - Original-file mutation is checked by SHA-256 against generated fixture photos; RAW decoding and external-device behavior were not tested.
 - The isolated session reports portal backend and PipeWire availability warnings in `harness.log`; these did not block the exercised views.
-
-## Confirmed PIC behavior defects (not fixed)
-
-These failures were exercised through the GUI against generated photos in the isolated test library. No application code or production library was modified.
-
-- **Editor Undo/Redo sequences:** single undo delta=203, single redo delta=0; contrast undo delta=46, exposure undo delta=209, two-step redo delta=0; sequence_errors=['Timed out waiting for Undo to restore the baseline preview', 'Timed out waiting for first Undo to remove only Contrast', 'Timed out waiting for second Undo to remove Exposure']; screenshots=11a-editor-undo.png, 11a-editor-redo.png, 11a-editor-multiple-adjustments.png, 11a-editor-undo-contrast.png, 11a-editor-undo-exposure.png, 11a-editor-redo-multiple.png
-  Reproduction: change Exposure or Contrast, then click Undo; the affected recipe and preview did not revert. See the `11a-editor-*` screenshots and `screenshots/11b-editor-reset.png`.
-- **Collage preview/export consistency:** normalized max geometry error=0.3103953147877013; preview boxes=[(1, 0, 481, 280), (1, 288, 264, 683)]; export boxes=[(107, 8, 575, 281), (213, 290, 470, 675)]; canvas=(683, 683); screenshots=16-collage-preview.png, export=rc6-collage.jpg
-  Reproduction: export the Smart AI square collage; normalized photo content bounding boxes differed between the preview and JPEG export. See `screenshots/16-collage-preview.png` and `exports/rc6-collage.jpg`.

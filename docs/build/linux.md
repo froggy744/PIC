@@ -1,4 +1,9 @@
-# PIC on Linux
+# PIC V1 on Linux
+
+For published V1 downloads, use [GitHub Releases](https://github.com/froggy744/PIC/releases). The instructions below also cover building from source; build filenames containing `REVISION` are illustrative and must be replaced with the actual artifact name.
+
+**V1 screenshot refresh:** replace the existing screenshots mentioned in the AppStream section with current UI captures before publishing new marketing images. The old filenames remain references until replacement; the planned [creator-kit screenshot list](../creator-kit.md#v1-screenshot-checklist) is not yet a set of existing files.
+
 
 Flatpak is PIC's primary Linux package. It builds against the selected GNOME
 runtime, so the resulting application does not depend on the host distribution's

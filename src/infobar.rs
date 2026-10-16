@@ -412,6 +412,7 @@ impl InfoBar {
         configure_action_button(&overflow);
         overflow.add_css_class("photo-actions-overflow");
         let overflow_popover = gtk::Popover::new();
+        overflow_popover.add_css_class("photo-actions-popover");
         overflow_popover.set_autohide(true);
         // Rate opens a child popover from inside this drawer. Closing that
         // child (after choosing a star or clicking away) must also close the

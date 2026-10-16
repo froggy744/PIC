@@ -115,6 +115,7 @@ fn show_album_context_menu(
     let frame_root = crate::css::resolve_runtime_dir(Path::new(ALBUM_COVER_THEME_DIRECTORY));
     let frames = album_frame_paths_in(&frame_root);
     let popover = gtk::Popover::new();
+    popover.add_css_class("album-context-menu");
     popover.set_autohide(true);
     popover.set_has_arrow(false);
     popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(
@@ -278,6 +279,7 @@ fn show_context_menu(
 ) {
     let appearance = settings::album_appearance(&connection.borrow());
     let popover = gtk::Popover::new();
+    popover.add_css_class("album-context-menu");
     popover.set_autohide(true);
     popover.set_has_arrow(false);
     popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(

@@ -61,9 +61,11 @@ fn build_inner(
     crate::startup_trace::mark("albums_background_rules_done", Some(album_started));
 
     let content = gtk::Box::new(gtk::Orientation::Vertical, 18);
-    content.set_margin_start(32);
-    content.set_margin_end(32);
-    content.set_margin_top(28);
+    // Keep page controls inset while allowing bookshelf art to span the album
+    // index edge to edge.
+    content.set_margin_start(0);
+    content.set_margin_end(0);
+    content.set_margin_top(BOOKSHELF_TOP_INSET);
     content.set_margin_bottom(32);
 
     let style = gtk::CssProvider::new();
@@ -75,6 +77,8 @@ fn build_inner(
     );
 
     let header = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    header.set_margin_start(32);
+    header.set_margin_end(32);
     let heading = gtk::Box::new(gtk::Orientation::Horizontal, 12);
     heading.set_hexpand(true);
 
@@ -127,6 +131,8 @@ fn build_inner(
     cards.set_hexpand(true);
     cards.set_vexpand(false);
     cards.set_valign(gtk::Align::Start);
+    cards.set_margin_start(32);
+    cards.set_margin_end(32);
     cards.add_css_class("albums-home-grid");
 
     let bookshelf_rows = gtk::Box::new(gtk::Orientation::Vertical, 0);
@@ -354,9 +360,8 @@ pub fn refresh_presentation(scrolled: &gtk::ScrolledWindow, connection: &Connect
     } else {
         scrolled.remove_css_class("albums-bookshelf");
     }
-
-    // Folder-backed row themes are rendered by real ShelfRow widgets. Only
-    // older root-level bookshelf images remain page-sized CSS backgrounds.
+    // Keep the selected art repeating behind the scroll viewport. The row
+    // widgets paint the shelves themselves; this fills the top and bottom gaps.
     if let Some(background_class) = bookshelf_background_css_class(appearance) {
         scrolled.add_css_class(&background_class);
     }

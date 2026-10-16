@@ -16,6 +16,10 @@ const DEFAULT_THUMBNAIL_WIDTH: i32 = 136;
 const DEFAULT_THUMBNAIL_HEIGHT: i32 = 91;
 const BOOKSHELF_ROW_HEIGHT: i32 = 288;
 const BOOKSHELF_SURFACE_Y: i32 = 235;
+const BOOKSHELF_TOP_INSET: i32 = 28;
+// The viewport starts above the album header; align its repeated image with
+// the first shelf row so the gap above shows the tail of the previous tile.
+const BOOKSHELF_BACKGROUND_ROW_ORIGIN: i32 = 77;
 const ALBUM_COVER_THEME_DIRECTORY: &str = "images/theme/album-covers";
 const BOOKSHELF_THEME_DIRECTORY: &str = "images/theme/bookshelf";
 const BOOKSHELF_MAX_COLUMNS: usize = 5;
@@ -1210,7 +1214,7 @@ mod tests {
     }
 
     #[test]
-    fn folder_row_themes_do_not_become_page_backgrounds() {
+    fn bookshelf_background_rules_cover_row_and_legacy_themes() {
         let directory = std::env::temp_dir().join(format!(
             "pic-bookshelf-css-{}-{}",
             std::process::id(),
@@ -1230,8 +1234,10 @@ mod tests {
             Some(single.join("row.png"))
         );
         let rules = bookshelf_background_rules(&directory);
-        assert!(!rules.contains(".albums-bookshelf-0 {"));
+        assert!(rules.contains(".albums-bookshelf-0 {"));
         assert!(rules.contains(".albums-bookshelf-1 {"));
+        assert!(rules.contains("background-size: 100% 288px"));
+        assert!(rules.contains("background-position: center 77px"));
         assert!(rules.contains("background-size: 100% auto"));
         assert!(crate::css::ALBUMS.contains(".albums-bookshelf-photo-count"));
         std::fs::remove_dir_all(directory).unwrap();

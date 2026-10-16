@@ -1,4 +1,7 @@
-# PIC community theme template
+# PIC V1 community theme template
+
+This theme-authoring reference applies to the V1 appearance system. For end-user theme selection and previews see [Themes](../THEMES.md); for the public V1 showcase see the [main README](../../README.md). UI screenshots will be added when the current theme designs are photographed.
+
 
 A starting point for building your own PIC appearance theme. Copy the folder,
 rename it, recolor the palette — done.

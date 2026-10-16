@@ -1,0 +1,459 @@
+PIC_STARTUP stage=main_start elapsed_ms=0 duration_ms=0
+PIC_STARTUP stage=adw_init_done elapsed_ms=181 duration_ms=0
+PIC_STARTUP stage=application_created elapsed_ms=182 duration_ms=0
+PIC_STARTUP stage=application_run_call elapsed_ms=182 duration_ms=0
+PIC_STARTUP stage=activation_start elapsed_ms=188 duration_ms=0
+PIC_STARTUP stage=library_manager_done elapsed_ms=188 duration_ms=0
+PIC_STARTUP stage=database_open_done elapsed_ms=196 duration_ms=8
+PIC_STARTUP stage=window_build_start elapsed_ms=196 duration_ms=0
+PIC_STARTUP stage=database_photos_sorted elapsed_ms=197 duration_ms=0
+PIC_STARTUP stage=library_counts elapsed_ms=197 duration_ms=0 photos=0 displayed=0 folders=0 albums=0 scan=disabled rss_mb=139
+PIC_NAV gallery_replace photos=0
+PIC_STARTUP stage=gallery_widgets_done elapsed_ms=200 duration_ms=0
+PIC_STARTUP stage=gallery_configured elapsed_ms=200 duration_ms=4
+PIC_STARTUP stage=actions_configured elapsed_ms=200 duration_ms=4
+PIC_STARTUP stage=grid_scroll_attached elapsed_ms=200 duration_ms=4
+PIC_STARTUP stage=scroll_callbacks_connected elapsed_ms=200 duration_ms=4
+PIC_STARTUP stage=initial_layout_restored elapsed_ms=200 duration_ms=4
+PIC_STARTUP stage=albums_widgets_start elapsed_ms=200 duration_ms=0
+PIC_STARTUP stage=albums_build_enter elapsed_ms=201 duration_ms=0
+PIC_STARTUP stage=albums_background_rules_done elapsed_ms=201 duration_ms=0
+PIC_STARTUP stage=albums_populate_done elapsed_ms=203 duration_ms=2
+PIC_STARTUP stage=albums_widgets_done elapsed_ms=203 duration_ms=2
+PIC_STARTUP stage=library_home_widgets_done elapsed_ms=204 duration_ms=8
+PIC_STARTUP stage=sidebar_widgets_done elapsed_ms=206 duration_ms=1
+PIC_STARTUP stage=layout_widgets_done elapsed_ms=213 duration_ms=8
+PIC_STARTUP stage=widget_content_and_signals_done elapsed_ms=214 duration_ms=18
+PIC_STARTUP stage=window_build_done elapsed_ms=217 duration_ms=20
+PIC_STARTUP stage=window_present_call elapsed_ms=217 duration_ms=28
+PIC_STARTUP stage=window_map elapsed_ms=245 duration_ms=28
+PIC_STARTUP stage=window_present_return elapsed_ms=245 duration_ms=28
+PIC_STARTUP stage=first_frame_tick elapsed_ms=247 duration_ms=1
+PIC_STARTUP stage=first_after_paint elapsed_ms=267 duration_ms=22
+PIC_NAV current_columns_changed old=5 new=4
+PIC_ZOOM layout mode=grid action=columns_changed old_columns=5 columns=4 width=1390 elapsed_us=26
+PIC_NAV current_columns_changed old=4 new=3
+PIC_ZOOM layout mode=grid action=columns_changed old_columns=4 columns=3 width=1148 elapsed_us=37
+PIC_STARTUP stage=gallery_population_start elapsed_ms=300 duration_ms=0
+PIC_NAV gallery_replace photos=0
+PIC_STARTUP stage=gallery_population_scheduled elapsed_ms=300 duration_ms=0
+PIC_STARTUP stage=gallery_population_restored elapsed_ms=321 duration_ms=21
+PIC_STARTUP stage=main_start elapsed_ms=0 duration_ms=0
+PIC_STARTUP stage=adw_init_done elapsed_ms=71 duration_ms=0
+PIC_STARTUP stage=application_created elapsed_ms=72 duration_ms=0
+PIC_STARTUP stage=application_run_call elapsed_ms=72 duration_ms=0
+PIC_STARTUP stage=activation_start elapsed_ms=78 duration_ms=0
+PIC_STARTUP stage=library_manager_done elapsed_ms=78 duration_ms=0
+PIC_STARTUP stage=database_open_done elapsed_ms=79 duration_ms=0
+PIC_STARTUP stage=window_build_start elapsed_ms=79 duration_ms=0
+PIC_STARTUP stage=database_photos_sorted elapsed_ms=80 duration_ms=1
+PIC_STARTUP stage=library_counts elapsed_ms=80 duration_ms=0 photos=15 displayed=15 folders=1 albums=0 scan=disabled rss_mb=117
+PIC_NAV gallery_replace photos=0
+PIC_STARTUP stage=gallery_widgets_done elapsed_ms=83 duration_ms=0
+PIC_STARTUP stage=gallery_configured elapsed_ms=83 duration_ms=4
+PIC_STARTUP stage=actions_configured elapsed_ms=84 duration_ms=5
+PIC_STARTUP stage=grid_scroll_attached elapsed_ms=84 duration_ms=5
+PIC_STARTUP stage=scroll_callbacks_connected elapsed_ms=84 duration_ms=5
+PIC_STARTUP stage=initial_layout_restored elapsed_ms=84 duration_ms=5
+PIC_STARTUP stage=albums_widgets_start elapsed_ms=84 duration_ms=0
+PIC_STARTUP stage=albums_build_enter elapsed_ms=84 duration_ms=0
+PIC_STARTUP stage=albums_background_rules_done elapsed_ms=84 duration_ms=0
+PIC_STARTUP stage=albums_populate_done elapsed_ms=87 duration_ms=2
+PIC_STARTUP stage=albums_widgets_done elapsed_ms=87 duration_ms=2
+PIC_STARTUP stage=library_home_widgets_done elapsed_ms=89 duration_ms=10
+PIC_NAV folder_order_changed old_count=0 new_count=1
+PIC_STARTUP stage=sidebar_widgets_done elapsed_ms=91 duration_ms=1
+PIC_STARTUP stage=layout_widgets_done elapsed_ms=98 duration_ms=9
+PIC_STARTUP stage=widget_content_and_signals_done elapsed_ms=100 duration_ms=21
+PIC_STARTUP stage=window_build_done elapsed_ms=102 duration_ms=23
+PIC_STARTUP stage=window_present_call elapsed_ms=102 duration_ms=24
+PIC_THUMBNAIL cache_lookup result=miss elapsed_us=16 uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/landscape.jpg
+PIC_THUMBNAIL cache_lookup result=miss elapsed_us=8 uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/portrait.jpg
+PIC_THUMBNAIL cache_lookup result=miss elapsed_us=10 uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/sample-00.jpg
+PIC_THUMBNAIL cache_lookup result=miss elapsed_us=7 uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/sample-01.jpg
+PIC_THUMBNAIL cache_lookup result=miss elapsed_us=10 uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/sample-02.jpg
+PIC_THUMBNAIL cache_lookup result=miss elapsed_us=8 uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/sample-03.jpg
+PIC_THUMBNAIL cache_lookup result=miss elapsed_us=7 uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/sample-04.jpg
+PIC_THUMBNAIL cache_lookup result=miss elapsed_us=7 uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/sample-05.jpg
+PIC_THUMBNAIL cache_lookup result=miss elapsed_us=7 uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/sample-06.jpg
+PIC_THUMBNAIL cache_lookup result=miss elapsed_us=7 uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/sample-07.jpg
+PIC_THUMBNAIL cache_lookup result=miss elapsed_us=8 uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/sample-08.jpg
+PIC_THUMBNAIL cache_lookup result=miss elapsed_us=7 uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/sample-09.jpg
+PIC_THUMBNAIL cache_lookup result=miss elapsed_us=7 uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/sample-10.jpg
+PIC_THUMBNAIL cache_lookup result=miss elapsed_us=7 uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/sample-11.jpg
+PIC_THUMBNAIL cache_lookup result=miss elapsed_us=7 uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/square.png
+PIC_THUMBNAIL bulk_start cancellable=true items=15 workers=8
+COLOR TRACE jpeg_icc path=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/sample-11.jpg status=none assume=sRGB
+COLOR TRACE jpeg_icc path=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/landscape.jpg status=none assume=sRGB
+COLOR TRACE jpeg_icc path=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/sample-01.jpg status=none assume=sRGB
+COLOR TRACE jpeg_icc path=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/sample-05.jpg status=none assume=sRGB
+COLOR TRACE jpeg_icc path=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/portrait.jpg status=none assume=sRGB
+COLOR TRACE jpeg_icc path=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/sample-07.jpg status=none assume=sRGB
+COLOR TRACE jpeg_icc path=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/sample-09.jpg status=none assume=sRGB
+COLOR TRACE jpeg_icc path=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/sample-00.jpg status=none assume=sRGB
+PIC_THUMBNAIL cache_write uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/landscape.jpg cache=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/xdg/cache/pic-rs/thumbs/files/y/339abd3fa38d4cba379619e9e5ecba7ecd1259836fc719fe5e2165a18e9d452a.jpg elapsed_ms=3
+PIC_THUMBNAIL cache_write uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/sample-11.jpg cache=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/xdg/cache/pic-rs/thumbs/files/n/a2a7631352d9502d5201a9080057ca576aeb5021e3406afe49f84db88883771f.jpg elapsed_ms=3
+COLOR TRACE jpeg_icc path=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/sample-08.jpg status=none assume=sRGB
+PIC_THUMBNAIL cache_write uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/sample-01.jpg cache=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/xdg/cache/pic-rs/thumbs/files/f/6f4b792b1658fce266f9ee3b5a98fffe5f800a6642b5f44437935dedb9aa4be1.jpg elapsed_ms=4
+PIC_THUMBNAIL cache_write uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/portrait.jpg cache=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/xdg/cache/pic-rs/thumbs/files/o/4590c71abaeea399210df0386d4250bb410e9a6c8ca28494f46779812f11ecff.jpg elapsed_ms=5
+PIC_THUMBNAIL cache_write uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/sample-09.jpg cache=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/xdg/cache/pic-rs/thumbs/files/r/d1c78be5161b2ecb7786692dd4f44883e31041a167ad4e5b142f38ea50bdafc2.jpg elapsed_ms=5
+PIC_THUMBNAIL cache_write uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/sample-00.jpg cache=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/xdg/cache/pic-rs/thumbs/files/4/bb0c2716a695db912e9e6b51690b662192a476cb5deddcd992865a2d66a21353.jpg elapsed_ms=5
+PIC_THUMBNAIL cache_write uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/sample-07.jpg cache=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/xdg/cache/pic-rs/thumbs/files/3/daafc62066ffdf742f8d649c82eac5d69416cc4138d5e6a9e0d84736a81cc2f7.jpg elapsed_ms=5
+PIC_THUMBNAIL cache_write uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/sample-05.jpg cache=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/xdg/cache/pic-rs/thumbs/files/2/6bba18e8d85148c1e9d5e1d62df823d2c234f2c558bdbdbdaa541c8a00a99f95.jpg elapsed_ms=5
+COLOR TRACE jpeg_icc path=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/sample-02.jpg status=none assume=sRGB
+COLOR TRACE jpeg_icc path=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/sample-06.jpg status=none assume=sRGB
+COLOR TRACE jpeg_icc path=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/sample-04.jpg status=none assume=sRGB
+COLOR TRACE jpeg_icc path=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/sample-10.jpg status=none assume=sRGB
+COLOR TRACE jpeg_icc path=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/sample-03.jpg status=none assume=sRGB
+PIC_THUMBNAIL cache_write uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/sample-08.jpg cache=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/xdg/cache/pic-rs/thumbs/files/b/f42bc0d2c391a51be1f3bb8f42147eea246835b8eec9138e199c25fced158dbf.jpg elapsed_ms=2
+PIC_THUMBNAIL cache_write uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/sample-04.jpg cache=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/xdg/cache/pic-rs/thumbs/files/9/de156d8872e65c8128beb0b65536b74bedf790b0acb8d8e9ea484db472a0b5eb.jpg elapsed_ms=2
+PIC_THUMBNAIL cache_write uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/sample-02.jpg cache=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/xdg/cache/pic-rs/thumbs/files/b/1f676461278050f6fb19d8968f8c0bd6368f6094b42bd8905e047aff393d315f.jpg elapsed_ms=3
+PIC_THUMBNAIL cache_write uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/sample-10.jpg cache=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/xdg/cache/pic-rs/thumbs/files/r/312fa91f60bad2ba54e534d416a662ab550f4a6807bd31cf1acf0295def46f5e.jpg elapsed_ms=2
+PIC_THUMBNAIL cache_write uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/sample-06.jpg cache=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/xdg/cache/pic-rs/thumbs/files/w/45e06443446b87a4dbeb4049931bada4895943074b4e296d76e430b32059acc4.jpg elapsed_ms=3
+PIC_THUMBNAIL cache_write uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/sample-03.jpg cache=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/xdg/cache/pic-rs/thumbs/files/j/c9737bd95575862a485e64414888e135fb50697de88c2ac9f8bac4c21b984c09.jpg elapsed_ms=3
+PIC_THUMBNAIL cache_write uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/square.png cache=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/xdg/cache/pic-rs/thumbs/files/v/bb276c01e34612d91b24315e1ea826afd05eb3febfe16d112d41708e1356dbdf.jpg elapsed_ms=4
+PIC_STARTUP stage=window_map elapsed_ms=132 duration_ms=29
+PIC_STARTUP stage=window_present_return elapsed_ms=132 duration_ms=30
+PIC_STARTUP stage=first_frame_tick elapsed_ms=134 duration_ms=1
+PIC_STARTUP stage=first_after_paint elapsed_ms=153 duration_ms=20
+PIC_SCAN_UI thumbnails_started queued_ms=51 total=15
+===== SCAN COMPLETE: imported=0 failed=0 | progressive gallery updates complete =====
+PIC_THUMBNAIL tile_refresh count=15
+PIC_NAV thumbnail_refresh_paths count=15
+PIC_NAV current_columns_changed old=5 new=4
+PIC_ZOOM layout mode=grid action=columns_changed old_columns=5 columns=4 width=1390 elapsed_us=25
+PIC_NAV current_columns_changed old=4 new=3
+PIC_ZOOM layout mode=grid action=columns_changed old_columns=4 columns=3 width=1148 elapsed_us=40
+PIC_STARTUP stage=gallery_population_start elapsed_ms=187 duration_ms=0
+PIC_NAV gallery_replace photos=15
+PIC_THUMBNAIL gtk_bind elapsed_us=248 id=1
+PIC_THUMBNAIL gtk_bind elapsed_us=16 id=2
+PIC_THUMBNAIL gtk_bind elapsed_us=13 id=3
+PIC_THUMBNAIL gtk_bind elapsed_us=12 id=4
+PIC_THUMBNAIL gtk_bind elapsed_us=12 id=5
+PIC_THUMBNAIL gtk_bind elapsed_us=13 id=6
+PIC_THUMBNAIL gtk_bind elapsed_us=12 id=7
+PIC_THUMBNAIL gtk_bind elapsed_us=12 id=8
+PIC_THUMBNAIL gtk_bind elapsed_us=12 id=9
+PIC_THUMBNAIL gtk_bind elapsed_us=13 id=10
+PIC_THUMBNAIL gtk_bind elapsed_us=12 id=11
+PIC_THUMBNAIL gtk_bind elapsed_us=12 id=12
+PIC_THUMBNAIL gtk_bind elapsed_us=17 id=13
+PIC_THUMBNAIL gtk_bind elapsed_us=11 id=14
+PIC_THUMBNAIL gtk_bind elapsed_us=12 id=15
+PIC_STARTUP stage=gallery_population_scheduled elapsed_ms=193 duration_ms=5
+PIC_ZOOM_TRACE pointer_enter x=493.0 y=398.0
+PIC_THUMBNAIL paintable_assign elapsed_us=11
+PIC_THUMBNAIL paintable_assign elapsed_us=8
+PIC_THUMBNAIL paintable_assign elapsed_us=11
+PIC_THUMBNAIL paintable_assign elapsed_us=6
+PIC_THUMBNAIL paintable_assign elapsed_us=6
+PIC_THUMBNAIL paintable_assign elapsed_us=6
+PIC_THUMBNAIL paintable_assign elapsed_us=7
+PIC_THUMBNAIL paintable_assign elapsed_us=6
+PIC_THUMBNAIL paintable_assign elapsed_us=6
+PIC_THUMBNAIL paintable_assign elapsed_us=6
+PIC_THUMBNAIL paintable_assign elapsed_us=8
+PIC_THUMBNAIL paintable_assign elapsed_us=7
+PIC_THUMBNAIL paintable_assign elapsed_us=7
+PIC_THUMBNAIL paintable_assign elapsed_us=6
+PIC_THUMBNAIL paintable_assign elapsed_us=7
+PIC_STARTUP stage=gallery_population_restored elapsed_ms=236 duration_ms=48
+UI TRACE photo_rating_shortcut ids=1 rating=3
+UI TRACE photo_rating_shortcut ids=1 rating=5
+PIC_ZOOM_TRACE pointer_leave
+PIC_NAV folder_cache_restore result=reject reason=no_cached_rows
+PIC_FOLDER_SECTIONED enabled mode=flat_photo_virtualized
+PIC_NAV gallery_replace photos=15
+PIC_SCAN_UI gallery_replace filter=Folder(1) generation=2 photos=15 elapsed_ms=0
+PIC_NAV folder_target_schedule folder_id=1 center=false generation=2
+PIC_SECTIONED_JUMP index=0 target_y=0.0 animated=false
+PIC_NAV gallery_replace photos=1
+PIC_THUMBNAIL paintable_assign elapsed_us=6
+PIC_THUMBNAIL gtk_bind elapsed_us=56 id=1
+PIC_SCAN_UI gallery_replace filter=Folder(1) generation=3 photos=1 elapsed_ms=2
+PIC_NAV folder_target_schedule folder_id=1 center=false generation=3
+PIC_SECTIONED_JUMP index=0 target_y=0.0 animated=false
+PIC_NAV gallery_replace photos=15
+PIC_THUMBNAIL paintable_assign elapsed_us=7
+PIC_THUMBNAIL gtk_bind elapsed_us=59 id=1
+PIC_THUMBNAIL paintable_assign elapsed_us=4
+PIC_THUMBNAIL gtk_bind elapsed_us=42 id=2
+PIC_THUMBNAIL paintable_assign elapsed_us=4
+PIC_THUMBNAIL gtk_bind elapsed_us=27 id=3
+PIC_THUMBNAIL paintable_assign elapsed_us=4
+PIC_THUMBNAIL gtk_bind elapsed_us=27 id=4
+PIC_THUMBNAIL paintable_assign elapsed_us=4
+PIC_THUMBNAIL gtk_bind elapsed_us=26 id=5
+PIC_THUMBNAIL paintable_assign elapsed_us=4
+PIC_THUMBNAIL gtk_bind elapsed_us=26 id=6
+PIC_THUMBNAIL paintable_assign elapsed_us=4
+PIC_THUMBNAIL gtk_bind elapsed_us=26 id=7
+PIC_THUMBNAIL paintable_assign elapsed_us=4
+PIC_THUMBNAIL gtk_bind elapsed_us=25 id=8
+PIC_THUMBNAIL paintable_assign elapsed_us=4
+PIC_THUMBNAIL gtk_bind elapsed_us=24 id=9
+PIC_THUMBNAIL paintable_assign elapsed_us=4
+PIC_THUMBNAIL gtk_bind elapsed_us=25 id=10
+PIC_THUMBNAIL paintable_assign elapsed_us=4
+PIC_THUMBNAIL gtk_bind elapsed_us=25 id=11
+PIC_THUMBNAIL paintable_assign elapsed_us=4
+PIC_THUMBNAIL gtk_bind elapsed_us=23 id=12
+PIC_THUMBNAIL paintable_assign elapsed_us=3
+PIC_THUMBNAIL gtk_bind elapsed_us=23 id=13
+PIC_THUMBNAIL paintable_assign elapsed_us=4
+PIC_THUMBNAIL gtk_bind elapsed_us=29 id=14
+PIC_THUMBNAIL paintable_assign elapsed_us=3
+PIC_THUMBNAIL gtk_bind elapsed_us=23 id=15
+PIC_SCAN_UI gallery_replace filter=Folder(1) generation=4 photos=15 elapsed_ms=6
+PIC_NAV folder_target_schedule folder_id=1 center=false generation=4
+PIC_SECTIONED_JUMP index=0 target_y=0.0 animated=false
+PIC_NAV gallery_replace photos=2
+PIC_THUMBNAIL paintable_assign elapsed_us=7
+PIC_THUMBNAIL gtk_bind elapsed_us=58 id=1
+PIC_THUMBNAIL paintable_assign elapsed_us=4
+PIC_THUMBNAIL gtk_bind elapsed_us=40 id=2
+PIC_SCAN_UI gallery_replace filter=Folder(1) generation=5 photos=2 elapsed_ms=2
+PIC_NAV folder_target_schedule folder_id=1 center=false generation=5
+PIC_SECTIONED_JUMP index=0 target_y=0.0 animated=false
+PIC_NAV gallery_replace photos=15
+PIC_THUMBNAIL paintable_assign elapsed_us=6
+PIC_THUMBNAIL gtk_bind elapsed_us=52 id=1
+PIC_THUMBNAIL paintable_assign elapsed_us=5
+PIC_THUMBNAIL gtk_bind elapsed_us=44 id=2
+PIC_THUMBNAIL paintable_assign elapsed_us=4
+PIC_THUMBNAIL gtk_bind elapsed_us=27 id=3
+PIC_THUMBNAIL paintable_assign elapsed_us=4
+PIC_THUMBNAIL gtk_bind elapsed_us=27 id=4
+PIC_THUMBNAIL paintable_assign elapsed_us=4
+PIC_THUMBNAIL gtk_bind elapsed_us=26 id=5
+PIC_THUMBNAIL paintable_assign elapsed_us=4
+PIC_THUMBNAIL gtk_bind elapsed_us=27 id=6
+PIC_THUMBNAIL paintable_assign elapsed_us=4
+PIC_THUMBNAIL gtk_bind elapsed_us=27 id=7
+PIC_THUMBNAIL paintable_assign elapsed_us=4
+PIC_THUMBNAIL gtk_bind elapsed_us=26 id=8
+PIC_THUMBNAIL paintable_assign elapsed_us=4
+PIC_THUMBNAIL gtk_bind elapsed_us=24 id=9
+PIC_THUMBNAIL paintable_assign elapsed_us=4
+PIC_THUMBNAIL gtk_bind elapsed_us=25 id=10
+PIC_THUMBNAIL paintable_assign elapsed_us=4
+PIC_THUMBNAIL gtk_bind elapsed_us=25 id=11
+PIC_THUMBNAIL paintable_assign elapsed_us=3
+PIC_THUMBNAIL gtk_bind elapsed_us=25 id=12
+PIC_THUMBNAIL paintable_assign elapsed_us=3
+PIC_THUMBNAIL gtk_bind elapsed_us=23 id=13
+PIC_THUMBNAIL paintable_assign elapsed_us=3
+PIC_THUMBNAIL gtk_bind elapsed_us=24 id=14
+PIC_THUMBNAIL paintable_assign elapsed_us=4
+PIC_THUMBNAIL gtk_bind elapsed_us=24 id=15
+PIC_SCAN_UI gallery_replace filter=Folder(1) generation=6 photos=15 elapsed_ms=6
+PIC_NAV folder_target_schedule folder_id=1 center=false generation=6
+PIC_SECTIONED_JUMP index=0 target_y=0.0 animated=false
+PIC_THUMBNAIL schedule source=scan raw=false uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/xdg/home/00-import-source/import-only.jpg
+PIC_THUMBNAIL schedule source=scan raw=false uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/xdg/home/00-import-source/import-second.png
+PIC_THUMBNAIL bulk_start cancellable=true items=2 workers=8
+COLOR TRACE jpeg_icc path=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/xdg/home/00-import-source/import-only.jpg status=none assume=sRGB
+PIC_THUMBNAIL cache_write uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/xdg/home/00-import-source/import-only.jpg cache=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/xdg/cache/pic-rs/thumbs/files/i/fe2e07e28614b5630e83352c148e5fe4eaa6c3600d0e7da5921fcd4abfea681d.jpg elapsed_ms=2
+PIC_THUMBNAIL cache_write uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/xdg/home/00-import-source/import-second.png cache=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/xdg/cache/pic-rs/thumbs/files/w/08d82cb356097947bebeff65f0eb6a7d749edd74c0e2bc914c928a2ed10e6acb.jpg elapsed_ms=2
+PIC_SCAN_UI indexing_finished queued_ms=21 imported=2 filter=Folder(1)
+PIC_SCAN_UI thumbnails_started queued_ms=21 total=2
+===== SCAN COMPLETE: imported=2 failed=0 | progressive gallery updates complete =====
+PIC_THUMBNAIL tile_refresh count=2
+PIC_NAV thumbnail_refresh_paths count=2
+PIC_NAV gallery_replace photos=17
+PIC_THUMBNAIL paintable_assign elapsed_us=6
+PIC_THUMBNAIL gtk_bind elapsed_us=51 id=1
+PIC_THUMBNAIL paintable_assign elapsed_us=4
+PIC_THUMBNAIL gtk_bind elapsed_us=40 id=2
+PIC_THUMBNAIL paintable_assign elapsed_us=4
+PIC_THUMBNAIL gtk_bind elapsed_us=26 id=3
+PIC_THUMBNAIL paintable_assign elapsed_us=4
+PIC_THUMBNAIL gtk_bind elapsed_us=27 id=4
+PIC_THUMBNAIL paintable_assign elapsed_us=4
+PIC_THUMBNAIL gtk_bind elapsed_us=26 id=5
+PIC_THUMBNAIL paintable_assign elapsed_us=4
+PIC_THUMBNAIL gtk_bind elapsed_us=27 id=6
+PIC_THUMBNAIL paintable_assign elapsed_us=4
+PIC_THUMBNAIL gtk_bind elapsed_us=25 id=7
+PIC_THUMBNAIL paintable_assign elapsed_us=4
+PIC_THUMBNAIL gtk_bind elapsed_us=25 id=8
+PIC_THUMBNAIL paintable_assign elapsed_us=4
+PIC_THUMBNAIL gtk_bind elapsed_us=24 id=9
+PIC_THUMBNAIL paintable_assign elapsed_us=3
+PIC_THUMBNAIL gtk_bind elapsed_us=24 id=10
+PIC_THUMBNAIL paintable_assign elapsed_us=3
+PIC_THUMBNAIL gtk_bind elapsed_us=23 id=11
+PIC_THUMBNAIL paintable_assign elapsed_us=3
+PIC_THUMBNAIL gtk_bind elapsed_us=23 id=12
+PIC_THUMBNAIL paintable_assign elapsed_us=5
+PIC_THUMBNAIL gtk_bind elapsed_us=31 id=13
+PIC_THUMBNAIL paintable_assign elapsed_us=7
+PIC_THUMBNAIL gtk_bind elapsed_us=37 id=14
+PIC_THUMBNAIL paintable_assign elapsed_us=5
+PIC_THUMBNAIL gtk_bind elapsed_us=32 id=15
+PIC_THUMBNAIL gtk_bind elapsed_us=21 id=16
+PIC_THUMBNAIL gtk_bind elapsed_us=19 id=17
+PIC_SCAN_UI gallery_replace filter=Folder(1) generation=7 photos=17 elapsed_ms=8
+PIC_NAV folder_target_schedule folder_id=1 center=false generation=7
+PIC_THUMBNAIL paintable_assign elapsed_us=8
+PIC_THUMBNAIL paintable_assign elapsed_us=4
+PIC_NAV folder_order_changed old_count=1 new_count=11
+PIC_SECTIONED_JUMP index=0 target_y=0.0 animated=false
+PIC_THUMBNAIL bulk_start cancellable=true items=0 workers=8
+PIC_SCAN_UI indexing_finished queued_ms=3 imported=0 filter=Folder(1)
+PIC_SCAN_UI thumbnails_started queued_ms=3 total=0
+===== SCAN COMPLETE: imported=0 failed=0 | progressive gallery updates complete =====
+PIC_NAV gallery_replace photos=17
+PIC_SCAN_UI gallery_replace filter=Folder(1) generation=8 photos=17 elapsed_ms=0
+PIC_NAV folder_target_schedule folder_id=1 center=false generation=8
+PIC_SECTIONED_JUMP index=0 target_y=0.0 animated=false
+PIC_LIGHTBOX_LAYOUT stage=opened overlay_width=1116 gallery_width=1116 inspector_width=280 inspector_visible=false viewer_inspector_visible=false scroll_y=8.0
+PIC_SECTIONED_SCROLL_CANCEL source=lightbox_open
+PIC_ZOOM_UI event=value_changed value=0.000 lightbox_visible=true edit_visible=false syncing=true last=3.000
+PIC_ZOOM t_ms=0 tid=ThreadId(1) adjustment_changed before value=0.0 lower=0.0 upper=1116.0 page=1116.0 step=111.6 page_inc=1004.4
+PIC_ZOOM t_ms=0 tid=ThreadId(1) viewport_anchor value=0.0 upper=1116.0 page=1116.0 target=0.0
+PIC_ZOOM t_ms=0 tid=ThreadId(1) adjustment_changed before value=0.0 lower=0.0 upper=784.0 page=784.0 step=78.4 page_inc=705.6
+PIC_ZOOM t_ms=0 tid=ThreadId(1) viewport_anchor value=0.0 upper=784.0 page=784.0 target=0.0
+PIC_VIEWER t_ms=0 tid=ThreadId(1) show_photo_request generation=2 index=0 uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/landscape.jpg
+PIC_VIEWER t_ms=0 tid=ThreadId(1) request lane=foreground action=new uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/landscape.jpg variant=1116x784
+PIC_ZOOM t_ms=15 tid=ThreadId(1) fit_mode source=open viewport=1116x784 picture_req=(-1, -1) alloc=0x0 intrinsic=0x0 target=1116x651
+PIC_VIEWER t_ms=0 tid=ThreadId(62) decode_start uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/landscape.jpg variant=1116x784 queue_ms=0
+COLOR TRACE jpeg_icc path=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/landscape.jpg status=none assume=sRGB
+PIC_VIEWER decode_stage source_ms=0 cpu_ms=9 uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/landscape.jpg
+PIC_VIEWER t_ms=11 tid=ThreadId(62) decode_done uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/landscape.jpg variant=1116x784 elapsed_ms=11 outcome=ok decoded=1116x651
+PIC_VIEWER t_ms=12 tid=ThreadId(1) display_apply elapsed_ms=0 uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/landscape.jpg
+PIC_VIEWER t_ms=12 tid=ThreadId(1) display_done lane=foreground source=decode navigation_ms=12 uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/landscape.jpg
+PIC_VIEWER t_ms=1704 tid=ThreadId(1) show_photo_request generation=3 index=1 uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/portrait.jpg
+PIC_VIEWER t_ms=1705 tid=ThreadId(1) request lane=foreground action=new uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/portrait.jpg variant=1116x784
+PIC_VIEWER t_ms=1705 tid=ThreadId(75) decode_start uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/portrait.jpg variant=1116x784 queue_ms=0
+COLOR TRACE jpeg_icc path=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/portrait.jpg status=none assume=sRGB
+PIC_VIEWER decode_stage source_ms=0 cpu_ms=6 uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/portrait.jpg
+PIC_VIEWER t_ms=1713 tid=ThreadId(75) decode_done uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/portrait.jpg variant=1116x784 elapsed_ms=7 outcome=ok decoded=523x784
+PIC_VIEWER t_ms=1713 tid=ThreadId(1) display_apply elapsed_ms=0 uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/portrait.jpg
+PIC_VIEWER t_ms=1713 tid=ThreadId(1) display_done lane=foreground source=decode navigation_ms=8 uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/portrait.jpg
+PIC_ZOOM t_ms=1728 tid=ThreadId(1) fit_mode source=navigate viewport=1116x784 picture_req=(1116, 651) alloc=1116x651 intrinsic=523x784 target=523x784
+PIC_VIEWER t_ms=1956 tid=ThreadId(1) request lane=prefetch action=new uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/sample-00.jpg variant=1116x784
+PIC_VIEWER t_ms=1956 tid=ThreadId(1) cache_hit lane=prefetch uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/landscape.jpg
+PIC_VIEWER t_ms=1956 tid=ThreadId(76) decode_start uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/sample-00.jpg variant=1116x784 queue_ms=0
+COLOR TRACE jpeg_icc path=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/sample-00.jpg status=none assume=sRGB
+PIC_VIEWER decode_stage source_ms=0 cpu_ms=1 uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/sample-00.jpg
+PIC_VIEWER t_ms=1959 tid=ThreadId(76) decode_done uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/sample-00.jpg variant=1116x784 elapsed_ms=3 outcome=ok decoded=960x640
+PIC_ZOOM_UI gesture=press x=45.00
+PIC_ZOOM_UI event=value_changed value=100.000 lightbox_visible=true edit_visible=false syncing=false last=0.000
+PIC_ZOOM_UI lightbox_input slider=100.000 fit=0.871111 native_req=2.000000 current_native=0.000000
+PIC_ZOOM_UI frame_apply slider=100.000 fit=0.871111 native_req=2.000000 previous_slider=0.000
+PIC_ZOOM t_ms=4681 tid=ThreadId(1) request_slider native_req=2.000000 applied_native=0.000000 zoom=0.000000 root=1116x784 picture_req=(523, 784) picture_alloc=523x784 hadj=0.0/1116.0/1116.0 vadj=0.0/784.0/784.0
+PIC_ZOOM t_ms=4681 tid=ThreadId(1) apply_manual source=slider native_req=2.000000 fit=0.871111 intrinsic=523x784 root=1116x784 current_zoom=0.000000 applied_native=0.000000
+PIC_ZOOM t_ms=4681 tid=ThreadId(1) fit_picture source=slider index=1 zoom=2.29592 viewport=1116x784 intrinsic=523x784 native=600x900 target=1200x1800 current_alloc=523x784 applied=true
+PIC_ZOOM t_ms=4681 tid=ThreadId(1) size_request_write source=slider from=(523, 784) to=1200x1800 alloc=523x784
+PIC_ZOOM t_ms=4682 tid=ThreadId(1) adjustment_changed before value=42.0 lower=0.0 upper=1200.0 page=1116.0 step=111.6 page_inc=1004.4
+PIC_ZOOM t_ms=4682 tid=ThreadId(1) viewport_anchor value=42.0 upper=1200.0 page=1116.0 target=42.0
+PIC_ZOOM t_ms=4682 tid=ThreadId(1) adjustment_changed before value=508.0 lower=0.0 upper=1800.0 page=784.0 step=78.4 page_inc=705.6
+PIC_ZOOM t_ms=4682 tid=ThreadId(1) viewport_anchor value=508.0 upper=1800.0 page=784.0 target=508.0
+PIC_VIEWER t_ms=4667 tid=ThreadId(1) request lane=native-zoom action=new uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/portrait.jpg variant=4294967295x4294967295
+PIC_ZOOM t_ms=4682 tid=ThreadId(1) slider_geometry source=slider native=2.00000 fit=0.87111 zoom=2.29592 commit_us=367
+PIC_VIEWER t_ms=4667 tid=ThreadId(77) decode_start uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/portrait.jpg variant=4294967295x4294967295 queue_ms=0
+COLOR TRACE jpeg_icc path=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/portrait.jpg status=none assume=sRGB
+PIC_VIEWER decode_stage source_ms=0 cpu_ms=3 uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/portrait.jpg
+PIC_VIEWER t_ms=4672 tid=ThreadId(77) decode_done uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/portrait.jpg variant=4294967295x4294967295 elapsed_ms=5 outcome=ok decoded=600x900
+PIC_VIEWER t_ms=4677 tid=ThreadId(1) native_zoom_apply uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/portrait.jpg texture=600x900 request=(1200, 1800)
+PIC_ZOOM_UI event=value_changed value=50.000 lightbox_visible=true edit_visible=false syncing=true last=100.000
+PIC_ZOOM t_ms=6810 tid=ThreadId(1) fit_picture source=one-to-one index=1 zoom=-1.00000 viewport=1116x784 intrinsic=600x900 native=600x900 target=600x900 current_alloc=1200x1800 applied=true
+PIC_ZOOM t_ms=6810 tid=ThreadId(1) size_request_write source=one-to-one from=(1200, 1800) to=600x900 alloc=1200x1800
+PIC_ZOOM t_ms=6810 tid=ThreadId(1) adjustment_changed before value=0.0 lower=0.0 upper=1116.0 page=1116.0 step=111.6 page_inc=1004.4
+PIC_ZOOM t_ms=6810 tid=ThreadId(1) viewport_anchor value=0.0 upper=1116.0 page=1116.0 target=0.0
+PIC_ZOOM t_ms=6810 tid=ThreadId(1) adjustment_changed before value=58.0 lower=0.0 upper=900.0 page=784.0 step=78.4 page_inc=705.6
+PIC_ZOOM t_ms=6810 tid=ThreadId(1) viewport_anchor value=58.0 upper=900.0 page=784.0 target=58.0
+PIC_ZOOM t_ms=6820 tid=ThreadId(1) geometry stage=one_to_one_settled_cached frame=Some(817) pointer_viewport=None h=0.00/0.00/1116.00/1116.00 v=58.00/0.00/900.00/784.00 picture_size=(600, 900) picture_req=(600, 900) align=Center/Start expand=false/false shrink=false fit=Contain intrinsic=(600, 900) picture_root=Some(Rect { x: 258.0, y: -58.0, width: 600.0, height: 900.0 }) picture_scroll=Some(Rect { x: 258.0, y: -58.0, width: 600.0, height: 900.0 }) origin_plus_adjustment=Some((258.0, 0.0)) viewport=Some("GtkViewport") viewport_size=Some((1116, 784)) viewport_root=Some(Rect { x: 0.0, y: 0.0, width: 1116.0, height: 784.0 }) scroll_size=(1116, 784) scroll_root=Some(Rect { x: 0.0, y: 0.0, width: 1116.0, height: 784.0 }) root_size=(1116, 784) focus=Some("GtkScale:GtkScale flags=StateFlags(FOCUSED | DIR_LTR | FOCUS_WITHIN)") picture_flags=StateFlags(DIR_LTR) scroll_flags=StateFlags(DIR_LTR) scroll_to_focus=Some(true)
+PIC_ZOOM t_ms=8667 tid=ThreadId(1) geometry stage=button_press frame=Some(927) pointer_viewport=Some((551.0, 398.0)) h=0.00/0.00/1116.00/1116.00 v=58.00/0.00/900.00/784.00 picture_size=(600, 900) picture_req=(600, 900) align=Center/Start expand=false/false shrink=false fit=Contain intrinsic=(600, 900) picture_root=Some(Rect { x: 258.0, y: -58.0, width: 600.0, height: 900.0 }) picture_scroll=Some(Rect { x: 258.0, y: -58.0, width: 600.0, height: 900.0 }) origin_plus_adjustment=Some((258.0, 0.0)) viewport=Some("GtkViewport") viewport_size=Some((1116, 784)) viewport_root=Some(Rect { x: 0.0, y: 0.0, width: 1116.0, height: 784.0 }) scroll_size=(1116, 784) scroll_root=Some(Rect { x: 0.0, y: 0.0, width: 1116.0, height: 784.0 }) root_size=(1116, 784) focus=Some("GtkScale:GtkScale flags=StateFlags(FOCUSED | DIR_LTR | FOCUS_WITHIN)") picture_flags=StateFlags(ACTIVE | PRELIGHT | DIR_LTR) scroll_flags=StateFlags(ACTIVE | PRELIGHT | DIR_LTR) scroll_to_focus=Some(true)
+PIC_ZOOM t_ms=8667 tid=ThreadId(1) geometry stage=drag_begin frame=Some(927) pointer_viewport=Some((551.0, 398.0)) h=0.00/0.00/1116.00/1116.00 v=58.00/0.00/900.00/784.00 picture_size=(600, 900) picture_req=(600, 900) align=Center/Start expand=false/false shrink=false fit=Contain intrinsic=(600, 900) picture_root=Some(Rect { x: 258.0, y: -58.0, width: 600.0, height: 900.0 }) picture_scroll=Some(Rect { x: 258.0, y: -58.0, width: 600.0, height: 900.0 }) origin_plus_adjustment=Some((258.0, 0.0)) viewport=Some("GtkViewport") viewport_size=Some((1116, 784)) viewport_root=Some(Rect { x: 0.0, y: 0.0, width: 1116.0, height: 784.0 }) scroll_size=(1116, 784) scroll_root=Some(Rect { x: 0.0, y: 0.0, width: 1116.0, height: 784.0 }) root_size=(1116, 784) focus=Some("GtkScale:GtkScale flags=StateFlags(FOCUSED | DIR_LTR | FOCUS_WITHIN)") picture_flags=StateFlags(ACTIVE | PRELIGHT | DIR_LTR) scroll_flags=StateFlags(ACTIVE | PRELIGHT | DIR_LTR) scroll_to_focus=Some(true)
+PIC_ZOOM t_ms=8671 tid=ThreadId(1) geometry stage=drag_first_update_before frame=Some(927) pointer_viewport=Some((551.0, 298.0)) h=0.00/0.00/1116.00/1116.00 v=58.00/0.00/900.00/784.00 picture_size=(600, 900) picture_req=(600, 900) align=Center/Start expand=false/false shrink=false fit=Contain intrinsic=(600, 900) picture_root=Some(Rect { x: 258.0, y: -58.0, width: 600.0, height: 900.0 }) picture_scroll=Some(Rect { x: 258.0, y: -58.0, width: 600.0, height: 900.0 }) origin_plus_adjustment=Some((258.0, 0.0)) viewport=Some("GtkViewport") viewport_size=Some((1116, 784)) viewport_root=Some(Rect { x: 0.0, y: 0.0, width: 1116.0, height: 784.0 }) scroll_size=(1116, 784) scroll_root=Some(Rect { x: 0.0, y: 0.0, width: 1116.0, height: 784.0 }) root_size=(1116, 784) focus=Some("GtkScale:GtkScale flags=StateFlags(FOCUSED | DIR_LTR | FOCUS_WITHIN)") picture_flags=StateFlags(ACTIVE | PRELIGHT | DIR_LTR) scroll_flags=StateFlags(ACTIVE | PRELIGHT | DIR_LTR) scroll_to_focus=Some(true)
+PIC_ZOOM t_ms=8671 tid=ThreadId(1) geometry stage=drag_first_update_after frame=Some(927) pointer_viewport=Some((551.0, 298.0)) h=0.00/0.00/1116.00/1116.00 v=116.00/0.00/900.00/784.00 picture_size=(600, 900) picture_req=(600, 900) align=Center/Start expand=false/false shrink=false fit=Contain intrinsic=(600, 900) picture_root=Some(Rect { x: 258.0, y: -58.0, width: 600.0, height: 900.0 }) picture_scroll=Some(Rect { x: 258.0, y: -58.0, width: 600.0, height: 900.0 }) origin_plus_adjustment=Some((258.0, 58.0)) viewport=Some("GtkViewport") viewport_size=Some((1116, 784)) viewport_root=Some(Rect { x: 0.0, y: 0.0, width: 1116.0, height: 784.0 }) scroll_size=(1116, 784) scroll_root=Some(Rect { x: 0.0, y: 0.0, width: 1116.0, height: 784.0 }) root_size=(1116, 784) focus=Some("GtkScale:GtkScale flags=StateFlags(FOCUSED | DIR_LTR | FOCUS_WITHIN)") picture_flags=StateFlags(ACTIVE | PRELIGHT | DIR_LTR) scroll_flags=StateFlags(ACTIVE | PRELIGHT | DIR_LTR) scroll_to_focus=Some(true)
+PIC_ZOOM t_ms=8672 tid=ThreadId(1) geometry stage=drag_end frame=Some(927) pointer_viewport=Some((551.0, 298.0)) h=0.00/0.00/1116.00/1116.00 v=116.00/0.00/900.00/784.00 picture_size=(600, 900) picture_req=(600, 900) align=Center/Start expand=false/false shrink=false fit=Contain intrinsic=(600, 900) picture_root=Some(Rect { x: 258.0, y: -58.0, width: 600.0, height: 900.0 }) picture_scroll=Some(Rect { x: 258.0, y: -58.0, width: 600.0, height: 900.0 }) origin_plus_adjustment=Some((258.0, 58.0)) viewport=Some("GtkViewport") viewport_size=Some((1116, 784)) viewport_root=Some(Rect { x: 0.0, y: 0.0, width: 1116.0, height: 784.0 }) scroll_size=(1116, 784) scroll_root=Some(Rect { x: 0.0, y: 0.0, width: 1116.0, height: 784.0 }) root_size=(1116, 784) focus=Some("GtkScale:GtkScale flags=StateFlags(FOCUSED | DIR_LTR | FOCUS_WITHIN)") picture_flags=StateFlags(PRELIGHT | DIR_LTR) scroll_flags=StateFlags(PRELIGHT | DIR_LTR) scroll_to_focus=Some(true)
+PIC_ZOOM t_ms=8703 tid=ThreadId(1) geometry stage=button_press_painted frame=Some(928) pointer_viewport=Some((551.0, 398.0)) h=0.00/0.00/1116.00/1116.00 v=116.00/0.00/900.00/784.00 picture_size=(600, 900) picture_req=(600, 900) align=Center/Start expand=false/false shrink=false fit=Contain intrinsic=(600, 900) picture_root=Some(Rect { x: 258.0, y: -116.0, width: 600.0, height: 900.0 }) picture_scroll=Some(Rect { x: 258.0, y: -116.0, width: 600.0, height: 900.0 }) origin_plus_adjustment=Some((258.0, 0.0)) viewport=Some("GtkViewport") viewport_size=Some((1116, 784)) viewport_root=Some(Rect { x: 0.0, y: 0.0, width: 1116.0, height: 784.0 }) scroll_size=(1116, 784) scroll_root=Some(Rect { x: 0.0, y: 0.0, width: 1116.0, height: 784.0 }) root_size=(1116, 784) focus=Some("GtkScale:GtkScale flags=StateFlags(FOCUSED | DIR_LTR | FOCUS_WITHIN)") picture_flags=StateFlags(PRELIGHT | DIR_LTR) scroll_flags=StateFlags(PRELIGHT | DIR_LTR) scroll_to_focus=Some(true)
+PIC_ZOOM t_ms=8703 tid=ThreadId(1) geometry stage=drag_first_update_painted frame=Some(928) pointer_viewport=Some((551.0, 298.0)) h=0.00/0.00/1116.00/1116.00 v=116.00/0.00/900.00/784.00 picture_size=(600, 900) picture_req=(600, 900) align=Center/Start expand=false/false shrink=false fit=Contain intrinsic=(600, 900) picture_root=Some(Rect { x: 258.0, y: -116.0, width: 600.0, height: 900.0 }) picture_scroll=Some(Rect { x: 258.0, y: -116.0, width: 600.0, height: 900.0 }) origin_plus_adjustment=Some((258.0, 0.0)) viewport=Some("GtkViewport") viewport_size=Some((1116, 784)) viewport_root=Some(Rect { x: 0.0, y: 0.0, width: 1116.0, height: 784.0 }) scroll_size=(1116, 784) scroll_root=Some(Rect { x: 0.0, y: 0.0, width: 1116.0, height: 784.0 }) root_size=(1116, 784) focus=Some("GtkScale:GtkScale flags=StateFlags(FOCUSED | DIR_LTR | FOCUS_WITHIN)") picture_flags=StateFlags(PRELIGHT | DIR_LTR) scroll_flags=StateFlags(PRELIGHT | DIR_LTR) scroll_to_focus=Some(true)
+PIC_ZOOM t_ms=8703 tid=ThreadId(1) geometry stage=drag_end_painted frame=Some(928) pointer_viewport=Some((551.0, 298.0)) h=0.00/0.00/1116.00/1116.00 v=116.00/0.00/900.00/784.00 picture_size=(600, 900) picture_req=(600, 900) align=Center/Start expand=false/false shrink=false fit=Contain intrinsic=(600, 900) picture_root=Some(Rect { x: 258.0, y: -116.0, width: 600.0, height: 900.0 }) picture_scroll=Some(Rect { x: 258.0, y: -116.0, width: 600.0, height: 900.0 }) origin_plus_adjustment=Some((258.0, 0.0)) viewport=Some("GtkViewport") viewport_size=Some((1116, 784)) viewport_root=Some(Rect { x: 0.0, y: 0.0, width: 1116.0, height: 784.0 }) scroll_size=(1116, 784) scroll_root=Some(Rect { x: 0.0, y: 0.0, width: 1116.0, height: 784.0 }) root_size=(1116, 784) focus=Some("GtkScale:GtkScale flags=StateFlags(FOCUSED | DIR_LTR | FOCUS_WITHIN)") picture_flags=StateFlags(PRELIGHT | DIR_LTR) scroll_flags=StateFlags(PRELIGHT | DIR_LTR) scroll_to_focus=Some(true)
+PIC_LIGHTBOX_LAYOUT stage=prepare photo=2 gallery_width=1116 inspector_width=280 inspector_visible=true scroll_y=8.0
+PIC_LIGHTBOX_LAYOUT stage=restore_requested photo=2 found=true scroll_y=8.0
+PIC_NAV viewport_anchor_restored photo_id=2 index=1 offset=62.0 before=8.0 target=8.0 applied=8.0
+PIC_NAV viewport_anchor_restored photo_id=2 index=1 offset=62.0 before=8.0 target=8.0 applied=8.0
+PIC_LIGHTBOX_LAYOUT stage=hidden overlay_width=1116 gallery_width=1116 inspector_width=280 inspector_visible=false viewer_inspector_visible=false scroll_y=8.0
+PIC_ZOOM_UI event=value_changed value=7.000 lightbox_visible=false edit_visible=false syncing=true last=50.000
+PIC_LIGHTBOX_LAYOUT stage=settled gallery_width=1116 inspector_width=280 inspector_visible=false scroll_y=8.0
+COLOR TRACE jpeg_icc path=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/landscape.jpg status=none assume=sRGB
+PIC_VIEWER decode_stage source_ms=0 cpu_ms=0 uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/landscape.jpg
+PIC_ZOOM_UI event=value_changed value=0.000 lightbox_visible=false edit_visible=false syncing=true last=7.000
+COLOR TRACE jpeg_icc path=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/landscape.jpg status=none assume=sRGB
+PIC_VIEWER decode_stage source_ms=0 cpu_ms=2 uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/landscape.jpg
+COLOR TRACE jpeg_icc path=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/landscape.jpg status=none assume=sRGB
+PIC_VIEWER decode_stage source_ms=0 cpu_ms=4 uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/landscape.jpg
+COLOR TRACE jpeg_icc path=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/landscape.jpg status=none assume=sRGB
+PIC_VIEWER decode_stage source_ms=0 cpu_ms=7 uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/landscape.jpg
+COLOR TRACE jpeg_icc path=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/landscape.jpg status=none assume=sRGB
+PIC_VIEWER decode_stage source_ms=0 cpu_ms=1 uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/landscape.jpg
+PIC_ZOOM_UI event=value_changed value=7.000 lightbox_visible=false edit_visible=false syncing=true last=0.000
+PIC_THUMBNAIL paintable_assign elapsed_us=11
+PIC_THUMBNAIL paintable_assign elapsed_us=7
+COLOR TRACE jpeg_icc path=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/landscape.jpg status=none assume=sRGB
+PIC_VIEWER decode_stage source_ms=0 cpu_ms=0 uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/landscape.jpg
+PIC_ZOOM_UI event=value_changed value=0.000 lightbox_visible=false edit_visible=false syncing=true last=7.000
+COLOR TRACE jpeg_icc path=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/landscape.jpg status=none assume=sRGB
+PIC_VIEWER decode_stage source_ms=0 cpu_ms=4 uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/landscape.jpg
+COLOR TRACE jpeg_icc path=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/landscape.jpg status=none assume=sRGB
+PIC_VIEWER decode_stage source_ms=0 cpu_ms=4 uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/landscape.jpg
+PIC_ZOOM_UI event=value_changed value=7.000 lightbox_visible=false edit_visible=false syncing=true last=0.000
+COLOR TRACE jpeg_icc path=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/landscape.jpg status=none assume=sRGB
+COLOR TRACE jpeg_icc path=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/portrait.jpg status=none assume=sRGB
+PIC_VIEWER decode_stage source_ms=0 cpu_ms=2 uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/portrait.jpg
+PIC_VIEWER decode_stage source_ms=0 cpu_ms=7 uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/landscape.jpg
+COLOR TRACE jpeg_icc path=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/landscape.jpg status=none assume=sRGB
+PIC_VIEWER decode_stage source_ms=0 cpu_ms=3 uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/landscape.jpg
+COLOR TRACE jpeg_icc path=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/portrait.jpg status=none assume=sRGB
+PIC_VIEWER decode_stage source_ms=0 cpu_ms=1 uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/portrait.jpg
+COLOR TRACE jpeg_icc path=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/exports/rc6-collage.jpg status=none assume=sRGB
+PIC_THUMBNAIL cache_write uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/exports/rc6-collage.jpg cache=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/xdg/cache/pic-rs/thumbs/files/4/eb0076ad6fea74113d40ed3cc222e8e31dbff3e8e9b2459ed85903c242e2c19a.jpg elapsed_ms=10
+PIC_WALL_LAYOUT viewport_width=1116 photos=17 rows=6 sections=2 height=1751
+PIC_FOLDER_SECTIONED enabled mode=flat_photo_virtualized
+PIC_NAV viewport_anchor_restored photo_id=1 index=0 offset=62.0 before=8.0 target=8.0 applied=8.0
+PIC_SCREEN init style=Fade transition=Crossfade count=0
+PIC_SCREEN phase=start style=Fade mode=Crossfade current=0 previous=None replacing=None frames=0 change=0
+PIC_THUMBNAIL cache_lookup result=hit elapsed_us=24 uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/xdg/home/00-import-source/import-only.jpg
+PIC_SCREEN decode kind=cache index=0 hit=true ms=0
+PIC_THUMBNAIL cache_lookup result=hit elapsed_us=10 uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/xdg/home/00-import-source/import-second.png
+PIC_SCREEN decode kind=cache index=1 hit=true ms=0
+PIC_THUMBNAIL cache_lookup result=hit elapsed_us=7 uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/exports/rc6-collage.jpg
+COLOR TRACE jpeg_icc path=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/xdg/home/00-import-source/import-only.jpg status=none assume=sRGB
+PIC_SCREEN decode kind=cache index=2 hit=true ms=0
+PIC_VIEWER decode_stage source_ms=0 cpu_ms=1 uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/xdg/home/00-import-source/import-only.jpg
+PIC_SCREEN decode kind=original network=false index=0 ok=true ms=2
+PIC_VIEWER decode_stage source_ms=0 cpu_ms=0 uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/xdg/home/00-import-source/import-second.png
+PIC_SCREEN decode kind=original network=false index=1 ok=true ms=1
+COLOR TRACE jpeg_icc path=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/exports/rc6-collage.jpg status=none assume=sRGB
+PIC_VIEWER decode_stage source_ms=0 cpu_ms=47 uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/exports/rc6-collage.jpg
+PIC_SCREEN decode kind=original network=false index=2 ok=true ms=54
+PIC_SCREEN phase=settled style=Fade current=0 old_image=None old_tile=None frames=3 change=0
+PIC_SCREEN phase=start style=Fade mode=Crossfade current=1 previous=Some(0) replacing=None frames=3 change=1
+PIC_THUMBNAIL cache_lookup result=hit elapsed_us=21 uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/landscape.jpg
+PIC_SCREEN decode kind=cache index=3 hit=true ms=0
+COLOR TRACE jpeg_icc path=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/landscape.jpg status=none assume=sRGB
+PIC_VIEWER decode_stage source_ms=0 cpu_ms=2 uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/sample-library/landscape.jpg
+PIC_SCREEN decode kind=original network=false index=3 ok=true ms=4
+PIC_SCREEN phase=settled style=Fade current=1 old_image=None old_tile=None frames=4 change=1
+PIC_SCREEN init style=Fade transition=Crossfade count=0
+PIC_SCREEN phase=start style=Fade mode=Crossfade current=0 previous=None replacing=None frames=0 change=0
+PIC_THUMBNAIL cache_lookup result=hit elapsed_us=23 uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/xdg/home/00-import-source/import-only.jpg
+PIC_SCREEN decode kind=cache index=0 hit=true ms=2
+PIC_THUMBNAIL cache_lookup result=hit elapsed_us=11 uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/xdg/home/00-import-source/import-second.png
+PIC_SCREEN decode kind=cache index=1 hit=true ms=0
+PIC_THUMBNAIL cache_lookup result=hit elapsed_us=9 uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/exports/rc6-collage.jpg
+COLOR TRACE jpeg_icc path=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/xdg/home/00-import-source/import-only.jpg status=none assume=sRGB
+PIC_VIEWER decode_stage source_ms=0 cpu_ms=0 uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/xdg/home/00-import-source/import-only.jpg
+PIC_SCREEN decode kind=cache index=2 hit=true ms=1
+PIC_SCREEN decode kind=original network=false index=0 ok=true ms=2
+PIC_VIEWER decode_stage source_ms=0 cpu_ms=0 uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/xdg/home/00-import-source/import-second.png
+PIC_SCREEN decode kind=original network=false index=1 ok=true ms=0
+COLOR TRACE jpeg_icc path=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/exports/rc6-collage.jpg status=none assume=sRGB
+PIC_VIEWER decode_stage source_ms=0 cpu_ms=30 uri=/home/peet/PIC/reports/gui-tests/folder-all-stars-benchmark-rerun/exports/rc6-collage.jpg
+PIC_SCREEN decode kind=original network=false index=2 ok=true ms=36
+PIC_SCREEN phase=settled style=Fade current=0 old_image=None old_tile=None frames=3 change=0

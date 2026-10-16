@@ -369,11 +369,16 @@ def smoke_test() -> None:
     command(["xdotool", "key", "3"])
     wait_for(lambda: photo_state("landscape.jpg")[0] == 3,
              "landscape rating persisted as three stars", timeout=8)
+    click_at(878, 178)
+    command(["xdotool", "key", "5"])
+    wait_for(lambda: photo_state("portrait.jpg")[0] == 5,
+             "portrait rating persisted as five stars", timeout=8)
     rating_shot = screenshot("02a-rating-three-stars.png")
-    rating_value, _ = photo_state("landscape.jpg")
-    record(add_case("Photo rating persistence", "Pressing 3 rates the selected image and saves that rating"),
-           rating_value == 3,
-           f"database photo rating={rating_value}; screenshot={rating_shot.name}")
+    landscape_rating, _ = photo_state("landscape.jpg")
+    portrait_rating, _ = photo_state("portrait.jpg")
+    record(add_case("Photo rating persistence", "Pressing 3 and 5 saves ratings for the selected photos"),
+           landscape_rating == 3 and portrait_rating == 5,
+           f"database ratings: landscape={landscape_rating}, portrait={portrait_rating}; screenshot={rating_shot.name}")
 
     # Open the actual imported folder and filter it to the rated image.
     click_at(118, 486)
@@ -405,6 +410,46 @@ def smoke_test() -> None:
     record(add_case("Folder rating filter reset", "Clearing the rating filter restores the folder photos"),
            len(matching_generated_tiles(filter_cleared)) >= 12,
            f"visible fixture tiles={len(matching_generated_tiles(filter_cleared))}; result={filter_cleared.name}")
+
+    # Measure selecting All Stars specifically in Folder view. The database
+    # state gives the handler/persistence latency; repeated screenshots give
+    # the first captured GUI frame containing exactly both rated fixture
+    # photos. The visual time includes screenshot capture and polling cadence.
+    # Clear closes the popover; reopen it before selecting All Stars.
+    click_at(1263, 28)
+    all_stars_menu = screenshot("02-rating-all-stars-menu.png")
+    all_stars_click_started = time.monotonic()
+    click_at(1280, 143)  # All Stars row in the rating-filter popover.
+    db_deadline = all_stars_click_started + 8
+    while db_setting("photo-rating-filter") != "stars" and time.monotonic() < db_deadline:
+        time.sleep(0.01)
+    db_result_ms = (time.monotonic() - all_stars_click_started) * 1000
+    all_stars_screenshot = SCREENSHOTS / "02-rating-all-stars-results.png"
+    expected_all_stars = {"landscape.jpg", "portrait.jpg"}
+    visible_tiles: list[tuple[int, int, str]] = []
+    visual_deadline = all_stars_click_started + 8
+    while time.monotonic() < visual_deadline:
+        screenshot(all_stars_screenshot.name)
+        visible_tiles = matching_generated_tiles(all_stars_screenshot)
+        if ({tile[2] for tile in visible_tiles} == expected_all_stars
+                and len(visible_tiles) == len(expected_all_stars)):
+            break
+        time.sleep(0.02)
+    visual_result_ms = (time.monotonic() - all_stars_click_started) * 1000
+    stars_filter = db_setting("photo-rating-filter")
+    record(add_case("Folder All Stars filter and result latency",
+                    "Selecting All Stars in Folder shows exactly the 3-star and 5-star photos"),
+           stars_filter == "stars"
+           and {tile[2] for tile in visible_tiles} == expected_all_stars
+           and len(visible_tiles) == len(expected_all_stars),
+           f"setting={stars_filter}; visible fixture tiles={visible_tiles}; "
+           f"database state observed={db_result_ms:.1f} ms; first captured matching GUI frame={visual_result_ms:.1f} ms; "
+           f"screenshots={all_stars_menu.name}, {all_stars_screenshot.name} (visual timing includes screenshot capture/polling)")
+    # Restore the unfiltered folder for the remaining import/navigation tests.
+    click_at(1230, 110)
+    wait_for(lambda: db_setting("photo-rating-filter") == "all",
+             "clear All Stars folder rating filter", timeout=8)
+    command(["xdotool", "key", "Escape"])
 
     # Exercise the actual local-folder chooser with a cancellation, an import,
     # and a second import of the same directory. The import source is outside
@@ -931,10 +976,11 @@ def write_report(error: Exception | None) -> None:
         action = {
             "PIC startup and Library": "Launch PIC on a new Xvfb display and capture the visible main window",
             "Isolated sample gallery": "Load the generated temporary photo fixture and query its catalog rows",
-            "Photo rating persistence": "Select landscape.jpg, press 3, and query the SQLite rating",
+            "Photo rating persistence": "Rate two generated photos through the GUI and query both SQLite ratings",
             "Folder navigation and photo membership": "Click the imported fixture folder and compare catalog membership and visible photos",
             "Folder rating filter membership": "Open the folder filter, select three stars, and verify the visible filename and stored filter",
             "Folder rating filter reset": "Click Clear and verify the full fixture membership returns",
+            "Folder All Stars filter and result latency": "Select All Stars in Folder; time the persisted filter state and first screenshot showing exactly both rated photos",
             "Import chooser cancellation": "Open the real folder picker, press Escape, and compare database counts",
             "GUI local folder import": "Choose the generated folder through the GTK chooser and query imported paths",
             "Duplicate GUI import": "Repeat the folder-picker import and verify row count stays unchanged",

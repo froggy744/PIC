@@ -1,10 +1,12 @@
 # PIC Guide 1 — Navigation
 
+> **PIC V1 guide.** Screenshots are being refreshed for the updated interface; the older images have been hidden until replacements are ready.
+
 *Part of the [PIC user guides](../../README.md).*
 
 ## The window
 
-<img src="../../screenshots/all%20photos.jpg" alt="PIC window with sidebar, search, photos and bottom information bar" width="900">
+<!-- V1 SCREENSHOT: add current UI capture for this section; older gallery image withheld. -->
 
 - **Sidebar:** Library destinations, Albums, Folders and Network Shares.
 - **Top bar:** search, sorting, grouping, rating filtering and application controls.
@@ -21,9 +23,9 @@ Use arrow keys to move through thumbnails and **Ctrl + click** for multiple sele
 
 ## Grid, Photo Wall and zoom
 
-The bottom bar's view toggle switches to **Photo Wall**, which fits photos into rows using their natural proportions. Use the zoom slider or **Ctrl + wheel** to resize thumbnails.
+The gallery layout controls switch between **Grid**, **Photo Wall** and **Masonry**, which fits photos into rows using their natural proportions. Use the zoom slider or **Ctrl + wheel** to resize thumbnails.
 
-<img src="../../screenshots/photo%20wall%20screen.jpg" alt="Photo Wall layout with the sidebar visible" width="900">
+<!-- V1 SCREENSHOT: add current UI capture for this section; older gallery image withheld. -->
 
 The shared slider adapts to the viewer and editor when they are active. It is disabled in contexts such as collage editing where that zoom control does not apply.
 
@@ -38,7 +40,7 @@ The shared slider adapts to the viewer and editor when they are active. It is di
 
 A cached preview can appear first, followed by a higher-quality decode. Native image data is loaded when close inspection needs it. The window can show a viewer without being in full-screen mode.
 
-<img src="../../screenshots/rations%20stars.jpg" alt="Viewer displaying a portrait and its star rating control" width="900">
+<!-- V1 SCREENSHOT: add current UI capture for this section; older gallery image withheld. -->
 
 The number keys **1–5 assign ratings**, and **0 clears a rating**. Use Space or the 1:1 control for magnification. Shortcuts avoid text fields so typing does not rate or open photos.
 
@@ -52,6 +54,12 @@ Sorting includes date taken, name, file size, dimensions, date added and rating.
 
 Use the sidebar toggle to hide or reveal the sidebar. Hover behavior and other interface preferences are available in Settings.
 
-<img src="../../screenshots/photo%20wall%20sidebar%20hidden.jpg" alt="Photo Wall using the full width with the sidebar hidden" width="900">
+<!-- V1 SCREENSHOT: add current UI capture for this section; older gallery image withheld. -->
 
 **Next:** [Folders →](folders.md)
+
+## V1 gallery choices
+
+PIC V1 offers **Grid**, **Photo Wall** and **Masonry** layouts. Grid uses consistent slots; Photo Wall keeps image proportions in fitted rows; Masonry fills columns with images at varied heights. Photo selection and the displayed controls may differ with active modes and themes.
+
+The bottom InfoBar keeps the selection count beside **Clear** and shows selected-image thumbnails when applicable. The count and Clear control remain visible as selection grows. Right-click metadata in the InfoBar for available properties-display options.

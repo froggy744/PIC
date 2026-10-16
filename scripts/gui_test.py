@@ -100,13 +100,21 @@ def seed_isolated_database() -> None:
         connection.execute("INSERT OR IGNORE INTO folders(path,name,imported_root) VALUES(?,?,1)",
                            (folder, SAMPLE_DIR.name))
         folder_id = connection.execute("SELECT id FROM folders WHERE path=?", (folder,)).fetchone()[0]
-        connection.executemany("INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)", [
+        settings = [
             ("screensaver-style", "fade"),
             ("screensaver-duration", "3"),
             ("screensaver-transition-ms", "200"),
             ("screensaver-shuffle", "false"),
             ("screensaver-captions", "true"),
-        ])
+        ]
+        # Optional theme/preset selection lets the isolated GUI harness take
+        # reproducible appearance screenshots without touching user settings.
+        gui_theme = os.environ.get("PIC_GUI_THEME")
+        if gui_theme:
+            settings.append(("appearance-theme", gui_theme))
+        if gui_theme == "tron":
+            settings.append(("tron-glow-preset", os.environ.get("PIC_GUI_TRON_GLOW_PRESET", "2")))
+        connection.executemany("INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)", settings)
         for path in sorted(SAMPLE_DIR.iterdir()):
             if path.suffix.lower() not in {".jpg", ".png"}:
                 continue

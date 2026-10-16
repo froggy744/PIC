@@ -116,6 +116,7 @@ pub fn build(
     toolbar.set_margin_start(12);
     toolbar.set_margin_end(12);
     toolbar.add_css_class("toolbar");
+    toolbar.add_css_class("edit-mode-toolbar");
 
     let panel_tabs = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     panel_tabs.set_valign(gtk::Align::Center);

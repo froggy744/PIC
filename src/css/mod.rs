@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use gtk4 as gtk;
 
 pub(crate) const BASE: &str = include_str!("base.css");
+pub(crate) const EDIT_MODE: &str = include_str!("edit_mode.css");
 pub(crate) const PHOTO_WALL: &str = include_str!("photo_wall.css");
 pub(crate) const SQUARE_CORNERS: &str = include_str!("square_corners.css");
 pub(crate) const ALBUMS: &str = include_str!("components/albums.css");
@@ -48,6 +49,18 @@ pub(crate) fn install_foundation(display: &gtk::gdk::Display) {
         display,
         &base,
         gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+    );
+
+    // The edit toolbar is shared by every appearance theme. Keep its visual
+    // contract in one place and resolve colors from the active theme palette.
+    // This scoped provider sits above theme-wide button rules while remaining
+    // below user geometry overrides such as square corners.
+    let edit_mode = gtk::CssProvider::new();
+    edit_mode.load_from_string(EDIT_MODE);
+    gtk::style_context_add_provider_for_display(
+        display,
+        &edit_mode,
+        gtk::STYLE_PROVIDER_PRIORITY_APPLICATION + 2,
     );
 
     // Wall geometry must win over theme frames (+1) and corner settings (+4).

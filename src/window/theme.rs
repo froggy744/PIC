@@ -29,6 +29,7 @@ pub(crate) const THEMES_DIRECTORY: &str = "themes";
 
 /// Fallback when the saved theme id no longer exists on disk.
 const DEFAULT_THEME_ID: &str = "standard";
+const TRON_GLOW_SETTING_KEY: &str = "tron-glow-preset";
 
 pub(crate) struct ThemeEngine {
     display: gdk::Display,
@@ -101,6 +102,94 @@ impl ThemeEngine {
 
     pub(crate) fn active_id(&self) -> String {
         self.active_id.borrow().clone()
+    }
+
+    /// Saved TRON glow choice. Cinematic is the signature default.
+    pub(crate) fn tron_glow_preset(&self) -> u32 {
+        crate::db::setting(&self.connection.borrow(), TRON_GLOW_SETTING_KEY)
+            .ok()
+            .flatten()
+            .and_then(|value| value.parse::<u32>().ok())
+            .filter(|value| *value <= 2)
+            .unwrap_or(2)
+    }
+
+    pub(crate) fn set_tron_glow_preset(&self, preset: u32) {
+        let preset = preset.min(2);
+        if let Err(error) = crate::db::set_setting(
+            &self.connection.borrow(),
+            TRON_GLOW_SETTING_KEY,
+            &preset.to_string(),
+        ) {
+            eprintln!("Could not save TRON glow preset: {error}");
+        }
+        self.apply_tron_glow_class(preset);
+    }
+
+    fn apply_tron_glow_class(&self, preset: u32) {
+        let class = match preset {
+            0 => "tron-glow-subtle",
+            1 => "tron-glow-standard",
+            _ => "tron-glow-cinematic",
+        };
+        for widget in gtk::Window::list_toplevels() {
+            let Ok(window) = widget.downcast::<gtk::Window>() else {
+                continue;
+            };
+            for old in ["tron-glow-subtle", "tron-glow-standard", "tron-glow-cinematic"] {
+                window.remove_css_class(old);
+            }
+            window.add_css_class(class);
+            if let Some(content) = window.child() {
+                for old in ["tron-glow-subtle", "tron-glow-standard", "tron-glow-cinematic"] {
+                    content.remove_css_class(old);
+                }
+                content.add_css_class(class);
+                Self::apply_glow_class_to_descendants(&content, class, false, false);
+            }
+        }
+    }
+
+    fn apply_glow_class_to_descendants(
+        widget: &gtk::Widget,
+        class: &str,
+        in_header: bool,
+        in_sidebar: bool,
+    ) {
+        let classes = widget.css_classes();
+        let has = |name: &str| classes.iter().any(|candidate| candidate.as_str() == name);
+        let header = in_header || has("layout-left-header") || has("layout-right-header");
+        let sidebar = in_sidebar || has("navigation-sidebar");
+        let css_name = widget.css_name();
+        let target = [
+            "photo-tile",
+            "album-cover",
+            "app-title",
+            "section-heading",
+            "folder-section-title",
+            "folder-section-icon",
+            "selection-badge",
+            "photo-action-button",
+            "search-field",
+        ]
+        .iter()
+        .any(|name| has(name))
+            || has("layout-left-header")
+            || has("layout-right-header")
+            || (sidebar && css_name.as_str() == "row")
+            || (header && css_name.as_str() == "button")
+            || css_name.as_str() == "scale";
+        if target {
+            for old in ["tron-glow-subtle", "tron-glow-standard", "tron-glow-cinematic"] {
+                widget.remove_css_class(old);
+            }
+            widget.add_css_class(class);
+        }
+        let mut child = widget.first_child();
+        while let Some(current) = child {
+            child = current.next_sibling();
+            Self::apply_glow_class_to_descendants(&current, class, header, sidebar);
+        }
     }
 
     pub(crate) fn active_is_dark(&self) -> bool {
@@ -218,6 +307,7 @@ impl ThemeEngine {
             );
             self.overlay_provider.borrow_mut().replace(provider);
         }
+        self.apply_tron_glow_class(self.tron_glow_preset());
 
         *self.active_id.borrow_mut() = theme.id.clone();
         if let Some(hook) = self.window_controls_hook.borrow().as_ref() {
@@ -291,6 +381,254 @@ mod tests {
             )
             .unwrap();
         connection
+    }
+
+    fn settle_glow_preview() {
+        let main_loop = glib::MainLoop::new(None, false);
+        let loop_to_quit = main_loop.clone();
+        glib::timeout_add_local_once(std::time::Duration::from_millis(80), move || {
+            loop_to_quit.quit();
+        });
+        main_loop.run();
+    }
+
+    #[test]
+    #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+    fn tron_glow_presets_persist_and_theme_css_parses() {
+        gtk::init().unwrap();
+        let errors = Rc::new(RefCell::new(Vec::new()));
+        let provider = gtk::CssProvider::new();
+        {
+            let errors = errors.clone();
+            provider.connect_parsing_error(move |_, section, error| {
+                errors
+                    .borrow_mut()
+                    .push(format!("{}: {error}", section.start_location().lines()));
+            });
+        }
+        let theme_css = include_str!("../../themes/tron/theme.css");
+        let has_glow_presets = theme_css.contains(".tron-glow-subtle .photo-tile");
+        provider.load_from_string(theme_css);
+        assert!(errors.borrow().is_empty(), "TRON CSS errors: {errors:?}");
+        let display = gdk::Display::default().unwrap();
+        gtk::style_context_add_provider_for_display(
+            &display,
+            &provider,
+            gtk::STYLE_PROVIDER_PRIORITY_APPLICATION + 2,
+        );
+
+        let connection = memory_db();
+        let lightbox = Rc::new(crate::lightbox::Lightbox::new());
+        let engine = ThemeEngine::new(display.clone(), connection.clone(), lightbox);
+        let window = gtk::Window::builder()
+            .title("TRON Legacy — glow preview")
+            .default_width(1120)
+            .default_height(720)
+            .build();
+        window.set_decorated(false);
+        let surface = gtk::Box::new(gtk::Orientation::Vertical, 18);
+        surface.set_margin_top(24);
+        surface.set_margin_bottom(24);
+        surface.set_margin_start(28);
+        surface.set_margin_end(28);
+        let header = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+        header.add_css_class("layout-left-header");
+        let title = gtk::Label::new(Some("THE GRID  /  PHOTO ARCHIVE"));
+        title.add_css_class("app-title");
+        title.set_hexpand(true);
+        title.set_xalign(0.0);
+        header.append(&title);
+        let active = gtk::ToggleButton::with_label("GRID ACTIVE");
+        active.set_active(true);
+        header.append(&active);
+        surface.append(&header);
+
+        let content = gtk::Box::new(gtk::Orientation::Horizontal, 24);
+        let sidebar = gtk::ListBox::new();
+        sidebar.add_css_class("navigation-sidebar");
+        sidebar.set_width_request(210);
+        for (label, selected) in [("Library", false), ("All Photos", true), ("Favorites", false)] {
+            let row = gtk::ListBoxRow::new();
+            row.set_child(Some(&gtk::Label::new(Some(label))));
+            if selected {
+                row.set_state_flags(gtk::StateFlags::SELECTED, false);
+            }
+            sidebar.append(&row);
+        }
+        content.append(&sidebar);
+
+        let page = gtk::Box::new(gtk::Orientation::Vertical, 18);
+        page.set_hexpand(true);
+        let section = gtk::Label::new(Some("RECOGNIZED SIGNALS  /  15 PHOTOS"));
+        section.add_css_class("section-heading");
+        section.set_xalign(0.0);
+        page.append(&section);
+        let tiles = gtk::Box::new(gtk::Orientation::Horizontal, 18);
+        for (index, (number, flags)) in [
+            ("01  /  UNSELECTED", gtk::StateFlags::empty()),
+            ("02  /  HOVER", gtk::StateFlags::PRELIGHT),
+            ("03  /  SELECTED", gtk::StateFlags::empty()),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let tile = gtk::Overlay::new();
+            tile.add_css_class("photo-frame");
+            tile.add_css_class("photo-tile");
+            tile.set_size_request(230, 158);
+            let image = gtk::DrawingArea::new();
+            image.set_content_width(230);
+            image.set_content_height(158);
+            image.set_draw_func(move |_, context, width, height| {
+                let palette = [
+                    [(0.08, 0.32, 0.58), (0.08, 0.62, 0.72)],
+                    [(0.74, 0.22, 0.12), (0.94, 0.64, 0.18)],
+                    [(0.14, 0.48, 0.30), (0.36, 0.72, 0.46)],
+                ][index];
+                let gradient = gtk::cairo::LinearGradient::new(0.0, 0.0, width as f64, height as f64);
+                gradient.add_color_stop_rgb(0.0, palette[0].0, palette[0].1, palette[0].2);
+                gradient.add_color_stop_rgb(1.0, palette[1].0, palette[1].1, palette[1].2);
+                context.set_source(&gradient).unwrap();
+                context.paint().unwrap();
+                context.set_source_rgba(0.02, 0.04, 0.08, 0.58);
+                context.arc(width as f64 * 0.72, height as f64 * 0.42, 30.0, 0.0, std::f64::consts::TAU);
+                context.fill().unwrap();
+                context.set_source_rgba(1.0, 1.0, 1.0, 0.34);
+                context.move_to(12.0, height as f64 * 0.78);
+                context.line_to(width as f64 * 0.68, height as f64 * 0.56);
+                context.stroke().unwrap();
+            });
+            tile.set_child(Some(&image));
+            let caption = gtk::Label::new(Some(number));
+            caption.add_css_class("dim-label");
+            caption.set_halign(gtk::Align::Center);
+            caption.set_valign(gtk::Align::End);
+            caption.set_margin_bottom(8);
+            tile.add_overlay(&caption);
+            tile.set_state_flags(flags, false);
+            if number.starts_with("03") {
+                tile.add_css_class("folder-photo-selected");
+            }
+            tiles.append(&tile);
+        }
+        page.append(&tiles);
+
+        let album_card = gtk::Button::new();
+        album_card.add_css_class("album-card");
+        album_card.add_css_class("framed-album-card");
+        let album = gtk::Box::new(gtk::Orientation::Vertical, 8);
+        let cover = gtk::Overlay::new();
+        cover.add_css_class("album-cover");
+        cover.set_size_request(168, 126);
+        let photo = gtk::DrawingArea::new();
+        photo.set_content_width(168);
+        photo.set_content_height(126);
+        photo.set_draw_func(|_, context, width, height| {
+            let gradient = gtk::cairo::LinearGradient::new(0.0, 0.0, width as f64, height as f64);
+            gradient.add_color_stop_rgb(0.0, 0.91, 0.20, 0.08);
+            gradient.add_color_stop_rgb(0.48, 0.98, 0.72, 0.12);
+            gradient.add_color_stop_rgb(1.0, 0.04, 0.36, 0.82);
+            context.set_source(&gradient).unwrap();
+            context.rectangle(0.0, 0.0, width as f64, height as f64);
+            context.fill().unwrap();
+            context.set_source_rgb(0.03, 0.04, 0.07);
+            context.arc(width as f64 * 0.68, height as f64 * 0.38, 19.0, 0.0, std::f64::consts::TAU);
+            context.fill().unwrap();
+        });
+        photo.set_margin_start(59);
+        photo.set_margin_top(34);
+        photo.set_margin_end(56);
+        photo.set_margin_bottom(40);
+        cover.set_child(Some(&photo));
+        let frame = gtk::Picture::for_filename("images/theme/album-covers/standard/standard-frame.png");
+        frame.set_content_fit(gtk::ContentFit::Fill);
+        frame.set_can_target(false);
+        cover.add_overlay(&frame);
+        album.append(&cover);
+        album.append(&gtk::Label::new(Some("NEON ARCHIVE")));
+        album_card.set_child(Some(&album));
+        album_card.set_halign(gtk::Align::Start);
+        page.append(&album_card);
+
+        let zoom = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.0, 100.0, 1.0);
+        zoom.set_value(68.0);
+        zoom.set_hexpand(true);
+        page.append(&zoom);
+        content.append(&page);
+        surface.append(&content);
+        window.set_child(Some(&surface));
+        window.present();
+        settle_glow_preview();
+
+        if let Ok(directory) = std::env::var("PIC_TRON_SCREENSHOT_DIR") {
+            std::fs::create_dir_all(&directory).unwrap();
+            for (preset, name) in [(0, "subtle"), (1, "standard"), (2, "cinematic")] {
+                engine.set_tron_glow_preset(preset);
+                let class = match preset {
+                    0 => "tron-glow-subtle",
+                    1 => "tron-glow-standard",
+                    _ => "tron-glow-cinematic",
+                };
+                assert!(title.has_css_class(class));
+                assert!(cover.has_css_class(class));
+                window.queue_draw();
+                settle_glow_preview();
+                use gtk::gdk::prelude::PaintableExt;
+                let snapshot = gtk::Snapshot::new();
+                gtk::WidgetPaintable::new(Some(&window)).snapshot(
+                    &snapshot,
+                    window.width() as f64,
+                    window.height() as f64,
+                );
+                window
+                    .renderer()
+                    .unwrap()
+                    .render_texture(&snapshot.to_node().unwrap(), None)
+                    .save_to_png(format!("{directory}/tron-{name}.png"))
+                    .unwrap();
+            }
+            let sample_photo_pixel = |name: &str| {
+                image::open(format!("{directory}/tron-{name}.png"))
+                    .unwrap()
+                    .to_rgb8()
+                    .get_pixel(320, 180)
+                    .0
+            };
+            let original = sample_photo_pixel("subtle");
+            for name in ["standard", "cinematic"] {
+                assert_eq!(
+                    sample_photo_pixel(name),
+                    original,
+                    "photo pixels changed in {name} preset"
+                );
+            }
+            let subtle = image::open(format!("{directory}/tron-subtle.png"))
+                .unwrap()
+                .to_rgb8();
+            let cinematic = image::open(format!("{directory}/tron-cinematic.png"))
+                .unwrap()
+                .to_rgb8();
+            if has_glow_presets {
+                assert!(
+                    subtle
+                        .pixels()
+                        .zip(cinematic.pixels())
+                        .any(|(left, right)| left != right),
+                    "Subtle and Cinematic must render different glow strengths"
+                );
+            }
+        }
+        for (preset, class) in [
+            (0, "tron-glow-subtle"),
+            (1, "tron-glow-standard"),
+            (2, "tron-glow-cinematic"),
+        ] {
+            engine.set_tron_glow_preset(preset);
+            assert!(window.has_css_class(class));
+            assert_eq!(engine.tron_glow_preset(), preset);
+        }
+        window.close();
+        gtk::style_context_remove_provider_for_display(&display, &provider);
     }
 
     /// Exercises the runtime failure paths from a display: rapid theme

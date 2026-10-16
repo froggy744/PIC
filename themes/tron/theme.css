@@ -18,17 +18,18 @@
    1. PALETTE.
    -------------------------------------------------------------------------- */
 
-@define-color accent_bg_color #5BD1F0;      /* TRON ice cyan: selection, rails, lines */
-@define-color accent_fg_color #04121C;      /* near-black text on glowing fills       */
-@define-color accent_color #A5E8FF;         /* pale ice cyan for icons/text           */
+@define-color accent_bg_color #00EFFF;      /* electric cyan core                      */
+@define-color accent_fg_color #02070D;      /* black text on illuminated fills         */
+@define-color accent_color #D9FCFF;         /* near-white cyan edge                     */
 
-@define-color window_bg_color #060A12;      /* window + sidebar: the void             */
-@define-color view_bg_color #091120;        /* photo grid background                  */
-@define-color headerbar_bg_color #0D1626;   /* toolbars, menus, popovers              */
+@define-color window_bg_color #02070D;      /* window + sidebar: the void             */
+@define-color view_bg_color #030911;        /* photo grid background                  */
+@define-color headerbar_bg_color #07111A;   /* dark glass chrome                       */
 @define-color theme_fg_color #D6E9F5;       /* primary text: cold white-blue          */
 
 /* CLU orange: energy states, the browsing marker, warnings. */
-@define-color clu_orange #FF9E2C;
+@define-color tron_blue #00AFFF;
+@define-color clu_orange #FF8A00;
 /* Burning red-orange for favourites. */
 @define-color tron_red #FF5C39;
 
@@ -37,18 +38,23 @@
    -------------------------------------------------------------------------- */
 
 window {
-    background-image: linear-gradient(180deg, #0B1526 0%, #05070D 45%, #081020 100%);
+    background-image: linear-gradient(180deg, #050D16 0%, #02070D 48%, #030A12 100%);
     color: @theme_fg_color;
 }
     .layout-left-column, .navigation-sidebar { background: alpha(@window_bg_color, 0.60); color: @theme_fg_color; }
     .layout-left-column {
-        border-right: 1px solid alpha(@accent_bg_color, 0.50);
-        box-shadow: inset -6px 0 20px alpha(@accent_bg_color, 0.08);
+        border-right: 1px solid alpha(@accent_bg_color, 0.72);
+        box-shadow: 2px 0 8px alpha(@accent_bg_color, 0.24),
+                    8px 0 28px alpha(@tron_blue, 0.14),
+                    inset -1px 0 0 alpha(#EAF9FF, 0.55);
     }
     .layout-left-header, .layout-right-header {
-        background: alpha(@headerbar_bg_color, 0.90);
-        border-bottom: 1px solid alpha(@accent_bg_color, 0.60);
-        box-shadow: 0 2px 16px alpha(@accent_bg_color, 0.25), inset 0 -10px 20px alpha(@accent_bg_color, 0.05);
+        background: alpha(@headerbar_bg_color, 0.96);
+        border-bottom: 1px solid alpha(@accent_bg_color, 0.82);
+        box-shadow: 0 1px 0 alpha(#EAF9FF, 0.62),
+                    0 3px 12px alpha(@accent_bg_color, 0.40),
+                    0 12px 34px alpha(@tron_blue, 0.18),
+                    inset 0 -10px 20px alpha(@accent_bg_color, 0.08);
         color: @theme_fg_color;
     }
     .app-title {
@@ -69,6 +75,29 @@ window {
         background: alpha(@accent_bg_color, 0.15);
         box-shadow: 0 0 8px alpha(@accent_bg_color, 0.55), inset 0 0 10px alpha(@accent_bg_color, 0.25);
     }
+    .layout-left-header button:checked, .layout-right-header button:checked,
+    .photo-action-button:checked {
+        color: #F3FEFF;
+        background: alpha(@accent_bg_color, 0.22);
+        border-color: #EAF9FF;
+        box-shadow: 0 0 0 1px alpha(@accent_bg_color, 0.95),
+                    0 0 10px alpha(#EAF9FF, 0.72),
+                    0 0 26px alpha(@accent_bg_color, 0.78),
+                    0 0 54px alpha(@tron_blue, 0.48),
+                    inset 0 0 12px alpha(@accent_bg_color, 0.22);
+    }
+    .layout-left-header button:active, .layout-right-header button:active,
+    .photo-action-button:active {
+        border-color: #FFFFFF;
+        box-shadow: 0 0 0 1px #FFFFFF,
+                    0 0 12px #EAF9FF,
+                    0 0 30px @accent_bg_color,
+                    0 0 58px alpha(@tron_blue, 0.72),
+                    inset 0 0 14px alpha(#FFFFFF, 0.36);
+    }
+    button:disabled, scale:disabled slider, progressbar:disabled progress {
+        box-shadow: none;
+    }
 
 /* --------------------------------------------------------------------------
    3. SEARCH FIELD — a glowing identity-disc port.
@@ -85,9 +114,11 @@ window {
     .search-field:focus-within {
         border-color: @accent_color;
         background: alpha(@accent_bg_color, 0.12);
-        box-shadow: 0 0 0 2px alpha(@accent_bg_color, 0.35),
-                    0 0 22px alpha(@accent_bg_color, 0.50),
-                    inset 0 0 12px alpha(@accent_bg_color, 0.15);
+        box-shadow: 0 0 0 1px #EAF9FF,
+                    0 0 0 3px alpha(@accent_bg_color, 0.55),
+                    0 0 20px alpha(@accent_bg_color, 0.72),
+                    0 0 40px alpha(@tron_blue, 0.42),
+                    inset 0 0 12px alpha(@accent_bg_color, 0.20);
     }
     .search-field image { color: @accent_color; text-shadow: 0 0 6px alpha(@accent_bg_color, 0.65); }
     .search-field entry { background: transparent; color: @theme_fg_color; }
@@ -97,7 +128,7 @@ window {
    -------------------------------------------------------------------------- */
 
     .photo-grid {
-        background-image: linear-gradient(180deg, #0C1828 0%, @view_bg_color 30%, #0A1424 100%);
+        background-image: linear-gradient(180deg, #07111B 0%, @view_bg_color 30%, #02070D 100%);
     }
     .group-heading-bar { background: transparent; padding: 0; }
     .section-heading-box { margin-top: 16px; margin-bottom: 8px; }
@@ -119,15 +150,18 @@ window {
     .photo-frame { box-shadow: none; }
     .photo-tile {
         border-radius: 4px;
-        border: 2px solid alpha(@accent_bg_color, 0.32);
-        background: alpha(@theme_fg_color, 0.04);
+        border: 1px solid alpha(@accent_bg_color, 0.38);
+        background: alpha(@theme_fg_color, 0.025);
         box-shadow: none;
+        transition: box-shadow 180ms ease-out, border-color 180ms ease-out;
     }
     .photo-tile:hover {
-        border-color: @accent_color;
-        box-shadow: 0 0 0 1px alpha(@accent_bg_color, 0.70),
-                    0 0 14px alpha(@accent_bg_color, 0.60),
-                    0 0 30px alpha(@accent_bg_color, 0.30);
+        border-color: #F1FEFF;
+        box-shadow: 0 0 0 1px alpha(@accent_bg_color, 0.96),
+                    0 0 8px alpha(#EAF9FF, 0.78),
+                    0 0 20px alpha(@accent_bg_color, 0.78),
+                    0 0 42px alpha(@tron_blue, 0.52);
+        transition: box-shadow 180ms ease-out, border-color 180ms ease-out;
     }
     .thumbnail { border-radius: 2px; }
     .missing-thumbnail { background: alpha(@theme_fg_color, 0.05); }
@@ -135,17 +169,19 @@ window {
     /* Multi-selection ring: white-hot core with cyan bloom. */
     .folder-photo-selected.photo-tile {
         border-color: #EAF9FF;
-        box-shadow: 0 0 0 1px alpha(@accent_bg_color, 0.90),
-                    0 0 14px alpha(@accent_bg_color, 0.75),
-                    0 0 32px alpha(@accent_bg_color, 0.35);
+        box-shadow: 0 0 0 1px #EAF9FF,
+                    0 0 8px alpha(#EAF9FF, 0.88),
+                    0 0 22px alpha(@accent_bg_color, 0.94),
+                    0 0 48px alpha(@tron_blue, 0.62);
     }
     .folder-photo-selected .selection-badge { opacity: 1; }
     gridview.section-grid > child:selected .photo-tile,
     gridview.section-grid > item:selected .photo-tile {
         border-color: #EAF9FF;
-        box-shadow: 0 0 0 1px alpha(@accent_bg_color, 0.90),
-                    0 0 14px alpha(@accent_bg_color, 0.75),
-                    0 0 32px alpha(@accent_bg_color, 0.35);
+        box-shadow: 0 0 0 1px #EAF9FF,
+                    0 0 8px alpha(#EAF9FF, 0.88),
+                    0 0 22px alpha(@accent_bg_color, 0.94),
+                    0 0 48px alpha(@tron_blue, 0.62);
     }
     .selection-badge {
         background: @accent_bg_color;
@@ -233,6 +269,19 @@ window {
    -------------------------------------------------------------------------- */
 
     .albums-home-grid > flowboxchild { padding: 0; margin: 0; min-height: 0; }
+    .framed-album-card .album-cover {
+        box-shadow: 0 0 0 1px alpha(@accent_bg_color, 0.82),
+                    0 0 9px alpha(@accent_bg_color, 0.62),
+                    0 0 26px alpha(@tron_blue, 0.42);
+        transition: box-shadow 200ms ease-out;
+    }
+    .framed-album-card:hover .album-cover,
+    .framed-album-card:focus-visible .album-cover {
+        box-shadow: 0 0 0 1px #F2FEFF,
+                    0 0 8px alpha(#EAF9FF, 0.82),
+                    0 0 20px alpha(@accent_bg_color, 0.86),
+                    0 0 44px alpha(@tron_blue, 0.62);
+    }
     button.album-card {
         min-width: 0; padding: 0; margin: 0;
         background: transparent; background-image: none;
@@ -248,7 +297,10 @@ window {
       CLU orange, so the two are always distinguishable.
    -------------------------------------------------------------------------- */
 
-    .navigation-sidebar row { color: @theme_fg_color; }
+    .navigation-sidebar row {
+        color: @theme_fg_color;
+        transition: background-color 160ms ease-out, box-shadow 160ms ease-out;
+    }
     .navigation-sidebar row:hover {
         background: alpha(@accent_bg_color, 0.10);
         box-shadow: inset 3px 0 0 0 alpha(@accent_bg_color, 0.65),
@@ -256,16 +308,20 @@ window {
     }
     .navigation-sidebar row:selected {
         background-image: linear-gradient(90deg, alpha(@accent_bg_color, 0.24) 0%, alpha(@accent_bg_color, 0.05) 100%);
-        box-shadow: inset 3px 0 0 0 @accent_color,
-                    0 0 12px alpha(@accent_bg_color, 0.40),
-                    inset 0 0 16px alpha(@accent_bg_color, 0.12);
+        box-shadow: inset 1px 0 0 #F1FEFF,
+                    inset 4px 0 0 @accent_bg_color,
+                    0 0 14px alpha(@accent_bg_color, 0.56),
+                    0 0 30px alpha(@tron_blue, 0.28),
+                    inset 0 0 18px alpha(@accent_bg_color, 0.18);
         color: @theme_fg_color;
         font-weight: 700;
     }
     .navigation-sidebar row.sidebar-scroll-location {
         background-image: linear-gradient(90deg, alpha(@clu_orange, 0.26) 0%, alpha(@clu_orange, 0.05) 100%);
-        box-shadow: inset 3px 0 0 0 @clu_orange,
-                    0 0 12px alpha(@clu_orange, 0.45),
+        box-shadow: inset 1px 0 0 #FFF0D9,
+                    inset 4px 0 0 @clu_orange,
+                    0 0 14px alpha(@clu_orange, 0.68),
+                    0 0 30px alpha(@clu_orange, 0.28),
                     inset 0 0 14px alpha(@clu_orange, 0.14);
         color: @theme_fg_color;
         font-weight: 600;
@@ -357,6 +413,47 @@ window {
         box-shadow: 0 0 12px alpha(@accent_bg_color, 0.50), inset 0 0 8px alpha(@accent_bg_color, 0.20);
     }
 
+    scale trough {
+        min-height: 4px;
+        border: 1px solid alpha(@accent_bg_color, 0.44);
+        background: #06111A;
+        box-shadow: inset 0 0 8px alpha(@tron_blue, 0.18);
+    }
+    scale highlight {
+        min-height: 4px;
+        background-image: linear-gradient(90deg, @tron_blue, @accent_bg_color, #EAF9FF);
+        box-shadow: 0 0 6px alpha(#EAF9FF, 0.70),
+                    0 0 16px alpha(@accent_bg_color, 0.82),
+                    0 0 28px alpha(@tron_blue, 0.44);
+    }
+    scale slider {
+        min-width: 14px;
+        min-height: 14px;
+        border: 1px solid #F1FEFF;
+        background: @accent_bg_color;
+        box-shadow: 0 0 5px #EAF9FF,
+                    0 0 14px alpha(@accent_bg_color, 0.92),
+                    0 0 26px alpha(@tron_blue, 0.70);
+    }
+    progressbar trough {
+        border: 1px solid alpha(@accent_bg_color, 0.42);
+        background: #06111A;
+    }
+    progressbar progress {
+        background-image: linear-gradient(90deg, @tron_blue, @accent_bg_color, #EAF9FF);
+        box-shadow: 0 0 8px alpha(@accent_bg_color, 0.82),
+                    0 0 22px alpha(@tron_blue, 0.52);
+    }
+
+    dialog .suggested-action,
+    dialog button:checked {
+        border-color: #EAF9FF;
+        background: alpha(@accent_bg_color, 0.18);
+        box-shadow: 0 0 0 1px alpha(@accent_bg_color, 0.85),
+                    0 0 14px alpha(@accent_bg_color, 0.58),
+                    inset 0 0 10px alpha(@accent_bg_color, 0.20);
+    }
+
     button.clear-action-button { color: #D6E9F5; background: #14243A; border: 1px solid #31506E; }
     button.clear-action-button:hover { color: @accent_color; background: #1B3050; border-color: alpha(@accent_bg_color, 0.60); box-shadow: 0 0 8px alpha(@accent_bg_color, 0.35); }
     button.clear-action-button:active { background: #0E1B2E; }
@@ -392,4 +489,169 @@ window {
                     0 0 10px alpha(@accent_bg_color, 0.60),
                     0 0 28px alpha(@accent_bg_color, 0.32),
                     inset 0 0 10px alpha(@accent_bg_color, 0.10);
+    }
+
+/* --------------------------------------------------------------------------
+   10. USER GLOW PRESETS. Cinematic is the unmodified signature look. The
+       other presets scope only theme decorations; photo pixels are untouched.
+   -------------------------------------------------------------------------- */
+
+    .tron-glow-standard .photo-tile:hover,
+    .tron-glow-standard .folder-photo-selected.photo-tile,
+    .tron-glow-standard gridview.section-grid > child:selected .photo-tile,
+    .tron-glow-standard gridview.section-grid > item:selected .photo-tile {
+        box-shadow: 0 0 0 1px #EAF9FF,
+                    0 0 7px alpha(@accent_bg_color, 0.78),
+                    0 0 22px alpha(@tron_blue, 0.44);
+    }
+    .tron-glow-standard .framed-album-card .album-cover {
+        box-shadow: 0 0 0 1px alpha(@accent_bg_color, 0.65),
+                    0 0 7px alpha(@accent_bg_color, 0.48),
+                    0 0 18px alpha(@tron_blue, 0.28);
+    }
+    .tron-glow-standard .navigation-sidebar row:selected {
+        box-shadow: inset 1px 0 0 #F1FEFF,
+                    inset 4px 0 0 @accent_bg_color,
+                    0 0 10px alpha(@accent_bg_color, 0.42),
+                    inset 0 0 12px alpha(@accent_bg_color, 0.12);
+    }
+    .tron-glow-standard .layout-left-header,
+    .tron-glow-standard .layout-right-header {
+        box-shadow: 0 1px 0 alpha(#EAF9FF, 0.48),
+                    0 2px 8px alpha(@accent_bg_color, 0.24),
+                    inset 0 -8px 16px alpha(@accent_bg_color, 0.05);
+    }
+    .tron-glow-standard .app-title,
+    .tron-glow-standard .section-heading,
+    .tron-glow-standard .folder-section-title {
+        text-shadow: 0 0 5px alpha(@accent_bg_color, 0.72),
+                     0 0 14px alpha(@tron_blue, 0.32);
+    }
+    .tron-glow-standard .selection-badge {
+        box-shadow: 0 0 0 1px @window_bg_color,
+                    0 0 6px alpha(@accent_bg_color, 0.74),
+                    0 0 14px alpha(@tron_blue, 0.34);
+    }
+
+    .tron-glow-subtle .photo-tile:hover,
+    .tron-glow-subtle .folder-photo-selected.photo-tile,
+    .tron-glow-subtle gridview.section-grid > child:selected .photo-tile,
+    .tron-glow-subtle gridview.section-grid > item:selected .photo-tile {
+        box-shadow: 0 0 0 1px alpha(@accent_bg_color, 0.78);
+    }
+    .tron-glow-subtle .framed-album-card .album-cover {
+        box-shadow: 0 0 0 1px alpha(@accent_bg_color, 0.50);
+    }
+    .tron-glow-subtle .navigation-sidebar row:selected {
+        box-shadow: inset 3px 0 0 @accent_color,
+                    inset 0 0 10px alpha(@accent_bg_color, 0.08);
+    }
+    .tron-glow-subtle .layout-left-column {
+        box-shadow: none;
+    }
+    .tron-glow-subtle .layout-left-header,
+    .tron-glow-subtle .layout-right-header {
+        box-shadow: inset 0 -1px 0 alpha(@accent_bg_color, 0.40);
+    }
+    .tron-glow-subtle .app-title,
+    .tron-glow-subtle .section-heading,
+    .tron-glow-subtle .folder-section-title,
+    .tron-glow-subtle .folder-section-icon,
+    .tron-glow-subtle .favorite-btn.active,
+    .tron-glow-subtle .favorite-btn.active image {
+        text-shadow: none;
+    }
+    .tron-glow-subtle .selection-badge {
+        box-shadow: 0 0 0 1px @window_bg_color;
+    }
+    .tron-glow-subtle .layout-left-header button:hover,
+    .tron-glow-subtle .layout-right-header button:hover,
+    .tron-glow-subtle .layout-left-header button:checked,
+    .tron-glow-subtle .layout-right-header button:checked {
+        box-shadow: inset 0 0 0 1px alpha(@accent_bg_color, 0.50);
+    }
+    .tron-glow-subtle scale highlight,
+    .tron-glow-subtle scale slider,
+    .tron-glow-subtle progressbar progress {
+        box-shadow: none;
+    }
+
+    /* Direct widget classes keep the presets reliable on custom GTK nodes
+       and on recycled grid children whose CSS nodes are not GtkWidgets. */
+    .photo-tile.tron-glow-standard:hover,
+    .folder-photo-selected.photo-tile.tron-glow-standard,
+    gridview.section-grid > child:selected .photo-tile.tron-glow-standard,
+    gridview.section-grid > item:selected .photo-tile.tron-glow-standard {
+        box-shadow: 0 0 0 1px #EAF9FF,
+                    0 0 7px alpha(@accent_bg_color, 0.78),
+                    0 0 22px alpha(@tron_blue, 0.44);
+    }
+    .photo-tile.tron-glow-subtle:hover,
+    .folder-photo-selected.photo-tile.tron-glow-subtle,
+    gridview.section-grid > child:selected .photo-tile.tron-glow-subtle,
+    gridview.section-grid > item:selected .photo-tile.tron-glow-subtle {
+        box-shadow: 0 0 0 1px alpha(@accent_bg_color, 0.78);
+    }
+    .album-cover.tron-glow-standard {
+        box-shadow: 0 0 0 1px alpha(@accent_bg_color, 0.65),
+                    0 0 7px alpha(@accent_bg_color, 0.48),
+                    0 0 18px alpha(@tron_blue, 0.28);
+    }
+    .album-cover.tron-glow-subtle {
+        box-shadow: 0 0 0 1px alpha(@accent_bg_color, 0.50);
+    }
+    .app-title.tron-glow-standard,
+    .section-heading.tron-glow-standard,
+    .folder-section-title.tron-glow-standard {
+        text-shadow: 0 0 5px alpha(@accent_bg_color, 0.72),
+                     0 0 14px alpha(@tron_blue, 0.32);
+    }
+    .app-title.tron-glow-subtle,
+    .section-heading.tron-glow-subtle,
+    .folder-section-title.tron-glow-subtle,
+    .folder-section-icon.tron-glow-subtle,
+    .favorite-btn.active.tron-glow-subtle,
+    .favorite-btn.active.tron-glow-subtle image {
+        text-shadow: none;
+    }
+    .layout-left-header.tron-glow-standard,
+    .layout-right-header.tron-glow-standard {
+        box-shadow: 0 1px 0 alpha(#EAF9FF, 0.48),
+                    0 2px 8px alpha(@accent_bg_color, 0.24),
+                    inset 0 -8px 16px alpha(@accent_bg_color, 0.05);
+    }
+    .layout-left-header.tron-glow-subtle,
+    .layout-right-header.tron-glow-subtle {
+        box-shadow: inset 0 -1px 0 alpha(@accent_bg_color, 0.40);
+    }
+    .layout-left-header button.tron-glow-subtle:hover,
+    .layout-right-header button.tron-glow-subtle:hover,
+    .layout-left-header button.tron-glow-subtle:checked,
+    .layout-right-header button.tron-glow-subtle:checked {
+        box-shadow: inset 0 0 0 1px alpha(@accent_bg_color, 0.50);
+    }
+    .navigation-sidebar row.tron-glow-standard:selected {
+        box-shadow: inset 1px 0 0 #F1FEFF,
+                    inset 4px 0 0 @accent_bg_color,
+                    0 0 10px alpha(@accent_bg_color, 0.42),
+                    inset 0 0 12px alpha(@accent_bg_color, 0.12);
+    }
+    .navigation-sidebar row.tron-glow-subtle:selected {
+        box-shadow: inset 3px 0 0 @accent_color,
+                    inset 0 0 10px alpha(@accent_bg_color, 0.08);
+    }
+    .selection-badge.tron-glow-standard {
+        box-shadow: 0 0 0 1px @window_bg_color,
+                    0 0 6px alpha(@accent_bg_color, 0.74),
+                    0 0 14px alpha(@tron_blue, 0.34);
+    }
+    .selection-badge.tron-glow-subtle { box-shadow: 0 0 0 1px @window_bg_color; }
+    .search-field.tron-glow-subtle,
+    .photo-action-button.tron-glow-subtle { box-shadow: none; }
+    scale.tron-glow-subtle highlight,
+    scale.tron-glow-subtle slider,
+    progressbar.tron-glow-subtle progress { box-shadow: none; }
+    .tron-glow-subtle .search-field,
+    .tron-glow-subtle .photo-action-button {
+        box-shadow: none;
     }

@@ -23,6 +23,8 @@ struct Scene {
     duration: f64,
     transition: f64,
     ken: bool,
+    matrix: bool,
+    rain: bool,
 }
 
 fn camera_fraction(age: f64, interval: f64, transition: f64) -> f64 {
@@ -47,6 +49,13 @@ mod imp {
             let obj = self.obj();
             let (w, h) = (obj.width() as f64, obj.height() as f64);
             let scene = self.scene.borrow();
+            if scene.rain {
+                snapshot.append_color(&gdk::RGBA::new(0.0, 0.012, 0.004, 1.0),
+                    &graphene::Rect::new(0.0, 0.0, w as f32, h as f32));
+                let cr = snapshot.append_cairo(&graphene::Rect::new(0., 0., w as f32, h as f32));
+                super::super::super::matrix::draw_rain(&cr, w, h, scene.clock);
+                return;
+            }
             let Some(current) = &scene.current else { return };
             snapshot.push_clip(&graphene::Rect::new(0.0, 0.0, w as f32, h as f32));
             if let Some(old) = &scene.outgoing { paint(snapshot, old, &scene, w, h); }
@@ -55,7 +64,8 @@ mod imp {
             } else { 1.0 };
             snapshot.push_opacity(fade);
             // Fade the whole viewport, including letterboxing in Fullscreen Fade.
-            snapshot.append_color(&gdk::RGBA::new(0.035, 0.043, 0.063, 1.0),
+            snapshot.append_color(&if scene.matrix { gdk::RGBA::new(0.0, 0.015, 0.005, 1.0) }
+                else { gdk::RGBA::new(0.035, 0.043, 0.063, 1.0) },
                 &graphene::Rect::new(0.0, 0.0, w as f32, h as f32));
             paint(snapshot, current, &scene, w, h);
             snapshot.pop();
@@ -112,9 +122,14 @@ impl Cinema {
             self.canvas.set_size_request(size.0, size.1);
         }
         let mut scene = self.canvas.imp().scene.borrow_mut();
+        let was_rain = scene.rain;
+        let previous_tick = (scene.clock * 30.0) as u64;
+        let previous_photo = scene.current.as_ref().map(|p| (p.id, p.revision));
         scene.sync(player, frame_time, ken);
+        let redraw = !scene.rain || !was_rain || previous_tick != (scene.clock * 30.0) as u64
+            || previous_photo != scene.current.as_ref().map(|p| (p.id, p.revision));
         drop(scene);
-        self.canvas.queue_draw();
+        if redraw { self.canvas.queue_draw(); }
     }
 }
 
@@ -126,6 +141,8 @@ impl Scene {
         self.duration = player.interval.as_secs_f64();
         self.transition = player.transition.as_secs_f64().max(0.2);
         self.ken = ken;
+        self.matrix = player.style.matrix();
+        self.rain = player.style == Style::MatrixRain;
         let clock = self.clock;
         if let Some(surface) = player.frames.get(&player.current) {
             if self.current.as_ref().is_none_or(|p| p.id != player.current) {
@@ -153,6 +170,70 @@ impl Scene {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+    fn matrix_styles_render_green_move_and_pause() {
+        libadwaita::init().unwrap();
+        let context = glib::MainContext::default();
+        for style in [Style::MatrixRain, Style::MatrixKenBurns] {
+            let mut player = Player::new(style, if style == Style::MatrixRain { 0 } else { 2 }, 6, false, 6);
+            let mut data = Vec::new();
+            for y in 0..360 {
+                for x in 0..640 {
+                    let color = if y > 230 - ((x as f64 / 90.).sin() * 65.) as i32 {
+                        [70, 150, 45, 255]
+                    } else { [(x / 3) as u8, (y / 2 + 60) as u8, 210, 255] };
+                    data.extend_from_slice(&color);
+                }
+            }
+            if style == Style::MatrixKenBurns {
+            let source = if let Ok(path) = std::env::var("PIC_MATRIX_PREVIEW_PHOTO") {
+                let image = image::open(path).unwrap().resize(1920, 1200, image::imageops::FilterType::Lanczos3).to_rgba8();
+                texture_pixels(image)
+            } else { Pixels { width: 640, height: 360, data } };
+            let pixels = super::super::super::matrix::prepare(source, style);
+            player.receive(ImageResult { index: 0, high_quality: true, pixels: Some(pixels) });
+            }
+            let mut stage = Stage::new(style, 0, PicasaTransition::Crossfade);
+            let window = gtk::Window::builder().decorated(false).default_width(1280).default_height(720)
+                .child(&stage.root).build();
+            window.present();
+            for _ in 0..20 {
+                while context.pending() { context.iteration(false); }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            let capture = |stage: &Stage| {
+                let snapshot = gtk::Snapshot::new();
+                stage.cinema.as_ref().unwrap().canvas.imp().snapshot(&snapshot);
+                let node = snapshot.to_node().unwrap();
+                let texture = window.renderer().unwrap().render_texture(&node,
+                    Some(&graphene::Rect::new(0., 0., 1280., 720.)));
+                let mut data = vec![0; 1280 * 720 * 4];
+                texture.download(&mut data, 1280 * 4);
+                (data, texture)
+            };
+            stage.sync(&player, 1_000_000);
+            while context.pending() { context.iteration(false); }
+            let (first, _) = capture(&stage);
+            for tick in 1..=60 { stage.sync(&player, 1_000_000 + tick * 16_667); }
+            let (moving, texture) = capture(&stage);
+            assert_ne!(first, moving, "{} did not animate", style.label());
+            assert!(moving.chunks_exact(4).all(|p| p[1] >= p[0] && p[1] >= p[2]), "non-green pixels");
+            if let Ok(dir) = std::env::var("PIC_MATRIX_PREVIEW_DIR") {
+                texture.save_to_png(std::path::Path::new(&dir).join(format!("{}.png", style.key()))).unwrap();
+            }
+            player.pause_or_resume();
+            stage.sync(&player, 2_500_000);
+            assert_eq!(moving, capture(&stage).0, "pause changed the image");
+            let scene = stage.cinema.as_ref().unwrap().canvas.imp().scene.borrow();
+            assert_eq!(scene.rain, style == Style::MatrixRain);
+            if style == Style::MatrixRain { assert!(scene.current.is_none()); }
+            assert_eq!(scene.ken, style == Style::MatrixKenBurns);
+            drop(scene);
+            window.close();
+        }
+    }
+
     #[test]
     #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
     fn canvas_renders_portraits_and_crossfades_at_viewport_size() {

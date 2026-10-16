@@ -481,7 +481,7 @@ impl Stage {
         let h = self.root.height() as f64;
         if w < 2.0 || h < 2.0 { return; }
         if let Some(cinema) = self.cinema.as_mut() {
-            cinema.sync(player, w, h, frame_time, self.style == Style::IPhoto);
+            cinema.sync(player, w, h, frame_time, matches!(self.style, Style::IPhoto | Style::MatrixKenBurns));
             return;
         }
         if let Some(pile) = self.pile.as_mut() {

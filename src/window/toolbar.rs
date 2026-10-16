@@ -370,13 +370,14 @@
     let parent_for_screensaver = window.downgrade();
     let connection_for_screensaver = connection.clone();
     let gallery_for_screensaver = gallery.clone();
+    let theme_for_screensaver = theme_engine.clone();
     screensaver.connect_clicked(move |_| {
         if let Some(window) = parent_for_screensaver.upgrade() {
             // Take a snapshot when Play is pressed, not when the toolbar is
             // created. Preserve the actual selection without silently adding
             // the most recently activated photo as a fallback.
             let ids = gallery_for_screensaver.selected_photo_ids(None);
-            crate::screensaver::open(&window, connection_for_screensaver.clone(), ids);
+            crate::screensaver::open(&window, connection_for_screensaver.clone(), ids, &theme_for_screensaver.active_id());
         }
     });
     right_header.pack_end(&header_tools);

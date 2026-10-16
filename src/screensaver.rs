@@ -16,11 +16,14 @@ use rusqlite::Connection;
 
 use crate::{db, edit, thumbnail};
 mod gpu;
+mod matrix;
 
 const STYLE_KEY: &str = "screensaver-style";
+const TERMINAL_STYLE_KEY: &str = "screensaver-terminal-style";
 const SOURCE_KEY: &str = "screensaver-source";
 const DURATION_KEY: &str = "screensaver-duration";
 const SHUFFLE_KEY: &str = "screensaver-shuffle";
+const EXCLUDE_PORTRAITS_KEY: &str = "screensaver-exclude-portraits";
 const SHUFFLE_TILES_KEY: &str = "screensaver-shuffle-tiles";
 const MOSAIC_TILES_KEY: &str = "screensaver-mosaic-tiles";
 const PICASA_TRANSITION_KEY: &str = "screensaver-picasa-transition";
@@ -39,11 +42,11 @@ const PREFETCH: usize = 3;
 const HQ_PATIENCE: Duration = Duration::from_secs(3);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Style { Mosaic, Grid, PicturePile, Floating, IPhoto, Fade, Surprise }
+enum Style { Mosaic, Grid, PicturePile, Floating, IPhoto, Fade, Surprise, MatrixRain, MatrixKenBurns }
 impl Style {
-    const CHOICES: [Self; 7] = [
+    const CHOICES: [Self; 9] = [
         Self::Mosaic, Self::Grid, Self::PicturePile, Self::Floating,
-        Self::IPhoto, Self::Fade, Self::Surprise,
+        Self::IPhoto, Self::Fade, Self::Surprise, Self::MatrixRain, Self::MatrixKenBurns,
     ];
     fn from_saved(v: &str) -> Self {
         match v {
@@ -53,6 +56,8 @@ impl Style {
             "iphoto" => Self::IPhoto,
             "fade" => Self::Fade,
             "surprise" => Self::Surprise,
+            "matrix-rain" => Self::MatrixRain,
+            "matrix-ken-burns" => Self::MatrixKenBurns,
             _ => Self::Mosaic,
         }
     }
@@ -62,6 +67,8 @@ impl Style {
             Self::PicturePile => "pile", Self::Floating => "floating",
             Self::IPhoto => "iphoto", Self::Fade => "fade",
             Self::Surprise => "surprise",
+            Self::MatrixRain => "matrix-rain",
+            Self::MatrixKenBurns => "matrix-ken-burns",
         }
     }
     fn dropdown_index(self) -> u32 {
@@ -69,9 +76,16 @@ impl Style {
     }
     fn resolved(self) -> Self {
         if self != Self::Surprise { return self; }
-        Self::CHOICES[random_seed() as usize % (Self::CHOICES.len() - 1)]
+        // Surprise stays within the six ordinary styles in every theme.
+        Self::CHOICES[random_seed() as usize % 6]
     }
-    fn single_photo(self) -> bool { matches!(self, Self::IPhoto | Self::Fade) }
+    fn single_photo(self) -> bool { matches!(self, Self::IPhoto | Self::Fade | Self::MatrixRain | Self::MatrixKenBurns) }
+    fn matrix(self) -> bool { matches!(self, Self::MatrixRain | Self::MatrixKenBurns) }
+    fn uses_photos(self) -> bool { self != Self::MatrixRain }
+    fn available(self, terminal: bool) -> bool { terminal || !self.matrix() }
+    fn for_theme(self, terminal: bool) -> Self {
+        if self.available(terminal) { self } else { Self::Mosaic }
+    }
     fn label(self) -> &'static str {
         match self {
             Self::Mosaic => "Mosaic",
@@ -81,6 +95,8 @@ impl Style {
             Self::IPhoto => "Ken Burns",
             Self::Fade => "Fullscreen Fade",
             Self::Surprise => "Surprise Me",
+            Self::MatrixRain => "Matrix Rain",
+            Self::MatrixKenBurns => "Matrix Ken Burns",
         }
     }
     fn subtitle(self) -> &'static str {
@@ -92,6 +108,8 @@ impl Style {
             Self::IPhoto => "Cinematic pan and zoom",
             Self::Fade => "Gentle full-screen slideshow",
             Self::Surprise => "Random style on launch",
+            Self::MatrixRain => "Animated Katakana rain on black, no photos",
+            Self::MatrixKenBurns => "Green photo with fixed Katakana streams and slow pan and zoom",
         }
     }
 }
@@ -174,6 +192,7 @@ struct Preferences {
     source: String,
     seconds: u32,
     shuffle: bool,
+    exclude_portraits: bool,
     shuffle_tiles: bool,
     mosaic_tiles: usize,
     picasa_transition: PicasaTransition,
@@ -189,6 +208,7 @@ impl Preferences {
             source: setting(SOURCE_KEY),
             seconds: setting(DURATION_KEY).parse::<u32>().unwrap_or(6).clamp(3, 30),
             shuffle: setting(SHUFFLE_KEY) != "false",
+            exclude_portraits: setting(EXCLUDE_PORTRAITS_KEY) == "true",
             shuffle_tiles: setting(SHUFFLE_TILES_KEY) != "false",
             mosaic_tiles: setting(MOSAIC_TILES_KEY).parse::<usize>()
                 .ok().filter(|count| *count > 0).unwrap_or(DEFAULT_MOSAIC_TILES),
@@ -204,6 +224,7 @@ impl Preferences {
             (SOURCE_KEY, self.source.clone()),
             (DURATION_KEY, self.seconds.to_string()),
             (SHUFFLE_KEY, self.shuffle.to_string()),
+            (EXCLUDE_PORTRAITS_KEY, self.exclude_portraits.to_string()),
             (SHUFFLE_TILES_KEY, self.shuffle_tiles.to_string()),
             (MOSAIC_TILES_KEY, self.mosaic_tiles.to_string()),
             (PICASA_TRANSITION_KEY, self.picasa_transition.key().to_string()),
@@ -242,6 +263,21 @@ impl From<db::Photo> for Slide {
             caption,
         }
     }
+}
+
+/// Classify the edited image as the viewer presents it. Unknown metadata is
+/// checked again after decode so it cannot put a portrait on screen.
+fn displayed_is_portrait(width: Option<i64>, height: Option<i64>, rotation: i32, recipe: &str) -> Option<bool> {
+    let mut width = u32::try_from(width?).ok().filter(|value| *value > 0)?;
+    let mut height = u32::try_from(height?).ok().filter(|value| *value > 0)?;
+    if rotation.rem_euclid(180) == 90 { std::mem::swap(&mut width, &mut height); }
+    let recipe = edit::EditRecipe::decode(recipe);
+    let (width, height) = edit::render::estimated_output_dimensions(width, height, &recipe);
+    Some(height > width)
+}
+
+fn accept_orientation(pixels: Pixels, exclude_portraits: bool) -> Option<Pixels> {
+    if exclude_portraits && pixels.height > pixels.width { None } else { Some(pixels) }
 }
 
 /// Read local time only when the displayed minute changes. The overlay is
@@ -359,6 +395,25 @@ fn style_preview(style: Style) -> gtk::DrawingArea {
                 cr.rectangle(13.5, 9.5, 39.0, 23.0);
                 let _ = cr.stroke();
             }
+            Style::MatrixRain | Style::MatrixKenBurns => {
+                rect(0., 0., 66., 42., (0.0, 0.025, 0.008));
+                let layout = pangocairo::functions::create_layout(cr);
+                layout.set_font_description(Some(&gtk::pango::FontDescription::from_string("Sans 7")));
+                for col in 0..11 {
+                    for row in 0..5 {
+                        let bright = ((col * 3 + row * 7) % 9) as f64 / 10.0;
+                        cr.set_source_rgb(0.02, 0.22 + bright * 0.7, 0.08);
+                        cr.move_to(col as f64 * 6., row as f64 * 8. + 7.);
+                        layout.set_text(&matrix::KATAKANA[(col * 7 + row * 13) % matrix::KATAKANA.len()].to_string());
+                        pangocairo::functions::show_layout(cr, &layout);
+                    }
+                }
+                if style == Style::MatrixKenBurns {
+                    cr.set_source_rgb(0.4, 1., 0.6);
+                    cr.rectangle(12., 8., 42., 26.);
+                    let _ = cr.stroke();
+                }
+            }
             Style::Surprise => {
                 photo(4.0, 5.0, 24.0, 15.0, 1);
                 photo(4.0, 22.0, 24.0, 15.0, 2);
@@ -376,9 +431,9 @@ fn style_preview(style: Style) -> gtk::DrawingArea {
 
 /// Compact style selector with miniature previews in its popover. Selection
 /// is stored in a Cell and propagated to related controls by the callback.
-/// A directly visible horizontal gallery of the existing seven vector
+/// A directly visible horizontal gallery of vector
 /// previews. Scrolling does not decode photographs or touch remote storage.
-fn style_picker(initial: Style, on_change: impl Fn(Style) + 'static)
+fn style_picker(initial: Style, terminal: bool, on_change: impl Fn(Style) + 'static)
     -> (gtk::ScrolledWindow, Rc<Cell<Style>>)
 {
     let chosen = Rc::new(Cell::new(initial));
@@ -397,7 +452,7 @@ fn style_picker(initial: Style, on_change: impl Fn(Style) + 'static)
     cards.set_margin_end(2);
     let buttons: Rc<RefCell<Vec<gtk::ToggleButton>>> = Rc::new(RefCell::new(Vec::new()));
     let on_change: Rc<dyn Fn(Style)> = Rc::new(on_change);
-    for candidate in Style::CHOICES {
+    for candidate in Style::CHOICES.into_iter().filter(|style| style.available(terminal)) {
         let card = gtk::ToggleButton::new();
         card.set_size_request(110, 85);
         card.set_active(candidate == initial);
@@ -431,8 +486,15 @@ fn style_picker(initial: Style, on_change: impl Fn(Style) + 'static)
 }
 
 /// Opens the settings/launch dialog without changing PIC's current viewer.
-pub fn open(parent: &adw::ApplicationWindow, connection: Rc<RefCell<Connection>>, selected_ids: Vec<i64>) {
-    let current = Preferences::load(&connection.borrow());
+pub fn open(parent: &adw::ApplicationWindow, connection: Rc<RefCell<Connection>>, selected_ids: Vec<i64>, theme_id: &str) {
+    let terminal = theme_id.eq_ignore_ascii_case("Terminal");
+    let mut current = Preferences::load(&connection.borrow());
+    if terminal {
+        if let Ok(Some(saved)) = db::setting(&connection.borrow(), TERMINAL_STYLE_KEY) {
+            current.style = Style::from_saved(&saved);
+        }
+    }
+    current.style = current.style.for_theme(terminal);
     let mut sources = vec![
         ("All Photos".to_owned(), Source::All),
         ("Favourites".to_owned(), Source::Favorites),
@@ -490,22 +552,16 @@ pub fn open(parent: &adw::ApplicationWindow, connection: Rc<RefCell<Connection>>
     shuffle_tiles_button.set_active(current.shuffle_tiles);
     shuffle_tiles_button.set_tooltip_text(Some("Change tile positions in a shuffled order"));
 
-    let transition_for_style = picasa_transition.clone();
-    let mosaic_for_style = mosaic_tiles.clone();
-    let shuffle_for_style = shuffle_tiles_button.clone();
-    let (style_picker, style_selected) = style_picker(current.style, move |style| {
-        transition_for_style.set_sensitive(!style.single_photo());
-        mosaic_for_style.set_sensitive(!style.single_photo());
-        shuffle_for_style.set_sensitive(!style.single_photo());
-    });
-    picasa_transition.set_sensitive(!current.style.single_photo());
-    mosaic_tiles.set_sensitive(!current.style.single_photo());
-    shuffle_tiles_button.set_sensitive(!current.style.single_photo());
     let style_heading = gtk::Label::new(Some("Choose a style"));
     style_heading.set_xalign(0.0);
     style_heading.add_css_class("heading");
     body.append(&style_heading);
-    body.append(&style_picker);
+    let picker_slot = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    body.append(&picker_slot);
+    let rain_note = gtk::Label::new(Some("Matrix Rain uses no photos."));
+    rain_note.set_xalign(0.0);
+    rain_note.add_css_class("dim-label");
+    body.append(&rain_note);
 
     let source_names: Vec<String> = sources.iter().map(|(name, _)| name.clone()).collect();
     let names: Vec<&str> = source_names.iter().map(String::as_str).collect();
@@ -520,7 +576,12 @@ pub fn open(parent: &adw::ApplicationWindow, connection: Rc<RefCell<Connection>>
             .unwrap_or(0)
     };
     source.set_selected(selected as u32);
-    body.append(&field("Photos", &source));
+    let source_field = field("Photos", &source);
+    body.append(&source_field);
+    let exclude_portraits = gtk::CheckButton::with_label("Exclude portrait photos");
+    exclude_portraits.set_active(current.exclude_portraits);
+    exclude_portraits.set_tooltip_text(Some("Skip photos taller than they are wide after rotation and crop"));
+    body.append(&exclude_portraits);
 
     let duration = gtk::SpinButton::with_range(3.0, 30.0, 1.0);
     duration.set_value(current.seconds as f64);
@@ -603,6 +664,29 @@ pub fn open(parent: &adw::ApplicationWindow, connection: Rc<RefCell<Connection>>
     body.append(&advanced_toggle);
     body.append(&revealer);
 
+    let photo_controls: Vec<gtk::Widget> = vec![
+        source_field.clone().upcast(), exclude_portraits.clone().upcast(),
+        timing_row.clone().upcast(),
+        advanced_toggle.clone().upcast(), revealer.clone().upcast(),
+    ];
+    for widget in &photo_controls { widget.set_visible(current.style.uses_photos()); }
+    rain_note.set_visible(!current.style.uses_photos());
+    let transition_for_style = picasa_transition.clone();
+    let mosaic_for_style = mosaic_tiles.clone();
+    let shuffle_for_style = shuffle_tiles_button.clone();
+    let note_for_style = rain_note.clone();
+    let (style_picker, style_selected) = style_picker(current.style, terminal, move |style| {
+        transition_for_style.set_sensitive(!style.single_photo());
+        mosaic_for_style.set_sensitive(!style.single_photo());
+        shuffle_for_style.set_sensitive(!style.single_photo());
+        for widget in &photo_controls { widget.set_visible(style.uses_photos()); }
+        note_for_style.set_visible(!style.uses_photos());
+    });
+    picasa_transition.set_sensitive(!current.style.single_photo());
+    mosaic_tiles.set_sensitive(!current.style.single_photo());
+    shuffle_tiles_button.set_sensitive(!current.style.single_photo());
+    picker_slot.append(&style_picker);
+
     let notice = gtk::Label::new(None);
     notice.set_visible(false);
     notice.set_wrap(true);
@@ -634,19 +718,22 @@ pub fn open(parent: &adw::ApplicationWindow, connection: Rc<RefCell<Connection>>
         let Some((_, photo_source)) = sources.get(source_index) else {
             return;
         };
-        let requested_tiles = match mosaic_tiles.text().trim().parse::<usize>() {
+        let requested_tiles = if style_selected.get().uses_photos() {
+            match mosaic_tiles.text().trim().parse::<usize>() {
             Ok(count) if count > 0 => count,
             _ => {
                 notice.set_text("Tiles must be a positive whole number.");
                 notice.set_visible(true);
                 return;
             }
-        };
+            }
+        } else { DEFAULT_MOSAIC_TILES };
         let prefs = Preferences {
             style: style_selected.get(),
             source: photo_source.key(),
             seconds: duration.value_as_int().clamp(3, 30) as u32,
             shuffle: shuffle_button.is_active(),
+            exclude_portraits: exclude_portraits.is_active(),
             shuffle_tiles: shuffle_tiles_button.is_active(),
             mosaic_tiles: requested_tiles,
             picasa_transition: PicasaTransition::from_dropdown(picasa_transition.selected()),
@@ -654,6 +741,17 @@ pub fn open(parent: &adw::ApplicationWindow, connection: Rc<RefCell<Connection>>
             captions: captions_button.is_active(),
             clock: clock_button.is_active(),
         };
+        if !prefs.style.uses_photos() {
+            prefs.save(&connection.borrow());
+            if terminal {
+                if let Err(error) = db::set_setting(&connection.borrow(), TERMINAL_STYLE_KEY, prefs.style.key()) {
+                    eprintln!("PIC screensaver: could not remember Terminal style: {error}");
+                }
+            }
+            if let Some(dialog) = dialog_for_start.upgrade() { dialog.close(); }
+            start_screensaver(&parent, Vec::new(), prefs);
+            return;
+        }
         let mut photos = match photo_source.photos(&connection.borrow()) {
             Ok(photos) => photos,
             Err(error) => {
@@ -662,12 +760,26 @@ pub fn open(parent: &adw::ApplicationWindow, connection: Rc<RefCell<Connection>>
                 return;
             }
         };
+        if prefs.exclude_portraits {
+            photos.retain(|photo| displayed_is_portrait(
+                photo.width, photo.height, photo.rotation, &photo.edit_recipe,
+            ) != Some(true));
+        }
         if photos.is_empty() {
-            notice.set_text("This collection has no photos. Choose another source.");
+            notice.set_text(if prefs.exclude_portraits {
+                "No landscape or square photos in this collection. Choose another source or turn off Exclude portrait photos."
+            } else {
+                "This collection has no photos. Choose another source."
+            });
             notice.set_visible(true);
             return;
         }
         prefs.save(&connection.borrow());
+        if terminal {
+            if let Err(error) = db::set_setting(&connection.borrow(), TERMINAL_STYLE_KEY, prefs.style.key()) {
+                eprintln!("PIC screensaver: could not remember Terminal style: {error}");
+            }
+        }
         if prefs.shuffle {
             shuffle(&mut photos);
         }
@@ -730,6 +842,7 @@ fn start_decode_worker(
     slides: Vec<Slide>,
     style: Style,
     mosaic_tiles: usize,
+    exclude_portraits: bool,
     requests: Receiver<usize>,
     results: mpsc::SyncSender<ImageResult>,
     cancelled: Arc<AtomicBool>,
@@ -788,7 +901,9 @@ fn start_decode_worker(
                 if results.send(ImageResult {
                     index,
                     high_quality: true,
-                    pixels: decoded.ok(),
+                    pixels: decoded.ok()
+                        .and_then(|pixels| accept_orientation(pixels, exclude_portraits))
+                        .map(|pixels| matrix::prepare(pixels, style)),
                 }).is_err() { break; }
             }
         });
@@ -810,7 +925,9 @@ fn start_decode_worker(
                 );
             }
             if results.send(ImageResult {
-                index, high_quality: false, pixels: cached,
+                index, high_quality: false, pixels: cached
+                    .and_then(|pixels| accept_orientation(pixels, exclude_portraits))
+                    .map(|pixels| matrix::prepare(pixels, style)),
             }).is_err() { break; }
 
             // Source availability checks belong to the other workers, not
@@ -1159,8 +1276,8 @@ fn cinematic_motion(index: usize, progress: f64) -> (f64, f64, f64) {
 }
 
 fn start_screensaver(parent: &adw::ApplicationWindow, slides: Vec<Slide>, prefs: Preferences) {
-    if slides.is_empty() { return; }
     let style = prefs.style.resolved();
+    if slides.is_empty() && style.uses_photos() { return; }
     let player = Rc::new(RefCell::new(Player::new(
         style, slides.len(), prefs.seconds, prefs.shuffle_tiles, prefs.mosaic_tiles,
     )));
@@ -1176,7 +1293,10 @@ fn start_screensaver(parent: &adw::ApplicationWindow, slides: Vec<Slide>, prefs:
     // Render at the resolution of tiles actually displayed, not just the
     // requested count (e.g. 10,000 requested from a three-photo collection).
     let active_mosaic_tiles = player.borrow().slots.len().max(1);
-    start_decode_worker(slides, style, active_mosaic_tiles, request_rx, result_tx, Arc::clone(&cancelled));
+    if style.uses_photos() {
+        start_decode_worker(slides, style, active_mosaic_tiles, prefs.exclude_portraits,
+            request_rx, result_tx, Arc::clone(&cancelled));
+    }
 
     // Fullscreen surfaces should be independent application windows on
     // Wayland, not transient dialogs attached to the main gallery. Closing
@@ -1220,8 +1340,8 @@ fn start_screensaver(parent: &adw::ApplicationWindow, slides: Vec<Slide>, prefs:
     clock.set_halign(gtk::Align::End);
     clock.set_margin_start(20);
     clock.set_can_target(false);
-    clock.set_visible(prefs.clock);
-    if prefs.clock {
+    clock.set_visible(prefs.clock && style.uses_photos());
+    if prefs.clock && style.uses_photos() {
         clock.set_label(&local_clock_text());
     }
     footer.set_end_widget(Some(&clock));
@@ -1323,7 +1443,7 @@ fn start_screensaver(parent: &adw::ApplicationWindow, slides: Vec<Slide>, prefs:
             }
             player.update(&request_tx);
             stage.borrow_mut().sync(&player, frame_clock.frame_time());
-            if prefs.clock {
+            if prefs.clock && style.uses_photos() {
                 let minute = SystemTime::now().duration_since(UNIX_EPOCH)
                     .unwrap_or_default().as_secs() / 60;
                 if minute != last_clock_minute.get() {
@@ -1384,6 +1504,7 @@ mod tests {
             transition_ms: 1700,
             captions: true,
             clock: true,
+            exclude_portraits: true,
         };
         prefs.save(&connection);
         let restored = Preferences::load(&connection);
@@ -1397,12 +1518,35 @@ mod tests {
         assert_eq!(restored.transition_ms, 1700);
         assert!(restored.captions);
         assert!(restored.clock);
+        assert!(restored.exclude_portraits);
         let another = Preferences { clock: false, style: Style::Fade, ..prefs };
         another.save(&connection);
         let restored = Preferences::load(&connection);
         assert_eq!(restored.style, Style::Fade);
         assert!(!restored.clock);
         assert!(restored.captions);
+    }
+
+    #[test]
+    fn portrait_filter_uses_visible_rotation_and_crop() {
+        assert_eq!(displayed_is_portrait(Some(4000), Some(6000), 0, ""), Some(true));
+        assert_eq!(displayed_is_portrait(Some(4000), Some(6000), 90, ""), Some(false));
+        assert_eq!(displayed_is_portrait(Some(4000), Some(4000), 0, ""), Some(false));
+        assert_eq!(displayed_is_portrait(None, Some(6000), 0, ""), None);
+        let mut recipe = edit::EditRecipe::default();
+        recipe.crop = edit::model::CropRect { left: 0.3, top: 0.0, right: 0.7, bottom: 1.0 };
+        assert_eq!(displayed_is_portrait(Some(4000), Some(3000), 0, &recipe.encode()), Some(true));
+    }
+
+    #[test]
+    fn portrait_filter_checks_decoded_photos_when_metadata_is_unknown() {
+        let pixels = |width, height| Pixels {
+            width, height, data: vec![255; (width * height * 4) as usize],
+        };
+        assert!(accept_orientation(pixels(2, 3), true).is_none());
+        assert!(accept_orientation(pixels(3, 2), true).is_some());
+        assert!(accept_orientation(pixels(2, 2), true).is_some());
+        assert!(accept_orientation(pixels(2, 3), false).is_some());
     }
 
     #[test]
@@ -1413,6 +1557,34 @@ mod tests {
             assert!(!style.label().is_empty());
             assert!(!style.subtitle().is_empty());
             assert!(labels.insert(style.label()));
+        }
+    }
+
+    #[test]
+    fn matrix_rain_does_not_need_a_photo_source() {
+        assert!(!Style::MatrixRain.uses_photos());
+        assert!(Style::MatrixKenBurns.uses_photos());
+    }
+
+    #[test]
+    fn matrix_styles_only_available_in_terminal() {
+        for style in Style::CHOICES {
+            assert!(style.available(true));
+            assert_eq!(style.available(false), !style.matrix());
+            assert!(!style.for_theme(false).matrix());
+            assert_eq!(style.for_theme(true), style);
+        }
+        for _ in 0..100 {
+            assert!(!Style::Surprise.resolved().matrix());
+        }
+    }
+
+    #[test]
+    fn matrix_style_keys_round_trip() {
+        for key in ["matrix-rain", "matrix-ken-burns"] {
+            let style = Style::from_saved(key);
+            assert_eq!(style.key(), key);
+            assert!(style.single_photo());
         }
     }
 

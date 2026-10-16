@@ -1757,9 +1757,29 @@ fn package_type() -> &'static str {
 
 fn about_page() -> gtk::ScrolledWindow {
     let content = page_content(
-        "About PIC",
-        "Build and package information for this installation of PIC.",
+        "PIC — Personal Image Catalogue",
+        "Miss Picasa or classic iPhoto? PIC brings that familiar photo-library experience to Linux.",
     );
+
+    let description = gtk::Label::new(Some(
+        "A free, open-source photo manager and editor built with Rust, GTK4 and libadwaita. \
+         Browse, organise and edit your own collection with a fast, lightweight, \
+         local-first app inspired by the classics.",
+    ));
+    description.set_xalign(0.0);
+    description.set_wrap(true);
+    description.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+    description.set_selectable(true);
+    content.append(&description);
+
+    let disclaimer = gtk::Label::new(Some(
+        "Independent project. Not affiliated with Google or Apple.",
+    ));
+    disclaimer.set_xalign(0.0);
+    disclaimer.set_wrap(true);
+    disclaimer.add_css_class("dim-label");
+    content.append(&disclaimer);
+
     let list = settings_list();
     append_row(&list, "Version", Some(env!("CARGO_PKG_VERSION")), None);
     append_row(

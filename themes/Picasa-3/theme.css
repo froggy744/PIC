@@ -1,0 +1,247 @@
+/* picasa-theme
+   version: 1
+   name: Picasa 3
+   dark: false
+   color-scheme: theme
+   mode: overlay
+*/
+
+/* Picasa 3's light Windows-era chrome: soft gray toolbars, blue focus and
+ * selection, compact controls, and restrained raised edges. */
+@define-color accent_bg_color #4A90D9;
+@define-color accent_fg_color #FFFFFF;
+@define-color accent_color #337AB7;
+@define-color window_bg_color #E7E7E7;
+@define-color view_bg_color #F4F4F4;
+@define-color headerbar_bg_color #F7F7F7;
+@define-color theme_fg_color #343434;
+
+@define-color picasa_chrome #E7E7E7;
+@define-color picasa_chrome_light #FAFAFA;
+@define-color picasa_border #B8B8B8;
+@define-color picasa_blue #4A90D9;
+
+/* Main window and compact toolbar strips. */
+window, .layout-left-column, .navigation-sidebar,
+.layout-right-column, .photo-grid, .albums-home-grid {
+    background-color: @picasa_chrome;
+    color: @theme_fg_color;
+}
+
+.layout-left-column { border-right: 1px solid @picasa_border; }
+.layout-left-header, .layout-right-header {
+    min-height: 36px;
+    padding-top: 2px;
+    padding-bottom: 2px;
+    background-image: linear-gradient(to bottom, @picasa_chrome_light, #E2E2E2);
+    border-bottom: 1px solid @picasa_border;
+    color: @theme_fg_color;
+}
+.app-title { color: #3D3D3D; font-size: 14px; font-weight: 600; text-shadow: none; }
+.layout-left-header button, .layout-right-header button {
+    min-height: 26px;
+    min-width: 26px;
+    padding: 2px 6px;
+    color: #444444;
+}
+.layout-left-header button:hover, .layout-right-header button:hover {
+    background-image: linear-gradient(to bottom, #FFFFFF, #DCEBFA);
+    border-color: #8CB8E2;
+}
+
+/* Search box resembles Picasa's recessed, white search field. */
+.search-field {
+    min-height: 27px;
+    padding: 1px 7px;
+    border: 1px solid #A9A9A9;
+    border-radius: 3px;
+    background-color: #FFFFFF;
+    color: #303030;
+    box-shadow: inset 0 1px 2px alpha(#000000, 0.16);
+}
+.search-field image { color: #737373; }
+.search-field entry { background: transparent; color: #303030; caret-color: @picasa_blue; }
+.search-field:focus-within { border-color: @picasa_blue; box-shadow: 0 0 2px alpha(@picasa_blue, 0.55); }
+
+/* Sidebar rows: compact, lightly divided, and blue when selected. */
+.navigation-sidebar { background-color: #E9E9E9; }
+.navigation-sidebar row {
+    min-height: 25px;
+    padding: 1px 4px;
+    border-radius: 2px;
+    color: #424242;
+}
+.navigation-sidebar row:hover { background-color: #DCEAF7; }
+.navigation-sidebar row:selected,
+.navigation-sidebar row.sidebar-scroll-location {
+    background-color: @picasa_blue;
+    color: #FFFFFF;
+    box-shadow: none;
+}
+.navigation-sidebar row:selected label,
+.navigation-sidebar row.sidebar-scroll-location label { color: #FFFFFF; }
+.navigation-sidebar .heading { color: #777777; font-size: 11px; font-weight: 700; }
+.navigation-sidebar .sidebar-section-heading-title { color: #555555; font-weight: 700; }
+.navigation-sidebar .folder-count, .sidebar-count { color: #747474; }
+.navigation-sidebar row:selected .folder-count,
+.navigation-sidebar row:selected .sidebar-count { color: #EAF4FF; }
+
+/* The photo canvas stays pale gray; small white frames echo the original grid. */
+.photo-grid { background-color: #EEEEEE; }
+.group-heading-bar, .folder-section-header { background: transparent; }
+.section-heading-box { margin-top: 12px; margin-bottom: 5px; }
+.section-heading { color: #4A4A4A; font-size: 14px; font-weight: 600; text-shadow: none; }
+.section-more-btn { color: #505050; }
+.section-more-btn:hover { background-color: #DCEAF7; }
+.folder-section-title { color: #4A4A4A; font-size: 13px; font-weight: 600; text-shadow: none; }
+.folder-section-count { color: #777777; font-size: 11px; }
+.folder-section-icon { color: #D4A84C; }
+.folder-section-separator { opacity: 0.25; }
+.folder-photo-row { background: transparent; }
+
+listview.folder-stream > row,
+gridview.section-grid > child,
+gridview.section-grid > item,
+.folder-photo-flow > flowboxchild {
+    background: transparent;
+    background-image: none;
+    box-shadow: none;
+}
+gridview.section-grid > child:hover,
+gridview.section-grid > child:selected,
+gridview.section-grid > item:hover,
+gridview.section-grid > item:selected,
+.folder-photo-flow > flowboxchild:hover,
+.folder-photo-flow > flowboxchild:selected {
+    background: transparent;
+    background-image: none;
+    box-shadow: none;
+}
+.photo-tile {
+    border: 2px solid transparent;
+    border-radius: 2px;
+    background-color: #FFFFFF;
+    box-shadow: 0 1px 3px alpha(#000000, 0.25);
+}
+.photo-tile:hover { border-color: #8CB8E2; box-shadow: 0 1px 4px alpha(#000000, 0.30); }
+.folder-photo-selected.photo-tile,
+gridview.section-grid > child:selected .photo-tile,
+gridview.section-grid > item:selected .photo-tile {
+    border-color: @picasa_blue;
+    box-shadow: 0 0 0 1px #FFFFFF, 0 0 0 3px @picasa_blue;
+}
+.thumbnail { border-radius: 1px; }
+.missing-thumbnail { background-color: #E4E4E4; }
+.selection-badge { color: #FFFFFF; background-color: @picasa_blue; }
+
+/* Raised gray buttons, pressed edges, and familiar blue focus states. */
+button:not(.album-card), .photo-action-button, .section-more-btn,
+.favorite-btn, .clear-action-button, .crop-aspect-button,
+.crop-orientation-row button, .collage-layout-tile, .collage-tabs > button {
+    min-height: 25px;
+    padding: 2px 8px;
+    border: 1px solid #AFAFAF;
+    border-radius: 3px;
+    color: #3D3D3D;
+    background-image: linear-gradient(to bottom, #FFFFFF, #E5E5E5);
+    box-shadow: 0 1px 1px alpha(#000000, 0.10);
+    text-shadow: none;
+}
+button:not(.album-card):hover, .photo-action-button:hover,
+.section-more-btn:hover, .favorite-btn:hover, .clear-action-button:hover,
+.crop-aspect-button:hover, .crop-orientation-row button:hover,
+.collage-layout-tile:hover, .collage-tabs > button:hover {
+    background-image: linear-gradient(to bottom, #FFFFFF, #DDEBFA);
+    border-color: #8AB6E0;
+}
+button:not(.album-card):active, button:not(.album-card):checked,
+.photo-action-button:active, .photo-action-button:checked,
+.crop-aspect-button:checked, .crop-orientation-row button:checked,
+.collage-layout-tile:checked, .collage-tabs > button:checked {
+    background-image: linear-gradient(to bottom, #D5D5D5, #EEEEEE);
+    box-shadow: inset 0 1px 2px alpha(#000000, 0.20);
+}
+button:focus-visible, entry:focus-within, spinbutton:focus-within {
+    outline: 2px solid alpha(@picasa_blue, 0.65);
+    outline-offset: 1px;
+}
+.crop-aspect-button:checked, .crop-orientation-row button:checked,
+.collage-layout-tile:checked, .collage-tabs > button:checked {
+    color: #FFFFFF;
+    background-image: linear-gradient(to bottom, #65A4E4, #3F83C7);
+    border-color: #3376B9;
+}
+
+/* The original app's green upload action and blue selection accents. */
+button.suggested-action, .upload-button, button.upload-action {
+    color: #FFFFFF;
+    background-image: linear-gradient(to bottom, #8BCB53, #5C9F28);
+    border-color: #518D24;
+    text-shadow: 0 1px alpha(#000000, 0.18);
+}
+button.suggested-action:hover, .upload-button:hover, button.upload-action:hover {
+    background-image: linear-gradient(to bottom, #9AD665, #68AC30);
+}
+
+/* The bottom action/info strip in the screenshot is light and tightly edged. */
+.photo-info-bar {
+    min-height: 48px;
+    background-image: linear-gradient(to bottom, #F7F7F7, #E3E3E3);
+    border-top: 1px solid #B8B8B8;
+    color: #3E3E3E;
+    box-shadow: none;
+}
+.info-preview { border-radius: 2px; background: #FFFFFF; border: 1px solid #B7B7B7; }
+.info-title, .metric-val { color: #3D3D3D; }
+.metric-key, .photo-info-bar .dim-label { color: #777777; }
+.photo-action-button { color: #555555; }
+.photo-context-menu, .photo-context-menu viewport { background-color: #F7F7F7; }
+.photo-context-menu { border: 1px solid #B5B5B5; border-radius: 3px; box-shadow: 0 3px 10px alpha(#000000, 0.24); }
+.photo-context-menu button { color: #3D3D3D; }
+.photo-context-menu button:hover { background-color: #DCEAF7; }
+
+/* Matching alert sheets and response buttons. */
+dialog.alert .sheet.background,
+dialog.alert .message-area,
+dialog.alert .response-area {
+    color: @theme_fg_color;
+    background-color: @picasa_chrome;
+    background-image: none;
+    border-radius: 4px;
+    box-shadow: none;
+}
+dialog.alert .sheet.background { border: 1px solid @picasa_border; }
+dialog.alert .heading-bin, dialog.alert label.body { color: @theme_fg_color; }
+dialog.alert .response-area button.text-button:not(.destructive-action) {
+    color: @theme_fg_color;
+    background-image: linear-gradient(to bottom, #FFFFFF, #E5E5E5);
+    border: 1px solid @picasa_border;
+    border-radius: 3px;
+    box-shadow: 0 1px 1px alpha(#000000, 0.10);
+}
+dialog.alert .response-area button.text-button:not(.destructive-action):hover {
+    background-image: linear-gradient(to bottom, #FFFFFF, #DCEBFA);
+}
+dialog.alert .response-area button.text-button.destructive-action {
+    border: 1px solid #C96B64;
+    border-radius: 3px;
+}
+
+/* Picasa 3 uses simple, square-edged text inputs. */
+entry, spinbutton, textview {
+    color: #333333;
+    background-color: #FFFFFF;
+    border: 1px solid #AFAFAF;
+    border-radius: 2px;
+    box-shadow: inset 0 1px 2px alpha(#000000, 0.12);
+}
+entry:focus-within, spinbutton:focus-within { border-color: @picasa_blue; }
+
+.favorite-btn.active, .favorite-btn.active image, .favorite-badge { color: #D8463E; }
+.edited-badge { color: @picasa_blue; }
+.offline-badge, .sidebar-offline-badge {
+    color: #4B3500;
+    background-color: #F2C14E;
+    border-radius: 9999px;
+    font-weight: 700;
+}

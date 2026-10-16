@@ -79,7 +79,7 @@ When the base theme itself is selected, no overlay provider is added.
 ## Shipped themes
 
 Theme folder names are stable saved ids. The current shipped folders are
-`standard`, `iDark` (base), `teal`, `glass`, `tron`, `archive ledger`,
+`standard`, `iDark` (base), `Picasa-3`, `teal`, `glass`, `tron`, `archive ledger`,
 `retro`, `velvet-dusk`, `GBand`, `GbandV2`, `Bright Studio`, `Premium Studio`,
 `RetroPC`, `aurora`, `frappe`, `grey`, `lars`, `latte`, `macchiato`, `nord`,
 `tokyo night` and `ww`. The picker reads their display names from metadata.

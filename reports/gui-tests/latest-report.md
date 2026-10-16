@@ -1,10 +1,10 @@
 # PIC GUI test report
 
 - Overall: **INCOMPLETE**
-- Commit: `7c0774edcda4c69b3324e3c363628a23aca9d467`
+- Commit: `9e85469ca620fbcfe8e80710d104f9ad66a76605`
 - Display: Xvfb `:2` (1600×1000×24), GTK backend X11, Cairo renderer
 - Application binary: `/home/peet/PIC/target/release/pic-rs`
-- Artifact directory: `reports/gui-tests/20261015T192343Z-184443`
+- Artifact directory: `reports/gui-tests/20261016T045227Z-14560`
 - PIC process: exited during cleanup
 - Counts: 36 PASS, 2 FAIL, 0 BLOCKED, 0 NOT TESTED
 - Data/config: generated test photos and isolated XDG directories under this run directory
@@ -32,7 +32,7 @@
 | Gallery right-click opens photo context menu | Right-click the photo and capture the open context menu | Right-click displays photo actions | Context menu visible; screenshot=09-photo-context-menu.png | PASS |
 | Photo editor opens | Choose Edit Photo and verify editor controls and source-image canvas | Edit Photo action opens the selected image and adjustment controls | PIC window title='PIC'; editor split-divider pixels=700; source image bounds=(779, 317, 1502, 739); screenshot=10-photo-editor.png | PASS |
 | Editor exposure adjustment | Move the Exposure slider and compare rendered image pixels | Exposure interaction changes preview pixels | preview center RGB delta=203; screenshot=11-editor-exposure-adjusted.png | PASS |
-| Editor Undo | Click Undo, send Ctrl+Z, and compare preview pixels with the original render | Undo restores the rendered image to the unadjusted state | preview center RGB delta from original=203; screenshot=11a-editor-undo.png | FAIL |
+| Editor Undo/Redo sequences | Undo and redo single and multiple adjustment tool changes and compare rendered pixels | Single and multiple tool edits undo and redo independently in order | single undo delta=203, single redo delta=0; contrast undo delta=46, exposure undo delta=209, two-step redo delta=0; sequence_errors=['Timed out waiting for Undo to restore the baseline preview', 'Timed out waiting for first Undo to remove only Contrast', 'Timed out waiting for second Undo to remove Exposure']; screenshots=11a-editor-undo.png, 11a-editor-redo.png, 11a-editor-multiple-adjustments.png, 11a-editor-undo-contrast.png, 11a-editor-undo-exposure.png, 11a-editor-redo-multiple.png | FAIL |
 | Editor Reset | Change Exposure, click Reset, and compare preview pixels with the original render | Reset all edits restores the original rendered pixels | preview center RGB delta from original=0; screenshot=11b-editor-reset.png | PASS |
 | Editor filters panel | Click Filters and capture the resulting controls | Filters tab displays filter controls | Filters screenshot=12-editor-filters.png | PASS |
 | Editor save, reopen data and original safety | Save a nonzero recipe, query SQLite, and compare source SHA-256 | Done persists nonzero edits in the catalog while preserving the source file | saved recipe='v=1/crop=0.00000,0.00000,1.00000,1.00000/straighten=0.0000/exposure=0.9221/contrast=0.0000/fill=0.0000/highlights=0.0000'; original SHA-256 unchanged=True; screenshot=13-gallery-after-editor.png | PASS |
@@ -43,11 +43,11 @@
 | Collage export options | Click Create Collage and inspect the export settings dialog | Export options are shown before choosing a destination | Options dialog screenshot=16a-collage-export-options.png | PASS |
 | Collage export destination chooser | Click Export and choose the temporary output path | Save chooser accepts an isolated output path | Save chooser screenshot=16b-collage-export-destination.png | PASS |
 | Collage export image validation | Open the saved image and verify format, dimensions, and pixel variance | Exported image opens, is nonblank, and has expected dimensions | rc6-collage.jpg: JPEG (3840, 3840), expected (3840, 3840) | PASS |
-| Collage preview/export consistency | Compare normalized preview canvas pixels with exported pixels | Export layout visually matches the editor preview | Scaled canvas mean absolute RGB difference=58.21/255; preview=16-collage-preview.png | FAIL |
+| Collage preview/export consistency | Compare normalized preview canvas pixels with exported pixels | Each photo has matching normalized x/y position and width/height | normalized max geometry error=0.3103953147877013; preview boxes=[(1, 0, 481, 280), (1, 288, 264, 683)]; export boxes=[(107, 8, 575, 281), (213, 290, 470, 675)]; canvas=(683, 683); screenshots=16-collage-preview.png, export=rc6-collage.jpg | FAIL |
 | Collage Exit action | Exit the collage editor and verify gallery return | Exit returns from collage editor to gallery | Post-collage screenshot=17-gallery-after-collage.png | PASS |
 | Gallery layout control interaction | Open the layout control and capture its changed state | Layout button visibly changes gallery layout or presents layout choices | Layout control response screenshot=19-gallery-layout-control.png | PASS |
 | Screensaver setup | Open style controls and start playback through the GUI | Play control opens screensaver style settings | Setup controls shown; screenshot=20-screensaver-setup.png | PASS |
-| Screensaver window and fullscreen geometry | Query the visible screensaver X11 window geometry | Screensaver window is visible and covers the X11 display | window=4195062; geometry=1600x1000; screenshot=21-screensaver-running.png; wm=Openbox | PASS |
+| Screensaver window and fullscreen geometry | Query the visible screensaver X11 window geometry | Screensaver window is visible and covers the X11 display | window=4195132; geometry=1600x1000; screenshot=21-screensaver-running.png; wm=Openbox | PASS |
 | Screensaver photo playback and transition | Capture the slideshow before and after its configured interval | A different generated image appears after the configured interval | Transition screenshot=21a-screensaver-transition.png | PASS |
 | Screensaver keyboard exit | Press Escape and capture return to the main window | Escape exits screensaver and returns to PIC | Returned to PIC; screenshot=22-screensaver-keyboard-exit.png | PASS |
 | Screensaver mouse exit | Restart playback, move/click the mouse, and verify dismissal | Mouse input exits screensaver and returns to PIC | Mouse input dismissed fullscreen screensaver and returned to PIC; setup=23-screensaver-setup-again.png; screenshot=24-screensaver-mouse-exit.png | PASS |
@@ -73,7 +73,7 @@ GTK/resource/startup scan: no matched critical errors
 
 These failures were exercised through the GUI against generated photos in the isolated test library. No application code or production library was modified.
 
-- **Editor Undo:** preview center RGB delta from original=203; screenshot=11a-editor-undo.png
-  Reproduction: adjust Exposure, click Undo, then press Ctrl+Z; the preview remained changed and Undo remained visually disabled. Reset restored it. See `screenshots/11-editor-exposure-adjusted.png`, `screenshots/11a-editor-undo.png`, and `screenshots/11b-editor-reset.png`.
-- **Collage preview/export consistency:** Scaled canvas mean absolute RGB difference=58.21/255; preview=16-collage-preview.png
-  Reproduction: export the Smart AI collage with the square canvas; the export content is inset horizontally compared with the preview. See `screenshots/16-collage-preview.png` and `exports/rc6-collage.jpg`.
+- **Editor Undo/Redo sequences:** single undo delta=203, single redo delta=0; contrast undo delta=46, exposure undo delta=209, two-step redo delta=0; sequence_errors=['Timed out waiting for Undo to restore the baseline preview', 'Timed out waiting for first Undo to remove only Contrast', 'Timed out waiting for second Undo to remove Exposure']; screenshots=11a-editor-undo.png, 11a-editor-redo.png, 11a-editor-multiple-adjustments.png, 11a-editor-undo-contrast.png, 11a-editor-undo-exposure.png, 11a-editor-redo-multiple.png
+  Reproduction: change Exposure or Contrast, then click Undo; the affected recipe and preview did not revert. See the `11a-editor-*` screenshots and `screenshots/11b-editor-reset.png`.
+- **Collage preview/export consistency:** normalized max geometry error=0.3103953147877013; preview boxes=[(1, 0, 481, 280), (1, 288, 264, 683)]; export boxes=[(107, 8, 575, 281), (213, 290, 470, 675)]; canvas=(683, 683); screenshots=16-collage-preview.png, export=rc6-collage.jpg
+  Reproduction: export the Smart AI square collage; normalized photo content bounding boxes differed between the preview and JPEG export. See `screenshots/16-collage-preview.png` and `exports/rc6-collage.jpg`.

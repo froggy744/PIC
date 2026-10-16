@@ -1134,6 +1134,39 @@ mod tests {
     }
 
     #[test]
+    fn changed_active_slider_action_can_be_undone_before_release() {
+        let mut session = EditSession::new(EditRecipe::default());
+        session.begin_action();
+        session.mutate_active(|recipe| recipe.exposure = 0.8);
+
+        assert!(session.can_undo(), "a changed edit must enable Undo while active");
+        assert!(session.undo());
+        assert_eq!(session.recipe.exposure, 0.0);
+        assert!(session.can_redo());
+        assert!(session.redo());
+        assert_eq!(session.recipe.exposure, 0.8);
+        assert!(session.recipe.encode().contains("exposure=0.8000"));
+    }
+
+    #[test]
+    fn multiple_edit_tools_undo_and_redo_in_order() {
+        let mut session = EditSession::new(EditRecipe::default());
+        session.mutate(|recipe| recipe.exposure = 0.8);
+        session.mutate(|recipe| recipe.contrast = 0.4);
+
+        assert!(session.undo());
+        assert_eq!(session.recipe.exposure, 0.8);
+        assert_eq!(session.recipe.contrast, 0.0);
+        assert!(session.undo());
+        assert!(session.recipe.is_default());
+        assert!(session.redo());
+        assert_eq!(session.recipe.exposure, 0.8);
+        assert!(session.redo());
+        assert_eq!(session.recipe.contrast, 0.4);
+        assert_eq!(EditRecipe::decode(&session.recipe.encode()), session.recipe);
+    }
+
+    #[test]
     fn removing_filter_preserves_tool_adjustments() {
         let mut recipe = EditRecipe::default();
         recipe.filter = FilterPreset::Clarendon;

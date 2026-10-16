@@ -261,6 +261,12 @@ def selected_badge_count(path: Path) -> int:
 def matching_color_bounds(path: Path, color: tuple[int, int, int], tolerance: int = 28,
                           crop: tuple[int, int, int, int] | None = None):
     image = Image.open(path).convert("RGB")
+    return color_bounds(image, color, tolerance, crop)
+
+
+def color_bounds(image: Image.Image, color: tuple[int, int, int], tolerance: int = 28,
+                 crop: tuple[int, int, int, int] | None = None):
+    image = image.convert("RGB")
     pixels = image.load()
     left, top, right, bottom = crop or (0, 0, image.width, image.height)
     points = []
@@ -597,19 +603,77 @@ def smoke_test() -> None:
         center_delta = sum(abs(center_before[i] - center_after[i]) for i in range(3))
         record(add_case("Editor exposure adjustment", "Exposure interaction changes preview pixels"),
                center_delta > 20, f"preview center RGB delta={center_delta}; screenshot={exposure_shot.name}")
-        click_at(1116, 86)
-        command(["xdotool", "key", "ctrl+z"])
-        try:
+        sequence_errors = []
+
+        def preview_center(path: Path):
+            return Image.open(path).convert("RGB").getpixel(
+                (1050 + MOUSE_OFFSET_X, 450 + MOUSE_OFFSET_Y))
+
+        def wait_center_matches(color, description):
             wait_for(lambda: sum(abs(a - b) for a, b in zip(
-                Image.open(screenshot("11a-editor-undo-wait.png")).convert("RGB").getpixel((1050 + MOUSE_OFFSET_X, 450 + MOUSE_OFFSET_Y)),
-                center_before)) <= 16, "Undo to restore the baseline preview", timeout=5)
-        except TimeoutError:
-            pass
+                preview_center(screenshot("11a-editor-undo-wait.png")), color)) <= 16,
+                description, timeout=8)
+
+        click_at(1116, 86)
+        try:
+            wait_center_matches(center_before, "Undo to restore the baseline preview")
+        except TimeoutError as error:
+            sequence_errors.append(str(error))
         undo_shot = screenshot("11a-editor-undo.png")
-        undo_center = Image.open(undo_shot).convert("RGB").getpixel((1050 + MOUSE_OFFSET_X, 450 + MOUSE_OFFSET_Y))
+        undo_center = preview_center(undo_shot)
         undo_delta = sum(abs(center_before[i] - undo_center[i]) for i in range(3))
-        record(add_case("Editor Undo", "Undo restores the rendered image to the unadjusted state"),
-               undo_delta <= 16, f"preview center RGB delta from original={undo_delta}; screenshot={undo_shot.name}")
+
+        click_at(1156, 86)
+        try:
+            wait_center_matches(center_after, "Redo to restore the Exposure preview")
+        except TimeoutError as error:
+            sequence_errors.append(str(error))
+        redo_shot = screenshot("11a-editor-redo.png")
+        redo_delta = sum(abs(exposure_color - redone) for exposure_color, redone
+                         in zip(center_after, preview_center(redo_shot)))
+
+        # Contrast is a separate edit tool. Undo must step back through it and
+        # Exposure independently, then Redo must replay both in order.
+        click_at(650, 263)
+        multi_shot = screenshot("11a-editor-multiple-adjustments.png")
+        multi_center = preview_center(multi_shot)
+        if sum(abs(a - b) for a, b in zip(center_after, multi_center)) <= 20:
+            sequence_errors.append("Contrast tool did not change the rendered preview")
+        click_at(1116, 86)
+        try:
+            wait_center_matches(center_after, "first Undo to remove only Contrast")
+        except TimeoutError as error:
+            sequence_errors.append(str(error))
+        multi_undo_one = screenshot("11a-editor-undo-contrast.png")
+        multi_undo_one_delta = sum(abs(a - b) for a, b in zip(center_after, preview_center(multi_undo_one)))
+        click_at(1116, 86)
+        try:
+            wait_center_matches(center_before, "second Undo to remove Exposure")
+        except TimeoutError as error:
+            sequence_errors.append(str(error))
+        multi_undo_two = screenshot("11a-editor-undo-exposure.png")
+        multi_undo_two_delta = sum(abs(a - b) for a, b in zip(center_before, preview_center(multi_undo_two)))
+        click_at(1156, 86)
+        click_at(1156, 86)
+        try:
+            wait_center_matches(multi_center, "two Redo actions to restore both adjustments")
+        except TimeoutError as error:
+            sequence_errors.append(str(error))
+        multi_redo = screenshot("11a-editor-redo-multiple.png")
+        multi_redo_delta = sum(abs(a - b) for a, b in zip(multi_center, preview_center(multi_redo)))
+        undo_sequence_passed = (
+            undo_delta <= 16 and redo_delta <= 16
+            and multi_undo_one_delta <= 16 and multi_undo_two_delta <= 16
+            and multi_redo_delta <= 16 and not sequence_errors
+        )
+        record(add_case("Editor Undo/Redo sequences",
+                        "Single and multiple tool edits undo and redo independently in order"),
+               undo_sequence_passed,
+               f"single undo delta={undo_delta}, single redo delta={redo_delta}; "
+               f"contrast undo delta={multi_undo_one_delta}, exposure undo delta={multi_undo_two_delta}, "
+               f"two-step redo delta={multi_redo_delta}; sequence_errors={sequence_errors}; "
+               f"screenshots={undo_shot.name}, {redo_shot.name}, {multi_shot.name}, "
+               f"{multi_undo_one.name}, {multi_undo_two.name}, {multi_redo.name}")
         click_at(570, 199)
         wait_for(lambda: sum(abs(a - b) for a, b in zip(
             Image.open(screenshot("11b-editor-reset-adjusted-wait.png")).convert("RGB").getpixel((1050 + MOUSE_OFFSET_X, 450 + MOUSE_OFFSET_Y)),
@@ -705,17 +769,38 @@ def smoke_test() -> None:
             record(add_case("Collage export image validation", "Exported image opens, is nonblank, and has expected dimensions"),
                    output_opened and exported.format == "JPEG" and exported_size == expected_size,
                    f"{export_path.name}: {exported.format} {exported_size}, expected {expected_size}")
-            # Compare the canvas area (excluding editor chrome) with a scaled
-            # export. Text labels and subpixel GTK scaling create small diffs;
-            # require a strong structural match by bounding mean channel error.
-            preview = Image.open(collage_shot).convert("RGB").crop((718 + MOUSE_OFFSET_X, 102 + MOUSE_OFFSET_Y,
-                                                                      1401 + MOUSE_OFFSET_X, 785 + MOUSE_OFFSET_Y)).resize((256, 256))
-            exported_preview = exported.convert("RGB").resize((256, 256))
-            difference = ImageChops.difference(preview, exported_preview)
-            mean_error = sum(ImageStat.Stat(difference).mean) / 3
-            record(add_case("Collage preview/export consistency", "Export layout visually matches the editor preview"),
-                   mean_error < 24,
-                   f"Scaled canvas mean absolute RGB difference={mean_error:.2f}/255; preview={collage_shot.name}")
+            # Compare normalized photo geometry on the same canvas size. Solid
+            # fixture interiors tolerate GTK interpolation and JPEG artifacts,
+            # while each bounding box pins x/y/width/height independently.
+            preview_canvas = Image.open(collage_shot).convert("RGB").crop((
+                718 + MOUSE_OFFSET_X, 102 + MOUSE_OFFSET_Y,
+                1401 + MOUSE_OFFSET_X, 785 + MOUSE_OFFSET_Y))
+            exported_canvas = exported.convert("RGB").resize(preview_canvas.size, Image.Resampling.BILINEAR)
+            preview_landscape_color = preview_canvas.getpixel((240, 140))
+            preview_portrait_color = preview_canvas.getpixel((200, 500))
+            preview_boxes = [
+                color_bounds(preview_canvas, preview_landscape_color, tolerance=12),
+                color_bounds(preview_canvas, preview_portrait_color, tolerance=12),
+            ]
+            export_boxes = [
+                color_bounds(exported_canvas, preview_landscape_color, tolerance=30),
+                color_bounds(exported_canvas, preview_portrait_color, tolerance=30),
+            ]
+            normalized_error = None
+            if all(preview_boxes) and all(export_boxes):
+                normalized_error = max(
+                    abs(a / preview_canvas.width - b / exported_canvas.width)
+                    if index % 2 == 0 else
+                    abs(a / preview_canvas.height - b / exported_canvas.height)
+                    for pbox, ebox in zip(preview_boxes, export_boxes)
+                    for index, (a, b) in enumerate(zip(pbox, ebox))
+                )
+            record(add_case("Collage preview/export consistency",
+                            "Each photo has matching normalized x/y position and width/height"),
+                   normalized_error is not None and normalized_error <= 0.02,
+                   f"normalized max geometry error={normalized_error}; preview boxes={preview_boxes}; "
+                   f"export boxes={export_boxes}; canvas={preview_canvas.size}; "
+                   f"screenshots={collage_shot.name}, export={export_path.name}")
             wait_for(lambda: not any("Export Collage" in command(["xdotool", "getwindowname", wid], check=False)
                                      for wid in command(["xdotool", "search", "--onlyvisible", "--name", ".*"], check=False).splitlines()),
                      "export completion dialog dismissal", timeout=30)
@@ -863,7 +948,7 @@ def write_report(error: Exception | None) -> None:
             "Gallery right-click opens photo context menu": "Right-click the photo and capture the open context menu",
             "Photo editor opens": "Choose Edit Photo and verify editor controls and source-image canvas",
             "Editor exposure adjustment": "Move the Exposure slider and compare rendered image pixels",
-            "Editor Undo": "Click Undo, send Ctrl+Z, and compare preview pixels with the original render",
+            "Editor Undo/Redo sequences": "Undo and redo single and multiple adjustment tool changes and compare rendered pixels",
             "Editor Reset": "Change Exposure, click Reset, and compare preview pixels with the original render",
             "Editor filters panel": "Click Filters and capture the resulting controls",
             "Editor save, reopen data and original safety": "Save a nonzero recipe, query SQLite, and compare source SHA-256",
@@ -899,10 +984,10 @@ def write_report(error: Exception | None) -> None:
                      "These failures were exercised through the GUI against generated photos in the isolated test library. No application code or production library was modified.", ""])
         for case in failed_cases:
             rows.append(f"- **{case.name}:** {case.actual}")
-            if case.name == "Editor Undo":
-                rows.append("  Reproduction: adjust Exposure, click Undo, then press Ctrl+Z; the preview remained changed and Undo remained visually disabled. Reset restored it. See `screenshots/11-editor-exposure-adjusted.png`, `screenshots/11a-editor-undo.png`, and `screenshots/11b-editor-reset.png`.")
+            if case.name == "Editor Undo/Redo sequences":
+                rows.append("  Reproduction: change Exposure or Contrast, then click Undo; the affected recipe and preview did not revert. See the `11a-editor-*` screenshots and `screenshots/11b-editor-reset.png`.")
             elif case.name == "Collage preview/export consistency":
-                rows.append("  Reproduction: export the Smart AI collage with the square canvas; the export content is inset horizontally compared with the preview. See `screenshots/16-collage-preview.png` and `exports/rc6-collage.jpg`.")
+                rows.append("  Reproduction: export the Smart AI square collage; normalized photo content bounding boxes differed between the preview and JPEG export. See `screenshots/16-collage-preview.png` and `exports/rc6-collage.jpg`.")
             elif case.name == "Gallery drag selection":
                 rows.append("  Reproduction: drag a selection rectangle across multiple visible thumbnail cards; fewer than two selection badges appeared. See `screenshots/03b-gallery-after-drag.png`.")
     if error:

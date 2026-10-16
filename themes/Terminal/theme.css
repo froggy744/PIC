@@ -92,6 +92,7 @@ scrollbar slider:active { background: alpha(@pic_text_color, 0.55); background-c
     border: none;
     box-shadow: none;
 }
+.layout-left-header { padding-bottom: 2px; }
 .layout-left-header button, .layout-right-header button {
     color: @pic_bar_text;
     background: transparent;
@@ -257,7 +258,29 @@ gridview.section-grid > item:focus-visible .photo-tile {
 .edit-section-label { color: @pic_text_muted; font-weight: 700; }
 .overlay-list row:selected { background: alpha(@pic_button_color, 0.2); }
 paned.edit-body-paned > separator,
-paned.collage-editor-paned > separator { background: transparent; border: none; box-shadow: none; }
+paned.collage-editor-paned > separator {
+    background: transparent;
+    border: none;
+    border-left: 1px solid @pic_background_border;
+    box-shadow: none;
+}
+paned.edit-body-paned > separator:hover,
+paned.edit-body-paned > separator:active,
+paned.collage-editor-paned > separator:hover,
+paned.collage-editor-paned > separator:active { border-left-color: @pic_button_color; }
+
+/* Keep the sidebar divider's wide drag target visually to a single line. */
+.sidebar-resize-handle {
+    background: transparent;
+    border: none;
+    box-shadow: inset -1px 0 0 @pic_background_border;
+}
+.sidebar-resize-handle:hover,
+.sidebar-resize-handle:active {
+    background: transparent;
+    border: none;
+    box-shadow: inset -1px 0 0 @pic_button_color;
+}
 
 /* ---- Info / action bar ---- */
 .photo-info-bar {
@@ -338,7 +361,7 @@ switch {
     box-shadow: none;
     color: transparent;
 }
-switch:checked { background: @pic_button_color; box-shadow: none; }
+switch:checked { background: alpha(@pic_text_color, 0.18); box-shadow: none; }
 switch slider {
     border-radius: 0;
     margin: 2px;
@@ -351,6 +374,7 @@ check, radio {
     box-shadow: none;
 }
 radio { border-radius: 0; }
+check.radio, radio { border: 1px solid @pic_bar_muted; }
 check:checked, radio:checked {
     background: @pic_button_color;
     color: @pic_button_ink;
@@ -366,6 +390,7 @@ progressbar progress { border-radius: 0; background: @pic_button_color; }
 .collage-compact-choice, .edit-fit-row button,
 .overlay-anchor-row button, .quick-fix-row button,
 button.clear-action-button,
+.settings-window button:not(.suggested-action):not(.destructive-action):not(.flat),
 .collage-footer button,
 .edit-panel-pages button.pill,
 dropdown > button, combobox button {
@@ -382,6 +407,7 @@ dropdown > button, combobox button {
 .collage-compact-choice:hover, .edit-fit-row button:hover,
 .overlay-anchor-row button:hover, .quick-fix-row button:hover,
 button.clear-action-button:hover,
+.settings-window button:not(.suggested-action):not(.destructive-action):not(.flat):hover,
 .collage-footer button:hover,
 dropdown > button:hover, combobox button:hover {
     background-image: none;
@@ -393,6 +419,7 @@ dropdown > button:hover, combobox button:hover {
 .collage-compact-choice:active, .edit-fit-row button:active,
 .overlay-anchor-row button:active, .quick-fix-row button:active,
 button.clear-action-button:active,
+.settings-window button:not(.suggested-action):not(.destructive-action):not(.flat):active,
 .collage-footer button:active,
 dropdown > button:active, combobox button:active {
     color: @pic_text_color;
@@ -430,7 +457,8 @@ dropdown > button:active, combobox button:active {
 .collage-layout-tile:focus-visible, .collage-tabs > button:focus-visible,
 .collage-compact-choice:focus-visible, .edit-fit-row button:focus-visible,
 .overlay-anchor-row button:focus-visible, .quick-fix-row button:focus-visible,
-.collage-footer button:focus-visible, button.clear-action-button:focus-visible {
+.collage-footer button:focus-visible, button.clear-action-button:focus-visible,
+.settings-window button:not(.suggested-action):not(.destructive-action):not(.flat):focus-visible {
     outline: 2px solid alpha(@pic_focus, 0.85);
     outline-offset: 1px;
 }
@@ -654,6 +682,38 @@ popover modelbutton:hover, popover row:hover, popover row:selected {
     background: @pic_background_color;
     color: @pic_text_color;
 }
+dialog.alert .sheet.background,
+dialog.alert .message-area,
+dialog.alert .response-area {
+    background-color: @pic_background_color;
+    background-image: none;
+    color: @pic_text_color;
+    border-radius: 0;
+    box-shadow: none;
+}
+dialog.alert .sheet.background { border: 1px solid @pic_background_border; }
+dialog.alert .heading-bin,
+dialog.alert label.body { color: @pic_text_color; }
+dialog.alert .response-area button.text-button:not(.destructive-action) {
+    color: @pic_text_color;
+    background-color: @pic_background_control;
+    background-image: none;
+    border: 1px solid @pic_background_border;
+    border-radius: 0;
+    box-shadow: none;
+}
+dialog.alert .response-area button.text-button:not(.destructive-action):hover {
+    color: @pic_text_color;
+    background-color: @pic_background_hover;
+}
+dialog.alert .response-area button.text-button:not(.destructive-action):active {
+    background-color: @pic_ctl_active;
+}
+dialog.alert .response-area button.text-button.destructive-action {
+    border: 1px solid @pic_danger_top;
+    border-radius: 0;
+    box-shadow: none;
+}
 .photo-context-menu {
     border: none;
     border-radius: 0;
@@ -753,6 +813,7 @@ window, .settings-window, dialog, popover, tooltip {
 .edit-mode-toolbar, .settings-window headerbar {
     border-bottom: 1px solid @pic_background_border;
 }
+.photo-info-bar { border-top: 1px solid @pic_background_border; }
 .layout-left-column { border-right: 1px solid @pic_background_border; }
 .navigation-sidebar row:selected,
 .navigation-sidebar row.sidebar-scroll-location {
@@ -779,7 +840,8 @@ gridview.section-grid > item:selected .photo-tile { border: 2px solid @pic_butto
 .edit-fit-row button, .overlay-anchor-row button, .quick-fix-row button,
 button.clear-action-button, .collage-footer button,
 .edit-panel-pages button.pill, dropdown > button, combobox button,
-button.suggested-action, button.destructive-action {
+button.suggested-action, button.destructive-action,
+.settings-window button:not(.suggested-action):not(.destructive-action):not(.flat) {
     border: 1px solid @pic_background_border;
 }
 button.suggested-action, button.crop-apply-button,

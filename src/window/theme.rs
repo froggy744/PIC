@@ -29,7 +29,6 @@ pub(crate) const THEMES_DIRECTORY: &str = "themes";
 
 /// Fallback when the saved theme id no longer exists on disk.
 const DEFAULT_THEME_ID: &str = "standard";
-const TRON_GLOW_SETTING_KEY: &str = "tron-glow-preset";
 
 pub(crate) struct ThemeEngine {
     display: gdk::Display,
@@ -102,94 +101,6 @@ impl ThemeEngine {
 
     pub(crate) fn active_id(&self) -> String {
         self.active_id.borrow().clone()
-    }
-
-    /// Saved TRON glow choice. Cinematic is the signature default.
-    pub(crate) fn tron_glow_preset(&self) -> u32 {
-        crate::db::setting(&self.connection.borrow(), TRON_GLOW_SETTING_KEY)
-            .ok()
-            .flatten()
-            .and_then(|value| value.parse::<u32>().ok())
-            .filter(|value| *value <= 2)
-            .unwrap_or(2)
-    }
-
-    pub(crate) fn set_tron_glow_preset(&self, preset: u32) {
-        let preset = preset.min(2);
-        if let Err(error) = crate::db::set_setting(
-            &self.connection.borrow(),
-            TRON_GLOW_SETTING_KEY,
-            &preset.to_string(),
-        ) {
-            eprintln!("Could not save TRON glow preset: {error}");
-        }
-        self.apply_tron_glow_class(preset);
-    }
-
-    fn apply_tron_glow_class(&self, preset: u32) {
-        let class = match preset {
-            0 => "tron-glow-subtle",
-            1 => "tron-glow-standard",
-            _ => "tron-glow-cinematic",
-        };
-        for widget in gtk::Window::list_toplevels() {
-            let Ok(window) = widget.downcast::<gtk::Window>() else {
-                continue;
-            };
-            for old in ["tron-glow-subtle", "tron-glow-standard", "tron-glow-cinematic"] {
-                window.remove_css_class(old);
-            }
-            window.add_css_class(class);
-            if let Some(content) = window.child() {
-                for old in ["tron-glow-subtle", "tron-glow-standard", "tron-glow-cinematic"] {
-                    content.remove_css_class(old);
-                }
-                content.add_css_class(class);
-                Self::apply_glow_class_to_descendants(&content, class, false, false);
-            }
-        }
-    }
-
-    fn apply_glow_class_to_descendants(
-        widget: &gtk::Widget,
-        class: &str,
-        in_header: bool,
-        in_sidebar: bool,
-    ) {
-        let classes = widget.css_classes();
-        let has = |name: &str| classes.iter().any(|candidate| candidate.as_str() == name);
-        let header = in_header || has("layout-left-header") || has("layout-right-header");
-        let sidebar = in_sidebar || has("navigation-sidebar");
-        let css_name = widget.css_name();
-        let target = [
-            "photo-tile",
-            "album-cover",
-            "app-title",
-            "section-heading",
-            "folder-section-title",
-            "folder-section-icon",
-            "selection-badge",
-            "photo-action-button",
-            "search-field",
-        ]
-        .iter()
-        .any(|name| has(name))
-            || has("layout-left-header")
-            || has("layout-right-header")
-            || (sidebar && css_name.as_str() == "row")
-            || (header && css_name.as_str() == "button")
-            || css_name.as_str() == "scale";
-        if target {
-            for old in ["tron-glow-subtle", "tron-glow-standard", "tron-glow-cinematic"] {
-                widget.remove_css_class(old);
-            }
-            widget.add_css_class(class);
-        }
-        let mut child = widget.first_child();
-        while let Some(current) = child {
-            child = current.next_sibling();
-            Self::apply_glow_class_to_descendants(&current, class, header, sidebar);
-        }
     }
 
     pub(crate) fn active_is_dark(&self) -> bool {
@@ -291,21 +202,20 @@ impl ThemeEngine {
     }
 
     fn activate(&self, theme: &DiscoveredTheme) {
-        // Swap the overlay provider. Selecting the base theme itself only
-        // needs the base layer that is already on the display.
+        // Swap the overlay provider. The selected base theme also needs a
+        // foreground copy so its editor controls outrank shared defaults.
         if let Some(old) = self.overlay_provider.borrow_mut().take() {
             gtk::style_context_remove_provider_for_display(&self.display, &old);
         }
         let selects_base = self.base_id.borrow().as_deref() == Some(theme.id.as_str());
-        if !selects_base {
+        if !selects_base || theme.id == "iDark" {
             let provider = gtk::CssProvider::new();
             provider.load_from_string(theme.css.as_str());
-            // PIC themes own scoped editor-toolbar palettes. Place those
-            // overlays above the shared toolbar defaults without changing
-            // precedence for other themes.
+            // Themes with scoped editor-toolbar styling sit above the shared
+            // toolbar defaults without changing precedence for other themes.
             let priority = if matches!(
                 theme.id.as_str(),
-                "PIC" | "PIC2" | "PIC-Default" | "PIC-Dark" | "Terminal" | "Monochrome-Studio"
+                "PIC" | "PIC2" | "PIC-Default" | "PIC-Dark" | "Terminal" | "Monochrome-Studio" | "windows old" | "Cyberpunk" | "OLED" | "iDark"
             ) {
                 gtk::STYLE_PROVIDER_PRIORITY_APPLICATION + 3
             } else {
@@ -318,8 +228,6 @@ impl ThemeEngine {
             );
             self.overlay_provider.borrow_mut().replace(provider);
         }
-        self.apply_tron_glow_class(self.tron_glow_preset());
-
         *self.active_id.borrow_mut() = theme.id.clone();
         if let Some(hook) = self.window_controls_hook.borrow().as_ref() {
             hook(theme.window_controls);
@@ -405,7 +313,106 @@ mod tests {
 
     #[test]
     #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
-    fn tron_glow_presets_persist_and_theme_css_parses() {
+    #[allow(deprecated)] // GTK4 exposes computed button borders through StyleContext.
+    fn windows_old_edit_toolbar_uses_readable_beveled_controls() {
+        gtk::init().unwrap();
+        let display = gdk::Display::default().unwrap();
+        crate::css::install_foundation(&display);
+        let connection = memory_db();
+        let lightbox = Rc::new(crate::lightbox::Lightbox::new());
+        let engine = ThemeEngine::new(display, connection, lightbox);
+        let theme = engine
+            .themes()
+            .into_iter()
+            .find(|theme| theme.id == "windows old")
+            .unwrap();
+        engine.activate(&theme);
+
+        let window = gtk::Window::new();
+        let toolbar = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        toolbar.add_css_class("edit-mode-toolbar");
+        let tabs = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        tabs.add_css_class("edit-panel-tabs");
+        tabs.add_css_class("linked");
+        let tab = gtk::ToggleButton::with_label("Crop");
+        tab.add_css_class("flat");
+        tabs.append(&tab);
+        toolbar.append(&tabs);
+        let actions = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        actions.add_css_class("edit-toolbar-actions");
+        let icon = gtk::Button::with_label("Undo");
+        icon.add_css_class("edit-toolbar-icon-button");
+        actions.append(&icon);
+        let done = gtk::Button::with_label("Done");
+        done.add_css_class("edit-toolbar-done");
+        actions.append(&done);
+        toolbar.append(&actions);
+        window.set_child(Some(&toolbar));
+        window.present();
+        settle_glow_preview();
+
+        assert!(toolbar.color().red() > 0.9, "navy toolbar needs white text");
+        assert!(tab.color().red() < 0.1, "silver tab needs black text");
+        assert!(tab.style_context().border().top() >= 2, "tab needs a raised edge");
+        assert!(icon.color().red() < 0.1, "silver icon needs black text");
+        assert!(icon.style_context().border().top() >= 2, "icon needs a raised edge");
+        assert!(done.color().red() > 0.9, "navy Done button needs white text");
+        window.close();
+    }
+
+    #[test]
+    #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+    fn affected_themes_color_the_edit_toolbar() {
+        gtk::init().unwrap();
+        let display = gdk::Display::default().unwrap();
+        crate::css::install_foundation(&display);
+        let engine = ThemeEngine::new(display, memory_db(), Rc::new(crate::lightbox::Lightbox::new()));
+        engine.startup();
+        let themes = engine.themes();
+        let window = gtk::Window::new();
+        let toolbar = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        toolbar.add_css_class("edit-mode-toolbar");
+        let tabs = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        tabs.add_css_class("edit-panel-tabs");
+        tabs.add_css_class("linked");
+        let tab = gtk::ToggleButton::with_label("Crop");
+        tab.add_css_class("flat");
+        tabs.append(&tab);
+        toolbar.append(&tabs);
+        window.set_child(Some(&toolbar));
+        window.present();
+
+        for (id, expected) in [
+            ("Cyberpunk", "#4a6a80"),
+            ("OLED", "#6b7a88"),
+            ("iDark", "#bec0c5"),
+        ] {
+            engine.activate(themes.iter().find(|theme| theme.id == id).unwrap());
+            settle_glow_preview();
+            let expected = gdk::RGBA::parse(expected).unwrap();
+            assert_eq!(tab.color(), expected, "{id} tab should use its own palette");
+            if id == "iDark" {
+                assert_eq!(toolbar.color(), gdk::RGBA::parse("#efefef").unwrap());
+            }
+        }
+
+        for (id, expected) in [
+            ("Premium Studio", "#ededf0"),
+            ("grey", "#d8d8d8"),
+            ("lars", "#ff9c00"),
+            ("ww", "#ffd700"),
+        ] {
+            engine.activate(themes.iter().find(|theme| theme.id == id).unwrap());
+            settle_glow_preview();
+            let expected = gdk::RGBA::parse(expected).unwrap();
+            assert_eq!(toolbar.color(), expected, "{id} toolbar should use its own palette");
+        }
+        window.close();
+    }
+
+    #[test]
+    #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+    fn tron_cinematic_theme_css_parses_and_previews() {
         gtk::init().unwrap();
         let errors = Rc::new(RefCell::new(Vec::new()));
         let provider = gtk::CssProvider::new();
@@ -418,7 +425,6 @@ mod tests {
             });
         }
         let theme_css = include_str!("../../themes/tron/theme.css");
-        let has_glow_presets = theme_css.contains(".tron-glow-subtle .photo-tile");
         provider.load_from_string(theme_css);
         assert!(errors.borrow().is_empty(), "TRON CSS errors: {errors:?}");
         let display = gdk::Display::default().unwrap();
@@ -428,11 +434,8 @@ mod tests {
             gtk::STYLE_PROVIDER_PRIORITY_APPLICATION + 2,
         );
 
-        let connection = memory_db();
-        let lightbox = Rc::new(crate::lightbox::Lightbox::new());
-        let engine = ThemeEngine::new(display.clone(), connection.clone(), lightbox);
         let window = gtk::Window::builder()
-            .title("TRON Legacy — glow preview")
+            .title("TRON Cinematic — preview")
             .default_width(1120)
             .default_height(720)
             .build();
@@ -573,70 +576,21 @@ mod tests {
 
         if let Ok(directory) = std::env::var("PIC_TRON_SCREENSHOT_DIR") {
             std::fs::create_dir_all(&directory).unwrap();
-            for (preset, name) in [(0, "subtle"), (1, "standard"), (2, "cinematic")] {
-                engine.set_tron_glow_preset(preset);
-                let class = match preset {
-                    0 => "tron-glow-subtle",
-                    1 => "tron-glow-standard",
-                    _ => "tron-glow-cinematic",
-                };
-                assert!(title.has_css_class(class));
-                assert!(cover.has_css_class(class));
-                window.queue_draw();
-                settle_glow_preview();
-                use gtk::gdk::prelude::PaintableExt;
-                let snapshot = gtk::Snapshot::new();
-                gtk::WidgetPaintable::new(Some(&window)).snapshot(
-                    &snapshot,
-                    window.width() as f64,
-                    window.height() as f64,
-                );
-                window
-                    .renderer()
-                    .unwrap()
-                    .render_texture(&snapshot.to_node().unwrap(), None)
-                    .save_to_png(format!("{directory}/tron-{name}.png"))
-                    .unwrap();
-            }
-            let sample_photo_pixel = |name: &str| {
-                image::open(format!("{directory}/tron-{name}.png"))
-                    .unwrap()
-                    .to_rgb8()
-                    .get_pixel(320, 180)
-                    .0
-            };
-            let original = sample_photo_pixel("subtle");
-            for name in ["standard", "cinematic"] {
-                assert_eq!(
-                    sample_photo_pixel(name),
-                    original,
-                    "photo pixels changed in {name} preset"
-                );
-            }
-            let subtle = image::open(format!("{directory}/tron-subtle.png"))
+            window.queue_draw();
+            settle_glow_preview();
+            use gtk::gdk::prelude::PaintableExt;
+            let snapshot = gtk::Snapshot::new();
+            gtk::WidgetPaintable::new(Some(&window)).snapshot(
+                &snapshot,
+                window.width() as f64,
+                window.height() as f64,
+            );
+            window
+                .renderer()
                 .unwrap()
-                .to_rgb8();
-            let cinematic = image::open(format!("{directory}/tron-cinematic.png"))
-                .unwrap()
-                .to_rgb8();
-            if has_glow_presets {
-                assert!(
-                    subtle
-                        .pixels()
-                        .zip(cinematic.pixels())
-                        .any(|(left, right)| left != right),
-                    "Subtle and Cinematic must render different glow strengths"
-                );
-            }
-        }
-        for (preset, class) in [
-            (0, "tron-glow-subtle"),
-            (1, "tron-glow-standard"),
-            (2, "tron-glow-cinematic"),
-        ] {
-            engine.set_tron_glow_preset(preset);
-            assert!(window.has_css_class(class));
-            assert_eq!(engine.tron_glow_preset(), preset);
+                .render_texture(&snapshot.to_node().unwrap(), None)
+                .save_to_png(format!("{directory}/tron-cinematic.png"))
+                .unwrap();
         }
         window.close();
         gtk::style_context_remove_provider_for_display(&display, &provider);

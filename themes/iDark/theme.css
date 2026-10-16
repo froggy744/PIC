@@ -91,6 +91,7 @@ button.clear-action-button:active { background: #d2d2d2; }
 .lightbox-picture.photo-grid { background: #292929; }
 
 /* Editor top toolbar only. */
+.edit-mode-toolbar { background: #333333; color: #efefef; border-bottom: 1px solid #171717; }
 .edit-panel-tabs.linked { border-radius: 10px; background: rgba(255,255,255,0.08); }
 .edit-panel-tabs.linked button.flat { min-height: 40px; padding: 0 16px; border: 0; border-radius: 0; background: rgba(255,255,255,0.08); background-image: none; box-shadow: none; color: #bec0c5; }
 .edit-panel-tabs.linked button.flat:first-child { border-radius: 10px 0 0 10px; }

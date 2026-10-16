@@ -1542,21 +1542,6 @@ fn themes_page(
             }
             append_empty_state(&list, "No themes found in the themes folder", themes.is_empty());
 
-            let glow = gtk::DropDown::from_strings(&["Subtle", "Standard", "Cinematic"]);
-            glow.set_selected(engine.tron_glow_preset());
-            glow.set_tooltip_text(Some("TRON Legacy glow intensity"));
-            {
-                let engine = engine.clone();
-                glow.connect_selected_notify(move |dropdown| {
-                    engine.set_tron_glow_preset(dropdown.selected());
-                });
-            }
-            append_row(
-                &list,
-                "TRON glow",
-                Some("Choose a restrained glow for busy grids or the full cinematic look."),
-                Some(glow.upcast_ref()),
-            );
             section.append(&list);
         })
     };

@@ -5,6 +5,11 @@
    mode: overlay
 */
 
+@define-color theme_fg_color #EDEDF0;
+@define-color headerbar_bg_color #17171A;
+@define-color accent_bg_color #8B7CF6;
+@define-color accent_fg_color #FFFFFF;
+
 /* Premium/professional appearance: a near-black base with subtly elevated
    card surfaces (soft shadow depth rather than borders), and one confident
    indigo-to-violet accent gradient used sparingly for selection and hover

@@ -5,6 +5,11 @@
    mode: overlay
 */
 
+@define-color theme_fg_color #FFD700;
+@define-color headerbar_bg_color #241A0F;
+@define-color accent_bg_color #A6791E;
+@define-color accent_fg_color #FFFFFF;
+
 /* World of Warcraft-inspired appearance: dark stone/leather panels, ornate
    gold trim, and warm amber highlights, echoing the game's own UI frames.
    Typography is supplied separately by platform CSS. */

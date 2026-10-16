@@ -662,3 +662,79 @@ gridview.section-grid > item,
 .photo-tile {
     background: @win95_white;
 }
+
+/* Editor toolbar: the shared defaults use black text on the blue title bar.
+   Give its controls the same raised and pressed chrome as the rest of Win95. */
+.edit-mode-toolbar {
+    background-color: @win95_blue;
+    background-image: linear-gradient(to right, @win95_blue, @win95_blue2);
+    color: @win95_white;
+    border: none;
+    border-bottom: 2px solid @win95_shadow;
+    border-radius: 0;
+    box-shadow: none;
+}
+.edit-mode-toolbar .edit-panel-tabs,
+.edit-mode-toolbar .edit-history-group.linked {
+    padding: 2px;
+    background: @win95_face;
+    border-radius: 0;
+    box-shadow: none;
+}
+.edit-mode-toolbar .edit-panel-tabs > button.flat,
+.edit-mode-toolbar .edit-toolbar-actions button.edit-toolbar-icon-button {
+    color: @win95_dark;
+    background: @win95_face;
+    background-image: none;
+    border-radius: 0;
+    border-top: 2px solid @win95_white;
+    border-left: 2px solid @win95_white;
+    border-right: 2px solid @win95_shadow;
+    border-bottom: 2px solid @win95_shadow;
+    box-shadow: inset -1px -1px 0 @win95_dark;
+}
+.edit-mode-toolbar .edit-panel-tabs > button.flat:first-child,
+.edit-mode-toolbar .edit-panel-tabs > button.flat:last-child,
+.edit-mode-toolbar .edit-history-group.linked button.edit-toolbar-icon-button {
+    border-radius: 0;
+}
+.edit-mode-toolbar .edit-panel-tabs > button.flat:hover,
+.edit-mode-toolbar .edit-toolbar-actions button.edit-toolbar-icon-button:hover {
+    color: @win95_dark;
+    background: #D0D0D0;
+}
+.edit-mode-toolbar .edit-panel-tabs > button.flat:checked,
+.edit-mode-toolbar .edit-panel-tabs > button.flat:checked:hover,
+.edit-mode-toolbar .edit-toolbar-actions button.edit-toolbar-icon-button:active {
+    color: @win95_dark;
+    background: @win95_face;
+    border-top: 2px solid @win95_shadow;
+    border-left: 2px solid @win95_shadow;
+    border-right: 2px solid @win95_white;
+    border-bottom: 2px solid @win95_white;
+    box-shadow: inset 1px 1px 0 @win95_dark;
+}
+.edit-mode-toolbar .edit-toolbar-actions button.edit-toolbar-done {
+    color: @win95_white;
+    background: @win95_blue;
+    background-image: none;
+    border-radius: 0;
+    border-top: 2px solid @win95_white;
+    border-left: 2px solid @win95_white;
+    border-right: 2px solid @win95_shadow;
+    border-bottom: 2px solid @win95_shadow;
+    box-shadow: inset -1px -1px 0 @win95_dark;
+}
+.edit-mode-toolbar .edit-toolbar-actions button.edit-toolbar-done:hover {
+    color: @win95_white;
+    background: @win95_blue2;
+}
+.edit-mode-toolbar .edit-toolbar-actions button.edit-toolbar-done:active {
+    color: @win95_white;
+    background: @win95_blue;
+    border-top: 2px solid @win95_shadow;
+    border-left: 2px solid @win95_shadow;
+    border-right: 2px solid @win95_white;
+    border-bottom: 2px solid @win95_white;
+    box-shadow: inset 1px 1px 0 @win95_dark;
+}

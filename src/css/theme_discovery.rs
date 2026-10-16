@@ -304,6 +304,19 @@ mod tests {
     }
 
     #[test]
+    fn shipped_tron_is_one_cinematic_theme_option() {
+        let themes = discover(&Path::new(env!("CARGO_MANIFEST_DIR")).join("themes"));
+        let tron: Vec<_> = themes
+            .iter()
+            .filter(|theme| theme.id.to_ascii_lowercase().contains("tron"))
+            .collect();
+        assert_eq!(tron.len(), 1);
+        assert_eq!(tron[0].id, "tron");
+        assert_eq!(tron[0].name, "TRON Cinematic");
+        assert!(tron[0].dark);
+    }
+
+    #[test]
     #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
     fn standard_theme_corner_radius_parses() {
         gtk4::init().unwrap();

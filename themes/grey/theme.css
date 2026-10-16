@@ -5,6 +5,11 @@
    mode: overlay
 */
 
+@define-color theme_fg_color #D8D8D8;
+@define-color headerbar_bg_color #232323;
+@define-color accent_bg_color #5B9BD5;
+@define-color accent_fg_color #FFFFFF;
+
 /* Photo-management appearance: neutral charcoal grays throughout so the
    chrome recedes and photo color/exposure stays the thing your eye judges.
    One quiet blue accent for selection/focus, nothing else competes for

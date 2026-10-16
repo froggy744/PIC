@@ -5,6 +5,11 @@
    mode: overlay
 */
 
+@define-color theme_fg_color #FF9C00;
+@define-color headerbar_bg_color #000000;
+@define-color accent_bg_color #FF9C00;
+@define-color accent_fg_color #000000;
+
 /* LCARS-inspired appearance: black viewports, glowing amber/blue/lilac
    accent pills, and bold headings, in the spirit of the 24th-century
    Starfleet computer interface. Typography is supplied separately by

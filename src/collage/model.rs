@@ -355,6 +355,45 @@ pub(super) fn tile_geometry(
     }
 }
 
+/// Integer content rectangle for a centered, aspect-preserving fit. Preview
+/// and export use the same rounding so photo placement is independent of the
+/// canvas resolution.
+pub(super) fn fit_content_rect(
+    source_width: u32,
+    source_height: u32,
+    tile_width: u32,
+    tile_height: u32,
+) -> (u32, u32, u32, u32) {
+    let source_width = source_width.max(1) as f64;
+    let source_height = source_height.max(1) as f64;
+    let tile_width = tile_width.max(1);
+    let tile_height = tile_height.max(1);
+    let scale = (tile_width as f64 / source_width).min(tile_height as f64 / source_height);
+    let width = (source_width * scale).round().clamp(1.0, tile_width as f64) as u32;
+    let height = (source_height * scale).round().clamp(1.0, tile_height as f64) as u32;
+    ((tile_width - width) / 2, (tile_height - height) / 2, width, height)
+}
+
+#[cfg(test)]
+mod fit_content_rect_tests {
+    use super::fit_content_rect;
+
+    #[test]
+    fn aspect_fit_is_centered_and_scales_with_the_canvas() {
+        assert_eq!(fit_content_rect(1600, 900, 683, 683), (0, 149, 683, 384));
+        assert_eq!(fit_content_rect(900, 1600, 683, 683), (149, 0, 384, 683));
+        assert_eq!(
+            fit_content_rect(3200, 1800, 1366, 1366),
+            (0, 299, 1366, 768)
+        );
+    }
+
+    #[test]
+    fn tiny_and_zero_dimensions_stay_inside_tile() {
+        assert_eq!(fit_content_rect(0, 0, 20, 10), (5, 0, 10, 10));
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct CollageProject {
     pub aspect: AspectRatio,

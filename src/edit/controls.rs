@@ -291,6 +291,7 @@ fn connect_scale(
             session
                 .borrow_mut()
                 .mutate_active(|recipe| assign(recipe, value));
+            update_history();
         } else {
             // Keyboard steps and deliberate wheel steps remain normal single
             // undoable actions; only a continuous mouse drag is coalesced.

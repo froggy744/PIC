@@ -412,7 +412,11 @@ fn fit_inside_tile(
 ) -> RgbaImage {
     let width = width.max(1);
     let height = height.max(1);
-    let image = source.resize(width, height, image::imageops::FilterType::Lanczos3);
+    let (x, y, fitted_width, fitted_height) =
+        super::model::fit_content_rect(source.width(), source.height(), width, height);
+    let image = source.resize_exact(
+        fitted_width, fitted_height, image::imageops::FilterType::Lanczos3,
+    );
     let mut image = image.to_rgba8();
     // Mask the visible fitted photo before it is placed in the full tile.
     // This radius is deliberately based on the photo, not the tile.
@@ -420,9 +424,7 @@ fn fit_inside_tile(
         round_corners(&mut image, corner_radius);
     }
     let mut output = RgbaImage::from_pixel(width, height, background);
-    let x = (width.saturating_sub(image.width()) / 2) as i64;
-    let y = (height.saturating_sub(image.height()) / 2) as i64;
-    image::imageops::overlay(&mut output, &image, x, y);
+    image::imageops::overlay(&mut output, &image, x as i64, y as i64);
     output
 }
 

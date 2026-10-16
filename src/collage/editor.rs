@@ -123,6 +123,7 @@ struct PreviewFrame {
     outer: gtk::Widget,
     inner: gtk::Fixed,
     photo: gtk::Frame,
+    picture: gtk::Picture,
     outer_radius: Cell<i32>,
     photo_radius: Cell<i32>,
     border: gtk::DrawingArea,
@@ -1145,12 +1146,10 @@ fn refresh_preview(
         if project_data.round_corners {
             frame.add_css_class("collage-photo-rounded");
         }
-        // Keep the widget positioned by GtkFixed separate from the widget
-        // that may receive a layout rotation transform.
+        let tile = gtk::Overlay::new();
         let inner = gtk::Fixed::new();
         inner.set_hexpand(true);
         inner.set_vexpand(true);
-        let tile = gtk::Overlay::new();
         tile.set_child(Some(&inner));
         // The overlay never contributes to layout and cannot consume pointer
         // events; mouse drag and context actions continue to reach the frame.
@@ -1172,8 +1171,8 @@ fn refresh_preview(
         tile.add_overlay(&border);
         tile.set_measure_overlay(&border, false);
         let picture = gtk::Picture::new();
-        // The containing frame is sized to the fitted rectangle in
-        // update_geometry, so the picture itself can always cover it.
+        // Fit content inside a full-size tile, matching the export's
+        // aspect-preserving contain geometry.
         picture.set_content_fit(gtk::ContentFit::Cover);
         picture.set_can_shrink(true);
         picture.set_hexpand(true);
@@ -1422,6 +1421,7 @@ fn refresh_preview(
             outer: frame.upcast(),
             inner,
             photo: photo_frame,
+            picture,
             outer_radius: Cell::new(0),
             photo_radius: Cell::new(0),
             border,
@@ -1504,15 +1504,12 @@ fn update_geometry(
             && project.keep_photo_aspect;
         let source_ratio = item.photo.aspect_ratio.max(0.01);
         let tile_ratio = w as f32 / h.max(1) as f32;
-        let (photo_w, photo_h) = if contain && source_ratio > tile_ratio {
-            (w, ((w as f32 / source_ratio).round() as i32).clamp(1, h))
-        } else if contain {
-            (((h as f32 * source_ratio).round() as i32).clamp(1, w), h)
+        let (photo_x, photo_y, photo_w, photo_h) = if contain {
+            let source_width = (source_ratio * 1_000_000.0).round() as u32;
+            super::model::fit_content_rect(source_width, 1_000_000, w as u32, h as u32)
         } else {
-            (w, h)
+            (0, 0, w as u32, h as u32)
         };
-        let photo_x = (w - photo_w) / 2;
-        let photo_y = (h - photo_h) / 2;
         if should_log {
             eprintln!(
                 "PIC_COLLAGE_TRACE preview_content id={} fit={} source_ratio={:.5} tile_ratio={:.5} photo=({},{},{}x{})",
@@ -1520,10 +1517,13 @@ fn update_geometry(
                 photo_x, photo_y, photo_w, photo_h,
             );
         }
-        preview.photo.set_size_request(photo_w, photo_h);
-        preview
-            .inner
-            .move_(&preview.photo, photo_x as f64, photo_y as f64);
+        preview.photo.set_size_request(w, h);
+        preview.picture.set_content_fit(if contain {
+            gtk::ContentFit::Contain
+        } else {
+            gtk::ContentFit::Cover
+        });
+        preview.inner.move_(&preview.photo, 0.0, 0.0);
         preview
             .photo
             .set_overflow(if project.round_corners && contain {

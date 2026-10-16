@@ -54,11 +54,12 @@ if [[ -z "$xvfb_bin" || ! -x "$xvfb_bin" ]]; then
     exit 2
 fi
 
-app_bin="${PIC_GUI_APP:-$repo_root/target/release/pic-rs}"
-if [[ ! -x "$app_bin" ]]; then
+if [[ -n "${PIC_GUI_APP:-}" ]]; then
+    app_bin="$PIC_GUI_APP"
+else
+    app_bin="$repo_root/target/release/pic-rs"
     printf 'Building PIC release binary...\n'
     cargo build --release --manifest-path "$repo_root/Cargo.toml" 2>&1 | tee "$run_dir/cargo-build.log"
-    app_bin="$repo_root/target/release/pic-rs"
 fi
 if [[ ! -x "$app_bin" ]]; then
     write_blocked_report "PIC release binary is unavailable: $app_bin"

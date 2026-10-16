@@ -996,6 +996,10 @@ impl EditSession {
 
     pub fn can_undo(&self) -> bool {
         !self.undo.is_empty()
+            || self
+                .active_action
+                .as_ref()
+                .is_some_and(|previous| previous != &self.recipe)
     }
 
     pub fn can_redo(&self) -> bool {

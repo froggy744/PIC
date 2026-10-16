@@ -16,3 +16,6 @@ __pycache__/
 
 # Local agent execution state
 .superpowers/
+
+# Local GUI test output
+/reports/

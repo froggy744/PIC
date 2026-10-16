@@ -668,6 +668,23 @@ popover modelbutton:hover, popover row:hover, popover row:selected {
 .photo-actions-menu { background: transparent; border: none; box-shadow: none; }
 .photo-actions-menu .photo-action-button image { opacity: 1; }
 .photo-actions-popover > contents { background: @pic_background_color; padding: 0; }
+.photo-actions-menu .photo-actions-menu-row button.photo-action-button,
+.photo-actions-menu .photo-actions-menu-row menubutton > button {
+    color: @pic_text_color;
+    background: transparent;
+    background-image: none;
+    border: none;
+    box-shadow: none;
+}
+.photo-actions-menu .photo-actions-menu-row button.photo-action-button:hover,
+.photo-actions-menu .photo-actions-menu-row menubutton > button:hover {
+    color: @pic_text_color;
+    background: @pic_background_hover;
+}
+.photo-actions-menu .photo-actions-menu-row button.photo-action-button:checked {
+    color: @pic_button_text;
+    background: @pic_button_selected;
+}
 .photo-context-menu button { color: @pic_text_color; border: none; border-radius: 5px; box-shadow: none; }
 .photo-context-menu button:hover,
 .photo-context-menu .photo-context-item:hover,

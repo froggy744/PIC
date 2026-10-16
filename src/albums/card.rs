@@ -456,7 +456,9 @@ fn album_card(
     cover.set_valign(gtk::Align::Start);
     cover.set_overflow(gtk::Overflow::Hidden);
     cover.add_css_class("album-cover");
-    if frame.is_none() {
+    if frame.is_some() {
+        cover.add_css_class("framed-album-cover");
+    } else {
         cover.add_css_class("photo-frame");
         cover.add_css_class("photo-tile");
         cover.add_css_class("plain-album-cover");
@@ -523,15 +525,14 @@ fn album_card(
         cover.set_size_request(width, height);
     }
 
-    if frame.is_none() {
-        // The picture's natural portrait height must not enlarge the cover's
-        // fixed landscape box when cropping is selected. Overlay children do
-        // not contribute to the cover's preferred size.
-        cover.set_child(Some(&gtk::Box::new(gtk::Orientation::Vertical, 0)));
-        cover.add_overlay(&picture);
-    } else {
-        cover.set_child(Some(&picture));
-    }
+    // The fixed cover box owns geometry. Album photos and frame PNGs are
+    // presentation layers and their natural image sizes must not influence
+    // the cover's measured size or shift the frame's transparent opening.
+    let cover_surface = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    cover_surface.set_size_request(width, height);
+    cover.set_child(Some(&cover_surface));
+    cover.add_overlay(&picture);
+    cover.set_measure_overlay(&picture, false);
 
     let placeholder = gtk::Image::from_icon_name("folder-pictures-symbolic");
     placeholder.set_pixel_size(48);
@@ -540,6 +541,7 @@ fn album_card(
     placeholder.add_css_class("dim-label");
     placeholder.set_visible(cover_photo.is_none());
     cover.add_overlay(&placeholder);
+    cover.set_measure_overlay(&placeholder, false);
 
     if frame.is_none() && !responsive_bookshelf && cover_photo.is_none() {
         let empty_label = gtk::Label::new(Some(if photos.is_empty() {
@@ -584,6 +586,7 @@ fn album_card(
         skin.set_can_target(false);
         skin.add_css_class("album-skin");
         cover.add_overlay(&skin);
+        cover.set_measure_overlay(&skin, false);
     }
 
     // Album covers are rectangular and need to grow with the bookshelf.

@@ -350,37 +350,20 @@ fn resize_bookshelf_cards(rows: &gtk::Box, target_width: i32, theme: &BookshelfT
             continue;
         }
 
+        let is_framed = unsafe { cover.data::<PhotoOpening>(FRAME_OPENING_KEY) }.is_some();
+        // Framed covers use transparent PNG art with a photo fitted to that
+        // frame's opening. Keep their dimensions identical with the bookshelf
+        // background enabled or disabled; stretching them to fill a shelf
+        // column makes the same cover visibly change size when the background
+        // toggle is used. Card alignment supplies the remaining column space.
+        if is_framed {
+            continue;
+        }
+
         let scale_x = target_width as f64 / current_width as f64;
-        let mut card_width = target_width;
-        let mut target_height =
+        let card_width = target_width;
+        let target_height =
             ((current_height as f64 * scale_x).round() as i32).clamp(1, theme.surface_y.max(1));
-
-        let opening = unsafe { cover.data::<PhotoOpening>(FRAME_OPENING_KEY) }
-            .map(|opening| unsafe { *opening.as_ref() });
-        // A framed cover keeps its frame's aspect ratio: the photo is inset from
-        // the frame's own opening, so a squashed box would slide the photo under
-        // the frame art. Narrow the card instead of squashing it.
-        if opening.is_some() && target_height >= theme.surface_y.max(1) {
-            card_width = (
-                (current_width as f64 * target_height as f64 / current_height as f64).round() as i32
-            ).clamp(1, card_width);
-            target_height = (
-                current_height as f64 * card_width as f64 / current_width as f64
-            ).round().max(1.0) as i32;
-        }
-
-        if let Some(picture) = find_descendant_with_css_class(cover.upcast_ref(), "thumbnail") {
-            // Recompute from the original opening instead of rescaling rounded
-            // margins, which can drift by a pixel after each resize.
-            if let Some(opening) = opening {
-                let (left, top, right, bottom) =
-                    photo_margins(opening, card_width, target_height);
-                picture.set_margin_start(left);
-                picture.set_margin_top(top);
-                picture.set_margin_end(right);
-                picture.set_margin_bottom(bottom);
-            }
-        }
 
         cover.set_width_request(card_width);
         cover.set_height_request(target_height);

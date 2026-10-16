@@ -1503,7 +1503,15 @@ fn themes_page(
             heading.add_css_class("heading");
             section.append(&heading);
 
-            let themes = engine.themes();
+            let mut themes = engine.themes();
+            // Keep the library's default order, with the two PIC presets
+            // immediately after Standard in Settings.
+            themes.sort_by_key(|theme| match theme.id.as_str() {
+                "standard" => 0,
+                "PIC-Default" => 1,
+                "PIC-Dark" => 2,
+                _ => 3,
+            });
             let list = settings_list();
             let mut group_leader: Option<gtk::CheckButton> = None;
             for theme in &themes {

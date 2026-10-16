@@ -1,57 +1,57 @@
 /* picasa-theme
-   version: 1.2
-   name: PIC2
-   dark: false
+   version: 1.3
+   name: PIC Pro Dark
+   dark: true
    color-scheme: theme
    mode: overlay
    window-controls: native
 */
 
-/* PIC Pro: graphite-blue chrome, light neutral content, and a single restrained
-   steel-blue accent. Depth comes from hairlines and soft highlights, not from
-   saturated colour. */
+/* PIC Pro Dark: deep charcoal chrome, near-black content surfaces,
+   single restrained steel accent. Depth from soft luminosity and
+   precise hairlines rather than saturation. */
 
 /* ---- Palette ---- */
-@define-color pic_bar_color #2f3842;
-@define-color pic_bar_top #38434f;
-@define-color pic_bar_bottom #2b343d;
-@define-color pic_bar_surface #25313b;
-@define-color pic_bar_inset #1c252d;
-@define-color pic_bar_hover #33424f;
-@define-color pic_bar_text #f5f6f7;
-@define-color pic_bar_muted #aebac4;
+@define-color pic_bar_color #1a1e24;
+@define-color pic_bar_top #22272e;
+@define-color pic_bar_bottom #161a1f;
+@define-color pic_bar_surface #14181d;
+@define-color pic_bar_inset #0e1115;
+@define-color pic_bar_hover #2a3038;
+@define-color pic_bar_text #e8eaed;
+@define-color pic_bar_muted #8b949e;
 
-@define-color pic_background_color #e9eaeb;
-@define-color pic_background_surface #f3f4f5;
-@define-color pic_background_control #e3e7eb;
-@define-color pic_background_hover #d7dfe5;
-@define-color pic_background_border #c6cbd0;
+@define-color pic_background_color #0f1216;
+@define-color pic_background_surface #161a1f;
+@define-color pic_background_control #1c2128;
+@define-color pic_background_hover #252b33;
+@define-color pic_background_border #2d333b;
 
-/* Controls on light surfaces */
-@define-color pic_ctl_top #f8f9fa;
-@define-color pic_ctl_bottom #e3e7eb;
-@define-color pic_ctl_hover_top #fdfdfe;
-@define-color pic_ctl_hover_bottom #e9edf1;
-@define-color pic_ctl_active #d2d9e0;
+/* Controls on dark surfaces */
+@define-color pic_ctl_top #252b33;
+@define-color pic_ctl_bottom #1c2128;
+@define-color pic_ctl_hover_top #2d343d;
+@define-color pic_ctl_hover_bottom #232930;
+@define-color pic_ctl_active #181d23;
 
-/* One accent: steel blue. Primary actions are this; "selected" is the deep navy. */
-@define-color pic_button_color #3a76bd;
-@define-color pic_accent_top #4a85cb;
-@define-color pic_accent_bottom #2f68ae;
-@define-color pic_button_primary_hover #4a85cb;
-@define-color pic_button_selected #24456e;
-@define-color pic_sel_top #2c5890;
-@define-color pic_sel_bottom #223f66;
+/* One accent: cool steel blue */
+@define-color pic_button_color #4a8fd4;
+@define-color pic_accent_top #5a9de0;
+@define-color pic_accent_bottom #3a7bc0;
+@define-color pic_button_primary_hover #5a9de0;
+@define-color pic_button_selected #2a5a8f;
+@define-color pic_sel_top #3366a0;
+@define-color pic_sel_bottom #254d7a;
 @define-color pic_menu_hover #2f5f9e;
-@define-color pic_danger_top #cf5560;
-@define-color pic_danger_bottom #b43d49;
+@define-color pic_danger_top #d45a65;
+@define-color pic_danger_bottom #b8434d;
 
-@define-color pic_button_hover #3a4856;
-@define-color pic_background_selected_hover #c6d5e2;
+@define-color pic_button_hover #3a4450;
+@define-color pic_background_selected_hover #1e3a55;
 @define-color pic_button_text #ffffff;
-@define-color pic_focus #6aa3e8;
-@define-color pic_text_color #22272b;
-@define-color pic_text_muted #626f7a;
+@define-color pic_focus #6eb0f0;
+@define-color pic_text_color #e8eaed;
+@define-color pic_text_muted #8b949e;
 
 /* GTK/libadwaita semantic colours */
 @define-color accent_bg_color @pic_button_color;
@@ -66,23 +66,23 @@ window { background: @pic_background_color; color: @pic_text_color; }
 
 /* ---- Tooltips & scrollbars ---- */
 tooltip.background, tooltip {
-    background: #1b232b;
+    background: #0c0e11;
     color: @pic_bar_text;
     border-radius: 6px;
-    box-shadow: 0 2px 8px alpha(black, 0.35), inset 0 0 0 1px alpha(white, 0.08);
+    box-shadow: 0 4px 16px alpha(black, 0.55), inset 0 0 0 1px alpha(white, 0.06);
 }
 tooltip label { color: @pic_bar_text; }
 scrollbar slider {
-    min-width: 3px;
-    min-height: 3px;
+    min-width: 4px;
+    min-height: 4px;
     margin: 0;
     border: 1px solid transparent;
     border-radius: 999px;
-    background: alpha(@pic_text_color, 0.32);
+    background: alpha(@pic_text_color, 0.22);
     background-clip: padding-box;
 }
-scrollbar slider:hover { background: alpha(@pic_text_color, 0.52); background-clip: padding-box; }
-scrollbar slider:active { background: alpha(@pic_text_color, 0.68); background-clip: padding-box; }
+scrollbar slider:hover { background: alpha(@pic_text_color, 0.40); background-clip: padding-box; }
+scrollbar slider:active { background: alpha(@pic_text_color, 0.55); background-clip: padding-box; }
 
 /* ---- Header and title bars ---- */
 .layout-left-header, .layout-right-header {
@@ -90,7 +90,7 @@ scrollbar slider:active { background: alpha(@pic_text_color, 0.68); background-c
     background-image: linear-gradient(to bottom, @pic_bar_top, @pic_bar_bottom);
     color: @pic_bar_text;
     border: none;
-    box-shadow: inset 0 1px 0 alpha(white, 0.06), inset 0 -1px 0 alpha(black, 0.38);
+    box-shadow: inset 0 1px 0 alpha(white, 0.05), inset 0 -1px 0 alpha(black, 0.45);
 }
 .layout-left-header button, .layout-right-header button {
     color: @pic_bar_text;
@@ -101,12 +101,12 @@ scrollbar slider:active { background: alpha(@pic_text_color, 0.68); background-c
     box-shadow: none;
 }
 .layout-left-header button:hover, .layout-right-header button:hover {
-    background: alpha(white, 0.09);
+    background: alpha(white, 0.07);
     color: @pic_button_text;
 }
-.layout-left-header button:active, .layout-right-header button:active { background: alpha(black, 0.25); }
+.layout-left-header button:active, .layout-right-header button:active { background: alpha(black, 0.35); }
 .layout-left-header button:focus-visible, .layout-right-header button:focus-visible {
-    outline: 2px solid alpha(@pic_focus, 0.85);
+    outline: 2px solid alpha(@pic_focus, 0.8);
     outline-offset: -2px;
 }
 .app-title { color: @pic_bar_text; font-weight: 700; text-shadow: none; }
@@ -116,13 +116,13 @@ scrollbar slider:active { background: alpha(@pic_text_color, 0.68); background-c
     background: @pic_bar_surface;
     color: @pic_bar_text;
 }
-.layout-left-column { border: none; box-shadow: inset -1px 0 0 alpha(black, 0.38); }
+.layout-left-column { border: none; box-shadow: inset -1px 0 0 alpha(black, 0.5); }
 .navigation-sidebar row {
     color: @pic_bar_text;
     border-radius: 6px;
 }
 .navigation-sidebar row:hover {
-    background: alpha(white, 0.07);
+    background: alpha(white, 0.05);
     color: @pic_button_text;
 }
 .navigation-sidebar row:selected,
@@ -130,10 +130,10 @@ scrollbar slider:active { background: alpha(@pic_text_color, 0.68); background-c
     background-color: @pic_button_selected;
     background-image: linear-gradient(to bottom, @pic_sel_top, @pic_sel_bottom);
     color: @pic_button_text;
-    box-shadow: inset 0 1px 0 alpha(white, 0.14), inset 0 0 0 1px alpha(black, 0.28);
+    box-shadow: inset 0 1px 0 alpha(white, 0.12), inset 0 0 0 1px alpha(black, 0.35);
 }
 .navigation-sidebar row:focus-visible {
-    outline: 2px solid alpha(@pic_focus, 0.85);
+    outline: 2px solid alpha(@pic_focus, 0.8);
     outline-offset: -2px;
 }
 .navigation-sidebar .heading,
@@ -145,19 +145,19 @@ scrollbar slider:active { background: alpha(@pic_text_color, 0.68); background-c
 .navigation-sidebar .sidebar-section-heading-title { font-weight: 700; }
 .sidebar-count { font-variant-numeric: tabular-nums; }
 .navigation-sidebar row:selected .sidebar-count,
-.navigation-sidebar row:selected .folder-count { color: alpha(white, 0.75); }
+.navigation-sidebar row:selected .folder-count { color: alpha(white, 0.72); }
 
-/* Search: dark, inset, with a soft focus halo */
+/* Search: deep inset with soft focus halo */
 .search-field {
     min-height: 34px;
     border-radius: 8px;
     border: none;
     background: @pic_bar_inset;
-    box-shadow: inset 0 1px 3px alpha(black, 0.45), inset 0 0 0 1px alpha(white, 0.07);
+    box-shadow: inset 0 1px 4px alpha(black, 0.55), inset 0 0 0 1px alpha(white, 0.05);
     color: @pic_bar_text;
 }
 .search-field:focus-within {
-    box-shadow: inset 0 1px 3px alpha(black, 0.45), inset 0 0 0 1px alpha(@pic_focus, 0.9), 0 0 0 3px alpha(@pic_focus, 0.25);
+    box-shadow: inset 0 1px 4px alpha(black, 0.55), inset 0 0 0 1px alpha(@pic_focus, 0.85), 0 0 0 3px alpha(@pic_focus, 0.22);
 }
 .search-field image { color: @pic_bar_muted; }
 .search-field entry {
@@ -167,7 +167,7 @@ scrollbar slider:active { background: alpha(@pic_text_color, 0.68); background-c
     box-shadow: none;
 }
 
-/* ---- Light gallery, albums, photo tiles ---- */
+/* ---- Gallery, albums, photo tiles ---- */
 .photo-grid, .albums-home-grid { background: @pic_background_surface; color: @pic_text_color; }
 .group-heading-bar { background: transparent; padding: 0; }
 .section-heading-box { margin-top: 14px; margin-bottom: 7px; }
@@ -186,29 +186,29 @@ scrollbar slider:active { background: alpha(@pic_text_color, 0.68); background-c
     box-shadow: none;
 }
 .section-more-btn:hover { background: @pic_background_hover; color: @pic_text_color; }
-.section-more-btn:focus-visible { outline: 2px solid alpha(@pic_focus, 0.9); outline-offset: 1px; }
+.section-more-btn:focus-visible { outline: 2px solid alpha(@pic_focus, 0.85); outline-offset: 1px; }
 .photo-frame { box-shadow: none; }
 .photo-tile {
     border: 2px solid transparent;
     border-radius: 5px;
     background: @pic_background_control;
-    box-shadow: 0 1px 3px alpha(black, 0.2);
+    box-shadow: 0 1px 4px alpha(black, 0.35);
 }
 .thumbnail { border-radius: 2px; }
 .missing-thumbnail { background: @pic_background_control; }
-.photo-tile:hover { border-color: alpha(@pic_button_color, 0.55); box-shadow: 0 2px 6px alpha(black, 0.26); }
+.photo-tile:hover { border-color: alpha(@pic_button_color, 0.5); box-shadow: 0 2px 8px alpha(black, 0.4); }
 .folder-photo-selected.photo-tile,
 gridview.section-grid > child:selected .photo-tile,
 gridview.section-grid > item:selected .photo-tile {
     border-color: @pic_button_color;
-    box-shadow: 0 0 0 1px alpha(black, 0.18), 0 2px 8px alpha(@pic_button_color, 0.35);
+    box-shadow: 0 0 0 1px alpha(black, 0.25), 0 2px 10px alpha(@pic_button_color, 0.3);
 }
 .folder-photo-selected .selection-badge { opacity: 1; }
 .selection-badge {
     color: @pic_button_text;
     background-color: @pic_button_color;
     background-image: linear-gradient(to bottom, @pic_accent_top, @pic_accent_bottom);
-    box-shadow: 0 1px 2px alpha(black, 0.35);
+    box-shadow: 0 1px 3px alpha(black, 0.4);
 }
 listview.folder-stream { background: transparent; padding: 0 20px 24px 20px; }
 listview.folder-stream > row,
@@ -234,7 +234,7 @@ gridview.section-grid > item:selected {
 .photo-tile:focus-visible,
 gridview.section-grid > child:focus-visible .photo-tile,
 gridview.section-grid > item:focus-visible .photo-tile {
-    outline: 2px solid alpha(@pic_focus, 0.9);
+    outline: 2px solid alpha(@pic_focus, 0.85);
     outline-offset: 2px;
 }
 
@@ -248,10 +248,10 @@ gridview.section-grid > item:focus-visible .photo-tile {
 .edit-preview, .overlay-list {
     border: 1px solid @pic_background_border;
     border-radius: 6px;
-    box-shadow: inset 0 1px 2px alpha(black, 0.06);
+    box-shadow: inset 0 1px 3px alpha(black, 0.25);
 }
 .edit-section-label { color: @pic_text_muted; font-weight: 700; }
-.overlay-list row:selected { background: alpha(@pic_button_color, 0.18); }
+.overlay-list row:selected { background: alpha(@pic_button_color, 0.2); }
 paned.edit-body-paned > separator,
 paned.collage-editor-paned > separator { background: transparent; border: none; box-shadow: none; }
 
@@ -261,13 +261,13 @@ paned.collage-editor-paned > separator { background: transparent; border: none; 
     background-image: linear-gradient(to bottom, @pic_bar_bottom, @pic_bar_color);
     color: @pic_bar_text;
     border: none;
-    box-shadow: inset 0 1px 0 alpha(black, 0.4), inset 0 2px 0 alpha(white, 0.04);
+    box-shadow: inset 0 1px 0 alpha(black, 0.5), inset 0 2px 0 alpha(white, 0.03);
 }
 .info-preview {
     background: @pic_bar_surface;
     border-radius: 5px;
     border: none;
-    box-shadow: 0 0 0 1px alpha(black, 0.35), 0 1px 3px alpha(black, 0.35);
+    box-shadow: 0 0 0 1px alpha(black, 0.4), 0 1px 4px alpha(black, 0.4);
 }
 .info-title, .metric-val { color: @pic_bar_text; }
 .metric-key, .photo-info-bar .dim-label { color: @pic_bar_muted; opacity: 1; }
@@ -279,24 +279,24 @@ paned.collage-editor-paned > separator { background: transparent; border: none; 
     border-radius: 6px;
     box-shadow: none;
 }
-.photo-info-bar .photo-action-button:hover { background: alpha(white, 0.09); color: @pic_button_text; }
-.photo-info-bar .photo-action-button:active { background: alpha(black, 0.25); }
+.photo-info-bar .photo-action-button:hover { background: alpha(white, 0.07); color: @pic_button_text; }
+.photo-info-bar .photo-action-button:active { background: alpha(black, 0.35); }
 .photo-info-bar .photo-action-button:checked {
     background-color: @pic_button_selected;
     background-image: linear-gradient(to bottom, @pic_sel_top, @pic_sel_bottom);
     color: @pic_button_text;
-    box-shadow: inset 0 1px 0 alpha(white, 0.14), inset 0 0 0 1px alpha(black, 0.28);
+    box-shadow: inset 0 1px 0 alpha(white, 0.12), inset 0 0 0 1px alpha(black, 0.35);
 }
-.photo-info-bar button:focus-visible { outline: 2px solid alpha(@pic_focus, 0.85); outline-offset: -2px; }
+.photo-info-bar button:focus-visible { outline: 2px solid alpha(@pic_focus, 0.8); outline-offset: -2px; }
 .photo-info-bar separator.infobar-group-separator { background: transparent; }
 
-/* ---- Sliders (light surfaces) ---- */
+/* ---- Sliders ---- */
 scale trough {
     min-height: 4px;
     min-width: 4px;
     border-radius: 2px;
-    background: alpha(@pic_text_color, 0.16);
-    box-shadow: inset 0 1px 1px alpha(black, 0.12);
+    background: alpha(@pic_text_color, 0.14);
+    box-shadow: inset 0 1px 1px alpha(black, 0.3);
 }
 scale highlight {
     border-radius: 2px;
@@ -309,54 +309,53 @@ scale slider {
     margin: -6px;
     border-radius: 50%;
     border: none;
-    background-color: #f4f5f6;
-    background-image: linear-gradient(to bottom, #ffffff, #e7eaed);
-    box-shadow: 0 0 0 1px alpha(black, 0.28), 0 1px 3px alpha(black, 0.3);
+    background-color: #d0d4d8;
+    background-image: linear-gradient(to bottom, #e8eaed, #c4c9ce);
+    box-shadow: 0 0 0 1px alpha(black, 0.4), 0 1px 3px alpha(black, 0.45);
 }
-scale slider:hover { background-image: linear-gradient(to bottom, #ffffff, #eff1f3); }
-scale slider:active { background-image: linear-gradient(to bottom, #e3e7ea, #d7dce0); }
-scale:focus-visible slider { box-shadow: 0 0 0 1px alpha(black, 0.28), 0 0 0 3px alpha(@pic_focus, 0.5); }
-scale:disabled { opacity: 0.45; }
+scale slider:hover { background-image: linear-gradient(to bottom, #f0f2f4, #d0d5da); }
+scale slider:active { background-image: linear-gradient(to bottom, #b8bec4, #a0a6ac); }
+scale:focus-visible slider { box-shadow: 0 0 0 1px alpha(black, 0.4), 0 0 0 3px alpha(@pic_focus, 0.45); }
+scale:disabled { opacity: 0.4; }
 
-/* Sliders on the dark bars */
+/* Sliders on dark bars */
 .photo-info-bar scale trough, .edit-mode-toolbar scale trough, .layout-left-header scale trough {
-    background: alpha(white, 0.2);
-    box-shadow: inset 0 1px 1px alpha(black, 0.35);
+    background: alpha(white, 0.15);
+    box-shadow: inset 0 1px 1px alpha(black, 0.4);
 }
 .photo-info-bar scale highlight, .edit-mode-toolbar scale highlight, .layout-left-header scale highlight {
-    background: #6aa3e8;
+    background: #6eb0f0;
 }
 
 /* ---- Switches, checks, radios, progress ---- */
 switch {
     border-radius: 999px;
-    background: alpha(@pic_text_color, 0.2);
-    box-shadow: inset 0 1px 2px alpha(black, 0.2);
+    background: alpha(@pic_text_color, 0.18);
+    box-shadow: inset 0 1px 2px alpha(black, 0.3);
     color: transparent;
 }
-switch:checked { background: @pic_button_color; box-shadow: inset 0 1px 2px alpha(black, 0.25); }
+switch:checked { background: @pic_button_color; box-shadow: inset 0 1px 2px alpha(black, 0.3); }
 switch slider {
     border-radius: 50%;
     margin: 2px;
     background: #ffffff;
-    box-shadow: 0 1px 3px alpha(black, 0.4);
+    box-shadow: 0 1px 3px alpha(black, 0.5);
 }
 check, radio {
     border-radius: 4px;
     background: @pic_ctl_top;
-    box-shadow: inset 0 0 0 1px alpha(black, 0.28);
+    box-shadow: inset 0 0 0 1px alpha(black, 0.35);
 }
 radio { border-radius: 50%; }
 check:checked, radio:checked {
     background: @pic_button_color;
     color: @pic_button_text;
-    box-shadow: inset 0 0 0 1px alpha(black, 0.25);
+    box-shadow: inset 0 0 0 1px alpha(black, 0.3);
 }
-progressbar trough { border-radius: 3px; min-height: 6px; background: alpha(@pic_text_color, 0.16); }
+progressbar trough { border-radius: 3px; min-height: 6px; background: alpha(@pic_text_color, 0.14); }
 progressbar progress { border-radius: 3px; background: @pic_button_color; }
 
-/* ---- Buttons: secondary (light surfaces) ----
-   Soft vertical gradient, hairline edge, top highlight. */
+/* ---- Buttons: secondary ---- */
 .crop-aspect-button, .crop-orientation-row button,
 .crop-action-row button.crop-apply-button, .crop-action-row button.crop-reset-button,
 .collage-layout-tile, .collage-tabs > button,
@@ -371,7 +370,7 @@ dropdown > button, combobox button {
     background-image: linear-gradient(to bottom, @pic_ctl_top, @pic_ctl_bottom);
     border: none;
     border-radius: 6px;
-    box-shadow: inset 0 0 0 1px alpha(black, 0.13), inset 0 1px 0 alpha(white, 0.85), 0 1px 1px alpha(black, 0.06);
+    box-shadow: inset 0 0 0 1px alpha(white, 0.06), inset 0 1px 0 alpha(white, 0.04), 0 1px 2px alpha(black, 0.25);
 }
 .crop-aspect-button:hover, .crop-orientation-row button:hover,
 .crop-action-row button.crop-apply-button:hover, .crop-action-row button.crop-reset-button:hover,
@@ -395,11 +394,10 @@ dropdown > button:active, combobox button:active {
     color: @pic_text_color;
     background-image: none;
     background-color: @pic_ctl_active;
-    box-shadow: inset 0 0 0 1px alpha(black, 0.18), inset 0 1px 3px alpha(black, 0.18);
+    box-shadow: inset 0 0 0 1px alpha(black, 0.3), inset 0 1px 4px alpha(black, 0.35);
 }
 
-/* Selected / toggled state: deep navy, inset. Covers every toggle group,
-   including the collage Orientation and Photo scaling rows. */
+/* Selected / toggled state */
 .crop-aspect-button:checked, .crop-orientation-row button:checked,
 .collage-layout-tile:checked, .collage-tabs > button:checked,
 .collage-compact-choice:checked, .collage-compact-choice.active, .collage-compact-choice.selected,
@@ -411,25 +409,25 @@ dropdown > button:active, combobox button:active {
     background-color: @pic_button_selected;
     background-image: linear-gradient(to bottom, @pic_sel_top, @pic_sel_bottom);
     border: none;
-    box-shadow: inset 0 0 0 1px alpha(black, 0.3), inset 0 1px 0 alpha(white, 0.14);
+    box-shadow: inset 0 0 0 1px alpha(black, 0.35), inset 0 1px 0 alpha(white, 0.12);
 }
 .crop-aspect-button:checked:hover, .crop-orientation-row button:checked:hover,
 .collage-layout-tile:checked:hover, .collage-tabs > button:checked:hover,
 .collage-compact-choice:checked:hover, .edit-fit-row button:checked:hover,
 .overlay-anchor-row button:checked:hover, .quick-fix-row button:checked:hover,
 .one-to-one-btn:checked:hover, .photo-action-button:checked:hover {
-    background-image: linear-gradient(to bottom, #346298, #284a73);
+    background-image: linear-gradient(to bottom, #3a74b0, #2c5a8a);
 }
 .crop-aspect-button:disabled, .crop-orientation-row button:disabled,
 .collage-layout-tile:disabled, .collage-tabs > button:disabled,
-.collage-compact-choice:disabled, .edit-fit-row button:disabled { opacity: 0.45; }
-.crop-action-row button:disabled { opacity: 0.45; }
+.collage-compact-choice:disabled, .edit-fit-row button:disabled { opacity: 0.4; }
+.crop-action-row button:disabled { opacity: 0.4; }
 .crop-aspect-button:focus-visible, .crop-orientation-row button:focus-visible,
 .collage-layout-tile:focus-visible, .collage-tabs > button:focus-visible,
 .collage-compact-choice:focus-visible, .edit-fit-row button:focus-visible,
 .overlay-anchor-row button:focus-visible, .quick-fix-row button:focus-visible,
 .collage-footer button:focus-visible, button.clear-action-button:focus-visible {
-    outline: 2px solid alpha(@pic_focus, 0.9);
+    outline: 2px solid alpha(@pic_focus, 0.85);
     outline-offset: 1px;
 }
 
@@ -446,7 +444,7 @@ button.crop-apply-button,
     border: none;
     border-radius: 6px;
     font-weight: 600;
-    box-shadow: inset 0 0 0 1px alpha(black, 0.28), inset 0 1px 0 alpha(white, 0.22), 0 1px 2px alpha(black, 0.18);
+    box-shadow: inset 0 0 0 1px alpha(black, 0.3), inset 0 1px 0 alpha(white, 0.18), 0 1px 3px alpha(black, 0.3);
 }
 button.suggested-action:hover,
 button.crop-apply-button:hover,
@@ -455,7 +453,7 @@ button.crop-apply-button:hover,
 .collage-footer button.collage-create-button:hover,
 .collage-footer > button:last-child:hover {
     color: @pic_button_text;
-    background-image: linear-gradient(to bottom, #5592d6, #3a76bd);
+    background-image: linear-gradient(to bottom, #6aadef, #4a8fd4);
 }
 button.suggested-action:active,
 button.crop-apply-button:active,
@@ -464,8 +462,8 @@ button.crop-apply-button:active,
 .collage-footer > button:last-child:active {
     color: @pic_button_text;
     background-image: none;
-    background-color: #2a5a99;
-    box-shadow: inset 0 0 0 1px alpha(black, 0.35), inset 0 1px 3px alpha(black, 0.3);
+    background-color: #2f6aad;
+    box-shadow: inset 0 0 0 1px alpha(black, 0.4), inset 0 1px 4px alpha(black, 0.4);
 }
 button.suggested-action:disabled,
 button.crop-apply-button:disabled,
@@ -473,25 +471,25 @@ button.crop-apply-button:disabled,
     color: @pic_text_muted;
     background-color: @pic_background_control;
     background-image: none;
-    box-shadow: inset 0 0 0 1px alpha(black, 0.1);
+    box-shadow: inset 0 0 0 1px alpha(white, 0.04);
 }
 button.suggested-action:focus-visible, button.crop-apply-button:focus-visible,
 .collage-footer > button:last-child:focus-visible {
-    outline: 2px solid alpha(@pic_focus, 0.9);
+    outline: 2px solid alpha(@pic_focus, 0.85);
     outline-offset: 2px;
 }
 
-/* Destructive actions read as destructive, in a muted red. */
+/* Destructive */
 button.destructive-action {
     color: @pic_button_text;
     background-color: @pic_danger_bottom;
     background-image: linear-gradient(to bottom, @pic_danger_top, @pic_danger_bottom);
     border: none;
     border-radius: 6px;
-    box-shadow: inset 0 0 0 1px alpha(black, 0.28), inset 0 1px 0 alpha(white, 0.2);
+    box-shadow: inset 0 0 0 1px alpha(black, 0.3), inset 0 1px 0 alpha(white, 0.15);
 }
-button.destructive-action:hover { background-image: linear-gradient(to bottom, #d96670, #bf4854); }
-button.destructive-action:active { background-image: none; background-color: #a2343f; }
+button.destructive-action:hover { background-image: linear-gradient(to bottom, #e06a74, #c84e58); }
+button.destructive-action:active { background-image: none; background-color: #a03842; }
 button.destructive-action:disabled { color: @pic_text_muted; background-image: none; background-color: @pic_background_control; }
 
 /* ---- Collage panel ---- */
@@ -503,7 +501,7 @@ button.destructive-action:disabled { color: @pic_text_muted; background-image: n
     background-image: linear-gradient(to bottom, @pic_ctl_top, @pic_ctl_bottom);
     border: none;
     border-radius: 6px;
-    box-shadow: inset 0 0 0 1px alpha(black, 0.13), inset 0 1px 0 alpha(white, 0.85), 0 1px 1px alpha(black, 0.06);
+    box-shadow: inset 0 0 0 1px alpha(white, 0.06), inset 0 1px 0 alpha(white, 0.04), 0 1px 2px alpha(black, 0.25);
     font-size: 12px;
     font-weight: 400;
 }
@@ -513,11 +511,11 @@ button.destructive-action:disabled { color: @pic_text_muted; background-image: n
 .collage-editor-paned button.flat:active {
     background-image: none;
     background-color: @pic_ctl_active;
-    box-shadow: inset 0 0 0 1px alpha(black, 0.18), inset 0 1px 3px alpha(black, 0.18);
+    box-shadow: inset 0 0 0 1px alpha(black, 0.3), inset 0 1px 4px alpha(black, 0.35);
 }
-.collage-editor-paned button.flat:focus-visible { outline: 2px solid alpha(@pic_focus, 0.9); outline-offset: 1px; }
+.collage-editor-paned button.flat:focus-visible { outline: 2px solid alpha(@pic_focus, 0.85); outline-offset: 1px; }
 
-/* Linked segmented groups (Orientation, Photo scaling): one continuous control */
+/* Linked segmented groups */
 .collage-editor-paned .linked > button.collage-compact-choice { border-radius: 0; }
 .collage-editor-paned .linked > button.collage-compact-choice:first-child { border-radius: 6px 0 0 6px; }
 .collage-editor-paned .linked > button.collage-compact-choice:last-child { border-radius: 0 6px 6px 0; }
@@ -529,23 +527,23 @@ button.collage-layout-tile:checked {
     background-color: @pic_button_selected;
     background-image: linear-gradient(to bottom, @pic_sel_top, @pic_sel_bottom);
     border: none;
-    box-shadow: inset 0 0 0 1px alpha(black, 0.3), inset 0 1px 0 alpha(white, 0.14);
+    box-shadow: inset 0 0 0 1px alpha(black, 0.35), inset 0 1px 0 alpha(white, 0.12);
 }
-button.collage-layout-tile:checked:focus-visible { outline: 2px solid alpha(@pic_focus, 0.9); }
+button.collage-layout-tile:checked:focus-visible { outline: 2px solid alpha(@pic_focus, 0.85); }
 
-/* Colour swatches: hairline edge; selected gets a gap ring */
+/* Colour swatches */
 button.collage-color-swatch {
     border: none;
     border-radius: 6px;
     background-image: none;
-    box-shadow: inset 0 0 0 1px alpha(black, 0.25);
+    box-shadow: inset 0 0 0 1px alpha(black, 0.35);
 }
-button.collage-color-swatch:hover { box-shadow: inset 0 0 0 1px alpha(black, 0.4); }
+button.collage-color-swatch:hover { box-shadow: inset 0 0 0 1px alpha(black, 0.5); }
 button.collage-color-swatch:checked {
     border: none;
-    box-shadow: inset 0 0 0 1px alpha(black, 0.25), 0 0 0 1px @pic_button_color;
+    box-shadow: inset 0 0 0 1px alpha(black, 0.35), 0 0 0 1px @pic_button_color;
 }
-button.collage-color-swatch:focus-visible { outline: 2px solid alpha(@pic_focus, 0.9); outline-offset: 3px; }
+button.collage-color-swatch:focus-visible { outline: 2px solid alpha(@pic_focus, 0.85); outline-offset: 3px; }
 
 .collage-footer {
     background: @pic_background_color;
@@ -560,13 +558,13 @@ button.collage-color-swatch:focus-visible { outline: 2px solid alpha(@pic_focus,
     color: @pic_bar_text;
     border: none;
     border-radius: 6px;
-    box-shadow: inset 0 1px 0 alpha(white, 0.06), 0 1px 0 alpha(black, 0.25);
+    box-shadow: inset 0 1px 0 alpha(white, 0.05), 0 1px 0 alpha(black, 0.35);
 }
 .edit-mode-toolbar .edit-panel-tabs {
     padding: 2px;
     border-radius: 7px;
     background: @pic_bar_inset;
-    box-shadow: inset 0 1px 3px alpha(black, 0.45);
+    box-shadow: inset 0 1px 4px alpha(black, 0.55);
 }
 .edit-mode-toolbar .edit-panel-tabs > button.flat {
     min-height: 32px;
@@ -580,7 +578,7 @@ button.collage-color-swatch:focus-visible { outline: 2px solid alpha(@pic_focus,
 .edit-mode-toolbar .edit-panel-tabs > button.flat label,
 .edit-mode-toolbar .edit-panel-tabs > button.flat image { color: inherit; }
 .edit-mode-toolbar .edit-panel-tabs > button.flat:hover {
-    background: alpha(white, 0.08);
+    background: alpha(white, 0.06);
     color: @pic_button_text;
 }
 .edit-mode-toolbar .edit-panel-tabs > button.flat:checked,
@@ -588,13 +586,13 @@ button.collage-color-swatch:focus-visible { outline: 2px solid alpha(@pic_focus,
     color: @pic_button_text;
     background-color: @pic_button_selected;
     background-image: linear-gradient(to bottom, @pic_sel_top, @pic_sel_bottom);
-    box-shadow: inset 0 1px 0 alpha(white, 0.14), 0 1px 2px alpha(black, 0.35);
+    box-shadow: inset 0 1px 0 alpha(white, 0.12), 0 1px 3px alpha(black, 0.4);
 }
 .edit-mode-toolbar .edit-panel-tabs > button.flat:focus-visible {
-    outline: 2px solid alpha(@pic_focus, 0.85);
+    outline: 2px solid alpha(@pic_focus, 0.8);
     outline-offset: -2px;
 }
-.edit-mode-toolbar .edit-panel-tabs > button.flat:disabled { opacity: 0.45; }
+.edit-mode-toolbar .edit-panel-tabs > button.flat:disabled { opacity: 0.4; }
 .edit-mode-toolbar .edit-toolbar-actions button.edit-toolbar-icon-button {
     color: @pic_bar_text;
     background: transparent;
@@ -603,10 +601,10 @@ button.collage-color-swatch:focus-visible { outline: 2px solid alpha(@pic_focus,
     border-radius: 6px;
     box-shadow: none;
 }
-.edit-mode-toolbar .edit-toolbar-actions button.edit-toolbar-icon-button:hover { background: alpha(white, 0.09); color: @pic_button_text; }
-.edit-mode-toolbar .edit-toolbar-actions button.edit-toolbar-icon-button:active { background: alpha(black, 0.25); }
-.edit-mode-toolbar .edit-toolbar-actions button.edit-toolbar-icon-button:disabled { opacity: 0.4; }
-.edit-mode-toolbar .edit-toolbar-actions button.edit-toolbar-icon-button:focus-visible { outline: 2px solid alpha(@pic_focus, 0.85); }
+.edit-mode-toolbar .edit-toolbar-actions button.edit-toolbar-icon-button:hover { background: alpha(white, 0.07); color: @pic_button_text; }
+.edit-mode-toolbar .edit-toolbar-actions button.edit-toolbar-icon-button:active { background: alpha(black, 0.35); }
+.edit-mode-toolbar .edit-toolbar-actions button.edit-toolbar-icon-button:disabled { opacity: 0.35; }
+.edit-mode-toolbar .edit-toolbar-actions button.edit-toolbar-icon-button:focus-visible { outline: 2px solid alpha(@pic_focus, 0.8); }
 .edit-mode-toolbar .edit-toolbar-actions button.edit-toolbar-done {
     border-radius: 4px;
 }
@@ -614,23 +612,23 @@ button.collage-color-swatch:focus-visible { outline: 2px solid alpha(@pic_focus,
     padding: 2px;
     border-radius: 7px;
     background: @pic_bar_inset;
-    box-shadow: inset 0 1px 3px alpha(black, 0.45);
+    box-shadow: inset 0 1px 4px alpha(black, 0.55);
 }
 .edit-mode-toolbar .edit-history-group.linked button.edit-toolbar-icon-button { border-radius: 5px; }
 
-/* ---- Text fields on light surfaces ---- */
+/* ---- Text fields ---- */
 .edit-panel-pages entry, .collage-editor-paned entry, .settings-window entry,
 dialog entry, spinbutton {
     min-height: 30px;
     color: @pic_text_color;
-    background: #ffffff;
+    background: @pic_bar_inset;
     border: none;
     border-radius: 6px;
-    box-shadow: inset 0 0 0 1px alpha(black, 0.18), inset 0 1px 2px alpha(black, 0.08);
+    box-shadow: inset 0 0 0 1px alpha(white, 0.06), inset 0 1px 3px alpha(black, 0.4);
 }
 .edit-panel-pages entry:focus-within, .collage-editor-paned entry:focus-within,
 .settings-window entry:focus-within, dialog entry:focus-within, spinbutton:focus-within {
-    box-shadow: inset 0 0 0 1px @pic_button_color, 0 0 0 3px alpha(@pic_focus, 0.35);
+    box-shadow: inset 0 0 0 1px @pic_button_color, 0 0 0 3px alpha(@pic_focus, 0.28);
 }
 
 /* ---- Menus, popovers, dialogs ---- */
@@ -638,7 +636,7 @@ popover > contents {
     background: @pic_background_surface;
     color: @pic_text_color;
     border-radius: 10px;
-    box-shadow: 0 10px 28px alpha(black, 0.3), 0 0 0 1px alpha(black, 0.16);
+    box-shadow: 0 12px 32px alpha(black, 0.55), 0 0 0 1px alpha(white, 0.06);
 }
 popover modelbutton, popover row { border-radius: 5px; }
 popover modelbutton:hover, popover row:hover, popover row:selected {
@@ -655,7 +653,7 @@ popover modelbutton:hover, popover row:hover, popover row:selected {
     border: none;
     border-radius: 10px;
     padding: 4px;
-    box-shadow: 0 10px 28px alpha(black, 0.3), 0 0 0 1px alpha(black, 0.16);
+    box-shadow: 0 12px 32px alpha(black, 0.55), 0 0 0 1px alpha(white, 0.06);
 }
 .album-context-menu > contents,
 .pic-folder-context-menu > contents,
@@ -663,7 +661,7 @@ popover modelbutton:hover, popover row:hover, popover row:selected {
 .photo-actions-popover > contents {
     border: none;
     border-radius: 10px;
-    box-shadow: 0 10px 28px alpha(black, 0.3), 0 0 0 1px alpha(black, 0.16);
+    box-shadow: 0 12px 32px alpha(black, 0.55), 0 0 0 1px alpha(white, 0.06);
 }
 .photo-actions-menu { background: transparent; border: none; box-shadow: none; }
 .photo-actions-menu .photo-action-button image { opacity: 1; }
@@ -710,19 +708,19 @@ popover modelbutton:hover, popover row:hover, popover row:selected {
     background: @pic_background_color;
     color: @pic_text_color;
     border-radius: 6px;
-    box-shadow: 0 2px 8px alpha(black, 0.28), 0 0 0 1px alpha(black, 0.12);
+    box-shadow: 0 3px 12px alpha(black, 0.45), 0 0 0 1px alpha(white, 0.05);
 }
 
 /* ---- Status and media badges ---- */
 .offline-badge, .sidebar-offline-badge {
-    color: #322600;
-    background: #f2c14e;
+    color: #1a1400;
+    background: #e0b84a;
     border-radius: 4px;
 }
-.favorite-btn.active, .favorite-btn.active image, .favorite-badge { color: #ce4551; }
+.favorite-btn.active, .favorite-btn.active image, .favorite-badge { color: #e05562; }
 .edited-badge { color: @pic_text_muted; }
 
-/* ---- Album cards: image-led ---- */
+/* ---- Album cards ---- */
 .albums-home-grid > flowboxchild { padding: 0; margin: 0; min-height: 0; }
 button.album-card {
     min-width: 0;
@@ -740,4 +738,4 @@ button.album-card:hover, button.album-card:active {
     border: none;
     box-shadow: none;
 }
-button.album-card:focus-visible { outline: 2px solid alpha(@pic_focus, 0.9); outline-offset: 2px; }
+button.album-card:focus-visible { outline: 2px solid alpha(@pic_focus, 0.85); outline-offset: 2px; }

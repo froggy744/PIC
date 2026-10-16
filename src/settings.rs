@@ -79,6 +79,7 @@ impl SettingsWindow {
         }
 
         let window = adw::Window::new();
+        window.add_css_class("settings-window");
         window.set_title(Some("Settings"));
         window.set_default_size(860, 620);
         window.set_transient_for(Some(parent));

@@ -2633,6 +2633,7 @@ fn add_folder_context_menu(list: &gtk::ListBox, row: &gtk::ListBoxRow, folder: &
         let popover = gtk::Popover::new();
         popover.set_has_arrow(false);
         popover.set_parent(&row_for_menu);
+        popover.add_css_class("album-context-menu");
         popover.add_css_class("pic-folder-context-menu");
         // Compact native menu, matching the photo context menu rather than
         // a large stack of centred GTK buttons.

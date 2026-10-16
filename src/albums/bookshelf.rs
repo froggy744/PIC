@@ -205,15 +205,20 @@ fn bookshelf_background_rules(directory: &Path) -> String {
     bookshelf_themes_in(directory)
         .into_iter()
         .enumerate()
-        .filter_map(|(index, theme)| {
-            (theme.kind == BookshelfThemeKind::Legacy).then(|| {
-                let uri = gio::File::for_path(theme.image_path).uri();
-                format!(
-                    ".albums-bookshelf-{index} {{ background-image: url(\"{uri}\"); \
-                     background-size: 100% auto; background-repeat: repeat-y; \
-                     background-position: center top; }}"
-                )
-            })
+        .map(|(index, theme)| {
+            let uri = gio::File::for_path(theme.image_path).uri();
+            let (size, position) = match theme.kind {
+                BookshelfThemeKind::Row => (
+                    format!("100% {}px", theme.row_height),
+                    format!("center {BOOKSHELF_BACKGROUND_ROW_ORIGIN}px"),
+                ),
+                BookshelfThemeKind::Legacy => ("100% auto".to_string(), "center top".to_string()),
+            };
+            format!(
+                ".albums-bookshelf-{index} {{ background-image: url(\"{uri}\"); \
+                 background-size: {size}; background-repeat: repeat-y; \
+                 background-position: {position}; }}"
+            )
         })
         .collect()
 }
@@ -225,7 +230,7 @@ fn bookshelf_background_css_class(appearance: AlbumAppearance) -> Option<String>
         return None;
     }
     let index = appearance.background_index % themes.len();
-    (themes[index].kind == BookshelfThemeKind::Legacy).then(|| format!("albums-bookshelf-{index}"))
+    Some(format!("albums-bookshelf-{index}"))
 }
 
 fn bookshelf_columns_for_width(width: i32, _card_width: i32) -> usize {

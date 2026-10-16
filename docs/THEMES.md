@@ -1,5 +1,7 @@
 # Appearance Themes
 
+> **PIC V1 guide.** Screenshots are being refreshed for the updated interface; the older images have been hidden until replacements are ready.
+
 Themes are plain folders on disk — nothing is hardcoded in the app. The
 appearance picker (Settings → Themes, also reachable from the header-bar
 sun/moon button) rescans the theme folder every time it is shown, so a new
@@ -126,3 +128,9 @@ Shared album component styles load above the appearance theme and use
 and bookshelf artwork are discovered independently under `images/theme/`.
 See the [template README](theme-template/README.md#album-cover-and-bookshelf-assets)
 for current asset paths, row geometry and refresh guidance.
+
+## V1 theme gallery and screenshots
+
+PIC V1 includes multiple distinctive appearance choices, from restrained desktop palettes to more expressive themes. Themes change the visual treatment of bars, surfaces, buttons, selected rows and editor controls; album-cover and bookshelf artwork can be configured separately. The [community theme template](theme-template/README.md) explains custom CSS and asset discovery.
+
+<!-- V1 SCREENSHOTS: insert newly captured themes here, after checking each screenshot matches current theme CSS. -->

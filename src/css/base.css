@@ -123,6 +123,27 @@ popover.sidebar-section-tooltip-menu button.sidebar-section-tooltip-item:active 
 .tour-heading { font-size: 22px; font-weight: 700; }
 .welcome-camera { -gtk-icon-shadow: 0 2px 4px rgba(0, 0, 0, 0.24); }
 
+/* AdwAlertDialog builds its sheet inside a dialog window. Keep the sheet,
+ * message, and responses on the active appearance palette for every theme. */
+dialog.alert .sheet.background,
+dialog.alert .message-area,
+dialog.alert .response-area {
+  color: @theme_fg_color;
+  background-color: @window_bg_color;
+  background-image: none;
+}
+
+dialog.alert .heading-bin,
+dialog.alert label.body {
+  color: @theme_fg_color;
+}
+
+dialog.alert .response-area button.text-button:not(.destructive-action) {
+  color: @theme_fg_color;
+  background-color: @view_bg_color;
+  background-image: none;
+}
+
 .photo-info-bar separator.infobar-group-separator { min-width: 1px; background: alpha(@theme_fg_color, 0.14); }
 
 /* The bottom InfoBar changes content for multi-photo selection, not height. */

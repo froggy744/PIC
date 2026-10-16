@@ -305,7 +305,7 @@ impl ThemeEngine {
             // precedence for other themes.
             let priority = if matches!(
                 theme.id.as_str(),
-                "PIC" | "PIC2" | "PIC-Default" | "PIC-Dark"
+                "PIC" | "PIC2" | "PIC-Default" | "PIC-Dark" | "Terminal" | "Monochrome-Studio"
             ) {
                 gtk::STYLE_PROVIDER_PRIORITY_APPLICATION + 3
             } else {

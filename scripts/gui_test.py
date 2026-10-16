@@ -244,6 +244,16 @@ def matching_generated_tiles(path: Path) -> list[tuple[int, int, str]]:
     return found
 
 
+def generated_photo_center_color_distance(path: Path, filename: str, x: int, y: int) -> int:
+    """Compare a visible fixture tile's center pixel with its generated source."""
+    source_path = SAMPLE_DIR / filename
+    with Image.open(source_path) as source:
+        expected = source.convert("RGB").getpixel((source.width // 2, source.height // 2))
+    with Image.open(path) as screenshot_image:
+        actual = screenshot_image.convert("RGB").getpixel((x + MOUSE_OFFSET_X, y + MOUSE_OFFSET_Y))
+    return sum(abs(left - right) for left, right in zip(actual, expected))
+
+
 def selected_badge_count(path: Path) -> int:
     image = Image.open(path).convert("RGB")
     count = 0
@@ -426,13 +436,20 @@ def smoke_test() -> None:
     db_result_ms = (time.monotonic() - all_stars_click_started) * 1000
     all_stars_screenshot = SCREENSHOTS / "02-rating-all-stars-results.png"
     expected_all_stars = {"landscape.jpg", "portrait.jpg"}
+    expected_tile_centers = {"landscape.jpg": (518, 178), "portrait.jpg": (878, 178)}
     visible_tiles: list[tuple[int, int, str]] = []
+    tile_color_distances: dict[str, int] = {}
     visual_deadline = all_stars_click_started + 8
     while time.monotonic() < visual_deadline:
         screenshot(all_stars_screenshot.name)
         visible_tiles = matching_generated_tiles(all_stars_screenshot)
+        tile_color_distances = {
+            name: generated_photo_center_color_distance(all_stars_screenshot, name, *center)
+            for name, center in expected_tile_centers.items()
+        }
         if ({tile[2] for tile in visible_tiles} == expected_all_stars
-                and len(visible_tiles) == len(expected_all_stars)):
+                and len(visible_tiles) == len(expected_all_stars)
+                and all(distance <= 20 for distance in tile_color_distances.values())):
             break
         time.sleep(0.02)
     visual_result_ms = (time.monotonic() - all_stars_click_started) * 1000
@@ -441,8 +458,10 @@ def smoke_test() -> None:
                     "Selecting All Stars in Folder shows exactly the 3-star and 5-star photos"),
            stars_filter == "stars"
            and {tile[2] for tile in visible_tiles} == expected_all_stars
-           and len(visible_tiles) == len(expected_all_stars),
+           and len(visible_tiles) == len(expected_all_stars)
+           and all(distance <= 20 for distance in tile_color_distances.values()),
            f"setting={stars_filter}; visible fixture tiles={visible_tiles}; "
+           f"source-to-screen center RGB distances={tile_color_distances} (max 20); "
            f"database state observed={db_result_ms:.1f} ms; first captured matching GUI frame={visual_result_ms:.1f} ms; "
            f"screenshots={all_stars_menu.name}, {all_stars_screenshot.name} (visual timing includes screenshot capture/polling)")
     # Restore the unfiltered folder for the remaining import/navigation tests.
@@ -980,7 +999,7 @@ def write_report(error: Exception | None) -> None:
             "Folder navigation and photo membership": "Click the imported fixture folder and compare catalog membership and visible photos",
             "Folder rating filter membership": "Open the folder filter, select three stars, and verify the visible filename and stored filter",
             "Folder rating filter reset": "Click Clear and verify the full fixture membership returns",
-            "Folder All Stars filter and result latency": "Select All Stars in Folder; time the persisted filter state and first screenshot showing exactly both rated photos",
+            "Folder All Stars filter and result latency": "Select All Stars in Folder; time persisted state and verify both result tile centers against the generated source colors",
             "Import chooser cancellation": "Open the real folder picker, press Escape, and compare database counts",
             "GUI local folder import": "Choose the generated folder through the GTK chooser and query imported paths",
             "Duplicate GUI import": "Repeat the folder-picker import and verify row count stays unchanged",

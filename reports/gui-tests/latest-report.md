@@ -1,10 +1,10 @@
 # PIC GUI test report
 
 - Overall: **COMPLETE**
-- Commit: `f34efb7e18222efb535c1880a09f55dd7362204c`
+- Commit: `707859660fbcc443b8897baf1272e149ea34344c`
 - Display: Xvfb `:2` (1600×1000×24), GTK backend X11, Cairo renderer
 - Application binary: `/home/peet/PIC/target/release/pic-rs`
-- Artifact directory: `reports/gui-tests/folder-all-stars-benchmark-rerun`
+- Artifact directory: `reports/gui-tests/folder-all-stars-verified`
 - PIC process: exited during cleanup
 - Counts: 39 PASS, 0 FAIL, 0 BLOCKED, 0 NOT TESTED
 - Data/config: generated test photos and isolated XDG directories under this run directory
@@ -19,7 +19,7 @@
 | Folder navigation and photo membership | Click the imported fixture folder and compare catalog membership and visible photos | Opening the generated folder shows its 15 catalogued photos | folder database count=15; visible generated tiles=12; screenshot=02b-folder-view.png | PASS |
 | Folder rating filter membership | Open the folder filter, select three stars, and verify the visible filename and stored filter | Three-star folder filter shows exactly the rated photo | setting=3; visible fixture tiles=[(518, 178, 'landscape.jpg')]; screenshots=02c-rating-filter-menu.png, 02d-folder-rated-filter.png | PASS |
 | Folder rating filter reset | Click Clear and verify the full fixture membership returns | Clearing the rating filter restores the folder photos | visible fixture tiles=12; result=02e-folder-rating-filter-cleared.png | PASS |
-| Folder All Stars filter and result latency | Select All Stars in Folder; time the persisted filter state and first screenshot showing exactly both rated photos | Selecting All Stars in Folder shows exactly the 3-star and 5-star photos | setting=stars; visible fixture tiles=[(518, 178, 'landscape.jpg'), (878, 178, 'portrait.jpg')]; database state observed=105.2 ms; first captured matching GUI frame=236.4 ms; screenshots=02-rating-all-stars-menu.png, 02-rating-all-stars-results.png (visual timing includes screenshot capture/polling) | PASS |
+| Folder All Stars filter and result latency | Select All Stars in Folder; time persisted state and verify both result tile centers against the generated source colors | Selecting All Stars in Folder shows exactly the 3-star and 5-star photos | setting=stars; visible fixture tiles=[(518, 178, 'landscape.jpg'), (878, 178, 'portrait.jpg')]; source-to-screen center RGB distances={'landscape.jpg': 0, 'portrait.jpg': 0} (max 20); database state observed=105.4 ms; first captured matching GUI frame=258.8 ms; screenshots=02-rating-all-stars-menu.png, 02-rating-all-stars-results.png (visual timing includes screenshot capture/polling) | PASS |
 | Import chooser cancellation | Open the real folder picker, press Escape, and compare database counts | Escape closes the picker without changing indexed photos | photo count before/after=15/15; screenshots=02f-import-cancel-dialog.png, 02g-import-cancelled.png | PASS |
 | GUI local folder import | Choose the generated folder through the GTK chooser and query imported paths | Selecting the temporary import directory indexes both photos | photos indexed from GUI-selected path=2; total library photos=17; screenshots=02h-import-source-chooser.png, 02h1-import-home-listing.png, 02h2-import-folder-selected.png, 02i-import-complete.png | PASS |
 | Duplicate GUI import | Repeat the folder-picker import and verify row count stays unchanged | Importing the same source folder again does not duplicate photo rows | photo count after repeat import=17; screenshots=02j-duplicate-import-chooser.png, 02k-duplicate-import-result.png | PASS |
@@ -48,7 +48,7 @@
 | Collage Exit action | Exit the collage editor and verify gallery return | Exit returns from collage editor to gallery | Post-collage screenshot=17-gallery-after-collage.png | PASS |
 | Gallery layout control interaction | Open the layout control and capture its changed state | Layout button visibly changes gallery layout or presents layout choices | Layout control response screenshot=19-gallery-layout-control.png | PASS |
 | Screensaver setup | Open style controls and start playback through the GUI | Play control opens screensaver style settings | Setup controls shown; screenshot=20-screensaver-setup.png | PASS |
-| Screensaver window and fullscreen geometry | Query the visible screensaver X11 window geometry | Screensaver window is visible and covers the X11 display | window=4195150; geometry=1600x1000; screenshot=21-screensaver-running.png; wm=Openbox | PASS |
+| Screensaver window and fullscreen geometry | Query the visible screensaver X11 window geometry | Screensaver window is visible and covers the X11 display | window=4195152; geometry=1600x1000; screenshot=21-screensaver-running.png; wm=Openbox | PASS |
 | Screensaver photo playback and transition | Capture the slideshow before and after its configured interval | A different generated image appears after the configured interval | Transition screenshot=21a-screensaver-transition.png | PASS |
 | Screensaver keyboard exit | Press Escape and capture return to the main window | Escape exits screensaver and returns to PIC | Returned to PIC; screenshot=22-screensaver-keyboard-exit.png | PASS |
 | Screensaver mouse exit | Restart playback, move/click the mouse, and verify dismissal | Mouse input exits screensaver and returns to PIC | Mouse input dismissed fullscreen screensaver and returned to PIC; setup=23-screensaver-setup-again.png; screenshot=24-screensaver-mouse-exit.png | PASS |

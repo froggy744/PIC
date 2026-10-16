@@ -1,19 +1,18 @@
 # PIC GUI test report
 
 - Overall: **COMPLETE**
-- Commit under test: `aec9f2b` (the tested source tree matches this commit)
+- Commit: `3ce4f39890b25087f6ab5c2d5c5e067af0384c07`
 - Display: Xvfb `:2` (1600×1000×24), GTK backend X11, Cairo renderer
 - Application binary: `/home/peet/PIC/target/release/pic-rs`
-- Artifact directory: `reports/gui-tests/20261016T050224Z-33159`
+- Artifact directory: `reports/gui-tests/merge-audit-3ce4f39`
 - PIC process: exited during cleanup
 - Counts: 38 PASS, 0 FAIL, 0 BLOCKED, 0 NOT TESTED
 - Data/config: generated test photos and isolated XDG directories under this run directory
 
 ## Regression fixes verified
 
-- **Edit Undo/Redo:** slider drags changed the recipe while the Undo toolbar remained disabled until the pointer-release callback. The edit session now treats a changed active slider action as undoable, and refreshes the history controls while slider values change. Single and multiple tool Undo/Redo GUI sequences returned to the expected rendered pixels (all measured center-pixel deltas: 0). The original generated photo SHA-256 remained unchanged after save/reopen.
-- **Collage preview/export:** preview sized a photo frame to a fitted rectangle and positioned it inside a `GtkFixed`; the allocated preview did not honor that offset consistently, while export centered the fitted pixels. Preview and export now use centered aspect-fit geometry on the full tile, with a shared resolution-independent fit calculation. The two normalized photo geometry comparisons had a maximum error of `0.0118` (under the `0.02` tolerance) at a 683×683 normalized canvas; export was a valid, nonblank 3840×3840 JPEG.
-- The GUI harness now rebuilds the default release binary before testing, preventing stale `target/release/pic-rs` from being mistaken for the current source. An explicit `PIC_GUI_APP` still selects a caller-provided binary.
+- **Edit Undo/Redo:** slider drags changed the recipe while Undo remained disabled until pointer release. The session now exposes changed active slider actions to Undo and refreshes history controls during slider changes. Single and multiple-tool Undo/Redo GUI sequences restored the expected rendered pixels (all center-pixel deltas were 0); reset, save/reopen, and original-file hash checks also passed.
+- **Collage preview/export:** the preview's fitted-image offset inside `GtkFixed` was not consistently reflected in its allocation, while export centered the fitted image. The preview now fits content within the full tile, and preview/export share aspect-fit geometry. The measured normalized geometry error was `0.0118` (below the `0.02` tolerance) on a 683×683 canvas; the export was a nonblank 3840×3840 JPEG.
 
 ## Test matrix
 
@@ -53,7 +52,7 @@
 | Collage Exit action | Exit the collage editor and verify gallery return | Exit returns from collage editor to gallery | Post-collage screenshot=17-gallery-after-collage.png | PASS |
 | Gallery layout control interaction | Open the layout control and capture its changed state | Layout button visibly changes gallery layout or presents layout choices | Layout control response screenshot=19-gallery-layout-control.png | PASS |
 | Screensaver setup | Open style controls and start playback through the GUI | Play control opens screensaver style settings | Setup controls shown; screenshot=20-screensaver-setup.png | PASS |
-| Screensaver window and fullscreen geometry | Query the visible screensaver X11 window geometry | Screensaver window is visible and covers the X11 display | window=4195104; geometry=1600x1000; screenshot=21-screensaver-running.png; wm=Openbox | PASS |
+| Screensaver window and fullscreen geometry | Query the visible screensaver X11 window geometry | Screensaver window is visible and covers the X11 display | window=4195090; geometry=1600x1000; screenshot=21-screensaver-running.png; wm=Openbox | PASS |
 | Screensaver photo playback and transition | Capture the slideshow before and after its configured interval | A different generated image appears after the configured interval | Transition screenshot=21a-screensaver-transition.png | PASS |
 | Screensaver keyboard exit | Press Escape and capture return to the main window | Escape exits screensaver and returns to PIC | Returned to PIC; screenshot=22-screensaver-keyboard-exit.png | PASS |
 | Screensaver mouse exit | Restart playback, move/click the mouse, and verify dismissal | Mouse input exits screensaver and returns to PIC | Mouse input dismissed fullscreen screensaver and returned to PIC; setup=23-screensaver-setup-again.png; screenshot=24-screensaver-mouse-exit.png | PASS |

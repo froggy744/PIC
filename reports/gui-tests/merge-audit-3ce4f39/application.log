@@ -1,0 +1,425 @@
+PIC_STARTUP stage=main_start elapsed_ms=0 duration_ms=0
+PIC_STARTUP stage=adw_init_done elapsed_ms=187 duration_ms=0
+PIC_STARTUP stage=application_created elapsed_ms=187 duration_ms=0
+PIC_STARTUP stage=application_run_call elapsed_ms=187 duration_ms=0
+PIC_STARTUP stage=activation_start elapsed_ms=194 duration_ms=0
+PIC_STARTUP stage=library_manager_done elapsed_ms=194 duration_ms=0
+PIC_STARTUP stage=database_open_done elapsed_ms=201 duration_ms=7
+PIC_STARTUP stage=window_build_start elapsed_ms=201 duration_ms=0
+PIC_STARTUP stage=database_photos_sorted elapsed_ms=202 duration_ms=0
+PIC_STARTUP stage=library_counts elapsed_ms=202 duration_ms=0 photos=0 displayed=0 folders=0 albums=0 scan=disabled rss_mb=139
+PIC_NAV gallery_replace photos=0
+PIC_STARTUP stage=gallery_widgets_done elapsed_ms=205 duration_ms=0
+PIC_STARTUP stage=gallery_configured elapsed_ms=205 duration_ms=4
+PIC_STARTUP stage=actions_configured elapsed_ms=205 duration_ms=4
+PIC_STARTUP stage=grid_scroll_attached elapsed_ms=205 duration_ms=4
+PIC_STARTUP stage=scroll_callbacks_connected elapsed_ms=206 duration_ms=4
+PIC_STARTUP stage=initial_layout_restored elapsed_ms=206 duration_ms=4
+PIC_STARTUP stage=albums_widgets_start elapsed_ms=206 duration_ms=0
+PIC_STARTUP stage=albums_build_enter elapsed_ms=206 duration_ms=0
+PIC_STARTUP stage=albums_background_rules_done elapsed_ms=206 duration_ms=0
+PIC_STARTUP stage=albums_populate_done elapsed_ms=208 duration_ms=2
+PIC_STARTUP stage=albums_widgets_done elapsed_ms=208 duration_ms=2
+PIC_STARTUP stage=library_home_widgets_done elapsed_ms=209 duration_ms=7
+PIC_STARTUP stage=sidebar_widgets_done elapsed_ms=211 duration_ms=1
+PIC_STARTUP stage=layout_widgets_done elapsed_ms=218 duration_ms=8
+PIC_STARTUP stage=widget_content_and_signals_done elapsed_ms=219 duration_ms=18
+PIC_STARTUP stage=window_build_done elapsed_ms=221 duration_ms=20
+PIC_STARTUP stage=window_present_call elapsed_ms=221 duration_ms=27
+PIC_STARTUP stage=window_map elapsed_ms=250 duration_ms=28
+PIC_STARTUP stage=window_present_return elapsed_ms=250 duration_ms=28
+PIC_STARTUP stage=first_frame_tick elapsed_ms=251 duration_ms=1
+PIC_STARTUP stage=first_after_paint elapsed_ms=269 duration_ms=19
+PIC_NAV current_columns_changed old=5 new=4
+PIC_ZOOM layout mode=grid action=columns_changed old_columns=5 columns=4 width=1390 elapsed_us=29
+PIC_STARTUP stage=gallery_population_start elapsed_ms=298 duration_ms=0
+PIC_NAV gallery_replace photos=0
+PIC_STARTUP stage=gallery_population_scheduled elapsed_ms=298 duration_ms=0
+PIC_STARTUP stage=gallery_population_restored elapsed_ms=318 duration_ms=20
+PIC_NAV current_columns_changed old=4 new=3
+PIC_ZOOM layout mode=grid action=columns_changed old_columns=4 columns=3 width=1148 elapsed_us=17
+PIC_STARTUP stage=main_start elapsed_ms=0 duration_ms=0
+PIC_STARTUP stage=adw_init_done elapsed_ms=73 duration_ms=0
+PIC_STARTUP stage=application_created elapsed_ms=73 duration_ms=0
+PIC_STARTUP stage=application_run_call elapsed_ms=73 duration_ms=0
+PIC_STARTUP stage=activation_start elapsed_ms=80 duration_ms=0
+PIC_STARTUP stage=library_manager_done elapsed_ms=80 duration_ms=0
+PIC_STARTUP stage=database_open_done elapsed_ms=81 duration_ms=0
+PIC_STARTUP stage=window_build_start elapsed_ms=81 duration_ms=0
+PIC_STARTUP stage=database_photos_sorted elapsed_ms=82 duration_ms=1
+PIC_STARTUP stage=library_counts elapsed_ms=82 duration_ms=0 photos=15 displayed=15 folders=1 albums=0 scan=disabled rss_mb=117
+PIC_NAV gallery_replace photos=0
+PIC_STARTUP stage=gallery_widgets_done elapsed_ms=86 duration_ms=0
+PIC_STARTUP stage=gallery_configured elapsed_ms=86 duration_ms=4
+PIC_STARTUP stage=actions_configured elapsed_ms=86 duration_ms=4
+PIC_STARTUP stage=grid_scroll_attached elapsed_ms=86 duration_ms=4
+PIC_STARTUP stage=scroll_callbacks_connected elapsed_ms=86 duration_ms=4
+PIC_STARTUP stage=initial_layout_restored elapsed_ms=86 duration_ms=4
+PIC_STARTUP stage=albums_widgets_start elapsed_ms=86 duration_ms=0
+PIC_STARTUP stage=albums_build_enter elapsed_ms=86 duration_ms=0
+PIC_STARTUP stage=albums_background_rules_done elapsed_ms=86 duration_ms=0
+PIC_STARTUP stage=albums_populate_done elapsed_ms=88 duration_ms=2
+PIC_STARTUP stage=albums_widgets_done elapsed_ms=88 duration_ms=2
+PIC_STARTUP stage=library_home_widgets_done elapsed_ms=89 duration_ms=8
+PIC_NAV folder_order_changed old_count=0 new_count=1
+PIC_STARTUP stage=sidebar_widgets_done elapsed_ms=91 duration_ms=1
+PIC_STARTUP stage=layout_widgets_done elapsed_ms=98 duration_ms=8
+PIC_STARTUP stage=widget_content_and_signals_done elapsed_ms=100 duration_ms=18
+PIC_STARTUP stage=window_build_done elapsed_ms=102 duration_ms=21
+PIC_STARTUP stage=window_present_call elapsed_ms=102 duration_ms=22
+PIC_THUMBNAIL cache_lookup result=miss elapsed_us=13 uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/landscape.jpg
+PIC_THUMBNAIL cache_lookup result=miss elapsed_us=11 uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/portrait.jpg
+PIC_THUMBNAIL cache_lookup result=miss elapsed_us=7 uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/sample-00.jpg
+PIC_THUMBNAIL cache_lookup result=miss elapsed_us=7 uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/sample-01.jpg
+PIC_THUMBNAIL cache_lookup result=miss elapsed_us=9 uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/sample-02.jpg
+PIC_THUMBNAIL cache_lookup result=miss elapsed_us=7 uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/sample-03.jpg
+PIC_THUMBNAIL cache_lookup result=miss elapsed_us=7 uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/sample-04.jpg
+PIC_THUMBNAIL cache_lookup result=miss elapsed_us=7 uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/sample-05.jpg
+PIC_THUMBNAIL cache_lookup result=miss elapsed_us=7 uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/sample-06.jpg
+PIC_THUMBNAIL cache_lookup result=miss elapsed_us=7 uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/sample-07.jpg
+PIC_THUMBNAIL cache_lookup result=miss elapsed_us=7 uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/sample-08.jpg
+PIC_THUMBNAIL cache_lookup result=miss elapsed_us=7 uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/sample-09.jpg
+PIC_THUMBNAIL cache_lookup result=miss elapsed_us=7 uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/sample-10.jpg
+PIC_THUMBNAIL cache_lookup result=miss elapsed_us=7 uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/sample-11.jpg
+PIC_THUMBNAIL cache_lookup result=miss elapsed_us=7 uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/square.png
+PIC_THUMBNAIL bulk_start cancellable=true items=15 workers=8
+COLOR TRACE jpeg_icc path=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/sample-01.jpg status=none assume=sRGB
+COLOR TRACE jpeg_icc path=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/landscape.jpg status=none assume=sRGB
+COLOR TRACE jpeg_icc path=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/sample-00.jpg status=none assume=sRGB
+COLOR TRACE jpeg_icc path=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/sample-05.jpg status=none assume=sRGB
+COLOR TRACE jpeg_icc path=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/portrait.jpg status=none assume=sRGB
+COLOR TRACE jpeg_icc path=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/sample-11.jpg status=none assume=sRGB
+COLOR TRACE jpeg_icc path=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/sample-09.jpg status=none assume=sRGB
+COLOR TRACE jpeg_icc path=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/sample-07.jpg status=none assume=sRGB
+PIC_THUMBNAIL cache_write uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/sample-01.jpg cache=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/xdg/cache/pic-rs/thumbs/files/1/38652ef480ed8dc6442c44317a404d6d5b24eb8506a3d467c3b35b69e702596e.jpg elapsed_ms=3
+PIC_THUMBNAIL cache_write uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/landscape.jpg cache=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/xdg/cache/pic-rs/thumbs/files/7/6d6f052943e977675e3888c7d15b68e83ac247becdce9630eae37aaa9c322e9d.jpg elapsed_ms=3
+COLOR TRACE jpeg_icc path=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/sample-02.jpg status=none assume=sRGB
+COLOR TRACE jpeg_icc path=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/sample-06.jpg status=none assume=sRGB
+PIC_THUMBNAIL cache_write uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/sample-11.jpg cache=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/xdg/cache/pic-rs/thumbs/files/j/39dfb6e8c881464340793d27d073c1b619f830970a0296eb52b012e96167406d.jpg elapsed_ms=4
+PIC_THUMBNAIL cache_write uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/sample-07.jpg cache=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/xdg/cache/pic-rs/thumbs/files/5/abddaa5f12ce6a52b98224c4ab0e9089d041864614f1b29174566b39ce57381a.jpg elapsed_ms=4
+PIC_THUMBNAIL cache_write uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/sample-09.jpg cache=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/xdg/cache/pic-rs/thumbs/files/4/6cb80da032d3d51f9eed3656e62ee4302ff8dbe62faf8c7988e40f2e36267c91.jpg elapsed_ms=4
+PIC_THUMBNAIL cache_write uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/sample-00.jpg cache=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/xdg/cache/pic-rs/thumbs/files/i/097e6f455f8301fbd35febffa6f370895edf4ef65136e2b2b36ad115df2a2a05.jpg elapsed_ms=4
+PIC_THUMBNAIL cache_write uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/portrait.jpg cache=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/xdg/cache/pic-rs/thumbs/files/0/8790e17ab30d7d210f680b21ecf52e1f2a2211c1e3056b595c708fd417ace155.jpg elapsed_ms=4
+PIC_THUMBNAIL cache_write uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/sample-05.jpg cache=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/xdg/cache/pic-rs/thumbs/files/e/ecde2ff8147c7867bdce42b1879a52d43ca1d9faf5e0580b49da5f137e9b0c3e.jpg elapsed_ms=4
+COLOR TRACE jpeg_icc path=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/sample-04.jpg status=none assume=sRGB
+COLOR TRACE jpeg_icc path=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/sample-10.jpg status=none assume=sRGB
+COLOR TRACE jpeg_icc path=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/sample-08.jpg status=none assume=sRGB
+COLOR TRACE jpeg_icc path=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/sample-03.jpg status=none assume=sRGB
+PIC_THUMBNAIL cache_write uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/sample-02.jpg cache=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/xdg/cache/pic-rs/thumbs/files/6/6be20d5aea5537aae4a47ff3927a69c9c8d652b40b65b5e1375c09445d416608.jpg elapsed_ms=2
+PIC_THUMBNAIL cache_write uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/sample-06.jpg cache=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/xdg/cache/pic-rs/thumbs/files/b/53b790833ace24bd4de13cb49d72338075db95008b70dbba593c17bb58f07905.jpg elapsed_ms=3
+PIC_THUMBNAIL cache_write uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/sample-04.jpg cache=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/xdg/cache/pic-rs/thumbs/files/l/81bdacd9a518fe74c59d0d53fd3873a85e6bc66ccf8c30227849d7d636cec3e0.jpg elapsed_ms=1
+PIC_THUMBNAIL cache_write uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/sample-03.jpg cache=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/xdg/cache/pic-rs/thumbs/files/l/7ec9639c505059f5e59403bc6965271597c7e5fea342e0681bc969cc007484dd.jpg elapsed_ms=2
+PIC_THUMBNAIL cache_write uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/sample-08.jpg cache=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/xdg/cache/pic-rs/thumbs/files/b/9953d61c00540638890f720b8bd56e01c2b2a0aa560db3717bb86c47187586fe.jpg elapsed_ms=2
+PIC_THUMBNAIL cache_write uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/sample-10.jpg cache=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/xdg/cache/pic-rs/thumbs/files/c/9db03e79d96485e524754be202b76abf419118b7882d3598d01dc1c5b89a5507.jpg elapsed_ms=2
+PIC_THUMBNAIL cache_write uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/square.png cache=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/xdg/cache/pic-rs/thumbs/files/l/d9a17d2b5c0b4bf08bac290ebde618423bfaa8b9d71399f38ded2ba2512ef221.jpg elapsed_ms=4
+PIC_STARTUP stage=window_map elapsed_ms=134 duration_ms=31
+PIC_STARTUP stage=window_present_return elapsed_ms=134 duration_ms=31
+PIC_STARTUP stage=first_frame_tick elapsed_ms=136 duration_ms=1
+PIC_STARTUP stage=first_after_paint elapsed_ms=154 duration_ms=19
+PIC_SCAN_UI thumbnails_started queued_ms=52 total=15
+===== SCAN COMPLETE: imported=0 failed=0 | progressive gallery updates complete =====
+PIC_THUMBNAIL tile_refresh count=15
+PIC_NAV thumbnail_refresh_paths count=15
+PIC_NAV current_columns_changed old=5 new=4
+PIC_ZOOM layout mode=grid action=columns_changed old_columns=5 columns=4 width=1390 elapsed_us=24
+PIC_STARTUP stage=gallery_population_start elapsed_ms=184 duration_ms=0
+PIC_NAV gallery_replace photos=15
+PIC_THUMBNAIL gtk_bind elapsed_us=268 id=1
+PIC_THUMBNAIL gtk_bind elapsed_us=15 id=2
+PIC_THUMBNAIL gtk_bind elapsed_us=13 id=3
+PIC_THUMBNAIL gtk_bind elapsed_us=13 id=4
+PIC_THUMBNAIL gtk_bind elapsed_us=12 id=5
+PIC_THUMBNAIL gtk_bind elapsed_us=13 id=6
+PIC_THUMBNAIL gtk_bind elapsed_us=12 id=7
+PIC_THUMBNAIL gtk_bind elapsed_us=12 id=8
+PIC_THUMBNAIL gtk_bind elapsed_us=13 id=9
+PIC_THUMBNAIL gtk_bind elapsed_us=12 id=10
+PIC_THUMBNAIL gtk_bind elapsed_us=12 id=11
+PIC_THUMBNAIL gtk_bind elapsed_us=13 id=12
+PIC_THUMBNAIL gtk_bind elapsed_us=13 id=13
+PIC_THUMBNAIL gtk_bind elapsed_us=12 id=14
+PIC_THUMBNAIL gtk_bind elapsed_us=12 id=15
+PIC_STARTUP stage=gallery_population_scheduled elapsed_ms=191 duration_ms=6
+PIC_ZOOM_TRACE pointer_enter x=433.0 y=398.0
+PIC_THUMBNAIL paintable_assign elapsed_us=8
+PIC_THUMBNAIL paintable_assign elapsed_us=7
+PIC_THUMBNAIL paintable_assign elapsed_us=5
+PIC_THUMBNAIL paintable_assign elapsed_us=5
+PIC_THUMBNAIL paintable_assign elapsed_us=5
+PIC_THUMBNAIL paintable_assign elapsed_us=5
+PIC_THUMBNAIL paintable_assign elapsed_us=5
+PIC_THUMBNAIL paintable_assign elapsed_us=5
+PIC_THUMBNAIL paintable_assign elapsed_us=4
+PIC_THUMBNAIL paintable_assign elapsed_us=4
+PIC_THUMBNAIL paintable_assign elapsed_us=4
+PIC_THUMBNAIL paintable_assign elapsed_us=4
+PIC_THUMBNAIL paintable_assign elapsed_us=5
+PIC_THUMBNAIL paintable_assign elapsed_us=5
+PIC_THUMBNAIL paintable_assign elapsed_us=5
+PIC_NAV current_columns_changed old=4 new=3
+PIC_ZOOM layout mode=grid action=columns_changed old_columns=4 columns=3 width=1148 elapsed_us=17
+PIC_STARTUP stage=gallery_population_restored elapsed_ms=236 duration_ms=52
+UI TRACE photo_rating_shortcut ids=1 rating=3
+PIC_ZOOM_TRACE pointer_leave
+PIC_NAV folder_cache_restore result=reject reason=no_cached_rows
+PIC_FOLDER_SECTIONED enabled mode=flat_photo_virtualized
+PIC_NAV gallery_replace photos=15
+PIC_SCAN_UI gallery_replace filter=Folder(1) generation=2 photos=15 elapsed_ms=0
+PIC_NAV folder_target_schedule folder_id=1 center=false generation=2
+PIC_SECTIONED_JUMP index=0 target_y=0.0 animated=false
+PIC_NAV gallery_replace photos=1
+PIC_THUMBNAIL paintable_assign elapsed_us=6
+PIC_THUMBNAIL gtk_bind elapsed_us=50 id=1
+PIC_SCAN_UI gallery_replace filter=Folder(1) generation=3 photos=1 elapsed_ms=2
+PIC_NAV folder_target_schedule folder_id=1 center=false generation=3
+PIC_SECTIONED_JUMP index=0 target_y=0.0 animated=false
+PIC_NAV gallery_replace photos=15
+PIC_THUMBNAIL paintable_assign elapsed_us=6
+PIC_THUMBNAIL gtk_bind elapsed_us=50 id=1
+PIC_THUMBNAIL paintable_assign elapsed_us=4
+PIC_THUMBNAIL gtk_bind elapsed_us=27 id=2
+PIC_THUMBNAIL paintable_assign elapsed_us=4
+PIC_THUMBNAIL gtk_bind elapsed_us=25 id=3
+PIC_THUMBNAIL paintable_assign elapsed_us=3
+PIC_THUMBNAIL gtk_bind elapsed_us=27 id=4
+PIC_THUMBNAIL paintable_assign elapsed_us=3
+PIC_THUMBNAIL gtk_bind elapsed_us=24 id=5
+PIC_THUMBNAIL paintable_assign elapsed_us=4
+PIC_THUMBNAIL gtk_bind elapsed_us=25 id=6
+PIC_THUMBNAIL paintable_assign elapsed_us=4
+PIC_THUMBNAIL gtk_bind elapsed_us=24 id=7
+PIC_THUMBNAIL paintable_assign elapsed_us=3
+PIC_THUMBNAIL gtk_bind elapsed_us=23 id=8
+PIC_THUMBNAIL paintable_assign elapsed_us=3
+PIC_THUMBNAIL gtk_bind elapsed_us=24 id=9
+PIC_THUMBNAIL paintable_assign elapsed_us=3
+PIC_THUMBNAIL gtk_bind elapsed_us=23 id=10
+PIC_THUMBNAIL paintable_assign elapsed_us=3
+PIC_THUMBNAIL gtk_bind elapsed_us=23 id=11
+PIC_THUMBNAIL paintable_assign elapsed_us=3
+PIC_THUMBNAIL gtk_bind elapsed_us=23 id=12
+PIC_THUMBNAIL paintable_assign elapsed_us=3
+PIC_THUMBNAIL gtk_bind elapsed_us=23 id=13
+PIC_THUMBNAIL paintable_assign elapsed_us=3
+PIC_THUMBNAIL gtk_bind elapsed_us=24 id=14
+PIC_THUMBNAIL paintable_assign elapsed_us=3
+PIC_THUMBNAIL gtk_bind elapsed_us=23 id=15
+PIC_SCAN_UI gallery_replace filter=Folder(1) generation=4 photos=15 elapsed_ms=5
+PIC_NAV folder_target_schedule folder_id=1 center=false generation=4
+PIC_SECTIONED_JUMP index=0 target_y=0.0 animated=false
+PIC_THUMBNAIL schedule source=scan raw=false uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/xdg/home/00-import-source/import-only.jpg
+PIC_THUMBNAIL schedule source=scan raw=false uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/xdg/home/00-import-source/import-second.png
+PIC_THUMBNAIL bulk_start cancellable=true items=2 workers=8
+COLOR TRACE jpeg_icc path=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/xdg/home/00-import-source/import-only.jpg status=none assume=sRGB
+PIC_THUMBNAIL cache_write uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/xdg/home/00-import-source/import-only.jpg cache=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/xdg/cache/pic-rs/thumbs/files/2/7b328b3eed600b0e6ecb5a3ec2b7a9869e0bd021f4eb880cb45438e4155976f0.jpg elapsed_ms=1
+PIC_THUMBNAIL cache_write uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/xdg/home/00-import-source/import-second.png cache=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/xdg/cache/pic-rs/thumbs/files/4/c0ac3cbf65319bb05b19d6c75209c8fe2c6589e4884104621193b668b427b048.jpg elapsed_ms=2
+PIC_SCAN_UI indexing_finished queued_ms=15 imported=2 filter=Folder(1)
+PIC_SCAN_UI thumbnails_started queued_ms=15 total=2
+===== SCAN COMPLETE: imported=2 failed=0 | progressive gallery updates complete =====
+PIC_THUMBNAIL tile_refresh count=2
+PIC_NAV thumbnail_refresh_paths count=2
+PIC_NAV gallery_replace photos=17
+PIC_THUMBNAIL paintable_assign elapsed_us=6
+PIC_THUMBNAIL gtk_bind elapsed_us=50 id=1
+PIC_THUMBNAIL paintable_assign elapsed_us=4
+PIC_THUMBNAIL gtk_bind elapsed_us=25 id=2
+PIC_THUMBNAIL paintable_assign elapsed_us=4
+PIC_THUMBNAIL gtk_bind elapsed_us=24 id=3
+PIC_THUMBNAIL paintable_assign elapsed_us=4
+PIC_THUMBNAIL gtk_bind elapsed_us=25 id=4
+PIC_THUMBNAIL paintable_assign elapsed_us=4
+PIC_THUMBNAIL gtk_bind elapsed_us=24 id=5
+PIC_THUMBNAIL paintable_assign elapsed_us=3
+PIC_THUMBNAIL gtk_bind elapsed_us=24 id=6
+PIC_THUMBNAIL paintable_assign elapsed_us=3
+PIC_THUMBNAIL gtk_bind elapsed_us=24 id=7
+PIC_THUMBNAIL paintable_assign elapsed_us=4
+PIC_THUMBNAIL gtk_bind elapsed_us=24 id=8
+PIC_THUMBNAIL paintable_assign elapsed_us=3
+PIC_THUMBNAIL gtk_bind elapsed_us=23 id=9
+PIC_THUMBNAIL paintable_assign elapsed_us=3
+PIC_THUMBNAIL gtk_bind elapsed_us=23 id=10
+PIC_THUMBNAIL paintable_assign elapsed_us=3
+PIC_THUMBNAIL gtk_bind elapsed_us=24 id=11
+PIC_THUMBNAIL paintable_assign elapsed_us=3
+PIC_THUMBNAIL gtk_bind elapsed_us=23 id=12
+PIC_THUMBNAIL paintable_assign elapsed_us=3
+PIC_THUMBNAIL gtk_bind elapsed_us=22 id=13
+PIC_THUMBNAIL paintable_assign elapsed_us=3
+PIC_THUMBNAIL gtk_bind elapsed_us=23 id=14
+PIC_THUMBNAIL paintable_assign elapsed_us=3
+PIC_THUMBNAIL gtk_bind elapsed_us=23 id=15
+PIC_THUMBNAIL gtk_bind elapsed_us=16 id=16
+PIC_THUMBNAIL gtk_bind elapsed_us=14 id=17
+PIC_SCAN_UI gallery_replace filter=Folder(1) generation=5 photos=17 elapsed_ms=7
+PIC_NAV folder_target_schedule folder_id=1 center=false generation=5
+PIC_THUMBNAIL paintable_assign elapsed_us=11
+PIC_THUMBNAIL paintable_assign elapsed_us=5
+PIC_NAV folder_order_changed old_count=1 new_count=11
+PIC_SECTIONED_JUMP index=0 target_y=0.0 animated=false
+PIC_THUMBNAIL bulk_start cancellable=true items=0 workers=8
+PIC_SCAN_UI indexing_finished queued_ms=45 imported=0 filter=Folder(1)
+PIC_SCAN_UI thumbnails_started queued_ms=45 total=0
+===== SCAN COMPLETE: imported=0 failed=0 | progressive gallery updates complete =====
+PIC_NAV gallery_replace photos=17
+PIC_SCAN_UI gallery_replace filter=Folder(1) generation=6 photos=17 elapsed_ms=0
+PIC_NAV folder_target_schedule folder_id=1 center=false generation=6
+PIC_SECTIONED_JUMP index=0 target_y=0.0 animated=false
+PIC_LIGHTBOX_LAYOUT stage=opened overlay_width=1116 gallery_width=1116 inspector_width=280 inspector_visible=false viewer_inspector_visible=false scroll_y=6.0
+PIC_SECTIONED_SCROLL_CANCEL source=lightbox_open
+PIC_ZOOM_UI event=value_changed value=0.000 lightbox_visible=true edit_visible=false syncing=true last=3.000
+PIC_ZOOM t_ms=0 tid=ThreadId(1) adjustment_changed before value=0.0 lower=0.0 upper=1116.0 page=1116.0 step=111.6 page_inc=1004.4
+PIC_ZOOM t_ms=0 tid=ThreadId(1) viewport_anchor value=0.0 upper=1116.0 page=1116.0 target=0.0
+PIC_ZOOM t_ms=0 tid=ThreadId(1) adjustment_changed before value=0.0 lower=0.0 upper=784.0 page=784.0 step=78.4 page_inc=705.6
+PIC_ZOOM t_ms=0 tid=ThreadId(1) viewport_anchor value=0.0 upper=784.0 page=784.0 target=0.0
+PIC_VIEWER t_ms=0 tid=ThreadId(1) show_photo_request generation=2 index=0 uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/landscape.jpg
+PIC_VIEWER t_ms=0 tid=ThreadId(1) request lane=foreground action=new uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/landscape.jpg variant=1116x784
+PIC_ZOOM t_ms=15 tid=ThreadId(1) fit_mode source=open viewport=1116x784 picture_req=(-1, -1) alloc=0x0 intrinsic=0x0 target=1116x651
+PIC_VIEWER t_ms=0 tid=ThreadId(60) decode_start uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/landscape.jpg variant=1116x784 queue_ms=0
+COLOR TRACE jpeg_icc path=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/landscape.jpg status=none assume=sRGB
+PIC_VIEWER decode_stage source_ms=0 cpu_ms=8 uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/landscape.jpg
+PIC_VIEWER t_ms=11 tid=ThreadId(60) decode_done uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/landscape.jpg variant=1116x784 elapsed_ms=10 outcome=ok decoded=1116x651
+PIC_VIEWER t_ms=11 tid=ThreadId(1) display_apply elapsed_ms=0 uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/landscape.jpg
+PIC_VIEWER t_ms=11 tid=ThreadId(1) display_done lane=foreground source=decode navigation_ms=11 uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/landscape.jpg
+PIC_VIEWER t_ms=1703 tid=ThreadId(1) show_photo_request generation=3 index=1 uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/portrait.jpg
+PIC_VIEWER t_ms=1705 tid=ThreadId(1) request lane=foreground action=new uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/portrait.jpg variant=1116x784
+PIC_VIEWER t_ms=1705 tid=ThreadId(73) decode_start uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/portrait.jpg variant=1116x784 queue_ms=0
+COLOR TRACE jpeg_icc path=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/portrait.jpg status=none assume=sRGB
+PIC_VIEWER decode_stage source_ms=0 cpu_ms=6 uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/portrait.jpg
+PIC_VIEWER t_ms=1712 tid=ThreadId(73) decode_done uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/portrait.jpg variant=1116x784 elapsed_ms=7 outcome=ok decoded=523x784
+PIC_VIEWER t_ms=1712 tid=ThreadId(1) display_apply elapsed_ms=0 uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/portrait.jpg
+PIC_VIEWER t_ms=1712 tid=ThreadId(1) display_done lane=foreground source=decode navigation_ms=9 uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/portrait.jpg
+PIC_ZOOM t_ms=1727 tid=ThreadId(1) fit_mode source=navigate viewport=1116x784 picture_req=(1116, 651) alloc=1116x651 intrinsic=523x784 target=523x784
+PIC_VIEWER t_ms=1955 tid=ThreadId(1) request lane=prefetch action=new uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/sample-00.jpg variant=1116x784
+PIC_VIEWER t_ms=1955 tid=ThreadId(1) cache_hit lane=prefetch uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/landscape.jpg
+PIC_VIEWER t_ms=1955 tid=ThreadId(74) decode_start uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/sample-00.jpg variant=1116x784 queue_ms=0
+COLOR TRACE jpeg_icc path=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/sample-00.jpg status=none assume=sRGB
+PIC_VIEWER decode_stage source_ms=0 cpu_ms=1 uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/sample-00.jpg
+PIC_VIEWER t_ms=1958 tid=ThreadId(74) decode_done uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/sample-00.jpg variant=1116x784 elapsed_ms=2 outcome=ok decoded=960x640
+PIC_ZOOM_UI gesture=press x=17.00
+PIC_ZOOM_UI event=value_changed value=42.500 lightbox_visible=true edit_visible=false syncing=false last=0.000
+PIC_ZOOM_UI lightbox_input slider=42.500 fit=0.871111 native_req=0.980667 current_native=0.000000
+PIC_ZOOM_UI event=value_changed value=90.000 lightbox_visible=true edit_visible=false syncing=false last=42.500
+PIC_ZOOM_UI lightbox_input slider=90.000 fit=0.871111 native_req=1.800000 current_native=0.000000
+PIC_ZOOM_UI frame_apply slider=90.000 fit=0.871111 native_req=1.800000 previous_slider=0.000
+PIC_ZOOM t_ms=4665 tid=ThreadId(1) request_slider native_req=1.800000 applied_native=0.000000 zoom=0.000000 root=1116x784 picture_req=(523, 784) picture_alloc=523x784 hadj=0.0/1116.0/1116.0 vadj=0.0/784.0/784.0
+PIC_ZOOM t_ms=4665 tid=ThreadId(1) apply_manual source=slider native_req=1.800000 fit=0.871111 intrinsic=523x784 root=1116x784 current_zoom=0.000000 applied_native=0.000000
+PIC_ZOOM t_ms=4665 tid=ThreadId(1) fit_picture source=slider index=1 zoom=2.06633 viewport=1116x784 intrinsic=523x784 native=600x900 target=1080x1620 current_alloc=523x784 applied=true
+PIC_ZOOM t_ms=4665 tid=ThreadId(1) size_request_write source=slider from=(523, 784) to=1080x1620 alloc=523x784
+PIC_ZOOM t_ms=4665 tid=ThreadId(1) adjustment_changed before value=418.0 lower=0.0 upper=1620.0 page=784.0 step=78.4 page_inc=705.6
+PIC_ZOOM t_ms=4665 tid=ThreadId(1) viewport_anchor value=418.0 upper=1620.0 page=784.0 target=418.0
+PIC_VIEWER t_ms=4650 tid=ThreadId(1) request lane=native-zoom action=new uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/portrait.jpg variant=4294967295x4294967295
+PIC_ZOOM t_ms=4666 tid=ThreadId(1) slider_geometry source=slider native=1.80000 fit=0.87111 zoom=2.06633 commit_us=292
+PIC_VIEWER t_ms=4651 tid=ThreadId(75) decode_start uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/portrait.jpg variant=4294967295x4294967295 queue_ms=0
+COLOR TRACE jpeg_icc path=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/portrait.jpg status=none assume=sRGB
+PIC_VIEWER decode_stage source_ms=0 cpu_ms=2 uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/portrait.jpg
+PIC_VIEWER t_ms=4655 tid=ThreadId(75) decode_done uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/portrait.jpg variant=4294967295x4294967295 elapsed_ms=4 outcome=ok decoded=600x900
+PIC_VIEWER t_ms=4681 tid=ThreadId(1) native_zoom_apply uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/portrait.jpg texture=600x900 request=(1080, 1620)
+PIC_ZOOM_UI event=value_changed value=50.000 lightbox_visible=true edit_visible=false syncing=true last=90.000
+PIC_ZOOM t_ms=6805 tid=ThreadId(1) fit_picture source=one-to-one index=1 zoom=-1.00000 viewport=1116x784 intrinsic=600x900 native=600x900 target=600x900 current_alloc=1080x1620 applied=true
+PIC_ZOOM t_ms=6805 tid=ThreadId(1) size_request_write source=one-to-one from=(1080, 1620) to=600x900 alloc=1080x1620
+PIC_ZOOM t_ms=6805 tid=ThreadId(1) adjustment_changed before value=58.0 lower=0.0 upper=900.0 page=784.0 step=78.4 page_inc=705.6
+PIC_ZOOM t_ms=6805 tid=ThreadId(1) viewport_anchor value=58.0 upper=900.0 page=784.0 target=58.0
+PIC_ZOOM t_ms=6820 tid=ThreadId(1) geometry stage=one_to_one_settled_cached frame=Some(775) pointer_viewport=None h=0.00/0.00/1116.00/1116.00 v=58.00/0.00/900.00/784.00 picture_size=(600, 900) picture_req=(600, 900) align=Center/Start expand=false/false shrink=false fit=Contain intrinsic=(600, 900) picture_root=Some(Rect { x: 258.0, y: -58.0, width: 600.0, height: 900.0 }) picture_scroll=Some(Rect { x: 258.0, y: -58.0, width: 600.0, height: 900.0 }) origin_plus_adjustment=Some((258.0, 0.0)) viewport=Some("GtkViewport") viewport_size=Some((1116, 784)) viewport_root=Some(Rect { x: 0.0, y: 0.0, width: 1116.0, height: 784.0 }) scroll_size=(1116, 784) scroll_root=Some(Rect { x: 0.0, y: 0.0, width: 1116.0, height: 784.0 }) root_size=(1116, 784) focus=Some("GtkScale:GtkScale flags=StateFlags(PRELIGHT | FOCUSED | DIR_LTR | FOCUS_WITHIN)") picture_flags=StateFlags(DIR_LTR) scroll_flags=StateFlags(DIR_LTR) scroll_to_focus=Some(true)
+PIC_ZOOM t_ms=8665 tid=ThreadId(1) geometry stage=button_press frame=Some(886) pointer_viewport=Some((551.0, 398.0)) h=0.00/0.00/1116.00/1116.00 v=58.00/0.00/900.00/784.00 picture_size=(600, 900) picture_req=(600, 900) align=Center/Start expand=false/false shrink=false fit=Contain intrinsic=(600, 900) picture_root=Some(Rect { x: 258.0, y: -58.0, width: 600.0, height: 900.0 }) picture_scroll=Some(Rect { x: 258.0, y: -58.0, width: 600.0, height: 900.0 }) origin_plus_adjustment=Some((258.0, 0.0)) viewport=Some("GtkViewport") viewport_size=Some((1116, 784)) viewport_root=Some(Rect { x: 0.0, y: 0.0, width: 1116.0, height: 784.0 }) scroll_size=(1116, 784) scroll_root=Some(Rect { x: 0.0, y: 0.0, width: 1116.0, height: 784.0 }) root_size=(1116, 784) focus=Some("GtkScale:GtkScale flags=StateFlags(FOCUSED | DIR_LTR | FOCUS_WITHIN)") picture_flags=StateFlags(ACTIVE | PRELIGHT | DIR_LTR) scroll_flags=StateFlags(ACTIVE | PRELIGHT | DIR_LTR) scroll_to_focus=Some(true)
+PIC_ZOOM t_ms=8665 tid=ThreadId(1) geometry stage=drag_begin frame=Some(886) pointer_viewport=Some((551.0, 398.0)) h=0.00/0.00/1116.00/1116.00 v=58.00/0.00/900.00/784.00 picture_size=(600, 900) picture_req=(600, 900) align=Center/Start expand=false/false shrink=false fit=Contain intrinsic=(600, 900) picture_root=Some(Rect { x: 258.0, y: -58.0, width: 600.0, height: 900.0 }) picture_scroll=Some(Rect { x: 258.0, y: -58.0, width: 600.0, height: 900.0 }) origin_plus_adjustment=Some((258.0, 0.0)) viewport=Some("GtkViewport") viewport_size=Some((1116, 784)) viewport_root=Some(Rect { x: 0.0, y: 0.0, width: 1116.0, height: 784.0 }) scroll_size=(1116, 784) scroll_root=Some(Rect { x: 0.0, y: 0.0, width: 1116.0, height: 784.0 }) root_size=(1116, 784) focus=Some("GtkScale:GtkScale flags=StateFlags(FOCUSED | DIR_LTR | FOCUS_WITHIN)") picture_flags=StateFlags(ACTIVE | PRELIGHT | DIR_LTR) scroll_flags=StateFlags(ACTIVE | PRELIGHT | DIR_LTR) scroll_to_focus=Some(true)
+PIC_ZOOM t_ms=8666 tid=ThreadId(1) geometry stage=button_press_painted frame=Some(887) pointer_viewport=Some((551.0, 398.0)) h=0.00/0.00/1116.00/1116.00 v=58.00/0.00/900.00/784.00 picture_size=(600, 900) picture_req=(600, 900) align=Center/Start expand=false/false shrink=false fit=Contain intrinsic=(600, 900) picture_root=Some(Rect { x: 258.0, y: -58.0, width: 600.0, height: 900.0 }) picture_scroll=Some(Rect { x: 258.0, y: -58.0, width: 600.0, height: 900.0 }) origin_plus_adjustment=Some((258.0, 0.0)) viewport=Some("GtkViewport") viewport_size=Some((1116, 784)) viewport_root=Some(Rect { x: 0.0, y: 0.0, width: 1116.0, height: 784.0 }) scroll_size=(1116, 784) scroll_root=Some(Rect { x: 0.0, y: 0.0, width: 1116.0, height: 784.0 }) root_size=(1116, 784) focus=Some("GtkScale:GtkScale flags=StateFlags(FOCUSED | DIR_LTR | FOCUS_WITHIN)") picture_flags=StateFlags(ACTIVE | PRELIGHT | DIR_LTR) scroll_flags=StateFlags(ACTIVE | PRELIGHT | DIR_LTR) scroll_to_focus=Some(true)
+PIC_ZOOM t_ms=8668 tid=ThreadId(1) geometry stage=drag_first_update_before frame=Some(887) pointer_viewport=Some((551.0, 298.0)) h=0.00/0.00/1116.00/1116.00 v=58.00/0.00/900.00/784.00 picture_size=(600, 900) picture_req=(600, 900) align=Center/Start expand=false/false shrink=false fit=Contain intrinsic=(600, 900) picture_root=Some(Rect { x: 258.0, y: -58.0, width: 600.0, height: 900.0 }) picture_scroll=Some(Rect { x: 258.0, y: -58.0, width: 600.0, height: 900.0 }) origin_plus_adjustment=Some((258.0, 0.0)) viewport=Some("GtkViewport") viewport_size=Some((1116, 784)) viewport_root=Some(Rect { x: 0.0, y: 0.0, width: 1116.0, height: 784.0 }) scroll_size=(1116, 784) scroll_root=Some(Rect { x: 0.0, y: 0.0, width: 1116.0, height: 784.0 }) root_size=(1116, 784) focus=Some("GtkScale:GtkScale flags=StateFlags(FOCUSED | DIR_LTR | FOCUS_WITHIN)") picture_flags=StateFlags(ACTIVE | PRELIGHT | DIR_LTR) scroll_flags=StateFlags(ACTIVE | PRELIGHT | DIR_LTR) scroll_to_focus=Some(true)
+PIC_ZOOM t_ms=8668 tid=ThreadId(1) geometry stage=drag_first_update_after frame=Some(887) pointer_viewport=Some((551.0, 298.0)) h=0.00/0.00/1116.00/1116.00 v=116.00/0.00/900.00/784.00 picture_size=(600, 900) picture_req=(600, 900) align=Center/Start expand=false/false shrink=false fit=Contain intrinsic=(600, 900) picture_root=Some(Rect { x: 258.0, y: -58.0, width: 600.0, height: 900.0 }) picture_scroll=Some(Rect { x: 258.0, y: -58.0, width: 600.0, height: 900.0 }) origin_plus_adjustment=Some((258.0, 58.0)) viewport=Some("GtkViewport") viewport_size=Some((1116, 784)) viewport_root=Some(Rect { x: 0.0, y: 0.0, width: 1116.0, height: 784.0 }) scroll_size=(1116, 784) scroll_root=Some(Rect { x: 0.0, y: 0.0, width: 1116.0, height: 784.0 }) root_size=(1116, 784) focus=Some("GtkScale:GtkScale flags=StateFlags(FOCUSED | DIR_LTR | FOCUS_WITHIN)") picture_flags=StateFlags(ACTIVE | PRELIGHT | DIR_LTR) scroll_flags=StateFlags(ACTIVE | PRELIGHT | DIR_LTR) scroll_to_focus=Some(true)
+PIC_ZOOM t_ms=8668 tid=ThreadId(1) geometry stage=drag_end frame=Some(887) pointer_viewport=Some((551.0, 298.0)) h=0.00/0.00/1116.00/1116.00 v=116.00/0.00/900.00/784.00 picture_size=(600, 900) picture_req=(600, 900) align=Center/Start expand=false/false shrink=false fit=Contain intrinsic=(600, 900) picture_root=Some(Rect { x: 258.0, y: -58.0, width: 600.0, height: 900.0 }) picture_scroll=Some(Rect { x: 258.0, y: -58.0, width: 600.0, height: 900.0 }) origin_plus_adjustment=Some((258.0, 58.0)) viewport=Some("GtkViewport") viewport_size=Some((1116, 784)) viewport_root=Some(Rect { x: 0.0, y: 0.0, width: 1116.0, height: 784.0 }) scroll_size=(1116, 784) scroll_root=Some(Rect { x: 0.0, y: 0.0, width: 1116.0, height: 784.0 }) root_size=(1116, 784) focus=Some("GtkScale:GtkScale flags=StateFlags(FOCUSED | DIR_LTR | FOCUS_WITHIN)") picture_flags=StateFlags(PRELIGHT | DIR_LTR) scroll_flags=StateFlags(PRELIGHT | DIR_LTR) scroll_to_focus=Some(true)
+PIC_ZOOM t_ms=8699 tid=ThreadId(1) geometry stage=drag_first_update_painted frame=Some(888) pointer_viewport=Some((551.0, 298.0)) h=0.00/0.00/1116.00/1116.00 v=116.00/0.00/900.00/784.00 picture_size=(600, 900) picture_req=(600, 900) align=Center/Start expand=false/false shrink=false fit=Contain intrinsic=(600, 900) picture_root=Some(Rect { x: 258.0, y: -116.0, width: 600.0, height: 900.0 }) picture_scroll=Some(Rect { x: 258.0, y: -116.0, width: 600.0, height: 900.0 }) origin_plus_adjustment=Some((258.0, 0.0)) viewport=Some("GtkViewport") viewport_size=Some((1116, 784)) viewport_root=Some(Rect { x: 0.0, y: 0.0, width: 1116.0, height: 784.0 }) scroll_size=(1116, 784) scroll_root=Some(Rect { x: 0.0, y: 0.0, width: 1116.0, height: 784.0 }) root_size=(1116, 784) focus=Some("GtkScale:GtkScale flags=StateFlags(FOCUSED | DIR_LTR | FOCUS_WITHIN)") picture_flags=StateFlags(PRELIGHT | DIR_LTR) scroll_flags=StateFlags(PRELIGHT | DIR_LTR) scroll_to_focus=Some(true)
+PIC_ZOOM t_ms=8699 tid=ThreadId(1) geometry stage=drag_end_painted frame=Some(888) pointer_viewport=Some((551.0, 298.0)) h=0.00/0.00/1116.00/1116.00 v=116.00/0.00/900.00/784.00 picture_size=(600, 900) picture_req=(600, 900) align=Center/Start expand=false/false shrink=false fit=Contain intrinsic=(600, 900) picture_root=Some(Rect { x: 258.0, y: -116.0, width: 600.0, height: 900.0 }) picture_scroll=Some(Rect { x: 258.0, y: -116.0, width: 600.0, height: 900.0 }) origin_plus_adjustment=Some((258.0, 0.0)) viewport=Some("GtkViewport") viewport_size=Some((1116, 784)) viewport_root=Some(Rect { x: 0.0, y: 0.0, width: 1116.0, height: 784.0 }) scroll_size=(1116, 784) scroll_root=Some(Rect { x: 0.0, y: 0.0, width: 1116.0, height: 784.0 }) root_size=(1116, 784) focus=Some("GtkScale:GtkScale flags=StateFlags(FOCUSED | DIR_LTR | FOCUS_WITHIN)") picture_flags=StateFlags(PRELIGHT | DIR_LTR) scroll_flags=StateFlags(PRELIGHT | DIR_LTR) scroll_to_focus=Some(true)
+PIC_LIGHTBOX_LAYOUT stage=prepare photo=2 gallery_width=1116 inspector_width=280 inspector_visible=true scroll_y=6.0
+PIC_LIGHTBOX_LAYOUT stage=restore_requested photo=2 found=true scroll_y=6.0
+PIC_NAV viewport_anchor_restored photo_id=2 index=1 offset=64.0 before=6.0 target=6.0 applied=6.0
+PIC_NAV viewport_anchor_restored photo_id=2 index=1 offset=64.0 before=6.0 target=6.0 applied=6.0
+PIC_LIGHTBOX_LAYOUT stage=hidden overlay_width=1116 gallery_width=1116 inspector_width=280 inspector_visible=false viewer_inspector_visible=false scroll_y=6.0
+PIC_ZOOM_UI event=value_changed value=7.000 lightbox_visible=false edit_visible=false syncing=true last=50.000
+PIC_LIGHTBOX_LAYOUT stage=settled gallery_width=1116 inspector_width=280 inspector_visible=false scroll_y=6.0
+COLOR TRACE jpeg_icc path=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/landscape.jpg status=none assume=sRGB
+PIC_VIEWER decode_stage source_ms=0 cpu_ms=0 uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/landscape.jpg
+PIC_ZOOM_UI event=value_changed value=0.000 lightbox_visible=false edit_visible=false syncing=true last=7.000
+COLOR TRACE jpeg_icc path=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/landscape.jpg status=none assume=sRGB
+PIC_VIEWER decode_stage source_ms=0 cpu_ms=2 uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/landscape.jpg
+COLOR TRACE jpeg_icc path=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/landscape.jpg status=none assume=sRGB
+PIC_VIEWER decode_stage source_ms=0 cpu_ms=4 uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/landscape.jpg
+COLOR TRACE jpeg_icc path=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/landscape.jpg status=none assume=sRGB
+PIC_VIEWER decode_stage source_ms=0 cpu_ms=6 uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/landscape.jpg
+COLOR TRACE jpeg_icc path=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/landscape.jpg status=none assume=sRGB
+PIC_VIEWER decode_stage source_ms=0 cpu_ms=2 uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/landscape.jpg
+PIC_ZOOM_UI event=value_changed value=7.000 lightbox_visible=false edit_visible=false syncing=true last=0.000
+PIC_THUMBNAIL paintable_assign elapsed_us=8
+PIC_THUMBNAIL paintable_assign elapsed_us=5
+COLOR TRACE jpeg_icc path=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/landscape.jpg status=none assume=sRGB
+PIC_VIEWER decode_stage source_ms=0 cpu_ms=1 uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/landscape.jpg
+PIC_ZOOM_UI event=value_changed value=0.000 lightbox_visible=false edit_visible=false syncing=true last=7.000
+COLOR TRACE jpeg_icc path=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/landscape.jpg status=none assume=sRGB
+PIC_VIEWER decode_stage source_ms=0 cpu_ms=4 uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/landscape.jpg
+COLOR TRACE jpeg_icc path=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/landscape.jpg status=none assume=sRGB
+PIC_VIEWER decode_stage source_ms=0 cpu_ms=4 uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/landscape.jpg
+PIC_ZOOM_UI event=value_changed value=7.000 lightbox_visible=false edit_visible=false syncing=true last=0.000
+COLOR TRACE jpeg_icc path=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/landscape.jpg status=none assume=sRGB
+COLOR TRACE jpeg_icc path=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/portrait.jpg status=none assume=sRGB
+PIC_VIEWER decode_stage source_ms=0 cpu_ms=2 uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/portrait.jpg
+PIC_VIEWER decode_stage source_ms=0 cpu_ms=7 uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/landscape.jpg
+PIC_COLLAGE_TRACE preview_canvas=699x699 layout=SmartMosaic keep=true border=None stroke=3 radius=0.060 spacing=0.0180 count=2
+PIC_COLLAGE_TRACE preview_tile id=1 slot=(8,8,683x280) visible=(8,8,683x280) center=(349.50,148.00) rounded=0.000 stroke=0 rotate=0.00
+PIC_COLLAGE_TRACE preview_content id=1 fit=true source_ratio=1.71429 tile_ratio=2.43929 photo=(101,0,480x280)
+PIC_COLLAGE_TRACE preview_tile id=2 slot=(8,296,683x395) visible=(8,296,683x395) center=(349.50,493.50) rounded=0.000 stroke=0 rotate=0.00
+PIC_COLLAGE_TRACE preview_content id=2 fit=true source_ratio=0.66667 tile_ratio=1.72911 photo=(210,0,263x395)
+PIC_COLLAGE_TRACE export_tile id=1 canvas=3840x3840 slot=(45,45,3750x1537) visible=(45,45,3750x1537) center=(1920.00,813.50) shape=0.000 stroke=0 color=None rotate=0.00 layout=SmartMosaic contain=true
+COLOR TRACE jpeg_icc path=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/landscape.jpg status=none assume=sRGB
+PIC_VIEWER decode_stage source_ms=0 cpu_ms=1 uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/landscape.jpg
+PIC_COLLAGE_TRACE export_content id=1 decoded=1200x700 edited=1200x700 target=3750x1537 contain=true library_rotation=0
+PIC_COLLAGE_TRACE export_composite id=1 bitmap=3750x1537 dest=(45,45) expected_center=(1920.00,813.50)
+PIC_COLLAGE_TRACE export_tile id=2 canvas=3840x3840 slot=(45,1627,3750x2169) visible=(45,1627,3750x2169) center=(1920.00,2711.50) shape=0.000 stroke=0 color=None rotate=0.00 layout=SmartMosaic contain=true
+COLOR TRACE jpeg_icc path=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/portrait.jpg status=none assume=sRGB
+PIC_VIEWER decode_stage source_ms=0 cpu_ms=1 uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/portrait.jpg
+PIC_COLLAGE_TRACE export_content id=2 decoded=600x900 edited=600x900 target=3750x2169 contain=true library_rotation=0
+PIC_COLLAGE_TRACE export_composite id=2 bitmap=3750x2169 dest=(45,1627) expected_center=(1920.00,2711.50)
+COLOR TRACE jpeg_icc path=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/exports/rc6-collage.jpg status=none assume=sRGB
+PIC_THUMBNAIL cache_write uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/exports/rc6-collage.jpg cache=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/xdg/cache/pic-rs/thumbs/files/3/bb53a8c9ecc1837141264e42e2444ccb4814e1660816e3d14274d0cadac50d78.jpg elapsed_ms=10
+PIC_WALL_LAYOUT viewport_width=1116 photos=17 rows=6 sections=2 height=1751
+PIC_FOLDER_SECTIONED enabled mode=flat_photo_virtualized
+PIC_NAV viewport_anchor_restored photo_id=1 index=0 offset=64.0 before=6.0 target=6.0 applied=6.0
+PIC_SCREEN init style=Fade transition=Crossfade count=0
+PIC_SCREEN phase=start style=Fade mode=Crossfade current=0 previous=None replacing=None frames=0 change=0
+PIC_THUMBNAIL cache_lookup result=hit elapsed_us=31 uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/xdg/home/00-import-source/import-only.jpg
+PIC_SCREEN decode kind=cache index=0 hit=true ms=1
+PIC_THUMBNAIL cache_lookup result=hit elapsed_us=10 uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/xdg/home/00-import-source/import-second.png
+PIC_SCREEN decode kind=cache index=1 hit=true ms=0
+PIC_THUMBNAIL cache_lookup result=hit elapsed_us=8 uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/exports/rc6-collage.jpg
+COLOR TRACE jpeg_icc path=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/xdg/home/00-import-source/import-only.jpg status=none assume=sRGB
+PIC_VIEWER decode_stage source_ms=0 cpu_ms=1 uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/xdg/home/00-import-source/import-only.jpg
+PIC_SCREEN decode kind=original network=false index=0 ok=true ms=2
+PIC_SCREEN decode kind=cache index=2 hit=true ms=1
+PIC_VIEWER decode_stage source_ms=0 cpu_ms=0 uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/xdg/home/00-import-source/import-second.png
+PIC_SCREEN decode kind=original network=false index=1 ok=true ms=1
+COLOR TRACE jpeg_icc path=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/exports/rc6-collage.jpg status=none assume=sRGB
+PIC_VIEWER decode_stage source_ms=0 cpu_ms=47 uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/exports/rc6-collage.jpg
+PIC_SCREEN decode kind=original network=false index=2 ok=true ms=53
+PIC_SCREEN phase=settled style=Fade current=0 old_image=None old_tile=None frames=3 change=0
+PIC_SCREEN phase=start style=Fade mode=Crossfade current=1 previous=Some(0) replacing=None frames=3 change=1
+PIC_THUMBNAIL cache_lookup result=hit elapsed_us=21 uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/landscape.jpg
+PIC_SCREEN decode kind=cache index=3 hit=true ms=0
+COLOR TRACE jpeg_icc path=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/landscape.jpg status=none assume=sRGB
+PIC_VIEWER decode_stage source_ms=0 cpu_ms=2 uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/sample-library/landscape.jpg
+PIC_SCREEN decode kind=original network=false index=3 ok=true ms=4
+PIC_SCREEN phase=settled style=Fade current=1 old_image=None old_tile=None frames=4 change=1
+PIC_SCREEN init style=Fade transition=Crossfade count=0
+PIC_SCREEN phase=start style=Fade mode=Crossfade current=0 previous=None replacing=None frames=0 change=0
+PIC_THUMBNAIL cache_lookup result=hit elapsed_us=23 uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/xdg/home/00-import-source/import-only.jpg
+PIC_SCREEN decode kind=cache index=0 hit=true ms=0
+PIC_THUMBNAIL cache_lookup result=hit elapsed_us=10 uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/xdg/home/00-import-source/import-second.png
+PIC_SCREEN decode kind=cache index=1 hit=true ms=0
+PIC_THUMBNAIL cache_lookup result=hit elapsed_us=11 uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/exports/rc6-collage.jpg
+COLOR TRACE jpeg_icc path=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/xdg/home/00-import-source/import-only.jpg status=none assume=sRGB
+PIC_VIEWER decode_stage source_ms=0 cpu_ms=1 uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/xdg/home/00-import-source/import-only.jpg
+PIC_SCREEN decode kind=cache index=2 hit=true ms=1
+PIC_SCREEN decode kind=original network=false index=0 ok=true ms=2
+PIC_VIEWER decode_stage source_ms=0 cpu_ms=0 uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/xdg/home/00-import-source/import-second.png
+PIC_SCREEN decode kind=original network=false index=1 ok=true ms=1
+COLOR TRACE jpeg_icc path=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/exports/rc6-collage.jpg status=none assume=sRGB
+PIC_VIEWER decode_stage source_ms=0 cpu_ms=28 uri=/home/peet/PIC/reports/gui-tests/merge-audit-3ce4f39/exports/rc6-collage.jpg
+PIC_SCREEN decode kind=original network=false index=2 ok=true ms=35
+PIC_SCREEN phase=settled style=Fade current=0 old_image=None old_tile=None frames=3 change=0

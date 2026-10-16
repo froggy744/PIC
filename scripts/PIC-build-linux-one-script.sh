@@ -988,6 +988,7 @@ copy_source_tree() {
         --exclude='./dist' \
         --exclude='./build-logs' \
         --exclude='./.flatpak-builder' \
+        --exclude='./.deleteme' \
         --exclude='./*.log' \
         --exclude='.worktrees' \
         --exclude='worktrees' \

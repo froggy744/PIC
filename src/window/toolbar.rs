@@ -336,7 +336,7 @@
             {
                 eprintln!("Could not save photo rating filter: {error}");
             }
-            refresh_grid(
+            refresh_grid_preserving_folder_viewport(
                 &connection,
                 filter.get(),
                 &search.borrow(),

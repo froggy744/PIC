@@ -463,11 +463,12 @@ def smoke_test() -> None:
     visual_result_ms = (time.monotonic() - all_stars_click_started) * 1000
     stars_filter = db_setting("photo-rating-filter")
     record(add_case("Folder All Stars filter and result latency",
-                    "Selecting All Stars in Folder shows exactly the 3-star and 5-star photos"),
+                    "Selecting All Stars in Folder shows exactly the 3-star and 5-star photos within 1.5 seconds"),
            stars_filter == "stars"
            and {tile[2] for tile in visible_tiles} == expected_all_stars
            and len(visible_tiles) == len(expected_all_stars)
-           and all(distance <= 20 for distance in tile_color_distances.values()),
+           and all(distance <= 20 for distance in tile_color_distances.values())
+           and visual_result_ms <= 1500,
            f"setting={stars_filter}; visible fixture tiles={visible_tiles}; "
            f"source-to-screen center RGB distances={tile_color_distances} (max 20); "
            f"database state observed={db_result_ms:.1f} ms; first captured matching GUI frame={visual_result_ms:.1f} ms; "

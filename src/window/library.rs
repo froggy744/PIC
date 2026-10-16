@@ -82,16 +82,30 @@ fn refresh_grid_preserving_folder_viewport(
     sort: PhotoSort,
     gallery: &Rc<grid::Gallery>,
 ) {
-    let mode = crate::image_format::raw_jpeg_pair_mode(&connection.borrow());
-    let anchor = gallery.using_sectioned_folder_view().then(|| FolderViewportAnchor {
-        header: gallery.capture_sectioned_folder_header_anchor(),
-        photos: gallery.capture_sectioned_folder_anchors(),
-        scroll_y: gallery.sectioned_folder_scroll_position(),
-    });
+    let anchor = (search.is_empty() && matches!(filter, sidebar::SidebarFilter::Folder(_)))
+        .then(|| {
+            let sectioned = gallery.using_sectioned_folder_view();
+            FolderViewportAnchor {
+                header: if sectioned {
+                    gallery.capture_sectioned_folder_header_anchor()
+                } else {
+                    None
+                },
+                photos: if sectioned {
+                    gallery.capture_sectioned_folder_anchors()
+                } else {
+                    Vec::new()
+                },
+                scroll_y: if sectioned {
+                    gallery.sectioned_folder_scroll_position()
+                } else {
+                    gallery.scroll_position()
+                },
+            }
+        });
     if std::env::var_os("PICASA_TRACE").is_some() {
         eprintln!(
-            "PIC_NAV raw_jpeg_refresh mode={} visible_anchors={} scroll_y={:.1}",
-            mode.key(),
+            "PIC_NAV viewport_refresh filter={filter:?} visible_anchors={} scroll_y={:.1}",
             anchor.as_ref().map_or(0, |anchor| anchor.photos.len()),
             anchor.as_ref().map_or(0.0, |anchor| anchor.scroll_y),
         );
@@ -319,8 +333,19 @@ fn refresh_grid_inner(
                                 gallery.restore_sectioned_folder_header_anchor(header_anchor)
                             } else if let Some(photo_anchor) = restore_photo_anchor {
                                 gallery.restore_sectioned_folder_anchor(Some(photo_anchor))
-                            } else {
+                            } else if gallery.using_sectioned_folder_view() {
                                 gallery.set_sectioned_folder_scroll_position(anchor.scroll_y)
+                            } else {
+                                if let Some(adjustment) = gallery.folder_root.vadjustment() {
+                                    let upper = (adjustment.upper() - adjustment.page_size())
+                                        .max(adjustment.lower());
+                                    adjustment.set_value(
+                                        anchor.scroll_y.clamp(adjustment.lower(), upper),
+                                    );
+                                    true
+                                } else {
+                                    false
+                                }
                             };
                             if restored || attempt >= 240 {
                                 glib::ControlFlow::Break

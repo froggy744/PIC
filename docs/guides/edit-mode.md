@@ -1,5 +1,7 @@
 # PIC Guide 4 — Edit Mode: Quick Fixes, Sliders & Filters
 
+> **PIC V1 guide.** Screenshots are being refreshed for the updated interface; the older images have been hidden until replacements are ready.
+
 *Part of the [PIC user guides](../../README.md).*
 
 PIC's Edit Mode is for the everyday fixes — the ones you used to open a heavy photo editor for. Brighten a dark room, warm up a sunset, straighten a horizon, try a filter. Done in a minute, without ever leaving your library.
@@ -18,7 +20,7 @@ You have three easy ways in:
 
 The photo area becomes the editor: controls on the left, your photo big on the right, and the photo's details still visible in the bottom bar.
 
-<a href="https://raw.githubusercontent.com/froggy744/PIC/main/screenshots/edit-mode.mp4"><img src="../../screenshots/effects%20screen.jpg" alt="Download the Edit Mode video demonstration" width="900"></a>
+<!-- V1 SCREENSHOT: updated Edit Mode capture to be added. -->
 
 [Download the Edit Mode demonstration (MP4, 20 seconds)](https://raw.githubusercontent.com/froggy744/PIC/main/screenshots/edit-mode.mp4).
 
@@ -124,3 +126,9 @@ When you're happy, click **Done**. You return to the grid exactly where you left
 ---
 
 **Previous guide:** [← Library](library.md) · **Next guide:** [Crop Mode →](crop-mode.md)
+
+## V1 editing workflow
+
+PIC keeps ordinary adjustments and creative edits as recipes in the library. Use the on-screen **Undo**, **Redo** and **Reset** controls to compare results, and **Export** to generate a separate image. V1 includes additional tonal/colour controls and effects, including clarity, grain, old-photo and newspaper-style looks. Exact available controls depend on the tool selected.
+
+For a creator-facing walkthrough, see the [V1 demonstration outline](../creator-kit.md).

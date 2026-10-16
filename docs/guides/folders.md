@@ -1,5 +1,7 @@
 # PIC Guide 2 — Folders and network shares
 
+> **PIC V1 guide.** Screenshots are being refreshed for the updated interface; the older images have been hidden until replacements are ready.
+
 *Part of the [PIC user guides](../../README.md).*
 
 PIC indexes the folders you choose. Importing and removing a folder from the catalogue do not reorganise or delete its original files.
@@ -8,7 +10,7 @@ PIC indexes the folders you choose. Importing and removing a folder from the cat
 
 Click **+** beside **Folders** to choose a local or mounted folder. Indexing reports progress and updates counts while photos become available; thumbnails continue in the background. Refresh checks for changes without needlessly reprocessing unchanged images.
 
-<img src="../../screenshots/folders%20view.jpg" alt="Folder view showing photos beneath their folder heading" width="900">
+<!-- V1 SCREENSHOT: add current UI capture for this section; older gallery image withheld. -->
 
 Expand the sidebar tree to reach subfolders. Selecting a folder navigates to its section in the photo stream. Folder headings help keep the location clear, and the virtualised layout keeps only the required tiles active rather than building the whole library's widgets.
 
@@ -16,7 +18,7 @@ Use the shared zoom slider or Ctrl + wheel to change photo size. The regular gri
 
 ## Watch, refresh or remove
 
-<img src="../../screenshots/watch%20folders.jpg" alt="Watched folder menu with refresh, stop watching, statistics and library removal" width="900">
+<!-- V1 SCREENSHOT: add current UI capture for this section; older gallery image withheld. -->
 
 Right-click a folder for its available actions:
 
@@ -34,7 +36,7 @@ Monitoring depends on storage availability. Use Refresh to request a rescan when
 
 Open **Browse Network Photos** to discover servers, scan the local network, or enter a share URL. Expand the network tree to choose the folder to import. Registered shares are available in the **Network Shares** sidebar section.
 
-<img src="../../screenshots/browse%20network.jpg" alt="Browse Network Photos dialog with discovery, scanning and URL controls" width="900">
+<!-- V1 SCREENSHOT: add current UI capture for this section; older gallery image withheld. -->
 
 The Linux packages include direct SMB and NFS transports, so manually mounting a share is not required for those paths. An existing mount can still be imported as a local folder. Access depends on the server, export/share permissions and connectivity. See [Portable NFS](../build/portable-nfs.md) for NFS details.
 
@@ -51,3 +53,9 @@ Removing something in your file manager changes the underlying storage. PIC's ca
 Folders describe physical locations. Albums collect photos within PIC without moving them or making copies. A photo can appear in several albums while its original remains in one folder.
 
 **Previous:** [← Navigation](navigation.md) · **Next:** [Library →](library.md)
+
+## Camera and SD card imports
+
+PIC V1 also supports importing selected images from supported connected cameras and SD cards. The import dialog lets you choose a source and destination, select all/deselect/invert, and import selected photos. Import progress can continue after the selection dialog closes.
+
+If a file or thumbnail is not visible immediately, check that the storage device is accessible and let scanning finish; support varies by file format and device.

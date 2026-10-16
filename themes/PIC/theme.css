@@ -18,13 +18,15 @@
 @define-color pic_bar_text #f5f6f7;
 @define-color pic_bar_muted #bdc8d1;
 @define-color pic_background_color #e9eaeb;
-@define-color pic_background_surface @pic_background_color;
+@define-color pic_background_surface #f3f4f5;
 @define-color pic_background_control #e3e7eb;
 @define-color pic_background_hover #d7dfe5;
 @define-color pic_background_border #c6cbd0;
 @define-color pic_button_color #2d8cff;
-@define-color pic_button_hover @pic_button_color;
-@define-color pic_button_selected @pic_button_color;
+@define-color pic_button_hover #334a60; /* understated hover on dark bars */
+@define-color pic_button_selected #24456e; /* persistent selected state */
+@define-color pic_button_primary_hover #1979e8;
+@define-color pic_background_selected_hover #c6d5e2;
 @define-color pic_button_text #ffffff;
 @define-color pic_focus #2d8cff;
 @define-color pic_text_color #22272b;
@@ -67,7 +69,7 @@ window { background: @pic_background_color; color: @pic_text_color; }
 
 /* Sidebar and navigation rows */
 .layout-left-column, .navigation-sidebar {
-    background: @pic_bar_color;
+    background: @pic_bar_surface;
     color: @pic_bar_text;
 }
 .layout-left-column { border: none; }
@@ -76,7 +78,7 @@ window { background: @pic_background_color; color: @pic_text_color; }
     border-radius: 4px;
 }
 .navigation-sidebar row:hover {
-    background: @pic_button_hover;
+    background: @pic_bar_hover;
     color: @pic_button_text;
 }
 .navigation-sidebar row:selected,
@@ -132,7 +134,7 @@ window { background: @pic_background_color; color: @pic_text_color; }
     border-radius: 4px;
     box-shadow: none;
 }
-.section-more-btn:hover { background: @pic_button_hover; color: @pic_button_text; }
+.section-more-btn:hover { background: @pic_background_hover; color: @pic_text_color; }
 .section-more-btn:focus-visible { outline: 2px solid @pic_focus; outline-offset: 1px; }
 .photo-frame { box-shadow: none; }
 .photo-tile {
@@ -143,7 +145,7 @@ window { background: @pic_background_color; color: @pic_text_color; }
 }
 .thumbnail { border-radius: 2px; }
 .missing-thumbnail { background: @pic_background_control; }
-.photo-tile:hover { border-color: @pic_button_color; box-shadow: none; }
+.photo-tile:hover { border-color: alpha(@pic_button_color, 0.5); box-shadow: none; }
 .folder-photo-selected.photo-tile,
 gridview.section-grid > child:selected .photo-tile,
 gridview.section-grid > item:selected .photo-tile {
@@ -231,7 +233,7 @@ button.crop-apply-button {
     box-shadow: none;
 }
 button.suggested-action:hover, button.destructive-action:hover,
-button.crop-apply-button:hover { background: @pic_button_hover; }
+button.crop-apply-button:hover { background: @pic_button_primary_hover; }
 button.suggested-action:active, button.destructive-action:active,
 button.crop-apply-button:active { background: @pic_button_selected; }
 button.suggested-action:disabled, button.destructive-action:disabled,
@@ -252,8 +254,8 @@ button.crop-apply-button:disabled { background: @pic_background_control; color: 
 .collage-layout-tile:hover, .collage-tabs > button:hover,
 .collage-compact-choice:hover, .edit-fit-row button:hover,
 .overlay-anchor-row button:hover, .quick-fix-row button:hover {
-    background: @pic_button_hover;
-    color: @pic_button_text;
+    background: @pic_background_hover;
+    color: @pic_text_color;
 }
 .crop-aspect-button:checked, .crop-orientation-row button:checked,
 .collage-layout-tile:checked, .collage-tabs > button:checked,
@@ -294,7 +296,7 @@ button.clear-action-button {
     border-radius: 4px;
     box-shadow: none;
 }
-button.clear-action-button:hover { background: @pic_button_hover; color: @pic_button_text; }
+button.clear-action-button:hover { background: @pic_background_hover; color: @pic_text_color; }
 
 /* Editor toolbar tabs: compact rectangular controls on the common dark bar. */
 .edit-mode-toolbar {
@@ -350,7 +352,7 @@ button.clear-action-button:hover { background: @pic_button_hover; color: @pic_bu
     border-radius: 4px;
     box-shadow: none;
 }
-.edit-mode-toolbar .edit-toolbar-actions button.edit-toolbar-done:hover { background: @pic_button_hover; }
+.edit-mode-toolbar .edit-toolbar-actions button.edit-toolbar-done:hover { background: @pic_button_primary_hover; }
 .edit-mode-toolbar .edit-toolbar-actions button.edit-toolbar-done:active { background: @pic_button_selected; }
 
 /* Collage layout selection uses a flat active fill without the inline accent border. */
@@ -376,7 +378,7 @@ button.collage-color-swatch:focus-visible { outline: 2px solid @pic_focus; outli
     border-radius: 4px;
     box-shadow: none;
 }
-.collage-footer button:hover { background: @pic_button_hover; color: @pic_button_text; }
+.collage-footer button:hover { background: @pic_background_hover; color: @pic_text_color; }
 .collage-footer button:checked,
 .collage-footer button:active { background: @pic_button_selected; color: @pic_button_text; }
 .collage-footer button:focus-visible { outline: 2px solid @pic_focus; outline-offset: 1px; }
@@ -416,9 +418,9 @@ gridview.section-grid > item:focus-visible .photo-tile {
 .album-context-menu button:hover,
 .pic-folder-context-menu button.folder-context-action:hover,
 .sidebar-section-tooltip-menu button.sidebar-section-tooltip-item:hover {
-    background: @pic_button_hover;
-    background-color: @pic_button_hover;
-    color: @pic_button_text;
+    background: @pic_background_hover;
+    background-color: @pic_background_hover;
+    color: @pic_text_color;
 }
 .settings-window headerbar { background: @pic_bar_color; color: @pic_bar_text; }
 .settings-window headerbar label { color: @pic_bar_text; }
@@ -435,11 +437,11 @@ gridview.section-grid > item:focus-visible .photo-tile {
 
 /* Status and media badges keep their semantic colors; controls stay classic. */
 .offline-badge, .sidebar-offline-badge {
-    color: @pic_text_color;
-    background: @pic_background_control;
+    color: #322600;
+    background: #f2c14e;
     border-radius: 4px;
 }
-.favorite-btn.active, .favorite-btn.active image, .favorite-badge { color: @pic_button_color; }
+.favorite-btn.active, .favorite-btn.active image, .favorite-badge { color: #ce4551; }
 .edited-badge { color: @pic_text_muted; }
 
 /* Album cards are image-led; focus remains visible without adding button chrome. */

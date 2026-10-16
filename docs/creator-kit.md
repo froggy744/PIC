@@ -1,0 +1,63 @@
+# PIC V1 — Creator & press kit
+
+**One-line introduction:** *PIC is a free, open-source, local-first photo library for Linux, inspired by the ease and personality of Picasa and classic iPhoto.*
+
+**Short description (ready to quote):** PIC gives Linux users a friendly home for their existing photos. Browse in Grid, Photo Wall or Masonry, organise with albums and ratings, edit non-destructively, make collages and enjoy a full-screen viewer and screensaver — without a cloud account or subscription.
+
+**Project:** [GitHub](https://github.com/froggy744/PIC) · **Downloads:** [Releases](https://github.com/froggy744/PIC/releases) · **Guides:** [Documentation](README.md) · **Feedback:** [Issues](https://github.com/froggy744/PIC/issues)
+
+## Why it is worth showing
+
+- **A familiar feeling, rebuilt for Linux:** a visual photo-library experience reminiscent of the desktop classics.
+- **Local-first:** photos stay in their chosen folders; no mandatory cloud sync or account.
+- **Three gallery styles:** Grid, Photo Wall and Masonry.
+- **Real organisation:** albums (including bookshelf/cover views), favourites, star ratings, filtering, sorting and search.
+- **Creative tools included:** non-destructive editing, filters, crop, overlays, text, collages and screensaver.
+- **Flexible libraries:** browse local folders and supported SMB/NFS shares; switch between separate library databases.
+- **Native Linux implementation:** Rust, GTK4 and libadwaita.
+
+## Suggested 60–90-second demo
+
+1. Open a populated library and toggle **Grid → Photo Wall → Masonry**.
+2. Show the albums page, album covers or bookshelf arrangement and an alternate theme.
+3. Favourite or rate an image; demonstrate the rating filter or search.
+4. Double-click into the viewer, zoom to 1:1 and move between shots.
+5. Open Edit Mode, adjust exposure or choose a filter, then explain that edits are non-destructive.
+6. Show a collage layout and the screensaver; finish with the download page.
+
+**Suggested title:** “PIC V1: The Picasa/iPhoto-style photo manager Linux has been missing”
+
+**Suggested short hook:** “Remember when your pictures lived in a beautiful desktop photo library? PIC brings that experience back on Linux — with modern galleries, albums and editing, and no cloud lock-in.”
+
+## Accurate coverage notes
+
+| Say | Avoid claiming |
+| --- | --- |
+| Linux-focused, with Flatpak and AppImage release downloads | Official support for every Linux distro or Windows |
+| Local-first; no required cloud account | All features need zero network access (network shares and downloads do not) |
+| Editing recipes preserve the original photo | PIC is a full raw editor or replaces professional editors |
+| Album membership does not duplicate originals | Albums physically reorganise the folders |
+| Library database backups save metadata/edits | Database backup includes image originals |
+| Inspired by Picasa and iPhoto | Affiliated with Google or Apple |
+
+## V1 screenshot checklist
+
+**Screenshots will be added after the UI is final.** Keep images current, unaltered as to product capabilities, and ideally 16:9 with personal information removed.
+
+| Planned asset | Show |
+| --- | --- |
+| `screenshots/v1-hero.png` | Main library overview and sidebar |
+| `screenshots/v1-layouts.png` | Gallery view comparison |
+| `screenshots/v1-albums.png` | Albums/bookshelf and covers |
+| `screenshots/v1-edit.png` | Non-destructive Edit Mode |
+| `screenshots/v1-collage.png` | Collage workspace |
+| `screenshots/v1-themes.png` | Distinct theme looks |
+| `screenshots/v1-screensaver.png` | Screensaver presentation |
+
+Once supplied, insert them into the [main README](../README.md), the relevant [guides](README.md), and update AppStream screenshots as explained in [Linux packaging](build/linux.md). These names are **planned**, not existing image links.
+
+## Credits and contact
+
+PIC is an **independent open-source project** by the [PIC contributors](https://github.com/froggy744/PIC/graphs/contributors). Link to the project and the release page when sharing it. For corrections, bugs or media questions, use [GitHub Issues](https://github.com/froggy744/PIC/issues).
+
+[← Main README](../README.md)

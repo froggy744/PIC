@@ -82,6 +82,7 @@ impl Style {
     fn single_photo(self) -> bool { matches!(self, Self::IPhoto | Self::Fade | Self::MatrixRain | Self::MatrixKenBurns) }
     fn matrix(self) -> bool { matches!(self, Self::MatrixRain | Self::MatrixKenBurns) }
     fn uses_photos(self) -> bool { self != Self::MatrixRain }
+    // Easter egg: follow the white rabbit; Matrix modes only appear in Terminal.
     fn available(self, terminal: bool) -> bool { terminal || !self.matrix() }
     fn for_theme(self, terminal: bool) -> Self {
         if self.available(terminal) { self } else { Self::Mosaic }

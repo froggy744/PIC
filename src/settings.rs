@@ -1503,71 +1503,103 @@ fn themes_page(
             heading.add_css_class("heading");
             section.append(&heading);
 
-            let mut themes = engine.themes();
-            // Keep the library's default order, with the two PIC presets
-            // immediately after Standard in Settings.
-            themes.sort_by_key(|theme| match theme.id.as_str() {
+            let mut main_themes = Vec::new();
+            let mut light_themes = Vec::new();
+            let mut dark_themes = Vec::new();
+            for theme in engine.themes() {
+                match theme.id.as_str() {
+                    "standard" | "PIC-Default" | "PIC-Dark" => main_themes.push(theme),
+                    _ if theme.dark => dark_themes.push(theme),
+                    _ => light_themes.push(theme),
+                }
+            }
+            main_themes.sort_by_key(|theme| match theme.id.as_str() {
                 "standard" => 0,
                 "PIC-Default" => 1,
                 "PIC-Dark" => 2,
                 _ => 3,
             });
+            light_themes.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+            dark_themes.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+            let groups = [
+                ("Main", main_themes),
+                ("Light", light_themes),
+                ("Dark", dark_themes),
+            ];
+            let has_themes = groups.iter().any(|(_, themes)| !themes.is_empty());
             let list = settings_list();
             list.set_selection_mode(gtk::SelectionMode::Single);
             let mut group_leader: Option<gtk::CheckButton> = None;
-            for theme in &themes {
-                // Radio indicator only: the row title already shows the name.
-                // A second label here doubles the row min-width and overflows
-                // the Settings window on long theme names.
-                let check = gtk::CheckButton::new();
-                check.set_valign(gtk::Align::Center);
-                // Keep one keyboard stop per theme, on the full row.
-                check.set_focusable(false);
-                check.set_tooltip_text(Some(&theme.id));
-                if let Some(leader) = group_leader.as_ref() {
-                    check.set_group(Some(leader));
-                } else {
-                    group_leader = Some(check.clone());
+            for (title, themes) in groups {
+                if themes.is_empty() {
+                    continue;
                 }
-                // Set the active state before connecting the handler so a
-                // rebuild never re-applies the already-active theme.
-                check.set_active(theme.id == engine.active_id());
-                {
-                    let engine = engine.clone();
-                    let theme = theme.clone();
-                    check.connect_toggled(move |button| {
-                        if button.is_active() {
-                            engine.select(&theme);
+                let heading_row = gtk::ListBoxRow::new();
+                heading_row.set_selectable(false);
+                heading_row.set_focusable(false);
+                let heading = gtk::Label::new(Some(title));
+                heading.set_halign(gtk::Align::Start);
+                heading.set_margin_start(12);
+                heading.set_margin_top(12);
+                heading.set_margin_bottom(4);
+                heading.add_css_class("heading");
+                heading_row.set_child(Some(&heading));
+                list.append(&heading_row);
+
+                for theme in &themes {
+                    // Radio indicator only: the row title already shows the name.
+                    // A second label here doubles the row min-width and overflows
+                    // the Settings window on long theme names.
+                    let check = gtk::CheckButton::new();
+                    check.set_valign(gtk::Align::Center);
+                    // Keep one keyboard stop per theme, on the full row.
+                    check.set_focusable(false);
+                    check.set_tooltip_text(Some(&theme.id));
+                    if let Some(leader) = group_leader.as_ref() {
+                        check.set_group(Some(leader));
+                    } else {
+                        group_leader = Some(check.clone());
+                    }
+                    // Set the active state before connecting the handler so a
+                    // rebuild never re-applies the already-active theme.
+                    check.set_active(theme.id == engine.active_id());
+                    {
+                        let engine = engine.clone();
+                        let theme = theme.clone();
+                        check.connect_toggled(move |button| {
+                            if button.is_active() {
+                                engine.select(&theme);
+                            }
+                        });
+                    }
+                    append_row(&list, &theme.name, None, Some(check.upcast_ref()));
+                    let row = list
+                        .last_child()
+                        .and_then(|child| child.downcast::<gtk::ListBoxRow>().ok())
+                        .expect("theme row was just appended");
+                    row.set_activatable(true);
+                    row.set_focusable(true);
+                    let row_check = check.clone();
+                    row.connect_activate(move |_| row_check.set_active(true));
+
+                    // Treat Enter as the row's explicit activation key. The
+                    // controller is on the row so it works regardless of which
+                    // child GTK has focused inside the theme row.
+                    let enter_check = check.clone();
+                    let keys = gtk::EventControllerKey::new();
+                    keys.set_propagation_phase(gtk::PropagationPhase::Capture);
+                    keys.connect_key_pressed(move |_, key, _, _| {
+                        if matches!(key, gtk::gdk::Key::Return | gtk::gdk::Key::KP_Enter) {
+                            enter_check.set_active(true);
+                            gtk::glib::Propagation::Stop
+                        } else {
+                            gtk::glib::Propagation::Proceed
                         }
                     });
+                    row.add_controller(keys);
                 }
-                append_row(&list, &theme.name, None, Some(check.upcast_ref()));
-                let row = list
-                    .last_child()
-                    .and_then(|child| child.downcast::<gtk::ListBoxRow>().ok())
-                    .expect("theme row was just appended");
-                row.set_activatable(true);
-                row.set_focusable(true);
-                let row_check = check.clone();
-                row.connect_activate(move |_| row_check.set_active(true));
-
-                // Treat Enter as the row's explicit activation key. The
-                // controller is on the row so it works regardless of which
-                // child GTK has focused inside the theme row.
-                let enter_check = check.clone();
-                let keys = gtk::EventControllerKey::new();
-                keys.set_propagation_phase(gtk::PropagationPhase::Capture);
-                keys.connect_key_pressed(move |_, key, _, _| {
-                    if matches!(key, gtk::gdk::Key::Return | gtk::gdk::Key::KP_Enter) {
-                        enter_check.set_active(true);
-                        gtk::glib::Propagation::Stop
-                    } else {
-                        gtk::glib::Propagation::Proceed
-                    }
-                });
-                row.add_controller(keys);
             }
-            append_empty_state(&list, "No themes found in the themes folder", themes.is_empty());
+            append_empty_state(&list, "No themes found in the themes folder", !has_themes);
 
             section.append(&list);
         })

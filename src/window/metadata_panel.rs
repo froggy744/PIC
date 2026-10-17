@@ -1038,6 +1038,26 @@ impl MetadataPanel {
         }
         self.append_choice_page(field, list, rows, selected, search.cloned());
     }
+    // Reorder existing checkbox widgets immediately, including inside open
+    // popovers, so selected items do not wait for a fresh database facet query.
+    fn move_selected_choices_first(list: &gtk::Box) {
+        let mut selected_widgets: Vec<gtk::Widget> = Vec::new();
+        let mut child = list.first_child();
+        while let Some(widget) = child {
+            child = widget.next_sibling();
+            if widget
+                .downcast_ref::<gtk::CheckButton>()
+                .is_some_and(|check| check.is_active())
+            {
+                selected_widgets.push(widget);
+            }
+        }
+        let mut previous: Option<gtk::Widget> = None;
+        for widget in selected_widgets {
+            list.reorder_child_after(&widget, previous.as_ref());
+            previous = Some(widget);
+        }
+    }
     fn append_choice_page(
         self: &Rc<Self>,
         field: Field,
@@ -1078,7 +1098,11 @@ impl MetadataPanel {
             }
             check.set_tooltip_text(Some(&field.display(&row.value)));
             let weak = Rc::downgrade(self);
+            let list_for_reorder = list.downgrade();
             check.connect_toggled(move |b| {
+                if let Some(list) = list_for_reorder.upgrade() {
+                    Self::move_selected_choices_first(&list);
+                }
                 if let Some(panel) = weak.upgrade() {
                     panel
                         .state

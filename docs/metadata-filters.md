@@ -2,13 +2,13 @@
 
 ## Using filters
 
-The filter icon immediately after **Sort** opens a collapsible panel above the photo area. Closing it retains the active filters; the button shows an active indicator. Remove individual value/range chips, or use **Clear All** (which also clears the existing rating filter).
+The filter icon immediately after **Sort** opens a collapsible panel above the photo area. Closing it retains the active filters; the button shows an active indicator. Remove individual value/range chips, or use the leading **X** button to clear metadata and the existing rating filter. The **Metadata** button opens the four-column Explorer.
 
 Categories combine with AND. Multiple values in a category combine with OR. Numeric and date bounds are inclusive; dates use `YYYY-MM-DD`, shutter ranges use seconds. **More** exposes manufacturer, exposure, white balance, dimensions, GPS, favourite, edited and EXIF-presence properties. Rating uses PIC's original rating state.
 
-**Metadata Explorer** expands into four configurable columns. Choices and disjunctive counts come from catalog metadata in the current browsing scope. Lists display 100 choices at a time; **Show more** makes every remaining value accessible without creating thousands of GTK controls at once.
+The **Metadata** button opens four configurable Explorer columns. Choices and disjunctive counts come from catalog metadata in the current browsing scope. Lists display 100 choices at a time; **Show more** makes every remaining value accessible without creating thousands of GTK controls at once.
 
-**Index missing metadata** scans previously imported originals on a worker, with progress and cancellation. Originals are never modified. Unavailable/changed files remain eligible for retry. Refresh a changed folder before retrying. Existing camera/lens metadata and file types are available immediately after migration, before expanded EXIF indexing.
+The refresh icon at the end of the filter row starts metadata indexing; its tooltip identifies the action. Indexing scans previously imported originals on a worker, with progress and cancellation. Originals are never modified. Unavailable/changed files remain eligible for retry. Refresh a changed folder before retrying. Existing camera/lens metadata and file types are available immediately after migration, before expanded EXIF indexing.
 
 Filters are session browsing state: panel close/reopen and layout changes preserve them; application startup and library switching reset them. PIC's global search and continuous Folder stream retain their existing semantics. Activating filters on the Library overview opens All Photos. Bookshelf keeps album cards and updates their matching counts/covers, including zero-result albums.
 

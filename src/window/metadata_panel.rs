@@ -69,10 +69,17 @@ impl MetadataPanel {
         controls_scroll.set_max_content_height(42);
         let controls = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         controls.add_css_class("metadata-filter-controls");
-        let clear = gtk::Button::with_label("Clear All");
+        let clear = gtk::Button::from_icon_name("edit-clear-all-symbolic");
         clear.add_css_class("metadata-filter-clear");
-        clear.set_tooltip_text(Some("Clear metadata and rating filters"));
+        clear.set_tooltip_text(Some("Clear all filters"));
+        clear.update_property(&[gtk::accessible::Property::Label("Clear all filters")]);
         controls.append(&clear);
+        let explorer_button = gtk::MenuButton::new();
+        explorer_button.add_css_class("metadata-filter-choice");
+        explorer_button.set_label("Metadata");
+        let explorer_popover = gtk::Popover::new();
+        explorer_button.set_popover(Some(&explorer_popover));
+        controls.append(&explorer_button);
         controls_scroll.set_child(Some(&controls));
         body.append(&controls_scroll);
         let chips = gtk::FlowBox::new();
@@ -93,16 +100,20 @@ impl MetadataPanel {
         hint.set_hexpand(true);
         lower.append(&hint);
         body.append(&lower);
-        let advanced = gtk::Expander::new(Some("Metadata Explorer"));
-        body.append(&advanced);
         let explorer_scroll = gtk::ScrolledWindow::new();
         explorer_scroll.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Never);
+        explorer_scroll.set_propagate_natural_width(false);
+        explorer_scroll.set_min_content_width(360);
+        explorer_scroll.set_max_content_width(600);
+        explorer_scroll.set_min_content_height(160);
+        explorer_scroll.set_max_content_height(260);
         let columns = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         explorer_scroll.set_child(Some(&columns));
-        advanced.set_child(Some(&explorer_scroll));
+        explorer_popover.set_child(Some(&explorer_scroll));
         let indexing = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-        let index_button = gtk::Button::with_label("Index missing metadata");
-        indexing.append(&index_button);
+        let index_button = gtk::Button::from_icon_name("view-refresh-symbolic");
+        index_button.set_tooltip_text(Some("Index missing metadata"));
+        index_button.update_property(&[gtk::accessible::Property::Label("Index missing metadata")]);
         let cancel_button = gtk::Button::with_label("Cancel");
         cancel_button.set_visible(false);
         indexing.append(&cancel_button);
@@ -230,6 +241,7 @@ impl MetadataPanel {
         rating_popover.set_child(Some(&ratings));
         rating_button.set_popover(Some(&rating_popover));
         controls.append(&rating_button);
+        controls.append(&panel.index_button);
         for field in [Field::Camera, Field::Lens, Field::Iso, Field::FileType] {
             let column = gtk::Box::new(gtk::Orientation::Vertical, 4);
             column.set_hexpand(true);
@@ -255,11 +267,9 @@ impl MetadataPanel {
             panel.explorer.borrow_mut().push((choose, list));
         }
         let weak = Rc::downgrade(&panel);
-        advanced.connect_expanded_notify(move |expander| {
-            if expander.is_expanded() {
-                if let Some(panel) = weak.upgrade() {
-                    panel.refresh_explorer();
-                }
+        explorer_popover.connect_show(move |_| {
+            if let Some(panel) = weak.upgrade() {
+                panel.refresh_explorer();
             }
         });
         let weak = Rc::downgrade(&panel);
@@ -772,7 +782,7 @@ mod tests {
         let clear = descendants(panel.root.upcast_ref())
             .into_iter()
             .filter_map(|w| w.downcast::<gtk::Button>().ok())
-            .find(|b| b.label().as_deref() == Some("Clear All"))
+            .find(|b| b.has_css_class("metadata-filter-clear"))
             .unwrap();
         clear.emit_clicked();
         assert!(Filters::load(&c.borrow()).is_empty());
@@ -1012,7 +1022,7 @@ mod app_tests {
         let clear = walk(&root)
             .into_iter()
             .filter_map(|w| w.downcast::<gtk::Button>().ok())
-            .find(|b| b.label().as_deref() == Some("Clear All"))
+            .find(|b| b.has_css_class("metadata-filter-clear"))
             .unwrap();
         clear.emit_clicked();
         wait_until(|| db::browse_photos(&query, None, false, None).unwrap().len() == 3);

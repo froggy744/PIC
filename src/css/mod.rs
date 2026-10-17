@@ -53,6 +53,16 @@ pub(crate) fn install_foundation(display: &gtk::gdk::Display) {
         gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
     );
 
+    // Metadata controls use consistent native desktop geometry in every theme.
+    // Theme palette variables still supply colours; square corners win at +4.
+    let metadata = gtk::CssProvider::new();
+    metadata.load_from_string(include_str!("components/metadata_filter_layout.css"));
+    gtk::style_context_add_provider_for_display(
+        display,
+        &metadata,
+        gtk::STYLE_PROVIDER_PRIORITY_APPLICATION + 2,
+    );
+
     // The edit toolbar is shared by every appearance theme. Keep its visual
     // contract in one place and resolve colors from the active theme palette.
     // This scoped provider sits above theme-wide button rules while remaining

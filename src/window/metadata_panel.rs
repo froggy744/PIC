@@ -8,6 +8,7 @@ use std::sync::{
 
 const VISIBLE_FILTERS_SETTING: &str = "photo-metadata-visible-filters";
 const EXPLORER_COLUMNS_SETTING: &str = "photo-metadata-explorer-columns";
+const EXPLORER_WIDTHS_SETTING: &str = "photo-metadata-explorer-widths";
 const DEFAULT_VISIBLE_FILTERS: &[Field] = &[
     Field::Camera,
     Field::Lens,
@@ -53,6 +54,7 @@ struct ExplorerColumn {
     root: gtk::Box,
     choose: gtk::DropDown,
     list: gtk::Box,
+    width: Rc<Cell<i32>>,
     add: gtk::Button,
     remove: gtk::Button,
 }
@@ -462,6 +464,18 @@ impl MetadataPanel {
             column.add.set_sensitive(fields.len() < 8);
             column.remove.set_sensitive(fields.len() > 1);
         }
+        self.save_explorer_widths();
+    }
+    fn save_explorer_widths(&self) {
+        let widths = self
+            .explorer
+            .borrow()
+            .iter()
+            .map(|column| column.width.get())
+            .collect::<Vec<_>>();
+        if let Ok(value) = serde_json::to_string(&widths) {
+            let _ = db::set_setting(&self.connection.borrow(), EXPLORER_WIDTHS_SETTING, &value);
+        }
     }
     fn add_explorer_column(self: &Rc<Self>, field: Field) {
         if self.explorer.borrow().len() >= 8 {
@@ -469,6 +483,18 @@ impl MetadataPanel {
         }
         let root = gtk::Box::new(gtk::Orientation::Vertical, 4);
         let header = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+        let width_index = self.explorer.borrow().len();
+        let saved_widths = db::setting(&self.connection.borrow(), EXPLORER_WIDTHS_SETTING)
+            .ok()
+            .flatten()
+            .and_then(|raw| serde_json::from_str::<Vec<i32>>(&raw).ok())
+            .unwrap_or_default();
+        let initial_width = saved_widths
+            .get(width_index)
+            .copied()
+            .unwrap_or(200)
+            .clamp(165, 420);
+        let width = Rc::new(Cell::new(initial_width));
         let names = Field::ALL
             .iter()
             .map(|item| item.label())
@@ -490,9 +516,13 @@ impl MetadataPanel {
         remove.set_tooltip_text(Some("Remove column"));
         remove.update_property(&[gtk::accessible::Property::Label("Remove column")]);
         header.append(&remove);
+        let resize = gtk::Image::from_icon_name("pan-end-symbolic");
+        resize.set_tooltip_text(Some("Drag to resize column"));
+        resize.set_cursor_from_name(Some("col-resize"));
+        header.append(&resize);
         root.append(&header);
         root.set_hexpand(true);
-        root.set_size_request(165, -1);
+        root.set_size_request(initial_width, -1);
         let list = gtk::Box::new(gtk::Orientation::Vertical, 2);
         let scroll = gtk::ScrolledWindow::new();
         scroll.set_min_content_height(130);
@@ -505,6 +535,7 @@ impl MetadataPanel {
             root: root.clone(),
             choose: choose.clone(),
             list: list.clone(),
+            width: width.clone(),
             add: add.clone(),
             remove: remove.clone(),
         });
@@ -532,6 +563,26 @@ impl MetadataPanel {
                     .find(|field| !current.contains(field))
                     .unwrap_or(Field::Camera);
                 panel.add_explorer_column(next);
+            }
+        });
+        let drag = gtk::GestureDrag::new();
+        resize.add_controller(drag.clone());
+        let drag_start_width = Rc::new(Cell::new(initial_width));
+        let start_width = drag_start_width.clone();
+        let stored_width = width.clone();
+        let root_for_drag = root.clone();
+        drag.connect_drag_begin(move |_, _, _| {
+            start_width.set(stored_width.get());
+        });
+        let weak = Rc::downgrade(self);
+        let start_width = drag_start_width;
+        let stored_width = width;
+        drag.connect_drag_update(move |_, delta_x, _| {
+            let new_width = (start_width.get() + delta_x as i32).clamp(165, 420);
+            stored_width.set(new_width);
+            root_for_drag.set_size_request(new_width, -1);
+            if let Some(panel) = weak.upgrade() {
+                panel.save_explorer_widths();
             }
         });
         let weak = Rc::downgrade(self);

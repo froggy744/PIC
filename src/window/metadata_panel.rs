@@ -276,7 +276,7 @@ impl MetadataPanel {
             // Hide only the buttons when ALL is active, not their expanding
             // scroll host. That host reserves flexible width so counts and
             // Clear all never jump left next to ALL.
-            individual_controls: controls,
+            individual_controls: controls.clone(),
             lightbox_open: Cell::new(false),
             connection,
             scope,

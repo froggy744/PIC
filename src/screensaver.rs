@@ -525,6 +525,7 @@ pub fn open(parent: &adw::ApplicationWindow, connection: Rc<RefCell<Connection>>
         .modal(true)
         .transient_for(parent)
         .build();
+    dialog.add_css_class("screensaver-settings-window");
     let body = gtk::Box::new(gtk::Orientation::Vertical, 10);
     body.set_margin_top(18);
     body.set_margin_bottom(18);
@@ -533,6 +534,7 @@ pub fn open(parent: &adw::ApplicationWindow, connection: Rc<RefCell<Connection>>
 
     let heading = gtk::Label::new(Some("Screensaver"));
     heading.add_css_class("title-2");
+    heading.add_css_class("screensaver-dialog-heading");
     heading.set_xalign(0.0);
     body.append(&heading);
 
@@ -556,6 +558,7 @@ pub fn open(parent: &adw::ApplicationWindow, connection: Rc<RefCell<Connection>>
     let style_heading = gtk::Label::new(Some("Choose a style"));
     style_heading.set_xalign(0.0);
     style_heading.add_css_class("heading");
+    style_heading.add_css_class("screensaver-dialog-heading");
     body.append(&style_heading);
     let picker_slot = gtk::Box::new(gtk::Orientation::Vertical, 0);
     body.append(&picker_slot);

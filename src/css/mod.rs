@@ -8,6 +8,7 @@ pub(crate) const PHOTO_WALL: &str = include_str!("photo_wall.css");
 pub(crate) const SQUARE_CORNERS: &str = include_str!("square_corners.css");
 pub(crate) const ALBUMS: &str = include_str!("components/albums.css");
 pub(crate) const PHOTO_CONTEXT_MENU: &str = include_str!("components/photo_context_menu.css");
+pub(crate) const SCREENSAVER: &str = include_str!("screensaver.css");
 
 pub(crate) mod theme_discovery;
 
@@ -89,6 +90,17 @@ pub(crate) fn install_foundation(display: &gtk::gdk::Display) {
         display,
         &search_status,
         gtk::STYLE_PROVIDER_PRIORITY_APPLICATION + 6,
+    );
+
+    // Screensaver controls live in a separate window from the main/settings
+    // window. Keep its headings readable even under overlays with broad
+    // heading rules; the selector is scoped to those two labels only.
+    let screensaver = gtk::CssProvider::new();
+    screensaver.load_from_string(SCREENSAVER);
+    gtk::style_context_add_provider_for_display(
+        display,
+        &screensaver,
+        gtk::STYLE_PROVIDER_PRIORITY_APPLICATION + 11,
     );
 
     // Always loaded; rules only match while the main window carries the

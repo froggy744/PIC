@@ -3745,6 +3745,14 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         if space_toggle_in_progress_for_toggle.get() {
             space_toggle_in_progress_for_toggle.set(false);
         }
+        if std::env::var_os("PICASA_TRACE").is_some() {
+            eprintln!(
+                "PIC_ZOOM_UI one_to_one enabled={} lightbox_visible={} edit_visible={}",
+                button.is_active(),
+                lightbox_for_one_to_one.root.is_visible(),
+                main_stack_for_one_to_one.visible_child_name().as_deref() == Some("edit"),
+            );
+        }
     });
 
     // Prepare the correct grid selection behind an animated close. This lets

@@ -696,6 +696,28 @@ def smoke_test() -> None:
     if editor_open:
         original_digest = hashlib.sha256((SAMPLE_DIR / "landscape.jpg").read_bytes()).hexdigest()
         center_before = Image.open(editor_shot).convert("RGB").getpixel((1050 + MOUSE_OFFSET_X, 450 + MOUSE_OFFSET_Y))
+        # At the empty-history boundary, Undo and Redo must leave the original
+        # preview untouched. This catches accidental edits when disabled
+        # controls still receive pointer events.
+        click_at(1085, 86)
+        empty_undo_shot = screenshot("10a-editor-undo-empty.png")
+        empty_undo_delta = sum(abs(a - b) for a, b in zip(
+            center_before, Image.open(empty_undo_shot).convert("RGB").getpixel(
+                (1050 + MOUSE_OFFSET_X, 450 + MOUSE_OFFSET_Y))))
+        click_at(1134, 86)
+        empty_redo_shot = screenshot("10a-editor-redo-empty.png")
+        empty_redo_delta = sum(abs(a - b) for a, b in zip(
+            center_before, Image.open(empty_redo_shot).convert("RGB").getpixel(
+                (1050 + MOUSE_OFFSET_X, 450 + MOUSE_OFFSET_Y))))
+        def toolbar_ink(path: Path, button_x: int) -> int:
+            image = Image.open(path).convert("RGB")
+            crop = image.crop((button_x - 17 + MOUSE_OFFSET_X, 71 + MOUSE_OFFSET_Y,
+                               button_x + 17 + MOUSE_OFFSET_X, 101 + MOUSE_OFFSET_Y))
+            return sum(1 for red, green, blue in crop.getdata()
+                       if max(red, green, blue) < 120)
+
+        empty_undo_ink = toolbar_ink(empty_undo_shot, 1085)
+        empty_redo_ink = toolbar_ink(empty_redo_shot, 1134)
         click_at(570, 199)
         wait_for(lambda: sum(abs(a - b) for a, b in zip(
             Image.open(screenshot("11-editor-exposure-wait.png")).convert("RGB").getpixel((1050 + MOUSE_OFFSET_X, 450 + MOUSE_OFFSET_Y)),
@@ -704,6 +726,8 @@ def smoke_test() -> None:
         exposure_shot = screenshot("11-editor-exposure-adjusted.png")
         center_after = Image.open(exposure_shot).convert("RGB").getpixel((1050 + MOUSE_OFFSET_X, 450 + MOUSE_OFFSET_Y))
         center_delta = sum(abs(center_before[i] - center_after[i]) for i in range(3))
+        exposure_undo_ink = toolbar_ink(exposure_shot, 1085)
+        exposure_redo_ink = toolbar_ink(exposure_shot, 1134)
         record(add_case("Editor exposure adjustment", "Exposure interaction changes preview pixels"),
                center_delta > 20, f"preview center RGB delta={center_delta}; screenshot={exposure_shot.name}")
         sequence_errors = []
@@ -725,6 +749,8 @@ def smoke_test() -> None:
         undo_shot = screenshot("11a-editor-undo.png")
         undo_center = preview_center(undo_shot)
         undo_delta = sum(abs(center_before[i] - undo_center[i]) for i in range(3))
+        undo_undo_ink = toolbar_ink(undo_shot, 1085)
+        undo_redo_ink = toolbar_ink(undo_shot, 1134)
 
         click_at(1134, 86)
         try:
@@ -734,6 +760,8 @@ def smoke_test() -> None:
         redo_shot = screenshot("11a-editor-redo.png")
         redo_delta = sum(abs(exposure_color - redone) for exposure_color, redone
                          in zip(center_after, preview_center(redo_shot)))
+        redo_undo_ink = toolbar_ink(redo_shot, 1085)
+        redo_redo_ink = toolbar_ink(redo_shot, 1134)
 
         # Contrast is a separate edit tool. Undo must step back through it and
         # Exposure independently, then Redo must replay both in order.
@@ -749,6 +777,7 @@ def smoke_test() -> None:
             sequence_errors.append(str(error))
         multi_undo_one = screenshot("11a-editor-undo-contrast.png")
         multi_undo_one_delta = sum(abs(a - b) for a, b in zip(center_after, preview_center(multi_undo_one)))
+        multi_undo_one_ink = (toolbar_ink(multi_undo_one, 1085), toolbar_ink(multi_undo_one, 1134))
         click_at(1085, 86)
         try:
             wait_center_matches(center_before, "second Undo to remove Exposure")
@@ -756,6 +785,7 @@ def smoke_test() -> None:
             sequence_errors.append(str(error))
         multi_undo_two = screenshot("11a-editor-undo-exposure.png")
         multi_undo_two_delta = sum(abs(a - b) for a, b in zip(center_before, preview_center(multi_undo_two)))
+        multi_undo_two_ink = (toolbar_ink(multi_undo_two, 1085), toolbar_ink(multi_undo_two, 1134))
         click_at(1134, 86)
         click_at(1134, 86)
         try:
@@ -764,17 +794,64 @@ def smoke_test() -> None:
             sequence_errors.append(str(error))
         multi_redo = screenshot("11a-editor-redo-multiple.png")
         multi_redo_delta = sum(abs(a - b) for a, b in zip(multi_center, preview_center(multi_redo)))
+        multi_redo_ink = (toolbar_ink(multi_redo, 1085), toolbar_ink(multi_redo, 1134))
+
+        # Undo to the Exposure-only state, then make a different edit. That
+        # new edit must discard the old Contrast redo branch.
+        click_at(1085, 86)
+        try:
+            wait_center_matches(center_after, "Undo before creating a new branch")
+        except TimeoutError as error:
+            sequence_errors.append(str(error))
+        branch_undo = screenshot("11a-editor-undo-before-branch.png")
+        branch_undo_delta = sum(abs(a - b) for a, b in zip(center_after, preview_center(branch_undo)))
+        click_at(650, 327)
+        try:
+            wait_for(lambda: sum(abs(a - b) for a, b in zip(
+                preview_center(screenshot("11a-editor-new-branch-wait.png")), center_after)) > 8,
+                "Fill Light edit on the new history branch", timeout=10)
+        except TimeoutError as error:
+            sequence_errors.append(str(error))
+        branch_edit = screenshot("11a-editor-new-branch.png")
+        branch_center = preview_center(branch_edit)
+        branch_edit_delta = sum(abs(a - b) for a, b in zip(center_after, branch_center))
+        click_at(1134, 86)
+        time.sleep(0.7)
+        branch_redo = screenshot("11a-editor-redo-discarded-branch.png")
+        branch_redo_delta = sum(abs(a - b) for a, b in zip(branch_center, preview_center(branch_redo)))
+        old_branch_delta = sum(abs(a - b) for a, b in zip(multi_center, preview_center(branch_redo)))
+        branch_redo_ink = (toolbar_ink(branch_redo, 1085), toolbar_ink(branch_redo, 1134))
         undo_sequence_passed = (
             undo_delta <= 16 and redo_delta <= 16
+            and empty_undo_delta <= 16 and empty_redo_delta <= 16
             and multi_undo_one_delta <= 16 and multi_undo_two_delta <= 16
-            and multi_redo_delta <= 16 and not sequence_errors
+            and multi_redo_delta <= 16 and branch_undo_delta <= 16
+            and branch_edit_delta > 8 and branch_redo_delta <= 16
+            and old_branch_delta > 20 and not sequence_errors
+            and empty_undo_ink == 0 and empty_redo_ink == 0
+            and exposure_undo_ink > 0 and exposure_redo_ink == 0
+            and undo_undo_ink == 0 and undo_redo_ink > 0
+            and redo_undo_ink > 0 and redo_redo_ink == 0
+            and multi_undo_one_ink[0] > 0 and multi_undo_one_ink[1] > 0
+            and multi_undo_two_ink[0] == 0 and multi_undo_two_ink[1] > 0
+            and multi_redo_ink[0] > 0 and multi_redo_ink[1] == 0
+            and branch_redo_ink[0] > 0 and branch_redo_ink[1] == 0
         )
         record(add_case("Editor Undo/Redo sequences",
-                        "Single and multiple tool edits undo and redo independently in order"),
+                        "Empty history is unchanged; single and multiple tool edits undo and redo independently in order"),
                undo_sequence_passed,
                f"single undo delta={undo_delta}, single redo delta={redo_delta}; "
+               f"empty undo delta={empty_undo_delta}, empty redo delta={empty_redo_delta}; "
                f"contrast undo delta={multi_undo_one_delta}, exposure undo delta={multi_undo_two_delta}, "
                f"two-step redo delta={multi_redo_delta}; sequence_errors={sequence_errors}; "
+               f"branch undo delta={branch_undo_delta}, new Fill Light delta={branch_edit_delta}, "
+               f"redo after new edit delta={branch_redo_delta}, distance from discarded state={old_branch_delta}; "
+               f"toolbar dark pixels empty(U/R)={empty_undo_ink}/{empty_redo_ink}, "
+               f"edited(U/R)={exposure_undo_ink}/{exposure_redo_ink}, "
+               f"after-Undo(U/R)={undo_undo_ink}/{undo_redo_ink}, "
+               f"after-Redo(U/R)={redo_undo_ink}/{redo_redo_ink}, "
+               f"two-Undo={multi_undo_two_ink}, final-Redo={multi_redo_ink}, "
+               f"discarded-branch={branch_redo_ink}; "
                f"screenshots={undo_shot.name}, {redo_shot.name}, {multi_shot.name}, "
                f"{multi_undo_one.name}, {multi_undo_two.name}, {multi_redo.name}")
         click_at(570, 199)

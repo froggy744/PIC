@@ -5,7 +5,6 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 run_id="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 run_dir="${PIC_GUI_RUN_DIR:-$repo_root/reports/gui-tests/$run_id}"
 report="$run_dir/report.md"
-mkdir -p "$run_dir/screenshots"
 
 show_test_menu() {
     local choice
@@ -22,6 +21,8 @@ Choose a GUI test run (each focused run performs the setup and earlier steps it 
   5) Gallery and viewer
   6) Editing and collage
   7) Screensaver
+  8) Complete suite (41 Xvfb checks + Fedora Wayland/Vulkan)
+  9) Wayland/Vulkan native smoke only
 Selection [1]:
 EOF
     read -r choice || choice=1
@@ -33,14 +34,27 @@ EOF
         5) printf 'viewer\n' ;;
         6) printf 'editing\n' ;;
         7) printf 'screensaver\n' ;;
+        8) printf 'wayland\n' ;;
+        9) printf 'native\n' ;;
         *) printf 'Invalid selection: %s\n' "$choice" >&2; exit 2 ;;
     esac
 }
 
 gui_suite="$(show_test_menu)"
-case "$gui_suite" in all|startup|library|import|viewer|editing|screensaver) ;;
+case "$gui_suite" in all|startup|library|import|viewer|editing|screensaver|native|wayland) ;;
     *) printf 'Invalid PIC_GUI_SUITE: %s\n' "$gui_suite" >&2; exit 2 ;;
 esac
+
+if [[ "$gui_suite" == "native" ]]; then
+    export PIC_GUI_SUITE="$gui_suite"
+    exec "$repo_root/scripts/test-gui-native.sh"
+fi
+if [[ "$gui_suite" == "wayland" ]]; then
+    export PIC_GUI_SUITE="$gui_suite"
+    exec "$repo_root/scripts/test-gui-wayland.sh"
+fi
+
+mkdir -p "$run_dir/screenshots"
 
 write_blocked_report() {
     local reason="$1"

@@ -18,6 +18,8 @@
 
 ## Suggested 60–90-second demo
 
+Start with the welcome screen and guided tutorial for a first-launch introduction, then follow this demo flow.
+
 1. Open a populated library and toggle **Grid → Photo Wall → Masonry**.
 2. Show the albums page, album covers or bookshelf arrangement and an alternate theme.
 3. Favourite or rate an image; demonstrate the rating filter or search.
@@ -43,6 +45,16 @@
 ## V1 screenshots and videos
 
 Use the [V1 media gallery](../screenshots/README.md) for the complete JPG set.
+
+### Welcome and tutorial
+
+![PIC V1 welcome screen](../screenshots/screenshots-V1/welcome%20screen.jpg)
+
+![PIC V1 tutorial screen](../screenshots/screenshots-V1/tutorial-screen2.jpg)
+
+[Welcome and tutorial guide](guides/getting-started.md#welcome-and-tutorial) · [Linux OS testing screenshots](../screenshots/testingOS/README.md)
+
+### Library and creative tools
 
 ![PIC V1 — grid metadata view](../screenshots/screenshots-V1/grid%20metadata%20view.jpg)
 

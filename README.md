@@ -59,6 +59,14 @@ See the [OS testing screenshots](screenshots/testingOS/README.md) for supplied c
 
 PIC is local-first. The app does not require a cloud account; network-share browsing and downloading packages naturally require a network connection.
 
+## Welcome and tutorial
+
+Start with PIC’s welcome screen and guided tutorial. [Follow the first-launch guide](docs/guides/getting-started.md#welcome-and-tutorial).
+
+![PIC V1 welcome screen](screenshots/screenshots-V1/welcome%20screen.jpg)
+
+![PIC V1 tutorial screen](screenshots/screenshots-V1/tutorial-screen2.jpg)
+
 ## Start exploring
 
 | I want to… | Read |

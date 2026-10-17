@@ -163,3 +163,11 @@ Both MP4s preserve the actual source resolution of **1920×1080**, with H.264 vi
 ### albums bookshelf theme
 
 ![PIC V1 — albums bookshelf theme](screenshots-V1/albums%20bookshelf%20theme.jpg)
+
+### Welcome screen
+
+![PIC V1 welcome screen](screenshots-V1/welcome%20screen.jpg)
+
+### Tutorial screen
+
+![PIC V1 tutorial screen](screenshots-V1/tutorial-screen2.jpg)

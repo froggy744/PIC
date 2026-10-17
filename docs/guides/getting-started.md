@@ -16,6 +16,14 @@ flatpak run io.github.froggy744.PIC
 
 Native development and optional AppImage builds are also covered there. Windows builds remain experimental.
 
+## Welcome and tutorial
+
+The welcome screen introduces PIC when you first open it. Use the tutorial for a guided introduction before exploring your photo library.
+
+![PIC V1 welcome screen](../../screenshots/screenshots-V1/welcome%20screen.jpg)
+
+![PIC V1 tutorial screen](../../screenshots/screenshots-V1/tutorial-screen2.jpg)
+
 ## Add your first folder
 
 1. Click **+** beside **Folders** and select a photo folder.

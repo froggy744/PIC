@@ -6,7 +6,7 @@ Welcome to the PIC user guides. Start with **[Getting started](guides/getting-st
 
 | Topic | Guide |
 | --- | --- |
-| Setup, import and first steps | [Getting started](guides/getting-started.md) |
+| Welcome, tutorial, import and first steps | [Getting started](guides/getting-started.md) |
 | Gallery layouts, selections, photo viewer and shortcuts | [Navigation](guides/navigation.md) |
 | Local folders, monitoring and SMB/NFS | [Folders and network shares](guides/folders.md) |
 | Albums, bookshelf, favourites, ratings, search and libraries | [Library](guides/library.md) |

@@ -701,7 +701,8 @@ popover modelbutton:hover, popover row:hover, popover row:selected {
     background-image: linear-gradient(to bottom, @pic_bar_top, @pic_bar_bottom);
     color: @pic_bar_text;
 }
-.settings-window headerbar label { color: @pic_bar_text; }
+.settings-window headerbar label,
+.screensaver-settings-window headerbar label { color: @pic_bar_text; }
 .settings-window .heading, .settings-window .title-1, .settings-window .title-2,
 .settings-window .title-3, .settings-window .title-4 { color: @pic_text_color; }
 .settings-window .dim-label { color: @pic_text_muted; opacity: 1; }

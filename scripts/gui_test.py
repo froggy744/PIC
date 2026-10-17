@@ -21,6 +21,7 @@ RUN_DIR = Path(os.environ["PIC_GUI_RUN_DIR"])
 SCREENSHOTS = RUN_DIR / "screenshots"
 APP = Path(os.environ["PIC_GUI_APP"])
 COMMIT = os.environ.get("PIC_GUI_COMMIT", "unknown")
+SUITE = os.environ.get("PIC_GUI_SUITE", "all")
 DISPLAY = os.environ["DISPLAY"]
 APP_LOG = RUN_DIR / "application.log"
 SAMPLE_DIR = RUN_DIR / "sample-library"
@@ -101,6 +102,7 @@ def seed_isolated_database() -> None:
                            (folder, SAMPLE_DIR.name))
         folder_id = connection.execute("SELECT id FROM folders WHERE path=?", (folder,)).fetchone()[0]
         settings = [
+            ("screensaver-source", "all"),
             ("screensaver-style", "fade"),
             ("screensaver-duration", "3"),
             ("screensaver-transition-ms", "200"),
@@ -347,6 +349,8 @@ def smoke_test() -> None:
     home = screenshot("01-library-home.png")
     record(add_case("PIC startup and Library", "PIC opens and renders its Library window"),
            app_alive() and home.exists(), f"window {APP_WINDOW}; screenshot={home.name}")
+    if SUITE == "startup":
+        return
     # Build an isolated library populated only with generated sample images.
     APP_PROCESS.terminate()
     APP_PROCESS.wait(timeout=5)
@@ -476,6 +480,8 @@ def smoke_test() -> None:
     wait_for(lambda: db_setting("photo-rating-filter") == "all",
              "clear All Stars folder rating filter", timeout=8)
     command(["xdotool", "key", "Escape"])
+    if SUITE == "library":
+        return
 
     # Exercise the actual local-folder chooser with a cancellation, an import,
     # and a second import of the same directory. The import source is outside
@@ -545,6 +551,30 @@ def smoke_test() -> None:
     record(add_case("Duplicate GUI import", "Importing the same source folder again does not duplicate photo rows"),
            with_photo_count() == 17,
            f"photo count after repeat import={with_photo_count()}; screenshots={duplicate_dialog.name}, {duplicate_result.name}")
+    # Restart PIC after a GUI import and confirm the isolated catalogue and
+    # imported rows survive a real process restart.
+    APP_PROCESS.terminate()
+    APP_PROCESS.wait(timeout=5)
+    log.close()
+    log = APP_LOG.open("a")
+    APP_PROCESS = subprocess.Popen([str(APP)], env=app_env, stdout=log, stderr=subprocess.STDOUT)
+    APP_WINDOW = wait_for(
+        lambda: next((wid for wid in command(["xdotool", "search", "--onlyvisible", "--name", ".*"], check=False).splitlines()
+                      if "PIC" in command(["xdotool", "getwindowname", wid], check=False)), None),
+        "PIC window after restart", timeout=30,
+    )
+    command(["xdotool", "windowfocus", "--sync", APP_WINDOW])
+    command(["xdotool", "key", "Escape"])
+    def restarted_gallery() -> Path | None:
+        current = screenshot("02l-library-after-restart.png")
+        return current if len(matching_generated_tiles(current)) >= 12 else None
+    restart_shot = wait_for(restarted_gallery, "generated gallery photos after PIC restart", timeout=30)
+    record(add_case("Catalogue persistence after restart",
+                    "Imported photo rows remain in the catalogue after closing and reopening PIC"),
+           with_photo_count() == 17 and len(matching_generated_tiles(restart_shot)) >= 12,
+           f"catalogue photo count after restart={with_photo_count()}; visible generated tiles={len(matching_generated_tiles(restart_shot))}; screenshot={restart_shot.name}")
+    if SUITE == "import":
+        return
 
     scroll_case = add_case("Gallery scrolling", "Mouse wheel scrolls the populated gallery")
     command(["xdotool", "mousemove", "650", "690"])
@@ -646,6 +676,8 @@ def smoke_test() -> None:
     menu_diff = screenshot_changed(gallery_after_viewer, menu_shot)
     record(add_case("Gallery right-click opens photo context menu", "Right-click displays photo actions"),
            menu_diff and app_alive(), f"Context menu visible; screenshot={menu_shot.name}")
+    if SUITE == "viewer":
+        return
     click_at(480, 109)
     wait_for(lambda: count_color_pixels(screenshot("10-photo-editor-wait.png"), (45, 110, 190)) > 200_000,
              "editor source image to finish rendering", timeout=12)
@@ -685,7 +717,7 @@ def smoke_test() -> None:
                 preview_center(screenshot("11a-editor-undo-wait.png")), color)) <= 16,
                 description, timeout=8)
 
-        click_at(1116, 86)
+        click_at(1085, 86)
         try:
             wait_center_matches(center_before, "Undo to restore the baseline preview")
         except TimeoutError as error:
@@ -694,7 +726,7 @@ def smoke_test() -> None:
         undo_center = preview_center(undo_shot)
         undo_delta = sum(abs(center_before[i] - undo_center[i]) for i in range(3))
 
-        click_at(1156, 86)
+        click_at(1134, 86)
         try:
             wait_center_matches(center_after, "Redo to restore the Exposure preview")
         except TimeoutError as error:
@@ -710,22 +742,22 @@ def smoke_test() -> None:
         multi_center = preview_center(multi_shot)
         if sum(abs(a - b) for a, b in zip(center_after, multi_center)) <= 20:
             sequence_errors.append("Contrast tool did not change the rendered preview")
-        click_at(1116, 86)
+        click_at(1085, 86)
         try:
             wait_center_matches(center_after, "first Undo to remove only Contrast")
         except TimeoutError as error:
             sequence_errors.append(str(error))
         multi_undo_one = screenshot("11a-editor-undo-contrast.png")
         multi_undo_one_delta = sum(abs(a - b) for a, b in zip(center_after, preview_center(multi_undo_one)))
-        click_at(1116, 86)
+        click_at(1085, 86)
         try:
             wait_center_matches(center_before, "second Undo to remove Exposure")
         except TimeoutError as error:
             sequence_errors.append(str(error))
         multi_undo_two = screenshot("11a-editor-undo-exposure.png")
         multi_undo_two_delta = sum(abs(a - b) for a, b in zip(center_before, preview_center(multi_undo_two)))
-        click_at(1156, 86)
-        click_at(1156, 86)
+        click_at(1134, 86)
+        click_at(1134, 86)
         try:
             wait_center_matches(multi_center, "two Redo actions to restore both adjustments")
         except TimeoutError as error:
@@ -788,9 +820,11 @@ def smoke_test() -> None:
         record(add_case("Editor persistence after reopening", "Reopening the photo restores the saved adjustment preview"),
                persisted_delta > 20 and photo_state("landscape.jpg")[1] == saved_recipe,
                f"preview RGB delta from original={persisted_delta}; catalog recipe unchanged={photo_state('landscape.jpg')[1] == saved_recipe}; screenshot={persisted_editor.name}")
-        click_at(1058, 86)
-        wait_for(lambda: app_alive() and "Edit" not in command(["xdotool", "getwindowname", APP_WINDOW], check=False),
-                 "close persisted editor")
+        click_at(1368, 85)
+        def gallery_after_persisted_editor() -> Path | None:
+            current = screenshot("13b-gallery-after-persisted-editor.png")
+            return current if len(matching_generated_tiles(current)) >= 10 else None
+        wait_for(gallery_after_persisted_editor, "gallery to return after closing persisted editor", timeout=15)
         # Select a second generated photo with Ctrl, then open the collage
         # action from the real thumbnail context menu.
         command(["xdotool", "keydown", "ctrl"])
@@ -911,12 +945,26 @@ def smoke_test() -> None:
             case = add_case(name, expected)
             case.actual = "Prerequisite editor did not open"
             case.result = "NOT TESTED"
+    if SUITE == "editing":
+        return
     click_at(1360, 866)
     saver_setup = screenshot("20-screensaver-setup.png")
     setup_open = screenshot_changed(editor_shot, saver_setup)
     record(add_case("Screensaver setup", "Play control opens screensaver style settings"),
            setup_open and app_alive(), f"Setup controls shown; screenshot={saver_setup.name}")
-    click_at(848, 617)
+    # The toolbar passes the current photo selection to the dialog, which
+    # defaults to Selected Photos. Pick All Photos explicitly so playback has
+    # multiple fixture images and the transition assertion is meaningful.
+    click_at(768, 449)
+    command(["xdotool", "key", "Home"])
+    command(["xdotool", "key", "Return"])
+    all_photos_source = screenshot("20a-screensaver-all-photos-source.png")
+    click_at(848, 635)
+    wait_for(lambda: db_setting("screensaver-source") == "all",
+             "screensaver source to save as All Photos", timeout=8)
+    record(add_case("Screensaver all-photo source", "Screensaver is configured to play all generated fixture photos"),
+           db_setting("screensaver-source") == "all",
+           f"saved source={db_setting('screensaver-source')}; screenshot={all_photos_source.name}")
     def fullscreen_saver_window() -> str | None:
         for window_id in command(["xdotool", "search", "--onlyvisible", "--name", "^PIC Screensaver$"], check=False).splitlines():
             geometry = command(["xdotool", "getwindowgeometry", "--shell", window_id], check=False)
@@ -957,7 +1005,7 @@ def smoke_test() -> None:
     click_at(1360, 866)
     saver_setup_again = wait_for_screen_change(main_return, "23-screensaver-setup-again.png",
                                                "reopen screensaver setup after keyboard dismissal")
-    click_at(848, 617)
+    click_at(848, 635)
     wait_for(fullscreen_saver_window, "second fullscreen screensaver window", timeout=12)
     # The screensaver intentionally ignores mouse motion for its first 850 ms
     # to avoid treating the activation pointer position as a user exit.
@@ -988,6 +1036,7 @@ def write_report(error: Exception | None) -> None:
         f"- Commit: `{COMMIT}`",
         f"- Display: Xvfb `{DISPLAY}` (1600×1000×24), GTK backend X11, Cairo renderer",
         f"- Application binary: `{APP}`",
+        f"- Selected suite: `{SUITE}` (focused runs include prerequisite steps)",
         f"- Artifact directory: `reports/gui-tests/{RUN_DIR.name}`",
         f"- PIC process: {'running through GUI actions' if APP_PROCESS is not None and APP_PROCESS.poll() is None else 'exited during cleanup'}",
         f"- Counts: {counts['PASS']} PASS, {counts['FAIL']} FAIL, {counts['BLOCKED']} BLOCKED, {counts['NOT TESTED']} NOT TESTED",

@@ -7,6 +7,41 @@ run_dir="${PIC_GUI_RUN_DIR:-$repo_root/reports/gui-tests/$run_id}"
 report="$run_dir/report.md"
 mkdir -p "$run_dir/screenshots"
 
+show_test_menu() {
+    local choice
+    if [[ -n "${PIC_GUI_SUITE:-}" ]]; then
+        printf '%s\n' "$PIC_GUI_SUITE"
+        return
+    fi
+    cat >&2 <<'EOF'
+Choose a GUI test run (each focused run performs the setup and earlier steps it depends on):
+  1) Full suite
+  2) Startup only
+  3) Library and ratings
+  4) Import
+  5) Gallery and viewer
+  6) Editing and collage
+  7) Screensaver
+Selection [1]:
+EOF
+    read -r choice || choice=1
+    case "${choice:-1}" in
+        1) printf 'all\n' ;;
+        2) printf 'startup\n' ;;
+        3) printf 'library\n' ;;
+        4) printf 'import\n' ;;
+        5) printf 'viewer\n' ;;
+        6) printf 'editing\n' ;;
+        7) printf 'screensaver\n' ;;
+        *) printf 'Invalid selection: %s\n' "$choice" >&2; exit 2 ;;
+    esac
+}
+
+gui_suite="$(show_test_menu)"
+case "$gui_suite" in all|startup|library|import|viewer|editing|screensaver) ;;
+    *) printf 'Invalid PIC_GUI_SUITE: %s\n' "$gui_suite" >&2; exit 2 ;;
+esac
+
 write_blocked_report() {
     local reason="$1"
     cat > "$report" <<EOF
@@ -102,6 +137,7 @@ export LIBGL_ALWAYS_SOFTWARE=1
 export GTK_A11Y=none
 export PIC_GUI_RUN_DIR="$run_dir"
 export PIC_GUI_APP="$app_bin"
+export PIC_GUI_SUITE="$gui_suite"
 export PIC_GUI_COMMIT="$(git -C "$repo_root" rev-parse HEAD)"
 export PIC_GUI_XVFB_LOG="$run_dir/xvfb.log"
 wm_bin="${PIC_GUI_WM_BIN:-$(command -v openbox || true)}"

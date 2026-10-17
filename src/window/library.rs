@@ -439,6 +439,20 @@ fn scroll_gallery_to_folder_when_ready(
                     total_for_timer.get(),
                 );
             }
+            // The Folder stream contains only photos that passed active
+            // filters. If none belong to this folder or its descendants, no
+            // section/header can ever be produced for the destination. Stop
+            // retrying instead of holding a dead scroll request for six
+            // seconds.
+            if !gallery.has_folder_navigation_target(folder_id) {
+                gallery.reveal_folder_destination(presentation_generation);
+                crate::nav_transition_trace!(
+                    "stage=folder_scroll_restore_complete refresh_generation={generation} folder_id={folder_id} reason=no_filtered_photos attempts={} elapsed_ms={}",
+                    total_for_timer.get(),
+                    started.elapsed().as_millis(),
+                );
+                return glib::ControlFlow::Break;
+            }
             // A folder view can be temporarily unmapped while GTK switches
             // presentation surfaces. Its scroll adjustment then has no
             // published extent, so waiting for the header to enter the
@@ -494,6 +508,17 @@ fn scroll_gallery_to_folder_when_ready(
                 );
                 glib::ControlFlow::Break
             } else {
+                if settled_for_timer.get() == 0 {
+                    // A failed first scroll generally means GTK has not yet
+                    // published usable section geometry/scroll bounds. Do not
+                    // keep the completed destination invisible while waiting
+                    // for those bounds; continue retrying the scroll below.
+                    gallery.reveal_folder_destination(presentation_generation);
+                    crate::nav_transition_trace!(
+                        "stage=folder_scroll_restore_early_reveal refresh_generation={generation} folder_id={folder_id} reason=target_not_ready attempts={}",
+                        total_for_timer.get(),
+                    );
+                }
                 let settled = settled_for_timer.get() + 1;
                 settled_for_timer.set(settled);
                 if settled == 1 {

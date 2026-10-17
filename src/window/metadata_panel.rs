@@ -1180,11 +1180,23 @@ impl MetadataPanel {
             check.set_tooltip_text(Some(&field.display(&row.value)));
             let weak = Rc::downgrade(self);
             let list_for_reorder = list.downgrade();
+            let search_for_selection = search.clone();
             check.connect_toggled(move |b| {
-                if let Some(list) = list_for_reorder.upgrade() {
-                    Self::move_selected_choices_first(&list);
-                }
                 if let Some(panel) = weak.upgrade() {
+                    // In the ALL explorer, selecting a searched value must
+                    // return to the complete facet list. Otherwise the next
+                    // refresh recreates only search-matching checkboxes and
+                    // makes additional selections appear impossible.
+                    if b.is_active() {
+                        if let Some(entry) = search_for_selection.as_ref() {
+                            if !entry.text().is_empty() {
+                                entry.set_text("");
+                            }
+                        }
+                    }
+                    if let Some(list) = list_for_reorder.upgrade() {
+                        Self::move_selected_choices_first(&list);
+                    }
                     panel
                         .state
                         .borrow_mut()

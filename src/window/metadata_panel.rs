@@ -74,11 +74,9 @@ impl MetadataPanel {
         clear.set_tooltip_text(Some("Clear all filters"));
         clear.update_property(&[gtk::accessible::Property::Label("Clear all filters")]);
         controls.append(&clear);
-        let explorer_button = gtk::MenuButton::new();
+        let explorer_button = gtk::ToggleButton::with_label("Metadata");
         explorer_button.add_css_class("metadata-filter-choice");
-        explorer_button.set_label("Metadata");
-        let explorer_popover = gtk::Popover::new();
-        explorer_button.set_popover(Some(&explorer_popover));
+        explorer_button.set_tooltip_text(Some("Show metadata explorer"));
         controls.append(&explorer_button);
         controls_scroll.set_child(Some(&controls));
         body.append(&controls_scroll);
@@ -109,7 +107,11 @@ impl MetadataPanel {
         explorer_scroll.set_max_content_height(260);
         let columns = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         explorer_scroll.set_child(Some(&columns));
-        explorer_popover.set_child(Some(&explorer_scroll));
+        let explorer_revealer = gtk::Revealer::new();
+        explorer_revealer.set_transition_type(gtk::RevealerTransitionType::SlideDown);
+        explorer_revealer.set_transition_duration(150);
+        explorer_revealer.set_child(Some(&explorer_scroll));
+        body.append(&explorer_revealer);
         let indexing = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         let index_button = gtk::Button::from_icon_name("view-refresh-symbolic");
         index_button.set_tooltip_text(Some("Index missing metadata"));
@@ -267,9 +269,12 @@ impl MetadataPanel {
             panel.explorer.borrow_mut().push((choose, list));
         }
         let weak = Rc::downgrade(&panel);
-        explorer_popover.connect_show(move |_| {
-            if let Some(panel) = weak.upgrade() {
-                panel.refresh_explorer();
+        explorer_button.connect_toggled(move |button| {
+            explorer_revealer.set_reveal_child(button.is_active());
+            if button.is_active() {
+                if let Some(panel) = weak.upgrade() {
+                    panel.refresh_explorer();
+                }
             }
         });
         let weak = Rc::downgrade(&panel);

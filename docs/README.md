@@ -1,6 +1,8 @@
 # PIC V1 — Documentation
 
-Welcome to the PIC user guides. Start with **[Getting started](guides/getting-started.md)**, then explore a topic below. Screenshots are being refreshed for the V1 interface; written workflows are available now.
+Welcome to the PIC user guides. Start with **[Getting started](guides/getting-started.md)**, then explore a topic below. The guides now use the supplied V1 screenshots.
+
+![PIC V1 — library index](../screenshots/screenshots-V1/library%20index.jpg)
 
 | Topic | Guide |
 | --- | --- |
@@ -13,11 +15,14 @@ Welcome to the PIC user guides. Start with **[Getting started](guides/getting-st
 | Appearance themes and theme authoring | [Themes](THEMES.md) |
 | Linux downloads, builds and troubleshooting | [Linux installation](build/linux.md) |
 | Creator/reviewer information and demo flow | [Creator & press kit](creator-kit.md) |
+| V1 release draft | [V1.0.0 draft](releases/v1.0.0.md) |
+| Metadata filtering | [Metadata filters](metadata-filters.md) |
 | Earlier release history | [RC5 notes](releases/rc5.md) |
 
 ## V1 documentation notes
 
-- UI images are intentionally held for the refreshed V1 screenshot set; older pictures should not be presented as current UI.
+- [V1 screenshot gallery and videos](../screenshots/README.md) · [Documentation checklist](v1-documentation-checklist.md).
+- Older captures are archived in `screenshots/rc` for release history.
 - Names and placement of controls can vary by theme and context.
 - Edit recipes, ratings, albums and other catalogue metadata are stored in PIC; originals remain in their existing locations for normal library operations.
 - Export creates a new file. Database backups **do not include the original photos**.

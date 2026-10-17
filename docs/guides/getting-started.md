@@ -1,6 +1,6 @@
 # Getting started with PIC
 
-> **PIC V1 guide.** Screenshots are being refreshed for the updated interface; the older images have been hidden until replacements are ready.
+> **PIC V1 guide.** Screenshots show the supplied V1 interface.
 
 [Main documentation](../../README.md) · [Navigation](navigation.md) · [Folders](folders.md) · [Library](library.md)
 
@@ -24,13 +24,13 @@ Native development and optional AppImage builds are also covered there. Windows 
 
 You can also import from **Browse Network Photos** using SMB or NFS. A disconnected drive or share can still have cached previews; the original must be reachable for full viewing, editing or export.
 
-<!-- V1 SCREENSHOT: add current UI capture for this section; older gallery image withheld. -->
+![PIC V1 — view-folders](../../screenshots/screenshots-V1/view-folders.jpg)
 
 ## Choose your layout
 
 Use the gallery layout controls to switch between **Grid**, **Photo Wall** and **Masonry**, which arranges photos in rows using their natural proportions. Change thumbnail size with the zoom slider or **Ctrl + mouse wheel**.
 
-<!-- V1 SCREENSHOT: add current UI capture for this section; older gallery image withheld. -->
+![PIC V1 — grid metadata view](../../screenshots/screenshots-V1/grid%20metadata%20view.jpg)
 
 In **Settings → Interface**, choose whether filenames are shown, how portrait thumbnails are presented, and whether Photo Wall uses optional **640 px high-quality thumbnails**. Those previews are generated as needed. [Library guide →](library.md)
 
@@ -48,7 +48,7 @@ Search matches photo and folder names. Select a folder suggestion and press Ente
 
 Select a photo and choose the pencil button or **Edit** from its context menu. Explore **Tools, Filters, Crop, Overlays and Text**. Changes are recipes saved in PIC, with Undo, Redo and Reset. Use **Export** to create an edited image file.
 
-<!-- V1 SCREENSHOT: add current UI capture for this section; older gallery image withheld. -->
+![PIC V1 — ratings](../../screenshots/screenshots-V1/ratings.jpg)
 
 [Edit Mode guide →](edit-mode.md) · [Crop Mode guide →](crop-mode.md)
 
@@ -56,7 +56,7 @@ Select a photo and choose the pencil button or **Edit** from its context menu. E
 
 Select several photos and choose the collage action. Choose **Mosaic**, **Smart AI** (Smart Mosaic) or **Grid**, then adjust orientation, aspect ratio, background, round corners and spacing. Use **Shuffle** to try a different arrangement and **Add** to include more photos. **Create Collage…** renders and exports the result as a JPEG. Saved projects can be resumed later.
 
-<!-- V1 SCREENSHOT: add current UI capture for this section; older gallery image withheld. -->
+![PIC V1 — edit mode - tools](../../screenshots/screenshots-V1/edit%20mode%20-%20tools.jpg)
 
 ## Keep your collection safe
 

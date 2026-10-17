@@ -1,6 +1,6 @@
 # PIC Guide 4 — Edit Mode: Quick Fixes, Sliders & Filters
 
-> **PIC V1 guide.** Screenshots are being refreshed for the updated interface; the older images have been hidden until replacements are ready.
+> **PIC V1 guide.** Screenshots show the supplied V1 interface.
 
 *Part of the [PIC user guides](../../README.md).*
 
@@ -20,9 +20,9 @@ You have three easy ways in:
 
 The photo area becomes the editor: controls on the left, your photo big on the right, and the photo's details still visible in the bottom bar.
 
-<!-- V1 SCREENSHOT: updated Edit Mode capture to be added. -->
+![PIC V1 — edit mode - tools](../../screenshots/screenshots-V1/edit%20mode%20-%20tools.jpg)
 
-[Download the Edit Mode demonstration (MP4, 20 seconds)](https://raw.githubusercontent.com/froggy744/PIC/main/screenshots/edit-mode.mp4).
+[Watch the V1 walkthrough (MP4)](../../screenshots/screenshots-V1/walkthrough-V1.mp4).
 
 At the top you'll find the **back arrow**, **Undo / Redo**, **Reset**, **Export** and **Done**. The shared zoom slider in the bottom bar controls editor magnification. Use the 1:1 control to inspect detail.
 
@@ -65,6 +65,8 @@ The Filters tab shows your photo as a grid of **live preview tiles** — every f
 
 Filter looks, Clarity, Grain, Auto Contrast and Auto Colour all use the same non-destructive recipe for editing and export. Auto Contrast protects against extreme percentile stretches; Auto Colour uses near-neutral areas rather than neutralising intentional sunsets or colourful subjects.
 
+![PIC V1 — edit mode - filters](../../screenshots/screenshots-V1/edit%20mode%20-%20filters.jpg)
+
 ### ✂️ Crop — trim and straighten
 
 Full details in the next guide: [Crop Mode →](crop-mode.md)
@@ -85,6 +87,8 @@ Overlays composite last — after crop, rotation and tone — so they sit cleanl
 
 Edits are still non-destructive: import, move, and opacity all live in the edit recipe.
 
+![PIC V1 — edit mode - add overlay](../../screenshots/screenshots-V1/edit%20mode%20-%20add%20overlay.jpg)
+
 ### 🔤 Text — captions, titles & callouts
 
 Click **Add Text** to drop an editable text layer on the photo, then type your words straight into the editor or **drag** the text around on the canvas; the corner handle resizes it (the font scales with it). The panel lists every text layer. Select one to adjust:
@@ -100,6 +104,8 @@ Click **Add Text** to drop an editable text layer on the photo, then type your w
 Text layers live in the same edit recipe as overlays: they composite above everything else, survive copy/paste of edits, export at full quality, and **Undo / Redo** treats a burst of typing as one step.
 
 ---
+
+![PIC V1 — edit mode - add text](../../screenshots/screenshots-V1/edit%20mode%20-%20add%20text.jpg)
 
 ## Undo, Redo, Reset — Experiment Freely
 
@@ -118,6 +124,10 @@ Right-click also offers **Paste Text & Overlays Only** — when the clipboard ho
 ## Export — Save Your Edited Photo
 
 Editing happens inside PIC's library, so to get the edited version out as a real image file, click **Export**. PIC renders a fresh, full-quality copy with all your edits applied — your original stays untouched as always.
+
+![PIC V1 — export photo](../../screenshots/screenshots-V1/export%20photo.jpg)
+
+![PIC V1 — print](../../screenshots/screenshots-V1/print.jpg)
 
 ## Done!
 

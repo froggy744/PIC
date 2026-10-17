@@ -1,6 +1,6 @@
 # Appearance Themes
 
-> **PIC V1 guide.** Screenshots are being refreshed for the updated interface; the older images have been hidden until replacements are ready.
+> **PIC V1 guide.** Screenshots show the supplied V1 interface.
 
 Themes are plain folders on disk — nothing is hardcoded in the app. The
 appearance picker (Settings → Themes, also reachable from the header-bar
@@ -133,4 +133,16 @@ for current asset paths, row geometry and refresh guidance.
 
 PIC V1 includes multiple distinctive appearance choices, from restrained desktop palettes to more expressive themes. Themes change the visual treatment of bars, surfaces, buttons, selected rows and editor controls; album-cover and bookshelf artwork can be configured separately. The [community theme template](theme-template/README.md) explains custom CSS and asset discovery.
 
-<!-- V1 SCREENSHOTS: insert newly captured themes here, after checking each screenshot matches current theme CSS. -->
+![PIC V1 — theme-PIC Default Official](../screenshots/screenshots-V1/theme-PIC%20Default%20Official.jpg)
+
+![PIC V1 — theme-PIC Dark-Official](../screenshots/screenshots-V1/theme-PIC%20Dark-Official.jpg)
+
+![PIC V1 — theme-standard-gtk4](../screenshots/screenshots-V1/theme-standard-gtk4.jpg)
+
+![PIC V1 — theme-snow leopard](../screenshots/screenshots-V1/theme-snow%20leopard.jpg)
+
+![PIC V1 — theme-nord](../screenshots/screenshots-V1/theme-nord.jpg)
+
+![PIC V1 — theme-terminal](../screenshots/screenshots-V1/theme-terminal.jpg)
+
+![PIC V1 — theme-lcars](../screenshots/screenshots-V1/theme-lcars.jpg)

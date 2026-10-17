@@ -1,5 +1,9 @@
 # Metadata filters
 
+![PIC V1 — filter metadata panel](../screenshots/screenshots-V1/filter%20metadata%20panel.jpg)
+
+![PIC V1 — grid metadata view](../screenshots/screenshots-V1/grid%20metadata%20view.jpg)
+
 ## Using filters
 
 The **Filters** button sits in a compact filter row below the app header, beside the category dropdowns. Its active marker indicates applied filters. The photo count and active-filter count sit at the right, beside **Clear all** and library **Refresh**. Closing the Explorer retains active filters; individual value/range chips remove one selection, and **Clear all** resets metadata and the existing rating filter.

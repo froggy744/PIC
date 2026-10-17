@@ -1,12 +1,12 @@
 # PIC Guide 1 — Navigation
 
-> **PIC V1 guide.** Screenshots are being refreshed for the updated interface; the older images have been hidden until replacements are ready.
+> **PIC V1 guide.** Screenshots show the supplied V1 interface.
 
 *Part of the [PIC user guides](../../README.md).*
 
 ## The window
 
-<!-- V1 SCREENSHOT: add current UI capture for this section; older gallery image withheld. -->
+![PIC V1 — grid metadata view](../../screenshots/screenshots-V1/grid%20metadata%20view.jpg)
 
 - **Sidebar:** Library destinations, Albums, Folders and Network Shares.
 - **Top bar:** search, sorting, grouping, rating filtering and application controls.
@@ -25,7 +25,7 @@ Use arrow keys to move through thumbnails and **Ctrl + click** for multiple sele
 
 The gallery layout controls switch between **Grid**, **Photo Wall** and **Masonry**, which fits photos into rows using their natural proportions. Use the zoom slider or **Ctrl + wheel** to resize thumbnails.
 
-<!-- V1 SCREENSHOT: add current UI capture for this section; older gallery image withheld. -->
+![PIC V1 — sort by](../../screenshots/screenshots-V1/sort%20by.jpg)
 
 The shared slider adapts to the viewer and editor when they are active. It is disabled in contexts such as collage editing where that zoom control does not apply.
 
@@ -40,7 +40,7 @@ The shared slider adapts to the viewer and editor when they are active. It is di
 
 A cached preview can appear first, followed by a higher-quality decode. Native image data is loaded when close inspection needs it. The window can show a viewer without being in full-screen mode.
 
-<!-- V1 SCREENSHOT: add current UI capture for this section; older gallery image withheld. -->
+![PIC V1 — 3 dots menu only](../../screenshots/screenshots-V1/3%20dots%20menu%20only.jpg)
 
 The number keys **1–5 assign ratings**, and **0 clears a rating**. Use Space or the 1:1 control for magnification. Shortcuts avoid text fields so typing does not rate or open photos.
 
@@ -54,7 +54,7 @@ Sorting includes date taken, name, file size, dimensions, date added and rating.
 
 Use the sidebar toggle to hide or reveal the sidebar. Hover behavior and other interface preferences are available in Settings.
 
-<!-- V1 SCREENSHOT: add current UI capture for this section; older gallery image withheld. -->
+![PIC V1 — sidebar hidden](../../screenshots/screenshots-V1/sidebar%20hidden.jpg)
 
 **Next:** [Folders →](folders.md)
 

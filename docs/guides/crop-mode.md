@@ -1,6 +1,6 @@
 # PIC Guide 5 — Crop Mode: Trim & Straighten
 
-> **PIC V1 guide.** Screenshots are being refreshed for the updated interface; the older images have been hidden until replacements are ready.
+> **PIC V1 guide.** Screenshots show the supplied V1 interface.
 
 *Part of the [PIC user guides](../../README.md).*
 
@@ -14,6 +14,8 @@ Crop Mode is PIC's little trimming workshop — a drag-anywhere crop box, a rule
 2. Switch to the **Crop** tab in the left panel. The crop workspace contains aspect ratios, orientation, straightening and Apply/Reset controls.
 
 Your photo appears with a bright **crop rectangle** over it, ready to shape.
+
+![PIC V1 — edit mode - crop](../../screenshots/screenshots-V1/edit%20mode%20-%20crop.jpg)
 
 ## Drag Your Crop
 

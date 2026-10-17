@@ -167,16 +167,9 @@ developer, release version, project links and screenshot URLs for software
 centers. Packaging updates the ID, desktop entry reference and version to
 match the selected build, including `PIC_APP_ID` overrides.
 
-To replace the screenshots, overwrite these files while retaining their names:
+The current documentation media lives in [`screenshots/screenshots-V1`](../../screenshots/README.md), including `grid metadata view.jpg`, `edit mode - tools.jpg` and the walkthrough MP4s. Older captures are archived under `screenshots/rc`.
 
-- `screenshots/all photos.jpg` — default library screenshot
-- `screenshots/effects screen.jpg` — editing tools
-- `screenshots/photo wall screen.jpg` — Photo Wall
-
-Commit and push the replacements to GitHub `main`. The metadata uses direct
-image URLs on that branch so the filenames can stay stable while the images
-change. Software centers may cache old images. For a published Flathub release,
-pin screenshot URLs to a release tag or commit as recommended by Flathub.
+AppStream screenshot URLs still reference the earlier asset paths. Updating those URLs in the packaging metadata is a separate packaging change; this V1 documentation refresh does not modify runtime resources. When updating packaging, select the V1 JPGs and pin published URLs to a release tag or commit. Software centers may cache old images.
 
 Rebuild the Flatpak to include the new app information:
 

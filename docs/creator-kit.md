@@ -40,21 +40,19 @@
 | Library database backups save metadata/edits | Database backup includes image originals |
 | Inspired by Picasa and iPhoto | Affiliated with Google or Apple |
 
-## V1 screenshot checklist
+## V1 screenshots and videos
 
-**Screenshots will be added after the UI is final.** Keep images current, unaltered as to product capabilities, and ideally 16:9 with personal information removed.
+Use the [V1 media gallery](../screenshots/README.md) for the complete JPG set.
 
-| Planned asset | Show |
-| --- | --- |
-| `screenshots/v1-hero.png` | Main library overview and sidebar |
-| `screenshots/v1-layouts.png` | Gallery view comparison |
-| `screenshots/v1-albums.png` | Albums/bookshelf and covers |
-| `screenshots/v1-edit.png` | Non-destructive Edit Mode |
-| `screenshots/v1-collage.png` | Collage workspace |
-| `screenshots/v1-themes.png` | Distinct theme looks |
-| `screenshots/v1-screensaver.png` | Screensaver presentation |
+![PIC V1 — grid metadata view](../screenshots/screenshots-V1/grid%20metadata%20view.jpg)
 
-Once supplied, insert them into the [main README](../README.md), the relevant [guides](README.md), and update AppStream screenshots as explained in [Linux packaging](build/linux.md). These names are **planned**, not existing image links.
+![PIC V1 — albums index](../screenshots/screenshots-V1/albums%20index.jpg)
+
+![PIC V1 — edit mode - tools](../screenshots/screenshots-V1/edit%20mode%20-%20tools.jpg)
+
+![PIC V1 — collage create](../screenshots/screenshots-V1/collage%20create.jpg)
+
+[Normal-speed walkthrough](../screenshots/screenshots-V1/walkthrough-V1.mp4) · [2× Reddit version](../screenshots/screenshots-V1/walkthrough-V1-reddit-2x.mp4). Both MP4s preserve the source 1920×1080 resolution and use H.264 video/AAC audio. The faster version is approximately 65 seconds.
 
 ## Credits and contact
 

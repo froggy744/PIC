@@ -8,8 +8,7 @@
 
 [**⬇ Download PIC V1**](https://github.com/froggy744/PIC/releases) · [Get started](docs/guides/getting-started.md) · [Explore the guides](docs/README.md) · [Report an issue](https://github.com/froggy744/PIC/issues)
 
-<!-- V1 SCREENSHOT: HERO — replace this comment with a current full-window gallery screenshot once ready.
-     Suggested: screenshots/v1-hero.png (use relative Markdown image path). -->
+![PIC V1 — grid metadata view](screenshots/screenshots-V1/grid%20metadata%20view.jpg)
 
 > **PIC V1 is here.** Built for anyone who misses browsing and enjoying their own photo collection without having to hand it to a cloud service.
 
@@ -23,9 +22,11 @@ Your photo collection deserves more than a folder full of filenames. PIC turns e
 | Fast cached previews and large-library browsing | Search, sort, group and filter photos | Crop, straighten, overlays and text |
 | Full photo viewer, zoom and screensaver | Local folders, SD cards, cameras, SMB/NFS shares | Collages, print and export |
 
-<!-- V1 SCREENSHOTS: THREE-UP SHOWCASE
-     Add current screenshots of (1) Photo Wall or Masonry, (2) Albums bookshelf/cover view,
-     (3) Edit Mode or collage. Use screenshots/ paths; do not reuse outdated UI captures. -->
+![PIC V1 — sidebar hidden](screenshots/screenshots-V1/sidebar%20hidden.jpg)
+
+![PIC V1 — albums index](screenshots/screenshots-V1/albums%20index.jpg)
+
+![PIC V1 — edit mode - tools](screenshots/screenshots-V1/edit%20mode%20-%20tools.jpg)
 
 ## Highlights
 
@@ -44,7 +45,9 @@ Adjust light and colour, apply filters, crop and straighten, add overlays or tex
 ### Make it yours
 Choose from appearance themes, customise the gallery, and explore album covers and bookshelf-style album presentation. PIC is built with **Rust + GTK4/libadwaita** for Linux.
 
-<!-- V1 SCREENSHOT: THEMES & ALBUMS — add current themes and bookshelf captures here. -->
+![PIC V1 — theme-nord](screenshots/screenshots-V1/theme-nord.jpg)
+
+[Watch the V1 walkthrough](screenshots/screenshots-V1/walkthrough-V1.mp4) · [2× version for Reddit](screenshots/screenshots-V1/walkthrough-V1-reddit-2x.mp4) · [All V1 screenshots](screenshots/README.md)
 
 ## Install PIC
 

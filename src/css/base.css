@@ -173,12 +173,71 @@ button.infobar-selected-thumb:hover {
 
 /* Content-surface colors, shared by every metadata filter panel theme. */
 .metadata-filter-panel {
-    background-color: @window_bg_color;
     color: @theme_fg_color;
-    border-bottom: 1px solid alpha(@theme_fg_color, 0.15);
+    background: transparent;
 }
 .metadata-filter-panel flowboxchild { padding: 0; }
 
-.metadata-filter-controls button {
-    padding: 4px 8px;
+.metadata-filter-toggle,
+.metadata-filter-controls button,
+.metadata-filter-summary button {
+    min-height: 28px;
+    padding: 0 8px;
+    border-radius: 8px;
+    border: 1px solid alpha(@theme_fg_color, 0.12);
+    background-color: alpha(@theme_fg_color, 0.045);
+    box-shadow: none;
+}
+.metadata-filter-toggle:hover,
+.metadata-filter-controls button:hover,
+.metadata-filter-summary button:hover {
+    background-color: alpha(@theme_fg_color, 0.09);
+}
+.metadata-filter-toggle:checked,
+.metadata-filter-choice:checked {
+    background-color: alpha(@accent_bg_color, 0.20);
+    border-color: alpha(@accent_bg_color, 0.38);
+}
+.metadata-filter-toggle.metadata-filter-active {
+    border-color: alpha(@accent_bg_color, 0.55);
+}
+.metadata-filter-toolbar { min-height: 34px; }
+.metadata-filter-controls { min-width: 0; }
+.metadata-filter-summary { margin-left: 6px; }
+.metadata-filter-active-count { color: @accent_color; }
+.metadata-filter-utility,
+.metadata-column-action {
+    min-width: 24px;
+    min-height: 24px;
+    padding: 2px;
+    border-radius: 6px;
+}
+.metadata-filter-controls .metadata-filter-utility { padding: 3px; }
+.metadata-explorer-column {
+    min-width: 0;
+    padding: 0 8px 0 2px;
+    border-right: 1px solid alpha(@theme_fg_color, 0.12);
+}
+.metadata-explorer-column:last-child { border-right: 0; }
+.metadata-explorer-column checkbutton {
+    min-height: 24px;
+    padding: 1px 2px;
+}
+.metadata-column-search { min-height: 30px; }
+.metadata-explorer scrolledwindow,
+.metadata-explorer viewport { background: transparent; }
+.metadata-explorer {
+    background-color: @window_bg_color;
+    color: @theme_fg_color;
+    border: 1px solid alpha(@theme_fg_color, 0.14);
+    border-radius: 11px;
+    margin: 2px 8px 8px;
+}
+.metadata-filter-toggle label,
+.metadata-filter-controls button label { font-weight: 500; }
+.metadata-filter-panel .metadata-filter-clear { color: @theme_fg_color; }
+.metadata-filter-panel .metadata-filter-clear:disabled { opacity: 0.55; }
+.metadata-explorer-column button.metadata-column-action {
+    border: 0;
+    background: transparent;
 }

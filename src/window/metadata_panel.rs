@@ -11,8 +11,7 @@ const EXPLORER_COLUMNS_SETTING: &str = "photo-metadata-explorer-columns";
 const EXPLORER_WIDTHS_SETTING: &str = "photo-metadata-explorer-widths";
 const DEFAULT_VISIBLE_FILTERS: &[Field] = &[
     Field::Camera,
-    Field::Lens,
-    Field::Iso,
+    Field::CameraMake,
     Field::CaptureDate,
     Field::FileType,
 ];
@@ -28,6 +27,20 @@ fn load_visible_filters(connection: &Connection) -> VisibleFilterSelection {
         .ok()
         .flatten()
         .and_then(|raw| serde_json::from_str::<VisibleFilterSelection>(&raw).ok())
+        .map(|mut selection| {
+            if selection.fields
+                == [
+                    Field::Camera,
+                    Field::Lens,
+                    Field::Iso,
+                    Field::CaptureDate,
+                    Field::FileType,
+                ]
+            {
+                selection.fields = DEFAULT_VISIBLE_FILTERS.to_vec();
+            }
+            selection
+        })
         .unwrap_or_else(|| VisibleFilterSelection {
             fields: DEFAULT_VISIBLE_FILTERS.to_vec(),
             rating: true,
@@ -40,19 +53,25 @@ fn load_explorer_fields(connection: &Connection) -> Vec<Field> {
         .flatten()
         .and_then(|raw| serde_json::from_str::<Vec<Field>>(&raw).ok())
         .map(|fields| {
-            fields
+            let fields = fields
                 .into_iter()
                 .filter(|field| Field::ALL.contains(field))
                 .take(8)
-                .collect()
+                .collect::<Vec<_>>();
+            if fields == [Field::Camera, Field::Lens, Field::Iso, Field::FileType] {
+                vec![Field::Camera, Field::Aperture, Field::Shutter]
+            } else {
+                fields
+            }
         })
         .filter(|fields: &Vec<Field>| !fields.is_empty())
-        .unwrap_or_else(|| vec![Field::Camera, Field::Lens, Field::Iso, Field::FileType])
+        .unwrap_or_else(|| vec![Field::Camera, Field::Aperture, Field::Shutter])
 }
 
 struct ExplorerColumn {
     root: gtk::Box,
     choose: gtk::DropDown,
+    search: gtk::SearchEntry,
     list: gtk::Box,
     width: Rc<Cell<i32>>,
     add: gtk::Button,
@@ -61,7 +80,8 @@ struct ExplorerColumn {
 
 pub(super) struct MetadataPanel {
     pub button: gtk::ToggleButton,
-    pub root: gtk::Revealer,
+    pub root: gtk::Box,
+    explorer_revealer: gtk::Revealer,
     connection: Rc<RefCell<Connection>>,
     scope: Rc<dyn Fn() -> Scope>,
     changed: Rc<dyn Fn()>,
@@ -69,13 +89,19 @@ pub(super) struct MetadataPanel {
     state: RefCell<Filters>,
     chips: gtk::FlowBox,
     indicator: gtk::Label,
+    photo_count: gtk::Label,
+    active_count: gtk::Label,
     status: gtk::Label,
+    indexing: gtk::Box,
     index_button: gtk::Button,
+    refresh_button: gtk::Button,
+    refresh_action: RefCell<Option<Rc<dyn Fn()>>>,
     cancel_button: gtk::Button,
     cancel: RefCell<Option<Arc<AtomicBool>>>,
     database: RefCell<Option<std::path::PathBuf>>,
     revision: Cell<u64>,
     request: Cell<u64>,
+    count_request: Cell<u64>,
     filter_selection: RefCell<VisibleFilterSelection>,
     filter_options: RefCell<Vec<(Option<Field>, gtk::CheckButton)>>,
     filter_buttons: RefCell<Vec<(Field, gtk::MenuButton)>>,
@@ -91,54 +117,41 @@ impl MetadataPanel {
     ) -> Rc<Self> {
         let button = gtk::ToggleButton::new();
         button.add_css_class("metadata-filter-toggle");
-        button.set_tooltip_text(Some("Filter photos by metadata"));
-        button.update_property(&[gtk::accessible::Property::Label("Filter")]);
+        button.set_tooltip_text(Some("Show or hide photo filters"));
+        button.update_property(&[gtk::accessible::Property::Label("Filters")]);
         let title = gtk::Box::new(gtk::Orientation::Horizontal, 4);
-        title.append(&gtk::Image::from_icon_name("metadata-filter-symbolic"));
+        title.append(&gtk::Image::from_icon_name("view-filter-symbolic"));
+        title.append(&gtk::Label::new(Some("Filters")));
         let indicator = gtk::Label::new(None);
         indicator.add_css_class("caption");
         title.append(&indicator);
         button.set_child(Some(&title));
-        let root = gtk::Revealer::new();
-        root.set_transition_type(gtk::RevealerTransitionType::SlideDown);
-        root.set_transition_duration(150);
+        let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
         root.add_css_class("metadata-filter-panel");
         let body = gtk::Box::new(gtk::Orientation::Vertical, 6);
-        for side in [0, 1] {
-            if side == 0 {
-                body.set_margin_start(12);
-            } else {
-                body.set_margin_end(12);
-            }
-        }
+        body.set_margin_start(10);
+        body.set_margin_end(10);
         body.set_margin_top(8);
         body.set_margin_bottom(8);
-        let scroll = gtk::ScrolledWindow::new();
-        scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
-        scroll.set_max_content_height(300);
-        scroll.set_propagate_natural_height(true);
-        scroll.set_child(Some(&body));
-        root.set_child(Some(&scroll));
+        root.append(&body);
+
+        let toolbar = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        toolbar.add_css_class("metadata-filter-toolbar");
+        toolbar.append(&button);
         let controls_scroll = gtk::ScrolledWindow::new();
         controls_scroll.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Never);
         controls_scroll.set_propagate_natural_width(false);
         controls_scroll.set_min_content_width(1);
         controls_scroll.set_max_content_height(42);
+        controls_scroll.set_hexpand(true);
         let controls = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         controls.add_css_class("metadata-filter-controls");
-        let clear = gtk::Button::from_icon_name("edit-clear-all-symbolic");
-        clear.add_css_class("metadata-filter-clear");
-        clear.set_tooltip_text(Some("Clear all filters"));
-        clear.update_property(&[gtk::accessible::Property::Label("Clear all filters")]);
-        controls.append(&clear);
-        let explorer_button = gtk::ToggleButton::with_label("Metadata");
-        explorer_button.add_css_class("metadata-filter-choice");
-        explorer_button.set_tooltip_text(Some("Show or hide metadata columns"));
-        controls.append(&explorer_button);
         let filters_button = gtk::MenuButton::new();
         filters_button.add_css_class("metadata-filter-choice");
-        filters_button.set_label("Filters");
-        filters_button.set_tooltip_text(Some("Choose which filter categories to show"));
+        filters_button.set_icon_name("list-add-symbolic");
+        filters_button
+            .update_property(&[gtk::accessible::Property::Label("Choose filter categories")]);
+        filters_button.set_tooltip_text(Some("Choose filter categories to show"));
         let filters_popover = gtk::Popover::new();
         let filters_list = gtk::Box::new(gtk::Orientation::Vertical, 2);
         filters_list.set_margin_start(10);
@@ -155,9 +168,33 @@ impl MetadataPanel {
         filters_scroll.set_child(Some(&filters_list));
         filters_popover.set_child(Some(&filters_scroll));
         filters_button.set_popover(Some(&filters_popover));
-        controls.append(&filters_button);
         controls_scroll.set_child(Some(&controls));
-        body.append(&controls_scroll);
+        toolbar.append(&controls_scroll);
+
+        let summary = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        summary.add_css_class("metadata-filter-summary");
+        let photo_count = gtk::Label::new(Some("— photos"));
+        photo_count.add_css_class("dim-label");
+        summary.append(&photo_count);
+        let active_count = gtk::Label::new(None);
+        active_count.add_css_class("metadata-filter-active-count");
+        summary.append(&active_count);
+        let clear = gtk::Button::from_icon_name("edit-clear-all-symbolic");
+        clear.add_css_class("metadata-filter-clear");
+        clear.set_tooltip_text(Some("Clear all filters"));
+        clear.update_property(&[gtk::accessible::Property::Label("Clear all filters")]);
+        summary.append(&clear);
+        let refresh_button = gtk::Button::from_icon_name("view-refresh-symbolic");
+        refresh_button.add_css_class("metadata-filter-utility");
+        refresh_button.set_tooltip_text(Some("Refresh library"));
+        refresh_button.update_property(&[gtk::accessible::Property::Label("Refresh library")]);
+        summary.append(&refresh_button);
+        let index_button = gtk::Button::from_icon_name("network-transmit-receive-symbolic");
+        index_button.add_css_class("metadata-filter-utility");
+        index_button.set_tooltip_text(Some("Index missing metadata"));
+        index_button.update_property(&[gtk::accessible::Property::Label("Index missing metadata")]);
+        toolbar.append(&summary);
+        body.append(&toolbar);
         let chips = gtk::FlowBox::new();
         chips.set_selection_mode(gtk::SelectionMode::None);
         chips.set_column_spacing(4);
@@ -168,24 +205,24 @@ impl MetadataPanel {
         let explorer_scroll = gtk::ScrolledWindow::new();
         explorer_scroll.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Never);
         explorer_scroll.set_propagate_natural_width(false);
-        explorer_scroll.set_min_content_width(360);
-        explorer_scroll.set_max_content_width(600);
-        explorer_scroll.set_min_content_height(160);
-        explorer_scroll.set_max_content_height(260);
+        explorer_scroll.set_min_content_width(1);
+        explorer_scroll.set_hexpand(true);
+        explorer_scroll.set_min_content_height(190);
+        explorer_scroll.set_max_content_height(220);
+        explorer_scroll.set_propagate_natural_height(true);
         let columns = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        columns.set_hexpand(true);
         explorer_scroll.set_child(Some(&columns));
-        let explorer_body = gtk::Box::new(gtk::Orientation::Vertical, 6);
-        explorer_body.append(&explorer_scroll);
+        explorer_scroll.add_css_class("metadata-explorer");
         let explorer_revealer = gtk::Revealer::new();
         explorer_revealer.set_transition_type(gtk::RevealerTransitionType::SlideDown);
         explorer_revealer.set_transition_duration(150);
-        explorer_revealer.add_css_class("metadata-explorer");
-        explorer_revealer.set_child(Some(&explorer_body));
+        explorer_revealer.set_reveal_child(false);
+        explorer_revealer.set_child(Some(&explorer_scroll));
+        explorer_revealer.set_child_visible(false);
         body.append(&explorer_revealer);
         let indexing = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-        let index_button = gtk::Button::from_icon_name("view-refresh-symbolic");
-        index_button.set_tooltip_text(Some("Index missing metadata"));
-        index_button.update_property(&[gtk::accessible::Property::Label("Index missing metadata")]);
+        indexing.set_visible(false);
         let cancel_button = gtk::Button::with_label("Cancel");
         cancel_button.set_visible(false);
         indexing.append(&cancel_button);
@@ -205,6 +242,7 @@ impl MetadataPanel {
         let panel = Rc::new(Self {
             button,
             root,
+            explorer_revealer,
             connection,
             scope,
             changed,
@@ -212,13 +250,19 @@ impl MetadataPanel {
             state: RefCell::new(state),
             chips,
             indicator,
+            photo_count,
+            active_count,
             status,
+            indexing,
             index_button,
+            refresh_button,
+            refresh_action: RefCell::new(None),
             cancel_button,
             cancel: RefCell::new(None),
             database: RefCell::new(database),
             revision: Cell::new(0),
             request: Cell::new(0),
+            count_request: Cell::new(0),
             filter_selection: RefCell::new(visible_filters),
             filter_options: RefCell::new(Vec::new()),
             filter_buttons: RefCell::new(Vec::new()),
@@ -228,7 +272,11 @@ impl MetadataPanel {
         for field in Field::ALL {
             let menu = gtk::MenuButton::new();
             menu.add_css_class("metadata-filter-choice");
-            menu.set_label(field.label());
+            menu.set_label(if field == Field::CameraMake {
+                "Manufacturer"
+            } else {
+                field.label()
+            });
             menu.set_visible(panel.filter_selection.borrow().fields.contains(&field));
             let popover = gtk::Popover::new();
             let content = gtk::Box::new(gtk::Orientation::Vertical, 6);
@@ -306,6 +354,8 @@ impl MetadataPanel {
         rating_popover.set_child(Some(&ratings));
         rating_button.set_popover(Some(&rating_popover));
         controls.append(&rating_button);
+        controls.append(&filters_button);
+        controls.append(&panel.index_button);
         let rating_option = gtk::CheckButton::with_label("Rating");
         let rating_visible = panel.filter_selection.borrow().rating;
         rating_button.set_visible(rating_visible);
@@ -323,7 +373,6 @@ impl MetadataPanel {
             .filter_options
             .borrow_mut()
             .push((None, rating_option));
-        controls.append(&panel.index_button);
         let weak = Rc::downgrade(&panel);
         filters_popover.connect_show(move |_| {
             if let Some(panel) = weak.upgrade() {
@@ -342,18 +391,10 @@ impl MetadataPanel {
             panel.add_explorer_column(field);
         }
         let weak = Rc::downgrade(&panel);
-        explorer_button.connect_toggled(move |button| {
-            explorer_revealer.set_reveal_child(button.is_active());
-            if button.is_active() {
-                if let Some(panel) = weak.upgrade() {
-                    panel.refresh_explorer();
-                }
-            }
-        });
-        let weak = Rc::downgrade(&panel);
         panel.button.connect_toggled(move |b| {
             if let Some(panel) = weak.upgrade() {
-                panel.root.set_reveal_child(b.is_active());
+                panel.explorer_revealer.set_child_visible(b.is_active());
+                panel.explorer_revealer.set_reveal_child(b.is_active());
                 if b.is_active() {
                     panel.sync();
                 }
@@ -371,6 +412,14 @@ impl MetadataPanel {
         panel.index_button.connect_clicked(move |_| {
             if let Some(panel) = weak.upgrade() {
                 panel.start_index();
+            }
+        });
+        let weak = Rc::downgrade(&panel);
+        panel.refresh_button.connect_clicked(move |_| {
+            if let Some(panel) = weak.upgrade() {
+                if let Some(refresh) = panel.refresh_action.borrow().as_ref() {
+                    refresh();
+                }
             }
         });
         let weak = Rc::downgrade(&panel);
@@ -430,6 +479,9 @@ impl MetadataPanel {
             cancel.store(true, AtomicOrdering::Relaxed);
         }
     }
+    pub fn set_refresh_action(&self, action: Rc<dyn Fn()>) {
+        self.refresh_action.replace(Some(action));
+    }
     fn sync_filter_visibility(&self) {
         let selection = self.filter_selection.borrow().clone();
         for (field, button) in self.filter_buttons.borrow().iter() {
@@ -482,6 +534,7 @@ impl MetadataPanel {
             return;
         }
         let root = gtk::Box::new(gtk::Orientation::Vertical, 4);
+        root.add_css_class("metadata-explorer-column");
         let header = gtk::Box::new(gtk::Orientation::Horizontal, 4);
         let width_index = self.explorer.borrow().len();
         let saved_widths = db::setting(&self.connection.borrow(), EXPLORER_WIDTHS_SETTING)
@@ -509,10 +562,12 @@ impl MetadataPanel {
         );
         header.append(&choose);
         let add = gtk::Button::from_icon_name("list-add-symbolic");
+        add.add_css_class("metadata-column-action");
         add.set_tooltip_text(Some("Add column"));
         add.update_property(&[gtk::accessible::Property::Label("Add column")]);
         header.append(&add);
         let remove = gtk::Button::from_icon_name("list-remove-symbolic");
+        remove.add_css_class("metadata-column-action");
         remove.set_tooltip_text(Some("Remove column"));
         remove.update_property(&[gtk::accessible::Property::Label("Remove column")]);
         header.append(&remove);
@@ -523,10 +578,15 @@ impl MetadataPanel {
         root.append(&header);
         root.set_hexpand(true);
         root.set_size_request(initial_width, -1);
+        let search = gtk::SearchEntry::new();
+        search.add_css_class("metadata-column-search");
+        search.set_placeholder_text(Some(&format!("Search {}…", field.label().to_lowercase())));
+        root.append(&search);
         let list = gtk::Box::new(gtk::Orientation::Vertical, 2);
         let scroll = gtk::ScrolledWindow::new();
-        scroll.set_min_content_height(130);
-        scroll.set_max_content_height(160);
+        scroll.set_min_content_height(120);
+        scroll.set_max_content_height(145);
+        scroll.set_propagate_natural_height(true);
         scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
         scroll.set_child(Some(&list));
         root.append(&scroll);
@@ -534,6 +594,7 @@ impl MetadataPanel {
         self.explorer.borrow_mut().push(ExplorerColumn {
             root: root.clone(),
             choose: choose.clone(),
+            search: search.clone(),
             list: list.clone(),
             width: width.clone(),
             add: add.clone(),
@@ -542,11 +603,22 @@ impl MetadataPanel {
 
         let weak = Rc::downgrade(self);
         let content = list.clone();
+        let search_for_choice = search.clone();
         choose.connect_selected_notify(move |choice| {
             if let Some(panel) = weak.upgrade() {
-                panel.populate_choices(Field::ALL[choice.selected() as usize], &content);
+                let field = Field::ALL[choice.selected() as usize];
+                panel.populate_column_choices(field, &search_for_choice, &content);
+                search_for_choice.set_text("");
+                search_for_choice.set_placeholder_text(Some(&format!(
+                    "Search {}…",
+                    field.label().to_lowercase()
+                )));
                 panel.save_explorer_columns();
             }
+        });
+        let content = list.clone();
+        search.connect_search_changed(move |entry| {
+            Self::filter_column_values(&content, &entry.text());
         });
         let weak = Rc::downgrade(self);
         add.connect_clicked(move |_| {
@@ -597,13 +669,33 @@ impl MetadataPanel {
             }
         });
         self.save_explorer_columns();
-        if self.root.reveals_child() {
-            self.populate_choices(field, &list);
+        if self.explorer_revealer.reveals_child() {
+            self.populate_column_choices(field, &search, &list);
+        }
+    }
+    fn filter_column_values(list: &gtk::Box, query: &str) {
+        let query = query.trim().to_lowercase();
+        let mut child = list.first_child();
+        while let Some(widget) = child {
+            child = widget.next_sibling();
+            if let Some(check) = widget.downcast_ref::<gtk::CheckButton>() {
+                let label = check.label().unwrap_or_default().to_lowercase();
+                check.set_visible(query.is_empty() || label.contains(&query));
+            } else if let Some(button) = widget.downcast_ref::<gtk::Button>() {
+                let label = button.label().unwrap_or_default().to_lowercase();
+                button.set_visible(
+                    query.is_empty() || label.starts_with("show more") || label.contains(&query),
+                );
+            }
         }
     }
     fn refresh_explorer(self: &Rc<Self>) {
         for column in self.explorer.borrow().iter() {
-            self.populate_choices(Field::ALL[column.choose.selected() as usize], &column.list);
+            self.populate_column_choices(
+                Field::ALL[column.choose.selected() as usize],
+                &column.search,
+                &column.list,
+            );
         }
     }
     fn apply(self: &Rc<Self>) {
@@ -627,6 +719,16 @@ impl MetadataPanel {
         let rating = (self.scope)().rating;
         let active = state.categories.len() + usize::from(!matches!(rating.as_str(), "" | "all"));
         self.indicator.set_text(if active == 0 { "" } else { "●" });
+        if active == 0 {
+            self.button.remove_css_class("metadata-filter-active");
+        } else {
+            self.button.add_css_class("metadata-filter-active");
+        }
+        if active == 0 {
+            self.active_count.set_text("");
+        } else {
+            self.active_count.set_text(&format!("{active} active"));
+        }
         self.button
             .set_tooltip_text(Some(&format!("Filter photos · {active} active categories")));
         for (field, selection) in state.categories {
@@ -685,9 +787,59 @@ impl MetadataPanel {
             self.chips.insert(&chip, -1);
         }
         self.chips.set_visible(active > 0);
-        if self.root.reveals_child() {
+        self.refresh_count();
+        if self.explorer_revealer.reveals_child() {
             self.refresh_explorer();
         }
+    }
+    fn refresh_count(self: &Rc<Self>) {
+        self.count_request
+            .set(self.count_request.get().wrapping_add(1));
+        let request = self.count_request.get();
+        let Some(path) = db::connection_path(&self.connection.borrow()).ok() else {
+            self.photo_count.set_text("— photos");
+            return;
+        };
+        let mut filters = self.state.borrow().clone();
+        let scope = (self.scope)();
+        filters.rating = scope.rating.clone();
+        let scope_for_query = scope.clone();
+        let expected_path = path.clone();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let result = db::open_existing(&path).and_then(|connection| {
+                db::filters::count_matching(&connection, &scope_for_query, &filters)
+            });
+            let _ = sender.send(result);
+        });
+        let weak = Rc::downgrade(self);
+        glib::timeout_add_local(Duration::from_millis(25), move || {
+            let Some(panel) = weak.upgrade() else {
+                return glib::ControlFlow::Break;
+            };
+            match receiver.try_recv() {
+                Ok(Ok(count)) => {
+                    if request == panel.count_request.get()
+                        && (panel.scope)() == scope
+                        && db::connection_path(&panel.connection.borrow())
+                            .ok()
+                            .as_ref()
+                            == Some(&expected_path)
+                    {
+                        panel.photo_count.set_text(&format!("{count} photos"));
+                    }
+                    glib::ControlFlow::Break
+                }
+                Ok(Err(_)) => {
+                    if request == panel.count_request.get() {
+                        panel.photo_count.set_text("— photos");
+                    }
+                    glib::ControlFlow::Break
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
+                Err(_) => glib::ControlFlow::Break,
+            }
+        });
     }
     fn populate_editor(self: &Rc<Self>, field: Field, content: &gtk::Box) {
         while let Some(child) = content.first_child() {
@@ -751,6 +903,22 @@ impl MetadataPanel {
         self.populate_choices(field, &list);
     }
     fn populate_choices(self: &Rc<Self>, field: Field, list: &gtk::Box) {
+        self.populate_choices_with_search(field, list, None);
+    }
+    fn populate_column_choices(
+        self: &Rc<Self>,
+        field: Field,
+        search: &gtk::SearchEntry,
+        list: &gtk::Box,
+    ) {
+        self.populate_choices_with_search(field, list, Some(search.clone()));
+    }
+    fn populate_choices_with_search(
+        self: &Rc<Self>,
+        field: Field,
+        list: &gtk::Box,
+        search: Option<gtk::SearchEntry>,
+    ) {
         while let Some(child) = list.first_child() {
             list.remove(&child);
         }
@@ -797,14 +965,14 @@ impl MetadataPanel {
                             .as_ref()
                             != Some(&expected_path)
                     {
-                        panel.populate_choices(field, &list);
+                        panel.populate_choices_with_search(field, &list, search.clone());
                         return glib::ControlFlow::Break;
                     }
                     while let Some(child) = list.first_child() {
                         list.remove(&child);
                     }
                     match result {
-                        Ok(rows) => panel.fill_choices(field, &list, rows),
+                        Ok(rows) => panel.fill_choices(field, &list, rows, search.as_ref()),
                         Err(e) => list.append(&gtk::Label::new(Some(&format!(
                             "Could not load metadata: {e}"
                         )))),
@@ -816,7 +984,13 @@ impl MetadataPanel {
             }
         });
     }
-    fn fill_choices(self: &Rc<Self>, field: Field, list: &gtk::Box, mut rows: Vec<Facet>) {
+    fn fill_choices(
+        self: &Rc<Self>,
+        field: Field,
+        list: &gtk::Box,
+        mut rows: Vec<Facet>,
+        search: Option<&gtk::SearchEntry>,
+    ) {
         let selected = self
             .state
             .borrow()
@@ -835,7 +1009,7 @@ impl MetadataPanel {
         if rows.is_empty() {
             list.append(&gtk::Label::new(Some("No values in this collection")));
         }
-        self.append_choice_page(field, list, rows, selected);
+        self.append_choice_page(field, list, rows, selected, search.cloned());
     }
     fn append_choice_page(
         self: &Rc<Self>,
@@ -843,7 +1017,15 @@ impl MetadataPanel {
         list: &gtk::Box,
         mut rows: Vec<Facet>,
         selected: Vec<String>,
+        search: Option<gtk::SearchEntry>,
     ) {
+        let query = search
+            .as_ref()
+            .map(|entry| entry.text().to_string().to_lowercase())
+            .unwrap_or_default();
+        if !query.is_empty() {
+            rows.retain(|row| field.display(&row.value).to_lowercase().contains(&query));
+        }
         let remaining = if rows.len() > 100 {
             rows.split_off(100)
         } else {
@@ -856,6 +1038,9 @@ impl MetadataPanel {
                 row.count
             ));
             check.set_active(selected.contains(&row.value));
+            check.set_visible(
+                query.is_empty() || field.display(&row.value).to_lowercase().contains(&query),
+            );
             // Long lens names must not force the application wider.
             if let Some(label) = check.child().and_then(|w| w.downcast::<gtk::Label>().ok()) {
                 label.set_ellipsize(gtk::pango::EllipsizeMode::End);
@@ -879,6 +1064,7 @@ impl MetadataPanel {
                 gtk::Button::with_label(&format!("Show more ({} remaining)", remaining.len()));
             let weak = Rc::downgrade(self);
             let list_weak = list.downgrade();
+            let search_weak = search.as_ref().map(gtk::SearchEntry::downgrade);
             let remaining = RefCell::new(Some(remaining));
             more.connect_clicked(move |button| {
                 if let (Some(panel), Some(list), Some(rows)) = (
@@ -894,7 +1080,8 @@ impl MetadataPanel {
                         .get(&field)
                         .map(|s| s.values.clone())
                         .unwrap_or_default();
-                    panel.append_choice_page(field, &list, rows, selected);
+                    let search = search_weak.as_ref().and_then(|entry| entry.upgrade());
+                    panel.append_choice_page(field, &list, rows, selected, search);
                 }
             });
             list.append(&more);
@@ -912,6 +1099,7 @@ impl MetadataPanel {
         self.index_button.set_sensitive(false);
         self.cancel_button.set_visible(true);
         self.status.set_visible(true);
+        self.indexing.set_visible(true);
         let weak = Rc::downgrade(self);
         glib::timeout_add_local(Duration::from_millis(150), move || {
             let Some(panel) = weak.upgrade() else {
@@ -974,6 +1162,20 @@ mod tests {
             std::thread::sleep(Duration::from_millis(5));
         }
     }
+    fn save_snapshot(window: &gtk::Window, path: &std::path::Path) {
+        let snapshot = gtk::Snapshot::new();
+        gtk::WidgetPaintable::new(Some(window)).snapshot(
+            &snapshot,
+            f64::from(window.width()),
+            f64::from(window.height()),
+        );
+        window
+            .renderer()
+            .unwrap()
+            .render_texture(snapshot.to_node().unwrap(), None)
+            .save_to_png(path)
+            .unwrap();
+    }
     fn descendants(widget: &gtk::Widget) -> Vec<gtk::Widget> {
         let mut result = vec![widget.clone()];
         let mut child = widget.first_child();
@@ -1001,6 +1203,7 @@ mod tests {
             Rc::new(move || calls.set(calls.get() + 1)),
             Rc::new(|_| {}),
         );
+        assert_eq!(panel.explorer.borrow().len(), 3);
         let window = gtk::Window::builder()
             .default_width(900)
             .default_height(550)
@@ -1011,7 +1214,6 @@ mod tests {
         let sort = gtk::MenuButton::new();
         sort.set_label("Sort");
         tools.append(&sort);
-        tools.append(&panel.button);
         header.pack_end(&tools);
         body.append(&header);
         body.append(&panel.root);
@@ -1021,10 +1223,10 @@ mod tests {
         window.set_child(Some(&body));
         window.present();
         settle();
-        assert_eq!(sort.next_sibling(), Some(panel.button.clone().upcast()));
+        assert!(panel.button.parent().is_some());
         panel.button.set_active(true);
         settle();
-        assert!(panel.root.reveals_child());
+        assert!(panel.explorer_revealer.reveals_child());
         panel
             .state
             .borrow_mut()
@@ -1033,7 +1235,7 @@ mod tests {
         assert_eq!(changes.get(), 1);
         panel.button.set_active(false);
         settle();
-        assert!(!panel.root.reveals_child());
+        assert!(!panel.explorer_revealer.reveals_child());
         assert!(!Filters::load(&c.borrow()).is_empty());
         panel.button.set_active(true);
         settle();
@@ -1061,23 +1263,12 @@ mod tests {
                 panel.root.height() < 400,
                 "Filter panel consumes photo viewport"
             );
-        }
-        if let Some(path) =
-            std::env::var_os("PIC_METADATA_SCREENSHOTS").map(std::path::PathBuf::from)
-        {
-            std::fs::create_dir_all(&path).unwrap();
-            let snapshot = gtk::Snapshot::new();
-            gtk::WidgetPaintable::new(Some(&window)).snapshot(
-                &snapshot,
-                f64::from(window.width()),
-                f64::from(window.height()),
-            );
-            window
-                .renderer()
-                .unwrap()
-                .render_texture(snapshot.to_node().unwrap(), None)
-                .save_to_png(path.join("standard-gtk4.png"))
-                .unwrap();
+            if let Some(path) =
+                std::env::var_os("PIC_METADATA_SCREENSHOTS").map(std::path::PathBuf::from)
+            {
+                std::fs::create_dir_all(&path).unwrap();
+                save_snapshot(&window, &path.join(format!("standard-gtk4-{width}.png")));
+            }
         }
         window.close();
     }
@@ -1180,17 +1371,7 @@ mod app_tests {
             .unwrap()
             .downcast::<gtk::ToggleButton>()
             .unwrap();
-        assert_eq!(
-            filter.prev_sibling().unwrap().tooltip_text().as_deref(),
-            Some("Sort photos")
-        );
         filter.set_active(true);
-        let metadata = walk(&root)
-            .into_iter()
-            .filter_map(|w| w.downcast::<gtk::ToggleButton>().ok())
-            .find(|b| b.label().as_deref() == Some("Metadata"))
-            .unwrap();
-        metadata.set_active(true);
         let explorer = walk(&root)
             .into_iter()
             .find(|w| w.has_css_class("metadata-explorer"))

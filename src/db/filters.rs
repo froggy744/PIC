@@ -344,6 +344,50 @@ pub fn facets(
     Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
 }
 
+/// Count photos matching the same browsing scope and filter predicate used by the grid.
+pub fn count_matching(c: &Connection, scope: &Scope, filters: &Filters) -> Result<i64> {
+    let (predicate, mut args) = filters.predicate(5);
+    let search = if scope.search.is_empty() {
+        Value::Null
+    } else {
+        Value::Text(format!(
+            "%{}%",
+            scope
+                .search
+                .replace('\\', "\\\\")
+                .replace('%', "\\%")
+                .replace('_', "\\_")
+        ))
+    };
+    let mut params = vec![
+        scope.folder.map(Value::Integer).unwrap_or(Value::Null),
+        scope.album.map(Value::Integer).unwrap_or(Value::Null),
+        Value::Integer(i64::from(scope.favorites)),
+        search,
+    ];
+    params.append(&mut args);
+    Ok(c.query_row(
+        &format!(
+            "SELECT COUNT(*) FROM photos p
+             WHERE p.trashed=0
+               AND (?1 IS NULL OR p.folder_id IN (
+                   WITH RECURSIVE descendants(id) AS (
+                       SELECT id FROM folders WHERE id=?1
+                       UNION ALL SELECT f.id FROM folders f JOIN descendants d ON f.parent_id=d.id
+                   ) SELECT id FROM descendants
+               ))
+               AND (?2 IS NULL OR p.id IN (
+                   SELECT photo_id FROM album_photos WHERE album_id=?2
+               ))
+               AND (?3=0 OR p.favorite=1)
+               AND (?4 IS NULL OR p.path LIKE ?4 ESCAPE '\\')
+               AND ({predicate})"
+        ),
+        rusqlite::params_from_iter(params),
+        |row| row.get(0),
+    )?)
+}
+
 // Same persisted legacy rating choices; Corrupt retains its existing JPEG inspection path.
 pub fn rating_predicate(key: &str, alias: &str) -> String {
     match key {
@@ -417,6 +461,29 @@ mod tests {
             .collect::<Vec<_>>();
         ids.sort();
         ids
+    }
+    #[test]
+    fn count_matches_grid_filters_and_scope() {
+        let c = catalog();
+        let mut filters = Filters::default();
+        filters.toggle(Field::Iso, "100".into(), true);
+        let scope = Scope::default();
+        assert_eq!(count_matching(&c, &scope, &filters).unwrap(), 2);
+
+        let folder_scope = Scope {
+            folder: Some(1),
+            ..Scope::default()
+        };
+        assert_eq!(count_matching(&c, &folder_scope, &filters).unwrap(), 1);
+
+        let album_scope = Scope {
+            album: Some(1),
+            ..Scope::default()
+        };
+        assert_eq!(count_matching(&c, &album_scope, &filters).unwrap(), 2);
+
+        filters.rating = "3".into();
+        assert_eq!(count_matching(&c, &album_scope, &filters).unwrap(), 1);
     }
     #[test]
     fn metadata_single_combined_or_clear_and_empty() {

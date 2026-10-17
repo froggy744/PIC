@@ -4758,6 +4758,10 @@ fn start_photo_export_single(
         });
     }
     let (refresh, metadata_panel) = include!("toolbar.rs");
+    {
+        let refresh = refresh.clone();
+        metadata_panel.set_refresh_action(Rc::new(move || refresh.emit_clicked()));
+    }
 
     right_column.append(&right_header);
     right_column.append(&metadata_panel.root);

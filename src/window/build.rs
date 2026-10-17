@@ -3197,7 +3197,11 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     });
 
     content.append(&gallery_overlay);
-    content.append(&info.root);
+    // Keep the infobar's gallery allocation while drawing it above the
+    // fullscreen lightbox overlay below.
+    let infobar_space = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    infobar_space.set_height_request(58);
+    content.append(&infobar_space);
 
     // One snapshot after the native split animation settles; unlike the
     // previous overlay the gallery must occupy only the remaining width.
@@ -4780,6 +4784,16 @@ fn start_photo_export_single(
             panel_for_close.set_lightbox_open(false);
         });
     }
+    {
+        let page = main_stack.visible_child_name();
+        metadata_panel.set_workspace_visible(!matches!(page.as_deref(), Some("edit" | "collage")));
+        let panel_for_workspace = metadata_panel.clone();
+        main_stack.connect_visible_child_notify(move |stack| {
+            let page = stack.visible_child_name();
+            panel_for_workspace
+                .set_workspace_visible(!matches!(page.as_deref(), Some("edit" | "collage")));
+        });
+    }
 
     // The viewer must include the metadata panel's former space. Parent it
     // above the combined panel and gallery surface, so hiding the panel frees
@@ -4795,6 +4809,9 @@ fn start_photo_export_single(
     gallery_stack.append(&content);
     gallery_surface.set_child(Some(&gallery_stack));
     gallery_surface.add_overlay(&lightbox.root);
+    info.root.set_hexpand(true);
+    info.root.set_valign(gtk::Align::End);
+    gallery_surface.add_overlay(&info.root);
 
     right_column.append(&right_header);
     right_column.append(&gallery_surface);

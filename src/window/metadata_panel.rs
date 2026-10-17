@@ -86,6 +86,7 @@ pub(super) struct MetadataPanel {
     camera_control: gtk::Box,
     individual_controls: gtk::ScrolledWindow,
     lightbox_open: Cell<bool>,
+    workspace_visible: Cell<bool>,
     connection: Rc<RefCell<Connection>>,
     scope: Rc<dyn Fn() -> Scope>,
     changed: Rc<dyn Fn()>,
@@ -292,6 +293,7 @@ impl MetadataPanel {
             // Clear all never jump left next to ALL.
             individual_controls: controls_scroll,
             lightbox_open: Cell::new(false),
+            workspace_visible: Cell::new(true),
             connection,
             scope,
             changed,
@@ -556,8 +558,14 @@ impl MetadataPanel {
         self.lightbox_open.set(open);
         self.sync_view();
     }
+    pub fn set_workspace_visible(&self, visible: bool) {
+        self.workspace_visible.set(visible);
+        self.sync_view();
+    }
     fn sync_view(&self) {
-        let show_panel = self.button.is_active() && !self.lightbox_open.get();
+        self.button.set_visible(self.workspace_visible.get());
+        let show_panel =
+            self.workspace_visible.get() && self.button.is_active() && !self.lightbox_open.get();
         self.root.set_visible(show_panel);
         let show_all = self.all_button.is_active();
         self.camera_control.set_visible(!show_all);

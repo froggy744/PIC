@@ -1079,7 +1079,6 @@ build_appimage() {
     log "Creating AppDir with linuxdeploy"
     linuxdeploy_args=(
         --appdir "$appdir"
-        --exclude-library 'libselinux.so*'
         --executable "$NATIVE_BIN"
         --desktop-file "$desktop"
         --icon-file "$staging_icon"
@@ -1102,7 +1101,6 @@ build_appimage() {
         chmod +x "$deployed_pixbuf_query"
         APPIMAGE_EXTRACT_AND_RUN=1 "$linuxdeploy" \
             --appdir "$appdir" \
-            --exclude-library 'libselinux.so*' \
             --deploy-deps-only "$deployed_pixbuf_query"
         [[ -x "$deployed_pixbuf_query" ]] || \
             die "GdkPixbuf loader-cache helper was not staged correctly."
@@ -1196,14 +1194,14 @@ build_appimage() {
         "$appdir/$APP_ID.$ICON_EXT" \
         "$appdir/usr/share/icons/hicolor/$([[ "$ICON_EXT" == svg ]] && printf scalable || printf 256x256)/apps/$APP_ID.$ICON_EXT"
 
-    # libselinux is part of the host OS ABI and must not be carried from the
-    # build distribution into the AppImage. Do this only after every linuxdeploy
-    # dependency pass: the SVG cache-helper deployment can otherwise add it back.
-    find "$appdir/usr/lib" -maxdepth 1 \( -type f -o -type l \) -name 'libselinux.so*' -delete 2>/dev/null || true
-    if find "$appdir/usr/lib" -maxdepth 1 \( -type f -o -type l \) -name 'libselinux.so*' -print -quit | grep -q .; then
-        die "AppImage staging still contains host libselinux"
+    # Bundle libselinux with the other non-glibc dependencies. GTK, Samba and
+    # other deployed libraries may link it, and minimal hosts such as CachyOS
+    # do not necessarily install it as a system package.
+    if ldd "$real_bin" | grep -q 'libselinux.so.1'; then
+        find "$appdir/usr/lib" -maxdepth 1 \( -type f -o -type l \) -name 'libselinux.so.1' -print -quit | grep -q . || \
+            die "AppImage is missing libselinux.so.1 required by its runtime"
+        ok "Bundled libselinux runtime"
     fi
-    ok "Excluded host libselinux from final AppImage runtime"
 
     log "Writing AppImage: $DIST_DIR/$output_name"
     (
@@ -1212,7 +1210,7 @@ build_appimage() {
         LDAI_OUTPUT="$output_name" \
         LDAI_NO_APPSTREAM=1 \
         APPIMAGE_EXTRACT_AND_RUN=1 \
-            "$linuxdeploy" --appdir "$appdir" --exclude-library 'libselinux.so*' --output appimage
+            "$linuxdeploy" --appdir "$appdir" --output appimage
     )
     [[ -s "$DIST_DIR/$output_name" ]] || return 1
     chmod +x "$DIST_DIR/$output_name"

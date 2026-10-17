@@ -10,6 +10,9 @@ pub fn start() {
 }
 
 pub fn mark(stage: &str, since: Option<Instant>) {
+    if std::env::var_os("PIC_STARTUP_TRACE").is_none() {
+        return;
+    }
     let elapsed = elapsed_ms();
     let duration = since.map(|start| start.elapsed().as_millis()).unwrap_or(0);
     eprintln!("PIC_STARTUP stage={stage} elapsed_ms={elapsed} duration_ms={duration}");

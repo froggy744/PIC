@@ -151,15 +151,17 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     }
     let startup_photos = Rc::new(photos);
     crate::startup_trace::mark("database_photos_sorted", Some(build_started));
-    eprintln!(
-        "PIC_STARTUP stage=library_counts elapsed_ms={} duration_ms=0 photos={} displayed={} folders={} albums={} scan=disabled rss_mb={}",
-        crate::startup_trace::elapsed_ms(),
-        sidebar_counts.photos,
-        startup_photos.len(),
-        folders.len(),
-        albums.len(),
-        crate::diagnostics::rss_mb()
-    );
+    if std::env::var_os("PIC_STARTUP_TRACE").is_some() {
+        eprintln!(
+            "PIC_STARTUP stage=library_counts elapsed_ms={} duration_ms=0 photos={} displayed={} folders={} albums={} scan=disabled rss_mb={}",
+            crate::startup_trace::elapsed_ms(),
+            sidebar_counts.photos,
+            startup_photos.len(),
+            folders.len(),
+            albums.len(),
+            crate::diagnostics::rss_mb()
+        );
+    }
 
     let info = Rc::new(InfoBar::new());
     info.set_photo(None);

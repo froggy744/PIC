@@ -84,7 +84,7 @@ pub(super) struct MetadataPanel {
     explorer_revealer: gtk::Revealer,
     all_button: gtk::ToggleButton,
     camera_control: gtk::Box,
-    individual_controls: gtk::ScrolledWindow,
+    individual_controls: gtk::Box,
     lightbox_open: Cell<bool>,
     connection: Rc<RefCell<Connection>>,
     scope: Rc<dyn Fn() -> Scope>,
@@ -153,11 +153,10 @@ impl MetadataPanel {
 
         let toolbar = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         toolbar.add_css_class("metadata-filter-toolbar");
-        // Camera + ALL always sit together when the individual filters are open.
-        // ALL stays visible when it switches the bar to the full explorer.
+        // ALL is always the first button, followed by Camera when individual
+        // filters are visible. The summary remains anchored at the right.
         let camera_control = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         camera_control.add_css_class("metadata-filter-controls");
-        toolbar.append(&camera_control);
         let all_button = gtk::ToggleButton::with_label("ALL");
         all_button.add_css_class("metadata-filter-all");
         all_button.set_tooltip_text(Some("Show all metadata columns"));
@@ -165,6 +164,7 @@ impl MetadataPanel {
             "Switch between individual filters and all metadata columns",
         )]);
         toolbar.append(&all_button);
+        toolbar.append(&camera_control);
         let controls_scroll = gtk::ScrolledWindow::new();
         controls_scroll.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Never);
         controls_scroll.set_propagate_natural_width(false);
@@ -273,7 +273,10 @@ impl MetadataPanel {
             explorer_revealer,
             all_button: all_button.clone(),
             camera_control,
-            individual_controls: controls_scroll,
+            // Hide only the buttons when ALL is active, not their expanding
+            // scroll host. That host reserves flexible width so counts and
+            // Clear all never jump left next to ALL.
+            individual_controls: controls,
             lightbox_open: Cell::new(false),
             connection,
             scope,

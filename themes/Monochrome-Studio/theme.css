@@ -57,8 +57,12 @@
 @define-color accent_fg_color @pic_button_text;
 @define-color accent_color @pic_button_color;
 @define-color window_bg_color @pic_background_color;
+@define-color window_fg_color @pic_text_color;
 @define-color view_bg_color @pic_background_surface;
+@define-color view_fg_color @pic_text_color;
+@define-color card_fg_color @pic_text_color;
 @define-color headerbar_bg_color @pic_bar_color;
+@define-color headerbar_fg_color @pic_bar_text;
 @define-color theme_fg_color @pic_text_color;
 
 window { background: @pic_background_color; color: @pic_text_color; }
@@ -482,7 +486,7 @@ button.suggested-action:focus-visible, button.crop-apply-button:focus-visible,
 
 /* Destructive actions use an outlined light treatment. */
 button.destructive-action {
-    color: @pic_button_text;
+    color: @pic_text_color;
     background-color: @pic_danger_bottom;
     background-image: none;
     border: none;
@@ -700,9 +704,11 @@ popover modelbutton:hover, popover row:hover, popover row:selected {
     background-image: none;
     color: @pic_bar_text;
 }
-.settings-window headerbar label { color: @pic_bar_text; }
+.settings-window headerbar label,
+.screensaver-settings-window headerbar label { color: @pic_bar_text; }
 .settings-window .heading, .settings-window .title-1, .settings-window .title-2,
 .settings-window .title-3, .settings-window .title-4 { color: @pic_text_color; }
+.settings-window .boxed-list row label:not(.dim-label) { color: @pic_text_color; }
 .settings-window .dim-label { color: @pic_text_muted; opacity: 1; }
 .scroll-scrub-date {
     padding: 7px 12px;
@@ -801,7 +807,6 @@ button.suggested-action:hover, button.crop-apply-button:hover,
 .collage-footer button.collage-create-button:hover,
 .collage-footer > button:last-child:hover { background-color: @pic_button_primary_hover; }
 button.destructive-action {
-    color: @pic_text_color;
     border: 2px solid @pic_button_color;
 }
 button.destructive-action:hover { background-color: @pic_background_hover; }

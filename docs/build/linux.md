@@ -205,3 +205,7 @@ Older AppImage builds may have left a local `io.github.froggy744.PIC.desktop`
 entry pointing to a removed file. If that happens, back up that specific
 AppImage entry outside `~/.local/share/applications/`; keep Flatpak's exported
 desktop entry. New builds use the separate AppImage desktop filename.
+
+## OS testing screenshots
+
+The [OS testing gallery](../../screenshots/testingOS/README.md) contains supplied captures from Ubuntu (light and dark), Kubuntu, Fedora and the system labelled CashyOS. Refer to the gallery for the captured appearance on each system.

@@ -53,6 +53,8 @@ Choose from appearance themes, customise the gallery, and explore album covers a
 
 **Linux:** Download the latest **Flatpak** or **AppImage** from [GitHub Releases](https://github.com/froggy744/PIC/releases). Flatpak is the recommended cross-distribution option; AppImage compatibility depends on the host. Follow the [Linux installation guide](docs/build/linux.md) for requirements and troubleshooting.
 
+See the [OS testing screenshots](screenshots/testingOS/README.md) for supplied captures on Ubuntu (light and dark), Kubuntu, Fedora and the system labelled CashyOS.
+
 **Windows:** Experimental, not a supported V1 download target.
 
 PIC is local-first. The app does not require a cloud account; network-share browsing and downloading packages naturally require a network connection.

@@ -14,6 +14,7 @@ Welcome to the PIC user guides. Start with **[Getting started](guides/getting-st
 | Crop and straightening | [Crop Mode](guides/crop-mode.md) |
 | Appearance themes and theme authoring | [Themes](THEMES.md) |
 | Linux downloads, builds and troubleshooting | [Linux installation](build/linux.md) |
+| Screenshots from Linux OS testing | [OS testing gallery](../screenshots/testingOS/README.md) |
 | Creator/reviewer information and demo flow | [Creator & press kit](creator-kit.md) |
 | V1 release draft | [V1.0.0 draft](releases/v1.0.0.md) |
 | Metadata filtering | [Metadata filters](metadata-filters.md) |

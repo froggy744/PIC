@@ -1,6 +1,6 @@
 # PIC V1 media
 
-Current documentation uses only the JPG captures in `screenshots-V1/`. Original screenshot dimensions are preserved; PNG captures were converted to JPEG at quality 92. Earlier screenshots and the older editor video are archived in `rc/` for historical release notes.
+Current documentation uses the JPG captures in `screenshots-V1/` and the [OS testing gallery](testingOS/README.md). Original screenshot dimensions are preserved; PNG captures were converted to JPEG at quality 92. Earlier screenshots and the older editor video are archived in `rc/` for historical release notes.
 
 ## Walkthrough
 

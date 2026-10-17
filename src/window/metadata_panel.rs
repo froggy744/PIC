@@ -62,13 +62,19 @@ impl MetadataPanel {
         scroll.set_propagate_natural_height(true);
         scroll.set_child(Some(&body));
         root.set_child(Some(&scroll));
-        let controls = gtk::FlowBox::new();
-        controls.set_selection_mode(gtk::SelectionMode::None);
-        controls.set_column_spacing(6);
-        controls.set_row_spacing(4);
-        controls.set_max_children_per_line(12);
-        controls.set_min_children_per_line(1);
-        body.append(&controls);
+        let controls_scroll = gtk::ScrolledWindow::new();
+        controls_scroll.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Never);
+        controls_scroll.set_propagate_natural_width(false);
+        controls_scroll.set_min_content_width(1);
+        controls_scroll.set_max_content_height(42);
+        let controls = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        controls.add_css_class("metadata-filter-controls");
+        let clear = gtk::Button::with_label("Clear All");
+        clear.add_css_class("metadata-filter-clear");
+        clear.set_tooltip_text(Some("Clear metadata and rating filters"));
+        controls.append(&clear);
+        controls_scroll.set_child(Some(&controls));
+        body.append(&controls_scroll);
         let chips = gtk::FlowBox::new();
         chips.set_selection_mode(gtk::SelectionMode::None);
         chips.set_column_spacing(4);
@@ -77,9 +83,6 @@ impl MetadataPanel {
         chips.set_min_children_per_line(1);
         body.append(&chips);
         let lower = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-        let clear = gtk::Button::with_label("Clear All");
-        clear.set_tooltip_text(Some("Clear metadata and rating filters"));
-        lower.append(&clear);
         let hint = gtk::Label::new(Some(
             "Match all categories · any selected value within each category",
         ));
@@ -145,6 +148,7 @@ impl MetadataPanel {
             Field::FileType,
         ] {
             let menu = gtk::MenuButton::new();
+            menu.add_css_class("metadata-filter-choice");
             menu.set_label(field.label());
             let popover = gtk::Popover::new();
             let content = gtk::Box::new(gtk::Orientation::Vertical, 6);
@@ -160,9 +164,10 @@ impl MetadataPanel {
                     panel.populate_editor(field, &content);
                 }
             });
-            controls.insert(&menu, -1);
+            controls.append(&menu);
         }
         let extra = gtk::MenuButton::new();
+        extra.add_css_class("metadata-filter-choice");
         extra.set_label("More");
         let popover = gtk::Popover::new();
         let extra_box = gtk::Box::new(gtk::Orientation::Vertical, 6);
@@ -174,7 +179,7 @@ impl MetadataPanel {
         extra_box.append(&editor);
         popover.set_child(Some(&extra_box));
         extra.set_popover(Some(&popover));
-        controls.insert(&extra, -1);
+        controls.append(&extra);
         let weak = Rc::downgrade(&panel);
         let content = editor.clone();
         choose.connect_selected_notify(move |choice| {
@@ -192,6 +197,7 @@ impl MetadataPanel {
         });
         // Route to the existing rating state and controls, not a second rating model.
         let rating_button = gtk::MenuButton::new();
+        rating_button.add_css_class("metadata-filter-choice");
         rating_button.set_label("Rating");
         let rating_popover = gtk::Popover::new();
         let ratings = gtk::Box::new(gtk::Orientation::Vertical, 2);
@@ -223,7 +229,7 @@ impl MetadataPanel {
         }
         rating_popover.set_child(Some(&ratings));
         rating_button.set_popover(Some(&rating_popover));
-        controls.insert(&rating_button, -1);
+        controls.append(&rating_button);
         for field in [Field::Camera, Field::Lens, Field::Iso, Field::FileType] {
             let column = gtk::Box::new(gtk::Orientation::Vertical, 4);
             column.set_hexpand(true);

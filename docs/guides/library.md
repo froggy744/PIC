@@ -93,3 +93,5 @@ Existing JPEG thumbnails from before this fix are regenerated through normal laz
 The Albums page supports album-cover presentation and a bookshelf-style layout. Cover and bookshelf artwork is configured separately from the app's appearance theme. Use the albums page's available presentation controls to change the look; photo membership remains virtual and original folders are untouched.
 
 **Three gallery layouts:** Grid, Photo Wall and Masonry. Rating controls and rating filtering work in the catalogue and folder browsing views; filter by an individual star level, all rated pictures or unrated pictures.
+
+![PIC V1 — albums bookshelf theme](../../screenshots/screenshots-V1/albums%20bookshelf%20theme.jpg)

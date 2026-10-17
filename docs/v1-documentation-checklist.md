@@ -19,4 +19,6 @@ No replacement screenshot was supplied specifically for the screensaver, camera 
 
 AppStream URLs are recorded in the Linux guide as a future packaging task; packaging resources are outside this documentation-only change.
 
-Validation: 37 JPG screenshots, zero remaining PNGs, and 127 local documentation media links resolving successfully. MP4 probes confirm H.264/AAC at 1920×1080, with durations 128.93 seconds and 64.53 seconds. `git diff --check` passed. Changed tracked paths are limited to Markdown documentation and screenshot media; no application tests or builds were needed.
+Validation: 38 JPG screenshots, zero remaining PNGs, and 130 local documentation media links resolving successfully. MP4 probes confirm H.264/AAC at 1920×1080, with durations 128.93 seconds and 64.53 seconds. `git diff --check` passed. Changed tracked paths are limited to Markdown documentation and screenshot media; no application tests or builds were needed.
+
+An additional PNG with no filename extension (`albums bookshelf theme`) was identified during commit review, converted to JPG and added to the library guide, release draft and gallery.

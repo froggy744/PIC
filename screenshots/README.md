@@ -159,3 +159,7 @@ Both MP4s preserve the actual source resolution of **1920×1080**, with H.264 vi
 ### watch folder
 
 ![PIC V1 — watch folder](screenshots-V1/watch%20folder.jpg)
+
+### albums bookshelf theme
+
+![PIC V1 — albums bookshelf theme](screenshots-V1/albums%20bookshelf%20theme.jpg)

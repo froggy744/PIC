@@ -87,17 +87,6 @@ impl MetadataPanel {
         chips.set_max_children_per_line(12);
         chips.set_min_children_per_line(1);
         body.append(&chips);
-        let lower = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-        let hint = gtk::Label::new(Some(
-            "Match all categories · any selected value within each category",
-        ));
-        hint.add_css_class("dim-label");
-        hint.add_css_class("caption");
-        hint.set_wrap(true);
-        hint.set_xalign(0.0);
-        hint.set_hexpand(true);
-        lower.append(&hint);
-        body.append(&lower);
         let explorer_scroll = gtk::ScrolledWindow::new();
         explorer_scroll.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Never);
         explorer_scroll.set_propagate_natural_width(false);
@@ -110,6 +99,7 @@ impl MetadataPanel {
         let explorer_revealer = gtk::Revealer::new();
         explorer_revealer.set_transition_type(gtk::RevealerTransitionType::SlideDown);
         explorer_revealer.set_transition_duration(150);
+        explorer_revealer.add_css_class("metadata-explorer");
         explorer_revealer.set_child(Some(&explorer_scroll));
         body.append(&explorer_revealer);
         let indexing = gtk::Box::new(gtk::Orientation::Horizontal, 6);
@@ -119,9 +109,8 @@ impl MetadataPanel {
         let cancel_button = gtk::Button::with_label("Cancel");
         cancel_button.set_visible(false);
         indexing.append(&cancel_button);
-        let status = gtk::Label::new(Some(
-            "Index older photos to include their missing EXIF fields.",
-        ));
+        let status = gtk::Label::new(None);
+        status.set_visible(false);
         status.set_wrap(true);
         status.set_xalign(0.0);
         status.set_hexpand(true);
@@ -655,6 +644,7 @@ impl MetadataPanel {
         self.cancel.replace(Some(cancel));
         self.index_button.set_sensitive(false);
         self.cancel_button.set_visible(true);
+        self.status.set_visible(true);
         let weak = Rc::downgrade(self);
         glib::timeout_add_local(Duration::from_millis(150), move || {
             let Some(panel) = weak.upgrade() else {
@@ -928,6 +918,22 @@ mod app_tests {
             Some("Sort photos")
         );
         filter.set_active(true);
+        let metadata = walk(&root)
+            .into_iter()
+            .filter_map(|w| w.downcast::<gtk::ToggleButton>().ok())
+            .find(|b| b.label().as_deref() == Some("Metadata"))
+            .unwrap();
+        metadata.set_active(true);
+        let explorer = walk(&root)
+            .into_iter()
+            .find(|w| w.has_css_class("metadata-explorer"))
+            .unwrap();
+        wait_until(|| {
+            walk(&explorer)
+                .iter()
+                .filter_map(|w| w.downcast_ref::<gtk::CheckButton>())
+                .any(|b| b.label().as_deref() == Some("nikon z 5 (2)"))
+        });
         let camera = walk(&root)
             .into_iter()
             .filter_map(|w| w.downcast::<gtk::MenuButton>().ok())

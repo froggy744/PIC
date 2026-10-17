@@ -1,3 +1,24 @@
+/* Header control replaces the old always-visible "Filters" panel button. */
+button.metadata-header-toggle {
+    min-width: 32px;
+    min-height: 32px;
+    padding: 0 7px;
+    border-radius: 8px;
+    border: 1px solid transparent;
+    background: transparent;
+    box-shadow: none;
+}
+button.metadata-header-toggle:hover {
+    background: alpha(@theme_fg_color, 0.08);
+}
+button.metadata-header-toggle:checked {
+    background: alpha(@accent_bg_color, 0.19);
+    border-color: alpha(@accent_bg_color, 0.34);
+}
+button.metadata-header-toggle.metadata-filter-active:not(:checked) {
+    color: @accent_color;
+}
+
 /* PIC metadata explorer: photo-first geometry, theme-inherited colours.
    Loaded above theme button rules; square-corner setting still wins. */
 .metadata-filter-panel .metadata-filter-toolbar {

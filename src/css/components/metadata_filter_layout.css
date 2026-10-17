@@ -144,6 +144,26 @@ button.metadata-header-toggle.metadata-filter-active:not(:checked) {
 .metadata-filter-panel .metadata-explorer-column viewport {
     background: transparent;
 }
+/* Compact, single-line selected filters live between ALL and the right
+   summary. Overflow scrolls horizontally instead of pushing the panel down. */
+.metadata-filter-panel .metadata-filter-middle {
+    min-width: 0;
+}
+.metadata-filter-panel .metadata-chips-scroll {
+    min-width: 0;
+}
+.metadata-filter-panel .metadata-selected-chips {
+    margin: 0;
+    padding: 0;
+}
+.metadata-filter-panel .metadata-selected-chips button.metadata-active-chip {
+    font-size: 11px;
+    font-weight: 500;
+    min-height: 26px;
+    padding: 1px 7px;
+    border-radius: 6px;
+    white-space: nowrap;
+}
 .metadata-filter-panel .metadata-active-chip {
     min-height: 25px;
     padding: 1px 9px;

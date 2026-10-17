@@ -24,6 +24,15 @@ button.metadata-header-toggle.metadata-filter-active:not(:checked) {
 .metadata-filter-panel .metadata-filter-toolbar {
     min-height: 38px;
 }
+.metadata-filter-panel {
+    transition: opacity 180ms ease-in-out;
+}
+.metadata-filter-panel.metadata-filter-lightbox-covered {
+    opacity: 0;
+}
+.metadata-filter-panel.metadata-filter-no-motion {
+    transition: none;
+}
 /* ALL is a mode switch, not an individual filter or a "select everything"
    command. It stays visible in both metadata presentation modes. */
 .metadata-filter-panel button.metadata-filter-all {

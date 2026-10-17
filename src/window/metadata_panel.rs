@@ -122,20 +122,21 @@ impl MetadataPanel {
         let title = gtk::Box::new(gtk::Orientation::Horizontal, 4);
         title.append(&gtk::Image::from_icon_name("view-filter-symbolic"));
         title.append(&gtk::Label::new(Some("Filters")));
+        title.append(&gtk::Image::from_icon_name("pan-down-symbolic"));
         let indicator = gtk::Label::new(None);
         indicator.add_css_class("caption");
         title.append(&indicator);
         button.set_child(Some(&title));
         let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
         root.add_css_class("metadata-filter-panel");
-        let body = gtk::Box::new(gtk::Orientation::Vertical, 6);
-        body.set_margin_start(10);
-        body.set_margin_end(10);
+        let body = gtk::Box::new(gtk::Orientation::Vertical, 8);
+        body.set_margin_start(12);
+        body.set_margin_end(12);
         body.set_margin_top(8);
-        body.set_margin_bottom(8);
+        body.set_margin_bottom(10);
         root.append(&body);
 
-        let toolbar = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let toolbar = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         toolbar.add_css_class("metadata-filter-toolbar");
         toolbar.append(&button);
         let controls_scroll = gtk::ScrolledWindow::new();
@@ -179,7 +180,7 @@ impl MetadataPanel {
         let active_count = gtk::Label::new(None);
         active_count.add_css_class("metadata-filter-active-count");
         summary.append(&active_count);
-        let clear = gtk::Button::from_icon_name("edit-clear-all-symbolic");
+        let clear = gtk::Button::with_label("Clear all");
         clear.add_css_class("metadata-filter-clear");
         clear.set_tooltip_text(Some("Clear all filters"));
         clear.update_property(&[gtk::accessible::Property::Label("Clear all filters")]);
@@ -188,11 +189,12 @@ impl MetadataPanel {
         refresh_button.add_css_class("metadata-filter-utility");
         refresh_button.set_tooltip_text(Some("Refresh library"));
         refresh_button.update_property(&[gtk::accessible::Property::Label("Refresh library")]);
-        summary.append(&refresh_button);
         let index_button = gtk::Button::from_icon_name("network-transmit-receive-symbolic");
         index_button.add_css_class("metadata-filter-utility");
         index_button.set_tooltip_text(Some("Index missing metadata"));
         index_button.update_property(&[gtk::accessible::Property::Label("Index missing metadata")]);
+        summary.append(&index_button);
+        summary.append(&refresh_button);
         toolbar.append(&summary);
         body.append(&toolbar);
         let chips = gtk::FlowBox::new();
@@ -207,10 +209,10 @@ impl MetadataPanel {
         explorer_scroll.set_propagate_natural_width(false);
         explorer_scroll.set_min_content_width(1);
         explorer_scroll.set_hexpand(true);
-        explorer_scroll.set_min_content_height(190);
-        explorer_scroll.set_max_content_height(220);
+        explorer_scroll.set_min_content_height(205);
+        explorer_scroll.set_max_content_height(235);
         explorer_scroll.set_propagate_natural_height(true);
-        let columns = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let columns = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         columns.set_hexpand(true);
         explorer_scroll.set_child(Some(&columns));
         explorer_scroll.add_css_class("metadata-explorer");
@@ -355,7 +357,7 @@ impl MetadataPanel {
         rating_button.set_popover(Some(&rating_popover));
         controls.append(&rating_button);
         controls.append(&filters_button);
-        controls.append(&panel.index_button);
+        // Indexing belongs with the toolbar utilities, not the filter chips.
         let rating_option = gtk::CheckButton::with_label("Rating");
         let rating_visible = panel.filter_selection.borrow().rating;
         rating_button.set_visible(rating_visible);
@@ -535,7 +537,8 @@ impl MetadataPanel {
         }
         let root = gtk::Box::new(gtk::Orientation::Vertical, 4);
         root.add_css_class("metadata-explorer-column");
-        let header = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+        let header = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        header.add_css_class("metadata-column-header");
         let width_index = self.explorer.borrow().len();
         let saved_widths = db::setting(&self.connection.borrow(), EXPLORER_WIDTHS_SETTING)
             .ok()
@@ -553,6 +556,7 @@ impl MetadataPanel {
             .map(|item| item.label())
             .collect::<Vec<_>>();
         let choose = gtk::DropDown::from_strings(&names);
+        choose.add_css_class("metadata-column-choice");
         choose.set_hexpand(true);
         choose.set_selected(
             Field::ALL
@@ -561,17 +565,32 @@ impl MetadataPanel {
                 .unwrap_or(0) as u32,
         );
         header.append(&choose);
-        let add = gtk::Button::from_icon_name("list-add-symbolic");
+        // Keep column management available without a row of floating + / - icons.
+        let actions = gtk::MenuButton::new();
+        actions.set_icon_name("view-more-symbolic");
+        actions.add_css_class("metadata-column-menu");
+        actions.set_tooltip_text(Some("Column options"));
+        actions.update_property(&[gtk::accessible::Property::Label("Column options")]);
+        let actions_popover = gtk::Popover::new();
+        let actions_box = gtk::Box::new(gtk::Orientation::Vertical, 4);
+        actions_box.add_css_class("metadata-column-actions-popover");
+        actions_box.set_margin_start(8);
+        actions_box.set_margin_end(8);
+        actions_box.set_margin_top(8);
+        actions_box.set_margin_bottom(8);
+        let add = gtk::Button::with_label("Add column");
         add.add_css_class("metadata-column-action");
-        add.set_tooltip_text(Some("Add column"));
-        add.update_property(&[gtk::accessible::Property::Label("Add column")]);
-        header.append(&add);
-        let remove = gtk::Button::from_icon_name("list-remove-symbolic");
+        let remove = gtk::Button::with_label("Remove column");
         remove.add_css_class("metadata-column-action");
-        remove.set_tooltip_text(Some("Remove column"));
-        remove.update_property(&[gtk::accessible::Property::Label("Remove column")]);
-        header.append(&remove);
-        let resize = gtk::Image::from_icon_name("pan-end-symbolic");
+        actions_box.append(&add);
+        actions_box.append(&remove);
+        actions_popover.set_child(Some(&actions_box));
+        actions.set_popover(Some(&actions_popover));
+        header.append(&actions);
+        // The thin grab area preserves adjustable widths without a chevron.
+        let resize = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        resize.add_css_class("metadata-column-resize");
+        resize.set_width_request(8);
         resize.set_tooltip_text(Some("Drag to resize column"));
         resize.set_cursor_from_name(Some("col-resize"));
         header.append(&resize);
@@ -621,7 +640,9 @@ impl MetadataPanel {
             Self::filter_column_values(&content, &entry.text());
         });
         let weak = Rc::downgrade(self);
+        let popover_for_add = actions_popover.clone();
         add.connect_clicked(move |_| {
+            popover_for_add.popdown();
             if let Some(panel) = weak.upgrade() {
                 let current = panel
                     .explorer
@@ -658,7 +679,9 @@ impl MetadataPanel {
             }
         });
         let weak = Rc::downgrade(self);
+        let popover_for_remove = actions_popover;
         remove.connect_clicked(move |_| {
+            popover_for_remove.popdown();
             if let Some(panel) = weak.upgrade() {
                 panel.explorer_columns.remove(&root);
                 panel
@@ -727,7 +750,7 @@ impl MetadataPanel {
         if active == 0 {
             self.active_count.set_text("");
         } else {
-            self.active_count.set_text(&format!("{active} active"));
+            self.active_count.set_text(&format!("{active} filters active"));
         }
         self.button
             .set_tooltip_text(Some(&format!("Filter photos · {active} active categories")));
@@ -738,7 +761,7 @@ impl MetadataPanel {
                     field.label(),
                     field.display(&value)
                 ));
-                chip.add_css_class("flat");
+                chip.add_css_class("metadata-active-chip");
                 chip.set_tooltip_text(Some(&format!(
                     "Remove {}: {}",
                     field.label(),
@@ -764,7 +787,7 @@ impl MetadataPanel {
                     selection.min.as_deref().unwrap_or("Any"),
                     selection.max.as_deref().unwrap_or("Any")
                 ));
-                chip.add_css_class("flat");
+                chip.add_css_class("metadata-active-chip");
                 let weak = Rc::downgrade(self);
                 chip.connect_clicked(move |_| {
                     if let Some(panel) = weak.upgrade() {
@@ -777,6 +800,7 @@ impl MetadataPanel {
         }
         if !matches!(rating.as_str(), "" | "all") {
             let chip = gtk::Button::with_label(&format!("Rating: {rating} ×"));
+            chip.add_css_class("metadata-active-chip");
             let weak = Rc::downgrade(self);
             chip.connect_clicked(move |_| {
                 if let Some(panel) = weak.upgrade() {

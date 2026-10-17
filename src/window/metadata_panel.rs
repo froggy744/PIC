@@ -53,6 +53,7 @@ struct ExplorerColumn {
     root: gtk::Box,
     choose: gtk::DropDown,
     list: gtk::Box,
+    add: gtk::Button,
     remove: gtk::Button,
 }
 
@@ -77,7 +78,6 @@ pub(super) struct MetadataPanel {
     filter_options: RefCell<Vec<(Option<Field>, gtk::CheckButton)>>,
     filter_buttons: RefCell<Vec<(Field, gtk::MenuButton)>>,
     explorer_columns: gtk::Box,
-    explorer_add: gtk::Button,
     explorer: RefCell<Vec<ExplorerColumn>>,
 }
 impl MetadataPanel {
@@ -129,6 +129,10 @@ impl MetadataPanel {
         clear.set_tooltip_text(Some("Clear all filters"));
         clear.update_property(&[gtk::accessible::Property::Label("Clear all filters")]);
         controls.append(&clear);
+        let explorer_button = gtk::ToggleButton::with_label("Metadata");
+        explorer_button.add_css_class("metadata-filter-choice");
+        explorer_button.set_tooltip_text(Some("Show or hide metadata columns"));
+        controls.append(&explorer_button);
         let filters_button = gtk::MenuButton::new();
         filters_button.add_css_class("metadata-filter-choice");
         filters_button.set_label("Filters");
@@ -169,15 +173,6 @@ impl MetadataPanel {
         let columns = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         explorer_scroll.set_child(Some(&columns));
         let explorer_body = gtk::Box::new(gtk::Orientation::Vertical, 6);
-        let explorer_tools = gtk::Box::new(gtk::Orientation::Horizontal, 4);
-        let explorer_button = gtk::ToggleButton::with_label("Metadata");
-        explorer_button.add_css_class("metadata-filter-choice");
-        explorer_button.set_tooltip_text(Some("Show or hide metadata columns"));
-        explorer_tools.append(&explorer_button);
-        let explorer_add = gtk::Button::with_label("Add column");
-        explorer_add.set_icon_name("list-add-symbolic");
-        explorer_tools.append(&explorer_add);
-        body.append(&explorer_tools);
         explorer_body.append(&explorer_scroll);
         let explorer_revealer = gtk::Revealer::new();
         explorer_revealer.set_transition_type(gtk::RevealerTransitionType::SlideDown);
@@ -226,7 +221,6 @@ impl MetadataPanel {
             filter_options: RefCell::new(Vec::new()),
             filter_buttons: RefCell::new(Vec::new()),
             explorer_columns: columns,
-            explorer_add,
             explorer: RefCell::new(Vec::new()),
         });
         for field in Field::ALL {
@@ -346,25 +340,6 @@ impl MetadataPanel {
             panel.add_explorer_column(field);
         }
         let weak = Rc::downgrade(&panel);
-        let explorer_toggle = explorer_button.clone();
-        panel.explorer_add.connect_clicked(move |_| {
-            if let Some(panel) = weak.upgrade() {
-                let current = panel
-                    .explorer
-                    .borrow()
-                    .iter()
-                    .map(|column| Field::ALL[column.choose.selected() as usize])
-                    .collect::<Vec<_>>();
-                let next = Field::ALL
-                    .iter()
-                    .copied()
-                    .find(|field| !current.contains(field))
-                    .unwrap_or(Field::Camera);
-                panel.add_explorer_column(next);
-                explorer_toggle.set_active(true);
-            }
-        });
-        let weak = Rc::downgrade(&panel);
         explorer_button.connect_toggled(move |button| {
             explorer_revealer.set_reveal_child(button.is_active());
             if button.is_active() {
@@ -483,8 +458,8 @@ impl MetadataPanel {
         if let Ok(value) = serde_json::to_string(&fields) {
             let _ = db::set_setting(&self.connection.borrow(), EXPLORER_COLUMNS_SETTING, &value);
         }
-        self.explorer_add.set_sensitive(fields.len() < 8);
         for column in self.explorer.borrow().iter() {
+            column.add.set_sensitive(fields.len() < 8);
             column.remove.set_sensitive(fields.len() > 1);
         }
     }
@@ -507,6 +482,10 @@ impl MetadataPanel {
                 .unwrap_or(0) as u32,
         );
         header.append(&choose);
+        let add = gtk::Button::from_icon_name("list-add-symbolic");
+        add.set_tooltip_text(Some("Add column"));
+        add.update_property(&[gtk::accessible::Property::Label("Add column")]);
+        header.append(&add);
         let remove = gtk::Button::from_icon_name("list-remove-symbolic");
         remove.set_tooltip_text(Some("Remove column"));
         remove.update_property(&[gtk::accessible::Property::Label("Remove column")]);
@@ -526,6 +505,7 @@ impl MetadataPanel {
             root: root.clone(),
             choose: choose.clone(),
             list: list.clone(),
+            add: add.clone(),
             remove: remove.clone(),
         });
 
@@ -535,6 +515,23 @@ impl MetadataPanel {
             if let Some(panel) = weak.upgrade() {
                 panel.populate_choices(Field::ALL[choice.selected() as usize], &content);
                 panel.save_explorer_columns();
+            }
+        });
+        let weak = Rc::downgrade(self);
+        add.connect_clicked(move |_| {
+            if let Some(panel) = weak.upgrade() {
+                let current = panel
+                    .explorer
+                    .borrow()
+                    .iter()
+                    .map(|column| Field::ALL[column.choose.selected() as usize])
+                    .collect::<Vec<_>>();
+                let next = Field::ALL
+                    .iter()
+                    .copied()
+                    .find(|field| !current.contains(field))
+                    .unwrap_or(Field::Camera);
+                panel.add_explorer_column(next);
             }
         });
         let weak = Rc::downgrade(self);

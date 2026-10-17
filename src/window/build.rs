@@ -4762,6 +4762,16 @@ fn start_photo_export_single(
         let refresh = refresh.clone();
         metadata_panel.set_refresh_action(Rc::new(move || refresh.emit_clicked()));
     }
+    // The lightbox overlays the gallery, not the metadata bar above it.
+    // Suppress that bar while viewing a photo and restore its prior mode
+    // (individual filters or ALL columns) when returning to the grid.
+    {
+        let panel_for_lightbox = metadata_panel.clone();
+        lightbox.root.connect_visible_notify(move |root| {
+            panel_for_lightbox.set_lightbox_open(root.is_visible());
+        });
+        metadata_panel.set_lightbox_open(lightbox.root.is_visible());
+    }
 
     right_column.append(&right_header);
     right_column.append(&metadata_panel.root);

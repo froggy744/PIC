@@ -31,7 +31,23 @@ const SCREENSHOTS: [(&str, &[u8]); 4] = [
     ),
 ];
 
-fn screenshot_texture(index: usize) -> gtk::gdk::Texture {
+// Decode with Rust rather than GTK's platform JPEG loader: AppImages can run
+// on hosts whose JPEG ABI differs from the build distribution's.
+fn decode_screenshot(bytes: &[u8]) -> image::ImageResult<gtk::gdk::Texture> {
+    let image = image::load_from_memory(bytes)?.to_rgba8();
+    let (width, height) = image.dimensions();
+    let bytes = glib::Bytes::from_owned(image.into_raw());
+    Ok(gtk::gdk::MemoryTexture::new(
+        width as i32,
+        height as i32,
+        gtk::gdk::MemoryFormat::R8g8b8a8,
+        &bytes,
+        width as usize * 4,
+    )
+    .upcast())
+}
+
+fn screenshot_texture(index: usize) -> Option<gtk::gdk::Texture> {
     let (filename, bundled) = SCREENSHOTS[index];
     let mut candidates = vec![std::path::PathBuf::from("screenshots").join(filename)];
     if let Ok(executable) = std::env::current_exe() {
@@ -42,16 +58,24 @@ fn screenshot_texture(index: usize) -> gtk::gdk::Texture {
     // Read on every tour opening, so replacing a JPEG needs no rebuild.
     for path in candidates {
         if path.is_file() {
-            match gtk::gdk::Texture::from_filename(&path) {
-                Ok(texture) => return texture,
+            match std::fs::read(&path)
+                .map_err(|error| error.to_string())
+                .and_then(|bytes| decode_screenshot(&bytes).map_err(|error| error.to_string()))
+            {
+                Ok(texture) => return Some(texture),
                 Err(error) => {
                     eprintln!("Could not load tour screenshot {}: {error}", path.display())
                 }
             }
         }
     }
-    gtk::gdk::Texture::from_bytes(&glib::Bytes::from_static(bundled))
-        .expect("bundled tour screenshot is valid")
+    match decode_screenshot(bundled) {
+        Ok(texture) => Some(texture),
+        Err(error) => {
+            eprintln!("Could not decode bundled tour screenshot {filename}: {error}");
+            None
+        }
+    }
 }
 
 pub(crate) fn present(parent: &adw::ApplicationWindow) {
@@ -91,12 +115,19 @@ pub(super) fn build() -> adw::Dialog {
         introduction.append(&copy);
         page.append(&introduction);
         let texture = screenshot_texture(index);
-        let picture = gtk::Picture::for_paintable(&texture);
+        let picture = gtk::Picture::new();
+        picture.set_paintable(texture.as_ref());
         picture.set_can_shrink(true);
         picture.set_content_fit(gtk::ContentFit::Contain);
         picture.set_vexpand(true);
         picture.set_alternative_text(Some(&format!("PIC {title} screen")));
-        page.append(&picture);
+        if texture.is_some() {
+            page.append(&picture);
+        } else {
+            page.append(&gtk::Label::new(Some(
+                "Screenshot unavailable. You can continue the tour.",
+            )));
+        }
         let scroll = gtk::ScrolledWindow::new();
         scroll.set_hscrollbar_policy(gtk::PolicyType::Never);
         let viewport = gtk::Viewport::new(None::<&gtk::Adjustment>, None::<&gtk::Adjustment>);

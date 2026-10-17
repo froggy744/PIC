@@ -19,6 +19,10 @@ fn main() {
     // Fedora/Linux proof of concept; do not link private transports for other OSes.
     #[cfg(target_os = "linux")]
     {
+        // TurboJPEG embeds libjpeg ABI 62. Keep its static symbols private so
+        // GTK/GdkPixbuf can use the distribution's own JPEG ABI (e.g. Ubuntu 80).
+        // Rust folds native archives into rlibs, so exclude all static archives.
+        println!("cargo:rustc-link-arg=-Wl,--exclude-libs,ALL");
         let samba = pkg_config::Config::new()
             .cargo_metadata(false)
             .probe("smbclient")

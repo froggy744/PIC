@@ -130,6 +130,13 @@ jobs:
           test -s squashfs-root/usr/lib/libselinux.so.1
           echo "Bundled libselinux runtime is present."
 
+          # Static TurboJPEG symbols must not override GTK's shared JPEG ABI.
+          nm -D --defined-only squashfs-root/usr/libexec/pic-rs > /tmp/pic-exported-symbols.txt
+          if grep -Eq '[[:space:]]jpeg_[[:alnum:]_]+$' /tmp/pic-exported-symbols.txt; then
+            echo "::error::Static JPEG symbols are exported and can crash GTK image decoding on other distributions."
+            exit 1
+          fi
+
           smoke_home="$(mktemp -d)"
           smoke_log="$(mktemp)"
           set +e

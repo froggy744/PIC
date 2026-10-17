@@ -7,6 +7,7 @@ mod diagnostics;
 mod edit;
 mod grid;
 mod image_format;
+mod metadata_index;
 mod infobar;
 mod sd_import;
 mod lightbox;

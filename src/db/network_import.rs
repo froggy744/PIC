@@ -301,6 +301,9 @@ pub fn finish_network_work(
             ],
         )?;
     }
+    if let Some(metadata) = metadata {
+        metadata::store(connection, id, &work.path, metadata)?;
+    }
     connection.execute(
         "UPDATE network_photo_work SET metadata_state=?2,thumbnail_state=?3 WHERE path=?1",
         params![work.path, metadata_state, thumbnail_state],

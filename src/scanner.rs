@@ -890,7 +890,7 @@ fn report_discovery_progress(
     }
 }
 
-fn read_metadata(path: &str, attributes: &gio::FileInfo) -> Result<PhotoMetadata> {
+pub(crate) fn read_metadata(path: &str, attributes: &gio::FileInfo) -> Result<PhotoMetadata> {
     let mtime = attributes
         .modification_date_time()
         .map(|time| time.to_unix());
@@ -986,7 +986,9 @@ fn read_metadata(path: &str, attributes: &gio::FileInfo) -> Result<PhotoMetadata
             .and_then(exif_orientation_value)
             .or(network_orientation),
     );
+    let searchable = searchable_exif(exif.as_ref());
     Ok(PhotoMetadata {
+        searchable,
         taken_at,
         camera,
         aperture,
@@ -1678,3 +1680,140 @@ mod scan_lock_tests {
 
 #[cfg(test)]
 mod network_dimensions_regression_tests;
+
+/// Shared by local, RAW and bounded remote-header extraction.
+fn searchable_exif(exif: Option<&exif::Exif>) -> db::metadata::SearchMetadata {
+    let Some(data) = exif else {
+        return db::metadata::SearchMetadata {
+            has_exif: Some(false),
+            gps: Some(false),
+            ..Default::default()
+        };
+    };
+    db::metadata::SearchMetadata {
+        camera_make: exif_text(data, Tag::Make),
+        camera_model: exif_text(data, Tag::Model),
+        lens_make: exif_text(data, Tag::LensMake),
+        lens_model: exif_text(data, Tag::LensModel),
+        captured_at: exif_date(data),
+        flash: exif_u32(data, Tag::Flash).map(|value| value & 1 != 0),
+        white_balance: exif_u32(data, Tag::WhiteBalance).map(|value| match value {
+            0 => "Auto".into(),
+            1 => "Manual".into(),
+            other => format!("EXIF {other}"),
+        }),
+        gps: Some(
+            data.get_field(Tag::GPSLatitude, In::PRIMARY).is_some()
+                && data.get_field(Tag::GPSLongitude, In::PRIMARY).is_some(),
+        ),
+        has_exif: Some(true),
+    }
+}
+
+#[cfg(test)]
+mod metadata_filter_extraction_tests {
+    use super::*;
+    #[test]
+    fn metadata_filter_raw_and_jpeg_share_exif_extraction() {
+        let fields = vec![
+            exif::Field {
+                tag: Tag::Make,
+                ifd_num: In::PRIMARY,
+                value: Value::Ascii(vec![b"NIKON CORPORATION".to_vec()]),
+            },
+            exif::Field {
+                tag: Tag::Model,
+                ifd_num: In::PRIMARY,
+                value: Value::Ascii(vec![b"NIKON Z 5".to_vec()]),
+            },
+            exif::Field {
+                tag: Tag::LensMake,
+                ifd_num: In::PRIMARY,
+                value: Value::Ascii(vec![b"Nikon".to_vec()]),
+            },
+            exif::Field {
+                tag: Tag::LensModel,
+                ifd_num: In::PRIMARY,
+                value: Value::Ascii(vec![b"NIKKOR Z 24-70mm f/4 S".to_vec()]),
+            },
+            exif::Field {
+                tag: Tag::PhotographicSensitivity,
+                ifd_num: In::PRIMARY,
+                value: Value::Short(vec![800]),
+            },
+            exif::Field {
+                tag: Tag::PixelXDimension,
+                ifd_num: In::PRIMARY,
+                value: Value::Long(vec![6000]),
+            },
+            exif::Field {
+                tag: Tag::PixelYDimension,
+                ifd_num: In::PRIMARY,
+                value: Value::Long(vec![4000]),
+            },
+            exif::Field {
+                tag: Tag::Flash,
+                ifd_num: In::PRIMARY,
+                value: Value::Short(vec![1]),
+            },
+            exif::Field {
+                tag: Tag::WhiteBalance,
+                ifd_num: In::PRIMARY,
+                value: Value::Short(vec![1]),
+            },
+            exif::Field {
+                tag: Tag::DateTimeOriginal,
+                ifd_num: In::PRIMARY,
+                value: Value::Ascii(vec![b"2025:06:12 13:14:15".to_vec()]),
+            },
+        ];
+        let root = std::env::temp_dir().join(format!("pic-filter-exif-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        for little in [false, true] {
+            let mut writer = exif::experimental::Writer::new();
+            for field in &fields {
+                writer.push_field(field);
+            }
+            let mut bytes = std::io::Cursor::new(Vec::new());
+            writer.write(&mut bytes, little).unwrap();
+            let tiff = bytes.into_inner();
+            let mut jpeg = vec![0xff, 0xd8, 0xff, 0xe1];
+            jpeg.extend(((tiff.len() + 8) as u16).to_be_bytes());
+            jpeg.extend(b"Exif\0\0");
+            jpeg.extend(&tiff);
+            jpeg.extend([0xff, 0xd9]);
+            for (name, bytes) in [("sample.NEF", tiff), ("sample.jpg", jpeg)] {
+                let path = root.join(name);
+                std::fs::write(&path, bytes).unwrap();
+                let info = gio::File::for_path(&path)
+                    .query_info(
+                        "time::modified,standard::size",
+                        gio::FileQueryInfoFlags::NONE,
+                        gio::Cancellable::NONE,
+                    )
+                    .unwrap();
+                let metadata = read_metadata(path.to_str().unwrap(), &info).unwrap();
+                assert_eq!(metadata.iso, Some(800));
+                assert_eq!(
+                    metadata.searchable.camera_model.as_deref(),
+                    Some("NIKON Z 5")
+                );
+                assert_eq!(metadata.searchable.lens_make.as_deref(), Some("Nikon"));
+                assert_eq!(metadata.searchable.flash, Some(true));
+                assert_eq!(metadata.searchable.white_balance.as_deref(), Some("Manual"));
+                assert_eq!(metadata.searchable.gps, Some(false));
+                assert_eq!(metadata.searchable.has_exif, Some(true));
+                assert!(metadata
+                    .searchable
+                    .captured_at
+                    .unwrap()
+                    .starts_with("2025-06-12"));
+            }
+        }
+        let empty = searchable_exif(None);
+        assert_eq!(empty.has_exif, Some(false));
+        assert!(empty.camera_model.is_none());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+}
+

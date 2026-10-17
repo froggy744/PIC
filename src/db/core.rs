@@ -19,6 +19,7 @@ pub fn open(path: &Path) -> Result<Connection> {
     connection.pragma_update(None, "journal_mode", "WAL")?;
     connection.execute_batch(SCHEMA)?;
     migrate_photo_schema(&connection)?;
+    metadata::seed_existing(&connection)?;
     migrate_folder_schema(&connection)?;
     migrate_album_schema(&connection)?;
     migrate_stored_paths(&connection)?;
@@ -121,7 +122,11 @@ fn migrate_photo_schema(connection: &Connection) -> Result<()> {
     // the database's historical insertion order until they are refreshed.
     connection.execute("UPDATE photos SET added_at = id WHERE added_at = 0", [])?;
     connection.execute_batch(
-        "CREATE INDEX IF NOT EXISTS idx_photos_added_at ON photos(added_at DESC);",
+        "CREATE INDEX IF NOT EXISTS idx_photos_added_at ON photos(added_at DESC);
+         CREATE INDEX IF NOT EXISTS idx_photos_iso ON photos(iso);
+         CREATE INDEX IF NOT EXISTS idx_photos_aperture ON photos(aperture);
+         CREATE INDEX IF NOT EXISTS idx_photos_focal ON photos(focal_length);
+         CREATE INDEX IF NOT EXISTS idx_photos_rating ON photos(rating);",
     )?;
     Ok(())
 }

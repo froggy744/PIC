@@ -27,6 +27,18 @@ CREATE TABLE IF NOT EXISTS photos (
   rating INTEGER NOT NULL DEFAULT 0,
   trashed BOOLEAN DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS photo_metadata (
+  photo_id INTEGER PRIMARY KEY REFERENCES photos(id) ON DELETE CASCADE,
+  camera_make TEXT, camera_model TEXT, lens_make TEXT, lens_model TEXT,
+  camera_key TEXT, lens_key TEXT, camera_make_key TEXT, lens_make_key TEXT,
+  file_type TEXT, captured_at TEXT, flash INTEGER, white_balance TEXT, gps INTEGER,
+  has_exif INTEGER, version INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_metadata_camera ON photo_metadata(camera_key);
+CREATE INDEX IF NOT EXISTS idx_metadata_lens ON photo_metadata(lens_key);
+CREATE INDEX IF NOT EXISTS idx_metadata_type ON photo_metadata(file_type);
+CREATE INDEX IF NOT EXISTS idx_metadata_date ON photo_metadata(captured_at);
+CREATE INDEX IF NOT EXISTS idx_metadata_version ON photo_metadata(version, photo_id);
 CREATE TABLE IF NOT EXISTS folders (
   id INTEGER PRIMARY KEY,
   path TEXT UNIQUE NOT NULL,
@@ -194,6 +206,7 @@ pub struct Photo {
 
 #[derive(Debug, Clone, Default)]
 pub struct PhotoMetadata {
+    pub searchable: metadata::SearchMetadata,
     pub taken_at: Option<String>,
     pub camera: Option<String>,
     pub aperture: Option<f64>,
@@ -293,3 +306,6 @@ include!("db/tests.rs");
 
 include!("db/path_migration.rs");
 include!("db/network_import.rs");
+
+pub mod metadata;
+pub mod filters;

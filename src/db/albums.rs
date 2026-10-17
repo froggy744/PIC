@@ -20,6 +20,29 @@ pub fn albums(connection: &Connection) -> Result<Vec<Album>> {
     Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
 }
 
+/// Browsing counts share the photo predicate; administrative album APIs stay unfiltered.
+pub fn browse_albums(connection: &Connection) -> Result<Vec<Album>> {
+    let filters = filters::Filters::for_browsing(connection);
+    let (predicate, args) = filters.predicate(1);
+    let mut statement = connection.prepare(&format!(
+        "SELECT a.id,a.name,a.created_at,COUNT(p.id),a.cover_frame,a.cover_photo_id
+         FROM albums a LEFT JOIN album_photos ap ON ap.album_id=a.id
+         LEFT JOIN photos p ON p.id=ap.photo_id AND p.trashed=0 AND ({predicate})
+         GROUP BY a.id ORDER BY a.name COLLATE NOCASE,a.id"
+    ))?;
+    let rows = statement.query_map(rusqlite::params_from_iter(args), |row| {
+        Ok(Album {
+            id: row.get(0)?,
+            name: row.get(1)?,
+            created_at: row.get(2)?,
+            photo_count: row.get(3)?,
+            cover_frame: row.get(4)?,
+            cover_photo_id: row.get(5)?,
+        })
+    })?;
+    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+}
+
 pub fn create_album(connection: &Connection, name: &str) -> Result<Album> {
     let name = name.trim();
     if name.is_empty() {

@@ -63,15 +63,33 @@ pub fn history_photos(connection: &Connection) -> Result<Vec<Photo>> {
 }
 
 pub fn history_photos_limited(connection: &Connection, limit: i64) -> Result<Vec<Photo>> {
-    let mut statement = connection.prepare(
+    history_photos_filtered(connection, limit, &filters::Filters::default())
+}
+pub fn browse_history_photos(connection: &Connection) -> Result<Vec<Photo>> {
+    let filters = filters::Filters::for_browsing(connection);
+    if filters.is_empty() && matches!(filters.rating.as_str(), "" | "all") {
+        history_photos(connection)
+    } else {
+        history_photos_filtered(connection, -1, &filters)
+    }
+}
+fn history_photos_filtered(
+    connection: &Connection,
+    limit: i64,
+    filters: &filters::Filters,
+) -> Result<Vec<Photo>> {
+    let (predicate, args) = filters.predicate(2);
+    let mut statement = connection.prepare(&format!(
         "SELECT p.id,p.path,p.folder_id,p.taken_at,p.camera,CAST(p.aperture AS REAL),p.width,p.height,p.size_bytes,p.mtime,p.added_at,p.rotation,p.edit_recipe,p.favorite,p.rating,p.trashed,f.path,p.lens,p.shutter_speed,p.iso,p.focal_length,p.exposure_bias,
                 h.edited_at, c.photo_id IS NOT NULL
          FROM recently_edited h JOIN photos p ON p.id=h.photo_id
          LEFT JOIN folders f ON f.id=p.folder_id
          LEFT JOIN collage_projects c ON c.photo_id=p.id
-         WHERE p.trashed=0 ORDER BY h.edited_at DESC,h.event_id DESC,p.id DESC LIMIT ?1",
-    )?;
-    let rows = statement.query_map([limit], |row| {
+         WHERE p.trashed=0 AND ({predicate}) ORDER BY h.edited_at DESC,h.event_id DESC,p.id DESC LIMIT ?1",
+    ))?;
+    let mut values = vec![rusqlite::types::Value::Integer(limit)];
+    values.extend(args);
+    let rows = statement.query_map(rusqlite::params_from_iter(values), |row| {
         let mut photo = photo_from_row(row)?;
         let timestamp: i64 = row.get(22)?;
         photo.edited_at = timestamp;

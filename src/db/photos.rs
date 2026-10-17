@@ -676,11 +676,9 @@ pub fn upsert_photo(
             metadata.mtime
         ],
     )?;
-    Ok(
-        connection.query_row("SELECT id FROM photos WHERE path = ?1", [&path], |row| {
-            row.get(0)
-        })?,
-    )
+    let id = connection.query_row("SELECT id FROM photos WHERE path = ?1", [&path], |row| row.get(0))?;
+    metadata::store(connection, id, &path, metadata)?;
+    Ok(id)
 }
 
 pub fn set_photo_folder(connection: &Connection, path: &str, folder_id: i64) -> Result<()> {
@@ -733,8 +731,51 @@ pub fn photos_limited(
     search: Option<&str>,
     limit: i64,
 ) -> Result<Vec<Photo>> {
+    photos_limited_filtered(
+        connection,
+        folder_id,
+        favorites_only,
+        search,
+        limit,
+        &filters::Filters::default(),
+    )
+}
+
+pub fn browse_photos(
+    connection: &Connection,
+    folder_id: Option<i64>,
+    favorites_only: bool,
+    search: Option<&str>,
+) -> Result<Vec<Photo>> {
+    browse_photos_limited(connection, folder_id, favorites_only, search, -1)
+}
+pub fn browse_photos_limited(
+    connection: &Connection,
+    folder_id: Option<i64>,
+    favorites_only: bool,
+    search: Option<&str>,
+    limit: i64,
+) -> Result<Vec<Photo>> {
+    photos_limited_filtered(
+        connection,
+        folder_id,
+        favorites_only,
+        search,
+        limit,
+        &filters::Filters::for_browsing(connection),
+    )
+}
+pub fn photos_limited_filtered(
+    connection: &Connection,
+    folder_id: Option<i64>,
+    favorites_only: bool,
+    search: Option<&str>,
+    limit: i64,
+    filters: &filters::Filters,
+) -> Result<Vec<Photo>> {
+    let (predicate, args) = filters.predicate(5);
     let search = search.map(|value| format!("%{}%", value.replace('%', "\\%").replace('_', "\\_")));
-    let mut statement = connection.prepare(
+    let mut statement = connection.prepare(&format!(
         "SELECT p.id,p.path,p.folder_id,p.taken_at,p.camera,CAST(p.aperture AS REAL),p.width,p.height,p.size_bytes,p.mtime,p.added_at,p.rotation,p.edit_recipe,p.favorite,p.rating,p.trashed,f.path,p.lens,p.shutter_speed,p.iso,p.focal_length,p.exposure_bias
          FROM photos p LEFT JOIN folders f ON f.id = p.folder_id
          WHERE p.trashed = 0 AND (?1 IS NULL OR p.folder_id IN
@@ -744,12 +785,17 @@ pub fn photos_limited(
                 SELECT child.id FROM folders child JOIN descendants ON child.parent_id = descendants.id
               ) SELECT id FROM descendants))
            AND (?2 = 0 OR p.favorite = 1) AND (?3 IS NULL OR p.path LIKE ?3 ESCAPE '\\')
+           AND ({predicate})
          ORDER BY p.taken_at IS NULL, p.taken_at DESC, p.path COLLATE NOCASE LIMIT ?4",
-    )?;
-    let rows = statement.query_map(
-        params![folder_id, favorites_only as i32, search, limit],
-        photo_from_row,
-    )?;
+    ))?;
+    let mut values: Vec<rusqlite::types::Value> = vec![
+        folder_id.into(),
+        (favorites_only as i64).into(),
+        search.into(),
+        limit.into(),
+    ];
+    values.extend(args);
+    let rows = statement.query_map(rusqlite::params_from_iter(values), photo_from_row)?;
     Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
 }
 
@@ -776,17 +822,27 @@ pub fn photos_in_album(
     album_id: i64,
     search: Option<&str>,
 ) -> Result<Vec<Photo>> {
+    photos_in_album_filtered(connection,album_id,search,&filters::Filters::default())
+}
+pub fn browse_photos_in_album(connection:&Connection,album_id:i64,search:Option<&str>)->Result<Vec<Photo>> {
+    photos_in_album_filtered(connection,album_id,search,&filters::Filters::for_browsing(connection))
+}
+pub fn photos_in_album_filtered(connection:&Connection,album_id:i64,search:Option<&str>,filters:&filters::Filters)->Result<Vec<Photo>> {
+    let (predicate,args)=filters.predicate(3);
     let search = search.map(|value| format!("%{}%", value.replace('%', "\\%").replace('_', "\\_")));
-    let mut statement = connection.prepare(
+    let mut statement = connection.prepare(&format!(
         "SELECT p.id,p.path,p.folder_id,p.taken_at,p.camera,CAST(p.aperture AS REAL),p.width,p.height,p.size_bytes,p.mtime,p.added_at,p.rotation,p.edit_recipe,p.favorite,p.rating,p.trashed,f.path,p.lens,p.shutter_speed,p.iso,p.focal_length,p.exposure_bias
          FROM album_photos ap
          JOIN photos p ON p.id = ap.photo_id
          LEFT JOIN folders f ON f.id = p.folder_id
          WHERE ap.album_id = ?1 AND p.trashed = 0
            AND (?2 IS NULL OR p.path LIKE ?2 ESCAPE '\\')
+           AND ({predicate})
          ORDER BY p.taken_at IS NULL, p.taken_at DESC, p.path COLLATE NOCASE",
-    )?;
-    let rows = statement.query_map(params![album_id, search], photo_from_row)?;
+    ))?;
+    let mut values:Vec<rusqlite::types::Value>=vec![album_id.into(),search.into()];
+    values.extend(args);
+    let rows = statement.query_map(rusqlite::params_from_iter(values), photo_from_row)?;
     Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
 }
 

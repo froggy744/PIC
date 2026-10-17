@@ -117,18 +117,20 @@ impl MetadataPanel {
     ) -> Rc<Self> {
         let button = gtk::ToggleButton::new();
         button.add_css_class("metadata-filter-toggle");
+        button.add_css_class("metadata-header-toggle");
         button.set_tooltip_text(Some("Show or hide photo filters"));
         button.update_property(&[gtk::accessible::Property::Label("Filters")]);
-        let title = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+        // Icon-only beside Sort and the existing rating button in the top bar.
+        let title = gtk::Box::new(gtk::Orientation::Horizontal, 3);
         title.append(&gtk::Image::from_icon_name("view-filter-symbolic"));
-        title.append(&gtk::Label::new(Some("Filters")));
-        title.append(&gtk::Image::from_icon_name("pan-down-symbolic"));
         let indicator = gtk::Label::new(None);
         indicator.add_css_class("caption");
         title.append(&indicator);
         button.set_child(Some(&title));
         let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
         root.add_css_class("metadata-filter-panel");
+        // Metadata options never occupy photo-grid space until the header toggle is used.
+        root.set_visible(false);
         let body = gtk::Box::new(gtk::Orientation::Vertical, 8);
         body.set_margin_start(12);
         body.set_margin_end(12);
@@ -138,7 +140,6 @@ impl MetadataPanel {
 
         let toolbar = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         toolbar.add_css_class("metadata-filter-toolbar");
-        toolbar.append(&button);
         let controls_scroll = gtk::ScrolledWindow::new();
         controls_scroll.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Never);
         controls_scroll.set_propagate_natural_width(false);
@@ -395,9 +396,11 @@ impl MetadataPanel {
         let weak = Rc::downgrade(&panel);
         panel.button.connect_toggled(move |b| {
             if let Some(panel) = weak.upgrade() {
-                panel.explorer_revealer.set_child_visible(b.is_active());
-                panel.explorer_revealer.set_reveal_child(b.is_active());
-                if b.is_active() {
+                let expanded = b.is_active();
+                panel.root.set_visible(expanded);
+                panel.explorer_revealer.set_child_visible(expanded);
+                panel.explorer_revealer.set_reveal_child(expanded);
+                if expanded {
                     panel.sync();
                 }
             }
@@ -1050,6 +1053,9 @@ impl MetadataPanel {
         if !query.is_empty() {
             rows.retain(|row| field.display(&row.value).to_lowercase().contains(&query));
         }
+        // Stable ordering keeps the original facet order within each group.
+        // Apply before paging so selected values beyond the first 100 are visible.
+        rows.sort_by_key(|row| !selected.contains(&row.value));
         let remaining = if rows.len() > 100 {
             rows.split_off(100)
         } else {

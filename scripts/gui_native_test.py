@@ -215,9 +215,11 @@ def accessible_action(node, action_name: str = "click") -> bool:
     if node is None:
         return False
     actions = node.queryAction()
-    for index in range(actions.nActions):
-        if actions.getName(index) == action_name:
-            return bool(actions.doAction(index))
+    preferred = (action_name, "click", "press", "toggle")
+    for name in preferred:
+        for index in range(actions.nActions):
+            if actions.getName(index) == name:
+                return bool(actions.doAction(index))
     return False
 
 
@@ -375,8 +377,23 @@ def import_photo_folder() -> None:
     if not STATE["confirmations"]["application_visible"]:
         raise RuntimeError("PIC main window is not showing on the Wayland desktop")
 
+    activate_pic_window()
     welcome = find_accessible(app, role="button", name="Skip for now")
     if welcome is not None:
+        never_show = find_accessible(
+            app, role="check box", name="Don’t show this automatically again")
+        if never_show is not None and not accessible_state(never_show, pyatspi.STATE_CHECKED):
+            for _ in range(20):
+                if accessible_state(never_show, pyatspi.STATE_FOCUSED):
+                    break
+                key("15:1", "15:0")  # Tab through welcome actions to the preference.
+                time.sleep(0.05)
+            if not accessible_state(never_show, pyatspi.STATE_FOCUSED):
+                raise RuntimeError("Could not focus Don’t show this automatically again through keyboard navigation")
+            key("57:1", "57:0")  # Space checks Don’t show this automatically again.
+            wait_for_accessible(
+                lambda: accessible_state(never_show, pyatspi.STATE_CHECKED),
+                "Don’t show this automatically again to be checked", timeout=5)
         if not accessible_action(welcome):
             raise RuntimeError("Could not dismiss PIC's welcome panel through AT-SPI")
 

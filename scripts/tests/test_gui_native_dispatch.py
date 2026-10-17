@@ -12,6 +12,12 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class NativeDispatchTests(unittest.TestCase):
+    def test_complete_wayland_run_executes_full_ui_suite_on_desktop_then_native(self):
+        source = (ROOT / "scripts/test-gui-wayland.sh").read_text()
+        self.assertIn('PIC_GUI_DESKTOP_DISPLAY=1 PIC_GUI_SUITE=all', source)
+        self.assertIn('PIC_GUI_SUITE=native PIC_GUI_NATIVE_RUN_DIR=', source)
+        self.assertIn("all 41 interactive UI regression cases on the Wayland desktop", source)
+
     def test_native_runner_streams_on_the_desktop_bus_with_reduced_renderer_logs(self):
         source = (ROOT / "scripts/test-gui-native.sh").read_text()
         self.assertIn('python3 "$repo_root/scripts/gui_native_test.py"', source)

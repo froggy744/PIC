@@ -16,6 +16,11 @@ from pathlib import Path
 
 from PIL import Image, ImageChops, ImageStat, ImageDraw
 
+try:
+    import pyatspi
+except ImportError:
+    pyatspi = None
+
 
 RUN_DIR = Path(os.environ["PIC_GUI_RUN_DIR"])
 SCREENSHOTS = RUN_DIR / "screenshots"
@@ -129,7 +134,15 @@ def seed_isolated_database() -> None:
 
 def screenshot(name: str) -> Path:
     target = SCREENSHOTS / name
-    command(["import", "-window", "root", str(target)], timeout=15)
+    if os.environ.get("PIC_GUI_DESKTOP_DISPLAY") == "1":
+        result = subprocess.run(
+            ["/usr/bin/python3", str(Path(__file__).with_name("capture_wayland_screenshot.py")), str(target)],
+            text=True, capture_output=True, timeout=25,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"Wayland screenshot capture failed: {result.stderr.strip()}")
+    else:
+        command(["import", "-window", "root", str(target)], timeout=15)
     image = Image.open(target).convert("RGB")
     if image.width < 100 or image.height < 100:
         raise RuntimeError(f"Screenshot has invalid dimensions: {image.size}")
@@ -163,6 +176,108 @@ def wait_for(predicate, description: str, timeout: float = 12):
 
 def app_alive() -> bool:
     return APP_PROCESS is not None and APP_PROCESS.poll() is None
+
+
+def accessible_nodes():
+    if pyatspi is None:
+        return
+    pending = [pyatspi.Registry.getDesktop(0)]
+    seen = 0
+    while pending and seen < 10000:
+        node = pending.pop()
+        seen += 1
+        yield node
+        try:
+            pending.extend(node.getChildAtIndex(i) for i in reversed(range(node.childCount)))
+        except Exception:
+            continue
+
+
+def click_accessible(role: str, name: str, timeout: float = 5):
+    deadline = time.monotonic() + timeout
+    wanted = name.casefold()
+    while time.monotonic() < deadline:
+        for node in accessible_nodes() or ():
+            try:
+                if node.getRoleName() == role and (node.name or "").casefold() == wanted:
+                    actions = node.queryAction()
+                    for index in range(actions.nActions):
+                        if actions.getName(index) in {"click", "press", "toggle"}:
+                            if actions.doAction(index):
+                                return node
+            except Exception:
+                continue
+        time.sleep(0.2)
+    return None
+
+
+def find_accessible(role: str, name: str):
+    wanted = name.casefold()
+    for node in accessible_nodes() or ():
+        try:
+            if node.getRoleName() == role and (node.name or "").casefold() == wanted:
+                return node
+        except Exception:
+            continue
+    return None
+
+
+def accessible_exists(role: str, name: str) -> bool:
+    wanted = name.casefold()
+    for node in accessible_nodes() or ():
+        try:
+            if (node.getRoleName() == role and (node.name or "").casefold() == wanted
+                    and node.getState().contains(pyatspi.STATE_SHOWING)):
+                return True
+        except Exception:
+            continue
+    return False
+
+
+def dismiss_first_run_welcome() -> None:
+    if os.environ.get("PIC_GUI_DESKTOP_DISPLAY") != "1":
+        return
+    if pyatspi is None:
+        raise RuntimeError("pyatspi is required to dismiss the first-run tutorial automatically")
+    checkbox = None
+    deadline = time.monotonic() + 8
+    while checkbox is None and time.monotonic() < deadline:
+        checkbox = find_accessible("check box", "Don’t show this automatically again")
+        if checkbox is None:
+            time.sleep(0.2)
+    if checkbox is not None:
+        try:
+            checked = checkbox.getState().contains(pyatspi.STATE_CHECKED)
+        except Exception:
+            checked = False
+        if not checked:
+            # GTK's checkbox has no AT-SPI action and reports an empty
+            # component extent on this build. Click its measured position in
+            # the responsive welcome panel, scaled from the actual window.
+            geometry = command(["xdotool", "getwindowgeometry", "--shell", APP_WINDOW])
+            values = {key: int(value) for key, value in re.findall(
+                r"^(X|Y|WIDTH|HEIGHT)=(-?\d+)$", geometry, re.MULTILINE)}
+            if not all(key in values for key in ("X", "Y", "WIDTH", "HEIGHT")):
+                raise RuntimeError("Could not determine PIC window geometry to click the tutorial preference")
+            click_x = values["X"] + round(values["WIDTH"] * 0.472)
+            click_y = values["Y"] + round(values["HEIGHT"] * 0.74)
+            command(["xdotool", "mousemove", str(click_x), str(click_y)])
+            command(["xdotool", "click", "1"])
+            wait_for(lambda: checkbox.getState().contains(pyatspi.STATE_CHECKED),
+                     "clicked first-run tutorial preference to become checked", timeout=4)
+    click_accessible("button", "Skip for now", timeout=4)
+
+
+def prepare_interactive_window(window_id: str) -> None:
+    """Give the existing coordinate/pixel assertions their reference geometry."""
+    if os.environ.get("PIC_GUI_DESKTOP_DISPLAY") != "1":
+        return
+    width = int(os.environ.get("PIC_GUI_DISPLAY_WIDTH", "1600"))
+    height = int(os.environ.get("PIC_GUI_DISPLAY_HEIGHT", "1000"))
+    x = max(0, (width - 1600) // 2)
+    y = max(0, (height - 1000) // 2)
+    command(["xdotool", "windowsize", "--sync", window_id, "1600", "1000"])
+    command(["xdotool", "windowmove", "--sync", window_id, str(x), str(y)])
 
 
 def check_logs() -> list[str]:
@@ -327,7 +442,7 @@ def smoke_test() -> None:
         "GSETTINGS_BACKEND": "memory", "GDK_BACKEND": "x11",
         "GSK_RENDERER": "cairo", "LIBGL_ALWAYS_SOFTWARE": "1",
         "GTK_USE_PORTAL": "0", "GIO_USE_VFS": "local",
-        "GTK_A11Y": "none",
+        "GTK_A11Y": "atspi" if os.environ.get("PIC_GUI_DESKTOP_DISPLAY") == "1" else "none",
         "PICASA_TRACE": "1", "PIC_SCREENSAVER_TRACE": "1",
     })
     log = APP_LOG.open("w")
@@ -337,7 +452,9 @@ def smoke_test() -> None:
                       if "PIC" in command(["xdotool", "getwindowname", wid], check=False)), None),
         "visible PIC window", timeout=30,
     )
+    prepare_interactive_window(APP_WINDOW)
     command(["xdotool", "windowfocus", "--sync", APP_WINDOW])
+    dismiss_first_run_welcome()
     geometry = command(["xdotool", "getwindowgeometry", "--shell", APP_WINDOW])
     match_x = re.search(r"^X=(\d+)$", geometry, re.MULTILINE)
     match_y = re.search(r"^Y=(\d+)$", geometry, re.MULTILINE)
@@ -365,6 +482,7 @@ def smoke_test() -> None:
                       if "PIC" in command(["xdotool", "getwindowname", wid], check=False)), None),
         "visible PIC window with temporary test photos", timeout=30,
     )
+    prepare_interactive_window(APP_WINDOW)
     command(["xdotool", "windowfocus", "--sync", APP_WINDOW])
     geometry = command(["xdotool", "getwindowgeometry", "--shell", APP_WINDOW])
     match_x = re.search(r"^X=(\d+)$", geometry, re.MULTILINE)
@@ -409,9 +527,12 @@ def smoke_test() -> None:
     record(add_case("Folder navigation and photo membership", "Opening the generated folder shows its 15 catalogued photos"),
            folder_photo_count == 15 and len(matching_generated_tiles(folder_shot)) >= 12,
            f"folder database count={folder_photo_count}; visible generated tiles={len(matching_generated_tiles(folder_shot))}; screenshot={folder_shot.name}")
-    click_at(1263, 28)
+    if click_accessible("toggle button", "Filter by rating (clear)") is None:
+        raise RuntimeError("Could not open the folder rating filter through AT-SPI")
+    wait_for(lambda: accessible_exists("radio button", "Clear"),
+             "rating filter popover to open", timeout=4)
     filter_menu = screenshot("02c-rating-filter-menu.png")
-    click_at(1280, 270)
+    click_at(1350, 286)
     wait_for(lambda: db_setting("photo-rating-filter") == "3",
              "folder rating filter set to three stars", timeout=8)
     filtered_shot = screenshot("02d-folder-rated-filter.png")
@@ -422,7 +543,7 @@ def smoke_test() -> None:
            f"setting={db_setting('photo-rating-filter')}; visible fixture tiles={filtered_tiles}; screenshots={filter_menu.name}, {filtered_shot.name}")
     # The check button leaves its popover open, so the Clear row is directly
     # available after choosing the rating filter.
-    click_at(1230, 110)
+    click_at(1350, 130)
     wait_for(lambda: db_setting("photo-rating-filter") == "all",
              "clear folder rating filter", timeout=8)
     command(["xdotool", "key", "Escape"])
@@ -436,10 +557,13 @@ def smoke_test() -> None:
     # the first captured GUI frame containing exactly both rated fixture
     # photos. The visual time includes screenshot capture and polling cadence.
     # Clear closes the popover; reopen it before selecting All Stars.
-    click_at(1263, 28)
+    if click_accessible("toggle button", "Filter by rating (clear)") is None:
+        raise RuntimeError("Could not reopen the folder rating filter through AT-SPI")
+    wait_for(lambda: accessible_exists("radio button", "Clear"),
+             "rating filter popover to reopen", timeout=4)
     all_stars_menu = screenshot("02-rating-all-stars-menu.png")
     all_stars_click_started = time.monotonic()
-    click_at(1280, 143)  # All Stars row in the rating-filter popover.
+    click_at(1350, 162)  # All Stars row in the rating-filter popover.
     db_deadline = all_stars_click_started + 8
     while db_setting("photo-rating-filter") != "stars" and time.monotonic() < db_deadline:
         time.sleep(0.01)
@@ -1111,7 +1235,7 @@ def write_report(error: Exception | None) -> None:
         "",
         f"- Overall: **{result}**",
         f"- Commit: `{COMMIT}`",
-        f"- Display: Xvfb `{DISPLAY}` (1600×1000×24), GTK backend X11, Cairo renderer",
+        f"- Display: `{os.environ.get('PIC_GUI_DISPLAY_DESCRIPTION', f'Xvfb {DISPLAY} (1600×1000×24), GTK X11/Cairo')}`",
         f"- Application binary: `{APP}`",
         f"- Selected suite: `{SUITE}` (focused runs include prerequisite steps)",
         f"- Artifact directory: `reports/gui-tests/{RUN_DIR.name}`",
@@ -1126,7 +1250,7 @@ def write_report(error: Exception | None) -> None:
     ]
     for case in CASES:
         action = {
-            "PIC startup and Library": "Launch PIC on a new Xvfb display and capture the visible main window",
+            "PIC startup and Library": f"Launch PIC on {os.environ.get('PIC_GUI_DISPLAY_DESCRIPTION', f'Xvfb {DISPLAY}')} and capture the visible main window",
             "Isolated sample gallery": "Load the generated temporary photo fixture and query its catalog rows",
             "Photo rating persistence": "Rate two generated photos through the GUI and query both SQLite ratings",
             "Folder navigation and photo membership": "Click the imported fixture folder and compare catalog membership and visible photos",

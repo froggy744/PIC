@@ -6,7 +6,7 @@ Run the complete X11 GUI regression suite from the repository root:
 scripts/test-gui.sh
 ```
 
-The script presents a numbered menu. Choose the full suite or a focused run ending after Startup, Library and ratings, Import, Gallery and viewer, Editing and collage, or Screensaver. Choose Complete suite to run the full 41-case Xvfb baseline followed by the native Fedora Wayland/Vulkan real-photo smoke. To skip the interactive menu, set `PIC_GUI_SUITE` to `all`, `startup`, `library`, `import`, `viewer`, `editing`, `screensaver`, `native`, or `wayland`.
+The script presents a numbered menu. Choose the full suite or a focused run ending after Startup, Library and ratings, Import, Gallery and viewer, Editing and collage, or Screensaver. Choose Complete Wayland desktop suite to run all 41 UI cases on the Fedora Wayland desktop, followed by the native Fedora Wayland/Vulkan real-photo smoke. To skip the menu, set `PIC_GUI_SUITE` to `all`, `startup`, `library`, `import`, `viewer`, `editing`, `screensaver`, `native`, or `wayland`.
 
 The harness always creates a fresh Xvfb display, wraps the app in a private D-Bus session, and uses temporary `HOME`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_CACHE_HOME`, and generated photos under `reports/gui-tests/<run-id>/`. It never opens the host library database or uses original photos. Screenshots and application/window-manager/Xvfb diagnostics are saved in that run directory; `latest-report.md` is refreshed after every run.
 
@@ -44,7 +44,7 @@ Choose **8) Complete suite** from the menu, or run it directly:
 PIC_GUI_SUITE=wayland scripts/test-gui.sh
 ```
 
-This runs the full 41-case Xvfb regression suite and then the automated Wayland/Vulkan smoke below. The 41 existing interaction cases still use Xvfb because they depend on X11 input/window-management tools; the second stage exercises PIC on the real Wayland desktop. Each stage has its own report and the combined run writes `reports/gui-tests/latest-wayland-report.md`.
+This runs all 41 interactive cases on the current Wayland desktop using its XWayland display, followed by the automated native Wayland/Vulkan smoke below. The UI suite covers gallery, filtering, ratings, import, viewer, editing and Undo/Redo, collage, layout controls, and screensaver. The native stage launches PIC with GTK's Wayland backend and checks Vulkan initialization, real-photo import, lightbox zoom, and persistence. Each stage has its own report and the combined run writes `reports/gui-tests/latest-wayland-report.md`.
 
 To run only the native Wayland checks, choose **9) Wayland/Vulkan native smoke only** or run:
 

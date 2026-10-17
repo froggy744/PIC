@@ -246,9 +246,12 @@ impl MetadataPanel {
         explorer_scroll.set_propagate_natural_width(false);
         explorer_scroll.set_min_content_width(1);
         explorer_scroll.set_hexpand(true);
-        explorer_scroll.set_min_content_height(205);
-        explorer_scroll.set_max_content_height(235);
-        explorer_scroll.set_propagate_natural_height(true);
+        // Facet lists are replaced with a loading row whenever the scope
+        // changes. Keep the explorer viewport fixed so that transient natural
+        // height changes do not resize the gallery above/below it.
+        explorer_scroll.set_min_content_height(220);
+        explorer_scroll.set_max_content_height(220);
+        explorer_scroll.set_propagate_natural_height(false);
         let columns = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         columns.set_hexpand(true);
         explorer_scroll.set_child(Some(&columns));
@@ -559,7 +562,8 @@ impl MetadataPanel {
         let show_all = self.all_button.is_active();
         self.camera_control.set_visible(!show_all);
         self.individual_controls.set_visible(!show_all);
-        self.chips_scroll.set_visible(show_all && self.chips.first_child().is_some());
+        self.chips_scroll
+            .set_visible(show_all && self.chips.first_child().is_some());
         self.explorer_revealer.set_child_visible(show_all);
         self.explorer_revealer.set_reveal_child(show_all);
         self.all_button.set_tooltip_text(Some(if show_all {
@@ -798,7 +802,7 @@ impl MetadataPanel {
     }
     fn refresh_explorer(self: &Rc<Self>) {
         for column in self.explorer.borrow().iter() {
-            self.populate_column_choices(
+            self.populate_column_choices_preserving(
                 Field::ALL[column.choose.selected() as usize],
                 &column.search,
                 &column.list,
@@ -834,7 +838,8 @@ impl MetadataPanel {
         if active == 0 {
             self.active_count.set_text("");
         } else {
-            self.active_count.set_text(&format!("{active} filters active"));
+            self.active_count
+                .set_text(&format!("{active} filters active"));
         }
         self.button
             .set_tooltip_text(Some(&format!("Filter photos · {active} active categories")));
@@ -894,7 +899,8 @@ impl MetadataPanel {
             });
             self.chips.append(&chip);
         }
-        self.chips_scroll.set_visible(self.all_button.is_active() && active > 0);
+        self.chips_scroll
+            .set_visible(self.all_button.is_active() && active > 0);
         self.refresh_count();
         if self.explorer_revealer.reveals_child() {
             self.refresh_explorer();
@@ -1021,16 +1027,36 @@ impl MetadataPanel {
     ) {
         self.populate_choices_with_search(field, list, Some(search.clone()));
     }
+    fn populate_column_choices_preserving(
+        self: &Rc<Self>,
+        field: Field,
+        search: &gtk::SearchEntry,
+        list: &gtk::Box,
+    ) {
+        self.populate_choices_with_search_mode(field, list, Some(search.clone()), true);
+    }
     fn populate_choices_with_search(
         self: &Rc<Self>,
         field: Field,
         list: &gtk::Box,
         search: Option<gtk::SearchEntry>,
     ) {
-        while let Some(child) = list.first_child() {
-            list.remove(&child);
+        self.populate_choices_with_search_mode(field, list, search, false);
+    }
+    fn populate_choices_with_search_mode(
+        self: &Rc<Self>,
+        field: Field,
+        list: &gtk::Box,
+        search: Option<gtk::SearchEntry>,
+        preserve_existing: bool,
+    ) {
+        let preserve_existing = preserve_existing && list.first_child().is_some();
+        if !preserve_existing {
+            while let Some(child) = list.first_child() {
+                list.remove(&child);
+            }
+            list.append(&gtk::Label::new(Some("Loading…")));
         }
-        list.append(&gtk::Label::new(Some("Loading…")));
         let Some(path) = db::connection_path(&self.connection.borrow()).ok() else {
             return;
         };
@@ -1073,8 +1099,16 @@ impl MetadataPanel {
                             .as_ref()
                             != Some(&expected_path)
                     {
-                        panel.populate_choices_with_search(field, &list, search.clone());
+                        panel.populate_choices_with_search_mode(
+                            field,
+                            &list,
+                            search.clone(),
+                            preserve_existing,
+                        );
                         return glib::ControlFlow::Break;
+                    }
+                    if preserve_existing && list.opacity() >= 0.995 {
+                        list.set_opacity(0.0);
                     }
                     while let Some(child) = list.first_child() {
                         list.remove(&child);
@@ -1085,10 +1119,47 @@ impl MetadataPanel {
                             "Could not load metadata: {e}"
                         )))),
                     };
+                    if preserve_existing {
+                        Self::reveal_refreshed_choices(&list);
+                    }
                     glib::ControlFlow::Break
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
                 Err(_) => glib::ControlFlow::Break,
+            }
+        });
+    }
+    fn reveal_refreshed_choices(list: &gtk::Box) {
+        if !list.settings().is_gtk_enable_animations() {
+            list.set_opacity(1.0);
+            return;
+        }
+        let from = list.opacity();
+        if from >= 0.995 {
+            list.set_opacity(1.0);
+            return;
+        }
+        let request = list.widget_name();
+        let started = Rc::new(Cell::new(None::<Instant>));
+        list.add_tick_callback(move |list, _| {
+            if list.widget_name() != request {
+                return glib::ControlFlow::Break;
+            }
+            let start = match started.get() {
+                Some(start) => start,
+                None => {
+                    let start = Instant::now();
+                    started.set(Some(start));
+                    start
+                }
+            };
+            let progress = (start.elapsed().as_secs_f64() / 0.17).clamp(0.0, 1.0);
+            let eased = progress * progress * (3.0 - 2.0 * progress);
+            list.set_opacity(from + (1.0 - from) * eased);
+            if progress >= 1.0 {
+                glib::ControlFlow::Break
+            } else {
+                glib::ControlFlow::Continue
             }
         });
     }

@@ -171,3 +171,7 @@ Both MP4s preserve the actual source resolution of **1920×1080**, with H.264 vi
 ### Tutorial screen
 
 ![PIC V1 tutorial screen](screenshots-V1/tutorial-screen2.jpg)
+
+## Tutorial runtime assets
+
+The four `wiz-*.jpg` images embedded by the app are maintained separately in `images/onboarding/`. Native and packaged builds stage those files in the runtime `screenshots/` directory to preserve editable tutorial image overrides. Documentation screenshot moves must not remove these application assets.

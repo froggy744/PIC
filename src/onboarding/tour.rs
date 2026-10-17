@@ -15,19 +15,19 @@ const STEPS: [(&str, &str); 4] = [
 const SCREENSHOTS: [(&str, &[u8]); 4] = [
     (
         "wiz-browse.jpg",
-        include_bytes!("../../screenshots/wiz-browse.jpg"),
+        include_bytes!("../../images/onboarding/wiz-browse.jpg"),
     ),
     (
         "wiz-albums.jpg",
-        include_bytes!("../../screenshots/wiz-albums.jpg"),
+        include_bytes!("../../images/onboarding/wiz-albums.jpg"),
     ),
     (
         "wiz-edit.jpg",
-        include_bytes!("../../screenshots/wiz-edit.jpg"),
+        include_bytes!("../../images/onboarding/wiz-edit.jpg"),
     ),
     (
         "wiz-collage.jpg",
-        include_bytes!("../../screenshots/wiz-collage.jpg"),
+        include_bytes!("../../images/onboarding/wiz-collage.jpg"),
     ),
 ];
 

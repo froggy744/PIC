@@ -932,7 +932,7 @@ copy_runtime_resources() {
         ok "Bundled runtime resources: $resource_root/$folder"
     done
     mkdir -p "$resource_root/screenshots"
-    cp -a "$SOURCE_DIR"/screenshots/wiz-*.jpg "$resource_root/screenshots/"
+    cp -a "$SOURCE_DIR"/images/onboarding/wiz-*.jpg "$resource_root/screenshots/"
 }
 
 validate_packaging_resources() {
@@ -1485,7 +1485,7 @@ EOF_TEST_INSTALLER
         "cp -a themes /app/share/$BIN_NAME/",
         "cp -a resources /app/share/$BIN_NAME/",
         "mkdir -p /app/share/$BIN_NAME/screenshots",
-        "cp -a screenshots/wiz-*.jpg /app/share/$BIN_NAME/screenshots/",
+        "cp -a images/onboarding/wiz-*.jpg /app/share/$BIN_NAME/screenshots/",
         "install -Dm644 $desktop_rel /app/share/applications/$APP_ID.desktop",
         "install -Dm644 $metainfo_rel /app/share/metainfo/$APP_ID.metainfo.xml",
         "install -Dm644 $icon_rel $FLATPAK_ICON_DEST"

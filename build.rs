@@ -7,7 +7,7 @@
 //! artwork. After each build this script mirrors the packaging layout by
 //! copying the current `themes/` and `images/` folders into the profile
 //! directory (for example `target/release`), keeping them in sync whenever
-//! their contents change. The editable `screenshots/wiz-*.jpg` tour images
+//! their contents change. The editable `images/onboarding/wiz-*.jpg` tour images
 //! are staged alongside those folders, without unrelated screenshots/videos.
 
 use std::env;
@@ -83,7 +83,7 @@ fn main() {
     }
     let screenshots = profile_dir.join("screenshots");
     fs::create_dir_all(&screenshots).expect("create runtime screenshot directory");
-    for entry in fs::read_dir(manifest_dir.join("screenshots")).expect("read tour screenshots") {
+    for entry in fs::read_dir(manifest_dir.join("images/onboarding")).expect("read tour screenshots") {
         let entry = entry.expect("read screenshot entry");
         let name = entry.file_name();
         let name_text = name.to_string_lossy();

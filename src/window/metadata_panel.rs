@@ -555,23 +555,7 @@ impl MetadataPanel {
     }
     fn sync_view(&self) {
         let show_panel = self.button.is_active() && !self.lightbox_open.get();
-        // Keep the active panel allocated while the lightbox is present. Hiding
-        // it changes the gallery's vertical allocation before the shared
-        // element animation covers it, and restoring it reflows the grid
-        // underneath the close fade. Opacity preserves the grid geometry.
-        let allocated = self.button.is_active();
-        self.root.set_visible(allocated);
-        self.root.set_can_target(show_panel);
-        if self.root.settings().is_gtk_enable_animations() {
-            self.root.remove_css_class("metadata-filter-no-motion");
-        } else {
-            self.root.add_css_class("metadata-filter-no-motion");
-        }
-        if self.lightbox_open.get() {
-            self.root.add_css_class("metadata-filter-lightbox-covered");
-        } else {
-            self.root.remove_css_class("metadata-filter-lightbox-covered");
-        }
+        self.root.set_visible(show_panel);
         let show_all = self.all_button.is_active();
         self.camera_control.set_visible(!show_all);
         self.individual_controls.set_visible(!show_all);

@@ -4762,9 +4762,8 @@ fn start_photo_export_single(
         let refresh = refresh.clone();
         metadata_panel.set_refresh_action(Rc::new(move || refresh.emit_clicked()));
     }
-    // The lightbox overlays the gallery, not the metadata bar above it.
-    // Suppress that bar while viewing a photo and restore its prior mode
-    // (individual filters or ALL columns) when returning to the grid.
+    // Suppress the metadata bar while viewing a photo and restore its prior
+    // mode (individual filters or ALL columns) when returning to the grid.
     {
         let panel_for_lightbox = metadata_panel.clone();
         lightbox.root.connect_visible_notify(move |root| {
@@ -4773,9 +4772,23 @@ fn start_photo_export_single(
         metadata_panel.set_lightbox_open(lightbox.root.is_visible());
     }
 
+    // The viewer must include the metadata panel's former space. Parent it
+    // above the combined panel and gallery surface, so hiding the panel frees
+    // that height to the lightbox while the gallery reflows behind its cover.
+    gallery_overlay.remove_overlay(&lightbox.root);
+    let gallery_surface = gtk::Overlay::new();
+    gallery_surface.set_hexpand(true);
+    gallery_surface.set_vexpand(true);
+    let gallery_stack = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    gallery_stack.set_hexpand(true);
+    gallery_stack.set_vexpand(true);
+    gallery_stack.append(&metadata_panel.root);
+    gallery_stack.append(&content);
+    gallery_surface.set_child(Some(&gallery_stack));
+    gallery_surface.add_overlay(&lightbox.root);
+
     right_column.append(&right_header);
-    right_column.append(&metadata_panel.root);
-    right_column.append(&content);
+    right_column.append(&gallery_surface);
     {
         let panel=metadata_panel.clone();
         window.connect_close_request(move |_| {panel.cancel_index();glib::Propagation::Proceed});

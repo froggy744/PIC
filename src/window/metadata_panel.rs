@@ -141,15 +141,15 @@ impl MetadataPanel {
         filters_list.set_margin_bottom(8);
         let filters_scroll = gtk::ScrolledWindow::new();
         filters_scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+        filters_scroll.set_min_content_width(220);
+        filters_scroll.set_min_content_height(240);
         filters_scroll.set_max_content_height(300);
+        filters_scroll.set_propagate_natural_width(true);
+        filters_scroll.set_propagate_natural_height(true);
         filters_scroll.set_child(Some(&filters_list));
         filters_popover.set_child(Some(&filters_scroll));
         filters_button.set_popover(Some(&filters_popover));
         controls.append(&filters_button);
-        let explorer_button = gtk::ToggleButton::with_label("Metadata");
-        explorer_button.add_css_class("metadata-filter-choice");
-        explorer_button.set_tooltip_text(Some("Show metadata explorer"));
-        controls.append(&explorer_button);
         controls_scroll.set_child(Some(&controls));
         body.append(&controls_scroll);
         let chips = gtk::FlowBox::new();
@@ -170,10 +170,14 @@ impl MetadataPanel {
         explorer_scroll.set_child(Some(&columns));
         let explorer_body = gtk::Box::new(gtk::Orientation::Vertical, 6);
         let explorer_tools = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+        let explorer_button = gtk::ToggleButton::with_label("Metadata");
+        explorer_button.add_css_class("metadata-filter-choice");
+        explorer_button.set_tooltip_text(Some("Show or hide metadata columns"));
+        explorer_tools.append(&explorer_button);
         let explorer_add = gtk::Button::with_label("Add column");
         explorer_add.set_icon_name("list-add-symbolic");
         explorer_tools.append(&explorer_add);
-        explorer_body.append(&explorer_tools);
+        body.append(&explorer_tools);
         explorer_body.append(&explorer_scroll);
         let explorer_revealer = gtk::Revealer::new();
         explorer_revealer.set_transition_type(gtk::RevealerTransitionType::SlideDown);
@@ -342,9 +346,22 @@ impl MetadataPanel {
             panel.add_explorer_column(field);
         }
         let weak = Rc::downgrade(&panel);
+        let explorer_toggle = explorer_button.clone();
         panel.explorer_add.connect_clicked(move |_| {
             if let Some(panel) = weak.upgrade() {
-                panel.add_explorer_column(Field::Camera);
+                let current = panel
+                    .explorer
+                    .borrow()
+                    .iter()
+                    .map(|column| Field::ALL[column.choose.selected() as usize])
+                    .collect::<Vec<_>>();
+                let next = Field::ALL
+                    .iter()
+                    .copied()
+                    .find(|field| !current.contains(field))
+                    .unwrap_or(Field::Camera);
+                panel.add_explorer_column(next);
+                explorer_toggle.set_active(true);
             }
         });
         let weak = Rc::downgrade(&panel);

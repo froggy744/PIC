@@ -82,6 +82,10 @@ pub(super) struct MetadataPanel {
     pub button: gtk::ToggleButton,
     pub root: gtk::Box,
     explorer_revealer: gtk::Revealer,
+    all_button: gtk::ToggleButton,
+    camera_control: gtk::Box,
+    individual_controls: gtk::ScrolledWindow,
+    lightbox_open: Cell<bool>,
     connection: Rc<RefCell<Connection>>,
     scope: Rc<dyn Fn() -> Scope>,
     changed: Rc<dyn Fn()>,
@@ -122,7 +126,16 @@ impl MetadataPanel {
         button.update_property(&[gtk::accessible::Property::Label("Filters")]);
         // Icon-only beside Sort and the existing rating button in the top bar.
         let title = gtk::Box::new(gtk::Orientation::Horizontal, 3);
-        title.append(&gtk::Image::from_icon_name("view-filter-symbolic"));
+        // Prefer the standard GTK icon when available. The bundled symbolic
+        // filter icon is a reliable fallback on themes without view-filter.
+        let filter_icon_name = gtk::gdk::Display::default()
+            .map(|display| gtk::IconTheme::for_display(&display).has_icon("view-filter-symbolic"))
+            .unwrap_or(false);
+        title.append(&gtk::Image::from_icon_name(if filter_icon_name {
+            "view-filter-symbolic"
+        } else {
+            "metadata-filter-symbolic"
+        }));
         let indicator = gtk::Label::new(None);
         indicator.add_css_class("caption");
         title.append(&indicator);
@@ -140,6 +153,18 @@ impl MetadataPanel {
 
         let toolbar = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         toolbar.add_css_class("metadata-filter-toolbar");
+        // Camera + ALL always sit together when the individual filters are open.
+        // ALL stays visible when it switches the bar to the full explorer.
+        let camera_control = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        camera_control.add_css_class("metadata-filter-controls");
+        toolbar.append(&camera_control);
+        let all_button = gtk::ToggleButton::with_label("ALL");
+        all_button.add_css_class("metadata-filter-all");
+        all_button.set_tooltip_text(Some("Show all metadata columns"));
+        all_button.update_property(&[gtk::accessible::Property::Label(
+            "Switch between individual filters and all metadata columns",
+        )]);
+        toolbar.append(&all_button);
         let controls_scroll = gtk::ScrolledWindow::new();
         controls_scroll.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Never);
         controls_scroll.set_propagate_natural_width(false);
@@ -246,6 +271,10 @@ impl MetadataPanel {
             button,
             root,
             explorer_revealer,
+            all_button: all_button.clone(),
+            camera_control,
+            individual_controls: controls_scroll,
+            lightbox_open: Cell::new(false),
             connection,
             scope,
             changed,
@@ -295,7 +324,11 @@ impl MetadataPanel {
                     panel.populate_editor(field, &content);
                 }
             });
-            controls.append(&menu);
+            if field == Field::Camera {
+                panel.camera_control.append(&menu);
+            } else {
+                controls.append(&menu);
+            }
             panel.filter_buttons.borrow_mut().push((field, menu));
 
             let option = gtk::CheckButton::with_label(field.label());
@@ -394,15 +427,24 @@ impl MetadataPanel {
             panel.add_explorer_column(field);
         }
         let weak = Rc::downgrade(&panel);
-        panel.button.connect_toggled(move |b| {
+        panel.button.connect_toggled(move |button| {
             if let Some(panel) = weak.upgrade() {
-                let expanded = b.is_active();
-                panel.root.set_visible(expanded);
-                panel.explorer_revealer.set_child_visible(expanded);
-                panel.explorer_revealer.set_reveal_child(expanded);
-                if expanded {
+                // Every new opening starts with the individual filter buttons.
+                // Hiding for the lightbox does not toggle this button, so it
+                // preserves the current ALL/individual mode on return.
+                if !button.is_active() {
+                    panel.all_button.set_active(false);
+                }
+                panel.sync_view();
+                if button.is_active() {
                     panel.sync();
                 }
+            }
+        });
+        let weak = Rc::downgrade(&panel);
+        panel.all_button.connect_toggled(move |_| {
+            if let Some(panel) = weak.upgrade() {
+                panel.sync_view();
             }
         });
         let weak = Rc::downgrade(&panel);
@@ -486,6 +528,31 @@ impl MetadataPanel {
     }
     pub fn set_refresh_action(&self, action: Rc<dyn Fn()>) {
         self.refresh_action.replace(Some(action));
+    }
+    /// Temporarily hide the filter interface behind the fullscreen viewer.
+    /// The header toggle and ALL choice stay unchanged and restore on return.
+    pub fn set_lightbox_open(&self, open: bool) {
+        self.lightbox_open.set(open);
+        self.sync_view();
+    }
+    fn sync_view(&self) {
+        let show_panel = self.button.is_active() && !self.lightbox_open.get();
+        let show_all = self.all_button.is_active();
+        self.root.set_visible(show_panel);
+        self.camera_control.set_visible(!show_all);
+        self.individual_controls.set_visible(!show_all);
+        self.explorer_revealer.set_child_visible(show_all);
+        self.explorer_revealer.set_reveal_child(show_all);
+        self.all_button.set_tooltip_text(Some(if show_all {
+            "Show individual filters"
+        } else {
+            "Show all metadata columns"
+        }));
+        if show_panel && show_all {
+            // Loading the facets remains asynchronous; do not refresh when
+            // the panel is simply being hidden behind the lightbox.
+            // The next normal sync() refresh will also update the columns.
+        }
     }
     fn sync_filter_visibility(&self) {
         let selection = self.filter_selection.borrow().clone();

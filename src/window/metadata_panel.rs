@@ -6,6 +6,56 @@ use std::sync::{
     Arc,
 };
 
+const VISIBLE_FILTERS_SETTING: &str = "photo-metadata-visible-filters";
+const EXPLORER_COLUMNS_SETTING: &str = "photo-metadata-explorer-columns";
+const DEFAULT_VISIBLE_FILTERS: &[Field] = &[
+    Field::Camera,
+    Field::Lens,
+    Field::Iso,
+    Field::CaptureDate,
+    Field::FileType,
+];
+
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+struct VisibleFilterSelection {
+    fields: Vec<Field>,
+    rating: bool,
+}
+
+fn load_visible_filters(connection: &Connection) -> VisibleFilterSelection {
+    db::setting(connection, VISIBLE_FILTERS_SETTING)
+        .ok()
+        .flatten()
+        .and_then(|raw| serde_json::from_str::<VisibleFilterSelection>(&raw).ok())
+        .unwrap_or_else(|| VisibleFilterSelection {
+            fields: DEFAULT_VISIBLE_FILTERS.to_vec(),
+            rating: true,
+        })
+}
+
+fn load_explorer_fields(connection: &Connection) -> Vec<Field> {
+    db::setting(connection, EXPLORER_COLUMNS_SETTING)
+        .ok()
+        .flatten()
+        .and_then(|raw| serde_json::from_str::<Vec<Field>>(&raw).ok())
+        .map(|fields| {
+            fields
+                .into_iter()
+                .filter(|field| Field::ALL.contains(field))
+                .take(8)
+                .collect()
+        })
+        .filter(|fields: &Vec<Field>| !fields.is_empty())
+        .unwrap_or_else(|| vec![Field::Camera, Field::Lens, Field::Iso, Field::FileType])
+}
+
+struct ExplorerColumn {
+    root: gtk::Box,
+    choose: gtk::DropDown,
+    list: gtk::Box,
+    remove: gtk::Button,
+}
+
 pub(super) struct MetadataPanel {
     pub button: gtk::ToggleButton,
     pub root: gtk::Revealer,
@@ -23,7 +73,12 @@ pub(super) struct MetadataPanel {
     database: RefCell<Option<std::path::PathBuf>>,
     revision: Cell<u64>,
     request: Cell<u64>,
-    explorer: RefCell<Vec<(gtk::DropDown, gtk::Box)>>,
+    filter_selection: RefCell<VisibleFilterSelection>,
+    filter_options: RefCell<Vec<(Option<Field>, gtk::CheckButton)>>,
+    filter_buttons: RefCell<Vec<(Field, gtk::MenuButton)>>,
+    explorer_columns: gtk::Box,
+    explorer_add: gtk::Button,
+    explorer: RefCell<Vec<ExplorerColumn>>,
 }
 impl MetadataPanel {
     pub fn new(
@@ -74,6 +129,23 @@ impl MetadataPanel {
         clear.set_tooltip_text(Some("Clear all filters"));
         clear.update_property(&[gtk::accessible::Property::Label("Clear all filters")]);
         controls.append(&clear);
+        let filters_button = gtk::MenuButton::new();
+        filters_button.add_css_class("metadata-filter-choice");
+        filters_button.set_label("Filters");
+        filters_button.set_tooltip_text(Some("Choose which filter categories to show"));
+        let filters_popover = gtk::Popover::new();
+        let filters_list = gtk::Box::new(gtk::Orientation::Vertical, 2);
+        filters_list.set_margin_start(10);
+        filters_list.set_margin_end(10);
+        filters_list.set_margin_top(8);
+        filters_list.set_margin_bottom(8);
+        let filters_scroll = gtk::ScrolledWindow::new();
+        filters_scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+        filters_scroll.set_max_content_height(300);
+        filters_scroll.set_child(Some(&filters_list));
+        filters_popover.set_child(Some(&filters_scroll));
+        filters_button.set_popover(Some(&filters_popover));
+        controls.append(&filters_button);
         let explorer_button = gtk::ToggleButton::with_label("Metadata");
         explorer_button.add_css_class("metadata-filter-choice");
         explorer_button.set_tooltip_text(Some("Show metadata explorer"));
@@ -96,11 +168,18 @@ impl MetadataPanel {
         explorer_scroll.set_max_content_height(260);
         let columns = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         explorer_scroll.set_child(Some(&columns));
+        let explorer_body = gtk::Box::new(gtk::Orientation::Vertical, 6);
+        let explorer_tools = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+        let explorer_add = gtk::Button::with_label("Add column");
+        explorer_add.set_icon_name("list-add-symbolic");
+        explorer_tools.append(&explorer_add);
+        explorer_body.append(&explorer_tools);
+        explorer_body.append(&explorer_scroll);
         let explorer_revealer = gtk::Revealer::new();
         explorer_revealer.set_transition_type(gtk::RevealerTransitionType::SlideDown);
         explorer_revealer.set_transition_duration(150);
         explorer_revealer.add_css_class("metadata-explorer");
-        explorer_revealer.set_child(Some(&explorer_scroll));
+        explorer_revealer.set_child(Some(&explorer_body));
         body.append(&explorer_revealer);
         let indexing = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         let index_button = gtk::Button::from_icon_name("view-refresh-symbolic");
@@ -120,6 +199,8 @@ impl MetadataPanel {
         body.append(&indexing);
         let database = db::connection_path(&connection.borrow()).ok();
         let state = Filters::load(&connection.borrow());
+        let visible_filters = load_visible_filters(&connection.borrow());
+        let explorer_fields = load_explorer_fields(&connection.borrow());
         let panel = Rc::new(Self {
             button,
             root,
@@ -137,21 +218,18 @@ impl MetadataPanel {
             database: RefCell::new(database),
             revision: Cell::new(0),
             request: Cell::new(0),
+            filter_selection: RefCell::new(visible_filters),
+            filter_options: RefCell::new(Vec::new()),
+            filter_buttons: RefCell::new(Vec::new()),
+            explorer_columns: columns,
+            explorer_add,
             explorer: RefCell::new(Vec::new()),
         });
-        for field in [
-            Field::Camera,
-            Field::Lens,
-            Field::Iso,
-            Field::Aperture,
-            Field::Shutter,
-            Field::FocalLength,
-            Field::CaptureDate,
-            Field::FileType,
-        ] {
+        for field in Field::ALL {
             let menu = gtk::MenuButton::new();
             menu.add_css_class("metadata-filter-choice");
             menu.set_label(field.label());
+            menu.set_visible(panel.filter_selection.borrow().fields.contains(&field));
             let popover = gtk::Popover::new();
             let content = gtk::Box::new(gtk::Orientation::Vertical, 6);
             content.set_margin_start(10);
@@ -167,36 +245,32 @@ impl MetadataPanel {
                 }
             });
             controls.append(&menu);
-        }
-        let extra = gtk::MenuButton::new();
-        extra.add_css_class("metadata-filter-choice");
-        extra.set_label("More");
-        let popover = gtk::Popover::new();
-        let extra_box = gtk::Box::new(gtk::Orientation::Vertical, 6);
-        let names = Field::ALL.iter().map(|f| f.label()).collect::<Vec<_>>();
-        let choose = gtk::DropDown::from_strings(&names);
-        choose.set_selected(1);
-        extra_box.append(&choose);
-        let editor = gtk::Box::new(gtk::Orientation::Vertical, 6);
-        extra_box.append(&editor);
-        popover.set_child(Some(&extra_box));
-        extra.set_popover(Some(&popover));
-        controls.append(&extra);
-        let weak = Rc::downgrade(&panel);
-        let content = editor.clone();
-        choose.connect_selected_notify(move |choice| {
-            if let Some(panel) = weak.upgrade() {
-                if let Some(field) = Field::ALL.get(choice.selected() as usize) {
-                    panel.populate_editor(*field, &content);
+            panel.filter_buttons.borrow_mut().push((field, menu));
+
+            let option = gtk::CheckButton::with_label(field.label());
+            option.set_active(panel.filter_selection.borrow().fields.contains(&field));
+            filters_list.append(&option);
+            let weak = Rc::downgrade(&panel);
+            option.connect_toggled(move |check| {
+                if let Some(panel) = weak.upgrade() {
+                    let mut selection = panel.filter_selection.borrow_mut();
+                    if check.is_active() {
+                        if !selection.fields.contains(&field) {
+                            selection.fields.push(field);
+                        }
+                    } else {
+                        selection.fields.retain(|selected| *selected != field);
+                    }
+                    drop(selection);
+                    panel.sync_filter_visibility();
+                    panel.save_visible_filters();
                 }
-            }
-        });
-        let weak = Rc::downgrade(&panel);
-        popover.connect_show(move |_| {
-            if let Some(panel) = weak.upgrade() {
-                panel.populate_editor(Field::ALL[choose.selected() as usize], &editor);
-            }
-        });
+            });
+            panel
+                .filter_options
+                .borrow_mut()
+                .push((Some(field), option));
+        }
         // Route to the existing rating state and controls, not a second rating model.
         let rating_button = gtk::MenuButton::new();
         rating_button.add_css_class("metadata-filter-choice");
@@ -232,31 +306,47 @@ impl MetadataPanel {
         rating_popover.set_child(Some(&ratings));
         rating_button.set_popover(Some(&rating_popover));
         controls.append(&rating_button);
+        let rating_option = gtk::CheckButton::with_label("Rating");
+        let rating_visible = panel.filter_selection.borrow().rating;
+        rating_button.set_visible(rating_visible);
+        rating_option.set_active(rating_visible);
+        filters_list.append(&rating_option);
+        let weak = Rc::downgrade(&panel);
+        rating_option.connect_toggled(move |check| {
+            if let Some(panel) = weak.upgrade() {
+                panel.filter_selection.borrow_mut().rating = check.is_active();
+                panel.sync_filter_visibility();
+                panel.save_visible_filters();
+            }
+        });
+        panel
+            .filter_options
+            .borrow_mut()
+            .push((None, rating_option));
         controls.append(&panel.index_button);
-        for field in [Field::Camera, Field::Lens, Field::Iso, Field::FileType] {
-            let column = gtk::Box::new(gtk::Orientation::Vertical, 4);
-            column.set_hexpand(true);
-            column.set_size_request(165, -1);
-            let choose = gtk::DropDown::from_strings(&names);
-            choose.set_selected(Field::ALL.iter().position(|f| *f == field).unwrap() as u32);
-            column.append(&choose);
-            let list = gtk::Box::new(gtk::Orientation::Vertical, 2);
-            let sc = gtk::ScrolledWindow::new();
-            sc.set_min_content_height(130);
-            sc.set_max_content_height(160);
-            sc.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
-            sc.set_child(Some(&list));
-            column.append(&sc);
-            columns.append(&column);
-            let weak = Rc::downgrade(&panel);
-            let content = list.clone();
-            choose.connect_selected_notify(move |choice| {
-                if let Some(panel) = weak.upgrade() {
-                    panel.populate_choices(Field::ALL[choice.selected() as usize], &content);
+        let weak = Rc::downgrade(&panel);
+        filters_popover.connect_show(move |_| {
+            if let Some(panel) = weak.upgrade() {
+                for (field, option) in panel.filter_options.borrow().iter() {
+                    let active = match field {
+                        Some(field) => panel.filter_selection.borrow().fields.contains(field),
+                        None => panel.filter_selection.borrow().rating,
+                    };
+                    if option.is_active() != active {
+                        option.set_active(active);
+                    }
                 }
-            });
-            panel.explorer.borrow_mut().push((choose, list));
+            }
+        });
+        for field in explorer_fields {
+            panel.add_explorer_column(field);
         }
+        let weak = Rc::downgrade(&panel);
+        panel.explorer_add.connect_clicked(move |_| {
+            if let Some(panel) = weak.upgrade() {
+                panel.add_explorer_column(Field::Camera);
+            }
+        });
         let weak = Rc::downgrade(&panel);
         explorer_button.connect_toggled(move |button| {
             explorer_revealer.set_reveal_child(button.is_active());
@@ -310,6 +400,18 @@ impl MetadataPanel {
                 panel
                     .state
                     .replace(Filters::load(&panel.connection.borrow()));
+                panel
+                    .filter_selection
+                    .replace(load_visible_filters(&panel.connection.borrow()));
+                panel.sync_filter_visibility();
+                let fields = load_explorer_fields(&panel.connection.borrow());
+                while let Some(column) = panel.explorer_columns.first_child() {
+                    panel.explorer_columns.remove(&column);
+                }
+                panel.explorer.borrow_mut().clear();
+                for field in fields {
+                    panel.add_explorer_column(field);
+                }
                 panel.revision.set(panel.revision.get() + 1);
                 panel.sync();
             }
@@ -332,6 +434,111 @@ impl MetadataPanel {
     pub fn cancel_index(&self) {
         if let Some(cancel) = self.cancel.borrow().as_ref() {
             cancel.store(true, AtomicOrdering::Relaxed);
+        }
+    }
+    fn sync_filter_visibility(&self) {
+        let selection = self.filter_selection.borrow().clone();
+        for (field, button) in self.filter_buttons.borrow().iter() {
+            button.set_visible(selection.fields.contains(field));
+        }
+        for (field, option) in self.filter_options.borrow().iter() {
+            let active = match field {
+                Some(field) => selection.fields.contains(field),
+                None => selection.rating,
+            };
+            if option.is_active() != active {
+                option.set_active(active);
+            }
+        }
+    }
+    fn save_visible_filters(&self) {
+        if let Ok(value) = serde_json::to_string(&*self.filter_selection.borrow()) {
+            let _ = db::set_setting(&self.connection.borrow(), VISIBLE_FILTERS_SETTING, &value);
+        }
+    }
+    fn save_explorer_columns(&self) {
+        let fields = self
+            .explorer
+            .borrow()
+            .iter()
+            .map(|column| Field::ALL[column.choose.selected() as usize])
+            .collect::<Vec<_>>();
+        if let Ok(value) = serde_json::to_string(&fields) {
+            let _ = db::set_setting(&self.connection.borrow(), EXPLORER_COLUMNS_SETTING, &value);
+        }
+        self.explorer_add.set_sensitive(fields.len() < 8);
+        for column in self.explorer.borrow().iter() {
+            column.remove.set_sensitive(fields.len() > 1);
+        }
+    }
+    fn add_explorer_column(self: &Rc<Self>, field: Field) {
+        if self.explorer.borrow().len() >= 8 {
+            return;
+        }
+        let root = gtk::Box::new(gtk::Orientation::Vertical, 4);
+        let header = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+        let names = Field::ALL
+            .iter()
+            .map(|item| item.label())
+            .collect::<Vec<_>>();
+        let choose = gtk::DropDown::from_strings(&names);
+        choose.set_hexpand(true);
+        choose.set_selected(
+            Field::ALL
+                .iter()
+                .position(|item| *item == field)
+                .unwrap_or(0) as u32,
+        );
+        header.append(&choose);
+        let remove = gtk::Button::from_icon_name("list-remove-symbolic");
+        remove.set_tooltip_text(Some("Remove column"));
+        remove.update_property(&[gtk::accessible::Property::Label("Remove column")]);
+        header.append(&remove);
+        root.append(&header);
+        root.set_hexpand(true);
+        root.set_size_request(165, -1);
+        let list = gtk::Box::new(gtk::Orientation::Vertical, 2);
+        let scroll = gtk::ScrolledWindow::new();
+        scroll.set_min_content_height(130);
+        scroll.set_max_content_height(160);
+        scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+        scroll.set_child(Some(&list));
+        root.append(&scroll);
+        self.explorer_columns.append(&root);
+        self.explorer.borrow_mut().push(ExplorerColumn {
+            root: root.clone(),
+            choose: choose.clone(),
+            list: list.clone(),
+            remove: remove.clone(),
+        });
+
+        let weak = Rc::downgrade(self);
+        let content = list.clone();
+        choose.connect_selected_notify(move |choice| {
+            if let Some(panel) = weak.upgrade() {
+                panel.populate_choices(Field::ALL[choice.selected() as usize], &content);
+                panel.save_explorer_columns();
+            }
+        });
+        let weak = Rc::downgrade(self);
+        remove.connect_clicked(move |_| {
+            if let Some(panel) = weak.upgrade() {
+                panel.explorer_columns.remove(&root);
+                panel
+                    .explorer
+                    .borrow_mut()
+                    .retain(|column| column.root != root);
+                panel.save_explorer_columns();
+            }
+        });
+        self.save_explorer_columns();
+        if self.root.reveals_child() {
+            self.populate_choices(field, &list);
+        }
+    }
+    fn refresh_explorer(self: &Rc<Self>) {
+        for column in self.explorer.borrow().iter() {
+            self.populate_choices(Field::ALL[column.choose.selected() as usize], &column.list);
         }
     }
     fn apply(self: &Rc<Self>) {
@@ -477,11 +684,6 @@ impl MetadataPanel {
         scroll.set_child(Some(&list));
         content.append(&scroll);
         self.populate_choices(field, &list);
-    }
-    fn refresh_explorer(self: &Rc<Self>) {
-        for (choice, list) in self.explorer.borrow().iter() {
-            self.populate_choices(Field::ALL[choice.selected() as usize], list);
-        }
     }
     fn populate_choices(self: &Rc<Self>, field: Field, list: &gtk::Box) {
         while let Some(child) = list.first_child() {

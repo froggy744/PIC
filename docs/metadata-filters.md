@@ -4,7 +4,7 @@
 
 The filter icon immediately after **Sort** opens a collapsible panel above the photo area. Closing it retains the active filters; the button shows an active indicator. Remove individual value/range chips, or use the leading **X** button to clear metadata and the existing rating filter. The **Metadata** toggle expands the four-column Explorer inline, as before.
 
-Categories combine with AND. Multiple values in a category combine with OR. Numeric and date bounds are inclusive; dates use `YYYY-MM-DD`, shutter ranges use seconds. **More** exposes manufacturer, exposure, white balance, dimensions, GPS, favourite, edited and EXIF-presence properties. Rating uses PIC's original rating state.
+Use **Filters** beside the X button to choose which category buttons are visible; choices are saved per library. Use **Add column** in Metadata Explorer and the X on a column to add or remove Explorer columns. Explorer column choices are saved per library. Categories combine with AND. Multiple values in a category combine with OR. Numeric and date bounds are inclusive; dates use `YYYY-MM-DD`, shutter ranges use seconds. **More** exposes manufacturer, exposure, white balance, dimensions, GPS, favourite, edited and EXIF-presence properties. Rating uses PIC's original rating state.
 
 The **Metadata** button opens four configurable Explorer columns. Choices and disjunctive counts come from catalog metadata in the current browsing scope. Lists display 100 choices at a time; **Show more** makes every remaining value accessible without creating thousands of GTK controls at once.
 

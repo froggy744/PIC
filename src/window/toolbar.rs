@@ -466,6 +466,9 @@
     );
     let header_tools = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     header_tools.append(&sort_button);
+    // Restore the original top-bar rating selector and keep metadata beside Sort.
+    header_tools.append(&metadata_panel.button);
+    header_tools.append(&rating_filter_button);
     header_tools.append(&info.view_toggle);
     info.append_menu_action(&settings, "Appearance");
     let screensaver = gtk::Button::from_icon_name("media-playback-start-symbolic");
@@ -497,17 +500,12 @@
     info.append_menu_action(&help, "Help");
     for (id, title, widget) in [
         ("sort", "Sort photos", sort_button.clone().upcast::<gtk::Widget>()),
+        ("metadata_filter", "Photo filters", metadata_panel.button.clone().upcast()),
+        ("rating_filter", "Filter by rating", rating_filter_button.clone().upcast()),
         ("view", "Photo view", info.view_toggle.clone().upcast()),
     ] {
         menu_controls.register(&connection.borrow(), "Top bar", id, title, &widget);
     }
-    menu_controls.register(
-        &connection.borrow(),
-        "Filter toolbar",
-        "metadata_filter",
-        "Photo filters",
-        &metadata_panel.button,
-    );
     for (id, title, widget) in [
         ("zoom", "Thumbnail zoom", info.grid_zoom.clone().upcast::<gtk::Widget>()),
         ("favorite", "Favourites", info.favorite.clone().upcast()),

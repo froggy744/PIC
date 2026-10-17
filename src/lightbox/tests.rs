@@ -467,6 +467,13 @@ mod lightbox_close_transition_regression {
         window.present();
         lightbox.root.set_visible(true);
 
+        let started = Rc::new(Cell::new(0_u32));
+        let started_for_handler = started.clone();
+        let root_for_started_handler = lightbox.root.clone();
+        lightbox.set_close_started_handler(move || {
+            assert!(root_for_started_handler.is_visible());
+            started_for_handler.set(started_for_handler.get() + 1);
+        });
         let prepared = Rc::new(Cell::new(0_u32));
         let prepared_for_handler = prepared.clone();
         lightbox.set_close_prepare_handler(move || {
@@ -475,6 +482,7 @@ mod lightbox_close_transition_regression {
 
         lightbox.request_close();
         lightbox.request_close(); // Repeated input must not start a second fade.
+        assert_eq!(started.get(), 1);
         assert_eq!(prepared.get(), 1);
 
         let context = glib::MainContext::default();
@@ -490,6 +498,7 @@ mod lightbox_close_transition_regression {
 
         lightbox.root.set_visible(true);
         lightbox.request_close();
+        assert_eq!(started.get(), 2);
         lightbox.close();
         assert!(!lightbox.root.is_visible());
         assert!((lightbox.root.opacity() - 1.0).abs() < f64::EPSILON);

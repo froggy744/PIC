@@ -416,6 +416,7 @@ pub struct Lightbox {
     collection_navigation: CollectionNavigationHandler,
     // Normal user closes fade out; programmatic close() remains immediate.
     close_requested: Rc<dyn Fn()>,
+    close_started: Rc<RefCell<Option<Rc<dyn Fn()>>>>,
     close_prepare: Rc<RefCell<Option<Rc<dyn Fn()>>>>,
     // A destination can finish loading behind the opaque viewer before fade.
     close_ready: Rc<RefCell<Option<Rc<dyn Fn() -> bool>>>>,

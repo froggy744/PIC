@@ -230,12 +230,14 @@ impl Lightbox {
         let zoom_sync: ZoomSyncHandler = Rc::new(RefCell::new(None));
         let context_menu: ContextMenuHandler = Rc::new(RefCell::new(None));
         let collection_navigation: CollectionNavigationHandler = Rc::new(RefCell::new(None));
+        let close_started: Rc<RefCell<Option<Rc<dyn Fn()>>>> = Rc::new(RefCell::new(None));
         let close_prepare: Rc<RefCell<Option<Rc<dyn Fn()>>>> = Rc::new(RefCell::new(None));
         let close_ready: Rc<RefCell<Option<Rc<dyn Fn() -> bool>>>> = Rc::new(RefCell::new(None));
         let close_generation = Rc::new(Cell::new(0_u64));
         let close_in_progress = Rc::new(Cell::new(false));
         let close_requested: Rc<dyn Fn()> = {
             let weak_root = root.downgrade();
+            let started = close_started.clone();
             let prepare = close_prepare.clone();
             let ready = close_ready.clone();
             let generation = close_generation.clone();
@@ -248,6 +250,9 @@ impl Lightbox {
                 };
                 if !root.is_visible() || closing.replace(true) {
                     return;
+                }
+                if let Some(started) = started.borrow().as_ref() {
+                    started();
                 }
                 // A closing viewer must not apply a late decode or prefetch.
                 cancel_lightbox_prefetch();
@@ -1152,6 +1157,7 @@ impl Lightbox {
             context_menu,
             collection_navigation,
             close_requested,
+            close_started,
             close_prepare,
             close_ready,
             close_generation,
@@ -1161,6 +1167,10 @@ impl Lightbox {
 
     pub fn request_close(&self) {
         (self.close_requested)();
+    }
+
+    pub fn set_close_started_handler(&self, handler: impl Fn() + 'static) {
+        self.close_started.replace(Some(Rc::new(handler)));
     }
 
     pub fn set_close_prepare_handler(&self, handler: impl Fn() + 'static) {

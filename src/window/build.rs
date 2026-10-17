@@ -4771,6 +4771,15 @@ fn start_photo_export_single(
         });
         metadata_panel.set_lightbox_open(lightbox.root.is_visible());
     }
+    // Restore the panel before preparing the destination grid. The lightbox
+    // still covers the combined surface, so GTK can finish the gallery's
+    // shorter allocation before the close fade reveals it.
+    {
+        let panel_for_close = metadata_panel.clone();
+        lightbox.set_close_started_handler(move || {
+            panel_for_close.set_lightbox_open(false);
+        });
+    }
 
     // The viewer must include the metadata panel's former space. Parent it
     // above the combined panel and gallery surface, so hiding the panel frees

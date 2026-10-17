@@ -442,9 +442,12 @@ impl MetadataPanel {
             }
         });
         let weak = Rc::downgrade(&panel);
-        panel.all_button.connect_toggled(move |_| {
+        panel.all_button.connect_toggled(move |button| {
             if let Some(panel) = weak.upgrade() {
                 panel.sync_view();
+                if button.is_active() && panel.root.is_visible() {
+                    panel.refresh_explorer();
+                }
             }
         });
         let weak = Rc::downgrade(&panel);
@@ -548,11 +551,6 @@ impl MetadataPanel {
         } else {
             "Show all metadata columns"
         }));
-        if show_panel && show_all {
-            // Loading the facets remains asynchronous; do not refresh when
-            // the panel is simply being hidden behind the lightbox.
-            // The next normal sync() refresh will also update the columns.
-        }
     }
     fn sync_filter_visibility(&self) {
         let selection = self.filter_selection.borrow().clone();

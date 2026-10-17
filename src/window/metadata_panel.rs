@@ -491,9 +491,7 @@ impl MetadataPanel {
     }
     fn refresh_explorer(self: &Rc<Self>) {
         for (choice, list) in self.explorer.borrow().iter() {
-            if list.is_mapped() {
-                self.populate_choices(Field::ALL[choice.selected() as usize], list);
-            }
+            self.populate_choices(Field::ALL[choice.selected() as usize], list);
         }
     }
     fn populate_choices(self: &Rc<Self>, field: Field, list: &gtk::Box) {

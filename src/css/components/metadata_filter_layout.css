@@ -1,0 +1,129 @@
+/* PIC metadata explorer: photo-first geometry, theme-inherited colours.
+   Loaded above theme button rules; square-corner setting still wins. */
+.metadata-filter-panel .metadata-filter-toolbar {
+    min-height: 38px;
+}
+.metadata-filter-panel .metadata-filter-toggle,
+.metadata-filter-panel .metadata-filter-controls button,
+.metadata-filter-panel .metadata-filter-summary button {
+    min-height: 32px;
+    padding: 0 11px;
+    border-radius: 8px;
+    border: 1px solid alpha(@theme_fg_color, 0.11);
+    background-color: alpha(@theme_fg_color, 0.045);
+    box-shadow: none;
+    font-weight: 500;
+}
+.metadata-filter-panel .metadata-filter-toggle:hover,
+.metadata-filter-panel .metadata-filter-controls button:hover,
+.metadata-filter-panel .metadata-filter-summary button:hover {
+    background-color: alpha(@theme_fg_color, 0.09);
+}
+.metadata-filter-panel .metadata-filter-toggle:checked,
+.metadata-filter-panel .metadata-filter-controls button:checked {
+    background-color: alpha(@accent_bg_color, 0.17);
+    border-color: alpha(@accent_bg_color, 0.35);
+}
+.metadata-filter-panel .metadata-filter-toggle.metadata-filter-active {
+    border-color: alpha(@accent_bg_color, 0.52);
+}
+.metadata-filter-panel .metadata-filter-controls {
+    min-width: 0;
+}
+.metadata-filter-panel .metadata-filter-summary {
+    margin-left: 8px;
+}
+.metadata-filter-panel .metadata-filter-active-count {
+    color: @accent_color;
+    font-weight: 600;
+}
+.metadata-filter-panel .metadata-filter-summary .metadata-filter-utility {
+    min-width: 32px;
+    padding: 0 7px;
+}
+.metadata-filter-panel .metadata-explorer {
+    margin: 2px 0 2px;
+    border: 1px solid alpha(@theme_fg_color, 0.14);
+    border-radius: 11px;
+    background-color: @window_bg_color;
+    color: @theme_fg_color;
+}
+.metadata-filter-panel .metadata-explorer-column {
+    min-width: 0;
+    padding: 10px 14px 12px;
+    border-right: 1px solid alpha(@theme_fg_color, 0.11);
+}
+.metadata-filter-panel .metadata-explorer-column:last-child {
+    border-right: 0;
+}
+.metadata-filter-panel .metadata-column-header {
+    min-height: 30px;
+    margin-bottom: 4px;
+}
+.metadata-filter-panel dropdown.metadata-column-choice > button {
+    min-height: 29px;
+    padding: 1px 7px;
+    border: 0;
+    border-radius: 6px;
+    box-shadow: none;
+    background: transparent;
+    font-weight: 600;
+}
+.metadata-filter-panel dropdown.metadata-column-choice > button:hover {
+    background-color: alpha(@theme_fg_color, 0.07);
+}
+.metadata-filter-panel .metadata-column-menu {
+    min-width: 28px;
+    min-height: 28px;
+    padding: 2px;
+    border: 0;
+    border-radius: 6px;
+    box-shadow: none;
+    background: transparent;
+}
+.metadata-filter-panel .metadata-column-menu:hover {
+    background-color: alpha(@theme_fg_color, 0.08);
+}
+.metadata-filter-panel .metadata-column-resize {
+    min-width: 8px;
+    border-radius: 3px;
+    background: transparent;
+}
+.metadata-filter-panel .metadata-column-resize:hover {
+    background-color: alpha(@accent_bg_color, 0.25);
+}
+.metadata-filter-panel .metadata-column-search {
+    min-height: 32px;
+    margin-bottom: 4px;
+}
+.metadata-filter-panel .metadata-explorer-column checkbutton {
+    min-height: 27px;
+    padding: 2px 1px;
+}
+.metadata-filter-panel .metadata-explorer-column scrolledwindow,
+.metadata-filter-panel .metadata-explorer-column viewport {
+    background: transparent;
+}
+.metadata-filter-panel .metadata-active-chip {
+    min-height: 25px;
+    padding: 1px 9px;
+    border-radius: 7px;
+    border: 1px solid alpha(@accent_bg_color, 0.32);
+    background-color: alpha(@accent_bg_color, 0.10);
+    color: @theme_fg_color;
+    box-shadow: none;
+}
+.metadata-filter-panel .metadata-active-chip:hover {
+    background-color: alpha(@accent_bg_color, 0.17);
+}
+.metadata-column-actions-popover button.metadata-column-action {
+    min-height: 30px;
+    padding: 4px 12px;
+    border-radius: 7px;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+}
+.metadata-column-actions-popover button.metadata-column-action:hover {
+    background-color: alpha(@theme_fg_color, 0.08);
+}

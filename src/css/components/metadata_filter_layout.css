@@ -162,7 +162,6 @@ button.metadata-header-toggle.metadata-filter-active:not(:checked) {
     min-height: 26px;
     padding: 1px 7px;
     border-radius: 6px;
-    white-space: nowrap;
 }
 .metadata-filter-panel .metadata-active-chip {
     min-height: 25px;

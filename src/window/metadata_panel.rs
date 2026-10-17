@@ -84,7 +84,7 @@ pub(super) struct MetadataPanel {
     explorer_revealer: gtk::Revealer,
     all_button: gtk::ToggleButton,
     camera_control: gtk::Box,
-    individual_controls: gtk::Box,
+    individual_controls: gtk::ScrolledWindow,
     lightbox_open: Cell<bool>,
     connection: Rc<RefCell<Connection>>,
     scope: Rc<dyn Fn() -> Scope>,
@@ -287,7 +287,7 @@ impl MetadataPanel {
             // Hide only the buttons when ALL is active, not their expanding
             // scroll host. That host reserves flexible width so counts and
             // Clear all never jump left next to ALL.
-            individual_controls: controls.clone(),
+            individual_controls: controls_scroll,
             lightbox_open: Cell::new(false),
             connection,
             scope,

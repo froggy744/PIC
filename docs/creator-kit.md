@@ -31,6 +31,12 @@ Start with the welcome screen and guided tutorial for a first-launch introductio
 
 **Suggested short hook:** “Remember when your pictures lived in a beautiful desktop photo library? PIC brings that experience back on Linux — with modern galleries, albums and editing, and no cloud lock-in.”
 
+## A bonus demo moment: follow the white rabbit 🐇
+
+Choose the **Terminal** theme, then open screensaver settings to reveal **Matrix Rain** and **Matrix Ken Burns**. Matrix Rain shows animated Katakana rain without photos; Matrix Ken Burns combines green-tinted photographs with Katakana streams and slow pan and zoom.
+
+![PIC V1 white rabbit Easter egg](../screenshots/screenshots-V1/easter%20egg.jpg)
+
 ## Accurate coverage notes
 
 | Say | Avoid claiming |

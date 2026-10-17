@@ -146,3 +146,9 @@ PIC V1 includes multiple distinctive appearance choices, from restrained desktop
 ![PIC V1 — theme-terminal](../screenshots/screenshots-V1/theme-terminal.jpg)
 
 ![PIC V1 — theme-lcars](../screenshots/screenshots-V1/theme-lcars.jpg)
+
+## Follow the white rabbit
+
+Choose the **Terminal** appearance theme and open screensaver settings. Two bonus styles become available: **Matrix Rain** (animated Katakana rain without photos) and **Matrix Ken Burns** (green-tinted photos, Katakana streams and slow pan and zoom). These choices appear when Terminal is active.
+
+![PIC V1 white rabbit Easter egg](../screenshots/screenshots-V1/easter%20egg.jpg)

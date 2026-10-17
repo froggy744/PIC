@@ -49,6 +49,10 @@ Choose from appearance themes, customise the gallery, and explore album covers a
 
 [Watch the V1 walkthrough](screenshots/screenshots-V1/walkthrough-V1.mp4) · [2× version for Reddit](screenshots/screenshots-V1/walkthrough-V1-reddit-2x.mp4) · [All V1 screenshots](screenshots/README.md)
 
+### Follow the white rabbit 🐇
+
+A little V1 Easter egg: choose the **Terminal** theme, then open the screensaver settings to discover **Matrix Rain** and **Matrix Ken Burns**. [See the screenshot and theme guide](docs/THEMES.md#follow-the-white-rabbit).
+
 ## Install PIC
 
 **Linux:** Download the latest **Flatpak** or **AppImage** from [GitHub Releases](https://github.com/froggy744/PIC/releases). Flatpak is the recommended cross-distribution option; AppImage compatibility depends on the host. Follow the [Linux installation guide](docs/build/linux.md) for requirements and troubleshooting.

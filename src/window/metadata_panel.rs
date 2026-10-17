@@ -91,7 +91,8 @@ pub(super) struct MetadataPanel {
     changed: Rc<dyn Fn()>,
     rating: Rc<dyn Fn(&str)>,
     state: RefCell<Filters>,
-    chips: gtk::FlowBox,
+    chips: gtk::Box,
+    chips_scroll: gtk::ScrolledWindow,
     indicator: gtk::Label,
     photo_count: gtk::Label,
     active_count: gtk::Label,
@@ -165,6 +166,10 @@ impl MetadataPanel {
         )]);
         toolbar.append(&all_button);
         toolbar.append(&camera_control);
+        // Reserve the flexible space between ALL and the right-aligned summary.
+        let middle = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        middle.add_css_class("metadata-filter-middle");
+        middle.set_hexpand(true);
         let controls_scroll = gtk::ScrolledWindow::new();
         controls_scroll.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Never);
         controls_scroll.set_propagate_natural_width(false);
@@ -196,7 +201,20 @@ impl MetadataPanel {
         filters_popover.set_child(Some(&filters_scroll));
         filters_button.set_popover(Some(&filters_popover));
         controls_scroll.set_child(Some(&controls));
-        toolbar.append(&controls_scroll);
+        middle.append(&controls_scroll);
+        let chips = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+        chips.add_css_class("metadata-selected-chips");
+        let chips_scroll = gtk::ScrolledWindow::new();
+        chips_scroll.add_css_class("metadata-chips-scroll");
+        chips_scroll.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Never);
+        chips_scroll.set_propagate_natural_width(false);
+        chips_scroll.set_min_content_width(1);
+        chips_scroll.set_max_content_height(42);
+        chips_scroll.set_hexpand(true);
+        chips_scroll.set_child(Some(&chips));
+        chips_scroll.set_visible(false);
+        middle.append(&chips_scroll);
+        toolbar.append(&middle);
 
         let summary = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         summary.add_css_class("metadata-filter-summary");
@@ -223,13 +241,6 @@ impl MetadataPanel {
         summary.append(&refresh_button);
         toolbar.append(&summary);
         body.append(&toolbar);
-        let chips = gtk::FlowBox::new();
-        chips.set_selection_mode(gtk::SelectionMode::None);
-        chips.set_column_spacing(4);
-        chips.set_row_spacing(4);
-        chips.set_max_children_per_line(12);
-        chips.set_min_children_per_line(1);
-        body.append(&chips);
         let explorer_scroll = gtk::ScrolledWindow::new();
         explorer_scroll.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Never);
         explorer_scroll.set_propagate_natural_width(false);
@@ -284,6 +295,7 @@ impl MetadataPanel {
             rating,
             state: RefCell::new(state),
             chips,
+            chips_scroll,
             indicator,
             photo_count,
             active_count,
@@ -547,6 +559,7 @@ impl MetadataPanel {
         self.root.set_visible(show_panel);
         self.camera_control.set_visible(!show_all);
         self.individual_controls.set_visible(!show_all);
+        self.chips_scroll.set_visible(show_all && self.chips.first_child().is_some());
         self.explorer_revealer.set_child_visible(show_all);
         self.explorer_revealer.set_reveal_child(show_all);
         self.all_button.set_tooltip_text(Some(if show_all {
@@ -849,7 +862,7 @@ impl MetadataPanel {
                         panel.apply();
                     }
                 });
-                self.chips.insert(&chip, -1);
+                self.chips.append(&chip);
             }
             if selection.min.is_some() || selection.max.is_some() {
                 let chip = gtk::Button::with_label(&format!(
@@ -866,7 +879,7 @@ impl MetadataPanel {
                         panel.apply();
                     }
                 });
-                self.chips.insert(&chip, -1);
+                self.chips.append(&chip);
             }
         }
         if !matches!(rating.as_str(), "" | "all") {
@@ -879,9 +892,9 @@ impl MetadataPanel {
                     panel.sync();
                 }
             });
-            self.chips.insert(&chip, -1);
+            self.chips.append(&chip);
         }
-        self.chips.set_visible(active > 0);
+        self.chips_scroll.set_visible(self.all_button.is_active() && active > 0);
         self.refresh_count();
         if self.explorer_revealer.reveals_child() {
             self.refresh_explorer();

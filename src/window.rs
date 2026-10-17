@@ -15,6 +15,7 @@ use crate::{db, grid, infobar::InfoBar, lightbox::Lightbox, scanner, sidebar};
 
 mod onboarding;
 mod photo_layout;
+mod metadata_panel;
 use photo_layout::{clear_saved_layouts, restore_section_layout, save_section_layout};
 
 mod layout_settle;

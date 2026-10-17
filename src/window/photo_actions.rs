@@ -296,7 +296,8 @@ fn finish_bulk_recipe(work: BulkRecipeState, name: &'static str, total: usize) {
             work.context.info.set_photo(Some(&selected));
         }
     }
-    if work.refresh_grid_when_done || work.context.filter.get() == sidebar::SidebarFilter::History {
+    if work.refresh_grid_when_done || work.context.filter.get() == sidebar::SidebarFilter::History
+        || !db::filters::Filters::load(&work.context.connection.borrow()).is_empty() {
         refresh_photo_actions_grid(&work.context);
     }
     let succeeded = total.saturating_sub(work.failed);

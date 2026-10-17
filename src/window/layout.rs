@@ -138,7 +138,7 @@
             }
             if new_filter == sidebar::SidebarFilter::Albums {
                 main_stack.set_visible_child_name("albums");
-                if let Ok(albums) = db::albums(&connection_for_albums.borrow()) {
+                if let Ok(albums) = db::browse_albums(&connection_for_albums.borrow()) {
                     let on_album = album_home_click_slot
                         .borrow()
                         .as_ref()
@@ -1650,7 +1650,7 @@
             }
             
             if lightbox_for_search.root.is_visible() && !query.is_empty() {
-                let mut photos = db::photos_limited(
+                let mut photos = db::browse_photos_limited(
                     &connection_for_search.borrow(),
                     None,
                     false,
@@ -1671,7 +1671,7 @@
                         let query = query.clone();
                         move |photo_id| {
                             let mut photos =
-                                db::photos(&connection.borrow(), None, false, Some(&query))
+                                db::browse_photos(&connection.borrow(), None, false, Some(&query))
                                     .unwrap_or_default();
                             retain_enabled_formats(&connection.borrow(), &mut photos);
                             sort_photos(&mut photos, sort.get());

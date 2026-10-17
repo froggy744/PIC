@@ -282,6 +282,8 @@ impl Filters {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Scope {
+    /// Presentation scope, used to refresh Bookshelf counts when rating changes.
+    pub bookshelf: bool,
     pub folder: Option<i64>,
     pub album: Option<i64>,
     pub favorites: bool,

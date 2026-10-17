@@ -358,8 +358,115 @@
     rating_filter_popover.set_child(Some(&rating_filter_box));
     rating_filter_button.set_popover(Some(&rating_filter_popover));
 
+    let metadata_panel = metadata_panel::MetadataPanel::new(
+        connection.clone(),
+        {
+            let connection = connection.clone();
+            let filter = filter.clone();
+            let search = search_text.clone();
+            Rc::new(move || {
+                let search = search.borrow().clone();
+                db::filters::Scope {
+                    bookshelf: filter.get() == sidebar::SidebarFilter::Albums,
+                    // Folder mode is PIC's continuous library stream.
+                    folder: None,
+                    album: if search.is_empty() {
+                        if let sidebar::SidebarFilter::Album(id) = filter.get() {
+                            Some(id)
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    },
+                    favorites: search.is_empty()
+                        && filter.get() == sidebar::SidebarFilter::Favorites,
+                    search,
+                    rating: db::setting(&connection.borrow(), RATING_FILTER_SETTING_KEY)
+                        .ok()
+                        .flatten()
+                        .unwrap_or_default(),
+                }
+            })
+        },
+        {
+            let connection = connection.clone();
+            let filter = filter.clone();
+            let search = search_text.clone();
+            let sort = sort.clone();
+            let gallery = gallery.clone();
+            let navigate = library_navigation_slot.clone();
+            let album_refresh = albums_home_refresh_slot.clone();
+            Rc::new(move || {
+                gallery.invalidate_folder_cache();
+                if filter.get() == sidebar::SidebarFilter::Library {
+                    if let Some(navigate) = navigate.borrow().as_ref() {
+                        navigate(sidebar::SidebarFilter::All);
+                    }
+                } else if filter.get() == sidebar::SidebarFilter::Albums {
+                    let path = db::connection_path(&connection.borrow()).ok();
+                    let expected_path = path.clone();
+                    let (tx, rx) = std::sync::mpsc::channel();
+                    std::thread::spawn(move || {
+                        let result = path
+                            .and_then(|path| db::open_existing(&path).ok())
+                            .and_then(|c| db::browse_albums(&c).ok());
+                        let _ = tx.send(result);
+                    });
+                    let slot = album_refresh.clone();
+                    let c = connection.clone();
+                    let expected = db::filters::Filters::for_browsing(&c.borrow());
+                    glib::timeout_add_local(Duration::from_millis(25), move || {
+                        match rx.try_recv() {
+                            Ok(Some(albums)) => {
+                                if db::connection_path(&c.borrow()).ok() == expected_path
+                                    && db::filters::Filters::for_browsing(&c.borrow()) == expected
+                                {
+                                    if let Some(refresh) = slot.borrow().as_ref() {
+                                        refresh(&albums);
+                                    }
+                                }
+                                glib::ControlFlow::Break
+                            }
+                            Err(std::sync::mpsc::TryRecvError::Empty) => {
+                                glib::ControlFlow::Continue
+                            }
+                            _ => glib::ControlFlow::Break,
+                        }
+                    });
+                } else {
+                    refresh_grid_preserving_folder_viewport(
+                        &connection,
+                        filter.get(),
+                        &search.borrow(),
+                        sort.get(),
+                        &gallery,
+                    );
+                }
+            })
+        },
+        {
+            let choices = vec![
+                ("all", rating_clear.clone()),
+                ("stars", rating_all_stars.clone()),
+                ("unrated", rating_unrated.clone()),
+                ("1", rating_one.clone()),
+                ("2", rating_two.clone()),
+                ("3", rating_three.clone()),
+                ("4", rating_four.clone()),
+                ("5", rating_five.clone()),
+                ("corrupt", corrupt_filter.clone()),
+            ];
+            Rc::new(move |key| {
+                if let Some((_, check)) = choices.iter().find(|(value, _)| *value == key) {
+                    check.set_active(true);
+                }
+            })
+        },
+    );
     let header_tools = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     header_tools.append(&sort_button);
+    header_tools.append(&metadata_panel.button);
     header_tools.append(&rating_filter_button);
     header_tools.append(&info.view_toggle);
     info.append_menu_action(&settings, "Appearance");
@@ -393,6 +500,7 @@
     for (id, title, widget) in [
         ("sort", "Sort photos", sort_button.clone().upcast::<gtk::Widget>()),
         ("filter", "Rating filter", rating_filter_button.clone().upcast()),
+        ("metadata_filter", "Metadata filter", metadata_panel.button.clone().upcast()),
         ("view", "Photo view", info.view_toggle.clone().upcast()),
     ] {
         menu_controls.register(&connection.borrow(), "Top bar", id, title, &widget);
@@ -418,5 +526,5 @@
     }
 
 
-    refresh
+    (refresh, metadata_panel)
 }

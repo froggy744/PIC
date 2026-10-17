@@ -211,11 +211,11 @@ fn refresh_grid_inner(
         let mut photos = if !search.is_empty() {
             // An active search is a library-wide view, regardless of the
             // destination that was selected before typing began.
-            db::photos(&connection, None, false, Some(&search)).unwrap_or_default()
+            db::browse_photos(&connection, None, false, Some(&search)).unwrap_or_default()
         } else if filter == sidebar::SidebarFilter::History {
-            db::history_photos(&connection).unwrap_or_default()
+            db::browse_history_photos(&connection).unwrap_or_default()
         } else if let sidebar::SidebarFilter::Album(album_id) = filter {
-            db::photos_in_album(&connection, album_id, None).unwrap_or_default()
+            db::browse_photos_in_album(&connection, album_id, None).unwrap_or_default()
         } else {
             let (folder_id, favorites) = match filter {
                 sidebar::SidebarFilter::All | sidebar::SidebarFilter::RecentlyAdded => {
@@ -231,7 +231,7 @@ fn refresh_grid_inner(
                 sidebar::SidebarFilter::Album(_) => unreachable!(),
                 sidebar::SidebarFilter::History => unreachable!(),
             };
-            db::photos(&connection, folder_id, favorites, None).unwrap_or_default()
+            db::browse_photos(&connection, folder_id, favorites, None).unwrap_or_default()
         };
 
         retain_enabled_formats(&connection, &mut photos);
@@ -1398,7 +1398,7 @@ mod photo_action_tests {
              INSERT INTO album_photos(album_id,photo_id) VALUES (1,1),(1,2);"
         ).unwrap();
         let refresh = || {
-            let mut photos = db::photos(&connection, Some(1), true, Some("keep")).unwrap();
+            let mut photos = db::browse_photos(&connection, Some(1), true, Some("keep")).unwrap();
             apply_rating_filter(&mut photos, RatingFilter::Unrated);
             photos.iter().map(|p| p.id).collect::<Vec<_>>()
         };
@@ -1414,7 +1414,7 @@ mod photo_action_tests {
         ids.sort_unstable();
         assert_eq!(ids, [1, 2]);
         db::set_rating_for_photos(&connection, &[1], 3).unwrap();
-        let mut album = db::photos_in_album(&connection, 1, None).unwrap();
+        let mut album = db::browse_photos_in_album(&connection, 1, None).unwrap();
         apply_rating_filter(&mut album, RatingFilter::Unrated);
         assert_eq!(album.iter().map(|p| p.id).collect::<Vec<_>>(), [2]);
     }

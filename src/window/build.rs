@@ -47,9 +47,10 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         window.maximize();
     }
 
+    let _ = db::delete_setting(&connection.borrow(), db::filters::SETTING);
     let folders = db::folders(&connection.borrow()).unwrap_or_default();
     let folder_cache = Rc::new(RefCell::new(folders.clone()));
-    let albums = db::albums(&connection.borrow()).unwrap_or_default();
+    let albums = db::browse_albums(&connection.borrow()).unwrap_or_default();
     let initial_filter = sidebar_filter_from_setting(
         db::setting(&connection.borrow(), LAST_VIEW_SETTING_KEY)
             .ok()
@@ -120,12 +121,12 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let mut photos = match initial_filter {
         sidebar::SidebarFilter::Library | sidebar::SidebarFilter::Albums => Vec::new(),
         sidebar::SidebarFilter::Album(album_id) => {
-            db::photos_in_album(&connection.borrow(), album_id, None).unwrap_or_default()
+            db::browse_photos_in_album(&connection.borrow(), album_id, None).unwrap_or_default()
         }
         sidebar::SidebarFilter::Favorites => {
-            db::photos(&connection.borrow(), None, true, None).unwrap_or_default()
+            db::browse_photos(&connection.borrow(), None, true, None).unwrap_or_default()
         }
-        _ => db::photos(&connection.borrow(), None, false, None).unwrap_or_default(),
+        _ => db::browse_photos(&connection.borrow(), None, false, None).unwrap_or_default(),
     };
     retain_enabled_formats(&connection.borrow(), &mut photos);
     limit_recently_added(
@@ -958,7 +959,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 }
             }),
             Rc::new(move || {
-                let albums = db::albums(&theme_connection.borrow()).unwrap_or_default();
+                let albums = db::browse_albums(&theme_connection.borrow()).unwrap_or_default();
                 if let Some(refresh) = theme_albums_refresh.borrow().as_ref() {
                     refresh(&albums);
                 }
@@ -1133,7 +1134,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                         candidate += step;
                         continue;
                     };
-                    let mut photos = db::photos(
+                    let mut photos = db::browse_photos(
                         &connection_for_collection_nav.borrow(),
                         Some(folder.id),
                         false,
@@ -1183,7 +1184,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 }
             }
             sidebar::SidebarFilter::Album(current_album_id) => {
-                let albums = db::albums(&connection_for_collection_nav.borrow())
+                let albums = db::browse_albums(&connection_for_collection_nav.borrow())
                     .unwrap_or_default();
                 let Some(current_index) = albums
                     .iter()
@@ -1192,7 +1193,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                     return;
                 };
                 let first_available_album = albums.iter().position(|album| {
-                    let mut photos = db::photos_in_album(
+                    let mut photos = db::browse_photos_in_album(
                         &connection_for_collection_nav.borrow(),
                         album.id,
                         (!search.is_empty()).then_some(search.as_str()),
@@ -1203,7 +1204,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                     !photos.is_empty()
                 });
                 let last_available_album = albums.iter().rposition(|album| {
-                    let mut photos = db::photos_in_album(
+                    let mut photos = db::browse_photos_in_album(
                         &connection_for_collection_nav.borrow(),
                         album.id,
                         (!search.is_empty()).then_some(search.as_str()),
@@ -1219,7 +1220,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 // navigation feel continuous instead of opening another
                 // album unexpectedly.
                 if direction < 0 && Some(current_index) == first_available_album {
-                    let mut photos = db::photos(
+                    let mut photos = db::browse_photos(
                         &connection_for_collection_nav.borrow(),
                         None,
                         false,
@@ -1271,7 +1272,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                     let folders = db::folders(&connection_for_collection_nav.borrow())
                         .unwrap_or_default();
                     for folder in folders {
-                        let mut photos = db::photos(
+                        let mut photos = db::browse_photos(
                             &connection_for_collection_nav.borrow(),
                             Some(folder.id),
                             false,
@@ -1323,7 +1324,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 let mut candidate = current_index as isize + step;
                 while candidate >= 0 && candidate < albums.len() as isize {
                     let album = &albums[candidate as usize];
-                    let mut photos = db::photos_in_album(
+                    let mut photos = db::browse_photos_in_album(
                         &connection_for_collection_nav.borrow(),
                         album.id,
                         (!search.is_empty()).then_some(search.as_str()),
@@ -1371,7 +1372,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             | sidebar::SidebarFilter::RecentlyAdded => {
                 // Photos connects forward to Favorites at its last item.
                 if current_filter == sidebar::SidebarFilter::All && direction > 0 {
-                    let mut photos = db::photos(
+                    let mut photos = db::browse_photos(
                         &connection_for_collection_nav.borrow(),
                         None,
                         true,
@@ -1418,7 +1419,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 if current_filter == sidebar::SidebarFilter::Favorites
                     && direction < 0
                 {
-                    let mut photos = db::photos(
+                    let mut photos = db::browse_photos(
                         &connection_for_collection_nav.borrow(),
                         None,
                         false,
@@ -1463,7 +1464,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 if current_filter == sidebar::SidebarFilter::Favorites
                     && direction > 0
                 {
-                    let mut photos = db::photos(
+                    let mut photos = db::browse_photos(
                         &connection_for_collection_nav.borrow(),
                         None,
                         false,
@@ -1512,7 +1513,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 if current_filter == sidebar::SidebarFilter::RecentlyAdded
                     && direction < 0
                 {
-                    let mut photos = db::photos(
+                    let mut photos = db::browse_photos(
                         &connection_for_collection_nav.borrow(),
                         None,
                         true,
@@ -1558,10 +1559,10 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 // boundary must win over folder-based navigation, otherwise
                 // the selected photo's folder can jump to an unrelated album.
                 if current_filter == sidebar::SidebarFilter::RecentlyAdded && direction > 0 {
-                    let albums = db::albums(&connection_for_collection_nav.borrow())
+                    let albums = db::browse_albums(&connection_for_collection_nav.borrow())
                         .unwrap_or_default();
                     for album in albums {
-                        let mut photos = db::photos_in_album(
+                        let mut photos = db::browse_photos_in_album(
                             &connection_for_collection_nav.borrow(),
                             album.id,
                             (!search.is_empty()).then_some(search.as_str()),
@@ -1627,7 +1628,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 let favorites_only = current_filter == sidebar::SidebarFilter::Favorites;
                 while candidate >= 0 && candidate < folders.len() as isize {
                     let folder = &folders[candidate as usize];
-                    let mut photos = db::photos(
+                    let mut photos = db::browse_photos(
                         &connection_for_collection_nav.borrow(),
                         Some(folder.id),
                         favorites_only,
@@ -2490,9 +2491,10 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         let sidebar_slot = sidebar_for_unavailable.clone();
         let on_delete_album = delete_album.clone();
         Rc::new(move || {
-            let albums = db::albums(&connection.borrow()).unwrap_or_default();
+            let albums = db::browse_albums(&connection.borrow()).unwrap_or_default();
             if let Some(sidebar) = sidebar_slot.borrow().as_ref() {
-                sidebar::refresh_album_rows(sidebar, &albums, &on_delete_album);
+                let sidebar_albums = db::albums(&connection.borrow()).unwrap_or_default();
+                sidebar::refresh_album_rows(sidebar, &sidebar_albums, &on_delete_album);
             }
             if let Some(refresh) = refresh_slot.borrow().as_ref() {
                 refresh(&albums);
@@ -3386,7 +3388,8 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         main_stack_for_teardown.connect_visible_child_notify(move |stack| {
             let visible = stack.visible_child_name();
             if visible.as_deref() == Some("photos")
-                && filter_for_history.get() == sidebar::SidebarFilter::History
+                && (filter_for_history.get() == sidebar::SidebarFilter::History
+                    || !db::filters::Filters::load(&connection_for_teardown.borrow()).is_empty())
             {
                 refresh_grid(
                     &connection_for_teardown,
@@ -3618,6 +3621,8 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         })));
     }
 
+    let search_for_favorite = search_text.clone();
+    let sort_for_favorite = sort.clone();
     let selected_for_favorite = selected_photo.clone();
     let db_for_favorite = connection.clone();
     let info_favorite = info.clone();
@@ -3647,6 +3652,9 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         } else {
             gallery_for_favorite.update_favorites(&[photo.id()], favorite);
             info_favorite.set_photo(Some(&photo));
+        }
+        if !db::filters::Filters::load(&db_for_favorite.borrow()).is_empty() {
+            refresh_grid(&db_for_favorite,filter_for_favorite.get(),&search_for_favorite.borrow(),sort_for_favorite.get(),&gallery_for_favorite);
         }
         if let Some(sidebar) = sidebar_for_favorite.borrow().as_ref().cloned() {
             if let Ok(counts) = db::sidebar_counts(&db_for_favorite.borrow()) {
@@ -4749,10 +4757,15 @@ fn start_photo_export_single(
             present_settings_for_appearance(Some("themes"));
         });
     }
-    let refresh = include!("toolbar.rs");
+    let (refresh, metadata_panel) = include!("toolbar.rs");
 
     right_column.append(&right_header);
+    right_column.append(&metadata_panel.root);
     right_column.append(&content);
+    {
+        let panel=metadata_panel.clone();
+        window.connect_close_request(move |_| {panel.cancel_index();glib::Propagation::Proceed});
+    }
 
     window.set_content(Some(&main_surface));
     crate::startup_trace::mark("widget_content_and_signals_done", Some(build_started));
@@ -5754,7 +5767,7 @@ fn start_photo_export_single(
                     pending_sidebar_counts = Some(*counts);
 
                     let search_active = !search_for_events.borrow().is_empty();
-                    if !search_active {
+                    if !search_active && db::filters::Filters::load(&connection_for_events.borrow()).is_empty() {
                         for indexed in photos {
                             let photo = &indexed.photo;
                             if indexed.newly_discovered
@@ -5959,7 +5972,8 @@ fn start_photo_export_single(
                     }
 
                     if matches!(kind, Some(ScanJobKind::Refresh | ScanJobKind::FolderRefresh))
-                        && !matches!(filter_for_events.get(), sidebar::SidebarFilter::Folder(_))
+                        && (!matches!(filter_for_events.get(), sidebar::SidebarFilter::Folder(_))
+                            || !db::filters::Filters::load(&connection_for_events.borrow()).is_empty())
                     {
                         refresh_grid(
                             &connection_for_events,
@@ -6207,8 +6221,9 @@ fn start_photo_export_single(
 
             let (library, new_connection) = db::select_library(id)
                 .map_err(|error| format!("{error:#}"))?;
+            db::delete_setting(&new_connection,db::filters::SETTING).map_err(|error|error.to_string())?;
             let folders = db::folders(&new_connection).map_err(|error| error.to_string())?;
-            let albums = db::albums(&new_connection).map_err(|error| error.to_string())?;
+            let albums = db::browse_albums(&new_connection).map_err(|error| error.to_string())?;
             let counts = db::sidebar_counts(&new_connection).unwrap_or_default();
             let new_filter = sidebar_filter_from_setting(
                 db::setting(&new_connection, LAST_VIEW_SETTING_KEY)
@@ -6241,15 +6256,15 @@ fn start_photo_export_single(
             let mut photos = match new_filter {
                 sidebar::SidebarFilter::Library | sidebar::SidebarFilter::Albums => Vec::new(),
                 sidebar::SidebarFilter::Album(album_id) => {
-                    db::photos_in_album(&new_connection, album_id, None).unwrap_or_default()
+                    db::browse_photos_in_album(&new_connection, album_id, None).unwrap_or_default()
                 }
                 sidebar::SidebarFilter::Favorites => {
-                    db::photos(&new_connection, None, true, None).unwrap_or_default()
+                    db::browse_photos(&new_connection, None, true, None).unwrap_or_default()
                 }
                 sidebar::SidebarFilter::History => {
-                    db::history_photos(&new_connection).unwrap_or_default()
+                    db::browse_history_photos(&new_connection).unwrap_or_default()
                 }
-                _ => db::photos(&new_connection, None, false, None).unwrap_or_default(),
+                _ => db::browse_photos(&new_connection, None, false, None).unwrap_or_default(),
             };
             retain_enabled_formats(&new_connection, &mut photos);
             limit_recently_added(&new_connection, new_filter, &mut photos);

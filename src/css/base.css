@@ -170,3 +170,11 @@ button.infobar-selected-thumb image {
 button.infobar-selected-thumb:hover {
   outline: 2px solid alpha(@accent_bg_color, 0.65);
 }
+
+/* Content-surface colors, shared by every metadata filter panel theme. */
+.metadata-filter-panel {
+    background-color: @window_bg_color;
+    color: @theme_fg_color;
+    border-bottom: 1px solid alpha(@theme_fg_color, 0.15);
+}
+.metadata-filter-panel flowboxchild { padding: 0; }

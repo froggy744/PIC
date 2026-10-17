@@ -738,3 +738,6 @@ gridview.section-grid > item,
     border-bottom: 2px solid @win95_white;
     box-shadow: inset 1px 1px 0 @win95_dark;
 }
+
+/* Keep the full column divider visible beside the header background. */
+.layout-left-header { margin-right: 1px; }

@@ -21,7 +21,7 @@
 
 window, .layout-left-column, .navigation-sidebar { background: @window_bg_color; color: @theme_fg_color; }
     .layout-left-column { border-right: 1px solid alpha(@theme_fg_color, 0.12); }
-    .layout-left-header, .layout-right-header { background: @headerbar_bg_color; border-bottom: none; color: @theme_fg_color; }
+    .layout-left-header, .layout-right-header { background: @headerbar_bg_color; border-bottom: 1px solid alpha(@theme_fg_color, 0.12); box-shadow: none; color: @theme_fg_color; }
     .app-title { color: @theme_fg_color; text-shadow: none; }
     .layout-left-header button, .layout-right-header button { color: @theme_fg_color; }
     .layout-left-header .sidebar-toggle-button, .layout-left-header .sidebar-toggle-button image { color: @theme_fg_color; opacity: 1; }

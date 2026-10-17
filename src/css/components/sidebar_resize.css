@@ -1,0 +1,17 @@
+.sidebar-resize-handle {
+  /* Keep the wide hit target input-only; the theme paints the actual divider. */
+  opacity: 0;
+  background: transparent;
+  background-color: transparent;
+  background-image: none;
+  border: none;
+  box-shadow: none;
+}
+
+.sidebar-resize-handle:hover,
+.sidebar-resize-handle:active {
+  background-color: transparent;
+  background-image: none;
+  border: none;
+  box-shadow: none;
+}

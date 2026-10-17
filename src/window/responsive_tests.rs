@@ -348,3 +348,117 @@ fn full_window_can_resize_narrow_and_restore_sidebar() {
     window.close();
     let _ = std::fs::remove_file(path);
 }
+
+#[test]
+#[ignore = "requires a GTK display; run individually for each PIC_TEST_THEME"]
+fn theme_header_edges_align() {
+    adw::init().unwrap();
+    let theme = std::env::var("PIC_TEST_THEME").unwrap_or_else(|_| "lars".into());
+    let app = adw::Application::builder()
+        .application_id("io.pic.HeaderAlignmentTest")
+        .build();
+    app.register(None::<&gio::Cancellable>).unwrap();
+    let directory = std::env::temp_dir().join(format!("pic-header-test-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).unwrap();
+    let connection = db::open(&directory.join("library.db")).unwrap();
+    for (key, value) in [
+        ("appearance-theme", theme.as_str()),
+        ("onboarding-never-show", "true"),
+        (WINDOW_WIDTH_SETTING_KEY, "1440"),
+        (WINDOW_HEIGHT_SETTING_KEY, "900"),
+        (SIDEBAR_WIDTH_FRACTION_SETTING_KEY, "0.22"),
+    ] {
+        db::set_setting(&connection, key, value).unwrap();
+    }
+    let window = build(&app, connection);
+    window.present();
+    settle();
+    let widgets = descendants(window.upcast_ref());
+    let left = widgets
+        .iter()
+        .find(|w| w.has_css_class("layout-left-header"))
+        .unwrap();
+    let right = widgets
+        .iter()
+        .find(|w| w.has_css_class("layout-right-header"))
+        .unwrap();
+    for width in [1440, 1100, 1600] {
+        window.set_default_size(width, 900);
+        settle();
+        let l = left.compute_bounds(&window).unwrap();
+        let r = right.compute_bounds(&window).unwrap();
+        let left_bottom = l.y() + l.height();
+        let right_bottom = r.y() + r.height();
+        eprintln!("{theme} width={width}: left bottom={left_bottom}, right bottom={right_bottom}");
+        assert!(
+            (left_bottom - right_bottom).abs() < 0.1,
+            "{theme}: header bottom edges differ: left={left_bottom}, right={right_bottom}"
+        );
+    }
+    if std::env::var_os("PIC_TEST_THEME_SWITCHES").is_some() {
+        let appearance = widgets
+            .iter()
+            .find(|w| w.tooltip_text().as_deref() == Some("Appearance"))
+            .unwrap()
+            .downcast_ref::<gtk::Button>()
+            .unwrap();
+        appearance.emit_clicked();
+        settle();
+        let settings = gtk::Window::list_toplevels()
+            .into_iter()
+            .filter_map(|w| w.downcast::<gtk::Window>().ok())
+            .find(|w| w.title().as_deref() == Some("Settings"))
+            .unwrap();
+        let checks: Vec<_> = descendants(settings.upcast_ref())
+            .into_iter()
+            .filter_map(|w| w.downcast::<gtk::CheckButton>().ok())
+            .filter(|w| {
+                w.tooltip_text()
+                    .is_some_and(|id| std::path::Path::new("themes").join(id.as_str()).is_dir())
+            })
+            .collect();
+        assert_eq!(
+            checks.len(),
+            crate::css::theme_discovery::discover(std::path::Path::new("themes")).len()
+        );
+        for check in checks {
+            let id = check.tooltip_text().unwrap();
+            let row = check.ancestor(gtk::ListBoxRow::static_type()).unwrap();
+            assert!(row.grab_focus());
+            assert!(std::process::Command::new("xdotool")
+                .args([
+                    "search",
+                    "--name",
+                    "^Settings$",
+                    "windowfocus",
+                    "--sync",
+                    "key",
+                    "Return"
+                ])
+                .status()
+                .unwrap()
+                .success());
+            settle();
+            let saved = db::open(&directory.join("library.db")).unwrap();
+            assert_eq!(
+                db::setting(&saved, "appearance-theme").unwrap().as_deref(),
+                Some(id.as_str()),
+                "Enter did not activate {id}"
+            );
+            let l = left.compute_bounds(&window).unwrap();
+            let r = right.compute_bounds(&window).unwrap();
+            eprintln!(
+                "switch + Enter {id}: left bottom={}, right bottom={}",
+                l.y() + l.height(),
+                r.y() + r.height()
+            );
+            assert!(
+                (l.y() + l.height() - r.y() - r.height()).abs() < 0.1,
+                "misaligned after switching to {id}"
+            );
+        }
+        settings.close();
+    }
+    window.close();
+    let _ = std::fs::remove_dir_all(directory);
+}

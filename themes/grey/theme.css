@@ -17,7 +17,7 @@
 
 window, .layout-left-column, .navigation-sidebar { background: #1E1E1E; color: #D8D8D8; }
     .layout-left-column { border-right: 1px solid #303030; }
-    .layout-left-header, .layout-right-header { background: #232323; border-bottom: 1px solid #2E2E2E; color: #D8D8D8; }
+    .layout-left-header, .layout-right-header { background: #232323; border-bottom: 1px solid #303030; box-shadow: none; color: #D8D8D8; }
     .app-title { color: #D8D8D8; text-shadow: none; font-weight: 600; }
     .layout-left-header button, .layout-right-header button { color: #C4C4C4; }
     .layout-left-header .sidebar-toggle-button, .layout-left-header .sidebar-toggle-button image { color: #C4C4C4; opacity: 1; }

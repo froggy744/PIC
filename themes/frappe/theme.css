@@ -34,7 +34,7 @@
 /* Standard GTK4 layout with Catppuccin Frappe colors. Typography is supplied separately by platform CSS. */
 window, .layout-left-column, .navigation-sidebar { background: @nord0; color: @nord4; }
     .layout-left-column { border-right: 1px solid alpha(@nord4, 0.12); }
-    .layout-left-header, .layout-right-header { background: @nord1; border-bottom: none; color: @nord5; }
+    .layout-left-header, .layout-right-header { background: @nord1; border-bottom: 1px solid alpha(@nord4, 0.12); box-shadow: none; color: @nord5; }
     .app-title { color: @nord6; text-shadow: none; }
     .layout-left-header button, .layout-right-header button { color: @nord5; }
     .layout-left-header .sidebar-toggle-button, .layout-left-header .sidebar-toggle-button image { color: @nord5; opacity: 1; }

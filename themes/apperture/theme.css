@@ -46,7 +46,7 @@ window, .layout-left-column, .navigation-sidebar { background: #2B2B2B; color: #
     .layout-left-column {
         background-image: linear-gradient(to bottom, #2F2F2F, #272727);
         border-right: 1px solid @ap_line;
-        box-shadow: inset -1px 0 0 alpha(#FFFFFF, 0.05);
+        box-shadow: none;
     }
     .navigation-sidebar { background: transparent; background-image: none; }
     .layout-left-column scrolledwindow,

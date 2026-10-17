@@ -45,18 +45,18 @@ window {
     .layout-left-column {
         border-right: 1px solid alpha(@accent_bg_color, 0.72);
         box-shadow: 2px 0 8px alpha(@accent_bg_color, 0.24),
-                    8px 0 28px alpha(@tron_blue, 0.14),
-                    inset -1px 0 0 alpha(#EAF9FF, 0.55);
+                    8px 0 28px alpha(@tron_blue, 0.14);
     }
     .layout-left-header, .layout-right-header {
         background: alpha(@headerbar_bg_color, 0.96);
-        border-bottom: 1px solid alpha(@accent_bg_color, 0.82);
-        box-shadow: 0 1px 0 alpha(#EAF9FF, 0.62),
-                    0 3px 12px alpha(@accent_bg_color, 0.40),
+        border-bottom: 1px solid alpha(@accent_bg_color, 0.72);
+        box-shadow: 0 3px 12px alpha(@accent_bg_color, 0.40),
                     0 12px 34px alpha(@tron_blue, 0.18),
                     inset 0 -10px 20px alpha(@accent_bg_color, 0.08);
         color: @theme_fg_color;
     }
+    /* Leave the column divider exposed above the horizontal header line. */
+    .layout-left-header { margin-right: 1px; }
     .app-title {
         color: #F2FBFF;
         font-weight: 800;

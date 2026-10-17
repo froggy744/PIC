@@ -1114,6 +1114,13 @@
     let right_header = adw::HeaderBar::new();
     right_header.set_height_request(46);
 
+    // Theme padding and search controls can give these independent columns
+    // different natural header heights. Share the vertical size request so
+    // their bottom borders stay aligned, including after a theme switch.
+    let header_height_group = gtk::SizeGroup::new(gtk::SizeGroupMode::Vertical);
+    header_height_group.add_widget(&left_header);
+    header_height_group.add_widget(&right_header);
+
     right_header.set_hexpand(true);
     right_header.set_show_start_title_buttons(!main_split.shows_sidebar());
     right_header.set_show_end_title_buttons(true);

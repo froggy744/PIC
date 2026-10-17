@@ -76,14 +76,14 @@ window {
     .layout-left-header {
         background-color: transparent;
         background-image: none;
-        border-bottom: none;
+        border-bottom: 1px solid alpha(@accent_bg_color, 0.12);
         box-shadow: none;
         color: @theme_fg_color;
     }
     .layout-right-header {
         background: transparent;
         background-image: none;
-        border-bottom: none;
+        border-bottom: 1px solid alpha(@accent_bg_color, 0.12);
         box-shadow: none;
         color: @theme_fg_color;
     }

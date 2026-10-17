@@ -1513,6 +1513,7 @@ fn themes_page(
                 _ => 3,
             });
             let list = settings_list();
+            list.set_selection_mode(gtk::SelectionMode::Single);
             let mut group_leader: Option<gtk::CheckButton> = None;
             for theme in &themes {
                 // Radio indicator only: the row title already shows the name.
@@ -1520,6 +1521,8 @@ fn themes_page(
                 // the Settings window on long theme names.
                 let check = gtk::CheckButton::new();
                 check.set_valign(gtk::Align::Center);
+                // Keep one keyboard stop per theme, on the full row.
+                check.set_focusable(false);
                 check.set_tooltip_text(Some(&theme.id));
                 if let Some(leader) = group_leader.as_ref() {
                     check.set_group(Some(leader));
@@ -1539,6 +1542,30 @@ fn themes_page(
                     });
                 }
                 append_row(&list, &theme.name, None, Some(check.upcast_ref()));
+                let row = list
+                    .last_child()
+                    .and_then(|child| child.downcast::<gtk::ListBoxRow>().ok())
+                    .expect("theme row was just appended");
+                row.set_activatable(true);
+                row.set_focusable(true);
+                let row_check = check.clone();
+                row.connect_activate(move |_| row_check.set_active(true));
+
+                // Treat Enter as the row's explicit activation key. The
+                // controller is on the row so it works regardless of which
+                // child GTK has focused inside the theme row.
+                let enter_check = check.clone();
+                let keys = gtk::EventControllerKey::new();
+                keys.set_propagation_phase(gtk::PropagationPhase::Capture);
+                keys.connect_key_pressed(move |_, key, _, _| {
+                    if matches!(key, gtk::gdk::Key::Return | gtk::gdk::Key::KP_Enter) {
+                        enter_check.set_active(true);
+                        gtk::glib::Propagation::Stop
+                    } else {
+                        gtk::glib::Propagation::Proceed
+                    }
+                });
+                row.add_controller(keys);
             }
             append_empty_state(&list, "No themes found in the themes folder", themes.is_empty());
 

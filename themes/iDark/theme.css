@@ -8,10 +8,9 @@
 /* iPhoto-inspired dark appearance. Typography is supplied separately by platform CSS. */
 window, .layout-left-column, .navigation-sidebar { background: #252525; color: #f2f2f2; }
 .layout-left-column { min-width: 200px; border-right: 1px solid #101010; }
-.sidebar-resize-handle { background: transparent; }
-.sidebar-resize-handle:hover { background: rgba(120,185,232,0.35); }
-.sidebar-resize-preview { background: rgba(120,185,232,0.95); }
-.layout-left-header, .layout-right-header { min-height: 46px; background: linear-gradient(to bottom, #404040, #2d2d2d); border-bottom: 1px solid #171717; color: #f5f5f5; }
+.sidebar-resize-handle, .sidebar-resize-handle:hover { background: transparent; }
+.sidebar-resize-preview { background: rgba(242,242,242,0.45); }
+.layout-left-header, .layout-right-header { min-height: 46px; background: linear-gradient(to bottom, #404040, #2d2d2d); border-bottom: 1px solid #101010; box-shadow: none; color: #f5f5f5; }
 .app-title { font-weight: 700; font-size: 15px; margin-left: 4px; color: #f5f5f5; text-shadow: 0 1px #111; }
 .layout-left-header button, .layout-right-header button { color: #eeeeee; border-radius: 6px; }
 .layout-left-header .sidebar-toggle-button, .layout-left-header .sidebar-toggle-button image { color: #f5f5f5; opacity: 1; }

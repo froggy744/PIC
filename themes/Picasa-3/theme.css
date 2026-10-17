@@ -34,7 +34,9 @@ window, .layout-left-column, .navigation-sidebar,
     padding-top: 2px;
     padding-bottom: 2px;
     background-image: linear-gradient(to bottom, @picasa_chrome_light, #E2E2E2);
+    border: none;
     border-bottom: 1px solid @picasa_border;
+    box-shadow: none;
     color: @theme_fg_color;
 }
 .app-title { color: #3D3D3D; font-size: 14px; font-weight: 600; text-shadow: none; }

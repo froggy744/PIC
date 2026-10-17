@@ -40,7 +40,8 @@ window, .layout-left-column, .navigation-sidebar { background: @window_bg_color;
     .layout-left-column { border-right: 1px solid alpha(@accent_bg_color, 0.22); }
     .layout-left-header, .layout-right-header {
         background: @headerbar_bg_color;
-        border-bottom: 1px solid alpha(@accent_bg_color, 0.28);
+        border-bottom: 1px solid alpha(@accent_bg_color, 0.22);
+        box-shadow: none;
         color: @theme_fg_color;
     }
     .app-title { color: @theme_fg_color; font-weight: 700; letter-spacing: 0.02em; text-shadow: none; }

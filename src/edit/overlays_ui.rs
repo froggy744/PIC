@@ -467,6 +467,7 @@ fn add_overlay_opacity_slider(parent: &gtk::Box) -> gtk::Scale {
 #[allow(clippy::too_many_arguments)]
 fn configure_overlay_canvas(
     layer: &gtk::DrawingArea,
+    gpu_canvas: Option<LiveGpuCanvas>,
     session: Rc<RefCell<EditSession>>,
     selected: Rc<Cell<Option<usize>>>,
     selected_text: Rc<Cell<Option<usize>>>,
@@ -587,6 +588,7 @@ fn configure_overlay_canvas(
         let overlays_toggle = overlays_toggle.clone();
         let text_toggle = text_toggle.clone();
         let picture_scroll = picture_scroll.clone();
+        let gpu_canvas = gpu_canvas.clone();
         let display_rect_from_params = display_rect_from_params.clone();
         layer.set_draw_func(move |_, context, width, height| {
             let hadj = picture_scroll.hadjustment().value();
@@ -607,7 +609,9 @@ fn configure_overlay_canvas(
             }
             let _ = context.rectangle(dx, dy, dw, dh);
             let _ = context.clip();
-            {
+            if !gpu_canvas.as_ref().is_some_and(LiveGpuCanvas::uses_gpu_layers) {
+                // In GPU edit mode the photo GLArea composites content
+                // directly. Keep Cairo here only for selection handles.
                 let recipe = session.borrow();
                 for overlay in &recipe.recipe.overlays {
                     if !overlay.visible {
@@ -678,6 +682,15 @@ fn configure_overlay_canvas(
                 };
                 draw_selection_chrome(context, display, rect.0, rect.1);
             }
+        });
+    }
+
+    // If GPU rendering fails, return Cairo-painted content immediately;
+    // the selection/drag layer remains interactive in either renderer mode.
+    if let Some(gpu_canvas) = &gpu_canvas {
+        let redraw_layer = layer.clone();
+        gpu_canvas.widget().connect_notify_local(Some("visible"), move |_, _| {
+            redraw_layer.queue_draw();
         });
     }
 

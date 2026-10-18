@@ -144,6 +144,25 @@ struct GpuView {
     scale: f32,
 }
 
+/// Raster inputs are prepared only when the overlay/text recipe changes.
+/// The source photo and all layer blending remain on the GPU.
+#[derive(Clone)]
+struct GpuOverlayLayer {
+    id: String,
+    rect: super::model::NormRect,
+    opacity: f32,
+    width: i32,
+    height: i32,
+    rgba: glib::Bytes,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct GpuOverlayKey {
+    overlays: Vec<super::model::OverlaySpec>,
+    text: Vec<super::model::TextLayerSpec>,
+    size: (i32, i32),
+}
+
 struct GlObjects {
     program: u32,
     vao: u32,
@@ -172,6 +191,9 @@ struct GlObjects {
     auto_contrast_params: u32,
     auto_contrast_fbo: u32,
     auto_contrast_revision: u64,
+    overlay_program: u32,
+    overlay_textures: Vec<u32>,
+    overlay_revision: u64,
 }
 
 struct GpuState {
@@ -180,6 +202,9 @@ struct GpuState {
     source_revision: u64,
     tone: GpuTone,
     geometry: Option<GpuGeometry>,
+    overlay_key: Option<GpuOverlayKey>,
+    overlays: Vec<GpuOverlayLayer>,
+    overlay_revision: u64,
     view: GpuView,
     objects: Option<GlObjects>,
     rendered_frames: u64,
@@ -221,6 +246,9 @@ impl LiveGpuCanvas {
             source_revision: 0,
             tone: GpuTone::default(),
             geometry: None,
+            overlay_key: None,
+            overlays: Vec::new(),
+            overlay_revision: 0,
             view: GpuView::default(),
             objects: None,
             rendered_frames: 0,
@@ -248,6 +276,9 @@ impl LiveGpuCanvas {
                 if let Some(objects) = dispose_state.borrow_mut().objects.take() {
                     unsafe {
                         gl::DeleteTextures(1, &objects.texture);
+                        if !objects.overlay_textures.is_empty() {
+                            gl::DeleteTextures(objects.overlay_textures.len() as i32, objects.overlay_textures.as_ptr());
+                        }
                         gl::DeleteTextures(1, &objects.clarity_luma_texture);
                         gl::DeleteTextures(1, &objects.clarity_blur_texture);
                         gl::DeleteTextures(1, &objects.effect_luma_texture);
@@ -268,6 +299,7 @@ impl LiveGpuCanvas {
                         gl::DeleteProgram(objects.auto_color_program);
                         gl::DeleteProgram(objects.histogram_program);
                         gl::DeleteProgram(objects.histogram_reduce_program);
+                        gl::DeleteProgram(objects.overlay_program);
                     }
                 }
             }
@@ -329,6 +361,8 @@ impl LiveGpuCanvas {
                 let source_revision = state.source_revision;
                 let tone = state.tone;
                 let geometry = state.geometry;
+                let overlays = state.overlays.clone();
+                let overlay_revision = state.overlay_revision;
                 let view = state.view;
                 let objects = state.objects.as_mut().expect("GL initialized");
                 let mut upload_trace = None;
@@ -515,6 +549,15 @@ impl LiveGpuCanvas {
                     gl::ActiveTexture(gl::TEXTURE0);
                     gl::BindTexture(gl::TEXTURE_2D, objects.texture);
                     gl::DrawArrays(gl::TRIANGLES, 0, 3);
+                    // Render photo layers *after* all image adjustments.
+                    // GPU blending composes image assets first, then text.
+                    if !overlays.is_empty() {
+                        render_gpu_overlays(
+                            objects, &overlays, overlay_revision, &view,
+                            view_width, view_height, device_scale,
+                            output_width, output_height,
+                        );
+                    }
                     #[cfg(test)]
                     if state.readback_requested {
                         let framebuffer_width = view_width * device_scale;
@@ -625,6 +668,9 @@ impl LiveGpuCanvas {
         // Existing editor sources are CPU-transformed; do not transform twice.
         state.geometry = None;
         state.source_revision = state.source_revision.wrapping_add(1);
+        state.overlay_key = None;
+        state.overlays.clear();
+        state.overlay_revision = state.overlay_revision.wrapping_add(1);
         state.last_queued = Some(Instant::now());
         self.area.set_visible(true);
         self.area.queue_render();
@@ -645,6 +691,7 @@ impl LiveGpuCanvas {
         let geo = GpuGeometry::for_source_rotation(width, height, rotation, recipe);
         if state.geometry != Some(geo) {
             state.geometry = Some(geo);
+            state.overlay_key = None;
             state.last_queued = Some(Instant::now());
             drop(state);
             self.area.queue_render();
@@ -661,7 +708,68 @@ impl LiveGpuCanvas {
         }
     }
 
+    /// Rebuild only when layer content or final geometry changes. Asset
+    /// decoding and Pango text shaping run once per recipe revision; compositing
+    /// runs in GL for each rendered frame.
+    pub fn set_overlay_layers(&self, recipe: &EditRecipe) {
+        let (width, height, key) = {
+            let state = self.state.borrow();
+            let Some(&(src_w, src_h, _)) = state.source.as_ref() else { return };
+            let size = state.geometry
+                .map_or((src_w, src_h), |g| (g.output_width, g.output_height));
+            let key = GpuOverlayKey {
+                overlays: recipe.overlays.clone(),
+                text: recipe.text_layers.clone(),
+                size,
+            };
+            if state.overlay_key.as_ref() == Some(&key) { return; }
+            (size.0, size.1, key)
+        };
+        let mut layers = Vec::new();
+        for (index, overlay) in recipe.overlays.iter().enumerate() {
+            if !overlay.visible || overlay.opacity <= 0.001 { continue; }
+            let Some(asset) = super::overlays::load_asset(&overlay.asset) else { continue };
+            let aspect = asset.width() as f32 / asset.height().max(1) as f32;
+            let rect = overlay.rect(width as f32, height as f32, aspect);
+            layers.push(GpuOverlayLayer {
+                id: format!("asset:{index}:{}", overlay.asset),
+                rect, opacity: overlay.opacity,
+                width: asset.width() as i32, height: asset.height() as i32,
+                rgba: glib::Bytes::from_owned(asset.as_raw().clone()),
+            });
+        }
+        for (index, text_layer) in recipe.text_layers.iter().enumerate() {
+            if !text_layer.visible || text_layer.opacity <= 0.001 { continue; }
+            let Some(raster) = super::text_render::render_text_rgba(
+                text_layer, width as f64, height as f64,
+            ) else { continue };
+            let rect = text_layer.rect_with_size(
+                raster.width() as f32 / width.max(1) as f32,
+                raster.height() as f32 / height.max(1) as f32,
+            );
+            layers.push(GpuOverlayLayer {
+                id: format!("text:{index}:{}", text_layer.id),
+                rect, opacity: text_layer.opacity,
+                width: raster.width() as i32, height: raster.height() as i32,
+                rgba: glib::Bytes::from_owned(raster.into_raw()),
+            });
+        }
+        let mut state = self.state.borrow_mut();
+        state.overlay_key = Some(key);
+        state.overlays = layers;
+        state.overlay_revision = state.overlay_revision.wrapping_add(1);
+        state.last_queued = Some(Instant::now());
+        drop(state);
+        self.area.queue_render();
+    }
+
+    pub fn uses_gpu_layers(&self) -> bool {
+        let state = self.state.borrow();
+        state.failure.is_none() && state.source.is_some() && self.area.is_visible()
+    }
+
     pub fn set_recipe(&self, recipe: &EditRecipe) {
+        self.set_overlay_layers(recipe);
         // Returning from CPU fallback may reuse an unchanged GPU recipe.
         // Restore the layer even when no uniform update is needed.
         self.area.set_visible(true);
@@ -1196,6 +1304,31 @@ void main() {
     color = vec4(y, y, y, 1.0);
 }"#)?;
 
+    let overlay_fragment = compile_shader(gl::FRAGMENT_SHADER, r#"#version 150
+uniform sampler2D uOverlay;
+uniform vec4 uLayerRect;
+uniform float uLayerOpacity;
+uniform vec2 uViewSize;
+uniform vec2 uScroll;
+uniform vec2 uPadding;
+uniform float uScale;
+uniform float uDeviceScale;
+uniform vec2 uPhotoSize;
+out vec4 color;
+void main() {
+    vec2 pixel = gl_FragCoord.xy / max(uDeviceScale, 1.0);
+    vec2 fromTop = vec2(pixel.x, uViewSize.y - pixel.y);
+    vec2 photo = (fromTop + uScroll - uPadding) / max(uScale, 0.0001);
+    if (photo.x < 0.0 || photo.y < 0.0 ||
+        photo.x >= uPhotoSize.x || photo.y >= uPhotoSize.y) discard;
+    vec2 uv = (photo - uLayerRect.xy) / uLayerRect.zw;
+    if (uv.x < 0.0 || uv.y < 0.0 || uv.x >= 1.0 || uv.y >= 1.0) discard;
+    // Upload bytes are top-down RGBA while OpenGL texture v=0 is the bottom row.
+    vec4 layer = texture(uOverlay, vec2(uv.x, 1.0-uv.y));
+    color = vec4(layer.rgb, layer.a * uLayerOpacity);
+}
+"#)?;
+
     let auto_vertex = compile_shader(gl::VERTEX_SHADER, r#"#version 150
 uniform sampler2D uSource;
 uniform int uWidth;
@@ -1291,6 +1424,7 @@ void main() {
     let auto_color_program;
     let histogram_program;
     let histogram_reduce_program;
+    let overlay_program;
     let mut vao = 0;
     let mut texture = 0;
     unsafe {
@@ -1314,6 +1448,12 @@ void main() {
         gl::AttachShader(histogram_reduce_program, vertex);
         gl::AttachShader(histogram_reduce_program, histogram_reduce_fragment);
         gl::LinkProgram(histogram_reduce_program);
+        overlay_program = gl::CreateProgram();
+        gl::AttachShader(overlay_program, vertex);
+        gl::AttachShader(overlay_program, overlay_fragment);
+        gl::LinkProgram(overlay_program);
+        let mut overlay_linked = 0;
+        gl::GetProgramiv(overlay_program, gl::LINK_STATUS, &mut overlay_linked);
         let mut histogram_linked = 0;
         let mut histogram_reduce_linked = 0;
         gl::GetProgramiv(histogram_program, gl::LINK_STATUS, &mut histogram_linked);
@@ -1332,6 +1472,17 @@ void main() {
         gl::DeleteShader(histogram_vertex);
         gl::DeleteShader(histogram_fragment);
         gl::DeleteShader(histogram_reduce_fragment);
+        gl::DeleteShader(overlay_fragment);
+        if overlay_linked == 0 {
+            let message = program_log(overlay_program);
+            gl::DeleteProgram(overlay_program);
+            gl::DeleteProgram(histogram_program);
+            gl::DeleteProgram(histogram_reduce_program);
+            gl::DeleteProgram(auto_color_program);
+            gl::DeleteProgram(blur_program);
+            gl::DeleteProgram(program);
+            return Err(format!("overlay shader link failed: {message}"));
+        }
         if histogram_linked == 0 || histogram_reduce_linked == 0 {
             let bad = if histogram_linked == 0 { histogram_program } else { histogram_reduce_program };
             let message = program_log(bad);
@@ -1398,7 +1549,96 @@ void main() {
         auto_contrast_params: 0,
         auto_contrast_fbo: 0,
         auto_contrast_revision: 0,
+        overlay_program,
+        overlay_textures: Vec::new(),
+        overlay_revision: 0,
     })
+}
+
+/// Draw independently textured layers over the completed tone/filter image.
+/// CPU only decodes assets and shapes text; no photo-sized CPU pixel blending.
+unsafe fn render_gpu_overlays(
+    objects: &mut GlObjects,
+    overlays: &[GpuOverlayLayer],
+    revision: u64,
+    view: &GpuView,
+    view_width: i32,
+    view_height: i32,
+    device_scale: i32,
+    photo_width: i32,
+    photo_height: i32,
+) {
+    if objects.overlay_revision != revision {
+        if !objects.overlay_textures.is_empty() {
+            gl::DeleteTextures(objects.overlay_textures.len() as i32, objects.overlay_textures.as_ptr());
+        }
+        objects.overlay_textures.clear();
+        for overlay in overlays {
+            let mut texture = 0;
+            gl::GenTextures(1, &mut texture);
+            gl::BindTexture(gl::TEXTURE_2D, texture);
+            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR as i32);
+            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR as i32);
+            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as i32);
+            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as i32);
+            gl::PixelStorei(gl::UNPACK_ALIGNMENT, 1);
+            gl::TexImage2D(
+                gl::TEXTURE_2D, 0, gl::RGBA8 as i32,
+                overlay.width, overlay.height, 0,
+                gl::RGBA, gl::UNSIGNED_BYTE,
+                overlay.rgba.as_ref().as_ptr().cast(),
+            );
+            objects.overlay_textures.push(texture);
+        }
+        objects.overlay_revision = revision;
+    }
+    let was_blending = gl::IsEnabled(gl::BLEND) == gl::TRUE;
+    let mut prev_src_rgb = 0;
+    let mut prev_dst_rgb = 0;
+    let mut prev_src_alpha = 0;
+    let mut prev_dst_alpha = 0;
+    let mut prev_eq_rgb = 0;
+    let mut prev_eq_alpha = 0;
+    gl::GetIntegerv(gl::BLEND_SRC_RGB, &mut prev_src_rgb);
+    gl::GetIntegerv(gl::BLEND_DST_RGB, &mut prev_dst_rgb);
+    gl::GetIntegerv(gl::BLEND_SRC_ALPHA, &mut prev_src_alpha);
+    gl::GetIntegerv(gl::BLEND_DST_ALPHA, &mut prev_dst_alpha);
+    gl::GetIntegerv(gl::BLEND_EQUATION_RGB, &mut prev_eq_rgb);
+    gl::GetIntegerv(gl::BLEND_EQUATION_ALPHA, &mut prev_eq_alpha);
+    gl::Enable(gl::BLEND);
+    gl::BlendFuncSeparate(
+        gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA,
+        gl::ONE, gl::ONE_MINUS_SRC_ALPHA,
+    );
+    gl::BlendEquation(gl::FUNC_ADD);
+    gl::UseProgram(objects.overlay_program);
+    uniform_1i(objects.overlay_program, "uOverlay", 0);
+    uniform_2f(objects.overlay_program, "uViewSize", view_width as f32, view_height as f32);
+    uniform_2f(objects.overlay_program, "uScroll", view.scroll_x, view.scroll_y);
+    uniform_2f(objects.overlay_program, "uPadding", view.pad_x, view.pad_y);
+    uniform_1f(objects.overlay_program, "uScale", view.scale);
+    uniform_1f(objects.overlay_program, "uDeviceScale", device_scale as f32);
+    uniform_2f(objects.overlay_program, "uPhotoSize", photo_width as f32, photo_height as f32);
+    for (overlay, &texture) in overlays.iter().zip(&objects.overlay_textures) {
+        gl::BindTexture(gl::TEXTURE_2D, texture);
+        let rect = overlay.rect;
+        let location = uniform_location(objects.overlay_program, "uLayerRect");
+        gl::Uniform4f(location,
+            rect.left * photo_width as f32,
+            rect.top * photo_height as f32,
+            rect.width * photo_width as f32,
+            rect.height * photo_height as f32,
+        );
+        uniform_1f(objects.overlay_program, "uLayerOpacity", overlay.opacity.clamp(0.0, 1.0));
+        gl::DrawArrays(gl::TRIANGLES, 0, 3);
+    }
+    gl::BlendFuncSeparate(prev_src_rgb as u32, prev_dst_rgb as u32,
+        prev_src_alpha as u32, prev_dst_alpha as u32);
+    gl::BlendEquationSeparate(prev_eq_rgb as u32, prev_eq_alpha as u32);
+    if !was_blending { gl::Disable(gl::BLEND); }
+    gl::UseProgram(objects.program);
+    gl::ActiveTexture(gl::TEXTURE0);
+    gl::BindTexture(gl::TEXTURE_2D, objects.texture);
 }
 
 /// Compute Auto Contrast on GPU from the exact flattened-sample luminance

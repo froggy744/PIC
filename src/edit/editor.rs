@@ -101,8 +101,8 @@ include!("export.rs");
 include!("overlays_ui.rs");
 include!("text_ui.rs");
 
-fn pan_drag_should_claim(can_scroll: bool, space_held: bool, canvas_tool_active: bool) -> bool {
-    space_held || (can_scroll && !canvas_tool_active)
+fn pan_drag_should_claim(can_scroll: bool, space_pan_active: bool, canvas_tool_active: bool) -> bool {
+    space_pan_active || (can_scroll && !canvas_tool_active)
 }
 
 fn cpu_fallback_reason(recipe: &EditRecipe) -> &'static str {
@@ -549,6 +549,8 @@ pub fn build(
     let pan_origin_h = Rc::new(Cell::new(0.0f64));
     let pan_origin_v = Rc::new(Cell::new(0.0f64));
     let pan_space_held = Rc::new(Cell::new(false));
+    let pan_space_armed = Rc::new(Cell::new(false));
+    let pan_drag_active = Rc::new(Cell::new(false));
     let pan_trace_updated = Rc::new(Cell::new(false));
     let pan_drag = gtk::GestureDrag::new();
     pan_drag.set_button(1);
@@ -558,6 +560,8 @@ pub fn build(
         let pan_origin_h = pan_origin_h.clone();
         let pan_origin_v = pan_origin_v.clone();
         let pan_space_held = pan_space_held.clone();
+        let pan_space_armed = pan_space_armed.clone();
+        let pan_drag_active = pan_drag_active.clone();
         let pan_trace_updated = pan_trace_updated.clone();
         let native_one_to_one = native_one_to_one.clone();
         let crop_overlay = crop_overlay.clone();
@@ -571,12 +575,15 @@ pub fn build(
                 || overlays_toggle.is_active()
                 || text_toggle.is_active();
             let space_held = pan_space_held.get();
+            let space_armed = pan_space_armed.get();
+            let space_pan_active = space_held || space_armed;
             pan_trace_updated.set(false);
             if std::env::var_os("PICASA_TRACE").is_some() {
                 eprintln!(
-                    "PIC_EDIT_PAN begin start={start_x:.1},{start_y:.1} scrollable={} space={} native_1to1={} tool_active={} h={:.1}/{:.1}/{:.1} v={:.1}/{:.1}/{:.1}",
+                    "PIC_EDIT_PAN begin start={start_x:.1},{start_y:.1} scrollable={} space_held={} space_armed={} native_1to1={} tool_active={} h={:.1}/{:.1}/{:.1} v={:.1}/{:.1}/{:.1}",
                     can_scroll,
                     space_held,
+                    space_armed,
                     native_one_to_one.get(),
                     canvas_tool_active,
                     hadj.value(),
@@ -587,7 +594,7 @@ pub fn build(
                     vadj.page_size(),
                 );
             }
-            if !pan_drag_should_claim(can_scroll, space_held, canvas_tool_active) {
+            if !pan_drag_should_claim(can_scroll, space_pan_active, canvas_tool_active) {
                 if std::env::var_os("PICASA_TRACE").is_some() {
                     eprintln!("PIC_EDIT_PAN decision=denied reason=no_space_or_scroll");
                 }
@@ -596,6 +603,10 @@ pub fn build(
             }
             pan_origin_h.set(hadj.value());
             pan_origin_v.set(vadj.value());
+            pan_drag_active.set(true);
+            if space_armed {
+                pan_space_armed.set(false);
+            }
             gesture.set_state(gtk::EventSequenceState::Claimed);
             if std::env::var_os("PICASA_TRACE").is_some() {
                 eprintln!("PIC_EDIT_PAN decision=claimed");
@@ -628,7 +639,9 @@ pub fn build(
         let picture_scroll = picture_scroll.clone();
         let canvas_zoom = canvas_zoom.clone();
         let native_one_to_one = native_one_to_one.clone();
+        let pan_drag_active = pan_drag_active.clone();
         pan_drag.connect_drag_end(move |_, dx, dy| {
+            pan_drag_active.set(false);
             if std::env::var_os("PICASA_TRACE").is_some() {
                 let hadj = picture_scroll.hadjustment();
                 let vadj = picture_scroll.vadjustment();
@@ -2325,8 +2338,9 @@ pub fn build(
 
     // Space must be observed at the toplevel: when focus is in the canvas or
     // an overlay widget the editor root is not guaranteed to be on the key
-    // event path. Capture it on the window while this editor is mapped so a
-    // Space+left-drag can always claim the canvas gesture.
+    // event path. Holding Space through a drag works as usual; releasing it
+    // before the drag arms the next canvas drag for users who cannot chord the
+    // key and mouse reliably.
     {
         let root = root.clone();
         let root_for_release = root.clone();
@@ -2334,11 +2348,15 @@ pub fn build(
         let native_one_to_one_for_release = native_one_to_one.clone();
         let pan_space_held_for_press = pan_space_held.clone();
         let pan_space_held_for_release = pan_space_held.clone();
+        let pan_space_armed_for_press = pan_space_armed.clone();
+        let pan_space_armed_for_release = pan_space_armed.clone();
+        let pan_drag_active_for_release = pan_drag_active.clone();
         let key = gtk::EventControllerKey::new();
         key.set_propagation_phase(gtk::PropagationPhase::Capture);
         key.connect_key_pressed(move |_, key, _, _| {
             if key == gtk::gdk::Key::space && root.is_mapped() {
                 pan_space_held_for_press.set(true);
+                pan_space_armed_for_press.set(false);
                 if std::env::var_os("PICASA_TRACE").is_some() {
                     eprintln!(
                         "PIC_EDIT_PAN space=pressed editor_mapped={} native_1to1={}",
@@ -2354,11 +2372,14 @@ pub fn build(
         key.connect_key_released(move |_, key, _, _| {
             if key == gtk::gdk::Key::space {
                 pan_space_held_for_release.set(false);
+                let armed = !pan_drag_active_for_release.get();
+                pan_space_armed_for_release.set(armed);
                 if std::env::var_os("PICASA_TRACE").is_some() {
                     eprintln!(
-                        "PIC_EDIT_PAN space=released editor_mapped={} native_1to1={}",
+                        "PIC_EDIT_PAN space=released editor_mapped={} native_1to1={} pan_armed={}",
                         root_for_release.is_mapped(),
                         native_one_to_one_for_release.get(),
+                        armed,
                     );
                 }
             }
@@ -2554,7 +2575,7 @@ mod panel_tests {
     use super::*;
 
     #[test]
-    fn canvas_drag_claims_when_scrollable_or_space_is_held() {
+    fn canvas_drag_claims_when_scrollable_or_space_is_held_or_armed() {
         assert!(pan_drag_should_claim(true, false, false));
         assert!(pan_drag_should_claim(false, true, true));
         assert!(!pan_drag_should_claim(false, false, false));

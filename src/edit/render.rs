@@ -630,6 +630,31 @@ mod tests {
     }
 
     #[test]
+    fn jpeg_file_export_uses_white_background_for_transparent_pixels() {
+        let source = RgbaImage::from_fn(64, 32, |x, _| {
+            if x < 32 { Rgba([0, 0, 0, 0]) }
+            else { Rgba([35, 140, 230, 255]) }
+        });
+        let path = std::env::temp_dir().join(format!(
+            "pic-export-jpeg-alpha-{}-{}.jpg", std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+        ));
+        save_export(&source, &path, crate::edit::export_batch::ExportFormat::Jpeg, 100)
+            .unwrap();
+        let decoded = image::open(&path).unwrap().to_rgb8();
+        let transparent = decoded.get_pixel(4, 16).0;
+        let opaque = decoded.get_pixel(58, 16).0;
+        assert!(transparent.iter().all(|&channel| channel > 248),
+            "JPEG transparency lost matte: {transparent:?}");
+        for (actual, expected) in opaque.iter().zip([35u8, 140, 230]) {
+            assert!(actual.abs_diff(expected) <= 5,
+                "JPEG altered fully opaque image: actual={actual} expected={expected}");
+        }
+        std::fs::remove_file(path).ok();
+    }
+
+    #[test]
     fn png_export_retains_transparent_overlay_pixels_exactly() {
         let image = RgbaImage::from_fn(4, 4, |x, y|
             Rgba([x as u8 * 35, y as u8 * 41, 120, (x * 51 + y * 13) as u8])

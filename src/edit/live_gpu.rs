@@ -192,7 +192,7 @@ struct GlObjects {
     auto_contrast_fbo: u32,
     auto_contrast_revision: u64,
     overlay_program: u32,
-    overlay_textures: Vec<u32>,
+    overlay_textures: Vec<(String, u32)>,
     overlay_revision: u64,
 }
 
@@ -277,7 +277,9 @@ impl LiveGpuCanvas {
                     unsafe {
                         gl::DeleteTextures(1, &objects.texture);
                         if !objects.overlay_textures.is_empty() {
-                            gl::DeleteTextures(objects.overlay_textures.len() as i32, objects.overlay_textures.as_ptr());
+                            for &(_, texture) in &objects.overlay_textures {
+                                gl::DeleteTextures(1, &texture);
+                            }
                         }
                         gl::DeleteTextures(1, &objects.clarity_luma_texture);
                         gl::DeleteTextures(1, &objects.clarity_blur_texture);
@@ -1569,11 +1571,15 @@ unsafe fn render_gpu_overlays(
     photo_height: i32,
 ) {
     if objects.overlay_revision != revision {
-        if !objects.overlay_textures.is_empty() {
-            gl::DeleteTextures(objects.overlay_textures.len() as i32, objects.overlay_textures.as_ptr());
-        }
-        objects.overlay_textures.clear();
+        // Repositioning and opacity changes only update rect/opacity uniforms.
+        // Retain GL textures by content identity, even when layer order changes.
+        let mut previous = std::mem::take(&mut objects.overlay_textures);
         for overlay in overlays {
+            if let Some(index) = previous.iter().position(|(id, _)| id == &overlay.id) {
+                let entry = previous.swap_remove(index);
+                objects.overlay_textures.push(entry);
+                continue;
+            }
             let mut texture = 0;
             gl::GenTextures(1, &mut texture);
             gl::BindTexture(gl::TEXTURE_2D, texture);
@@ -1588,7 +1594,14 @@ unsafe fn render_gpu_overlays(
                 gl::RGBA, gl::UNSIGNED_BYTE,
                 overlay.rgba.as_ref().as_ptr().cast(),
             );
-            objects.overlay_textures.push(texture);
+            if std::env::var_os("PICASA_TRACE").is_some() {
+                eprintln!("PIC_EDIT_GPU layer_upload id={} dimensions={}x{}",
+                    overlay.id, overlay.width, overlay.height);
+            }
+            objects.overlay_textures.push((overlay.id.clone(), texture));
+        }
+        for (_, texture) in previous {
+            gl::DeleteTextures(1, &texture);
         }
         objects.overlay_revision = revision;
     }
@@ -1619,8 +1632,8 @@ unsafe fn render_gpu_overlays(
     uniform_1f(objects.overlay_program, "uScale", view.scale);
     uniform_1f(objects.overlay_program, "uDeviceScale", device_scale as f32);
     uniform_2f(objects.overlay_program, "uPhotoSize", photo_width as f32, photo_height as f32);
-    for (overlay, &texture) in overlays.iter().zip(&objects.overlay_textures) {
-        gl::BindTexture(gl::TEXTURE_2D, texture);
+    for (overlay, (_, texture)) in overlays.iter().zip(&objects.overlay_textures) {
+        gl::BindTexture(gl::TEXTURE_2D, *texture);
         let rect = overlay.rect;
         let location = uniform_location(objects.overlay_program, "uLayerRect");
         gl::Uniform4f(location,

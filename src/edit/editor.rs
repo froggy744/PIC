@@ -987,13 +987,16 @@ pub fn build(
                     // Retain the last sharp frame while unsupported CPU effects
                     // render. Never magnify an interactive draft at any zoom.
                     let interactive_draft = false;
+                    // The GPU now rotates the RAW decoded texture itself;
+                    // decoder and worker must not apply a library quarter-turn.
+                    let decode_rotation = if gpu_base_requested { 0 } else { rotation };
                     let render_recipe = if gpu_base_requested {
                         gpu_base_recipe(&recipe)
                     } else {
                         recipe.clone()
                     };
                     let (canvas_width, canvas_height) =
-                        preview_target_dimensions(photo.width(), photo.height(), rotation);
+                        preview_target_dimensions(photo.width(), photo.height(), decode_rotation);
                     let (target_width, target_height) = (canvas_width, canvas_height);
                     let source_full = true;
 
@@ -1024,7 +1027,7 @@ pub fn build(
                         .send(PreviewJob {
                             generation: current_generation,
                             path,
-                            rotation,
+                            rotation: decode_rotation,
                             target_width,
                             target_height,
                             recipe: render_recipe,
@@ -1097,6 +1100,7 @@ pub fn build(
                                             &bytes,
                                             width as usize * 4,
                                         );
+                                        let mut gpu_dimensions = None;
                                         if let Some(gpu_canvas) = &gpu_canvas {
                                             if gpu_base_requested {
                                                 gpu_canvas.set_source(
@@ -1106,6 +1110,10 @@ pub fn build(
                                                     width as i32,
                                                     height as i32,
                                                     bytes.clone(),
+                                                );
+                                                gpu_dimensions = gpu_canvas.set_untransformed_geometry_for_rotation(
+                                                    rotation,
+                                                    &gpu_recipe,
                                                 );
                                                 gpu_canvas.set_recipe(&gpu_recipe);
                                                 if std::env::var_os("PICASA_TRACE").is_some() {
@@ -1124,8 +1132,11 @@ pub fn build(
                                             }
                                         }
                                         let old_dimensions = preview_dimensions.get();
-                                        // Canvas geometry always follows the actual full-resolution buffer.
-                                        let display_dimensions = (width as i32, height as i32);
+                                        // The GL framebuffer still uses the full decoded source;
+                                        // GtkPicture and the scroller use the GPU crop/rotation
+                                        // output dimensions, not the raw texture dimensions.
+                                        let display_dimensions = gpu_dimensions
+                                            .unwrap_or((width as i32, height as i32));
                                         preview_dimensions.set(display_dimensions);
                                         sync_gpu_view();
                                         if std::env::var_os("PICASA_TRACE").is_some() {
@@ -1142,6 +1153,9 @@ pub fn build(
                                             );
                                         }
                                         picture.set_paintable(Some(&texture));
+                                        // The raw photo remains a cheap GTK layout anchor.
+                                        // Do not briefly display it unrotated behind GPU edits.
+                                        picture.set_opacity(if gpu_base_requested { 0.0 } else { 1.0 });
                                         if native {
                                             let anchor =
                                                 pending_one_to_one_anchor.borrow_mut().take();
@@ -1167,7 +1181,7 @@ pub fn build(
                                             apply_canvas_zoom(
                                                 &picture,
                                                 &picture_scroll,
-                                                (width as i32, height as i32),
+                                                display_dimensions,
                                                 canvas_zoom.get(),
                                             );
                                         }
@@ -1234,17 +1248,29 @@ pub fn build(
                         generation.set(generation.get().wrapping_add(1));
                         busy.stop();
                         busy.set_visible(false);
+                        let old_dimensions = preview_dimensions.get();
+                        let display_dimensions = gpu_canvas
+                            .set_untransformed_geometry_for_rotation(
+                                active_rotation.get(), &recipe,
+                            )
+                            .unwrap_or(old_dimensions);
+                        preview_dimensions.set(display_dimensions);
                         if native_one_to_one.get() {
-                            if let Some(anchor) = pending_one_to_one_anchor.borrow_mut().take() {
+                            let anchor = pending_one_to_one_anchor.borrow_mut().take();
+                            if native_preview_needs_reanchor(
+                                old_dimensions, display_dimensions, anchor.is_some(),
+                            ) {
                                 apply_native_preview_layout(
-                                    &picture,
-                                    &picture_scroll,
-                                    preview_dimensions.get(),
-                                    Some(anchor),
-                                    native_one_to_one.clone(),
+                                    &picture, &picture_scroll, display_dimensions,
+                                    anchor, native_one_to_one.clone(),
                                 );
                             }
+                        } else if old_dimensions != display_dimensions {
+                            apply_canvas_zoom(
+                                &picture, &picture_scroll, display_dimensions, canvas_zoom.get(),
+                            );
                         }
+                        picture.set_opacity(0.0);
                         gpu_canvas.set_recipe(&recipe);
                         sync_gpu_view();
                         return;

@@ -3057,6 +3057,24 @@ mod tests {
         check_frame(&combined, &gradient);
         renderer.set_recipe(&EditRecipe::default());
         check_frame(&EditRecipe::default(), &gradient);
+        // GPU stats must be calculated from the *filtered* photograph,
+        // before automatic corrections. Toggle presets and intensity on the
+        // same uploaded source to expose stale neutral/histogram caches.
+        for filter in [
+            FilterPreset::Clarendon, FilterPreset::Valencia,
+            FilterPreset::Newspaper, FilterPreset::DreamGlow,
+        ] {
+            for amount in [0.4, 1.0] {
+                let mut filtered = combined.clone();
+                filtered.filter = filter;
+                filtered.filter_amount = amount;
+                renderer.set_recipe(&filtered);
+                check_frame(&filtered, &gradient);
+                assert!(renderer.source_uploaded(), "changing filters must not invalidate the uploaded texture");
+            }
+        }
+        renderer.set_recipe(&EditRecipe::default());
+        check_frame(&EditRecipe::default(), &gradient);
         window.close();
     }
 

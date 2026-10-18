@@ -732,12 +732,21 @@ pub fn build(
     filter_grid.add_css_class("filter-grid");
     let mut filter_buttons = Vec::new();
     let mut filter_pictures = Vec::new();
+    let mut filter_gpu_tiles = Vec::new();
+    let filter_effects = FilterTileEffect::all();
+    let gpu_tile_enabled = gpu_canvas.is_some()
+        && filter_effects.iter().all(|effect| {
+            gpu_tone_supported(&effect.recipe(&session.borrow().recipe))
+        });
     let mut black_white = None;
     let mut sepia = None;
-    for effect in FilterTileEffect::all() {
-        let (button, picture) = filter_tile(effect);
+    for effect in filter_effects {
+        let (button, picture, gpu_tile) = filter_tile(effect, gpu_tile_enabled);
         filter_grid.insert(&button, -1);
         filter_pictures.push(picture);
+        if let Some(canvas) = gpu_tile {
+            filter_gpu_tiles.push((effect, canvas));
+        }
         match effect {
             FilterTileEffect::Preset(preset) => filter_buttons.push((preset, button)),
             FilterTileEffect::BlackWhite => black_white = Some(button),
@@ -870,40 +879,84 @@ pub fn build(
     };
     controls.sync(&session.borrow().recipe);
 
-    // Generate all quick-look tiles away from the GTK thread. The previews
-    // use the current tool recipe while substituting only the tile's filter,
-    // so they remain representative without delaying editor startup.
+    // Decode a SINGLE small source on a worker; each tile then runs its look
+    // through the same GL shader pipeline as live Edit. There is no CPU loop
+    // applying all 17 filters in normal GPU mode. CPU thumbnails are retained
+    // for CPU mode and as a one-shot fallback when GPU context creation fails.
     {
         let path = photo.path();
         let rotation = active_rotation.get();
         let recipe = session.borrow().recipe.clone();
-        let (sender, receiver) = std::sync::mpsc::channel();
-        std::thread::spawn(move || {
-            let _ = sender.send(render_filter_thumbnails(&path, rotation, &recipe));
-        });
-        glib::timeout_add_local(Duration::from_millis(25), move || {
-            match receiver.try_recv() {
-                Ok(Ok(thumbnails)) => {
-                    for (picture, (width, height, pixels)) in filter_pictures.iter().zip(thumbnails)
-                    {
-                        let bytes = glib::Bytes::from_owned(pixels);
-                        let texture = gtk::gdk::MemoryTexture::new(
-                            width as i32,
-                            height as i32,
-                            gtk::gdk::MemoryFormat::R8g8b8a8,
-                            &bytes,
-                            width as usize * 4,
-                        );
-                        picture.set_paintable(Some(&texture));
-                    }
-                    glib::ControlFlow::Break
-                }
-                Ok(Err(_)) | Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                    glib::ControlFlow::Break
-                }
-                Err(std::sync::mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
+        let start_cpu: Rc<dyn Fn()> = {
+            let path = path.clone();
+            let recipe = recipe.clone();
+            let pictures = filter_pictures.clone();
+            let started = Rc::new(Cell::new(false));
+            Rc::new(move || {
+                if started.replace(true) { return; }
+                queue_cpu_filter_thumbnails(
+                    path.clone(), rotation, recipe.clone(), pictures.clone(),
+                );
+            })
+        };
+        if filter_gpu_tiles.is_empty() {
+            start_cpu();
+        } else {
+            for (_, canvas) in &filter_gpu_tiles {
+                let fallback = start_cpu.clone();
+                canvas.set_failure_handler(move || fallback());
             }
-        });
+            let (sender, receiver) = std::sync::mpsc::channel();
+            let decode_path = path.clone();
+            std::thread::spawn(move || {
+                let image = super::render::decode_base_for_viewer(
+                    &decode_path, 0,
+                    FILTER_TILE_PREVIEW_WIDTH as u32 * FILTER_TILE_SUPERSAMPLE,
+                    FILTER_TILE_PREVIEW_HEIGHT as u32 * FILTER_TILE_SUPERSAMPLE,
+                ).map(|image| (image.width(), image.height(), image.into_raw()));
+                let _ = sender.send(image);
+            });
+            glib::timeout_add_local(Duration::from_millis(25), move || {
+                match receiver.try_recv() {
+                    Ok(Ok((width, height, pixels))) => {
+                        let bytes = glib::Bytes::from_owned(pixels);
+                        for (effect, canvas) in &filter_gpu_tiles {
+                            let tile_recipe = effect.recipe(&recipe);
+                            canvas.set_source(
+                                &path, 0, &tile_recipe,
+                                width as i32, height as i32, bytes.clone(),
+                            );
+                            let (out_w, out_h) = canvas
+                                .set_untransformed_geometry_for_rotation(
+                                    rotation, &tile_recipe,
+                                )
+                                .unwrap_or((width as i32, height as i32));
+                            canvas.set_recipe(&tile_recipe);
+                            canvas.set_thumbnail_cover(
+                                out_w, out_h, FILTER_TILE_PREVIEW_WIDTH,
+                            );
+                        }
+                        if std::env::var_os("PICASA_TRACE").is_some() {
+                            eprintln!(
+                                "PIC_EDIT_GPU filter_tiles count={} source={}x{} single_decode=true",
+                                filter_gpu_tiles.len(), width, height,
+                            );
+                        }
+                        glib::ControlFlow::Break
+                    }
+                    Ok(Err(error)) => {
+                        eprintln!("PIC_EDIT_GPU filter_tile_decode_failed: {error}");
+                        start_cpu();
+                        glib::ControlFlow::Break
+                    }
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                        start_cpu();
+                        glib::ControlFlow::Break
+                    }
+                    Err(std::sync::mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
+                }
+            });
+        }
     }
 
     // Ordinary wheel scrolling over a slider should continue scrolling the
@@ -2583,6 +2636,20 @@ mod panel_tests {
             FilterTileEffect::Preset(FilterPreset::None).label(),
             "Original"
         );
+    }
+
+    #[test]
+    fn gpu_filter_tiles_share_the_live_shaders_for_supported_presets() {
+        let recipe = EditRecipe::default();
+        assert_eq!(FilterTileEffect::all().len(), FilterPreset::ALL.len() + 3);
+        assert!(FilterTileEffect::all().iter().all(|effect| {
+            gpu_tone_supported(&effect.recipe(&recipe))
+        }));
+        let mut with_auto = recipe.clone();
+        with_auto.auto_color = true;
+        assert!(FilterTileEffect::all().iter().any(|effect| {
+            !gpu_tone_supported(&effect.recipe(&with_auto))
+        }));
     }
 
     #[test]

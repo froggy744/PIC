@@ -27,7 +27,8 @@ jobs:
           sudo apt-get install -y \
             build-essential clang mold cmake nasm pkg-config \
             libgtk-4-dev libadwaita-1-dev libsmbclient-dev libnfs-dev \
-            librsvg2-common libgdk-pixbuf2.0-bin xvfb xauth
+            librsvg2-common libgdk-pixbuf2.0-bin xvfb xauth \
+            libgl1-mesa-dri mesa-utils
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Compile PIC
@@ -45,3 +46,9 @@ jobs:
           xvfb-run -a env GSK_RENDERER=cairo cargo test --locked \
             lightbox_one_to_one_recipe_refresh_preserves_panned_viewport -- \
             --ignored --test-threads=1
+      - name: GPU OpenGL pixel parity (software GL under Xvfb)
+        run: |
+          xvfb-run -a env GDK_BACKEND=x11 GSK_RENDERER=gl \
+            LIBGL_ALWAYS_SOFTWARE=1 \
+            cargo test --locked gtk_gl_area_matches_cpu_reference_at_native_pixel_size -- \
+            --ignored --test-threads=1 --nocapture

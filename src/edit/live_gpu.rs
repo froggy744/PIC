@@ -62,6 +62,7 @@ struct GpuTone {
     highlights: f32,
     sharpen: f32,
     grain: f32,
+    clarity: f32,
     black_white: bool,
     sepia: bool,
     filter_amount: f32,
@@ -84,6 +85,12 @@ struct GlObjects {
     texture: u32,
     source_revision: u64,
     filter: u32,
+    blur_program: u32,
+    clarity_luma_texture: u32,
+    clarity_blur_texture: u32,
+    clarity_luma_fbo: u32,
+    clarity_blur_fbo: u32,
+    clarity_dimensions: (i32, i32),
 }
 
 struct GpuState {
@@ -158,8 +165,13 @@ impl LiveGpuCanvas {
                 if let Some(objects) = dispose_state.borrow_mut().objects.take() {
                     unsafe {
                         gl::DeleteTextures(1, &objects.texture);
+                        gl::DeleteTextures(1, &objects.clarity_luma_texture);
+                        gl::DeleteTextures(1, &objects.clarity_blur_texture);
+                        gl::DeleteFramebuffers(1, &objects.clarity_luma_fbo);
+                        gl::DeleteFramebuffers(1, &objects.clarity_blur_fbo);
                         gl::DeleteVertexArrays(1, &objects.vao);
                         gl::DeleteProgram(objects.program);
+                        gl::DeleteProgram(objects.blur_program);
                     }
                 }
             }
@@ -298,10 +310,28 @@ impl LiveGpuCanvas {
                     uniform_1f(objects.program, "uShadows", tone.shadows);
                     uniform_1f(objects.program, "uHighlights", tone.highlights);
                     uniform_1f(objects.program, "uSharpen", tone.sharpen);
+                    uniform_1f(objects.program, "uClarity", tone.clarity);
                     uniform_1f(objects.program, "uGrain", tone.grain);
                     uniform_1f(objects.program, "uBlackWhite", if tone.black_white { 1.0 } else { 0.0 });
                     uniform_1f(objects.program, "uSepia", if tone.sepia { 1.0 } else { 0.0 });
                     uniform_1f(objects.program, "uFilterAmount", tone.filter_amount);
+                    if tone.clarity.abs() > 0.001 {
+                        if let Some((source_width, source_height, _)) = source.as_ref() {
+                            draw_clarity_luminance(
+                                objects,
+                                *source_width,
+                                *source_height,
+                                view_width * device_scale,
+                                view_height * device_scale,
+                            );
+                        }
+                    }
+                    uniform_1i(objects.program, "uClarityPrepass", 0);
+                    gl::ActiveTexture(gl::TEXTURE1);
+                    gl::BindTexture(gl::TEXTURE_2D, objects.clarity_luma_texture);
+                    uniform_1i(objects.program, "uClarityLuma", 1);
+                    gl::ActiveTexture(gl::TEXTURE0);
+                    gl::BindTexture(gl::TEXTURE_2D, objects.texture);
                     gl::DrawArrays(gl::TRIANGLES, 0, 3);
                     #[cfg(test)]
                     if state.readback_requested {
@@ -429,6 +459,7 @@ impl LiveGpuCanvas {
             highlights: recipe.highlights,
             sharpen: recipe.sharpen,
             grain: recipe.grain,
+            clarity: recipe.clarity,
             black_white: recipe.black_white,
             sepia: recipe.sepia,
             filter_amount: recipe.filter_amount,
@@ -544,7 +575,6 @@ pub fn gpu_tone_supported(recipe: &EditRecipe) -> bool {
     recipe.filter == FilterPreset::None
         && !recipe.auto_color
         && !recipe.auto_contrast
-        && recipe.clarity == 0.0
 }
 
 pub fn gpu_base_recipe(recipe: &EditRecipe) -> EditRecipe {
@@ -558,6 +588,7 @@ pub fn gpu_base_recipe(recipe: &EditRecipe) -> EditRecipe {
     base.highlights = 0.0;
     base.sharpen = 0.0;
     base.grain = 0.0;
+    base.clarity = 0.0;
     base.black_white = false;
     base.sepia = false;
     base
@@ -621,6 +652,10 @@ uniform float uShadows;
 uniform float uHighlights;
 uniform float uSharpen;
 uniform float uGrain;
+uniform float uClarity;
+uniform sampler2D uClarityLuma;
+uniform int uClarityPrepass;
+uniform vec2 uClarityPassSize;
 uniform float uBlackWhite;
 uniform float uSepia;
 uniform float uFilterAmount;
@@ -682,8 +717,20 @@ vec4 sampleTone(ivec2 coord) {
     ivec2 limit = ivec2(uSourceSize) - ivec2(1);
     return tonePixel(texelFetch(uSource, clamp(coord, ivec2(0), limit), 0));
 }
+vec3 clarified(ivec2 coord) {
+    vec3 base = sampleTone(coord).rgb;
+    if (abs(uClarity) <= 0.001) return base;
+    float y = luma(base);
+    float localY = texture(uClarityLuma,
+        (vec2(coord) + vec2(0.5)) / uSourceSize).r;
+    float midtones = clamp(4.0 * y * (1.0 - y), 0.0, 1.0);
+    float detail = clamp(y - localY, -0.24, 0.24);
+    float target = clamp(y + detail * midtones * uClarity * 1.85, 0.0, 1.0);
+    float gain = clamp(target / max(y, 0.01), 0.25, 3.0);
+    return round(clamp(base * gain, 0.0, 1.0) * 255.0) / 255.0;
+}
 vec3 sharpened(ivec2 coord) {
-    vec3 center = sampleTone(coord).rgb;
+    vec3 center = clarified(coord);
     if (uSharpen <= 0.0001) return center;
     const float k0 = 0.07076637;
     const float k1 = 0.24446040;
@@ -692,7 +739,7 @@ vec3 sharpened(ivec2 coord) {
     vec3 blurred = vec3(0.0);
     for (int y = -2; y <= 2; ++y) {
         for (int x = -2; x <= 2; ++x) {
-            blurred += sampleTone(coord + ivec2(x, y)).rgb * kernel[x + 2] * kernel[y + 2];
+            blurred += clarified(coord + ivec2(x, y)) * kernel[x + 2] * kernel[y + 2];
         }
     }
     blurred = round(clamp(blurred, 0.0, 1.0) * 255.0) / 255.0;
@@ -713,6 +760,12 @@ vec3 processedPixel(ivec2 coord) {
     return grainPixel(coord, sharpened(coord));
 }
 void main() {
+    if (uClarityPrepass != 0) {
+        vec2 uv = gl_FragCoord.xy / uClarityPassSize;
+        float y = luma(tonePixel(texture(uSource, uv)).rgb);
+        color = vec4(y, y, y, 1.0);
+        return;
+    }
     vec2 pixel = gl_FragCoord.xy / max(uDeviceScale, 1.0);
     vec2 topLeft = vec2(pixel.x, uViewSize.y - pixel.y);
     vec2 sourcePos = (topLeft + uScroll - uPadding) / max(uScale, 0.0001);
@@ -721,7 +774,7 @@ void main() {
         color = vec4(0.055, 0.06, 0.07, 1.0);
         return;
     }
-    if (uSharpen <= 0.0001 && uGrain <= 0.001) {
+    if (uSharpen <= 0.0001 && uGrain <= 0.001 && abs(uClarity) <= 0.001) {
         color = tonePixel(texture(uSource, sourcePos / uSourceSize));
         return;
     }
@@ -740,7 +793,29 @@ void main() {
 }"#,
     )?;
 
+    let blur_fragment = compile_shader(gl::FRAGMENT_SHADER, r#"#version 150
+uniform sampler2D uInput;
+uniform vec2 uTexel;
+uniform vec2 uDirection;
+uniform float uSigma;
+uniform int uRadius;
+out vec4 color;
+void main() {
+    vec2 uv = gl_FragCoord.xy * uTexel;
+    float value = 0.0;
+    float total = 0.0;
+    for (int offset = -uRadius; offset <= uRadius; ++offset) {
+        float f = float(offset);
+        float weight = exp(-0.5 * f * f / (uSigma * uSigma));
+        value += texture(uInput, uv + uDirection * uTexel * f).r * weight;
+        total += weight;
+    }
+    float y = value / max(total, 0.0001);
+    color = vec4(y, y, y, 1.0);
+}"#)?;
+
     let program;
+    let blur_program;
     let mut vao = 0;
     let mut texture = 0;
     unsafe {
@@ -748,10 +823,23 @@ void main() {
         gl::AttachShader(program, vertex);
         gl::AttachShader(program, fragment);
         gl::LinkProgram(program);
+        blur_program = gl::CreateProgram();
+        gl::AttachShader(blur_program, vertex);
+        gl::AttachShader(blur_program, blur_fragment);
+        gl::LinkProgram(blur_program);
+        let mut blur_linked = 0;
+        gl::GetProgramiv(blur_program, gl::LINK_STATUS, &mut blur_linked);
         let mut linked = 0;
         gl::GetProgramiv(program, gl::LINK_STATUS, &mut linked);
         gl::DeleteShader(vertex);
         gl::DeleteShader(fragment);
+        gl::DeleteShader(blur_fragment);
+        if blur_linked == 0 {
+            let message = program_log(blur_program);
+            gl::DeleteProgram(blur_program);
+            gl::DeleteProgram(program);
+            return Err(format!("clarity blur shader link failed: {message}"));
+        }
         if linked == 0 {
             let message = program_log(program);
             gl::DeleteProgram(program);
@@ -773,7 +861,90 @@ void main() {
         texture,
         source_revision: 0,
         filter: gl::NEAREST,
+        blur_program,
+        clarity_luma_texture: 0,
+        clarity_blur_texture: 0,
+        clarity_luma_fbo: 0,
+        clarity_blur_fbo: 0,
+        clarity_dimensions: (0, 0),
     })
+}
+
+// Clarity uses a source-sized luminance *coordinate system*, but its blur is
+// computed once per draw in a <=1200px GPU buffer (not via CPU imageops).
+// The original GtkGLArea framebuffer must be restored, never framebuffer 0.
+unsafe fn draw_clarity_luminance(
+    objects: &mut GlObjects,
+    source_width: i32,
+    source_height: i32,
+    view_width_px: i32,
+    view_height_px: i32,
+) {
+    let downsample = (source_width.max(source_height) as f32 / 1200.0).max(1.0);
+    let width = (source_width as f32 / downsample).round().max(1.0) as i32;
+    let height = (source_height as f32 / downsample).round().max(1.0) as i32;
+    let mut original_framebuffer = 0;
+    gl::GetIntegerv(gl::FRAMEBUFFER_BINDING, &mut original_framebuffer);
+    if objects.clarity_dimensions != (width, height) {
+        if objects.clarity_luma_texture == 0 {
+            gl::GenTextures(1, &mut objects.clarity_luma_texture);
+            gl::GenTextures(1, &mut objects.clarity_blur_texture);
+            gl::GenFramebuffers(1, &mut objects.clarity_luma_fbo);
+            gl::GenFramebuffers(1, &mut objects.clarity_blur_fbo);
+        }
+        for (texture, framebuffer) in [
+            (objects.clarity_luma_texture, objects.clarity_luma_fbo),
+            (objects.clarity_blur_texture, objects.clarity_blur_fbo),
+        ] {
+            gl::BindTexture(gl::TEXTURE_2D, texture);
+            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR as i32);
+            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR as i32);
+            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as i32);
+            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as i32);
+            gl::TexImage2D(
+                gl::TEXTURE_2D, 0, gl::R8 as i32, width, height, 0,
+                gl::RED, gl::UNSIGNED_BYTE, std::ptr::null(),
+            );
+            gl::BindFramebuffer(gl::FRAMEBUFFER, framebuffer);
+            gl::FramebufferTexture2D(
+                gl::FRAMEBUFFER, gl::COLOR_ATTACHMENT0, gl::TEXTURE_2D, texture, 0,
+            );
+        }
+        objects.clarity_dimensions = (width, height);
+    }
+    // GLArea owns the framebuffer saved before allocation; never bind 0.
+    gl::BindFramebuffer(gl::FRAMEBUFFER, objects.clarity_luma_fbo);
+    gl::Viewport(0, 0, width, height);
+    gl::UseProgram(objects.program);
+    gl::ActiveTexture(gl::TEXTURE0);
+    gl::BindTexture(gl::TEXTURE_2D, objects.texture);
+    uniform_1i(objects.program, "uClarityPrepass", 1);
+    uniform_2f(objects.program, "uClarityPassSize", width as f32, height as f32);
+    gl::DrawArrays(gl::TRIANGLES, 0, 3);
+
+    let sigma = ((width.min(height) as f32) * 0.008).clamp(1.5, 20.0);
+    let radius = (sigma * 3.0).ceil() as i32;
+    gl::UseProgram(objects.blur_program);
+    uniform_1i(objects.blur_program, "uInput", 0);
+    uniform_2f(objects.blur_program, "uTexel", 1.0 / width as f32, 1.0 / height as f32);
+    uniform_1f(objects.blur_program, "uSigma", sigma);
+    gl::Uniform1i(uniform_location(objects.blur_program, "uRadius"), radius);
+    for (input, output, x, y) in [
+        (objects.clarity_luma_texture, objects.clarity_blur_fbo, 1.0, 0.0),
+        (objects.clarity_blur_texture, objects.clarity_luma_fbo, 0.0, 1.0),
+    ] {
+        gl::BindFramebuffer(gl::FRAMEBUFFER, output);
+        gl::BindTexture(gl::TEXTURE_2D, input);
+        uniform_2f(objects.blur_program, "uDirection", x, y);
+        gl::DrawArrays(gl::TRIANGLES, 0, 3);
+    }
+
+    gl::BindFramebuffer(gl::FRAMEBUFFER, original_framebuffer as u32);
+    gl::Viewport(0, 0, view_width_px, view_height_px);
+    gl::UseProgram(objects.program);
+    uniform_1i(objects.program, "uClarityPrepass", 0);
+    gl::ActiveTexture(gl::TEXTURE0);
+    gl::BindTexture(gl::TEXTURE_2D, objects.texture);
 }
 
 fn gl_library() -> Result<&'static Library, String> {
@@ -893,13 +1064,14 @@ mod tests {
         assert_eq!(base.highlights, 0.0);
         assert_eq!(base.sharpen, 0.0);
         assert_eq!(base.grain, 0.0);
+        assert_eq!(base.clarity, 0.0);
         assert!(!base.black_white);
         assert!(!base.sepia);
         assert_eq!(base.crop, recipe.crop);
     }
 
     #[test]
-    fn gpu_support_includes_grain_and_monochrome_looks_but_excludes_clarity() {
+    fn gpu_support_includes_clarity_grain_and_monochrome_looks() {
         let recipe = EditRecipe::default();
         assert!(gpu_tone_supported(&recipe));
         let mut sharpened = recipe.clone();
@@ -913,6 +1085,8 @@ mod tests {
         assert!(gpu_tone_supported(&looks));
         let mut unsupported = recipe;
         unsupported.clarity = 0.1;
+        assert!(gpu_tone_supported(&unsupported));
+        unsupported.auto_color = true;
         assert!(!gpu_tone_supported(&unsupported));
     }
 
@@ -1047,6 +1221,29 @@ mod tests {
             check_frame(&effect, &source);
             assert_eq!(renderer.uploaded_revision(), uploaded_revision);
         }
+        renderer.set_recipe(&reset_recipe);
+        check_frame(&reset_recipe, &source);
+
+        // Clarity requires a GPU luminance/blur pass. Here we first verify it
+        // really renders on GL and does not re-upload source data. Pixel parity
+        // at arbitrary scales is covered separately before default enablement.
+        let mut clarity_recipe = reset_recipe.clone();
+        clarity_recipe.clarity = 0.45;
+        assert!(gpu_tone_supported(&clarity_recipe));
+        renderer.set_recipe(&clarity_recipe);
+        renderer.request_readback();
+        let deadline = Instant::now() + std::time::Duration::from_secs(5);
+        let mut clarity_pixels = None;
+        while Instant::now() < deadline {
+            while context.pending() { context.iteration(false); }
+            if let Some(readback) = renderer.take_readback() {
+                clarity_pixels = Some(readback);
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(clarity_pixels.is_some(), "GPU clarity framebuffer readback failed");
+        assert_eq!(renderer.uploaded_revision(), uploaded_revision);
         renderer.set_recipe(&reset_recipe);
         check_frame(&reset_recipe, &source);
 

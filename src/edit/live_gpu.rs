@@ -61,6 +61,10 @@ struct GpuTone {
     shadows: f32,
     highlights: f32,
     sharpen: f32,
+    grain: f32,
+    black_white: bool,
+    sepia: bool,
+    filter_amount: f32,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -294,6 +298,10 @@ impl LiveGpuCanvas {
                     uniform_1f(objects.program, "uShadows", tone.shadows);
                     uniform_1f(objects.program, "uHighlights", tone.highlights);
                     uniform_1f(objects.program, "uSharpen", tone.sharpen);
+                    uniform_1f(objects.program, "uGrain", tone.grain);
+                    uniform_1f(objects.program, "uBlackWhite", if tone.black_white { 1.0 } else { 0.0 });
+                    uniform_1f(objects.program, "uSepia", if tone.sepia { 1.0 } else { 0.0 });
+                    uniform_1f(objects.program, "uFilterAmount", tone.filter_amount);
                     gl::DrawArrays(gl::TRIANGLES, 0, 3);
                     #[cfg(test)]
                     if state.readback_requested {
@@ -420,6 +428,10 @@ impl LiveGpuCanvas {
             shadows: recipe.shadows,
             highlights: recipe.highlights,
             sharpen: recipe.sharpen,
+            grain: recipe.grain,
+            black_white: recipe.black_white,
+            sepia: recipe.sepia,
+            filter_amount: recipe.filter_amount,
         };
         let mut state = self.state.borrow_mut();
         if state.tone == next {
@@ -532,10 +544,7 @@ pub fn gpu_tone_supported(recipe: &EditRecipe) -> bool {
     recipe.filter == FilterPreset::None
         && !recipe.auto_color
         && !recipe.auto_contrast
-        && !recipe.black_white
-        && !recipe.sepia
         && recipe.clarity == 0.0
-        && recipe.grain == 0.0
 }
 
 pub fn gpu_base_recipe(recipe: &EditRecipe) -> EditRecipe {
@@ -548,6 +557,9 @@ pub fn gpu_base_recipe(recipe: &EditRecipe) -> EditRecipe {
     base.shadows = 0.0;
     base.highlights = 0.0;
     base.sharpen = 0.0;
+    base.grain = 0.0;
+    base.black_white = false;
+    base.sepia = false;
     base
 }
 
@@ -608,6 +620,10 @@ uniform float uFillLight;
 uniform float uShadows;
 uniform float uHighlights;
 uniform float uSharpen;
+uniform float uGrain;
+uniform float uBlackWhite;
+uniform float uSepia;
+uniform float uFilterAmount;
 out vec4 color;
 float luma(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
 float smoothMask(float low, float high, float value) {
@@ -647,6 +663,18 @@ vec4 tonePixel(vec4 px) {
         c.g = contrastCurve(c.g, uContrast);
         c.b = contrastCurve(c.b, uContrast);
     }
+    // CPU order: manual tone, then optional B&W / Sepia look, then quantization.
+    vec3 preLook = c;
+    if (uBlackWhite > 0.5) c = vec3(clamp(luma(c), 0.0, 1.0));
+    if (uSepia > 0.5) {
+        float y = clamp(luma(c), 0.0, 1.0);
+        float strength = 0.75 * (1.0 - 0.20 * abs(2.0 * y - 1.0));
+        c = vec3(y * (1.0 + 0.080 * strength),
+                 y * (1.0 - 0.006 * strength),
+                 y * (1.0 - 0.180 * strength));
+    }
+    if (uBlackWhite > 0.5 || uSepia > 0.5)
+        c = mix(preLook, c, clamp(uFilterAmount, 0.0, 1.0));
     c = round(clamp(c, 0.0, 1.0) * 255.0) / 255.0;
     return vec4(c, px.a);
 }
@@ -670,6 +698,20 @@ vec3 sharpened(ivec2 coord) {
     blurred = round(clamp(blurred, 0.0, 1.0) * 255.0) / 255.0;
     return clamp(center + (center - blurred) * (uSharpen * 1.6), 0.0, 1.0);
 }
+// Match the CPU's stable, source-coordinate based grain hash.
+// Unsigned arithmetic wraps as required by the Rust u32 implementation.
+vec3 grainPixel(ivec2 coord, vec3 rgb) {
+    if (uGrain <= 0.001) return rgb;
+    ivec2 c = clamp(coord, ivec2(0), ivec2(uSourceSize) - ivec2(1));
+    uint hash = uint(c.x) * 374761393u ^ uint(c.y) * 668265263u ^ 0x9e3779b9u;
+    hash = (hash ^ (hash >> 13u)) * 1274126177u;
+    hash ^= hash >> 16u;
+    float noise = (float(hash & 65535u) / 65535.0 - 0.5) * uGrain * 0.24 * 255.0;
+    return round(clamp(rgb * 255.0 + vec3(noise), 0.0, 255.0)) / 255.0;
+}
+vec3 processedPixel(ivec2 coord) {
+    return grainPixel(coord, sharpened(coord));
+}
 void main() {
     vec2 pixel = gl_FragCoord.xy / max(uDeviceScale, 1.0);
     vec2 topLeft = vec2(pixel.x, uViewSize.y - pixel.y);
@@ -679,7 +721,7 @@ void main() {
         color = vec4(0.055, 0.06, 0.07, 1.0);
         return;
     }
-    if (uSharpen <= 0.0001) {
+    if (uSharpen <= 0.0001 && uGrain <= 0.001) {
         color = tonePixel(texture(uSource, sourcePos / uSourceSize));
         return;
     }
@@ -687,14 +729,14 @@ void main() {
         vec2 texel = sourcePos - vec2(0.5);
         ivec2 lo = ivec2(floor(texel));
         vec2 f = fract(texel);
-        vec3 top = mix(sharpened(lo), sharpened(lo + ivec2(1, 0)), f.x);
-        vec3 bottom = mix(sharpened(lo + ivec2(0, 1)), sharpened(lo + ivec2(1, 1)), f.x);
+        vec3 top = mix(processedPixel(lo), processedPixel(lo + ivec2(1, 0)), f.x);
+        vec3 bottom = mix(processedPixel(lo + ivec2(0, 1)), processedPixel(lo + ivec2(1, 1)), f.x);
         color = vec4(mix(top, bottom, f.y), 1.0);
         return;
     }
     ivec2 coord = ivec2(floor(sourcePos));
     vec4 px = sampleTone(coord);
-    color = vec4(sharpened(coord), px.a);
+    color = vec4(processedPixel(coord), px.a);
 }"#,
     )?;
 
@@ -850,16 +892,25 @@ mod tests {
         assert_eq!(base.shadows, 0.0);
         assert_eq!(base.highlights, 0.0);
         assert_eq!(base.sharpen, 0.0);
+        assert_eq!(base.grain, 0.0);
+        assert!(!base.black_white);
+        assert!(!base.sepia);
         assert_eq!(base.crop, recipe.crop);
     }
 
     #[test]
-    fn gpu_support_includes_sharpen_but_excludes_other_cpu_effects() {
+    fn gpu_support_includes_grain_and_monochrome_looks_but_excludes_clarity() {
         let recipe = EditRecipe::default();
         assert!(gpu_tone_supported(&recipe));
         let mut sharpened = recipe.clone();
         sharpened.sharpen = 0.35;
         assert!(gpu_tone_supported(&sharpened));
+        let mut looks = recipe.clone();
+        looks.grain = 0.5;
+        looks.black_white = true;
+        looks.sepia = true;
+        looks.filter_amount = 0.5;
+        assert!(gpu_tone_supported(&looks));
         let mut unsupported = recipe;
         unsupported.clarity = 0.1;
         assert!(!gpu_tone_supported(&unsupported));
@@ -979,6 +1030,25 @@ mod tests {
         renderer.set_recipe(&reset_recipe);
         check_frame(&reset_recipe, &source);
         assert_eq!(renderer.uploaded_revision(), uploaded_revision);
+
+        for (grain, black_white, sepia, amount) in [
+            (0.7, false, false, 1.0),
+            (0.0, true, false, 0.55),
+            (0.0, false, true, 0.7),
+            (0.25, true, true, 0.5),
+        ] {
+            let mut effect = reset_recipe.clone();
+            effect.grain = grain;
+            effect.black_white = black_white;
+            effect.sepia = sepia;
+            effect.filter_amount = amount;
+            assert!(gpu_tone_supported(&effect));
+            renderer.set_recipe(&effect);
+            check_frame(&effect, &source);
+            assert_eq!(renderer.uploaded_revision(), uploaded_revision);
+        }
+        renderer.set_recipe(&reset_recipe);
+        check_frame(&reset_recipe, &source);
 
         // A CPU-only effect hides this layer. Reset to an unchanged neutral
         // recipe must show the cached source again, without another upload.

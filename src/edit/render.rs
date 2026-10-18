@@ -111,13 +111,21 @@ pub fn render_for_export(
     // Never use a portrait-only viewport for a landscape source or vice
     // versa. EXIF orientation is applied by the decoder and PIC library
     // rotation by render_for_viewer only after the native decode.
-    render_for_viewer(
-        reference,
-        rotation,
-        &EditRecipe::decode(edit_recipe),
-        width,
-        height,
-    )
+    let recipe = EditRecipe::decode(edit_recipe);
+    // The interactive renderer can skip missing overlay assets to remain
+    // usable while offline. Export must not silently drop a visible logo or
+    // watermark from a supposedly finished image.
+    for overlay in &recipe.overlays {
+        if overlay.visible && overlay.opacity > 0.001
+            && super::overlays::load_asset(&overlay.asset).is_none()
+        {
+            anyhow::bail!(
+                "cannot export: required image overlay asset {} is missing or unreadable",
+                overlay.asset
+            );
+        }
+    }
+    render_for_viewer(reference, rotation, &recipe, width, height)
 }
 
 fn crop_normalized(image: &RgbaImage, crop: CropRect) -> RgbaImage {
@@ -619,6 +627,24 @@ pub fn save_export(
 mod tests {
     use super::*;
     use crate::edit::filters::FilterPreset;
+
+    #[test]
+    fn export_refuses_to_silently_omit_a_missing_visible_logo() {
+        let mut recipe = EditRecipe::default();
+        recipe.overlays.push(super::super::model::OverlaySpec::new_centered(
+            "nonexistent-pic-overlay-unique-test-asset",
+        ));
+        let error = render_for_export("/unused-original.jpg", 0, &recipe.encode(), 120, 80)
+            .unwrap_err().to_string();
+        assert!(error.contains("required image overlay asset"), "{error}");
+
+        // A deliberately hidden overlay is not part of the exported recipe.
+        recipe.overlays[0].visible = false;
+        let hidden_error = render_for_export(
+            "/unused-original.jpg", 0, &recipe.encode(), 120, 80,
+        ).unwrap_err().to_string();
+        assert!(!hidden_error.contains("required image overlay asset"));
+    }
 
     #[test]
     fn library_quarter_turn_export_keeps_full_native_resolution() {

@@ -105,6 +105,22 @@ fn pan_drag_should_claim(can_scroll: bool, space_held: bool, canvas_tool_active:
     space_held || (can_scroll && !canvas_tool_active)
 }
 
+fn cpu_fallback_reason(recipe: &EditRecipe) -> &'static str {
+    if recipe.clarity != 0.0 {
+        "clarity"
+    } else if recipe.grain != 0.0 {
+        "grain"
+    } else if recipe.filter != FilterPreset::None {
+        "filter"
+    } else if recipe.auto_color || recipe.auto_contrast {
+        "auto_adjustment"
+    } else if recipe.black_white || recipe.sepia {
+        "look"
+    } else {
+        "unsupported_recipe"
+    }
+}
+
 pub fn build(
     parent: &gtk::Window,
     connection: Rc<RefCell<Connection>>,
@@ -533,6 +549,7 @@ pub fn build(
     let pan_origin_h = Rc::new(Cell::new(0.0f64));
     let pan_origin_v = Rc::new(Cell::new(0.0f64));
     let pan_space_held = Rc::new(Cell::new(false));
+    let pan_trace_updated = Rc::new(Cell::new(false));
     let pan_drag = gtk::GestureDrag::new();
     pan_drag.set_button(1);
     pan_drag.set_propagation_phase(gtk::PropagationPhase::Capture);
@@ -541,6 +558,7 @@ pub fn build(
         let pan_origin_h = pan_origin_h.clone();
         let pan_origin_v = pan_origin_v.clone();
         let pan_space_held = pan_space_held.clone();
+        let pan_trace_updated = pan_trace_updated.clone();
         let crop_overlay = crop_overlay.clone();
         let overlays_toggle = overlays_toggle.clone();
         let text_toggle = text_toggle.clone();
@@ -552,6 +570,21 @@ pub fn build(
                 || overlays_toggle.is_active()
                 || text_toggle.is_active();
             let space_held = pan_space_held.get();
+            pan_trace_updated.set(false);
+            if std::env::var_os("PICASA_TRACE").is_some() {
+                eprintln!(
+                    "PIC_EDIT_PAN begin scrollable={} space={} tool_active={} h={:.1}/{:.1}/{:.1} v={:.1}/{:.1}/{:.1}",
+                    can_scroll,
+                    space_held,
+                    canvas_tool_active,
+                    hadj.value(),
+                    hadj.upper(),
+                    hadj.page_size(),
+                    vadj.value(),
+                    vadj.upper(),
+                    vadj.page_size(),
+                );
+            }
             if !pan_drag_should_claim(can_scroll, space_held, canvas_tool_active) {
                 gesture.set_state(gtk::EventSequenceState::Denied);
                 return;
@@ -566,6 +599,7 @@ pub fn build(
         let picture_scroll = picture_scroll.clone();
         let pan_origin_h = pan_origin_h.clone();
         let pan_origin_v = pan_origin_v.clone();
+        let pan_trace_updated = pan_trace_updated.clone();
         pan_drag.connect_drag_update(move |_, dx, dy| {
             let hadj = picture_scroll.hadjustment();
             let vadj = picture_scroll.vadjustment();
@@ -573,6 +607,13 @@ pub fn build(
             let max_v = (vadj.upper() - vadj.page_size()).max(vadj.lower());
             hadj.set_value((pan_origin_h.get() - dx).clamp(hadj.lower(), max_h));
             vadj.set_value((pan_origin_v.get() - dy).clamp(vadj.lower(), max_v));
+            if !pan_trace_updated.replace(true) && std::env::var_os("PICASA_TRACE").is_some() {
+                eprintln!(
+                    "PIC_EDIT_PAN first_update delta={dx:.1},{dy:.1} h={:.1} v={:.1}",
+                    hadj.value(),
+                    vadj.value(),
+                );
+            }
         });
     }
     {
@@ -580,6 +621,9 @@ pub fn build(
         let canvas_zoom = canvas_zoom.clone();
         let native_one_to_one = native_one_to_one.clone();
         pan_drag.connect_drag_end(move |_, _, _| {
+            if std::env::var_os("PICASA_TRACE").is_some() {
+                eprintln!("PIC_EDIT_PAN end");
+            }
             picture_scroll.set_cursor_from_name(
                 if native_one_to_one.get() || canvas_zoom.get() > 1.0 {
                     Some("grab")
@@ -1022,7 +1066,8 @@ pub fn build(
                                                 gpu_canvas.hide();
                                                 if std::env::var_os("PICASA_TRACE").is_some() {
                                                     eprintln!(
-                                                        "PIC_EDIT_RENDERER renderer=cpu_fallback reason=unsupported_recipe"
+                                                        "PIC_EDIT_RENDERER renderer=cpu_fallback reason={}",
+                                                        cpu_fallback_reason(&gpu_recipe),
                                                     );
                                                 }
                                             }
@@ -2174,7 +2219,6 @@ pub fn build(
         let escape_action = escape_action.clone();
         let key = gtk::EventControllerKey::new();
         key.set_propagation_phase(gtk::PropagationPhase::Capture);
-        let space_held_for_press = pan_space_held.clone();
         key.connect_key_pressed(move |_, key, _, _| {
             match key {
                 gtk::gdk::Key::Return | gtk::gdk::Key::KP_Enter
@@ -2187,20 +2231,42 @@ pub fn build(
                     escape_action();
                     glib::Propagation::Stop
                 }
-                gtk::gdk::Key::space => {
-                    space_held_for_press.set(true);
-                    glib::Propagation::Stop
-                }
                 _ => glib::Propagation::Proceed,
             }
         });
-        let space_held_for_release = pan_space_held.clone();
-        key.connect_key_released(move |_, key, _, _| {
-            if key == gtk::gdk::Key::space {
-                space_held_for_release.set(false);
+        root.add_controller(key);
+    }
+
+    // Space must be observed at the toplevel: when focus is in the canvas or
+    // an overlay widget the editor root is not guaranteed to be on the key
+    // event path. Capture it on the window while this editor is mapped so a
+    // Space+left-drag can always claim the canvas gesture.
+    {
+        let root = root.clone();
+        let pan_space_held_for_press = pan_space_held.clone();
+        let pan_space_held_for_release = pan_space_held.clone();
+        let key = gtk::EventControllerKey::new();
+        key.set_propagation_phase(gtk::PropagationPhase::Capture);
+        key.connect_key_pressed(move |_, key, _, _| {
+            if key == gtk::gdk::Key::space && root.is_mapped() {
+                pan_space_held_for_press.set(true);
+                if std::env::var_os("PICASA_TRACE").is_some() {
+                    eprintln!("PIC_EDIT_PAN space=pressed");
+                }
+                glib::Propagation::Stop
+            } else {
+                glib::Propagation::Proceed
             }
         });
-        root.add_controller(key);
+        key.connect_key_released(move |_, key, _, _| {
+            if key == gtk::gdk::Key::space {
+                pan_space_held_for_release.set(false);
+                if std::env::var_os("PICASA_TRACE").is_some() {
+                    eprintln!("PIC_EDIT_PAN space=released");
+                }
+            }
+        });
+        parent.add_controller(key);
     }
 
     configure_crop_overlay(
@@ -2396,6 +2462,15 @@ mod panel_tests {
         assert!(pan_drag_should_claim(false, true, true));
         assert!(!pan_drag_should_claim(false, false, false));
         assert!(!pan_drag_should_claim(true, false, true));
+    }
+
+    #[test]
+    fn clarity_fallback_is_identified_in_renderer_trace() {
+        let mut recipe = EditRecipe::default();
+        recipe.clarity = 0.1;
+        assert_eq!(cpu_fallback_reason(&recipe), "clarity");
+        recipe.clarity = 0.0;
+        assert_eq!(cpu_fallback_reason(&recipe), "unsupported_recipe");
     }
 
     fn descendants(root: &impl IsA<gtk::Widget>) -> Vec<gtk::Widget> {

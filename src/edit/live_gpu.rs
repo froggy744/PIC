@@ -1558,6 +1558,49 @@ mod tests {
         renderer.set_recipe(&reset_recipe);
         check_frame(&reset_recipe, &source);
 
+        // Full effect stack should compose without a CPU fallback, texture
+        // re-upload or framebuffer feedback between independent blur passes.
+        let mut mixed = reset_recipe.clone();
+        mixed.filter = FilterPreset::DreamGlow;
+        mixed.filter_amount = 0.7;
+        mixed.clarity = 0.4;
+        mixed.grain = 0.3;
+        mixed.sharpen = 0.25;
+        mixed.exposure = 0.12;
+        assert!(gpu_tone_supported(&mixed));
+        renderer.set_recipe(&mixed);
+        renderer.request_readback();
+        let deadline = Instant::now() + std::time::Duration::from_secs(5);
+        let mut result = None;
+        while Instant::now() < deadline {
+            while context.pending() { context.iteration(false); }
+            if let Some(readback) = renderer.take_readback() {
+                result = Some(readback);
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let result = result.expect("mixed GPU effects did not render");
+        let scale = renderer.widget().scale_factor().max(1) as u32;
+        let gpu = result.chunks_exact(WIDTH as usize * scale as usize * 4)
+            .rev().flatten().copied().collect::<Vec<_>>();
+        let cpu = super::super::render::apply_tone(source.clone(), &mixed);
+        let cpu = if scale == 1 { cpu } else {
+            image::imageops::resize(&cpu, WIDTH * scale, HEIGHT * scale,
+                image::imageops::FilterType::Nearest)
+        }.into_raw();
+        let differences = gpu.iter().zip(&cpu)
+            .map(|(a,b)| (*a as i16 - *b as i16).unsigned_abs() as usize)
+            .collect::<Vec<_>>();
+        let max_error = differences.iter().copied().max().unwrap_or_default();
+        let mean_error = differences.iter().sum::<usize>() as f64 / differences.len().max(1) as f64;
+        eprintln!("PIC_EDIT_GPU mixed_parity max={max_error} mean={mean_error:.3}");
+        assert!(max_error <= 45 && mean_error <= 9.0,
+            "mixed GPU recipe diverges from CPU: max={max_error} mean={mean_error:.3}");
+        assert_eq!(renderer.uploaded_revision(), uploaded_revision);
+        renderer.set_recipe(&reset_recipe);
+        check_frame(&reset_recipe, &source);
+
         // A CPU-only effect hides this layer. Reset to an unchanged neutral
         // recipe must show the cached source again, without another upload.
         renderer.hide();

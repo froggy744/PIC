@@ -2307,7 +2307,16 @@ pub fn build(
     // sync_controls so undo/redo can refresh the panel through the slot.
     let redraw_overlay_canvas: Rc<dyn Fn()> = {
         let overlay_layer = overlay_layer.clone();
-        Rc::new(move || overlay_layer.queue_draw())
+        let gpu_canvas = gpu_canvas.clone();
+        let session = session.clone();
+        Rc::new(move || {
+            if let Some(gpu) = &gpu_canvas {
+                // Layer movement/opacity changes update only overlay textures
+                // and uniforms; the decoded photo remains in GPU memory.
+                gpu.set_overlay_layers(&session.borrow().recipe);
+            }
+            overlay_layer.queue_draw();
+        })
     };
     let update_canvas_input: Rc<dyn Fn()> = {
         let overlay_layer = overlay_layer.clone();
@@ -2395,6 +2404,7 @@ pub fn build(
 
     configure_overlay_canvas(
         &overlay_layer,
+        gpu_canvas.clone(),
         session.clone(),
         selected_overlay.clone(),
         selected_text.clone(),

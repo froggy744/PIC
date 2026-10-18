@@ -564,12 +564,26 @@ pub(super) fn largest_rotated_rect(width: f32, height: f32, angle: f32) -> (f32,
     }
 }
 
+/// JPEG cannot store an alpha channel. Composite transparent pixels over
+/// white rather than discarding their alpha (which makes PNG logos dark).
+/// Opaque photo RGB samples remain bit-for-bit unchanged.
+fn flatten_jpeg_alpha(image: &RgbaImage) -> image::RgbImage {
+    image::RgbImage::from_fn(image.width(), image.height(), |x, y| {
+        let pixel = image.get_pixel(x, y);
+        let alpha = u32::from(pixel[3]);
+        image::Rgb(std::array::from_fn(|channel| {
+            let foreground = u32::from(pixel[channel]);
+            ((foreground * alpha + 255 * (255 - alpha) + 127) / 255) as u8
+        }))
+    })
+}
+
 pub fn save_jpeg(image: &RgbaImage, destination: &std::path::Path, quality: u8) -> Result<()> {
     use image::ImageEncoder;
     let file = std::fs::File::create(destination)
         .with_context(|| format!("could not create {}", destination.display()))?;
     let writer = std::io::BufWriter::new(file);
-    let rgb = DynamicImage::ImageRgba8(image.clone()).to_rgb8();
+    let rgb = flatten_jpeg_alpha(image);
     image::codecs::jpeg::JpegEncoder::new_with_quality(writer, quality).write_image(
         &rgb,
         rgb.width(),
@@ -601,6 +615,35 @@ pub fn save_export(
 mod tests {
     use super::*;
     use crate::edit::filters::FilterPreset;
+
+    #[test]
+    fn jpeg_export_alpha_matte_preserves_opaque_and_flattens_transparency() {
+        let pixels = RgbaImage::from_fn(3, 1, |x, _| match x {
+            0 => Rgba([12, 34, 56, 255]),
+            1 => Rgba([0, 40, 120, 128]),
+            _ => Rgba([0, 0, 0, 0]),
+        });
+        let result = flatten_jpeg_alpha(&pixels);
+        assert_eq!(result.get_pixel(0, 0).0, [12, 34, 56]);
+        assert_eq!(result.get_pixel(1, 0).0, [127, 147, 187]);
+        assert_eq!(result.get_pixel(2, 0).0, [255, 255, 255]);
+    }
+
+    #[test]
+    fn png_export_retains_transparent_overlay_pixels_exactly() {
+        let image = RgbaImage::from_fn(4, 4, |x, y|
+            Rgba([x as u8 * 35, y as u8 * 41, 120, (x * 51 + y * 13) as u8])
+        );
+        let path = std::env::temp_dir().join(format!(
+            "pic-export-alpha-{}-{}.png", std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+        ));
+        save_export(&image, &path, crate::edit::export_batch::ExportFormat::Png, 90).unwrap();
+        let reread = image::open(&path).unwrap().to_rgba8();
+        assert_eq!(reread, image);
+        std::fs::remove_file(path).ok();
+    }
 
     #[test]
     fn filter_amount_blends_only_creative_look_not_other_adjustments() {

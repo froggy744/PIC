@@ -2225,7 +2225,9 @@ mod tests {
             if x == 0 && y == 0 { return image::Rgba([0, 0, 0, 255]); }
             if x == 1 && y == 0 { return image::Rgba([255, 255, 255, 255]); }
             let value = (102 + 2 * x + y) as u8;
-            image::Rgba([value, value, value, 255])
+            // Deliberate blue cast: this exercises colour-corrected histogram
+            // bins instead of allowing the Auto Colour pass to be a no-op.
+            image::Rgba([value.saturating_sub(12), value, value.saturating_add(8), 255])
         });
         let mut automatic = EditRecipe::default();
         automatic.auto_contrast = true;

@@ -64,6 +64,12 @@ jobs:
             LIBGL_ALWAYS_SOFTWARE=1 \
             cargo test --locked gtk_gl_area_layer_alpha_and_stacking_match_cpu -- \
             --ignored --test-threads=1 --nocapture
+      - name: GPU filter-picker cover and creative-preset parity
+        run: |
+          xvfb-run -a env GDK_BACKEND=x11 GSK_RENDERER=gl \
+            LIBGL_ALWAYS_SOFTWARE=1 \
+            cargo test --locked gtk_gl_area_filter_thumbnail_cover_matches_cpu -- \
+            --ignored --test-threads=1 --nocapture
       - name: GPU full-resolution sharpness, tiny exposure and reset
         run: |
           xvfb-run -a env GDK_BACKEND=x11 GSK_RENDERER=gl \

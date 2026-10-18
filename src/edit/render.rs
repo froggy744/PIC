@@ -97,16 +97,20 @@ pub fn render_for_export(
     source_height: i64,
 ) -> Result<RgbaImage> {
     let (width, height) = if source_width > 0 && source_height > 0 {
-        (source_width as u32, source_height as u32)
+        // A square decode *bound* preserves full sensor/photo resolution
+        // whether EXIF orientation and/or PIC's library rotation swaps axes.
+        // The decoder still caps actual output to the source's native size.
+        let long_edge = (source_width as u32).max(source_height as u32);
+        (long_edge, long_edge)
     } else {
         // RAW/remote records can lack catalog dimensions. An unbounded request
         // lets the viewer decoder clamp to the largest source/embedded preview
         // it can actually decode instead of exporting a 1x1 image.
         (u32::MAX, u32::MAX)
     };
-    // These are *unrotated source* decode bounds. Library rotation happens
-    // afterward in render_for_viewer; swapping here silently downsized a
-    // landscape source on any 90°/270° export before applying edits.
+    // Never use a portrait-only viewport for a landscape source or vice
+    // versa. EXIF orientation is applied by the decoder and PIC library
+    // rotation by render_for_viewer only after the native decode.
     render_for_viewer(
         reference,
         rotation,

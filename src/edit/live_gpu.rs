@@ -2549,6 +2549,42 @@ mod tests {
             eprintln!("PIC_EDIT_GPU geometry_parity rotation={rotation} angle={angle} {}x{} max_channel_delta={max_delta}",
                 output.0, output.1);
         }
+        // Automatic histogram statistics must see the transformed and named-
+        // filtered output, not the original uncropped RAW texture.
+        let mut stats_recipe = EditRecipe::default();
+        stats_recipe.crop = CropRect {
+            left: 0.125, top: 0.125, right: 0.875, bottom: 0.875,
+        };
+        stats_recipe.filter = FilterPreset::Valencia;
+        stats_recipe.filter_amount = 0.75;
+        stats_recipe.auto_color = true;
+        stats_recipe.auto_contrast = true;
+        renderer.set_untransformed_geometry_for_rotation(0, &stats_recipe);
+        renderer.set_recipe(&stats_recipe);
+        let actual = capture();
+        let expected = super::super::render::apply_tone(
+            super::super::render::apply_geometry(original.clone(), &stats_recipe),
+            &stats_recipe,
+        );
+        let scale = renderer.widget().scale_factor().max(1) as usize;
+        let stride = WIDTH as usize * scale * 4;
+        let mut max_delta = 0u8;
+        for y in 0..expected.height() as usize {
+            for x in 0..expected.width() as usize {
+                let offset = y * scale * stride + x * scale * 4;
+                for channel in 0..4 {
+                    max_delta = max_delta.max(
+                        actual[offset + channel]
+                            .abs_diff(expected.get_pixel(x as u32, y as u32)[channel]),
+                    );
+                }
+            }
+        }
+        assert!(max_delta <= 3,
+            "GPU cropped/filtered automatic corrections diverge: max delta={max_delta}");
+        assert_eq!(renderer.uploaded_revision(), revision);
+        eprintln!("PIC_EDIT_GPU cropped_filter_auto_parity max_channel_delta={max_delta}");
+        renderer.set_recipe(&neutral);
         renderer.clear_untransformed_geometry();
         let reset = capture();
         assert_eq!(reset, baseline,

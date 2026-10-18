@@ -246,7 +246,7 @@ where
     }
     let image = fit_max_edge(render(job)?, max_edge);
     let staging = staging_export_path(destination)?;
-    let result = (|| {
+    let result: Result<()> = (|| {
         super::render::save_export(&image, &staging, format, quality)?;
         // The result is only made visible at its final filename once complete.
         std::fs::rename(&staging, destination).with_context(|| format!(

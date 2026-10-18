@@ -1514,7 +1514,13 @@ mod tests {
                 .collect::<Vec<_>>();
             let maximum = errors.iter().copied().max().unwrap_or_default();
             let average = errors.iter().sum::<usize>() as f64 / errors.len().max(1) as f64;
-            eprintln!("PIC_EDIT_GPU special_filter_parity preset={preset:?} max={maximum} avg={average:.3}");
+            let worst = errors.iter().enumerate().max_by_key(|(_, delta)| *delta)
+                .map(|(index, delta)| {
+                    let stride = WIDTH as usize * scale as usize * 4;
+                    (index / stride, (index % stride) / 4, index % 4,
+                     actual[index], cpu[index], *delta)
+                });
+            eprintln!("PIC_EDIT_GPU special_filter_parity preset={preset:?} max={maximum} avg={average:.3} worst={worst:?}");
             assert!(maximum <= 35 && average <= 5.0,
                 "GPU {preset:?} differs too much from CPU: max={maximum}, avg={average:.3}");
             assert_eq!(renderer.uploaded_revision(), uploaded_revision);

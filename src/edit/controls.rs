@@ -232,8 +232,12 @@ fn filter_tile(
     let gpu_canvas = if gpu_thumbnail {
         let stage = gtk::Overlay::new();
         stage.set_size_request(FILTER_TILE_PREVIEW_WIDTH, FILTER_TILE_PREVIEW_HEIGHT);
-        stage.set_hexpand(true);
-        stage.set_vexpand(true);
+        // Keep the GL framebuffer exactly the viewport passed to
+        // set_thumbnail_cover; FlowBox may allocate extra width to the button.
+        stage.set_hexpand(false);
+        stage.set_vexpand(false);
+        stage.set_halign(gtk::Align::Center);
+        stage.set_valign(gtk::Align::Start);
         stage.set_child(Some(&picture));
         let canvas = LiveGpuCanvas::new();
         stage.add_overlay(&canvas.widget());

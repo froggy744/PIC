@@ -107,19 +107,20 @@ impl FilterPreset {
 
 type Rgb = (f32, f32, f32);
 
-struct FilterParams {
-    exposure: f32,
-    shadow_lift: f32,
-    tint: Rgb,
-    shadow_tone: Rgb,
-    highlight_tone: Rgb,
-    split_strength: f32,
-    saturation: f32,
-    contrast: f32,
-    vignette: f32,
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct FilterParams {
+    pub(crate) exposure: f32,
+    pub(crate) shadow_lift: f32,
+    pub(crate) tint: Rgb,
+    pub(crate) shadow_tone: Rgb,
+    pub(crate) highlight_tone: Rgb,
+    pub(crate) split_strength: f32,
+    pub(crate) saturation: f32,
+    pub(crate) contrast: f32,
+    pub(crate) vignette: f32,
 }
 
-fn params(preset: FilterPreset) -> FilterParams {
+pub(crate) fn params(preset: FilterPreset) -> FilterParams {
     match preset {
         FilterPreset::Clarendon => FilterParams {
             exposure: 1.05,

@@ -902,9 +902,17 @@ pub fn build(
         if filter_gpu_tiles.is_empty() {
             start_cpu();
         } else {
+            // One broken GL tile switches the *entire* filter picker back to
+            // its CPU Picture widgets, rather than leaving a mixed grid.
+            let all_gpu_canvases = filter_gpu_tiles.iter()
+                .map(|(_, canvas)| canvas.clone()).collect::<Vec<_>>();
             for (_, canvas) in &filter_gpu_tiles {
                 let fallback = start_cpu.clone();
-                canvas.set_failure_handler(move || fallback());
+                let canvases = all_gpu_canvases.clone();
+                canvas.set_failure_handler(move || {
+                    for canvas in &canvases { canvas.hide(); }
+                    fallback();
+                });
             }
             let (sender, receiver) = std::sync::mpsc::channel();
             let decode_path = path.clone();

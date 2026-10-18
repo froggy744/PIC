@@ -1896,6 +1896,90 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires GTK OpenGL display; run under xvfb-run"]
+    fn gtk_gl_area_geometry_crop_and_straighten_match_cpu() {
+        gtk::init().expect("GTK initialization");
+        const WIDTH: u32 = 48;
+        const HEIGHT: u32 = 32;
+        let original = image::RgbaImage::from_fn(WIDTH, HEIGHT, |x, y| {
+            image::Rgba([
+                (25 + 4 * x) as u8,
+                (31 + 5 * y) as u8,
+                (12 + (x * 3 + y * 2) % 190) as u8,
+                255,
+            ])
+        });
+        let renderer = LiveGpuCanvas::new();
+        renderer.widget().set_size_request(WIDTH as i32, HEIGHT as i32);
+        let window = gtk::Window::new();
+        window.set_default_size(WIDTH as i32, HEIGHT as i32);
+        window.set_child(Some(&renderer.widget()));
+        window.present();
+        let neutral = EditRecipe::default();
+        renderer.set_source(
+            "test://gpu-untransformed-geometry", 0, &neutral,
+            WIDTH as i32, HEIGHT as i32,
+            glib::Bytes::from_owned(original.clone().into_raw()),
+        );
+        renderer.set_view(0.0, 0.0, WIDTH as f64, HEIGHT as f64, 1.0, 0.0, 0.0);
+        let context = glib::MainContext::default();
+        let capture = || -> Vec<u8> {
+            renderer.request_readback();
+            let deadline = Instant::now() + std::time::Duration::from_secs(6);
+            let pixels = loop {
+                while context.pending() { context.iteration(false); }
+                if let Some(frame) = renderer.take_readback() { break frame; }
+                assert!(Instant::now() < deadline, "GPU geometry framebuffer timeout");
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            };
+            let scale = renderer.widget().scale_factor().max(1) as usize;
+            pixels.chunks_exact(WIDTH as usize * scale * 4)
+                .rev().flatten().copied().collect::<Vec<u8>>()
+        };
+        let baseline = capture();
+        let revision = renderer.uploaded_revision();
+        for (angle, crop) in [
+            (0.0, CropRect {left:0.25,top:0.25,right:0.75,bottom:0.75}),
+            (4.5, CropRect::default()),
+            (-6.5, CropRect {left:0.16,top:0.13,right:0.88,bottom:0.85}),
+        ] {
+            let recipe = EditRecipe {
+                straighten: angle, crop, ..EditRecipe::default()
+            };
+            let expected = super::super::render::apply_geometry(original.clone(), &recipe);
+            let output = renderer.set_untransformed_geometry(&recipe).unwrap();
+            assert_eq!(output, (expected.width() as i32, expected.height() as i32));
+            let actual = capture();
+            let scale = renderer.widget().scale_factor().max(1) as usize;
+            let stride = WIDTH as usize * scale * 4;
+            let mut max_delta = 0u8;
+            for y in 0..expected.height() as usize {
+                for x in 0..expected.width() as usize {
+                    let actual_offset = y * scale * stride + x * scale * 4;
+                    let pixel = expected.get_pixel(x as u32, y as u32);
+                    for channel in 0..4 {
+                        max_delta = max_delta.max(
+                            actual[actual_offset + channel].abs_diff(pixel[channel])
+                        );
+                    }
+                }
+            }
+            assert!(max_delta <= 2,
+                "GPU source geometry mismatch angle={angle} crop={crop:?} delta={max_delta}");
+            assert_eq!(renderer.uploaded_revision(), revision,
+                "geometry-only changes must never re-upload the source");
+            eprintln!("PIC_EDIT_GPU geometry_parity angle={angle} {}x{} max_channel_delta={max_delta}",
+                output.0, output.1);
+        }
+        renderer.clear_untransformed_geometry();
+        let reset = capture();
+        assert_eq!(reset, baseline,
+            "removing GPU geometry must restore original full-res source pixels");
+        assert_eq!(renderer.uploaded_revision(), revision);
+        window.close();
+    }
+
+    #[test]
     #[ignore = "requires a GTK display and working OpenGL; run under xvfb-run"]
     fn gtk_gl_area_matches_cpu_reference_at_native_pixel_size() {
         gtk::init().expect("GTK initialization");

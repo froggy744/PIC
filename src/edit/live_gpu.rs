@@ -597,9 +597,10 @@ impl LiveGpuCanvas {
         state.source.is_some()
             && state.key.as_ref().is_some_and(|key| {
                 key.reference == reference
-                    && key.rotation == rotation
-                    && key.crop == recipe.crop
-                    && key.straighten == recipe.straighten
+                    && (state.geometry.is_some()
+                        || (key.rotation == rotation
+                            && key.crop == recipe.crop
+                            && key.straighten == recipe.straighten))
             })
             && state.failure.is_none()
     }
@@ -810,6 +811,10 @@ pub fn gpu_base_recipe(recipe: &EditRecipe) -> EditRecipe {
     base.sepia = false;
     base.auto_color = false;
     base.auto_contrast = false;
+    // In LiveGPU mode geometry is applied directly to the RAW source texture.
+    // Do not first straighten/crop it on the CPU and then reapply on the GPU.
+    base.crop = CropRect::default();
+    base.straighten = 0.0;
     base
 }
 
@@ -1862,7 +1867,8 @@ mod tests {
         assert!(!base.sepia);
         assert!(!base.auto_color);
         assert!(!base.auto_contrast);
-        assert_eq!(base.crop, recipe.crop);
+        assert_eq!(base.crop, CropRect::default());
+        assert_eq!(base.straighten, 0.0);
     }
 
     #[test]

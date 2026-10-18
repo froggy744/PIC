@@ -35,6 +35,8 @@ jobs:
         run: cargo check --locked
       - name: Test editor render
         run: cargo test --locked edit::render::tests -- --test-threads=1
+      - name: Test Export (JPEG, PNG, WebP, non-destructive batch)
+        run: cargo test --locked edit::export_batch::tests -- --test-threads=1
       - name: Test recipe compatibility and history
         run: cargo test --locked edit::model::tests -- --test-threads=1
       - name: Test creative filters
@@ -77,29 +79,3 @@ jobs:
             cargo test --locked gtk_gl_area_full_resolution_sharpness_regression -- \
             --ignored --test-threads=1 --nocapture
 
-  milestone-tag:
-    name: Preserve hardware-tested Edit milestone tag
-    if: github.event_name == 'pull_request' && github.head_ref == 'feature/gpu-edit-pipeline'
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Annotate immutable hardware-tested commit
-        env:
-          TAG_NAME: gpu-edit-hardware-verified-2026-10-18
-          TARGET_SHA: 35b227e40633c0b38c1ce903eabd2f168121dc13
-        run: |
-          set -euo pipefail
-          git fetch origin "$TARGET_SHA" --depth=1
-          if git ls-remote --exit-code --tags origin "refs/tags/$TAG_NAME" > /dev/null 2>&1; then
-            echo "Hardware-verified tag already exists"
-            exit 0
-          fi
-          git -c user.name='PIC release automation' \
-              -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
-              tag -a "$TAG_NAME" "$TARGET_SHA" \
-              -m "GPU Edit hardware test passed on Fedora RX 9070 XT; experimental milestone"
-          git push origin "refs/tags/$TAG_NAME"

@@ -67,6 +67,7 @@ struct GpuTone {
     sepia: bool,
     filter_amount: f32,
     filter: FilterPreset,
+    auto_color: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -97,6 +98,10 @@ struct GlObjects {
     effect_luma_fbo: u32,
     effect_blur_fbo: u32,
     effect_dimensions: (i32, i32),
+    auto_color_program: u32,
+    auto_color_stats: u32,
+    auto_color_fbo: u32,
+    auto_color_revision: u64,
 }
 
 struct GpuState {
@@ -175,13 +180,16 @@ impl LiveGpuCanvas {
                         gl::DeleteTextures(1, &objects.clarity_blur_texture);
                         gl::DeleteTextures(1, &objects.effect_luma_texture);
                         gl::DeleteTextures(1, &objects.effect_blur_texture);
+                        gl::DeleteTextures(1, &objects.auto_color_stats);
                         gl::DeleteFramebuffers(1, &objects.clarity_luma_fbo);
                         gl::DeleteFramebuffers(1, &objects.clarity_blur_fbo);
                         gl::DeleteFramebuffers(1, &objects.effect_luma_fbo);
                         gl::DeleteFramebuffers(1, &objects.effect_blur_fbo);
+                        gl::DeleteFramebuffers(1, &objects.auto_color_fbo);
                         gl::DeleteVertexArrays(1, &objects.vao);
                         gl::DeleteProgram(objects.program);
                         gl::DeleteProgram(objects.blur_program);
+                        gl::DeleteProgram(objects.auto_color_program);
                     }
                 }
             }
@@ -325,6 +333,7 @@ impl LiveGpuCanvas {
                     uniform_1f(objects.program, "uBlackWhite", if tone.black_white { 1.0 } else { 0.0 });
                     uniform_1f(objects.program, "uSepia", if tone.sepia { 1.0 } else { 0.0 });
                     uniform_1f(objects.program, "uFilterAmount", tone.filter_amount);
+                    uniform_1i(objects.program, "uAutoColor", if tone.auto_color { 1 } else { 0 });
                     let params = filters::params(tone.filter);
                     uniform_1f(objects.program, "uNamedFilter", if tone.filter == FilterPreset::None { 0.0 } else { 1.0 });
                     uniform_1f(objects.program, "uNewspaper", if tone.filter == FilterPreset::Newspaper { 1.0 } else { 0.0 });
@@ -346,6 +355,16 @@ impl LiveGpuCanvas {
                         _ => 0.0,
                     };
                     uniform_1f(objects.program, "uNamedGrain", film_grain);
+                    if tone.auto_color {
+                        if let Some((width, height, _)) = source.as_ref() {
+                            draw_auto_color_stats(objects, *width, *height, source_revision, view_width * device_scale, view_height * device_scale);
+                            gl::ActiveTexture(gl::TEXTURE3);
+                            gl::BindTexture(gl::TEXTURE_2D, objects.auto_color_stats);
+                            uniform_1i(objects.program, "uAutoColorStats", 3);
+                            gl::ActiveTexture(gl::TEXTURE0);
+                            gl::BindTexture(gl::TEXTURE_2D, objects.texture);
+                        }
+                    }
                     if matches!(tone.filter, FilterPreset::PencilSketch | FilterPreset::DreamGlow) {
                         if let Some((source_width, source_height, _)) = source.as_ref() {
                             // Blur the 100%-strength base look BEFORE Filter Amount blending.
@@ -518,6 +537,7 @@ impl LiveGpuCanvas {
             sepia: recipe.sepia,
             filter_amount: recipe.filter_amount,
             filter: recipe.filter,
+            auto_color: recipe.auto_color,
         };
         let mut state = self.state.borrow_mut();
         if state.tone == next {
@@ -627,8 +647,7 @@ impl LiveGpuCanvas {
 }
 
 pub fn gpu_tone_supported(recipe: &EditRecipe) -> bool {
-    !recipe.auto_color
-        && !recipe.auto_contrast
+    !recipe.auto_contrast && !(recipe.auto_color && recipe.filter != FilterPreset::None)
 }
 
 pub fn gpu_base_recipe(recipe: &EditRecipe) -> EditRecipe {
@@ -646,6 +665,7 @@ pub fn gpu_base_recipe(recipe: &EditRecipe) -> EditRecipe {
     base.filter = FilterPreset::None;
     base.black_white = false;
     base.sepia = false;
+    base.auto_color = false;
     base
 }
 
@@ -729,6 +749,8 @@ uniform float uFilterSaturation;
 uniform float uFilterContrast;
 uniform float uFilterVignette;
 uniform float uNamedGrain;
+uniform int uAutoColor;
+uniform sampler2D uAutoColorStats;
 out vec4 color;
 float luma(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
 float smoothMask(float low, float high, float value) {
@@ -741,7 +763,17 @@ float contrastCurve(float value, float amount) {
     return clamp(x + a * 4.0 * (x - 0.5) * x * (1.0 - x), 0.0, 1.0);
 }
 vec4 tonePixel(vec4 px) {
-    vec3 c = px.rgb * exp2(uExposure);
+    vec3 corrected = px.rgb;
+    if (uAutoColor != 0 && px.a >= 16.0/255.0) {
+        vec4 sums = texelFetch(uAutoColorStats, ivec2(0,0), 0);
+        if (sums.a >= 0.5) {
+            vec3 means = sums.rgb / sums.a;
+            float neutral = dot(means, vec3(0.2126,0.7152,0.0722));
+            vec3 gains = vec3(1.0) + (clamp(vec3(neutral) / max(means,vec3(1.0)), vec3(0.82), vec3(1.22)) - vec3(1.0)) * 0.65;
+            corrected = round(clamp(corrected * gains, 0.0, 1.0) * 255.0) / 255.0;
+        }
+    }
+    vec3 c = corrected * exp2(uExposure);
     if (abs(uFillLight) > 0.0001 || abs(uShadows) > 0.0001 ||
         abs(uHighlights) > 0.0001) {
         float y = luma(c);
@@ -956,8 +988,34 @@ void main() {
     color = vec4(y, y, y, 1.0);
 }"#)?;
 
+    let auto_vertex = compile_shader(gl::VERTEX_SHADER, r#"#version 150
+uniform sampler2D uSource;
+uniform int uWidth;
+uniform int uSampleStep;
+out vec4 vWeighted;
+void main() {
+    int idx = gl_VertexID * uSampleStep;
+    ivec2 at = ivec2(idx % uWidth, idx / uWidth);
+    vec4 px = texelFetch(uSource, at, 0);
+    float y = dot(px.rgb, vec3(0.2126, 0.7152, 0.0722));
+    float hi = max(px.r, max(px.g, px.b));
+    float lo = min(px.r, min(px.g, px.b));
+    float chroma = (hi - lo) / max(hi, 1.0/255.0);
+    float weight = (px.a < 16.0/255.0 || y < 0.07 || y > 0.93 || chroma > 0.32)
+        ? 0.0 : pow(1.0 - chroma / 0.32, 2.0);
+    vWeighted = vec4(px.rgb * (255.0 * weight), weight);
+    gl_Position = vec4(0.0, 0.0, 0.0, 1.0);
+    gl_PointSize = 1.0;
+}"#)?;
+    let auto_fragment = compile_shader(gl::FRAGMENT_SHADER, r#"#version 150
+in vec4 vWeighted;
+out vec4 color;
+void main() { color = vWeighted; }
+"#)?;
+
     let program;
     let blur_program;
+    let auto_color_program;
     let mut vao = 0;
     let mut texture = 0;
     unsafe {
@@ -969,6 +1027,12 @@ void main() {
         gl::AttachShader(blur_program, vertex);
         gl::AttachShader(blur_program, blur_fragment);
         gl::LinkProgram(blur_program);
+        auto_color_program = gl::CreateProgram();
+        gl::AttachShader(auto_color_program, auto_vertex);
+        gl::AttachShader(auto_color_program, auto_fragment);
+        gl::LinkProgram(auto_color_program);
+        let mut auto_linked = 0;
+        gl::GetProgramiv(auto_color_program, gl::LINK_STATUS, &mut auto_linked);
         let mut blur_linked = 0;
         gl::GetProgramiv(blur_program, gl::LINK_STATUS, &mut blur_linked);
         let mut linked = 0;
@@ -976,6 +1040,15 @@ void main() {
         gl::DeleteShader(vertex);
         gl::DeleteShader(fragment);
         gl::DeleteShader(blur_fragment);
+        gl::DeleteShader(auto_vertex);
+        gl::DeleteShader(auto_fragment);
+        if auto_linked == 0 {
+            let message = program_log(auto_color_program);
+            gl::DeleteProgram(auto_color_program);
+            gl::DeleteProgram(blur_program);
+            gl::DeleteProgram(program);
+            return Err(format!("auto colour shader link failed: {message}"));
+        }
         if blur_linked == 0 {
             let message = program_log(blur_program);
             gl::DeleteProgram(blur_program);
@@ -1014,7 +1087,64 @@ void main() {
         effect_luma_fbo: 0,
         effect_blur_fbo: 0,
         effect_dimensions: (0, 0),
+        auto_color_program,
+        auto_color_stats: 0,
+        auto_color_fbo: 0,
+        auto_color_revision: 0,
     })
+}
+
+/// GPU reduction into a one-pixel RGBA32F sum. Matches CPU flattened
+/// neutral sampling without a source-sized CPU processing pass or GL readback.
+unsafe fn draw_auto_color_stats(
+    objects: &mut GlObjects, width: i32, height: i32,
+    revision: u64, viewport_width: i32, viewport_height: i32,
+) {
+    if objects.auto_color_revision == revision { return; }
+    let mut previous_fbo = 0;
+    let mut previous_blend_src = 0;
+    let mut previous_blend_dst = 0;
+    gl::GetIntegerv(gl::FRAMEBUFFER_BINDING, &mut previous_fbo);
+    gl::GetIntegerv(gl::BLEND_SRC_RGB, &mut previous_blend_src);
+    gl::GetIntegerv(gl::BLEND_DST_RGB, &mut previous_blend_dst);
+    let was_blending = gl::IsEnabled(gl::BLEND) == gl::TRUE;
+    if objects.auto_color_stats == 0 {
+        gl::GenTextures(1, &mut objects.auto_color_stats);
+        gl::GenFramebuffers(1, &mut objects.auto_color_fbo);
+        gl::BindTexture(gl::TEXTURE_2D, objects.auto_color_stats);
+        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST as i32);
+        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as i32);
+        gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RGBA32F as i32,
+            1, 1, 0, gl::RGBA, gl::FLOAT, std::ptr::null());
+        gl::BindFramebuffer(gl::FRAMEBUFFER, objects.auto_color_fbo);
+        gl::FramebufferTexture2D(gl::FRAMEBUFFER, gl::COLOR_ATTACHMENT0,
+            gl::TEXTURE_2D, objects.auto_color_stats, 0);
+    } else {
+        gl::BindFramebuffer(gl::FRAMEBUFFER, objects.auto_color_fbo);
+    }
+    gl::Viewport(0, 0, 1, 1);
+    gl::ClearColor(0.0, 0.0, 0.0, 0.0);
+    gl::Clear(gl::COLOR_BUFFER_BIT);
+    gl::Enable(gl::BLEND);
+    gl::BlendEquation(gl::FUNC_ADD);
+    gl::BlendFunc(gl::ONE, gl::ONE);
+    gl::UseProgram(objects.auto_color_program);
+    gl::ActiveTexture(gl::TEXTURE0);
+    gl::BindTexture(gl::TEXTURE_2D, objects.texture);
+    uniform_1i(objects.auto_color_program, "uSource", 0);
+    uniform_1i(objects.auto_color_program, "uWidth", width);
+    let pixels = i64::from(width) * i64::from(height);
+    let step = (pixels / 200_000).max(1);
+    uniform_1i(objects.auto_color_program, "uSampleStep", step as i32);
+    gl::DrawArrays(gl::POINTS, 0, ((pixels + step - 1) / step) as i32);
+    gl::BlendFunc(previous_blend_src as u32, previous_blend_dst as u32);
+    if !was_blending { gl::Disable(gl::BLEND); }
+    gl::BindFramebuffer(gl::FRAMEBUFFER, previous_fbo as u32);
+    gl::Viewport(0, 0, viewport_width, viewport_height);
+    gl::UseProgram(objects.program);
+    gl::ActiveTexture(gl::TEXTURE0);
+    gl::BindTexture(gl::TEXTURE_2D, objects.texture);
+    objects.auto_color_revision = revision;
 }
 
 fn cpu_gaussian_kernel_radius(sigma: f32) -> i32 {
@@ -1307,6 +1437,7 @@ mod tests {
         assert_eq!(base.filter, FilterPreset::None);
         assert!(!base.black_white);
         assert!(!base.sepia);
+        assert!(!base.auto_color);
         assert_eq!(base.crop, recipe.crop);
     }
 
@@ -1327,6 +1458,8 @@ mod tests {
         unsupported.clarity = 0.1;
         assert!(gpu_tone_supported(&unsupported));
         unsupported.auto_color = true;
+        assert!(gpu_tone_supported(&unsupported));
+        unsupported.filter = FilterPreset::Clarendon;
         assert!(!gpu_tone_supported(&unsupported));
         for effect_filter in [FilterPreset::PencilSketch, FilterPreset::DreamGlow] {
             let mut preset = EditRecipe::default();

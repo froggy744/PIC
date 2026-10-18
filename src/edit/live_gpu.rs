@@ -92,6 +92,11 @@ struct GlObjects {
     clarity_luma_fbo: u32,
     clarity_blur_fbo: u32,
     clarity_dimensions: (i32, i32),
+    effect_luma_texture: u32,
+    effect_blur_texture: u32,
+    effect_luma_fbo: u32,
+    effect_blur_fbo: u32,
+    effect_dimensions: (i32, i32),
 }
 
 struct GpuState {
@@ -168,8 +173,12 @@ impl LiveGpuCanvas {
                         gl::DeleteTextures(1, &objects.texture);
                         gl::DeleteTextures(1, &objects.clarity_luma_texture);
                         gl::DeleteTextures(1, &objects.clarity_blur_texture);
+                        gl::DeleteTextures(1, &objects.effect_luma_texture);
+                        gl::DeleteTextures(1, &objects.effect_blur_texture);
                         gl::DeleteFramebuffers(1, &objects.clarity_luma_fbo);
                         gl::DeleteFramebuffers(1, &objects.clarity_blur_fbo);
+                        gl::DeleteFramebuffers(1, &objects.effect_luma_fbo);
+                        gl::DeleteFramebuffers(1, &objects.effect_blur_fbo);
                         gl::DeleteVertexArrays(1, &objects.vao);
                         gl::DeleteProgram(objects.program);
                         gl::DeleteProgram(objects.blur_program);
@@ -319,6 +328,8 @@ impl LiveGpuCanvas {
                     let params = filters::params(tone.filter);
                     uniform_1f(objects.program, "uNamedFilter", if tone.filter == FilterPreset::None { 0.0 } else { 1.0 });
                     uniform_1f(objects.program, "uNewspaper", if tone.filter == FilterPreset::Newspaper { 1.0 } else { 0.0 });
+                    uniform_1f(objects.program, "uPencilSketch", if tone.filter == FilterPreset::PencilSketch { 1.0 } else { 0.0 });
+                    uniform_1f(objects.program, "uDreamGlow", if tone.filter == FilterPreset::DreamGlow { 1.0 } else { 0.0 });
                     uniform_1f(objects.program, "uFilterExposure", params.exposure);
                     uniform_1f(objects.program, "uFilterShadowLift", params.shadow_lift);
                     uniform_3f(objects.program, "uFilterTint", params.tint.0, params.tint.1, params.tint.2);
@@ -335,6 +346,29 @@ impl LiveGpuCanvas {
                         _ => 0.0,
                     };
                     uniform_1f(objects.program, "uNamedGrain", film_grain);
+                    if matches!(tone.filter, FilterPreset::PencilSketch | FilterPreset::DreamGlow) {
+                        if let Some((source_width, source_height, _)) = source.as_ref() {
+                            // Blur the 100%-strength base look BEFORE Filter Amount blending.
+                            // Dream Glow must not recursively sample its own incomplete blur.
+                            uniform_1f(objects.program, "uDreamGlow", 0.0);
+                            uniform_1f(objects.program, "uFilterAmount", 1.0);
+                            draw_effect_luminance(
+                                objects,
+                                *source_width,
+                                *source_height,
+                                view_width * device_scale,
+                                view_height * device_scale,
+                                tone.filter == FilterPreset::PencilSketch,
+                            );
+                            uniform_1f(objects.program, "uDreamGlow", if tone.filter == FilterPreset::DreamGlow { 1.0 } else { 0.0 });
+                            uniform_1f(objects.program, "uFilterAmount", tone.filter_amount);
+                            gl::ActiveTexture(gl::TEXTURE2);
+                            gl::BindTexture(gl::TEXTURE_2D, objects.effect_luma_texture);
+                            uniform_1i(objects.program, "uEffectBlur", 2);
+                            gl::ActiveTexture(gl::TEXTURE0);
+                            gl::BindTexture(gl::TEXTURE_2D, objects.texture);
+                        }
+                    }
                     if tone.clarity.abs() > 0.001 {
                         if let Some((source_width, source_height, _)) = source.as_ref() {
                             draw_clarity_luminance(
@@ -593,8 +627,7 @@ impl LiveGpuCanvas {
 }
 
 pub fn gpu_tone_supported(recipe: &EditRecipe) -> bool {
-    !matches!(recipe.filter, FilterPreset::PencilSketch | FilterPreset::DreamGlow)
-        && !recipe.auto_color
+    !recipe.auto_color
         && !recipe.auto_contrast
 }
 
@@ -683,6 +716,9 @@ uniform float uSepia;
 uniform float uFilterAmount;
 uniform float uNamedFilter;
 uniform float uNewspaper;
+uniform float uPencilSketch;
+uniform float uDreamGlow;
+uniform sampler2D uEffectBlur;
 uniform float uFilterExposure;
 uniform float uFilterShadowLift;
 uniform vec3 uFilterTint;
@@ -758,6 +794,14 @@ float stableNoise(ivec2 coord) {
 }
 vec4 namedFilterPixel(vec4 px, ivec2 coord) {
     if (uNamedFilter < 0.5 || uFilterAmount <= 0.0) return px;
+    if (uPencilSketch > 0.5) {
+        float gray = mix(1.0, luma(px.rgb), px.a);
+        float local = texture(uEffectBlur, (vec2(coord) + vec2(0.5)) / uSourceSize).r;
+        float dodge = min((gray + 0.015) / (local + 0.015), 1.0);
+        float graphite = pow(dodge, 3.0) * (0.88 + 0.12 * gray);
+        float shade = round(graphite * 255.0) / 255.0;
+        return vec4(round(mix(px.rgb, vec3(shade), clamp(uFilterAmount, 0.0, 1.0)) * 255.0) / 255.0, px.a);
+    }
     if (uNewspaper > 0.5) {
         // Same ordered 4x4 Bayer halftone and source-coordinate phase as CPU.
         if (px.a <= 0.0) return px;
@@ -789,6 +833,10 @@ vec4 namedFilterPixel(vec4 px, ivec2 coord) {
     float falloff = 1.0 - uFilterVignette * dot(d, d) / (maxDistance * maxDistance);
     c *= falloff;
     c = round(clamp(c, 0.0, 1.0) * 255.0) / 255.0;
+    if (uDreamGlow > 0.5) {
+        float glow = texture(uEffectBlur, (vec2(coord) + vec2(0.5)) / uSourceSize).r * 0.45;
+        c = round(clamp(c + (vec3(1.0) - c) * glow, 0.0, 1.0) * 255.0) / 255.0;
+    }
     if (uNamedGrain > 0.0) {
         float noise = stableNoise(coord) * uNamedGrain * 255.0;
         c = round(clamp(c * 255.0 + vec3(noise), 0.0, 255.0)) / 255.0;
@@ -845,7 +893,18 @@ void main() {
     if (uClarityPrepass != 0) {
         vec2 uv = gl_FragCoord.xy / uClarityPassSize;
         ivec2 coord = ivec2(floor(uv * uSourceSize));
-        float y = luma(tonePixel(namedFilterPixel(texture(uSource, uv), coord)).rgb);
+        vec4 px = texture(uSource, uv);
+        float y;
+        if (uClarityPrepass == 2) {
+            if (uPencilSketch > 0.5) {
+                y = mix(1.0, luma(px.rgb), px.a);
+            } else {
+                float baseLuma = luma(namedFilterPixel(px, coord).rgb);
+                y = clamp((baseLuma - 0.55) / 0.45, 0.0, 1.0) * px.a;
+            }
+        } else {
+            y = luma(tonePixel(namedFilterPixel(px, coord)).rgb);
+        }
         color = vec4(y, y, y, 1.0);
         return;
     }
@@ -950,6 +1009,11 @@ void main() {
         clarity_luma_fbo: 0,
         clarity_blur_fbo: 0,
         clarity_dimensions: (0, 0),
+        effect_luma_texture: 0,
+        effect_blur_texture: 0,
+        effect_luma_fbo: 0,
+        effect_blur_fbo: 0,
+        effect_dimensions: (0, 0),
     })
 }
 
@@ -1015,6 +1079,82 @@ unsafe fn draw_clarity_luminance(
     for (input, output, x, y) in [
         (objects.clarity_luma_texture, objects.clarity_blur_fbo, 1.0, 0.0),
         (objects.clarity_blur_texture, objects.clarity_luma_fbo, 0.0, 1.0),
+    ] {
+        gl::BindFramebuffer(gl::FRAMEBUFFER, output);
+        gl::BindTexture(gl::TEXTURE_2D, input);
+        uniform_2f(objects.blur_program, "uDirection", x, y);
+        gl::DrawArrays(gl::TRIANGLES, 0, 3);
+    }
+
+    gl::BindFramebuffer(gl::FRAMEBUFFER, original_framebuffer as u32);
+    gl::Viewport(0, 0, view_width_px, view_height_px);
+    gl::UseProgram(objects.program);
+    uniform_1i(objects.program, "uClarityPrepass", 0);
+    gl::ActiveTexture(gl::TEXTURE0);
+    gl::BindTexture(gl::TEXTURE_2D, objects.texture);
+}
+
+// GPU blur of the unadjusted Pencil Sketch luminance or Dream Glow highlights.
+unsafe fn draw_effect_luminance(
+    objects: &mut GlObjects,
+    source_width: i32,
+    source_height: i32,
+    view_width_px: i32,
+    view_height_px: i32,
+    pencil: bool,
+) {
+    let downsample = (source_width.max(source_height) as f32 / 1200.0).max(1.0);
+    let width = (source_width as f32 / downsample).round().max(1.0) as i32;
+    let height = (source_height as f32 / downsample).round().max(1.0) as i32;
+    let mut original_framebuffer = 0;
+    gl::GetIntegerv(gl::FRAMEBUFFER_BINDING, &mut original_framebuffer);
+    if objects.effect_dimensions != (width, height) {
+        if objects.effect_luma_texture == 0 {
+            gl::GenTextures(1, &mut objects.effect_luma_texture);
+            gl::GenTextures(1, &mut objects.effect_blur_texture);
+            gl::GenFramebuffers(1, &mut objects.effect_luma_fbo);
+            gl::GenFramebuffers(1, &mut objects.effect_blur_fbo);
+        }
+        for (texture, framebuffer) in [
+            (objects.effect_luma_texture, objects.effect_luma_fbo),
+            (objects.effect_blur_texture, objects.effect_blur_fbo),
+        ] {
+            gl::BindTexture(gl::TEXTURE_2D, texture);
+            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR as i32);
+            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR as i32);
+            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as i32);
+            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as i32);
+            gl::TexImage2D(
+                gl::TEXTURE_2D, 0, gl::R8 as i32, width, height, 0,
+                gl::RED, gl::UNSIGNED_BYTE, std::ptr::null(),
+            );
+            gl::BindFramebuffer(gl::FRAMEBUFFER, framebuffer);
+            gl::FramebufferTexture2D(
+                gl::FRAMEBUFFER, gl::COLOR_ATTACHMENT0, gl::TEXTURE_2D, texture, 0,
+            );
+        }
+        objects.effect_dimensions = (width, height);
+    }
+    // GLArea owns the framebuffer saved before allocation; never bind 0.
+    gl::BindFramebuffer(gl::FRAMEBUFFER, objects.effect_luma_fbo);
+    gl::Viewport(0, 0, width, height);
+    gl::UseProgram(objects.program);
+    gl::ActiveTexture(gl::TEXTURE0);
+    gl::BindTexture(gl::TEXTURE_2D, objects.texture);
+    uniform_1i(objects.program, "uClarityPrepass", 2);
+    uniform_2f(objects.program, "uClarityPassSize", width as f32, height as f32);
+    gl::DrawArrays(gl::TRIANGLES, 0, 3);
+
+    let sigma = ((width.min(height) as f32) * if pencil { 0.004 } else { 0.008 }).max(0.8);
+    let radius = (sigma * 3.0).ceil() as i32;
+    gl::UseProgram(objects.blur_program);
+    uniform_1i(objects.blur_program, "uInput", 0);
+    uniform_2f(objects.blur_program, "uTexel", 1.0 / width as f32, 1.0 / height as f32);
+    uniform_1f(objects.blur_program, "uSigma", sigma);
+    gl::Uniform1i(uniform_location(objects.blur_program, "uRadius"), radius);
+    for (input, output, x, y) in [
+        (objects.effect_luma_texture, objects.effect_blur_fbo, 1.0, 0.0),
+        (objects.effect_blur_texture, objects.effect_luma_fbo, 0.0, 1.0),
     ] {
         gl::BindFramebuffer(gl::FRAMEBUFFER, output);
         gl::BindTexture(gl::TEXTURE_2D, input);
@@ -1176,10 +1316,10 @@ mod tests {
         assert!(gpu_tone_supported(&unsupported));
         unsupported.auto_color = true;
         assert!(!gpu_tone_supported(&unsupported));
-        for unsupported_filter in [FilterPreset::PencilSketch, FilterPreset::DreamGlow] {
+        for effect_filter in [FilterPreset::PencilSketch, FilterPreset::DreamGlow] {
             let mut preset = EditRecipe::default();
-            preset.filter = unsupported_filter;
-            assert!(!gpu_tone_supported(&preset));
+            preset.filter = effect_filter;
+            assert!(gpu_tone_supported(&preset));
         }
         for supported_filter in [FilterPreset::Clarendon, FilterPreset::Gingham, FilterPreset::Valencia, FilterPreset::OldPhoto] {
             let mut preset = EditRecipe::default();

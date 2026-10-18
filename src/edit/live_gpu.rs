@@ -833,6 +833,11 @@ void main() {
         r#"#version 150
 uniform sampler2D uSource;
 uniform vec2 uSourceSize;
+uniform vec2 uOutputSize;
+uniform int uGpuGeometryOn;
+uniform vec2 uRotatedSize;
+uniform vec2 uCropOffset;
+uniform vec2 uAngleCosSin;
 uniform vec2 uViewSize;
 uniform vec2 uScroll;
 uniform vec2 uPadding;
@@ -952,10 +957,30 @@ vec4 tonePixel(vec4 px) {
     c = round(clamp(c, 0.0, 1.0) * 255.0) / 255.0;
     return vec4(c, px.a);
 }
+// Inverse transform in output pixel coordinates: rotate + autocrop first,
+// then crop. Manual bilinear interpolation uses CPU-equivalent 8-bit rounding.
+vec4 geometryPixel(ivec2 outputCoord) {
+    ivec2 valid = clamp(outputCoord, ivec2(0), ivec2(uOutputSize) - ivec2(1));
+    if (uGpuGeometryOn == 0) return texelFetch(uSource, valid, 0);
+    vec2 offset = vec2(valid) + uCropOffset - (uRotatedSize - vec2(1.0)) * 0.5;
+    vec2 sourceCoord = vec2(
+        uAngleCosSin.x * offset.x + uAngleCosSin.y * offset.y,
+        -uAngleCosSin.y * offset.x + uAngleCosSin.x * offset.y
+    ) + (uSourceSize - vec2(1.0)) * 0.5;
+    sourceCoord = clamp(sourceCoord, vec2(0.0), uSourceSize - vec2(1.0));
+    ivec2 lo = ivec2(floor(sourceCoord));
+    ivec2 hi = min(lo + ivec2(1), ivec2(uSourceSize) - ivec2(1));
+    vec2 t = fract(sourceCoord);
+    vec4 upper = mix(texelFetch(uSource, lo, 0),
+                     texelFetch(uSource, ivec2(hi.x, lo.y), 0), t.x);
+    vec4 lower = mix(texelFetch(uSource, ivec2(lo.x, hi.y), 0),
+                     texelFetch(uSource, hi, 0), t.x);
+    return round(clamp(mix(upper, lower, t.y), 0.0, 1.0) * 255.0) / 255.0;
+}
 // Port of filters::apply_filter's parameterized colour presets. The filter
 // is applied and quantized *before* the manual tone pipeline, like CPU export.
 float stableNoise(ivec2 coord) {
-    ivec2 c = clamp(coord, ivec2(0), ivec2(uSourceSize) - ivec2(1));
+    ivec2 c = clamp(coord, ivec2(0), ivec2(uOutputSize) - ivec2(1));
     uint hash = uint(c.x) * 374761393u ^ uint(c.y) * 668265263u ^ 0x9e3779b9u;
     hash = (hash ^ (hash >> 13u)) * 1274126177u;
     hash ^= hash >> 16u;
@@ -996,7 +1021,7 @@ vec4 namedFilterPixel(vec4 px, ivec2 coord) {
     c = vec3(contrastCurve(c.r, uFilterContrast),
              contrastCurve(c.g, uFilterContrast),
              contrastCurve(c.b, uFilterContrast));
-    vec2 centre = (uSourceSize - vec2(1.0)) * 0.5;
+    vec2 centre = (uOutputSize - vec2(1.0)) * 0.5;
     vec2 d = vec2(coord) - centre;
     float maxDistance = max(length(centre), 1.0);
     float falloff = 1.0 - uFilterVignette * dot(d, d) / (maxDistance * maxDistance);
@@ -1016,16 +1041,16 @@ vec4 namedFilterPixel(vec4 px, ivec2 coord) {
     return vec4(c, px.a);
 }
 vec4 sampleTone(ivec2 coord) {
-    ivec2 limit = ivec2(uSourceSize) - ivec2(1);
+    ivec2 limit = ivec2(uOutputSize) - ivec2(1);
     ivec2 valid = clamp(coord, ivec2(0), limit);
-    return tonePixel(namedFilterPixel(texelFetch(uSource, valid, 0), valid));
+    return tonePixel(namedFilterPixel(geometryPixel(valid), valid));
 }
 vec3 clarified(ivec2 coord) {
     vec3 base = sampleTone(coord).rgb;
     if (abs(uClarity) <= 0.001) return base;
     float y = luma(base);
     float localY = texture(uClarityLuma,
-        (vec2(coord) + vec2(0.5)) / uSourceSize).r;
+        (vec2(coord) + vec2(0.5)) / uOutputSize).r;
     float midtones = clamp(4.0 * y * (1.0 - y), 0.0, 1.0);
     float detail = clamp(y - localY, -0.24, 0.24);
     float target = clamp(y + detail * midtones * uClarity * 1.85, 0.0, 1.0);
@@ -1061,8 +1086,8 @@ vec3 processedPixel(ivec2 coord) {
 void main() {
     if (uClarityPrepass != 0) {
         vec2 uv = gl_FragCoord.xy / uClarityPassSize;
-        ivec2 coord = ivec2(floor(uv * uSourceSize));
-        vec4 px = texture(uSource, uv);
+        ivec2 coord = ivec2(floor(uv * uOutputSize));
+        vec4 px = uGpuGeometryOn != 0 ? geometryPixel(coord) : texture(uSource, uv);
         float y;
         if (uClarityPrepass == 2) {
             if (uPencilSketch > 0.5) {
@@ -1081,12 +1106,14 @@ void main() {
     vec2 topLeft = vec2(pixel.x, uViewSize.y - pixel.y);
     vec2 sourcePos = (topLeft + uScroll - uPadding) / max(uScale, 0.0001);
     if (sourcePos.x < 0.0 || sourcePos.y < 0.0 ||
-        sourcePos.x >= uSourceSize.x || sourcePos.y >= uSourceSize.y) {
+        sourcePos.x >= uOutputSize.x || sourcePos.y >= uOutputSize.y) {
         color = vec4(0.055, 0.06, 0.07, 1.0);
         return;
     }
     if (uSharpen <= 0.0001 && uGrain <= 0.001 && abs(uClarity) <= 0.001 && uNamedFilter < 0.5) {
-        color = tonePixel(texture(uSource, sourcePos / uSourceSize));
+        color = tonePixel(uGpuGeometryOn != 0
+            ? geometryPixel(ivec2(floor(sourcePos)))
+            : texture(uSource, sourcePos / uSourceSize));
         return;
     }
     if (uScale < 1.0) {

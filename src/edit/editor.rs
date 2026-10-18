@@ -101,8 +101,57 @@ include!("export.rs");
 include!("overlays_ui.rs");
 include!("text_ui.rs");
 
-fn pan_drag_should_claim(can_scroll: bool, space_pan_active: bool, canvas_tool_active: bool) -> bool {
-    space_pan_active || (can_scroll && !canvas_tool_active)
+fn pan_drag_should_claim(can_scroll: bool, canvas_tool_active: bool) -> bool {
+    can_scroll && !canvas_tool_active
+}
+
+// Apply native scroll geometry even when the GPU reuses its source texture.
+fn apply_native_preview_layout(
+    picture: &gtk::Picture,
+    scroll: &gtk::ScrolledWindow,
+    dimensions: (i32, i32),
+    anchor: Option<OneToOneAnchor>,
+    native_one_to_one: Rc<Cell<bool>>,
+) {
+    apply_canvas_one_to_one(picture, scroll, dimensions);
+    let (width, height) = dimensions;
+    scroll.add_tick_callback(move |scroll, frame_clock| {
+        // A queued allocation must not move the image after returning to Fit.
+        if !native_one_to_one.get() {
+            return glib::ControlFlow::Break;
+        }
+        let hadj = scroll.hadjustment();
+        let vadj = scroll.vadjustment();
+        if hadj.upper() < width as f64 || vadj.upper() < height as f64 {
+            return glib::ControlFlow::Continue;
+        }
+        let (target_h, target_v) = match anchor {
+            Some(OneToOneAnchor::Cursor {
+                normalized_x,
+                normalized_y,
+                pointer_x,
+                pointer_y,
+            }) => (
+                normalized_scroll_target(normalized_x, pointer_x, hadj.page_size(), width as f64),
+                normalized_scroll_target(normalized_y, pointer_y, vadj.page_size(), height as f64),
+            ),
+            _ => (
+                one_to_one_scroll_target(0.0, 0.0, hadj.page_size(), 1.0, width as f64, false),
+                one_to_one_scroll_target(0.0, 0.0, vadj.page_size(), 1.0, height as f64, false),
+            ),
+        };
+        hadj.set_value(target_h.clamp(hadj.lower(), (hadj.upper() - hadj.page_size()).max(hadj.lower())));
+        vadj.set_value(target_v.clamp(vadj.lower(), (vadj.upper() - vadj.page_size()).max(vadj.lower())));
+        if std::env::var_os("PICASA_TRACE").is_some() {
+            eprintln!(
+                "PIC_EDIT_1TO1 settled frame={} target={}x{} h={:.1}/{:.1}/{:.1} v={:.1}/{:.1}/{:.1}",
+                frame_clock.frame_time(), width, height,
+                hadj.value(), hadj.upper(), hadj.page_size(),
+                vadj.value(), vadj.upper(), vadj.page_size(),
+            );
+        }
+        glib::ControlFlow::Break
+    });
 }
 
 fn cpu_fallback_reason(recipe: &EditRecipe) -> &'static str {
@@ -517,7 +566,10 @@ pub fn build(
             } else if canvas_zoom.get() > 0.0 {
                 fit_scale * canvas_zoom.get()
             } else {
-                fit_scale
+                // Match GtkPicture's ContentFit::Contain in Fit mode. The
+                // manual zoom baseline includes a margin; Fit itself does not.
+                (width / dimensions.0.max(1) as f64)
+                    .min(height / dimensions.1.max(1) as f64)
             };
             let pad_x = ((width - dimensions.0 as f64 * scale) * 0.5).max(0.0);
             let pad_y = ((height - dimensions.1 as f64 * scale) * 0.5).max(0.0);
@@ -548,9 +600,6 @@ pub fn build(
     // drag gesture without conflict.
     let pan_origin_h = Rc::new(Cell::new(0.0f64));
     let pan_origin_v = Rc::new(Cell::new(0.0f64));
-    let pan_space_held = Rc::new(Cell::new(false));
-    let pan_space_armed = Rc::new(Cell::new(false));
-    let pan_drag_active = Rc::new(Cell::new(false));
     let pan_trace_updated = Rc::new(Cell::new(false));
     let pan_drag = gtk::GestureDrag::new();
     pan_drag.set_button(1);
@@ -559,9 +608,6 @@ pub fn build(
         let picture_scroll = picture_scroll.clone();
         let pan_origin_h = pan_origin_h.clone();
         let pan_origin_v = pan_origin_v.clone();
-        let pan_space_held = pan_space_held.clone();
-        let pan_space_armed = pan_space_armed.clone();
-        let pan_drag_active = pan_drag_active.clone();
         let pan_trace_updated = pan_trace_updated.clone();
         let native_one_to_one = native_one_to_one.clone();
         let crop_overlay = crop_overlay.clone();
@@ -574,16 +620,11 @@ pub fn build(
             let canvas_tool_active = crop_overlay.is_visible()
                 || overlays_toggle.is_active()
                 || text_toggle.is_active();
-            let space_held = pan_space_held.get();
-            let space_armed = pan_space_armed.get();
-            let space_pan_active = space_held || space_armed;
             pan_trace_updated.set(false);
             if std::env::var_os("PICASA_TRACE").is_some() {
                 eprintln!(
-                    "PIC_EDIT_PAN begin start={start_x:.1},{start_y:.1} scrollable={} space_held={} space_armed={} native_1to1={} tool_active={} h={:.1}/{:.1}/{:.1} v={:.1}/{:.1}/{:.1}",
+                    "PIC_EDIT_PAN begin start={start_x:.1},{start_y:.1} scrollable={} native_1to1={} tool_active={} h={:.1}/{:.1}/{:.1} v={:.1}/{:.1}/{:.1}",
                     can_scroll,
-                    space_held,
-                    space_armed,
                     native_one_to_one.get(),
                     canvas_tool_active,
                     hadj.value(),
@@ -594,19 +635,15 @@ pub fn build(
                     vadj.page_size(),
                 );
             }
-            if !pan_drag_should_claim(can_scroll, space_pan_active, canvas_tool_active) {
+            if !pan_drag_should_claim(can_scroll, canvas_tool_active) {
                 if std::env::var_os("PICASA_TRACE").is_some() {
-                    eprintln!("PIC_EDIT_PAN decision=denied reason=no_space_or_scroll");
+                    eprintln!("PIC_EDIT_PAN decision=denied reason=tool_active_or_not_scrollable");
                 }
                 gesture.set_state(gtk::EventSequenceState::Denied);
                 return;
             }
             pan_origin_h.set(hadj.value());
             pan_origin_v.set(vadj.value());
-            pan_drag_active.set(true);
-            if space_armed {
-                pan_space_armed.set(false);
-            }
             gesture.set_state(gtk::EventSequenceState::Claimed);
             if std::env::var_os("PICASA_TRACE").is_some() {
                 eprintln!("PIC_EDIT_PAN decision=claimed");
@@ -639,9 +676,7 @@ pub fn build(
         let picture_scroll = picture_scroll.clone();
         let canvas_zoom = canvas_zoom.clone();
         let native_one_to_one = native_one_to_one.clone();
-        let pan_drag_active = pan_drag_active.clone();
         pan_drag.connect_drag_end(move |_, dx, dy| {
-            pan_drag_active.set(false);
             if std::env::var_os("PICASA_TRACE").is_some() {
                 let hadj = picture_scroll.hadjustment();
                 let vadj = picture_scroll.vadjustment();
@@ -949,10 +984,9 @@ pub fn build(
                     let gpu_base_requested = gpu_canvas.is_some()
                         && !gpu_failed.get()
                         && gpu_tone_supported(&recipe);
-                    // CPU-only effects (sharpen, clarity, filters, etc.) need
-                    // a bounded draft during active slider drags. The release
-                    // handler queues the source-resolution settle render.
-                    let interactive_draft = interactive && !gpu_base_requested;
+                    // Retain the last sharp frame while unsupported CPU effects
+                    // render. Never magnify an interactive draft at any zoom.
+                    let interactive_draft = false;
                     let render_recipe = if gpu_base_requested {
                         gpu_base_recipe(&recipe)
                     } else {
@@ -960,16 +994,8 @@ pub fn build(
                     };
                     let (canvas_width, canvas_height) =
                         preview_target_dimensions(photo.width(), photo.height(), rotation);
-                    let (target_width, target_height) = if interactive_draft {
-                        interactive_preview_target_dimensions(
-                            photo.width(),
-                            photo.height(),
-                            rotation,
-                        )
-                    } else {
-                        preview_target_dimensions(photo.width(), photo.height(), rotation)
-                    };
-                    let source_full = !interactive_draft;
+                    let (target_width, target_height) = (canvas_width, canvas_height);
+                    let source_full = true;
 
                     if std::env::var_os("PICASA_TRACE").is_some() {
                         eprintln!(
@@ -1031,8 +1057,6 @@ pub fn build(
                     let gpu_recipe = gpu_recipe.clone();
                     let gpu_reference = gpu_reference.clone();
                     let gpu_base_requested = gpu_base_requested;
-                    let canvas_width = canvas_width.min(i32::MAX as u32) as i32;
-                    let canvas_height = canvas_height.min(i32::MAX as u32) as i32;
                     let cpu_fallback = cpu_fallback;
                     let cpu_preview_started = cpu_preview_started;
                     glib::timeout_add_local(Duration::from_millis(25), move || {
@@ -1100,20 +1124,8 @@ pub fn build(
                                             }
                                         }
                                         let old_dimensions = preview_dimensions.get();
-                                        let canvas_dimensions = if old_dimensions.0 > 1
-                                            && old_dimensions.1 > 1
-                                        {
-                                            old_dimensions
-                                        } else {
-                                            (canvas_width, canvas_height)
-                                        };
-                                        // The displayed canvas follows the
-                                        // source dimensions at every zoom.
-                                        let display_dimensions = preview_display_dimensions(
-                                            canvas_dimensions,
-                                            (width as i32, height as i32),
-                                            !source_full,
-                                        );
+                                        // Canvas geometry always follows the actual full-resolution buffer.
+                                        let display_dimensions = (width as i32, height as i32);
                                         preview_dimensions.set(display_dimensions);
                                         sync_gpu_view();
                                         if std::env::var_os("PICASA_TRACE").is_some() {
@@ -1143,117 +1155,13 @@ pub fn build(
                                                 display_dimensions,
                                                 anchor.is_some(),
                                             ) {
-                                                apply_canvas_one_to_one(
+                                                apply_native_preview_layout(
                                                     &picture,
                                                     &picture_scroll,
                                                     display_dimensions,
+                                                    anchor,
+                                                    native_one_to_one.clone(),
                                                 );
-                                                let (width, height) = display_dimensions;
-                                                let settle_wait_frames = Cell::new(0u32);
-                                                let picture_scroll_for_restore = picture_scroll.clone();
-                                            let picture_scroll_for_tick = picture_scroll.clone();
-                                            picture_scroll_for_restore.add_tick_callback(
-                                                move |_, frame_clock| {
-                                                    let hadj =
-                                                        picture_scroll_for_tick.hadjustment();
-                                                    let vadj =
-                                                        picture_scroll_for_tick.vadjustment();
-                                                    if hadj.upper() < width as f64
-                                                        && vadj.upper() < height as f64
-                                                    {
-                                                        let wait_frames = settle_wait_frames.get() + 1;
-                                                        settle_wait_frames.set(wait_frames);
-                                                        if std::env::var_os("PICASA_TRACE").is_some()
-                                                            && (wait_frames == 1
-                                                                || wait_frames % 30 == 0)
-                                                        {
-                                                            eprintln!(
-                                                                "PIC_EDIT_1TO1 settle_wait frame={} target={}x{} alloc={}x{} h={:.1}/{:.1}/{:.1} v={:.1}/{:.1}/{:.1}",
-                                                                frame_clock.frame_time(),
-                                                                width,
-                                                                height,
-                                                                picture_scroll_for_tick.width(),
-                                                                picture_scroll_for_tick.height(),
-                                                                hadj.value(),
-                                                                hadj.upper(),
-                                                                hadj.page_size(),
-                                                                vadj.value(),
-                                                                vadj.upper(),
-                                                                vadj.page_size(),
-                                                            );
-                                                        }
-                                                        return glib::ControlFlow::Continue;
-                                                    }
-                                                    let h_max = (hadj.upper() - hadj.page_size())
-                                                        .max(hadj.lower());
-                                                    let v_max = (vadj.upper() - vadj.page_size())
-                                                        .max(vadj.lower());
-                                                    let (target_h, target_v) = match anchor {
-                                                        Some(OneToOneAnchor::Cursor {
-                                                            normalized_x,
-                                                            normalized_y,
-                                                            pointer_x,
-                                                            pointer_y,
-                                                        }) => (
-                                                            normalized_scroll_target(
-                                                                normalized_x,
-                                                                pointer_x,
-                                                                hadj.page_size(),
-                                                                width as f64,
-                                                            ),
-                                                            normalized_scroll_target(
-                                                                normalized_y,
-                                                                pointer_y,
-                                                                vadj.page_size(),
-                                                                height as f64,
-                                                            ),
-                                                        ),
-                                                        _ => (
-                                                            one_to_one_scroll_target(
-                                                                0.0,
-                                                                0.0,
-                                                                hadj.page_size(),
-                                                                1.0,
-                                                                width as f64,
-                                                                false,
-                                                            ),
-                                                            one_to_one_scroll_target(
-                                                                0.0,
-                                                                0.0,
-                                                                vadj.page_size(),
-                                                                1.0,
-                                                                height as f64,
-                                                                false,
-                                                            ),
-                                                        ),
-                                                    };
-                                                    hadj.set_value(
-                                                        target_h.clamp(hadj.lower(), h_max),
-                                                    );
-                                                    vadj.set_value(
-                                                        target_v.clamp(vadj.lower(), v_max),
-                                                    );
-
-                                                    if std::env::var_os("PICASA_TRACE").is_some() {
-                                                        eprintln!(
-                                                            "PIC_EDIT_1TO1 settled frame={} target={}x{} h={:.1}/{:.1}/{:.1} v={:.1}/{:.1}/{:.1} scroll={:.1},{:.1}",
-                                                            frame_clock.frame_time(),
-                                                            width,
-                                                            height,
-                                                            hadj.value(),
-                                                            hadj.upper(),
-                                                            hadj.page_size(),
-                                                            vadj.value(),
-                                                            vadj.upper(),
-                                                            vadj.page_size(),
-                                                            target_h,
-                                                            target_v,
-                                                        );
-                                                    }
-
-                                                    glib::ControlFlow::Break
-                                                },
-                                            );
                                             }
                                         } else {
                                             apply_canvas_zoom(
@@ -1303,6 +1211,14 @@ pub fn build(
         let gpu_canvas = gpu_canvas.clone();
         let gpu_failed = gpu_failed.clone();
         let sync_gpu_view = sync_gpu_view.clone();
+        let picture = picture.clone();
+        let picture_scroll = picture_scroll.clone();
+        let preview_dimensions = preview_dimensions.clone();
+        let native_one_to_one = native_one_to_one.clone();
+        let pending_one_to_one_anchor = pending_one_to_one_anchor.clone();
+        let preview_debounce = preview_debounce.clone();
+        let generation = generation.clone();
+        let busy = busy.clone();
         Rc::new(move || {
             let recipe = session.borrow().recipe.clone();
             if let Some(gpu_canvas) = &gpu_canvas {
@@ -1312,13 +1228,29 @@ pub fn build(
                         active_rotation.get(),
                         &recipe,
                     ) {
+                        if let Some(source) = preview_debounce.borrow_mut().take() {
+                            source.remove();
+                        }
+                        generation.set(generation.get().wrapping_add(1));
+                        busy.stop();
+                        busy.set_visible(false);
+                        if native_one_to_one.get() {
+                            if let Some(anchor) = pending_one_to_one_anchor.borrow_mut().take() {
+                                apply_native_preview_layout(
+                                    &picture,
+                                    &picture_scroll,
+                                    preview_dimensions.get(),
+                                    Some(anchor),
+                                    native_one_to_one.clone(),
+                                );
+                            }
+                        }
                         gpu_canvas.set_recipe(&recipe);
                         sync_gpu_view();
                         return;
                     }
-                } else {
-                    gpu_canvas.hide();
                 }
+                // Keep the last sharp GPU frame until CPU fallback is ready.
             }
             schedule_preview();
         })
@@ -2336,57 +2268,6 @@ pub fn build(
         root.add_controller(key);
     }
 
-    // Space must be observed at the toplevel: when focus is in the canvas or
-    // an overlay widget the editor root is not guaranteed to be on the key
-    // event path. Holding Space through a drag works as usual; releasing it
-    // before the drag arms the next canvas drag for users who cannot chord the
-    // key and mouse reliably.
-    {
-        let root = root.clone();
-        let root_for_release = root.clone();
-        let native_one_to_one_for_key = native_one_to_one.clone();
-        let native_one_to_one_for_release = native_one_to_one.clone();
-        let pan_space_held_for_press = pan_space_held.clone();
-        let pan_space_held_for_release = pan_space_held.clone();
-        let pan_space_armed_for_press = pan_space_armed.clone();
-        let pan_space_armed_for_release = pan_space_armed.clone();
-        let pan_drag_active_for_release = pan_drag_active.clone();
-        let key = gtk::EventControllerKey::new();
-        key.set_propagation_phase(gtk::PropagationPhase::Capture);
-        key.connect_key_pressed(move |_, key, _, _| {
-            if key == gtk::gdk::Key::space && root.is_mapped() {
-                pan_space_held_for_press.set(true);
-                pan_space_armed_for_press.set(false);
-                if std::env::var_os("PICASA_TRACE").is_some() {
-                    eprintln!(
-                        "PIC_EDIT_PAN space=pressed editor_mapped={} native_1to1={}",
-                        root.is_mapped(),
-                        native_one_to_one_for_key.get(),
-                    );
-                }
-                glib::Propagation::Stop
-            } else {
-                glib::Propagation::Proceed
-            }
-        });
-        key.connect_key_released(move |_, key, _, _| {
-            if key == gtk::gdk::Key::space {
-                pan_space_held_for_release.set(false);
-                let armed = !pan_drag_active_for_release.get();
-                pan_space_armed_for_release.set(armed);
-                if std::env::var_os("PICASA_TRACE").is_some() {
-                    eprintln!(
-                        "PIC_EDIT_PAN space=released editor_mapped={} native_1to1={} pan_armed={}",
-                        root_for_release.is_mapped(),
-                        native_one_to_one_for_release.get(),
-                        armed,
-                    );
-                }
-            }
-        });
-        parent.add_controller(key);
-    }
-
     configure_crop_overlay(
         &crop_overlay,
         pending_crop.clone(),
@@ -2575,11 +2456,11 @@ mod panel_tests {
     use super::*;
 
     #[test]
-    fn canvas_drag_claims_when_scrollable_or_space_is_held_or_armed() {
-        assert!(pan_drag_should_claim(true, false, false));
-        assert!(pan_drag_should_claim(false, true, true));
-        assert!(!pan_drag_should_claim(false, false, false));
-        assert!(!pan_drag_should_claim(true, false, true));
+    fn canvas_drag_claims_only_when_scrollable_and_no_canvas_tool_is_active() {
+        assert!(pan_drag_should_claim(true, false));
+        assert!(!pan_drag_should_claim(false, true));
+        assert!(!pan_drag_should_claim(false, false));
+        assert!(!pan_drag_should_claim(true, true));
     }
 
     #[test]

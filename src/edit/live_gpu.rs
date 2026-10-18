@@ -91,7 +91,7 @@ struct GpuState {
     objects: Option<GlObjects>,
     rendered_frames: u64,
     last_queued: Option<Instant>,
-    frame_after_paint: Option<(Instant, Option<f64>)>,
+    frame_after_paint: Option<(Instant, Option<Instant>)>,
     failure: Option<String>,
     on_failure: Option<Box<dyn Fn()>>,
     #[cfg(test)]
@@ -169,11 +169,11 @@ impl LiveGpuCanvas {
                 clock.connect_after_paint(move |_| {
                     let frame = state.borrow_mut().frame_after_paint.take();
                     if std::env::var_os("PICASA_TRACE").is_some() {
-                        if let Some((rendered_at, queue_ms)) = frame {
+                        if let Some((rendered_at, queued_at)) = frame {
                             eprintln!(
                                 "PIC_EDIT_GPU frame_present_after_paint_ms={:.3} queue_to_after_paint_ms={}",
                                 rendered_at.elapsed().as_secs_f64() * 1000.0,
-                                queue_ms.map_or_else(|| "none".to_owned(), |ms| format!("{ms:.3}")),
+                                queued_at.map_or_else(|| "none".to_owned(), |at| format!("{:.3}", at.elapsed().as_secs_f64() * 1000.0)),
                             );
                         }
                     }
@@ -181,6 +181,7 @@ impl LiveGpuCanvas {
             }
         });
         area.connect_render(move |area, _context| {
+            let render_started = Instant::now();
             let init_error = {
                 let mut state = render_state.borrow_mut();
                 if state.failure.is_some() {
@@ -317,11 +318,10 @@ impl LiveGpuCanvas {
                     gl::BindVertexArray(0);
                     gl::UseProgram(0);
                 }
-                let queue_ms = state
-                    .last_queued
-                    .take()
-                    .map(|queued| queued.elapsed().as_secs_f64() * 1000.0);
-                state.frame_after_paint = Some((Instant::now(), queue_ms));
+                let queued_at = state.last_queued.take();
+                let queue_ms = queued_at
+                    .map(|queued| render_started.saturating_duration_since(queued).as_secs_f64() * 1000.0);
+                state.frame_after_paint = Some((Instant::now(), queued_at));
                 state.rendered_frames = state.rendered_frames.wrapping_add(1);
                 #[cfg(test)]
                 if let Some(pixels) = readback {
@@ -408,6 +408,9 @@ impl LiveGpuCanvas {
     }
 
     pub fn set_recipe(&self, recipe: &EditRecipe) {
+        // Returning from CPU fallback may reuse an unchanged GPU recipe.
+        // Restore the layer even when no uniform update is needed.
+        self.area.set_visible(true);
         let next = GpuTone {
             exposure: recipe.exposure,
             contrast: recipe.contrast,
@@ -959,6 +962,7 @@ mod tests {
         };
 
         check_frame(&reset_recipe, &source);
+        eprintln!("PIC_EDIT_GPU test_gsk_renderer={:?}", window.renderer().map(|r| r.type_().name().to_owned()));
         let uploaded_revision = renderer.uploaded_revision();
         let mut edited = reset_recipe.clone();
         edited.exposure = 0.17;
@@ -973,6 +977,15 @@ mod tests {
         check_frame(&edited, &source);
         assert_eq!(renderer.uploaded_revision(), uploaded_revision);
         renderer.set_recipe(&reset_recipe);
+        check_frame(&reset_recipe, &source);
+        assert_eq!(renderer.uploaded_revision(), uploaded_revision);
+
+        // A CPU-only effect hides this layer. Reset to an unchanged neutral
+        // recipe must show the cached source again, without another upload.
+        renderer.hide();
+        assert!(!renderer.widget().is_visible());
+        renderer.set_recipe(&reset_recipe);
+        assert!(renderer.widget().is_visible());
         check_frame(&reset_recipe, &source);
         assert_eq!(renderer.uploaded_revision(), uploaded_revision);
 
@@ -1143,17 +1156,23 @@ mod tests {
         window.set_default_size(VIEW_WIDTH, VIEW_HEIGHT);
         window.set_child(Some(&renderer.widget()));
         window.present();
-        let source = image::RgbaImage::from_fn(SOURCE_WIDTH, SOURCE_HEIGHT, |x, y| {
-            image::Rgba([(x % 251) as u8, (y % 239) as u8, ((x + y) % 233) as u8, 255])
-        });
+        let source = if let Ok(reference) = std::env::var("PIC_TEST_EDIT_REFERENCE") {
+            super::super::render::decode_base_for_viewer(&reference, 0, u32::MAX, u32::MAX)
+                .expect("benchmark photograph must decode")
+        } else {
+            image::RgbaImage::from_fn(SOURCE_WIDTH, SOURCE_HEIGHT, |x, y| {
+                image::Rgba([(x % 251) as u8, (y % 239) as u8, ((x + y) % 233) as u8, 255])
+            })
+        };
+        let (source_width, source_height) = source.dimensions();
         let base_recipe = EditRecipe::default();
         let upload_started = Instant::now();
         renderer.set_source(
-            "test://24mp-benchmark",
+            "test://source-benchmark",
             0,
             &base_recipe,
-            SOURCE_WIDTH as i32,
-            SOURCE_HEIGHT as i32,
+            source_width as i32,
+            source_height as i32,
             glib::Bytes::from_owned(source.clone().into_raw()),
         );
         renderer.set_view(
@@ -1161,7 +1180,7 @@ mod tests {
             0.0,
             VIEW_WIDTH as f64,
             VIEW_HEIGHT as f64,
-            VIEW_WIDTH as f64 / SOURCE_WIDTH as f64,
+            VIEW_WIDTH as f64 / source_width as f64,
             0.0,
             0.0,
         );
@@ -1176,9 +1195,17 @@ mod tests {
         }
         assert!(
             renderer.source_uploaded(),
-            "24MP source texture upload failed"
+            "Full source texture upload failed"
         );
         let ready_ms = upload_started.elapsed().as_secs_f64() * 1000.0;
+        renderer.widget().make_current();
+        let driver = unsafe {
+            let name = gl::GetString(gl::RENDERER);
+            if name.is_null() { "unknown".to_owned() }
+            else { std::ffi::CStr::from_ptr(name.cast()).to_string_lossy().into_owned() }
+        };
+        eprintln!("PIC_EDIT_GPU benchmark_gl_renderer={driver} gsk_renderer={:?}", window.renderer().map(|r| r.type_().name().to_owned()));
+
 
         let mut recipe = base_recipe.clone();
         recipe.exposure = 0.2;
@@ -1203,7 +1230,7 @@ mod tests {
         );
         eprintln!(
             "PIC_EDIT_GPU benchmark source={}x{} viewport={}x{} upload_ready_ms={ready_ms:.3} cpu_full_frame_ms={cpu_ms:.3} uniform_to_draw_callback_ms={uniform_to_draw_ms:.3}",
-            SOURCE_WIDTH, SOURCE_HEIGHT, VIEW_WIDTH, VIEW_HEIGHT,
+            source_width, source_height, VIEW_WIDTH, VIEW_HEIGHT,
         );
         window.close();
     }

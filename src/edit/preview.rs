@@ -44,26 +44,6 @@ fn preview_target_dimensions(
     (width, height)
 }
 
-/// Keep slider-drag CPU previews responsive by decoding and processing a
-/// bounded draft. The full-size render is queued when the drag ends.
-fn interactive_preview_target_dimensions(
-    source_width: i64,
-    source_height: i64,
-    rotation: i32,
-) -> (u32, u32) {
-    const MAX_EDGE: u32 = 960;
-    let (width, height) = preview_target_dimensions(source_width, source_height, rotation);
-    let longest = width.max(height);
-    if longest <= MAX_EDGE || longest == 0 {
-        return (width, height);
-    }
-    let scale = MAX_EDGE as f64 / longest as f64;
-    (
-        ((width as f64 * scale).round() as u32).max(1),
-        ((height as f64 * scale).round() as u32).max(1),
-    )
-}
-
 fn cached_preview_base(
     cache: &Arc<Mutex<Vec<PreviewBase>>>,
     path: &str,
@@ -77,33 +57,6 @@ fn cached_preview_base(
         .iter()
         .find(|entry| entry.matches(path, rotation, target_width, target_height))
         .map(|entry| entry.image.clone())
-}
-
-fn cached_preview_base_for_downsample(
-    cache: &Arc<Mutex<Vec<PreviewBase>>>,
-    path: &str,
-    rotation: i32,
-    target_width: u32,
-    target_height: u32,
-) -> Option<image::RgbaImage> {
-    let image = cache
-        .lock()
-        .ok()?
-        .iter()
-        .filter(|entry| {
-            entry.path == path
-                && entry.rotation == rotation
-                && entry.image.width() >= target_width
-                && entry.image.height() >= target_height
-        })
-        .min_by_key(|entry| entry.image.width() as u64 * entry.image.height() as u64)
-        .map(|entry| entry.image.clone())?;
-    Some(image::imageops::resize(
-        &image,
-        target_width,
-        target_height,
-        image::imageops::FilterType::Lanczos3,
-    ))
 }
 
 fn store_preview_base(cache: &Arc<Mutex<Vec<PreviewBase>>>, entry: PreviewBase) {
@@ -252,14 +205,6 @@ fn render_preview_job(
         );
         let (base, cache_status) = if let Some(image) = cached {
             (image, "hit")
-        } else if let Some(image) = cached_preview_base_for_downsample(
-            base_cache,
-            &job.path,
-            job.rotation,
-            job.target_width,
-            job.target_height,
-        ) {
-            (image, "downsample")
         } else {
             let image = super::render::decode_base_for_viewer(
                 &job.path,
@@ -279,18 +224,6 @@ fn render_preview_job(
             );
             (image, "miss")
         };
-        if cache_status == "downsample" {
-            store_preview_base(
-                base_cache,
-                PreviewBase {
-                    path: job.path.clone(),
-                    rotation: job.rotation,
-                    target_width: job.target_width,
-                    target_height: job.target_height,
-                    image: base.clone(),
-                },
-            );
-        }
         if std::env::var_os("PICASA_TRACE").is_some() {
             eprintln!(
                 "PIC_EDIT source_base cache={} target={}x{} decoded={}x{} uri={}",
@@ -349,44 +282,6 @@ fn render_preview_job(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn interactive_preview_is_bounded_and_keeps_rotation_aspect() {
-        assert_eq!(
-            interactive_preview_target_dimensions(3960, 2640, 0),
-            (960, 640)
-        );
-        assert_eq!(
-            interactive_preview_target_dimensions(3960, 2640, 90),
-            (640, 960)
-        );
-        assert_eq!(
-            interactive_preview_target_dimensions(800, 600, 0),
-            (800, 600)
-        );
-    }
-
-    #[test]
-    fn interactive_draft_downsamples_the_cached_full_source() {
-        let cache = Arc::new(Mutex::new(vec![PreviewBase {
-            path: "test://cached-source".to_owned(),
-            rotation: 0,
-            target_width: 4,
-            target_height: 4,
-            image: image::RgbaImage::from_pixel(4, 4, image::Rgba([30, 60, 90, 255])),
-        }]));
-
-        let draft = cached_preview_base_for_downsample(
-            &cache,
-            "test://cached-source",
-            0,
-            2,
-            2,
-        )
-        .expect("cached full source should satisfy the interactive draft");
-        assert_eq!(draft.dimensions(), (2, 2));
-        assert_eq!(cache.lock().unwrap()[0].image.dimensions(), (4, 4));
-    }
 
     #[test]
     fn edit_preview_at_fit_and_one_to_one_keeps_source_resolution() {
@@ -467,6 +362,16 @@ mod tests {
             edited_edges * 4 >= baseline_edges * 3,
             "minor exposure edit lost fine edges"
         );
+        // Unsupported effects must use the same cached full source, too.
+        for (generation, sharpen, clarity) in [(4, 0.425, 0.0), (5, 0.0, 0.201)] {
+            let mut recipe = EditRecipe::default();
+            recipe.sharpen = sharpen;
+            recipe.clarity = clarity;
+            let adjusted = render(generation, recipe, &mut geometry_cache);
+            assert_eq!(adjusted.dimensions(), (WIDTH, HEIGHT));
+            assert!(edge_count(&adjusted) >= baseline_edges * 3 / 4);
+        }
+        assert_eq!(cache.lock().unwrap().len(), 1, "effects must reuse one decoded source");
         std::fs::remove_file(path).unwrap();
     }
 

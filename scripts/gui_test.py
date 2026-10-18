@@ -82,6 +82,8 @@ def make_sample_library() -> None:
         image = Image.new("RGB", size, color)
         draw = ImageDraw.Draw(image)
         draw.text((110 if name == "portrait.jpg" else 32, 28), name, fill="white")
+        if name == "landscape.jpg":
+            draw.rectangle((400, 250, 430, 280), fill=(255, 255, 0))
         if name == "portrait.jpg":
             # High contrast edge marker makes native-size pan movement
             # measurable independently of viewport clipping.
@@ -430,6 +432,60 @@ def editor_divider_pixels(path: Path) -> int:
                and 185 <= sum(image.getpixel((x, y))) // 3 <= 235)
 
 
+def check_editor_navigation(editor_shot: Path, editor_crop, source_bounds) -> None:
+    # Exercise the real window key propagation, including the infobar
+    # action, rather than invoking the editor zoom closure directly.
+    command(["xdotool", "mousemove", "1050", "450"])
+    command(["xdotool", "key", "space"])
+    time.sleep(1)
+    native_shot = screenshot("10a-editor-space-native.png")
+    native_pixels = count_color_pixels(native_shot, (45, 110, 190))
+    native_marker = matching_color_bounds(native_shot, (255, 255, 0), crop=editor_crop)
+    command(["xdotool", "mousedown", "1"])
+    command(["xdotool", "mousemove", "970", "430"])
+    command(["xdotool", "mouseup", "1"])
+    time.sleep(0.3)
+    panned_shot = screenshot("10a-editor-native-panned.png")
+    panned_marker = matching_color_bounds(panned_shot, (255, 255, 0), crop=editor_crop)
+    pan_dx = native_marker[0] - panned_marker[0] if native_marker and panned_marker else None
+    record(add_case("Editor native mouse drag", "Dragging left moves source pixels left by the same distance"),
+           pan_dx is not None and abs(pan_dx - 80) <= 2,
+           f"native marker={native_marker}; panned marker={panned_marker}; horizontal shift={pan_dx}")
+    command(["xdotool", "click", "4"])
+    time.sleep(0.4)
+    wheel_shot = screenshot("10a-editor-native-wheel.png")
+    wheel_marker = matching_color_bounds(wheel_shot, (255, 255, 0), crop=editor_crop)
+    wheel_dy = wheel_marker[1] - panned_marker[1] if wheel_marker and panned_marker else None
+    record(add_case("Editor native mouse wheel", "Wheel up scrolls source pixels down"),
+           wheel_dy is not None and wheel_dy > 0,
+           f"panned marker={panned_marker}; wheel marker={wheel_marker}; vertical shift={wheel_dy}")
+    fit_pixels = count_color_pixels(editor_shot, (45, 110, 190))
+    command(["xdotool", "key", "space"])
+    time.sleep(1)
+    fit_again = screenshot("10a-editor-space-fit.png")
+    fit_again_bounds = matching_color_bounds(fit_again, (45, 110, 190), crop=editor_crop)
+    space_ok = native_pixels > fit_pixels * 1.25 and fit_again_bounds == source_bounds
+    record(add_case("Editor Space toggles native zoom and Fit",
+                    "Two Space presses enlarge the source then restore Fit without leaving Edit"),
+           space_ok,
+           f"Fit pixels={fit_pixels}; native pixels={native_pixels}; restored bounds={fit_again_bounds}; original={source_bounds}")
+    if not space_ok:
+        raise RuntimeError("Stop recovery validation: editor Space zoom regression")
+    command(["xdotool", "mousemove", "1050", "450"])
+    command(["xdotool", "keydown", "ctrl"])
+    command(["xdotool", "click", "4"])
+    command(["xdotool", "keyup", "ctrl"])
+    time.sleep(0.5)
+    ctrl_zoom = screenshot("10a-editor-ctrl-wheel.png")
+    zoom_pixels = count_color_pixels(ctrl_zoom, (45, 110, 190))
+    record(add_case("Editor Ctrl+wheel zoom", "Ctrl+wheel enlarges the photograph from Fit"),
+           zoom_pixels > fit_pixels * 1.02, f"Fit pixels={fit_pixels}; zoomed pixels={zoom_pixels}")
+    command(["xdotool", "key", "space"])
+    time.sleep(0.3)
+    command(["xdotool", "key", "space"])
+    time.sleep(0.3)
+
+
 def smoke_test() -> None:
     global APP_PROCESS, APP_WINDOW, MOUSE_OFFSET_X, MOUSE_OFFSET_Y
     make_sample_library()
@@ -500,6 +556,18 @@ def smoke_test() -> None:
     library_case = add_case("Isolated sample gallery", "Generated photos load into the temporary library")
     record(library_case, photo_count == expected_photos and app_alive(),
            f"{photo_count} generated photos indexed; screenshot={before.name}")
+
+    if SUITE == "edit-navigation":
+        click_at(518, 178, button=3)
+        click_at(480, 109)
+        wait_for(lambda: count_color_pixels(screenshot("editor-ready.png"), (45, 110, 190)) > 200_000,
+                 "editor source to render", timeout=12)
+        shot = screenshot("editor-fit.png")
+        crop = (699 + MOUSE_OFFSET_X, 132 + MOUSE_OFFSET_Y,
+                1423 + MOUSE_OFFSET_X, 823 + MOUSE_OFFSET_Y)
+        bounds = matching_color_bounds(shot, (45, 110, 190), crop=crop)
+        check_editor_navigation(shot, crop, bounds)
+        return
 
     # Set a rating through the actual keyboard shortcut, then verify the
     # corresponding photo row changes in the live temporary SQLite database.
@@ -818,6 +886,7 @@ def smoke_test() -> None:
            editor_open and divider_pixels >= 300 and source_bounds is not None and app_alive(),
            f"PIC window title={editor_title!r}; editor split-divider pixels={divider_pixels}; source image bounds={source_bounds}; screenshot={editor_shot.name}")
     if editor_open:
+        check_editor_navigation(editor_shot, editor_crop, source_bounds)
         original_digest = hashlib.sha256((SAMPLE_DIR / "landscape.jpg").read_bytes()).hexdigest()
         center_before = Image.open(editor_shot).convert("RGB").getpixel((1050 + MOUSE_OFFSET_X, 450 + MOUSE_OFFSET_Y))
         # At the empty-history boundary, Undo and Redo must leave the original

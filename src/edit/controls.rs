@@ -257,16 +257,14 @@ fn connect_scale(
         let dragging = dragging.clone();
         let action_start_recipe = action_start_recipe.clone();
         let update_history = update_history.clone();
-        let queue_preview = queue_preview.clone();
         Rc::new(move || {
             if dragging.replace(false) {
                 let start = action_start_recipe.borrow_mut().take();
                 let changed = scale_action_changed(start, &session.borrow().recipe);
                 session.borrow_mut().end_action();
                 update_history();
-                if changed {
-                    queue_preview();
-                }
+                // value_changed already queued the final full-resolution recipe.
+                // Releasing the slider only closes its undo action.
                 if std::env::var_os("PICASA_TRACE").is_some() {
                     eprintln!("PIC_EDIT slider_action_end changed={changed}");
                 }

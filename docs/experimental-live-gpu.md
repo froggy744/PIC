@@ -2,13 +2,16 @@
 
 PIC's editor has an opt-in GTK `GLArea` renderer for live tone controls. It
 keeps the decoded source in one OpenGL texture and changes shader uniforms for
-Exposure, Contrast, Saturation, Warmth, Fill Light, Shadows and Highlights.
-Crop and straighten are prepared by the existing CPU geometry path. Filters,
-auto controls, clarity, sharpening and grain use the existing CPU renderer.
-While those CPU-only controls are being dragged, PIC uses a bounded 1600-pixel
-draft and retains the source-sized canvas; releasing a changed slider queues a
-full-resolution settle render. The CPU renderer remains the default and the
-export path is unchanged.
+Exposure, Contrast, Saturation, Warmth, Fill Light, Shadows, Highlights and
+Sharpen. Crop and straighten use the existing CPU geometry path. Filters,
+auto controls, clarity and grain use the CPU renderer. All editing buffers
+retain source resolution; during CPU processing the last sharp frame stays
+visible. Unsupported CPU effects can still lag. The CPU renderer remains the
+default and the export path is unchanged.
+
+See [the recovery handoff](livegpu-recovery-handoff.md) for verified behaviour,
+measurements and unresolved failures. Vulkan selection fell back to OpenGL in
+the latest isolated test; actual Vulkan compatibility remains unverified.
 
 ```sh
 PIC_EDIT_RENDERER=cpu cargo run
@@ -27,7 +30,7 @@ preview dimensions.
 
 ## Verification
 
-The OpenGL parity and 24MP viewport benchmark tests are ignored in the normal
+The OpenGL parity and full-source viewport benchmark tests are ignored in the normal
 suite because they need a GTK display and GL context. On Linux, run:
 
 ```sh

@@ -87,6 +87,7 @@ pub(super) struct MetadataPanel {
     individual_controls: gtk::ScrolledWindow,
     lightbox_open: Cell<bool>,
     workspace_visible: Cell<bool>,
+    navigation_view: RefCell<Option<(String, sidebar::SidebarFilter)>>,
     connection: Rc<RefCell<Connection>>,
     scope: Rc<dyn Fn() -> Scope>,
     changed: Rc<dyn Fn()>,
@@ -294,6 +295,7 @@ impl MetadataPanel {
             individual_controls: controls_scroll,
             lightbox_open: Cell::new(false),
             workspace_visible: Cell::new(true),
+            navigation_view: RefCell::new(None),
             connection,
             scope,
             changed,
@@ -561,6 +563,25 @@ impl MetadataPanel {
     pub fn set_workspace_visible(&self, visible: bool) {
         self.workspace_visible.set(visible);
         self.sync_view();
+    }
+    pub fn set_navigation_view(&self, page: &str, filter: sidebar::SidebarFilter) {
+        if self.navigation_view.borrow().as_ref().is_some_and(
+            |(previous_page, previous_filter)| previous_page == page && *previous_filter == filter,
+        ) {
+            return;
+        }
+        self.navigation_view.replace(Some((page.to_owned(), filter)));
+        // Close on entry, rather than forbidding the panel in these views:
+        // the user can still explicitly open it after navigating.
+        if page != "photos"
+            || !matches!(
+                filter,
+                sidebar::SidebarFilter::All | sidebar::SidebarFilter::Folder(_)
+            )
+        {
+            self.button.set_active(false);
+        }
+        self.set_workspace_visible(!matches!(page, "edit" | "collage"));
     }
     fn sync_view(&self) {
         self.button.set_visible(self.workspace_visible.get());
@@ -1410,6 +1431,48 @@ mod tests {
             child = w.next_sibling();
         }
         result
+    }
+    #[test]
+    #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+    fn metadata_panel_navigation_auto_closes_and_allows_manual_reopen() {
+        adw::init().unwrap();
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(db::SCHEMA).unwrap();
+        let panel = MetadataPanel::new(
+            Rc::new(RefCell::new(c)),
+            Rc::new(Scope::default),
+            Rc::new(|| {}),
+            Rc::new(|_| {}),
+        );
+        for (page, filter) in [
+            ("library", sidebar::SidebarFilter::Library),
+            ("albums", sidebar::SidebarFilter::Albums),
+            ("photos", sidebar::SidebarFilter::Album(1)),
+            ("photos", sidebar::SidebarFilter::History),
+            ("photos", sidebar::SidebarFilter::RecentlyAdded),
+            ("photos", sidebar::SidebarFilter::Favorites),
+        ] {
+            panel.button.set_active(true);
+            panel.set_navigation_view(page, filter);
+            assert!(!panel.button.is_active(), "must close on entering {filter:?}");
+            assert!(!panel.root.is_visible());
+            panel.button.set_active(true);
+            panel.set_navigation_view(page, filter);
+            assert!(panel.root.is_visible(), "manual opening must persist in {filter:?}");
+            panel.set_lightbox_open(true);
+            assert!(!panel.root.is_visible());
+            panel.set_lightbox_open(false);
+            assert!(panel.root.is_visible());
+        }
+        for filter in [
+            sidebar::SidebarFilter::All,
+            sidebar::SidebarFilter::Folder(1),
+            sidebar::SidebarFilter::Folder(2),
+        ] {
+            panel.set_navigation_view("photos", filter);
+            assert!(panel.root.is_visible(), "keep open for photos and local/network folders");
+        }
+        panel.button.set_active(false);
     }
     #[test]
     #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]

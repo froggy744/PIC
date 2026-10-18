@@ -3199,11 +3199,6 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     });
 
     content.append(&gallery_overlay);
-    // Keep the infobar's gallery allocation while drawing it above the
-    // fullscreen lightbox overlay below.
-    let infobar_space = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    infobar_space.set_height_request(58);
-    content.append(&infobar_space);
 
     // One snapshot after the native split animation settles; unlike the
     // previous overlay the gallery must occupy only the remaining width.
@@ -4788,12 +4783,26 @@ fn start_photo_export_single(
     }
     {
         let page = main_stack.visible_child_name();
-        metadata_panel.set_workspace_visible(!matches!(page.as_deref(), Some("edit" | "collage")));
+        metadata_panel.set_navigation_view(page.as_deref().unwrap_or(""), filter.get());
         let panel_for_workspace = metadata_panel.clone();
+        let filter_for_workspace = filter.clone();
         main_stack.connect_visible_child_notify(move |stack| {
             let page = stack.visible_child_name();
             panel_for_workspace
-                .set_workspace_visible(!matches!(page.as_deref(), Some("edit" | "collage")));
+                .set_navigation_view(page.as_deref().unwrap_or(""), filter_for_workspace.get());
+        });
+        let panel_for_navigation = Rc::downgrade(&metadata_panel);
+        let filter_for_navigation = filter.clone();
+        // Several sidebar destinations share the photos stack page. Observe
+        // their filter changes before painting, too, without closing a panel
+        // that the user manually reopened in the same destination.
+        main_stack.add_tick_callback(move |stack, _| {
+            let Some(panel) = panel_for_navigation.upgrade() else {
+                return glib::ControlFlow::Break;
+            };
+            let page = stack.visible_child_name();
+            panel.set_navigation_view(page.as_deref().unwrap_or(""), filter_for_navigation.get());
+            glib::ControlFlow::Continue
         });
     }
 
@@ -4811,12 +4820,13 @@ fn start_photo_export_single(
     gallery_stack.append(&content);
     gallery_surface.set_child(Some(&gallery_stack));
     gallery_surface.add_overlay(&lightbox.root);
-    info.root.set_hexpand(true);
-    info.root.set_valign(gtk::Align::End);
-    gallery_surface.add_overlay(&info.root);
-
     right_column.append(&right_header);
     right_column.append(&gallery_surface);
+    // Allocate the toolbar outside the viewer. An overlay here made Fit
+    // center in a taller area whose bottom was covered by the toolbar.
+    info.root.set_hexpand(true);
+    info.root.set_valign(gtk::Align::End);
+    right_column.append(&info.root);
     {
         let panel=metadata_panel.clone();
         window.connect_close_request(move |_| {panel.cancel_index();glib::Propagation::Proceed});

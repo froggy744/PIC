@@ -1242,7 +1242,20 @@ mod tests {
             }
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
-        assert!(clarity_pixels.is_some(), "GPU clarity framebuffer readback failed");
+        let readback = clarity_pixels.expect("GPU clarity framebuffer readback failed");
+        let scale = renderer.widget().scale_factor().max(1) as u32;
+        let observed = readback.chunks_exact(WIDTH as usize * scale as usize * 4)
+            .rev().flatten().copied().collect::<Vec<_>>();
+        let expected = super::super::render::apply_tone(source.clone(), &clarity_recipe);
+        let expected = if scale == 1 { expected } else {
+            image::imageops::resize(&expected, WIDTH * scale, HEIGHT * scale,
+                image::imageops::FilterType::Nearest)
+        }.into_raw();
+        let maximum_delta = observed.iter().zip(&expected)
+            .map(|(a, b)| (*a as i16 - *b as i16).abs())
+            .max().unwrap_or_default();
+        assert!(maximum_delta <= 12,
+            "GPU Clarity differs too much from the CPU reference: max channel delta {maximum_delta}");
         assert_eq!(renderer.uploaded_revision(), uploaded_revision);
         renderer.set_recipe(&reset_recipe);
         check_frame(&reset_recipe, &source);

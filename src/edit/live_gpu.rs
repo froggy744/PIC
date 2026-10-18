@@ -2195,6 +2195,100 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires a GTK OpenGL display; run under xvfb-run"]
+    fn gtk_gl_area_layer_alpha_and_stacking_match_cpu() {
+        gtk::init().expect("GTK initialization");
+        const W: u32 = 48;
+        const H: u32 = 32;
+        let image = image::RgbaImage::from_pixel(W, H, image::Rgba([20, 40, 60, 255]));
+        let canvas = LiveGpuCanvas::new();
+        canvas.widget().set_size_request(W as i32, H as i32);
+        let window = gtk::Window::new();
+        window.set_default_size(W as i32, H as i32);
+        window.set_child(Some(&canvas.widget()));
+        window.present();
+        let recipe = EditRecipe::default();
+        canvas.set_source(
+            "test://gpu-alpha-layers", 0, &recipe,
+            W as i32, H as i32,
+            glib::Bytes::from_owned(image.clone().into_raw()),
+        );
+        canvas.set_view(0.0, 0.0, W as f64, H as f64, 1.0, 0.0, 0.0);
+        let rgba_image = image::RgbaImage::from_pixel(4, 4, image::Rgba([220, 60, 15, 128]));
+        let rgba_text = image::RgbaImage::from_pixel(2, 2, image::Rgba([250, 250, 250, 255]));
+        {
+            let mut state = canvas.state.borrow_mut();
+            state.overlays = vec![
+                GpuOverlayLayer {
+                    id: "image".to_owned(),
+                    rect: super::super::model::NormRect {
+                        left: 6.0/W as f32, top: 4.0/H as f32,
+                        width: 4.0/W as f32, height: 4.0/H as f32,
+                    },
+                    opacity: 0.75, width: 4, height: 4,
+                    rgba: glib::Bytes::from_owned(rgba_image.into_raw()),
+                },
+                GpuOverlayLayer {
+                    id: "text".to_owned(),
+                    rect: super::super::model::NormRect {
+                        left: 7.0/W as f32, top: 5.0/H as f32,
+                        width: 2.0/W as f32, height: 2.0/H as f32,
+                    },
+                    opacity: 0.65, width: 2, height: 2,
+                    rgba: glib::Bytes::from_owned(rgba_text.into_raw()),
+                },
+            ];
+            state.overlay_revision = state.overlay_revision.wrapping_add(1);
+        }
+        canvas.widget().queue_render();
+        canvas.request_readback();
+        let context = glib::MainContext::default();
+        let deadline = Instant::now() + std::time::Duration::from_secs(6);
+        let readback = loop {
+            while context.pending() { context.iteration(false); }
+            if let Some(pixels) = canvas.take_readback() { break pixels; }
+            assert!(Instant::now() < deadline, "layer pixel readback timed out");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        };
+        let scale = canvas.widget().scale_factor().max(1) as usize;
+        let actual = readback.chunks_exact(W as usize*scale*4)
+            .rev().flatten().copied().collect::<Vec<u8>>();
+        let pixel = |x: usize, y: usize| -> [u8; 4] {
+            let idx = (y*scale*W as usize*scale + x*scale)*4;
+            actual[idx..idx+4].try_into().unwrap()
+        };
+        let mix = |base: [u8;4], layer: [u8;4], opacity: f32| {
+            let a = (layer[3] as f32 / 255.0) * opacity;
+            let mut out = [0; 4];
+            for i in 0..3 {
+                out[i] = (layer[i] as f32*a + base[i] as f32*(1.0-a))
+                    .round().clamp(0.0, 255.0) as u8;
+            }
+            out[3] = (255.0*a + base[3] as f32*(1.0-a)).round() as u8;
+            out
+        };
+        let base = [20, 40, 60, 255];
+        let first = mix(base, [220,60,15,128], 0.75);
+        let combined = mix(first, [250,250,250,255], 0.65);
+        let close = |observed: [u8;4], expected: [u8;4], place: &str| {
+            for channel in 0..4 {
+                let delta = observed[channel].abs_diff(expected[channel]);
+                assert!(delta <= 2,
+                    "GPU {place} channel {channel}: {observed:?} vs {expected:?}, delta {delta}");
+            }
+        };
+        close(pixel(0, 0), base, "uncovered background");
+        close(pixel(6, 4), first, "image overlay alpha");
+        close(pixel(7, 5), combined, "text above image");
+        close(pixel(10, 4), base, "outside rectangle");
+        let rev = canvas.uploaded_revision();
+        canvas.set_recipe(&recipe);
+        canvas.widget().queue_render();
+        assert_eq!(canvas.uploaded_revision(), rev, "layer updates must not reupload photo");
+        window.close();
+    }
+
+    #[test]
     #[ignore = "requires GTK OpenGL display; run under xvfb-run"]
     fn gtk_gl_area_geometry_crop_and_straighten_match_cpu() {
         gtk::init().expect("GTK initialization");

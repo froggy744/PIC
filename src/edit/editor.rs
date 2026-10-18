@@ -559,10 +559,11 @@ pub fn build(
         let pan_origin_v = pan_origin_v.clone();
         let pan_space_held = pan_space_held.clone();
         let pan_trace_updated = pan_trace_updated.clone();
+        let native_one_to_one = native_one_to_one.clone();
         let crop_overlay = crop_overlay.clone();
         let overlays_toggle = overlays_toggle.clone();
         let text_toggle = text_toggle.clone();
-        pan_drag.connect_drag_begin(move |gesture, _, _| {
+        pan_drag.connect_drag_begin(move |gesture, start_x, start_y| {
             let hadj = picture_scroll.hadjustment();
             let vadj = picture_scroll.vadjustment();
             let can_scroll = hadj.upper() > hadj.page_size() || vadj.upper() > vadj.page_size();
@@ -573,9 +574,10 @@ pub fn build(
             pan_trace_updated.set(false);
             if std::env::var_os("PICASA_TRACE").is_some() {
                 eprintln!(
-                    "PIC_EDIT_PAN begin scrollable={} space={} tool_active={} h={:.1}/{:.1}/{:.1} v={:.1}/{:.1}/{:.1}",
+                    "PIC_EDIT_PAN begin start={start_x:.1},{start_y:.1} scrollable={} space={} native_1to1={} tool_active={} h={:.1}/{:.1}/{:.1} v={:.1}/{:.1}/{:.1}",
                     can_scroll,
                     space_held,
+                    native_one_to_one.get(),
                     canvas_tool_active,
                     hadj.value(),
                     hadj.upper(),
@@ -586,12 +588,18 @@ pub fn build(
                 );
             }
             if !pan_drag_should_claim(can_scroll, space_held, canvas_tool_active) {
+                if std::env::var_os("PICASA_TRACE").is_some() {
+                    eprintln!("PIC_EDIT_PAN decision=denied reason=no_space_or_scroll");
+                }
                 gesture.set_state(gtk::EventSequenceState::Denied);
                 return;
             }
             pan_origin_h.set(hadj.value());
             pan_origin_v.set(vadj.value());
             gesture.set_state(gtk::EventSequenceState::Claimed);
+            if std::env::var_os("PICASA_TRACE").is_some() {
+                eprintln!("PIC_EDIT_PAN decision=claimed");
+            }
             picture_scroll.set_cursor_from_name(Some("grabbing"));
         });
     }
@@ -620,9 +628,15 @@ pub fn build(
         let picture_scroll = picture_scroll.clone();
         let canvas_zoom = canvas_zoom.clone();
         let native_one_to_one = native_one_to_one.clone();
-        pan_drag.connect_drag_end(move |_, _, _| {
+        pan_drag.connect_drag_end(move |_, dx, dy| {
             if std::env::var_os("PICASA_TRACE").is_some() {
-                eprintln!("PIC_EDIT_PAN end");
+                let hadj = picture_scroll.hadjustment();
+                let vadj = picture_scroll.vadjustment();
+                eprintln!(
+                    "PIC_EDIT_PAN end delta={dx:.1},{dy:.1} h={:.1} v={:.1}",
+                    hadj.value(),
+                    vadj.value(),
+                );
             }
             picture_scroll.set_cursor_from_name(
                 if native_one_to_one.get() || canvas_zoom.get() > 1.0 {
@@ -1122,10 +1136,11 @@ pub fn build(
                                                     display_dimensions,
                                                 );
                                                 let (width, height) = display_dimensions;
+                                                let settle_wait_frames = Cell::new(0u32);
                                                 let picture_scroll_for_restore = picture_scroll.clone();
                                             let picture_scroll_for_tick = picture_scroll.clone();
                                             picture_scroll_for_restore.add_tick_callback(
-                                                move |_, _| {
+                                                move |_, frame_clock| {
                                                     let hadj =
                                                         picture_scroll_for_tick.hadjustment();
                                                     let vadj =
@@ -1133,6 +1148,27 @@ pub fn build(
                                                     if hadj.upper() < width as f64
                                                         && vadj.upper() < height as f64
                                                     {
+                                                        let wait_frames = settle_wait_frames.get() + 1;
+                                                        settle_wait_frames.set(wait_frames);
+                                                        if std::env::var_os("PICASA_TRACE").is_some()
+                                                            && (wait_frames == 1
+                                                                || wait_frames % 30 == 0)
+                                                        {
+                                                            eprintln!(
+                                                                "PIC_EDIT_1TO1 settle_wait frame={} target={}x{} alloc={}x{} h={:.1}/{:.1}/{:.1} v={:.1}/{:.1}/{:.1}",
+                                                                frame_clock.frame_time(),
+                                                                width,
+                                                                height,
+                                                                picture_scroll_for_tick.width(),
+                                                                picture_scroll_for_tick.height(),
+                                                                hadj.value(),
+                                                                hadj.upper(),
+                                                                hadj.page_size(),
+                                                                vadj.value(),
+                                                                vadj.upper(),
+                                                                vadj.page_size(),
+                                                            );
+                                                        }
                                                         return glib::ControlFlow::Continue;
                                                     }
                                                     let h_max = (hadj.upper() - hadj.page_size())
@@ -1184,6 +1220,23 @@ pub fn build(
                                                     vadj.set_value(
                                                         target_v.clamp(vadj.lower(), v_max),
                                                     );
+
+                                                    if std::env::var_os("PICASA_TRACE").is_some() {
+                                                        eprintln!(
+                                                            "PIC_EDIT_1TO1 settled frame={} target={}x{} h={:.1}/{:.1}/{:.1} v={:.1}/{:.1}/{:.1} scroll={:.1},{:.1}",
+                                                            frame_clock.frame_time(),
+                                                            width,
+                                                            height,
+                                                            hadj.value(),
+                                                            hadj.upper(),
+                                                            hadj.page_size(),
+                                                            vadj.value(),
+                                                            vadj.upper(),
+                                                            vadj.page_size(),
+                                                            target_h,
+                                                            target_v,
+                                                        );
+                                                    }
 
                                                     glib::ControlFlow::Break
                                                 },
@@ -1911,6 +1964,28 @@ pub fn build(
         let fit_action = fit_action.clone();
         let zoom_sync = zoom_sync.clone();
         Rc::new(move |enabled| {
+            if std::env::var_os("PICASA_TRACE").is_some() {
+                let hadj = picture_scroll.hadjustment();
+                let vadj = picture_scroll.vadjustment();
+                let (pointer_x, pointer_y) = canvas_pointer.get();
+                eprintln!(
+                    "PIC_EDIT_1TO1 request enabled={} previous={} dims={:?} canvas_zoom={:.4} viewport={}x{} pointer={:.1},{:.1} h={:.1}/{:.1}/{:.1} v={:.1}/{:.1}/{:.1}",
+                    enabled,
+                    native_one_to_one.get(),
+                    preview_dimensions.get(),
+                    canvas_zoom.get(),
+                    picture_scroll.width(),
+                    picture_scroll.height(),
+                    pointer_x,
+                    pointer_y,
+                    hadj.value(),
+                    hadj.upper(),
+                    hadj.page_size(),
+                    vadj.value(),
+                    vadj.upper(),
+                    vadj.page_size(),
+                );
+            }
             if enabled {
                 let dimensions = preview_dimensions.get();
                 let multiplier = if canvas_zoom.get() <= 0.0 {
@@ -1971,11 +2046,19 @@ pub fn build(
                     OneToOneAnchor::Center
                 };
                 pending_one_to_one_anchor.replace(Some(anchor));
+                let cursor_anchor = matches!(anchor, OneToOneAnchor::Cursor { .. });
 
                 native_one_to_one.set(true);
                 // Native 1:1 has its own sizing path. Do not encode it as a
                 // normal Fit-relative zoom multiplier.
                 canvas_zoom.set(0.0);
+                if std::env::var_os("PICASA_TRACE").is_some() {
+                    eprintln!(
+                        "PIC_EDIT_1TO1 state enabled=true anchor_cursor={} dims={:?}",
+                        cursor_anchor,
+                        dimensions,
+                    );
+                }
                 queue_preview();
                 if let Some(handler) = zoom_sync.borrow().as_ref() {
                     handler(
@@ -1985,6 +2068,9 @@ pub fn build(
                 }
             } else {
                 pending_one_to_one_anchor.borrow_mut().take();
+                if std::env::var_os("PICASA_TRACE").is_some() {
+                    eprintln!("PIC_EDIT_1TO1 state enabled=false action=fit");
+                }
                 fit_action();
             }
         })
@@ -2243,6 +2329,9 @@ pub fn build(
     // Space+left-drag can always claim the canvas gesture.
     {
         let root = root.clone();
+        let root_for_release = root.clone();
+        let native_one_to_one_for_key = native_one_to_one.clone();
+        let native_one_to_one_for_release = native_one_to_one.clone();
         let pan_space_held_for_press = pan_space_held.clone();
         let pan_space_held_for_release = pan_space_held.clone();
         let key = gtk::EventControllerKey::new();
@@ -2251,7 +2340,11 @@ pub fn build(
             if key == gtk::gdk::Key::space && root.is_mapped() {
                 pan_space_held_for_press.set(true);
                 if std::env::var_os("PICASA_TRACE").is_some() {
-                    eprintln!("PIC_EDIT_PAN space=pressed");
+                    eprintln!(
+                        "PIC_EDIT_PAN space=pressed editor_mapped={} native_1to1={}",
+                        root.is_mapped(),
+                        native_one_to_one_for_key.get(),
+                    );
                 }
                 glib::Propagation::Stop
             } else {
@@ -2262,7 +2355,11 @@ pub fn build(
             if key == gtk::gdk::Key::space {
                 pan_space_held_for_release.set(false);
                 if std::env::var_os("PICASA_TRACE").is_some() {
-                    eprintln!("PIC_EDIT_PAN space=released");
+                    eprintln!(
+                        "PIC_EDIT_PAN space=released editor_mapped={} native_1to1={}",
+                        root_for_release.is_mapped(),
+                        native_one_to_one_for_release.get(),
+                    );
                 }
             }
         });

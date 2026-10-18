@@ -2071,6 +2071,30 @@ mod tests {
         let reset = read_frame(&reference);
         assert_eq!(neutral, reset, "exposure reset changed original GPU pixels");
         assert_eq!(renderer.uploaded_revision(), revision);
+        // GPU neutral-statistic accumulation must also work at actual Nikon
+        // resolution. Optional PIC_TEST_EDIT_REFERENCE exercises a private NEF.
+        let mut automatic = EditRecipe::default();
+        automatic.auto_color = true;
+        assert!(gpu_tone_supported(&automatic));
+        let auto_gpu = read_frame(&automatic);
+        let auto_cpu = super::super::render::apply_tone(image.clone(), &automatic);
+        let auto_cpu = image::imageops::crop_imm(
+            &auto_cpu, x, y, VIEW as u32, VIEW as u32,
+        ).to_image();
+        let auto_cpu = if scale == 1 { auto_cpu } else {
+            image::imageops::resize(&auto_cpu,
+                VIEW as u32 * scale, VIEW as u32 * scale,
+                image::imageops::FilterType::Nearest)
+        }.into_raw();
+        let auto_delta = auto_gpu.iter().zip(&auto_cpu)
+            .map(|(a, b)| (*a as i16 - *b as i16).abs())
+            .max().unwrap_or_default();
+        assert!(auto_delta <= 3,
+            "full-source Auto Colour GPU/CPU mismatch: max delta {auto_delta}");
+        assert_eq!(renderer.uploaded_revision(), revision);
+        let reset_again = read_frame(&reference);
+        assert_eq!(neutral, reset_again);
+        eprintln!("PIC_EDIT_GPU full_source_autocolor max_channel_delta={auto_delta}");
         eprintln!(
             "PIC_EDIT_GPU full_source_quality source={}x{} viewport={}x{} \
              max_channel_delta={} exposure_edge_ratio={:.4} upload_count=1",

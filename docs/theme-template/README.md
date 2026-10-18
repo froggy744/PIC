@@ -111,8 +111,10 @@ Each bookshelf folder supplies one repeating row image. Preferred names are
 sorted PNG/JPG is used. PIC measures the shelf line in the artwork itself — the
 strongest full-width horizontal edge whose band below stays one colour across
 the width (the shelf board) — and stands every album on it, so drop-in artwork
-needs no setup. Optional `theme.conf` overrides that measurement when the
-artwork's own edge is ambiguous:
+needs no setup. Measurement finds the *underside* of a photographed board, which
+sits a few pixels below the front edge albums should stand on, so pin the line
+yourself whenever the artwork is a photo. Optional `theme.conf` overrides that
+measurement:
 
 ```ini
 row_height=288

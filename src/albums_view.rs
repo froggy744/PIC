@@ -17,9 +17,6 @@ const DEFAULT_THUMBNAIL_HEIGHT: i32 = 91;
 const BOOKSHELF_ROW_HEIGHT: i32 = 288;
 const BOOKSHELF_SURFACE_Y: i32 = 235;
 const BOOKSHELF_TOP_INSET: i32 = 28;
-// The viewport starts above the album header; align its repeated image with
-// the first shelf row so the gap above shows the tail of the previous tile.
-const BOOKSHELF_BACKGROUND_ROW_ORIGIN: i32 = 77;
 const ALBUM_COVER_THEME_DIRECTORY: &str = "images/theme/album-covers";
 const BOOKSHELF_THEME_DIRECTORY: &str = "images/theme/bookshelf";
 const BOOKSHELF_MAX_COLUMNS: usize = 5;
@@ -811,6 +808,44 @@ mod tests {
     }
 
     #[test]
+    fn every_shipped_bookshelf_theme_pins_its_own_shelf_surface() {
+        let themes = bookshelf_themes_in(Path::new(BOOKSHELF_THEME_DIRECTORY));
+        assert_eq!(themes.len(), 8);
+        // Shipped artwork is photographic, so each folder ships the conf that
+        // states where its drawn shelf edge is; a packaging slip that loses the
+        // file has to be visible as missing geometry, not as a silent page-wide
+        // default that puts every cover a few pixels off the drawn board.
+        assert!(themes.iter().all(|theme|
+            theme.kind == BookshelfThemeKind::Row
+                && theme.image_path
+                    .parent()
+                    .map(|directory| directory.join("theme.conf"))
+                    .is_some_and(|conf| conf.is_file())
+        ));
+        // Covers stand on the board, so the pinned line always sits inside the
+        // row, above the underside of the board the artwork draws.
+        assert!(themes.iter().all(|theme| theme.surface_y > 0 && theme.surface_y < theme.row_height));
+        // The pinned numbers are measured at each artwork's own front edge, so
+        // a shipped board that is re-cropped or re-exported shows up here.
+        for (id, surface_y) in [
+            ("concrete", 227),
+            ("darkwood", 225),
+            ("darkwood-small", 232),
+            ("frontwall-white", 234),
+            ("light-wood", 225),
+            ("marble", 236),
+            ("shelf", 227),
+            ("single", 247),
+        ] {
+            assert!(themes.iter().any(|theme| theme.id == id && theme.surface_y == surface_y));
+        }
+        assert!(themes.iter().any(|theme| {
+            theme.id == "frontwall-white"
+                && theme.image_path.file_name().is_some_and(|name| name == "bookshelf.jpg")
+        }));
+    }
+
+    #[test]
     fn measures_the_shelf_surface_from_the_artwork() {
         let directory = std::env::temp_dir().join(format!(
             "pic-bookshelf-surface-{}-{}",
@@ -1237,7 +1272,7 @@ mod tests {
         assert!(rules.contains(".albums-bookshelf-0 {"));
         assert!(rules.contains(".albums-bookshelf-1 {"));
         assert!(rules.contains("background-size: 100% 288px"));
-        assert!(rules.contains("background-position: center 77px"));
+        assert!(rules.contains("background-position: center top"));
         assert!(rules.contains("background-size: 100% auto"));
         assert!(crate::css::ALBUMS.contains(".albums-bookshelf-photo-count"));
         std::fs::remove_dir_all(directory).unwrap();
@@ -1821,6 +1856,21 @@ mod tests {
                 assert!(!cards.is_visible());
                 assert!(rows.is_visible());
                 assert!(rows.height() >= BOOKSHELF_ROW_HEIGHT);
+                assert!(
+                    bookshelf_background_css_class(settings::album_appearance(
+                        &connection.borrow(),
+                    ))
+                        .is_some_and(|background_class|
+                            rows.has_css_class(&background_class),
+                        ),
+                    "the selected art must repeat on the rows box, whose top edge is the first row, so its tiles land exactly behind the shelves the rows draw"
+                );
+                assert!(
+                    view.css_classes()
+                        .into_iter()
+                        .all(|name| !name.starts_with("albums-bookshelf-")),
+                    "the repeating artwork must not hang on the scrolled window, whose background stays put while the rows scroll"
+                );
                 let photo_count = find_descendant_with_css_class(
                     button.upcast_ref(),
                     "albums-bookshelf-photo-count",
@@ -1838,6 +1888,20 @@ mod tests {
                 .unwrap();
                 assert_eq!(
                     button.margin_top() + cover.height_request(),
+                    theme.surface_y
+                );
+                let row = button
+                    .ancestor(gtk::Overlay::static_type())
+                    .unwrap()
+                    .downcast::<gtk::Overlay>()
+                    .unwrap();
+                let cover_bottom = cover
+                    .compute_point(&row, &gtk::graphene::Point::new(0.0, cover.height() as f32))
+                    .unwrap()
+                    .y();
+                assert!(
+                    (cover_bottom - theme.surface_y as f32).abs() <= 1.0,
+                    "allocated cover edge {cover_bottom} misses the shelf surface {}",
                     theme.surface_y
                 );
             } else if style == "default" {
@@ -1904,6 +1968,47 @@ mod tests {
                 .is_visible()
         );
         assert!(find_descendant_with_css_class(view.upcast_ref(), "album-skin").is_none());
+
+        window.set_default_size(700, 600);
+        settle_gtk_layout();
+        for (index, theme) in bookshelf_themes_in(Path::new(BOOKSHELF_THEME_DIRECTORY))
+            .into_iter()
+            .enumerate()
+            .filter(|(_, theme)| theme.kind == BookshelfThemeKind::Row)
+        {
+            db::set_setting(
+                &connection.borrow(),
+                crate::settings::ALBUM_BOOKSHELF_BACKGROUND_SETTING_KEY,
+                &index.to_string(),
+            )
+            .unwrap();
+            refresh(&view, &albums, connection.clone(), 136, Rc::new(|_| {}), Rc::new(|| {}));
+            settle_gtk_layout();
+            let rows = find_descendant_with_css_class(view.upcast_ref(), "albums-bookshelf-rows")
+                .unwrap();
+            assert!(rows.has_css_class(&format!("albums-bookshelf-{index}")));
+            let cover = find_descendant_with_css_class(&rows, "album-cover").unwrap();
+            let button = cover.ancestor(gtk::Button::static_type()).unwrap();
+            let row = button.ancestor(gtk::Overlay::static_type()).unwrap();
+            let bottom = cover
+                .compute_point(&row, &gtk::graphene::Point::new(0.0, cover.height() as f32))
+                .unwrap()
+                .y();
+            assert!(
+                (bottom - theme.surface_y as f32).abs() <= 1.0,
+                "{} cover edge {bottom} misses shelf {}",
+                theme.id,
+                theme.surface_y
+            );
+        }
+        let rows = find_descendant_with_css_class(view.upcast_ref(), "albums-bookshelf-rows")
+            .unwrap();
+        let before = rows.compute_point(&view, &gtk::graphene::Point::new(0.0, 0.0)).unwrap().y();
+        let adjustment = view.vadjustment();
+        adjustment.set_value((adjustment.value() + 50.0).min(adjustment.upper() - adjustment.page_size()));
+        settle_gtk_layout();
+        let after = rows.compute_point(&view, &gtk::graphene::Point::new(0.0, 0.0)).unwrap().y();
+        assert!((after - before).abs() >= 49.0, "shelf rows must scroll with their artwork");
 
         refresh(
             &view,

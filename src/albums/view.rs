@@ -230,7 +230,7 @@ fn build_inner(
             resize_bookshelf_cards(&runtime_for_resize.rows, target_card_width, &theme);
             runtime_for_resize.last_card_width.set(target_card_width);
 
-            
+
         }
 
         glib::ControlFlow::Continue
@@ -360,9 +360,17 @@ pub fn refresh_presentation(scrolled: &gtk::ScrolledWindow, connection: &Connect
     } else {
         scrolled.remove_css_class("albums-bookshelf");
     }
-    // Keep the selected art repeating behind the scroll viewport. The row
-    // widgets paint the shelves themselves; this fills the top and bottom gaps.
-    if let Some(background_class) = bookshelf_background_css_class(appearance) {
+    // Repeat the selected art on the shelf-rows box, not on the scrolled
+    // window. The box wraps exactly the drawn rows, so its tiles start at the
+    // top of the first row and scroll with the rows: a page-sized background on
+    // the scrolled window stays put while the rows move, which drew a second,
+    // offset set of shelves in the gaps above and below the album rows.
+    if let Some(rows) = find_descendant_with_css_class(scrolled.upcast_ref(), "albums-bookshelf-rows") {
+        remove_bookshelf_background_classes(&rows);
+        if let Some(background_class) = bookshelf_background_css_class(appearance) {
+            rows.add_css_class(&background_class);
+        }
+    } else if let Some(background_class) = bookshelf_background_css_class(appearance) {
         scrolled.add_css_class(&background_class);
     }
 }
@@ -371,7 +379,12 @@ fn remove_bookshelf_background_classes(widget: &gtk::Widget) {
     for class_name in widget
         .css_classes()
         .into_iter()
-        .filter(|name| name.starts_with("albums-bookshelf-"))
+        .filter(|name|
+            name.starts_with("albums-bookshelf-")
+                // The marker names the rows box that carries the artwork, so
+                // only the numbered background classes may be swapped.
+                && name != "albums-bookshelf-rows"
+        )
     {
         widget.remove_css_class(&class_name);
     }
@@ -420,7 +433,7 @@ fn populate(
         if albums.len() == 1 { "" } else { "s" }
     ));
 
-    
+
 
     let appearance = settings::album_appearance(&connection.borrow());
     let fit_whole_photo = settings::saved_bool(

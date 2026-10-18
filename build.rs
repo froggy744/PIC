@@ -83,6 +83,10 @@ fn main() {
         let source = manifest_dir.join(folder);
         if source.is_dir() {
             stage_dir(&source, &profile_dir.join(folder));
+            // Cargo watches the mtime of the folder itself, which a file added
+            // inside a subfolder never bumps, so newly shipped artwork stayed
+            // out of the staged copy next to the binary. Watch every entry.
+            emit_tree_watchlist(&source);
         }
     }
     let screenshots = profile_dir.join("screenshots");
@@ -130,6 +134,18 @@ fn emit_build_metadata() {
     println!("cargo:rustc-env=PIC_BUILD_DATE={build_date}");
     println!("cargo:rerun-if-changed=.git/HEAD");
     println!("cargo:rerun-if-changed=.git/index");
+}
+
+/// Tell cargo to rerun when anything inside a staged runtime tree changes.
+fn emit_tree_watchlist(directory: &Path) {
+    if let Ok(entries) = fs::read_dir(directory) {
+        for path in entries.filter_map(Result::ok).map(|entry| entry.path()) {
+            println!("cargo:rerun-if-changed={}", path.display());
+            if path.is_dir() {
+                emit_tree_watchlist(&path);
+            }
+        }
+    }
 }
 
 /// Replace `destination` with a fresh copy of `source`.

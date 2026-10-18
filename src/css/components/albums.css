@@ -14,5 +14,6 @@
     .albums-standard .album-photo-count { font-size: 12px; }
 
 .albums-bookshelf-photo-count { color: #3a210f; }
+.albums-bookshelf button.album-card { padding: 0; border: none; background: transparent; background-image: none; box-shadow: none; }
 .albums-bookshelf button.album-card.framed-album-card { color: #302014; }
 button.album-card.framed-album-card:hover { opacity: 0.90; }

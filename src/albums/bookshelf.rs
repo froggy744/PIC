@@ -50,6 +50,11 @@ fn bookshelf_theme_image_in(directory: &Path) -> Option<PathBuf> {
 /// edge whose band below stays flat across the whole width. That band is the
 /// shelf board, and its top edge is where albums and books stand.
 ///
+/// Fallback only: shipped artwork states `surface_y` in `theme.conf`, because on
+/// a photographed board the flat band under the measured edge is the shadow
+/// beneath the board, a few pixels below the front edge covers should stand on.
+/// See the measured edges in images/bookshelf-row-template.md.
+///
 /// Returned as a ratio of the image height, because the row is drawn by
 /// stretching the whole canvas to `row_height`.
 fn shelf_surface_ratio(path: &Path) -> Option<f64> {
@@ -207,13 +212,16 @@ fn bookshelf_background_rules(directory: &Path) -> String {
         .enumerate()
         .map(|(index, theme)| {
             let uri = gio::File::for_path(theme.image_path).uri();
-            let (size, position) = match theme.kind {
-                BookshelfThemeKind::Row => (
-                    format!("100% {}px", theme.row_height),
-                    format!("center {BOOKSHELF_BACKGROUND_ROW_ORIGIN}px"),
-                ),
-                BookshelfThemeKind::Legacy => ("100% auto".to_string(), "center top".to_string()),
+            // The class lands on the shelf-rows box, whose top edge is the top
+            // of the first row and whose height is a whole number of rows. A
+            // tile that is exactly one row tall and starts at the box top is
+            // therefore drawn at the same y as the row it sits behind, and it
+            // scrolls with the rows instead of staying fixed in the viewport.
+            let size = match theme.kind {
+                BookshelfThemeKind::Row => format!("100% {}px", theme.row_height),
+                BookshelfThemeKind::Legacy => "100% auto".to_string(),
             };
+            let position = "center top";
             format!(
                 ".albums-bookshelf-{index} {{ background-image: url(\"{uri}\"); \
                  background-size: {size}; background-repeat: repeat-y; \

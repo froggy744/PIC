@@ -2422,6 +2422,70 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires GTK OpenGL; run under xvfb-run"]
+    fn gtk_gl_area_filter_thumbnail_cover_matches_cpu() {
+        gtk::init().expect("GTK init");
+        const SW: u32 = 48;
+        const SH: u32 = 32;
+        const TILE: u32 = 32;
+        let src = image::RgbaImage::from_fn(SW, SH, |x, y| {
+            image::Rgba([
+                (x * 3 + y * 2 + 20) as u8,
+                (y * 5 + x + 15) as u8,
+                ((x * 2 + y * 3 + 30) % 240) as u8, 255,
+            ])
+        });
+        let gpu = LiveGpuCanvas::new();
+        let window = gtk::Window::new();
+        window.set_default_size(TILE as i32, TILE as i32);
+        window.set_child(Some(&gpu.widget()));
+        window.present();
+        gpu.set_source("test://filter-tile", 0, &EditRecipe::default(),
+            SW as i32, SH as i32, glib::Bytes::from_owned(src.clone().into_raw()));
+        gpu.set_untransformed_geometry(&EditRecipe::default());
+        gpu.set_thumbnail_cover(SW as i32, SH as i32, TILE as i32);
+        let context = glib::MainContext::default();
+        for (filter, black_white, sepia) in [
+            (FilterPreset::None, false, false),
+            (FilterPreset::Clarendon, false, false),
+            (FilterPreset::Newspaper, false, false),
+            (FilterPreset::None, true, false),
+            (FilterPreset::None, false, true),
+        ] {
+            let mut recipe = EditRecipe::default();
+            recipe.filter = filter;
+            recipe.filter_amount = 1.0;
+            recipe.black_white = black_white;
+            recipe.sepia = sepia;
+            gpu.set_recipe(&recipe);
+            gpu.request_readback();
+            let deadline = Instant::now() + std::time::Duration::from_secs(6);
+            let pixels = loop {
+                while context.pending() { context.iteration(false); }
+                if let Some(frame) = gpu.take_readback() { break frame; }
+                assert!(Instant::now() < deadline, "GPU filter tile timed out");
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            };
+            let scale = gpu.widget().scale_factor().max(1) as usize;
+            let actual = pixels.chunks_exact(TILE as usize * scale * 4)
+                .rev().flatten().copied().collect::<Vec<_>>();
+            let cpu = super::super::render::apply_tone(src.clone(), &recipe);
+            let expected = image::imageops::crop_imm(&cpu, 8, 0, TILE, TILE).to_image();
+            let expected = if scale == 1 { expected } else {
+                image::imageops::resize(&expected, TILE * scale as u32,
+                    TILE * scale as u32, image::imageops::FilterType::Nearest)
+            }.into_raw();
+            assert_eq!(actual.len(), expected.len());
+            let max_delta = actual.iter().zip(&expected)
+                .map(|(a, b)| a.abs_diff(*b)).max().unwrap_or_default();
+            eprintln!("PIC_EDIT_GPU thumbnail_parity filter={filter:?} bw={black_white} sepia={sepia} max_delta={max_delta}");
+            assert!(max_delta <= 2,
+                "thumbnail GPU/CPU mismatch filter={filter:?} bw={black_white} sepia={sepia}: {max_delta}");
+        }
+        window.close();
+    }
+
+    #[test]
     #[ignore = "requires a GTK OpenGL display; run under xvfb-run"]
     fn gtk_gl_area_layer_alpha_and_stacking_match_cpu() {
         gtk::init().expect("GTK initialization");

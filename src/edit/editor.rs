@@ -904,13 +904,17 @@ pub fn build(
         } else {
             // One broken GL tile switches the *entire* filter picker back to
             // its CPU Picture widgets, rather than leaving a mixed grid.
-            let all_gpu_canvases = filter_gpu_tiles.iter()
-                .map(|(_, canvas)| canvas.clone()).collect::<Vec<_>>();
+            let tile_areas = filter_gpu_tiles.iter()
+                .map(|(_, canvas)| canvas.widget().downgrade())
+                .collect::<Vec<_>>();
             for (_, canvas) in &filter_gpu_tiles {
                 let fallback = start_cpu.clone();
-                let canvases = all_gpu_canvases.clone();
+                let areas = tile_areas.clone();
+                // Weak GLArea refs avoid creating a canvas/state callback cycle.
                 canvas.set_failure_handler(move || {
-                    for canvas in &canvases { canvas.hide(); }
+                    for area in &areas {
+                        if let Some(area) = area.upgrade() { area.set_visible(false); }
+                    }
                     fallback();
                 });
             }

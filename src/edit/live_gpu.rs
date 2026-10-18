@@ -482,8 +482,8 @@ impl LiveGpuCanvas {
                             uniform_1f(objects.program, "uFilterAmount", 1.0);
                             draw_effect_luminance(
                                 objects,
-                                *source_width,
-                                *source_height,
+                                output_width,
+                                output_height,
                                 view_width * device_scale,
                                 view_height * device_scale,
                                 tone.filter == FilterPreset::PencilSketch,
@@ -501,8 +501,8 @@ impl LiveGpuCanvas {
                         if let Some((source_width, source_height, _)) = source.as_ref() {
                             draw_clarity_luminance(
                                 objects,
-                                *source_width,
-                                *source_height,
+                                output_width,
+                                output_height,
                                 view_width * device_scale,
                                 view_height * device_scale,
                             );
@@ -791,7 +791,12 @@ impl LiveGpuCanvas {
 }
 
 pub fn gpu_tone_supported(recipe: &EditRecipe) -> bool {
-    recipe.filter == FilterPreset::None || !(recipe.auto_color || recipe.auto_contrast)
+    // Histogram/neutral reductions currently sample the raw source texture;
+    // crop and straighten change the pixel population, so preserve CPU parity
+    // until those GPU statistic passes also sample the transformed output.
+    let geometry_changes_pixels = !recipe.crop.is_full() || recipe.straighten.abs() >= 0.01;
+    (recipe.filter == FilterPreset::None || !(recipe.auto_color || recipe.auto_contrast))
+        && !(geometry_changes_pixels && (recipe.auto_color || recipe.auto_contrast))
 }
 
 pub fn gpu_base_recipe(recipe: &EditRecipe) -> EditRecipe {
@@ -1029,7 +1034,7 @@ vec4 namedFilterPixel(vec4 px, ivec2 coord) {
     if (uNamedFilter < 0.5 || uFilterAmount <= 0.0) return px;
     if (uPencilSketch > 0.5) {
         float gray = mix(1.0, luma(px.rgb), px.a);
-        float local = texture(uEffectBlur, (vec2(coord) + vec2(0.5)) / uSourceSize).r;
+        float local = texture(uEffectBlur, (vec2(coord) + vec2(0.5)) / uOutputSize).r;
         float dodge = min((gray + 0.015) / (local + 0.015), 1.0);
         float graphite = pow(dodge, 3.0) * (0.88 + 0.12 * gray);
         float shade = round(graphite * 255.0) / 255.0;
@@ -1067,7 +1072,7 @@ vec4 namedFilterPixel(vec4 px, ivec2 coord) {
     c *= falloff;
     c = round(clamp(c, 0.0, 1.0) * 255.0) / 255.0;
     if (uDreamGlow > 0.5) {
-        float glow = texture(uEffectBlur, (vec2(coord) + vec2(0.5)) / uSourceSize).r * 0.45;
+        float glow = texture(uEffectBlur, (vec2(coord) + vec2(0.5)) / uOutputSize).r * 0.45;
         c = round(clamp(c + (vec3(1.0) - c) * glow, 0.0, 1.0) * 255.0) / 255.0;
     }
     if (uNamedGrain > 0.0) {
@@ -1898,6 +1903,15 @@ mod tests {
         assert!(gpu_tone_supported(&auto_contrast));
         auto_contrast.filter = FilterPreset::Clarendon;
         assert!(!gpu_tone_supported(&auto_contrast));
+        let mut cropped_auto = EditRecipe::default();
+        cropped_auto.crop.left = 0.1;
+        cropped_auto.auto_color = true;
+        assert!(!gpu_tone_supported(&cropped_auto));
+        cropped_auto.auto_color = false;
+        cropped_auto.auto_contrast = true;
+        assert!(!gpu_tone_supported(&cropped_auto));
+        cropped_auto.auto_contrast = false;
+        assert!(gpu_tone_supported(&cropped_auto));
         for effect_filter in [FilterPreset::PencilSketch, FilterPreset::DreamGlow] {
             let mut preset = EditRecipe::default();
             preset.filter = effect_filter;

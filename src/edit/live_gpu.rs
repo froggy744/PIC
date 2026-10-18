@@ -1874,7 +1874,7 @@ mod tests {
             let stride = VIEW as usize * scale as usize * 4;
             let mut sum = 0u64;
             for row in rgba.chunks_exact(stride) {
-                for x in 1..(VIEW as usize * scale) {
+                for x in 1..(VIEW as usize * scale as usize) {
                     let idx = x * 4;
                     for channel in 0..3 {
                         sum += (row[idx+channel] as i16 - row[idx-4+channel] as i16)

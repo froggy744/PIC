@@ -880,6 +880,25 @@ impl LiveGpuCanvas {
         self.area.queue_render();
     }
 
+    /// Square filter-picker cover crop. Unlike the full editor's scroll
+    /// view, this small GLArea has no GTK scroller or adjustable margins.
+    /// It uses the same fragment shader and source geometry as live Edit.
+    pub fn set_thumbnail_cover(&self, width: i32, height: i32, tile_size: i32) {
+        let view = thumbnail_cover_view(width, height, tile_size);
+        self.area.set_margin_start(0);
+        self.area.set_margin_top(0);
+        self.area.set_size_request(tile_size, tile_size);
+        self.area.set_halign(gtk::Align::Fill);
+        self.area.set_valign(gtk::Align::Fill);
+        let mut state = self.state.borrow_mut();
+        if state.view != view {
+            state.view = view;
+            state.last_queued = Some(Instant::now());
+            drop(state);
+            self.area.queue_render();
+        }
+    }
+
     pub fn set_view(
         &self,
         scroll_x: f64,
@@ -974,6 +993,22 @@ impl LiveGpuCanvas {
     #[cfg(test)]
     fn take_readback(&self) -> Option<Vec<u8>> {
         self.state.borrow_mut().readback_pixels.take()
+    }
+}
+
+fn thumbnail_cover_view(width: i32, height: i32, tile_size: i32) -> GpuView {
+    let width = width.max(1) as f32;
+    let height = height.max(1) as f32;
+    let tile = tile_size.max(1) as f32;
+    let scale = (tile / width).max(tile / height);
+    GpuView {
+        width: tile,
+        height: tile,
+        scroll_x: ((width * scale - tile) * 0.5).max(0.0),
+        scroll_y: ((height * scale - tile) * 0.5).max(0.0),
+        pad_x: 0.0,
+        pad_y: 0.0,
+        scale,
     }
 }
 
@@ -2338,6 +2373,22 @@ mod tests {
         layer.size = super::super::model::TextLayerSpec::DEFAULT_SIZE;
         assert_ne!(key, text_layer_content_key(&layer, (4000, 3000)),
             "raster must use the current output photo dimensions");
+    }
+
+    #[test]
+    fn gpu_thumbnail_cover_stays_square_and_centers_photo() {
+        let landscape = thumbnail_cover_view(300, 200, 84);
+        assert_eq!(landscape.width, 84.0);
+        assert_eq!(landscape.height, 84.0);
+        assert!((landscape.scale - 0.42).abs() < 0.0001);
+        assert!((landscape.scroll_x - 21.0).abs() < 0.001);
+        assert_eq!(landscape.scroll_y, 0.0);
+        let portrait = thumbnail_cover_view(200, 300, 84);
+        assert!((portrait.scroll_y - 21.0).abs() < 0.001);
+        assert_eq!(portrait.scroll_x, 0.0);
+        let square = thumbnail_cover_view(168, 168, 84);
+        assert_eq!(square.scale, 0.5);
+        assert_eq!(square.scroll_x, 0.0);
     }
 
     #[test]

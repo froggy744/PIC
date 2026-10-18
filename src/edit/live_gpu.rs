@@ -2392,6 +2392,29 @@ mod tests {
         assert!(auto_delta <= 3,
             "full-source Auto Colour GPU/CPU mismatch: max delta {auto_delta}");
         assert_eq!(renderer.uploaded_revision(), revision);
+        // Real source dimensions exercise the 256-bin GPU histogram and its
+        // dependency on neutral-colour gains. Both automatic tools must be
+        // composable without another source upload or a stale cached histogram.
+        let mut both = automatic.clone();
+        both.auto_contrast = true;
+        assert!(gpu_tone_supported(&both));
+        let both_gpu = read_frame(&both);
+        let both_cpu = super::super::render::apply_tone(image.clone(), &both);
+        let both_cpu = image::imageops::crop_imm(
+            &both_cpu, x, y, VIEW as u32, VIEW as u32,
+        ).to_image();
+        let both_cpu = if scale == 1 { both_cpu } else {
+            image::imageops::resize(&both_cpu,
+                VIEW as u32 * scale, VIEW as u32 * scale,
+                image::imageops::FilterType::Nearest)
+        }.into_raw();
+        let combined_delta = both_gpu.iter().zip(&both_cpu)
+            .map(|(a, b)| (*a as i16 - *b as i16).abs())
+            .max().unwrap_or_default();
+        assert!(combined_delta <= 3,
+            "full-size combined Auto Colour/Contrast parity: delta {combined_delta}");
+        assert_eq!(renderer.uploaded_revision(), revision);
+        eprintln!("PIC_EDIT_GPU full_source_combined_auto max_channel_delta={combined_delta}");
         let reset_again = read_frame(&reference);
         assert_eq!(neutral, reset_again);
         eprintln!("PIC_EDIT_GPU full_source_autocolor max_channel_delta={auto_delta}");

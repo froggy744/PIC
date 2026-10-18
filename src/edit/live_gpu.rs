@@ -2587,6 +2587,37 @@ mod tests {
         eprintln!("PIC_EDIT_GPU cropped_filter_auto_parity max_channel_delta={max_delta} status=unverified");
         renderer.set_recipe(&neutral);
         }
+        // The real GTK editor maintains a GPU geometry object even for
+        // uncropped full-frame photos. Validate supported standalone/both
+        // automatic adjustments with that identity geometry and FBO path.
+        for (auto_color, auto_contrast) in [(true, false), (false, true), (true, true)] {
+            let mut recipe = EditRecipe::default();
+            recipe.auto_color = auto_color;
+            recipe.auto_contrast = auto_contrast;
+            assert!(gpu_tone_supported(&recipe));
+            renderer.set_untransformed_geometry_for_rotation(0, &recipe);
+            renderer.set_recipe(&recipe);
+            let actual = capture();
+            let expected = super::super::render::apply_tone(original.clone(), &recipe);
+            let scale = renderer.widget().scale_factor().max(1) as usize;
+            let row_bytes = WIDTH as usize * scale * 4;
+            let mut max_delta = 0u8;
+            for y in 0..HEIGHT as usize {
+                for x in 0..WIDTH as usize {
+                    let offset = y * scale * row_bytes + x * scale * 4;
+                    for channel in 0..4 {
+                        max_delta = max_delta.max(actual[offset+channel].abs_diff(
+                            expected.get_pixel(x as u32, y as u32)[channel],
+                        ));
+                    }
+                }
+            }
+            assert!(max_delta <= 2,
+                "GPU identity geometry auto_color={auto_color} auto_contrast={auto_contrast}: delta={max_delta}");
+            assert_eq!(renderer.uploaded_revision(), revision);
+            eprintln!("PIC_EDIT_GPU identity_auto_parity color={auto_color} contrast={auto_contrast} max_delta={max_delta}");
+        }
+        renderer.set_recipe(&neutral);
         renderer.clear_untransformed_geometry();
         let reset = capture();
         assert_eq!(reset, baseline,

@@ -475,7 +475,7 @@ impl LiveGpuCanvas {
                         }
                     }
                     if matches!(tone.filter, FilterPreset::PencilSketch | FilterPreset::DreamGlow) {
-                        if let Some((source_width, source_height, _)) = source.as_ref() {
+                        if source.is_some() {
                             // Blur the 100%-strength base look BEFORE Filter Amount blending.
                             // Dream Glow must not recursively sample its own incomplete blur.
                             uniform_1f(objects.program, "uDreamGlow", 0.0);
@@ -498,7 +498,7 @@ impl LiveGpuCanvas {
                         }
                     }
                     if tone.clarity.abs() > 0.001 {
-                        if let Some((source_width, source_height, _)) = source.as_ref() {
+                        if source.is_some() {
                             draw_clarity_luminance(
                                 objects,
                                 output_width,

@@ -202,7 +202,33 @@ pub fn render_job(job: &ExportJob) -> Result<RgbaImage> {
     )
 }
 
+/// Stage an export in the destination directory. A completed output
+/// appears atomically; failed encodes never leave a broken .jpg/.png/.webp.
+fn staging_export_path(destination: &Path) -> Result<PathBuf> {
+    use std::fs::OpenOptions;
+    let parent = destination.parent().unwrap_or_else(|| Path::new("."));
+    let name = destination.file_name()
+        .map(|value| value.to_string_lossy())
+        .unwrap_or_else(|| std::borrow::Cow::Borrowed("photo"));
+    for counter in 0u32..1024 {
+        let candidate = parent.join(format!(
+            ".{name}.pic-export-{}-{counter}.tmp", std::process::id()
+        ));
+        match OpenOptions::new().write(true).create_new(true).open(&candidate) {
+            Ok(file) => {
+                drop(file);
+                return Ok(candidate);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    anyhow::bail!("could not create temporary export file for {}", destination.display())
+}
+
 /// Render and save one job to an exact destination path (caller resolves it).
+/// A full output is written beside the final path first and renamed only
+/// after encoding succeeds, preserving existing files on a failed export.
 pub fn export_job_to<F>(
     job: &ExportJob,
     destination: &Path,
@@ -214,8 +240,24 @@ pub fn export_job_to<F>(
 where
     F: Fn(&ExportJob) -> Result<RgbaImage>,
 {
+    use anyhow::Context;
+    if destination.exists() {
+        anyhow::bail!("refusing to overwrite existing export: {}", destination.display());
+    }
     let image = fit_max_edge(render(job)?, max_edge);
-    super::render::save_export(&image, destination, format, quality)
+    let staging = staging_export_path(destination)?;
+    let result = (|| {
+        super::render::save_export(&image, &staging, format, quality)?;
+        // The result is only made visible at its final filename once complete.
+        std::fs::rename(&staging, destination).with_context(|| format!(
+            "could not finish export {}", destination.display()
+        ))?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(staging);
+    }
+    result
 }
 
 /// Export every job into `folder`, skipping missing sources, continuing after
@@ -432,6 +474,50 @@ mod tests {
         let image = RgbaImage::new(640, 480);
         let fitted = fit_max_edge(image, 0);
         assert_eq!((fitted.width(), fitted.height()), (640, 480));
+    }
+
+    #[test]
+    fn export_never_overwrites_an_existing_file() {
+        let folder = std::env::temp_dir().join(format!(
+            "pic-export-nooverwrite-{}", std::process::id(),
+        ));
+        std::fs::create_dir_all(&folder).unwrap();
+        let destination = folder.join("export.png");
+        std::fs::write(&destination, b"keep this original").unwrap();
+        let job = ExportJob::from_record(
+            "unused".into(), 0, "".into(), 1, 1, "export.png",
+        );
+        let result = export_job_to(&job, &destination, 0, 92,
+            ExportFormat::Png, &|_| Ok(RgbaImage::new(1, 1)));
+        assert!(result.is_err());
+        assert_eq!(std::fs::read(&destination).unwrap(), b"keep this original");
+        std::fs::remove_dir_all(folder).ok();
+    }
+
+    #[test]
+    fn staged_export_finishes_with_no_temporary_files() {
+        let folder = std::env::temp_dir().join(format!(
+            "pic-export-atomic-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+        ));
+        std::fs::create_dir_all(&folder).unwrap();
+        let destination = folder.join("export.png");
+        let job = ExportJob::from_record(
+            "unused".into(), 0, "".into(), 6, 4, "export.png",
+        );
+        let original = RgbaImage::from_fn(6, 4, |x, y| image::Rgba([
+            (x * 37) as u8, (y * 43) as u8, 120, (x * 31 + y * 17) as u8,
+        ]));
+        export_job_to(&job, &destination, 0, 92, ExportFormat::Png,
+            &|_| Ok(original.clone())).unwrap();
+        assert_eq!(image::open(&destination).unwrap().to_rgba8(), original);
+        let paths = std::fs::read_dir(&folder).unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(paths, vec!["export.png"]);
+        std::fs::remove_dir_all(folder).ok();
     }
 
     #[test]

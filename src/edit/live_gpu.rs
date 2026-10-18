@@ -370,25 +370,28 @@ impl LiveGpuCanvas {
                         _ => 0.0,
                     };
                     uniform_1f(objects.program, "uNamedGrain", film_grain);
-                    if tone.auto_contrast {
-                        if let Some((width, height, _)) = source.as_ref() {
-                            draw_auto_contrast_stats(
-                                objects, *width, *height, source_revision,
-                                view_width * device_scale, view_height * device_scale,
-                            );
-                            gl::ActiveTexture(gl::TEXTURE4);
-                            gl::BindTexture(gl::TEXTURE_2D, objects.auto_contrast_params);
-                            uniform_1i(objects.program, "uAutoContrastParams", 4);
-                            gl::ActiveTexture(gl::TEXTURE0);
-                            gl::BindTexture(gl::TEXTURE_2D, objects.texture);
-                        }
-                    }
+                    // CPU recipe order is Auto Colour first, Auto Contrast second.
+                    // The histogram must sample the colour-corrected values.
                     if tone.auto_color {
                         if let Some((width, height, _)) = source.as_ref() {
                             draw_auto_color_stats(objects, *width, *height, source_revision, view_width * device_scale, view_height * device_scale);
                             gl::ActiveTexture(gl::TEXTURE3);
                             gl::BindTexture(gl::TEXTURE_2D, objects.auto_color_stats);
                             uniform_1i(objects.program, "uAutoColorStats", 3);
+                            gl::ActiveTexture(gl::TEXTURE0);
+                            gl::BindTexture(gl::TEXTURE_2D, objects.texture);
+                        }
+                    }
+                    if tone.auto_contrast {
+                        if let Some((width, height, _)) = source.as_ref() {
+                            draw_auto_contrast_stats(
+                                objects, *width, *height, source_revision,
+                                tone.auto_color,
+                                view_width * device_scale, view_height * device_scale,
+                            );
+                            gl::ActiveTexture(gl::TEXTURE4);
+                            gl::BindTexture(gl::TEXTURE_2D, objects.auto_contrast_params);
+                            uniform_1i(objects.program, "uAutoContrastParams", 4);
                             gl::ActiveTexture(gl::TEXTURE0);
                             gl::BindTexture(gl::TEXTURE_2D, objects.texture);
                         }
@@ -676,8 +679,7 @@ impl LiveGpuCanvas {
 }
 
 pub fn gpu_tone_supported(recipe: &EditRecipe) -> bool {
-    (recipe.filter == FilterPreset::None || !(recipe.auto_color || recipe.auto_contrast))
-        && !(recipe.auto_color && recipe.auto_contrast)
+    recipe.filter == FilterPreset::None || !(recipe.auto_color || recipe.auto_contrast)
 }
 
 pub fn gpu_base_recipe(recipe: &EditRecipe) -> EditRecipe {
@@ -1068,11 +1070,22 @@ void main() { color = vWeighted; }
 uniform sampler2D uSource;
 uniform int uWidth;
 uniform int uSampleStep;
+uniform int uAutoColor;
+uniform sampler2D uAutoColorStats;
 void main() {
     int sampleIndex = gl_VertexID * uSampleStep;
     ivec2 at = ivec2(sampleIndex % uWidth, sampleIndex / uWidth);
     vec4 px = texelFetch(uSource, at, 0);
-    float luminance = dot(px.rgb, vec3(0.2126, 0.7152, 0.0722));
+    if (uAutoColor != 0 && px.a >= 16.0/255.0) {
+        vec4 sums = texelFetch(uAutoColorStats, ivec2(0,0), 0);
+        if (sums.a >= 0.5) {
+            vec3 means = sums.rgb / sums.a;
+            float neutral = dot(means, vec3(0.2126,0.7152,0.0722));
+            vec3 gains = vec3(1.0) + (clamp(vec3(neutral) / max(means,vec3(1.0)),vec3(0.82),vec3(1.22))-vec3(1.0))*0.65;
+            px.rgb = round(clamp(px.rgb*gains,0.0,1.0)*255.0)/255.0;
+        }
+    }
+    float luminance = dot(px.rgb, vec3(0.2126, 0.7152));
     float bucket = floor(luminance * 255.0 + 0.5);
     float pos = ((bucket + 0.5) / 256.0) * 2.0 - 1.0;
     gl_Position = vec4(pos, 0.0, 0.0, 1.0);
@@ -1238,10 +1251,14 @@ unsafe fn draw_auto_contrast_stats(
     width: i32,
     height: i32,
     revision: u64,
+    auto_color: bool,
     viewport_width: i32,
     viewport_height: i32,
 ) {
-    if objects.auto_contrast_revision == revision { return; }
+    // Two cached percentile sets for the same source: uncorrected and after
+    // Auto Colour. Switching either toggle must invalidate the histogram.
+    let signature = revision.wrapping_mul(2).wrapping_add(u64::from(auto_color));
+    if objects.auto_contrast_revision == signature { return; }
     let mut prev_fbo = 0;
     let mut prev_blend_src_rgb = 0;
     let mut prev_blend_dst_rgb = 0;
@@ -1292,6 +1309,14 @@ unsafe fn draw_auto_contrast_stats(
     gl::ActiveTexture(gl::TEXTURE0);
     gl::BindTexture(gl::TEXTURE_2D, objects.texture);
     uniform_1i(objects.histogram_program, "uSource", 0);
+    uniform_1i(objects.histogram_program, "uAutoColor", if auto_color { 1 } else { 0 });
+    if auto_color {
+        gl::ActiveTexture(gl::TEXTURE3);
+        gl::BindTexture(gl::TEXTURE_2D, objects.auto_color_stats);
+        uniform_1i(objects.histogram_program, "uAutoColorStats", 3);
+        gl::ActiveTexture(gl::TEXTURE0);
+        gl::BindTexture(gl::TEXTURE_2D, objects.texture);
+    }
     uniform_1i(objects.histogram_program, "uWidth", width);
     let pixel_count = i64::from(width) * i64::from(height);
     let stride = (pixel_count / 250_000).max(1);
@@ -1321,7 +1346,7 @@ unsafe fn draw_auto_contrast_stats(
     gl::UseProgram(objects.program);
     gl::ActiveTexture(gl::TEXTURE0);
     gl::BindTexture(gl::TEXTURE_2D, objects.texture);
-    objects.auto_contrast_revision = revision;
+    objects.auto_contrast_revision = signature;
 }
 
 /// GPU reduction into a one-pixel RGBA32F sum. Matches CPU flattened
@@ -1716,6 +1741,8 @@ mod tests {
         auto_contrast.auto_contrast = true;
         assert!(gpu_tone_supported(&auto_contrast));
         auto_contrast.auto_color = true;
+        assert!(gpu_tone_supported(&auto_contrast));
+        auto_contrast.filter = FilterPreset::Clarendon;
         assert!(!gpu_tone_supported(&auto_contrast));
         for effect_filter in [FilterPreset::PencilSketch, FilterPreset::DreamGlow] {
             let mut preset = EditRecipe::default();
@@ -2210,6 +2237,21 @@ mod tests {
         renderer.set_view(0.0, 0.0, WIDTH as f64, HEIGHT as f64, 1.0, 0.0, 0.0);
         renderer.set_recipe(&automatic);
         check_frame(&automatic, &gradient);
+        renderer.set_recipe(&EditRecipe::default());
+        check_frame(&EditRecipe::default(), &gradient);
+        // CPU applies Auto Colour before computing contrast percentile bounds.
+        // Verify the actual combination, then switch off Auto Colour without
+        // reloading the source, to exercise the two histogram cache keys.
+        let mut combined = EditRecipe::default();
+        combined.auto_color = true;
+        combined.auto_contrast = true;
+        assert!(gpu_tone_supported(&combined));
+        renderer.set_recipe(&combined);
+        check_frame(&combined, &gradient);
+        renderer.set_recipe(&automatic);
+        check_frame(&automatic, &gradient);
+        renderer.set_recipe(&combined);
+        check_frame(&combined, &gradient);
         renderer.set_recipe(&EditRecipe::default());
         check_frame(&EditRecipe::default(), &gradient);
         window.close();

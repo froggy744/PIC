@@ -52,3 +52,9 @@ jobs:
             LIBGL_ALWAYS_SOFTWARE=1 \
             cargo test --locked gtk_gl_area_matches_cpu_reference_at_native_pixel_size -- \
             --ignored --test-threads=1 --nocapture
+      - name: GPU full-resolution sharpness, tiny exposure and reset
+        run: |
+          xvfb-run -a env GDK_BACKEND=x11 GSK_RENDERER=gl \
+            LIBGL_ALWAYS_SOFTWARE=1 \
+            cargo test --locked gtk_gl_area_full_resolution_sharpness_regression -- \
+            --ignored --test-threads=1 --nocapture

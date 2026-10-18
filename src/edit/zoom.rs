@@ -132,16 +132,16 @@ fn one_to_one_scroll_target(
     }
 }
 
-/// The display canvas has a stable native size while draft textures use
-/// fewer pixels. A quick effect render must not resize the 1:1 canvas to
-/// the smaller texture's intrinsic dimensions.
+/// Draft textures use fewer pixels but cover the existing image canvas.
+/// Keeping the canvas size stable prevents Fit and 1:1 layouts from jumping
+/// while the user drags a control; the full-resolution settle render can then
+/// update its dimensions if geometry changed.
 fn preview_display_dimensions(
     old_dimensions: (i32, i32),
     decoded_dimensions: (i32, i32),
-    native: bool,
     native_draft: bool,
 ) -> (i32, i32) {
-    if native && native_draft {
+    if native_draft {
         old_dimensions
     } else {
         decoded_dimensions
@@ -166,14 +166,21 @@ mod native_preview_geometry_tests {
     fn reduced_quality_filter_draft_keeps_full_size_canvas() {
         let native = (4000, 3000);
         let draft = (1600, 1200);
-        assert_eq!(preview_display_dimensions(native, draft, true, true), native);
+        assert_eq!(preview_display_dimensions(native, draft, true), native);
         assert!(!native_preview_needs_reanchor(native, native, false));
+    }
+
+    #[test]
+    fn reduced_quality_filter_draft_keeps_fit_canvas_size() {
+        let canvas = (4000, 3000);
+        let draft = (1600, 1200);
+        assert_eq!(preview_display_dimensions(canvas, draft, true), canvas);
     }
 
     #[test]
     fn native_refinement_does_not_recenter_unchanged_image() {
         let native = (4000, 3000);
-        assert_eq!(preview_display_dimensions(native, native, true, false), native);
+        assert_eq!(preview_display_dimensions(native, native, false), native);
         assert!(!native_preview_needs_reanchor(native, native, false));
     }
 
@@ -182,7 +189,7 @@ mod native_preview_geometry_tests {
         assert!(native_preview_needs_reanchor((1800, 1400), (4000, 3000), true));
         assert!(native_preview_needs_reanchor((4000, 3000), (3600, 2800), false));
         assert_eq!(
-            preview_display_dimensions((1800, 1400), (4000, 3000), true, false),
+            preview_display_dimensions((1800, 1400), (4000, 3000), false),
             (4000, 3000)
         );
     }

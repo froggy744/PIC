@@ -1,6 +1,7 @@
 mod editor;
 pub mod export_batch;
 pub mod filters;
+pub mod live_gpu;
 pub mod model;
 pub mod overlays;
 pub mod render;

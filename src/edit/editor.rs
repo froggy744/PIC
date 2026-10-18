@@ -9,6 +9,9 @@ use libadwaita as adw;
 use rusqlite::Connection;
 
 use super::filters::FilterPreset;
+use super::live_gpu::{
+    EditRendererMode, LiveGpuCanvas, gpu_base_recipe, gpu_tone_supported,
+};
 use super::model::{
     CropRect, EditRecipe, EditSession, OverlayAnchor, OverlaySpec, TextAlign, TextLayerSpec,
 };
@@ -370,12 +373,27 @@ pub fn build(
     picture.set_hexpand(true);
     picture.set_vexpand(true);
 
+    let canvas_layer = gtk::Overlay::new();
+    canvas_layer.set_child(Some(&picture));
+    let renderer_mode = EditRendererMode::from_environment();
+    let gpu_canvas = renderer_mode
+        .should_attempt_gpu()
+        .then(LiveGpuCanvas::new);
+    if let Some(gpu_canvas) = &gpu_canvas {
+        canvas_layer.add_overlay(&gpu_canvas.widget());
+        if std::env::var_os("PICASA_TRACE").is_some() {
+            eprintln!("PIC_EDIT_RENDERER renderer=gpu requested=true");
+        }
+    } else if std::env::var_os("PICASA_TRACE").is_some() {
+        eprintln!("PIC_EDIT_RENDERER renderer=cpu mode={renderer_mode:?}");
+    }
+
     let picture_scroll = gtk::ScrolledWindow::new();
     picture_scroll.set_hexpand(true);
     picture_scroll.set_vexpand(true);
     picture_scroll.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Automatic);
     picture_scroll.add_css_class("edit-canvas-stage");
-    picture_scroll.set_child(Some(&picture));
+    picture_scroll.set_child(Some(&canvas_layer));
     preview_area.set_child(Some(&picture_scroll));
 
     let crop_overlay = gtk::DrawingArea::new();
@@ -452,6 +470,57 @@ pub fn build(
     let preview_base_cache: Arc<Mutex<Vec<PreviewBase>>> = Arc::new(Mutex::new(Vec::new()));
     // Edit rendering keeps source resolution at every zoom level.
     let preview_worker = spawn_preview_worker(preview_base_cache.clone());
+    let gpu_failed = Rc::new(Cell::new(false));
+    let sync_gpu_view: Rc<dyn Fn()> = if let Some(gpu_canvas) = gpu_canvas.clone() {
+        let gpu_canvas = gpu_canvas.clone();
+        let picture_scroll = picture_scroll.clone();
+        let preview_dimensions = preview_dimensions.clone();
+        let native_one_to_one = native_one_to_one.clone();
+        let canvas_zoom = canvas_zoom.clone();
+        Rc::new(move || {
+            let hadj = picture_scroll.hadjustment();
+            let vadj = picture_scroll.vadjustment();
+            let width = if hadj.page_size() > 0.0 {
+                hadj.page_size()
+            } else {
+                picture_scroll.width().max(1) as f64
+            };
+            let height = if vadj.page_size() > 0.0 {
+                vadj.page_size()
+            } else {
+                picture_scroll.height().max(1) as f64
+            };
+            let dimensions = preview_dimensions.get();
+            let fit_scale = fit_zoom_for_canvas(&picture_scroll, dimensions);
+            let scale = if native_one_to_one.get() {
+                1.0
+            } else if canvas_zoom.get() > 0.0 {
+                fit_scale * canvas_zoom.get()
+            } else {
+                fit_scale
+            };
+            let pad_x = ((width - dimensions.0 as f64 * scale) * 0.5).max(0.0);
+            let pad_y = ((height - dimensions.1 as f64 * scale) * 0.5).max(0.0);
+            gpu_canvas.set_view(
+                hadj.value(),
+                vadj.value(),
+                width,
+                height,
+                scale,
+                pad_x,
+                pad_y,
+            );
+        })
+    } else {
+        Rc::new(|| {})
+    };
+    if gpu_canvas.is_some() {
+        let sync_gpu_view = sync_gpu_view.clone();
+        picture_scroll.add_tick_callback(move |_, _| {
+            sync_gpu_view();
+            glib::ControlFlow::Continue
+        });
+    }
 
     // Drag-to-pan for the editing canvas. Keep this controller on the
     // stationary ScrolledWindow so pointer coordinates do not move with the
@@ -744,6 +813,9 @@ pub fn build(
         let overlay_layer = overlay_layer.clone();
         let preview_debounce = preview_debounce.clone();
         let preview_worker = preview_worker.clone();
+        let gpu_canvas = gpu_canvas.clone();
+        let gpu_failed = gpu_failed.clone();
+        let sync_gpu_view = sync_gpu_view.clone();
         Rc::new(move || {
             // Throttle, not debounce: the old code reset the timer on every
             // slider tick, so a continuous drag skipped every intermediate
@@ -769,6 +841,9 @@ pub fn build(
             let overlay_layer = overlay_layer.clone();
             let preview_debounce_for_fire = preview_debounce.clone();
             let preview_worker = preview_worker.clone();
+            let gpu_canvas = gpu_canvas.clone();
+            let gpu_failed = gpu_failed.clone();
+            let sync_gpu_view = sync_gpu_view.clone();
             let active_rotation = active_rotation_for_queue.clone();
             let source = glib::timeout_add_local_once(
                 Duration::from_millis(PREVIEW_THROTTLE_MS),
@@ -777,25 +852,44 @@ pub fn build(
                     let current_generation = generation.get().wrapping_add(1);
                     generation.set(current_generation);
                     let recipe = session.borrow().recipe.clone();
+                    let gpu_recipe = recipe.clone();
                     let interactive = session.borrow().action_active();
                     let path = photo.path();
+                    let gpu_reference = path.clone();
                     let rotation = active_rotation.get();
                     let native = native_one_to_one.get();
-                    // Keep edit buffers at source resolution in both Fit and
-                    // 1:1 modes; the picture widget scales to the viewport.
-                    let (target_width, target_height) = preview_target_dimensions(
-                        photo.width(),
-                        photo.height(),
-                        rotation,
-                    );
-                    let source_full = true;
+                    let gpu_base_requested = gpu_canvas.is_some()
+                        && !gpu_failed.get()
+                        && gpu_tone_supported(&recipe);
+                    // CPU-only effects (sharpen, clarity, filters, etc.) need
+                    // a bounded draft during active slider drags. The release
+                    // handler queues the source-resolution settle render.
+                    let interactive_draft = interactive && !gpu_base_requested;
+                    let render_recipe = if gpu_base_requested {
+                        gpu_base_recipe(&recipe)
+                    } else {
+                        recipe.clone()
+                    };
+                    let (canvas_width, canvas_height) =
+                        preview_target_dimensions(photo.width(), photo.height(), rotation);
+                    let (target_width, target_height) = if interactive_draft {
+                        interactive_preview_target_dimensions(
+                            photo.width(),
+                            photo.height(),
+                            rotation,
+                        )
+                    } else {
+                        preview_target_dimensions(photo.width(), photo.height(), rotation)
+                    };
+                    let source_full = !interactive_draft;
 
                     if std::env::var_os("PICASA_TRACE").is_some() {
                         eprintln!(
-                            "PIC_EDIT preview_request generation={} native={} interactive={} source_full={} target={}x{} recipe_default={} uri={}",
+                            "PIC_EDIT preview_request generation={} native={} interactive={} draft={} source_full={} target={}x{} recipe_default={} uri={}",
                             current_generation,
                             native,
                             interactive,
+                            interactive_draft,
                             source_full,
                             target_width,
                             target_height,
@@ -819,7 +913,7 @@ pub fn build(
                             rotation,
                             target_width,
                             target_height,
-                            recipe,
+                            recipe: render_recipe,
                             result_sender,
                         })
                         .is_err()
@@ -829,6 +923,8 @@ pub fn build(
                         status.set_text("Preview worker stopped");
                         return;
                     }
+                    let cpu_preview_started = std::time::Instant::now();
+                    let cpu_fallback = gpu_canvas.is_some() && !gpu_base_requested;
 
                     let photo = photo.clone();
                     let picture = picture.clone();
@@ -842,6 +938,15 @@ pub fn build(
                     let native_one_to_one = native_one_to_one.clone();
                     let crop_overlay = crop_overlay.clone();
                     let overlay_layer = overlay_layer.clone();
+                    let gpu_canvas = gpu_canvas.clone();
+                    let sync_gpu_view = sync_gpu_view.clone();
+                    let gpu_recipe = gpu_recipe.clone();
+                    let gpu_reference = gpu_reference.clone();
+                    let gpu_base_requested = gpu_base_requested;
+                    let canvas_width = canvas_width.min(i32::MAX as u32) as i32;
+                    let canvas_height = canvas_height.min(i32::MAX as u32) as i32;
+                    let cpu_fallback = cpu_fallback;
+                    let cpu_preview_started = cpu_preview_started;
                     glib::timeout_add_local(Duration::from_millis(25), move || {
                         match receiver.try_recv() {
                             Ok(result) => {
@@ -862,6 +967,16 @@ pub fn build(
                                         if result_generation != current_generation {
                                             return glib::ControlFlow::Break;
                                         }
+                                        if std::env::var_os("PICASA_TRACE").is_some()
+                                            && cpu_fallback
+                                        {
+                                            eprintln!(
+                                                "PIC_EDIT_RENDERER cpu_fallback_wall_ms={:.3} dimensions={}x{}",
+                                                cpu_preview_started.elapsed().as_secs_f64() * 1000.0,
+                                                width,
+                                                height,
+                                            );
+                                        }
                                         let bytes = glib::Bytes::from_owned(pixels);
                                         let texture = gtk::gdk::MemoryTexture::new(
                                             width as i32,
@@ -870,16 +985,48 @@ pub fn build(
                                             &bytes,
                                             width as usize * 4,
                                         );
+                                        if let Some(gpu_canvas) = &gpu_canvas {
+                                            if gpu_base_requested {
+                                                gpu_canvas.set_source(
+                                                    &gpu_reference,
+                                                    rotation,
+                                                    &gpu_recipe,
+                                                    width as i32,
+                                                    height as i32,
+                                                    bytes.clone(),
+                                                );
+                                                gpu_canvas.set_recipe(&gpu_recipe);
+                                                if std::env::var_os("PICASA_TRACE").is_some() {
+                                                    eprintln!(
+                                                        "PIC_EDIT_RENDERER renderer=gpu source_ready={}x{}", width, height
+                                                    );
+                                                }
+                                            } else {
+                                                gpu_canvas.hide();
+                                                if std::env::var_os("PICASA_TRACE").is_some() {
+                                                    eprintln!(
+                                                        "PIC_EDIT_RENDERER renderer=cpu_fallback reason=unsupported_recipe"
+                                                    );
+                                                }
+                                            }
+                                        }
                                         let old_dimensions = preview_dimensions.get();
+                                        let canvas_dimensions = if old_dimensions.0 > 1
+                                            && old_dimensions.1 > 1
+                                        {
+                                            old_dimensions
+                                        } else {
+                                            (canvas_width, canvas_height)
+                                        };
                                         // The displayed canvas follows the
                                         // source dimensions at every zoom.
                                         let display_dimensions = preview_display_dimensions(
-                                            old_dimensions,
+                                            canvas_dimensions,
                                             (width as i32, height as i32),
-                                            native,
                                             !source_full,
                                         );
                                         preview_dimensions.set(display_dimensions);
+                                        sync_gpu_view();
                                         if std::env::var_os("PICASA_TRACE").is_some() {
                                             eprintln!(
                                                 "PIC_EDIT preview_display generation={} adjustment_buffer={}x{} displayed={}x{} native={} source_full={} uri={}",
@@ -1020,9 +1167,43 @@ pub fn build(
         })
     };
 
-    // A low-resolution texture is never used for a native 1:1 canvas, so a
-    // completed adjustment has no separate settle/refinement handoff.
-    let queue_preview: Rc<dyn Fn()> = schedule_preview.clone();
+    let queue_preview: Rc<dyn Fn()> = {
+        let schedule_preview = schedule_preview.clone();
+        let session = session.clone();
+        let photo = photo.clone();
+        let active_rotation = active_rotation.clone();
+        let gpu_canvas = gpu_canvas.clone();
+        let gpu_failed = gpu_failed.clone();
+        let sync_gpu_view = sync_gpu_view.clone();
+        Rc::new(move || {
+            let recipe = session.borrow().recipe.clone();
+            if let Some(gpu_canvas) = &gpu_canvas {
+                if !gpu_failed.get() && gpu_tone_supported(&recipe) {
+                    if gpu_canvas.has_source_for(
+                        &photo.path(),
+                        active_rotation.get(),
+                        &recipe,
+                    ) {
+                        gpu_canvas.set_recipe(&recipe);
+                        sync_gpu_view();
+                        return;
+                    }
+                } else {
+                    gpu_canvas.hide();
+                }
+            }
+            schedule_preview();
+        })
+    };
+    if let Some(gpu_canvas) = &gpu_canvas {
+        let gpu_failed = gpu_failed.clone();
+        let schedule_preview = schedule_preview.clone();
+        gpu_canvas.set_failure_handler(move || {
+            gpu_failed.set(true);
+            let schedule_preview = schedule_preview.clone();
+            glib::idle_add_local_once(move || schedule_preview());
+        });
+    }
 
     let update_history_buttons =
         history_button_updater(session.clone(), undo.clone(), redo.clone());

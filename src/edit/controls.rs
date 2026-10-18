@@ -251,30 +251,37 @@ fn connect_scale(
     assign: impl Fn(&mut EditRecipe, f32) + 'static,
 ) {
     let dragging = Rc::new(Cell::new(false));
+    let action_start_recipe = Rc::new(RefCell::new(None::<EditRecipe>));
     let press = gtk::GestureClick::new();
     press.set_button(1);
     press.set_propagation_phase(gtk::PropagationPhase::Capture);
     {
         let session = session.clone();
         let dragging = dragging.clone();
+        let action_start_recipe = action_start_recipe.clone();
         press.connect_pressed(move |_, _, _, _| {
             dragging.set(true);
+            action_start_recipe.replace(Some(session.borrow().recipe.clone()));
             session.borrow_mut().begin_action();
         });
     }
     {
         let session = session.clone();
         let dragging = dragging.clone();
+        let action_start_recipe = action_start_recipe.clone();
         let update_history = update_history.clone();
         let queue_preview = queue_preview.clone();
         press.connect_released(move |_, _, _, _| {
             if dragging.replace(false) {
-                let before = session.borrow().recipe.clone();
+                let changed = action_start_recipe
+                    .borrow_mut()
+                    .take();
+                let changed = scale_action_changed(changed, &session.borrow().recipe);
                 session.borrow_mut().end_action();
                 update_history();
                 // The drag rendered draft frames; queue one full-resolution
-                // settle frame, but only if the value actually changed.
-                if session.borrow().recipe != before {
+                // settle frame when the recipe differs from its drag start.
+                if changed {
                     queue_preview();
                 }
             }
@@ -300,6 +307,26 @@ fn connect_scale(
         }
         queue_preview();
     });
+}
+
+fn scale_action_changed(start_recipe: Option<EditRecipe>, current_recipe: &EditRecipe) -> bool {
+    start_recipe.is_some_and(|start| start != *current_recipe)
+}
+
+#[cfg(test)]
+mod scale_action_tests {
+    use super::*;
+
+    #[test]
+    fn settle_render_is_requested_only_after_a_real_slider_change() {
+        let initial = EditRecipe::default();
+        assert!(!scale_action_changed(Some(initial.clone()), &initial));
+        assert!(!scale_action_changed(None, &initial));
+
+        let mut changed = initial.clone();
+        changed.exposure = -0.03;
+        assert!(scale_action_changed(Some(initial), &changed));
+    }
 }
 
 fn configure_scale_scroll(scale: &gtk::Scale, tools_scroll: &gtk::ScrolledWindow) {

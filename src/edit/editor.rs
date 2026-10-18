@@ -1228,6 +1228,7 @@ pub fn build(
         let picture = picture.clone();
         let picture_scroll = picture_scroll.clone();
         let preview_dimensions = preview_dimensions.clone();
+        let canvas_zoom = canvas_zoom.clone();
         let native_one_to_one = native_one_to_one.clone();
         let pending_one_to_one_anchor = pending_one_to_one_anchor.clone();
         let preview_debounce = preview_debounce.clone();

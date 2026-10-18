@@ -1999,8 +1999,10 @@ mod tests {
             let scale = renderer.widget().scale_factor().max(1) as usize;
             let stride = WIDTH as usize * scale * 4;
             let mut max_delta = 0u8;
-            for y in 0..expected.height() as usize {
-                for x in 0..expected.width() as usize {
+            // Quarter-turns can extend past the fixed 48x32 GLArea; compare
+            // the visible intersection. Exact full output size is checked above.
+            for y in 0..expected.height().min(HEIGHT) as usize {
+                for x in 0..expected.width().min(WIDTH) as usize {
                     let actual_offset = y * scale * stride + x * scale * 4;
                     let pixel = expected.get_pixel(x as u32, y as u32);
                     for channel in 0..4 {

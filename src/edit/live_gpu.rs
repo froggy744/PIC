@@ -71,6 +71,52 @@ struct GpuTone {
     auto_contrast: bool,
 }
 
+/// Geometry of a decoded, untransformed source texture. Match the integer
+/// rounding in render::rotate_autocrop and render::crop_normalized.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct GpuGeometry {
+    output_width: i32,
+    output_height: i32,
+    straight_width: f32,
+    straight_height: f32,
+    crop_x: f32,
+    crop_y: f32,
+    cos_angle: f32,
+    sin_angle: f32,
+}
+impl GpuGeometry {
+    fn for_source(width: i32, height: i32, recipe: &EditRecipe) -> Self {
+        let angle = if recipe.straighten.abs() < 0.01 {
+            0.0
+        } else {
+            recipe.straighten.to_radians()
+        };
+        let (straight_width, straight_height) = if angle == 0.0 || width < 2 || height < 2 {
+            (width as f32, height as f32)
+        } else {
+            let (w, h) = super::render::largest_rotated_rect(width as f32, height as f32, angle);
+            (w.floor().max(1.0), h.floor().max(1.0))
+        };
+        let c = recipe.crop.normalized();
+        let w = straight_width as i32;
+        let h = straight_height as i32;
+        let x = ((c.left * straight_width).round() as i32).clamp(0, w - 1);
+        let y = ((c.top * straight_height).round() as i32).clamp(0, h - 1);
+        let right = (c.right * straight_width).round() as i32;
+        let bottom = (c.bottom * straight_height).round() as i32;
+        Self {
+            output_width: (right - x).clamp(1, w - x),
+            output_height: (bottom - y).clamp(1, h - y),
+            straight_width,
+            straight_height,
+            crop_x: x as f32,
+            crop_y: y as f32,
+            cos_angle: angle.cos(),
+            sin_angle: angle.sin(),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 struct GpuView {
     width: f32,
@@ -117,6 +163,7 @@ struct GpuState {
     source: Option<(i32, i32, glib::Bytes)>,
     source_revision: u64,
     tone: GpuTone,
+    geometry: Option<GpuGeometry>,
     view: GpuView,
     objects: Option<GlObjects>,
     rendered_frames: u64,
@@ -157,6 +204,7 @@ impl LiveGpuCanvas {
             source: None,
             source_revision: 0,
             tone: GpuTone::default(),
+            geometry: None,
             view: GpuView::default(),
             objects: None,
             rendered_frames: 0,
@@ -264,6 +312,7 @@ impl LiveGpuCanvas {
                     .map(|(width, height, bytes)| (*width, *height, bytes.clone()));
                 let source_revision = state.source_revision;
                 let tone = state.tone;
+                let geometry = state.geometry;
                 let view = state.view;
                 let objects = state.objects.as_mut().expect("GL initialized");
                 let mut upload_trace = None;
@@ -318,6 +367,17 @@ impl LiveGpuCanvas {
                     gl::ActiveTexture(gl::TEXTURE0);
                     gl::BindTexture(gl::TEXTURE_2D, objects.texture);
                     uniform_1i(objects.program, "uSource", 0);
+                    let source_width = source.as_ref().map_or(1, |s| s.0);
+                    let source_height = source.as_ref().map_or(1, |s| s.1);
+                    let output_width = geometry.map_or(source_width, |g| g.output_width);
+                    let output_height = geometry.map_or(source_height, |g| g.output_height);
+                    uniform_1i(objects.program, "uGpuGeometryOn", if geometry.is_some() { 1 } else { 0 });
+                    uniform_2f(objects.program, "uOutputSize", output_width as f32, output_height as f32);
+                    if let Some(geo) = geometry {
+                        uniform_2f(objects.program, "uRotatedSize", geo.straight_width, geo.straight_height);
+                        uniform_2f(objects.program, "uCropOffset", geo.crop_x, geo.crop_y);
+                        uniform_2f(objects.program, "uAngleCosSin", geo.cos_angle, geo.sin_angle);
+                    }
                     uniform_2f(
                         objects.program,
                         "uSourceSize",
@@ -543,10 +603,37 @@ impl LiveGpuCanvas {
             straighten: recipe.straighten,
         });
         state.source = Some((width, height, pixels));
+        // Existing editor sources are CPU-transformed; do not transform twice.
+        state.geometry = None;
         state.source_revision = state.source_revision.wrapping_add(1);
         state.last_queued = Some(Instant::now());
         self.area.set_visible(true);
         self.area.queue_render();
+    }
+
+    /// Source pixels are RAW decoded source data, not a CPU cropped image.
+    /// Return the exact viewport dimensions needed by the scroll/layout layer.
+    /// Updating geometry never reuploads the unchanged source texture.
+    pub fn set_untransformed_geometry(&self, recipe: &EditRecipe) -> Option<(i32, i32)> {
+        let mut state = self.state.borrow_mut();
+        let &(width, height, _) = state.source.as_ref()?;
+        let geo = GpuGeometry::for_source(width, height, recipe);
+        if state.geometry != Some(geo) {
+            state.geometry = Some(geo);
+            state.last_queued = Some(Instant::now());
+            drop(state);
+            self.area.queue_render();
+        }
+        Some((geo.output_width, geo.output_height))
+    }
+
+    pub fn clear_untransformed_geometry(&self) {
+        let mut state = self.state.borrow_mut();
+        if state.geometry.take().is_some() {
+            state.last_queued = Some(Instant::now());
+            drop(state);
+            self.area.queue_render();
+        }
     }
 
     pub fn set_recipe(&self, recipe: &EditRecipe) {
@@ -1753,6 +1840,31 @@ mod tests {
             let mut preset = EditRecipe::default();
             preset.filter = supported_filter;
             assert!(gpu_tone_supported(&preset));
+        }
+    }
+
+    #[test]
+    fn gpu_straighten_crop_dimensions_match_cpu() {
+        let image = image::RgbaImage::from_fn(101, 67, |x, y| {
+            image::Rgba([x as u8, y as u8, (x + y) as u8, 255])
+        });
+        for angle in [0.0, 1.5, -4.5, 8.7] {
+            for crop in [
+                CropRect::default(),
+                CropRect { left: 0.13, top: 0.2, right: 0.87, bottom: 0.92 },
+                CropRect { left: 0.0, top: 0.0, right: 0.5, bottom: 0.5 },
+            ] {
+                let recipe = EditRecipe {
+                    straighten: angle, crop, ..EditRecipe::default()
+                };
+                let cpu = super::super::render::apply_geometry(image.clone(), &recipe);
+                let gpu = GpuGeometry::for_source(101, 67, &recipe);
+                assert_eq!(
+                    (gpu.output_width, gpu.output_height),
+                    (cpu.width() as i32, cpu.height() as i32),
+                    "angle={angle}, crop={crop:?}",
+                );
+            }
         }
     }
 

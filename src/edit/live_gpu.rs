@@ -512,32 +512,6 @@ impl LiveGpuCanvas {
                         _ => 0.0,
                     };
                     uniform_1f(objects.program, "uNamedGrain", film_grain);
-                    // CPU recipe order is Auto Colour first, Auto Contrast second.
-                    // The histogram must sample the colour-corrected values.
-                    if tone.auto_color {
-                        if let Some((width, height, _)) = source.as_ref() {
-                            draw_auto_color_stats(objects, *width, *height, source_revision, view_width * device_scale, view_height * device_scale);
-                            gl::ActiveTexture(gl::TEXTURE3);
-                            gl::BindTexture(gl::TEXTURE_2D, objects.auto_color_stats);
-                            uniform_1i(objects.program, "uAutoColorStats", 3);
-                            gl::ActiveTexture(gl::TEXTURE0);
-                            gl::BindTexture(gl::TEXTURE_2D, objects.texture);
-                        }
-                    }
-                    if tone.auto_contrast {
-                        if let Some((width, height, _)) = source.as_ref() {
-                            draw_auto_contrast_stats(
-                                objects, *width, *height, source_revision,
-                                tone.auto_color,
-                                view_width * device_scale, view_height * device_scale,
-                            );
-                            gl::ActiveTexture(gl::TEXTURE4);
-                            gl::BindTexture(gl::TEXTURE_2D, objects.auto_contrast_params);
-                            uniform_1i(objects.program, "uAutoContrastParams", 4);
-                            gl::ActiveTexture(gl::TEXTURE0);
-                            gl::BindTexture(gl::TEXTURE_2D, objects.texture);
-                        }
-                    }
                     if matches!(tone.filter, FilterPreset::PencilSketch | FilterPreset::DreamGlow) {
                         if source.is_some() {
                             // Blur the 100%-strength base look BEFORE Filter Amount blending.
@@ -557,6 +531,49 @@ impl LiveGpuCanvas {
                             gl::ActiveTexture(gl::TEXTURE2);
                             gl::BindTexture(gl::TEXTURE_2D, objects.effect_luma_texture);
                             uniform_1i(objects.program, "uEffectBlur", 2);
+                            gl::ActiveTexture(gl::TEXTURE0);
+                            gl::BindTexture(gl::TEXTURE_2D, objects.texture);
+                        }
+                    }
+                    // Prepare the statistics image once per decoded source,
+                    // geometry and filter strength. The GPU histogram must
+                    // sample output BEFORE Auto Colour and Auto Contrast.
+                    let stats_texture = if (tone.auto_color || tone.auto_contrast) && source.is_some()
+                        && (tone.filter != FilterPreset::None || geometry.is_some())
+                    {
+                        draw_stats_source(
+                            objects, output_width, output_height, stats_revision,
+                            view_width * device_scale, view_height * device_scale,
+                        );
+                        objects.stats_source_texture
+                    } else {
+                        objects.texture
+                    };
+                    // CPU recipe order is Auto Colour first, Auto Contrast second.
+                    // The histogram must sample the colour-corrected values.
+                    if tone.auto_color {
+                        if let Some((width, height, _)) = source.as_ref() {
+                            let _ = (width, height);
+                            draw_auto_color_stats(objects, stats_texture, output_width, output_height,
+                                stats_revision, view_width * device_scale, view_height * device_scale);
+                            gl::ActiveTexture(gl::TEXTURE3);
+                            gl::BindTexture(gl::TEXTURE_2D, objects.auto_color_stats);
+                            uniform_1i(objects.program, "uAutoColorStats", 3);
+                            gl::ActiveTexture(gl::TEXTURE0);
+                            gl::BindTexture(gl::TEXTURE_2D, objects.texture);
+                        }
+                    }
+                    if tone.auto_contrast {
+                        if let Some((width, height, _)) = source.as_ref() {
+                            let _ = (width, height);
+                            draw_auto_contrast_stats(
+                                objects, stats_texture, output_width, output_height, stats_revision,
+                                tone.auto_color,
+                                view_width * device_scale, view_height * device_scale,
+                            );
+                            gl::ActiveTexture(gl::TEXTURE4);
+                            gl::BindTexture(gl::TEXTURE_2D, objects.auto_contrast_params);
+                            uniform_1i(objects.program, "uAutoContrastParams", 4);
                             gl::ActiveTexture(gl::TEXTURE0);
                             gl::BindTexture(gl::TEXTURE_2D, objects.texture);
                         }
@@ -1722,11 +1739,68 @@ unsafe fn render_gpu_overlays(
     gl::BindTexture(gl::TEXTURE_2D, objects.texture);
 }
 
+/// Filter and crop the decoded source in an offscreen GPU framebuffer,
+/// using exactly the same shader and effect textures as the onscreen view.
+/// Autocorrection histograms then sample this cache; no CPU photo render.
+unsafe fn draw_stats_source(
+    objects: &mut GlObjects,
+    width: i32,
+    height: i32,
+    revision: u64,
+    viewport_width: i32,
+    viewport_height: i32,
+) {
+    if objects.stats_source_revision == revision
+        && objects.stats_source_dimensions == (width, height)
+    {
+        return;
+    }
+    let mut previous_fbo = 0;
+    gl::GetIntegerv(gl::FRAMEBUFFER_BINDING, &mut previous_fbo);
+    if objects.stats_source_texture == 0 {
+        gl::GenTextures(1, &mut objects.stats_source_texture);
+        gl::GenFramebuffers(1, &mut objects.stats_source_fbo);
+    }
+    if objects.stats_source_dimensions != (width, height) {
+        gl::BindTexture(gl::TEXTURE_2D, objects.stats_source_texture);
+        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST as i32);
+        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as i32);
+        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as i32);
+        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as i32);
+        gl::TexImage2D(
+            gl::TEXTURE_2D, 0, gl::RGBA8 as i32, width, height, 0,
+            gl::RGBA, gl::UNSIGNED_BYTE, std::ptr::null(),
+        );
+        gl::BindFramebuffer(gl::FRAMEBUFFER, objects.stats_source_fbo);
+        gl::FramebufferTexture2D(gl::FRAMEBUFFER, gl::COLOR_ATTACHMENT0,
+            gl::TEXTURE_2D, objects.stats_source_texture, 0);
+        objects.stats_source_dimensions = (width, height);
+    }
+    gl::BindFramebuffer(gl::FRAMEBUFFER, objects.stats_source_fbo);
+    gl::Viewport(0, 0, width, height);
+    gl::UseProgram(objects.program);
+    gl::ActiveTexture(gl::TEXTURE0);
+    gl::BindTexture(gl::TEXTURE_2D, objects.texture);
+    uniform_1i(objects.program, "uClarityPrepass", 3);
+    uniform_2f(objects.program, "uClarityPassSize", width as f32, height as f32);
+    gl::DrawArrays(gl::TRIANGLES, 0, 3);
+    gl::BindFramebuffer(gl::FRAMEBUFFER, previous_fbo as u32);
+    gl::Viewport(0, 0, viewport_width, viewport_height);
+    uniform_1i(objects.program, "uClarityPrepass", 0);
+    gl::ActiveTexture(gl::TEXTURE0);
+    gl::BindTexture(gl::TEXTURE_2D, objects.texture);
+    objects.stats_source_revision = revision;
+    if std::env::var_os("PICASA_TRACE").is_some() {
+        eprintln!("PIC_EDIT_GPU auto_stats_prepass dimensions={width}x{height} revision={revision}");
+    }
+}
+
 /// Compute Auto Contrast on GPU from the exact flattened-sample luminance
 /// histogram used by render::apply_auto_contrast. Both histograms and robust
 /// percentile bounds remain in GPU textures, with no synchronous readback.
 unsafe fn draw_auto_contrast_stats(
     objects: &mut GlObjects,
+    stats_source: u32,
     width: i32,
     height: i32,
     revision: u64,
@@ -1786,7 +1860,7 @@ unsafe fn draw_auto_contrast_stats(
     gl::BlendFunc(gl::ONE, gl::ONE);
     gl::UseProgram(objects.histogram_program);
     gl::ActiveTexture(gl::TEXTURE0);
-    gl::BindTexture(gl::TEXTURE_2D, objects.texture);
+    gl::BindTexture(gl::TEXTURE_2D, stats_source);
     uniform_1i(objects.histogram_program, "uSource", 0);
     uniform_1i(objects.histogram_program, "uAutoColor", if auto_color { 1 } else { 0 });
     if auto_color {
@@ -1831,7 +1905,7 @@ unsafe fn draw_auto_contrast_stats(
 /// GPU reduction into a one-pixel RGBA32F sum. Matches CPU flattened
 /// neutral sampling without a source-sized CPU processing pass or GL readback.
 unsafe fn draw_auto_color_stats(
-    objects: &mut GlObjects, width: i32, height: i32,
+    objects: &mut GlObjects, stats_source: u32, width: i32, height: i32,
     revision: u64, viewport_width: i32, viewport_height: i32,
 ) {
     if objects.auto_color_revision == revision { return; }
@@ -1874,7 +1948,7 @@ unsafe fn draw_auto_color_stats(
     gl::BlendFunc(gl::ONE, gl::ONE);
     gl::UseProgram(objects.auto_color_program);
     gl::ActiveTexture(gl::TEXTURE0);
-    gl::BindTexture(gl::TEXTURE_2D, objects.texture);
+    gl::BindTexture(gl::TEXTURE_2D, stats_source);
     uniform_1i(objects.auto_color_program, "uSource", 0);
     uniform_1i(objects.auto_color_program, "uWidth", width);
     let pixels = i64::from(width) * i64::from(height);

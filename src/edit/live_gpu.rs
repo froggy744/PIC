@@ -318,6 +318,7 @@ impl LiveGpuCanvas {
                     uniform_1f(objects.program, "uFilterAmount", tone.filter_amount);
                     let params = filters::params(tone.filter);
                     uniform_1f(objects.program, "uNamedFilter", if tone.filter == FilterPreset::None { 0.0 } else { 1.0 });
+                    uniform_1f(objects.program, "uNewspaper", if tone.filter == FilterPreset::Newspaper { 1.0 } else { 0.0 });
                     uniform_1f(objects.program, "uFilterExposure", params.exposure);
                     uniform_1f(objects.program, "uFilterShadowLift", params.shadow_lift);
                     uniform_3f(objects.program, "uFilterTint", params.tint.0, params.tint.1, params.tint.2);
@@ -592,7 +593,7 @@ impl LiveGpuCanvas {
 }
 
 pub fn gpu_tone_supported(recipe: &EditRecipe) -> bool {
-    !matches!(recipe.filter, FilterPreset::PencilSketch | FilterPreset::DreamGlow | FilterPreset::Newspaper)
+    !matches!(recipe.filter, FilterPreset::PencilSketch | FilterPreset::DreamGlow)
         && !recipe.auto_color
         && !recipe.auto_contrast
 }
@@ -681,6 +682,7 @@ uniform float uBlackWhite;
 uniform float uSepia;
 uniform float uFilterAmount;
 uniform float uNamedFilter;
+uniform float uNewspaper;
 uniform float uFilterExposure;
 uniform float uFilterShadowLift;
 uniform vec3 uFilterTint;
@@ -756,6 +758,20 @@ float stableNoise(ivec2 coord) {
 }
 vec4 namedFilterPixel(vec4 px, ivec2 coord) {
     if (uNamedFilter < 0.5 || uFilterAmount <= 0.0) return px;
+    if (uNewspaper > 0.5) {
+        // Same ordered 4x4 Bayer halftone and source-coordinate phase as CPU.
+        if (px.a <= 0.0) return px;
+        const int bayer[16] = int[16](
+            0, 8, 2, 10, 12, 4, 14, 6,
+            3, 11, 1, 9, 15, 7, 13, 5);
+        int offset = (coord.y % 4) * 4 + (coord.x % 4);
+        float threshold = (float(bayer[offset]) + 0.5) / 16.0;
+        float ink = pow(clamp(1.0 - luma(px.rgb), 0.0, 1.0), 0.83);
+        vec3 halftone = ink >= threshold
+            ? vec3(36.0, 34.0, 31.0) / 255.0
+            : vec3(231.0, 220.0, 196.0) / 255.0;
+        return vec4(round(mix(px.rgb, halftone, clamp(uFilterAmount, 0.0, 1.0)) * 255.0) / 255.0, px.a);
+    }
     vec3 c = px.rgb * uFilterExposure;
     c += vec3(uFilterShadowLift) * (vec3(1.0) - c);
     c *= uFilterTint;
@@ -1160,7 +1176,7 @@ mod tests {
         assert!(gpu_tone_supported(&unsupported));
         unsupported.auto_color = true;
         assert!(!gpu_tone_supported(&unsupported));
-        for unsupported_filter in [FilterPreset::PencilSketch, FilterPreset::DreamGlow, FilterPreset::Newspaper] {
+        for unsupported_filter in [FilterPreset::PencilSketch, FilterPreset::DreamGlow] {
             let mut preset = EditRecipe::default();
             preset.filter = unsupported_filter;
             assert!(!gpu_tone_supported(&preset));
@@ -1311,7 +1327,7 @@ mod tests {
             FilterPreset::Valencia, FilterPreset::Walden,
             FilterPreset::DisposableFilm, FilterPreset::DigicamFlash,
             FilterPreset::Cinematic, FilterPreset::GoldenHour,
-            FilterPreset::OldPhoto,
+            FilterPreset::OldPhoto, FilterPreset::Newspaper,
         ] {
             let mut recipe = reset_recipe.clone();
             recipe.filter = preset;

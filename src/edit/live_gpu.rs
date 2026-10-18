@@ -68,6 +68,7 @@ struct GpuTone {
     filter_amount: f32,
     filter: FilterPreset,
     auto_color: bool,
+    auto_contrast: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -102,6 +103,13 @@ struct GlObjects {
     auto_color_stats: u32,
     auto_color_fbo: u32,
     auto_color_revision: u64,
+    histogram_program: u32,
+    histogram_reduce_program: u32,
+    histogram_texture: u32,
+    histogram_fbo: u32,
+    auto_contrast_params: u32,
+    auto_contrast_fbo: u32,
+    auto_contrast_revision: u64,
 }
 
 struct GpuState {
@@ -181,15 +189,21 @@ impl LiveGpuCanvas {
                         gl::DeleteTextures(1, &objects.effect_luma_texture);
                         gl::DeleteTextures(1, &objects.effect_blur_texture);
                         gl::DeleteTextures(1, &objects.auto_color_stats);
+                        gl::DeleteTextures(1, &objects.histogram_texture);
+                        gl::DeleteTextures(1, &objects.auto_contrast_params);
                         gl::DeleteFramebuffers(1, &objects.clarity_luma_fbo);
                         gl::DeleteFramebuffers(1, &objects.clarity_blur_fbo);
                         gl::DeleteFramebuffers(1, &objects.effect_luma_fbo);
                         gl::DeleteFramebuffers(1, &objects.effect_blur_fbo);
                         gl::DeleteFramebuffers(1, &objects.auto_color_fbo);
+                        gl::DeleteFramebuffers(1, &objects.histogram_fbo);
+                        gl::DeleteFramebuffers(1, &objects.auto_contrast_fbo);
                         gl::DeleteVertexArrays(1, &objects.vao);
                         gl::DeleteProgram(objects.program);
                         gl::DeleteProgram(objects.blur_program);
                         gl::DeleteProgram(objects.auto_color_program);
+                        gl::DeleteProgram(objects.histogram_program);
+                        gl::DeleteProgram(objects.histogram_reduce_program);
                     }
                 }
             }
@@ -334,6 +348,7 @@ impl LiveGpuCanvas {
                     uniform_1f(objects.program, "uSepia", if tone.sepia { 1.0 } else { 0.0 });
                     uniform_1f(objects.program, "uFilterAmount", tone.filter_amount);
                     uniform_1i(objects.program, "uAutoColor", if tone.auto_color { 1 } else { 0 });
+                    uniform_1i(objects.program, "uAutoContrast", if tone.auto_contrast { 1 } else { 0 });
                     let params = filters::params(tone.filter);
                     uniform_1f(objects.program, "uNamedFilter", if tone.filter == FilterPreset::None { 0.0 } else { 1.0 });
                     uniform_1f(objects.program, "uNewspaper", if tone.filter == FilterPreset::Newspaper { 1.0 } else { 0.0 });
@@ -355,6 +370,19 @@ impl LiveGpuCanvas {
                         _ => 0.0,
                     };
                     uniform_1f(objects.program, "uNamedGrain", film_grain);
+                    if tone.auto_contrast {
+                        if let Some((width, height, _)) = source.as_ref() {
+                            draw_auto_contrast_stats(
+                                objects, *width, *height, source_revision,
+                                view_width * device_scale, view_height * device_scale,
+                            );
+                            gl::ActiveTexture(gl::TEXTURE4);
+                            gl::BindTexture(gl::TEXTURE_2D, objects.auto_contrast_params);
+                            uniform_1i(objects.program, "uAutoContrastParams", 4);
+                            gl::ActiveTexture(gl::TEXTURE0);
+                            gl::BindTexture(gl::TEXTURE_2D, objects.texture);
+                        }
+                    }
                     if tone.auto_color {
                         if let Some((width, height, _)) = source.as_ref() {
                             draw_auto_color_stats(objects, *width, *height, source_revision, view_width * device_scale, view_height * device_scale);
@@ -538,6 +566,7 @@ impl LiveGpuCanvas {
             filter_amount: recipe.filter_amount,
             filter: recipe.filter,
             auto_color: recipe.auto_color,
+            auto_contrast: recipe.auto_contrast,
         };
         let mut state = self.state.borrow_mut();
         if state.tone == next {
@@ -647,7 +676,8 @@ impl LiveGpuCanvas {
 }
 
 pub fn gpu_tone_supported(recipe: &EditRecipe) -> bool {
-    !recipe.auto_contrast && !(recipe.auto_color && recipe.filter != FilterPreset::None)
+    (recipe.filter == FilterPreset::None || !(recipe.auto_color || recipe.auto_contrast))
+        && !(recipe.auto_color && recipe.auto_contrast)
 }
 
 pub fn gpu_base_recipe(recipe: &EditRecipe) -> EditRecipe {
@@ -666,6 +696,7 @@ pub fn gpu_base_recipe(recipe: &EditRecipe) -> EditRecipe {
     base.black_white = false;
     base.sepia = false;
     base.auto_color = false;
+    base.auto_contrast = false;
     base
 }
 
@@ -751,6 +782,8 @@ uniform float uFilterVignette;
 uniform float uNamedGrain;
 uniform int uAutoColor;
 uniform sampler2D uAutoColorStats;
+uniform int uAutoContrast;
+uniform sampler2D uAutoContrastParams;
 out vec4 color;
 float luma(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
 float smoothMask(float low, float high, float value) {
@@ -771,6 +804,21 @@ vec4 tonePixel(vec4 px) {
             float neutral = dot(means, vec3(0.2126,0.7152,0.0722));
             vec3 gains = vec3(1.0) + (clamp(vec3(neutral) / max(means,vec3(1.0)), vec3(0.82), vec3(1.22)) - vec3(1.0)) * 0.65;
             corrected = round(clamp(corrected * gains, 0.0, 1.0) * 255.0) / 255.0;
+        }
+    }
+    // CPU order: Auto Contrast is applied after Auto Colour and any named
+    // look, before manual Exposure/Contrast and the other slider adjustments.
+    if (uAutoContrast != 0 && px.a >= 16.0/255.0) {
+        vec4 limits = texelFetch(uAutoContrastParams, ivec2(0, 0), 0);
+        if (limits.a > 0.5) {
+            float y = luma(corrected);
+            if (y > 0.0001) {
+                float pivot = (limits.r + limits.g) * 0.5;
+                float stretched = clamp((y - pivot) * limits.b + pivot, 0.012, 0.988);
+                float adjusted = y + (stretched - y) * 0.75;
+                float gain = clamp(adjusted / y, 0.2, 3.0);
+                corrected = round(clamp(corrected * gain, 0.0, 1.0) * 255.0) / 255.0;
+            }
         }
     }
     vec3 c = corrected * exp2(uExposure);
@@ -1013,9 +1061,65 @@ out vec4 color;
 void main() { color = vWeighted; }
 "#)?;
 
+
+    // Each sampled source pixel draws a one-pixel point into one bin of the
+    // 256x1 floating-point histogram texture. It is then reduced ONCE on GPU.
+    let histogram_vertex = compile_shader(gl::VERTEX_SHADER, r#"#version 150
+uniform sampler2D uSource;
+uniform int uWidth;
+uniform int uSampleStep;
+void main() {
+    int sampleIndex = gl_VertexID * uSampleStep;
+    ivec2 at = ivec2(sampleIndex % uWidth, sampleIndex / uWidth);
+    vec4 px = texelFetch(uSource, at, 0);
+    float luminance = dot(px.rgb, vec3(0.2126, 0.7152, 0.0722));
+    float bucket = floor(luminance * 255.0 + 0.5);
+    float pos = ((bucket + 0.5) / 256.0) * 2.0 - 1.0;
+    gl_Position = vec4(pos, 0.0, 0.0, 1.0);
+    if (px.a < 16.0 / 255.0) gl_Position.xy = vec2(2.0, 2.0);
+    gl_PointSize = 1.0;
+}"#)?;
+    let histogram_fragment = compile_shader(gl::FRAGMENT_SHADER, r#"#version 150
+out vec4 color;
+void main() { color = vec4(0.0, 0.0, 0.0, 1.0); }
+"#)?;
+    // Pixel shader executes at a single 1x1 target. It calculates the same
+    // percentile bounds, scene-luminance pivot and limited gain as render.rs.
+    let histogram_reduce_fragment = compile_shader(gl::FRAGMENT_SHADER, r#"#version 150
+uniform sampler2D uHistogram;
+out vec4 color;
+void main() {
+    float samples = 0.0;
+    for (int i = 0; i < 256; ++i) {
+        samples += texelFetch(uHistogram, ivec2(i, 0), 0).a;
+    }
+    if (samples < 4.0) { color = vec4(0.0); return; }
+    float clipped = samples >= 100.0 ? max(1.0, floor(samples * 0.01 + 0.5)) : 0.0;
+    int low = 0;
+    int high = 255;
+    float total = 0.0;
+    for (int i = 0; i < 256; ++i) {
+        total += texelFetch(uHistogram, ivec2(i, 0), 0).a;
+        if (total > clipped) { low = i; break; }
+    }
+    total = 0.0;
+    for (int i = 255; i >= 0; --i) {
+        total += texelFetch(uHistogram, ivec2(i, 0), 0).a;
+        if (total > clipped) { high = i; break; }
+    }
+    if (high <= low + 6) { color = vec4(0.0); return; }
+    float span = float(high - low) / 255.0;
+    float contrast = clamp(0.85 / span, 1.0, 3.2);
+    color = contrast > 1.001
+        ? vec4(float(low) / 255.0, float(high) / 255.0, contrast, 1.0)
+        : vec4(0.0);
+}"#)?;
+
     let program;
     let blur_program;
     let auto_color_program;
+    let histogram_program;
+    let histogram_reduce_program;
     let mut vao = 0;
     let mut texture = 0;
     unsafe {
@@ -1031,6 +1135,18 @@ void main() { color = vWeighted; }
         gl::AttachShader(auto_color_program, auto_vertex);
         gl::AttachShader(auto_color_program, auto_fragment);
         gl::LinkProgram(auto_color_program);
+        histogram_program = gl::CreateProgram();
+        gl::AttachShader(histogram_program, histogram_vertex);
+        gl::AttachShader(histogram_program, histogram_fragment);
+        gl::LinkProgram(histogram_program);
+        histogram_reduce_program = gl::CreateProgram();
+        gl::AttachShader(histogram_reduce_program, vertex);
+        gl::AttachShader(histogram_reduce_program, histogram_reduce_fragment);
+        gl::LinkProgram(histogram_reduce_program);
+        let mut histogram_linked = 0;
+        let mut histogram_reduce_linked = 0;
+        gl::GetProgramiv(histogram_program, gl::LINK_STATUS, &mut histogram_linked);
+        gl::GetProgramiv(histogram_reduce_program, gl::LINK_STATUS, &mut histogram_reduce_linked);
         let mut auto_linked = 0;
         gl::GetProgramiv(auto_color_program, gl::LINK_STATUS, &mut auto_linked);
         let mut blur_linked = 0;
@@ -1042,6 +1158,19 @@ void main() { color = vWeighted; }
         gl::DeleteShader(blur_fragment);
         gl::DeleteShader(auto_vertex);
         gl::DeleteShader(auto_fragment);
+        gl::DeleteShader(histogram_vertex);
+        gl::DeleteShader(histogram_fragment);
+        gl::DeleteShader(histogram_reduce_fragment);
+        if histogram_linked == 0 || histogram_reduce_linked == 0 {
+            let bad = if histogram_linked == 0 { histogram_program } else { histogram_reduce_program };
+            let message = program_log(bad);
+            gl::DeleteProgram(histogram_program);
+            gl::DeleteProgram(histogram_reduce_program);
+            gl::DeleteProgram(auto_color_program);
+            gl::DeleteProgram(blur_program);
+            gl::DeleteProgram(program);
+            return Err(format!("auto contrast shader link failed: {message}"));
+        }
         if auto_linked == 0 {
             let message = program_log(auto_color_program);
             gl::DeleteProgram(auto_color_program);
@@ -1091,7 +1220,108 @@ void main() { color = vWeighted; }
         auto_color_stats: 0,
         auto_color_fbo: 0,
         auto_color_revision: 0,
+        histogram_program,
+        histogram_reduce_program,
+        histogram_texture: 0,
+        histogram_fbo: 0,
+        auto_contrast_params: 0,
+        auto_contrast_fbo: 0,
+        auto_contrast_revision: 0,
     })
+}
+
+/// Compute Auto Contrast on GPU from the exact flattened-sample luminance
+/// histogram used by render::apply_auto_contrast. Both histograms and robust
+/// percentile bounds remain in GPU textures, with no synchronous readback.
+unsafe fn draw_auto_contrast_stats(
+    objects: &mut GlObjects,
+    width: i32,
+    height: i32,
+    revision: u64,
+    viewport_width: i32,
+    viewport_height: i32,
+) {
+    if objects.auto_contrast_revision == revision { return; }
+    let mut prev_fbo = 0;
+    let mut prev_blend_src_rgb = 0;
+    let mut prev_blend_dst_rgb = 0;
+    let mut prev_blend_src_alpha = 0;
+    let mut prev_blend_dst_alpha = 0;
+    let mut prev_blend_equation_rgb = 0;
+    let mut prev_blend_equation_alpha = 0;
+    let mut prev_clear = [0.0f32; 4];
+    gl::GetIntegerv(gl::FRAMEBUFFER_BINDING, &mut prev_fbo);
+    gl::GetIntegerv(gl::BLEND_SRC_RGB, &mut prev_blend_src_rgb);
+    gl::GetIntegerv(gl::BLEND_DST_RGB, &mut prev_blend_dst_rgb);
+    gl::GetIntegerv(gl::BLEND_SRC_ALPHA, &mut prev_blend_src_alpha);
+    gl::GetIntegerv(gl::BLEND_DST_ALPHA, &mut prev_blend_dst_alpha);
+    gl::GetIntegerv(gl::BLEND_EQUATION_RGB, &mut prev_blend_equation_rgb);
+    gl::GetIntegerv(gl::BLEND_EQUATION_ALPHA, &mut prev_blend_equation_alpha);
+    gl::GetFloatv(gl::COLOR_CLEAR_VALUE, prev_clear.as_mut_ptr());
+    let blend_was_enabled = gl::IsEnabled(gl::BLEND) == gl::TRUE;
+
+    if objects.histogram_texture == 0 {
+        gl::GenTextures(1, &mut objects.histogram_texture);
+        gl::GenFramebuffers(1, &mut objects.histogram_fbo);
+        gl::GenTextures(1, &mut objects.auto_contrast_params);
+        gl::GenFramebuffers(1, &mut objects.auto_contrast_fbo);
+        for (texture, fbo, w) in [
+            (objects.histogram_texture, objects.histogram_fbo, 256),
+            (objects.auto_contrast_params, objects.auto_contrast_fbo, 1),
+        ] {
+            gl::BindTexture(gl::TEXTURE_2D, texture);
+            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST as i32);
+            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as i32);
+            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as i32);
+            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as i32);
+            gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RGBA32F as i32,
+                w, 1, 0, gl::RGBA, gl::FLOAT, std::ptr::null());
+            gl::BindFramebuffer(gl::FRAMEBUFFER, fbo);
+            gl::FramebufferTexture2D(gl::FRAMEBUFFER, gl::COLOR_ATTACHMENT0,
+                gl::TEXTURE_2D, texture, 0);
+        }
+    }
+    gl::BindFramebuffer(gl::FRAMEBUFFER, objects.histogram_fbo);
+    gl::Viewport(0, 0, 256, 1);
+    gl::ClearColor(0.0, 0.0, 0.0, 0.0);
+    gl::Clear(gl::COLOR_BUFFER_BIT);
+    gl::Enable(gl::BLEND);
+    gl::BlendEquation(gl::FUNC_ADD);
+    gl::BlendFunc(gl::ONE, gl::ONE);
+    gl::UseProgram(objects.histogram_program);
+    gl::ActiveTexture(gl::TEXTURE0);
+    gl::BindTexture(gl::TEXTURE_2D, objects.texture);
+    uniform_1i(objects.histogram_program, "uSource", 0);
+    uniform_1i(objects.histogram_program, "uWidth", width);
+    let pixel_count = i64::from(width) * i64::from(height);
+    let stride = (pixel_count / 250_000).max(1);
+    uniform_1i(objects.histogram_program, "uSampleStep", stride as i32);
+    gl::DrawArrays(gl::POINTS, 0, ((pixel_count + stride - 1) / stride) as i32);
+
+    gl::BindFramebuffer(gl::FRAMEBUFFER, objects.auto_contrast_fbo);
+    gl::Viewport(0, 0, 1, 1);
+    gl::Disable(gl::BLEND);
+    gl::UseProgram(objects.histogram_reduce_program);
+    gl::ActiveTexture(gl::TEXTURE0);
+    gl::BindTexture(gl::TEXTURE_2D, objects.histogram_texture);
+    uniform_1i(objects.histogram_reduce_program, "uHistogram", 0);
+    gl::DrawArrays(gl::TRIANGLES, 0, 3);
+
+    gl::BlendFuncSeparate(
+        prev_blend_src_rgb as u32, prev_blend_dst_rgb as u32,
+        prev_blend_src_alpha as u32, prev_blend_dst_alpha as u32,
+    );
+    gl::BlendEquationSeparate(
+        prev_blend_equation_rgb as u32, prev_blend_equation_alpha as u32,
+    );
+    if blend_was_enabled { gl::Enable(gl::BLEND); } else { gl::Disable(gl::BLEND); }
+    gl::ClearColor(prev_clear[0], prev_clear[1], prev_clear[2], prev_clear[3]);
+    gl::BindFramebuffer(gl::FRAMEBUFFER, prev_fbo as u32);
+    gl::Viewport(0, 0, viewport_width, viewport_height);
+    gl::UseProgram(objects.program);
+    gl::ActiveTexture(gl::TEXTURE0);
+    gl::BindTexture(gl::TEXTURE_2D, objects.texture);
+    objects.auto_contrast_revision = revision;
 }
 
 /// GPU reduction into a one-pixel RGBA32F sum. Matches CPU flattened
@@ -1458,6 +1688,7 @@ mod tests {
         assert!(!base.black_white);
         assert!(!base.sepia);
         assert!(!base.auto_color);
+        assert!(!base.auto_contrast);
         assert_eq!(base.crop, recipe.crop);
     }
 
@@ -1481,6 +1712,11 @@ mod tests {
         assert!(gpu_tone_supported(&unsupported));
         unsupported.filter = FilterPreset::Clarendon;
         assert!(!gpu_tone_supported(&unsupported));
+        let mut auto_contrast = EditRecipe::default();
+        auto_contrast.auto_contrast = true;
+        assert!(gpu_tone_supported(&auto_contrast));
+        auto_contrast.auto_color = true;
+        assert!(!gpu_tone_supported(&auto_contrast));
         for effect_filter in [FilterPreset::PencilSketch, FilterPreset::DreamGlow] {
             let mut preset = EditRecipe::default();
             preset.filter = effect_filter;
@@ -1956,6 +2192,26 @@ mod tests {
         renderer.set_recipe(&reset_recipe);
         check_frame(&reset_recipe, &source);
 
+        // Auto Contrast is percentile-based. This deliberate outlier fixture
+        // checks source histogram computation and pixel correction together.
+        let gradient = image::RgbaImage::from_fn(WIDTH, HEIGHT, |x, y| {
+            if x == 0 && y == 0 { return image::Rgba([0, 0, 0, 255]); }
+            if x == 1 && y == 0 { return image::Rgba([255, 255, 255, 255]); }
+            let value = (102 + 2 * x + y) as u8;
+            image::Rgba([value, value, value, 255])
+        });
+        let mut automatic = EditRecipe::default();
+        automatic.auto_contrast = true;
+        renderer.set_source(
+            "test://auto-contrast-outliers", 0, &automatic,
+            WIDTH as i32, HEIGHT as i32,
+            glib::Bytes::from_owned(gradient.clone().into_raw()),
+        );
+        renderer.set_view(0.0, 0.0, WIDTH as f64, HEIGHT as f64, 1.0, 0.0, 0.0);
+        renderer.set_recipe(&automatic);
+        check_frame(&automatic, &gradient);
+        renderer.set_recipe(&EditRecipe::default());
+        check_frame(&EditRecipe::default(), &gradient);
         window.close();
     }
 

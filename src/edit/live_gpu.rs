@@ -1085,7 +1085,7 @@ void main() {
             px.rgb = round(clamp(px.rgb*gains,0.0,1.0)*255.0)/255.0;
         }
     }
-    float luminance = dot(px.rgb, vec3(0.2126, 0.7152));
+    float luminance = dot(px.rgb, vec3(0.2126, 0.7152, 0.0722));
     float bucket = floor(luminance * 255.0 + 0.5);
     float pos = ((bucket + 0.5) / 256.0) * 2.0 - 1.0;
     gl_Position = vec4(pos, 0.0, 0.0, 1.0);

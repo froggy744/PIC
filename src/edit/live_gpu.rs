@@ -1780,6 +1780,126 @@ mod tests {
         window.close();
     }
 
+    /// Optional private full-resolution regression:
+    /// PIC_TEST_EDIT_REFERENCE=/path/to/DSC_5791.NEF
+    ///
+    /// With no reference, CI generates an anonymous high-frequency 3936x2624
+    /// fixture instead. Never commit personal photographs to the public repo.
+    #[test]
+    #[ignore = "requires a GTK display + OpenGL; run under xvfb-run"]
+    fn gtk_gl_area_full_resolution_sharpness_regression() {
+        gtk::init().expect("GTK initialization");
+        const VIEW: i32 = 256;
+        let image = if let Ok(path) = std::env::var("PIC_TEST_EDIT_REFERENCE") {
+            super::super::render::decode_base_for_viewer(&path, 0, u32::MAX, u32::MAX)
+                .expect("real photo must decode using PIC's viewer path")
+        } else {
+            image::RgbaImage::from_fn(3936, 2624, |x, y| {
+                // Fine one/two-pixel strands mixed with broad photographic
+                // gradients. A 960-pixel draft would destroy these details.
+                let hair = (x % 7) == 0 && (y % 13) < 7;
+                let eyelash = y % 23 == 0 && x % 4 < 2;
+                let r = if hair || eyelash { 22 } else { (60 + x % 147) as u8 };
+                let g = if hair || eyelash { 17 } else { (35 + y % 188) as u8 };
+                let b = if hair || eyelash { 26 } else { (45 + (x+y) % 173) as u8 };
+                image::Rgba([r, g, b, 255])
+            })
+        };
+        let (width, height) = image.dimensions();
+        assert!(width >= VIEW as u32 && height >= VIEW as u32);
+        let x = width / 2 - VIEW as u32 / 2;
+        let y = height / 2 - VIEW as u32 / 2;
+        let renderer = LiveGpuCanvas::new();
+        renderer.widget().set_size_request(VIEW, VIEW);
+        let window = gtk::Window::new();
+        window.set_default_size(VIEW, VIEW);
+        window.set_child(Some(&renderer.widget()));
+        window.present();
+
+        let reference = EditRecipe::default();
+        renderer.set_source(
+            "test://full-detail", 0, &reference,
+            width as i32, height as i32,
+            glib::Bytes::from_owned(image.clone().into_raw()),
+        );
+        renderer.set_view(x as f64, y as f64, VIEW as f64, VIEW as f64, 1.0, 0.0, 0.0);
+
+        let context = glib::MainContext::default();
+        let read_frame = |recipe: &EditRecipe| {
+            renderer.set_recipe(recipe);
+            renderer.request_readback();
+            let deadline = Instant::now() + std::time::Duration::from_secs(20);
+            let result = loop {
+                while context.pending() {
+                    context.iteration(false);
+                }
+                if let Some(pixels) = renderer.take_readback() {
+                    break pixels;
+                }
+                assert!(Instant::now() < deadline, "full-resolution GPU frame timed out");
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            };
+            let scale = renderer.widget().scale_factor().max(1) as usize;
+            assert_eq!(result.len(), (VIEW as usize * scale).pow(2) * 4);
+            result.chunks_exact(VIEW as usize * scale * 4)
+                .rev().flatten().copied().collect::<Vec<u8>>()
+        };
+        let neutral = read_frame(&reference);
+        let revision = renderer.uploaded_revision();
+        let mut exposure = reference.clone();
+        exposure.exposure = -0.03;
+        let exposed = read_frame(&exposure);
+        assert_eq!(renderer.uploaded_revision(), revision,
+            "Exposure-only edit must reuse the full-size uploaded texture");
+        let cpu = super::super::render::apply_tone(image.clone(), &exposure);
+        let expected = image::imageops::crop_imm(&cpu, x, y, VIEW as u32, VIEW as u32).to_image();
+        let scale = renderer.widget().scale_factor().max(1) as u32;
+        let expected = if scale == 1 { expected } else {
+            image::imageops::resize(
+                &expected,
+                VIEW as u32 * scale,
+                VIEW as u32 * scale,
+                image::imageops::FilterType::Nearest,
+            )
+        }.into_raw();
+        assert_eq!(exposed.len(), expected.len());
+        let max_delta = exposed.iter().zip(&expected)
+            .map(|(a, b)| (*a as i16 - *b as i16).abs())
+            .max().unwrap_or_default();
+        assert!(max_delta <= 1,
+            "full-source exposure GPU/CPU parity failed: max channel delta {max_delta}");
+        // RGB edge strength within the same native 1:1 viewport. Exposure must
+        // not resample or erase the image texture's one-pixel detail.
+        let edge_energy = |rgba: &[u8]| -> f64 {
+            let stride = VIEW as usize * scale as usize * 4;
+            let mut sum = 0u64;
+            for row in rgba.chunks_exact(stride) {
+                for x in 1..(VIEW as usize * scale) {
+                    let idx = x * 4;
+                    for channel in 0..3 {
+                        sum += (row[idx+channel] as i16 - row[idx-4+channel] as i16)
+                            .unsigned_abs() as u64;
+                    }
+                }
+            }
+            sum as f64
+        };
+        let source_energy = edge_energy(&neutral);
+        let edit_energy = edge_energy(&exposed);
+        let ratio = edit_energy / source_energy.max(1.0);
+        assert!((0.92..=1.08).contains(&ratio),
+            "tiny exposure altered native-pixel sharpness: edge ratio {ratio:.4}");
+        let reset = read_frame(&reference);
+        assert_eq!(neutral, reset, "exposure reset changed original GPU pixels");
+        assert_eq!(renderer.uploaded_revision(), revision);
+        eprintln!(
+            "PIC_EDIT_GPU full_source_quality source={}x{} viewport={}x{} \
+             max_channel_delta={} exposure_edge_ratio={:.4} upload_count=1",
+            width, height, VIEW, VIEW, max_delta, ratio
+        );
+        window.close();
+    }
+
     #[test]
     #[ignore = "measures software/hardware GL upload and viewport rendering; run under xvfb-run"]
     fn gtk_gl_area_benchmarks_full_source_upload_and_viewport_sized_draw() {

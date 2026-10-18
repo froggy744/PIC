@@ -71,6 +71,22 @@ struct GpuTone {
     auto_contrast: bool,
 }
 
+fn text_layer_content_key(layer: &super::model::TextLayerSpec, size: (i32, i32)) -> String {
+    // Position, anchor and opacity affect uniforms only. A raster change
+    // (content, font, colour, alignment, photo dimensions) must upload again.
+    let raster = (
+        &layer.id,
+        &layer.text,
+        &layer.font_family,
+        layer.size,
+        layer.bold,
+        layer.italic,
+        layer.color,
+        &layer.align,
+    );
+    format!("text:{raster:?}:{}x{}", size.0, size.1)
+}
+
 /// Geometry of a decoded, untransformed source texture. Match the integer
 /// rounding in render::rotate_autocrop and render::crop_normalized.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -730,33 +746,48 @@ impl LiveGpuCanvas {
             if state.overlay_key.as_ref() == Some(&key) { return; }
             (size.0, size.1, key)
         };
+        let previous = self.state.borrow().overlays.clone();
         let mut layers = Vec::new();
-        for (index, overlay) in recipe.overlays.iter().enumerate() {
+        for overlay in &recipe.overlays {
             if !overlay.visible || overlay.opacity <= 0.001 { continue; }
             let Some(asset) = super::overlays::load_asset(&overlay.asset) else { continue };
             let aspect = asset.width() as f32 / asset.height().max(1) as f32;
             let rect = overlay.rect(width as f32, height as f32, aspect);
+            let id = format!("asset:{}", overlay.asset);
+            let rgba = previous.iter().find(|layer| layer.id == id)
+                .map_or_else(
+                    || glib::Bytes::from_owned(asset.as_raw().clone()),
+                    |layer| layer.rgba.clone(),
+                );
             layers.push(GpuOverlayLayer {
-                id: format!("asset:{index}:{}", overlay.asset),
+                id,
                 rect, opacity: overlay.opacity,
                 width: asset.width() as i32, height: asset.height() as i32,
-                rgba: glib::Bytes::from_owned(asset.as_raw().clone()),
+                rgba,
             });
         }
-        for (index, text_layer) in recipe.text_layers.iter().enumerate() {
+        for text_layer in &recipe.text_layers {
             if !text_layer.visible || text_layer.opacity <= 0.001 { continue; }
-            let Some(raster) = super::text_render::render_text_rgba(
-                text_layer, width as f64, height as f64,
-            ) else { continue };
+            let id = text_layer_content_key(text_layer, (width, height));
+            let (raster_width, raster_height, rgba) =
+                if let Some(layer) = previous.iter().find(|layer| layer.id == id) {
+                    (layer.width, layer.height, layer.rgba.clone())
+                } else {
+                    let Some(raster) = super::text_render::render_text_rgba(
+                        text_layer, width as f64, height as f64,
+                    ) else { continue };
+                    (raster.width() as i32, raster.height() as i32,
+                     glib::Bytes::from_owned(raster.into_raw()))
+                };
             let rect = text_layer.rect_with_size(
-                raster.width() as f32 / width.max(1) as f32,
-                raster.height() as f32 / height.max(1) as f32,
+                raster_width as f32 / width.max(1) as f32,
+                raster_height as f32 / height.max(1) as f32,
             );
             layers.push(GpuOverlayLayer {
-                id: format!("text:{index}:{}", text_layer.id),
+                id,
                 rect, opacity: text_layer.opacity,
-                width: raster.width() as i32, height: raster.height() as i32,
-                rgba: glib::Bytes::from_owned(raster.into_raw()),
+                width: raster_width, height: raster_height,
+                rgba,
             });
         }
         let mut state = self.state.borrow_mut();
@@ -2189,6 +2220,27 @@ mod tests {
             preset.filter = supported_filter;
             assert!(gpu_tone_supported(&preset));
         }
+    }
+
+    #[test]
+    fn text_gpu_texture_key_changes_only_when_raster_content_changes() {
+        let mut layer = super::super::model::TextLayerSpec::new_default();
+        let key = text_layer_content_key(&layer, (3936, 2624));
+        layer.x = 0.23;
+        layer.y = 0.45;
+        layer.opacity = 0.5;
+        layer.anchor = super::super::model::OverlayAnchor::BottomRight;
+        assert_eq!(key, text_layer_content_key(&layer, (3936, 2624)),
+            "moving a text overlay must retain the GPU raster texture");
+        layer.text = "Updated words".to_string();
+        assert_ne!(key, text_layer_content_key(&layer, (3936, 2624)),
+            "changing text must invalidate the GPU raster texture");
+        layer.text = "Your text".to_string();
+        layer.size = 0.12;
+        assert_ne!(key, text_layer_content_key(&layer, (3936, 2624)));
+        layer.size = super::super::model::TextLayerSpec::DEFAULT_SIZE;
+        assert_ne!(key, text_layer_content_key(&layer, (4000, 3000)),
+            "raster must use the current output photo dimensions");
     }
 
     #[test]

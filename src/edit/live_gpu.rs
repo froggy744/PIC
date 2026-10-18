@@ -15,7 +15,7 @@ use gtk::prelude::*;
 use gtk4 as gtk;
 use libloading::Library;
 
-use super::filters::FilterPreset;
+use super::filters::{self, FilterPreset};
 use super::model::{CropRect, EditRecipe};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -66,6 +66,7 @@ struct GpuTone {
     black_white: bool,
     sepia: bool,
     filter_amount: f32,
+    filter: FilterPreset,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -315,6 +316,24 @@ impl LiveGpuCanvas {
                     uniform_1f(objects.program, "uBlackWhite", if tone.black_white { 1.0 } else { 0.0 });
                     uniform_1f(objects.program, "uSepia", if tone.sepia { 1.0 } else { 0.0 });
                     uniform_1f(objects.program, "uFilterAmount", tone.filter_amount);
+                    let params = filters::params(tone.filter);
+                    uniform_1f(objects.program, "uNamedFilter", if tone.filter == FilterPreset::None { 0.0 } else { 1.0 });
+                    uniform_1f(objects.program, "uFilterExposure", params.exposure);
+                    uniform_1f(objects.program, "uFilterShadowLift", params.shadow_lift);
+                    uniform_3f(objects.program, "uFilterTint", params.tint.0, params.tint.1, params.tint.2);
+                    uniform_3f(objects.program, "uFilterShadowTone", params.shadow_tone.0, params.shadow_tone.1, params.shadow_tone.2);
+                    uniform_3f(objects.program, "uFilterHighlightTone", params.highlight_tone.0, params.highlight_tone.1, params.highlight_tone.2);
+                    uniform_1f(objects.program, "uFilterSplit", params.split_strength);
+                    uniform_1f(objects.program, "uFilterSaturation", params.saturation);
+                    uniform_1f(objects.program, "uFilterContrast", params.contrast);
+                    uniform_1f(objects.program, "uFilterVignette", params.vignette);
+                    let film_grain = match tone.filter {
+                        FilterPreset::DisposableFilm => 0.035,
+                        FilterPreset::DigicamFlash => 0.012,
+                        FilterPreset::OldPhoto => 0.075,
+                        _ => 0.0,
+                    };
+                    uniform_1f(objects.program, "uNamedGrain", film_grain);
                     if tone.clarity.abs() > 0.001 {
                         if let Some((source_width, source_height, _)) = source.as_ref() {
                             draw_clarity_luminance(
@@ -463,6 +482,7 @@ impl LiveGpuCanvas {
             black_white: recipe.black_white,
             sepia: recipe.sepia,
             filter_amount: recipe.filter_amount,
+            filter: recipe.filter,
         };
         let mut state = self.state.borrow_mut();
         if state.tone == next {
@@ -572,7 +592,7 @@ impl LiveGpuCanvas {
 }
 
 pub fn gpu_tone_supported(recipe: &EditRecipe) -> bool {
-    recipe.filter == FilterPreset::None
+    !matches!(recipe.filter, FilterPreset::PencilSketch | FilterPreset::DreamGlow | FilterPreset::Newspaper)
         && !recipe.auto_color
         && !recipe.auto_contrast
 }
@@ -589,6 +609,7 @@ pub fn gpu_base_recipe(recipe: &EditRecipe) -> EditRecipe {
     base.sharpen = 0.0;
     base.grain = 0.0;
     base.clarity = 0.0;
+    base.filter = FilterPreset::None;
     base.black_white = false;
     base.sepia = false;
     base
@@ -659,6 +680,17 @@ uniform vec2 uClarityPassSize;
 uniform float uBlackWhite;
 uniform float uSepia;
 uniform float uFilterAmount;
+uniform float uNamedFilter;
+uniform float uFilterExposure;
+uniform float uFilterShadowLift;
+uniform vec3 uFilterTint;
+uniform vec3 uFilterShadowTone;
+uniform vec3 uFilterHighlightTone;
+uniform float uFilterSplit;
+uniform float uFilterSaturation;
+uniform float uFilterContrast;
+uniform float uFilterVignette;
+uniform float uNamedGrain;
 out vec4 color;
 float luma(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
 float smoothMask(float low, float high, float value) {
@@ -713,9 +745,47 @@ vec4 tonePixel(vec4 px) {
     c = round(clamp(c, 0.0, 1.0) * 255.0) / 255.0;
     return vec4(c, px.a);
 }
+// Port of filters::apply_filter's parameterized colour presets. The filter
+// is applied and quantized *before* the manual tone pipeline, like CPU export.
+float stableNoise(ivec2 coord) {
+    ivec2 c = clamp(coord, ivec2(0), ivec2(uSourceSize) - ivec2(1));
+    uint hash = uint(c.x) * 374761393u ^ uint(c.y) * 668265263u ^ 0x9e3779b9u;
+    hash = (hash ^ (hash >> 13u)) * 1274126177u;
+    hash ^= hash >> 16u;
+    return float(hash & 65535u) / 65535.0 - 0.5;
+}
+vec4 namedFilterPixel(vec4 px, ivec2 coord) {
+    if (uNamedFilter < 0.5 || uFilterAmount <= 0.0) return px;
+    vec3 c = px.rgb * uFilterExposure;
+    c += vec3(uFilterShadowLift) * (vec3(1.0) - c);
+    c *= uFilterTint;
+    float y = clamp(luma(c), 0.0, 1.0);
+    c = mix(c, c * uFilterShadowTone, (1.0 - y) * uFilterSplit);
+    c = mix(c, c * uFilterHighlightTone, y * uFilterSplit);
+    float gray = luma(c);
+    c = vec3(gray) + (c - vec3(gray)) * uFilterSaturation;
+    c = vec3(contrastCurve(c.r, uFilterContrast),
+             contrastCurve(c.g, uFilterContrast),
+             contrastCurve(c.b, uFilterContrast));
+    vec2 centre = (uSourceSize - vec2(1.0)) * 0.5;
+    vec2 d = vec2(coord) - centre;
+    float maxDistance = max(length(centre), 1.0);
+    float falloff = 1.0 - uFilterVignette * dot(d, d) / (maxDistance * maxDistance);
+    c *= falloff;
+    c = round(clamp(c, 0.0, 1.0) * 255.0) / 255.0;
+    if (uNamedGrain > 0.0) {
+        float noise = stableNoise(coord) * uNamedGrain * 255.0;
+        c = round(clamp(c * 255.0 + vec3(noise), 0.0, 255.0)) / 255.0;
+    }
+    // CPU blend_filter_amount quantizes the blend of original and look.
+    c = round(clamp(mix(px.rgb, c, clamp(uFilterAmount, 0.0, 1.0)),
+                    0.0, 1.0) * 255.0) / 255.0;
+    return vec4(c, px.a);
+}
 vec4 sampleTone(ivec2 coord) {
     ivec2 limit = ivec2(uSourceSize) - ivec2(1);
-    return tonePixel(texelFetch(uSource, clamp(coord, ivec2(0), limit), 0));
+    ivec2 valid = clamp(coord, ivec2(0), limit);
+    return tonePixel(namedFilterPixel(texelFetch(uSource, valid, 0), valid));
 }
 vec3 clarified(ivec2 coord) {
     vec3 base = sampleTone(coord).rgb;
@@ -749,11 +819,7 @@ vec3 sharpened(ivec2 coord) {
 // Unsigned arithmetic wraps as required by the Rust u32 implementation.
 vec3 grainPixel(ivec2 coord, vec3 rgb) {
     if (uGrain <= 0.001) return rgb;
-    ivec2 c = clamp(coord, ivec2(0), ivec2(uSourceSize) - ivec2(1));
-    uint hash = uint(c.x) * 374761393u ^ uint(c.y) * 668265263u ^ 0x9e3779b9u;
-    hash = (hash ^ (hash >> 13u)) * 1274126177u;
-    hash ^= hash >> 16u;
-    float noise = (float(hash & 65535u) / 65535.0 - 0.5) * uGrain * 0.24 * 255.0;
+    float noise = stableNoise(coord) * uGrain * 0.24 * 255.0;
     return round(clamp(rgb * 255.0 + vec3(noise), 0.0, 255.0)) / 255.0;
 }
 vec3 processedPixel(ivec2 coord) {
@@ -762,7 +828,8 @@ vec3 processedPixel(ivec2 coord) {
 void main() {
     if (uClarityPrepass != 0) {
         vec2 uv = gl_FragCoord.xy / uClarityPassSize;
-        float y = luma(tonePixel(texture(uSource, uv)).rgb);
+        ivec2 coord = ivec2(floor(uv * uSourceSize));
+        float y = luma(tonePixel(namedFilterPixel(texture(uSource, uv), coord)).rgb);
         color = vec4(y, y, y, 1.0);
         return;
     }
@@ -774,7 +841,7 @@ void main() {
         color = vec4(0.055, 0.06, 0.07, 1.0);
         return;
     }
-    if (uSharpen <= 0.0001 && uGrain <= 0.001 && abs(uClarity) <= 0.001) {
+    if (uSharpen <= 0.0001 && uGrain <= 0.001 && abs(uClarity) <= 0.001 && uNamedFilter < 0.5) {
         color = tonePixel(texture(uSource, sourcePos / uSourceSize));
         return;
     }
@@ -1025,6 +1092,10 @@ unsafe fn uniform_2f(program: u32, name: &str, x: f32, y: f32) {
     gl::Uniform2f(uniform_location(program, name), x, y);
 }
 
+unsafe fn uniform_3f(program: u32, name: &str, x: f32, y: f32, z: f32) {
+    gl::Uniform3f(uniform_location(program, name), x, y, z);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1065,6 +1136,7 @@ mod tests {
         assert_eq!(base.sharpen, 0.0);
         assert_eq!(base.grain, 0.0);
         assert_eq!(base.clarity, 0.0);
+        assert_eq!(base.filter, FilterPreset::None);
         assert!(!base.black_white);
         assert!(!base.sepia);
         assert_eq!(base.crop, recipe.crop);
@@ -1088,6 +1160,16 @@ mod tests {
         assert!(gpu_tone_supported(&unsupported));
         unsupported.auto_color = true;
         assert!(!gpu_tone_supported(&unsupported));
+        for unsupported_filter in [FilterPreset::PencilSketch, FilterPreset::DreamGlow, FilterPreset::Newspaper] {
+            let mut preset = EditRecipe::default();
+            preset.filter = unsupported_filter;
+            assert!(!gpu_tone_supported(&preset));
+        }
+        for supported_filter in [FilterPreset::Clarendon, FilterPreset::Gingham, FilterPreset::Valencia, FilterPreset::OldPhoto] {
+            let mut preset = EditRecipe::default();
+            preset.filter = supported_filter;
+            assert!(gpu_tone_supported(&preset));
+        }
     }
 
     #[test]

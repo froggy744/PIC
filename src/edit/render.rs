@@ -537,7 +537,7 @@ fn bilinear(image: &RgbaImage, x: f32, y: f32) -> Rgba<u8> {
     Rgba(out)
 }
 
-fn largest_rotated_rect(width: f32, height: f32, angle: f32) -> (f32, f32) {
+pub(super) fn largest_rotated_rect(width: f32, height: f32, angle: f32) -> (f32, f32) {
     let width = width.abs();
     let height = height.abs();
     if width <= 0.0 || height <= 0.0 {

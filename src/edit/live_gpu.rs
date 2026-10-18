@@ -1910,6 +1910,32 @@ mod tests {
                 "sharpened Fit channel {index} differs from the CPU reference"
             );
         }
+        // GPU Auto Colour must match the CPU neutral estimate when many
+        // credible near-neutral pixels exist, not merely on no-op photos.
+        let neutrals = image::RgbaImage::from_fn(WIDTH, HEIGHT, |x, y| {
+            let n = ((x + y) % 14) as u8;
+            image::Rgba([112 + n, 124 + n, 137 + n, 255])
+        });
+        let auto = EditRecipe { auto_color: true, ..Default::default() };
+        assert!(gpu_tone_supported(&auto));
+        renderer.set_source(
+            "test://autocolor-neutrals", 0, &auto,
+            WIDTH as i32, HEIGHT as i32,
+            glib::Bytes::from_owned(neutrals.clone().into_raw()),
+        );
+        renderer.set_view(0.0, 0.0, WIDTH as f64, HEIGHT as f64, 1.0, 0.0, 0.0);
+        renderer.set_recipe(&auto);
+        check_frame(&auto, &neutrals);
+        renderer.set_recipe(&EditRecipe::default());
+        check_frame(&EditRecipe::default(), &neutrals);
+        renderer.set_source(
+            "test://gpu-parity", 0, &reset_recipe,
+            WIDTH as i32, HEIGHT as i32,
+            glib::Bytes::from_owned(source.clone().into_raw()),
+        );
+        renderer.set_recipe(&reset_recipe);
+        check_frame(&reset_recipe, &source);
+
         window.close();
     }
 

@@ -1479,6 +1479,49 @@ mod tests {
         renderer.set_recipe(&reset_recipe);
         check_frame(&reset_recipe, &source);
 
+        // Pencil Sketch and Dream Glow use two additional GPU blur passes.
+        // Their reduced-resolution kernels have a looser reference tolerance
+        // than exact per-pixel colour transforms, but still catch wrong passes.
+        for preset in [FilterPreset::PencilSketch, FilterPreset::DreamGlow] {
+            let mut recipe = reset_recipe.clone();
+            recipe.filter = preset;
+            recipe.filter_amount = 1.0;
+            assert!(gpu_tone_supported(&recipe));
+            renderer.set_recipe(&recipe);
+            renderer.request_readback();
+            let deadline = Instant::now() + std::time::Duration::from_secs(5);
+            let mut result = None;
+            while Instant::now() < deadline {
+                while context.pending() { context.iteration(false); }
+                if let Some(readback) = renderer.take_readback() {
+                    result = Some(readback);
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            let actual = result.expect("GPU special-filter readback missing");
+            let scale = renderer.widget().scale_factor().max(1) as u32;
+            let actual = actual.chunks_exact(WIDTH as usize * scale as usize * 4)
+                .rev().flatten().copied().collect::<Vec<_>>();
+            let cpu = super::super::render::apply_tone(source.clone(), &recipe);
+            let cpu = if scale == 1 { cpu } else {
+                image::imageops::resize(&cpu, WIDTH * scale, HEIGHT * scale,
+                    image::imageops::FilterType::Nearest)
+            }.into_raw();
+            assert_eq!(actual.len(), cpu.len());
+            let errors = actual.iter().zip(&cpu)
+                .map(|(a, b)| (*a as i16 - *b as i16).unsigned_abs() as usize)
+                .collect::<Vec<_>>();
+            let maximum = errors.iter().copied().max().unwrap_or_default();
+            let average = errors.iter().sum::<usize>() as f64 / errors.len().max(1) as f64;
+            eprintln!("PIC_EDIT_GPU special_filter_parity preset={preset:?} max={maximum} avg={average:.3}");
+            assert!(maximum <= 35 && average <= 5.0,
+                "GPU {preset:?} differs too much from CPU: max={maximum}, avg={average:.3}");
+            assert_eq!(renderer.uploaded_revision(), uploaded_revision);
+        }
+        renderer.set_recipe(&reset_recipe);
+        check_frame(&reset_recipe, &source);
+
         // Clarity requires a GPU luminance/blur pass. Here we first verify it
         // really renders on GL and does not re-upload source data. Pixel parity
         // at arbitrary scales is covered separately before default enablement.

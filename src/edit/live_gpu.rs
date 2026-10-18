@@ -60,6 +60,7 @@ struct GpuTone {
     fill_light: f32,
     shadows: f32,
     highlights: f32,
+    sharpen: f32,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -206,7 +207,7 @@ impl LiveGpuCanvas {
             let view_height = area.height().max(1);
             let device_scale = area.scale_factor().max(1);
             let draw_started = Instant::now();
-            let (upload_trace, queue_ms, gl_error) = {
+            let (upload_trace, queue_ms, gl_error, sharpen) = {
                 let mut state = render_state.borrow_mut();
                 let source = state
                     .source
@@ -291,6 +292,7 @@ impl LiveGpuCanvas {
                     uniform_1f(objects.program, "uFillLight", tone.fill_light);
                     uniform_1f(objects.program, "uShadows", tone.shadows);
                     uniform_1f(objects.program, "uHighlights", tone.highlights);
+                    uniform_1f(objects.program, "uSharpen", tone.sharpen);
                     gl::DrawArrays(gl::TRIANGLES, 0, 3);
                     #[cfg(test)]
                     if state.readback_requested {
@@ -326,7 +328,7 @@ impl LiveGpuCanvas {
                     state.readback_pixels = Some(pixels);
                 }
                 let gl_error = unsafe { gl::GetError() };
-                (upload_trace, queue_ms, gl_error)
+                (upload_trace, queue_ms, gl_error, tone.sharpen)
             };
             if gl_error != gl::NO_ERROR {
                 fail(
@@ -345,13 +347,14 @@ impl LiveGpuCanvas {
                     );
                 }
                 eprintln!(
-                    "PIC_EDIT_GPU gpu_draw_submit_ms={:.3} viewport={}x{} framebuffer={}x{} scale_factor={} queue_to_render_ms={}",
+                    "PIC_EDIT_GPU gpu_draw_submit_ms={:.3} viewport={}x{} framebuffer={}x{} scale_factor={} sharpen={:.3} queue_to_render_ms={}",
                     draw_started.elapsed().as_secs_f64() * 1000.0,
                     view_width,
                     view_height,
                     view_width * device_scale,
                     view_height * device_scale,
                     device_scale,
+                    sharpen,
                     queue_ms.map_or_else(|| "none".to_owned(), |ms| format!("{ms:.3}")),
                 );
             }
@@ -413,6 +416,7 @@ impl LiveGpuCanvas {
             fill_light: recipe.fill_light,
             shadows: recipe.shadows,
             highlights: recipe.highlights,
+            sharpen: recipe.sharpen,
         };
         let mut state = self.state.borrow_mut();
         if state.tone == next {
@@ -528,7 +532,6 @@ pub fn gpu_tone_supported(recipe: &EditRecipe) -> bool {
         && !recipe.black_white
         && !recipe.sepia
         && recipe.clarity == 0.0
-        && recipe.sharpen == 0.0
         && recipe.grain == 0.0
 }
 
@@ -541,6 +544,7 @@ pub fn gpu_base_recipe(recipe: &EditRecipe) -> EditRecipe {
     base.fill_light = 0.0;
     base.shadows = 0.0;
     base.highlights = 0.0;
+    base.sharpen = 0.0;
     base
 }
 
@@ -600,6 +604,7 @@ uniform float uTemperature;
 uniform float uFillLight;
 uniform float uShadows;
 uniform float uHighlights;
+uniform float uSharpen;
 out vec4 color;
 float luma(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
 float smoothMask(float low, float high, float value) {
@@ -611,18 +616,7 @@ float contrastCurve(float value, float amount) {
     float a = clamp(amount, -1.0, 1.0) * 0.55;
     return clamp(x + a * 4.0 * (x - 0.5) * x * (1.0 - x), 0.0, 1.0);
 }
-void main() {
-    vec2 pixel = gl_FragCoord.xy / max(uDeviceScale, 1.0);
-    vec2 topLeft = vec2(pixel.x, uViewSize.y - pixel.y);
-    vec2 sourcePos = (topLeft + uScroll - uPadding) / max(uScale, 0.0001);
-    if (sourcePos.x < 0.0 || sourcePos.y < 0.0 ||
-        sourcePos.x >= uSourceSize.x || sourcePos.y >= uSourceSize.y) {
-        color = vec4(0.055, 0.06, 0.07, 1.0);
-        return;
-    }
-    vec2 uv = vec2(sourcePos.x / uSourceSize.x,
-                   sourcePos.y / uSourceSize.y);
-    vec4 px = texture(uSource, uv);
+vec4 tonePixel(vec4 px) {
     vec3 c = px.rgb * exp2(uExposure);
     if (abs(uFillLight) > 0.0001 || abs(uShadows) > 0.0001 ||
         abs(uHighlights) > 0.0001) {
@@ -650,7 +644,54 @@ void main() {
         c.g = contrastCurve(c.g, uContrast);
         c.b = contrastCurve(c.b, uContrast);
     }
-    color = vec4(clamp(c, 0.0, 1.0), px.a);
+    c = round(clamp(c, 0.0, 1.0) * 255.0) / 255.0;
+    return vec4(c, px.a);
+}
+vec4 sampleTone(ivec2 coord) {
+    ivec2 limit = ivec2(uSourceSize) - ivec2(1);
+    return tonePixel(texelFetch(uSource, clamp(coord, ivec2(0), limit), 0));
+}
+vec3 sharpened(ivec2 coord) {
+    vec3 center = sampleTone(coord).rgb;
+    if (uSharpen <= 0.0001) return center;
+    const float k0 = 0.07076637;
+    const float k1 = 0.24446040;
+    const float k2 = 0.36954646;
+    const float kernel[5] = float[5](k0, k1, k2, k1, k0);
+    vec3 blurred = vec3(0.0);
+    for (int y = -2; y <= 2; ++y) {
+        for (int x = -2; x <= 2; ++x) {
+            blurred += sampleTone(coord + ivec2(x, y)).rgb * kernel[x + 2] * kernel[y + 2];
+        }
+    }
+    blurred = round(clamp(blurred, 0.0, 1.0) * 255.0) / 255.0;
+    return clamp(center + (center - blurred) * (uSharpen * 1.6), 0.0, 1.0);
+}
+void main() {
+    vec2 pixel = gl_FragCoord.xy / max(uDeviceScale, 1.0);
+    vec2 topLeft = vec2(pixel.x, uViewSize.y - pixel.y);
+    vec2 sourcePos = (topLeft + uScroll - uPadding) / max(uScale, 0.0001);
+    if (sourcePos.x < 0.0 || sourcePos.y < 0.0 ||
+        sourcePos.x >= uSourceSize.x || sourcePos.y >= uSourceSize.y) {
+        color = vec4(0.055, 0.06, 0.07, 1.0);
+        return;
+    }
+    if (uSharpen <= 0.0001) {
+        color = tonePixel(texture(uSource, sourcePos / uSourceSize));
+        return;
+    }
+    if (uScale < 1.0) {
+        vec2 texel = sourcePos - vec2(0.5);
+        ivec2 lo = ivec2(floor(texel));
+        vec2 f = fract(texel);
+        vec3 top = mix(sharpened(lo), sharpened(lo + ivec2(1, 0)), f.x);
+        vec3 bottom = mix(sharpened(lo + ivec2(0, 1)), sharpened(lo + ivec2(1, 1)), f.x);
+        color = vec4(mix(top, bottom, f.y), 1.0);
+        return;
+    }
+    ivec2 coord = ivec2(floor(sourcePos));
+    vec4 px = sampleTone(coord);
+    color = vec4(sharpened(coord), px.a);
 }"#,
     )?;
 
@@ -805,13 +846,17 @@ mod tests {
         assert_eq!(base.fill_light, 0.0);
         assert_eq!(base.shadows, 0.0);
         assert_eq!(base.highlights, 0.0);
+        assert_eq!(base.sharpen, 0.0);
         assert_eq!(base.crop, recipe.crop);
     }
 
     #[test]
-    fn gpu_support_is_limited_to_the_initial_four_adjustments() {
+    fn gpu_support_includes_sharpen_but_excludes_other_cpu_effects() {
         let recipe = EditRecipe::default();
         assert!(gpu_tone_supported(&recipe));
+        let mut sharpened = recipe.clone();
+        sharpened.sharpen = 0.35;
+        assert!(gpu_tone_supported(&sharpened));
         let mut unsupported = recipe;
         unsupported.clarity = 0.1;
         assert!(!gpu_tone_supported(&unsupported));
@@ -923,6 +968,7 @@ mod tests {
         edited.fill_light = 0.2;
         edited.shadows = -0.15;
         edited.highlights = 0.1;
+        edited.sharpen = 0.35;
         renderer.set_recipe(&edited);
         check_frame(&edited, &source);
         assert_eq!(renderer.uploaded_revision(), uploaded_revision);
@@ -1025,6 +1071,60 @@ mod tests {
                 "Fit channel {index} differs from 2x2 linear reference"
             );
         }
+
+        let mut fit_sharpen = reset_recipe.clone();
+        fit_sharpen.sharpen = 0.35;
+        renderer.set_recipe(&fit_sharpen);
+        renderer.request_readback();
+        let deadline = Instant::now() + std::time::Duration::from_secs(5);
+        let mut sharpened_fit = None;
+        while Instant::now() < deadline {
+            while context.pending() {
+                context.iteration(false);
+            }
+            if let Some(readback) = renderer.take_readback() {
+                sharpened_fit = Some(readback);
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let sharpened_fit = sharpened_fit.expect("sharpened Fit viewport should render");
+        let sharpened_fit = sharpened_fit
+            .chunks_exact(24 * scale as usize * 4)
+            .rev()
+            .flatten()
+            .copied()
+            .collect::<Vec<_>>();
+        let sharpened_source = super::super::render::apply_tone(source.clone(), &fit_sharpen);
+        let expected_fit = image::RgbaImage::from_fn(24, 16, |x, y| {
+            let mut sum = [0u16; 4];
+            for dy in 0..2 {
+                for dx in 0..2 {
+                    let pixel = sharpened_source.get_pixel(x * 2 + dx, y * 2 + dy);
+                    for channel in 0..4 {
+                        sum[channel] += pixel[channel] as u16;
+                    }
+                }
+            }
+            image::Rgba(sum.map(|channel| ((channel + 2) / 4) as u8))
+        });
+        let expected_fit = if scale == 1 {
+            expected_fit
+        } else {
+            image::imageops::resize(
+                &expected_fit,
+                24 * scale,
+                16 * scale,
+                image::imageops::FilterType::Nearest,
+            )
+        }
+        .into_raw();
+        for (index, (actual, expected)) in sharpened_fit.iter().zip(&expected_fit).enumerate() {
+            assert!(
+                (*actual as i16 - *expected as i16).abs() <= 1,
+                "sharpened Fit channel {index} differs from the CPU reference"
+            );
+        }
         window.close();
     }
 
@@ -1082,6 +1182,7 @@ mod tests {
 
         let mut recipe = base_recipe.clone();
         recipe.exposure = 0.2;
+        recipe.sharpen = 0.35;
         let cpu_started = Instant::now();
         let _cpu_reference = super::super::render::apply_tone(source.clone(), &recipe);
         let cpu_ms = cpu_started.elapsed().as_secs_f64() * 1000.0;

@@ -252,6 +252,27 @@ fn connect_scale(
 ) {
     let dragging = Rc::new(Cell::new(false));
     let action_start_recipe = Rc::new(RefCell::new(None::<EditRecipe>));
+    let finish_action: Rc<dyn Fn()> = {
+        let session = session.clone();
+        let dragging = dragging.clone();
+        let action_start_recipe = action_start_recipe.clone();
+        let update_history = update_history.clone();
+        let queue_preview = queue_preview.clone();
+        Rc::new(move || {
+            if dragging.replace(false) {
+                let start = action_start_recipe.borrow_mut().take();
+                let changed = scale_action_changed(start, &session.borrow().recipe);
+                session.borrow_mut().end_action();
+                update_history();
+                if changed {
+                    queue_preview();
+                }
+                if std::env::var_os("PICASA_TRACE").is_some() {
+                    eprintln!("PIC_EDIT slider_action_end changed={changed}");
+                }
+            }
+        })
+    };
     let press = gtk::GestureClick::new();
     press.set_button(1);
     press.set_propagation_phase(gtk::PropagationPhase::Capture);
@@ -263,31 +284,38 @@ fn connect_scale(
             dragging.set(true);
             action_start_recipe.replace(Some(session.borrow().recipe.clone()));
             session.borrow_mut().begin_action();
-        });
-    }
-    {
-        let session = session.clone();
-        let dragging = dragging.clone();
-        let action_start_recipe = action_start_recipe.clone();
-        let update_history = update_history.clone();
-        let queue_preview = queue_preview.clone();
-        press.connect_released(move |_, _, _, _| {
-            if dragging.replace(false) {
-                let changed = action_start_recipe
-                    .borrow_mut()
-                    .take();
-                let changed = scale_action_changed(changed, &session.borrow().recipe);
-                session.borrow_mut().end_action();
-                update_history();
-                // The drag rendered draft frames; queue one full-resolution
-                // settle frame when the recipe differs from its drag start.
-                if changed {
-                    queue_preview();
-                }
+            if std::env::var_os("PICASA_TRACE").is_some() {
+                eprintln!("PIC_EDIT slider_action_begin");
             }
         });
     }
+    {
+        let finish_action = finish_action.clone();
+        press.connect_released(move |_, _, _, _| {
+            finish_action();
+        });
+    }
     scale.add_controller(press);
+
+    // GtkScale's internal drag gesture can cancel a sibling GestureClick once
+    // the pointer moves. This capture controller still sees the physical
+    // release, ensuring the draft settles to a source-resolution render.
+    let release = gtk::EventControllerLegacy::new();
+    release.set_propagation_phase(gtk::PropagationPhase::Capture);
+    {
+        let finish_action = finish_action.clone();
+        release.connect_event(move |_, event| {
+            if event.event_type() == gtk::gdk::EventType::ButtonRelease
+                && event
+                    .downcast_ref::<gtk::gdk::ButtonEvent>()
+                    .is_some_and(|button| button.button() == 1)
+            {
+                finish_action();
+            }
+            glib::Propagation::Proceed
+        });
+    }
+    scale.add_controller(release);
 
     scale.connect_value_changed(move |scale| {
         if syncing.get() {

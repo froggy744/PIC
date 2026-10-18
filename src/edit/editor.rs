@@ -101,6 +101,10 @@ include!("export.rs");
 include!("overlays_ui.rs");
 include!("text_ui.rs");
 
+fn pan_drag_should_claim(can_scroll: bool, space_held: bool, canvas_tool_active: bool) -> bool {
+    space_held || (can_scroll && !canvas_tool_active)
+}
+
 pub fn build(
     parent: &gtk::Window,
     connection: Rc<RefCell<Connection>>,
@@ -528,6 +532,7 @@ pub fn build(
     // drag gesture without conflict.
     let pan_origin_h = Rc::new(Cell::new(0.0f64));
     let pan_origin_v = Rc::new(Cell::new(0.0f64));
+    let pan_space_held = Rc::new(Cell::new(false));
     let pan_drag = gtk::GestureDrag::new();
     pan_drag.set_button(1);
     pan_drag.set_propagation_phase(gtk::PropagationPhase::Capture);
@@ -535,14 +540,26 @@ pub fn build(
         let picture_scroll = picture_scroll.clone();
         let pan_origin_h = pan_origin_h.clone();
         let pan_origin_v = pan_origin_v.clone();
-        pan_drag.connect_drag_begin(move |_, _, _| {
+        let pan_space_held = pan_space_held.clone();
+        let crop_overlay = crop_overlay.clone();
+        let overlays_toggle = overlays_toggle.clone();
+        let text_toggle = text_toggle.clone();
+        pan_drag.connect_drag_begin(move |gesture, _, _| {
             let hadj = picture_scroll.hadjustment();
             let vadj = picture_scroll.vadjustment();
+            let can_scroll = hadj.upper() > hadj.page_size() || vadj.upper() > vadj.page_size();
+            let canvas_tool_active = crop_overlay.is_visible()
+                || overlays_toggle.is_active()
+                || text_toggle.is_active();
+            let space_held = pan_space_held.get();
+            if !pan_drag_should_claim(can_scroll, space_held, canvas_tool_active) {
+                gesture.set_state(gtk::EventSequenceState::Denied);
+                return;
+            }
             pan_origin_h.set(hadj.value());
             pan_origin_v.set(vadj.value());
-            if hadj.upper() > hadj.page_size() || vadj.upper() > vadj.page_size() {
-                picture_scroll.set_cursor_from_name(Some("grabbing"));
-            }
+            gesture.set_state(gtk::EventSequenceState::Claimed);
+            picture_scroll.set_cursor_from_name(Some("grabbing"));
         });
     }
     {
@@ -2157,6 +2174,7 @@ pub fn build(
         let escape_action = escape_action.clone();
         let key = gtk::EventControllerKey::new();
         key.set_propagation_phase(gtk::PropagationPhase::Capture);
+        let space_held_for_press = pan_space_held.clone();
         key.connect_key_pressed(move |_, key, _, _| {
             match key {
                 gtk::gdk::Key::Return | gtk::gdk::Key::KP_Enter
@@ -2169,7 +2187,17 @@ pub fn build(
                     escape_action();
                     glib::Propagation::Stop
                 }
+                gtk::gdk::Key::space => {
+                    space_held_for_press.set(true);
+                    glib::Propagation::Stop
+                }
                 _ => glib::Propagation::Proceed,
+            }
+        });
+        let space_held_for_release = pan_space_held.clone();
+        key.connect_key_released(move |_, key, _, _| {
+            if key == gtk::gdk::Key::space {
+                space_held_for_release.set(false);
             }
         });
         root.add_controller(key);
@@ -2361,6 +2389,14 @@ pub fn build(
 #[cfg(test)]
 mod panel_tests {
     use super::*;
+
+    #[test]
+    fn canvas_drag_claims_when_scrollable_or_space_is_held() {
+        assert!(pan_drag_should_claim(true, false, false));
+        assert!(pan_drag_should_claim(false, true, true));
+        assert!(!pan_drag_should_claim(false, false, false));
+        assert!(!pan_drag_should_claim(true, false, true));
+    }
 
     fn descendants(root: &impl IsA<gtk::Widget>) -> Vec<gtk::Widget> {
         let mut widgets = Vec::new();

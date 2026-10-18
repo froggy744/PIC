@@ -269,7 +269,10 @@ pub(super) fn apply_tone(mut image: RgbaImage, recipe: &EditRecipe) -> RgbaImage
     }
 
     if recipe.sharpen > 0.001 && image.width() > 2 && image.height() > 2 {
+        let blur_started = std::time::Instant::now();
         let blurred = image::imageops::blur(&image, 1.1);
+        let blur_ms = blur_started.elapsed().as_secs_f64() * 1000.0;
+        let apply_started = std::time::Instant::now();
         let amount = recipe.sharpen * 1.6;
         image
             .as_mut()
@@ -284,6 +287,15 @@ pub(super) fn apply_tone(mut image: RgbaImage, recipe: &EditRecipe) -> RgbaImage
                         .round() as u8;
                 }
             });
+        if std::env::var_os("PICASA_TRACE").is_some() {
+            eprintln!(
+                "PIC_EDIT_EFFECT op=sharpen dimensions={}x{} blur_ms={blur_ms:.3} apply_ms={:.3} amount={:.3}",
+                image.width(),
+                image.height(),
+                apply_started.elapsed().as_secs_f64() * 1000.0,
+                recipe.sharpen,
+            );
+        }
     }
     if recipe.grain > 0.001 {
         filters::apply_grain(&mut image, recipe.grain * 0.24);

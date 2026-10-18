@@ -51,7 +51,7 @@ fn interactive_preview_target_dimensions(
     source_height: i64,
     rotation: i32,
 ) -> (u32, u32) {
-    const MAX_EDGE: u32 = 1600;
+    const MAX_EDGE: u32 = 960;
     let (width, height) = preview_target_dimensions(source_width, source_height, rotation);
     let longest = width.max(height);
     if longest <= MAX_EDGE || longest == 0 {
@@ -235,6 +235,7 @@ fn render_preview_job(
         });
 
 
+    let render_started = std::time::Instant::now();
     let geometry = if geometry_hit {
         geometry_cache
             .as_ref()
@@ -278,6 +279,18 @@ fn render_preview_job(
             );
             (image, "miss")
         };
+        if cache_status == "downsample" {
+            store_preview_base(
+                base_cache,
+                PreviewBase {
+                    path: job.path.clone(),
+                    rotation: job.rotation,
+                    target_width: job.target_width,
+                    target_height: job.target_height,
+                    image: base.clone(),
+                },
+            );
+        }
         if std::env::var_os("PICASA_TRACE").is_some() {
             eprintln!(
                 "PIC_EDIT source_base cache={} target={}x{} decoded={}x{} uri={}",
@@ -308,15 +321,23 @@ fn render_preview_job(
     };
 
     let geometry_dimensions = (geometry.width(), geometry.height());
+    let tone_started = std::time::Instant::now();
     let rendered = super::render::apply_tone(geometry, &job.recipe);
+    let tone_elapsed_ms = tone_started.elapsed().as_secs_f64() * 1000.0;
     if std::env::var_os("PICASA_TRACE").is_some() {
         eprintln!(
-            "PIC_EDIT adjustment_buffer geometry={}x{} output={}x{} recipe_default={} uri={}",
+            "PIC_EDIT adjustment_buffer geometry={}x{} output={}x{} recipe_default={} sharpen={:.3} clarity={:.3} grain={:.3} filter={:?} tone_ms={:.3} job_ms={:.3} uri={}",
             geometry_dimensions.0,
             geometry_dimensions.1,
             rendered.width(),
             rendered.height(),
             job.recipe.is_default(),
+            job.recipe.sharpen,
+            job.recipe.clarity,
+            job.recipe.grain,
+            job.recipe.filter,
+            tone_elapsed_ms,
+            render_started.elapsed().as_secs_f64() * 1000.0,
             crate::thumbnail::viewer_trace_reference(&job.path),
         );
     }
@@ -333,11 +354,11 @@ mod tests {
     fn interactive_preview_is_bounded_and_keeps_rotation_aspect() {
         assert_eq!(
             interactive_preview_target_dimensions(3960, 2640, 0),
-            (1600, 1067)
+            (960, 640)
         );
         assert_eq!(
             interactive_preview_target_dimensions(3960, 2640, 90),
-            (1067, 1600)
+            (640, 960)
         );
         assert_eq!(
             interactive_preview_target_dimensions(800, 600, 0),

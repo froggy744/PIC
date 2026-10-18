@@ -1104,9 +1104,19 @@ unsafe fn draw_auto_color_stats(
     let mut previous_fbo = 0;
     let mut previous_blend_src = 0;
     let mut previous_blend_dst = 0;
+    let mut previous_src_alpha = 0;
+    let mut previous_dst_alpha = 0;
+    let mut previous_equation_rgb = 0;
+    let mut previous_equation_alpha = 0;
+    let mut previous_clear_color = [0.0_f32; 4];
     gl::GetIntegerv(gl::FRAMEBUFFER_BINDING, &mut previous_fbo);
     gl::GetIntegerv(gl::BLEND_SRC_RGB, &mut previous_blend_src);
     gl::GetIntegerv(gl::BLEND_DST_RGB, &mut previous_blend_dst);
+    gl::GetIntegerv(gl::BLEND_SRC_ALPHA, &mut previous_src_alpha);
+    gl::GetIntegerv(gl::BLEND_DST_ALPHA, &mut previous_dst_alpha);
+    gl::GetIntegerv(gl::BLEND_EQUATION_RGB, &mut previous_equation_rgb);
+    gl::GetIntegerv(gl::BLEND_EQUATION_ALPHA, &mut previous_equation_alpha);
+    gl::GetFloatv(gl::COLOR_CLEAR_VALUE, previous_clear_color.as_mut_ptr());
     let was_blending = gl::IsEnabled(gl::BLEND) == gl::TRUE;
     if objects.auto_color_stats == 0 {
         gl::GenTextures(1, &mut objects.auto_color_stats);
@@ -1137,7 +1147,17 @@ unsafe fn draw_auto_color_stats(
     let step = (pixels / 200_000).max(1);
     uniform_1i(objects.auto_color_program, "uSampleStep", step as i32);
     gl::DrawArrays(gl::POINTS, 0, ((pixels + step - 1) / step) as i32);
-    gl::BlendFunc(previous_blend_src as u32, previous_blend_dst as u32);
+    gl::BlendFuncSeparate(
+        previous_blend_src as u32, previous_blend_dst as u32,
+        previous_src_alpha as u32, previous_dst_alpha as u32,
+    );
+    gl::BlendEquationSeparate(
+        previous_equation_rgb as u32, previous_equation_alpha as u32,
+    );
+    gl::ClearColor(
+        previous_clear_color[0], previous_clear_color[1],
+        previous_clear_color[2], previous_clear_color[3],
+    );
     if !was_blending { gl::Disable(gl::BLEND); }
     gl::BindFramebuffer(gl::FRAMEBUFFER, previous_fbo as u32);
     gl::Viewport(0, 0, viewport_width, viewport_height);

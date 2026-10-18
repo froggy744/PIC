@@ -625,6 +625,79 @@ mod tests {
     }
 
     #[test]
+    fn full_quality_png_export_matches_edited_viewer_and_keeps_original() {
+        use crate::edit::filters::FilterPreset;
+        use crate::edit::model::{CropRect, OverlaySpec, TextLayerSpec};
+        let dir = std::env::temp_dir().join(format!(
+            "pic-export-parity-{}-{}", std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+                .unwrap().as_nanos(),
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let source_path = dir.join("DSC_5791.png");
+        let photo = RgbaImage::from_fn(128, 128, |x, y| {
+            image::Rgba([
+                (x * 2) as u8, (y * 2) as u8,
+                ((x + y) % 230) as u8, 255,
+            ])
+        });
+        image::DynamicImage::ImageRgba8(photo.clone()).save(&source_path).unwrap();
+        let original_file = std::fs::read(&source_path).unwrap();
+
+        // Use PIC's same managed overlay format, not an external path whose
+        // disappearance would make Export silently omit an image layer.
+        let logo = RgbaImage::from_pixel(16, 16, image::Rgba([225, 35, 60, 128]));
+        let logo_file = dir.join("logo.png");
+        image::DynamicImage::ImageRgba8(logo).save(&logo_file).unwrap();
+        let prepared = super::super::overlays::prepare_overlay_asset(&logo_file).unwrap();
+        let overlay_dir = super::super::overlays::overlays_dir();
+        std::fs::create_dir_all(&overlay_dir).unwrap();
+        let managed_logo = overlay_dir.join(format!("{}.png", prepared.hash));
+        let created_logo = !managed_logo.is_file();
+        if created_logo {
+            std::fs::write(&managed_logo, &prepared.bytes).unwrap();
+        }
+
+        let mut recipe = EditRecipe::default();
+        recipe.filter = FilterPreset::Valencia;
+        recipe.filter_amount = 0.72;
+        recipe.exposure = 0.18;
+        recipe.saturation = 0.17;
+        recipe.sharpen = 0.25;
+        recipe.straighten = 3.0;
+        recipe.crop = CropRect {
+            left: 0.13, top: 0.09, right: 0.9, bottom: 0.86,
+        };
+        let mut overlay = OverlaySpec::new_centered(prepared.hash);
+        overlay.opacity = 0.6;
+        overlay.width = 0.25;
+        recipe.overlays.push(overlay);
+        recipe.text_layers.push(TextLayerSpec::new_default());
+
+        let job = ExportJob::from_record(
+            source_path.display().to_string(), 90, recipe.encode(),
+            128, 128, "DSC_5791.png",
+        );
+        let destination = dir.join("DSC_5791_edit.png");
+        export_job_to(&job, &destination, 0, 92, ExportFormat::Png, &render_job)
+            .unwrap();
+
+        let expected = super::super::render::apply_recipe(
+            super::super::render::apply_library_rotation(photo, 90), &recipe,
+        );
+        let actual = image::open(&destination).unwrap().to_rgba8();
+        assert_eq!(actual.dimensions(), expected.dimensions());
+        assert_eq!(actual, expected, "lossless Export differs from Edit recipe");
+        assert_eq!(std::fs::read(&source_path).unwrap(), original_file,
+            "Export changed the original source file");
+
+        if created_logo {
+            std::fs::remove_file(managed_logo).ok();
+        }
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
     fn batch_stops_when_cancel_flag_is_set() {
         let dir = std::env::temp_dir().join(format!(
             "pic-export-cancel-{}-{}",

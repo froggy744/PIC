@@ -96,7 +96,7 @@ pub fn render_for_export(
     source_width: i64,
     source_height: i64,
 ) -> Result<RgbaImage> {
-    let (mut width, mut height) = if source_width > 0 && source_height > 0 {
+    let (width, height) = if source_width > 0 && source_height > 0 {
         (source_width as u32, source_height as u32)
     } else {
         // RAW/remote records can lack catalog dimensions. An unbounded request
@@ -104,9 +104,9 @@ pub fn render_for_export(
         // it can actually decode instead of exporting a 1x1 image.
         (u32::MAX, u32::MAX)
     };
-    if matches!(rotation.rem_euclid(360), 90 | 270) {
-        std::mem::swap(&mut width, &mut height);
-    }
+    // These are *unrotated source* decode bounds. Library rotation happens
+    // afterward in render_for_viewer; swapping here silently downsized a
+    // landscape source on any 90°/270° export before applying edits.
     render_for_viewer(
         reference,
         rotation,
@@ -615,6 +615,30 @@ pub fn save_export(
 mod tests {
     use super::*;
     use crate::edit::filters::FilterPreset;
+
+    #[test]
+    fn library_quarter_turn_export_keeps_full_native_resolution() {
+        let path = std::env::temp_dir().join(format!(
+            "pic-export-rotation-{}-{}.png", std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+        ));
+        let source = RgbaImage::from_fn(120, 80, |x, y| {
+            Rgba([(x * 2) as u8, (y * 3) as u8, (x ^ y) as u8, 255])
+        });
+        DynamicImage::ImageRgba8(source.clone()).save(&path).unwrap();
+        for rotation in [90, 180, 270] {
+            let output = render_for_export(
+                path.to_str().unwrap(), rotation, "", 120, 80,
+            ).unwrap();
+            let expected = apply_library_rotation(source.clone(), rotation);
+            assert_eq!(output.dimensions(), expected.dimensions(),
+                "library rotation {rotation} downsampled the original");
+            assert_eq!(output, expected,
+                "library rotation {rotation} changed decoded source pixels");
+        }
+        std::fs::remove_file(path).ok();
+    }
 
     #[test]
     fn jpeg_export_alpha_matte_preserves_opaque_and_flattens_transparency() {

@@ -1017,6 +1017,14 @@ void main() {
     })
 }
 
+fn cpu_gaussian_kernel_radius(sigma: f32) -> i32 {
+    // Mirror image::imageops::GaussianBlurParameters (image 0.25.10).
+    // Keeping the sample support identical matters for Pencil Sketch edges.
+    let mut size = ((((sigma - 0.8) / 0.3 + 1.0) * 2.0 + 1.0).max(3.0)) as i32;
+    if size % 2 == 0 { size += 1; }
+    (size - 1) / 2
+}
+
 // Clarity uses a source-sized luminance *coordinate system*, but its blur is
 // computed once per draw in a <=1200px GPU buffer (not via CPU imageops).
 // The original GtkGLArea framebuffer must be restored, never framebuffer 0.
@@ -1070,7 +1078,9 @@ unsafe fn draw_clarity_luminance(
     gl::DrawArrays(gl::TRIANGLES, 0, 3);
 
     let sigma = ((width.min(height) as f32) * 0.008).clamp(1.5, 20.0);
-    let radius = (sigma * 3.0).ceil() as i32;
+    // image 0.25.10 GaussianBlurParameters::kernel_size_from_sigma;
+    // a generic 3*sigma support mismatches its small-radius behaviour.
+    let radius = cpu_gaussian_kernel_radius(sigma);
     gl::UseProgram(objects.blur_program);
     uniform_1i(objects.blur_program, "uInput", 0);
     uniform_2f(objects.blur_program, "uTexel", 1.0 / width as f32, 1.0 / height as f32);
@@ -1146,7 +1156,9 @@ unsafe fn draw_effect_luminance(
     gl::DrawArrays(gl::TRIANGLES, 0, 3);
 
     let sigma = ((width.min(height) as f32) * if pencil { 0.004 } else { 0.008 }).max(0.8);
-    let radius = (sigma * 3.0).ceil() as i32;
+    // image 0.25.10 GaussianBlurParameters::kernel_size_from_sigma;
+    // a generic 3*sigma support mismatches its small-radius behaviour.
+    let radius = cpu_gaussian_kernel_radius(sigma);
     gl::UseProgram(objects.blur_program);
     uniform_1i(objects.blur_program, "uInput", 0);
     uniform_2f(objects.blur_program, "uTexel", 1.0 / width as f32, 1.0 / height as f32);

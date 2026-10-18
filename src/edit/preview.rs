@@ -18,6 +18,32 @@ impl PreviewBase {
 
 const PREVIEW_BASE_CACHE_CAPACITY: usize = 2;
 
+fn preview_target_dimensions(
+    source_width: i64,
+    source_height: i64,
+    rotation: i32,
+) -> (u32, u32) {
+    // Edit renders retain the full source resolution at every zoom level.
+    // The canvas scales that texture for Fit mode; keeping the source pixels
+    // avoids a resolution drop when an adjustment is applied.
+    let (mut width, mut height) = (
+        if source_width > 0 {
+            source_width as u32
+        } else {
+            u32::MAX
+        },
+        if source_height > 0 {
+            source_height as u32
+        } else {
+            u32::MAX
+        },
+    );
+    if matches!(rotation.rem_euclid(360), 90 | 270) {
+        std::mem::swap(&mut width, &mut height);
+    }
+    (width, height)
+}
+
 fn cached_preview_base(
     cache: &Arc<Mutex<Vec<PreviewBase>>>,
     path: &str,
@@ -169,13 +195,15 @@ fn render_preview_job(
             .image
             .clone()
     } else {
-        let base = if let Some(image) = cached_preview_base(
+        let cached = cached_preview_base(
             base_cache,
             &job.path,
             job.rotation,
             job.target_width,
             job.target_height,
-        ) {
+        );
+        let cache_hit = cached.is_some();
+        let base = if let Some(image) = cached {
             image
         } else {
             let image = super::render::decode_base_for_viewer(
@@ -196,6 +224,17 @@ fn render_preview_job(
             );
             image
         };
+        if std::env::var_os("PICASA_TRACE").is_some() {
+            eprintln!(
+                "PIC_EDIT source_base cache={} target={}x{} decoded={}x{} uri={}",
+                if cache_hit { "hit" } else { "miss" },
+                job.target_width,
+                job.target_height,
+                base.width(),
+                base.height(),
+                crate::thumbnail::viewer_trace_reference(&job.path),
+            );
+        }
 
         if geometry_needed {
             let image = super::render::apply_geometry(base, &job.recipe);
@@ -214,8 +253,148 @@ fn render_preview_job(
         }
     };
 
+    let geometry_dimensions = (geometry.width(), geometry.height());
     let rendered = super::render::apply_tone(geometry, &job.recipe);
+    if std::env::var_os("PICASA_TRACE").is_some() {
+        eprintln!(
+            "PIC_EDIT adjustment_buffer geometry={}x{} output={}x{} recipe_default={} uri={}",
+            geometry_dimensions.0,
+            geometry_dimensions.1,
+            rendered.width(),
+            rendered.height(),
+            job.recipe.is_default(),
+            crate::thumbnail::viewer_trace_reference(&job.path),
+        );
+    }
 
 
     Ok(rendered)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn edit_preview_at_fit_and_one_to_one_keeps_source_resolution() {
+        let source = (3936, 2624);
+        assert_eq!(preview_target_dimensions(3936, 2624, 0), source);
+        assert_eq!(preview_target_dimensions(3936, 2624, 90), (2624, 3936));
+        assert_eq!(preview_target_dimensions(0, 0, 0), (u32::MAX, u32::MAX));
+    }
+
+    #[test]
+    fn one_to_one_preview_keeps_native_dimensions_and_detail_through_edit_and_reset() {
+        const WIDTH: u32 = 3936;
+        const HEIGHT: u32 = 2624;
+        let path = std::env::temp_dir().join(format!(
+            "pic-edit-preview-quality-{}-{}.jpg",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let source = image::RgbImage::from_fn(WIDTH, HEIGHT, |x, y| {
+            // A fine repeating edge pattern stands in for eyelashes and hair.
+            let stripe = ((x / 5 + y / 11) % 2) as u8;
+            let value = if stripe == 0 { 48 } else { 205 };
+            image::Rgb([value, value, value])
+        });
+        source.save(&path).unwrap();
+        let reference = path.to_string_lossy().into_owned();
+        let cache = Arc::new(Mutex::new(Vec::new()));
+        let mut geometry_cache = None;
+        let render =
+            |generation, recipe: EditRecipe, geometry_cache: &mut Option<PreviewGeometry>| {
+                let (sender, _receiver) = std::sync::mpsc::channel();
+                let job = PreviewJob {
+                    generation,
+                    path: reference.clone(),
+                    rotation: 0,
+                    target_width: WIDTH,
+                    target_height: HEIGHT,
+                    recipe,
+                    result_sender: sender,
+                };
+                render_preview_job(&job, &cache, geometry_cache).unwrap()
+            };
+
+        let original = render(1, EditRecipe::default(), &mut geometry_cache);
+        let mut edited_recipe = EditRecipe::default();
+        edited_recipe.exposure = -0.03;
+        let edited = render(2, edited_recipe, &mut geometry_cache);
+        let reset = render(3, EditRecipe::default(), &mut geometry_cache);
+
+        for (label, image) in [("zero", &original), ("edited", &edited), ("reset", &reset)] {
+            assert_eq!((image.width(), image.height()), (WIDTH, HEIGHT), "{label}");
+        }
+        assert_eq!(
+            original, reset,
+            "reset must restore the decoded preview pixels"
+        );
+        let edge_count = |image: &image::RgbaImage| {
+            (0..WIDTH - 1)
+                .step_by(2)
+                .filter(|&x| {
+                    let left = image.get_pixel(x, 100)[0] as i16;
+                    let right = image.get_pixel(x + 1, 100)[0] as i16;
+                    (left - right).abs() > 35
+                })
+                .count()
+        };
+        let baseline_edges = edge_count(&original);
+        let edited_edges = edge_count(&edited);
+        eprintln!(
+            "PIC_EDIT test_detail dimensions={}x{} fine_edges_zero={} fine_edges_exposure={}",
+            WIDTH, HEIGHT, baseline_edges, edited_edges
+        );
+        assert!(baseline_edges > 100, "fixture should contain fine detail");
+        assert!(
+            edited_edges * 4 >= baseline_edges * 3,
+            "minor exposure edit lost fine edges"
+        );
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    #[ignore = "requires PIC_TEST_EDIT_REFERENCE for a real local or NFS photo"]
+    fn real_photo_zero_exposure_reset_keep_editor_preview_resolution() {
+        let reference = std::env::var("PIC_TEST_EDIT_REFERENCE")
+            .expect("set PIC_TEST_EDIT_REFERENCE to a local path or NFS URI");
+        let cache = Arc::new(Mutex::new(Vec::new()));
+        let mut geometry_cache = None;
+        let render =
+            |generation, recipe: EditRecipe, geometry_cache: &mut Option<PreviewGeometry>| {
+                let (sender, _receiver) = std::sync::mpsc::channel();
+                let job = PreviewJob {
+                    generation,
+                    path: reference.clone(),
+                    rotation: 0,
+                    target_width: 3960,
+                    target_height: 2640,
+                    recipe,
+                    result_sender: sender,
+                };
+                render_preview_job(&job, &cache, geometry_cache).unwrap()
+            };
+
+        let original = render(1, EditRecipe::default(), &mut geometry_cache);
+        let mut recipe = EditRecipe::default();
+        recipe.exposure = -0.03;
+        let edited = render(2, recipe, &mut geometry_cache);
+        let reset = render(3, EditRecipe::default(), &mut geometry_cache);
+        let dimensions = (original.width(), original.height());
+        assert!(dimensions.0 > 2000 && dimensions.1 > 1000, "unexpected source resolution: {dimensions:?}");
+        assert_eq!((edited.width(), edited.height()), dimensions);
+        assert_eq!((reset.width(), reset.height()), dimensions);
+        assert_eq!(original, reset);
+        eprintln!(
+            "PIC_EDIT real_photo dimensions={}x{} exposure_dimensions={}x{} reset=identical",
+            dimensions.0,
+            dimensions.1,
+            edited.width(),
+            edited.height(),
+        );
+    }
 }

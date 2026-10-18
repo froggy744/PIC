@@ -126,6 +126,16 @@ fn decode_jpeg_turbo_with_scale(
         .map_err(|error| anyhow::anyhow!("TurboJPEG pixel decode failed: {error}"))?;
     let image = image::RgbImage::from_raw(scaled.width as u32, scaled.height as u32, pixels)
         .context("TurboJPEG returned an invalid RGB buffer")?;
+    if std::env::var_os("PICASA_TRACE").is_some() {
+        eprintln!(
+            "PIC_DECODE turbojpeg source={}x{} decoded={}x{} scale={}",
+            header.width,
+            header.height,
+            scaled.width,
+            scaled.height,
+            scale.1,
+        );
+    }
     Ok(DecodedThumbnailSource {
         image,
         source_width: header.width as u32,

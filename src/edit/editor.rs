@@ -447,17 +447,11 @@ pub fn build(
     let zoom_sync: Rc<RefCell<Option<Box<dyn Fn(f64, f64)>>>> = Rc::new(RefCell::new(None));
     let generation = Rc::new(Cell::new(0u64));
     let preview_debounce: Rc<RefCell<Option<glib::SourceId>>> = Rc::new(RefCell::new(None));
-    // Keep both the normal Fit preview base and a prefetched native-resolution
-    // base. Sharing this tiny cache with the prefetch thread lets 1:1 reuse the
-    // decoded pixels without evicting the fast 1800x1400 editing base.
+    // Keep source-resolution edit bases across adjustments so slider changes
+    // reuse the decoded pixels instead of rereading the original.
     let preview_base_cache: Arc<Mutex<Vec<PreviewBase>>> = Arc::new(Mutex::new(Vec::new()));
+    // Edit rendering keeps source resolution at every zoom level.
     let preview_worker = spawn_preview_worker(preview_base_cache.clone());
-    // Native 24MP rendering must never block the fast draft worker. Both
-    // workers share decoded bases, but have independent render queues.
-    let preview_native_worker = spawn_preview_worker(preview_base_cache.clone());
-    let full_native_next = Rc::new(Cell::new(false));
-    let native_refine_source: Rc<RefCell<Option<glib::SourceId>>> =
-        Rc::new(RefCell::new(None));
 
     // Drag-to-pan for the editing canvas. Keep this controller on the
     // stationary ScrolledWindow so pointer coordinates do not move with the
@@ -750,8 +744,6 @@ pub fn build(
         let overlay_layer = overlay_layer.clone();
         let preview_debounce = preview_debounce.clone();
         let preview_worker = preview_worker.clone();
-        let preview_native_worker = preview_native_worker.clone();
-        let full_native_next = full_native_next.clone();
         Rc::new(move || {
             // Throttle, not debounce: the old code reset the timer on every
             // slider tick, so a continuous drag skipped every intermediate
@@ -777,8 +769,6 @@ pub fn build(
             let overlay_layer = overlay_layer.clone();
             let preview_debounce_for_fire = preview_debounce.clone();
             let preview_worker = preview_worker.clone();
-            let preview_native_worker = preview_native_worker.clone();
-            let full_native_next = full_native_next.clone();
             let active_rotation = active_rotation_for_queue.clone();
             let source = glib::timeout_add_local_once(
                 Duration::from_millis(PREVIEW_THROTTLE_MS),
@@ -787,54 +777,41 @@ pub fn build(
                     let current_generation = generation.get().wrapping_add(1);
                     generation.set(current_generation);
                     let recipe = session.borrow().recipe.clone();
-                    // While a slider drag is in progress, render half-resolution
-                    // draft frames: 4x fewer pixels keeps the drag preview light
-                    // and fast. The release handler queues a full-resolution
-                    // settle render once the drag ends.
                     let interactive = session.borrow().action_active();
                     let path = photo.path();
                     let rotation = active_rotation.get();
                     let native = native_one_to_one.get();
-                    // 1:1 entry needs true native geometry. Subsequent tone/
-                    // filter adjustments start with a small quick-look texture,
-                    // then refine at the same widget geometry after idle.
-                    let native_full = native && (full_native_next.get()
-                        || pending_one_to_one_anchor.borrow().is_some());
-                    let (target_width, target_height) = if native_full {
-                        let mut width = if photo.width() > 0 {
-                            photo.width() as u32
-                        } else {
-                            u32::MAX
-                        };
-                        let mut height = if photo.height() > 0 {
-                            photo.height() as u32
-                        } else {
-                            u32::MAX
-                        };
-                        if matches!(rotation.rem_euclid(360), 90 | 270) {
-                            std::mem::swap(&mut width, &mut height);
-                        }
-                        (width, height)
-                    } else if native {
-                        (1600, 1200)
-                    } else if interactive {
-                        (1800 / 2, 1400 / 2)
-                    } else {
-                        (1800, 1400)
-                    };
+                    // Keep edit buffers at source resolution in both Fit and
+                    // 1:1 modes; the picture widget scales to the viewport.
+                    let (target_width, target_height) = preview_target_dimensions(
+                        photo.width(),
+                        photo.height(),
+                        rotation,
+                    );
+                    let source_full = true;
 
-                    if native && !native_full {
-                        // No spinner over the photo for a fast draft.
-                        busy.stop();
-                        busy.set_visible(false);
-                    } else if !interactive {
+                    if std::env::var_os("PICASA_TRACE").is_some() {
+                        eprintln!(
+                            "PIC_EDIT preview_request generation={} native={} interactive={} source_full={} target={}x{} recipe_default={} uri={}",
+                            current_generation,
+                            native,
+                            interactive,
+                            source_full,
+                            target_width,
+                            target_height,
+                            recipe.is_default(),
+                            crate::thumbnail::viewer_trace_reference(&path),
+                        );
+                    }
+
+                    if !interactive {
                         busy.set_visible(true);
                         busy.start();
                         status.set_text("Rendering preview…");
                     }
 
                     let (result_sender, receiver) = std::sync::mpsc::channel();
-                    let worker = if native_full { &preview_native_worker } else { &preview_worker };
+                    let worker = &preview_worker;
                     if worker
                         .send(PreviewJob {
                             generation: current_generation,
@@ -853,6 +830,7 @@ pub fn build(
                         return;
                     }
 
+                    let photo = photo.clone();
                     let picture = picture.clone();
                     let status = status.clone();
                     let busy = busy.clone();
@@ -867,9 +845,9 @@ pub fn build(
                     glib::timeout_add_local(Duration::from_millis(25), move || {
                         match receiver.try_recv() {
                             Ok(result) => {
-                                // A pending native refinement must never put
-                                // the canvas back into 1:1 after the user
-                                // presses Fit while the worker is rendering.
+                                // A result from the previous zoom mode must
+                                // never replace the current canvas after the
+                                // user changes between Fit and 1:1.
                                 if generation.get() != current_generation
                                     || native_one_to_one.get() != native
                                 {
@@ -893,17 +871,28 @@ pub fn build(
                                             width as usize * 4,
                                         );
                                         let old_dimensions = preview_dimensions.get();
-                                        // A quick native draft is a *different
-                                        // texture resolution*, not a different
-                                        // photo size. The 1:1 canvas and pan
-                                        // offsets must remain native-sized.
+                                        // The displayed canvas follows the
+                                        // source dimensions at every zoom.
                                         let display_dimensions = preview_display_dimensions(
                                             old_dimensions,
                                             (width as i32, height as i32),
                                             native,
-                                            !native_full,
+                                            !source_full,
                                         );
                                         preview_dimensions.set(display_dimensions);
+                                        if std::env::var_os("PICASA_TRACE").is_some() {
+                                            eprintln!(
+                                                "PIC_EDIT preview_display generation={} adjustment_buffer={}x{} displayed={}x{} native={} source_full={} uri={}",
+                                                current_generation,
+                                                width,
+                                                height,
+                                                display_dimensions.0,
+                                                display_dimensions.1,
+                                                native,
+                                                source_full,
+                                                crate::thumbnail::viewer_trace_reference(&photo.path()),
+                                            );
+                                        }
                                         picture.set_paintable(Some(&texture));
                                         if native {
                                             let anchor =
@@ -1031,45 +1020,9 @@ pub fn build(
         })
     };
 
-    // Fast paint first in native mode, sharp native pixels after the user
-    // pauses. Keep refinement off the UI thread and out of the draft lane.
-    // A pending cursor anchor means the user has JUST entered 1:1: the normal
-    // native request handles that transition, without a duplicate draft.
-    let queue_preview: Rc<dyn Fn()> = {
-        let schedule_preview = schedule_preview.clone();
-        let native_one_to_one = native_one_to_one.clone();
-        let pending_anchor = pending_one_to_one_anchor.clone();
-        let full_native_next = full_native_next.clone();
-        let native_refine_source = native_refine_source.clone();
-        let session = session.clone();
-        Rc::new(move || {
-            if let Some(source) = native_refine_source.borrow_mut().take() {
-                source.remove();
-            }
-            full_native_next.set(false);
-            schedule_preview();
-            if !native_one_to_one.get() || pending_anchor.borrow().is_some() {
-                return;
-            }
-            let schedule = schedule_preview.clone();
-            let native = native_one_to_one.clone();
-            let full = full_native_next.clone();
-            let session = session.clone();
-            let source_slot = native_refine_source.clone();
-            let source = glib::timeout_add_local(Duration::from_millis(240), move || {
-                if session.borrow().action_active() {
-                    return glib::ControlFlow::Continue;
-                }
-                source_slot.borrow_mut().take();
-                if native.get() {
-                    full.set(true);
-                    schedule();
-                }
-                glib::ControlFlow::Break
-            });
-            native_refine_source.replace(Some(source));
-        })
-    };
+    // A low-resolution texture is never used for a native 1:1 canvas, so a
+    // completed adjustment has no separate settle/refinement handoff.
+    let queue_preview: Rc<dyn Fn()> = schedule_preview.clone();
 
     let update_history_buttons =
         history_button_updater(session.clone(), undo.clone(), redo.clone());
@@ -2206,56 +2159,6 @@ pub fn build(
     }
 
     queue_preview();
-
-    // Phase 5: warm the native-resolution decoded base shortly after the fast
-    // Fit preview has been requested. The decode happens on its own thread so
-    // slider rendering remains responsive. The shared two-entry cache keeps
-    // both Fit and native bases, so warming 1:1 never makes normal editing pay
-    // another decode.
-    {
-        let cache = preview_base_cache.clone();
-        let path = photo.path();
-        let rotation = photo.rotation();
-        let mut target_width = if photo.width() > 0 {
-            photo.width() as u32
-        } else {
-            u32::MAX
-        };
-        let mut target_height = if photo.height() > 0 {
-            photo.height() as u32
-        } else {
-            u32::MAX
-        };
-        if matches!(rotation.rem_euclid(360), 90 | 270) {
-            std::mem::swap(&mut target_width, &mut target_height);
-        }
-
-        glib::timeout_add_local_once(Duration::from_millis(300), move || {
-            if cached_preview_base(&cache, &path, rotation, target_width, target_height).is_some() {
-                return;
-            }
-
-            std::thread::spawn(move || {
-                if let Ok(image) = super::render::decode_base_for_viewer(
-                    &path,
-                    rotation,
-                    target_width,
-                    target_height,
-                ) {
-                    store_preview_base(
-                        &cache,
-                        PreviewBase {
-                            path: path.clone(),
-                            rotation,
-                            target_width,
-                            target_height,
-                            image,
-                        },
-                    );
-                }
-            });
-        });
-    }
 
     EditEditor {
         root,

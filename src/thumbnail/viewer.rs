@@ -627,6 +627,8 @@ where
     };
 
     check_viewer_cancelled(&cancelled, "before_pixel_conversion")?;
+    let decoded_width = image.width();
+    let decoded_height = image.height();
     let image = image.into_rgba8();
 
     // Resize before orientation. Rotating only display-sized pixels avoids a
@@ -639,6 +641,17 @@ where
     let oriented = apply_orientation(DynamicImage::ImageRgba8(image), orientation).into_rgba8();
     check_viewer_cancelled(&cancelled, "after_final_orientation")?;
     if std::env::var_os("PICASA_TRACE").is_some() {
+        eprintln!(
+            "PIC_DECODE viewer format={} requested={}x{} decoded={}x{} output={}x{} orientation={}",
+            crate::image_format::for_path(reference).map_or("unknown", |f| f.id),
+            viewport_width,
+            viewport_height,
+            decoded_width,
+            decoded_height,
+            oriented.width(),
+            oriented.height(),
+            orientation,
+        );
         let total_ms = decode_started.elapsed().as_millis();
         eprintln!(
             "PIC_VIEWER decode_stage source_ms={} cpu_ms={} uri={}",
@@ -660,7 +673,7 @@ fn read_viewer_source(
     }
 }
 
-fn viewer_trace_reference(reference: &str) -> String {
+pub(crate) fn viewer_trace_reference(reference: &str) -> String {
     let Some((scheme, rest)) = reference.split_once("://") else {
         return reference.to_owned();
     };

@@ -147,6 +147,27 @@ fn blend_filter_amount(image: &mut RgbaImage, original: &RgbaImage, amount: f32)
 }
 
 pub(super) fn apply_tone(mut image: RgbaImage, recipe: &EditRecipe) -> RgbaImage {
+    // Keep the unedited image as-is. Besides avoiding a full pixel loop for
+    // the common zero-adjustment state, this preserves every decoded detail
+    // and makes reset pixel-identical to the source preview.
+    if recipe.filter == filters::FilterPreset::None
+        && !recipe.auto_color
+        && !recipe.auto_contrast
+        && recipe.exposure == 0.0
+        && recipe.temperature == 0.0
+        && recipe.saturation == 0.0
+        && recipe.fill_light == 0.0
+        && recipe.shadows == 0.0
+        && recipe.highlights == 0.0
+        && recipe.contrast == 0.0
+        && !recipe.black_white
+        && !recipe.sepia
+        && recipe.clarity == 0.0
+        && recipe.sharpen == 0.0
+        && recipe.grain == 0.0
+    {
+        return image;
+    }
     let filter_amount = recipe.filter_amount.clamp(0.0, 1.0);
     if recipe.filter != filters::FilterPreset::None && filter_amount > 0.0 {
         if filter_amount >= 1.0 {

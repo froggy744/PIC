@@ -207,6 +207,10 @@ struct GlObjects {
     auto_contrast_params: u32,
     auto_contrast_fbo: u32,
     auto_contrast_revision: u64,
+    stats_source_texture: u32,
+    stats_source_fbo: u32,
+    stats_source_dimensions: (i32, i32),
+    stats_source_revision: u64,
     overlay_program: u32,
     overlay_textures: Vec<(String, u32)>,
     overlay_revision: u64,
@@ -216,6 +220,7 @@ struct GpuState {
     key: Option<SourceKey>,
     source: Option<(i32, i32, glib::Bytes)>,
     source_revision: u64,
+    stats_revision: u64,
     tone: GpuTone,
     geometry: Option<GpuGeometry>,
     overlay_key: Option<GpuOverlayKey>,
@@ -261,6 +266,7 @@ impl LiveGpuCanvas {
             key: None,
             source: None,
             source_revision: 0,
+            stats_revision: 0,
             tone: GpuTone::default(),
             geometry: None,
             overlay_key: None,
@@ -306,6 +312,7 @@ impl LiveGpuCanvas {
                         gl::DeleteTextures(1, &objects.auto_color_stats);
                         gl::DeleteTextures(1, &objects.histogram_texture);
                         gl::DeleteTextures(1, &objects.auto_contrast_params);
+                        gl::DeleteTextures(1, &objects.stats_source_texture);
                         gl::DeleteFramebuffers(1, &objects.clarity_luma_fbo);
                         gl::DeleteFramebuffers(1, &objects.clarity_blur_fbo);
                         gl::DeleteFramebuffers(1, &objects.effect_luma_fbo);
@@ -313,6 +320,7 @@ impl LiveGpuCanvas {
                         gl::DeleteFramebuffers(1, &objects.auto_color_fbo);
                         gl::DeleteFramebuffers(1, &objects.histogram_fbo);
                         gl::DeleteFramebuffers(1, &objects.auto_contrast_fbo);
+                        gl::DeleteFramebuffers(1, &objects.stats_source_fbo);
                         gl::DeleteVertexArrays(1, &objects.vao);
                         gl::DeleteProgram(objects.program);
                         gl::DeleteProgram(objects.blur_program);
@@ -379,6 +387,7 @@ impl LiveGpuCanvas {
                     .as_ref()
                     .map(|(width, height, bytes)| (*width, *height, bytes.clone()));
                 let source_revision = state.source_revision;
+                let stats_revision = state.stats_revision;
                 let tone = state.tone;
                 let geometry = state.geometry;
                 let overlays = state.overlays.clone();
@@ -689,6 +698,7 @@ impl LiveGpuCanvas {
         // Existing editor sources are CPU-transformed; do not transform twice.
         state.geometry = None;
         state.source_revision = state.source_revision.wrapping_add(1);
+        state.stats_revision = state.stats_revision.wrapping_add(1);
         state.overlay_key = None;
         state.overlays.clear();
         state.overlay_revision = state.overlay_revision.wrapping_add(1);
@@ -712,6 +722,7 @@ impl LiveGpuCanvas {
         let geo = GpuGeometry::for_source_rotation(width, height, rotation, recipe);
         if state.geometry != Some(geo) {
             state.geometry = Some(geo);
+            state.stats_revision = state.stats_revision.wrapping_add(1);
             state.overlay_key = None;
             state.last_queued = Some(Instant::now());
             drop(state);
@@ -723,6 +734,7 @@ impl LiveGpuCanvas {
     pub fn clear_untransformed_geometry(&self) {
         let mut state = self.state.borrow_mut();
         if state.geometry.take().is_some() {
+            state.stats_revision = state.stats_revision.wrapping_add(1);
             state.last_queued = Some(Instant::now());
             drop(state);
             self.area.queue_render();
@@ -841,6 +853,9 @@ impl LiveGpuCanvas {
         let mut state = self.state.borrow_mut();
         if state.tone == next {
             return;
+        }
+        if state.tone.filter != next.filter || state.tone.filter_amount != next.filter_amount {
+            state.stats_revision = state.stats_revision.wrapping_add(1);
         }
         state.tone = next;
         state.last_queued = Some(Instant::now());
@@ -1288,6 +1303,10 @@ void main() {
         ivec2 coord = ivec2(floor(uv * uOutputSize));
         vec4 px = uGpuGeometryOn != 0 ? geometryPixel(coord) : texture(uSource, uv);
         float y;
+        if (uClarityPrepass == 3) {
+            color = namedFilterPixel(geometryPixel(coord), coord);
+            return;
+        }
         if (uClarityPrepass == 2) {
             if (uPencilSketch > 0.5) {
                 y = mix(1.0, luma(px.rgb), px.a);
@@ -1596,6 +1615,10 @@ void main() {
         auto_contrast_params: 0,
         auto_contrast_fbo: 0,
         auto_contrast_revision: 0,
+        stats_source_texture: 0,
+        stats_source_fbo: 0,
+        stats_source_dimensions: (0, 0),
+        stats_source_revision: 0,
         overlay_program,
         overlay_textures: Vec::new(),
         overlay_revision: 0,

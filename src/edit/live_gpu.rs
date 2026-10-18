@@ -79,6 +79,9 @@ struct GpuGeometry {
     output_height: i32,
     straight_width: f32,
     straight_height: f32,
+    oriented_width: f32,
+    oriented_height: f32,
+    library_rotation: i32,
     crop_x: f32,
     crop_y: f32,
     cos_angle: f32,
@@ -86,15 +89,25 @@ struct GpuGeometry {
 }
 impl GpuGeometry {
     fn for_source(width: i32, height: i32, recipe: &EditRecipe) -> Self {
+        Self::for_source_rotation(width, height, 0, recipe)
+    }
+
+    fn for_source_rotation(width: i32, height: i32, rotation: i32, recipe: &EditRecipe) -> Self {
+        let rotation = rotation.rem_euclid(360);
+        let (oriented_width, oriented_height) = if rotation == 90 || rotation == 270 {
+            (height, width)
+        } else {
+            (width, height)
+        };
         let angle = if recipe.straighten.abs() < 0.01 {
             0.0
         } else {
             recipe.straighten.to_radians()
         };
-        let (straight_width, straight_height) = if angle == 0.0 || width < 2 || height < 2 {
-            (width as f32, height as f32)
+        let (straight_width, straight_height) = if angle == 0.0 || oriented_width < 2 || oriented_height < 2 {
+            (oriented_width as f32, oriented_height as f32)
         } else {
-            let (w, h) = super::render::largest_rotated_rect(width as f32, height as f32, angle);
+            let (w, h) = super::render::largest_rotated_rect(oriented_width as f32, oriented_height as f32, angle);
             (w.floor().max(1.0), h.floor().max(1.0))
         };
         let c = recipe.crop.normalized();
@@ -109,6 +122,9 @@ impl GpuGeometry {
             output_height: (bottom - y).clamp(1, h - y),
             straight_width,
             straight_height,
+            oriented_width: oriented_width as f32,
+            oriented_height: oriented_height as f32,
+            library_rotation: rotation / 90,
             crop_x: x as f32,
             crop_y: y as f32,
             cos_angle: angle.cos(),
@@ -375,6 +391,8 @@ impl LiveGpuCanvas {
                     uniform_2f(objects.program, "uOutputSize", output_width as f32, output_height as f32);
                     if let Some(geo) = geometry {
                         uniform_2f(objects.program, "uRotatedSize", geo.straight_width, geo.straight_height);
+                        uniform_2f(objects.program, "uOrientedSize", geo.oriented_width, geo.oriented_height);
+                        uniform_1i(objects.program, "uLibraryRotation", geo.library_rotation);
                         uniform_2f(objects.program, "uCropOffset", geo.crop_x, geo.crop_y);
                         uniform_2f(objects.program, "uAngleCosSin", geo.cos_angle, geo.sin_angle);
                     }
@@ -615,9 +633,15 @@ impl LiveGpuCanvas {
     /// Return the exact viewport dimensions needed by the scroll/layout layer.
     /// Updating geometry never reuploads the unchanged source texture.
     pub fn set_untransformed_geometry(&self, recipe: &EditRecipe) -> Option<(i32, i32)> {
+        self.set_untransformed_geometry_for_rotation(0, recipe)
+    }
+
+    /// The rotation is PIC's library quarter-turn, applied before straighten.
+    /// Pass unrotated decoded pixels; source uploads remain unchanged.
+    pub fn set_untransformed_geometry_for_rotation(&self, rotation: i32, recipe: &EditRecipe) -> Option<(i32, i32)> {
         let mut state = self.state.borrow_mut();
         let &(width, height, _) = state.source.as_ref()?;
-        let geo = GpuGeometry::for_source(width, height, recipe);
+        let geo = GpuGeometry::for_source_rotation(width, height, rotation, recipe);
         if state.geometry != Some(geo) {
             state.geometry = Some(geo);
             state.last_queued = Some(Instant::now());
@@ -836,6 +860,8 @@ uniform vec2 uSourceSize;
 uniform vec2 uOutputSize;
 uniform int uGpuGeometryOn;
 uniform vec2 uRotatedSize;
+uniform vec2 uOrientedSize;
+uniform int uLibraryRotation;
 uniform vec2 uCropOffset;
 uniform vec2 uAngleCosSin;
 uniform vec2 uViewSize;
@@ -963,10 +989,18 @@ vec4 geometryPixel(ivec2 outputCoord) {
     ivec2 valid = clamp(outputCoord, ivec2(0), ivec2(uOutputSize) - ivec2(1));
     if (uGpuGeometryOn == 0) return texelFetch(uSource, valid, 0);
     vec2 offset = vec2(valid) + uCropOffset - (uRotatedSize - vec2(1.0)) * 0.5;
-    vec2 sourceCoord = vec2(
+    vec2 orientedCoord = vec2(
         uAngleCosSin.x * offset.x + uAngleCosSin.y * offset.y,
         -uAngleCosSin.y * offset.x + uAngleCosSin.x * offset.y
-    ) + (uSourceSize - vec2(1.0)) * 0.5;
+    ) + (uOrientedSize - vec2(1.0)) * 0.5;
+    vec2 sourceCoord = orientedCoord;
+    if (uLibraryRotation == 1) {
+        sourceCoord = vec2(orientedCoord.y, uSourceSize.y - 1.0 - orientedCoord.x);
+    } else if (uLibraryRotation == 2) {
+        sourceCoord = uSourceSize - vec2(1.0) - orientedCoord;
+    } else if (uLibraryRotation == 3) {
+        sourceCoord = vec2(uSourceSize.x - 1.0 - orientedCoord.y, orientedCoord.x);
+    }
     sourceCoord = clamp(sourceCoord, vec2(0.0), uSourceSize - vec2(1.0));
     ivec2 lo = ivec2(floor(sourceCoord));
     ivec2 hi = min(lo + ivec2(1), ivec2(uSourceSize) - ivec2(1));
@@ -1875,6 +1909,7 @@ mod tests {
         let image = image::RgbaImage::from_fn(101, 67, |x, y| {
             image::Rgba([x as u8, y as u8, (x + y) as u8, 255])
         });
+        for rotation in [0, 90, 180, 270] {
         for angle in [0.0, 1.5, -4.5, 8.7] {
             for crop in [
                 CropRect::default(),
@@ -1884,14 +1919,18 @@ mod tests {
                 let recipe = EditRecipe {
                     straighten: angle, crop, ..EditRecipe::default()
                 };
-                let cpu = super::super::render::apply_geometry(image.clone(), &recipe);
-                let gpu = GpuGeometry::for_source(101, 67, &recipe);
+                let cpu = super::super::render::apply_geometry(
+                    super::super::render::apply_library_rotation(image.clone(), rotation),
+                    &recipe,
+                );
+                let gpu = GpuGeometry::for_source_rotation(101, 67, rotation, &recipe);
                 assert_eq!(
                     (gpu.output_width, gpu.output_height),
                     (cpu.width() as i32, cpu.height() as i32),
-                    "angle={angle}, crop={crop:?}",
+                    "rotation={rotation} angle={angle}, crop={crop:?}",
                 );
             }
+        }
         }
     }
 
@@ -1938,16 +1977,23 @@ mod tests {
         };
         let baseline = capture();
         let revision = renderer.uploaded_revision();
-        for (angle, crop) in [
-            (0.0, CropRect {left:0.25,top:0.25,right:0.75,bottom:0.75}),
-            (4.5, CropRect::default()),
-            (-6.5, CropRect {left:0.16,top:0.13,right:0.88,bottom:0.85}),
+        for (rotation, angle, crop) in [
+            (0, 0.0, CropRect {left:0.25,top:0.25,right:0.75,bottom:0.75}),
+            (0, 4.5, CropRect::default()),
+            (0, -6.5, CropRect {left:0.16,top:0.13,right:0.88,bottom:0.85}),
+            (90, 0.0, CropRect::default()),
+            (180, 0.0, CropRect::default()),
+            (270, 0.0, CropRect::default()),
+            (90, 4.5, CropRect {left:0.10,top:0.12,right:0.90,bottom:0.83}),
         ] {
             let recipe = EditRecipe {
                 straighten: angle, crop, ..EditRecipe::default()
             };
-            let expected = super::super::render::apply_geometry(original.clone(), &recipe);
-            let output = renderer.set_untransformed_geometry(&recipe).unwrap();
+            let expected = super::super::render::apply_geometry(
+                super::super::render::apply_library_rotation(original.clone(), rotation),
+                &recipe,
+            );
+            let output = renderer.set_untransformed_geometry_for_rotation(rotation, &recipe).unwrap();
             assert_eq!(output, (expected.width() as i32, expected.height() as i32));
             let actual = capture();
             let scale = renderer.widget().scale_factor().max(1) as usize;
@@ -1965,10 +2011,10 @@ mod tests {
                 }
             }
             assert!(max_delta <= 2,
-                "GPU source geometry mismatch angle={angle} crop={crop:?} delta={max_delta}");
+                "GPU source geometry mismatch rotation={rotation} angle={angle} crop={crop:?} delta={max_delta}");
             assert_eq!(renderer.uploaded_revision(), revision,
                 "geometry-only changes must never re-upload the source");
-            eprintln!("PIC_EDIT_GPU geometry_parity angle={angle} {}x{} max_channel_delta={max_delta}",
+            eprintln!("PIC_EDIT_GPU geometry_parity rotation={rotation} angle={angle} {}x{} max_channel_delta={max_delta}",
                 output.0, output.1);
         }
         renderer.clear_untransformed_geometry();

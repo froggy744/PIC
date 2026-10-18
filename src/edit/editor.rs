@@ -481,6 +481,12 @@ pub fn build(
     overlay_layer.set_vexpand(true);
     overlay_layer.set_can_target(false);
     preview_area.add_overlay(&overlay_layer);
+    if let Some(gpu) = &gpu_canvas {
+        let gpu = gpu.clone();
+        overlay_layer.connect_notify_local(Some("visible"), move |widget, _| {
+            gpu.set_overlay_compositing_visible(widget.is_visible());
+        });
+    }
 
     let busy = gtk::Spinner::new();
     busy.set_halign(gtk::Align::Center);

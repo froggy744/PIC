@@ -162,7 +162,46 @@ const FILTER_TILE_PREVIEW_HEIGHT: i32 = FILTER_TILE_PREVIEW_WIDTH;
 // CPU-downscaled to the exact tile box; see render_filter_thumbnails.
 const FILTER_TILE_SUPERSAMPLE: u32 = 2;
 
-fn filter_tile(effect: FilterTileEffect) -> (gtk::ToggleButton, gtk::Picture) {
+/// CPU thumbnail renderer is used only in CPU mode or when the GPU tile
+/// renderer cannot initialize. In GPU mode normal tiles use shader GLAreas.
+fn queue_cpu_filter_thumbnails(
+    path: String,
+    rotation: i32,
+    recipe: EditRecipe,
+    pictures: Vec<gtk::Picture>,
+) {
+    let (sender, receiver) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = sender.send(render_filter_thumbnails(&path, rotation, &recipe));
+    });
+    glib::timeout_add_local(Duration::from_millis(25), move || {
+        match receiver.try_recv() {
+            Ok(Ok(thumbnails)) => {
+                for (picture, (width, height, pixels)) in pictures.iter().zip(thumbnails) {
+                    let bytes = glib::Bytes::from_owned(pixels);
+                    let texture = gtk::gdk::MemoryTexture::new(
+                        width as i32, height as i32,
+                        gtk::gdk::MemoryFormat::R8g8b8a8,
+                        &bytes, width as usize * 4,
+                    );
+                    picture.set_paintable(Some(&texture));
+                }
+                glib::ControlFlow::Break
+            }
+            Ok(Err(error)) => {
+                eprintln!("PIC_EDIT_FILTERS CPU thumbnail error: {error}");
+                glib::ControlFlow::Break
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => glib::ControlFlow::Break,
+            Err(std::sync::mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
+        }
+    });
+}
+
+fn filter_tile(
+    effect: FilterTileEffect,
+    gpu_thumbnail: bool,
+) -> (gtk::ToggleButton, gtk::Picture, Option<LiveGpuCanvas>) {
     let button = gtk::ToggleButton::new();
     button.add_css_class("filter-tile");
     button.set_tooltip_text(Some(effect.label()));
@@ -188,15 +227,31 @@ fn filter_tile(effect: FilterTileEffect) -> (gtk::ToggleButton, gtk::Picture) {
     picture.add_css_class("filter-tile-preview");
     picture.set_overflow(gtk::Overflow::Hidden);
 
+    // Same OpenGL effect shaders as live Edit; the Picture stays available
+    // underneath for the CPU renderer or an OpenGL initialization failure.
+    let gpu_canvas = if gpu_thumbnail {
+        let stage = gtk::Overlay::new();
+        stage.set_size_request(FILTER_TILE_PREVIEW_WIDTH, FILTER_TILE_PREVIEW_HEIGHT);
+        stage.set_hexpand(true);
+        stage.set_vexpand(true);
+        stage.set_child(Some(&picture));
+        let canvas = LiveGpuCanvas::new();
+        stage.add_overlay(&canvas.widget());
+        content.append(&stage);
+        Some(canvas)
+    } else {
+        content.append(&picture);
+        None
+    };
+
     let label = gtk::Label::new(Some(effect.label()));
     label.set_ellipsize(gtk::pango::EllipsizeMode::End);
     label.set_justify(gtk::Justification::Center);
     label.set_max_width_chars(18);
     label.add_css_class("filter-tile-label");
-    content.append(&picture);
     content.append(&label);
     button.set_child(Some(&content));
-    (button, picture)
+    (button, picture, gpu_canvas)
 }
 
 fn add_slider(

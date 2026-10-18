@@ -205,6 +205,7 @@ struct GpuState {
     overlay_key: Option<GpuOverlayKey>,
     overlays: Vec<GpuOverlayLayer>,
     overlay_revision: u64,
+    overlay_visible: bool,
     view: GpuView,
     objects: Option<GlObjects>,
     rendered_frames: u64,
@@ -249,6 +250,7 @@ impl LiveGpuCanvas {
             overlay_key: None,
             overlays: Vec::new(),
             overlay_revision: 0,
+            overlay_visible: true,
             view: GpuView::default(),
             objects: None,
             rendered_frames: 0,
@@ -365,6 +367,7 @@ impl LiveGpuCanvas {
                 let geometry = state.geometry;
                 let overlays = state.overlays.clone();
                 let overlay_revision = state.overlay_revision;
+                let overlay_visible = state.overlay_visible;
                 let view = state.view;
                 let objects = state.objects.as_mut().expect("GL initialized");
                 let mut upload_trace = None;
@@ -553,7 +556,7 @@ impl LiveGpuCanvas {
                     gl::DrawArrays(gl::TRIANGLES, 0, 3);
                     // Render photo layers *after* all image adjustments.
                     // GPU blending composes image assets first, then text.
-                    if !overlays.is_empty() {
+                    if overlay_visible && !overlays.is_empty() {
                         render_gpu_overlays(
                             objects, &overlays, overlay_revision, &view,
                             view_width, view_height, device_scale,
@@ -763,6 +766,17 @@ impl LiveGpuCanvas {
         state.last_queued = Some(Instant::now());
         drop(state);
         self.area.queue_render();
+    }
+
+    /// Crop mode hides content overlays just as the previous Cairo renderer did.
+    pub fn set_overlay_compositing_visible(&self, visible: bool) {
+        let mut state = self.state.borrow_mut();
+        if state.overlay_visible != visible {
+            state.overlay_visible = visible;
+            state.last_queued = Some(Instant::now());
+            drop(state);
+            self.area.queue_render();
+        }
     }
 
     pub fn uses_gpu_layers(&self) -> bool {

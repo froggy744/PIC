@@ -1303,6 +1303,23 @@ mod tests {
             check_frame(&effect, &source);
             assert_eq!(renderer.uploaded_revision(), uploaded_revision);
         }
+        // Check each ordinary preset against the existing CPU/export look.
+        // At 1:1 the GPU must not change source dimensions or upload again.
+        for preset in [
+            FilterPreset::Clarendon, FilterPreset::Gingham,
+            FilterPreset::Juno, FilterPreset::Lark,
+            FilterPreset::Valencia, FilterPreset::Walden,
+            FilterPreset::DisposableFilm, FilterPreset::DigicamFlash,
+            FilterPreset::Cinematic, FilterPreset::GoldenHour,
+            FilterPreset::OldPhoto,
+        ] {
+            let mut recipe = reset_recipe.clone();
+            recipe.filter = preset;
+            recipe.filter_amount = 0.65;
+            renderer.set_recipe(&recipe);
+            check_frame(&recipe, &source);
+            assert_eq!(renderer.uploaded_revision(), uploaded_revision);
+        }
         renderer.set_recipe(&reset_recipe);
         check_frame(&reset_recipe, &source);
 

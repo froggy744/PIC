@@ -68,6 +68,46 @@ For CPU reference:
 PIC_EDIT_RENDERER=cpu cargo run
 ```
 
+## Second Fedora GPU validation — office RX 7600 XT
+
+Only after the editor-quality and AppImage-only CI pass on the **same
+commit**, run the GPU build on the office Fedora Wayland machine. Do not
+compare its performance to the previously approved RX 9070 XT as if the
+GPUs were identical.
+
+```sh
+cd ~/PIC/.worktrees/gpu-edit-test
+git fetch origin feature/gpu-edit-pipeline
+git switch --detach origin/feature/gpu-edit-pipeline
+git log -1 --oneline
+PIC_EDIT_RENDERER=gpu PICASA_TRACE=1 cargo run --release \
+  2>&1 | tee /tmp/pic-rx7600xt-gpu.log
+```
+
+Review one editable NEF at Fit and 1:1, exposure, a creative filter, a
+crop/rotation, and text/image layers. Check that no unexpected blur or
+visual jump occurs and that the logs show actual GPU draws. Combined
+Auto Colour/Auto Contrast with a cropped/filtered recipe intentionally
+stays on the CPU reference until the strict GPU parity gate is green.
+
+The privately held real-RAW Export regression needs a local NEF/DNG
+path but **does not upload the photo or modify it**. It creates and
+removes temporary JPEG, PNG and WebP exports; checks render dimensions,
+lossless pixel identity, JPEG quality, normalized EXIF, GPS/author
+privacy and the unchanged RAW original:
+
+```sh
+PIC_TEST_EDIT_REFERENCE="/path/to/your/photo.NEF" \
+  cargo test --locked real_raw_export_fidelity_and_privacy -- \
+  --ignored --test-threads=1 --nocapture
+```
+
+Do not run the private RAW test against an offline mount or a network
+copy that is not currently readable. Do not publish the generated logs
+if they contain private source paths. The test proves Export's CPU
+render correctness; interactive GPU preview quality still needs a
+visual comparison on the actual Fedora monitor.
+
 The experimental Linux packaging workflow builds and smoke-tests **AppImage only**
 without publishing a release. **Flatpak validation is deferred on the owner's
 instruction (2026-10-19)**; do not schedule new Flatpak builds until asked. Passing package builds are not a substitute for testing

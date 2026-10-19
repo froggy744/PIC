@@ -1013,9 +1013,11 @@ fn thumbnail_cover_view(width: i32, height: i32, tile_size: i32) -> GpuView {
 }
 
 pub fn gpu_tone_supported(recipe: &EditRecipe) -> bool {
-    // Histogram/neutral reductions currently sample the raw source texture;
-    // crop and straighten change the pixel population, so preserve CPU parity
-    // until those GPU statistic passes also sample the transformed output.
+    // A filtered/cropped GPU histogram prepass exists, but its result can
+    // deviate significantly from the CPU reference (31–51/255 in fixtures).
+    // Keep the exact CPU renderer for auto corrections combined with any
+    // named look or non-identity geometry until strict parity is proven.
+    // Standalone/both autos on unfiltered, uncropped photos are GPU verified.
     let geometry_changes_pixels = !recipe.crop.is_full() || recipe.straighten.abs() >= 0.01;
     (recipe.filter == FilterPreset::None || !(recipe.auto_color || recipe.auto_contrast))
         && !(geometry_changes_pixels && (recipe.auto_color || recipe.auto_contrast))
@@ -2276,6 +2278,42 @@ mod tests {
         assert_eq!(EditRendererMode::Auto.should_attempt_gpu(), false);
         assert!(!EditRendererMode::Cpu.should_attempt_gpu());
         assert!(EditRendererMode::Gpu.should_attempt_gpu());
+    }
+
+    #[test]
+    fn uncertain_automatic_filter_and_crop_combinations_keep_cpu_reference() {
+        // A future GPU histogram optimisation must not accidentally enable
+        // combinations with unverified colour or contrast statistics.
+        for (auto_color, auto_contrast) in [(true, false), (false, true), (true, true)] {
+            let mut plain = EditRecipe::default();
+            plain.auto_color = auto_color;
+            plain.auto_contrast = auto_contrast;
+            assert!(gpu_tone_supported(&plain),
+                "simple automatic corrections must remain GPU accelerated");
+
+            let mut crop = plain.clone();
+            crop.crop.left = 0.1;
+            assert!(!gpu_tone_supported(&crop),
+                "cropped Auto corrections require pixel-parity approval");
+            let mut straighten = plain.clone();
+            straighten.straighten = 3.5;
+            assert!(!gpu_tone_supported(&straighten),
+                "straightened Auto corrections require pixel-parity approval");
+            for filter in FilterPreset::ALL {
+                let mut filtered = plain.clone();
+                filtered.filter = filter;
+                filtered.filter_amount = 0.65;
+                assert!(!gpu_tone_supported(&filtered),
+                    "{filter:?} + automatic correction must use verified CPU path");
+            }
+        }
+        for filter in FilterPreset::ALL {
+            let mut no_autos = EditRecipe::default();
+            no_autos.filter = filter;
+            no_autos.crop.left = 0.1;
+            assert!(gpu_tone_supported(&no_autos),
+                "{filter:?} with crop but no autos is GPU supported");
+        }
     }
 
     #[test]

@@ -448,11 +448,11 @@ pub fn build(
     let renderer_mode = EditRendererMode::from_environment();
     let gpu_canvas = renderer_mode
         .should_attempt_gpu()
-        .then(LiveGpuCanvas::new);
+        .then(|| LiveGpuCanvas::new_for_mode(renderer_mode));
     if let Some(gpu_canvas) = &gpu_canvas {
         canvas_layer.add_overlay(&gpu_canvas.widget());
         if std::env::var_os("PICASA_TRACE").is_some() {
-            eprintln!("PIC_EDIT_RENDERER renderer=gpu requested=true");
+            eprintln!("PIC_EDIT_RENDERER renderer=gpu mode={renderer_mode:?} reason=automatic_capability_probe");
         }
     } else if std::env::var_os("PICASA_TRACE").is_some() {
         eprintln!("PIC_EDIT_RENDERER renderer=cpu mode={renderer_mode:?}");
@@ -735,7 +735,8 @@ pub fn build(
     let mut filter_pictures = Vec::new();
     let mut filter_gpu_tiles = Vec::new();
     let filter_effects = FilterTileEffect::all();
-    let gpu_tile_enabled = gpu_canvas.is_some()
+    let gpu_tile_enabled = renderer_mode == EditRendererMode::Gpu
+        && gpu_canvas.is_some()
         && filter_effects.iter().all(|effect| {
             gpu_tone_supported(&effect.recipe(&session.borrow().recipe))
         });
@@ -1225,9 +1226,9 @@ pub fn build(
                                             );
                                         }
                                         picture.set_paintable(Some(&texture));
-                                        // The raw photo remains a cheap GTK layout anchor.
-                                        // Do not briefly display it unrotated behind GPU edits.
-                                        picture.set_opacity(if gpu_base_requested { 0.0 } else { 1.0 });
+                                        // Keep the CPU preview visible until the first verified
+                                        // GPU frame has actually been presented.
+                                        picture.set_opacity(1.0);
                                         if native {
                                             let anchor =
                                                 pending_one_to_one_anchor.borrow_mut().take();
@@ -1359,6 +1360,8 @@ pub fn build(
         })
     };
     if let Some(gpu_canvas) = &gpu_canvas {
+        let picture = picture.clone();
+        gpu_canvas.set_frame_presented_handler(move || picture.set_opacity(0.0));
         let gpu_failed = gpu_failed.clone();
         let schedule_preview = schedule_preview.clone();
         gpu_canvas.set_failure_handler(move || {

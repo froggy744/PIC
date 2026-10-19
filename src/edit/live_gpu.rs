@@ -8,7 +8,7 @@
 use std::cell::RefCell;
 use std::ffi::{c_void, CString};
 use std::rc::Rc;
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
 use gtk::prelude::*;
@@ -39,11 +39,335 @@ impl EditRendererMode {
     }
 
     pub fn should_attempt_gpu(self) -> bool {
-        // Auto deliberately stays on CPU. Any future Auto gate must be based
-        // on successful context creation and the GL features actually used,
-        // never a vendor string or dedicated/iGPU classification.
-        matches!(self, Self::Gpu)
+        match self {
+            Self::Cpu => false,
+            Self::Gpu => true,
+            Self::Auto => auto_gpu_retry_allowed(),
+        }
     }
+}
+
+#[derive(Clone, Debug)]
+enum AutoGpuDecision {
+    Unknown,
+    Verified(String),
+    Failed {
+        reason: String,
+        retry_after: Instant,
+    },
+}
+
+static AUTO_GPU_DECISION: OnceLock<Mutex<AutoGpuDecision>> = OnceLock::new();
+const AUTO_GPU_RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(60);
+
+fn auto_gpu_decision() -> &'static Mutex<AutoGpuDecision> {
+    AUTO_GPU_DECISION.get_or_init(|| Mutex::new(AutoGpuDecision::Unknown))
+}
+
+fn auto_gpu_retry_allowed() -> bool {
+    let Ok(decision) = auto_gpu_decision().lock() else {
+        return true;
+    };
+    match &*decision {
+        AutoGpuDecision::Unknown | AutoGpuDecision::Verified(_) => true,
+        AutoGpuDecision::Failed {
+            reason,
+            retry_after,
+        } => {
+            if Instant::now() < *retry_after {
+                trace_gpu(format_args!(
+                    "renderer=cpu auto_retry_suppressed reason={reason:?}"
+                ));
+                false
+            } else {
+                true
+            }
+        }
+    }
+}
+
+fn cache_auto_gpu_success(fingerprint: String) {
+    if let Ok(mut decision) = auto_gpu_decision().lock() {
+        *decision = AutoGpuDecision::Verified(fingerprint);
+    }
+}
+
+fn cache_auto_gpu_failure(reason: String) {
+    if let Ok(mut decision) = auto_gpu_decision().lock() {
+        *decision = AutoGpuDecision::Failed {
+            reason,
+            retry_after: Instant::now() + AUTO_GPU_RETRY_DELAY,
+        };
+    }
+}
+
+fn auto_gpu_is_verified(fingerprint: &str) -> bool {
+    auto_gpu_decision().lock().ok().is_some_and(
+        |decision| matches!(&*decision, AutoGpuDecision::Verified(value) if value == fingerprint),
+    )
+}
+
+fn trace_gpu(message: impl std::fmt::Display) {
+    if std::env::var_os("PICASA_TRACE").is_some() {
+        eprintln!("PIC_EDIT_GPU {message}");
+    }
+}
+
+fn is_software_renderer(renderer: &str) -> bool {
+    let renderer = renderer.to_ascii_lowercase();
+    [
+        "llvmpipe",
+        "softpipe",
+        "swrast",
+        "swiftshader",
+        "software rasterizer",
+    ]
+    .iter()
+    .any(|needle| renderer.contains(needle))
+}
+
+#[derive(Clone, Debug)]
+struct GlCapabilities {
+    version: String,
+    renderer: String,
+    shading_language: String,
+    max_texture_size: i32,
+    fragment_texture_units: i32,
+    vertex_texture_units: i32,
+}
+
+impl GlCapabilities {
+    fn fingerprint(&self) -> String {
+        format!(
+            "{}|{}|{}|{}|{}|{}",
+            self.version,
+            self.renderer,
+            self.shading_language,
+            self.max_texture_size,
+            self.fragment_texture_units,
+            self.vertex_texture_units,
+        )
+    }
+}
+
+unsafe fn gl_string(name: u32) -> String {
+    let value = gl::GetString(name);
+    if value.is_null() {
+        "unknown".to_owned()
+    } else {
+        std::ffi::CStr::from_ptr(value.cast())
+            .to_string_lossy()
+            .into_owned()
+    }
+}
+
+fn query_gl_capabilities(mode: EditRendererMode) -> Result<GlCapabilities, String> {
+    let (
+        version,
+        renderer,
+        shading_language,
+        max_texture_size,
+        fragment_texture_units,
+        vertex_texture_units,
+    ) = unsafe {
+        let mut values = [0; 4];
+        gl::GetIntegerv(gl::MAJOR_VERSION, &mut values[0]);
+        gl::GetIntegerv(gl::MINOR_VERSION, &mut values[1]);
+        gl::GetIntegerv(gl::MAX_TEXTURE_SIZE, &mut values[2]);
+        gl::GetIntegerv(gl::MAX_TEXTURE_IMAGE_UNITS, &mut values[3]);
+        let mut vertex_units = 0;
+        gl::GetIntegerv(gl::MAX_VERTEX_TEXTURE_IMAGE_UNITS, &mut vertex_units);
+        (
+            gl_string(gl::VERSION),
+            gl_string(gl::RENDERER),
+            gl_string(gl::SHADING_LANGUAGE_VERSION),
+            values[2],
+            values[3],
+            vertex_units,
+        )
+    };
+    let mut major = 0;
+    let mut minor = 0;
+    unsafe {
+        gl::GetIntegerv(gl::MAJOR_VERSION, &mut major);
+        gl::GetIntegerv(gl::MINOR_VERSION, &mut minor);
+    }
+    if major < 3 || (major == 3 && minor < 2) {
+        return Err(format!(
+            "OpenGL 3.2 required, context reports {major}.{minor} ({version})"
+        ));
+    }
+    if max_texture_size < 2048 {
+        return Err(format!(
+            "maximum texture size {max_texture_size} is below the 2048 minimum"
+        ));
+    }
+    if fragment_texture_units < 6 || vertex_texture_units < 1 {
+        return Err(format!(
+            "insufficient texture units (fragment={fragment_texture_units}, vertex={vertex_texture_units}; need 6 and 1)"
+        ));
+    }
+    let software = is_software_renderer(&renderer);
+    trace_gpu(format_args!(
+        "capabilities version={version:?} glsl={shading_language:?} renderer={renderer:?} software={software} max_texture={max_texture_size} fragment_units={fragment_texture_units} vertex_units={vertex_texture_units} mode={mode:?}"
+    ));
+    if software && mode == EditRendererMode::Auto {
+        return Err(format!(
+            "software OpenGL renderer {renderer:?} is not selected automatically"
+        ));
+    }
+    Ok(GlCapabilities {
+        version,
+        renderer,
+        shading_language,
+        max_texture_size,
+        fragment_texture_units,
+        vertex_texture_units,
+    })
+}
+
+fn validate_render_target() -> Result<(), String> {
+    unsafe {
+        let mut previous_framebuffer = 0;
+        let mut previous_viewport = [0; 4];
+        let mut previous_program = 0;
+        let mut previous_vao = 0;
+        let mut previous_active_texture = 0;
+        gl::GetIntegerv(gl::FRAMEBUFFER_BINDING, &mut previous_framebuffer);
+        gl::GetIntegerv(gl::VIEWPORT, previous_viewport.as_mut_ptr());
+        gl::GetIntegerv(gl::CURRENT_PROGRAM, &mut previous_program);
+        gl::GetIntegerv(gl::VERTEX_ARRAY_BINDING, &mut previous_vao);
+        gl::GetIntegerv(gl::ACTIVE_TEXTURE, &mut previous_active_texture);
+        while gl::GetError() != gl::NO_ERROR {}
+        let vertex = compile_shader(
+            gl::VERTEX_SHADER,
+            "#version 150\nvoid main(){ vec2 p=gl_VertexID==0?vec2(-1,-1):gl_VertexID==1?vec2(3,-1):vec2(-1,3); gl_Position=vec4(p,0,1); }",
+        )?;
+        let fragment = compile_shader(
+            gl::FRAGMENT_SHADER,
+            "#version 150\nuniform sampler2D s; out vec4 c; void main(){ c=texelFetch(s,ivec2(0),0); }",
+        )?;
+        let program = gl::CreateProgram();
+        gl::AttachShader(program, vertex);
+        gl::AttachShader(program, fragment);
+        gl::LinkProgram(program);
+        gl::DeleteShader(vertex);
+        gl::DeleteShader(fragment);
+        let mut linked = 0;
+        gl::GetProgramiv(program, gl::LINK_STATUS, &mut linked);
+        if linked == 0 {
+            let message = program_log(program);
+            gl::DeleteProgram(program);
+            return Err(format!("validation shader link failed: {message}"));
+        }
+        let mut vao = 0;
+        let mut source = 0;
+        let mut target = 0;
+        let mut fbo = 0;
+        gl::GenVertexArrays(1, &mut vao);
+        gl::BindVertexArray(vao);
+        gl::GenTextures(1, &mut source);
+        gl::BindTexture(gl::TEXTURE_2D, source);
+        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST as i32);
+        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as i32);
+        let expected = [64u8, 128, 192, 255];
+        gl::TexImage2D(
+            gl::TEXTURE_2D,
+            0,
+            gl::RGBA8 as i32,
+            2,
+            2,
+            0,
+            gl::RGBA,
+            gl::UNSIGNED_BYTE,
+            expected.as_ptr().cast(),
+        );
+        gl::GenTextures(1, &mut target);
+        gl::BindTexture(gl::TEXTURE_2D, target);
+        gl::TexImage2D(
+            gl::TEXTURE_2D,
+            0,
+            gl::RGBA32F as i32,
+            2,
+            2,
+            0,
+            gl::RGBA,
+            gl::FLOAT,
+            std::ptr::null(),
+        );
+        gl::GenFramebuffers(1, &mut fbo);
+        gl::BindFramebuffer(gl::FRAMEBUFFER, fbo);
+        gl::FramebufferTexture2D(
+            gl::FRAMEBUFFER,
+            gl::COLOR_ATTACHMENT0,
+            gl::TEXTURE_2D,
+            target,
+            0,
+        );
+        let framebuffer_status = gl::CheckFramebufferStatus(gl::FRAMEBUFFER);
+        if framebuffer_status != gl::FRAMEBUFFER_COMPLETE {
+            gl::BindFramebuffer(gl::FRAMEBUFFER, previous_framebuffer as u32);
+            gl::Viewport(
+                previous_viewport[0],
+                previous_viewport[1],
+                previous_viewport[2],
+                previous_viewport[3],
+            );
+            gl::BindVertexArray(previous_vao as u32);
+            gl::UseProgram(previous_program as u32);
+            gl::ActiveTexture(previous_active_texture as u32);
+            gl::DeleteFramebuffers(1, &fbo);
+            gl::DeleteTextures(1, &target);
+            gl::DeleteTextures(1, &source);
+            gl::DeleteVertexArrays(1, &vao);
+            gl::DeleteProgram(program);
+            return Err(format!(
+                "validation framebuffer incomplete: 0x{framebuffer_status:04x}"
+            ));
+        }
+        gl::Viewport(0, 0, 2, 2);
+        gl::UseProgram(program);
+        gl::ActiveTexture(gl::TEXTURE0);
+        gl::BindTexture(gl::TEXTURE_2D, source);
+        gl::Uniform1i(gl::GetUniformLocation(program, c"s".as_ptr()), 0);
+        gl::DrawArrays(gl::TRIANGLES, 0, 3);
+        let mut pixels = [0.0f32; 16];
+        gl::ReadPixels(
+            0, 0, 2, 2, gl::RGBA, gl::FLOAT, pixels.as_mut_ptr().cast(),
+        );
+        let gl_error = gl::GetError();
+        gl::BindFramebuffer(gl::FRAMEBUFFER, previous_framebuffer as u32);
+        gl::Viewport(
+            previous_viewport[0],
+            previous_viewport[1],
+            previous_viewport[2],
+            previous_viewport[3],
+        );
+        gl::BindVertexArray(previous_vao as u32);
+        gl::UseProgram(previous_program as u32);
+        gl::ActiveTexture(previous_active_texture as u32);
+        gl::DeleteFramebuffers(1, &fbo);
+        gl::DeleteTextures(1, &target);
+        gl::DeleteTextures(1, &source);
+        gl::DeleteVertexArrays(1, &vao);
+        gl::DeleteProgram(program);
+        if gl_error != gl::NO_ERROR {
+            return Err(format!(
+                "validation draw/readback failed with GL error 0x{gl_error:04x}"
+            ));
+        }
+        if pixels.chunks_exact(4).any(|pixel| {
+            pixel
+                .iter()
+                .zip(expected)
+                .any(|(actual, expected)| (actual - expected as f32 / 255.0).abs() > 1.0 / 255.0)
+        }) {
+            return Err(format!(
+                "validation frame produced unexpected pixels: {pixels:?}"
+            ));
+        }
+    }
+    Ok(())
 }
 
 impl GpuTone {
@@ -256,6 +580,7 @@ struct GlObjects {
 }
 
 struct GpuState {
+    renderer_mode: EditRendererMode,
     key: Option<SourceKey>,
     source: Option<(i32, i32, glib::Bytes)>,
     source_revision: u64,
@@ -270,10 +595,12 @@ struct GpuState {
     view: GpuView,
     objects: Option<GlObjects>,
     rendered_frames: u64,
+    has_presented_frame: bool,
     last_queued: Option<Instant>,
     frame_after_paint: Option<(Instant, Option<Instant>)>,
     failure: Option<String>,
     on_failure: Option<Box<dyn Fn()>>,
+    on_frame_presented: Option<Box<dyn Fn()>>,
     #[cfg(test)]
     readback_requested: bool,
     #[cfg(test)]
@@ -292,6 +619,10 @@ pub struct LiveGpuCanvas {
 
 impl LiveGpuCanvas {
     pub fn new() -> Self {
+        Self::new_for_mode(EditRendererMode::Gpu)
+    }
+
+    pub fn new_for_mode(renderer_mode: EditRendererMode) -> Self {
         let area = gtk::GLArea::new();
         area.set_allowed_apis(gtk::gdk::GLAPI::GL);
         area.set_auto_render(false);
@@ -307,6 +638,7 @@ impl LiveGpuCanvas {
         area.add_css_class("edit-live-gpu-canvas");
 
         let state = Rc::new(RefCell::new(GpuState {
+            renderer_mode,
             key: None,
             source: None,
             source_revision: 0,
@@ -321,10 +653,12 @@ impl LiveGpuCanvas {
             view: GpuView::default(),
             objects: None,
             rendered_frames: 0,
+            has_presented_frame: false,
             last_queued: None,
             frame_after_paint: None,
             failure: None,
             on_failure: None,
+            on_frame_presented: None,
             #[cfg(test)]
             readback_requested: false,
             #[cfg(test)]
@@ -392,7 +726,17 @@ impl LiveGpuCanvas {
             if let Some(clock) = area.frame_clock() {
                 let state = paint_state.clone();
                 clock.connect_after_paint(move |_| {
-                    let frame = state.borrow_mut().frame_after_paint.take();
+                    let (frame, callback) = {
+                        let mut state = state.borrow_mut();
+                        let frame = state.frame_after_paint.take();
+                        let callback = if frame.is_some() && !state.has_presented_frame {
+                            state.has_presented_frame = true;
+                            state.on_frame_presented.as_ref().map(|_| ())
+                        } else {
+                            None
+                        };
+                        (frame, callback)
+                    };
                     if std::env::var_os("PICASA_TRACE").is_some() {
                         if let Some((rendered_at, queued_at)) = frame {
                             eprintln!(
@@ -400,6 +744,11 @@ impl LiveGpuCanvas {
                                 rendered_at.elapsed().as_secs_f64() * 1000.0,
                                 queued_at.map_or_else(|| "none".to_owned(), |at| format!("{:.3}", at.elapsed().as_secs_f64() * 1000.0)),
                             );
+                        }
+                    }
+                    if callback.is_some() {
+                        if let Some(callback) = state.borrow().on_frame_presented.as_ref() {
+                            callback();
                         }
                     }
                 });
@@ -413,7 +762,7 @@ impl LiveGpuCanvas {
                     return gtk::glib::Propagation::Stop;
                 }
                 if state.objects.is_none() {
-                    match initialize_gl() {
+                    match initialize_gl(state.renderer_mode) {
                         Ok(objects) => {
                             state.objects = Some(objects);
                             None
@@ -432,6 +781,21 @@ impl LiveGpuCanvas {
             let view_width = area.width().max(1);
             let view_height = area.height().max(1);
             let device_scale = area.scale_factor().max(1);
+            let oversized_source = {
+                let state = render_state.borrow();
+                let dimensions = state.source.as_ref().map(|(width, height, _)| (*width, *height));
+                let mut maximum = 0;
+                unsafe { gl::GetIntegerv(gl::MAX_TEXTURE_SIZE, &mut maximum) };
+                dimensions.filter(|(width, height)| *width > maximum || *height > maximum)
+            };
+            if let Some((width, height)) = oversized_source {
+                fail(
+                    area,
+                    &render_state,
+                    format!("source dimensions {width}x{height} exceed GL_MAX_TEXTURE_SIZE"),
+                );
+                return gtk::glib::Propagation::Stop;
+            }
             let draw_started = Instant::now();
             let (upload_trace, queue_ms, gl_error, sharpen) = {
                 let mut state = render_state.borrow_mut();
@@ -748,7 +1112,6 @@ impl LiveGpuCanvas {
                 let queued_at = state.last_queued.take();
                 let queue_ms = queued_at
                     .map(|queued| render_started.saturating_duration_since(queued).as_secs_f64() * 1000.0);
-                state.frame_after_paint = Some((Instant::now(), queued_at));
                 state.rendered_frames = state.rendered_frames.wrapping_add(1);
                 #[cfg(test)]
                 if let Some(pixels) = readback {
@@ -765,6 +1128,8 @@ impl LiveGpuCanvas {
                 );
                 return gtk::glib::Propagation::Stop;
             }
+
+            render_state.borrow_mut().frame_after_paint = Some((Instant::now(), None));
 
             if std::env::var_os("PICASA_TRACE").is_some() {
                 if let Some((width, height, elapsed)) = upload_trace {
@@ -797,6 +1162,10 @@ impl LiveGpuCanvas {
 
     pub fn set_failure_handler(&self, handler: impl Fn() + 'static) {
         self.state.borrow_mut().on_failure = Some(Box::new(handler));
+    }
+
+    pub fn set_frame_presented_handler(&self, handler: impl Fn() + 'static) {
+        self.state.borrow_mut().on_frame_presented = Some(Box::new(handler));
     }
 
     pub fn has_source_for(&self, reference: &str, rotation: i32, recipe: &EditRecipe) -> bool {
@@ -832,6 +1201,7 @@ impl LiveGpuCanvas {
         // Existing editor sources are CPU-transformed; do not transform twice.
         state.geometry = None;
         state.source_revision = state.source_revision.wrapping_add(1);
+        state.has_presented_frame = false;
         state.stats_revision = state.stats_revision.wrapping_add(1);
         state.overlay_key = None;
         state.overlays.clear();
@@ -1230,19 +1600,33 @@ pub fn gpu_base_recipe(recipe: &EditRecipe) -> EditRecipe {
 }
 
 fn fail(area: &gtk::GLArea, state: &Rc<RefCell<GpuState>>, message: String) {
-    let callback = {
+    let (callback, hide_canvas, renderer_mode) = {
         let mut state = state.borrow_mut();
         state.failure = Some(message.clone());
-        state.on_failure.take()
+        (
+            state.on_failure.take(),
+            !state.has_presented_frame,
+            state.renderer_mode,
+        )
     };
-    area.set_visible(false);
-    eprintln!("PIC_EDIT_GPU init_failed reason={message}; falling back to CPU renderer");
+    if renderer_mode == EditRendererMode::Auto
+        && !message.starts_with("source dimensions ")
+    {
+        cache_auto_gpu_failure(message.clone());
+    }
+    if hide_canvas {
+        area.set_visible(false);
+    }
+    trace_gpu(format_args!(
+        "renderer=cpu fallback_reason={message:?} mode={renderer_mode:?}"
+    ));
     if let Some(callback) = callback {
         callback();
     }
 }
 
-fn initialize_gl() -> Result<GlObjects, String> {
+fn initialize_gl(mode: EditRendererMode) -> Result<GlObjects, String> {
+    let initialization_started = Instant::now();
     let library = gl_library()?;
     gl::load_with(|symbol| {
         let name = format!("{symbol}\0");
@@ -1255,6 +1639,7 @@ fn initialize_gl() -> Result<GlObjects, String> {
     if !gl::CreateShader::is_loaded() || !gl::GenVertexArrays::is_loaded() {
         return Err("OpenGL entry points are unavailable".to_owned());
     }
+    let capabilities = query_gl_capabilities(mode)?;
 
     let vertex = compile_shader(
         gl::VERTEX_SHADER,
@@ -1940,7 +2325,7 @@ void main() {
         gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as i32);
         gl::BindVertexArray(0);
     }
-    Ok(GlObjects {
+    let objects = GlObjects {
         program,
         vao,
         texture,
@@ -1986,7 +2371,24 @@ void main() {
         overlay_revision: 0,
         #[cfg(test)]
         gpu_timer_query: 0,
-    })
+    };
+    let fingerprint = capabilities.fingerprint();
+    let validation_cached = mode == EditRendererMode::Auto && auto_gpu_is_verified(&fingerprint);
+    if !validation_cached {
+        validate_render_target()?;
+        trace_gpu("initialization_validation=passed small_frame=true framebuffer=true");
+    } else {
+        trace_gpu("initialization_validation=cached capability_fingerprint_match=true");
+    }
+    if mode == EditRendererMode::Auto {
+        cache_auto_gpu_success(fingerprint);
+    }
+    trace_gpu(format_args!(
+        "initialization_total_ms={:.3} validation_cached={}",
+        initialization_started.elapsed().as_secs_f64() * 1000.0,
+        validation_cached
+    ));
+    Ok(objects)
 }
 
 /// Render the complete edit recipe at output-pixel resolution, then build its
@@ -2844,7 +3246,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn renderer_mode_defaults_to_cpu_safe_auto() {
+    fn renderer_mode_defaults_to_capability_checked_auto() {
         assert_eq!(EditRendererMode::parse(None), EditRendererMode::Auto);
         assert_eq!(
             EditRendererMode::parse(Some("auto")),
@@ -2852,9 +3254,82 @@ mod tests {
         );
         assert_eq!(EditRendererMode::parse(Some("gpu")), EditRendererMode::Gpu);
         assert_eq!(EditRendererMode::parse(Some("cpu")), EditRendererMode::Cpu);
-        assert_eq!(EditRendererMode::Auto.should_attempt_gpu(), false);
+        assert_eq!(EditRendererMode::Auto.should_attempt_gpu(), true);
         assert!(!EditRendererMode::Cpu.should_attempt_gpu());
         assert!(EditRendererMode::Gpu.should_attempt_gpu());
+    }
+
+    #[test]
+    fn software_renderers_are_detected_without_vendor_classification() {
+        for renderer in [
+            "llvmpipe (LLVM 18.1.8)",
+            "softpipe",
+            "swrast",
+            "SwiftShader",
+        ] {
+            assert!(is_software_renderer(renderer), "{renderer}");
+        }
+        for renderer in [
+            "AMD Radeon RX 7600",
+            "Mesa Intel(R) UHD Graphics",
+            "NVIDIA RTX",
+        ] {
+            assert!(!is_software_renderer(renderer), "{renderer}");
+        }
+    }
+
+    #[test]
+    #[ignore = "requires GTK and OpenGL; run once with hardware GL and once with software GL"]
+    fn gtk_auto_renderer_validates_or_rejects_the_current_context_cleanly() {
+        gtk::init().expect("GTK initialization");
+        let renderer = LiveGpuCanvas::new_for_mode(EditRendererMode::Auto);
+        renderer.widget().set_size_request(8, 8);
+        let window = gtk::Window::new();
+        window.set_default_size(8, 8);
+        window.set_child(Some(&renderer.widget()));
+        window.present();
+        let recipe = EditRecipe::default();
+        let pixels = image::RgbaImage::from_pixel(4, 4, image::Rgba([48, 96, 144, 255]));
+        renderer.set_source(
+            "test://auto-capability-validation",
+            0,
+            &recipe,
+            4,
+            4,
+            glib::Bytes::from_owned(pixels.into_raw()),
+        );
+        renderer.set_recipe(&recipe);
+        renderer.set_view(0.0, 0.0, 8.0, 8.0, 1.0, 0.0, 0.0);
+        let context = glib::MainContext::default();
+        let deadline = Instant::now() + std::time::Duration::from_secs(6);
+        while Instant::now() < deadline {
+            while context.pending() {
+                context.iteration(false);
+            }
+            let state = renderer.state.borrow();
+            if state.failure.is_some() || state.has_presented_frame {
+                break;
+            }
+            drop(state);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let state = renderer.state.borrow();
+        assert!(
+            state.failure.is_some() || state.has_presented_frame,
+            "Auto must either validate and present a frame or record a clear CPU fallback reason"
+        );
+        if state.failure.is_none() {
+            assert!(
+                state.objects.is_some(),
+                "validated context keeps its GL objects"
+            );
+            assert!(
+                auto_gpu_retry_allowed(),
+                "successful capability validation is cached"
+            );
+        }
+        drop(state);
+        window.close();
     }
 
     #[test]

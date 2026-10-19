@@ -221,9 +221,56 @@ is deferred by the owner (2026-10-19)**. Passing package builds cannot replace
 hardware testing on Fedora Wayland with the host's Mesa/GLVND drivers.
 AppImage must never bundle vendor GPU drivers.
 
-## Release gate
+## Phase 5 — automatic live-renderer selection
 
-Before enabling GPU automatically or proposing a merge to `main`, require
-strict parity on automatic-adjustment combinations, real full-res JPEG/PNG
-NEF-preview exports with EXIF and ICC review, AppImage smoke results,
-and owner approval. Never publish personal test photos.
+`PIC_EDIT_RENDERER` now defaults to `auto`. Auto creates a GTK GLArea and
+selects GPU only after the current context passes capability, shader, and
+render-target validation; `PIC_EDIT_RENDERER=cpu` forces CPU and `gpu` makes an
+explicit attempt (including under software GL for debugging). No renderer
+settings control was added. Filter-picker thumbnails stay on CPU in Auto to
+avoid creating a separate GL context per tile; explicit GPU mode keeps their
+existing accelerated path.
+
+The probe requires an OpenGL 3.2 context, successful compilation/linking of all
+editor programs, at least six fragment texture units, one vertex texture unit,
+and a maximum texture size of at least 2048. It then draws a known 2×2 sample to
+an RGBA32F framebuffer and verifies the pixels. Successful capability
+fingerprints are cached for the process; shader programs still initialize for
+each new GLArea. Failed Auto initialization is suppressed for 60 seconds, so a
+known-bad driver is not retried for each image; a later editor opening can
+retry after that delay. A source larger than the device texture limit falls
+back for that editor without poisoning the device-wide capability cache.
+
+Auto classifies known software rasterizers (`llvmpipe`, `softpipe`, `swrast`,
+and SwiftShader) as CPU-only. This check does not classify GPU vendors or
+integrated versus discrete devices. An Intel or AMD integrated GPU is eligible
+when it meets the same GL requirements; no Intel iGPU was available for this
+local run. Hardware validation used an AMD Radeon RX 7600 on Mesa 26.2.3. The
+2×2 validation readback is one-time and tiny; no photo pixels are read back for
+capability selection. The first Auto initialization measured 21.739 ms
+(including shader initialization and validation); the first 8×8 draw submitted
+in 1.866 ms. The latter is CPU callback time, not a GPU timer-query result.
+
+The CPU `GtkPicture` remains available during GPU initialization and until the
+first frame is presented. Runtime errors retain the last valid GPU frame while
+the CPU recipe render completes. Unsupported recipes, GL initialization or
+draw errors, and oversized sources are traced under `PICASA_TRACE` and use the
+CPU renderer. The existing CPU fallback for Auto Colour/Auto Contrast with
+unverified zoom, crop, straighten, rotation, and creative-filter combinations
+is unchanged. EditRecipe, Export, and saved recipe behavior are unchanged.
+
+Phase 5 local checks: automatic context validation and pixel presentation
+passed on the RX 7600; with `LIBGL_ALWAYS_SOFTWARE=1`, llvmpipe was detected
+and rejected with a CPU fallback. Existing native-size GPU parity and
+crop/straighten/quarter-turn tests passed on the RX 7600. The project Editor
+quality workflow could not run its Xvfb-only portion here because `xvfb-run`
+is not installed. The filter-thumbnail GL test also needs that isolated
+display: on the active desktop display, the window manager allocated a larger
+framebuffer than the test's 32×32 expected image. The GitHub Editor CI result
+is pending branch push; this validation is not a replacement for CI or for
+testing on Intel integrated graphics.
+
+Before a release, retain the strict parity gates for automatic-adjustment
+combinations, review full-resolution JPEG/PNG NEF-preview exports with EXIF and
+ICC metadata, run the packaging smoke checks when relevant, and obtain owner
+approval. Never publish personal test photos.

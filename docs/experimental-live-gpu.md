@@ -10,11 +10,14 @@
   Clarity, Grain, B&W/Sepia and all fourteen named creative presets.
 - Crop, Straighten, library quarter-turn rotations, Fit/1:1, pan and source
   texture caching. Interactive image overlays and rasterized Pango text.
-- Fit and other sub-100% views use a source texture mip pyramid with
-  footprint-selected trilinear sampling. The mip chain is generated only when
-  the decoded source is uploaded; view/recipe changes do not reupload pixels.
-  The 1:1 path uses level-zero integer fetches and nearest magnification so
-  source pixels remain exact.
+- Fit and other sub-100% views use footprint-selected trilinear mip sampling.
+  A neutral source uses a mip pyramid generated with its one source upload.
+  For edited frames, the GPU applies geometry and the full-resolution recipe
+  into a cached render texture before building the mip pyramid. The cache is
+  reused until the source, recipe or geometry changes; no CPU readback or
+  repeated source upload is needed. This keeps Sharpen, Clarity and Grain in
+  the same order as CPU preview and Export. The 1:1 path uses level-zero
+  sampling and retains full source detail.
 - Seventeen GPU filter-picker covers from one decoded source preview.
 - A failed GL context, shader or draw returns to the CPU render path; image
   originals and the database recipe are never modified by GPU operations.

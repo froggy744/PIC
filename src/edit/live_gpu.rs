@@ -46,6 +46,26 @@ impl EditRendererMode {
     }
 }
 
+impl GpuTone {
+    fn is_neutral(self) -> bool {
+        self.exposure == 0.0
+            && self.contrast == 0.0
+            && self.saturation == 0.0
+            && self.temperature == 0.0
+            && self.fill_light == 0.0
+            && self.shadows == 0.0
+            && self.highlights == 0.0
+            && self.sharpen == 0.0
+            && self.grain == 0.0
+            && self.clarity == 0.0
+            && !self.black_white
+            && !self.sepia
+            && self.filter == FilterPreset::None
+            && !self.auto_color
+            && !self.auto_contrast
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 struct SourceKey {
     reference: String,
@@ -187,6 +207,12 @@ struct GlObjects {
     vao: u32,
     texture: u32,
     source_revision: u64,
+    processed_texture: u32,
+    processed_fbo: u32,
+    processed_dimensions: (i32, i32),
+    processed_source_revision: u64,
+    processed_tone_revision: u64,
+    processed_geometry_revision: u64,
     filter: u32,
     blur_program: u32,
     clarity_luma_texture: u32,
@@ -227,6 +253,7 @@ struct GpuState {
     source_revision: u64,
     stats_revision: u64,
     tone: GpuTone,
+    tone_revision: u64,
     geometry: Option<GpuGeometry>,
     overlay_key: Option<GpuOverlayKey>,
     overlays: Vec<GpuOverlayLayer>,
@@ -277,6 +304,7 @@ impl LiveGpuCanvas {
             source_revision: 0,
             stats_revision: 0,
             tone: GpuTone::default(),
+            tone_revision: 0,
             geometry: None,
             overlay_key: None,
             overlays: Vec::new(),
@@ -313,6 +341,7 @@ impl LiveGpuCanvas {
                 if let Some(objects) = dispose_state.borrow_mut().objects.take() {
                     unsafe {
                         gl::DeleteTextures(1, &objects.texture);
+                        gl::DeleteTextures(1, &objects.processed_texture);
                         if !objects.overlay_textures.is_empty() {
                             for &(_, texture) in &objects.overlay_textures {
                                 gl::DeleteTextures(1, &texture);
@@ -334,6 +363,7 @@ impl LiveGpuCanvas {
                         gl::DeleteFramebuffers(1, &objects.histogram_fbo);
                         gl::DeleteFramebuffers(1, &objects.auto_contrast_fbo);
                         gl::DeleteFramebuffers(1, &objects.stats_source_fbo);
+                        gl::DeleteFramebuffers(1, &objects.processed_fbo);
                         gl::DeleteVertexArrays(1, &objects.vao);
                         gl::DeleteProgram(objects.program);
                         gl::DeleteProgram(objects.blur_program);
@@ -402,6 +432,7 @@ impl LiveGpuCanvas {
                 let source_revision = state.source_revision;
                 let stats_revision = state.stats_revision;
                 let tone = state.tone;
+                let tone_revision = state.tone_revision;
                 let geometry = state.geometry;
                 let overlays = state.overlays.clone();
                 let overlay_revision = state.overlay_revision;
@@ -550,6 +581,9 @@ impl LiveGpuCanvas {
                         _ => 0.0,
                     };
                     uniform_1f(objects.program, "uNamedGrain", film_grain);
+                    uniform_1i(objects.program, "uProcessedSource", 5);
+                    uniform_1i(objects.program, "uProcessPass", 0);
+                    uniform_1i(objects.program, "uUseProcessedSource", 0);
                     if matches!(tone.filter, FilterPreset::PencilSketch | FilterPreset::DreamGlow) {
                         if source.is_some() {
                             // Blur the 100%-strength base look BEFORE Filter Amount blending.
@@ -633,6 +667,35 @@ impl LiveGpuCanvas {
                     uniform_1i(objects.program, "uClarityLuma", 1);
                     gl::ActiveTexture(gl::TEXTURE0);
                     gl::BindTexture(gl::TEXTURE_2D, objects.texture);
+                    let use_processed_source = view.scale < 1.0
+                        && source.is_some()
+                        && !tone.is_neutral();
+                    if use_processed_source {
+                        let output_dimensions = (output_width, output_height);
+                        if objects.processed_source_revision != source_revision
+                            || objects.processed_tone_revision != tone_revision
+                            || objects.processed_geometry_revision != stats_revision
+                            || objects.processed_dimensions != output_dimensions
+                        {
+                            render_processed_source(
+                                objects,
+                                output_width,
+                                output_height,
+                                view_width * device_scale,
+                                view_height * device_scale,
+                                view.scale,
+                            );
+                            objects.processed_source_revision = source_revision;
+                            objects.processed_tone_revision = tone_revision;
+                            objects.processed_geometry_revision = stats_revision;
+                            objects.processed_dimensions = output_dimensions;
+                        }
+                        gl::ActiveTexture(gl::TEXTURE5);
+                        gl::BindTexture(gl::TEXTURE_2D, objects.processed_texture);
+                        uniform_1i(objects.program, "uUseProcessedSource", 1);
+                        gl::ActiveTexture(gl::TEXTURE0);
+                        gl::BindTexture(gl::TEXTURE_2D, objects.texture);
+                    }
                     gl::DrawArrays(gl::TRIANGLES, 0, 3);
                     // Render photo layers *after* all image adjustments.
                     // GPU blending composes image assets first, then text.
@@ -919,6 +982,7 @@ impl LiveGpuCanvas {
             state.stats_revision = state.stats_revision.wrapping_add(1);
         }
         state.tone = next;
+        state.tone_revision = state.tone_revision.wrapping_add(1);
         state.last_queued = Some(Instant::now());
         drop(state);
         self.area.queue_render();
@@ -1160,6 +1224,9 @@ void main() {
         gl::FRAGMENT_SHADER,
         r#"#version 150
 uniform sampler2D uSource;
+uniform sampler2D uProcessedSource;
+uniform int uProcessPass;
+uniform int uUseProcessedSource;
 uniform vec2 uSourceSize;
 uniform vec2 uOutputSize;
 uniform int uGpuGeometryOn;
@@ -1436,6 +1503,12 @@ vec3 processedPixel(ivec2 coord) {
     return grainPixel(coord, sharpened(coord));
 }
 void main() {
+    if (uProcessPass != 0) {
+        ivec2 coord = ivec2(floor(gl_FragCoord.xy));
+        vec4 px = sampleTone(coord);
+        color = vec4(processedPixel(coord), px.a);
+        return;
+    }
     if (uClarityPrepass != 0) {
         vec2 uv = gl_FragCoord.xy / uClarityPassSize;
         ivec2 coord = ivec2(floor(uv * uOutputSize));
@@ -1464,6 +1537,10 @@ void main() {
     if (sourcePos.x < 0.0 || sourcePos.y < 0.0 ||
         sourcePos.x >= uOutputSize.x || sourcePos.y >= uOutputSize.y) {
         color = vec4(0.055, 0.06, 0.07, 1.0);
+        return;
+    }
+    if (uUseProcessedSource != 0) {
+        color = textureLod(uProcessedSource, sourcePos / uOutputSize, uMinificationLod);
         return;
     }
     // The source texture's mip pyramid integrates a footprint-sized area.
@@ -1737,6 +1814,12 @@ void main() {
         vao,
         texture,
         source_revision: 0,
+        processed_texture: 0,
+        processed_fbo: 0,
+        processed_dimensions: (0, 0),
+        processed_source_revision: 0,
+        processed_tone_revision: 0,
+        processed_geometry_revision: 0,
         filter: gl::NEAREST,
         blur_program,
         clarity_luma_texture: 0,
@@ -1770,6 +1853,83 @@ void main() {
         #[cfg(test)]
         gpu_timer_query: 0,
     })
+}
+
+/// Render the complete edit recipe at output-pixel resolution, then build its
+/// mip pyramid. CPU preview and Export apply spatial effects before display
+/// scaling; this cached texture keeps GPU Fit in the same order without a
+/// source upload or framebuffer readback.
+unsafe fn render_processed_source(
+    objects: &mut GlObjects,
+    width: i32,
+    height: i32,
+    viewport_width: i32,
+    viewport_height: i32,
+    view_scale: f32,
+) {
+    let mut previous_framebuffer = 0;
+    gl::GetIntegerv(gl::FRAMEBUFFER_BINDING, &mut previous_framebuffer);
+    if objects.processed_texture == 0 {
+        gl::GenTextures(1, &mut objects.processed_texture);
+        gl::GenFramebuffers(1, &mut objects.processed_fbo);
+    }
+    gl::ActiveTexture(gl::TEXTURE5);
+    gl::BindTexture(gl::TEXTURE_2D, objects.processed_texture);
+    if objects.processed_dimensions != (width, height) {
+        gl::TexParameteri(
+            gl::TEXTURE_2D,
+            gl::TEXTURE_MIN_FILTER,
+            gl::LINEAR_MIPMAP_LINEAR as i32,
+        );
+        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as i32);
+        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as i32);
+        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as i32);
+        gl::TexImage2D(
+            gl::TEXTURE_2D,
+            0,
+            gl::RGBA8 as i32,
+            width,
+            height,
+            0,
+            gl::RGBA,
+            gl::UNSIGNED_BYTE,
+            std::ptr::null(),
+        );
+        gl::BindFramebuffer(gl::FRAMEBUFFER, objects.processed_fbo);
+        gl::FramebufferTexture2D(
+            gl::FRAMEBUFFER,
+            gl::COLOR_ATTACHMENT0,
+            gl::TEXTURE_2D,
+            objects.processed_texture,
+            0,
+        );
+        objects.processed_dimensions = (width, height);
+    }
+
+    gl::BindFramebuffer(gl::FRAMEBUFFER, objects.processed_fbo);
+    gl::Viewport(0, 0, width, height);
+    gl::UseProgram(objects.program);
+    uniform_1i(objects.program, "uProcessPass", 1);
+    uniform_1i(objects.program, "uUseProcessedSource", 0);
+    uniform_1f(objects.program, "uMinificationLod", 0.0);
+    // Grain is generated in source coordinates here; mip filtering naturally
+    // reduces its variance at Fit rather than scaling screen-space noise.
+    uniform_1f(objects.program, "uScale", 1.0);
+    // The source sampler remains on unit 0. Unbind the target from its regular
+    // sampler unit during the FBO pass to avoid a texture feedback loop.
+    gl::BindTexture(gl::TEXTURE_2D, 0);
+    gl::ActiveTexture(gl::TEXTURE0);
+    gl::DrawArrays(gl::TRIANGLES, 0, 3);
+    uniform_1i(objects.program, "uProcessPass", 0);
+    uniform_1f(objects.program, "uMinificationLod", (1.0 / view_scale.max(0.0001)).log2().max(0.0));
+    uniform_1f(objects.program, "uScale", view_scale.max(0.0001));
+    gl::ActiveTexture(gl::TEXTURE5);
+    gl::BindTexture(gl::TEXTURE_2D, objects.processed_texture);
+    gl::GenerateMipmap(gl::TEXTURE_2D);
+    gl::BindFramebuffer(gl::FRAMEBUFFER, previous_framebuffer as u32);
+    gl::Viewport(0, 0, viewport_width, viewport_height);
+    gl::ActiveTexture(gl::TEXTURE0);
+    gl::BindTexture(gl::TEXTURE_2D, objects.texture);
 }
 
 /// Draw independently textured layers over the completed tone/filter image.
@@ -3054,6 +3214,8 @@ mod tests {
         edited.shadows = -0.15;
         edited.highlights = 0.1;
         edited.sharpen = 0.35;
+        // Native-size regression coverage includes Sharpen. Grain below and
+        // Clarity later in this test use the same 1:1 CPU parity helper.
         renderer.set_recipe(&edited);
         check_frame(&edited, &source);
         assert_eq!(renderer.uploaded_revision(), uploaded_revision);
@@ -3381,6 +3543,70 @@ mod tests {
             assert!(
                 (*actual as i16 - *expected as i16).abs() <= 1,
                 "sharpened Fit channel {index} differs from the CPU reference"
+            );
+        }
+        for (label, mut effect, allowed_delta) in [
+            ("clarity", EditRecipe::default(), 12u8),
+            ("grain", EditRecipe::default(), 1u8),
+        ] {
+            if label == "clarity" {
+                effect.clarity = 0.45;
+            } else {
+                effect.grain = 0.5;
+            }
+            renderer.set_recipe(&effect);
+            renderer.request_readback();
+            let deadline = Instant::now() + std::time::Duration::from_secs(5);
+            let pixels = loop {
+                while context.pending() {
+                    context.iteration(false);
+                }
+                if let Some(pixels) = renderer.take_readback() {
+                    break pixels;
+                }
+                assert!(Instant::now() < deadline, "{label} Fit readback timed out");
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            };
+            let actual = pixels
+                .chunks_exact(24 * scale as usize * 4)
+                .rev()
+                .flatten()
+                .copied()
+                .collect::<Vec<_>>();
+            let processed = super::super::render::apply_tone(source.clone(), &effect);
+            let reference = image::RgbaImage::from_fn(24, 16, |x, y| {
+                let mut sum = [0u16; 4];
+                for dy in 0..2 {
+                    for dx in 0..2 {
+                        let pixel = processed.get_pixel(x * 2 + dx, y * 2 + dy);
+                        for channel in 0..4 {
+                            sum[channel] += pixel[channel] as u16;
+                        }
+                    }
+                }
+                image::Rgba(sum.map(|channel| ((channel + 2) / 4) as u8))
+            });
+            let reference = if scale == 1 {
+                reference
+            } else {
+                image::imageops::resize(
+                    &reference,
+                    24 * scale,
+                    16 * scale,
+                    image::imageops::FilterType::Nearest,
+                )
+            }
+            .into_raw();
+            let maximum_delta = actual
+                .iter()
+                .zip(&reference)
+                .map(|(actual, expected)| actual.abs_diff(*expected))
+                .max()
+                .unwrap_or_default();
+            eprintln!("PIC_EDIT_GPU {label}_fit_source_order max_channel_delta={maximum_delta}");
+            assert!(
+                maximum_delta <= allowed_delta,
+                "{label} Fit differs from tone-at-source-resolution reference: {maximum_delta}"
             );
         }
         // GPU Auto Colour must match the CPU neutral estimate when many
@@ -3756,11 +3982,14 @@ mod tests {
                 std::thread::sleep(std::time::Duration::from_millis(2));
             }
         }
-        gpu_times.sort_by(f64::total_cmp);
-        let gpu_mean = gpu_times.iter().sum::<f64>() / gpu_times.len() as f64;
-        let gpu_median = gpu_times[gpu_times.len() / 2];
+        let gpu_first_frame = gpu_times[0];
+        let cached_times = &gpu_times[1..];
+        let gpu_cached_mean = cached_times.iter().sum::<f64>() / cached_times.len() as f64;
+        let mut cached_sorted = cached_times.to_vec();
+        cached_sorted.sort_by(f64::total_cmp);
+        let gpu_cached_median = cached_sorted[cached_sorted.len() / 2];
         eprintln!(
-            "PIC_EDIT_GPU benchmark source={}x{} viewport={}x{} upload_ready_ms={ready_ms:.3} cpu_full_frame_ms={cpu_ms:.3} uniform_to_draw_callback_ms={uniform_to_draw_ms:.3} gpu_elapsed_ms_mean={gpu_mean:.3} gpu_elapsed_ms_median={gpu_median:.3} samples={}",
+            "PIC_EDIT_GPU benchmark source={}x{} viewport={}x{} upload_ready_ms={ready_ms:.3} cpu_full_frame_ms={cpu_ms:.3} uniform_to_draw_callback_ms={uniform_to_draw_ms:.3} gpu_first_frame_ms={gpu_first_frame:.3} gpu_cached_mean_ms={gpu_cached_mean:.3} gpu_cached_median_ms={gpu_cached_median:.3} samples={}",
             source_width, source_height, VIEW_WIDTH, VIEW_HEIGHT,
             gpu_times.len(),
         );

@@ -70,10 +70,11 @@ PIC_EDIT_RENDERER=cpu cargo run
 
 ## Second Fedora GPU validation — office RX 7600 XT
 
-Only after the editor-quality and AppImage-only CI pass on the **same
-commit**, run the GPU build on the office Fedora Wayland machine. Do not
-compare its performance to the previously approved RX 9070 XT as if the
-GPUs were identical.
+Once Editor image-quality CI passes on the branch commit, the office Fedora
+RX 7600 XT can test directly using `cargo run --release`; **an AppImage build
+is not required** for source/graphics testing. AppImage smoke validation runs
+separately for packaging changes or on a manually requested release checkpoint.
+Do not compare performance to the RX 9070 XT as if the GPUs were identical.
 
 ```sh
 cd ~/PIC/.worktrees/gpu-edit-test
@@ -108,15 +109,17 @@ if they contain private source paths. The test proves Export's CPU
 render correctness; interactive GPU preview quality still needs a
 visual comparison on the actual Fedora monitor.
 
-The experimental Linux packaging workflow builds and smoke-tests **AppImage only**
-without publishing a release. **Flatpak validation is deferred on the owner's
-instruction (2026-10-19)**; do not schedule new Flatpak builds until asked. Passing package builds are not a substitute for testing
-desktop GL contexts and host Mesa/GLVND/Flatpak GL extensions on Fedora
-Wayland hardware. AppImage must never bundle vendor GPU drivers.
+The experimental Linux packaging workflow builds and smoke-tests **AppImage only**,
+without publishing a release. It does not run for ordinary `src/edit/**` or
+`src/thumbnail/**` commits. It runs for changes to the packaging script,
+workflow or Cargo manifests, and on manually dispatched checkpoints. **Flatpak
+is deferred by the owner (2026-10-19)**. Passing package builds cannot replace
+hardware testing on Fedora Wayland with the host's Mesa/GLVND drivers.
+AppImage must never bundle vendor GPU drivers.
 
 ## Release gate
 
 Before enabling GPU automatically or proposing a merge to `main`, require
 strict parity on automatic-adjustment combinations, real full-res JPEG/PNG
-NEF-preview exports with EXIF and ICC review, AppImage/Flatpak smoke results,
+NEF-preview exports with EXIF and ICC review, AppImage smoke results,
 and owner approval. Never publish personal test photos.

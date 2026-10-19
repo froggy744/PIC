@@ -1041,3 +1041,64 @@ mod raw_thumbnail_tests {
         assert_eq!(before.modified().unwrap(), after.modified().unwrap());
     }
 }
+
+
+#[cfg(test)]
+mod embedded_nef_color_profile_tests {
+    use super::*;
+
+    #[test]
+    fn embedded_nef_jpeg_converts_wide_gamut_to_srgb_for_viewer_and_export() {
+        use image::ImageEncoder;
+        let xy = |x, y| lcms2::CIExyY { x, y, Y: 1.0 };
+        let primaries = lcms2::CIExyYTRIPLE {
+            Red: xy(0.7347, 0.2653),
+            Green: xy(0.1596, 0.8404),
+            Blue: xy(0.0366, 0.0001),
+        };
+        let gamma = lcms2::ToneCurve::new(1.8);
+        let icc = lcms2::Profile::new_rgb(
+            &xy(0.3457, 0.3585), &primaries, &[&gamma, &gamma, &gamma],
+        ).unwrap().icc().unwrap();
+        let source_rgb = image::RgbImage::from_pixel(128, 96, image::Rgb([128, 64, 32]));
+        let mut jpeg = Vec::new();
+        let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, 100);
+        encoder.set_icc_profile(icc).unwrap();
+        encoder.write_image(
+            source_rgb.as_raw(), 128, 96, image::ExtendedColorType::Rgb8,
+        ).unwrap();
+
+        // A classic little-endian TIFF root IFD pointing to one embedded JPEG,
+        // matching the Nikon NEF JPEGInterchangeFormat tags. No private photo.
+        let mut nef = b"II\x2a\0\x08\0\0\0".to_vec();
+        nef.extend_from_slice(&2u16.to_le_bytes());
+        for (tag, value) in [(0x0201u16, 38u32), (0x0202u16, jpeg.len() as u32)] {
+            nef.extend_from_slice(&tag.to_le_bytes());
+            nef.extend_from_slice(&4u16.to_le_bytes());
+            nef.extend_from_slice(&1u32.to_le_bytes());
+            nef.extend_from_slice(&value.to_le_bytes());
+        }
+        nef.extend_from_slice(&0u32.to_le_bytes());
+        assert_eq!(nef.len(), 38);
+        nef.extend_from_slice(&jpeg);
+        let path = std::env::temp_dir().join(format!(
+            "pic-nef-icc-{}-{}.NEF", std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+                .unwrap().as_nanos(),
+        ));
+        std::fs::write(&path, &nef).unwrap();
+        let reference = path.to_str().unwrap();
+        let (decoded, w, h) = decode_local_raw_for_viewer(
+            reference, 1, 128, 96, &|| false,
+        ).unwrap();
+        assert_eq!((w, h), (128, 96));
+        let pixel = decoded.to_rgb8().get_pixel(32, 32).0;
+        // Independently verified ProPhoto RGB -> sRGB transform from
+        // thumbnail::color::tests, tolerating a few JPEG codec levels.
+        for (actual, expected) in pixel.into_iter().zip([191u8, 53, 29]) {
+            assert!(actual.abs_diff(expected) <= 8,
+                "embedded NEF preview lost its ICC transform: {pixel:?}");
+        }
+        std::fs::remove_file(path).unwrap();
+    }
+}

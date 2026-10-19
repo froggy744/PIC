@@ -47,7 +47,7 @@ OpenGL pixel parity) passed at `0700ac3`:
 https://github.com/froggy744/PIC/actions/runs/39199032850
 
 **Important Nikon distinction:** For DSC_5791.NEF, the available full-size
-embedded JPEG is 3936×2624. Export at those dimensions uses the camera's JPEG
+embedded JPEG is 3936×2624 (other embedded previews are 1620×1080 and 640×424, confirmed by inspecting the user's local NEF without uploading it). Export at those dimensions uses the camera's JPEG
 preview; it does **not** demosaic Nikon NEF RAW sensor data. RAW-development
 colour, detail and profile fidelity require a separate demosaicing pipeline.
 Do not describe the embedded-JPEG export as full RAW development.
@@ -68,8 +68,9 @@ For CPU reference:
 PIC_EDIT_RENDERER=cpu cargo run
 ```
 
-The experimental Linux packaging workflow builds AppImage/Flatpak without
-publishing a release. Passing package builds are not a substitute for testing
+The experimental Linux packaging workflow builds and smoke-tests **AppImage only**
+without publishing a release. **Flatpak validation is deferred on the owner's
+instruction (2026-10-19)**; do not schedule new Flatpak builds until asked. Passing package builds are not a substitute for testing
 desktop GL contexts and host Mesa/GLVND/Flatpak GL extensions on Fedora
 Wayland hardware. AppImage must never bundle vendor GPU drivers.
 

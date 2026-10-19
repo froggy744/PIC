@@ -566,6 +566,81 @@ mod tests {
     }
 
     #[test]
+    fn exported_jpeg_has_correct_exif_dimensions_orientation_and_icc() {
+        use image::ImageDecoder;
+        let dir = std::env::temp_dir().join(format!(
+            "pic-export-exif-{}-{}", std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+                .unwrap().as_nanos(),
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let source = dir.join("source.png");
+        image::DynamicImage::ImageRgba8(
+            RgbaImage::from_pixel(50, 30, image::Rgba([120, 80, 50, 255]))
+        ).save(&source).unwrap();
+        let job = ExportJob::from_record(
+            source.display().to_string(), 90, String::new(), 50, 30, "source.png"
+        );
+        let destination = dir.join("out.jpg");
+        export_job_to(&job, &destination, 0, 95, ExportFormat::Jpeg, &render_job).unwrap();
+        let output = image::open(&destination).unwrap();
+        assert_eq!((output.width(), output.height()), (30, 50));
+        let metadata = exif::Reader::new().read_from_container(
+            &mut std::io::BufReader::new(std::fs::File::open(&destination).unwrap())
+        ).unwrap();
+        assert_eq!(metadata.get_field(exif::Tag::Orientation, exif::In::PRIMARY)
+            .unwrap().value.get_uint(0), Some(1));
+        assert_eq!(metadata.get_field(exif::Tag::PixelXDimension, exif::In::PRIMARY)
+            .unwrap().value.get_uint(0), Some(30));
+        assert_eq!(metadata.get_field(exif::Tag::PixelYDimension, exif::In::PRIMARY)
+            .unwrap().value.get_uint(0), Some(50));
+        assert!(metadata.get_field(exif::Tag::GPSLatitude, exif::In::PRIMARY).is_none());
+        let mut decoder = image::codecs::jpeg::JpegDecoder::new(
+            std::io::BufReader::new(std::fs::File::open(&destination).unwrap())
+        ).unwrap();
+        assert!(decoder.icc_profile().unwrap().is_some(),
+            "exported JPEG must identify its output sRGB color space");
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn concurrent_exports_never_replace_the_first_completed_destination() {
+        let dir = std::env::temp_dir().join(format!(
+            "pic-export-race-{}-{}", std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+                .unwrap().as_nanos(),
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let dest = dir.join("same.png");
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let handles = (0..2).map(|index| {
+            let destination = dest.clone();
+            let barrier = barrier.clone();
+            std::thread::spawn(move || {
+                let job = ExportJob::from_record(
+                    "unused".into(), 0, String::new(), 12, 10, "same.png"
+                );
+                export_job_to(&job, &destination, 0, 92, ExportFormat::Png, &|_| {
+                    barrier.wait(); // both pass the initial exists check
+                    Ok(RgbaImage::from_pixel(12, 10, image::Rgba([
+                        50 + (index * 80) as u8, 100, 150, 255
+                    ])))
+                })
+            })
+        }).collect::<Vec<_>>();
+        let results: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+        assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1,
+            "one concurrent export must fail instead of replacing the first");
+        assert!(dest.exists());
+        let survivors = std::fs::read_dir(&dir).unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(survivors, vec!["same.png"]);
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
     fn batch_continues_after_failures_and_counts_them() {
         let dir = std::env::temp_dir().join(format!(
             "pic-export-batch-{}-{}",

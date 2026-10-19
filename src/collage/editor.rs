@@ -1921,6 +1921,9 @@ fn choose_export_destination(
         .and_then(|path| path.parent())
         .map(std::path::Path::to_path_buf);
     let selected_window = chooser_window.clone();
+    let retry_project = project.clone();
+    let retry_options = options;
+    let retry_saved_photo_id = saved_photo_id.clone();
     let on_selected = Rc::new(move |path: std::path::PathBuf, _replace_existing| {
         let project = project.borrow().clone();
         let photo_id = saved_photo_id.get();
@@ -1947,6 +1950,8 @@ fn choose_export_destination(
         });
         let window = selected_window.clone();
         let saved_photo_id = saved_photo_id.clone();
+        let retry_project = retry_project.clone();
+        let retry_saved_photo_id = retry_saved_photo_id.clone();
         glib::timeout_add_local(Duration::from_millis(50), move || {
             match receiver.try_recv() {
                 Ok(Ok(id)) => {
@@ -1969,6 +1974,22 @@ fn choose_export_destination(
                         .close_response("close")
                         .build();
                     dialog.add_response("close", "Close");
+                    dialog.add_response("choose-another", "Choose another filename…");
+                    dialog.set_response_appearance(
+                        "choose-another",
+                        adw::ResponseAppearance::Suggested,
+                    );
+                    let retry_window = window.clone();
+                    let retry_project = retry_project.clone();
+                    let retry_saved_photo_id = retry_saved_photo_id.clone();
+                    dialog.connect_response(Some("choose-another"), move |_, _| {
+                        choose_export_destination(
+                            &retry_window,
+                            retry_project.clone(),
+                            retry_options,
+                            retry_saved_photo_id.clone(),
+                        );
+                    });
                     dialog.present(Some(&window));
                     glib::ControlFlow::Break
                 }

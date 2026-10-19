@@ -265,10 +265,11 @@ and rejected with a CPU fallback. Existing native-size GPU parity and
 crop/straighten/quarter-turn tests passed on the RX 7600. The project Editor
 quality workflow could not run its Xvfb-only portion here because `xvfb-run`
 is not installed. The filter-thumbnail GL test also needs that isolated
-display: on the active desktop display, the window manager allocated a larger
-framebuffer than the test's 32×32 expected image. The GitHub Editor CI result
-is pending branch push; this validation is not a replacement for CI or for
-testing on Intel integrated graphics.
+display: on the active desktop and Wayland displays, GTK allocated a larger
+framebuffer than the test's 32×32 expected image. No GitHub Editor CI run was
+triggered by the standalone branch push (the workflow's push filter names a
+different branch, and no PR was opened). This validation is not a replacement
+for CI or for testing on Intel integrated graphics.
 
 Before a release, retain the strict parity gates for automatic-adjustment
 combinations, review full-resolution JPEG/PNG NEF-preview exports with EXIF and

@@ -4,6 +4,7 @@
 //! embedded thumbnails, MakerNotes and sensor dimensions must never be copied:
 //! an edited/cropped image has different pixels and may be shared publicly.
 use exif::{In, Tag, Value};
+use gio::prelude::FileExt;
 
 #[derive(Clone)]
 struct Entry {
@@ -105,8 +106,7 @@ fn build(metadata: Option<&exif::Exif>, width: u32, height: u32) -> Vec<u8> {
     if let Some(meta) = metadata {
         for (tag, id) in [
             (Tag::Make, 0x010F), (Tag::Model, 0x0110),
-            (Tag::DateTime, 0x0132), (Tag::Artist, 0x013B),
-            (Tag::Copyright, 0x8298),
+            (Tag::DateTime, 0x0132),
         ] {
             if let Some(entry) = copied_ascii(meta, tag, id) {
                 ifd0.push(entry);

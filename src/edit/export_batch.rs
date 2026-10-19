@@ -673,7 +673,7 @@ mod tests {
             export_job_to(&job, &destination, 0, 94, format, &|_| Ok(pixels.clone()))
                 .unwrap();
             let saved = image::open(&destination).unwrap();
-            assert_eq!(saved.dimensions(), (12, 20), "{suffix}");
+            assert_eq!((saved.width(), saved.height()), (12, 20), "{suffix}");
             let bytes = std::fs::read(&destination).unwrap();
             assert!(bytes.windows(b"NIKON Z 5".len()).any(|w| w == b"NIKON Z 5"),
                 "{suffix} lost the camera model metadata");

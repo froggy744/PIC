@@ -900,6 +900,104 @@ mod tests {
         std::fs::remove_dir_all(dir).ok();
     }
 
+    /// Run only with a privately held RAW original:
+    /// PIC_TEST_EDIT_REFERENCE=/photos/image.NEF cargo test --locked \
+    ///   real_raw_export_fidelity_and_privacy -- --ignored --test-threads=1
+    ///
+    /// This test never uploads photos, never writes beside the original, and
+    /// never changes the user's library database or stored edit recipe.
+    #[test]
+    #[ignore = "requires PIC_TEST_EDIT_REFERENCE pointing to a locally accessible original"]
+    fn real_raw_export_fidelity_and_privacy() {
+        use crate::edit::filters::FilterPreset;
+        use crate::edit::model::CropRect;
+        use image::ImageDecoder;
+
+        let reference = std::env::var("PIC_TEST_EDIT_REFERENCE")
+            .expect("set PIC_TEST_EDIT_REFERENCE to a local NEF/DNG original");
+        let source = Path::new(&reference);
+        assert!(source.is_file(), "RAW original is not a readable local file");
+        let original = std::fs::read(source).unwrap();
+        let original_hash = blake3::hash(&original);
+
+        let mut recipe = EditRecipe::default();
+        recipe.filter = FilterPreset::Valencia;
+        recipe.filter_amount = 0.7;
+        recipe.exposure = 0.2;
+        recipe.contrast = 0.12;
+        recipe.saturation = 0.1;
+        recipe.sharpen = 0.2;
+        recipe.crop = CropRect {
+            left: 0.1, top: 0.1, right: 0.9, bottom: 0.9,
+        };
+        let job = ExportJob::from_record(
+            reference.clone(), 90, recipe.encode(), 0, 0, "raw.NEF",
+        );
+        let expected = render_job(&job)
+            .expect("RAW viewer decode and CPU Edit rendering must succeed");
+        assert!(expected.width().min(expected.height()) >= 1500,
+            "RAW Export appears to have used a small thumbnail: {}x{}",
+            expected.width(), expected.height());
+
+        let dir = std::env::temp_dir().join(format!(
+            "pic-private-raw-export-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+                .unwrap().as_nanos(),
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        for (format, extension) in [
+            (ExportFormat::Jpeg, "jpg"),
+            (ExportFormat::Png, "png"),
+            (ExportFormat::Webp, "webp"),
+        ] {
+            let output = dir.join(format!("rendered.{extension}"));
+            export_job_to(&job, &output, 0, 95, format, &render_job).unwrap();
+            let actual = image::open(&output).unwrap().to_rgba8();
+            assert_eq!(actual.dimensions(), expected.dimensions(),
+                "{extension}: native Export dimensions differ from Edit");
+            if format != ExportFormat::Jpeg {
+                assert_eq!(actual, expected,
+                    "{extension}: lossless Export pixels differ from Edit");
+            } else {
+                // JPEG is lossy; bound average channel error to catch a
+                // mistakenly low-quality encode or colour-profile mismatch.
+                let sum: u64 = actual.pixels().zip(expected.pixels()).map(|(a, b)| {
+                    (0..3).map(|channel| u64::from(a[channel].abs_diff(b[channel])))
+                        .sum::<u64>()
+                }).sum();
+                let samples = u64::from(actual.width()) * u64::from(actual.height()) * 3;
+                let mean = sum as f64 / samples.max(1) as f64;
+                assert!(mean <= 8.0, "JPEG at quality 95 has mean RGB error {mean:.2}");
+            }
+
+            let mut file = std::io::BufReader::new(std::fs::File::open(&output).unwrap());
+            let exif = exif::Reader::new().read_from_container(&mut file)
+                .expect("export must have parseable EXIF");
+            assert_eq!(exif.get_field(exif::Tag::Orientation, exif::In::PRIMARY)
+                .unwrap().value.get_uint(0), Some(1));
+            assert_eq!(exif.get_field(exif::Tag::PixelXDimension, exif::In::PRIMARY)
+                .unwrap().value.get_uint(0), Some(actual.width()));
+            assert_eq!(exif.get_field(exif::Tag::PixelYDimension, exif::In::PRIMARY)
+                .unwrap().value.get_uint(0), Some(actual.height()));
+            assert!(exif.get_field(exif::Tag::GPSLatitude, exif::In::PRIMARY).is_none());
+            assert!(exif.get_field(exif::Tag::GPSLongitude, exif::In::PRIMARY).is_none());
+            assert!(exif.get_field(exif::Tag::Artist, exif::In::PRIMARY).is_none());
+            assert!(exif.get_field(exif::Tag::Copyright, exif::In::PRIMARY).is_none());
+            if format == ExportFormat::Jpeg {
+                let mut decoder = image::codecs::jpeg::JpegDecoder::new(
+                    std::io::BufReader::new(std::fs::File::open(&output).unwrap())
+                ).unwrap();
+                assert!(decoder.icc_profile().unwrap().is_some(),
+                    "JPEG must include its output sRGB ICC profile");
+            }
+        }
+        assert_eq!(blake3::hash(&std::fs::read(source).unwrap()), original_hash,
+            "Export must never change the original RAW bytes");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
     #[test]
     fn batch_stops_when_cancel_flag_is_set() {
         let dir = std::env::temp_dir().join(format!(

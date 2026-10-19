@@ -826,7 +826,11 @@ impl LiveGpuCanvas {
                         view_width * device_scale,
                         view_height * device_scale,
                     );
-                    gl::ClearColor(0.055, 0.06, 0.07, 1.0);
+                    // The CPU Picture remains behind this GLArea as the
+                    // preview background. Keep uncovered canvas pixels
+                    // transparent so crop/zoom changes do not introduce a
+                    // GPU-colored border around the image.
+                    gl::ClearColor(0.0, 0.0, 0.0, 0.0);
                     gl::Clear(gl::COLOR_BUFFER_BIT);
                     #[cfg(test)]
                     if gpu_timer_requested {
@@ -1989,7 +1993,7 @@ void main() {
     vec2 sourcePos = (topLeft + uScroll - uPadding) / max(uScale, 0.0001);
     if (sourcePos.x < 0.0 || sourcePos.y < 0.0 ||
         sourcePos.x >= uOutputSize.x || sourcePos.y >= uOutputSize.y) {
-        color = vec4(0.055, 0.06, 0.07, 1.0);
+        color = vec4(0.0);
         return;
     }
     if (uUseProcessedSource != 0) {
@@ -4777,7 +4781,30 @@ mod tests {
             );
         }
 
+        // Letterboxing and areas outside the photo must show the editor's
+        // normal preview background through the GLArea, including after crop
+        // changes. The GPU layer itself should contribute no opaque border.
+        renderer.set_view(0.0, 0.0, 48.0, 32.0, 0.5, 12.0, 8.0);
+        renderer.request_readback();
+        let deadline = Instant::now() + std::time::Duration::from_secs(5);
+        let mut padded_view = None;
+        while Instant::now() < deadline {
+            while context.pending() {
+                context.iteration(false);
+            }
+            if let Some(readback) = renderer.take_readback() {
+                padded_view = Some(readback);
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let padded_view = padded_view.expect("padded GPU viewport should render");
+        assert_eq!(padded_view[3], 0, "uncovered GLArea background is transparent");
+        let center = ((16 * 48 + 24) * 4) + 3;
+        assert_eq!(padded_view[center], 255, "photo pixels remain opaque");
+
         let mut fit_sharpen = reset_recipe.clone();
+        renderer.set_view(0.0, 0.0, 24.0, 16.0, 0.5, 0.0, 0.0);
         fit_sharpen.sharpen = 0.35;
         renderer.set_recipe(&fit_sharpen);
         renderer.request_readback();

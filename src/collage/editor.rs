@@ -1924,7 +1924,7 @@ fn choose_export_destination(
     let retry_project = project.clone();
     let retry_options = options;
     let retry_saved_photo_id = saved_photo_id.clone();
-    let on_selected = Rc::new(move |path: std::path::PathBuf, _replace_existing| {
+    let on_selected = Rc::new(move |path: std::path::PathBuf, confirmed_replace| {
         let project = project.borrow().clone();
         let photo_id = saved_photo_id.get();
         let progress = adw::AlertDialog::builder()
@@ -1938,7 +1938,14 @@ fn choose_export_destination(
         std::thread::spawn(move || {
             let result = (|| -> anyhow::Result<i64> {
                 let connection = crate::db::open_existing(&database?)?;
-                let id = super::persistence::export_project(&connection, &project, photo_id, &path, &options)?;
+                let id = super::persistence::export_project(
+                    &connection,
+                    &project,
+                    photo_id,
+                    &path,
+                    &options,
+                    confirmed_replace,
+                )?;
                 if let Some(photo) = crate::db::photo(&connection, id)? {
                     if let Err(error) = crate::thumbnail::create(&photo.path,photo.mtime,photo.size_bytes) {
                         eprintln!("Could not cache collage thumbnail: {error}");

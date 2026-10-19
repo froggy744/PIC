@@ -130,6 +130,29 @@ pub fn save_collage_project(
     metadata: &PhotoMetadata,
     draft: &str,
 ) -> Result<i64> {
+    save_collage_project_inner(connection, photo_id, path, metadata, draft, false)
+}
+
+/// Replace a library photo with a collage after the user confirmed that
+/// destination in the system Save picker.
+pub fn replace_photo_with_collage(
+    connection: &Connection,
+    photo_id: i64,
+    path: &Path,
+    metadata: &PhotoMetadata,
+    draft: &str,
+) -> Result<i64> {
+    save_collage_project_inner(connection, Some(photo_id), path, metadata, draft, true)
+}
+
+fn save_collage_project_inner(
+    connection: &Connection,
+    photo_id: Option<i64>,
+    path: &Path,
+    metadata: &PhotoMetadata,
+    draft: &str,
+    replace_photo: bool,
+) -> Result<i64> {
     let mut saved_draft: serde_json::Value = serde_json::from_str(draft)?;
     anyhow::ensure!(saved_draft.is_object(), "Invalid collage project JSON");
     let transaction = connection.unchecked_transaction()?;
@@ -137,15 +160,16 @@ pub fn save_collage_project(
         .map(|id| collage_project(&transaction, id))
         .transpose()?
         .flatten();
-    if photo_id.is_some() {
-        anyhow::ensure!(
-            previous.is_some(),
-            "Saved collage no longer exists in the library"
-        );
-    }
+    anyhow::ensure!(
+        photo_id.is_none() || previous.is_some() || replace_photo,
+        "Saved collage no longer exists in the library"
+    );
     let id = if let Some(id) = photo_id {
         transaction.execute(
-            "UPDATE photos SET path=?1,width=?2,height=?3,mtime=?4,size_bytes=?5 WHERE id=?6",
+            "UPDATE photos SET path=?1,width=?2,height=?3,mtime=?4,size_bytes=?5,
+                taken_at=NULL,camera=NULL,aperture=NULL,lens=NULL,shutter_speed=NULL,
+                iso=NULL,focal_length=NULL,exposure_bias=NULL,rotation=0,edit_recipe=''
+             WHERE id=?6",
             params![
                 path.to_string_lossy(),
                 metadata.width,
@@ -157,7 +181,6 @@ pub fn save_collage_project(
         )?;
         id
     } else {
-        // Do not take over an unrelated library photo at an existing path.
         transaction.execute(
             "INSERT INTO photos(path,width,height,mtime,size_bytes,added_at) VALUES (?1,?2,?3,?4,?5,?6)",
             params![path.to_string_lossy(),metadata.width,metadata.height,metadata.mtime,metadata.size_bytes,chrono::Utc::now().timestamp()],

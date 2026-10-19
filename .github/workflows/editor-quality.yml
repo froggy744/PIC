@@ -45,6 +45,8 @@ jobs:
         run: cargo test --locked edit::filters::tests -- --test-threads=1
       - name: Test native preview geometry
         run: cargo test --locked native_preview_geometry_tests -- --test-threads=1
+      - name: Test wide-gamut Nikon NEF embedded JPEG colour fidelity
+        run: cargo test --locked embedded_nef_jpeg_converts_wide_gamut_to_srgb_for_viewer_and_export -- --test-threads=1
       - name: Test lightbox 1:1 recipe refresh preserves pan
         run: |
           xvfb-run -a env GSK_RENDERER=cairo cargo test --locked \

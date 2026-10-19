@@ -38,8 +38,9 @@ pub struct OperationProgressUi {
     dismiss: gtk::Button,
     last_paint: Cell<Option<Instant>>,
     last_done: Cell<usize>,
-    hide_source: Cell<Option<glib::SourceId>>,
-    notice_generation: Cell<u64>,
+    // Incrementing this token invalidates old auto-hide callbacks without
+    // removing a GLib SourceId that may already have dispatched.
+    notice_generation: Rc<Cell<u64>>,
     running: Cell<bool>,
     /// Space guard hid the bar; restore it when room returns if still running.
     bar_suppressed: Cell<bool>,
@@ -111,8 +112,7 @@ impl OperationProgressUi {
             dismiss,
             last_paint: Cell::new(None),
             last_done: Cell::new(0),
-            hide_source: Cell::new(None),
-            notice_generation: Cell::new(0),
+            notice_generation: Rc::new(Cell::new(0)),
             running: Cell::new(false),
             bar_suppressed: Cell::new(false),
             dismissed: Rc::new(Cell::new(false)),
@@ -262,8 +262,6 @@ impl OperationProgressUi {
     /// made while that job was already running.
     pub fn show_if_not_dismissed(&self) {
         self.cancel_hide();
-        self.notice_generation
-            .set(self.notice_generation.get().wrapping_add(1));
         if self.dismissed.get() {
             return;
         }
@@ -275,17 +273,17 @@ impl OperationProgressUi {
         self.cancel_hide();
         let generation = self.notice_generation.get();
         let weak = Rc::downgrade(self);
-        let source = glib::timeout_add_local_once(delay, move || {
+        glib::timeout_add_local_once(delay, move || {
             let Some(this) = weak.upgrade() else {
                 return;
             };
+            // A replacement notice always advances the token; expired
+            // callbacks must never dismiss a more recent operation.
             if this.notice_generation.get() == generation {
                 this.root.set_visible(false);
                 this.slot.set_reveal_child(false);
-                this.hide_source.set(None);
             }
         });
-        self.hide_source.set(Some(source));
     }
 
     /// Shared flag polled by background workers. Cleared by `begin`.
@@ -313,13 +311,11 @@ impl OperationProgressUi {
     }
 
     fn cancel_hide(&self) {
-        if let Some(source) = self.hide_source.take() {
-            // The auto-hide source may already have fired; glib panics if we
-            // remove a dead SourceId. That was the LayersOnly paste crash.
-            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                source.remove();
-            }));
-        }
+        // Invalidate pending auto-hide callbacks rather than calling
+        // SourceId::remove(): removing an already-dispatched once-only
+        // source panics, even when the panic is caught.
+        self.notice_generation
+            .set(self.notice_generation.get().wrapping_add(1));
     }
 
     pub fn begin(&self, name: &str, total: usize) {
@@ -430,7 +426,12 @@ impl OperationProgressUi {
         self.last_done.set(0);
         let weak_root = self.root.downgrade();
         let weak_slot = self.slot.downgrade();
-        let source = glib::timeout_add_local_once(FINISH_HIDE_AFTER, move || {
+        let generation = self.notice_generation.get();
+        let current_generation = Rc::clone(&self.notice_generation);
+        glib::timeout_add_local_once(FINISH_HIDE_AFTER, move || {
+            if current_generation.get() != generation {
+                return;
+            }
             if let Some(root) = weak_root.upgrade() {
                 root.set_visible(false);
             }
@@ -438,7 +439,6 @@ impl OperationProgressUi {
                 slot.set_reveal_child(false);
             }
         });
-        self.hide_source.set(Some(source));
     }
 }
 
@@ -452,4 +452,50 @@ pub(crate) fn format_count(value: usize) -> String {
         formatted.push(digit);
     }
     formatted
+}
+
+#[cfg(test)]
+mod progress_timer_regression_tests {
+    use super::*;
+
+    #[test]
+    #[ignore = "requires a GTK display; run under xvfb-run"]
+    fn expired_auto_hide_does_not_panic_or_hide_new_notification() {
+        gtk::init().expect("GTK initialization");
+        let progress = OperationProgressUi::new();
+        let drain = |duration: Duration| {
+            let context = glib::MainContext::default();
+            let until = Instant::now() + duration;
+            while Instant::now() < until {
+                while context.pending() {
+                    context.iteration(false);
+                }
+                std::thread::sleep(Duration::from_millis(2));
+            }
+        };
+
+        progress.present();
+        progress.hide_after(Duration::from_millis(1));
+        drain(Duration::from_millis(30));
+        assert!(!progress.root().property::<bool>("visible"),
+            "expired notification must hide");
+
+        // The old one-shot source no longer exists. It previously remained
+        // in hide_source and caused a SourceId::remove panic here.
+        progress.present();
+        progress.hide_after(Duration::from_millis(10));
+        progress.present();
+        drain(Duration::from_millis(30));
+        assert!(progress.root().property::<bool>("visible"),
+            "an expired callback must not dismiss the replacement notice");
+
+        // finish() also schedules a one-shot timeout. A later hide_after()
+        // must invalidate it without trying to remove a stale GLib ID.
+        progress.finish("Export", "Export complete");
+        progress.hide_after(Duration::from_millis(1));
+        drain(Duration::from_millis(30));
+        assert!(!progress.root().property::<bool>("visible"));
+        progress.present();
+        assert!(progress.root().property::<bool>("visible"));
+    }
 }

@@ -46,6 +46,62 @@ embedded Nikon JPEG colour-fidelity regression fixture passed, but this does
 not establish Auto parity on an actual camera file. `PIC_EDIT_RENDERER=auto`
 intentionally retains the CPU default while these release gates are open.
 
+### Auto-correction investigation on the RX 7600
+
+The opt-in diagnostic (`PIC_GPU_AUTOSTATS_DIAG=1`) compared CPU Export with
+GPU output for all 14 creative presets at strengths 0.25, 0.65 and 1.0, using
+Auto Colour, Auto Contrast and both together. It used a deterministic 48×32
+synthetic photo with a 12.5% crop on each edge. The full 126-row result,
+including maximum and mean channel difference, worst pixel/channel and the
+filter-stage comparison, is in
+[`auto-correction-parity-rx7600.csv`](auto-correction-parity-rx7600.csv).
+These test-only reads inspect the GPU filter intermediate; interactive draws
+still do not read image or statistic textures back to the CPU.
+
+Across the 13 presets other than Pencil Sketch, the maximum final difference
+was 4/255; the creative-filter intermediate differed by at most 1/255.
+Full-strength standard presets were exact in this fixture, while low blend
+strengths exposed byte-rounding differences. Auto Contrast and the combined
+case sometimes amplified those one-level input differences because a changed
+8-bit luminance bin can change the clipped percentile bounds. Pencil Sketch
+was the outlier: its GPU filter intermediate differed by up to 6/255, and its
+full-strength Auto Contrast and combined results differed by 16/255 (mean
+1.2378/255; worst at pixel (0, 15), red 245 GPU vs 229 CPU).
+
+The Pencil Sketch mismatch is in the spatial filter before automatic
+correction. CPU `image::imageops::blur` carries its separable Gaussian
+intermediate in float and quantizes once at the output; the GPU blur writes
+each axis pass to an 8-bit R8 texture, quantizing between passes. At larger
+source sizes, the GPU also caps the effect buffer at 1200 pixels, unlike the
+full-source CPU Export blur. The subsequent Auto Contrast histogram and
+correction amplify this filter-stage difference. The CPU fallback remains in
+place for all automatic corrections combined with creative presets, crop,
+straighten, FIT/50% and rotated views.
+
+The deterministic Auto Colour reduction uses one RGBA32F partial texel for
+each 512 sampled pixels and a final reduction pass. For the 3936×2624 RX 7600
+benchmark this was 391 texels (about 6.1 KiB), with no extra source upload or
+CPU readback. The same-device OpenGL timer-query comparison with the previous
+single-texel additive reduction was:
+
+| GPU case | Deterministic reduction, first / cached | Previous reduction, first / cached |
+| --- | ---: | ---: |
+| First full frame | 10.236 / 0.016 ms | 8.921 / 0.019 ms |
+| Auto Colour | 1.245 / 0.017 ms | 1.102 / 0.017 ms |
+| Auto Contrast | 1.905 / 0.029 ms | 1.130 / 0.017 ms |
+| Both | 1.726 / 0.018 ms | 2.157 / 0.017 ms |
+
+The runs show no consistent latency regression for the deterministic reduction;
+the variation across first-frame measurements is larger than the measured
+cached difference. On the native identity fixture, deterministic Auto Colour
+is exact (0/255), while the previous reduction measured 1/255. Keep the small
+reduction for that measured parity improvement, but keep the broader CPU
+fallback gates: it does not repair creative-filter or geometry discrepancies.
+The same GPU timer-query test measured CPU full-frame Auto Colour, Auto
+Contrast and combined renders at 59.045, 66.271 and 85.737 ms with the current
+reduction, versus 59.415, 68.686 and 86.447 ms with the previous path. Timer
+queries measure GPU execution; those CPU numbers are reference-render time.
+
 Future Auto selection must probe successful GL context/shader initialization
 and the OpenGL capabilities required by the renderer. It must not branch on
 GPU vendor strings or dedicated-versus-integrated GPU classification. Keep

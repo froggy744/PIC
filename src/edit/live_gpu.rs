@@ -6,7 +6,7 @@
 //! renderer has broader performance and platform validation.
 
 use std::cell::RefCell;
-use std::ffi::{CString, c_void};
+use std::ffi::{c_void, CString};
 use std::rc::Rc;
 use std::sync::OnceLock;
 use std::time::Instant;
@@ -3558,43 +3558,48 @@ mod tests {
                         renderer.set_untransformed_geometry_for_rotation(0, &stats_recipe);
                         renderer.set_recipe(&stats_recipe);
                         let actual = capture();
-                        if filter == FilterPreset::Clarendon && amount == 0.25 && auto_color {
-                            renderer.widget().make_current();
-                            let mut gpu_filtered = vec![
+                        // Read back only in this opt-in test diagnostic to
+                        // isolate creative-filter input error from downstream
+                        // histogram/correction error. Interactive rendering
+                        // never reads these textures back to the CPU.
+                        let mut filter_reference = stats_recipe.clone();
+                        filter_reference.auto_color = false;
+                        filter_reference.auto_contrast = false;
+                        let cpu_filtered = super::super::render::apply_tone(
+                            cpu_geometry.clone(),
+                            &filter_reference,
+                        );
+                        let mut gpu_filtered =
+                            vec![
                                 0u8;
-                                cpu_geometry.width() as usize
-                                    * cpu_geometry.height() as usize
-                                    * 4
+                                cpu_filtered.width() as usize * cpu_filtered.height() as usize * 4
                             ];
-                            if let Some(objects) = renderer.state.borrow().objects.as_ref() {
-                                unsafe {
-                                    gl::BindTexture(gl::TEXTURE_2D, objects.stats_source_texture);
-                                    gl::GetTexImage(
-                                        gl::TEXTURE_2D,
-                                        0,
-                                        gl::RGBA,
-                                        gl::UNSIGNED_BYTE,
-                                        gpu_filtered.as_mut_ptr().cast(),
-                                    );
-                                }
+                        renderer.widget().make_current();
+                        if let Some(objects) = renderer.state.borrow().objects.as_ref() {
+                            unsafe {
+                                gl::BindTexture(gl::TEXTURE_2D, objects.stats_source_texture);
+                                gl::GetTexImage(
+                                    gl::TEXTURE_2D,
+                                    0,
+                                    gl::RGBA,
+                                    gl::UNSIGNED_BYTE,
+                                    gpu_filtered.as_mut_ptr().cast(),
+                                );
                             }
-                            let mut filter_reference = stats_recipe.clone();
-                            filter_reference.auto_color = false;
-                            filter_reference.auto_contrast = false;
-                            let cpu_filtered = super::super::render::apply_tone(
-                                cpu_geometry.clone(),
-                                &filter_reference,
-                            )
-                            .into_raw();
-                            let filter_max = gpu_filtered
-                                .iter()
-                                .zip(&cpu_filtered)
-                                .map(|(a, b)| a.abs_diff(*b))
-                                .max()
-                                .unwrap_or_default();
-                            eprintln!(
-                                "PIC_EDIT_GPU filter_stats_stage filter={filter:?} amount={amount} max_channel_delta={filter_max}"
-                            );
+                        }
+                        let cpu_filtered = cpu_filtered.into_raw();
+                        let mut filter_stage_max = 0u8;
+                        let mut filter_stage_sum = 0u64;
+                        let mut filter_stage_worst = (0usize, 0u8, 0u8);
+                        for (index, (gpu, cpu)) in
+                            gpu_filtered.iter().zip(&cpu_filtered).enumerate()
+                        {
+                            let delta = gpu.abs_diff(*cpu);
+                            filter_stage_sum += delta as u64;
+                            if delta > filter_stage_max {
+                                filter_stage_max = delta;
+                                filter_stage_worst = (index, *gpu, *cpu);
+                            }
                         }
                         let expected = super::super::render::apply_tone(
                             super::super::render::apply_geometry(original.clone(), &stats_recipe),
@@ -3626,7 +3631,13 @@ mod tests {
                         }
                         assert_eq!(renderer.uploaded_revision(), revision);
                         eprintln!(
-                            "PIC_EDIT_GPU cropped_filter_auto_parity filter={filter:?} amount={amount} color={auto_color} contrast={auto_contrast} max_channel_delta={max_delta} mean_channel_delta={:.4} worst_pixel=({}, {}) channel={} actual={} expected={} status=unverified",
+                            "PIC_EDIT_GPU cropped_filter_auto_parity filter={filter:?} amount={amount} color={auto_color} contrast={auto_contrast} filter_stage_max={filter_stage_max} filter_stage_mean={:.4} filter_worst_pixel=({}, {}) filter_channel={} filter_actual={} filter_expected={} final_max={max_delta} final_mean={:.4} worst_pixel=({}, {}) channel={} actual={} expected={} error_origin={} status=unverified",
+                            filter_stage_sum as f64 / cpu_filtered.len().max(1) as f64,
+                            (filter_stage_worst.0 / 4) as u32 % cpu_geometry.width(),
+                            (filter_stage_worst.0 / 4) as u32 / cpu_geometry.width(),
+                            filter_stage_worst.0 % 4,
+                            filter_stage_worst.1,
+                            filter_stage_worst.2,
                             sum_delta as f64
                                 / (expected.width() as usize * expected.height() as usize * 4)
                                     .max(1) as f64,
@@ -3635,6 +3646,15 @@ mod tests {
                             worst.0 % 4,
                             worst.1,
                             worst.2,
+                            if filter_stage_max > 0 && max_delta > filter_stage_max {
+                                "filter+downstream-histogram-or-correction"
+                            } else if filter_stage_max > 0 {
+                                "creative-filter"
+                            } else if max_delta > 0 {
+                                "histogram-correction-or-final-quantization"
+                            } else {
+                                "none"
+                            },
                         );
                     }
                 }

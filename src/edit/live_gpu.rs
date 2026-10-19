@@ -2711,11 +2711,7 @@ mod tests {
         // Diagnostic only: these combinations deliberately retain the CPU
         // fallback until the GPU histogram path passes strict pixel parity.
         // Sample more than one preset and isolate the offending auto stage.
-        for filter in [
-            FilterPreset::Clarendon, FilterPreset::Valencia,
-            FilterPreset::GoldenHour, FilterPreset::Newspaper,
-            FilterPreset::DreamGlow,
-        ] {
+        for filter in FilterPreset::ALL {
             for (auto_color, auto_contrast) in [(true, false), (false, true), (true, true)] {
                 let mut stats_recipe = EditRecipe::default();
                 stats_recipe.crop = CropRect {

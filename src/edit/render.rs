@@ -701,6 +701,7 @@ pub fn save_export_with_metadata(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use image::DynamicImage;
     use crate::edit::filters::FilterPreset;
 
     #[test]

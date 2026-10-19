@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - 'src/edit/**'
+      - 'src/window/operation_progress.rs'
       - '.github/workflows/editor-quality.yml'
   push:
     branches:
@@ -43,6 +44,11 @@ jobs:
         run: cargo test --locked edit::model::tests -- --test-threads=1
       - name: Test creative filters
         run: cargo test --locked edit::filters::tests -- --test-threads=1
+      - name: Test progress notification auto-hide after expired timers
+        run: |
+          xvfb-run -a env GDK_BACKEND=x11 GSK_RENDERER=cairo \
+            cargo test --locked expired_auto_hide_does_not_panic_or_hide_new_notification -- \
+            --ignored --test-threads=1 --nocapture
       - name: Test native preview geometry
         run: cargo test --locked native_preview_geometry_tests -- --test-threads=1
       - name: Test wide-gamut Nikon NEF embedded JPEG colour fidelity

@@ -37,6 +37,8 @@ jobs:
         run: cargo test --locked edit::render::tests -- --test-threads=1
       - name: Test Export (JPEG, PNG, WebP, non-destructive batch)
         run: cargo test --locked edit::export_batch::tests -- --test-threads=1
+      - name: Test sanitized EXIF metadata and orientation
+        run: cargo test --locked edit::export_metadata::tests -- --test-threads=1
       - name: Test recipe compatibility and history
         run: cargo test --locked edit::model::tests -- --test-threads=1
       - name: Test creative filters

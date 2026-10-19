@@ -591,12 +591,31 @@ fn flatten_jpeg_alpha(image: &RgbaImage) -> image::RgbImage {
 }
 
 pub fn save_jpeg(image: &RgbaImage, destination: &std::path::Path, quality: u8) -> Result<()> {
+    save_jpeg_with_metadata(image, destination, quality, None, None)
+}
+
+fn save_jpeg_with_metadata(
+    image: &RgbaImage,
+    destination: &std::path::Path,
+    quality: u8,
+    exif: Option<&[u8]>,
+    icc: Option<&[u8]>,
+) -> Result<()> {
     use image::ImageEncoder;
     let file = std::fs::File::create(destination)
         .with_context(|| format!("could not create {}", destination.display()))?;
     let writer = std::io::BufWriter::new(file);
     let rgb = flatten_jpeg_alpha(image);
-    image::codecs::jpeg::JpegEncoder::new_with_quality(writer, quality).write_image(
+    let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(writer, quality);
+    if let Some(metadata) = exif {
+        encoder.set_exif_metadata(metadata.to_vec())
+            .map_err(|error| anyhow::anyhow!("JPEG EXIF metadata rejected: {error}"))?;
+    }
+    if let Some(profile) = icc {
+        encoder.set_icc_profile(profile.to_vec())
+            .map_err(|error| anyhow::anyhow!("JPEG ICC profile rejected: {error}"))?;
+    }
+    encoder.write_image(
         &rgb,
         rgb.width(),
         rgb.height(),
@@ -605,21 +624,77 @@ pub fn save_jpeg(image: &RgbaImage, destination: &std::path::Path, quality: u8) 
     Ok(())
 }
 
-/// Save an export in the chosen dialog format. `quality` applies to JPEG only.
+/// Save an export in the chosen dialog format. 'quality' applies to JPEG only.
+/// The plain form is kept for callers that have no original file metadata.
 pub fn save_export(
     image: &RgbaImage,
     destination: &std::path::Path,
     format: crate::edit::export_batch::ExportFormat,
     quality: u8,
 ) -> Result<()> {
+    save_export_with_metadata(image, destination, format, quality, None)
+}
+
+/// Export rendered pixels with rebuilt, orientation-normalized EXIF and an
+/// sRGB profile. Never copy a source ICC verbatim: pixels may have been color
+/// converted or edited and may no longer be in the source's color space.
+pub fn save_export_with_metadata(
+    image: &RgbaImage,
+    destination: &std::path::Path,
+    format: crate::edit::export_batch::ExportFormat,
+    quality: u8,
+    exif: Option<&[u8]>,
+) -> Result<()> {
+    use image::ImageEncoder;
+    use crate::edit::export_batch::ExportFormat;
+    let icc = if exif.is_some() {
+        Some(lcms2::Profile::new_srgb().icc()
+            .map_err(|error| anyhow::anyhow!("could not generate sRGB profile: {error}"))?)
+    } else {
+        None
+    };
     match format {
-        crate::edit::export_batch::ExportFormat::Jpeg => save_jpeg(image, destination, quality),
-        crate::edit::export_batch::ExportFormat::Png => DynamicImage::ImageRgba8(image.clone())
-            .save_with_format(destination, image::ImageFormat::Png)
-            .with_context(|| format!("could not save {}", destination.display())),
-        crate::edit::export_batch::ExportFormat::Webp => DynamicImage::ImageRgba8(image.clone())
-            .save_with_format(destination, image::ImageFormat::WebP)
-            .with_context(|| format!("could not save {}", destination.display())),
+        ExportFormat::Jpeg => save_jpeg_with_metadata(
+            image, destination, quality, exif, icc.as_deref()
+        ),
+        ExportFormat::Png => {
+            let file = std::fs::File::create(destination)
+                .with_context(|| format!("could not create {}", destination.display()))?;
+            let mut encoder = image::codecs::png::PngEncoder::new(std::io::BufWriter::new(file));
+            if let Some(exif) = exif {
+                encoder.set_exif_metadata(exif.to_vec())
+                    .map_err(|error| anyhow::anyhow!("PNG EXIF rejected: {error}"))?;
+            }
+            if let Some(icc) = icc {
+                encoder.set_icc_profile(icc)
+                    .map_err(|error| anyhow::anyhow!("PNG ICC rejected: {error}"))?;
+            }
+            encoder.write_image(
+                image.as_raw(), image.width(), image.height(),
+                image::ExtendedColorType::Rgba8,
+            )?;
+            Ok(())
+        }
+        ExportFormat::Webp => {
+            let file = std::fs::File::create(destination)
+                .with_context(|| format!("could not create {}", destination.display()))?;
+            let mut encoder = image::codecs::webp::WebPEncoder::new_lossless(
+                std::io::BufWriter::new(file)
+            );
+            if let Some(exif) = exif {
+                encoder.set_exif_metadata(exif.to_vec())
+                    .map_err(|error| anyhow::anyhow!("WebP EXIF rejected: {error}"))?;
+            }
+            if let Some(icc) = icc {
+                encoder.set_icc_profile(icc)
+                    .map_err(|error| anyhow::anyhow!("WebP ICC rejected: {error}"))?;
+            }
+            encoder.write_image(
+                image.as_raw(), image.width(), image.height(),
+                image::ExtendedColorType::Rgba8,
+            )?;
+            Ok(())
+        }
     }
 }
 

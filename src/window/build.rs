@@ -4336,6 +4336,7 @@ fn choose_photo_export_destination(
     format: crate::edit::export_batch::ExportFormat,
     progress: Rc<OperationProgressUi>,
 ) {
+    let parent = window.clone();
     let multiple = jobs.len() > 1;
     let dialog = gtk::FileDialog::builder()
         .title(if multiple {
@@ -4356,7 +4357,36 @@ fn choose_photo_export_destination(
             if multiple {
                 start_photo_export_folder(progress.clone(), jobs.clone(), path, max_edge, format);
             } else if let Some(job) = jobs.first().cloned() {
-                start_photo_export_single(progress.clone(), job, path, max_edge, format);
+                if path.exists() {
+                    let dialog = adw::AlertDialog::builder()
+                        .heading("Replace existing export?")
+                        .body(format!(
+                            "{} already exists. Replace it with the exported photo?",
+                            path.display(),
+                        ))
+                        .close_response("cancel")
+                        .default_response("replace")
+                        .build();
+                    dialog.add_response("cancel", "Cancel");
+                    dialog.add_response("replace", "Replace");
+                    dialog.set_response_appearance("replace", adw::ResponseAppearance::Destructive);
+                    let progress_for_replace = progress.clone();
+                    let job_for_replace = job.clone();
+                    let path_for_replace = path.clone();
+                    dialog.connect_response(Some("replace"), move |_, _| {
+                        start_photo_export_single(
+                            progress_for_replace.clone(),
+                            job_for_replace.clone(),
+                            path_for_replace.clone(),
+                            max_edge,
+                            format,
+                            true,
+                        );
+                    });
+                    dialog.present(Some(&parent));
+                } else {
+                    start_photo_export_single(progress.clone(), job, path, max_edge, format, false);
+                }
             }
         }
     });
@@ -4475,6 +4505,7 @@ fn start_photo_export_single(
     destination: std::path::PathBuf,
     max_edge: u32,
     format: crate::edit::export_batch::ExportFormat,
+    replace_existing: bool,
 ) {
     progress.begin("Exporting photos", 1);
     let cancel = progress.cancel_flag();
@@ -4494,14 +4525,28 @@ fn start_photo_export_single(
                 ..Default::default()
             }
         } else {
-            let result = crate::edit::export_batch::export_job_to(
-                &job,
-                &destination,
-                max_edge,
-                crate::edit::export_batch::default_export_quality(),
-                format,
-                &|job| crate::edit::export_batch::render_job(job),
-            );
+            let render = |job: &crate::edit::export_batch::ExportJob| {
+                crate::edit::export_batch::render_job(job)
+            };
+            let result = if replace_existing {
+                crate::edit::export_batch::export_job_to_confirmed_replace(
+                    &job,
+                    &destination,
+                    max_edge,
+                    crate::edit::export_batch::default_export_quality(),
+                    format,
+                    &render,
+                )
+            } else {
+                crate::edit::export_batch::export_job_to(
+                    &job,
+                    &destination,
+                    max_edge,
+                    crate::edit::export_batch::default_export_quality(),
+                    format,
+                    &render,
+                )
+            };
             match result {
                 Ok(()) => crate::edit::export_batch::BatchExportOutcome {
                     exported: 1,

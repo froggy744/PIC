@@ -232,18 +232,19 @@ fn staging_export_path(destination: &Path) -> Result<PathBuf> {
 /// Publish a fully encoded sibling temporary file without ever replacing an
 /// existing destination. Linux's renameat2(NOREPLACE) makes the operation
 /// atomic even if another PIC process races us to the same filename.
-fn publish_export(staging: &Path, destination: &Path) -> Result<()> {
+fn publish_export(staging: &Path, destination: &Path, replace_existing: bool) -> Result<()> {
     #[cfg(target_os = "linux")]
     {
         use std::ffi::CString;
         use std::os::unix::ffi::OsStrExt;
         let source = CString::new(staging.as_os_str().as_bytes())?;
         let target = CString::new(destination.as_os_str().as_bytes())?;
+        let flags = if replace_existing { 0 } else { libc::RENAME_NOREPLACE };
         let result = unsafe {
             libc::renameat2(
                 libc::AT_FDCWD, source.as_ptr(),
                 libc::AT_FDCWD, target.as_ptr(),
-                libc::RENAME_NOREPLACE,
+                flags,
             )
         };
         if result == 0 {
@@ -251,19 +252,24 @@ fn publish_export(staging: &Path, destination: &Path) -> Result<()> {
         }
         let error = std::io::Error::last_os_error();
         // A mounted filesystem might not support this rename extension.
-        // Never fall back to a potentially overwriting plain rename.
+        // Preserve the strict no-replace guarantee in the default path.
         if matches!(error.raw_os_error(), Some(libc::EINVAL) | Some(libc::ENOSYS) | Some(libc::EOPNOTSUPP)) {
-            std::fs::hard_link(staging, destination)?;
-            std::fs::remove_file(staging)?;
+            if replace_existing {
+                // Same-directory rename remains atomic and replaces the target
+                // on Linux when renameat2 is unavailable on the filesystem.
+                std::fs::rename(staging, destination)?;
+            } else {
+                std::fs::hard_link(staging, destination)?;
+                std::fs::remove_file(staging)?;
+            }
             return Ok(());
         }
         return Err(error.into());
     }
     #[cfg(not(target_os = "linux"))]
     {
-        // Preserve the previous platform behaviour for non-Linux builds.
         // Cross-process no-replace publication needs a platform-specific API.
-        if destination.exists() {
+        if !replace_existing && destination.exists() {
             anyhow::bail!("refusing to overwrite existing export: {}", destination.display());
         }
         std::fs::rename(staging, destination)?;
@@ -285,8 +291,39 @@ pub fn export_job_to<F>(
 where
     F: Fn(&ExportJob) -> Result<RgbaImage>,
 {
+    export_job_to_inner(job, destination, max_edge, quality, format, false, render)
+}
+
+/// Export to an exact path after the user has explicitly confirmed replacing
+/// an existing destination. The staged file is still published atomically.
+pub fn export_job_to_confirmed_replace<F>(
+    job: &ExportJob,
+    destination: &Path,
+    max_edge: u32,
+    quality: u8,
+    format: ExportFormat,
+    render: &F,
+) -> Result<()>
+where
+    F: Fn(&ExportJob) -> Result<RgbaImage>,
+{
+    export_job_to_inner(job, destination, max_edge, quality, format, true, render)
+}
+
+fn export_job_to_inner<F>(
+    job: &ExportJob,
+    destination: &Path,
+    max_edge: u32,
+    quality: u8,
+    format: ExportFormat,
+    replace_existing: bool,
+    render: &F,
+) -> Result<()>
+where
+    F: Fn(&ExportJob) -> Result<RgbaImage>,
+{
     use anyhow::Context;
-    if destination.exists() {
+    if !replace_existing && destination.exists() {
         anyhow::bail!("refusing to overwrite existing export: {}", destination.display());
     }
     let image = fit_max_edge(render(job)?, max_edge);
@@ -297,7 +334,7 @@ where
             &image, &staging, format, quality, Some(&exif)
         )?;
         // The result is only made visible at its final filename once complete.
-        publish_export(&staging, destination).with_context(|| format!(
+        publish_export(&staging, destination, replace_existing).with_context(|| format!(
             "could not finish export {}", destination.display()
         ))?;
         Ok(())
@@ -559,6 +596,55 @@ mod tests {
             ExportFormat::Png, &|_| Ok(RgbaImage::new(1, 1)));
         assert!(result.is_err());
         assert_eq!(std::fs::read(&destination).unwrap(), b"keep this original");
+        std::fs::remove_dir_all(folder).ok();
+    }
+
+    #[test]
+    fn confirmed_repeat_export_atomically_replaces_existing_file() {
+        let folder = std::env::temp_dir().join(format!(
+            "pic-export-confirmed-replace-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+                .unwrap().as_nanos(),
+        ));
+        std::fs::create_dir_all(&folder).unwrap();
+        let destination = folder.join("export.png");
+        std::fs::write(&destination, b"old export").unwrap();
+        let job = ExportJob::from_record("unused".into(), 0, "".into(), 2, 1, "export.png");
+        let expected = RgbaImage::from_pixel(2, 1, image::Rgba([40, 80, 120, 255]));
+
+        export_job_to_confirmed_replace(
+            &job, &destination, 0, 92, ExportFormat::Png, &|_| Ok(expected.clone()),
+        ).unwrap();
+
+        assert_eq!(image::open(&destination).unwrap().to_rgba8(), expected);
+        let files = std::fs::read_dir(&folder).unwrap().count();
+        assert_eq!(files, 1, "staged files must be cleaned after replacement");
+        std::fs::remove_dir_all(folder).ok();
+    }
+
+    #[test]
+    fn failed_confirmed_repeat_export_preserves_existing_file() {
+        let folder = std::env::temp_dir().join(format!(
+            "pic-export-failed-replace-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+                .unwrap().as_nanos(),
+        ));
+        std::fs::create_dir_all(&folder).unwrap();
+        let destination = folder.join("export.png");
+        let original = b"old export";
+        std::fs::write(&destination, original).unwrap();
+        let job = ExportJob::from_record("unused".into(), 0, "".into(), 2, 1, "export.png");
+
+        let result = export_job_to_confirmed_replace(
+            &job, &destination, 0, 92, ExportFormat::Png,
+            &|_| anyhow::bail!("synthetic render failure"),
+        );
+
+        assert!(result.is_err());
+        assert_eq!(std::fs::read(&destination).unwrap(), original);
+        assert_eq!(std::fs::read_dir(&folder).unwrap().count(), 1);
         std::fs::remove_dir_all(folder).ok();
     }
 

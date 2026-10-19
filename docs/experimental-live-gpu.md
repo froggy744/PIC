@@ -1,68 +1,81 @@
-# Experimental LiveGPU editing renderer
+# Experimental GPU Edit and safe photo Export
 
-PIC's editor has an opt-in GTK `GLArea` renderer for live tone controls. It
-keeps the decoded source in one OpenGL texture and changes shader uniforms for
-Exposure, Contrast, Saturation, Warmth, Fill Light, Shadows, Highlights and
-Sharpen. Crop and straighten use the existing CPU geometry path. Filters,
-auto controls, clarity and grain use the CPU renderer. All editing buffers
-retain source resolution; during CPU processing the last sharp frame stays
-visible. Unsupported CPU effects can still lag. The CPU renderer remains the
-default and the export path is unchanged.
+**Scope:** draft PR #212 on \`feature/gpu-edit-pipeline\` (base
+\`feature/gpu-live-edit\`). The stable \`main\` branch is unchanged.
 
-See [the recovery handoff](livegpu-recovery-handoff.md) for verified behaviour,
-measurements and unresolved failures. Vulkan selection fell back to OpenGL in
-the latest isolated test; actual Vulkan compatibility remains unverified.
+## GPU Edit status (verified on the owner’s Fedora RX 9070 XT)
 
-```sh
+- Photo adjustments on a GTK \`GLArea\` desktop OpenGL shader: Exposure,
+  Contrast, Saturation, Temperature, Fill Light, Shadows, Highlights, Sharpen,
+  Clarity, Grain, B&W/Sepia and all fourteen named creative presets.
+- Crop, Straighten, library quarter-turn rotations, Fit/1:1, pan and source
+  texture caching. Interactive image overlays and rasterized Pango text.
+- Seventeen GPU filter-picker covers from one decoded source preview.
+- A failed GL context, shader or draw returns to the CPU render path; image
+  originals and the database recipe are never modified by GPU operations.
+- Owner tested and approved the GPU Edit milestone at commit
+  \`35b227e40633c0b38c1ce903eabd2f168121dc13\` (tag
+  \`gpu-edit-hardware-verified-2026-10-18\`). This **does not** verify every
+  later Export change or every distribution runtime.
+
+**Still CPU for accuracy:** Auto Colour and/or Auto Contrast combined with
+named creative presets or cropped/straightened geometry. The current GPU
+statistics path has produced 31–51/255 channel deviations against the CPU
+reference on synthetic fixtures. Keep CPU fallback until strict parity tests
+prove those combinations safe. \`PIC_EDIT_RENDERER=auto\` intentionally retains
+the CPU default; do not auto-enable GPU across distributions prematurely.
+
+## Export status and implementation
+
+Export uses the full decoded source through the CPU recipe reference. It is
+independent of the GPU preview framebuffer, preserves transparent PNG/WebP
+overlays, and flattens JPEG alpha against white. It does not modify the source
+file. Crop, rotate, tone, filters, layers and text are applied before encoding.
+JPEG/PNG/WebP save through a staging file alongside the final destination; on
+Linux a \`RENAME_NOREPLACE\` publication prevents concurrent overwrites.
+
+EXIF is rebuilt from a selected set of nonlocation camera/lens/exposure/date
+fields. The exported orientation is always 1 and pixel dimensions describe
+the rendered file, never the unedited source. GPS, author fields, MakerNotes,
+embedded previews and source-side EXIF pointers are intentionally omitted by
+default. The output is tagged with a generated sRGB ICC profile, not blindly
+with the input file's potentially incompatible profile.
+
+The automated editor quality workflow (including output metadata, Export
+pixels, non-destructive originals, concurrency, overlay safety and software
+OpenGL pixel parity) passed at \`0700ac3\`:
+https://github.com/froggy744/PIC/actions/runs/39199032850
+
+**Important Nikon distinction:** For DSC_5791.NEF, the available full-size
+embedded JPEG is 3936×2624. Export at those dimensions uses the camera's JPEG
+preview; it does **not** demosaic Nikon NEF RAW sensor data. RAW-development
+colour, detail and profile fidelity require a separate demosaicing pipeline.
+Do not describe the embedded-JPEG export as full RAW development.
+
+## Development and verification
+
+\`\`\`sh
+cd ~/PIC/.worktrees/gpu-edit-test
+git fetch origin feature/gpu-edit-pipeline
+git switch --detach origin/feature/gpu-edit-pipeline
+
+PIC_EDIT_RENDERER=gpu PICASA_TRACE=1 cargo run --release \
+  2>&1 | tee /tmp/pic-gpu-test.log
+\`\`\`
+
+For CPU reference:
+\`\`\`sh
 PIC_EDIT_RENDERER=cpu cargo run
-PIC_EDIT_RENDERER=auto cargo run
-PIC_EDIT_RENDERER=gpu PICASA_TRACE=1 cargo run
-```
+\`\`\`
 
-`auto` currently selects CPU intentionally. `gpu` requests desktop OpenGL via
-`GtkGLArea`; context creation, shader, upload or draw errors hide the GL layer
-and re-render through CPU. The GPU area is sized from the scrolled viewport;
-the full-resolution source texture is sampled using the current scroll offset
-and zoom. It does not create a source-sized framebuffer. Uniform-only changes
-do not upload the source texture again. `PICASA_TRACE=1` records source upload,
-GL draw submission, frame-clock after-paint latency, CPU fallback latency and
-preview dimensions.
+The experimental Linux packaging workflow builds AppImage/Flatpak without
+publishing a release. Passing package builds are not a substitute for testing
+desktop GL contexts and host Mesa/GLVND/Flatpak GL extensions on Fedora
+Wayland hardware. AppImage must never bundle vendor GPU drivers.
 
-## Verification
+## Release gate
 
-The OpenGL parity and full-source viewport benchmark tests are ignored in the normal
-suite because they need a GTK display and GL context. On Linux, run:
-
-```sh
-GSK_RENDERER=gl PICASA_TRACE=1 xvfb-run -a cargo test \
-  gtk_gl_area_matches_cpu_reference_at_native_pixel_size \
-  -- --ignored --test-threads=1 --nocapture
-GSK_RENDERER=vulkan PICASA_TRACE=1 xvfb-run -a cargo test \
-  gtk_gl_area_matches_cpu_reference_at_native_pixel_size \
-  -- --ignored --test-threads=1 --nocapture
-GSK_RENDERER=gl PICASA_TRACE=1 xvfb-run -a cargo test \
-  gtk_gl_area_benchmarks_full_source_upload_and_viewport_sized_draw \
-  -- --ignored --test-threads=1 --nocapture
-```
-
-The Vulkan selection here tests GTK's Vulkan scene renderer with an independent
-desktop OpenGL `GLArea`. It does not make the edit shader a Vulkan renderer.
-Parity uses GL framebuffer readback only in tests; normal editing has no GPU to
-CPU readback.
-
-## Packaging checks still required
-
-This branch has only been exercised in the current Linux development
-environment. Fedora, Flatpak and AppImage runtimes need separate validation
-before `auto` can select GPU rendering:
-
-- Fedora: verify the GTK GLArea desktop GL context with the installed Mesa or
-  vendor driver on both X11 and Wayland.
-- Flatpak: verify the app runtime includes GTK GLArea support and that the
-  matching host `org.freedesktop.Platform.GL` extension is available.
-- AppImage: verify `libGL.so.1` resolves to the host GLVND/driver stack. Do not
-  bundle a vendor-specific GL driver in the AppImage.
-
-The application loads GL entry points dynamically. If `libGL.so.1` or a
-compatible context is unavailable, the GPU request falls back to CPU and emits
-a `PIC_EDIT_GPU init_failed` trace.
+Before enabling GPU automatically or proposing a merge to \`main\`, require
+strict parity on automatic-adjustment combinations, real full-res JPEG/PNG
+NEF-preview exports with EXIF and ICC review, AppImage/Flatpak smoke results,
+and owner approval. Never publish personal test photos.

@@ -262,8 +262,12 @@ where
             Err(_) => decode_with_image(&bytes)?,
         };
         check_viewer_cancelled(cancelled, "after_turbojpeg_decode")?;
+        // Embedded Nikon JPEGs can carry a non-sRGB ICC profile. Match the
+        // ordinary JPEG viewer path before the editor/export tags sRGB.
+        let corrected = color::color_manage_jpeg_rgb(&bytes, decoded.image, reference);
+        check_viewer_cancelled(cancelled, "after_nef_jpeg_color_conversion")?;
         return Ok((
-            DynamicImage::ImageRgb8(decoded.image),
+            DynamicImage::ImageRgb8(corrected),
             target_width,
             target_height,
         ));
@@ -495,8 +499,13 @@ where
                 );
                 let decoded = decode_jpeg_turbo_with_target(&bytes, target_width, target_height)
                     .or_else(|_| decode_with_image(&bytes))?;
+                check_viewer_cancelled(&cancelled, "after_remote_nef_jpeg_decode")?;
+                // Apply the same embedded ICC transform as local NEFs and
+                // standalone JPEGs before the output is labelled sRGB.
+                let corrected = color::color_manage_jpeg_rgb(&bytes, decoded.image, reference);
+                check_viewer_cancelled(&cancelled, "after_remote_nef_jpeg_color_conversion")?;
                 (
-                    DynamicImage::ImageRgb8(decoded.image),
+                    DynamicImage::ImageRgb8(corrected),
                     target_width,
                     target_height,
                 )

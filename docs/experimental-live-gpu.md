@@ -266,9 +266,15 @@ passed on the RX 7600; with `LIBGL_ALWAYS_SOFTWARE=1`, llvmpipe was detected
 and rejected with a CPU fallback. Existing native-size GPU parity,
 crop/straighten/quarter-turn and FIT checkerboard tests passed on the RX 7600.
 The isolated Xvfb filter-thumbnail regression now passes with maximum channel
-error 1 across its presets. The complete Editor workflow and hosted Editor CI
-are being run for the requested draft PR into `feature/gpu-edit-pipeline`.
-Intel integrated graphics was not available for this hardware validation.
+error 1 across its presets. The full Editor quality workflow passed locally,
+and hosted Editor CI passed on draft PR #213 into
+`feature/gpu-edit-pipeline` (run 39241677602). A Fedora desktop smoke test with
+`PIC_EDIT_RENDERER` unset selected the AMD Radeon RX 7600, passed capability
+validation, presented GPU frames, and exercised FIT, 1:1, zoom, and adjustments.
+The trace showed CPU fallback for unsupported Auto-correction and creative
+filter recipes. The renderer-mode regression test for the forced CPU override
+passed. Intel integrated graphics was not available for this hardware
+validation.
 
 Before a release, retain the strict parity gates for automatic-adjustment
 combinations, review full-resolution JPEG/PNG NEF-preview exports with EXIF and

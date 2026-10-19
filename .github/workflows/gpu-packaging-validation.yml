@@ -1,17 +1,19 @@
 name: Experimental GPU AppImage validation
 
 # GPU draft PR: AppImage only. Flatpak is intentionally deferred.
-# Never publish or attach binaries to releases
-# from this workflow; main and the stable release workflow are untouched.
+# Run Rust/Edit/Export regression CI on normal source commits instead.
+# AppImage is expensive: rebuild only after a packaging/build dependency change
+# or a deliberate manual validation checkpoint (workflow_dispatch).
+# Never publish or attach binaries to releases; main remains untouched.
 on:
   pull_request:
     branches:
       - feature/gpu-live-edit
     paths:
-      - 'src/edit/**'
-      - 'src/thumbnail/**'
       - 'scripts/PIC-build-linux-one-script.sh'
       - '.github/workflows/gpu-packaging-validation.yml'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
   workflow_dispatch:
 
 permissions:

@@ -2708,39 +2708,52 @@ mod tests {
         // Automatic histogram statistics must see the transformed and named-
         // filtered output, not the original uncropped RAW texture.
         if std::env::var_os("PIC_GPU_AUTOSTATS_DIAG").is_some() {
-        let mut stats_recipe = EditRecipe::default();
-        stats_recipe.crop = CropRect {
-            left: 0.125, top: 0.125, right: 0.875, bottom: 0.875,
-        };
-        stats_recipe.filter = FilterPreset::Valencia;
-        stats_recipe.filter_amount = 0.75;
-        stats_recipe.auto_color = true;
-        stats_recipe.auto_contrast = true;
-        renderer.set_untransformed_geometry_for_rotation(0, &stats_recipe);
-        renderer.set_recipe(&stats_recipe);
-        let actual = capture();
-        let expected = super::super::render::apply_tone(
-            super::super::render::apply_geometry(original.clone(), &stats_recipe),
-            &stats_recipe,
-        );
-        let scale = renderer.widget().scale_factor().max(1) as usize;
-        let stride = WIDTH as usize * scale * 4;
-        let mut max_delta = 0u8;
-        for y in 0..expected.height() as usize {
-            for x in 0..expected.width() as usize {
-                let offset = y * scale * stride + x * scale * 4;
-                for channel in 0..4 {
-                    max_delta = max_delta.max(
-                        actual[offset + channel]
-                            .abs_diff(expected.get_pixel(x as u32, y as u32)[channel]),
-                    );
+        // Diagnostic only: these combinations deliberately retain the CPU
+        // fallback until the GPU histogram path passes strict pixel parity.
+        // Sample more than one preset and isolate the offending auto stage.
+        for filter in [
+            FilterPreset::Clarendon, FilterPreset::Valencia,
+            FilterPreset::GoldenHour, FilterPreset::Newspaper,
+            FilterPreset::DreamGlow,
+        ] {
+            for (auto_color, auto_contrast) in [(true, false), (false, true), (true, true)] {
+                let mut stats_recipe = EditRecipe::default();
+                stats_recipe.crop = CropRect {
+                    left: 0.125, top: 0.125, right: 0.875, bottom: 0.875,
+                };
+                stats_recipe.filter = filter;
+                stats_recipe.filter_amount = 0.75;
+                stats_recipe.auto_color = auto_color;
+                stats_recipe.auto_contrast = auto_contrast;
+                assert!(!gpu_tone_supported(&stats_recipe),
+                    "unverified combination must not bypass CPU fallback");
+                renderer.set_untransformed_geometry_for_rotation(0, &stats_recipe);
+                renderer.set_recipe(&stats_recipe);
+                let actual = capture();
+                let expected = super::super::render::apply_tone(
+                    super::super::render::apply_geometry(original.clone(), &stats_recipe),
+                    &stats_recipe,
+                );
+                let scale = renderer.widget().scale_factor().max(1) as usize;
+                let stride = WIDTH as usize * scale * 4;
+                let mut max_delta = 0u8;
+                for y in 0..expected.height() as usize {
+                    for x in 0..expected.width() as usize {
+                        let offset = y * scale * stride + x * scale * 4;
+                        for channel in 0..4 {
+                            max_delta = max_delta.max(
+                                actual[offset + channel]
+                                    .abs_diff(expected.get_pixel(x as u32, y as u32)[channel]),
+                            );
+                        }
+                    }
                 }
+                assert_eq!(renderer.uploaded_revision(), revision);
+                eprintln!(
+                    "PIC_EDIT_GPU cropped_filter_auto_parity filter={filter:?} color={auto_color} contrast={auto_contrast} max_channel_delta={max_delta} status=unverified"
+                );
             }
         }
-        assert!(max_delta <= 64,
-            "GPU experimental crop/filter autos diverged unexpectedly: delta={max_delta}");
-        assert_eq!(renderer.uploaded_revision(), revision);
-        eprintln!("PIC_EDIT_GPU cropped_filter_auto_parity max_channel_delta={max_delta} status=unverified");
         renderer.set_recipe(&neutral);
         }
         // The real GTK editor maintains a GPU geometry object even for

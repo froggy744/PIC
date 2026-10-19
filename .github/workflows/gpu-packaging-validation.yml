@@ -58,7 +58,7 @@ jobs:
           set +e
           timeout 12s xvfb-run -a env \
             GDK_BACKEND=x11 GSK_RENDERER=gl LIBGL_ALWAYS_SOFTWARE=1 \
-            PIC_EDIT_RENDERER=gpu PICASA_TRACE=1 \
+            PIC_EDIT_RENDERER=gpu PICASA_TRACE=1 GTK_A11Y=none \
             HOME="$(mktemp -d)" \
             APPDIR="$PWD/squashfs-root" \
             ./squashfs-root/AppRun >/tmp/pic-package-smoke.log 2>&1
@@ -69,7 +69,18 @@ jobs:
             echo "::error::AppImage startup exited unexpectedly ($status)."
             exit "$status"
           fi
-          echo "AppImage started without fatal loader failures."
+          # A timeout alone is not a startup pass: a broken AppRun can hang
+          # before GTK creates the gallery. Require PIC's actual gallery
+          # initialization trace, which the existing healthy CI run emits.
+          if ! grep -Eq 'PIC_NAV gallery_replace photos=|STARTUP cold_start_ms=' /tmp/pic-package-smoke.log; then
+            echo "::error::AppImage never confirmed gallery initialization."
+            exit 1
+          fi
+          if grep -Eq 'Gtk-ERROR|GLib-GObject-CRITICAL|segmentation fault|panicked at' /tmp/pic-package-smoke.log; then
+            echo "::error::AppImage emitted a fatal GTK/Rust runtime diagnostic."
+            exit 1
+          fi
+          echo "AppImage gallery initialization confirmed under software OpenGL."
       - name: Save private CI test artifact (never publish)
         uses: actions/upload-artifact@v4
         with:

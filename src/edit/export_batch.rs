@@ -626,6 +626,66 @@ mod tests {
         std::fs::remove_dir_all(dir).ok();
     }
 
+    #[test]
+    fn nikon_style_tiff_metadata_survives_export_and_original_is_unchanged() {
+        // A minimal TIFF/NEF-style source checks the real metadata reader,
+        // not just the in-memory EXIF builder. The pixels are supplied by the
+        // render closure because this tiny TIFF carries only camera fields.
+        let dir = std::env::temp_dir().join(format!(
+            "pic-export-nef-metadata-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+                .unwrap().as_nanos(),
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let source = dir.join("sample.NEF");
+        let entries: &[(u16, &[u8])] = &[
+            (0x010F, b"NIKON CORPORATION\0"),
+            (0x0110, b"NIKON Z 5\0"),
+            (0x0132, b"2026:10:18 12:34:56\0"),
+        ];
+        let mut tiff = b"II\x2a\x00\x08\x00\x00\x00".to_vec();
+        tiff.extend_from_slice(&(entries.len() as u16).to_le_bytes());
+        let mut offset = (8 + 2 + entries.len() * 12 + 4) as u32;
+        let mut values = Vec::new();
+        for &(tag, bytes) in entries {
+            tiff.extend_from_slice(&tag.to_le_bytes());
+            tiff.extend_from_slice(&2u16.to_le_bytes()); // ASCII
+            tiff.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+            tiff.extend_from_slice(&offset.to_le_bytes());
+            values.extend_from_slice(bytes);
+            offset += bytes.len() as u32;
+        }
+        tiff.extend_from_slice(&0u32.to_le_bytes()); // next IFD
+        tiff.extend_from_slice(&values);
+        std::fs::write(&source, &tiff).unwrap();
+
+        let job = ExportJob::from_record(
+            source.display().to_string(), 90, String::new(), 20, 12, "sample.NEF",
+        );
+        let pixels = RgbaImage::from_pixel(12, 20, image::Rgba([75, 120, 180, 255]));
+        for (format, suffix) in [
+            (ExportFormat::Jpeg, "jpg"),
+            (ExportFormat::Png, "png"),
+            (ExportFormat::Webp, "webp"),
+        ] {
+            let destination = dir.join(format!("output.{suffix}"));
+            export_job_to(&job, &destination, 0, 94, format, &|_| Ok(pixels.clone()))
+                .unwrap();
+            let saved = image::open(&destination).unwrap();
+            assert_eq!(saved.dimensions(), (12, 20), "{suffix}");
+            let bytes = std::fs::read(&destination).unwrap();
+            assert!(bytes.windows(b"NIKON Z 5".len()).any(|w| w == b"NIKON Z 5"),
+                "{suffix} lost the camera model metadata");
+            assert!(bytes.windows(b"2026:10:18 12:34:56".len())
+                .any(|w| w == b"2026:10:18 12:34:56"),
+                "{suffix} lost the photo date metadata");
+            assert_eq!(std::fs::read(&source).unwrap(), tiff,
+                "{suffix} export modified the original");
+        }
+        std::fs::remove_dir_all(dir).ok();
+    }
+
     #[cfg(target_os = "linux")]
     #[test]
     fn concurrent_exports_never_replace_the_first_completed_destination() {

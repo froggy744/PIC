@@ -6,7 +6,7 @@
 //! renderer has broader performance and platform validation.
 
 use std::cell::RefCell;
-use std::ffi::{c_void, CString};
+use std::ffi::{CString, c_void};
 use std::rc::Rc;
 use std::sync::OnceLock;
 use std::time::Instant;
@@ -143,12 +143,17 @@ impl GpuGeometry {
         } else {
             recipe.straighten.to_radians()
         };
-        let (straight_width, straight_height) = if angle == 0.0 || oriented_width < 2 || oriented_height < 2 {
-            (oriented_width as f32, oriented_height as f32)
-        } else {
-            let (w, h) = super::render::largest_rotated_rect(oriented_width as f32, oriented_height as f32, angle);
-            (w.floor().max(1.0), h.floor().max(1.0))
-        };
+        let (straight_width, straight_height) =
+            if angle == 0.0 || oriented_width < 2 || oriented_height < 2 {
+                (oriented_width as f32, oriented_height as f32)
+            } else {
+                let (w, h) = super::render::largest_rotated_rect(
+                    oriented_width as f32,
+                    oriented_height as f32,
+                    angle,
+                );
+                (w.floor().max(1.0), h.floor().max(1.0))
+            };
         let c = recipe.crop.normalized();
         let w = straight_width as i32;
         let h = straight_height as i32;
@@ -228,6 +233,9 @@ struct GlObjects {
     auto_color_program: u32,
     auto_color_stats: u32,
     auto_color_fbo: u32,
+    auto_color_partial_texture: u32,
+    auto_color_partial_fbo: u32,
+    auto_color_partial_dimensions: (i32, i32),
     auto_color_revision: u64,
     histogram_program: u32,
     histogram_reduce_program: u32,
@@ -352,6 +360,7 @@ impl LiveGpuCanvas {
                         gl::DeleteTextures(1, &objects.effect_luma_texture);
                         gl::DeleteTextures(1, &objects.effect_blur_texture);
                         gl::DeleteTextures(1, &objects.auto_color_stats);
+                        gl::DeleteTextures(1, &objects.auto_color_partial_texture);
                         gl::DeleteTextures(1, &objects.histogram_texture);
                         gl::DeleteTextures(1, &objects.auto_contrast_params);
                         gl::DeleteTextures(1, &objects.stats_source_texture);
@@ -360,6 +369,7 @@ impl LiveGpuCanvas {
                         gl::DeleteFramebuffers(1, &objects.effect_luma_fbo);
                         gl::DeleteFramebuffers(1, &objects.effect_blur_fbo);
                         gl::DeleteFramebuffers(1, &objects.auto_color_fbo);
+                        gl::DeleteFramebuffers(1, &objects.auto_color_partial_fbo);
                         gl::DeleteFramebuffers(1, &objects.histogram_fbo);
                         gl::DeleteFramebuffers(1, &objects.auto_contrast_fbo);
                         gl::DeleteFramebuffers(1, &objects.stats_source_fbo);
@@ -840,7 +850,11 @@ impl LiveGpuCanvas {
 
     /// The rotation is PIC's library quarter-turn, applied before straighten.
     /// Pass unrotated decoded pixels; source uploads remain unchanged.
-    pub fn set_untransformed_geometry_for_rotation(&self, rotation: i32, recipe: &EditRecipe) -> Option<(i32, i32)> {
+    pub fn set_untransformed_geometry_for_rotation(
+        &self,
+        rotation: i32,
+        recipe: &EditRecipe,
+    ) -> Option<(i32, i32)> {
         let mut state = self.state.borrow_mut();
         let &(width, height, _) = state.source.as_ref()?;
         let geo = GpuGeometry::for_source_rotation(width, height, rotation, recipe);
@@ -871,58 +885,78 @@ impl LiveGpuCanvas {
     pub fn set_overlay_layers(&self, recipe: &EditRecipe) {
         let (width, height, key) = {
             let state = self.state.borrow();
-            let Some(&(src_w, src_h, _)) = state.source.as_ref() else { return };
-            let size = state.geometry
+            let Some(&(src_w, src_h, _)) = state.source.as_ref() else {
+                return;
+            };
+            let size = state
+                .geometry
                 .map_or((src_w, src_h), |g| (g.output_width, g.output_height));
             let key = GpuOverlayKey {
                 overlays: recipe.overlays.clone(),
                 text: recipe.text_layers.clone(),
                 size,
             };
-            if state.overlay_key.as_ref() == Some(&key) { return; }
+            if state.overlay_key.as_ref() == Some(&key) {
+                return;
+            }
             (size.0, size.1, key)
         };
         let previous = self.state.borrow().overlays.clone();
         let mut layers = Vec::new();
         for overlay in &recipe.overlays {
-            if !overlay.visible || overlay.opacity <= 0.001 { continue; }
-            let Some(asset) = super::overlays::load_asset(&overlay.asset) else { continue };
+            if !overlay.visible || overlay.opacity <= 0.001 {
+                continue;
+            }
+            let Some(asset) = super::overlays::load_asset(&overlay.asset) else {
+                continue;
+            };
             let aspect = asset.width() as f32 / asset.height().max(1) as f32;
             let rect = overlay.rect(width as f32, height as f32, aspect);
             let id = format!("asset:{}", overlay.asset);
-            let rgba = previous.iter().find(|layer| layer.id == id)
-                .map_or_else(
-                    || glib::Bytes::from_owned(asset.as_raw().clone()),
-                    |layer| layer.rgba.clone(),
-                );
+            let rgba = previous.iter().find(|layer| layer.id == id).map_or_else(
+                || glib::Bytes::from_owned(asset.as_raw().clone()),
+                |layer| layer.rgba.clone(),
+            );
             layers.push(GpuOverlayLayer {
                 id,
-                rect, opacity: overlay.opacity,
-                width: asset.width() as i32, height: asset.height() as i32,
+                rect,
+                opacity: overlay.opacity,
+                width: asset.width() as i32,
+                height: asset.height() as i32,
                 rgba,
             });
         }
         for text_layer in &recipe.text_layers {
-            if !text_layer.visible || text_layer.opacity <= 0.001 { continue; }
+            if !text_layer.visible || text_layer.opacity <= 0.001 {
+                continue;
+            }
             let id = text_layer_content_key(text_layer, (width, height));
-            let (raster_width, raster_height, rgba) =
-                if let Some(layer) = previous.iter().find(|layer| layer.id == id) {
-                    (layer.width, layer.height, layer.rgba.clone())
-                } else {
-                    let Some(raster) = super::text_render::render_text_rgba(
-                        text_layer, width as f64, height as f64,
-                    ) else { continue };
-                    (raster.width() as i32, raster.height() as i32,
-                     glib::Bytes::from_owned(raster.into_raw()))
+            let (raster_width, raster_height, rgba) = if let Some(layer) =
+                previous.iter().find(|layer| layer.id == id)
+            {
+                (layer.width, layer.height, layer.rgba.clone())
+            } else {
+                let Some(raster) =
+                    super::text_render::render_text_rgba(text_layer, width as f64, height as f64)
+                else {
+                    continue;
                 };
+                (
+                    raster.width() as i32,
+                    raster.height() as i32,
+                    glib::Bytes::from_owned(raster.into_raw()),
+                )
+            };
             let rect = text_layer.rect_with_size(
                 raster_width as f32 / width.max(1) as f32,
                 raster_height as f32 / height.max(1) as f32,
             );
             layers.push(GpuOverlayLayer {
                 id,
-                rect, opacity: text_layer.opacity,
-                width: raster_width, height: raster_height,
+                rect,
+                opacity: text_layer.opacity,
+                width: raster_width,
+                height: raster_height,
                 rgba,
             });
         }
@@ -1147,14 +1181,28 @@ fn thumbnail_cover_view(width: i32, height: i32, tile_size: i32) -> GpuView {
 }
 
 pub fn gpu_tone_supported(recipe: &EditRecipe) -> bool {
-    // A filtered/cropped GPU histogram prepass exists, but its result can
-    // deviate significantly from the CPU reference (31–51/255 in fixtures).
-    // Keep the exact CPU renderer for auto corrections combined with any
-    // named look or non-identity geometry until strict parity is proven.
-    // Standalone/both autos on unfiltered, uncropped photos are GPU verified.
+    // A filtered/cropped GPU histogram prepass exists, but does not yet match
+    // the CPU Export reference consistently. Keep automatic corrections on
+    // CPU for creative looks and non-identity geometry until strict parity is
+    // proven. Standalone/both autos on plain, uncropped photos are verified.
     let geometry_changes_pixels = !recipe.crop.is_full() || recipe.straighten.abs() >= 0.01;
     (recipe.filter == FilterPreset::None || !(recipe.auto_color || recipe.auto_contrast))
         && !(geometry_changes_pixels && (recipe.auto_color || recipe.auto_contrast))
+}
+
+/// GPU Auto corrections are currently approved only for native 1:1 previews
+/// with identity library rotation. The statistics are computed from the full
+/// source, but the final mip filtering can differ from CPU preview rounding.
+pub fn gpu_tone_supported_for_view(
+    recipe: &EditRecipe,
+    native_one_to_one: bool,
+    rotation: i32,
+) -> bool {
+    if !gpu_tone_supported(recipe) {
+        return false;
+    }
+    let has_auto = recipe.auto_color || recipe.auto_contrast;
+    !has_auto || (native_one_to_one && rotation.rem_euclid(360) == 0)
 }
 
 pub fn gpu_base_recipe(recipe: &EditRecipe) -> EditRecipe {
@@ -1223,6 +1271,7 @@ void main() {
     let fragment = compile_shader(
         gl::FRAGMENT_SHADER,
         r#"#version 150
+#extension GL_ARB_gpu_shader5 : enable
 uniform sampler2D uSource;
 uniform sampler2D uProcessedSource;
 uniform int uProcessPass;
@@ -1276,8 +1325,20 @@ uniform int uAutoColor;
 uniform sampler2D uAutoColorStats;
 uniform int uAutoContrast;
 uniform sampler2D uAutoContrastParams;
+#ifdef GL_ARB_gpu_shader5
+precise out vec4 color;
+#else
 out vec4 color;
-float luma(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
+#endif
+// Keep the same left-to-right multiply/add sequence as render::rgb_luma.
+// A GLSL dot may be fused/re-associated by the driver, moving a pixel across
+// an Auto Contrast histogram half-bin even though its input is an exact u8.
+float luma(vec3 c) {
+    float y = 0.2126 * c.r;
+    y = y + 0.7152 * c.g;
+    y = y + 0.0722 * c.b;
+    return y;
+}
 float smoothMask(float low, float high, float value) {
     float t = clamp((value - low) / (high - low), 0.0, 1.0);
     return t * t * (3.0 - 2.0 * t);
@@ -1303,13 +1364,14 @@ vec4 tonePixel(vec4 px) {
     if (uAutoContrast != 0 && px.a >= 16.0/255.0) {
         vec4 limits = texelFetch(uAutoContrastParams, ivec2(0, 0), 0);
         if (limits.a > 0.5) {
-            float y = luma(corrected);
+            vec3 correctedBytes = round(corrected * 255.0);
+            float y = luma(correctedBytes) / 255.0;
             if (y > 0.0001) {
                 float pivot = (limits.r + limits.g) * 0.5;
                 float stretched = clamp((y - pivot) * limits.b + pivot, 0.012, 0.988);
                 float adjusted = y + (stretched - y) * 0.75;
                 float gain = clamp(adjusted / y, 0.2, 3.0);
-                corrected = round(clamp(corrected * gain, 0.0, 1.0) * 255.0) / 255.0;
+                corrected = round(clamp(correctedBytes * gain, 0.0, 255.0)) / 255.0;
             }
         }
     }
@@ -1453,9 +1515,14 @@ vec4 namedFilterPixel(vec4 px, ivec2 coord) {
         float noise = stableNoise(coord) * uNamedGrain * min(uScale, 1.0) * 255.0;
         c = round(clamp(c * 255.0 + vec3(noise), 0.0, 255.0)) / 255.0;
     }
-    // CPU blend_filter_amount quantizes the blend of original and look.
-    c = round(clamp(mix(px.rgb, c, clamp(uFilterAmount, 0.0, 1.0)),
-                    0.0, 1.0) * 255.0) / 255.0;
+    // CPU blend_filter_amount mixes two already-quantized byte images using
+    // `base + (filtered - base) * amount`, then rounds to u8. Do the same in
+    // byte space; normalized `mix()` can land on the opposite side of a half
+    // byte and Auto Contrast can amplify that one-level difference.
+    vec3 originalBytes = round(px.rgb * 255.0);
+    vec3 filteredBytes = round(c * 255.0);
+    c = round(clamp(originalBytes + (filteredBytes - originalBytes) *
+                    clamp(uFilterAmount, 0.0, 1.0), 0.0, 255.0)) / 255.0;
     return vec4(c, px.a);
 }
 vec4 sampleTone(ivec2 coord) {
@@ -1571,7 +1638,9 @@ void main() {
 }"#,
     )?;
 
-    let blur_fragment = compile_shader(gl::FRAGMENT_SHADER, r#"#version 150
+    let blur_fragment = compile_shader(
+        gl::FRAGMENT_SHADER,
+        r#"#version 150
 uniform sampler2D uInput;
 uniform vec2 uTexel;
 uniform vec2 uDirection;
@@ -1590,9 +1659,12 @@ void main() {
     }
     float y = value / max(total, 0.0001);
     color = vec4(y, y, y, 1.0);
-}"#)?;
+}"#,
+    )?;
 
-    let overlay_fragment = compile_shader(gl::FRAGMENT_SHADER, r#"#version 150
+    let overlay_fragment = compile_shader(
+        gl::FRAGMENT_SHADER,
+        r#"#version 150
 uniform sampler2D uOverlay;
 uniform vec4 uLayerRect;
 uniform float uLayerOpacity;
@@ -1615,42 +1687,84 @@ void main() {
     vec4 layer = texture(uOverlay, vec2(uv.x, 1.0-uv.y));
     color = vec4(layer.rgb, layer.a * uLayerOpacity);
 }
-"#)?;
+"#,
+    )?;
 
-    let auto_vertex = compile_shader(gl::VERTEX_SHADER, r#"#version 150
+    // Hierarchical Kahan summation keeps the GPU's weighted neutral estimate
+    // stable as source resolution and rasterization order change. The prior
+    // additive blend into one float pixel accumulated up to 200k samples in
+    // driver-dependent order, shifting gains enough to move Auto Contrast bins.
+    let auto_fragment = compile_shader(
+        gl::FRAGMENT_SHADER,
+        r#"#version 150
 uniform sampler2D uSource;
+uniform sampler2D uPartials;
 uniform int uWidth;
 uniform int uSampleStep;
-out vec4 vWeighted;
-void main() {
-    int idx = gl_VertexID * uSampleStep;
-    ivec2 at = ivec2(idx % uWidth, idx / uWidth);
-    vec4 px = texelFetch(uSource, at, 0);
-    float y = dot(px.rgb, vec3(0.2126, 0.7152, 0.0722));
-    float hi = max(px.r, max(px.g, px.b));
-    float lo = min(px.r, min(px.g, px.b));
-    float chroma = (hi - lo) / max(hi, 1.0/255.0);
-    float weight = (px.a < 16.0/255.0 || y < 0.07 || y > 0.93 || chroma > 0.32)
-        ? 0.0 : pow(1.0 - chroma / 0.32, 2.0);
-    vWeighted = vec4(px.rgb * (255.0 * weight), weight);
-    gl_Position = vec4(0.0, 0.0, 0.0, 1.0);
-    gl_PointSize = 1.0;
-}"#)?;
-    let auto_fragment = compile_shader(gl::FRAGMENT_SHADER, r#"#version 150
-in vec4 vWeighted;
+uniform int uSampleCount;
+uniform int uPartialCount;
+uniform int uReductionPass;
 out vec4 color;
-void main() { color = vWeighted; }
-"#)?;
-
+void main() {
+    vec4 sum = vec4(0.0);
+    vec4 compensation = vec4(0.0);
+    if (uReductionPass == 0) {
+        int batch = int(gl_FragCoord.x);
+        for (int i = 0; i < 512; ++i) {
+            int sample = batch * 512 + i;
+            if (sample >= uSampleCount) break;
+            int index = sample * uSampleStep;
+            ivec2 at = ivec2(index % uWidth, index / uWidth);
+    vec4 px = texelFetch(uSource, at, 0);
+            vec3 bytes = round(px.rgb * 255.0);
+            int hi = int(max(bytes.r, max(bytes.g, bytes.b)));
+            int lo = int(min(bytes.r, min(bytes.g, bytes.b)));
+            int denominator = max(hi, 1);
+            bool tooChromatic = (hi - lo) * 25 > denominator * 8;
+            float chroma = float(hi - lo) / float(denominator);
+            int lumaScore = 1063 * int(bytes.r) + 3576 * int(bytes.g) + 361 * int(bytes.b);
+            // Exact integer form of CPU's inclusive 0.07..=0.93 test:
+            // coefficients are in 1/5000 units and luma is divided by 255.
+            bool outsideMidtones = lumaScore < 89250 || lumaScore > 1185750;
+            float weight = (px.a < 16.0/255.0 || outsideMidtones || tooChromatic)
+        ? 0.0 : pow(1.0 - chroma / 0.32, 2.0);
+            vec4 value = vec4(bytes * weight, weight);
+            vec4 adjusted = value - compensation;
+            vec4 next = sum + adjusted;
+            compensation = (next - sum) - adjusted;
+            sum = next;
+        }
+    } else {
+        for (int i = 0; i < 512; ++i) {
+            if (i >= uPartialCount) break;
+            vec4 value = texelFetch(uPartials, ivec2(i, 0), 0);
+            vec4 adjusted = value - compensation;
+            vec4 next = sum + adjusted;
+            compensation = (next - sum) - adjusted;
+            sum = next;
+        }
+    }
+    color = sum;
+}
+"#,
+    )?;
 
     // Each sampled source pixel draws a one-pixel point into one bin of the
     // 256x1 floating-point histogram texture. It is then reduced ONCE on GPU.
-    let histogram_vertex = compile_shader(gl::VERTEX_SHADER, r#"#version 150
+    let histogram_vertex = compile_shader(
+        gl::VERTEX_SHADER,
+        r#"#version 150
 uniform sampler2D uSource;
 uniform int uWidth;
 uniform int uSampleStep;
 uniform int uAutoColor;
 uniform sampler2D uAutoColorStats;
+float luma(vec3 c) {
+    float y = 0.2126 * c.r;
+    y = y + 0.7152 * c.g;
+    y = y + 0.0722 * c.b;
+    return y;
+}
 void main() {
     int sampleIndex = gl_VertexID * uSampleStep;
     ivec2 at = ivec2(sampleIndex % uWidth, sampleIndex / uWidth);
@@ -1659,25 +1773,31 @@ void main() {
         vec4 sums = texelFetch(uAutoColorStats, ivec2(0,0), 0);
         if (sums.a >= 0.5) {
             vec3 means = sums.rgb / sums.a;
-            float neutral = dot(means, vec3(0.2126,0.7152,0.0722));
+            float neutral = luma(means);
             vec3 gains = vec3(1.0) + (clamp(vec3(neutral) / max(means,vec3(1.0)),vec3(0.82),vec3(1.22))-vec3(1.0))*0.65;
             px.rgb = round(clamp(px.rgb*gains,0.0,1.0)*255.0)/255.0;
         }
     }
-    float luminance = dot(px.rgb, vec3(0.2126, 0.7152, 0.0722));
-    float bucket = floor(luminance * 255.0 + 0.5);
+    float luminance = luma(round(px.rgb * 255.0));
+    float bucket = floor(luminance + 0.5);
     float pos = ((bucket + 0.5) / 256.0) * 2.0 - 1.0;
     gl_Position = vec4(pos, 0.0, 0.0, 1.0);
     if (px.a < 16.0 / 255.0) gl_Position.xy = vec2(2.0, 2.0);
     gl_PointSize = 1.0;
-}"#)?;
-    let histogram_fragment = compile_shader(gl::FRAGMENT_SHADER, r#"#version 150
+}"#,
+    )?;
+    let histogram_fragment = compile_shader(
+        gl::FRAGMENT_SHADER,
+        r#"#version 150
 out vec4 color;
 void main() { color = vec4(0.0, 0.0, 0.0, 1.0); }
-"#)?;
+"#,
+    )?;
     // Pixel shader executes at a single 1x1 target. It calculates the same
     // percentile bounds, scene-luminance pivot and limited gain as render.rs.
-    let histogram_reduce_fragment = compile_shader(gl::FRAGMENT_SHADER, r#"#version 150
+    let histogram_reduce_fragment = compile_shader(
+        gl::FRAGMENT_SHADER,
+        r#"#version 150
 uniform sampler2D uHistogram;
 out vec4 color;
 void main() {
@@ -1686,7 +1806,10 @@ void main() {
         samples += texelFetch(uHistogram, ivec2(i, 0), 0).a;
     }
     if (samples < 4.0) { color = vec4(0.0); return; }
-    float clipped = samples >= 100.0 ? max(1.0, floor(samples * 0.01 + 0.5)) : 0.0;
+    // The histogram contains exact integer counts. Use integer-equivalent
+    // rounding instead of a float 0.01 multiply so half-percentile boundaries
+    // match Rust's f64 round for every count.
+    float clipped = samples >= 100.0 ? max(1.0, floor((samples + 50.0) / 100.0)) : 0.0;
     int low = 0;
     int high = 255;
     float total = 0.0;
@@ -1705,7 +1828,8 @@ void main() {
     color = contrast > 1.001
         ? vec4(float(low) / 255.0, float(high) / 255.0, contrast, 1.0)
         : vec4(0.0);
-}"#)?;
+}"#,
+    )?;
 
     let program;
     let blur_program;
@@ -1725,7 +1849,7 @@ void main() {
         gl::AttachShader(blur_program, blur_fragment);
         gl::LinkProgram(blur_program);
         auto_color_program = gl::CreateProgram();
-        gl::AttachShader(auto_color_program, auto_vertex);
+        gl::AttachShader(auto_color_program, vertex);
         gl::AttachShader(auto_color_program, auto_fragment);
         gl::LinkProgram(auto_color_program);
         histogram_program = gl::CreateProgram();
@@ -1745,7 +1869,11 @@ void main() {
         let mut histogram_linked = 0;
         let mut histogram_reduce_linked = 0;
         gl::GetProgramiv(histogram_program, gl::LINK_STATUS, &mut histogram_linked);
-        gl::GetProgramiv(histogram_reduce_program, gl::LINK_STATUS, &mut histogram_reduce_linked);
+        gl::GetProgramiv(
+            histogram_reduce_program,
+            gl::LINK_STATUS,
+            &mut histogram_reduce_linked,
+        );
         let mut auto_linked = 0;
         gl::GetProgramiv(auto_color_program, gl::LINK_STATUS, &mut auto_linked);
         let mut blur_linked = 0;
@@ -1755,7 +1883,6 @@ void main() {
         gl::DeleteShader(vertex);
         gl::DeleteShader(fragment);
         gl::DeleteShader(blur_fragment);
-        gl::DeleteShader(auto_vertex);
         gl::DeleteShader(auto_fragment);
         gl::DeleteShader(histogram_vertex);
         gl::DeleteShader(histogram_fragment);
@@ -1772,7 +1899,11 @@ void main() {
             return Err(format!("overlay shader link failed: {message}"));
         }
         if histogram_linked == 0 || histogram_reduce_linked == 0 {
-            let bad = if histogram_linked == 0 { histogram_program } else { histogram_reduce_program };
+            let bad = if histogram_linked == 0 {
+                histogram_program
+            } else {
+                histogram_reduce_program
+            };
             let message = program_log(bad);
             gl::DeleteProgram(histogram_program);
             gl::DeleteProgram(histogram_reduce_program);
@@ -1835,6 +1966,9 @@ void main() {
         auto_color_program,
         auto_color_stats: 0,
         auto_color_fbo: 0,
+        auto_color_partial_texture: 0,
+        auto_color_partial_fbo: 0,
+        auto_color_partial_dimensions: (0, 0),
         auto_color_revision: 0,
         histogram_program,
         histogram_reduce_program,
@@ -1921,7 +2055,11 @@ unsafe fn render_processed_source(
     gl::ActiveTexture(gl::TEXTURE0);
     gl::DrawArrays(gl::TRIANGLES, 0, 3);
     uniform_1i(objects.program, "uProcessPass", 0);
-    uniform_1f(objects.program, "uMinificationLod", (1.0 / view_scale.max(0.0001)).log2().max(0.0));
+    uniform_1f(
+        objects.program,
+        "uMinificationLod",
+        (1.0 / view_scale.max(0.0001)).log2().max(0.0),
+    );
     uniform_1f(objects.program, "uScale", view_scale.max(0.0001));
     gl::ActiveTexture(gl::TEXTURE5);
     gl::BindTexture(gl::TEXTURE_2D, objects.processed_texture);
@@ -1964,14 +2102,21 @@ unsafe fn render_gpu_overlays(
             gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as i32);
             gl::PixelStorei(gl::UNPACK_ALIGNMENT, 1);
             gl::TexImage2D(
-                gl::TEXTURE_2D, 0, gl::RGBA8 as i32,
-                overlay.width, overlay.height, 0,
-                gl::RGBA, gl::UNSIGNED_BYTE,
+                gl::TEXTURE_2D,
+                0,
+                gl::RGBA8 as i32,
+                overlay.width,
+                overlay.height,
+                0,
+                gl::RGBA,
+                gl::UNSIGNED_BYTE,
                 overlay.rgba.as_ref().as_ptr().cast(),
             );
             if std::env::var_os("PICASA_TRACE").is_some() {
-                eprintln!("PIC_EDIT_GPU layer_upload id={} dimensions={}x{}",
-                    overlay.id, overlay.width, overlay.height);
+                eprintln!(
+                    "PIC_EDIT_GPU layer_upload id={} dimensions={}x{}",
+                    overlay.id, overlay.width, overlay.height
+                );
             }
             objects.overlay_textures.push((overlay.id.clone(), texture));
         }
@@ -1995,35 +2140,63 @@ unsafe fn render_gpu_overlays(
     gl::GetIntegerv(gl::BLEND_EQUATION_ALPHA, &mut prev_eq_alpha);
     gl::Enable(gl::BLEND);
     gl::BlendFuncSeparate(
-        gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA,
-        gl::ONE, gl::ONE_MINUS_SRC_ALPHA,
+        gl::SRC_ALPHA,
+        gl::ONE_MINUS_SRC_ALPHA,
+        gl::ONE,
+        gl::ONE_MINUS_SRC_ALPHA,
     );
     gl::BlendEquation(gl::FUNC_ADD);
     gl::UseProgram(objects.overlay_program);
     uniform_1i(objects.overlay_program, "uOverlay", 0);
-    uniform_2f(objects.overlay_program, "uViewSize", view_width as f32, view_height as f32);
-    uniform_2f(objects.overlay_program, "uScroll", view.scroll_x, view.scroll_y);
+    uniform_2f(
+        objects.overlay_program,
+        "uViewSize",
+        view_width as f32,
+        view_height as f32,
+    );
+    uniform_2f(
+        objects.overlay_program,
+        "uScroll",
+        view.scroll_x,
+        view.scroll_y,
+    );
     uniform_2f(objects.overlay_program, "uPadding", view.pad_x, view.pad_y);
     uniform_1f(objects.overlay_program, "uScale", view.scale);
     uniform_1f(objects.overlay_program, "uDeviceScale", device_scale as f32);
-    uniform_2f(objects.overlay_program, "uPhotoSize", photo_width as f32, photo_height as f32);
+    uniform_2f(
+        objects.overlay_program,
+        "uPhotoSize",
+        photo_width as f32,
+        photo_height as f32,
+    );
     for (overlay, (_, texture)) in overlays.iter().zip(&objects.overlay_textures) {
         gl::BindTexture(gl::TEXTURE_2D, *texture);
         let rect = overlay.rect;
         let location = uniform_location(objects.overlay_program, "uLayerRect");
-        gl::Uniform4f(location,
+        gl::Uniform4f(
+            location,
             rect.left * photo_width as f32,
             rect.top * photo_height as f32,
             rect.width * photo_width as f32,
             rect.height * photo_height as f32,
         );
-        uniform_1f(objects.overlay_program, "uLayerOpacity", overlay.opacity.clamp(0.0, 1.0));
+        uniform_1f(
+            objects.overlay_program,
+            "uLayerOpacity",
+            overlay.opacity.clamp(0.0, 1.0),
+        );
         gl::DrawArrays(gl::TRIANGLES, 0, 3);
     }
-    gl::BlendFuncSeparate(prev_src_rgb as u32, prev_dst_rgb as u32,
-        prev_src_alpha as u32, prev_dst_alpha as u32);
+    gl::BlendFuncSeparate(
+        prev_src_rgb as u32,
+        prev_dst_rgb as u32,
+        prev_src_alpha as u32,
+        prev_dst_alpha as u32,
+    );
     gl::BlendEquationSeparate(prev_eq_rgb as u32, prev_eq_alpha as u32);
-    if !was_blending { gl::Disable(gl::BLEND); }
+    if !was_blending {
+        gl::Disable(gl::BLEND);
+    }
     gl::UseProgram(objects.program);
     gl::ActiveTexture(gl::TEXTURE0);
     gl::BindTexture(gl::TEXTURE_2D, objects.texture);
@@ -2058,12 +2231,24 @@ unsafe fn draw_stats_source(
         gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as i32);
         gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as i32);
         gl::TexImage2D(
-            gl::TEXTURE_2D, 0, gl::RGBA8 as i32, width, height, 0,
-            gl::RGBA, gl::UNSIGNED_BYTE, std::ptr::null(),
+            gl::TEXTURE_2D,
+            0,
+            gl::RGBA8 as i32,
+            width,
+            height,
+            0,
+            gl::RGBA,
+            gl::UNSIGNED_BYTE,
+            std::ptr::null(),
         );
         gl::BindFramebuffer(gl::FRAMEBUFFER, objects.stats_source_fbo);
-        gl::FramebufferTexture2D(gl::FRAMEBUFFER, gl::COLOR_ATTACHMENT0,
-            gl::TEXTURE_2D, objects.stats_source_texture, 0);
+        gl::FramebufferTexture2D(
+            gl::FRAMEBUFFER,
+            gl::COLOR_ATTACHMENT0,
+            gl::TEXTURE_2D,
+            objects.stats_source_texture,
+            0,
+        );
         objects.stats_source_dimensions = (width, height);
     }
     gl::BindFramebuffer(gl::FRAMEBUFFER, objects.stats_source_fbo);
@@ -2072,7 +2257,12 @@ unsafe fn draw_stats_source(
     gl::ActiveTexture(gl::TEXTURE0);
     gl::BindTexture(gl::TEXTURE_2D, objects.texture);
     uniform_1i(objects.program, "uClarityPrepass", 3);
-    uniform_2f(objects.program, "uClarityPassSize", width as f32, height as f32);
+    uniform_2f(
+        objects.program,
+        "uClarityPassSize",
+        width as f32,
+        height as f32,
+    );
     gl::DrawArrays(gl::TRIANGLES, 0, 3);
     gl::BindFramebuffer(gl::FRAMEBUFFER, previous_fbo as u32);
     gl::Viewport(0, 0, viewport_width, viewport_height);
@@ -2081,7 +2271,9 @@ unsafe fn draw_stats_source(
     gl::BindTexture(gl::TEXTURE_2D, objects.texture);
     objects.stats_source_revision = revision;
     if std::env::var_os("PICASA_TRACE").is_some() {
-        eprintln!("PIC_EDIT_GPU auto_stats_prepass dimensions={width}x{height} revision={revision}");
+        eprintln!(
+            "PIC_EDIT_GPU auto_stats_prepass dimensions={width}x{height} revision={revision}"
+        );
     }
 }
 
@@ -2101,7 +2293,9 @@ unsafe fn draw_auto_contrast_stats(
     // Two cached percentile sets for the same source: uncorrected and after
     // Auto Colour. Switching either toggle must invalidate the histogram.
     let signature = revision.wrapping_mul(2).wrapping_add(u64::from(auto_color));
-    if objects.auto_contrast_revision == signature { return; }
+    if objects.auto_contrast_revision == signature {
+        return;
+    }
     let mut prev_fbo = 0;
     let mut prev_blend_src_rgb = 0;
     let mut prev_blend_dst_rgb = 0;
@@ -2134,11 +2328,25 @@ unsafe fn draw_auto_contrast_stats(
             gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as i32);
             gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as i32);
             gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as i32);
-            gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RGBA32F as i32,
-                w, 1, 0, gl::RGBA, gl::FLOAT, std::ptr::null());
+            gl::TexImage2D(
+                gl::TEXTURE_2D,
+                0,
+                gl::RGBA32F as i32,
+                w,
+                1,
+                0,
+                gl::RGBA,
+                gl::FLOAT,
+                std::ptr::null(),
+            );
             gl::BindFramebuffer(gl::FRAMEBUFFER, fbo);
-            gl::FramebufferTexture2D(gl::FRAMEBUFFER, gl::COLOR_ATTACHMENT0,
-                gl::TEXTURE_2D, texture, 0);
+            gl::FramebufferTexture2D(
+                gl::FRAMEBUFFER,
+                gl::COLOR_ATTACHMENT0,
+                gl::TEXTURE_2D,
+                texture,
+                0,
+            );
         }
     }
     gl::BindFramebuffer(gl::FRAMEBUFFER, objects.histogram_fbo);
@@ -2152,7 +2360,11 @@ unsafe fn draw_auto_contrast_stats(
     gl::ActiveTexture(gl::TEXTURE0);
     gl::BindTexture(gl::TEXTURE_2D, stats_source);
     uniform_1i(objects.histogram_program, "uSource", 0);
-    uniform_1i(objects.histogram_program, "uAutoColor", if auto_color { 1 } else { 0 });
+    uniform_1i(
+        objects.histogram_program,
+        "uAutoColor",
+        if auto_color { 1 } else { 0 },
+    );
     if auto_color {
         gl::ActiveTexture(gl::TEXTURE3);
         gl::BindTexture(gl::TEXTURE_2D, objects.auto_color_stats);
@@ -2179,13 +2391,20 @@ unsafe fn draw_auto_contrast_stats(
     gl::DrawArrays(gl::TRIANGLES, 0, 3);
 
     gl::BlendFuncSeparate(
-        prev_blend_src_rgb as u32, prev_blend_dst_rgb as u32,
-        prev_blend_src_alpha as u32, prev_blend_dst_alpha as u32,
+        prev_blend_src_rgb as u32,
+        prev_blend_dst_rgb as u32,
+        prev_blend_src_alpha as u32,
+        prev_blend_dst_alpha as u32,
     );
     gl::BlendEquationSeparate(
-        prev_blend_equation_rgb as u32, prev_blend_equation_alpha as u32,
+        prev_blend_equation_rgb as u32,
+        prev_blend_equation_alpha as u32,
     );
-    if blend_was_enabled { gl::Enable(gl::BLEND); } else { gl::Disable(gl::BLEND); }
+    if blend_was_enabled {
+        gl::Enable(gl::BLEND);
+    } else {
+        gl::Disable(gl::BLEND);
+    }
     gl::ClearColor(prev_clear[0], prev_clear[1], prev_clear[2], prev_clear[3]);
     gl::BindFramebuffer(gl::FRAMEBUFFER, prev_fbo as u32);
     gl::Viewport(0, 0, viewport_width, viewport_height);
@@ -2198,68 +2417,109 @@ unsafe fn draw_auto_contrast_stats(
 /// GPU reduction into a one-pixel RGBA32F sum. Matches CPU flattened
 /// neutral sampling without a source-sized CPU processing pass or GL readback.
 unsafe fn draw_auto_color_stats(
-    objects: &mut GlObjects, stats_source: u32, width: i32, height: i32,
-    revision: u64, viewport_width: i32, viewport_height: i32,
+    objects: &mut GlObjects,
+    stats_source: u32,
+    width: i32,
+    height: i32,
+    revision: u64,
+    viewport_width: i32,
+    viewport_height: i32,
 ) {
-    if objects.auto_color_revision == revision { return; }
+    if objects.auto_color_revision == revision {
+        return;
+    }
     let mut previous_fbo = 0;
-    let mut previous_blend_src = 0;
-    let mut previous_blend_dst = 0;
-    let mut previous_src_alpha = 0;
-    let mut previous_dst_alpha = 0;
-    let mut previous_equation_rgb = 0;
-    let mut previous_equation_alpha = 0;
-    let mut previous_clear_color = [0.0_f32; 4];
     gl::GetIntegerv(gl::FRAMEBUFFER_BINDING, &mut previous_fbo);
-    gl::GetIntegerv(gl::BLEND_SRC_RGB, &mut previous_blend_src);
-    gl::GetIntegerv(gl::BLEND_DST_RGB, &mut previous_blend_dst);
-    gl::GetIntegerv(gl::BLEND_SRC_ALPHA, &mut previous_src_alpha);
-    gl::GetIntegerv(gl::BLEND_DST_ALPHA, &mut previous_dst_alpha);
-    gl::GetIntegerv(gl::BLEND_EQUATION_RGB, &mut previous_equation_rgb);
-    gl::GetIntegerv(gl::BLEND_EQUATION_ALPHA, &mut previous_equation_alpha);
-    gl::GetFloatv(gl::COLOR_CLEAR_VALUE, previous_clear_color.as_mut_ptr());
     let was_blending = gl::IsEnabled(gl::BLEND) == gl::TRUE;
+    let pixel_count = i64::from(width) * i64::from(height);
+    let step = (pixel_count / 200_000).max(1);
+    let sample_count = ((pixel_count + step - 1) / step) as i32;
+    let partial_count = (sample_count + 511) / 512;
     if objects.auto_color_stats == 0 {
         gl::GenTextures(1, &mut objects.auto_color_stats);
         gl::GenFramebuffers(1, &mut objects.auto_color_fbo);
         gl::BindTexture(gl::TEXTURE_2D, objects.auto_color_stats);
         gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST as i32);
         gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as i32);
-        gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RGBA32F as i32,
-            1, 1, 0, gl::RGBA, gl::FLOAT, std::ptr::null());
+        gl::TexImage2D(
+            gl::TEXTURE_2D,
+            0,
+            gl::RGBA32F as i32,
+            1,
+            1,
+            0,
+            gl::RGBA,
+            gl::FLOAT,
+            std::ptr::null(),
+        );
         gl::BindFramebuffer(gl::FRAMEBUFFER, objects.auto_color_fbo);
-        gl::FramebufferTexture2D(gl::FRAMEBUFFER, gl::COLOR_ATTACHMENT0,
-            gl::TEXTURE_2D, objects.auto_color_stats, 0);
+        gl::FramebufferTexture2D(
+            gl::FRAMEBUFFER,
+            gl::COLOR_ATTACHMENT0,
+            gl::TEXTURE_2D,
+            objects.auto_color_stats,
+            0,
+        );
     } else {
-        gl::BindFramebuffer(gl::FRAMEBUFFER, objects.auto_color_fbo);
+        gl::BindTexture(gl::TEXTURE_2D, objects.auto_color_stats);
     }
-    gl::Viewport(0, 0, 1, 1);
-    gl::ClearColor(0.0, 0.0, 0.0, 0.0);
-    gl::Clear(gl::COLOR_BUFFER_BIT);
-    gl::Enable(gl::BLEND);
-    gl::BlendEquation(gl::FUNC_ADD);
-    gl::BlendFunc(gl::ONE, gl::ONE);
+    if objects.auto_color_partial_texture == 0 {
+        gl::GenTextures(1, &mut objects.auto_color_partial_texture);
+        gl::GenFramebuffers(1, &mut objects.auto_color_partial_fbo);
+    }
+    if objects.auto_color_partial_dimensions != (partial_count, 1) {
+        gl::BindTexture(gl::TEXTURE_2D, objects.auto_color_partial_texture);
+        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST as i32);
+        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as i32);
+        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as i32);
+        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as i32);
+        gl::TexImage2D(
+            gl::TEXTURE_2D,
+            0,
+            gl::RGBA32F as i32,
+            partial_count,
+            1,
+            0,
+            gl::RGBA,
+            gl::FLOAT,
+            std::ptr::null(),
+        );
+        gl::BindFramebuffer(gl::FRAMEBUFFER, objects.auto_color_partial_fbo);
+        gl::FramebufferTexture2D(
+            gl::FRAMEBUFFER,
+            gl::COLOR_ATTACHMENT0,
+            gl::TEXTURE_2D,
+            objects.auto_color_partial_texture,
+            0,
+        );
+        objects.auto_color_partial_dimensions = (partial_count, 1);
+    }
+
+    gl::Disable(gl::BLEND);
     gl::UseProgram(objects.auto_color_program);
     gl::ActiveTexture(gl::TEXTURE0);
     gl::BindTexture(gl::TEXTURE_2D, stats_source);
     uniform_1i(objects.auto_color_program, "uSource", 0);
     uniform_1i(objects.auto_color_program, "uWidth", width);
-    let pixels = i64::from(width) * i64::from(height);
-    let step = (pixels / 200_000).max(1);
     uniform_1i(objects.auto_color_program, "uSampleStep", step as i32);
-    gl::DrawArrays(gl::POINTS, 0, ((pixels + step - 1) / step) as i32);
-    gl::BlendFuncSeparate(
-        previous_blend_src as u32, previous_blend_dst as u32,
-        previous_src_alpha as u32, previous_dst_alpha as u32,
-    );
-    gl::BlendEquationSeparate(
-        previous_equation_rgb as u32, previous_equation_alpha as u32,
-    );
-    gl::ClearColor(
-        previous_clear_color[0], previous_clear_color[1],
-        previous_clear_color[2], previous_clear_color[3],
-    );
-    if !was_blending { gl::Disable(gl::BLEND); }
+    uniform_1i(objects.auto_color_program, "uSampleCount", sample_count);
+    uniform_1i(objects.auto_color_program, "uReductionPass", 0);
+    gl::BindFramebuffer(gl::FRAMEBUFFER, objects.auto_color_partial_fbo);
+    gl::Viewport(0, 0, partial_count, 1);
+    gl::DrawArrays(gl::TRIANGLES, 0, 3);
+
+    uniform_1i(objects.auto_color_program, "uReductionPass", 1);
+    uniform_1i(objects.auto_color_program, "uPartialCount", partial_count);
+    gl::ActiveTexture(gl::TEXTURE1);
+    gl::BindTexture(gl::TEXTURE_2D, objects.auto_color_partial_texture);
+    uniform_1i(objects.auto_color_program, "uPartials", 1);
+    gl::BindFramebuffer(gl::FRAMEBUFFER, objects.auto_color_fbo);
+    gl::Viewport(0, 0, 1, 1);
+    gl::DrawArrays(gl::TRIANGLES, 0, 3);
+
+    if was_blending {
+        gl::Enable(gl::BLEND);
+    }
     gl::BindFramebuffer(gl::FRAMEBUFFER, previous_fbo as u32);
     gl::Viewport(0, 0, viewport_width, viewport_height);
     gl::UseProgram(objects.program);
@@ -2272,7 +2532,9 @@ fn cpu_gaussian_kernel_radius(sigma: f32) -> i32 {
     // Mirror image::imageops::GaussianBlurParameters (image 0.25.10).
     // Keeping the sample support identical matters for Pencil Sketch edges.
     let mut size = ((((sigma - 0.8) / 0.3 + 1.0) * 2.0 + 1.0).max(3.0)) as i32;
-    if size % 2 == 0 { size += 1; }
+    if size % 2 == 0 {
+        size += 1;
+    }
     (size - 1) / 2
 }
 
@@ -2308,12 +2570,23 @@ unsafe fn draw_clarity_luminance(
             gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as i32);
             gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as i32);
             gl::TexImage2D(
-                gl::TEXTURE_2D, 0, gl::R8 as i32, width, height, 0,
-                gl::RED, gl::UNSIGNED_BYTE, std::ptr::null(),
+                gl::TEXTURE_2D,
+                0,
+                gl::R8 as i32,
+                width,
+                height,
+                0,
+                gl::RED,
+                gl::UNSIGNED_BYTE,
+                std::ptr::null(),
             );
             gl::BindFramebuffer(gl::FRAMEBUFFER, framebuffer);
             gl::FramebufferTexture2D(
-                gl::FRAMEBUFFER, gl::COLOR_ATTACHMENT0, gl::TEXTURE_2D, texture, 0,
+                gl::FRAMEBUFFER,
+                gl::COLOR_ATTACHMENT0,
+                gl::TEXTURE_2D,
+                texture,
+                0,
             );
         }
         objects.clarity_dimensions = (width, height);
@@ -2325,7 +2598,12 @@ unsafe fn draw_clarity_luminance(
     gl::ActiveTexture(gl::TEXTURE0);
     gl::BindTexture(gl::TEXTURE_2D, objects.texture);
     uniform_1i(objects.program, "uClarityPrepass", 1);
-    uniform_2f(objects.program, "uClarityPassSize", width as f32, height as f32);
+    uniform_2f(
+        objects.program,
+        "uClarityPassSize",
+        width as f32,
+        height as f32,
+    );
     gl::DrawArrays(gl::TRIANGLES, 0, 3);
 
     let sigma = ((width.min(height) as f32) * 0.008).clamp(1.5, 20.0);
@@ -2334,12 +2612,27 @@ unsafe fn draw_clarity_luminance(
     let radius = cpu_gaussian_kernel_radius(sigma);
     gl::UseProgram(objects.blur_program);
     uniform_1i(objects.blur_program, "uInput", 0);
-    uniform_2f(objects.blur_program, "uTexel", 1.0 / width as f32, 1.0 / height as f32);
+    uniform_2f(
+        objects.blur_program,
+        "uTexel",
+        1.0 / width as f32,
+        1.0 / height as f32,
+    );
     uniform_1f(objects.blur_program, "uSigma", sigma);
     gl::Uniform1i(uniform_location(objects.blur_program, "uRadius"), radius);
     for (input, output, x, y) in [
-        (objects.clarity_luma_texture, objects.clarity_blur_fbo, 1.0, 0.0),
-        (objects.clarity_blur_texture, objects.clarity_luma_fbo, 0.0, 1.0),
+        (
+            objects.clarity_luma_texture,
+            objects.clarity_blur_fbo,
+            1.0,
+            0.0,
+        ),
+        (
+            objects.clarity_blur_texture,
+            objects.clarity_luma_fbo,
+            0.0,
+            1.0,
+        ),
     ] {
         gl::BindFramebuffer(gl::FRAMEBUFFER, output);
         gl::BindTexture(gl::TEXTURE_2D, input);
@@ -2386,12 +2679,23 @@ unsafe fn draw_effect_luminance(
             gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as i32);
             gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as i32);
             gl::TexImage2D(
-                gl::TEXTURE_2D, 0, gl::R8 as i32, width, height, 0,
-                gl::RED, gl::UNSIGNED_BYTE, std::ptr::null(),
+                gl::TEXTURE_2D,
+                0,
+                gl::R8 as i32,
+                width,
+                height,
+                0,
+                gl::RED,
+                gl::UNSIGNED_BYTE,
+                std::ptr::null(),
             );
             gl::BindFramebuffer(gl::FRAMEBUFFER, framebuffer);
             gl::FramebufferTexture2D(
-                gl::FRAMEBUFFER, gl::COLOR_ATTACHMENT0, gl::TEXTURE_2D, texture, 0,
+                gl::FRAMEBUFFER,
+                gl::COLOR_ATTACHMENT0,
+                gl::TEXTURE_2D,
+                texture,
+                0,
             );
         }
         objects.effect_dimensions = (width, height);
@@ -2403,7 +2707,12 @@ unsafe fn draw_effect_luminance(
     gl::ActiveTexture(gl::TEXTURE0);
     gl::BindTexture(gl::TEXTURE_2D, objects.texture);
     uniform_1i(objects.program, "uClarityPrepass", 2);
-    uniform_2f(objects.program, "uClarityPassSize", width as f32, height as f32);
+    uniform_2f(
+        objects.program,
+        "uClarityPassSize",
+        width as f32,
+        height as f32,
+    );
     gl::DrawArrays(gl::TRIANGLES, 0, 3);
 
     let sigma = ((width.min(height) as f32) * if pencil { 0.004 } else { 0.008 }).max(0.8);
@@ -2412,12 +2721,27 @@ unsafe fn draw_effect_luminance(
     let radius = cpu_gaussian_kernel_radius(sigma);
     gl::UseProgram(objects.blur_program);
     uniform_1i(objects.blur_program, "uInput", 0);
-    uniform_2f(objects.blur_program, "uTexel", 1.0 / width as f32, 1.0 / height as f32);
+    uniform_2f(
+        objects.blur_program,
+        "uTexel",
+        1.0 / width as f32,
+        1.0 / height as f32,
+    );
     uniform_1f(objects.blur_program, "uSigma", sigma);
     gl::Uniform1i(uniform_location(objects.blur_program, "uRadius"), radius);
     for (input, output, x, y) in [
-        (objects.effect_luma_texture, objects.effect_blur_fbo, 1.0, 0.0),
-        (objects.effect_blur_texture, objects.effect_luma_fbo, 0.0, 1.0),
+        (
+            objects.effect_luma_texture,
+            objects.effect_blur_fbo,
+            1.0,
+            0.0,
+        ),
+        (
+            objects.effect_blur_texture,
+            objects.effect_luma_fbo,
+            0.0,
+            1.0,
+        ),
     ] {
         gl::BindFramebuffer(gl::FRAMEBUFFER, output);
         gl::BindTexture(gl::TEXTURE_2D, input);
@@ -2541,32 +2865,58 @@ mod tests {
             let mut plain = EditRecipe::default();
             plain.auto_color = auto_color;
             plain.auto_contrast = auto_contrast;
-            assert!(gpu_tone_supported(&plain),
-                "simple automatic corrections must remain GPU accelerated");
+            assert!(
+                gpu_tone_supported(&plain),
+                "simple automatic corrections must remain GPU accelerated"
+            );
 
             let mut crop = plain.clone();
             crop.crop.left = 0.1;
-            assert!(!gpu_tone_supported(&crop),
-                "cropped Auto corrections require pixel-parity approval");
+            assert!(
+                !gpu_tone_supported(&crop),
+                "cropped Auto corrections require pixel-parity approval"
+            );
             let mut straighten = plain.clone();
             straighten.straighten = 3.5;
-            assert!(!gpu_tone_supported(&straighten),
-                "straightened Auto corrections require pixel-parity approval");
+            assert!(
+                !gpu_tone_supported(&straighten),
+                "straightened Auto corrections require pixel-parity approval"
+            );
             for filter in FilterPreset::ALL {
                 let mut filtered = plain.clone();
                 filtered.filter = filter;
                 filtered.filter_amount = 0.65;
-                assert!(!gpu_tone_supported(&filtered),
-                    "{filter:?} + automatic correction must use verified CPU path");
+                assert!(
+                    !gpu_tone_supported(&filtered),
+                    "{filter:?} + automatic correction must use verified CPU path"
+                );
             }
         }
         for filter in FilterPreset::ALL {
             let mut no_autos = EditRecipe::default();
             no_autos.filter = filter;
             no_autos.crop.left = 0.1;
-            assert!(gpu_tone_supported(&no_autos),
-                "{filter:?} with crop but no autos is GPU supported");
+            assert!(
+                gpu_tone_supported(&no_autos),
+                "{filter:?} with crop but no autos is GPU supported"
+            );
         }
+    }
+
+    #[test]
+    fn automatic_preview_gate_keeps_unverified_zoom_and_rotation_on_cpu() {
+        let mut automatic = EditRecipe::default();
+        automatic.auto_color = true;
+        assert!(gpu_tone_supported_for_view(&automatic, true, 0));
+        assert!(!gpu_tone_supported_for_view(&automatic, false, 0));
+        assert!(!gpu_tone_supported_for_view(&automatic, true, 90));
+        assert!(!gpu_tone_supported_for_view(&automatic, true, 180));
+
+        let plain = EditRecipe::default();
+        assert!(
+            gpu_tone_supported_for_view(&plain, false, 90),
+            "non-automatic edits retain GPU FIT and rotation support"
+        );
     }
 
     #[test]
@@ -2641,7 +2991,12 @@ mod tests {
             preset.filter = effect_filter;
             assert!(gpu_tone_supported(&preset));
         }
-        for supported_filter in [FilterPreset::Clarendon, FilterPreset::Gingham, FilterPreset::Valencia, FilterPreset::OldPhoto] {
+        for supported_filter in [
+            FilterPreset::Clarendon,
+            FilterPreset::Gingham,
+            FilterPreset::Valencia,
+            FilterPreset::OldPhoto,
+        ] {
             let mut preset = EditRecipe::default();
             preset.filter = supported_filter;
             assert!(gpu_tone_supported(&preset));
@@ -2656,17 +3011,26 @@ mod tests {
         layer.y = 0.45;
         layer.opacity = 0.5;
         layer.anchor = super::super::model::OverlayAnchor::BottomRight;
-        assert_eq!(key, text_layer_content_key(&layer, (3936, 2624)),
-            "moving a text overlay must retain the GPU raster texture");
+        assert_eq!(
+            key,
+            text_layer_content_key(&layer, (3936, 2624)),
+            "moving a text overlay must retain the GPU raster texture"
+        );
         layer.text = "Updated words".to_string();
-        assert_ne!(key, text_layer_content_key(&layer, (3936, 2624)),
-            "changing text must invalidate the GPU raster texture");
+        assert_ne!(
+            key,
+            text_layer_content_key(&layer, (3936, 2624)),
+            "changing text must invalidate the GPU raster texture"
+        );
         layer.text = "Your text".to_string();
         layer.size = 0.12;
         assert_ne!(key, text_layer_content_key(&layer, (3936, 2624)));
         layer.size = super::super::model::TextLayerSpec::DEFAULT_SIZE;
-        assert_ne!(key, text_layer_content_key(&layer, (4000, 3000)),
-            "raster must use the current output photo dimensions");
+        assert_ne!(
+            key,
+            text_layer_content_key(&layer, (4000, 3000)),
+            "raster must use the current output photo dimensions"
+        );
     }
 
     #[test]
@@ -2691,27 +3055,39 @@ mod tests {
             image::Rgba([x as u8, y as u8, (x + y) as u8, 255])
         });
         for rotation in [0, 90, 180, 270] {
-        for angle in [0.0, 1.5, -4.5, 8.7] {
-            for crop in [
-                CropRect::default(),
-                CropRect { left: 0.13, top: 0.2, right: 0.87, bottom: 0.92 },
-                CropRect { left: 0.0, top: 0.0, right: 0.5, bottom: 0.5 },
-            ] {
-                let recipe = EditRecipe {
-                    straighten: angle, crop, ..EditRecipe::default()
-                };
-                let cpu = super::super::render::apply_geometry(
-                    super::super::render::apply_library_rotation(image.clone(), rotation),
-                    &recipe,
-                );
-                let gpu = GpuGeometry::for_source_rotation(101, 67, rotation, &recipe);
-                assert_eq!(
-                    (gpu.output_width, gpu.output_height),
-                    (cpu.width() as i32, cpu.height() as i32),
-                    "rotation={rotation} angle={angle}, crop={crop:?}",
-                );
+            for angle in [0.0, 1.5, -4.5, 8.7] {
+                for crop in [
+                    CropRect::default(),
+                    CropRect {
+                        left: 0.13,
+                        top: 0.2,
+                        right: 0.87,
+                        bottom: 0.92,
+                    },
+                    CropRect {
+                        left: 0.0,
+                        top: 0.0,
+                        right: 0.5,
+                        bottom: 0.5,
+                    },
+                ] {
+                    let recipe = EditRecipe {
+                        straighten: angle,
+                        crop,
+                        ..EditRecipe::default()
+                    };
+                    let cpu = super::super::render::apply_geometry(
+                        super::super::render::apply_library_rotation(image.clone(), rotation),
+                        &recipe,
+                    );
+                    let gpu = GpuGeometry::for_source_rotation(101, 67, rotation, &recipe);
+                    assert_eq!(
+                        (gpu.output_width, gpu.output_height),
+                        (cpu.width() as i32, cpu.height() as i32),
+                        "rotation={rotation} angle={angle}, crop={crop:?}",
+                    );
+                }
             }
-        }
         }
     }
 
@@ -2726,7 +3102,8 @@ mod tests {
             image::Rgba([
                 (x * 3 + y * 2 + 20) as u8,
                 (y * 5 + x + 15) as u8,
-                ((x * 2 + y * 3 + 30) % 240) as u8, 255,
+                ((x * 2 + y * 3 + 30) % 240) as u8,
+                255,
             ])
         });
         let gpu = LiveGpuCanvas::new();
@@ -2734,8 +3111,14 @@ mod tests {
         window.set_default_size(TILE as i32, TILE as i32);
         window.set_child(Some(&gpu.widget()));
         window.present();
-        gpu.set_source("test://filter-tile", 0, &EditRecipe::default(),
-            SW as i32, SH as i32, glib::Bytes::from_owned(src.clone().into_raw()));
+        gpu.set_source(
+            "test://filter-tile",
+            0,
+            &EditRecipe::default(),
+            SW as i32,
+            SH as i32,
+            glib::Bytes::from_owned(src.clone().into_raw()),
+        );
         gpu.set_untransformed_geometry(&EditRecipe::default());
         gpu.set_thumbnail_cover(SW as i32, SH as i32, TILE as i32);
         let context = glib::MainContext::default();
@@ -2755,26 +3138,49 @@ mod tests {
             gpu.request_readback();
             let deadline = Instant::now() + std::time::Duration::from_secs(6);
             let pixels = loop {
-                while context.pending() { context.iteration(false); }
-                if let Some(frame) = gpu.take_readback() { break frame; }
+                while context.pending() {
+                    context.iteration(false);
+                }
+                if let Some(frame) = gpu.take_readback() {
+                    break frame;
+                }
                 assert!(Instant::now() < deadline, "GPU filter tile timed out");
                 std::thread::sleep(std::time::Duration::from_millis(5));
             };
             let scale = gpu.widget().scale_factor().max(1) as usize;
-            let actual = pixels.chunks_exact(TILE as usize * scale * 4)
-                .rev().flatten().copied().collect::<Vec<_>>();
+            let actual = pixels
+                .chunks_exact(TILE as usize * scale * 4)
+                .rev()
+                .flatten()
+                .copied()
+                .collect::<Vec<_>>();
             let cpu = super::super::render::apply_tone(src.clone(), &recipe);
             let expected = image::imageops::crop_imm(&cpu, 8, 0, TILE, TILE).to_image();
-            let expected = if scale == 1 { expected } else {
-                image::imageops::resize(&expected, TILE * scale as u32,
-                    TILE * scale as u32, image::imageops::FilterType::Nearest)
-            }.into_raw();
+            let expected = if scale == 1 {
+                expected
+            } else {
+                image::imageops::resize(
+                    &expected,
+                    TILE * scale as u32,
+                    TILE * scale as u32,
+                    image::imageops::FilterType::Nearest,
+                )
+            }
+            .into_raw();
             assert_eq!(actual.len(), expected.len());
-            let max_delta = actual.iter().zip(&expected)
-                .map(|(a, b)| a.abs_diff(*b)).max().unwrap_or_default();
-            eprintln!("PIC_EDIT_GPU thumbnail_parity filter={filter:?} bw={black_white} sepia={sepia} max_delta={max_delta}");
-            assert!(max_delta <= 2,
-                "thumbnail GPU/CPU mismatch filter={filter:?} bw={black_white} sepia={sepia}: {max_delta}");
+            let max_delta = actual
+                .iter()
+                .zip(&expected)
+                .map(|(a, b)| a.abs_diff(*b))
+                .max()
+                .unwrap_or_default();
+            eprintln!(
+                "PIC_EDIT_GPU thumbnail_parity filter={filter:?} bw={black_white} sepia={sepia} max_delta={max_delta}"
+            );
+            assert!(
+                max_delta <= 2,
+                "thumbnail GPU/CPU mismatch filter={filter:?} bw={black_white} sepia={sepia}: {max_delta}"
+            );
         }
         window.close();
     }
@@ -2796,36 +3202,69 @@ mod tests {
         window.set_child(Some(&gpu.widget()));
         window.present();
         gpu.set_source(
-            "test://checkerboard-fit", 0, &EditRecipe::default(),
-            SOURCE as i32, SOURCE as i32,
+            "test://checkerboard-fit",
+            0,
+            &EditRecipe::default(),
+            SOURCE as i32,
+            SOURCE as i32,
             glib::Bytes::from_owned(checker.clone().into_raw()),
         );
         // Exercise the geometryPixel path that previously bypassed
         // footprint filtering for an unadjusted source texture.
         gpu.set_untransformed_geometry(&EditRecipe::default());
-        gpu.set_view(0.0, 0.0, VIEW as f64, VIEW as f64,
-            VIEW as f64 / SOURCE as f64, 0.0, 0.0);
+        gpu.set_view(
+            0.0,
+            0.0,
+            VIEW as f64,
+            VIEW as f64,
+            VIEW as f64 / SOURCE as f64,
+            0.0,
+            0.0,
+        );
         gpu.request_readback();
         let context = glib::MainContext::default();
         let deadline = Instant::now() + std::time::Duration::from_secs(6);
         let pixels = loop {
-            while context.pending() { context.iteration(false); }
-            if let Some(pixels) = gpu.take_readback() { break pixels; }
-            assert!(Instant::now() < deadline, "checkerboard Fit readback timed out");
+            while context.pending() {
+                context.iteration(false);
+            }
+            if let Some(pixels) = gpu.take_readback() {
+                break pixels;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "checkerboard Fit readback timed out"
+            );
             std::thread::sleep(std::time::Duration::from_millis(5));
         };
-        let actual = pixels.chunks_exact(VIEW as usize * 4)
-            .rev().flatten().copied().collect::<Vec<_>>();
-        let reference = image::imageops::resize(
-            &checker, VIEW, VIEW, image::imageops::FilterType::Lanczos3,
-        ).into_raw();
-        let max_delta = actual.iter().zip(&reference)
-            .map(|(a, b)| a.abs_diff(*b)).max().unwrap_or_default();
-        let mean_delta = actual.iter().zip(&reference)
-            .map(|(a, b)| a.abs_diff(*b) as f64).sum::<f64>() / actual.len() as f64;
-        eprintln!("PIC_EDIT_GPU checkerboard_fit_reference=Lanczos3 scale=0.25 max_delta={max_delta} mean_delta={mean_delta:.3}");
-        assert!(max_delta <= 3 && mean_delta <= 1.0,
-            "checkerboard Fit differs from Lanczos3: max={max_delta}, mean={mean_delta:.3}");
+        let actual = pixels
+            .chunks_exact(VIEW as usize * 4)
+            .rev()
+            .flatten()
+            .copied()
+            .collect::<Vec<_>>();
+        let reference =
+            image::imageops::resize(&checker, VIEW, VIEW, image::imageops::FilterType::Lanczos3)
+                .into_raw();
+        let max_delta = actual
+            .iter()
+            .zip(&reference)
+            .map(|(a, b)| a.abs_diff(*b))
+            .max()
+            .unwrap_or_default();
+        let mean_delta = actual
+            .iter()
+            .zip(&reference)
+            .map(|(a, b)| a.abs_diff(*b) as f64)
+            .sum::<f64>()
+            / actual.len() as f64;
+        eprintln!(
+            "PIC_EDIT_GPU checkerboard_fit_reference=Lanczos3 scale=0.25 max_delta={max_delta} mean_delta={mean_delta:.3}"
+        );
+        assert!(
+            max_delta <= 3 && mean_delta <= 1.0,
+            "checkerboard Fit differs from Lanczos3: max={max_delta}, mean={mean_delta:.3}"
+        );
         window.close();
     }
 
@@ -2844,8 +3283,11 @@ mod tests {
         window.present();
         let recipe = EditRecipe::default();
         canvas.set_source(
-            "test://gpu-alpha-layers", 0, &recipe,
-            W as i32, H as i32,
+            "test://gpu-alpha-layers",
+            0,
+            &recipe,
+            W as i32,
+            H as i32,
             glib::Bytes::from_owned(image.clone().into_raw()),
         );
         canvas.set_view(0.0, 0.0, W as f64, H as f64, 1.0, 0.0, 0.0);
@@ -2857,19 +3299,27 @@ mod tests {
                 GpuOverlayLayer {
                     id: "image".to_owned(),
                     rect: super::super::model::NormRect {
-                        left: 6.0/W as f32, top: 4.0/H as f32,
-                        width: 4.0/W as f32, height: 4.0/H as f32,
+                        left: 6.0 / W as f32,
+                        top: 4.0 / H as f32,
+                        width: 4.0 / W as f32,
+                        height: 4.0 / H as f32,
                     },
-                    opacity: 0.75, width: 4, height: 4,
+                    opacity: 0.75,
+                    width: 4,
+                    height: 4,
                     rgba: glib::Bytes::from_owned(rgba_image.into_raw()),
                 },
                 GpuOverlayLayer {
                     id: "text".to_owned(),
                     rect: super::super::model::NormRect {
-                        left: 7.0/W as f32, top: 5.0/H as f32,
-                        width: 2.0/W as f32, height: 2.0/H as f32,
+                        left: 7.0 / W as f32,
+                        top: 5.0 / H as f32,
+                        width: 2.0 / W as f32,
+                        height: 2.0 / H as f32,
                     },
-                    opacity: 0.65, width: 2, height: 2,
+                    opacity: 0.65,
+                    width: 2,
+                    height: 2,
                     rgba: glib::Bytes::from_owned(rgba_text.into_raw()),
                 },
             ];
@@ -2880,36 +3330,47 @@ mod tests {
         let context = glib::MainContext::default();
         let deadline = Instant::now() + std::time::Duration::from_secs(6);
         let readback = loop {
-            while context.pending() { context.iteration(false); }
-            if let Some(pixels) = canvas.take_readback() { break pixels; }
+            while context.pending() {
+                context.iteration(false);
+            }
+            if let Some(pixels) = canvas.take_readback() {
+                break pixels;
+            }
             assert!(Instant::now() < deadline, "layer pixel readback timed out");
             std::thread::sleep(std::time::Duration::from_millis(5));
         };
         let scale = canvas.widget().scale_factor().max(1) as usize;
-        let actual = readback.chunks_exact(W as usize*scale*4)
-            .rev().flatten().copied().collect::<Vec<u8>>();
+        let actual = readback
+            .chunks_exact(W as usize * scale * 4)
+            .rev()
+            .flatten()
+            .copied()
+            .collect::<Vec<u8>>();
         let pixel = |x: usize, y: usize| -> [u8; 4] {
-            let idx = (y*scale*W as usize*scale + x*scale)*4;
-            actual[idx..idx+4].try_into().unwrap()
+            let idx = (y * scale * W as usize * scale + x * scale) * 4;
+            actual[idx..idx + 4].try_into().unwrap()
         };
-        let mix = |base: [u8;4], layer: [u8;4], opacity: f32| {
+        let mix = |base: [u8; 4], layer: [u8; 4], opacity: f32| {
             let a = (layer[3] as f32 / 255.0) * opacity;
             let mut out = [0; 4];
             for i in 0..3 {
-                out[i] = (layer[i] as f32*a + base[i] as f32*(1.0-a))
-                    .round().clamp(0.0, 255.0) as u8;
+                out[i] = (layer[i] as f32 * a + base[i] as f32 * (1.0 - a))
+                    .round()
+                    .clamp(0.0, 255.0) as u8;
             }
-            out[3] = (255.0*a + base[3] as f32*(1.0-a)).round() as u8;
+            out[3] = (255.0 * a + base[3] as f32 * (1.0 - a)).round() as u8;
             out
         };
         let base = [20, 40, 60, 255];
-        let first = mix(base, [220,60,15,128], 0.75);
-        let combined = mix(first, [250,250,250,255], 0.65);
-        let close = |observed: [u8;4], expected: [u8;4], place: &str| {
+        let first = mix(base, [220, 60, 15, 128], 0.75);
+        let combined = mix(first, [250, 250, 250, 255], 0.65);
+        let close = |observed: [u8; 4], expected: [u8; 4], place: &str| {
             for channel in 0..4 {
                 let delta = observed[channel].abs_diff(expected[channel]);
-                assert!(delta <= 2,
-                    "GPU {place} channel {channel}: {observed:?} vs {expected:?}, delta {delta}");
+                assert!(
+                    delta <= 2,
+                    "GPU {place} channel {channel}: {observed:?} vs {expected:?}, delta {delta}"
+                );
             }
         };
         close(pixel(0, 0), base, "uncovered background");
@@ -2919,7 +3380,11 @@ mod tests {
         let rev = canvas.uploaded_revision();
         canvas.set_recipe(&recipe);
         canvas.widget().queue_render();
-        assert_eq!(canvas.uploaded_revision(), rev, "layer updates must not reupload photo");
+        assert_eq!(
+            canvas.uploaded_revision(),
+            rev,
+            "layer updates must not reupload photo"
+        );
         window.close();
     }
 
@@ -2938,15 +3403,20 @@ mod tests {
             ])
         });
         let renderer = LiveGpuCanvas::new();
-        renderer.widget().set_size_request(WIDTH as i32, HEIGHT as i32);
+        renderer
+            .widget()
+            .set_size_request(WIDTH as i32, HEIGHT as i32);
         let window = gtk::Window::new();
         window.set_default_size(WIDTH as i32, HEIGHT as i32);
         window.set_child(Some(&renderer.widget()));
         window.present();
         let neutral = EditRecipe::default();
         renderer.set_source(
-            "test://gpu-untransformed-geometry", 0, &neutral,
-            WIDTH as i32, HEIGHT as i32,
+            "test://gpu-untransformed-geometry",
+            0,
+            &neutral,
+            WIDTH as i32,
+            HEIGHT as i32,
             glib::Bytes::from_owned(original.clone().into_raw()),
         );
         renderer.set_view(0.0, 0.0, WIDTH as f64, HEIGHT as f64, 1.0, 0.0, 0.0);
@@ -2955,34 +3425,76 @@ mod tests {
             renderer.request_readback();
             let deadline = Instant::now() + std::time::Duration::from_secs(6);
             let pixels = loop {
-                while context.pending() { context.iteration(false); }
-                if let Some(frame) = renderer.take_readback() { break frame; }
-                assert!(Instant::now() < deadline, "GPU geometry framebuffer timeout");
+                while context.pending() {
+                    context.iteration(false);
+                }
+                if let Some(frame) = renderer.take_readback() {
+                    break frame;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "GPU geometry framebuffer timeout"
+                );
                 std::thread::sleep(std::time::Duration::from_millis(5));
             };
             let scale = renderer.widget().scale_factor().max(1) as usize;
-            pixels.chunks_exact(WIDTH as usize * scale * 4)
-                .rev().flatten().copied().collect::<Vec<u8>>()
+            pixels
+                .chunks_exact(WIDTH as usize * scale * 4)
+                .rev()
+                .flatten()
+                .copied()
+                .collect::<Vec<u8>>()
         };
         let baseline = capture();
         let revision = renderer.uploaded_revision();
         for (rotation, angle, crop) in [
-            (0, 0.0, CropRect {left:0.25,top:0.25,right:0.75,bottom:0.75}),
+            (
+                0,
+                0.0,
+                CropRect {
+                    left: 0.25,
+                    top: 0.25,
+                    right: 0.75,
+                    bottom: 0.75,
+                },
+            ),
             (0, 4.5, CropRect::default()),
-            (0, -6.5, CropRect {left:0.16,top:0.13,right:0.88,bottom:0.85}),
+            (
+                0,
+                -6.5,
+                CropRect {
+                    left: 0.16,
+                    top: 0.13,
+                    right: 0.88,
+                    bottom: 0.85,
+                },
+            ),
             (90, 0.0, CropRect::default()),
             (180, 0.0, CropRect::default()),
             (270, 0.0, CropRect::default()),
-            (90, 4.5, CropRect {left:0.10,top:0.12,right:0.90,bottom:0.83}),
+            (
+                90,
+                4.5,
+                CropRect {
+                    left: 0.10,
+                    top: 0.12,
+                    right: 0.90,
+                    bottom: 0.83,
+                },
+            ),
         ] {
             let recipe = EditRecipe {
-                straighten: angle, crop, ..EditRecipe::default()
+                straighten: angle,
+                crop,
+                ..EditRecipe::default()
             };
             let expected = super::super::render::apply_geometry(
                 super::super::render::apply_library_rotation(original.clone(), rotation),
                 &recipe,
             );
-            let output = renderer.set_untransformed_geometry_for_rotation(rotation, &recipe).unwrap();
+            let output = renderer
+                .set_untransformed_geometry_for_rotation(rotation, &recipe)
+                .unwrap();
             assert_eq!(output, (expected.width() as i32, expected.height() as i32));
             let actual = capture();
             let scale = renderer.widget().scale_factor().max(1) as usize;
@@ -2995,65 +3507,221 @@ mod tests {
                     let actual_offset = y * scale * stride + x * scale * 4;
                     let pixel = expected.get_pixel(x as u32, y as u32);
                     for channel in 0..4 {
-                        max_delta = max_delta.max(
-                            actual[actual_offset + channel].abs_diff(pixel[channel])
-                        );
+                        max_delta =
+                            max_delta.max(actual[actual_offset + channel].abs_diff(pixel[channel]));
                     }
                 }
             }
-            assert!(max_delta <= 2,
-                "GPU source geometry mismatch rotation={rotation} angle={angle} crop={crop:?} delta={max_delta}");
-            assert_eq!(renderer.uploaded_revision(), revision,
-                "geometry-only changes must never re-upload the source");
-            eprintln!("PIC_EDIT_GPU geometry_parity rotation={rotation} angle={angle} {}x{} max_channel_delta={max_delta}",
-                output.0, output.1);
+            assert!(
+                max_delta <= 2,
+                "GPU source geometry mismatch rotation={rotation} angle={angle} crop={crop:?} delta={max_delta}"
+            );
+            assert_eq!(
+                renderer.uploaded_revision(),
+                revision,
+                "geometry-only changes must never re-upload the source"
+            );
+            eprintln!(
+                "PIC_EDIT_GPU geometry_parity rotation={rotation} angle={angle} {}x{} max_channel_delta={max_delta}",
+                output.0, output.1
+            );
         }
         // Automatic histogram statistics must see the transformed and named-
         // filtered output, not the original uncropped RAW texture.
         if std::env::var_os("PIC_GPU_AUTOSTATS_DIAG").is_some() {
-        // Diagnostic only: these combinations deliberately retain the CPU
-        // fallback until the GPU histogram path passes strict pixel parity.
-        // Sample more than one preset and isolate the offending auto stage.
-        for filter in FilterPreset::ALL {
+            // Diagnostic only: these combinations deliberately retain the CPU
+            // fallback until the GPU histogram path passes strict pixel parity.
+            // Cover all presets at several filter strengths and isolate the
+            // offending automatic stage. This runs only in the workflow's opt-in
+            // diagnostics because it deliberately bypasses the renderer gate.
+            for filter in FilterPreset::ALL {
+                for amount in [0.25, 0.65, 1.0] {
+                    for (auto_color, auto_contrast) in [(true, false), (false, true), (true, true)]
+                    {
+                        let mut stats_recipe = EditRecipe::default();
+                        stats_recipe.crop = CropRect {
+                            left: 0.125,
+                            top: 0.125,
+                            right: 0.875,
+                            bottom: 0.875,
+                        };
+                        stats_recipe.filter = filter;
+                        stats_recipe.filter_amount = amount;
+                        stats_recipe.auto_color = auto_color;
+                        stats_recipe.auto_contrast = auto_contrast;
+                        assert!(
+                            !gpu_tone_supported(&stats_recipe),
+                            "unverified combination must not bypass CPU fallback"
+                        );
+                        let cpu_geometry =
+                            super::super::render::apply_geometry(original.clone(), &stats_recipe);
+                        renderer.set_untransformed_geometry_for_rotation(0, &stats_recipe);
+                        renderer.set_recipe(&stats_recipe);
+                        let actual = capture();
+                        if filter == FilterPreset::Clarendon && amount == 0.25 && auto_color {
+                            renderer.widget().make_current();
+                            let mut gpu_filtered = vec![
+                                0u8;
+                                cpu_geometry.width() as usize
+                                    * cpu_geometry.height() as usize
+                                    * 4
+                            ];
+                            if let Some(objects) = renderer.state.borrow().objects.as_ref() {
+                                unsafe {
+                                    gl::BindTexture(gl::TEXTURE_2D, objects.stats_source_texture);
+                                    gl::GetTexImage(
+                                        gl::TEXTURE_2D,
+                                        0,
+                                        gl::RGBA,
+                                        gl::UNSIGNED_BYTE,
+                                        gpu_filtered.as_mut_ptr().cast(),
+                                    );
+                                }
+                            }
+                            let mut filter_reference = stats_recipe.clone();
+                            filter_reference.auto_color = false;
+                            filter_reference.auto_contrast = false;
+                            let cpu_filtered = super::super::render::apply_tone(
+                                cpu_geometry.clone(),
+                                &filter_reference,
+                            )
+                            .into_raw();
+                            let filter_max = gpu_filtered
+                                .iter()
+                                .zip(&cpu_filtered)
+                                .map(|(a, b)| a.abs_diff(*b))
+                                .max()
+                                .unwrap_or_default();
+                            eprintln!(
+                                "PIC_EDIT_GPU filter_stats_stage filter={filter:?} amount={amount} max_channel_delta={filter_max}"
+                            );
+                        }
+                        let expected = super::super::render::apply_tone(
+                            super::super::render::apply_geometry(original.clone(), &stats_recipe),
+                            &stats_recipe,
+                        );
+                        let scale = renderer.widget().scale_factor().max(1) as usize;
+                        let stride = WIDTH as usize * scale * 4;
+                        let mut max_delta = 0u8;
+                        let mut sum_delta = 0u64;
+                        let mut worst = (0usize, 0u8, 0u8);
+                        for y in 0..expected.height() as usize {
+                            for x in 0..expected.width() as usize {
+                                let offset = y * scale * stride + x * scale * 4;
+                                for channel in 0..4 {
+                                    let observed = actual[offset + channel];
+                                    let reference = expected.get_pixel(x as u32, y as u32)[channel];
+                                    let delta = observed.abs_diff(reference);
+                                    sum_delta += delta as u64;
+                                    if delta > max_delta {
+                                        worst = (
+                                            (y * expected.width() as usize + x) * 4 + channel,
+                                            observed,
+                                            reference,
+                                        );
+                                    }
+                                    max_delta = max_delta.max(delta);
+                                }
+                            }
+                        }
+                        assert_eq!(renderer.uploaded_revision(), revision);
+                        eprintln!(
+                            "PIC_EDIT_GPU cropped_filter_auto_parity filter={filter:?} amount={amount} color={auto_color} contrast={auto_contrast} max_channel_delta={max_delta} mean_channel_delta={:.4} worst_pixel=({}, {}) channel={} actual={} expected={} status=unverified",
+                            sum_delta as f64
+                                / (expected.width() as usize * expected.height() as usize * 4)
+                                    .max(1) as f64,
+                            (worst.0 / 4) as u32 % expected.width(),
+                            (worst.0 / 4) as u32 / expected.width(),
+                            worst.0 % 4,
+                            worst.1,
+                            worst.2,
+                        );
+                    }
+                }
+            }
+            renderer.set_recipe(&neutral);
+        }
+        // Exercise the diagnostic GPU route over full-resolution geometry.
+        // The editor keeps these automatic combinations on CPU until every
+        // measured case passes the same strict native pixel limit.
+        for (rotation, angle, crop) in [
+            (0, 4.5, CropRect::default()),
+            (
+                0,
+                0.0,
+                CropRect {
+                    left: 0.125,
+                    top: 0.125,
+                    right: 0.875,
+                    bottom: 0.875,
+                },
+            ),
+            (90, 0.0, CropRect::default()),
+            (270, 0.0, CropRect::default()),
+        ] {
             for (auto_color, auto_contrast) in [(true, false), (false, true), (true, true)] {
-                let mut stats_recipe = EditRecipe::default();
-                stats_recipe.crop = CropRect {
-                    left: 0.125, top: 0.125, right: 0.875, bottom: 0.875,
+                let mut recipe = EditRecipe {
+                    straighten: angle,
+                    crop,
+                    ..EditRecipe::default()
                 };
-                stats_recipe.filter = filter;
-                stats_recipe.filter_amount = 0.75;
-                stats_recipe.auto_color = auto_color;
-                stats_recipe.auto_contrast = auto_contrast;
-                assert!(!gpu_tone_supported(&stats_recipe),
-                    "unverified combination must not bypass CPU fallback");
-                renderer.set_untransformed_geometry_for_rotation(0, &stats_recipe);
-                renderer.set_recipe(&stats_recipe);
+                recipe.auto_color = auto_color;
+                recipe.auto_contrast = auto_contrast;
+                let gpu = gpu_tone_supported_for_view(&recipe, true, rotation);
+                renderer.set_untransformed_geometry_for_rotation(rotation, &recipe);
+                renderer.set_recipe(&recipe);
                 let actual = capture();
                 let expected = super::super::render::apply_tone(
-                    super::super::render::apply_geometry(original.clone(), &stats_recipe),
-                    &stats_recipe,
+                    super::super::render::apply_geometry(
+                        super::super::render::apply_library_rotation(original.clone(), rotation),
+                        &recipe,
+                    ),
+                    &recipe,
                 );
                 let scale = renderer.widget().scale_factor().max(1) as usize;
                 let stride = WIDTH as usize * scale * 4;
+                let compare_width = expected.width().min(WIDTH) as usize;
+                let compare_height = expected.height().min(HEIGHT) as usize;
                 let mut max_delta = 0u8;
-                for y in 0..expected.height() as usize {
-                    for x in 0..expected.width() as usize {
+                let mut sum_delta = 0u64;
+                let mut worst = (0usize, 0u8, 0u8);
+                let mut channels = 0usize;
+                for y in 0..compare_height {
+                    for x in 0..compare_width {
                         let offset = y * scale * stride + x * scale * 4;
+                        let expected_pixel = expected.get_pixel(x as u32, y as u32);
                         for channel in 0..4 {
-                            max_delta = max_delta.max(
-                                actual[offset + channel]
-                                    .abs_diff(expected.get_pixel(x as u32, y as u32)[channel]),
-                            );
+                            let observed = actual[offset + channel];
+                            let reference = expected_pixel[channel];
+                            let delta = observed.abs_diff(reference);
+                            sum_delta += delta as u64;
+                            channels += 1;
+                            if delta > max_delta {
+                                worst = (
+                                    (y * expected.width() as usize + x) * 4 + channel,
+                                    observed,
+                                    reference,
+                                );
+                            }
+                            max_delta = max_delta.max(delta);
                         }
                     }
                 }
-                assert_eq!(renderer.uploaded_revision(), revision);
                 eprintln!(
-                    "PIC_EDIT_GPU cropped_filter_auto_parity filter={filter:?} color={auto_color} contrast={auto_contrast} max_channel_delta={max_delta} status=unverified"
+                    "PIC_EDIT_GPU automatic_geometry_parity rotation={rotation} straighten={angle} crop={crop:?} color={auto_color} contrast={auto_contrast} renderer={} max_channel_delta={max_delta} mean_channel_delta={:.4} worst_index={} actual={} expected={}",
+                    if gpu { "GPU" } else { "CPU-fallback" },
+                    sum_delta as f64 / channels.max(1) as f64,
+                    worst.0,
+                    worst.1,
+                    worst.2,
                 );
+                if gpu {
+                    assert!(
+                        max_delta <= 1,
+                        "supported automatic geometry parity failed: max delta {max_delta}"
+                    );
+                }
             }
-        }
-        renderer.set_recipe(&neutral);
         }
         // The real GTK editor maintains a GPU geometry object even for
         // uncropped full-frame photos. Validate supported standalone/both
@@ -3074,22 +3742,29 @@ mod tests {
                 for x in 0..WIDTH as usize {
                     let offset = y * scale * row_bytes + x * scale * 4;
                     for channel in 0..4 {
-                        max_delta = max_delta.max(actual[offset+channel].abs_diff(
-                            expected.get_pixel(x as u32, y as u32)[channel],
-                        ));
+                        max_delta = max_delta.max(
+                            actual[offset + channel]
+                                .abs_diff(expected.get_pixel(x as u32, y as u32)[channel]),
+                        );
                     }
                 }
             }
-            assert!(max_delta <= 2,
-                "GPU identity geometry auto_color={auto_color} auto_contrast={auto_contrast}: delta={max_delta}");
+            assert!(
+                max_delta <= 2,
+                "GPU identity geometry auto_color={auto_color} auto_contrast={auto_contrast}: delta={max_delta}"
+            );
             assert_eq!(renderer.uploaded_revision(), revision);
-            eprintln!("PIC_EDIT_GPU identity_auto_parity color={auto_color} contrast={auto_contrast} max_delta={max_delta}");
+            eprintln!(
+                "PIC_EDIT_GPU identity_auto_parity color={auto_color} contrast={auto_contrast} max_delta={max_delta}"
+            );
         }
         renderer.set_recipe(&neutral);
         renderer.clear_untransformed_geometry();
         let reset = capture();
-        assert_eq!(reset, baseline,
-            "removing GPU geometry must restore original full-res source pixels");
+        assert_eq!(
+            reset, baseline,
+            "removing GPU geometry must restore original full-res source pixels"
+        );
         assert_eq!(renderer.uploaded_revision(), revision);
         window.close();
     }
@@ -3175,10 +3850,16 @@ mod tests {
             }
             .into_raw();
             let mut max_delta = 0i16;
+            let mut sum_delta = 0u64;
+            let mut worst = (0usize, 0u8, 0u8);
             for (index, (actual, expected)) in
                 actual_top_down.iter().zip(expected.iter()).enumerate()
             {
                 let delta = (*actual as i16 - *expected as i16).abs();
+                sum_delta += delta as u64;
+                if delta > max_delta {
+                    worst = (index, *actual, *expected);
+                }
                 max_delta = max_delta.max(delta);
                 // A creative filter followed by two automatic 8-bit passes
                 // can accumulate a few levels of cross-platform float/rounding
@@ -3188,22 +3869,44 @@ mod tests {
                 // before choosing the final defensible CPU parity tolerance.
                 // Do NOT enable these combinations in gpu_tone_supported yet.
                 let allowed = if recipe.filter != FilterPreset::None
-                    && (recipe.auto_color || recipe.auto_contrast) { 40 } else { 1 };
-                assert!(delta <= allowed,
+                    && (recipe.auto_color || recipe.auto_contrast)
+                {
+                    40
+                } else {
+                    1
+                };
+                assert!(
+                    delta <= allowed,
                     "filter={:?} amount={} auto_color={} auto_contrast={} channel {index} differs by {delta} (limit {allowed})",
-                    recipe.filter, recipe.filter_amount, recipe.auto_color, recipe.auto_contrast);
+                    recipe.filter,
+                    recipe.filter_amount,
+                    recipe.auto_color,
+                    recipe.auto_contrast
+                );
             }
             eprintln!(
-                "PIC_EDIT_GPU parity_test dimensions={}x{} recipe_default={} filter={:?} amount={} auto_color={} auto_contrast={} max_channel_delta={max_delta}",
+                "PIC_EDIT_GPU parity_test dimensions={}x{} recipe_default={} filter={:?} amount={} auto_color={} auto_contrast={} max_channel_delta={max_delta} mean_channel_delta={:.4} worst_pixel=({}, {}) channel={} actual={} expected={}",
                 WIDTH,
                 HEIGHT,
-                recipe.is_default(), recipe.filter, recipe.filter_amount,
-                recipe.auto_color, recipe.auto_contrast,
+                recipe.is_default(),
+                recipe.filter,
+                recipe.filter_amount,
+                recipe.auto_color,
+                recipe.auto_contrast,
+                sum_delta as f64 / actual_top_down.len().max(1) as f64,
+                (worst.0 / 4) as u32 % WIDTH,
+                (worst.0 / 4) as u32 / WIDTH,
+                worst.0 % 4,
+                worst.1,
+                worst.2,
             );
         };
 
         check_frame(&reset_recipe, &source);
-        eprintln!("PIC_EDIT_GPU test_gsk_renderer={:?}", window.renderer().map(|r| r.type_().name().to_owned()));
+        eprintln!(
+            "PIC_EDIT_GPU test_gsk_renderer={:?}",
+            window.renderer().map(|r| r.type_().name().to_owned())
+        );
         let uploaded_revision = renderer.uploaded_revision();
         let mut edited = reset_recipe.clone();
         edited.exposure = 0.17;
@@ -3242,12 +3945,18 @@ mod tests {
         // Check each ordinary preset against the existing CPU/export look.
         // At 1:1 the GPU must not change source dimensions or upload again.
         for preset in [
-            FilterPreset::Clarendon, FilterPreset::Gingham,
-            FilterPreset::Juno, FilterPreset::Lark,
-            FilterPreset::Valencia, FilterPreset::Walden,
-            FilterPreset::DisposableFilm, FilterPreset::DigicamFlash,
-            FilterPreset::Cinematic, FilterPreset::GoldenHour,
-            FilterPreset::OldPhoto, FilterPreset::Newspaper,
+            FilterPreset::Clarendon,
+            FilterPreset::Gingham,
+            FilterPreset::Juno,
+            FilterPreset::Lark,
+            FilterPreset::Valencia,
+            FilterPreset::Walden,
+            FilterPreset::DisposableFilm,
+            FilterPreset::DigicamFlash,
+            FilterPreset::Cinematic,
+            FilterPreset::GoldenHour,
+            FilterPreset::OldPhoto,
+            FilterPreset::Newspaper,
         ] {
             let mut recipe = reset_recipe.clone();
             recipe.filter = preset;
@@ -3272,7 +3981,9 @@ mod tests {
             let deadline = Instant::now() + std::time::Duration::from_secs(5);
             let mut result = None;
             while Instant::now() < deadline {
-                while context.pending() { context.iteration(false); }
+                while context.pending() {
+                    context.iteration(false);
+                }
                 if let Some(readback) = renderer.take_readback() {
                     result = Some(readback);
                     break;
@@ -3281,28 +3992,54 @@ mod tests {
             }
             let actual = result.expect("GPU special-filter readback missing");
             let scale = renderer.widget().scale_factor().max(1) as u32;
-            let actual = actual.chunks_exact(WIDTH as usize * scale as usize * 4)
-                .rev().flatten().copied().collect::<Vec<_>>();
+            let actual = actual
+                .chunks_exact(WIDTH as usize * scale as usize * 4)
+                .rev()
+                .flatten()
+                .copied()
+                .collect::<Vec<_>>();
             let cpu = super::super::render::apply_tone(source.clone(), &recipe);
-            let cpu = if scale == 1 { cpu } else {
-                image::imageops::resize(&cpu, WIDTH * scale, HEIGHT * scale,
-                    image::imageops::FilterType::Nearest)
-            }.into_raw();
+            let cpu = if scale == 1 {
+                cpu
+            } else {
+                image::imageops::resize(
+                    &cpu,
+                    WIDTH * scale,
+                    HEIGHT * scale,
+                    image::imageops::FilterType::Nearest,
+                )
+            }
+            .into_raw();
             assert_eq!(actual.len(), cpu.len());
-            let errors = actual.iter().zip(&cpu)
+            let errors = actual
+                .iter()
+                .zip(&cpu)
                 .map(|(a, b)| (*a as i16 - *b as i16).unsigned_abs() as usize)
                 .collect::<Vec<_>>();
             let maximum = errors.iter().copied().max().unwrap_or_default();
             let average = errors.iter().sum::<usize>() as f64 / errors.len().max(1) as f64;
-            let worst = errors.iter().enumerate().max_by_key(|(_, delta)| *delta)
+            let worst = errors
+                .iter()
+                .enumerate()
+                .max_by_key(|(_, delta)| *delta)
                 .map(|(index, delta)| {
                     let stride = WIDTH as usize * scale as usize * 4;
-                    (index / stride, (index % stride) / 4, index % 4,
-                     actual[index], cpu[index], *delta)
+                    (
+                        index / stride,
+                        (index % stride) / 4,
+                        index % 4,
+                        actual[index],
+                        cpu[index],
+                        *delta,
+                    )
                 });
-            eprintln!("PIC_EDIT_GPU special_filter_parity preset={preset:?} max={maximum} avg={average:.3} worst={worst:?}");
-            assert!(maximum <= 35 && average <= 5.0,
-                "GPU {preset:?} differs too much from CPU: max={maximum}, avg={average:.3}");
+            eprintln!(
+                "PIC_EDIT_GPU special_filter_parity preset={preset:?} max={maximum} avg={average:.3} worst={worst:?}"
+            );
+            assert!(
+                maximum <= 35 && average <= 5.0,
+                "GPU {preset:?} differs too much from CPU: max={maximum}, avg={average:.3}"
+            );
             assert_eq!(renderer.uploaded_revision(), uploaded_revision);
         }
         renderer.set_recipe(&reset_recipe);
@@ -3319,7 +4056,9 @@ mod tests {
         let deadline = Instant::now() + std::time::Duration::from_secs(5);
         let mut clarity_pixels = None;
         while Instant::now() < deadline {
-            while context.pending() { context.iteration(false); }
+            while context.pending() {
+                context.iteration(false);
+            }
             if let Some(readback) = renderer.take_readback() {
                 clarity_pixels = Some(readback);
                 break;
@@ -3328,18 +4067,34 @@ mod tests {
         }
         let readback = clarity_pixels.expect("GPU clarity framebuffer readback failed");
         let scale = renderer.widget().scale_factor().max(1) as u32;
-        let observed = readback.chunks_exact(WIDTH as usize * scale as usize * 4)
-            .rev().flatten().copied().collect::<Vec<_>>();
+        let observed = readback
+            .chunks_exact(WIDTH as usize * scale as usize * 4)
+            .rev()
+            .flatten()
+            .copied()
+            .collect::<Vec<_>>();
         let expected = super::super::render::apply_tone(source.clone(), &clarity_recipe);
-        let expected = if scale == 1 { expected } else {
-            image::imageops::resize(&expected, WIDTH * scale, HEIGHT * scale,
-                image::imageops::FilterType::Nearest)
-        }.into_raw();
-        let maximum_delta = observed.iter().zip(&expected)
+        let expected = if scale == 1 {
+            expected
+        } else {
+            image::imageops::resize(
+                &expected,
+                WIDTH * scale,
+                HEIGHT * scale,
+                image::imageops::FilterType::Nearest,
+            )
+        }
+        .into_raw();
+        let maximum_delta = observed
+            .iter()
+            .zip(&expected)
             .map(|(a, b)| (*a as i16 - *b as i16).abs())
-            .max().unwrap_or_default();
-        assert!(maximum_delta <= 12,
-            "GPU Clarity differs too much from the CPU reference: max channel delta {maximum_delta}");
+            .max()
+            .unwrap_or_default();
+        assert!(
+            maximum_delta <= 12,
+            "GPU Clarity differs too much from the CPU reference: max channel delta {maximum_delta}"
+        );
         assert_eq!(renderer.uploaded_revision(), uploaded_revision);
         renderer.set_recipe(&reset_recipe);
         check_frame(&reset_recipe, &source);
@@ -3359,7 +4114,9 @@ mod tests {
         let deadline = Instant::now() + std::time::Duration::from_secs(5);
         let mut result = None;
         while Instant::now() < deadline {
-            while context.pending() { context.iteration(false); }
+            while context.pending() {
+                context.iteration(false);
+            }
             if let Some(readback) = renderer.take_readback() {
                 result = Some(readback);
                 break;
@@ -3368,21 +4125,36 @@ mod tests {
         }
         let result = result.expect("mixed GPU effects did not render");
         let scale = renderer.widget().scale_factor().max(1) as u32;
-        let gpu = result.chunks_exact(WIDTH as usize * scale as usize * 4)
-            .rev().flatten().copied().collect::<Vec<_>>();
+        let gpu = result
+            .chunks_exact(WIDTH as usize * scale as usize * 4)
+            .rev()
+            .flatten()
+            .copied()
+            .collect::<Vec<_>>();
         let cpu = super::super::render::apply_tone(source.clone(), &mixed);
-        let cpu = if scale == 1 { cpu } else {
-            image::imageops::resize(&cpu, WIDTH * scale, HEIGHT * scale,
-                image::imageops::FilterType::Nearest)
-        }.into_raw();
-        let differences = gpu.iter().zip(&cpu)
-            .map(|(a,b)| (*a as i16 - *b as i16).unsigned_abs() as usize)
+        let cpu = if scale == 1 {
+            cpu
+        } else {
+            image::imageops::resize(
+                &cpu,
+                WIDTH * scale,
+                HEIGHT * scale,
+                image::imageops::FilterType::Nearest,
+            )
+        }
+        .into_raw();
+        let differences = gpu
+            .iter()
+            .zip(&cpu)
+            .map(|(a, b)| (*a as i16 - *b as i16).unsigned_abs() as usize)
             .collect::<Vec<_>>();
         let max_error = differences.iter().copied().max().unwrap_or_default();
         let mean_error = differences.iter().sum::<usize>() as f64 / differences.len().max(1) as f64;
         eprintln!("PIC_EDIT_GPU mixed_parity max={max_error} mean={mean_error:.3}");
-        assert!(max_error <= 45 && mean_error <= 9.0,
-            "mixed GPU recipe diverges from CPU: max={max_error} mean={mean_error:.3}");
+        assert!(
+            max_error <= 45 && mean_error <= 9.0,
+            "mixed GPU recipe diverges from CPU: max={max_error} mean={mean_error:.3}"
+        );
         assert_eq!(renderer.uploaded_revision(), uploaded_revision);
         renderer.set_recipe(&reset_recipe);
         check_frame(&reset_recipe, &source);
@@ -3615,11 +4387,17 @@ mod tests {
             let n = ((x + y) % 14) as u8;
             image::Rgba([112 + n, 124 + n, 137 + n, 255])
         });
-        let auto = EditRecipe { auto_color: true, ..Default::default() };
+        let auto = EditRecipe {
+            auto_color: true,
+            ..Default::default()
+        };
         assert!(gpu_tone_supported(&auto));
         renderer.set_source(
-            "test://autocolor-neutrals", 0, &auto,
-            WIDTH as i32, HEIGHT as i32,
+            "test://autocolor-neutrals",
+            0,
+            &auto,
+            WIDTH as i32,
+            HEIGHT as i32,
             glib::Bytes::from_owned(neutrals.clone().into_raw()),
         );
         renderer.set_view(0.0, 0.0, WIDTH as f64, HEIGHT as f64, 1.0, 0.0, 0.0);
@@ -3628,8 +4406,11 @@ mod tests {
         renderer.set_recipe(&EditRecipe::default());
         check_frame(&EditRecipe::default(), &neutrals);
         renderer.set_source(
-            "test://gpu-parity", 0, &reset_recipe,
-            WIDTH as i32, HEIGHT as i32,
+            "test://gpu-parity",
+            0,
+            &reset_recipe,
+            WIDTH as i32,
+            HEIGHT as i32,
             glib::Bytes::from_owned(source.clone().into_raw()),
         );
         renderer.set_recipe(&reset_recipe);
@@ -3638,18 +4419,30 @@ mod tests {
         // Auto Contrast is percentile-based. This deliberate outlier fixture
         // checks source histogram computation and pixel correction together.
         let gradient = image::RgbaImage::from_fn(WIDTH, HEIGHT, |x, y| {
-            if x == 0 && y == 0 { return image::Rgba([0, 0, 0, 255]); }
-            if x == 1 && y == 0 { return image::Rgba([255, 255, 255, 255]); }
+            if x == 0 && y == 0 {
+                return image::Rgba([0, 0, 0, 255]);
+            }
+            if x == 1 && y == 0 {
+                return image::Rgba([255, 255, 255, 255]);
+            }
             let value = (102 + 2 * x + y) as u8;
             // Deliberate blue cast: this exercises colour-corrected histogram
             // bins instead of allowing the Auto Colour pass to be a no-op.
-            image::Rgba([value.saturating_sub(12), value, value.saturating_add(8), 255])
+            image::Rgba([
+                value.saturating_sub(12),
+                value,
+                value.saturating_add(8),
+                255,
+            ])
         });
         let mut automatic = EditRecipe::default();
         automatic.auto_contrast = true;
         renderer.set_source(
-            "test://auto-contrast-outliers", 0, &automatic,
-            WIDTH as i32, HEIGHT as i32,
+            "test://auto-contrast-outliers",
+            0,
+            &automatic,
+            WIDTH as i32,
+            HEIGHT as i32,
             glib::Bytes::from_owned(gradient.clone().into_raw()),
         );
         renderer.set_view(0.0, 0.0, WIDTH as f64, HEIGHT as f64, 1.0, 0.0, 0.0);
@@ -3672,6 +4465,165 @@ mod tests {
         check_frame(&combined, &gradient);
         renderer.set_recipe(&EditRecipe::default());
         check_frame(&EditRecipe::default(), &gradient);
+        for (name, fixture) in [
+            (
+                "low-contrast",
+                image::RgbaImage::from_fn(WIDTH, HEIGHT, |x, y| {
+                    let value = (116 + (x * 3 + y * 2) % 18) as u8;
+                    image::Rgba([value.saturating_sub(3), value, value.saturating_add(4), 255])
+                }),
+            ),
+            (
+                "high-contrast",
+                image::RgbaImage::from_fn(WIDTH, HEIGHT, |x, y| {
+                    let value = if (x + y) % 2 == 0 { 4 } else { 251 };
+                    image::Rgba([
+                        value,
+                        if x % 3 == 0 { 0 } else { value },
+                        if y % 3 == 0 { 255 } else { value },
+                        255,
+                    ])
+                }),
+            ),
+        ] {
+            renderer.set_source(
+                &format!("test://auto-{name}"),
+                0,
+                &EditRecipe::default(),
+                WIDTH as i32,
+                HEIGHT as i32,
+                glib::Bytes::from_owned(fixture.clone().into_raw()),
+            );
+            renderer.set_view(0.0, 0.0, WIDTH as f64, HEIGHT as f64, 1.0, 0.0, 0.0);
+            renderer.set_recipe(&EditRecipe::default());
+            check_frame(&EditRecipe::default(), &fixture);
+            let fixture_revision = renderer.uploaded_revision();
+            for (auto_color, auto_contrast) in [(true, false), (false, true), (true, true)] {
+                let automatic = EditRecipe {
+                    auto_color,
+                    auto_contrast,
+                    ..EditRecipe::default()
+                };
+                renderer.set_recipe(&automatic);
+                check_frame(&automatic, &fixture);
+                assert_eq!(renderer.uploaded_revision(), fixture_revision);
+            }
+            eprintln!("PIC_EDIT_GPU automatic_fixture={name} source_uploads=1");
+        }
+        renderer.set_source(
+            "test://auto-contrast-outliers",
+            0,
+            &combined,
+            WIDTH as i32,
+            HEIGHT as i32,
+            glib::Bytes::from_owned(gradient.clone().into_raw()),
+        );
+        renderer.set_view(0.0, 0.0, WIDTH as f64, HEIGHT as f64, 1.0, 0.0, 0.0);
+        // The automatic statistics must stay tied to the complete source
+        // image as the preview moves between native, 50% and Fit. Verify GPU
+        // output against tone-at-source-resolution followed by box reduction.
+        for zoom in [1.0f64, 0.5, 0.25] {
+            let view_width = (WIDTH as f64 * zoom) as u32;
+            let view_height = (HEIGHT as f64 * zoom) as u32;
+            renderer.set_view(
+                0.0,
+                0.0,
+                view_width as f64,
+                view_height as f64,
+                zoom,
+                0.0,
+                0.0,
+            );
+            for (auto_color, auto_contrast) in [(true, false), (false, true), (true, true)] {
+                let mut zoom_recipe = EditRecipe::default();
+                zoom_recipe.auto_color = auto_color;
+                zoom_recipe.auto_contrast = auto_contrast;
+                renderer.set_recipe(&zoom_recipe);
+                renderer.request_readback();
+                let deadline = Instant::now() + std::time::Duration::from_secs(5);
+                let pixels = loop {
+                    while context.pending() {
+                        context.iteration(false);
+                    }
+                    if let Some(pixels) = renderer.take_readback() {
+                        break pixels;
+                    }
+                    assert!(Instant::now() < deadline, "Auto zoom readback timed out");
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                };
+                let device_scale = renderer.widget().scale_factor().max(1) as u32;
+                let actual = pixels
+                    .chunks_exact(view_width as usize * device_scale as usize * 4)
+                    .rev()
+                    .flatten()
+                    .copied()
+                    .collect::<Vec<_>>();
+                let processed = super::super::render::apply_tone(gradient.clone(), &zoom_recipe);
+                let factor = zoom.recip() as u32;
+                let reference = image::RgbaImage::from_fn(view_width, view_height, |x, y| {
+                    let mut sum = [0u32; 4];
+                    for dy in 0..factor {
+                        for dx in 0..factor {
+                            let pixel = processed.get_pixel(x * factor + dx, y * factor + dy);
+                            for channel in 0..4 {
+                                sum[channel] += pixel[channel] as u32;
+                            }
+                        }
+                    }
+                    image::Rgba(
+                        sum.map(|value| ((value + factor * factor / 2) / (factor * factor)) as u8),
+                    )
+                });
+                let reference = if device_scale == 1 {
+                    reference
+                } else {
+                    image::imageops::resize(
+                        &reference,
+                        view_width * device_scale,
+                        view_height * device_scale,
+                        image::imageops::FilterType::Nearest,
+                    )
+                }
+                .into_raw();
+                let mut max_delta = 0u8;
+                let mut sum_delta = 0u64;
+                let mut worst = (0usize, 0u8, 0u8);
+                for (index, (observed, expected)) in actual.iter().zip(&reference).enumerate() {
+                    let delta = observed.abs_diff(*expected);
+                    sum_delta += delta as u64;
+                    if delta > max_delta {
+                        worst = (index, *observed, *expected);
+                    }
+                    max_delta = max_delta.max(delta);
+                }
+                eprintln!(
+                    "PIC_EDIT_GPU automatic_zoom_parity zoom={zoom} color={auto_color} contrast={auto_contrast} renderer={} max_channel_delta={max_delta} mean_channel_delta={:.4} worst_index={} actual={} expected={}",
+                    if gpu_tone_supported_for_view(&zoom_recipe, zoom == 1.0, 0) {
+                        "GPU"
+                    } else {
+                        "CPU-fallback"
+                    },
+                    sum_delta as f64 / actual.len().max(1) as f64,
+                    worst.0,
+                    worst.1,
+                    worst.2,
+                );
+                if zoom == 1.0 {
+                    assert!(
+                        max_delta <= 1,
+                        "native Auto parity color={auto_color} contrast={auto_contrast}: max delta {max_delta}"
+                    );
+                } else {
+                    assert!(
+                        !gpu_tone_supported_for_view(&zoom_recipe, false, 0),
+                        "sub-100% Auto must keep the CPU preview fallback until strict parity passes"
+                    );
+                }
+            }
+        }
+        renderer.set_view(0.0, 0.0, WIDTH as f64, HEIGHT as f64, 1.0, 0.0, 0.0);
+        renderer.set_recipe(&EditRecipe::default());
+        check_frame(&EditRecipe::default(), &gradient);
         // GPU stats must be calculated from the *filtered* photograph,
         // before automatic corrections. Toggle presets and intensity on the
         // same uploaded source to expose stale neutral/histogram caches.
@@ -3680,23 +4632,29 @@ mod tests {
         // quantized pixels straddle a histogram bin. Keep this independent
         // opt-in diagnostic while the live editor remains on CPU fallback.
         if std::env::var_os("PIC_GPU_AUTOSTATS_DIAG").is_some() {
-        for filter in [
-            FilterPreset::Clarendon, FilterPreset::Valencia,
-            FilterPreset::Newspaper, FilterPreset::DreamGlow,
-        ] {
-            for amount in [0.4, 1.0] {
-                let mut filtered = combined.clone();
-                filtered.filter = filter;
-                filtered.filter_amount = amount;
-                for (auto_color, auto_contrast) in [(true, false), (false, true), (true, true)] {
-                    filtered.auto_color = auto_color;
-                    filtered.auto_contrast = auto_contrast;
-                    renderer.set_recipe(&filtered);
-                    check_frame(&filtered, &gradient);
+            for filter in [
+                FilterPreset::Clarendon,
+                FilterPreset::Valencia,
+                FilterPreset::Newspaper,
+                FilterPreset::DreamGlow,
+            ] {
+                for amount in [0.25, 0.65, 1.0] {
+                    let mut filtered = combined.clone();
+                    filtered.filter = filter;
+                    filtered.filter_amount = amount;
+                    for (auto_color, auto_contrast) in [(true, false), (false, true), (true, true)]
+                    {
+                        filtered.auto_color = auto_color;
+                        filtered.auto_contrast = auto_contrast;
+                        renderer.set_recipe(&filtered);
+                        check_frame(&filtered, &gradient);
+                    }
+                    assert!(
+                        renderer.source_uploaded(),
+                        "changing filters must not invalidate the uploaded texture"
+                    );
                 }
-                assert!(renderer.source_uploaded(), "changing filters must not invalidate the uploaded texture");
             }
-        }
         }
         renderer.set_recipe(&EditRecipe::default());
         check_frame(&EditRecipe::default(), &gradient);
@@ -3722,9 +4680,21 @@ mod tests {
                 // gradients. A 960-pixel draft would destroy these details.
                 let hair = (x % 7) == 0 && (y % 13) < 7;
                 let eyelash = y % 23 == 0 && x % 4 < 2;
-                let r = if hair || eyelash { 22 } else { (60 + x % 147) as u8 };
-                let g = if hair || eyelash { 17 } else { (35 + y % 188) as u8 };
-                let b = if hair || eyelash { 26 } else { (45 + (x+y) % 173) as u8 };
+                let r = if hair || eyelash {
+                    22
+                } else {
+                    (60 + x % 147) as u8
+                };
+                let g = if hair || eyelash {
+                    17
+                } else {
+                    (35 + y % 188) as u8
+                };
+                let b = if hair || eyelash {
+                    26
+                } else {
+                    (45 + (x + y) % 173) as u8
+                };
                 image::Rgba([r, g, b, 255])
             })
         };
@@ -3741,8 +4711,11 @@ mod tests {
 
         let reference = EditRecipe::default();
         renderer.set_source(
-            "test://full-detail", 0, &reference,
-            width as i32, height as i32,
+            "test://full-detail",
+            0,
+            &reference,
+            width as i32,
+            height as i32,
             glib::Bytes::from_owned(image.clone().into_raw()),
         );
         renderer.set_view(x as f64, y as f64, VIEW as f64, VIEW as f64, 1.0, 0.0, 0.0);
@@ -3759,38 +4732,56 @@ mod tests {
                 if let Some(pixels) = renderer.take_readback() {
                     break pixels;
                 }
-                assert!(Instant::now() < deadline, "full-resolution GPU frame timed out");
+                assert!(
+                    Instant::now() < deadline,
+                    "full-resolution GPU frame timed out"
+                );
                 std::thread::sleep(std::time::Duration::from_millis(5));
             };
             let scale = renderer.widget().scale_factor().max(1) as usize;
             assert_eq!(result.len(), (VIEW as usize * scale).pow(2) * 4);
-            result.chunks_exact(VIEW as usize * scale * 4)
-                .rev().flatten().copied().collect::<Vec<u8>>()
+            result
+                .chunks_exact(VIEW as usize * scale * 4)
+                .rev()
+                .flatten()
+                .copied()
+                .collect::<Vec<u8>>()
         };
         let neutral = read_frame(&reference);
         let revision = renderer.uploaded_revision();
         let mut exposure = reference.clone();
         exposure.exposure = -0.03;
         let exposed = read_frame(&exposure);
-        assert_eq!(renderer.uploaded_revision(), revision,
-            "Exposure-only edit must reuse the full-size uploaded texture");
+        assert_eq!(
+            renderer.uploaded_revision(),
+            revision,
+            "Exposure-only edit must reuse the full-size uploaded texture"
+        );
         let cpu = super::super::render::apply_tone(image.clone(), &exposure);
         let expected = image::imageops::crop_imm(&cpu, x, y, VIEW as u32, VIEW as u32).to_image();
         let scale = renderer.widget().scale_factor().max(1) as u32;
-        let expected = if scale == 1 { expected } else {
+        let expected = if scale == 1 {
+            expected
+        } else {
             image::imageops::resize(
                 &expected,
                 VIEW as u32 * scale,
                 VIEW as u32 * scale,
                 image::imageops::FilterType::Nearest,
             )
-        }.into_raw();
+        }
+        .into_raw();
         assert_eq!(exposed.len(), expected.len());
-        let max_delta = exposed.iter().zip(&expected)
+        let max_delta = exposed
+            .iter()
+            .zip(&expected)
             .map(|(a, b)| (*a as i16 - *b as i16).abs())
-            .max().unwrap_or_default();
-        assert!(max_delta <= 1,
-            "full-source exposure GPU/CPU parity failed: max channel delta {max_delta}");
+            .max()
+            .unwrap_or_default();
+        assert!(
+            max_delta <= 1,
+            "full-source exposure GPU/CPU parity failed: max channel delta {max_delta}"
+        );
         // RGB edge strength within the same native 1:1 viewport. Exposure must
         // not resample or erase the image texture's one-pixel detail.
         let edge_energy = |rgba: &[u8]| -> f64 {
@@ -3800,7 +4791,7 @@ mod tests {
                 for x in 1..(VIEW as usize * scale as usize) {
                     let idx = x * 4;
                     for channel in 0..3 {
-                        sum += (row[idx+channel] as i16 - row[idx-4+channel] as i16)
+                        sum += (row[idx + channel] as i16 - row[idx - 4 + channel] as i16)
                             .unsigned_abs() as u64;
                     }
                 }
@@ -3810,8 +4801,10 @@ mod tests {
         let source_energy = edge_energy(&neutral);
         let edit_energy = edge_energy(&exposed);
         let ratio = edit_energy / source_energy.max(1.0);
-        assert!((0.92..=1.08).contains(&ratio),
-            "tiny exposure altered native-pixel sharpness: edge ratio {ratio:.4}");
+        assert!(
+            (0.92..=1.08).contains(&ratio),
+            "tiny exposure altered native-pixel sharpness: edge ratio {ratio:.4}"
+        );
         let reset = read_frame(&reference);
         assert_eq!(neutral, reset, "exposure reset changed original GPU pixels");
         assert_eq!(renderer.uploaded_revision(), revision);
@@ -3822,19 +4815,29 @@ mod tests {
         assert!(gpu_tone_supported(&automatic));
         let auto_gpu = read_frame(&automatic);
         let auto_cpu = super::super::render::apply_tone(image.clone(), &automatic);
-        let auto_cpu = image::imageops::crop_imm(
-            &auto_cpu, x, y, VIEW as u32, VIEW as u32,
-        ).to_image();
-        let auto_cpu = if scale == 1 { auto_cpu } else {
-            image::imageops::resize(&auto_cpu,
-                VIEW as u32 * scale, VIEW as u32 * scale,
-                image::imageops::FilterType::Nearest)
-        }.into_raw();
-        let auto_delta = auto_gpu.iter().zip(&auto_cpu)
+        let auto_cpu =
+            image::imageops::crop_imm(&auto_cpu, x, y, VIEW as u32, VIEW as u32).to_image();
+        let auto_cpu = if scale == 1 {
+            auto_cpu
+        } else {
+            image::imageops::resize(
+                &auto_cpu,
+                VIEW as u32 * scale,
+                VIEW as u32 * scale,
+                image::imageops::FilterType::Nearest,
+            )
+        }
+        .into_raw();
+        let auto_delta = auto_gpu
+            .iter()
+            .zip(&auto_cpu)
             .map(|(a, b)| (*a as i16 - *b as i16).abs())
-            .max().unwrap_or_default();
-        assert!(auto_delta <= 3,
-            "full-source Auto Colour GPU/CPU mismatch: max delta {auto_delta}");
+            .max()
+            .unwrap_or_default();
+        assert!(
+            auto_delta <= 3,
+            "full-source Auto Colour GPU/CPU mismatch: max delta {auto_delta}"
+        );
         assert_eq!(renderer.uploaded_revision(), revision);
         // Real source dimensions exercise the 256-bin GPU histogram and its
         // dependency on neutral-colour gains. Both automatic tools must be
@@ -3844,19 +4847,29 @@ mod tests {
         assert!(gpu_tone_supported(&both));
         let both_gpu = read_frame(&both);
         let both_cpu = super::super::render::apply_tone(image.clone(), &both);
-        let both_cpu = image::imageops::crop_imm(
-            &both_cpu, x, y, VIEW as u32, VIEW as u32,
-        ).to_image();
-        let both_cpu = if scale == 1 { both_cpu } else {
-            image::imageops::resize(&both_cpu,
-                VIEW as u32 * scale, VIEW as u32 * scale,
-                image::imageops::FilterType::Nearest)
-        }.into_raw();
-        let combined_delta = both_gpu.iter().zip(&both_cpu)
+        let both_cpu =
+            image::imageops::crop_imm(&both_cpu, x, y, VIEW as u32, VIEW as u32).to_image();
+        let both_cpu = if scale == 1 {
+            both_cpu
+        } else {
+            image::imageops::resize(
+                &both_cpu,
+                VIEW as u32 * scale,
+                VIEW as u32 * scale,
+                image::imageops::FilterType::Nearest,
+            )
+        }
+        .into_raw();
+        let combined_delta = both_gpu
+            .iter()
+            .zip(&both_cpu)
             .map(|(a, b)| (*a as i16 - *b as i16).abs())
-            .max().unwrap_or_default();
-        assert!(combined_delta <= 3,
-            "full-size combined Auto Colour/Contrast parity: delta {combined_delta}");
+            .max()
+            .unwrap_or_default();
+        assert!(
+            combined_delta <= 3,
+            "full-size combined Auto Colour/Contrast parity: delta {combined_delta}"
+        );
         assert_eq!(renderer.uploaded_revision(), revision);
         eprintln!("PIC_EDIT_GPU full_source_combined_auto max_channel_delta={combined_delta}");
         let reset_again = read_frame(&reference);
@@ -3930,11 +4943,18 @@ mod tests {
         renderer.widget().make_current();
         let driver = unsafe {
             let name = gl::GetString(gl::RENDERER);
-            if name.is_null() { "unknown".to_owned() }
-            else { std::ffi::CStr::from_ptr(name.cast()).to_string_lossy().into_owned() }
+            if name.is_null() {
+                "unknown".to_owned()
+            } else {
+                std::ffi::CStr::from_ptr(name.cast())
+                    .to_string_lossy()
+                    .into_owned()
+            }
         };
-        eprintln!("PIC_EDIT_GPU benchmark_gl_renderer={driver} gsk_renderer={:?}", window.renderer().map(|r| r.type_().name().to_owned()));
-
+        eprintln!(
+            "PIC_EDIT_GPU benchmark_gl_renderer={driver} gsk_renderer={:?}",
+            window.renderer().map(|r| r.type_().name().to_owned())
+        );
 
         let mut recipe = base_recipe.clone();
         recipe.exposure = 0.2;
@@ -3990,9 +5010,81 @@ mod tests {
         let gpu_cached_median = cached_sorted[cached_sorted.len() / 2];
         eprintln!(
             "PIC_EDIT_GPU benchmark source={}x{} viewport={}x{} upload_ready_ms={ready_ms:.3} cpu_full_frame_ms={cpu_ms:.3} uniform_to_draw_callback_ms={uniform_to_draw_ms:.3} gpu_first_frame_ms={gpu_first_frame:.3} gpu_cached_mean_ms={gpu_cached_mean:.3} gpu_cached_median_ms={gpu_cached_median:.3} samples={}",
-            source_width, source_height, VIEW_WIDTH, VIEW_HEIGHT,
+            source_width,
+            source_height,
+            VIEW_WIDTH,
+            VIEW_HEIGHT,
             gpu_times.len(),
         );
+
+        let source_revision = renderer.uploaded_revision();
+        let measure_auto = |recipe: &EditRecipe| {
+            let mut gpu_samples_ms = Vec::with_capacity(2);
+            let timer_deadline = Instant::now() + std::time::Duration::from_secs(20);
+            for _ in 0..2 {
+                let previous_frame = renderer.rendered_frames();
+                renderer.request_gpu_timer();
+                renderer.set_recipe(recipe);
+                while renderer.rendered_frames() <= previous_frame
+                    && Instant::now() < timer_deadline
+                {
+                    while context.pending() {
+                        context.iteration(false);
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(2));
+                }
+                assert!(
+                    renderer.rendered_frames() > previous_frame,
+                    "automatic correction GPU draw was not queued"
+                );
+                loop {
+                    if let Some(elapsed_ns) = renderer.take_gpu_time_ns() {
+                        gpu_samples_ms.push(elapsed_ns as f64 / 1_000_000.0);
+                        break;
+                    }
+                    while context.pending() {
+                        context.iteration(false);
+                    }
+                    assert!(
+                        Instant::now() < timer_deadline,
+                        "automatic correction GPU timer query timed out"
+                    );
+                    std::thread::sleep(std::time::Duration::from_millis(2));
+                }
+            }
+            assert_eq!(
+                renderer.uploaded_revision(),
+                source_revision,
+                "automatic edits must reuse the uploaded source texture"
+            );
+            let cached = gpu_samples_ms[1];
+            (gpu_samples_ms[0], cached)
+        };
+        for (label, auto_color, auto_contrast) in [
+            ("auto_color", true, false),
+            ("auto_contrast", false, true),
+            ("combined", true, true),
+        ] {
+            let mut automatic = base_recipe.clone();
+            automatic.auto_color = auto_color;
+            automatic.auto_contrast = auto_contrast;
+            if label == "combined" {
+                // Invalidate both statistics caches without changing the
+                // source texture. Do not pump the main context between these
+                // recipe updates, so only the combined frame is rendered.
+                let mut invalidate = automatic.clone();
+                invalidate.filter_amount = 0.99;
+                renderer.set_recipe(&invalidate);
+            }
+            let cpu_started = Instant::now();
+            let _cpu_frame = super::super::render::apply_tone(source.clone(), &automatic);
+            let cpu_auto_ms = cpu_started.elapsed().as_secs_f64() * 1000.0;
+            let (gpu_first_ms, gpu_cached_ms) = measure_auto(&automatic);
+            eprintln!(
+                "PIC_EDIT_GPU benchmark_{label} gpu_first_frame_ms={gpu_first_ms:.3} gpu_cached_frame_ms={gpu_cached_ms:.3} gpu_stats_plus_extra_ms={:.3} cpu_full_frame_ms={cpu_auto_ms:.3} source_upload_delta=0",
+                (gpu_first_ms - gpu_cached_ms).max(0.0),
+            );
+        }
         window.close();
     }
 }

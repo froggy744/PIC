@@ -26,12 +26,25 @@
   `gpu-edit-hardware-verified-2026-10-18`). This **does not** verify every
   later Export change or every distribution runtime.
 
-**Still CPU for accuracy:** Auto Colour and/or Auto Contrast combined with
-named creative presets or cropped/straightened geometry. The current GPU
-statistics path has produced 31–51/255 channel deviations against the CPU
-reference on synthetic fixtures. Keep CPU fallback until strict parity tests
-prove those combinations safe. `PIC_EDIT_RENDERER=auto` intentionally retains
-the CPU default; do not auto-enable GPU across distributions prematurely.
+**Auto-correction parity status:** Plain Auto Colour, plain Auto Contrast and
+their combination match the CPU Export renderer on the synthetic native 1:1
+fixtures (maximum channel difference 0–1). The GPU path now keeps deterministic
+GPU-side Auto Colour accumulation and full-resolution histogram statistics;
+it does not read statistics back to the CPU. Preview selection remains
+conservative: GPU Auto corrections are currently used only for identity
+geometry at native 1:1. FIT/50% previews and quarter-turn rotations use CPU
+because mip-filter rounding or rotated sampling can differ from the Export
+reference. Auto corrections with crops, straighten or creative presets also
+remain on CPU. The expanded crop/filter matrix still measures up to 16/255
+maximum channel difference for Auto Contrast with full-strength Pencil Sketch,
+so those combinations are not safe to enable on GPU yet. The test logs maximum and mean
+channel differences and the worst pixel for each diagnostic case; tolerances
+have not been increased.
+
+No local Nikon NEF/NRW file was available for the Auto parity matrix. The
+embedded Nikon JPEG colour-fidelity regression fixture passed, but this does
+not establish Auto parity on an actual camera file. `PIC_EDIT_RENDERER=auto`
+intentionally retains the CPU default while these release gates are open.
 
 Future Auto selection must probe successful GL context/shader initialization
 and the OpenGL capabilities required by the renderer. It must not branch on
@@ -93,11 +106,15 @@ xvfb-run -a cargo test --locked gtk_gl_area_fit_minification_matches_lanczos_che
 
 The ignored `gtk_gl_area_benchmarks_full_source_upload_and_viewport_sized_draw`
 test reports source upload/mipmap construction, CPU full-frame time, GPU draw
-callback timing and a GL elapsed-time query for the rendered frame. Run it on
-each target desktop GPU under the same display session used for visual review.
-The callback time is submission timing; the GL query measures GPU work without
-a synchronous readback. `PICASA_TRACE=1` also reports upload, draw-submit and
-frame-present timings during a live run.
+callback timing and GL elapsed-time queries for the rendered frame and
+automatic-statistics passes. A Mesa 26.2.3 run on the AMD Radeon RX 7600
+measured 7.012 ms for the first 3936×2624 frame and 0.017 ms cached; Auto
+Colour 1.134 ms, Auto Contrast 1.075 ms and both 1.635 ms on their first
+frames. Cached automatic frames measured 0.017–0.018 ms. The corresponding CPU
+full-frame recipes took 62.101, 68.781 and 87.842 ms. Auto adjustments caused
+zero additional source uploads. These GPU numbers come from OpenGL timer
+queries, while the separately reported draw callback is CPU submission time.
+They are local hardware results, not a guarantee for other drivers.
 
 ## Second Fedora GPU validation — office RX 7600 XT
 

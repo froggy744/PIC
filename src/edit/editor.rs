@@ -11,6 +11,7 @@ use rusqlite::Connection;
 use super::filters::FilterPreset;
 use super::live_gpu::{
     EditRendererMode, LiveGpuCanvas, gpu_base_recipe, gpu_tone_supported,
+    gpu_tone_supported_for_view,
 };
 use super::model::{
     CropRect, EditRecipe, EditSession, OverlayAnchor, OverlaySpec, TextAlign, TextLayerSpec,
@@ -1054,7 +1055,7 @@ pub fn build(
                     let native = native_one_to_one.get();
                     let gpu_base_requested = gpu_canvas.is_some()
                         && !gpu_failed.get()
-                        && gpu_tone_supported(&recipe);
+                        && gpu_tone_supported_for_view(&recipe, native, rotation);
                     // Retain the last sharp frame while unsupported CPU effects
                     // render. Never magnify an interactive draft at any zoom.
                     let interactive_draft = false;
@@ -1308,7 +1309,11 @@ pub fn build(
         Rc::new(move || {
             let recipe = session.borrow().recipe.clone();
             if let Some(gpu_canvas) = &gpu_canvas {
-                if !gpu_failed.get() && gpu_tone_supported(&recipe) {
+                if !gpu_failed.get()
+                    && gpu_tone_supported_for_view(
+                        &recipe, native_one_to_one.get(), active_rotation.get(),
+                    )
+                {
                     if gpu_canvas.has_source_for(
                         &photo.path(),
                         active_rotation.get(),

@@ -10,6 +10,11 @@
   Clarity, Grain, B&W/Sepia and all fourteen named creative presets.
 - Crop, Straighten, library quarter-turn rotations, Fit/1:1, pan and source
   texture caching. Interactive image overlays and rasterized Pango text.
+- Fit and other sub-100% views use a source texture mip pyramid with
+  footprint-selected trilinear sampling. The mip chain is generated only when
+  the decoded source is uploaded; view/recipe changes do not reupload pixels.
+  The 1:1 path uses level-zero integer fetches and nearest magnification so
+  source pixels remain exact.
 - Seventeen GPU filter-picker covers from one decoded source preview.
 - A failed GL context, shader or draw returns to the CPU render path; image
   originals and the database recipe are never modified by GPU operations.
@@ -24,6 +29,13 @@ statistics path has produced 31–51/255 channel deviations against the CPU
 reference on synthetic fixtures. Keep CPU fallback until strict parity tests
 prove those combinations safe. `PIC_EDIT_RENDERER=auto` intentionally retains
 the CPU default; do not auto-enable GPU across distributions prematurely.
+
+Future Auto selection must probe successful GL context/shader initialization
+and the OpenGL capabilities required by the renderer. It must not branch on
+GPU vendor strings or dedicated-versus-integrated GPU classification. Keep
+the explicit GPU mode available for validation, and fall back to CPU after
+context, shader or draw errors. Add capability gates only after the release
+checks below pass on supported runtime stacks.
 
 ## Export status and implementation
 
@@ -67,6 +79,22 @@ For CPU reference:
 ```sh
 PIC_EDIT_RENDERER=cpu cargo run
 ```
+
+GPU Fit quality regression (high-frequency checkerboard against an
+`image::FilterType::Lanczos3` reference):
+
+```sh
+xvfb-run -a cargo test --locked gtk_gl_area_fit_minification_matches_lanczos_checkerboard_reference \
+  -- --ignored --test-threads=1 --nocapture
+```
+
+The ignored `gtk_gl_area_benchmarks_full_source_upload_and_viewport_sized_draw`
+test reports source upload/mipmap construction, CPU full-frame time, GPU draw
+callback timing and a GL elapsed-time query for the rendered frame. Run it on
+each target desktop GPU under the same display session used for visual review.
+The callback time is submission timing; the GL query measures GPU work without
+a synchronous readback. `PICASA_TRACE=1` also reports upload, draw-submit and
+frame-present timings during a live run.
 
 ## Second Fedora GPU validation — office RX 7600 XT
 

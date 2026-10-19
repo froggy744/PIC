@@ -39,6 +39,9 @@ impl EditRendererMode {
     }
 
     pub fn should_attempt_gpu(self) -> bool {
+        // Auto deliberately stays on CPU. Any future Auto gate must be based
+        // on successful context creation and the GL features actually used,
+        // never a vendor string or dedicated/iGPU classification.
         matches!(self, Self::Gpu)
     }
 }
@@ -214,6 +217,8 @@ struct GlObjects {
     overlay_program: u32,
     overlay_textures: Vec<(String, u32)>,
     overlay_revision: u64,
+    #[cfg(test)]
+    gpu_timer_query: u32,
 }
 
 struct GpuState {
@@ -238,6 +243,10 @@ struct GpuState {
     readback_requested: bool,
     #[cfg(test)]
     readback_pixels: Option<Vec<u8>>,
+    #[cfg(test)]
+    gpu_timer_requested: bool,
+    #[cfg(test)]
+    gpu_timer_pending: bool,
 }
 
 #[derive(Clone)]
@@ -284,6 +293,10 @@ impl LiveGpuCanvas {
             readback_requested: false,
             #[cfg(test)]
             readback_pixels: None,
+            #[cfg(test)]
+            gpu_timer_requested: false,
+            #[cfg(test)]
+            gpu_timer_pending: false,
         }));
 
         let error_state = state.clone();
@@ -394,6 +407,8 @@ impl LiveGpuCanvas {
                 let overlay_revision = state.overlay_revision;
                 let overlay_visible = state.overlay_visible;
                 let view = state.view;
+                #[cfg(test)]
+                let gpu_timer_requested = state.gpu_timer_requested;
                 let objects = state.objects.as_mut().expect("GL initialized");
                 let mut upload_trace = None;
                 #[cfg(test)]
@@ -407,6 +422,13 @@ impl LiveGpuCanvas {
                     );
                     gl::ClearColor(0.055, 0.06, 0.07, 1.0);
                     gl::Clear(gl::COLOR_BUFFER_BIT);
+                    #[cfg(test)]
+                    if gpu_timer_requested {
+                        if objects.gpu_timer_query == 0 {
+                            gl::GenQueries(1, &mut objects.gpu_timer_query);
+                        }
+                        gl::BeginQuery(gl::TIME_ELAPSED, objects.gpu_timer_query);
+                    }
                     if let Some((width, height, bytes)) = source.as_ref() {
                         if objects.source_revision != source_revision {
                             gl::ActiveTexture(gl::TEXTURE0);
@@ -424,6 +446,11 @@ impl LiveGpuCanvas {
                                 gl::UNSIGNED_BYTE,
                                 bytes.as_ref().as_ptr().cast(),
                             );
+                            // Build the source pyramid once per decoded image.
+                            // Sampling this pyramid at the view's footprint avoids
+                            // aliasing at Fit without a CPU resize/readback or a
+                            // second geometry-specific upload.
+                            gl::GenerateMipmap(gl::TEXTURE_2D);
                             let elapsed = upload_started.elapsed().as_secs_f64() * 1000.0;
                             objects.source_revision = source_revision;
                             upload_trace = Some((*width, *height, elapsed));
@@ -431,14 +458,16 @@ impl LiveGpuCanvas {
                     }
 
                     let filter = if view.scale < 1.0 {
-                        gl::LINEAR
+                        gl::LINEAR_MIPMAP_LINEAR
                     } else {
                         gl::NEAREST
                     };
                     if objects.filter != filter {
                         gl::BindTexture(gl::TEXTURE_2D, objects.texture);
                         gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, filter as i32);
-                        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, filter as i32);
+                        // Magnification remains pixel exact; minification uses
+                        // the mip pyramid and trilinear level selection.
+                        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as i32);
                         objects.filter = filter;
                     }
 
@@ -476,6 +505,15 @@ impl LiveGpuCanvas {
                     uniform_2f(objects.program, "uScroll", view.scroll_x, view.scroll_y);
                     uniform_2f(objects.program, "uPadding", view.pad_x, view.pad_y);
                     uniform_1f(objects.program, "uScale", view.scale.max(0.0001));
+                    uniform_1f(
+                        objects.program,
+                        "uMinificationLod",
+                        if view.scale < 1.0 {
+                            (1.0 / view.scale.max(0.0001)).log2().max(0.0)
+                        } else {
+                            0.0
+                        },
+                    );
                     uniform_1f(objects.program, "uExposure", tone.exposure);
                     uniform_1f(objects.program, "uContrast", tone.contrast);
                     uniform_1f(objects.program, "uSaturation", tone.saturation);
@@ -604,6 +642,12 @@ impl LiveGpuCanvas {
                             view_width, view_height, device_scale,
                             output_width, output_height,
                         );
+                    }
+                    #[cfg(test)]
+                    if gpu_timer_requested {
+                        gl::EndQuery(gl::TIME_ELAPSED);
+                        state.gpu_timer_requested = false;
+                        state.gpu_timer_pending = true;
                     }
                     #[cfg(test)]
                     if state.readback_requested {
@@ -994,6 +1038,32 @@ impl LiveGpuCanvas {
     fn take_readback(&self) -> Option<Vec<u8>> {
         self.state.borrow_mut().readback_pixels.take()
     }
+
+    #[cfg(test)]
+    fn request_gpu_timer(&self) {
+        self.state.borrow_mut().gpu_timer_requested = true;
+        self.area.queue_render();
+    }
+
+    #[cfg(test)]
+    fn take_gpu_time_ns(&self) -> Option<u64> {
+        if !self.state.borrow().gpu_timer_pending {
+            return None;
+        }
+        self.area.make_current();
+        let query = self.state.borrow().objects.as_ref()?.gpu_timer_query;
+        let mut available = 0;
+        unsafe {
+            gl::GetQueryObjectiv(query, gl::QUERY_RESULT_AVAILABLE, &mut available);
+            if available == 0 {
+                return None;
+            }
+            let mut elapsed_ns = 0u64;
+            gl::GetQueryObjectui64v(query, gl::QUERY_RESULT, &mut elapsed_ns);
+            self.state.borrow_mut().gpu_timer_pending = false;
+            Some(elapsed_ns)
+        }
+    }
 }
 
 fn thumbnail_cover_view(width: i32, height: i32, tile_size: i32) -> GpuView {
@@ -1102,6 +1172,7 @@ uniform vec2 uViewSize;
 uniform vec2 uScroll;
 uniform vec2 uPadding;
 uniform float uScale;
+uniform float uMinificationLod;
 uniform float uDeviceScale;
 uniform float uExposure;
 uniform float uContrast;
@@ -1219,10 +1290,17 @@ vec4 tonePixel(vec4 px) {
 }
 // Inverse transform in output pixel coordinates: rotate + autocrop first,
 // then crop. Manual bilinear interpolation uses CPU-equivalent 8-bit rounding.
-vec4 geometryPixel(ivec2 outputCoord) {
-    ivec2 valid = clamp(outputCoord, ivec2(0), ivec2(uOutputSize) - ivec2(1));
-    if (uGpuGeometryOn == 0) return texelFetch(uSource, valid, 0);
-    vec2 offset = vec2(valid) + uCropOffset - (uRotatedSize - vec2(1.0)) * 0.5;
+vec4 geometryPixelLod(vec2 outputCoord, float lod) {
+    vec2 valid = clamp(outputCoord, vec2(0.0), uOutputSize - vec2(1.0));
+    if (uGpuGeometryOn == 0) {
+        if (lod <= 0.001) {
+            ivec2 nearestCoord = ivec2(floor(valid));
+            if (all(lessThan(abs(valid - vec2(nearestCoord)), vec2(0.001))))
+                return texelFetch(uSource, nearestCoord, 0);
+        }
+        return textureLod(uSource, (vec2(valid) + vec2(0.5)) / uSourceSize, lod);
+    }
+    vec2 offset = valid + uCropOffset - (uRotatedSize - vec2(1.0)) * 0.5;
     vec2 orientedCoord = vec2(
         uAngleCosSin.x * offset.x + uAngleCosSin.y * offset.y,
         -uAngleCosSin.y * offset.x + uAngleCosSin.x * offset.y
@@ -1236,6 +1314,9 @@ vec4 geometryPixel(ivec2 outputCoord) {
         sourceCoord = vec2(uSourceSize.x - 1.0 - orientedCoord.y, orientedCoord.x);
     }
     sourceCoord = clamp(sourceCoord, vec2(0.0), uSourceSize - vec2(1.0));
+    if (lod > 0.001) {
+        return textureLod(uSource, (sourceCoord + vec2(0.5)) / uSourceSize, lod);
+    }
     ivec2 lo = ivec2(floor(sourceCoord));
     ivec2 hi = min(lo + ivec2(1), ivec2(uSourceSize) - ivec2(1));
     vec2 t = fract(sourceCoord);
@@ -1245,6 +1326,7 @@ vec4 geometryPixel(ivec2 outputCoord) {
                      texelFetch(uSource, hi, 0), t.x);
     return round(clamp(mix(upper, lower, t.y), 0.0, 1.0) * 255.0) / 255.0;
 }
+vec4 geometryPixel(ivec2 outputCoord) { return geometryPixelLod(vec2(outputCoord), 0.0); }
 // Port of filters::apply_filter's parameterized colour presets. The filter
 // is applied and quantized *before* the manual tone pipeline, like CPU export.
 float stableNoise(ivec2 coord) {
@@ -1300,7 +1382,8 @@ vec4 namedFilterPixel(vec4 px, ivec2 coord) {
         c = round(clamp(c + (vec3(1.0) - c) * glow, 0.0, 1.0) * 255.0) / 255.0;
     }
     if (uNamedGrain > 0.0) {
-        float noise = stableNoise(coord) * uNamedGrain * 255.0;
+        // Source-scale grain averages down with the display footprint.
+        float noise = stableNoise(coord) * uNamedGrain * min(uScale, 1.0) * 255.0;
         c = round(clamp(c * 255.0 + vec3(noise), 0.0, 255.0)) / 255.0;
     }
     // CPU blend_filter_amount quantizes the blend of original and look.
@@ -1311,7 +1394,7 @@ vec4 namedFilterPixel(vec4 px, ivec2 coord) {
 vec4 sampleTone(ivec2 coord) {
     ivec2 limit = ivec2(uOutputSize) - ivec2(1);
     ivec2 valid = clamp(coord, ivec2(0), limit);
-    return tonePixel(namedFilterPixel(geometryPixel(valid), valid));
+    return tonePixel(namedFilterPixel(geometryPixelLod(vec2(valid), uMinificationLod), valid));
 }
 vec3 clarified(ivec2 coord) {
     vec3 base = sampleTone(coord).rgb;
@@ -1345,7 +1428,8 @@ vec3 sharpened(ivec2 coord) {
 // Unsigned arithmetic wraps as required by the Rust u32 implementation.
 vec3 grainPixel(ivec2 coord, vec3 rgb) {
     if (uGrain <= 0.001) return rgb;
-    float noise = stableNoise(coord) * uGrain * 0.24 * 255.0;
+    // Avoid turning source-scale grain into coarse screen-space noise at Fit.
+    float noise = stableNoise(coord) * uGrain * min(uScale, 1.0) * 0.24 * 255.0;
     return round(clamp(rgb * 255.0 + vec3(noise), 0.0, 255.0)) / 255.0;
 }
 vec3 processedPixel(ivec2 coord) {
@@ -1382,19 +1466,26 @@ void main() {
         color = vec4(0.055, 0.06, 0.07, 1.0);
         return;
     }
+    // The source texture's mip pyramid integrates a footprint-sized area.
+    // Trilinear LOD selection is stable at fractional zooms and suppresses
+    // checkerboard/moiré detail at Fit. LOD zero preserves exact 1:1 fetches.
+    if (uScale < 1.0) {
+        vec2 outputCoord = sourcePos - vec2(0.5);
+        ivec2 coord = ivec2(floor(outputCoord));
+        if (uSharpen > 0.0001 || uGrain > 0.001 || abs(uClarity) > 0.001 || uNamedFilter >= 0.5) {
+            vec4 px = sampleTone(coord);
+            color = vec4(processedPixel(coord), px.a);
+            return;
+        }
+        vec4 px = geometryPixelLod(outputCoord, uMinificationLod);
+        px = namedFilterPixel(px, coord);
+        color = tonePixel(px);
+        return;
+    }
     if (uSharpen <= 0.0001 && uGrain <= 0.001 && abs(uClarity) <= 0.001 && uNamedFilter < 0.5) {
         color = tonePixel(uGpuGeometryOn != 0
             ? geometryPixel(ivec2(floor(sourcePos)))
             : texture(uSource, sourcePos / uSourceSize));
-        return;
-    }
-    if (uScale < 1.0) {
-        vec2 texel = sourcePos - vec2(0.5);
-        ivec2 lo = ivec2(floor(texel));
-        vec2 f = fract(texel);
-        vec3 top = mix(processedPixel(lo), processedPixel(lo + ivec2(1, 0)), f.x);
-        vec3 bottom = mix(processedPixel(lo + ivec2(0, 1)), processedPixel(lo + ivec2(1, 1)), f.x);
-        color = vec4(mix(top, bottom, f.y), 1.0);
         return;
     }
     ivec2 coord = ivec2(floor(sourcePos));
@@ -1676,6 +1767,8 @@ void main() {
         overlay_program,
         overlay_textures: Vec::new(),
         overlay_revision: 0,
+        #[cfg(test)]
+        gpu_timer_query: 0,
     })
 }
 
@@ -2523,6 +2616,56 @@ mod tests {
             assert!(max_delta <= 2,
                 "thumbnail GPU/CPU mismatch filter={filter:?} bw={black_white} sepia={sepia}: {max_delta}");
         }
+        window.close();
+    }
+
+    #[test]
+    #[ignore = "requires GTK OpenGL display; run under xvfb-run"]
+    fn gtk_gl_area_fit_minification_matches_lanczos_checkerboard_reference() {
+        gtk::init().expect("GTK init");
+        const SOURCE: u32 = 128;
+        const VIEW: u32 = 32;
+        let checker = image::RgbaImage::from_fn(SOURCE, SOURCE, |x, y| {
+            let value = if (x + y) % 2 == 0 { 0 } else { 255 };
+            image::Rgba([value, value, value, 255])
+        });
+        let gpu = LiveGpuCanvas::new();
+        gpu.widget().set_size_request(VIEW as i32, VIEW as i32);
+        let window = gtk::Window::new();
+        window.set_default_size(VIEW as i32, VIEW as i32);
+        window.set_child(Some(&gpu.widget()));
+        window.present();
+        gpu.set_source(
+            "test://checkerboard-fit", 0, &EditRecipe::default(),
+            SOURCE as i32, SOURCE as i32,
+            glib::Bytes::from_owned(checker.clone().into_raw()),
+        );
+        // Exercise the geometryPixel path that previously bypassed
+        // footprint filtering for an unadjusted source texture.
+        gpu.set_untransformed_geometry(&EditRecipe::default());
+        gpu.set_view(0.0, 0.0, VIEW as f64, VIEW as f64,
+            VIEW as f64 / SOURCE as f64, 0.0, 0.0);
+        gpu.request_readback();
+        let context = glib::MainContext::default();
+        let deadline = Instant::now() + std::time::Duration::from_secs(6);
+        let pixels = loop {
+            while context.pending() { context.iteration(false); }
+            if let Some(pixels) = gpu.take_readback() { break pixels; }
+            assert!(Instant::now() < deadline, "checkerboard Fit readback timed out");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        };
+        let actual = pixels.chunks_exact(VIEW as usize * 4)
+            .rev().flatten().copied().collect::<Vec<_>>();
+        let reference = image::imageops::resize(
+            &checker, VIEW, VIEW, image::imageops::FilterType::Lanczos3,
+        ).into_raw();
+        let max_delta = actual.iter().zip(&reference)
+            .map(|(a, b)| a.abs_diff(*b)).max().unwrap_or_default();
+        let mean_delta = actual.iter().zip(&reference)
+            .map(|(a, b)| a.abs_diff(*b) as f64).sum::<f64>() / actual.len() as f64;
+        eprintln!("PIC_EDIT_GPU checkerboard_fit_reference=Lanczos3 scale=0.25 max_delta={max_delta} mean_delta={mean_delta:.3}");
+        assert!(max_delta <= 3 && mean_delta <= 1.0,
+            "checkerboard Fit differs from Lanczos3: max={max_delta}, mean={mean_delta:.3}");
         window.close();
     }
 
@@ -3576,6 +3719,7 @@ mod tests {
 
         let prior_frame = renderer.rendered_frames();
         let gpu_started = Instant::now();
+        renderer.request_gpu_timer();
         renderer.set_recipe(&recipe);
         while renderer.rendered_frames() <= prior_frame && Instant::now() < deadline {
             while context.pending() {
@@ -3588,9 +3732,37 @@ mod tests {
             renderer.rendered_frames() > prior_frame,
             "GPU draw was not queued"
         );
+        let mut gpu_times = Vec::with_capacity(5);
+        for frame in 0..5 {
+            if frame > 0 {
+                let previous_frame = renderer.rendered_frames();
+                renderer.request_gpu_timer();
+                while renderer.rendered_frames() <= previous_frame && Instant::now() < deadline {
+                    while context.pending() {
+                        context.iteration(false);
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(2));
+                }
+            }
+            loop {
+                if let Some(elapsed_ns) = renderer.take_gpu_time_ns() {
+                    gpu_times.push(elapsed_ns as f64 / 1_000_000.0);
+                    break;
+                }
+                while context.pending() {
+                    context.iteration(false);
+                }
+                assert!(Instant::now() < deadline, "GPU timer query timed out");
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
+        }
+        gpu_times.sort_by(f64::total_cmp);
+        let gpu_mean = gpu_times.iter().sum::<f64>() / gpu_times.len() as f64;
+        let gpu_median = gpu_times[gpu_times.len() / 2];
         eprintln!(
-            "PIC_EDIT_GPU benchmark source={}x{} viewport={}x{} upload_ready_ms={ready_ms:.3} cpu_full_frame_ms={cpu_ms:.3} uniform_to_draw_callback_ms={uniform_to_draw_ms:.3}",
+            "PIC_EDIT_GPU benchmark source={}x{} viewport={}x{} upload_ready_ms={ready_ms:.3} cpu_full_frame_ms={cpu_ms:.3} uniform_to_draw_callback_ms={uniform_to_draw_ms:.3} gpu_elapsed_ms_mean={gpu_mean:.3} gpu_elapsed_ms_median={gpu_median:.3} samples={}",
             source_width, source_height, VIEW_WIDTH, VIEW_HEIGHT,
+            gpu_times.len(),
         );
         window.close();
     }

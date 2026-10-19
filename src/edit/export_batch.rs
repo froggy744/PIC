@@ -226,6 +226,48 @@ fn staging_export_path(destination: &Path) -> Result<PathBuf> {
     anyhow::bail!("could not create temporary export file for {}", destination.display())
 }
 
+/// Publish a fully encoded sibling temporary file without ever replacing an
+/// existing destination. Linux's renameat2(NOREPLACE) makes the operation
+/// atomic even if another PIC process races us to the same filename.
+fn publish_export(staging: &Path, destination: &Path) -> Result<()> {
+    #[cfg(target_os = "linux")]
+    {
+        use std::ffi::CString;
+        use std::os::unix::ffi::OsStrExt;
+        let source = CString::new(staging.as_os_str().as_bytes())?;
+        let target = CString::new(destination.as_os_str().as_bytes())?;
+        let result = unsafe {
+            libc::renameat2(
+                libc::AT_FDCWD, source.as_ptr(),
+                libc::AT_FDCWD, target.as_ptr(),
+                libc::RENAME_NOREPLACE,
+            )
+        };
+        if result == 0 {
+            return Ok(());
+        }
+        let error = std::io::Error::last_os_error();
+        // A mounted filesystem might not support this rename extension.
+        // Never fall back to a potentially overwriting plain rename.
+        if matches!(error.raw_os_error(), Some(libc::EINVAL | libc::ENOSYS | libc::EOPNOTSUPP)) {
+            std::fs::hard_link(staging, destination)?;
+            std::fs::remove_file(staging)?;
+            return Ok(());
+        }
+        return Err(error.into());
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        // Preserve the previous platform behaviour for non-Linux builds.
+        // Cross-process no-replace publication needs a platform-specific API.
+        if destination.exists() {
+            anyhow::bail!("refusing to overwrite existing export: {}", destination.display());
+        }
+        std::fs::rename(staging, destination)?;
+        Ok(())
+    }
+}
+
 /// Render and save one job to an exact destination path (caller resolves it).
 /// A full output is written beside the final path first and renamed only
 /// after encoding succeeds, preserving existing files on a failed export.
@@ -252,7 +294,7 @@ where
             &image, &staging, format, quality, Some(&exif)
         )?;
         // The result is only made visible at its final filename once complete.
-        std::fs::rename(&staging, destination).with_context(|| format!(
+        publish_export(&staging, destination).with_context(|| format!(
             "could not finish export {}", destination.display()
         ))?;
         Ok(())

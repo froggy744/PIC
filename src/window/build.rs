@@ -4336,72 +4336,45 @@ fn choose_photo_export_destination(
     format: crate::edit::export_batch::ExportFormat,
     progress: Rc<OperationProgressUi>,
 ) {
-    let parent = window.clone();
     let multiple = jobs.len() > 1;
-    let dialog = gtk::FileDialog::builder()
-        .title(if multiple {
-            "Export Photos to Folder"
-        } else {
-            "Export Photo"
-        })
-        .accept_label("Export")
-        .modal(true)
-        .build();
-    if !multiple {
-        if let Some(job) = jobs.first() {
-            dialog.set_initial_name(Some(&job.file_name));
-        }
-    }
-    let on_file = Rc::new(move |file: gio::File| {
-        if let Some(path) = file.path() {
-            if multiple {
-                start_photo_export_folder(progress.clone(), jobs.clone(), path, max_edge, format);
-            } else if let Some(job) = jobs.first().cloned() {
-                if path.exists() {
-                    let dialog = adw::AlertDialog::builder()
-                        .heading("Replace existing export?")
-                        .body(format!(
-                            "{} already exists. Replace it with the exported photo?",
-                            path.display(),
-                        ))
-                        .close_response("cancel")
-                        .default_response("replace")
-                        .build();
-                    dialog.add_response("cancel", "Cancel");
-                    dialog.add_response("replace", "Replace");
-                    dialog.set_response_appearance("replace", adw::ResponseAppearance::Destructive);
-                    let progress_for_replace = progress.clone();
-                    let job_for_replace = job.clone();
-                    let path_for_replace = path.clone();
-                    dialog.connect_response(Some("replace"), move |_, _| {
-                        start_photo_export_single(
-                            progress_for_replace.clone(),
-                            job_for_replace.clone(),
-                            path_for_replace.clone(),
-                            max_edge,
-                            format,
-                            true,
-                        );
-                    });
-                    dialog.present(Some(&parent));
-                } else {
-                    start_photo_export_single(progress.clone(), job, path, max_edge, format, false);
-                }
-            }
-        }
-    });
     if multiple {
+        let dialog = gtk::FileDialog::builder()
+            .title("Export Photos to Folder")
+            .accept_label("Export")
+            .modal(true)
+            .build();
         dialog.select_folder(Some(window), None::<&gio::Cancellable>, move |result| {
             if let Ok(file) = result {
-                on_file(file);
+                if let Some(path) = file.path() {
+                    start_photo_export_folder(progress.clone(), jobs.clone(), path, max_edge, format);
+                }
             }
         });
     } else {
-        dialog.save(Some(window), None::<&gio::Cancellable>, move |result| {
-            if let Ok(file) = result {
-                on_file(file);
-            }
+        let Some(job) = jobs.first().cloned() else {
+            return;
+        };
+        let initial_name = job.file_name.clone();
+        let on_selected = Rc::new(move |path, replace_existing| {
+            start_photo_export_single(
+                progress.clone(),
+                job.clone(),
+                path,
+                max_edge,
+                format,
+                replace_existing,
+            );
         });
+        crate::save_dialog::choose_export_save_path(
+            window,
+            "Export Photo",
+            "Export",
+            &initial_name,
+            Some(format.extension()),
+            None,
+            Rc::new(|path| path.is_file()),
+            on_selected,
+        );
     }
 }
 

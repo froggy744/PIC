@@ -26,6 +26,7 @@ mod photo_object;
 mod photo_texture;
 mod platform;
 mod scanner;
+mod save_dialog;
 mod screensaver;
 mod settings;
 mod sidebar;

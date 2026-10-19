@@ -1847,7 +1847,11 @@ fn choose_export_path(
 
     content.append(&grid);
     let dialog = adw::AlertDialog::builder()
-        .heading("Export Collage")
+        .heading(if saved_photo_id.get().is_some() {
+            "Save Collage"
+        } else {
+            "Export Collage"
+        })
         .extra_child(&content)
         .close_response("cancel")
         .default_response("export")
@@ -1900,24 +1904,32 @@ fn choose_export_destination(
     filter.add_pattern(&format!("*.{extension}"));
     let filters = gio::ListStore::new::<gtk::FileFilter>();
     filters.append(&filter);
-    let dialog = gtk::FileDialog::builder()
-        .title("Export Collage")
-        .accept_label("Export")
-        .initial_name(format!("collage.{extension}"))
-        .filters(&filters)
-        .modal(true)
-        .build();
-    let window = window.clone();
-    let save_parent = window.clone();
-    dialog.save(Some(&save_parent), None::<&gio::Cancellable>, move |result| {
-        let Some(path) = result.ok().and_then(|file| file.path()) else {
-            return;
-        };
-        let path = if path.extension().is_none() {
-            path.with_extension(extension)
-        } else {
-            path
-        };
+    let chooser_window = window.clone();
+    let saved_path = saved_photo_id.get().and_then(|id| {
+        let database = crate::db::active_database_path().ok()?;
+        let connection = crate::db::open_existing(&database).ok()?;
+        crate::db::photo(&connection, id)
+            .ok()
+            .flatten()
+            .map(|photo| std::path::PathBuf::from(photo.path))
+    });
+    let initial_name = saved_path
+        .as_ref()
+        .and_then(|path| path.file_name())
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| format!("collage.{extension}"));
+    let save_title = if saved_path.is_some() {
+        "Save Collage"
+    } else {
+        "Export Collage"
+    };
+    let action_label = if saved_path.is_some() { "Save" } else { "Export" };
+    let replace_path = saved_path.clone();
+    let may_replace = Rc::new(move |path: &std::path::Path| {
+        path.is_file() && replace_path.as_deref().is_some_and(|saved| saved == path)
+    });
+    let selected_window = chooser_window.clone();
+    let on_selected = Rc::new(move |path: std::path::PathBuf, _replace_existing| {
         let project = project.borrow().clone();
         let photo_id = saved_photo_id.get();
         let progress = adw::AlertDialog::builder()
@@ -1925,7 +1937,7 @@ fn choose_export_destination(
             .body("Rendering the image and saving its editable project.")
             .build();
         progress.set_can_close(false);
-        progress.present(Some(&window));
+        progress.present(Some(&selected_window));
         let (sender, receiver) = std::sync::mpsc::channel();
         let database = crate::db::active_database_path();
         std::thread::spawn(move || {
@@ -1941,7 +1953,7 @@ fn choose_export_destination(
             })();
             let _ = sender.send(result.map_err(|error| error.to_string()));
         });
-        let window = window.clone();
+        let window = selected_window.clone();
         let saved_photo_id = saved_photo_id.clone();
         glib::timeout_add_local(Duration::from_millis(50), move || {
             match receiver.try_recv() {
@@ -1976,4 +1988,14 @@ fn choose_export_destination(
             }
         });
     });
+    crate::save_dialog::choose_export_save_path(
+        &chooser_window,
+        save_title,
+        action_label,
+        &initial_name,
+        Some(extension),
+        Some(filters),
+        may_replace,
+        on_selected,
+    );
 }

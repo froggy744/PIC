@@ -2069,8 +2069,9 @@ void main() {
         photo.x >= uPhotoSize.x || photo.y >= uPhotoSize.y) discard;
     vec2 uv = (photo - uLayerRect.xy) / uLayerRect.zw;
     if (uv.x < 0.0 || uv.y < 0.0 || uv.x >= 1.0 || uv.y >= 1.0) discard;
-    // Upload bytes are top-down RGBA while OpenGL texture v=0 is the bottom row.
-    vec4 layer = texture(uOverlay, vec2(uv.x, 1.0-uv.y));
+    // The first uploaded row is stored at texture v=0. Layer coordinates also
+    // start at the top, so sampling uv directly keeps PNG and Cairo text upright.
+    vec4 layer = texture(uOverlay, uv);
     color = vec4(layer.rgb, layer.a * uLayerOpacity);
 }
 "#,
@@ -3767,8 +3768,20 @@ mod tests {
             glib::Bytes::from_owned(image.clone().into_raw()),
         );
         canvas.set_view(0.0, 0.0, W as f64, H as f64, 1.0, 0.0, 0.0);
-        let rgba_image = image::RgbaImage::from_pixel(4, 4, image::Rgba([220, 60, 15, 128]));
-        let rgba_text = image::RgbaImage::from_pixel(2, 2, image::Rgba([250, 250, 250, 255]));
+        let rgba_image = image::RgbaImage::from_fn(4, 4, |_, y| {
+            if y < 2 {
+                image::Rgba([240, 30, 10, 255])
+            } else {
+                image::Rgba([10, 40, 240, 255])
+            }
+        });
+        let rgba_text = image::RgbaImage::from_fn(2, 2, |_, y| {
+            if y == 0 {
+                image::Rgba([240, 240, 10, 255])
+            } else {
+                image::Rgba([10, 230, 230, 255])
+            }
+        });
         {
             let mut state = canvas.state.borrow_mut();
             state.overlays = vec![
@@ -3838,8 +3851,10 @@ mod tests {
             out
         };
         let base = [20, 40, 60, 255];
-        let first = mix(base, [220, 60, 15, 128], 0.75);
-        let combined = mix(first, [250, 250, 250, 255], 0.65);
+        let first_top = mix(base, [240, 30, 10, 255], 0.75);
+        let first_bottom = mix(base, [10, 40, 240, 255], 0.75);
+        let combined_top = mix(first_top, [240, 240, 10, 255], 0.65);
+        let combined_bottom = mix(first_bottom, [10, 230, 230, 255], 0.65);
         let close = |observed: [u8; 4], expected: [u8; 4], place: &str| {
             for channel in 0..4 {
                 let delta = observed[channel].abs_diff(expected[channel]);
@@ -3850,8 +3865,10 @@ mod tests {
             }
         };
         close(pixel(0, 0), base, "uncovered background");
-        close(pixel(6, 4), first, "image overlay alpha");
-        close(pixel(7, 5), combined, "text above image");
+        close(pixel(6, 4), first_top, "image overlay top row");
+        close(pixel(6, 7), first_bottom, "image overlay bottom row");
+        close(pixel(7, 5), combined_top, "text top row above image");
+        close(pixel(7, 6), combined_bottom, "text bottom row above image");
         close(pixel(10, 4), base, "outside rectangle");
         let rev = canvas.uploaded_revision();
         canvas.set_recipe(&recipe);

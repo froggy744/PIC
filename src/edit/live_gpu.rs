@@ -1903,7 +1903,10 @@ unsafe fn draw_auto_contrast_stats(
         gl::BindTexture(gl::TEXTURE_2D, objects.auto_color_stats);
         uniform_1i(objects.histogram_program, "uAutoColorStats", 3);
         gl::ActiveTexture(gl::TEXTURE0);
-        gl::BindTexture(gl::TEXTURE_2D, objects.texture);
+        // Keep unit 0 bound to the filtered/cropped statistics source.
+        // Resetting it to the raw texture here silently calculates the
+        // combined Auto Colour + Auto Contrast histogram on different pixels.
+        gl::BindTexture(gl::TEXTURE_2D, stats_source);
     }
     uniform_1i(objects.histogram_program, "uWidth", width);
     let pixel_count = i64::from(width) * i64::from(height);

@@ -1,6 +1,7 @@
-name: Experimental GPU Linux packaging
+name: Experimental GPU AppImage validation
 
-# Only the GPU draft PR is built. Never publish or attach binaries to releases
+# GPU draft PR: AppImage only. Flatpak is intentionally deferred.
+# Never publish or attach binaries to releases
 # from this workflow; main and the stable release workflow are untouched.
 on:
   pull_request:
@@ -74,36 +75,4 @@ jobs:
         with:
           name: PIC-GPU-experimental-AppImage
           path: dist/*.AppImage
-          if-no-files-found: error
-
-  flatpak:
-    name: Build experimental Flatpak
-    runs-on: ubuntu-24.04
-    timeout-minutes: 90
-    env:
-      PIC_GNOME_RUNTIME: "50"
-      PIC_FDO_RUST_RUNTIME: "25.08"
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install packaging host dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            flatpak flatpak-builder build-essential pkg-config \
-            curl ca-certificates git python3 imagemagick \
-            libglib2.0-bin appstream
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - name: Validate build script
-        run: bash -n scripts/PIC-build-linux-one-script.sh
-      - name: Build and test experimental Flatpak
-        run: |
-          printf 'yes\n' | ./scripts/PIC-build-linux-one-script.sh \
-            local --flatpak-only
-          test -n "$(find dist -maxdepth 1 -type f -name '*.flatpak' -print -quit)"
-      - name: Save private CI test artifact (never publish)
-        uses: actions/upload-artifact@v4
-        with:
-          name: PIC-GPU-experimental-Flatpak
-          path: dist/*.flatpak
           if-no-files-found: error

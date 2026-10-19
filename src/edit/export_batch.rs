@@ -116,7 +116,11 @@ where
         .and_then(|value| value.to_str())
         .unwrap_or("export")
         .to_string();
-    for counter in 2u32..10_000 {
+    // Large imports can legitimately exceed 10,000 photos. Never fall back
+    // to an unchecked, extensionless name after suffix 9999: that could
+    // collide with an existing export or produce a file of the wrong type.
+    let mut counter = 2u64;
+    loop {
         let candidate = match &extension {
             Some(extension) => format!("{stem}_{counter}.{extension}"),
             None => format!("{stem}_{counter}"),
@@ -125,10 +129,9 @@ where
             reserved.insert(candidate.clone());
             return candidate;
         }
+        counter = counter.checked_add(1)
+            .expect("all export filename suffixes exhausted");
     }
-    let fallback = format!("{stem}-export");
-    reserved.insert(fallback.clone());
-    fallback
 }
 
 pub fn unique_export_path(folder: &Path, file_name: &str, reserved: &mut HashSet<String>) -> PathBuf {
@@ -493,6 +496,26 @@ mod tests {
             unique_file_name("a.jpg", &mut reserved, |name| name == "a.jpg"),
             "a_2.jpg"
         );
+    }
+
+    #[test]
+    fn many_duplicate_exports_never_drop_extension_or_reuse_a_filename() {
+        let mut reserved = HashSet::new();
+        reserved.insert("DSC_5791.png".to_string());
+        // Exercise the old fallback path, which began at suffix 10,000.
+        for counter in 2..=10_005 {
+            reserved.insert(format!("DSC_5791_{counter}.png"));
+        }
+        let result = unique_file_name("DSC_5791.png", &mut reserved, |name| {
+            name == "DSC_5791_10006.png"
+        });
+        assert_eq!(result, "DSC_5791_10007.png");
+        assert!(reserved.contains(&result));
+        let next = unique_file_name("DSC_5791.png", &mut reserved, |_| false);
+        assert_eq!(next, "DSC_5791_10006.png");
+        assert!(reserved.contains(&next));
+        assert_ne!(next, result);
+        assert!(!reserved.contains("DSC_5791-export"));
     }
 
     #[test]

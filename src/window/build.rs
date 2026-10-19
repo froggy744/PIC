@@ -4372,7 +4372,6 @@ fn choose_photo_export_destination(
             &initial_name,
             Some(format.extension()),
             None,
-            Rc::new(|path| path.is_file()),
             on_selected,
         );
     }

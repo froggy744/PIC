@@ -1920,10 +1920,6 @@ fn choose_export_destination(
         .as_ref()
         .and_then(|path| path.parent())
         .map(std::path::Path::to_path_buf);
-    let replace_path = saved_path.clone();
-    let may_replace = Rc::new(move |path: &std::path::Path| {
-        path.is_file() && replace_path.as_deref().is_some_and(|saved| saved == path)
-    });
     let selected_window = chooser_window.clone();
     let on_selected = Rc::new(move |path: std::path::PathBuf, _replace_existing| {
         let project = project.borrow().clone();
@@ -1991,7 +1987,6 @@ fn choose_export_destination(
         &initial_name,
         Some(extension),
         initial_folder,
-        may_replace,
         on_selected,
     );
 }

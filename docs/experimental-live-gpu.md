@@ -39,12 +39,14 @@ remain on CPU. The expanded crop/filter matrix still measures up to 16/255
 maximum channel difference for Auto Contrast with full-strength Pencil Sketch,
 so those combinations are not safe to enable on GPU yet. The test logs maximum and mean
 channel differences and the worst pixel for each diagnostic case; tolerances
-have not been increased.
+have not been increased. Auto mode now probes hardware capability by default;
+these unverified edit combinations still use the CPU renderer.
 
 No local Nikon NEF/NRW file was available for the Auto parity matrix. The
 embedded Nikon JPEG colour-fidelity regression fixture passed, but this does
 not establish Auto parity on an actual camera file. `PIC_EDIT_RENDERER=auto`
-intentionally retains the CPU default while these release gates are open.
+uses capability-checked GPU selection by default; the unverified Auto recipe
+combinations listed above continue to use the CPU renderer.
 
 ### Auto-correction investigation on the RX 7600
 
@@ -223,7 +225,7 @@ AppImage must never bundle vendor GPU drivers.
 
 ## Phase 5 — automatic live-renderer selection
 
-`PIC_EDIT_RENDERER` now defaults to `auto`. Auto creates a GTK GLArea and
+`PIC_EDIT_RENDERER` defaults to `auto`. Auto creates a GTK GLArea and
 selects GPU only after the current context passes capability, shader, and
 render-target validation; `PIC_EDIT_RENDERER=cpu` forces CPU and `gpu` makes an
 explicit attempt (including under software GL for debugging). No renderer
@@ -261,15 +263,12 @@ is unchanged. EditRecipe, Export, and saved recipe behavior are unchanged.
 
 Phase 5 local checks: automatic context validation and pixel presentation
 passed on the RX 7600; with `LIBGL_ALWAYS_SOFTWARE=1`, llvmpipe was detected
-and rejected with a CPU fallback. Existing native-size GPU parity and
-crop/straighten/quarter-turn tests passed on the RX 7600. The project Editor
-quality workflow could not run its Xvfb-only portion here because `xvfb-run`
-is not installed. The filter-thumbnail GL test also needs that isolated
-display: on the active desktop and Wayland displays, GTK allocated a larger
-framebuffer than the test's 32×32 expected image. No GitHub Editor CI run was
-triggered by the standalone branch push (the workflow's push filter names a
-different branch, and no PR was opened). This validation is not a replacement
-for CI or for testing on Intel integrated graphics.
+and rejected with a CPU fallback. Existing native-size GPU parity,
+crop/straighten/quarter-turn and FIT checkerboard tests passed on the RX 7600.
+The isolated Xvfb filter-thumbnail regression now passes with maximum channel
+error 1 across its presets. The complete Editor workflow and hosted Editor CI
+are being run for the requested draft PR into `feature/gpu-edit-pipeline`.
+Intel integrated graphics was not available for this hardware validation.
 
 Before a release, retain the strict parity gates for automatic-adjustment
 combinations, review full-resolution JPEG/PNG NEF-preview exports with EXIF and

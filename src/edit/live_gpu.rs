@@ -2,8 +2,8 @@
 //!
 //! The source texture remains at decoded source dimensions. GtkGLArea itself
 //! is kept at the scrolled viewport size, so 24MP photos never create a 24MP
-//! render target. `auto` intentionally remains on the CPU path until this
-//! renderer has broader performance and platform validation.
+//! render target. `auto` validates the active GL context and shaders before
+//! selecting GPU, then falls back to CPU on initialization or draw failures.
 
 use std::cell::RefCell;
 use std::ffi::{c_void, CString};
@@ -726,16 +726,14 @@ impl LiveGpuCanvas {
             if let Some(clock) = area.frame_clock() {
                 let state = paint_state.clone();
                 clock.connect_after_paint(move |_| {
-                    let (frame, callback) = {
+                    let (frame, first_presented) = {
                         let mut state = state.borrow_mut();
                         let frame = state.frame_after_paint.take();
-                        let callback = if frame.is_some() && !state.has_presented_frame {
+                        let first_presented = frame.is_some() && !state.has_presented_frame;
+                        if first_presented {
                             state.has_presented_frame = true;
-                            state.on_frame_presented.as_ref().map(|_| ())
-                        } else {
-                            None
-                        };
-                        (frame, callback)
+                        }
+                        (frame, first_presented)
                     };
                     if std::env::var_os("PICASA_TRACE").is_some() {
                         if let Some((rendered_at, queued_at)) = frame {
@@ -746,7 +744,10 @@ impl LiveGpuCanvas {
                             );
                         }
                     }
-                    if callback.is_some() {
+                    if first_presented {
+                        trace_gpu("renderer=gpu status=presented first_frame=true");
+                    }
+                    if first_presented {
                         if let Some(callback) = state.borrow().on_frame_presented.as_ref() {
                             callback();
                         }
@@ -2384,7 +2385,7 @@ void main() {
         cache_auto_gpu_success(fingerprint);
     }
     trace_gpu(format_args!(
-        "initialization_total_ms={:.3} validation_cached={}",
+        "renderer=gpu status=initialized initialization_total_ms={:.3} validation_cached={}",
         initialization_started.elapsed().as_secs_f64() * 1000.0,
         validation_cached
     ));

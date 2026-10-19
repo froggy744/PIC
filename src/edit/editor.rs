@@ -452,7 +452,7 @@ pub fn build(
     if let Some(gpu_canvas) = &gpu_canvas {
         canvas_layer.add_overlay(&gpu_canvas.widget());
         if std::env::var_os("PICASA_TRACE").is_some() {
-            eprintln!("PIC_EDIT_RENDERER renderer=gpu mode={renderer_mode:?} reason=automatic_capability_probe");
+            eprintln!("PIC_EDIT_RENDERER renderer=gpu status=initialization_attempt mode={renderer_mode:?}");
         }
     } else if std::env::var_os("PICASA_TRACE").is_some() {
         eprintln!("PIC_EDIT_RENDERER renderer=cpu mode={renderer_mode:?}");

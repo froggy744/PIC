@@ -5,15 +5,9 @@ name: Experimental GPU AppImage validation
 # AppImage is expensive: rebuild only after a packaging/build dependency change
 # or a deliberate manual validation checkpoint (workflow_dispatch).
 # Never publish or attach binaries to releases; main remains untouched.
+# PR diffs include earlier packaging changes and can retrigger expensive builds
+# on every source push. Run this checkpoint only by manual dispatch.
 on:
-  pull_request:
-    branches:
-      - feature/gpu-live-edit
-    paths:
-      - 'scripts/PIC-build-linux-one-script.sh'
-      - '.github/workflows/gpu-packaging-validation.yml'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
   workflow_dispatch:
 
 permissions:

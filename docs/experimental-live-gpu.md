@@ -276,6 +276,23 @@ filter recipes. The renderer-mode regression test for the forced CPU override
 passed. Intel integrated graphics was not available for this hardware
 validation.
 
+### V1 acceptance note — full-resolution RAW fallback performance
+
+The owner acceptance trace on the RX 7600 confirmed automatic GPU
+initialization and frame presentation. It also exposed a CPU preview latency
+for a Nikon embedded-JPEG image at 4016×6016 (about 24 MP): the active recipe
+fell back to full-resolution CPU rendering. Dream Glow preview renders took
+about 2.3–2.6 seconds; a combined Sharpen, Clarity, and Grain update reached
+about 6.4 seconds. The interactive preview requests in this trace used the
+full source dimensions rather than a reduced draft. The CPU fallback is
+intentional for recipes that have not passed GPU parity; the trace's fallback
+reason labels do not enumerate every property in the recipe.
+
+This is a responsiveness limitation, not a GPU initialization or image
+correctness failure. Defer adaptive, reduced-resolution CPU previews during
+slider interaction to V1.1. V1 keeps the current full-resolution CPU fallback,
+GPU shader path, and CPU Export behavior unchanged.
+
 Before a release, retain the strict parity gates for automatic-adjustment
 combinations, review full-resolution JPEG/PNG NEF-preview exports with EXIF and
 ICC metadata, run the packaging smoke checks when relevant, and obtain owner

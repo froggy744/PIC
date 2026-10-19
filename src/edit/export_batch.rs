@@ -247,7 +247,10 @@ where
     let image = fit_max_edge(render(job)?, max_edge);
     let staging = staging_export_path(destination)?;
     let result: Result<()> = (|| {
-        super::render::save_export(&image, &staging, format, quality)?;
+        let exif = super::export_metadata::for_export(&job.source_path, image.width(), image.height());
+        super::render::save_export_with_metadata(
+            &image, &staging, format, quality, Some(&exif)
+        )?;
         // The result is only made visible at its final filename once complete.
         std::fs::rename(&staging, destination).with_context(|| format!(
             "could not finish export {}", destination.display()

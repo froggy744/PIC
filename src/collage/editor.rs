@@ -1896,14 +1896,6 @@ fn choose_export_destination(
         super::render::ExportFormat::Jpeg => "jpg",
         super::render::ExportFormat::Png => "png",
     };
-    let filter = gtk::FileFilter::new();
-    filter.set_name(Some(match options.format {
-        super::render::ExportFormat::Jpeg => "JPEG image",
-        super::render::ExportFormat::Png => "PNG image",
-    }));
-    filter.add_pattern(&format!("*.{extension}"));
-    let filters = gio::ListStore::new::<gtk::FileFilter>();
-    filters.append(&filter);
     let chooser_window = window.clone();
     let saved_path = saved_photo_id.get().and_then(|id| {
         let database = crate::db::active_database_path().ok()?;
@@ -1924,6 +1916,10 @@ fn choose_export_destination(
         "Export Collage"
     };
     let action_label = if saved_path.is_some() { "Save" } else { "Export" };
+    let initial_folder = saved_path
+        .as_ref()
+        .and_then(|path| path.parent())
+        .map(std::path::Path::to_path_buf);
     let replace_path = saved_path.clone();
     let may_replace = Rc::new(move |path: &std::path::Path| {
         path.is_file() && replace_path.as_deref().is_some_and(|saved| saved == path)
@@ -1994,7 +1990,7 @@ fn choose_export_destination(
         action_label,
         &initial_name,
         Some(extension),
-        Some(filters),
+        initial_folder,
         may_replace,
         on_selected,
     );

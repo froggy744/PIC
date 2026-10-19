@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use image::{DynamicImage, Rgba, RgbaImage};
+use image::{Rgba, RgbaImage};
 use rayon::prelude::*;
 
 use super::filters;

@@ -249,7 +249,7 @@ fn publish_export(staging: &Path, destination: &Path) -> Result<()> {
         let error = std::io::Error::last_os_error();
         // A mounted filesystem might not support this rename extension.
         // Never fall back to a potentially overwriting plain rename.
-        if matches!(error.raw_os_error(), Some(libc::EINVAL | libc::ENOSYS | libc::EOPNOTSUPP)) {
+        if matches!(error.raw_os_error(), Some(libc::EINVAL) | Some(libc::ENOSYS) | Some(libc::EOPNOTSUPP)) {
             std::fs::hard_link(staging, destination)?;
             std::fs::remove_file(staging)?;
             return Ok(());

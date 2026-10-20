@@ -44,6 +44,19 @@ impl Lightbox {
         picture_viewport.set_child(Some(&picture));
         root.add_overlay(&picture_viewport);
 
+        // Keep the last point inside the image viewport. The 1:1 control is
+        // outside the picture, so its click event cannot itself supply the
+        // image point that should remain under the cursor after enlargement.
+        let zoom_pointer = Rc::new(Cell::new(None));
+        let motion = gtk::EventControllerMotion::new();
+        motion.set_propagation_phase(gtk::PropagationPhase::Capture);
+        let zoom_pointer_for_motion = zoom_pointer.clone();
+        motion.connect_motion(move |_, x, y| {
+            zoom_pointer_for_motion.set(Some((x, y)));
+        });
+        picture_viewport.add_controller(motion);
+        let pending_one_to_one_anchor = Rc::new(Cell::new(None));
+
         let one_to_one_active = Rc::new(Cell::new(false));
         let native_texture: Rc<RefCell<Option<NativeTextureCache>>> = Rc::new(RefCell::new(None));
         let native_quality_pending = Rc::new(Cell::new(false));
@@ -650,6 +663,7 @@ impl Lightbox {
         let zoom_render_debounce_for_scroll = zoom_render_debounce.clone();
         let zoom_render_lease_for_scroll = zoom_render_lease.clone();
         let one_to_one_for_scroll = one_to_one_active.clone();
+        let zoom_pointer_for_scroll = zoom_pointer.clone();
         let one_to_one_sync_for_scroll = one_to_one_sync.clone();
         let zoom_sync_for_scroll = zoom_sync.clone();
         let wheel_navigation_for_scroll = wheel_navigation.clone();
@@ -668,6 +682,7 @@ impl Lightbox {
             let decode_cancel = decode_cancel.clone();
             let photo_changed = photo_changed.clone();
             let viewport = picture_viewport.clone();
+            let pending_one_to_one_anchor = pending_one_to_one_anchor.clone();
             let native_texture = native_texture.clone();
             let native_quality_pending = native_quality_pending.clone();
             let zoom_render_lease = zoom_render_lease.clone();
@@ -741,6 +756,7 @@ impl Lightbox {
                     expected_generation,
                     decode_cancel.clone(),
                     &viewport,
+                    pending_one_to_one_anchor.clone(),
                     native_texture.clone(),
                     display_cache.clone(),
                     fit_geometry_fixed,
@@ -778,12 +794,17 @@ impl Lightbox {
                 .current_event_state()
                 .contains(gtk::gdk::ModifierType::CONTROL_MASK)
             {
+                let anchor = capture_viewport_zoom_anchor(
+                    &picture_for_scroll,
+                    &viewport_for_scroll,
+                    zoom_pointer_for_scroll.get(),
+                );
+                let was_one_to_one = one_to_one_for_scroll.replace(false);
                 // Ctrl+wheel and the InfoBar slider share native-image scale
                 // semantics. Fit is the lower bound, 100% is the native-pixel
                 // midpoint, and the upper bound matches the slider's right
                 // endpoint.
-                if one_to_one_for_scroll.get() {
-                    one_to_one_for_scroll.set(false);
+                if was_one_to_one {
                     picture_for_scroll.set_can_shrink(true);
                     if let Some(handler) = one_to_one_sync_for_scroll.borrow().as_ref() {
                         handler(false);
@@ -803,13 +824,12 @@ impl Lightbox {
                     intrinsic_width,
                     intrinsic_height,
                 );
-                let current_scale = if zoom_for_scroll.get() <= 0.0 {
-                    fit_scale
-                } else {
-                    (fit_scale * zoom_for_scroll.get()).max(fit_scale)
-                };
-                let next_scale = (current_scale * if dy < 0.0 { 1.12 } else { 0.89 })
-                    .clamp(fit_scale, LIGHTBOX_MAX_ZOOM_FACTOR);
+                let current_scale = current_native_zoom_scale(
+                    was_one_to_one,
+                    zoom_for_scroll.get(),
+                    fit_scale,
+                );
+                let next_scale = ctrl_wheel_next_scale(current_scale, fit_scale, dy);
 
                 zoom_trace(format!(
                     "ctrl_wheel dy={dy:.3} fit={fit_scale:.6} current_native={current_scale:.6} next_native={next_scale:.6} zoom_before={:.6} picture_req={:?} alloc={}x{}",
@@ -850,6 +870,11 @@ impl Lightbox {
                     root_for_scroll.height(),
                     zoom_for_scroll.get(),
                     "ctrl-wheel",
+                );
+                apply_viewport_zoom_anchor(
+                    &picture_for_scroll,
+                    &viewport_for_scroll,
+                    anchor,
                 );
                 if zoom_for_scroll.get() > 0.0 {
                     ensure_zoom_texture(
@@ -949,6 +974,9 @@ impl Lightbox {
         let native_texture_for_key = native_texture.clone();
         let display_cache_for_key = display_texture_cache.clone();
         let one_to_one_for_key = one_to_one_active.clone();
+        let one_to_one_sync_for_key = one_to_one_sync.clone();
+        let zoom_pointer_for_key = zoom_pointer.clone();
+        let pending_anchor_for_key = pending_one_to_one_anchor.clone();
         let collection_navigation_for_key = collection_navigation.clone();
         let key_navigation_ready_for_key = key_navigation_ready.clone();
         let wheel_navigation_for_key = wheel_navigation.clone();
@@ -960,29 +988,43 @@ impl Lightbox {
                 close_for_escape();
                 glib::Propagation::Stop
             } else if [gtk::gdk::Key::plus, gtk::gdk::Key::equal].contains(&key) {
-                let current = if zoom_for_key.get() <= 0.0 {
+                let anchor = capture_viewport_zoom_anchor(
+                    &picture_for_key,
+                    &viewport_for_key,
+                    zoom_pointer_for_key.get(),
+                );
+                let was_one_to_one = one_to_one_for_key.replace(false);
+                if was_one_to_one {
+                    picture_for_key.set_can_shrink(true);
+                    if let Some(handler) = one_to_one_sync_for_key.borrow().as_ref() {
+                        handler(false);
+                    }
+                }
+                let fit_scale = photos_for_key
+                    .borrow()
+                    .get(index_for_key.get())
+                    .map(|photo| {
+                        let (intrinsic_width, intrinsic_height) =
+                            picture_intrinsic_dimensions(&picture_for_key);
+                        presentation_fit_scale(
+                            photo,
+                            root_for_escape.width(),
+                            root_for_escape.height(),
+                            intrinsic_width,
+                            intrinsic_height,
+                        )
+                    })
+                    .unwrap_or(1.0);
+                let current = if was_one_to_one {
+                    1.0 / fit_scale.max(f64::EPSILON)
+                } else if zoom_for_key.get() <= 0.0 {
                     1.0
                 } else {
                     zoom_for_key.get()
                 };
                 // Cap the internal (fit-relative) zoom at the same native
                 // magnification the slider and wheel allow.
-                let max_internal = photos_for_key
-                    .borrow()
-                    .get(index_for_key.get())
-                    .map(|photo| {
-                        let (intrinsic_width, intrinsic_height) =
-                            picture_intrinsic_dimensions(&picture_for_key);
-                        let fit_scale = presentation_fit_scale(
-                            photo,
-                            root_for_escape.width(),
-                            root_for_escape.height(),
-                            intrinsic_width,
-                            intrinsic_height,
-                        );
-                        LIGHTBOX_MAX_ZOOM_FACTOR / fit_scale.max(f64::EPSILON)
-                    })
-                    .unwrap_or(4.0);
+                let max_internal = LIGHTBOX_MAX_ZOOM_FACTOR / fit_scale.max(f64::EPSILON);
                 set_zoom_state(
                     &zoom_for_key,
                     &applied_for_key,
@@ -997,9 +1039,41 @@ impl Lightbox {
                     zoom_for_key.get(),
                     "key",
                 );
+                let (picture_width, picture_height) = picture_for_key.size_request();
+                prime_viewport_for_picture_size(&viewport_for_key, picture_width, picture_height);
+                apply_viewport_zoom_anchor(&picture_for_key, &viewport_for_key, anchor);
                 glib::Propagation::Stop
             } else if key == gtk::gdk::Key::minus {
-                let current = if zoom_for_key.get() <= 0.0 {
+                let anchor = capture_viewport_zoom_anchor(
+                    &picture_for_key,
+                    &viewport_for_key,
+                    zoom_pointer_for_key.get(),
+                );
+                let was_one_to_one = one_to_one_for_key.replace(false);
+                if was_one_to_one {
+                    picture_for_key.set_can_shrink(true);
+                    if let Some(handler) = one_to_one_sync_for_key.borrow().as_ref() {
+                        handler(false);
+                    }
+                }
+                let fit_scale = photos_for_key
+                    .borrow()
+                    .get(index_for_key.get())
+                    .map(|photo| {
+                        let (intrinsic_width, intrinsic_height) =
+                            picture_intrinsic_dimensions(&picture_for_key);
+                        presentation_fit_scale(
+                            photo,
+                            root_for_escape.width(),
+                            root_for_escape.height(),
+                            intrinsic_width,
+                            intrinsic_height,
+                        )
+                    })
+                    .unwrap_or(1.0);
+                let current = if was_one_to_one {
+                    1.0 / fit_scale.max(f64::EPSILON)
+                } else if zoom_for_key.get() <= 0.0 {
                     1.0
                 } else {
                     zoom_for_key.get()
@@ -1014,6 +1088,9 @@ impl Lightbox {
                     zoom_for_key.get(),
                     "key",
                 );
+                let (picture_width, picture_height) = picture_for_key.size_request();
+                prime_viewport_for_picture_size(&viewport_for_key, picture_width, picture_height);
+                apply_viewport_zoom_anchor(&picture_for_key, &viewport_for_key, anchor);
                 glib::Propagation::Stop
             } else if key == gtk::gdk::Key::_0 {
                 set_zoom_state(&zoom_for_key, &applied_for_key, 0.0);
@@ -1090,6 +1167,7 @@ impl Lightbox {
                         generation,
                         cancel_for_key.clone(),
                         &viewport_for_key,
+                        pending_anchor_for_key.clone(),
                         native_texture_for_key.clone(),
                         display_cache_for_key.clone(),
                         fit_geometry_fixed,
@@ -1134,6 +1212,7 @@ impl Lightbox {
             let generation = load_generation.clone();
             let cancel = decode_cancel.clone();
             let viewport = picture_viewport.clone();
+            let pending_anchor = pending_one_to_one_anchor.clone();
             let native = native_texture.clone();
             let cache = display_texture_cache.clone();
             let ready = key_navigation_ready.clone();
@@ -1153,6 +1232,7 @@ impl Lightbox {
                         next,
                         cancel.clone(),
                         &viewport,
+                        pending_anchor.clone(),
                         native.clone(),
                         cache.clone(),
                         false,
@@ -1173,6 +1253,8 @@ impl Lightbox {
             backdrop,
             picture,
             picture_viewport,
+            zoom_pointer,
+            pending_one_to_one_anchor,
             photos,
             index,
             last_width,
@@ -1308,6 +1390,11 @@ impl Lightbox {
             return;
         }
         let commit_started = std::time::Instant::now();
+        let anchor = capture_viewport_zoom_anchor(
+            &self.picture,
+            &self.picture_viewport,
+            self.zoom_pointer.get(),
+        );
 
         // Do not enter the expensive special 1:1/native-texture mode merely
         // because a continuous slider crosses 100%. The geometry is still
@@ -1402,6 +1489,7 @@ impl Lightbox {
                 picture_height,
             );
         }
+        apply_viewport_zoom_anchor(&self.picture, &self.picture_viewport, anchor);
 
         self.ensure_zoom_texture(&photo);
         zoom_trace(format!(
@@ -1489,6 +1577,15 @@ impl Lightbox {
             }
         }
 
+        let anchor = enabled.then(|| {
+            capture_viewport_zoom_anchor(
+                &self.picture,
+                &self.picture_viewport,
+                self.zoom_pointer.get(),
+            )
+        });
+        self.pending_one_to_one_anchor.set(anchor);
+
         self.one_to_one_active.set(enabled);
         if enabled {
             if let Some(active) = self.zoom_render_lease.borrow_mut().take() {
@@ -1540,6 +1637,14 @@ impl Lightbox {
                         -1.0,
                         "one-to-one",
                     );
+                    if let Some(anchor) = anchor {
+                        apply_viewport_zoom_anchor(
+                            &self.picture,
+                            &self.picture_viewport,
+                            anchor,
+                        );
+                        self.pending_one_to_one_anchor.set(None);
+                    }
                     self.picture.queue_resize();
                     self.picture_viewport.queue_resize();
                     trace_lightbox_after_paint(
@@ -1557,6 +1662,7 @@ impl Lightbox {
             // the same main-thread completion, avoiding a blank intermediate frame.
         } else {
             // 1:1 off always returns to fit-to-window.
+            self.pending_one_to_one_anchor.set(None);
             self.set_zoom(0.0);
             let photo = self.photos.borrow().get(self.index.get()).cloned();
             let restored_fit = photo.as_ref().is_some_and(|photo| {
@@ -1726,6 +1832,7 @@ impl Lightbox {
         let current_generation = self.load_generation.clone();
         let decode_cancel = self.decode_cancel.clone();
         let picture_viewport = self.picture_viewport.clone();
+        let pending_one_to_one_anchor = self.pending_one_to_one_anchor.clone();
         let native_texture = self.native_texture.clone();
         let display_texture_cache = self.display_texture_cache.clone();
         let backdrop_for_transition = self.backdrop.clone();
@@ -1777,6 +1884,7 @@ impl Lightbox {
                 generation,
                 decode_cancel.clone(),
                 &picture_viewport,
+                pending_one_to_one_anchor.clone(),
                 native_texture.clone(),
                 display_texture_cache.clone(),
                 // Keep existing geometry only when a matching cached preview
@@ -2231,6 +2339,7 @@ impl Lightbox {
             generation,
             self.decode_cancel.clone(),
             &self.picture_viewport,
+            self.pending_one_to_one_anchor.clone(),
             self.native_texture.clone(),
             self.display_texture_cache.clone(),
             fit_geometry_fixed,
@@ -2321,6 +2430,7 @@ impl Lightbox {
             generation,
             self.decode_cancel.clone(),
             &self.picture_viewport,
+            self.pending_one_to_one_anchor.clone(),
             self.native_texture.clone(),
             self.display_texture_cache.clone(),
             fit_geometry_fixed,
@@ -2454,6 +2564,7 @@ impl Lightbox {
             generation,
             self.decode_cancel.clone(),
             &self.picture_viewport,
+            self.pending_one_to_one_anchor.clone(),
             self.native_texture.clone(),
             self.display_texture_cache.clone(),
             preserve_geometry,

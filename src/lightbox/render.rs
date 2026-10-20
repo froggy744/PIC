@@ -415,6 +415,7 @@ fn show_photo(
     expected_generation: u64,
     decode_cancel: Rc<RefCell<Option<Arc<ViewerRequestLease>>>>,
     picture_viewport: &gtk::ScrolledWindow,
+    pending_one_to_one_anchor: Rc<Cell<Option<ViewportZoomAnchor>>>,
     native_texture: Rc<RefCell<Option<NativeTextureCache>>>,
     display_texture_cache: DisplayTextureCache,
     fit_geometry_fixed: bool,
@@ -697,6 +698,13 @@ fn show_photo(
                             -1.0,
                             "one-to-one-decode",
                         );
+                        if let Some(anchor) = pending_one_to_one_anchor.take() {
+                            apply_viewport_zoom_anchor(
+                                &picture,
+                                &picture_viewport,
+                                anchor,
+                            );
+                        }
                         picture.queue_resize();
                         picture_viewport.queue_resize();
                         trace_lightbox_after_paint(
@@ -1681,6 +1689,106 @@ fn centered_scroll_value(upper: f64, page_size: f64, lower: f64) -> f64 {
         .clamp(lower, max_scroll)
 }
 
+fn zoom_axis_origin(content_size: f64, page_size: f64) -> f64 {
+    ((page_size - content_size) * 0.5).max(0.0)
+}
+
+fn zoom_axis_value_at_pointer(
+    old_content_size: f64,
+    new_content_size: f64,
+    old_value: f64,
+    old_lower: f64,
+    old_page_size: f64,
+    new_lower: f64,
+    new_page_size: f64,
+    pointer: f64,
+) -> f64 {
+    let old_size = old_content_size.max(1.0);
+    let source_at_pointer = (old_value - old_lower + pointer
+        - zoom_axis_origin(old_size, old_page_size))
+        .clamp(0.0, old_size);
+    let source_fraction = source_at_pointer / old_size;
+    let new_size = new_content_size.max(1.0);
+    let wanted = new_lower
+        + source_fraction * new_size
+        + zoom_axis_origin(new_size, new_page_size)
+        - pointer;
+    wanted.clamp(new_lower, (new_lower + new_size - new_page_size).max(new_lower))
+}
+
+fn capture_viewport_zoom_anchor(
+    picture: &gtk::Picture,
+    viewport: &gtk::ScrolledWindow,
+    pointer: Option<(f64, f64)>,
+) -> ViewportZoomAnchor {
+    let (requested_width, requested_height) = picture.size_request();
+    let old_width = if requested_width > 0 { requested_width } else { picture.width() };
+    let old_height = if requested_height > 0 { requested_height } else { picture.height() };
+    let (pointer_x, pointer_y) = pointer.unwrap_or_else(|| {
+        (
+            viewport.width().max(1) as f64 * 0.5,
+            viewport.height().max(1) as f64 * 0.5,
+        )
+    });
+    let horizontal = viewport.hadjustment();
+    let vertical = viewport.vadjustment();
+    ViewportZoomAnchor {
+        old_width: old_width.max(1),
+        old_height: old_height.max(1),
+        old_h_value: horizontal.value(),
+        old_v_value: vertical.value(),
+        old_h_lower: horizontal.lower(),
+        old_v_lower: vertical.lower(),
+        old_h_page: horizontal.page_size(),
+        old_v_page: vertical.page_size(),
+        pointer_x,
+        pointer_y,
+    }
+}
+
+fn apply_viewport_zoom_anchor(
+    picture: &gtk::Picture,
+    viewport: &gtk::ScrolledWindow,
+    anchor: ViewportZoomAnchor,
+) {
+    let (new_width, new_height) = picture.size_request();
+    let horizontal = viewport.hadjustment();
+    let vertical = viewport.vadjustment();
+    let h_value = zoom_axis_value_at_pointer(
+        f64::from(anchor.old_width),
+        f64::from(new_width.max(1)),
+        anchor.old_h_value,
+        anchor.old_h_lower,
+        anchor.old_h_page,
+        horizontal.lower(),
+        horizontal.page_size(),
+        anchor.pointer_x,
+    );
+    let v_value = zoom_axis_value_at_pointer(
+        f64::from(anchor.old_height),
+        f64::from(new_height.max(1)),
+        anchor.old_v_value,
+        anchor.old_v_lower,
+        anchor.old_v_page,
+        vertical.lower(),
+        vertical.page_size(),
+        anchor.pointer_y,
+    );
+    horizontal.set_value(h_value);
+    vertical.set_value(v_value);
+    zoom_trace(format!(
+        "pointer_anchor pointer=({:.1},{:.1}) from={}x{} to={}x{} scroll=({:.1},{:.1})",
+        anchor.pointer_x,
+        anchor.pointer_y,
+        anchor.old_width,
+        anchor.old_height,
+        new_width,
+        new_height,
+        horizontal.value(),
+        vertical.value(),
+    ));
+}
+
 /// Install explicit picture geometry and its matching centered scroll ranges before
 /// GTK allocates the GtkViewport child. The viewport configures adjustments
 /// during allocation, but its `changed` handlers run after it places the
@@ -1837,6 +1945,23 @@ fn viewer_zoom_decode_target(root: &gtk::Overlay, rotation: i32, zoom: f64) -> (
     let zoom = zoom.max(1.0);
     let scale = |value: u32| (f64::from(value) * zoom).round().clamp(1.0, u32::MAX as f64) as u32;
     (scale(base_width), scale(base_height))
+}
+
+fn ctrl_wheel_next_scale(current_scale: f64, fit_scale: f64, dy: f64) -> f64 {
+    (current_scale * if dy < 0.0 { 1.12 } else { 0.89 }).clamp(
+        fit_scale,
+        LIGHTBOX_MAX_ZOOM_FACTOR,
+    )
+}
+
+fn current_native_zoom_scale(one_to_one: bool, zoom: f64, fit_scale: f64) -> f64 {
+    if one_to_one {
+        1.0
+    } else if zoom <= 0.0 {
+        fit_scale
+    } else {
+        (fit_scale * zoom).max(fit_scale)
+    }
 }
 
 fn rotate_image(image: image::RgbaImage, rotation: i32) -> image::RgbaImage {

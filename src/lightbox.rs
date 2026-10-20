@@ -381,6 +381,8 @@ pub struct Lightbox {
     backdrop: gtk::Box,
     picture: gtk::Picture,
     picture_viewport: gtk::ScrolledWindow,
+    zoom_pointer: Rc<Cell<Option<(f64, f64)>>>,
+    pending_one_to_one_anchor: Rc<Cell<Option<ViewportZoomAnchor>>>,
     photos: Rc<RefCell<Vec<PhotoObject>>>,
     index: Rc<Cell<usize>>,
     last_width: Rc<Cell<i32>>,
@@ -426,6 +428,20 @@ pub struct Lightbox {
     close_ready: Rc<RefCell<Option<Rc<dyn Fn() -> bool>>>>,
     close_generation: Rc<Cell<u64>>,
     close_in_progress: Rc<Cell<bool>>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(super) struct ViewportZoomAnchor {
+    old_width: i32,
+    old_height: i32,
+    old_h_value: f64,
+    old_v_value: f64,
+    old_h_lower: f64,
+    old_v_lower: f64,
+    old_h_page: f64,
+    old_v_page: f64,
+    pointer_x: f64,
+    pointer_y: f64,
 }
 
 // Structural split only: included files remain in this module scope.

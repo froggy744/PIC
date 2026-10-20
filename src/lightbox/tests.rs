@@ -223,6 +223,47 @@ mod viewer_presentation_tests {
     }
 
     #[test]
+    fn zoom_anchor_keeps_the_image_point_under_the_pointer() {
+        let old_size = 1200.0;
+        let new_size = 1800.0;
+        let page = 800.0;
+        let pointer = 250.0;
+        let old_scroll = 200.0;
+        let value = zoom_axis_value_at_pointer(
+            old_size,
+            new_size,
+            old_scroll,
+            0.0,
+            page,
+            0.0,
+            page,
+            pointer,
+        );
+        let before = old_scroll + pointer;
+        let after = value + pointer;
+        assert!((before / old_size - after / new_size).abs() < 0.001);
+    }
+
+    #[test]
+    fn zoom_anchor_accounts_for_centered_fit_geometry_and_clamps_at_edges() {
+        // Before zoom the image is centred inside the viewport; after zoom it
+        // overflows and the adjustment becomes its origin.
+        let value = zoom_axis_value_at_pointer(600.0, 1200.0, 0.0, 0.0, 800.0, 0.0, 800.0, 200.0);
+        assert_eq!(value, 0.0);
+        let edge = zoom_axis_value_at_pointer(1200.0, 2400.0, 0.0, 0.0, 800.0, 0.0, 800.0, 0.0);
+        assert_eq!(edge, 0.0);
+    }
+
+    #[test]
+    fn zooming_from_one_to_one_steps_from_native_scale_without_fit_reset() {
+        let fit_scale = 0.2;
+        let current = current_native_zoom_scale(true, -1.0, fit_scale);
+        assert_eq!(current, 1.0);
+        assert_eq!(ctrl_wheel_next_scale(current, fit_scale, -1.0), 1.12);
+        assert_eq!(ctrl_wheel_next_scale(current, fit_scale, 1.0), 0.89);
+    }
+
+    #[test]
     fn scroll_anchor_collapses_to_the_origin_without_overflow() {
         // Nothing to scroll: the origin is the only legal value, and GTK
         // centres the child by alignment anyway.
@@ -585,6 +626,12 @@ mod one_to_one_quality_regression {
         assert!(lightbox.picture.paintable().is_some());
         assert!(picture_intrinsic_dimensions(&lightbox.picture).0 < 800);
         let fit_size = lightbox.picture.size_request();
+        lightbox.zoom_pointer.set(Some((58.0, 47.0)));
+        let anchor = capture_viewport_zoom_anchor(
+            &lightbox.picture,
+            &lightbox.picture_viewport,
+            lightbox.zoom_pointer.get(),
+        );
         lightbox.set_one_to_one(true);
         assert!(lightbox.one_to_one_active.get());
         assert!(lightbox.picture.paintable().is_some(),
@@ -600,6 +647,28 @@ mod one_to_one_quality_regression {
             std::thread::sleep(Duration::from_millis(10));
         }
         assert_eq!(picture_intrinsic_dimensions(&lightbox.picture), (800, 600));
+        let expected_h = zoom_axis_value_at_pointer(
+            f64::from(anchor.old_width),
+            f64::from(lightbox.picture.size_request().0),
+            anchor.old_h_value,
+            anchor.old_h_lower,
+            anchor.old_h_page,
+            lightbox.picture_viewport.hadjustment().lower(),
+            lightbox.picture_viewport.hadjustment().page_size(),
+            anchor.pointer_x,
+        );
+        let expected_v = zoom_axis_value_at_pointer(
+            f64::from(anchor.old_height),
+            f64::from(lightbox.picture.size_request().1),
+            anchor.old_v_value,
+            anchor.old_v_lower,
+            anchor.old_v_page,
+            lightbox.picture_viewport.vadjustment().lower(),
+            lightbox.picture_viewport.vadjustment().page_size(),
+            anchor.pointer_y,
+        );
+        assert!((lightbox.picture_viewport.hadjustment().value() - expected_h).abs() < 1.0);
+        assert!((lightbox.picture_viewport.vadjustment().value() - expected_v).abs() < 1.0);
         assert!(!lightbox.picture.can_shrink(),
             "native texture must use non-shrinking 1:1 geometry");
         lightbox.set_one_to_one(false);
@@ -677,6 +746,12 @@ mod wheel_quality_regression {
             fit_dimensions.0 < 800,
             "test must start with a reduced fit preview"
         );
+        lightbox.zoom_pointer.set(Some((42.0, 54.0)));
+        let anchor = capture_viewport_zoom_anchor(
+            &lightbox.picture,
+            &lightbox.picture_viewport,
+            lightbox.zoom_pointer.get(),
+        );
         // This public scale request shares the zoom render path used by both
         // Ctrl+wheel and the InfoBar slider.
         let zoom_scale = lightbox.current_fit_scale() * 1.12;
@@ -687,6 +762,28 @@ mod wheel_quality_regression {
             let dimensions = picture_intrinsic_dimensions(&lightbox.picture);
             dimensions.0 > fit_dimensions.0 && dimensions.0 < 800
         });
+        let expected_h = zoom_axis_value_at_pointer(
+            f64::from(anchor.old_width),
+            f64::from(lightbox.picture.size_request().0),
+            anchor.old_h_value,
+            anchor.old_h_lower,
+            anchor.old_h_page,
+            lightbox.picture_viewport.hadjustment().lower(),
+            lightbox.picture_viewport.hadjustment().page_size(),
+            anchor.pointer_x,
+        );
+        let expected_v = zoom_axis_value_at_pointer(
+            f64::from(anchor.old_height),
+            f64::from(lightbox.picture.size_request().1),
+            anchor.old_v_value,
+            anchor.old_v_lower,
+            anchor.old_v_page,
+            lightbox.picture_viewport.vadjustment().lower(),
+            lightbox.picture_viewport.vadjustment().page_size(),
+            anchor.pointer_y,
+        );
+        assert!((lightbox.picture_viewport.hadjustment().value() - expected_h).abs() < 1.0);
+        assert!((lightbox.picture_viewport.vadjustment().value() - expected_v).abs() < 1.0);
         assert!(lightbox.native_texture.borrow().is_none(),
             "wheel zoom below 1:1 should keep the native-resolution cache reserved for 1:1"
         );

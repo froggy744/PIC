@@ -89,6 +89,13 @@ def make_sample_library() -> None:
             # measurable independently of viewport clipping.
             draw.rectangle((8, 8, 87, 87), fill=(255, 255, 0))
         image.save(SAMPLE_DIR / name)
+    if SUITE == "browse-navigation":
+        second_folder = SAMPLE_DIR / "zz-second-folder"
+        second_folder.mkdir(parents=True, exist_ok=True)
+        for name, color in (("folder-first.jpg", (190, 90, 40)), ("folder-last.jpg", (100, 55, 165))):
+            image = Image.new("RGB", (960, 640), color)
+            ImageDraw.Draw(image).text((32, 28), name, fill="white")
+            image.save(second_folder / name)
     IMPORT_DIR.mkdir(parents=True, exist_ok=True)
     Image.new("RGB", (640, 480), (235, 125, 30)).save(IMPORT_DIR / "import-only.jpg")
     Image.new("RGB", (512, 384), (30, 180, 195)).save(IMPORT_DIR / "import-second.png")
@@ -122,15 +129,20 @@ def seed_isolated_database() -> None:
         if gui_theme:
             settings.append(("appearance-theme", gui_theme))
         connection.executemany("INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)", settings)
-        for path in sorted(SAMPLE_DIR.iterdir()):
+        for path in sorted(SAMPLE_DIR.rglob("*")):
             if path.suffix.lower() not in {".jpg", ".png"}:
                 continue
+            photo_folder = str(path.parent.resolve())
+            parent_folder_id = folder_id if path.parent.resolve() != SAMPLE_DIR.resolve() else None
+            connection.execute("INSERT OR IGNORE INTO folders(path,name,imported_root,parent_id) VALUES(?,?,0,?)",
+                               (photo_folder, path.parent.name, parent_folder_id))
+            photo_folder_id = connection.execute("SELECT id FROM folders WHERE path=?", (photo_folder,)).fetchone()[0]
             with Image.open(path) as image:
                 width, height = image.size
             stat = path.stat()
             connection.execute(
                 "INSERT OR REPLACE INTO photos(path,folder_id,width,height,size_bytes,mtime,added_at) VALUES(?,?,?,?,?,?,?)",
-                (str(path.resolve()), folder_id, width, height, stat.st_size, int(stat.st_mtime), int(stat.st_mtime)),
+                (str(path.resolve()), photo_folder_id, width, height, stat.st_size, int(stat.st_mtime), int(stat.st_mtime)),
             )
 
 
@@ -343,6 +355,15 @@ def db_setting(key: str) -> str | None:
     return row[0] if row else None
 
 
+def activated_photo_path() -> str | None:
+    photo_id = db_setting("last-activated-photo-id")
+    if photo_id is None:
+        return None
+    with sqlite3.connect(XDG_DATA / "pic-rs" / "library.db") as connection:
+        row = connection.execute("SELECT path FROM photos WHERE id=?", (int(photo_id),)).fetchone()
+    return row[0] if row else None
+
+
 def with_photo_count() -> int:
     with sqlite3.connect(XDG_DATA / "pic-rs" / "library.db") as connection:
         return int(connection.execute("SELECT COUNT(*) FROM photos").fetchone()[0])
@@ -550,12 +571,95 @@ def smoke_test() -> None:
     wait_for(lambda: app_alive() and screenshot("02-library-loaded.png").exists(),
              "PIC temporary gallery render", timeout=30)
     before = screenshot("02-library-loaded.png")
-    expected_photos = 15
+    expected_photos = 17 if SUITE == "browse-navigation" else 15
     with sqlite3.connect(XDG_DATA / "pic-rs" / "library.db") as connection:
         photo_count = connection.execute("SELECT COUNT(*) FROM photos").fetchone()[0]
     library_case = add_case("Isolated sample gallery", "Generated photos load into the temporary library")
     record(library_case, photo_count == expected_photos and app_alive(),
            f"{photo_count} generated photos indexed; screenshot={before.name}")
+
+    if SUITE == "browse-navigation":
+        def activate_selected_name() -> str:
+            command(["xdotool", "key", "space"])
+            time.sleep(0.3)
+            path = activated_photo_path()
+            command(["xdotool", "key", "Escape"])
+            time.sleep(0.35)
+            return Path(path).name if path else ""
+
+        def browse_case(name: str, expected: str, actual: str, passed: bool) -> None:
+            record(add_case(name, expected), passed, f"activated photo={actual or 'none'}")
+
+        click_at(518, 178)
+        first = activate_selected_name()
+        browse_case("Browse initial selection", "The clicked first tile opens", first,
+                    first == "landscape.jpg")
+
+        click_at(518, 178)
+        command(["xdotool", "key", "Right"])
+        right = activate_selected_name()
+        browse_case("Browse Right arrow", "Right selects the next tile in the row", right,
+                    right == "portrait.jpg")
+
+        click_at(518, 178)
+        command(["xdotool", "key", "Down"])
+        down = activate_selected_name()
+        browse_case("Browse Down arrow", "Down selects the tile below in the same column", down,
+                    down not in {"", "landscape.jpg"})
+
+        click_at(518, 178)
+        command(["xdotool", "key", "Page_Down"])
+        page_down = activate_selected_name()
+        command(["xdotool", "key", "Page_Up"])
+        page_up = activate_selected_name()
+        browse_case("Browse Page Up/Down", "Page Down advances a viewport page and Page Up reverses it",
+                    f"down={page_down}; up={page_up}",
+                    page_down not in {"", "landscape.jpg"} and page_up == "landscape.jpg")
+
+        click_at(518, 178)
+        command(["xdotool", "key", "Page_Down"])
+        command(["xdotool", "key", "Home"])
+        home = activate_selected_name()
+        browse_case("Browse Home", "Home returns to the first photo in this view", home,
+                    home == "landscape.jpg")
+
+        click_at(518, 178)
+        command(["xdotool", "key", "End"])
+        end = activate_selected_name()
+        command(["xdotool", "key", "ctrl+Home"])
+        control_home = activate_selected_name()
+        command(["xdotool", "key", "ctrl+End"])
+        control_end = activate_selected_name()
+        browse_case("Browse End and Ctrl+Home/End",
+                    "End selects the last photo; Ctrl+Home/End span the complete view",
+                    f"end={end}; ctrl-home={control_home}; ctrl-end={control_end}",
+                    end not in {"", "landscape.jpg"}
+                    and control_home == "landscape.jpg" and control_end == end)
+
+        # Open the generated root folder so the gallery has real folder
+        # sections. Its nested child holds two photos for scoped Home/End.
+        click_at(118, 486)
+        time.sleep(0.5)
+        command(["xdotool", "key", "ctrl+End"])
+        folder_end = activate_selected_name()
+        command(["xdotool", "key", "Home"])
+        folder_home = activate_selected_name()
+        command(["xdotool", "key", "End"])
+        folder_last = activate_selected_name()
+        command(["xdotool", "key", "ctrl+Home"])
+        folder_control_home = activate_selected_name()
+        command(["xdotool", "key", "ctrl+Down"])
+        folder_control_down = activate_selected_name()
+        command(["xdotool", "key", "ctrl+Up"])
+        folder_control_up = activate_selected_name()
+        browse_case("Browse folder Home/End and Ctrl+Up/Down",
+                    "Home/End stay within the active folder; Ctrl+Home/End and Ctrl+Up/Down span or step folders",
+                    f"folder-end={folder_end}; home={folder_home}; end={folder_last}; "
+                    f"ctrl-home={folder_control_home}; ctrl-down={folder_control_down}; ctrl-up={folder_control_up}",
+                    folder_end == "folder-last.jpg" and folder_home == "folder-first.jpg"
+                    and folder_last == "folder-last.jpg" and folder_control_home == "landscape.jpg"
+                    and folder_control_down == "folder-first.jpg" and folder_control_up == "landscape.jpg")
+        return
 
     if SUITE == "edit-navigation":
         click_at(518, 178, button=3)
@@ -567,6 +671,67 @@ def smoke_test() -> None:
                 1423 + MOUSE_OFFSET_X, 823 + MOUSE_OFFSET_Y)
         bounds = matching_color_bounds(shot, (45, 110, 190), crop=crop)
         check_editor_navigation(shot, crop, bounds)
+        baseline = Image.open(shot).convert("RGB").getpixel(
+            (1050 + MOUSE_OFFSET_X, 450 + MOUSE_OFFSET_Y))
+
+        def editor_center(path: Path):
+            return Image.open(path).convert("RGB").getpixel(
+                (1050 + MOUSE_OFFSET_X, 450 + MOUSE_OFFSET_Y))
+
+        def center_delta(color):
+            return sum(abs(a - b) for a, b in zip(baseline, color))
+
+        # The Exposure track is at this stable position in the 1600x1000
+        # test window. Verify the context click resets the active slider.
+        click_at(570, 199)
+        try:
+            wait_for(lambda: center_delta(editor_center(
+                screenshot("edit-slider-change-wait.png"))) > 20,
+                "Exposure slider to change the editor preview", timeout=8)
+            changed_path = screenshot("edit-slider-changed.png")
+            change_delta = center_delta(editor_center(changed_path))
+        except TimeoutError:
+            changed_path = None
+            change_delta = None
+        click_at(570, 199, button=3)
+        reset_path = screenshot("edit-slider-right-click-reset.png")
+        try:
+            wait_for(lambda: center_delta(editor_center(
+                screenshot("edit-slider-reset-wait.png"))) <= 16,
+                "right-click reset to restore neutral Exposure", timeout=8)
+            reset_path = screenshot("edit-slider-right-click-reset.png")
+            reset_delta = center_delta(editor_center(reset_path))
+            record(add_case("Edit slider right-click reset",
+                            "Right-click resets Exposure to its neutral default"),
+                   change_delta is not None and change_delta > 20 and reset_delta <= 16,
+                   f"adjusted delta={change_delta}; reset delta={reset_delta}; "
+                   f"screenshots={changed_path.name if changed_path else 'no adjustment'}, {reset_path.name}")
+        except TimeoutError as error:
+            record(add_case("Edit slider right-click reset",
+                            "Right-click resets Exposure to its neutral default"),
+                   False, f"preview did not return to neutral: {error}; screenshot={reset_path.name}")
+
+        # Drag through the zero detent and release within one screen pixel of
+        # its marker. The preview must settle back to the neutral rendering.
+        command(["xdotool", "mousemove", "350", "199"])
+        command(["xdotool", "mousedown", "1"])
+        for x in range(365, 501, 15):
+            command(["xdotool", "mousemove", str(x), "199"])
+        command(["xdotool", "mouseup", "1"])
+        try:
+            wait_for(lambda: center_delta(editor_center(
+                screenshot("edit-slider-detent-wait.png"))) <= 16,
+                "slider drag detent to settle at neutral Exposure", timeout=8)
+            detent_path = screenshot("edit-slider-center-detent.png")
+            detent_delta = center_delta(editor_center(detent_path))
+            record(add_case("Edit slider center detent",
+                            "Dragging across the centre mark snaps to the default"),
+                   detent_delta <= 16,
+                   f"preview center delta from neutral={detent_delta}; screenshot={detent_path.name}")
+        except TimeoutError as error:
+            record(add_case("Edit slider center detent",
+                            "Dragging across the centre mark snaps to the default"),
+                   False, f"preview did not settle at neutral: {error}")
         return
 
     # Set a rating through the actual keyboard shortcut, then verify the

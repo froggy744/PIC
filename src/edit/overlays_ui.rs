@@ -294,11 +294,7 @@ fn overlay_grid_position(
     _aspect: f32,
 ) -> (u8, u8, f64, f64) {
     let (col, row) = overlay.anchor.grid_position();
-    let targets = [
-        OverlaySpec::POSITION_MARGIN,
-        0.5,
-        1.0 - OverlaySpec::POSITION_MARGIN,
-    ];
+    let targets = [0.0, 0.5, 1.0];
     (
         col,
         row,
@@ -332,11 +328,7 @@ fn place_overlay_grid(
 ) {
     let photo_w = dims.0.max(1) as f64;
     let photo_h = dims.1.max(1) as f64;
-    let targets = [
-        OverlaySpec::POSITION_MARGIN,
-        0.5,
-        1.0 - OverlaySpec::POSITION_MARGIN,
-    ];
+    let targets = [0.0, 0.5, 1.0];
     let col = col.min(2);
     let row = row.min(2);
     overlay.anchor = OverlayAnchor::from_grid(col, row);
@@ -444,6 +436,7 @@ fn add_overlay_opacity_slider(parent: &gtk::Box) -> gtk::Scale {
     scale.set_draw_value(false);
     scale.set_hexpand(true);
     scale.add_css_class("edit-adjustment-scale");
+    add_scale_default_affordance(&scale, 1.0);
     let value = gtk::Label::new(Some("1.00"));
     value.set_xalign(1.0);
     value.set_width_chars(4);
@@ -1713,11 +1706,7 @@ mod overlay_geometry_tests {
     fn position_grid_places_and_recovers_all_nine_alignments() {
         let dims = (2400, 1600);
         let aspect = 1.5;
-        let targets = [
-            OverlaySpec::POSITION_MARGIN,
-            0.5,
-            1.0 - OverlaySpec::POSITION_MARGIN,
-        ];
+        let targets = [0.0, 0.5, 1.0];
         for row in 0..3 {
             for col in 0..3 {
                 let mut overlay = OverlaySpec::new_centered("overlay.png");
@@ -1746,11 +1735,7 @@ mod overlay_geometry_tests {
 
     #[test]
     fn positions_survive_recipe_copy_between_landscape_and_portrait() {
-        let targets = [
-            OverlaySpec::POSITION_MARGIN,
-            0.5,
-            1.0 - OverlaySpec::POSITION_MARGIN,
-        ];
+        let targets = [0.0, 0.5, 1.0];
         for row in 0..3u8 {
             for col in 0..3u8 {
                 let mut source = OverlaySpec::new_centered("logo");

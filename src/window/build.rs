@@ -4678,6 +4678,59 @@ fn start_photo_export_single(
             let photos_page =
                 stack_for_keys.visible_child_name().as_deref() == Some("photos");
 
+            // Browse navigation is handled at the window boundary so it is
+            // independent of whether a thumbnail, the grid, or a sidebar row
+            // retained focus. Text fields, Edit, Collage, and the Lightbox
+            // keep their own key maps.
+            if photos_page && !lightbox_for_keys.root.is_visible() && !disallowed_modifier {
+                let shift = modifiers.contains(gtk::gdk::ModifierType::SHIFT_MASK);
+                let mut browser_command = false;
+                if control && !shift {
+                    browser_command = matches!(
+                        key,
+                        gtk::gdk::Key::Home
+                            | gtk::gdk::Key::End
+                            | gtk::gdk::Key::Up
+                            | gtk::gdk::Key::Down
+                    );
+                } else if !control && !shift {
+                    browser_command = matches!(
+                        key,
+                        gtk::gdk::Key::Left
+                            | gtk::gdk::Key::Right
+                            | gtk::gdk::Key::Up
+                            | gtk::gdk::Key::Down
+                            | gtk::gdk::Key::Page_Up
+                            | gtk::gdk::Key::Page_Down
+                            | gtk::gdk::Key::Home
+                            | gtk::gdk::Key::End
+                    );
+                }
+                if browser_command {
+                    let focus_is_in_gallery = std::iter::successors(
+                        gtk::prelude::RootExt::focus(&window_for_keys),
+                        |widget| widget.parent(),
+                    )
+                    .any(|widget| widget == gallery_for_keys.visible_root());
+                    let arrow = matches!(
+                        key,
+                        gtk::gdk::Key::Left
+                            | gtk::gdk::Key::Right
+                            | gtk::gdk::Key::Up
+                            | gtk::gdk::Key::Down
+                    );
+                    if !arrow || !focus_is_in_gallery || control {
+                        let current_photo_id = selected_for_keys
+                            .borrow()
+                            .as_ref()
+                            .map(crate::photo_object::PhotoObject::id);
+                        if gallery_for_keys.navigate_browser_key(key, control, current_photo_id) {
+                            return glib::Propagation::Stop;
+                        }
+                    }
+                }
+            }
+
             if control && !disallowed_modifier && matches!(key, gtk::gdk::Key::a | gtk::gdk::Key::A) {
                 if photos_page && !lightbox_for_keys.root.is_visible() {
                     let folder_id = match filter_for_keys.get() {

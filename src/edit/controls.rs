@@ -301,12 +301,50 @@ fn add_slider(
     scale
 }
 
+fn add_scale_default_affordance(scale: &gtk::Scale, default_value: f64) {
+    let adjustment = scale.adjustment();
+    let is_center_default = default_value > adjustment.lower() && default_value < adjustment.upper();
+    if is_center_default {
+        // A small visible detent marks the neutral/default position.
+        scale.add_mark(default_value, gtk::PositionType::Bottom, None);
+        scale.set_tooltip_text(Some(
+            "Drag through the centre mark to snap to the default; right-click to reset this slider",
+        ));
+    } else {
+        scale.set_tooltip_text(Some("Right-click to reset this slider to its default"));
+    }
+
+    let reset = gtk::GestureClick::new();
+    reset.set_button(3);
+    reset.set_propagation_phase(gtk::PropagationPhase::Capture);
+    let scale_for_reset = scale.clone();
+    reset.connect_pressed(move |gesture, _, _, _| {
+        scale_for_reset.set_value(default_value);
+        gesture.set_state(gtk::EventSequenceState::Claimed);
+    });
+    scale.add_controller(reset);
+}
+
+fn slider_detent_value(
+    value: f64,
+    default_value: f64,
+    lower: f64,
+    upper: f64,
+    step: f64,
+) -> Option<f64> {
+    let is_center_default = default_value > lower && default_value < upper;
+    let detent_radius = step.abs() * 0.51;
+    (is_center_default && (value - default_value).abs() <= detent_radius)
+        .then_some(default_value)
+}
+
 fn connect_scale(
     scale: &gtk::Scale,
     session: Rc<RefCell<EditSession>>,
     syncing: Rc<Cell<bool>>,
     queue_preview: Rc<dyn Fn()>,
     update_history: Rc<dyn Fn()>,
+    default_value: f64,
     assign: impl Fn(&mut EditRecipe, f32) + 'static,
 ) {
     let dragging = Rc::new(Cell::new(false));
@@ -330,6 +368,8 @@ fn connect_scale(
             }
         })
     };
+    add_scale_default_affordance(scale, default_value);
+
     let press = gtk::GestureClick::new();
     press.set_button(1);
     press.set_propagation_phase(gtk::PropagationPhase::Capture);
@@ -378,6 +418,24 @@ fn connect_scale(
         if syncing.get() {
             return;
         }
+        if dragging.get() {
+            let adjustment = scale.adjustment();
+            if let Some(snapped) = slider_detent_value(
+                scale.value(),
+                default_value,
+                adjustment.lower(),
+                adjustment.upper(),
+                adjustment.step_increment(),
+            ) {
+                if (scale.value() - snapped).abs() > f64::EPSILON {
+                    // Set the exact neutral value when the thumb crosses its
+                    // detent. The nested value-changed signal applies that value
+                    // to the edit recipe and queues the matching preview.
+                    scale.set_value(snapped);
+                    return;
+                }
+            }
+        }
         let value = scale.value() as f32;
         if dragging.get() {
             session
@@ -401,6 +459,15 @@ fn scale_action_changed(start_recipe: Option<EditRecipe>, current_recipe: &EditR
 #[cfg(test)]
 mod scale_action_tests {
     use super::*;
+
+    #[test]
+    fn detent_snaps_only_internal_defaults_within_half_a_step() {
+        assert_eq!(slider_detent_value(0.04, 0.0, -1.0, 1.0, 0.1), Some(0.0));
+        assert_eq!(slider_detent_value(-0.04, 0.0, -1.0, 1.0, 0.1), Some(0.0));
+        assert_eq!(slider_detent_value(0.06, 0.0, -1.0, 1.0, 0.1), None);
+        assert_eq!(slider_detent_value(0.0, 0.0, 0.0, 1.0, 0.1), None);
+        assert_eq!(slider_detent_value(0.0, 0.0, -1.0, 1.0, 0.0), Some(0.0));
+    }
 
     #[test]
     fn settle_render_is_requested_only_after_a_real_slider_change() {

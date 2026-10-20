@@ -41,7 +41,7 @@ EOF
 }
 
 gui_suite="$(show_test_menu)"
-case "$gui_suite" in all|startup|library|import|viewer|editing|edit-navigation|screensaver|native|wayland) ;;
+case "$gui_suite" in all|startup|library|import|viewer|editing|edit-navigation|browse-navigation|screensaver|native|wayland) ;;
     *) printf 'Invalid PIC_GUI_SUITE: %s\n' "$gui_suite" >&2; exit 2 ;;
 esac
 

@@ -267,7 +267,7 @@ pub fn build(
     toolbar_actions.append(&reset);
 
     let export = toolbar_icon_button(
-        "document-send-symbolic",
+        "document-save-symbolic",
         "Export the current edited photo (size and file type)",
     );
     toolbar_actions.append(&export);
@@ -1381,6 +1381,7 @@ pub fn build(
         syncing.clone(),
         queue_preview.clone(),
         update_history_buttons.clone(),
+        0.0,
         |recipe, value| recipe.straighten = value,
     );
     connect_scale(
@@ -1389,6 +1390,7 @@ pub fn build(
         syncing.clone(),
         queue_preview.clone(),
         update_history_buttons.clone(),
+        0.0,
         |r, v| r.exposure = v,
     );
     connect_scale(
@@ -1397,6 +1399,7 @@ pub fn build(
         syncing.clone(),
         queue_preview.clone(),
         update_history_buttons.clone(),
+        0.0,
         |r, v| r.contrast = v,
     );
     connect_scale(
@@ -1405,6 +1408,7 @@ pub fn build(
         syncing.clone(),
         queue_preview.clone(),
         update_history_buttons.clone(),
+        0.0,
         |r, v| r.fill_light = v,
     );
     connect_scale(
@@ -1413,6 +1417,7 @@ pub fn build(
         syncing.clone(),
         queue_preview.clone(),
         update_history_buttons.clone(),
+        0.0,
         |r, v| r.highlights = v,
     );
     connect_scale(
@@ -1421,6 +1426,7 @@ pub fn build(
         syncing.clone(),
         queue_preview.clone(),
         update_history_buttons.clone(),
+        0.0,
         |r, v| r.shadows = v,
     );
     connect_scale(
@@ -1429,6 +1435,7 @@ pub fn build(
         syncing.clone(),
         queue_preview.clone(),
         update_history_buttons.clone(),
+        0.0,
         |r, v| r.temperature = v,
     );
     connect_scale(
@@ -1437,6 +1444,7 @@ pub fn build(
         syncing.clone(),
         queue_preview.clone(),
         update_history_buttons.clone(),
+        0.0,
         |r, v| r.saturation = v,
     );
     connect_scale(
@@ -1445,6 +1453,7 @@ pub fn build(
         syncing.clone(),
         queue_preview.clone(),
         update_history_buttons.clone(),
+        0.0,
         |r, v| r.sharpen = v,
     );
     connect_scale(
@@ -1453,6 +1462,7 @@ pub fn build(
         syncing.clone(),
         queue_preview.clone(),
         update_history_buttons.clone(),
+        0.0,
         |r, v| r.clarity = v,
     );
     connect_scale(
@@ -1461,6 +1471,7 @@ pub fn build(
         syncing.clone(),
         queue_preview.clone(),
         update_history_buttons.clone(),
+        0.0,
         |r, v| r.grain = v,
     );
 
@@ -1470,6 +1481,7 @@ pub fn build(
         syncing.clone(),
         queue_preview.clone(),
         update_history_buttons.clone(),
+        100.0,
         |recipe, percentage| recipe.filter_amount = (percentage / 100.0).clamp(0.0, 1.0),
     );
 

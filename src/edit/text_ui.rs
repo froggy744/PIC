@@ -917,11 +917,7 @@ fn build_text_position_grid(parent: &gtk::Box) -> Vec<((u8, u8), gtk::ToggleButt
 
 fn text_grid_position(layer: &TextLayerSpec, photo_w: i32, photo_h: i32) -> (u8, u8, f64, f64) {
     let (col, row) = layer.anchor.grid_position();
-    let targets = [
-        TextLayerSpec::POSITION_MARGIN,
-        0.5,
-        1.0 - TextLayerSpec::POSITION_MARGIN,
-    ];
+    let targets = [0.0, 0.5, 1.0];
     (
         col,
         row,
@@ -940,11 +936,7 @@ fn place_text_grid(
 ) {
     let col = col.min(2);
     let row = row.min(2);
-    let targets = [
-        TextLayerSpec::POSITION_MARGIN,
-        0.5,
-        1.0 - TextLayerSpec::POSITION_MARGIN,
-    ];
+    let targets = [0.0, 0.5, 1.0];
     layer.anchor = OverlayAnchor::from_grid(col, row);
     layer.x = targets[usize::from(col)] + (x_offset / f64::from(dims.0.max(1))) as f32;
     layer.y = targets[usize::from(row)] + (y_offset / f64::from(dims.1.max(1))) as f32;
@@ -962,6 +954,7 @@ fn add_text_opacity_slider(parent: &gtk::Box) -> gtk::Scale {
     scale.set_draw_value(false);
     scale.set_hexpand(true);
     scale.add_css_class("edit-adjustment-scale");
+    add_scale_default_affordance(&scale, 1.0);
     let value = gtk::Label::new(Some("1.00"));
     value.set_xalign(1.0);
     value.set_width_chars(4);
@@ -985,8 +978,7 @@ mod text_position_tests {
     #[test]
     fn all_nine_position_cells_place_and_report_the_text_layer() {
         let dims = (2400, 1600);
-        let margin = TextLayerSpec::POSITION_MARGIN;
-        let targets = [margin, 0.5, 1.0 - margin];
+        let targets = [0.0, 0.5, 1.0];
         for row in 0..3 {
             for col in 0..3 {
                 let mut layer = TextLayerSpec::new_default();
@@ -1027,7 +1019,7 @@ mod text_position_tests {
                 assert_eq!(layer.anchor, OverlayAnchor::from_grid(col, row));
                 let rect = super::super::text_render::text_rect(layer, 4000.0, 6000.0).unwrap();
                 let (ax, ay) = layer.anchor.factors();
-                let targets = [TextLayerSpec::POSITION_MARGIN, 0.5, 1.0 - TextLayerSpec::POSITION_MARGIN];
+                let targets = [0.0, 0.5, 1.0];
                 assert!((rect.left + rect.width * ax - targets[col as usize]).abs() < 1e-5);
                 assert!((rect.top + rect.height * ay - targets[row as usize]).abs() < 1e-5);
             }

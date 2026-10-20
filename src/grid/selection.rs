@@ -23,7 +23,199 @@ fn folder_navigation_scope(
     scope
 }
 
+fn navigation_range_for_index(
+    index: usize,
+    count: usize,
+    ranges: &[GroupRange],
+    folder_scope: bool,
+) -> std::ops::Range<usize> {
+    if folder_scope {
+        if let Some(range) = ranges
+            .iter()
+            .find(|range| index >= range.start && index < range.end)
+        {
+            return range.start..range.end;
+        }
+    }
+    0..count
+}
+
+fn adjacent_folder_photo_target(photos: &[PhotoObject], current: usize, direction: i32) -> Option<usize> {
+    let folder_id = photos.get(current)?.folder_id();
+    let mut folders = Vec::<(i64, usize)>::new();
+    let mut seen = HashSet::new();
+    for (index, photo) in photos.iter().enumerate() {
+        let folder = photo.folder_id();
+        if seen.insert(folder) {
+            folders.push((folder, index));
+        }
+    }
+    let position = folders.iter().position(|(folder, _)| *folder == folder_id)?;
+    let target = if direction < 0 {
+        position.checked_sub(1)?
+    } else {
+        position.checked_add(1).filter(|next| *next < folders.len())?
+    };
+    Some(folders[target].1)
+}
+
 impl Gallery {
+    /// Handle a photo-browser navigation key from the window boundary. This
+    /// keeps the commands available when focus was left in the sidebar while
+    /// preserving the gallery's existing visual arrow logic when the grid has
+    /// focus.
+    pub(crate) fn navigate_browser_key(
+        &self,
+        key: gtk::gdk::Key,
+        control: bool,
+        current_photo_id: Option<i64>,
+    ) -> bool {
+        let photos = self.current_photos.borrow().clone();
+        if photos.is_empty() {
+            return false;
+        }
+        let current = current_photo_id
+            .and_then(|id| photos.iter().position(|photo| photo.id() == id))
+            .or_else(|| {
+                let selected = self.selection.selection();
+                gtk::BitsetIter::init_first(&selected).map(|(_, position)| position as usize)
+            })
+            .or_else(|| {
+                self.viewport_center_photo()
+                    .and_then(|photo| photos.iter().position(|item| item.id() == photo.id()))
+            })
+            .unwrap_or(0)
+            .min(photos.len() - 1);
+
+        let ranges = self.group_ranges.borrow();
+        let count = photos.len();
+        let target = match (key, control) {
+            (gtk::gdk::Key::Home, true) => Some(0),
+            (gtk::gdk::Key::End, true) => Some(count - 1),
+            (gtk::gdk::Key::Home, false) => {
+                let scope = self.group_mode.get() == GroupMode::Folder;
+                Some(navigation_range_for_index(current, count, &ranges, scope).start)
+            }
+            (gtk::gdk::Key::End, false) => {
+                let scope = self.group_mode.get() == GroupMode::Folder;
+                Some(navigation_range_for_index(current, count, &ranges, scope).end - 1)
+            }
+            (gtk::gdk::Key::Up | gtk::gdk::Key::Down, true) => {
+                let direction = if key == gtk::gdk::Key::Up { -1 } else { 1 };
+                Some(adjacent_folder_photo_target(&photos, current, direction).unwrap_or(current))
+            }
+            (gtk::gdk::Key::Left, false) => current.checked_sub(1),
+            (gtk::gdk::Key::Right, false) => {
+                (current + 1 < count).then_some(current + 1)
+            }
+            (gtk::gdk::Key::Up | gtk::gdk::Key::Down, false) => {
+                self.keyboard_vertical_target(current, if key == gtk::gdk::Key::Up { -1 } else { 1 }, &ranges)
+            }
+            (gtk::gdk::Key::Page_Up | gtk::gdk::Key::Page_Down, false) => {
+                let direction = if key == gtk::gdk::Key::Page_Up { -1 } else { 1 };
+                self.keyboard_page_target(current, direction, &ranges)
+            }
+            _ => return false,
+        };
+        drop(ranges);
+
+        // Ctrl+Up/Down is consumed even at the end of the folder list, so it
+        // cannot fall through and move a different widget or photo selection.
+        if control && matches!(key, gtk::gdk::Key::Up | gtk::gdk::Key::Down) {
+            if let Some(target) = target.filter(|target| *target != current) {
+                self.focus_keyboard_photo(&photos[target]);
+            }
+            return true;
+        }
+
+        let Some(target) = target else {
+            return true;
+        };
+        self.focus_keyboard_photo(&photos[target]);
+        if std::env::var_os("PICASA_TRACE").is_some() {
+            eprintln!(
+                "PIC_NAV browse_key key={key:?} control={control} from={} to={} count={count}",
+                photos[current].id(), photos[target].id()
+            );
+        }
+        true
+    }
+
+    fn focus_keyboard_photo(&self, photo: &PhotoObject) {
+        self.select_photo(photo.id());
+        self.visible_root().grab_focus();
+    }
+
+    fn keyboard_vertical_target(
+        &self,
+        current: usize,
+        direction: i32,
+        ranges: &[GroupRange],
+    ) -> Option<usize> {
+        if self.layout() != PhotoLayout::Grid {
+            return self
+                .sectioned_folder
+                .wall_vertical_neighbor(current as u32, direction)
+                .map(|index| index as usize);
+        }
+        let columns = self.current_columns.get().max(1);
+        let preferred = self
+            .sectioned_folder
+            .column_for_index(current as u32)
+            .unwrap_or((current as u32) % columns);
+        if ranges.is_empty() {
+            let target = current as i64 + i64::from(direction) * i64::from(columns);
+            return (target >= 0 && target < self.current_photos.borrow().len() as i64)
+                .then_some(target as usize);
+        }
+        vertical_navigation_target(ranges, current as u32, columns, preferred, direction)
+            .map(|index| index as usize)
+    }
+
+    fn keyboard_page_target(
+        &self,
+        current: usize,
+        direction: i32,
+        ranges: &[GroupRange],
+    ) -> Option<usize> {
+        if self.layout() != PhotoLayout::Grid {
+            let adjustment = self.sectioned_folder.scroll.borrow().as_ref()?.vadjustment();
+            let page = adjustment.page_size().max(1.0);
+            let y = self.sectioned_folder.y_for_index(current as u32)?;
+            return self
+                .sectioned_folder
+                .wall_index_for_y((y + f64::from(direction) * page).max(0.0));
+        }
+
+        let adjustment = if self.group_mode.get() == GroupMode::Folder
+            && !self.using_virtual_photo_surface()
+        {
+            self.folder_root.vadjustment()
+        } else {
+            self.root.vadjustment()
+        };
+        let page_height = adjustment.map_or(0.0, |adjustment| adjustment.page_size());
+        let row_pitch = f64::from(folder_line_height(self.tile_height.get(), self.show_file_names.get()).max(1));
+        let page_rows = ((page_height / row_pitch).floor() as usize).saturating_sub(1).max(1);
+        let columns = self.current_columns.get().max(1);
+        let preferred = self
+            .sectioned_folder
+            .column_for_index(current as u32)
+            .unwrap_or((current as u32) % columns);
+        let mut target = current as u32;
+        for _ in 0..page_rows {
+            let next = if ranges.is_empty() {
+                let candidate = i64::from(target) + i64::from(direction) * i64::from(columns);
+                (candidate >= 0 && candidate < self.current_photos.borrow().len() as i64)
+                    .then_some(candidate as u32)
+            } else {
+                vertical_navigation_target(ranges, target, columns, preferred, direction)
+            }?;
+            target = next;
+        }
+        Some(target as usize)
+    }
+
     /// Capture a *photo identity and viewport Y offset*, not a scroll-bar
     /// number. Changing Folder Grid's columns changes every later row's
     /// absolute Y coordinate, so the scrollbar alone cannot preserve focus.
@@ -1559,6 +1751,71 @@ impl Gallery {
 
     pub fn photo_objects(&self) -> Vec<PhotoObject> {
         self.current_photos.borrow().clone()
+    }
+}
+
+#[cfg(test)]
+mod browser_navigation_tests {
+    use super::*;
+
+    fn range(start: usize, end: usize, folder_id: i64) -> GroupRange {
+        GroupRange {
+            start,
+            end,
+            label: format!("folder-{folder_id}"),
+            folder_id,
+        }
+    }
+
+    #[test]
+    fn home_and_end_scope_to_the_active_folder_unless_control_is_used() {
+        let ranges = vec![range(0, 3, 10), range(3, 5, 20), range(5, 9, 30)];
+        assert_eq!(navigation_range_for_index(4, 9, &ranges, true), 3..5);
+        assert_eq!(navigation_range_for_index(4, 9, &ranges, false), 0..9);
+    }
+
+    #[test]
+    fn folder_step_uses_first_photo_of_the_adjacent_nonempty_folder() {
+        let photos = [
+            keyboard_photo(1, 10),
+            keyboard_photo(2, 10),
+            keyboard_photo(3, 30),
+            keyboard_photo(4, 40),
+        ];
+        assert_eq!(adjacent_folder_photo_target(&photos, 1, 1), Some(2));
+        assert_eq!(adjacent_folder_photo_target(&photos, 2, -1), Some(0));
+        assert_eq!(adjacent_folder_photo_target(&photos, 0, -1), None);
+        assert_eq!(adjacent_folder_photo_target(&photos, 3, 1), None);
+    }
+
+    fn keyboard_photo(id: i64, folder_id: i64) -> PhotoObject {
+        let photo = Photo {
+            id,
+            path: format!("/folder-{folder_id}/{id}.jpg"),
+            folder_id: Some(folder_id),
+            folder_path: Some(format!("/folder-{folder_id}")),
+            taken_at: None,
+            camera: None,
+            aperture: None,
+            lens: None,
+            shutter_speed: None,
+            iso: None,
+            focal_length: None,
+            exposure_bias: None,
+            width: Some(100),
+            height: Some(100),
+            size_bytes: Some(100),
+            mtime: Some(id),
+            added_at: id,
+            rotation: 0,
+            edit_recipe: String::new(),
+            favorite: false,
+            rating: 0,
+            trashed: false,
+            history_caption: None,
+            edited_at: 0,
+        };
+        PhotoObject::from_photo(&photo)
     }
 }
 fn selection_position_for_id(selection: &gtk::MultiSelection, photo_id: i64) -> Option<u32> {

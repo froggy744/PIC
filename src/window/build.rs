@@ -4290,11 +4290,57 @@ fn show_photo_export_dialog(
         "2048 px",
         "Full HD (1920 px)",
         "HD (1280 px)",
+        "Custom…",
     ]);
     size.set_selected(0);
     let size_row = if jobs.len() > 1 { 1 } else { 0 };
     grid.attach(&size_label, 0, size_row, 1, 1);
     grid.attach(&size, 1, size_row, 1, 1);
+
+    let custom_size_label = gtk::Label::new(Some("Long edge (px)"));
+    custom_size_label.set_xalign(0.0);
+    let custom_size = gtk::SpinButton::with_range(1.0, 30000.0, 100.0);
+    custom_size.set_value(3000.0);
+    custom_size.set_numeric(true);
+    custom_size.set_digits(0);
+    custom_size.set_tooltip_text(Some("Maximum output size for the longest edge"));
+    let custom_size_row = size_row + 1;
+    grid.attach(&custom_size_label, 0, custom_size_row, 1, 1);
+    grid.attach(&custom_size, 1, custom_size_row, 1, 1);
+    custom_size_label.set_visible(false);
+    custom_size.set_visible(false);
+    {
+        let custom_size_label = custom_size_label.clone();
+        let custom_size = custom_size.clone();
+        size.connect_selected_notify(move |dropdown| {
+            let visible = dropdown.selected() == 5;
+            custom_size_label.set_visible(visible);
+            custom_size.set_visible(visible);
+        });
+    }
+
+    let quality_label = gtk::Label::new(Some("JPEG quality"));
+    quality_label.set_xalign(0.0);
+    let quality = gtk::Scale::with_range(gtk::Orientation::Horizontal, 60.0, 100.0, 1.0);
+    quality.set_value(crate::edit::export_batch::default_export_quality() as f64);
+    quality.set_draw_value(false);
+    quality.set_hexpand(true);
+    quality.set_tooltip_text(Some("JPEG image quality; disabled for PNG and WebP"));
+    let quality_value = gtk::Label::new(None);
+    quality_value.set_width_chars(5);
+    quality_value.set_xalign(1.0);
+    quality_value.add_css_class("edit-adjustment-value");
+    quality_value.set_text(&format!("{:.0}", quality.value()));
+    let quality_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    quality_row.append(&quality);
+    quality_row.append(&quality_value);
+    let quality_grid_row = size_row + 2;
+    grid.attach(&quality_label, 0, quality_grid_row, 1, 1);
+    grid.attach(&quality_row, 1, quality_grid_row, 1, 1);
+    quality.connect_value_changed({
+        let quality_value = quality_value.clone();
+        move |scale| quality_value.set_text(&format!("{:.0}", scale.value()))
+    });
 
     let type_label = gtk::Label::new(Some("File type"));
     type_label.set_xalign(0.0);
@@ -4302,8 +4348,18 @@ fn show_photo_export_dialog(
         &crate::edit::export_batch::ExportFormat::dialog_labels(),
     );
     file_type.set_selected(0);
-    grid.attach(&type_label, 0, size_row + 1, 1, 1);
-    grid.attach(&file_type, 1, size_row + 1, 1, 1);
+    let type_row = size_row + 3;
+    grid.attach(&type_label, 0, type_row, 1, 1);
+    grid.attach(&file_type, 1, type_row, 1, 1);
+    {
+        let quality = quality.clone();
+        let quality_label = quality_label.clone();
+        file_type.connect_selected_notify(move |dropdown| {
+            let enabled = dropdown.selected() == 0;
+            quality.set_sensitive(enabled);
+            quality_label.set_sensitive(enabled);
+        });
+    }
     content.append(&grid);
     let dialog = adw::AlertDialog::builder()
         .heading(if jobs.len() == 1 {
@@ -4322,6 +4378,8 @@ fn show_photo_export_dialog(
     {
         let window = window.clone();
         let size = size.clone();
+        let custom_size = custom_size.clone();
+        let quality = quality.clone();
         let file_type = file_type.clone();
         dialog.connect_response(Some("export"), move |_, _| {
             let max_edge = match size.selected() {
@@ -4329,8 +4387,10 @@ fn show_photo_export_dialog(
                 2 => 2048,
                 3 => 1920,
                 4 => 1280,
+                5 => custom_size.value().round() as u32,
                 _ => 0,
             };
+            let quality = quality.value().round().clamp(60.0, 100.0) as u8;
             let format =
                 crate::edit::export_batch::ExportFormat::from_dialog_index(file_type.selected());
             let jobs = jobs
@@ -4346,6 +4406,7 @@ fn show_photo_export_dialog(
                 &window,
                 jobs,
                 max_edge,
+                quality,
                 format,
                 progress.clone(),
             );
@@ -4358,6 +4419,7 @@ fn choose_photo_export_destination(
     window: &gtk::Window,
     jobs: Vec<crate::edit::export_batch::ExportJob>,
     max_edge: u32,
+    quality: u8,
     format: crate::edit::export_batch::ExportFormat,
     progress: Rc<OperationProgressUi>,
 ) {
@@ -4368,10 +4430,53 @@ fn choose_photo_export_destination(
             .accept_label("Export")
             .modal(true)
             .build();
+        let parent = window.clone();
         dialog.select_folder(Some(window), None::<&gio::Cancellable>, move |result| {
             if let Ok(file) = result {
                 if let Some(path) = file.path() {
-                    start_photo_export_folder(progress.clone(), jobs.clone(), path, max_edge, format);
+                    if jobs.iter().any(|job| path.join(&job.file_name).exists()) {
+                        let confirm = adw::AlertDialog::builder()
+                            .heading("Export files already exist")
+                            .body("Replace files with matching names, or keep both by adding numbers to the new filenames?")
+                            .close_response("cancel")
+                            .default_response("keep-both")
+                            .build();
+                        confirm.add_response("cancel", "Cancel");
+                        confirm.add_response("keep-both", "Keep Both");
+                        confirm.add_response("replace", "Replace Existing");
+                        confirm.set_response_appearance(
+                            "replace",
+                            adw::ResponseAppearance::Destructive,
+                        );
+                        let parent = parent.clone();
+                        let progress = progress.clone();
+                        let jobs = jobs.clone();
+                        let path = path.clone();
+                        confirm.connect_response(None, move |_, response| {
+                            if response == "keep-both" || response == "replace" {
+                                start_photo_export_folder(
+                                    progress.clone(),
+                                    jobs.clone(),
+                                    path.clone(),
+                                    max_edge,
+                                    quality,
+                                    format,
+                                    response == "replace",
+                                );
+                            }
+                        });
+                        confirm.present(Some(&parent));
+                    } else {
+                        start_photo_export_folder(
+                            progress.clone(),
+                            jobs.clone(),
+                            path,
+                            max_edge,
+                            quality,
+                            format,
+                            false,
+                        );
+                    }
                 }
             }
         });
@@ -4386,6 +4491,7 @@ fn choose_photo_export_destination(
                 job.clone(),
                 path,
                 max_edge,
+                quality,
                 format,
                 replace_existing,
             );
@@ -4468,7 +4574,9 @@ fn start_photo_export_folder(
     jobs: Vec<crate::edit::export_batch::ExportJob>,
     folder: std::path::PathBuf,
     max_edge: u32,
+    quality: u8,
     format: crate::edit::export_batch::ExportFormat,
+    replace_existing: bool,
 ) {
     let total = jobs.len();
     progress.begin("Exporting photos", total);
@@ -4476,13 +4584,14 @@ fn start_photo_export_folder(
     let (sender, receiver) = std::sync::mpsc::channel();
     watch_export_progress(progress, receiver, total);
     std::thread::spawn(move || {
-        let outcome = crate::edit::export_batch::run_batch_export_with_workers(
+        let outcome = crate::edit::export_batch::run_batch_export_with_workers_and_overwrite(
             &jobs,
             &folder,
             max_edge,
-            crate::edit::export_batch::default_export_quality(),
+            quality,
             format,
             crate::edit::export_batch::DEFAULT_BATCH_EXPORT_WORKERS,
+            replace_existing,
             |job| crate::edit::export_batch::render_job(job),
             |done, _total, filename, failed| {
                 let _ = sender.send(ExportProgressMessage::Update {
@@ -4502,6 +4611,7 @@ fn start_photo_export_single(
     job: crate::edit::export_batch::ExportJob,
     destination: std::path::PathBuf,
     max_edge: u32,
+    quality: u8,
     format: crate::edit::export_batch::ExportFormat,
     replace_existing: bool,
 ) {
@@ -4531,7 +4641,7 @@ fn start_photo_export_single(
                     &job,
                     &destination,
                     max_edge,
-                    crate::edit::export_batch::default_export_quality(),
+                    quality,
                     format,
                     &render,
                 )
@@ -4540,7 +4650,7 @@ fn start_photo_export_single(
                     &job,
                     &destination,
                     max_edge,
-                    crate::edit::export_batch::default_export_quality(),
+                    quality,
                     format,
                     &render,
                 )

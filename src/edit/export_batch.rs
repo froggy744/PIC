@@ -425,6 +425,29 @@ pub fn run_batch_export<F, P>(
     quality: u8,
     format: ExportFormat,
     render: F,
+    on_progress: P,
+    cancel: Option<&AtomicBool>,
+) -> BatchExportOutcome
+where
+    F: Fn(&ExportJob) -> Result<RgbaImage>,
+    P: FnMut(usize, usize, &str, usize),
+{
+    run_batch_export_with_overwrite(
+        jobs, folder, max_edge, quality, format, false, render, on_progress, cancel,
+    )
+}
+
+/// Batch export with an explicit policy for destination files that already
+/// exist. When replacement is disabled, existing and duplicate names receive
+/// a numeric suffix as in `run_batch_export`.
+pub fn run_batch_export_with_overwrite<F, P>(
+    jobs: &[ExportJob],
+    folder: &Path,
+    max_edge: u32,
+    quality: u8,
+    format: ExportFormat,
+    replace_existing: bool,
+    render: F,
     mut on_progress: P,
     cancel: Option<&AtomicBool>,
 ) -> BatchExportOutcome
@@ -453,8 +476,13 @@ where
             on_progress(done, total, &job.file_name, outcome.failed);
             continue;
         }
-        let destination = unique_export_path(folder, &job.file_name, &mut reserved);
-        match export_job_to(job, &destination, max_edge, quality, format, &render) {
+        let destination = batch_export_path(folder, &job.file_name, &mut reserved, replace_existing);
+        let result = if replace_existing {
+            export_job_to_confirmed_replace(job, &destination, max_edge, quality, format, &render)
+        } else {
+            export_job_to(job, &destination, max_edge, quality, format, &render)
+        };
+        match result {
             Ok(()) => outcome.exported += 1,
             Err(error) => {
                 outcome.failed += 1;
@@ -479,6 +507,28 @@ pub fn run_batch_export_with_workers<F, P>(
     format: ExportFormat,
     workers: usize,
     render: F,
+    on_progress: P,
+    cancel: Option<&AtomicBool>,
+) -> BatchExportOutcome
+where
+    F: Fn(&ExportJob) -> Result<RgbaImage> + Sync,
+    P: FnMut(usize, usize, &str, usize),
+{
+    run_batch_export_with_workers_and_overwrite(
+        jobs, folder, max_edge, quality, format, workers, false, render, on_progress, cancel,
+    )
+}
+
+/// Concurrent batch export with an explicit existing-file replacement policy.
+pub fn run_batch_export_with_workers_and_overwrite<F, P>(
+    jobs: &[ExportJob],
+    folder: &Path,
+    max_edge: u32,
+    quality: u8,
+    format: ExportFormat,
+    workers: usize,
+    replace_existing: bool,
+    render: F,
     mut on_progress: P,
     cancel: Option<&AtomicBool>,
 ) -> BatchExportOutcome
@@ -487,8 +537,13 @@ where
     P: FnMut(usize, usize, &str, usize),
 {
     if workers <= 1 || jobs.len() <= 1 {
-        return run_batch_export(
-            jobs, folder, max_edge, quality, format, render, on_progress, cancel,
+        if !replace_existing {
+            return run_batch_export(
+                jobs, folder, max_edge, quality, format, render, on_progress, cancel,
+            );
+        }
+        return run_batch_export_with_overwrite(
+            jobs, folder, max_edge, quality, format, replace_existing, render, on_progress, cancel,
         );
     }
 
@@ -501,7 +556,7 @@ where
         .iter()
         .map(|job| {
             crate::source::file_available(&job.source_path)
-                .then(|| unique_export_path(folder, &job.file_name, &mut reserved))
+                .then(|| batch_export_path(folder, &job.file_name, &mut reserved, replace_existing))
         })
         .collect::<Vec<_>>();
     let next = AtomicUsize::new(0);
@@ -532,14 +587,13 @@ where
                     let _ = sender.send((index, Err(None)));
                     continue;
                 }
-                let result = export_job_to(
-                    job,
-                    destination,
-                    max_edge,
-                    quality,
-                    format,
-                    render,
-                )
+                let result = if replace_existing {
+                    export_job_to_confirmed_replace(
+                        job, destination, max_edge, quality, format, render,
+                    )
+                } else {
+                    export_job_to(job, destination, max_edge, quality, format, render)
+                }
                 .map_err(|error| Some(format!("{}: {error:#}", job.source_path)));
                 let _ = sender.send((index, result));
             });
@@ -578,6 +632,20 @@ where
         on_progress(completed, total, "", outcome.failed);
     }
     outcome
+}
+
+fn batch_export_path(
+    folder: &Path,
+    file_name: &str,
+    reserved: &mut HashSet<String>,
+    replace_existing: bool,
+) -> PathBuf {
+    if replace_existing && !reserved.contains(file_name) {
+        reserved.insert(file_name.to_string());
+        folder.join(file_name)
+    } else {
+        unique_export_path(folder, file_name, reserved)
+    }
 }
 
 pub fn default_export_quality() -> u8 {

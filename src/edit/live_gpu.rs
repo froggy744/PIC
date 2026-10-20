@@ -1933,18 +1933,29 @@ vec3 clarified(ivec2 coord) {
 vec3 sharpened(ivec2 coord) {
     vec3 center = clarified(coord);
     if (uSharpen <= 0.0001) return center;
-    const float k0 = 0.07076637;
-    const float k1 = 0.24446040;
-    const float k2 = 0.36954646;
-    const float kernel[5] = float[5](k0, k1, k2, k1, k0);
-    vec3 blurred = vec3(0.0);
-    for (int y = -2; y <= 2; ++y) {
-        for (int x = -2; x <= 2; ++x) {
-            blurred += clarified(coord + ivec2(x, y)) * kernel[x + 2] * kernel[y + 2];
+    // Match render::sharpen_unsharp:
+    // sigma=1.1, radius=ceil(3*sigma)=4, horizontal pass rounded to u8,
+    // then vertical pass and the final rounded unsharp mask. The previous
+    // 5x5 truncated kernel changed the blur near strong edges and caused
+    // visible GPU/CPU/export differences.
+    const float kernel[9] = float[9](
+        0.0004877075, 0.0087979808, 0.0694521442, 0.2399204373,
+        0.3626834452,
+        0.2399204373, 0.0694521442, 0.0087979808, 0.0004877075
+    );
+    precise vec3 vertical = vec3(0.0);
+    for (int y = -4; y <= 4; ++y) {
+        precise vec3 horizontal = vec3(0.0);
+        for (int x = -4; x <= 4; ++x) {
+            horizontal += clarified(coord + ivec2(x, y)) * kernel[x + 4];
         }
+        // CPU's horizontal scratch buffer is u8 between the two passes.
+        horizontal = floor(clamp(horizontal, 0.0, 1.0) * 255.0 + 0.5) / 255.0;
+        vertical += horizontal * kernel[y + 4];
     }
-    blurred = round(clamp(blurred, 0.0, 1.0) * 255.0) / 255.0;
-    return clamp(center + (center - blurred) * (uSharpen * 1.6), 0.0, 1.0);
+    vec3 blurred = floor(clamp(vertical, 0.0, 1.0) * 255.0 + 0.5) / 255.0;
+    return floor(clamp(center + (center - blurred) * (uSharpen * 1.6),
+                       0.0, 1.0) * 255.0 + 0.5) / 255.0;
 }
 // Match the CPU's stable, source-coordinate based grain hash.
 // Unsigned arithmetic wraps as required by the Rust u32 implementation.
@@ -1995,6 +2006,19 @@ void main() {
         return;
     }
     if (uUseProcessedSource != 0) {
+        // At an exact half-size preview, match the CPU's byte-space 2x2 box
+        // filter directly. Driver-generated RGBA8 mip levels can round a
+        // channel two levels away from the CPU result on high-contrast edges.
+        if (abs(uMinificationLod - 1.0) < 0.001 && abs(uDeviceScale - 1.0) < 0.001) {
+            ivec2 centre = ivec2(floor(sourcePos));
+            ivec2 first = centre - ivec2(1);
+            vec4 sum = texelFetch(uProcessedSource, first, 0)
+                     + texelFetch(uProcessedSource, first + ivec2(1, 0), 0)
+                     + texelFetch(uProcessedSource, first + ivec2(0, 1), 0)
+                     + texelFetch(uProcessedSource, first + ivec2(1, 1), 0);
+            color = floor(sum * (255.0 / 4.0) + vec4(0.5)) / 255.0;
+            return;
+        }
         color = textureLod(uProcessedSource, sourcePos / uOutputSize, uMinificationLod);
         return;
     }
@@ -4392,11 +4416,22 @@ mod tests {
                 };
                 assert!(
                     delta <= allowed,
-                    "filter={:?} amount={} auto_color={} auto_contrast={} channel {index} differs by {delta} (limit {allowed})",
+                    "filter={:?} amount={} auto_color={} auto_contrast={} exposure={} contrast={} saturation={} temperature={} fill={} shadows={} highlights={} sharpen={} clarity={} channel {index} differs by {delta} (limit {allowed}); gpu={} cpu={}",
                     recipe.filter,
                     recipe.filter_amount,
                     recipe.auto_color,
-                    recipe.auto_contrast
+                    recipe.auto_contrast,
+                    recipe.exposure,
+                    recipe.contrast,
+                    recipe.saturation,
+                    recipe.temperature,
+                    recipe.fill_light,
+                    recipe.shadows,
+                    recipe.highlights,
+                    recipe.sharpen,
+                    recipe.clarity,
+                    actual,
+                    expected,
                 );
             }
             eprintln!(
@@ -4434,6 +4469,10 @@ mod tests {
         edited.sharpen = 0.35;
         // Native-size regression coverage includes Sharpen. Grain below and
         // Clarity later in this test use the same 1:1 CPU parity helper.
+        let mut edited_without_sharpen = edited.clone();
+        edited_without_sharpen.sharpen = 0.0;
+        renderer.set_recipe(&edited_without_sharpen);
+        check_frame(&edited_without_sharpen, &source);
         renderer.set_recipe(&edited);
         check_frame(&edited, &source);
         assert_eq!(renderer.uploaded_revision(), uploaded_revision);
@@ -4852,7 +4891,8 @@ mod tests {
         for (index, (actual, expected)) in sharpened_fit.iter().zip(&expected_fit).enumerate() {
             assert!(
                 (*actual as i16 - *expected as i16).abs() <= 1,
-                "sharpened Fit channel {index} differs from the CPU reference"
+                "sharpened Fit channel {index} differs from the CPU reference: actual={actual}, expected={expected}, delta={}",
+                (*actual as i16 - *expected as i16).abs()
             );
         }
         for (label, mut effect, allowed_delta) in [

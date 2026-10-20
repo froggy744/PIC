@@ -20,6 +20,9 @@
 #include <netdb.h>
 #include <unistd.h>
 
+/* Keep scan cancellation responsive without paying one RPC per 64 KiB. */
+#define PIC_NFS_SCAN_READ_CHUNK (512u * 1024u)
+
 /* Cancellation belongs to this worker, never to foreground viewer reads. */
 typedef int (*pic_cancel_cb)(void *);
 static _Thread_local pic_cancel_cb scan_cancel = NULL;
@@ -224,48 +227,70 @@ int pic_nfs_scan(const char *host, const char *export_path, const char *relative
     nfs_closedir(scan_session, dir);
     return 0;
 }
-/* A libnfs context must never be used concurrently. Viewer reads run on
- * short-lived Rust threads, so thread-local storage caused every image read to
- * create a fresh session. Keep one process-local session and serialize its
- * complete operation; failed NFS operations invalidate it. The context is NOT
- * a GVfs or Linux kernel mount. */
-static pthread_mutex_t read_session_lock = PTHREAD_MUTEX_INITIALIZER;
-static int lock_read_session(char *error, size_t cap) {
-    if (!scan_cancel) { pthread_mutex_lock(&read_session_lock); return 0; }
-    while (!cancelled_error(error, cap)) {
-        int result = pthread_mutex_trylock(&read_session_lock);
-        if (result == 0) {
-            if (!cancelled_error(error, cap)) return 0;
-            pthread_mutex_unlock(&read_session_lock); return -1;
+/* A libnfs context must never be used concurrently. Thumbnail workers can
+ * decode remote photos in parallel, so give them a bounded pool of independent
+ * contexts instead of serializing every full-file read behind one context.
+ * Each context is locked for its complete operation and reused by later reads.
+ * The contexts are not GVfs or Linux kernel mounts. */
+#define READ_SESSION_COUNT 5
+#define SCAN_READ_SESSION_COUNT 4
+static pthread_mutex_t read_session_locks[READ_SESSION_COUNT] = {
+    PTHREAD_MUTEX_INITIALIZER, PTHREAD_MUTEX_INITIALIZER,
+    PTHREAD_MUTEX_INITIALIZER, PTHREAD_MUTEX_INITIALIZER,
+    PTHREAD_MUTEX_INITIALIZER,
+};
+static struct nfs_context *read_sessions[READ_SESSION_COUNT] = {0};
+static char read_hosts[READ_SESSION_COUNT][256] = {{0}};
+static char read_exports[READ_SESSION_COUNT][4096] = {{0}};
+
+static int lock_read_session(size_t *selected, char *error, size_t cap) {
+    for (;;) {
+        if (cancelled_error(error, cap)) return -1;
+        /* Reserve one context for foreground requests while the import
+         * workers are running their bounded NFS thumbnail batch. */
+        size_t session_limit = scan_cancel ? SCAN_READ_SESSION_COUNT : READ_SESSION_COUNT;
+        for (size_t i = 0; i < session_limit; i++) {
+            int result = pthread_mutex_trylock(&read_session_locks[i]);
+            if (result == 0) {
+                if (!cancelled_error(error, cap)) {
+                    *selected = i;
+                    return 0;
+                }
+                pthread_mutex_unlock(&read_session_locks[i]);
+                return -1;
+            }
+            if (result != EBUSY) {
+                snprintf(error, cap, "NFS read lock: %s", strerror(result));
+                return -1;
+            }
         }
-        if (result != EBUSY) { snprintf(error, cap, "NFS read lock: %s", strerror(result)); return -1; }
         struct timespec delay = {0, 10000000};
         nanosleep(&delay, NULL);
     }
-    return -1;
 }
 
-static struct nfs_context *read_session=NULL;
-static char read_host[256]={0};
-static char read_export[4096]={0};
-static void invalidate_read_session(void) {
-    if (read_session) nfs_destroy_context(read_session);
-    read_session=NULL;
-    read_host[0]=0;
-    read_export[0]=0;
+static void unlock_read_session(size_t selected) {
+    pthread_mutex_unlock(&read_session_locks[selected]);
 }
-static struct nfs_context *get_read_session(const char *host, const char *export_path,
+
+static void invalidate_read_session(size_t selected) {
+    if (read_sessions[selected]) nfs_destroy_context(read_sessions[selected]);
+    read_sessions[selected]=NULL;
+    read_hosts[selected][0]=0;
+    read_exports[selected][0]=0;
+}
+static struct nfs_context *get_read_session(size_t selected, const char *host, const char *export_path,
                                             char *error, size_t cap) {
-    if (!read_session || strcmp(read_host,host) || strcmp(read_export,export_path)) {
-        invalidate_read_session();
-        read_session=open_session(host,export_path,error,cap);
-        if (!read_session) return NULL;
-        snprintf(read_host,sizeof read_host,"%s",host);
-        snprintf(read_export,sizeof read_export,"%s",export_path);
+    if (!read_sessions[selected] || strcmp(read_hosts[selected],host) || strcmp(read_exports[selected],export_path)) {
+        invalidate_read_session(selected);
+        read_sessions[selected]=open_session(host,export_path,error,cap);
+        if (!read_sessions[selected]) return NULL;
+        snprintf(read_hosts[selected],sizeof read_hosts[selected],"%s",host);
+        snprintf(read_exports[selected],sizeof read_exports[selected],"%s",export_path);
     } else {
         if (trace_enabled()) fprintf(stderr,"PIC_NFS_CONNECT reuse host=%s export=%s\n",host,export_path);
     }
-    return read_session;
+    return read_sessions[selected];
 }
 /* Free the opened handle through the public API even on Stop. Restore the
  * normal timeout while still holding the lock, before reuse or disposal. */
@@ -281,24 +306,25 @@ int pic_nfs_read(const char *host, const char *export_path, const char *relative
                  char *error, size_t cap) {
     *out=NULL;*length=0;
     uint64_t lock_started = monotonic_ms();
-    if (lock_read_session(error, cap) < 0) return -1;
+    size_t selected;
+    if (lock_read_session(&selected, error, cap) < 0) return -1;
     trace_stage("read_session_lock", lock_started, host, export_path, relative, "outcome=acquired");
-    struct nfs_context *nfs=get_read_session(host,export_path,error,cap);
-    if (!nfs) {pthread_mutex_unlock(&read_session_lock);return -1;}
-    if (cancelled_error(error,cap)) { pthread_mutex_unlock(&read_session_lock); return -1; }
+    struct nfs_context *nfs=get_read_session(selected,host,export_path,error,cap);
+    if (!nfs) {unlock_read_session(selected);return -1;}
+    if (cancelled_error(error,cap)) { unlock_read_session(selected); return -1; }
     struct nfsfh *fh=NULL;
     uint64_t open_started = monotonic_ms();
     if(nfs_open(nfs,relative,O_RDONLY,&fh)!=0) {
         trace_stage("file_open", open_started, host, export_path, relative, "outcome=error");
-        err(error,cap,"nfs_open",nfs);invalidate_read_session();
-        pthread_mutex_unlock(&read_session_lock);return -1;
+        err(error,cap,"nfs_open",nfs);invalidate_read_session(selected);
+        unlock_read_session(selected);return -1;
     }
     trace_stage("file_open", open_started, host, export_path, relative, "outcome=ok");
     size_t capbytes=64*1024,used=0;
     if(max_bytes<capbytes)capbytes=max_bytes;
     unsigned char *bytes=malloc(capbytes?capbytes:1);
     if(!bytes) {snprintf(error,cap,"NFS out of memory");close_read_handle(nfs,fh);
-        pthread_mutex_unlock(&read_session_lock);return -1;}
+        unlock_read_session(selected);return -1;}
     int failed=0;
     uint64_t read_started = monotonic_ms();
     int read_calls = 0;
@@ -313,7 +339,7 @@ int pic_nfs_read(const char *host, const char *export_path, const char *relative
         }
         uint64_t call_started = monotonic_ms();
         size_t chunk=capbytes-used;
-        if (scan_cancel && chunk>64*1024) chunk=64*1024;
+        if (scan_cancel && chunk>PIC_NFS_SCAN_READ_CHUNK) chunk=PIC_NFS_SCAN_READ_CHUNK;
         int got;
 #if defined(PIC_LIBNFS_LEGACY_READ_ORDER)
         got=nfs_read(nfs,fh,(uint64_t)chunk,bytes+used);
@@ -349,50 +375,51 @@ int pic_nfs_read(const char *host, const char *export_path, const char *relative
     if(failed){
         /* Resource/memory/size errors do not imply a broken NFS session. */
         if (canceled || close_status<0 || strstr(error,"nfs_read:") || strstr(error,"nfs_close:"))
-            invalidate_read_session();
-        free(bytes);pthread_mutex_unlock(&read_session_lock);return -1;
+            invalidate_read_session(selected);
+        free(bytes);unlock_read_session(selected);return -1;
     }
-    *out=bytes;*length=used;pthread_mutex_unlock(&read_session_lock);return 0;
+    *out=bytes;*length=used;unlock_read_session(selected);return 0;
 }
 
 int pic_nfs_read_range(const char *host, const char *export_path, const char *relative,
                        uint64_t offset, size_t requested, unsigned char **out, size_t *length,
                        char *error, size_t cap) {
     *out=NULL; *length=0;
-    if (lock_read_session(error, cap) < 0) return -1;
-    struct nfs_context *nfs=get_read_session(host,export_path,error,cap);
-    if (!nfs) { pthread_mutex_unlock(&read_session_lock); return -1; }
-    if (cancelled_error(error,cap)) { pthread_mutex_unlock(&read_session_lock); return -1; }
+    size_t selected;
+    if (lock_read_session(&selected, error, cap) < 0) return -1;
+    struct nfs_context *nfs=get_read_session(selected,host,export_path,error,cap);
+    if (!nfs) { unlock_read_session(selected); return -1; }
+    if (cancelled_error(error,cap)) { unlock_read_session(selected); return -1; }
     struct nfsfh *fh=NULL;
-    if (nfs_open(nfs,relative,O_RDONLY,&fh)!=0) { err(error,cap,"nfs_open",nfs); invalidate_read_session(); pthread_mutex_unlock(&read_session_lock); return -1; }
-    if (cancelled_error(error,cap)) { close_read_handle(nfs,fh); invalidate_read_session(); pthread_mutex_unlock(&read_session_lock); return -1; }
+    if (nfs_open(nfs,relative,O_RDONLY,&fh)!=0) { err(error,cap,"nfs_open",nfs); invalidate_read_session(selected); unlock_read_session(selected); return -1; }
+    if (cancelled_error(error,cap)) { close_read_handle(nfs,fh); invalidate_read_session(selected); unlock_read_session(selected); return -1; }
     uint64_t position=0;
-    if (nfs_lseek(nfs,fh,(int64_t)offset,SEEK_SET,&position)!=0) { err(error,cap,"nfs_lseek",nfs); close_read_handle(nfs,fh); invalidate_read_session(); pthread_mutex_unlock(&read_session_lock); return -1; }
+    if (nfs_lseek(nfs,fh,(int64_t)offset,SEEK_SET,&position)!=0) { err(error,cap,"nfs_lseek",nfs); close_read_handle(nfs,fh); invalidate_read_session(selected); unlock_read_session(selected); return -1; }
     unsigned char *bytes=malloc(requested ? requested : 1);
-    if (!bytes) { snprintf(error,cap,"NFS out of memory"); close_read_handle(nfs,fh); pthread_mutex_unlock(&read_session_lock); return -1; }
+    if (!bytes) { snprintf(error,cap,"NFS out of memory"); close_read_handle(nfs,fh); unlock_read_session(selected); return -1; }
     size_t used=0;
     while (used < requested) {
         if (cancelled_error(error, cap)) {
-            free(bytes); close_read_handle(nfs,fh); invalidate_read_session(); pthread_mutex_unlock(&read_session_lock); return -1;
+            free(bytes); close_read_handle(nfs,fh); invalidate_read_session(selected); unlock_read_session(selected); return -1;
         }
         size_t chunk=requested-used;
-        if (scan_cancel && chunk>64*1024) chunk=64*1024;
+        if (scan_cancel && chunk>PIC_NFS_SCAN_READ_CHUNK) chunk=PIC_NFS_SCAN_READ_CHUNK;
         int got;
 #if defined(PIC_LIBNFS_LEGACY_READ_ORDER)
         got=nfs_read(nfs,fh,(uint64_t)chunk,bytes+used);
 #else
         got=nfs_read(nfs,fh,bytes+used,chunk);
 #endif
-        if (got < 0) { err(error,cap,"nfs_read",nfs); free(bytes); close_read_handle(nfs,fh); invalidate_read_session(); pthread_mutex_unlock(&read_session_lock); return -1; }
+        if (got < 0) { err(error,cap,"nfs_read",nfs); free(bytes); close_read_handle(nfs,fh); invalidate_read_session(selected); unlock_read_session(selected); return -1; }
         if (got == 0) break;
         used+=(size_t)got;
     }
     if (cancelled_error(error,cap)) {
-        free(bytes); close_read_handle(nfs,fh); invalidate_read_session(); pthread_mutex_unlock(&read_session_lock); return -1;
+        free(bytes); close_read_handle(nfs,fh); invalidate_read_session(selected); unlock_read_session(selected); return -1;
     }
     close_read_handle(nfs,fh);
-    if (cancelled_error(error,cap)) { free(bytes); invalidate_read_session(); pthread_mutex_unlock(&read_session_lock); return -1; }
-    pthread_mutex_unlock(&read_session_lock);
+    if (cancelled_error(error,cap)) { free(bytes); invalidate_read_session(selected); unlock_read_session(selected); return -1; }
+    unlock_read_session(selected);
     *out=bytes; *length=used;
     if (trace_enabled()) fprintf(stderr,"PIC_NFS_RANGE offset=%llu requested=%zu received=%zu host=%s relative=%s\n",(unsigned long long)offset,requested,used,host,relative);
     return 0;

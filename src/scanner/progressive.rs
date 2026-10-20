@@ -13,6 +13,8 @@ use std::time::{Duration, Instant};
 const BATCH_SIZE: usize = 128;
 const FLUSH_INTERVAL: Duration = Duration::from_millis(200);
 const QUEUE_SIZE: usize = 1024;
+const NETWORK_THUMBNAIL_WORKERS: usize = 4;
+const NETWORK_THUMBNAIL_BATCH: usize = 4;
 
 #[derive(Clone)]
 struct Record {
@@ -148,7 +150,7 @@ struct Enriched {
 }
 enum Enrichment {
     Offline,
-    Photo(Enriched),
+    PhotoBatch(Vec<Enriched>),
     Done,
     Fatal(String),
 }
@@ -255,75 +257,109 @@ fn enrich(
 ) -> Result<()> {
     let _read_cancellation = crate::private_nfs::cancel_scan_reads(control);
     let connection = db::open_existing(database)?;
+    let thumbnail_workers = if root.starts_with("nfs://") {
+        NETWORK_THUMBNAIL_WORKERS
+    } else {
+        1
+    };
+    let thumbnail_pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(thumbnail_workers)
+        .build()
+        .expect("network thumbnail worker pool should be constructible");
     while !control.is_cancelled() {
         // Observe completion before querying SQLite: observing it afterwards
         // could race the writer's final commit and strand the final work item.
         let completed = discovery_done.load(Ordering::Acquire);
-        let Some(work) = db::next_network_work(&connection, root, generation)? else {
+        let works = db::network_work_batch(
+            &connection,
+            root,
+            generation,
+            NETWORK_THUMBNAIL_BATCH,
+        )?;
+        if works.is_empty() {
             if completed {
                 send_bounded(sender, Enrichment::Done, control);
                 return Ok(());
             }
             std::thread::sleep(Duration::from_millis(20));
             continue;
-        };
+        }
         while thumbnail::priority_pending_count() > 0 && !control.is_cancelled() {
             std::thread::sleep(Duration::from_millis(10));
         }
         if control.is_cancelled() {
             break;
         }
-        let mut result = Enriched {
-            work: work.clone(),
-            metadata: None,
+        let mut results = works.into_iter().map(|work| Enriched {
             metadata_state: work.metadata_state.clone(),
             thumbnail_state: work.thumbnail_state.clone(),
+            work,
+            metadata: None,
             errors: Vec::new(),
-        };
-        if work.metadata_pending {
-            match source.metadata(&work) {
-                Ok(metadata) => {
-                    result.metadata = Some(metadata);
-                    result.metadata_state = "ready".into();
-                }
-                Err(error) => {
-                    if control.is_cancelled() {
-                        break;
+        }).collect::<Vec<_>>();
+        for result in &mut results {
+            if result.work.metadata_pending {
+                match source.metadata(&result.work) {
+                    Ok(metadata) => {
+                        result.metadata = Some(metadata);
+                        result.metadata_state = "ready".into();
                     }
-                    if !source.available(root) {
-                        send_bounded(sender, Enrichment::Offline, control);
-                        return Ok(());
+                    Err(error) => {
+                        if control.is_cancelled() {
+                            break;
+                        }
+                        if !source.available(root) {
+                            send_bounded(sender, Enrichment::Offline, control);
+                            return Ok(());
+                        }
+                        result.metadata_state = "failed".into();
+                        result.errors.push(format!("metadata: {error}"));
                     }
-                    result.metadata_state = "failed".into();
-                    result.errors.push(format!("metadata: {error}"));
-                }
-            }
-        }
-        if work.thumbnail_pending && !control.is_cancelled() {
-            // Let newly visible photos run between a header read and decoding.
-            while thumbnail::priority_pending_count() > 0 && !control.is_cancelled() {
-                std::thread::sleep(Duration::from_millis(10));
-            }
-            if control.is_cancelled() {
-                break;
-            }
-            match source.thumbnail(&work) {
-                Ok(true) => result.thumbnail_state = "ready".into(),
-                Ok(false) => result.thumbnail_state = "unsupported".into(),
-                Err(error) => {
-                    if control.is_cancelled() {
-                        break;
-                    }
-                    if !source.available(root) {
-                        send_bounded(sender, Enrichment::Offline, control);
-                        return Ok(());
-                    }
-                    result.thumbnail_state = "failed".into();
-                    result.errors.push(format!("thumbnail: {error}"));
                 }
             }
         }
-        if !send_bounded(sender, Enrichment::Photo(result), control) || !acknowledged(ack, control)
+        if control.is_cancelled() {
+            break;
+        }
+        // Give foreground tile requests priority between bounded batches, then
+        // fetch/decode several NFS originals together. Each Rayon worker installs
+        // the thread-local NFS cancellation hook so Stop remains responsive.
+        while thumbnail::priority_pending_count() > 0 && !control.is_cancelled() {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        if control.is_cancelled() {
+            break;
+        }
+        thumbnail_pool.install(|| {
+            use rayon::prelude::*;
+            results.par_iter_mut().for_each(|result| {
+                if !result.work.thumbnail_pending || control.is_cancelled() {
+                    return;
+                }
+                let _read_cancellation = crate::private_nfs::cancel_scan_reads(control);
+                match source.thumbnail(&result.work) {
+                    Ok(true) => result.thumbnail_state = "ready".into(),
+                    Ok(false) => result.thumbnail_state = "unsupported".into(),
+                    Err(error) => {
+                        if control.is_cancelled() {
+                            return;
+                        }
+                        if !source.available(root) {
+                            result.errors.push("network share disconnected".into());
+                            return;
+                        }
+                        result.thumbnail_state = "failed".into();
+                        result.errors.push(format!("thumbnail: {error}"));
+                    }
+                }
+            });
+        });
+        if results.iter().any(|result| result.errors.iter().any(|error| error == "network share disconnected")) {
+            send_bounded(sender, Enrichment::Offline, control);
+            return Ok(());
+        }
+        if !send_bounded(sender, Enrichment::PhotoBatch(results), control)
+            || !acknowledged(ack, control)
         {
             break;
         }
@@ -473,52 +509,43 @@ fn run_with_source(
             }
             if let Ok(message) = enrichment_receiver.try_recv() {
                 match message {
-                    Enrichment::Photo(result) => {
-                        let transaction = connection.unchecked_transaction()?;
-                        let photo = db::finish_network_work(
-                            &transaction,
-                            &result.work,
-                            result.metadata.as_ref(),
-                            &result.metadata_state,
-                            &result.thumbnail_state,
-                        )?;
-                        transaction.commit()?;
-                        if let Some(photo) = photo {
-                            if result.work.metadata_state != "ready"
-                                && result.metadata_state == "ready"
-                            {
-                                metadata_ready += 1;
-                            }
-                            if result.work.thumbnail_state != "ready"
-                                && result.thumbnail_state == "ready"
-                            {
-                                previews_ready += 1;
-                            }
-                            if result.metadata.is_some() {
-                                send(
-                                    events,
-                                    ScanEvent::PhotosUpdated {
-                                        photos: vec![photo],
-                                    },
-                                );
-                            }
-                            if result.work.thumbnail_pending && result.thumbnail_state == "ready" {
-                                send(
-                                    events,
-                                    ScanEvent::ThumbnailCreated {
+                    Enrichment::PhotoBatch(results) => {
+                        for result in results {
+                            let transaction = connection.unchecked_transaction()?;
+                            let photo = db::finish_network_work(
+                                &transaction,
+                                &result.work,
+                                result.metadata.as_ref(),
+                                &result.metadata_state,
+                                &result.thumbnail_state,
+                            )?;
+                            transaction.commit()?;
+                            if let Some(photo) = photo {
+                                if result.work.metadata_state != "ready"
+                                    && result.metadata_state == "ready"
+                                {
+                                    metadata_ready += 1;
+                                }
+                                if result.work.thumbnail_state != "ready"
+                                    && result.thumbnail_state == "ready"
+                                {
+                                    previews_ready += 1;
+                                }
+                                if result.metadata.is_some() {
+                                    send(events, ScanEvent::PhotosUpdated { photos: vec![photo] });
+                                }
+                                if result.work.thumbnail_pending && result.thumbnail_state == "ready" {
+                                    send(events, ScanEvent::ThumbnailCreated {
                                         path: PathBuf::from(&result.work.path),
-                                    },
-                                );
-                            }
-                            for error in result.errors {
-                                failed += 1;
-                                send(
-                                    events,
-                                    ScanEvent::Failed {
+                                    });
+                                }
+                                for error in result.errors {
+                                    failed += 1;
+                                    send(events, ScanEvent::Failed {
                                         path: PathBuf::from(&result.work.path),
                                         error,
-                                    },
-                                );
+                                    });
+                                }
                             }
                         }
                         let _ = enrichment_ack.try_send(());

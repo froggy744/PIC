@@ -1340,6 +1340,14 @@ mod embedded_nef_color_profile_tests {
         ));
         std::fs::write(&path, &nef).unwrap();
         let reference = path.to_str().unwrap();
+        let thumbnail = decode_raw_thumbnail_inner(reference, 64).unwrap();
+        assert_eq!(thumbnail.scale, "embedded JPEG preview");
+        assert_eq!(
+            (thumbnail.source_width, thumbnail.source_height),
+            (128, 96)
+        );
+        assert_eq!(thumbnail.image.dimensions(), (64, 48));
+
         let (decoded, w, h) = decode_local_raw_for_viewer(
             reference, 1, 128, 96, &|| false,
         ).unwrap();

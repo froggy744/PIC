@@ -60,6 +60,17 @@
                     .iter()
                     .find(|folder| folder.id == folder_id)
                     .map(|folder| (folder_id, folder.path.clone()))
+                    .or_else(|| {
+                        // A selected sidebar row can arrive before the
+                        // in-memory folder cache has caught up. Resolve that
+                        // uncommon miss from the database so Folder-to-Folder
+                        // navigation can still reuse the loaded stream.
+                        db::folders(&connection.borrow())
+                            .ok()?
+                            .into_iter()
+                            .find(|folder| folder.id == folder_id)
+                            .map(|folder| (folder_id, folder.path))
+                    })
             } else {
                 None
             };
@@ -224,10 +235,24 @@
                         );
                         Some(REFRESH_GENERATION.load(std::sync::atomic::Ordering::Relaxed))
                     } else {
-                        // Switching views is not a scan or filter mutation:
-                        // retain the previously built Folder stream for the
-                        // next exact-photo Open in Folder navigation.
-                        refresh_grid_for_navigation(&connection, new_filter, sort.get(), &gallery);
+                        if matches!(new_filter, sidebar::SidebarFilter::Folder(_)) {
+                            // The sidebar's folder cache can briefly lag the
+                            // selected row. Resolve the folder from the DB and
+                            // build its view instead of sending a Folder
+                            // destination through the non-folder navigation
+                            // refresh path.
+                            refresh_grid(&connection, new_filter, "", sort.get(), &gallery);
+                        } else {
+                            // Switching views is not a scan or filter mutation:
+                            // retain the previously built Folder stream for the
+                            // next exact-photo Open in Folder navigation.
+                            refresh_grid_for_navigation(
+                                &connection,
+                                new_filter,
+                                sort.get(),
+                                &gallery,
+                            );
+                        }
                         Some(REFRESH_GENERATION.load(std::sync::atomic::Ordering::Relaxed))
                     }
                 }

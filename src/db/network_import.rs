@@ -243,24 +243,36 @@ pub fn catalog_network_photo(
     })
 }
 
+#[cfg(test)]
 pub fn next_network_work(
     connection: &Connection,
     root: &str,
     generation: i64,
 ) -> Result<Option<NetworkWork>> {
-    Ok(connection.query_row(
+    Ok(network_work_batch(connection, root, generation, 1)?.into_iter().next())
+}
+
+pub fn network_work_batch(
+    connection: &Connection,
+    root: &str,
+    generation: i64,
+    limit: usize,
+) -> Result<Vec<NetworkWork>> {
+    let mut statement = connection.prepare(
         "SELECT path,mtime,size,metadata_state,thumbnail_state FROM network_photo_work w
          WHERE root=?1 AND generation=?2 AND (metadata_state='pending' OR thumbnail_state='pending')
-         AND EXISTS(SELECT 1 FROM network_import_seen s WHERE s.root=w.root AND s.path=w.path AND s.kind='photo') ORDER BY rowid LIMIT 1",
-        params![root,generation], |row| {
+         AND EXISTS(SELECT 1 FROM network_import_seen s WHERE s.root=w.root AND s.path=w.path AND s.kind='photo') ORDER BY rowid LIMIT ?3",
+    )?;
+    let rows = statement.query_map(params![root, generation, limit as i64], |row| {
             let metadata_state:String=row.get(3)?;
             let thumbnail_state:String=row.get(4)?;
             Ok(NetworkWork {
             path: row.get(0)?, root: root.into(), generation, mtime: row.get(1)?,size: row.get(2)?,
             metadata_pending: metadata_state=="pending",thumbnail_pending: thumbnail_state=="pending",
             metadata_state,thumbnail_state,
-        })},
-    ).optional()?)
+        })
+    })?;
+    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
 }
 
 /// Apply only results for the current source version and current job. Updating

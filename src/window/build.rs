@@ -6380,14 +6380,17 @@ fn start_photo_export_single(
             let folders = db::folders(&new_connection).map_err(|error| error.to_string())?;
             let albums = db::browse_albums(&new_connection).map_err(|error| error.to_string())?;
             let counts = db::sidebar_counts(&new_connection).unwrap_or_default();
-            let new_filter = sidebar_filter_from_setting(
-                db::setting(&new_connection, LAST_VIEW_SETTING_KEY)
-                    .ok()
-                    .flatten()
-                    .as_deref(),
-                &folders,
-                &albums,
-            );
+            let saved_view = db::setting(&new_connection, LAST_VIEW_SETTING_KEY)
+                .ok()
+                .flatten();
+            // A new library has no browsing destination yet. Open its home
+            // page so the successful switch is immediately visible, instead
+            // of landing on an empty Recently Added photo grid.
+            let new_filter = if saved_view.is_none() {
+                sidebar::SidebarFilter::Library
+            } else {
+                sidebar_filter_from_setting(saved_view.as_deref(), &folders, &albums)
+            };
             let new_sort = PhotoSort {
                 field: SortField::from_key(
                     &db::setting(&new_connection, SORT_FIELD_SETTING_KEY)

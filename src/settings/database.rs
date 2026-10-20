@@ -329,12 +329,20 @@ pub(super) fn page(
                 if let Ok(file) = result {
                     if let Some(path) = file.path() {
                         let display_name = file_stem(&path);
-                        match crate::db::add_existing_library(&path, &display_name, "")
-                            .and_then(|library| {
-                                (management.switch_library)(&library.id)
-                                    .map_err(anyhow::Error::msg)?;
-                                Ok(library)
-                            })
+                        let library = crate::db::known_libraries().and_then(|libraries| {
+                            libraries
+                                .into_iter()
+                                .find(|library| library.path == path)
+                                .map(Ok)
+                                .unwrap_or_else(|| {
+                                    crate::db::add_existing_library(&path, &display_name, "")
+                                })
+                        });
+                        match library.and_then(|library| {
+                            (management.switch_library)(&library.id)
+                                .map_err(anyhow::Error::msg)?;
+                            Ok(library)
+                        })
                         {
                             Ok(library) => {
                                 status.set_text(&format!("Opened {}.", library.name));

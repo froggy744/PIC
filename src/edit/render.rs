@@ -624,8 +624,8 @@ fn save_jpeg_with_metadata(
     Ok(())
 }
 
-/// Save an export in the chosen dialog format. 'quality' applies to JPEG only.
-/// The plain form is kept for callers that have no original file metadata.
+/// Test helper for exports that have no original file metadata.
+#[cfg(test)]
 pub fn save_export(
     image: &RgbaImage,
     destination: &std::path::Path,

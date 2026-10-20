@@ -451,10 +451,6 @@ struct GpuGeometry {
     sin_angle: f32,
 }
 impl GpuGeometry {
-    fn for_source(width: i32, height: i32, recipe: &EditRecipe) -> Self {
-        Self::for_source_rotation(width, height, 0, recipe)
-    }
-
     fn for_source_rotation(width: i32, height: i32, rotation: i32, recipe: &EditRecipe) -> Self {
         let rotation = rotation.rem_euclid(360);
         let (oriented_width, oriented_height) = if rotation == 90 || rotation == 270 {
@@ -1219,6 +1215,7 @@ impl LiveGpuCanvas {
     /// Source pixels are RAW decoded source data, not a CPU cropped image.
     /// Return the exact viewport dimensions needed by the scroll/layout layer.
     /// Updating geometry never reuploads the unchanged source texture.
+    #[cfg(test)]
     pub fn set_untransformed_geometry(&self, recipe: &EditRecipe) -> Option<(i32, i32)> {
         self.set_untransformed_geometry_for_rotation(0, recipe)
     }
@@ -1244,6 +1241,7 @@ impl LiveGpuCanvas {
         Some((geo.output_width, geo.output_height))
     }
 
+    #[cfg(test)]
     pub fn clear_untransformed_geometry(&self) {
         let mut state = self.state.borrow_mut();
         if state.geometry.take().is_some() {

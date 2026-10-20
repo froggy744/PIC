@@ -278,6 +278,7 @@ impl OverlaySpec {
     pub const MIN_WIDTH: f32 = 0.02;
     pub const MAX_WIDTH: f32 = 1.0;
     pub const DEFAULT_WIDTH: f32 = 0.25;
+    #[cfg(test)]
     pub const POSITION_MARGIN: f32 = 0.03;
 
     /// A centered overlay covering a quarter of the photo's width.
@@ -486,6 +487,7 @@ impl TextLayerSpec {
     pub const MIN_SIZE: f32 = 0.004;
     pub const MAX_SIZE: f32 = 0.5;
     pub const DEFAULT_SIZE: f32 = 0.045;
+    #[cfg(test)]
     pub const POSITION_MARGIN: f32 = OverlaySpec::POSITION_MARGIN;
 
     /// A centred layer with placeholder content, matching the defaults the

@@ -118,8 +118,8 @@ fn build_draw_panel(
     tool_grid.set_halign(gtk::Align::Center);
     tool_grid.set_column_homogeneous(true);
     tool_grid.set_row_homogeneous(true);
-    tool_grid.set_column_spacing(4);
-    tool_grid.set_row_spacing(4);
+    tool_grid.set_column_spacing(8);
+    tool_grid.set_row_spacing(8);
     tool_grid.add_css_class("draw-tool-grid");
     let select = draw_tool_button("draw-select-symbolic", "Select");
     select.set_active(false);

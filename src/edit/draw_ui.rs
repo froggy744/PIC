@@ -818,6 +818,17 @@ fn build_draw_panel(
     }
     layer.add_controller(drag);
     {
+        let select = select.clone();
+        let right_click = gtk::GestureClick::new();
+        right_click.set_button(3);
+        right_click.set_propagation_phase(gtk::PropagationPhase::Capture);
+        right_click.connect_pressed(move |gesture, _, _, _| {
+            gesture.set_state(gtk::EventSequenceState::Claimed);
+            select.set_active(true);
+        });
+        layer.add_controller(right_click);
+    }
+    {
         let gesture = gesture.clone();
         let session = session.clone();
         let update = update_history_buttons.clone();

@@ -671,6 +671,29 @@ def smoke_test() -> None:
                     f"page-down={folder_page_down}; page-up={folder_page_up}",
                     folder_page_down in {"folder-first.jpg", "folder-last.jpg"}
                     and folder_page_up == "landscape.jpg")
+
+        photo_order = ["landscape.jpg", "portrait.jpg", "square.png"] + [
+            f"sample-{index:02d}.jpg" for index in range(12)
+        ] + ["folder-first.jpg", "folder-last.jpg"]
+
+        for layout_name in ("Photo Wall", "Masonry"):
+            # The toolbar button cycles Grid -> Photo Wall -> Masonry -> Grid.
+            click_at(1298, 28)
+            time.sleep(1.0)
+            command(["xdotool", "key", "ctrl+Home"])
+            for _ in range(3):
+                command(["xdotool", "key", "Page_Down"])
+            down_name = activate_selected_name()
+            for _ in range(3):
+                command(["xdotool", "key", "Page_Up"])
+            up_name = activate_selected_name()
+            down_position = photo_order.index(down_name) if down_name in photo_order else -1
+            up_position = photo_order.index(up_name) if up_name in photo_order else -1
+            browse_case(f"Browse {layout_name} folder Page Up/Down",
+                        f"Repeated page keys cross folder boundaries in both directions ({layout_name})",
+                        f"down={down_name}; up={up_name}",
+                        down_position >= photo_order.index("folder-first.jpg")
+                        and 0 <= up_position < photo_order.index("folder-first.jpg"))
         return
 
     if SUITE == "edit-navigation":

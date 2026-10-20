@@ -178,6 +178,16 @@ impl Gallery {
         direction: i32,
         ranges: &[GroupRange],
     ) -> Option<usize> {
+        if self.group_mode.get() == GroupMode::Folder
+            && sectioned_folder_view_enabled()
+        {
+            return self
+                .sectioned_folder
+                .page_navigation_target(current as u32, direction)
+                .filter(|target| *target != current as u32)
+                .map(|target| target as usize);
+        }
+
         if self.layout() != PhotoLayout::Grid {
             let adjustment = self.sectioned_folder.scroll.borrow().as_ref()?.vadjustment();
             let page = adjustment.page_size().max(1.0);

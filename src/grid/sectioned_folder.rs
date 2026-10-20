@@ -2231,6 +2231,58 @@ impl SectionedFolderView {
         None
     }
 
+    /// Find the photo one Folder viewport page from the selected photo.
+    /// Folder sections add their own headers and row geometry, so keyboard
+    /// paging must use the same coordinates as the visible folder surface.
+    pub(crate) fn page_navigation_target(&self, index: u32, direction: i32) -> Option<u32> {
+        let scrolled = self.scroll.borrow().as_ref()?.clone();
+        let adjustment = scrolled.vadjustment();
+        let page = adjustment.page_size();
+        if page <= 0.0 || direction == 0 {
+            return None;
+        }
+        let y = self.y_for_index(index)?;
+        let target_y = (y + f64::from(direction) * page).max(0.0);
+        if self.layout_mode.get() == PhotoLayout::Masonry {
+            let wall = self.wall_state.borrow();
+            let current_y = wall.layout.item(index as usize)?.y;
+            return wall
+                .layout
+                .items
+                .iter()
+                .filter(|item| {
+                    if direction < 0 {
+                        item.photo_index < index as usize && item.y <= current_y
+                    } else {
+                        item.photo_index > index as usize && item.y >= current_y
+                    }
+                })
+                .min_by(|left, right| {
+                    (left.y - target_y)
+                        .abs()
+                        .total_cmp(&(right.y - target_y).abs())
+                })
+                .map(|item| item.photo_index as u32)
+                .or_else(|| {
+                    if direction < 0 {
+                        Some(0)
+                    } else {
+                        Some(self.current_photos.borrow().len().saturating_sub(1) as u32)
+                    }
+                });
+        }
+        let target = self.photo_for_scroll_position(target_y);
+        let photos = self.current_photos.borrow();
+        target
+            .and_then(|target| {
+                photos
+                    .iter()
+                    .position(|photo| photo.id() == target.id())
+                    .map(|target| target as u32)
+            })
+            .or_else(|| (direction > 0).then(|| photos.len().saturating_sub(1) as u32))
+    }
+
     fn viewport_center_photo(&self) -> Option<PhotoObject> {
         let scrolled = self.scroll.borrow().as_ref()?.clone();
         let adjustment = scrolled.vadjustment();

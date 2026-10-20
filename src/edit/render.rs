@@ -149,21 +149,10 @@ pub fn render_for_export(
 ) -> Result<RgbaImage> {
     let trace = std::env::var_os("PICASA_TRACE").is_some();
     let render_started = std::time::Instant::now();
-    let (width, height) = if source_width > 0 && source_height > 0 {
-        // A square decode *bound* preserves full sensor/photo resolution
-        // whether EXIF orientation and/or PIC's library rotation swaps axes.
-        // The decoder still caps actual output to the source's native size.
-        let long_edge = (source_width as u32).max(source_height as u32);
-        (long_edge, long_edge)
-    } else {
-        // RAW/remote records can lack catalog dimensions. An unbounded request
-        // lets the viewer decoder clamp to the largest source/embedded preview
-        // it can actually decode instead of exporting a 1x1 image.
-        (u32::MAX, u32::MAX)
-    };
     // Never use a portrait-only viewport for a landscape source or vice
     // versa. EXIF orientation is applied by the decoder and PIC library
-    // rotation by render_for_viewer only after the native decode.
+    // rotation only after the native decode. RAW exports ignore catalog
+    // bounds: stale dimensions must never cap a full-resolution original.
     let recipe = EditRecipe::decode(edit_recipe);
     // The interactive renderer can skip missing overlay assets to remain
     // usable while offline. Export must not silently drop a visible logo or
@@ -182,7 +171,25 @@ pub fn render_for_export(
     // independently so slow decode, pixel processing, and overlay work are
     // distinguishable in one PICASA_TRACE run.
     let stage = std::time::Instant::now();
-    let decoded = decode_base_for_viewer(reference, rotation, width, height)?;
+    let decoded = if crate::image_format::uses(
+        reference,
+        crate::image_format::DecoderKind::Raw,
+    ) {
+        apply_library_rotation(
+            crate::thumbnail::decode_raw_source_for_export(reference)?,
+            rotation,
+        )
+    } else {
+        let (width, height) = if source_width > 0 && source_height > 0 {
+            // A square decode bound preserves native resolution even when EXIF
+            // orientation and library rotation swap the source axes.
+            let long_edge = (source_width as u32).max(source_height as u32);
+            (long_edge, long_edge)
+        } else {
+            (u32::MAX, u32::MAX)
+        };
+        decode_base_for_viewer(reference, rotation, width, height)?
+    };
     if trace {
         eprintln!(
             "PIC_EXPORT stage=decode_rotate elapsed_ms={:.3} size={}x{} renderer=cpu",

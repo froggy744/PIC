@@ -1409,6 +1409,51 @@ mod tests {
         assert!(source.is_file(), "RAW original is not a readable local file");
         let original = std::fs::read(source).unwrap();
         let original_hash = blake3::hash(&original);
+        // Match the dimensions stored by library indexing and passed by the
+        // gallery/Edit export callers. Zero-sized test bounds would miss a
+        // possible downscale caused by stale or incorrect catalog geometry.
+        let (source_width, source_height) =
+            crate::thumbnail::dimensions(&reference, &original)
+                .expect("read native RAW dimensions");
+        // Exercise Export as the first full-resolution consumer so the trace
+        // proves a cold Export decodes the original, then warms the shared
+        // source-frame cache for later full-size reads.
+        let full_export = super::super::render::render_for_export(
+            &reference,
+            0,
+            "",
+            i64::from(source_width),
+            i64::from(source_height),
+        )
+        .expect("render the original RAW at full size without edits");
+        assert!(
+            full_export.width() == source_width && full_export.height() == source_height,
+            "full-size Export appears to have used a cached thumbnail: {}x{}",
+            full_export.width(),
+            full_export.height()
+        );
+        let full_preview = crate::thumbnail::decode_for_viewer(
+            &reference,
+            source_width.max(source_height),
+            source_width.max(source_height),
+        )
+        .expect("decode the original RAW's largest available preview at full size");
+        assert_eq!(
+            full_export, full_preview,
+            "full-size Export must match decoding the original RAW, not its cached thumbnail"
+        );
+        let stale_catalog_export = super::super::render::render_for_export(
+            &reference,
+            0,
+            "",
+            640,
+            427,
+        )
+        .expect("stale thumbnail-sized catalog bounds must not limit RAW Export");
+        assert_eq!(
+            stale_catalog_export, full_preview,
+            "RAW Export must decode the original at full size despite stale thumbnail-sized catalog dimensions"
+        );
 
         let mut recipe = EditRecipe::default();
         recipe.filter = FilterPreset::Valencia;
@@ -1421,7 +1466,8 @@ mod tests {
             left: 0.1, top: 0.1, right: 0.9, bottom: 0.9,
         };
         let job = ExportJob::from_record(
-            reference.clone(), 90, recipe.encode(), 0, 0, "raw.NEF",
+            reference.clone(), 90, recipe.encode(),
+            i64::from(source_width), i64::from(source_height), "raw.NEF",
         );
         let expected = render_job(&job)
             .expect("RAW viewer decode and CPU Edit rendering must succeed");

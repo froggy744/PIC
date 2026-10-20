@@ -4282,22 +4282,22 @@ fn show_photo_export_dialog(
         grid.attach(&count, 0, 0, 2, 1);
     }
 
-    let size_label = gtk::Label::new(Some("Size"));
+    let size_label = gtk::Label::new(Some("Maximum long edge"));
     size_label.set_xalign(0.0);
     let size = gtk::DropDown::from_strings(&[
-        "Original size",
-        "4K (3840 px)",
-        "2048 px",
-        "Full HD (1920 px)",
-        "HD (1280 px)",
-        "Custom…",
+        "Original dimensions",
+        "3840 px maximum (4K)",
+        "2048 px maximum",
+        "1920 px maximum (Full HD)",
+        "1280 px maximum (HD)",
+        "Custom maximum…",
     ]);
     size.set_selected(0);
     let size_row = if jobs.len() > 1 { 1 } else { 0 };
     grid.attach(&size_label, 0, size_row, 1, 1);
     grid.attach(&size, 1, size_row, 1, 1);
 
-    let custom_size_label = gtk::Label::new(Some("Long edge (px)"));
+    let custom_size_label = gtk::Label::new(Some("Maximum long edge (px)"));
     custom_size_label.set_xalign(0.0);
     let custom_size = gtk::SpinButton::with_range(1.0, 30000.0, 100.0);
     custom_size.set_value(3000.0);
@@ -4361,6 +4361,19 @@ fn show_photo_export_dialog(
         });
     }
     content.append(&grid);
+    let includes_nikon_raw = jobs.iter().any(|job| {
+        crate::image_format::for_path(&job.source_path)
+            .is_some_and(|format| format.id == "nikon_raw")
+    });
+    let size_help = gtk::Label::new(Some(if includes_nikon_raw {
+        "NEF exports use the camera's largest embedded JPEG. Size limits the long edge; JPEG quality controls compression."
+    } else {
+        "Size limits the long edge; JPEG quality controls compression."
+    }));
+    size_help.set_xalign(0.0);
+    size_help.set_wrap(true);
+    size_help.add_css_class("dim-label");
+    content.append(&size_help);
     let dialog = adw::AlertDialog::builder()
         .heading(if jobs.len() == 1 {
             "Export Photo"

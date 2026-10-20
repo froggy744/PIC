@@ -354,6 +354,14 @@ pub fn decode_for_viewer(
     decode_for_viewer_with_cancel(reference, viewport_width, viewport_height, None, || false)
 }
 
+/// Decode a RAW original for Export without a viewport-size limit or thumbnail
+/// cache input. Nikon NEF uses its largest embedded camera JPEG; this preserves
+/// the fast camera-rendered V1.01 path and is not sensor RAW development.
+pub fn decode_raw_source_for_export(reference: &str) -> Result<image::RgbaImage> {
+    anyhow::ensure!(is_raw(reference), "not a supported RAW source: {reference}");
+    decode_for_viewer(reference, u32::MAX, u32::MAX)
+}
+
 /// Decode a local RAW file for the lightbox: prefer the embedded NEF preview,
 /// then rawler's preview/full decode as fallbacks. Returns the image plus the
 /// already-computed viewer target dimensions (before EXIF orientation is

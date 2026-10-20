@@ -14,6 +14,10 @@ const BATCH_SIZE: usize = 128;
 const FLUSH_INTERVAL: Duration = Duration::from_millis(200);
 const QUEUE_SIZE: usize = 1024;
 const NETWORK_THUMBNAIL_WORKERS: usize = 4;
+// SMB calls remain serialized by libsmbclient's shared-context lock. Two
+// workers overlap JPEG decoding with the next read without using the library
+// concurrently; four workers measured no throughput gain and higher latency.
+const SMB_THUMBNAIL_WORKERS: usize = 2;
 const NETWORK_THUMBNAIL_BATCH: usize = 4;
 
 #[derive(Clone)]
@@ -259,6 +263,8 @@ fn enrich(
     let connection = db::open_existing(database)?;
     let thumbnail_workers = if root.starts_with("nfs://") {
         NETWORK_THUMBNAIL_WORKERS
+    } else if root.starts_with("smb://") {
+        SMB_THUMBNAIL_WORKERS
     } else {
         1
     };

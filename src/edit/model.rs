@@ -483,6 +483,167 @@ pub struct TextLayerSpec {
     pub visible: bool,
 }
 
+/// One vector annotation in normalized image coordinates. Stroke width is a
+/// fraction of the image's shorter edge, so it scales consistently at export.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DrawAnnotation {
+    pub kind: DrawKind,
+    pub points: Vec<(f32, f32)>,
+    /// Packed 0xRRGGBBAA.
+    pub color: u32,
+    pub width: f32,
+    pub opacity: f32,
+    pub arrow_start: bool,
+    pub arrow_end: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DrawKind {
+    Pen,
+    Line,
+    Arrow,
+    Rectangle,
+    Ellipse,
+    Highlighter,
+}
+
+/// Move annotations into the cropped image's normalized coordinate space.
+/// Points beyond the crop are deliberately retained so the renderer clips
+/// the original stroke at the new image boundary.
+pub fn remap_drawings_for_crop(
+    drawings: &mut [DrawAnnotation],
+    crop: CropRect,
+    old_size: (u32, u32),
+) {
+    let crop = crop.normalized();
+    let sx = (crop.right - crop.left).max(0.01);
+    let sy = (crop.bottom - crop.top).max(0.01);
+    let old_short = old_size.0.min(old_size.1).max(1) as f32;
+    let new_short = ((old_size.0 as f32 * sx).min(old_size.1 as f32 * sy)).max(1.0);
+    for item in drawings {
+        for (x, y) in &mut item.points {
+            *x = (*x - crop.left) / sx;
+            *y = (*y - crop.top) / sy;
+        }
+        item.width = (item.width * old_short / new_short).clamp(0.0001, 0.1);
+    }
+}
+
+pub fn remap_drawings_for_uncrop(
+    drawings: &mut [DrawAnnotation],
+    crop: CropRect,
+    current_size: (u32, u32),
+) {
+    let crop = crop.normalized();
+    let sx = (crop.right - crop.left).max(0.01);
+    let sy = (crop.bottom - crop.top).max(0.01);
+    let cropped_short = current_size.0.min(current_size.1).max(1) as f32;
+    let full_short = ((current_size.0 as f32 / sx).min(current_size.1 as f32 / sy)).max(1.0);
+    for item in drawings {
+        for (x, y) in &mut item.points {
+            *x = crop.left + *x * sx;
+            *y = crop.top + *y * sy;
+        }
+        item.width = (item.width * cropped_short / full_short).clamp(0.0001, 0.1);
+    }
+}
+
+pub fn remap_drawings_for_rotation(drawings: &mut [DrawAnnotation], clockwise_degrees: i32) {
+    let turns = clockwise_degrees.rem_euclid(360);
+    if !matches!(turns, 90 | 180 | 270) {
+        return;
+    }
+    for item in drawings {
+        for (x, y) in &mut item.points {
+            (*x, *y) = match turns {
+                90 => (1.0 - *y, *x),
+                180 => (1.0 - *x, 1.0 - *y),
+                270 => (*y, 1.0 - *x),
+                _ => (*x, *y),
+            };
+        }
+    }
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct DrawWire {
+    k: String,
+    p: Vec<[f32; 2]>,
+    c: u32,
+    w: f32,
+    o: f32,
+    #[serde(default)]
+    a: bool,
+    #[serde(default)]
+    e: bool,
+}
+
+fn decode_draw(value: &str) -> Vec<DrawAnnotation> {
+    serde_json::from_str::<Vec<DrawWire>>(value)
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|wire| {
+            let kind = match wire.k.as_str() {
+                "pen" => DrawKind::Pen,
+                "line" => DrawKind::Line,
+                "arrow" => DrawKind::Arrow,
+                "rect" => DrawKind::Rectangle,
+                "ellipse" => DrawKind::Ellipse,
+                "highlight" => DrawKind::Highlighter,
+                _ => return None,
+            };
+            if wire.p.len() < 2 || wire.p.iter().any(|p| !p[0].is_finite() || !p[1].is_finite()) {
+                return None;
+            }
+            Some(DrawAnnotation {
+                kind,
+                points: wire
+                    .p
+                    .into_iter()
+                    .map(|p| (p[0].clamp(-1.0, 2.0), p[1].clamp(-1.0, 2.0)))
+                    .collect(),
+                color: wire.c,
+                width: if wire.w.is_finite() {
+                    wire.w.clamp(0.0001, 0.1)
+                } else {
+                    0.005
+                },
+                opacity: if wire.o.is_finite() {
+                    wire.o.clamp(0.0, 1.0)
+                } else {
+                    1.0
+                },
+                arrow_start: wire.a,
+                arrow_end: wire.e,
+            })
+        })
+        .collect()
+}
+
+fn encode_draw(items: &[DrawAnnotation]) -> String {
+    let wires = items
+        .iter()
+        .map(|item| DrawWire {
+            k: match item.kind {
+                DrawKind::Pen => "pen",
+                DrawKind::Line => "line",
+                DrawKind::Arrow => "arrow",
+                DrawKind::Rectangle => "rect",
+                DrawKind::Ellipse => "ellipse",
+                DrawKind::Highlighter => "highlight",
+            }
+            .into(),
+            p: item.points.iter().map(|(x, y)| [*x, *y]).collect(),
+            c: item.color,
+            w: item.width,
+            o: item.opacity,
+            a: item.arrow_start,
+            e: item.arrow_end,
+        })
+        .collect::<Vec<_>>();
+    serde_json::to_string(&wires).unwrap_or_else(|_| "[]".into())
+}
+
 impl TextLayerSpec {
     pub const MIN_SIZE: f32 = 0.004;
     pub const MAX_SIZE: f32 = 0.5;
@@ -758,6 +919,8 @@ pub struct EditRecipe {
     /// Non-destructive editable text layers, painted above the image
     /// overlays. Vector order is the stacking order among text layers.
     pub text_layers: Vec<TextLayerSpec>,
+    /// Non-destructive vector annotations in image-space coordinates.
+    pub drawings: Vec<DrawAnnotation>,
 }
 
 impl Default for EditRecipe {
@@ -783,6 +946,7 @@ impl Default for EditRecipe {
             grain: 0.0,
             overlays: Vec::new(),
             text_layers: Vec::new(),
+            drawings: Vec::new(),
         }
     }
 }
@@ -834,6 +998,7 @@ impl EditRecipe {
                 "grain" => recipe.grain = number().unwrap_or(0.0).clamp(0.0, 1.0),
                 "ov" => recipe.overlays = decode_overlays(value),
                 "tl" => recipe.text_layers = decode_text_layers(value),
+                "dr" => recipe.drawings = decode_draw(value),
                 _ => {}
             }
         }
@@ -876,6 +1041,10 @@ impl EditRecipe {
             encoded.push_str("|tl=");
             encoded.push_str(&encode_text_layers(&self.text_layers));
         }
+        if !self.drawings.is_empty() {
+            encoded.push_str("|dr=");
+            encoded.push_str(&encode_draw(&self.drawings));
+        }
         encoded
     }
 
@@ -899,6 +1068,7 @@ impl EditRecipe {
             && self.grain.abs() < 0.0001
             && self.overlays.is_empty()
             && self.text_layers.is_empty()
+            && self.drawings.is_empty()
     }
 }
 
@@ -1792,5 +1962,93 @@ mod tests {
         assert!((rect.height - 1.0).abs() < 1e-5);
         assert!((rect.left - (1.0 - 0.28125) * 0.5).abs() < 1e-5);
         assert!(rect.top.abs() < 1e-5);
+    }
+
+    #[test]
+    fn draw_annotations_round_trip_through_edit_recipe() {
+        let mut recipe = EditRecipe::default();
+        recipe.drawings.push(DrawAnnotation {
+            kind: DrawKind::Arrow,
+            points: vec![(0.12, 0.2), (0.82, 0.74)],
+            color: 0xf04438cc,
+            width: 0.007,
+            opacity: 0.63,
+            arrow_start: true,
+            arrow_end: false,
+        });
+        recipe.drawings.push(DrawAnnotation {
+            kind: DrawKind::Highlighter,
+            points: vec![(0.1, 0.4), (0.6, 0.42)],
+            color: 0xfec84bff,
+            width: 0.02,
+            opacity: 0.24,
+            arrow_start: false,
+            arrow_end: false,
+        });
+        let encoded = recipe.encode();
+        assert!(encoded.contains("|dr="));
+        assert_eq!(EditRecipe::decode(&encoded).drawings,recipe.drawings);
+    }
+
+    #[test]
+    fn crop_transform_keeps_drawings_attached_to_the_cropped_image() {
+        let mut drawings = vec![DrawAnnotation {
+            kind: DrawKind::Pen,
+            points: vec![(0.25, 0.5), (0.75, 0.5)],
+            color: 0xffffffff,
+            width: 0.01,
+            opacity: 1.0,
+            arrow_start: false,
+            arrow_end: false,
+        }];
+        let crop = CropRect { left: 0.25, top: 0.25, right: 0.75, bottom: 0.75 };
+        remap_drawings_for_crop(&mut drawings, crop, (1000, 800));
+        assert_eq!(drawings[0].points, vec![(0.0, 0.5), (1.0, 0.5)]);
+        assert!((drawings[0].width - 0.02).abs() < 1e-6);
+        remap_drawings_for_uncrop(&mut drawings, crop, (500, 400));
+        assert_eq!(drawings[0].points, vec![(0.25, 0.5), (0.75, 0.5)]);
+        assert!((drawings[0].width - 0.01).abs() < 1e-6);
+    }
+
+    #[test]
+    fn drawings_participate_in_editor_undo_and_redo() {
+        let mut session = EditSession::new(EditRecipe::default());
+        session.mutate(|recipe| {
+            recipe.drawings.push(DrawAnnotation {
+                kind: DrawKind::Line,
+                points: vec![(0.1, 0.2), (0.9, 0.8)],
+                color: 0xffffffff,
+                width: 0.01,
+                opacity: 1.0,
+                arrow_start: false,
+                arrow_end: false,
+            })
+        });
+        assert_eq!(session.recipe.drawings.len(), 1);
+        assert!(session.undo());
+        assert!(session.recipe.drawings.is_empty());
+        assert!(session.redo());
+        assert_eq!(session.recipe.drawings.len(), 1);
+    }
+
+    #[test]
+    fn rotation_transform_keeps_drawings_attached_to_the_image() {
+        let mut drawings = vec![DrawAnnotation {
+            kind: DrawKind::Line,
+            points: vec![(0.2, 0.3), (0.8, 0.6)],
+            color: 0xffffffff,
+            width: 0.01,
+            opacity: 1.0,
+            arrow_start: false,
+            arrow_end: false,
+        }];
+        remap_drawings_for_rotation(&mut drawings, 90);
+        for (actual, expected) in drawings[0].points.iter().zip([(0.7, 0.2), (0.4, 0.8)]) {
+            assert!((actual.0 - expected.0).abs() < 1e-6);
+            assert!((actual.1 - expected.1).abs() < 1e-6);
+        }
+        remap_drawings_for_rotation(&mut drawings, 270);
+        assert!((drawings[0].points[0].0 - 0.2).abs() < 1e-6);
+        assert!((drawings[0].points[0].1 - 0.3).abs() < 1e-6);
     }
 }

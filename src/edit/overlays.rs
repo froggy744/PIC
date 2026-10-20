@@ -258,7 +258,7 @@ pub fn clear_asset_cache() {
 /// and keep their own colours no matter how the photograph was edited. Missing
 /// or corrupted assets are skipped without failing the render.
 pub fn composite_overlays(mut image: RgbaImage, recipe: &EditRecipe) -> RgbaImage {
-    if (recipe.overlays.is_empty() && recipe.text_layers.is_empty())
+    if (recipe.overlays.is_empty() && recipe.text_layers.is_empty() && recipe.drawings.is_empty())
         || image.width() == 0
         || image.height() == 0
     {
@@ -299,10 +299,61 @@ pub fn composite_overlays(mut image: RgbaImage, recipe: &EditRecipe) -> RgbaImag
         );
         blend_overlay(&mut image, &raster, rect, layer.opacity, None);
     }
+    composite_drawings(&mut image, &recipe.drawings);
     if overlay_trace() {
         eprintln!("PIC_OVERLAY composite overlays={} text={} size={}x{} elapsed_us={}", recipe.overlays.len(), recipe.text_layers.len(), image.width(), image.height(), started.elapsed().as_micros());
     }
     image
+}
+
+/// Rasterize vector annotations with Cairo's antialiased paths at the final
+/// output resolution, then source-over blend them into the rendered photo.
+fn composite_drawings(image: &mut RgbaImage, drawings: &[super::model::DrawAnnotation]) {
+    use gtk4::cairo::{Context, Format, ImageSurface, LineCap, LineJoin};
+    use super::model::DrawKind;
+    if drawings.is_empty() || image.width() == 0 || image.height() == 0 { return; }
+    let (width,height)=(image.width() as i32,image.height() as i32);
+    let Ok(mut surface)=ImageSurface::create(Format::ARgb32,width,height) else { return; };
+    let Ok(cr)=Context::new(&surface) else { return; };
+    cr.set_antialias(gtk4::cairo::Antialias::Best);
+    cr.set_line_cap(LineCap::Round); cr.set_line_join(LineJoin::Round);
+    let short=width.min(height).max(1) as f64;
+    for item in drawings {
+        if item.points.len()<2 { continue; }
+        let r=((item.color>>24)&255) as f64/255.; let g=((item.color>>16)&255) as f64/255.; let b=((item.color>>8)&255) as f64/255.; let a=(item.color&255) as f64/255.*item.opacity.clamp(0.,1.) as f64;
+        cr.set_source_rgba(r,g,b,a); cr.set_line_width((item.width as f64*short).max(1.));
+        let (x0,y0)=item.points[0]; let (x1,y1)=*item.points.last().unwrap();
+        match item.kind {
+            DrawKind::Pen|DrawKind::Highlighter => { smooth_annotation_path(&cr,&item.points,width as f64,height as f64);let _=cr.stroke(); }
+            DrawKind::Line|DrawKind::Arrow => {let ax=x0 as f64*width as f64;let ay=y0 as f64*height as f64;let bx=x1 as f64*width as f64;let by=y1 as f64*height as f64;cr.move_to(ax,ay);cr.line_to(bx,by);let _=cr.stroke();if item.kind==DrawKind::Arrow{let angle=(by-ay).atan2(bx-ax);let length=(item.width as f64*short*4.).max(8.);for (x,y,angle) in [(bx,by,angle),(ax,ay,angle+std::f64::consts::PI)] {if (x==bx&&item.arrow_end)||(x==ax&&item.arrow_start){cr.move_to(x,y);cr.line_to(x-length*(angle-0.55).cos(),y-length*(angle-0.55).sin());cr.move_to(x,y);cr.line_to(x-length*(angle+0.55).cos(),y-length*(angle+0.55).sin());}}let _=cr.stroke();}}
+            DrawKind::Rectangle => {cr.rectangle(x0.min(x1) as f64*width as f64,y0.min(y1) as f64*height as f64,(x1-x0).abs() as f64*width as f64,(y1-y0).abs() as f64*height as f64);let _=cr.stroke();}
+            DrawKind::Ellipse => {let ax=x0 as f64*width as f64;let ay=y0 as f64*height as f64;let bx=x1 as f64*width as f64;let by=y1 as f64*height as f64;cr.save().ok();cr.translate((ax+bx)/2.,(ay+by)/2.);cr.scale((bx-ax).abs().max(1.)/2.,(by-ay).abs().max(1.)/2.);cr.arc(0.,0.,1.,0.,std::f64::consts::TAU);cr.restore().ok();let _=cr.stroke();}
+        }
+    }
+    drop(cr);
+    surface.flush();
+    let Ok(data)=surface.data() else { return; };
+    // Cairo ARgb32 is premultiplied BGRA on little-endian targets (GTK's
+    // supported desktop platforms); use native-format guard for portability.
+    #[cfg(target_endian="little")]
+    for (dst,src) in image.as_mut().chunks_exact_mut(4).zip(data.chunks_exact(4)) {
+        let sa=src[3] as f32/255.;let da=dst[3] as f32/255.;let out_a=sa+da*(1.-sa);if out_a<=0. {continue;}
+        for (channel,s) in [(0,src[2]),(1,src[1]),(2,src[0])] { dst[channel]=((s as f32+dst[channel] as f32*da*(1.-sa))/out_a).round().clamp(0.,255.) as u8; }
+        dst[3]=(out_a*255.).round().clamp(0.,255.) as u8;
+    }
+    #[cfg(target_endian="big")]
+    for (dst,src) in image.as_mut().chunks_exact_mut(4).zip(data.chunks_exact(4)) {
+        let sa=src[0] as f32/255.;let da=dst[3] as f32/255.;let out_a=sa+da*(1.-sa);if out_a<=0. {continue;}
+        for (channel,s) in [(0,src[1]),(1,src[2]),(2,src[3])] { dst[channel]=((s as f32+dst[channel] as f32*da*(1.-sa))/out_a).round().clamp(0.,255.) as u8; }
+        dst[3]=(out_a*255.).round().clamp(0.,255.) as u8;
+    }
+}
+
+fn smooth_annotation_path(cr:&gtk4::cairo::Context,points:&[(f32,f32)],width:f64,height:f64){
+    if points.len()<2{return;}
+    cr.move_to(points[0].0 as f64*width,points[0].1 as f64*height);
+    for i in 1..points.len()-1 {let (x,y)=points[i];let (nx,ny)=points[i+1];cr.curve_to(x as f64*width,y as f64*height,x as f64*width,y as f64*height,(x+nx) as f64*width/2.,(y+ny) as f64*height/2.);}
+    let (x,y)=points[points.len()-1];cr.line_to(x as f64*width,y as f64*height);
 }
 
 /// Source-over blend of `overlay` into `base` inside the normalized `rect`,

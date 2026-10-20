@@ -5,12 +5,16 @@ const BACKUP_HISTORY: usize = 5;
 #[derive(Clone, Copy)]
 enum BackupKind {
     Automatic,
+    #[cfg(test)]
+    Manual,
 }
 
 impl BackupKind {
     fn prefix(self) -> &'static str {
         match self {
             Self::Automatic => "auto",
+            #[cfg(test)]
+            Self::Manual => "manual",
         }
     }
 }

@@ -100,6 +100,7 @@ include!("controls.rs");
 include!("undo.rs");
 include!("export.rs");
 include!("overlays_ui.rs");
+include!("draw_ui.rs");
 include!("text_ui.rs");
 
 fn pan_drag_should_claim(can_scroll: bool, canvas_tool_active: bool) -> bool {
@@ -211,12 +212,16 @@ pub fn build(
     let text_toggle = gtk::ToggleButton::with_label("Text");
     text_toggle.set_group(Some(&tools_toggle));
     text_toggle.set_tooltip_text(Some("Place editable text layers on the photo"));
+    let draw_toggle = gtk::ToggleButton::with_label("Draw");
+    draw_toggle.set_group(Some(&tools_toggle));
+    draw_toggle.set_tooltip_text(Some("Draw and manage annotations on the photo"));
     for button in [
         &tools_toggle,
         &filters_toggle,
         &crop_toggle,
         &overlays_toggle,
         &text_toggle,
+        &draw_toggle,
     ] {
         button.add_css_class("flat");
     }
@@ -225,6 +230,7 @@ pub fn build(
     panel_tabs.append(&crop_toggle);
     panel_tabs.append(&overlays_toggle);
     panel_tabs.append(&text_toggle);
+    panel_tabs.append(&draw_toggle);
     toolbar.append(&panel_tabs);
 
     let toolbar_spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
@@ -350,6 +356,13 @@ pub fn build(
     text_box.set_margin_bottom(16);
     text_box.set_margin_start(14);
     text_box.set_margin_end(14);
+    let draw_box = gtk::Box::new(gtk::Orientation::Vertical, 10);
+    draw_box.set_hexpand(true);
+    draw_box.set_vexpand(true);
+    draw_box.set_margin_top(12);
+    draw_box.set_margin_bottom(16);
+    draw_box.set_margin_start(10);
+    draw_box.set_margin_end(10);
     let tools_scroll = gtk::ScrolledWindow::new();
     tools_scroll.set_hexpand(true);
     tools_scroll.set_halign(gtk::Align::Fill);
@@ -378,6 +391,11 @@ pub fn build(
     text_scroll.set_min_content_width(1);
     text_scroll.set_propagate_natural_width(false);
     text_scroll.set_child(Some(&text_box));
+    let draw_scroll = gtk::ScrolledWindow::new();
+    draw_scroll.set_hexpand(true);
+    draw_scroll.set_halign(gtk::Align::Fill);
+    draw_scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+    draw_scroll.set_child(Some(&draw_box));
     text_box.set_direction(gtk::TextDirection::Ltr);
     let text_horizontal_adjustment = text_scroll.hadjustment();
     text_horizontal_adjustment.connect_changed(|adjustment| {
@@ -398,6 +416,7 @@ pub fn build(
         crop_scroll.clone(),
         overlays_scroll.clone(),
         text_scroll.clone(),
+        draw_scroll.clone(),
     ] {
         scroll.connect_notify_local(Some("width"), |scroll, _| {
             // Width notification arrives before GTK recomputes the child and
@@ -423,6 +442,7 @@ pub fn build(
     panel_stack.add_named(&crop_scroll, Some("crop"));
     panel_stack.add_named(&overlays_scroll, Some("overlays"));
     panel_stack.add_named(&text_scroll, Some("text"));
+    panel_stack.add_named(&draw_scroll, Some("draw"));
     panel_stack.set_visible_child(&tools_scroll);
     sidebar.append(&panel_stack);
     body.set_start_child(Some(&sidebar));
@@ -482,6 +502,13 @@ pub fn build(
     overlay_layer.set_vexpand(true);
     overlay_layer.set_can_target(false);
     preview_area.add_overlay(&overlay_layer);
+    let draw_layer = gtk::DrawingArea::new();
+    draw_layer.set_hexpand(true);
+    draw_layer.set_vexpand(true);
+    draw_layer.set_visible(false);
+    draw_layer.set_can_target(false);
+    draw_layer.set_focusable(true);
+    preview_area.add_overlay(&draw_layer);
     if let Some(gpu) = &gpu_canvas {
         let gpu = gpu.clone();
         overlay_layer.connect_notify_local(Some("visible"), move |widget, _| {
@@ -620,6 +647,7 @@ pub fn build(
         let crop_overlay = crop_overlay.clone();
         let overlays_toggle = overlays_toggle.clone();
         let text_toggle = text_toggle.clone();
+        let draw_toggle = draw_toggle.clone();
         pan_drag.connect_drag_begin(move |gesture, start_x, start_y| {
             let hadj = picture_scroll.hadjustment();
             let vadj = picture_scroll.vadjustment();
@@ -627,6 +655,7 @@ pub fn build(
             let canvas_tool_active = crop_overlay.is_visible()
                 || overlays_toggle.is_active()
                 || text_toggle.is_active();
+            let canvas_tool_active = canvas_tool_active || draw_toggle.is_active();
             pan_trace_updated.set(false);
             if std::env::var_os("PICASA_TRACE").is_some() {
                 eprintln!(
@@ -1688,11 +1717,20 @@ pub fn build(
             }
         });
     }
+    {
+        let panel_stack = panel_stack.clone();
+        draw_toggle.connect_toggled(move |button| {
+            if button.is_active() {
+                panel_stack.set_visible_child_name("draw");
+            }
+        });
+    }
 
     let sync_controls: Rc<dyn Fn()> = {
         let controls = controls.clone();
         let session = session.clone();
         let syncing = syncing.clone();
+        let draw_layer = draw_layer.clone();
         let sync_overlays_slot = sync_overlays_slot.clone();
         let sync_text_slot = sync_text_slot.clone();
         Rc::new(move || {
@@ -1705,6 +1743,7 @@ pub fn build(
             if let Some(sync_text) = sync_text_slot.borrow().as_ref() {
                 sync_text();
             }
+            draw_layer.queue_draw();
         })
     };
 
@@ -2141,6 +2180,8 @@ pub fn build(
 
     let set_library_rotation_action: Rc<dyn Fn(i32)> = {
         let active_rotation = active_rotation.clone();
+        let session = session.clone();
+        let update_history_buttons=update_history_buttons.clone();
         let native_one_to_one = native_one_to_one.clone();
         let pending_one_to_one_anchor = pending_one_to_one_anchor.clone();
         let canvas_zoom = canvas_zoom.clone();
@@ -2150,7 +2191,13 @@ pub fn build(
         let preview_dimensions = preview_dimensions.clone();
         let queue_preview = queue_preview.clone();
         Rc::new(move |rotation| {
-            active_rotation.set(rotation.rem_euclid(360));
+            let rotation=rotation.rem_euclid(360);
+            let delta=(rotation-active_rotation.get()).rem_euclid(360);
+            if delta!=0 {
+                session.borrow_mut().mutate(|recipe| super::model::remap_drawings_for_rotation(&mut recipe.drawings,delta));
+                update_history_buttons();
+            }
+            active_rotation.set(rotation);
             pending_one_to_one_anchor.borrow_mut().take();
             let was_one_to_one = native_one_to_one.replace(false);
             if was_one_to_one {
@@ -2190,6 +2237,7 @@ pub fn build(
 
     let apply_crop: Rc<dyn Fn(bool)> = {
         let session = session.clone();
+        let preview_dimensions = preview_dimensions.clone();
         let crop_overlay = crop_overlay.clone();
         let pending_crop = pending_crop.clone();
         let queue_preview = queue_preview.clone();
@@ -2202,9 +2250,11 @@ pub fn build(
             let child = *pending_crop.borrow();
             let changed = !child.is_full();
             if changed {
-                session
-                    .borrow_mut()
-                    .mutate(|recipe| recipe.crop = recipe.crop.compose(child));
+                let (width,height)=preview_dimensions.get();
+                session.borrow_mut().mutate(|recipe| {
+                    super::model::remap_drawings_for_crop(&mut recipe.drawings, child, (width.max(1) as u32,height.max(1) as u32));
+                    recipe.crop = recipe.crop.compose(child);
+                });
             }
 
             pending_crop.replace(CropRect::default());
@@ -2334,12 +2384,16 @@ pub fn build(
         let landscape = landscape.clone();
         let queue_preview = queue_preview.clone();
         let update_history_buttons = update_history_buttons.clone();
+        let preview_dimensions=preview_dimensions.clone();
         reset_crop.connect_clicked(move |_| {
-            let had_crop = !session.borrow().recipe.crop.is_full();
+            let prior_crop=session.borrow().recipe.crop;
+            let had_crop = !prior_crop.is_full();
             if had_crop {
-                session
-                    .borrow_mut()
-                    .mutate(|recipe| recipe.crop = CropRect::default());
+                let (width,height)=preview_dimensions.get();
+                session.borrow_mut().mutate(|recipe| {
+                    super::model::remap_drawings_for_uncrop(&mut recipe.drawings,prior_crop,(width.max(1) as u32,height.max(1) as u32));
+                    recipe.crop = CropRect::default();
+                });
             }
             pending_crop.replace(CropRect::default());
             crop_aspect_preset.set(CropAspectPreset::Free);
@@ -2366,6 +2420,7 @@ pub fn build(
         let apply_crop = apply_crop.clone();
         let crop_overlay = crop_overlay.clone();
         let escape_action = escape_action.clone();
+        let draw_toggle = draw_toggle.clone();
         let key = gtk::EventControllerKey::new();
         key.set_propagation_phase(gtk::PropagationPhase::Capture);
         key.connect_key_pressed(move |_, key, _, _| {
@@ -2377,6 +2432,9 @@ pub fn build(
                     glib::Propagation::Stop
                 }
                 gtk::gdk::Key::Escape => {
+                    if draw_toggle.is_active() {
+                        return glib::Propagation::Proceed;
+                    }
                     escape_action();
                     glib::Propagation::Stop
                 }
@@ -2414,12 +2472,13 @@ pub fn build(
         let overlays_toggle = overlays_toggle.clone();
         let text_toggle = text_toggle.clone();
         let crop_overlay = crop_overlay.clone();
+        let draw_toggle_for_input = draw_toggle.clone();
         let session = session.clone();
         Rc::new(move || {
             let in_crop = crop_overlay.is_visible();
             overlay_layer.set_visible(!in_crop);
             let recipe = session.borrow();
-            let enable = (overlays_toggle.is_active() && !recipe.recipe.overlays.is_empty()
+            let enable = !draw_toggle_for_input.is_active() && (overlays_toggle.is_active() && !recipe.recipe.overlays.is_empty()
                 || text_toggle.is_active() && !recipe.recipe.text_layers.is_empty())
                 && !in_crop;
             drop(recipe);
@@ -2492,6 +2551,25 @@ pub fn build(
         preview_dimensions.clone(),
     );
     sync_text_slot.replace(Some(sync_text_panel.clone()));
+
+    let update_draw_canvas = build_draw_panel(
+        &draw_box,
+        &draw_layer,
+        session.clone(),
+        preview_dimensions.clone(),
+        canvas_zoom.clone(),
+        native_one_to_one.clone(),
+        picture_scroll.clone(),
+        draw_toggle.clone(),
+        update_history_buttons.clone(),
+        queue_preview.clone(),
+    );
+    {
+        let update_draw_canvas = update_draw_canvas.clone();
+        let update_canvas_input = update_canvas_input.clone();
+        draw_toggle.connect_toggled(move |_| { update_draw_canvas(); update_canvas_input(); });
+    }
+    update_draw_canvas();
 
     configure_overlay_canvas(
         &overlay_layer,

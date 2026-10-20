@@ -747,6 +747,45 @@ mod tests {
     }
 
     #[test]
+    fn full_resolution_export_rasterizes_draw_annotations() {
+        let path = std::env::temp_dir().join(format!(
+            "pic-export-draw-{}-{}.png",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
+        ));
+        let source = RgbaImage::from_pixel(160, 100, Rgba([20, 30, 40, 255]));
+        DynamicImage::ImageRgba8(source.clone()).save(&path).unwrap();
+        let mut recipe = EditRecipe::default();
+        recipe.drawings.push(super::super::model::DrawAnnotation {
+            kind: super::super::model::DrawKind::Arrow,
+            points: vec![(0.2, 0.5), (0.8, 0.5)],
+            color: 0xff0000ff,
+            width: 0.025,
+            opacity: 1.0,
+            arrow_start: false,
+            arrow_end: true,
+        });
+        let output = render_for_export(path.to_str().unwrap(), 0, &recipe.encode(), 160, 100)
+            .unwrap();
+        assert_eq!(output.dimensions(), (160, 100));
+        assert!(
+            output
+                .pixels()
+                .any(|p| p.0[0] > 220 && p.0[1] < 80 && p.0[2] < 80),
+            "the full-resolution export includes the red annotation"
+        );
+        assert_eq!(
+            image::open(&path).unwrap().to_rgba8(),
+            source,
+            "export leaves the original image unchanged"
+        );
+        std::fs::remove_file(path).ok();
+    }
+
+    #[test]
     fn jpeg_export_alpha_matte_preserves_opaque_and_flattens_transparency() {
         let pixels = RgbaImage::from_fn(3, 1, |x, _| match x {
             0 => Rgba([12, 34, 56, 255]),

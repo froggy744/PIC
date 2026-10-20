@@ -114,6 +114,7 @@ fn build_draw_panel(
     let selected = Rc::new(Cell::new(None::<usize>));
     let selected_many = Rc::new(RefCell::new(Vec::<usize>::new()));
     let gesture = Rc::new(RefCell::new(DrawGesture::default()));
+    let pen_cursor_position = Rc::new(Cell::new(None::<(f64, f64)>));
     let tool_grid = gtk::Grid::new();
     tool_grid.set_halign(gtk::Align::Center);
     tool_grid.set_column_homogeneous(true);
@@ -216,6 +217,10 @@ fn build_draw_panel(
     parent.append(&colour_row);
 
     let (width, _width_value) = draw_slider_row(parent, "Thickness", 1.0, 36.0, 1.0, 5.0, false);
+    {
+        let layer = layer.clone();
+        width.connect_value_changed(move |_| layer.queue_draw());
+    }
     let (opacity, _opacity_value) =
         draw_slider_row(parent, "Opacity", 5.0, 100.0, 5.0, 100.0, true);
     let delete = gtk::Button::with_label("Delete selected");
@@ -437,6 +442,7 @@ fn build_draw_panel(
         let selected_many = selected_many.clone();
         let arrowheads = arrowheads.clone();
         let display = display.clone();
+        let pen_cursor_position = pen_cursor_position.clone();
         layer.set_draw_func(move |widget, cr, w, h| {
             let d = display(w as f64, h as f64);
             let (pw, ph) = preview_dimensions.get();
@@ -478,8 +484,35 @@ fn build_draw_panel(
                 };
                 draw_annotation_on_canvas(cr, &preview, d, pw, ph);
             }
+            if tools.get() == DrawTool::Pen {
+                if let Some((cx, cy)) = pen_cursor_position.get() {
+                    let (dx, dy, dw, dh) = d;
+                    if cx >= dx && cx <= dx + dw && cy >= dy && cy <= dy + dh {
+                        let pen_width = (width.value() as f64 / 1000.).clamp(0.001, 0.04);
+                        let diameter = pen_width * pw.min(ph).max(1) as f64 * dw
+                            / pw.max(1) as f64;
+                        draw_pen_cursor(cr, cx, cy, diameter);
+                    }
+                }
+            }
             let _ = widget;
         });
+    }
+    {
+        let position = pen_cursor_position.clone();
+        let motion_layer = layer.clone();
+        let motion = gtk::EventControllerMotion::new();
+        motion.connect_motion(move |_, x, y| {
+            position.set(Some((x, y)));
+            motion_layer.queue_draw();
+        });
+        let position = pen_cursor_position.clone();
+        let leave_layer = layer.clone();
+        motion.connect_leave(move |_| {
+            position.set(None);
+            leave_layer.queue_draw();
+        });
+        layer.add_controller(motion);
     }
 
     let update_history = update_history_buttons.clone();
@@ -933,6 +966,20 @@ fn should_preview_gesture(tool: DrawTool, gesture: &DrawGesture) -> bool {
     is_drawing_tool(tool)
         && (gesture.points.len() > 1 || gesture.current != gesture.start)
         && !gesture.selecting_box
+}
+
+fn draw_pen_cursor(cr: &gtk::cairo::Context, x: f64, y: f64, diameter: f64) {
+    let radius = (diameter / 2.).max(0.75);
+    cr.save().ok();
+    cr.set_antialias(gtk::cairo::Antialias::Best);
+    cr.arc(x, y, radius, 0., std::f64::consts::TAU);
+    cr.set_source_rgba(1., 1., 1., 0.95);
+    cr.set_line_width(3.);
+    let _ = cr.stroke_preserve();
+    cr.set_source_rgba(0., 0., 0., 0.95);
+    cr.set_line_width(1.);
+    let _ = cr.stroke();
+    cr.restore().ok();
 }
 
 fn draw_marquee(

@@ -1,5 +1,7 @@
 mod editor;
 pub mod export_batch;
+#[cfg(debug_assertions)]
+pub mod export_benchmark;
 mod export_metadata;
 pub mod filters;
 pub mod live_gpu;

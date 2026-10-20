@@ -4476,12 +4476,13 @@ fn start_photo_export_folder(
     let (sender, receiver) = std::sync::mpsc::channel();
     watch_export_progress(progress, receiver, total);
     std::thread::spawn(move || {
-        let outcome = crate::edit::export_batch::run_batch_export(
+        let outcome = crate::edit::export_batch::run_batch_export_with_workers(
             &jobs,
             &folder,
             max_edge,
             crate::edit::export_batch::default_export_quality(),
             format,
+            crate::edit::export_batch::DEFAULT_BATCH_EXPORT_WORKERS,
             |job| crate::edit::export_batch::render_job(job),
             |done, _total, filename, failed| {
                 let _ = sender.send(ExportProgressMessage::Update {

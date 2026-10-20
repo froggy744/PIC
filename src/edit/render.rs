@@ -147,6 +147,8 @@ pub fn render_for_export(
     source_width: i64,
     source_height: i64,
 ) -> Result<RgbaImage> {
+    let trace = std::env::var_os("PICASA_TRACE").is_some();
+    let render_started = std::time::Instant::now();
     let (width, height) = if source_width > 0 && source_height > 0 {
         // A square decode *bound* preserves full sensor/photo resolution
         // whether EXIF orientation and/or PIC's library rotation swaps axes.
@@ -176,7 +178,54 @@ pub fn render_for_export(
             );
         }
     }
-    render_for_viewer(reference, rotation, &recipe, width, height)
+    // Keep Export on the full-resolution CPU reference, but expose each stage
+    // independently so slow decode, pixel processing, and overlay work are
+    // distinguishable in one PICASA_TRACE run.
+    let stage = std::time::Instant::now();
+    let decoded = decode_base_for_viewer(reference, rotation, width, height)?;
+    if trace {
+        eprintln!(
+            "PIC_EXPORT stage=decode_rotate elapsed_ms={:.3} size={}x{} renderer=cpu",
+            stage.elapsed().as_secs_f64() * 1000.0,
+            decoded.width(), decoded.height(),
+        );
+    }
+    let stage = std::time::Instant::now();
+    let geometrical = apply_geometry(decoded, &recipe);
+    if trace {
+        eprintln!(
+            "PIC_EXPORT stage=geometry elapsed_ms={:.3} size={}x{}",
+            stage.elapsed().as_secs_f64() * 1000.0,
+            geometrical.width(), geometrical.height(),
+        );
+    }
+    let stage = std::time::Instant::now();
+    let toned = apply_tone(geometrical, &recipe);
+    if trace {
+        eprintln!(
+            "PIC_EXPORT stage=tone elapsed_ms={:.3} size={}x{}",
+            stage.elapsed().as_secs_f64() * 1000.0,
+            toned.width(), toned.height(),
+        );
+    }
+    let stage = std::time::Instant::now();
+    let output = super::overlays::composite_overlays(toned, &recipe);
+    if trace {
+        eprintln!(
+            "PIC_EXPORT stage=overlays elapsed_ms={:.3} size={}x{} image_layers={} text_layers={} drawings={}",
+            stage.elapsed().as_secs_f64() * 1000.0,
+            output.width(), output.height(),
+            recipe.overlays.iter().filter(|layer| layer.visible && layer.opacity > 0.001).count(),
+            recipe.text_layers.iter().filter(|layer| layer.visible && layer.opacity > 0.001).count(),
+            recipe.drawings.len(),
+        );
+        eprintln!(
+            "PIC_EXPORT stage=render_complete elapsed_ms={:.3} size={}x{} renderer=cpu",
+            render_started.elapsed().as_secs_f64() * 1000.0,
+            output.width(), output.height(),
+        );
+    }
+    Ok(output)
 }
 
 fn crop_normalized(image: &RgbaImage, crop: CropRect) -> RgbaImage {

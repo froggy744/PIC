@@ -50,6 +50,14 @@ fn register_bundled_icons() {
 
 fn main() {
     startup_trace::start();
+    #[cfg(debug_assertions)]
+    if let Some(album) = std::env::var_os("PIC_EXPORT_BENCH_ALBUM") {
+        if let Err(error) = edit::export_benchmark::run(album.to_string_lossy().as_ref()) {
+            eprintln!("PIC_EXPORT_BENCH result=error error={error:#}");
+            std::process::exit(1);
+        }
+        return;
+    }
     use gio::prelude::*;
     use gtk4 as gtk;
     use libadwaita as adw;

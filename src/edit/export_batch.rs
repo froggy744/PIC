@@ -1,13 +1,14 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use image::RgbaImage;
 
 use super::model::EditRecipe;
 
 pub const EDIT_SUFFIX: &str = "_edit";
+pub const DEFAULT_BATCH_EXPORT_WORKERS: usize = 6;
 const DEFAULT_EXPORT_QUALITY: u8 = 92;
 
 /// Output format chosen in the export dialog (shared by gallery and editor).
@@ -141,19 +142,35 @@ pub fn unique_export_path(folder: &Path, file_name: &str, reserved: &mut HashSet
 
 /// Shrink so the long edge is at most `max_edge`, preserving aspect ratio.
 /// Never upscales. `max_edge == 0` leaves the image untouched.
-pub fn fit_max_edge(image: RgbaImage, max_edge: u32) -> RgbaImage {
+pub fn fit_max_edge(image: RgbaImage, max_edge: u32) -> Result<RgbaImage> {
     if max_edge == 0 {
-        return image;
+        return Ok(image);
     }
     let (width, height) = (image.width(), image.height());
     let long_edge = width.max(height);
     if long_edge <= max_edge {
-        return image;
+        return Ok(image);
     }
     let scale = max_edge as f32 / long_edge as f32;
     let new_width = ((width as f32 * scale).round() as u32).max(1);
     let new_height = ((height as f32 * scale).round() as u32).max(1);
-    image::imageops::resize(&image, new_width, new_height, image::imageops::FilterType::Lanczos3)
+    let source = fast_image_resize::images::Image::from_vec_u8(
+        width,
+        height,
+        image.into_raw(),
+        fast_image_resize::PixelType::U8x4,
+    )?;
+    let mut destination = fast_image_resize::images::Image::new(
+        new_width,
+        new_height,
+        fast_image_resize::PixelType::U8x4,
+    );
+    let options = fast_image_resize::ResizeOptions::new().resize_alg(
+        fast_image_resize::ResizeAlg::Convolution(fast_image_resize::FilterType::Lanczos3),
+    );
+    fast_image_resize::Resizer::new().resize(&source, &mut destination, &options)?;
+    RgbaImage::from_raw(new_width, new_height, destination.into_vec())
+        .context("export resizer returned an invalid RGBA buffer")
 }
 
 #[derive(Clone, Debug)]
@@ -322,21 +339,71 @@ fn export_job_to_inner<F>(
 where
     F: Fn(&ExportJob) -> Result<RgbaImage>,
 {
-    use anyhow::Context;
+    let trace = std::env::var_os("PICASA_TRACE").is_some();
+    let export_started = std::time::Instant::now();
     if !replace_existing && destination.exists() {
         anyhow::bail!("refusing to overwrite existing export: {}", destination.display());
     }
-    let image = fit_max_edge(render(job)?, max_edge);
+    let stage_started = std::time::Instant::now();
+    let rendered = render(job)?;
+    if trace {
+        eprintln!(
+            "PIC_EXPORT stage=render_callback elapsed_ms={:.3} size={}x{}",
+            stage_started.elapsed().as_secs_f64() * 1000.0,
+            rendered.width(), rendered.height(),
+        );
+    }
+    let stage_started = std::time::Instant::now();
+    let image = fit_max_edge(rendered, max_edge)?;
+    if trace {
+        eprintln!(
+            "PIC_EXPORT stage=fit_max_edge elapsed_ms={:.3} size={}x{} max_edge={}",
+            stage_started.elapsed().as_secs_f64() * 1000.0,
+            image.width(), image.height(), max_edge,
+        );
+    }
+    let stage_started = std::time::Instant::now();
     let staging = staging_export_path(destination)?;
+    if trace {
+        eprintln!(
+            "PIC_EXPORT stage=staging_file elapsed_ms={:.3} format={:?}",
+            stage_started.elapsed().as_secs_f64() * 1000.0,
+            format,
+        );
+    }
     let result: Result<()> = (|| {
+        let stage_started = std::time::Instant::now();
         let exif = super::export_metadata::for_export(&job.source_path, image.width(), image.height());
+        if trace {
+            eprintln!(
+                "PIC_EXPORT stage=metadata elapsed_ms={:.3} bytes={}",
+                stage_started.elapsed().as_secs_f64() * 1000.0,
+                exif.len(),
+            );
+        }
+        let stage_started = std::time::Instant::now();
         super::render::save_export_with_metadata(
             &image, &staging, format, quality, Some(&exif)
         )?;
+        if trace {
+            eprintln!(
+                "PIC_EXPORT stage=encode elapsed_ms={:.3} size={}x{} format={:?} quality={}",
+                stage_started.elapsed().as_secs_f64() * 1000.0,
+                image.width(), image.height(), format, quality,
+            );
+        }
         // The result is only made visible at its final filename once complete.
+        let stage_started = std::time::Instant::now();
         publish_export(&staging, destination, replace_existing).with_context(|| format!(
             "could not finish export {}", destination.display()
         ))?;
+        if trace {
+            eprintln!(
+                "PIC_EXPORT stage=publish elapsed_ms={:.3} total_ms={:.3}",
+                stage_started.elapsed().as_secs_f64() * 1000.0,
+                export_started.elapsed().as_secs_f64() * 1000.0,
+            );
+        }
         Ok(())
     })();
     if result.is_err() {
@@ -397,6 +464,118 @@ where
             }
         }
         on_progress(done, total, &job.file_name, outcome.failed);
+    }
+    outcome
+}
+
+/// Export a batch with a bounded number of concurrent jobs. Destinations are
+/// reserved before workers start, while each worker renders and publishes one
+/// independent photo at a time. Progress callbacks run on the caller thread.
+pub fn run_batch_export_with_workers<F, P>(
+    jobs: &[ExportJob],
+    folder: &Path,
+    max_edge: u32,
+    quality: u8,
+    format: ExportFormat,
+    workers: usize,
+    render: F,
+    mut on_progress: P,
+    cancel: Option<&AtomicBool>,
+) -> BatchExportOutcome
+where
+    F: Fn(&ExportJob) -> Result<RgbaImage> + Sync,
+    P: FnMut(usize, usize, &str, usize),
+{
+    if workers <= 1 || jobs.len() <= 1 {
+        return run_batch_export(
+            jobs, folder, max_edge, quality, format, render, on_progress, cancel,
+        );
+    }
+
+    let total = jobs.len();
+    let mut outcome = BatchExportOutcome::default();
+    let mut reserved = HashSet::new();
+    // Match serial export semantics: missing sources do not reserve a name,
+    // so a later available job with the same name can still use it.
+    let destinations = jobs
+        .iter()
+        .map(|job| {
+            crate::source::file_available(&job.source_path)
+                .then(|| unique_export_path(folder, &job.file_name, &mut reserved))
+        })
+        .collect::<Vec<_>>();
+    let next = AtomicUsize::new(0);
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let worker_count = workers.min(total);
+
+    std::thread::scope(|scope| {
+        for _ in 0..worker_count {
+            let sender = sender.clone();
+            let next = &next;
+            let destinations = &destinations;
+            let cancel = cancel;
+            let render = &render;
+            scope.spawn(move || loop {
+                if cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
+                    break;
+                }
+                let index = next.fetch_add(1, Ordering::Relaxed);
+                if index >= total {
+                    break;
+                }
+                let job = &jobs[index];
+                let Some(destination) = destinations[index].as_ref() else {
+                    let _ = sender.send((index, Err(None)));
+                    continue;
+                };
+                if !crate::source::file_available(&job.source_path) {
+                    let _ = sender.send((index, Err(None)));
+                    continue;
+                }
+                let result = export_job_to(
+                    job,
+                    destination,
+                    max_edge,
+                    quality,
+                    format,
+                    render,
+                )
+                .map_err(|error| Some(format!("{}: {error:#}", job.source_path)));
+                let _ = sender.send((index, result));
+            });
+        }
+        drop(sender);
+
+        let mut completed = 0usize;
+        for (index, result) in receiver {
+            completed += 1;
+            match result {
+                Ok(()) => outcome.exported += 1,
+                Err(None) => {
+                    outcome.skipped += 1;
+                    outcome.errors.push(format!(
+                        "skipped (missing): {}",
+                        jobs[index].source_path
+                    ));
+                }
+                Err(Some(error)) => {
+                    outcome.failed += 1;
+                    outcome.errors.push(error);
+                }
+            }
+            on_progress(
+                completed,
+                total,
+                &jobs[index].file_name,
+                outcome.failed,
+            );
+        }
+    });
+
+    let completed = outcome.exported + outcome.skipped + outcome.failed;
+    if cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) && completed < total {
+        outcome.errors.push(format!("cancelled after {completed} / {total}"));
+        on_progress(completed, total, "", outcome.failed);
     }
     outcome
 }
@@ -558,26 +737,26 @@ mod tests {
     #[test]
     fn fit_max_edge_preserves_portrait_and_landscape() {
         let portrait = RgbaImage::new(3000, 4000);
-        let fitted = fit_max_edge(portrait, 1000);
+        let fitted = fit_max_edge(portrait, 1000).unwrap();
         assert_eq!((fitted.width(), fitted.height()), (750, 1000));
 
         let landscape = RgbaImage::new(4000, 3000);
-        let fitted = fit_max_edge(landscape, 1000);
+        let fitted = fit_max_edge(landscape, 1000).unwrap();
         assert_eq!((fitted.width(), fitted.height()), (1000, 750));
 
         let square = RgbaImage::new(2000, 2000);
-        let fitted = fit_max_edge(square, 500);
+        let fitted = fit_max_edge(square, 500).unwrap();
         assert_eq!((fitted.width(), fitted.height()), (500, 500));
     }
 
     #[test]
     fn fit_max_edge_never_upscales_or_touches_disabled() {
         let small = RgbaImage::new(100, 50);
-        let fitted = fit_max_edge(small, 1000);
+        let fitted = fit_max_edge(small, 1000).unwrap();
         assert_eq!((fitted.width(), fitted.height()), (100, 50));
 
         let image = RgbaImage::new(640, 480);
-        let fitted = fit_max_edge(image, 0);
+        let fitted = fit_max_edge(image, 0).unwrap();
         assert_eq!((fitted.width(), fitted.height()), (640, 480));
     }
 
@@ -858,6 +1037,163 @@ mod tests {
         assert!(dir.join("photo-1.jpg").is_file());
         assert!(dir.join("photo-4_edit.jpg").is_file());
         assert!(!dir.join("photo-2_edit.jpg").exists());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn parallel_batch_preserves_pixels_missing_sources_and_progress() {
+        let dir = std::env::temp_dir().join(format!(
+            "pic-export-parallel-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let source = dir.join("source.png");
+        let expected = RgbaImage::from_pixel(16, 12, image::Rgba([40, 90, 180, 255]));
+        image::DynamicImage::ImageRgba8(expected.clone())
+            .save(&source)
+            .unwrap();
+        let jobs = [
+            ExportJob::from_record(
+                dir.join("missing.png").display().to_string(),
+                0,
+                String::new(),
+                16,
+                12,
+                "same.png",
+            ),
+            ExportJob::from_record(
+                source.display().to_string(),
+                0,
+                String::new(),
+                16,
+                12,
+                "same.png",
+            ),
+            ExportJob::from_record(
+                source.display().to_string(),
+                0,
+                String::new(),
+                16,
+                12,
+                "same.png",
+            ),
+            ExportJob::from_record(
+                source.display().to_string(),
+                0,
+                String::new(),
+                16,
+                12,
+                "other.png",
+            ),
+        ];
+        let mut progress = Vec::new();
+        let outcome = run_batch_export_with_workers(
+            &jobs,
+            &dir,
+            0,
+            92,
+            ExportFormat::Png,
+            2,
+            render_job,
+            |done, total, name, failed| {
+                progress.push((done, total, name.to_string(), failed));
+            },
+            None,
+        );
+
+        assert_eq!(outcome.exported, 3, "{outcome:?}");
+        assert_eq!(outcome.skipped, 1, "{outcome:?}");
+        assert_eq!(outcome.failed, 0, "{outcome:?}");
+        assert_eq!(progress.len(), jobs.len());
+        assert_eq!(progress.last().unwrap().0, jobs.len());
+        assert_eq!(progress.last().unwrap().1, jobs.len());
+        assert!(dir.join("same.png").is_file());
+        assert!(dir.join("same_2.png").is_file());
+        assert!(dir.join("other.png").is_file());
+        assert_eq!(image::open(dir.join("same.png")).unwrap().to_rgba8(), expected);
+        assert_eq!(image::open(dir.join("same_2.png")).unwrap().to_rgba8(), expected);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn parallel_batch_finishes_in_flight_jobs_then_honors_cancellation() {
+        let dir = std::env::temp_dir().join(format!(
+            "pic-export-parallel-cancel-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let jobs = (0..4)
+            .map(|index| {
+                let source = dir.join(format!("source-{index}.png"));
+                std::fs::write(&source, b"available").unwrap();
+                ExportJob::from_record(
+                    source.display().to_string(),
+                    0,
+                    String::new(),
+                    8,
+                    8,
+                    &format!("photo-{index}.png"),
+                )
+            })
+            .collect::<Vec<_>>();
+        let cancel = AtomicBool::new(false);
+        let start_barrier = std::sync::Arc::new(std::sync::Barrier::new(3));
+        let mut progress = Vec::new();
+
+        std::thread::scope(|scope| {
+            let barrier = start_barrier.clone();
+            let worker = scope.spawn(|| {
+                run_batch_export_with_workers(
+                    &jobs,
+                    &dir,
+                    0,
+                    92,
+                    ExportFormat::Png,
+                    2,
+                    move |_| {
+                        barrier.wait();
+                        Ok(RgbaImage::new(8, 8))
+                    },
+                    |done, total, name, failed| {
+                        progress.push((done, total, name.to_string(), failed));
+                    },
+                    Some(&cancel),
+                )
+            });
+
+            // Both workers have claimed a job and entered rendering. Cancel
+            // before releasing them so no further jobs can be claimed.
+            start_barrier.wait();
+            cancel.store(true, Ordering::Relaxed);
+            let outcome = worker.join().unwrap();
+            assert_eq!(outcome.exported, 2, "{outcome:?}");
+            assert_eq!(outcome.skipped, 0, "{outcome:?}");
+            assert_eq!(outcome.failed, 0, "{outcome:?}");
+            assert!(outcome
+                .errors
+                .iter()
+                .any(|error| error == "cancelled after 2 / 4"));
+        });
+
+        assert_eq!(progress.len(), 3);
+        assert_eq!(progress.last().unwrap().0, 2);
+        assert_eq!(progress.last().unwrap().1, 4);
+        assert!(progress.last().unwrap().2.is_empty());
+        assert_eq!(
+            std::fs::read_dir(&dir)
+                .unwrap()
+                .filter_map(|entry| entry.ok())
+                .count(),
+            6
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 

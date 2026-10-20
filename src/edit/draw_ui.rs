@@ -850,8 +850,17 @@ fn build_draw_panel(
     let _ = draw_toggle;
     let _ = queue_preview;
     let layer_for_update = layer.clone();
+    let select_for_update = select.clone();
+    let tools_for_update = tools.clone();
+    let was_active = Rc::new(Cell::new(draw_toggle.is_active()));
     Rc::new(move || {
         let active = draw_toggle.is_active();
+        if active {
+            was_active.set(true);
+        } else if was_active.replace(false) {
+            tools_for_update.set(DrawTool::Select);
+            select_for_update.set_active(true);
+        }
         layer_for_update.set_visible(true);
         layer_for_update.set_can_target(active);
         if active {

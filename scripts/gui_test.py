@@ -659,6 +659,18 @@ def smoke_test() -> None:
                     folder_end == "folder-last.jpg" and folder_home == "folder-first.jpg"
                     and folder_last == "folder-last.jpg" and folder_control_home == "landscape.jpg"
                     and folder_control_down == "folder-first.jpg" and folder_control_up == "landscape.jpg")
+
+        for _ in range(3):
+            command(["xdotool", "key", "Page_Down"])
+        folder_page_down = activate_selected_name()
+        for _ in range(3):
+            command(["xdotool", "key", "Page_Up"])
+        folder_page_up = activate_selected_name()
+        browse_case("Browse Page Up/Down across folders",
+                    "Repeated page keys continue across folder boundaries and clamp at view ends",
+                    f"page-down={folder_page_down}; page-up={folder_page_up}",
+                    folder_page_down in {"folder-first.jpg", "folder-last.jpg"}
+                    and folder_page_up == "landscape.jpg")
         return
 
     if SUITE == "edit-navigation":

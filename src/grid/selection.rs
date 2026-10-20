@@ -210,10 +210,17 @@ impl Gallery {
                     .then_some(candidate as u32)
             } else {
                 vertical_navigation_target(ranges, target, columns, preferred, direction)
-            }?;
+            };
+            // A page may be larger than the rows remaining in this folder or
+            // at either end of the view. Keep the progress already made so a
+            // Page Up/Down can cross section boundaries and land at the view
+            // boundary instead of leaving selection stuck at its start.
+            let Some(next) = next else {
+                break;
+            };
             target = next;
         }
-        Some(target as usize)
+        (target != current as u32).then_some(target as usize)
     }
 
     /// Capture a *photo identity and viewport Y offset*, not a scroll-bar

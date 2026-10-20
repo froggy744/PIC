@@ -123,6 +123,8 @@ def seed_isolated_database() -> None:
             ("screensaver-shuffle", "false"),
             ("screensaver-captions", "true"),
         ]
+        if SUITE == "browse-navigation":
+            settings.append(("last-view", "all"))
         # Optional theme selection lets the isolated GUI harness take
         # reproducible appearance screenshots without touching user settings.
         gui_theme = os.environ.get("PIC_GUI_THEME")
@@ -590,6 +592,10 @@ def smoke_test() -> None:
         def browse_case(name: str, expected: str, actual: str, passed: bool) -> None:
             record(add_case(name, expected), passed, f"activated photo={actual or 'none'}")
 
+        photo_order = ["landscape.jpg", "portrait.jpg", "square.png"] + [
+            f"sample-{index:02d}.jpg" for index in range(12)
+        ] + ["folder-first.jpg", "folder-last.jpg"]
+
         click_at(518, 178)
         first = activate_selected_name()
         browse_case("Browse initial selection", "The clicked first tile opens", first,
@@ -636,6 +642,32 @@ def smoke_test() -> None:
                     end not in {"", "landscape.jpg"}
                     and control_home == "landscape.jpg" and control_end == end)
 
+        for layout_name, saved_value in (("Photo Wall", "photo_wall"), ("Masonry", "masonry")):
+            click_at(1298, 28)
+            time.sleep(1.0)
+            with sqlite3.connect(XDG_DATA / "pic-rs" / "library.db") as connection:
+                saved_mode = connection.execute(
+                    "SELECT value FROM settings WHERE key='photo_layout.all'"
+                ).fetchone()
+            command(["xdotool", "key", "ctrl+Home"])
+            for _ in range(3):
+                command(["xdotool", "key", "Page_Down"])
+            down_name = activate_selected_name()
+            for _ in range(3):
+                command(["xdotool", "key", "Page_Up"])
+            up_name = activate_selected_name()
+            down_position = photo_order.index(down_name) if down_name in photo_order else -1
+            up_position = photo_order.index(up_name) if up_name in photo_order else -1
+            browse_case(f"Browse All Photos {layout_name} Page Up/Down",
+                        f"The view button selects {layout_name}; repeated page keys move down then back up",
+                        f"saved={saved_mode[0] if saved_mode else 'missing'}; down={down_name}; up={up_name}",
+                        saved_mode == (saved_value,)
+                        and down_position > 0
+                        and 0 <= up_position < down_position)
+
+        click_at(1298, 28)
+        time.sleep(1.0)
+
         # Open the generated root folder so the gallery has real folder
         # sections. Its nested child holds two photos for scoped Home/End.
         click_at(118, 486)
@@ -672,14 +704,14 @@ def smoke_test() -> None:
                     folder_page_down in {"folder-first.jpg", "folder-last.jpg"}
                     and folder_page_up == "landscape.jpg")
 
-        photo_order = ["landscape.jpg", "portrait.jpg", "square.png"] + [
-            f"sample-{index:02d}.jpg" for index in range(12)
-        ] + ["folder-first.jpg", "folder-last.jpg"]
-
-        for layout_name in ("Photo Wall", "Masonry"):
+        for layout_name, saved_value in (("Photo Wall", "photo_wall"), ("Masonry", "masonry")):
             # The toolbar button cycles Grid -> Photo Wall -> Masonry -> Grid.
             click_at(1298, 28)
             time.sleep(1.0)
+            with sqlite3.connect(XDG_DATA / "pic-rs" / "library.db") as connection:
+                saved_mode = connection.execute(
+                    "SELECT value FROM settings WHERE key='photo_layout.folders'"
+                ).fetchone()
             command(["xdotool", "key", "ctrl+Home"])
             for _ in range(3):
                 command(["xdotool", "key", "Page_Down"])
@@ -691,8 +723,9 @@ def smoke_test() -> None:
             up_position = photo_order.index(up_name) if up_name in photo_order else -1
             browse_case(f"Browse {layout_name} folder Page Up/Down",
                         f"Repeated page keys cross folder boundaries in both directions ({layout_name})",
-                        f"down={down_name}; up={up_name}",
-                        down_position >= photo_order.index("folder-first.jpg")
+                        f"saved={saved_mode[0] if saved_mode else 'missing'}; down={down_name}; up={up_name}",
+                        saved_mode == (saved_value,)
+                        and down_position >= photo_order.index("folder-first.jpg")
                         and 0 <= up_position < photo_order.index("folder-first.jpg"))
         return
 

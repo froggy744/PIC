@@ -178,8 +178,9 @@ impl Gallery {
         direction: i32,
         ranges: &[GroupRange],
     ) -> Option<usize> {
-        if self.group_mode.get() == GroupMode::Folder
-            && sectioned_folder_view_enabled()
+        if sectioned_folder_view_enabled()
+            && (self.group_mode.get() == GroupMode::Folder
+                || self.layout() != PhotoLayout::Grid)
         {
             return self
                 .sectioned_folder

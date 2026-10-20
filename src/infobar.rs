@@ -314,11 +314,15 @@ impl InfoBar {
         let layout_for_toggle = photo_layout.clone();
         view_toggle.connect_clicked(move |button| {
             use crate::grid::PhotoLayout;
-            let layout = match layout_for_toggle.get() {
+            let current = layout_for_toggle.get();
+            let layout = match current {
                 PhotoLayout::Grid => PhotoLayout::PhotoWall,
                 PhotoLayout::PhotoWall => PhotoLayout::Masonry,
                 PhotoLayout::Masonry => PhotoLayout::Grid,
             };
+            crate::nav_transition_trace!(
+                "stage=view_toggle_clicked current={current:?} requested={layout:?}"
+            );
             layout_for_toggle.set(layout);
             update_photo_layout_button(button, layout);
         });
@@ -807,8 +811,13 @@ impl InfoBar {
 
     pub fn connect_photo_layout(&self, changed: impl Fn(crate::grid::PhotoLayout) + 'static) {
         let layout = self.photo_layout.clone();
-        self.view_toggle
-            .connect_clicked(move |_| changed(layout.get()));
+        self.view_toggle.connect_clicked(move |_| {
+            let requested = layout.get();
+            crate::nav_transition_trace!(
+                "stage=view_toggle_dispatched requested={requested:?}"
+            );
+            changed(requested);
+        });
     }
 
     pub fn connect_clear_saved_views(&self, clear: impl Fn() + 'static) {

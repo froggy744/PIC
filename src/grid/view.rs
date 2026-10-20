@@ -60,7 +60,7 @@ pub struct Gallery {
     // sidebar click can land on the requested folder rather than its first
     // descendant.
     folder_catalog: Rc<RefCell<Vec<FolderCatalogEntry>>>,
-    folder_view_changed: Rc<RefCell<Option<Rc<dyn Fn(bool)>>>>,
+    folder_view_changed: Rc<RefCell<Option<Rc<dyn Fn(bool, bool)>>>>,
     selected: Rc<dyn Fn(Option<PhotoObject>)>,
     store: gio::ListStore,
     selection: gtk::MultiSelection,

@@ -343,8 +343,18 @@ impl Gallery {
 
     pub fn set_layout(self: &Rc<Self>, layout: PhotoLayout) {
         if self.layout() == layout {
+            crate::nav_transition_trace!(
+                "stage=layout_switch_ignored requested={layout:?} current={:?} group={:?}",
+                self.layout(),
+                self.group_mode.get()
+            );
             return;
         }
+        crate::nav_transition_trace!(
+            "stage=layout_switch_requested from={:?} to={layout:?} group={:?}",
+            self.layout(),
+            self.group_mode.get()
+        );
         let anchor = self.capture_view_anchor();
         let chosen_width = self.current_zoom_width();
         let layout_generation = self
@@ -404,7 +414,7 @@ impl Gallery {
             );
         }
         if let Some(changed) = self.folder_view_changed.borrow().as_ref() {
-            changed(self.group_mode.get() == GroupMode::Folder);
+            changed(self.group_mode.get() == GroupMode::Folder, true);
         }
         // Publish readiness only AFTER a destination renderer has completed
         // its deferred scroll/anchor restoration, not just after set_layout()
@@ -416,8 +426,9 @@ impl Gallery {
                 if gallery.sectioned_folder.layout_switch_generation.get() == layout_generation {
                     gallery.layout_presentation_settled_generation.set(layout_generation);
                     crate::nav_transition_trace!(
-                        "stage=layout_presentation_ready generation={layout_generation} layout={:?} scroll={:.1}",
+                        "stage=layout_presentation_ready generation={layout_generation} layout={:?} group={:?} scroll={:.1}",
                         gallery.layout(),
+                        gallery.group_mode.get(),
                         gallery.scroll_position(),
                     );
                 }

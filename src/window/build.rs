@@ -1831,7 +1831,12 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         let gallery_scroll_stack = gallery_scroll_stack.clone();
         let gallery_for_folder_view = gallery.clone();
         let folder_scroll_for_layout = folder_scroll.clone();
-        gallery.set_folder_view_changed_handler(move |folder_mode| {
+        gallery.set_folder_view_changed_handler(move |folder_mode, layout_changed| {
+            crate::nav_transition_trace!(
+                "stage=folder_view_present folder_mode={folder_mode} layout_changed={layout_changed} layout={:?} visible_before={:?}",
+                gallery_for_folder_view.layout(),
+                gallery_scroll_stack.visible_child_name()
+            );
             // Capture before switching children: GTK may move focus when a
             // focused renderer is hidden. Search and sidebar focus stay put.
             let had_gallery_focus = gallery_owns_focus(&gallery_scroll_stack);
@@ -1858,6 +1863,11 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                     "grid"
                 },
             );
+            crate::nav_transition_trace!(
+                "stage=folder_view_presented folder_mode={folder_mode} layout_changed={layout_changed} layout={:?} wall={wall} sectioned={folder_sectioned} visible={:?}",
+                gallery_for_folder_view.layout(),
+                gallery_scroll_stack.visible_child_name()
+            );
             if folder_mode || wall {
                 if folder_sectioned {
                     if std::env::var_os("PICASA_TRACE").is_some() {
@@ -1867,10 +1877,20 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                         had_gallery_focus,
                         &gallery_for_folder_view.folder_sectioned_root,
                     );
-                    let gallery = gallery_for_folder_view.clone();
-                    glib::idle_add_local_once(move || {
-                        gallery.refresh_sectioned_folder();
-                    });
+                    // In Folder Grid, set_layout() already rebuilt this
+                    // model. Rebuilding it again here invalidates the pending
+                    // Grid anchor restore, so the layout transition never
+                    // reports ready. Other presentation changes still need
+                    // the deferred refresh here.
+                    let folder_grid_layout_switch = layout_changed
+                        && folder_mode
+                        && gallery_for_folder_view.layout() == grid::PhotoLayout::Grid;
+                    if !folder_grid_layout_switch {
+                        let gallery = gallery_for_folder_view.clone();
+                        glib::idle_add_local_once(move || {
+                            gallery.refresh_sectioned_folder();
+                        });
+                    }
                     return;
                 }
                 if folder_grid_experiment {

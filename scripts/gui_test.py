@@ -727,6 +727,19 @@ def smoke_test() -> None:
                         saved_mode == (saved_value,)
                         and down_position >= photo_order.index("folder-first.jpg")
                         and 0 <= up_position < photo_order.index("folder-first.jpg"))
+
+        # Grid is the folder mode where deferred refreshes used to invalidate
+        # the layout-ready callback, leaving the outgoing transition visible.
+        click_at(1298, 28)
+        time.sleep(1.0)
+        with sqlite3.connect(XDG_DATA / "pic-rs" / "library.db") as connection:
+            saved_folder_grid = connection.execute(
+                "SELECT value FROM settings WHERE key='photo_layout.folders'"
+            ).fetchone()
+        browse_case("Browse Grid folder view switch",
+                    "The view button returns Folder view from Masonry to Grid",
+                    f"saved={saved_folder_grid[0] if saved_folder_grid else 'missing'}",
+                    saved_folder_grid == ("grid",))
         return
 
     if SUITE == "edit-navigation":

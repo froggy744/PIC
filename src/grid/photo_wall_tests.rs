@@ -506,7 +506,7 @@ fn photo_wall_view_toggle_keeps_selection_and_grid_scroll_context() {
 
     let stack_for_mode = stack.clone();
     let gallery_for_mode = gallery.clone();
-    gallery.set_folder_view_changed_handler(move |_| {
+    gallery.set_folder_view_changed_handler(move |_, _| {
         stack_for_mode.set_visible_child_name(if gallery_for_mode.using_virtual_photo_surface() {
             "wall"
         } else {

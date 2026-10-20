@@ -92,13 +92,13 @@ impl Gallery {
             self.sectioned_folder.refresh_model();
         }
         if let Some(handler) = self.folder_view_changed.borrow().as_ref() {
-            handler(mode == GroupMode::Folder);
+            handler(mode == GroupMode::Folder, false);
         }
     }
 
-    pub fn set_folder_view_changed_handler(&self, handler: impl Fn(bool) + 'static) {
-        let handler: Rc<dyn Fn(bool)> = Rc::new(handler);
-        handler(self.group_mode.get() == GroupMode::Folder);
+    pub fn set_folder_view_changed_handler(&self, handler: impl Fn(bool, bool) + 'static) {
+        let handler: Rc<dyn Fn(bool, bool)> = Rc::new(handler);
+        handler(self.group_mode.get() == GroupMode::Folder, false);
         self.folder_view_changed.replace(Some(handler));
     }
 

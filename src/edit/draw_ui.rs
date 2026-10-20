@@ -8,18 +8,19 @@ enum DrawTool {
     Arrow,
     Rectangle,
     Ellipse,
-    Highlighter,
     Eraser,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct DrawGesture {
     start: (f32, f32),
     current: (f32, f32),
     points: Vec<(f32, f32)>,
-    before: Option<super::model::DrawAnnotation>,
+    before: Vec<(usize, super::model::DrawAnnotation)>,
     selected: Option<usize>,
     resizing: bool,
+    selecting_box: bool,
+    additive_selection: bool,
 }
 
 fn draw_tool_button(label: &str, tooltip: &str, first: &gtk::ToggleButton) -> gtk::ToggleButton {
@@ -46,6 +47,7 @@ fn build_draw_panel(
     use super::model::DrawAnnotation;
     let tools = Rc::new(Cell::new(DrawTool::Pen));
     let selected = Rc::new(Cell::new(None::<usize>));
+    let selected_many = Rc::new(RefCell::new(Vec::<usize>::new()));
     let gesture = Rc::new(RefCell::new(DrawGesture::default()));
     let tool_row = gtk::Box::new(gtk::Orientation::Horizontal, 2);
     tool_row.add_css_class("linked");
@@ -61,13 +63,12 @@ fn build_draw_panel(
     let arrow = draw_tool_button("Arrow", "Arrow", &select);
     let rect = draw_tool_button("▱", "Rectangle", &select);
     let ellipse = draw_tool_button("◯", "Ellipse", &select);
-    let highlighter = draw_tool_button("Highlight", "Transparent highlighter", &select);
-    let eraser = draw_tool_button("Erase", "Erase annotations by dragging", &select);
+    let eraser = draw_tool_button("Erase", "Erase an annotation or selection", &select);
     for b in [&select, &pen, &line, &arrow] {
         tool_row.append(b);
     }
     parent.append(&tool_row);
-    for b in [&rect, &ellipse, &highlighter, &eraser] {
+    for b in [&rect, &ellipse, &eraser] {
         tool_row_second.append(b);
     }
     parent.append(&tool_row_second);
@@ -94,45 +95,44 @@ fn build_draw_panel(
         });
     }
 
-    let swatches = gtk::Box::new(gtk::Orientation::Horizontal, 5);
-    swatches.set_margin_top(8);
+    let colour_row = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    colour_row.set_hexpand(true);
+    colour_row.set_halign(gtk::Align::Fill);
+    colour_row.set_margin_top(10);
+    let colour_swatches = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+    colour_swatches.set_hexpand(true);
+    colour_swatches.set_halign(gtk::Align::Fill);
+    colour_swatches.set_homogeneous(true);
+    colour_swatches.add_css_class("text-colour-swatches");
     let mut color_buttons = Vec::new();
-    for (name, color) in [
-        ("Black", 0x17191fff),
-        ("White", 0xffffffff),
-        ("Red", 0xf04438ff),
-        ("Orange", 0xf79009ff),
-        ("Yellow", 0xfec84bff),
-        ("Green", 0x12b76aff),
-        ("Blue", 0x2e90faff),
-        ("Purple", 0x875bf7ff),
+    for (name, class, rgba) in [
+        ("White", "text-swatch-white", 0xffffffff),
+        ("Black", "text-swatch-black", 0x111111ff),
+        ("Red", "text-swatch-red", 0xf21f1fff),
+        ("Orange", "text-swatch-orange", 0xff7a00ff),
+        ("Yellow", "text-swatch-yellow", 0xffe60dff),
+        ("Green", "text-swatch-green", 0x1fb848ff),
+        ("Blue", "text-swatch-blue", 0x266bffff),
+        ("Purple", "text-swatch-purple", 0xad4de0ff),
     ] {
         let b = gtk::Button::new();
-        b.set_size_request(24, 24);
-        b.add_css_class("draw-color-swatch");
+        b.set_size_request(0, 30);
+        b.add_css_class("text-colour-swatch");
+        b.add_css_class(class);
         b.set_tooltip_text(Some(name));
-        let area = gtk::DrawingArea::new();
-        area.set_content_width(16);
-        area.set_content_height(16);
-        area.set_draw_func(move |_, cr, w, h| {
-            let c = color;
-            cr.set_source_rgba(
-                ((c >> 24) & 255) as f64 / 255.,
-                ((c >> 16) & 255) as f64 / 255.,
-                ((c >> 8) & 255) as f64 / 255.,
-                1.,
-            );
-            cr.arc(w as f64 / 2., h as f64 / 2., 7., 0., std::f64::consts::TAU);
-            let _ = cr.fill();
-        });
-        b.set_child(Some(&area));
-        swatches.append(&b);
-        color_buttons.push((b, color));
+        colour_swatches.append(&b);
+        color_buttons.push((b, rgba));
     }
-    let custom = gtk::ColorDialogButton::new(Some(gtk::ColorDialog::new()));
-    custom.set_tooltip_text(Some("Choose custom annotation colour"));
-    swatches.append(&custom);
-    parent.append(&swatches);
+    let custom = gtk::Button::new();
+    custom.set_size_request(0, 30);
+    custom.add_css_class("text-colour-swatch");
+    custom.set_tooltip_text(Some("Choose custom colour"));
+    let custom_icon = gtk::Image::from_icon_name("color-select-symbolic");
+    custom_icon.set_pixel_size(16);
+    custom.set_child(Some(&custom_icon));
+    colour_swatches.append(&custom);
+    colour_row.append(&colour_swatches);
+    parent.append(&colour_row);
 
     let width = gtk::Scale::with_range(gtk::Orientation::Horizontal, 1.0, 36.0, 1.0);
     width.set_value(5.0);
@@ -152,7 +152,7 @@ fn build_draw_panel(
     delete.set_sensitive(false);
     parent.append(&delete);
     let helper = gtk::Label::new(Some(
-        "Drag on the photo to annotate. Escape cancels a gesture.",
+        "Drag to draw. Select: click, Shift/Ctrl-click, or drag a marquee. Escape cancels.",
     ));
     helper.set_wrap(true);
     helper.add_css_class("dim-label");
@@ -165,7 +165,6 @@ fn build_draw_panel(
         (&arrow, DrawTool::Arrow),
         (&rect, DrawTool::Rectangle),
         (&ellipse, DrawTool::Ellipse),
-        (&highlighter, DrawTool::Highlighter),
         (&eraser, DrawTool::Eraser),
     ] {
         let tools = tools.clone();
@@ -173,24 +172,32 @@ fn build_draw_panel(
         b.connect_toggled(move |button| {
             if button.is_active() {
                 tools.set(tool);
-                layer.set_cursor_from_name(Some(match tool {
-                    DrawTool::Select => "default",
-                    DrawTool::Eraser => "not-allowed",
-                    _ => "crosshair",
-                }));
+                layer.set_cursor_from_name(Some(cursor_for_tool(tool)));
                 layer.queue_draw();
             }
         });
     }
-    let color = Rc::new(Cell::new(0xf04438ffu32));
+    let color = Rc::new(Cell::new(0xf21f1fffu32));
     let style_sync = Rc::new(Cell::new(false));
     let apply_selected_color = Rc::new({
         let session = session.clone();
         let selected = selected.clone();
+        let selected_many = selected_many.clone();
         let update = update_history_buttons.clone();
         let layer = layer.clone();
         move |rgba: u32| {
-            if let Some(i) = selected.get() {
+            let indices = selected_many.borrow().clone();
+            if !indices.is_empty() {
+                session.borrow_mut().mutate(|r| {
+                    for i in &indices {
+                        if let Some(item) = r.drawings.get_mut(*i) {
+                            item.color = rgba;
+                        }
+                    }
+                });
+                update();
+                layer.queue_draw();
+            } else if let Some(i) = selected.get() {
                 session.borrow_mut().mutate(|r| {
                     if let Some(item) = r.drawings.get_mut(i) {
                         item.color = rgba;
@@ -210,20 +217,46 @@ fn build_draw_panel(
         });
     }
     {
+        let colour_row = colour_row.clone();
         let color = color.clone();
         let apply_selected_color = apply_selected_color.clone();
-        custom.connect_rgba_notify(move |button| {
-            let c = button.rgba();
-            let q = |v: f32| (v.clamp(0., 1.) * 255.).round() as u32;
-            let rgba =
-                (q(c.red()) << 24) | (q(c.green()) << 16) | (q(c.blue()) << 8) | (q(c.alpha()));
-            color.set(rgba);
-            apply_selected_color(rgba);
+        let chooser = gtk::ColorDialog::new();
+        custom.connect_clicked(move |_| {
+            let current = color.get();
+            let initial = gtk::gdk::RGBA::new(
+                ((current >> 24) & 255) as f32 / 255.,
+                ((current >> 16) & 255) as f32 / 255.,
+                ((current >> 8) & 255) as f32 / 255.,
+                (current & 255) as f32 / 255.,
+            );
+            let dialog = chooser.clone();
+            let color = color.clone();
+            let apply_selected_color = apply_selected_color.clone();
+            let parent_window = colour_row
+                .root()
+                .and_then(|root| root.downcast::<gtk::Window>().ok());
+            dialog.choose_rgba(
+                parent_window.as_ref(),
+                Some(&initial),
+                None::<&gtk::gio::Cancellable>,
+                move |result| {
+                    if let Ok(picked) = result {
+                        let q = |v: f32| (v.clamp(0., 1.) * 255.).round() as u32;
+                        let rgba = (q(picked.red()) << 24)
+                            | (q(picked.green()) << 16)
+                            | (q(picked.blue()) << 8)
+                            | q(picked.alpha());
+                        color.set(rgba);
+                        apply_selected_color(rgba);
+                    }
+                },
+            );
         });
     }
     {
         let session = session.clone();
         let selected = selected.clone();
+        let selected_many = selected_many.clone();
         let width = width.clone();
         let style_sync = style_sync.clone();
         let update = update_history_buttons.clone();
@@ -232,11 +265,19 @@ fn build_draw_panel(
             if style_sync.get() {
                 return;
             }
-            if let Some(i) = selected.get() {
+            let indices = selected_many.borrow().clone();
+            if !indices.is_empty() || selected.get().is_some() {
                 let value = (scale.value() as f32 / 1000.).clamp(0.001, 0.04);
                 session.borrow_mut().mutate(|r| {
-                    if let Some(item) = r.drawings.get_mut(i) {
-                        item.width = value;
+                    for i in &indices {
+                        if let Some(item) = r.drawings.get_mut(*i) {
+                            item.width = value;
+                        }
+                    }
+                    if indices.is_empty() {
+                        if let Some(item) = selected.get().and_then(|i| r.drawings.get_mut(i)) {
+                            item.width = value;
+                        }
                     }
                 });
                 update();
@@ -247,6 +288,7 @@ fn build_draw_panel(
     {
         let session = session.clone();
         let selected = selected.clone();
+        let selected_many = selected_many.clone();
         let opacity = opacity.clone();
         let style_sync = style_sync.clone();
         let update = update_history_buttons.clone();
@@ -255,11 +297,19 @@ fn build_draw_panel(
             if style_sync.get() {
                 return;
             }
-            if let Some(i) = selected.get() {
+            let indices = selected_many.borrow().clone();
+            if !indices.is_empty() || selected.get().is_some() {
                 let value = (scale.value() / 100.) as f32;
                 session.borrow_mut().mutate(|r| {
-                    if let Some(item) = r.drawings.get_mut(i) {
-                        item.opacity = value;
+                    for i in &indices {
+                        if let Some(item) = r.drawings.get_mut(*i) {
+                            item.opacity = value;
+                        }
+                    }
+                    if indices.is_empty() {
+                        if let Some(item) = selected.get().and_then(|i| r.drawings.get_mut(i)) {
+                            item.opacity = value;
+                        }
                     }
                 });
                 update();
@@ -318,6 +368,7 @@ fn build_draw_panel(
         let tools = tools.clone();
         let preview_dimensions = preview_dimensions.clone();
         let layer = layer.clone();
+        let selected_many = selected_many.clone();
         let arrowheads = arrowheads.clone();
         let display = display.clone();
         layer.set_draw_func(move |widget, cr, w, h| {
@@ -326,17 +377,25 @@ fn build_draw_panel(
             let recipe = session.borrow();
             for (i, item) in recipe.recipe.drawings.iter().enumerate() {
                 draw_annotation_on_canvas(cr, item, d, pw, ph);
-                if selected.get() == Some(i) {
-                    draw_selection_box(cr, item, d, pw, ph);
+                if selected_many.borrow().contains(&i) || selected.get() == Some(i) {
+                    draw_selection_box(
+                        cr,
+                        item,
+                        d,
+                        pw,
+                        ph,
+                        selected_many.borrow().len() == 1 && selected.get() == Some(i),
+                    );
                 }
             }
             let state = gesture.borrow();
-            if state.points.len() > 1 || state.current != state.start {
+            if state.selecting_box {
+                draw_marquee(cr, d, state.start, state.current);
+            } else if should_preview_gesture(tools.get(), &state) {
                 let (start_head, end_head) = arrowheads.get();
                 let preview = DrawAnnotation {
                     kind: tool_kind(tools.get()),
-                    points: if tools.get() == DrawTool::Pen || tools.get() == DrawTool::Highlighter
-                    {
+                    points: if tools.get() == DrawTool::Pen {
                         state.points.clone()
                     } else {
                         vec![state.start, state.current]
@@ -357,14 +416,25 @@ fn build_draw_panel(
     let layer_for_delete = layer.clone();
     let session_delete = session.clone();
     let selected_delete = selected.clone();
+    let selected_many_delete = selected_many.clone();
     let delete_button = delete.clone();
     delete.connect_clicked(move |_| {
-        if let Some(i) = selected_delete.take() {
+        let mut indices = selected_many_delete.borrow().clone();
+        if indices.is_empty() {
+            indices.extend(selected_delete.take());
+        }
+        if !indices.is_empty() {
+            indices.sort_unstable();
+            indices.dedup();
             session_delete.borrow_mut().mutate(|r| {
-                if i < r.drawings.len() {
-                    r.drawings.remove(i);
+                for i in indices.iter().rev() {
+                    if *i < r.drawings.len() {
+                        r.drawings.remove(*i);
+                    }
                 }
             });
+            selected_delete.set(None);
+            selected_many_delete.borrow_mut().clear();
             update_history();
             layer_for_delete.queue_draw();
             delete_button.set_sensitive(false);
@@ -387,6 +457,7 @@ fn build_draw_panel(
         let width = width.clone();
         let opacity = opacity.clone();
         let color = color.clone();
+        let selected_many = selected_many.clone();
         drag.connect_drag_begin(move |g, x, y| {
             let d = display(layer.width() as f64, layer.height() as f64);
             let (pw, ph) = preview_dimensions.get();
@@ -399,6 +470,9 @@ fn build_draw_panel(
                 start: p,
                 current: p,
                 points: vec![p],
+                additive_selection: g.current_event_state().intersects(
+                    gtk::gdk::ModifierType::SHIFT_MASK | gtk::gdk::ModifierType::CONTROL_MASK,
+                ),
                 ..Default::default()
             };
             if tool == DrawTool::Select {
@@ -412,27 +486,68 @@ fn build_draw_panel(
                     .find(|(_, a)| annotation_hit(a, p, pw, ph))
                     .map(|(i, _)| i);
                 drop(recipe);
-                selected.set(hit);
-                delete.set_sensitive(hit.is_some());
                 if let Some(i) = hit {
-                    state.selected = Some(i);
-                    state.before = session.borrow().recipe.drawings.get(i).cloned();
-                    if let Some(item) = &state.before {
-                        style_sync.set(true);
-                        width.set_value((item.width * 1000.).clamp(1., 36.) as f64);
-                        opacity.set_value((item.opacity * 100.).clamp(5., 100.) as f64);
-                        color.set(item.color);
-                        style_sync.set(false);
-                        let (mx, my) = item
-                            .points
-                            .iter()
-                            .fold((0f32, 0f32), |(x, y), p| (x.max(p.0), y.max(p.1)));
-                        state.resizing = (p.0 - mx).abs() < 0.025 && (p.1 - my).abs() < 0.025;
+                    let mut indices = selected_many.borrow_mut();
+                    if state.additive_selection {
+                        if !indices.contains(&i) {
+                            indices.push(i);
+                        }
+                    } else if !indices.contains(&i) {
+                        indices.clear();
+                        indices.push(i);
                     }
-                    session.borrow_mut().begin_action();
+                    if indices.contains(&i) {
+                        selected.set(Some(i));
+                        state.selected = Some(i);
+                        state.before = {
+                            let recipe = session.borrow();
+                            indices
+                                .iter()
+                                .filter_map(|index| {
+                                    recipe
+                                        .recipe
+                                        .drawings
+                                        .get(*index)
+                                        .cloned()
+                                        .map(|item| (*index, item))
+                                })
+                                .collect()
+                        };
+                    } else {
+                        selected.set(indices.last().copied());
+                    }
+                    let only_one = indices.len() == 1;
+                    drop(indices);
+                    delete.set_sensitive(!selected_many.borrow().is_empty());
+                    if state.selected.is_some() {
+                        let item = session.borrow().recipe.drawings.get(i).cloned();
+                        if let Some(item) = item {
+                            style_sync.set(true);
+                            width.set_value((item.width * 1000.).clamp(1., 36.) as f64);
+                            opacity.set_value((item.opacity * 100.).clamp(5., 100.) as f64);
+                            color.set(item.color);
+                            style_sync.set(false);
+                            let (mx, my) = item
+                                .points
+                                .iter()
+                                .fold((0f32, 0f32), |(x, y), p| (x.max(p.0), y.max(p.1)));
+                            state.resizing =
+                                only_one && (p.0 - mx).abs() < 0.025 && (p.1 - my).abs() < 0.025;
+                        }
+                        session.borrow_mut().begin_action();
+                    }
+                } else {
+                    if !state.additive_selection {
+                        selected_many.borrow_mut().clear();
+                        selected.set(None);
+                    }
+                    state.selecting_box = true;
+                    delete.set_sensitive(!selected_many.borrow().is_empty());
                 }
             } else if tool == DrawTool::Eraser {
                 selected.set(None);
+                let old_selection = selected_many.borrow().clone();
+                selected_many.borrow_mut().clear();
                 delete.set_sensitive(false);
                 let recipe = session.borrow();
                 let hit = recipe
@@ -444,14 +559,25 @@ fn build_draw_panel(
                     .find(|(_, a)| annotation_hit(a, p, pw, ph))
                     .map(|(i, _)| i);
                 drop(recipe);
-                if let Some(i) = hit {
-                    state.selected = Some(i);
+                let erase_indices = if hit.is_some_and(|i| old_selection.contains(&i)) {
+                    old_selection
+                } else {
+                    hit.into_iter().collect()
+                };
+                if !erase_indices.is_empty() {
+                    let mut erase_indices = erase_indices;
+                    erase_indices.sort_unstable();
+                    erase_indices.dedup();
                     session.borrow_mut().begin_action();
                     session.borrow_mut().mutate_active(|r| {
-                        if i < r.drawings.len() {
-                            r.drawings.remove(i);
+                        for i in erase_indices.iter().rev() {
+                            if *i < r.drawings.len() {
+                                r.drawings.remove(*i);
+                            }
                         }
                     });
+                } else {
+                    session.borrow_mut().begin_action();
                 }
             }
             gesture.replace(state);
@@ -476,7 +602,7 @@ fn build_draw_panel(
             let mut s = gesture.borrow_mut();
             s.current = (nx as f32, ny as f32);
             match tools.get() {
-                DrawTool::Pen | DrawTool::Highlighter => {
+                DrawTool::Pen => {
                     let p = s.current;
                     if s.points
                         .last()
@@ -486,12 +612,13 @@ fn build_draw_panel(
                     }
                 }
                 DrawTool::Select => {
-                    if let Some(i) = s.selected {
-                        if let Some(before) = &s.before {
-                            let ox = s.current.0 - s.start.0;
-                            let oy = s.current.1 - s.start.1;
-                            if let Some(item) = session.borrow_mut().recipe.drawings.get_mut(i) {
-                                if s.resizing {
+                    if !s.selecting_box && !s.before.is_empty() {
+                        let ox = s.current.0 - s.start.0;
+                        let oy = s.current.1 - s.start.1;
+                        let mut recipe = session.borrow_mut();
+                        for (i, before) in &s.before {
+                            if let Some(item) = recipe.recipe.drawings.get_mut(*i) {
+                                if s.resizing && Some(*i) == s.selected {
                                     let (minx, maxx, miny, maxy) = before.points.iter().fold(
                                         (1f32, 0f32, 1f32, 0f32),
                                         |(a, b, c, d), p| {
@@ -552,24 +679,17 @@ fn build_draw_panel(
         let layer = layer.clone();
         let update = update_history_buttons.clone();
         let selected = selected.clone();
+        let selected_many = selected_many.clone();
         let width = width.clone();
         let opacity = opacity.clone();
         let color = color.clone();
         let arrowheads = arrowheads.clone();
         let delete = delete.clone();
         drag.connect_drag_end(move |_, _, _| {
-            let s = gesture.borrow_mut();
+            let s = gesture.borrow().clone();
             let tool = tools.get();
-            if matches!(
-                tool,
-                DrawTool::Pen
-                    | DrawTool::Line
-                    | DrawTool::Arrow
-                    | DrawTool::Rectangle
-                    | DrawTool::Ellipse
-                    | DrawTool::Highlighter
-            ) {
-                let points = if matches!(tool, DrawTool::Pen | DrawTool::Highlighter) {
+            if is_drawing_tool(tool) {
+                let points = if tool == DrawTool::Pen {
                     s.points.clone()
                 } else {
                     vec![s.start, s.current]
@@ -585,23 +705,49 @@ fn build_draw_panel(
                         points,
                         color: color.get(),
                         width: width_norm,
-                        opacity: if tool == DrawTool::Highlighter {
-                            alpha.min(0.35)
-                        } else {
-                            alpha
-                        },
+                        opacity: alpha,
                         arrow_start: tool == DrawTool::Arrow && arrow_start,
                         arrow_end: tool == DrawTool::Arrow && arrow_end,
                     };
                     session.borrow_mut().mutate(|r| r.drawings.push(item));
                     selected.set(Some(session.borrow().recipe.drawings.len() - 1));
+                    selected_many.borrow_mut().clear();
+                    selected_many
+                        .borrow_mut()
+                        .push(session.borrow().recipe.drawings.len() - 1);
                     delete.set_sensitive(true);
                     update();
                 }
+            } else if tool == DrawTool::Select && s.selecting_box {
+                let min = (s.start.0.min(s.current.0), s.start.1.min(s.current.1));
+                let max = (s.start.0.max(s.current.0), s.start.1.max(s.current.1));
+                let recipe = session.borrow();
+                let found = recipe
+                    .recipe
+                    .drawings
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, item)| annotation_intersects_rect(item, min, max))
+                    .map(|(i, _)| i)
+                    .collect::<Vec<_>>();
+                drop(recipe);
+                let mut indices = selected_many.borrow_mut();
+                if !s.additive_selection {
+                    indices.clear();
+                }
+                for i in found {
+                    if !indices.contains(&i) {
+                        indices.push(i);
+                    }
+                }
+                selected.set(indices.last().copied());
+                delete.set_sensitive(!indices.is_empty());
+                update();
             } else if session.borrow().action_active() {
                 session.borrow_mut().end_action();
                 update();
             }
+            gesture.replace(DrawGesture::default());
             layer.queue_draw();
         });
     }
@@ -636,7 +782,7 @@ fn build_draw_panel(
         layer_for_update.set_visible(true);
         layer_for_update.set_can_target(active);
         if active {
-            layer_for_update.set_cursor_from_name(Some("crosshair"));
+            layer_for_update.set_cursor_from_name(Some(cursor_for_tool(tools.get())));
         } else {
             layer_for_update.set_cursor_from_name(None);
         }
@@ -652,8 +798,108 @@ fn tool_kind(tool: DrawTool) -> super::model::DrawKind {
         DrawTool::Arrow => Arrow,
         DrawTool::Rectangle => Rectangle,
         DrawTool::Ellipse => Ellipse,
-        DrawTool::Highlighter => Highlighter,
         _ => Pen,
+    }
+}
+
+fn cursor_for_tool(tool: DrawTool) -> &'static str {
+    match tool {
+        DrawTool::Select => "default",
+        DrawTool::Eraser => "cell",
+        _ => "crosshair",
+    }
+}
+
+fn is_drawing_tool(tool: DrawTool) -> bool {
+    matches!(
+        tool,
+        DrawTool::Pen | DrawTool::Line | DrawTool::Arrow | DrawTool::Rectangle | DrawTool::Ellipse
+    )
+}
+
+fn should_preview_gesture(tool: DrawTool, gesture: &DrawGesture) -> bool {
+    is_drawing_tool(tool)
+        && (gesture.points.len() > 1 || gesture.current != gesture.start)
+        && !gesture.selecting_box
+}
+
+fn draw_marquee(
+    cr: &gtk::cairo::Context,
+    d: (f64, f64, f64, f64),
+    start: (f32, f32),
+    end: (f32, f32),
+) {
+    let (x, y, w, h) = d;
+    let left = x + start.0.min(end.0) as f64 * w;
+    let top = y + start.1.min(end.1) as f64 * h;
+    let width = (end.0 - start.0).abs() as f64 * w;
+    let height = (end.1 - start.1).abs() as f64 * h;
+    cr.save().ok();
+    cr.set_source_rgba(0.2, 0.55, 1., 0.12);
+    cr.rectangle(left, top, width, height);
+    let _ = cr.fill_preserve();
+    cr.set_source_rgba(0.2, 0.55, 1., 0.95);
+    cr.set_line_width(1.);
+    cr.set_dash(&[4., 3.], 0.);
+    let _ = cr.stroke();
+    cr.restore().ok();
+}
+
+fn annotation_intersects_rect(
+    item: &super::model::DrawAnnotation,
+    min: (f32, f32),
+    max: (f32, f32),
+) -> bool {
+    if item.points.len() < 2 {
+        return false;
+    }
+    let (minx, maxx, miny, maxy) = item
+        .points
+        .iter()
+        .fold((1f32, 0f32, 1f32, 0f32), |(a, b, c, d), p| {
+            (a.min(p.0), b.max(p.0), c.min(p.1), d.max(p.1))
+        });
+    minx <= max.0 && maxx >= min.0 && miny <= max.1 && maxy >= min.1
+}
+
+#[cfg(test)]
+mod draw_ui_tests {
+    use super::*;
+
+    #[test]
+    fn selection_and_eraser_gestures_are_not_draw_previews() {
+        let gesture = DrawGesture {
+            start: (0.1, 0.2),
+            current: (0.7, 0.8),
+            points: vec![(0.1, 0.2), (0.7, 0.8)],
+            ..Default::default()
+        };
+        assert!(!should_preview_gesture(DrawTool::Select, &gesture));
+        assert!(!should_preview_gesture(DrawTool::Eraser, &gesture));
+        assert!(should_preview_gesture(DrawTool::Ellipse, &gesture));
+    }
+
+    #[test]
+    fn selection_marquee_intersects_annotation_bounds() {
+        let annotation = super::super::model::DrawAnnotation {
+            kind: super::super::model::DrawKind::Line,
+            points: vec![(0.2, 0.3), (0.7, 0.8)],
+            color: 0xff0000ff,
+            width: 0.01,
+            opacity: 1.0,
+            arrow_start: false,
+            arrow_end: false,
+        };
+        assert!(annotation_intersects_rect(
+            &annotation,
+            (0.65, 0.7),
+            (0.8, 0.9)
+        ));
+        assert!(!annotation_intersects_rect(
+            &annotation,
+            (0.75, 0.85),
+            (0.9, 0.95)
+        ));
     }
 }
 
@@ -750,6 +996,7 @@ fn draw_selection_box(
     d: (f64, f64, f64, f64),
     _: i32,
     _: i32,
+    show_resize_handle: bool,
 ) {
     let (x, y, w, h) = d;
     let pts = &item.points;
@@ -770,9 +1017,11 @@ fn draw_selection_box(
     );
     let _ = cr.stroke();
     cr.set_dash(&[], 0.);
-    cr.rectangle(x + maxx as f64 * w - 4., y + maxy as f64 * h - 4., 8., 8.);
-    cr.set_source_rgba(0.2, 0.55, 1., 1.);
-    let _ = cr.fill();
+    if show_resize_handle {
+        cr.rectangle(x + maxx as f64 * w - 4., y + maxy as f64 * h - 4., 8., 8.);
+        cr.set_source_rgba(0.2, 0.55, 1., 1.);
+        let _ = cr.fill();
+    }
     cr.restore().ok();
 }
 fn annotation_hit(item: &super::model::DrawAnnotation, p: (f32, f32), _: i32, _: i32) -> bool {

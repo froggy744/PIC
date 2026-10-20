@@ -418,7 +418,7 @@ fn build_draw_panel(
     let selected_delete = selected.clone();
     let selected_many_delete = selected_many.clone();
     let delete_button = delete.clone();
-    delete.connect_clicked(move |_| {
+    let delete_selected = Rc::new(move || {
         let mut indices = selected_many_delete.borrow().clone();
         if indices.is_empty() {
             indices.extend(selected_delete.take());
@@ -440,6 +440,10 @@ fn build_draw_panel(
             delete_button.set_sensitive(false);
         }
     });
+    {
+        let delete_selected = delete_selected.clone();
+        delete.connect_clicked(move |_| delete_selected());
+    }
 
     let drag = gtk::GestureDrag::new();
     drag.set_button(1);
@@ -759,8 +763,16 @@ fn build_draw_panel(
         let layer = layer.clone();
         let key = gtk::EventControllerKey::new();
         let layer_for_key = layer.clone();
+        let draw_toggle_for_key = draw_toggle.clone();
+        let delete_selected = delete_selected.clone();
         key.connect_key_pressed(move |_, key, _, _| {
-            if key == gtk::gdk::Key::Escape {
+            if (key == gtk::gdk::Key::Delete || key == gtk::gdk::Key::BackSpace)
+                && draw_toggle_for_key.is_active()
+            {
+                delete_selected();
+                layer_for_key.queue_draw();
+                glib::Propagation::Stop
+            } else if key == gtk::gdk::Key::Escape {
                 if session.borrow().action_active() {
                     session.borrow_mut().undo();
                     update();

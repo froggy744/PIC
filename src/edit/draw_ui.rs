@@ -23,11 +23,15 @@ struct DrawGesture {
     additive_selection: bool,
 }
 
-fn draw_tool_button(label: &str, tooltip: &str, first: &gtk::ToggleButton) -> gtk::ToggleButton {
-    let button = gtk::ToggleButton::with_label(label);
-    button.set_group(Some(first));
-    button.set_tooltip_text(Some(tooltip));
+fn draw_tool_button(icon_name: &str, label: &str) -> gtk::ToggleButton {
+    let button = gtk::ToggleButton::new();
+    let icon = gtk::Image::from_icon_name(icon_name);
+    icon.set_pixel_size(18);
+    button.set_child(Some(&icon));
+    button.set_tooltip_text(Some(label));
+    button.update_property(&[gtk::accessible::Property::Label(label)]);
     button.add_css_class("flat");
+    button.add_css_class("draw-tool-button");
     button
 }
 
@@ -53,17 +57,18 @@ fn build_draw_panel(
     tool_row.add_css_class("linked");
     let tool_row_second = gtk::Box::new(gtk::Orientation::Horizontal, 2);
     tool_row_second.add_css_class("linked");
-    let select = gtk::ToggleButton::with_label("Select");
+    let select = draw_tool_button("draw-select-symbolic", "Select and move annotations");
     select.set_active(false);
-    select.set_tooltip_text(Some("Select, move, resize, or delete annotations"));
-    select.add_css_class("flat");
-    let pen = draw_tool_button("Pen", "Freehand pen", &select);
+    let pen = draw_tool_button("draw-pen-symbolic", "Freehand pen");
     pen.set_active(true);
-    let line = draw_tool_button("Line", "Straight line", &select);
-    let arrow = draw_tool_button("Arrow", "Arrow", &select);
-    let rect = draw_tool_button("▱", "Rectangle", &select);
-    let ellipse = draw_tool_button("◯", "Ellipse", &select);
-    let eraser = draw_tool_button("Erase", "Erase an annotation or selection", &select);
+    let line = draw_tool_button("draw-line-symbolic", "Straight line");
+    let arrow = draw_tool_button("draw-arrow-symbolic", "Arrow");
+    let rect = draw_tool_button("draw-rectangle-symbolic", "Rectangle");
+    let ellipse = draw_tool_button("draw-ellipse-symbolic", "Ellipse");
+    let eraser = draw_tool_button("draw-eraser-symbolic", "Erase an annotation or selection");
+    for button in [&pen, &line, &arrow, &rect, &ellipse, &eraser] {
+        button.set_group(Some(&select));
+    }
     for b in [&select, &pen, &line, &arrow] {
         tool_row.append(b);
     }
@@ -78,6 +83,7 @@ fn build_draw_panel(
     arrow_end.set_active(true);
     arrow_row.append(&arrow_start);
     arrow_row.append(&arrow_end);
+    arrow_row.set_visible(false);
     parent.append(&arrow_row);
     let arrowheads = Rc::new(Cell::new((false, true)));
     {
@@ -169,9 +175,11 @@ fn build_draw_panel(
     ] {
         let tools = tools.clone();
         let layer = layer.clone();
+        let arrow_row = arrow_row.clone();
         b.connect_toggled(move |button| {
             if button.is_active() {
                 tools.set(tool);
+                arrow_row.set_visible(tool == DrawTool::Arrow);
                 layer.set_cursor_from_name(Some(cursor_for_tool(tool)));
                 layer.queue_draw();
             }

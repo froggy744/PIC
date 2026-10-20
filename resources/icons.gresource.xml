@@ -2,6 +2,13 @@
 <gresources>
   <gresource prefix="/picrs">
     <file alias="icons/metadata-filter-symbolic.svg" compressed="true" preprocess="xml-stripblanks">custom-icons/metadata-filter-symbolic.svg</file>
+    <file alias="icons/draw-arrow-symbolic.svg" compressed="true" preprocess="xml-stripblanks">custom-icons/draw-arrow-symbolic.svg</file>
+    <file alias="icons/draw-ellipse-symbolic.svg" compressed="true" preprocess="xml-stripblanks">custom-icons/draw-ellipse-symbolic.svg</file>
+    <file alias="icons/draw-eraser-symbolic.svg" compressed="true" preprocess="xml-stripblanks">custom-icons/draw-eraser-symbolic.svg</file>
+    <file alias="icons/draw-line-symbolic.svg" compressed="true" preprocess="xml-stripblanks">custom-icons/draw-line-symbolic.svg</file>
+    <file alias="icons/draw-pen-symbolic.svg" compressed="true" preprocess="xml-stripblanks">custom-icons/draw-pen-symbolic.svg</file>
+    <file alias="icons/draw-rectangle-symbolic.svg" compressed="true" preprocess="xml-stripblanks">custom-icons/draw-rectangle-symbolic.svg</file>
+    <file alias="icons/draw-select-symbolic.svg" compressed="true" preprocess="xml-stripblanks">custom-icons/draw-select-symbolic.svg</file>
     <file compressed="true" preprocess="xml-stripblanks">icons/ac-adapter-symbolic.svg</file>
     <file compressed="true" preprocess="xml-stripblanks">icons/accessories-calculator-symbolic.svg</file>
     <file compressed="true" preprocess="xml-stripblanks">icons/accessories-character-map-symbolic.svg</file>

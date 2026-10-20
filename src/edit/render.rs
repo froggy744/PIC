@@ -24,6 +24,57 @@ pub fn apply_geometry(mut image: RgbaImage, recipe: &EditRecipe) -> RgbaImage {
     image
 }
 
+/// Reproject drawings when the Straighten angle changes. Points are first
+/// moved from the current cropped frame back through the old rotation, then
+/// into the newly autocropped frame and back through the recipe crop.
+pub fn remap_drawings_for_straighten(
+    drawings: &mut [super::model::DrawAnnotation],
+    source_size: (u32, u32),
+    crop: CropRect,
+    old_degrees: f32,
+    new_degrees: f32,
+) {
+    if drawings.is_empty() || (old_degrees - new_degrees).abs() < 0.0001 {
+        return;
+    }
+    let crop = crop.normalized();
+    let crop_w = (crop.right - crop.left).max(0.01);
+    let crop_h = (crop.bottom - crop.top).max(0.01);
+    let source_w = source_size.0.max(1) as f32;
+    let source_h = source_size.1.max(1) as f32;
+    let output_size = |degrees: f32| {
+        if degrees.abs() < 0.01 || source_w < 2.0 || source_h < 2.0 {
+            (source_w, source_h)
+        } else {
+            let (w, h) = largest_rotated_rect(source_w, source_h, degrees.to_radians());
+            (w.floor().max(1.0), h.floor().max(1.0))
+        }
+    };
+    let (old_w, old_h) = output_size(old_degrees);
+    let (new_w, new_h) = output_size(new_degrees);
+    let old_short = (old_w * crop_w).min(old_h * crop_h).max(1.0);
+    let new_short = (new_w * crop_w).min(new_h * crop_h).max(1.0);
+    let old_angle = old_degrees.to_radians();
+    let new_angle = new_degrees.to_radians();
+    let (old_cos, old_sin) = (old_angle.cos(), old_angle.sin());
+    let (new_cos, new_sin) = (new_angle.cos(), new_angle.sin());
+    for item in drawings {
+        for (x, y) in &mut item.points {
+            let old_x = (crop.left + *x * crop_w) * old_w - old_w * 0.5;
+            let old_y = (crop.top + *y * crop_h) * old_h - old_h * 0.5;
+            let source_x = old_cos * old_x + old_sin * old_y + source_w * 0.5;
+            let source_y = -old_sin * old_x + old_cos * old_y + source_h * 0.5;
+            let new_dx = source_x - source_w * 0.5;
+            let new_dy = source_y - source_h * 0.5;
+            let new_x = new_cos * new_dx - new_sin * new_dy + new_w * 0.5;
+            let new_y = new_sin * new_dx + new_cos * new_dy + new_h * 0.5;
+            *x = (new_x / new_w - crop.left) / crop_w;
+            *y = (new_y / new_h - crop.top) / crop_h;
+        }
+        item.width = (item.width * old_short / new_short).clamp(0.0001, 0.1);
+    }
+}
+
 /// Apply a recipe end-to-end: geometry (straighten, crop), tone, then image
 /// overlays. This is the single chokepoint used by thumbnails, the lightbox,
 /// the main viewer, export, printing, collage and filter preview tiles, so an
@@ -703,6 +754,40 @@ mod tests {
     use super::*;
     use image::DynamicImage;
     use crate::edit::filters::FilterPreset;
+
+    #[test]
+    fn straighten_reprojects_drawings_between_image_frames() {
+        let mut drawings = vec![super::super::model::DrawAnnotation {
+            kind: super::super::model::DrawKind::Line,
+            points: vec![(0.42, 0.46), (0.58, 0.54)],
+            color: 0xff0000ff,
+            width: 0.01,
+            opacity: 1.0,
+            arrow_start: false,
+            arrow_end: false,
+        }];
+        let original = drawings.clone();
+        remap_drawings_for_straighten(
+            &mut drawings,
+            (1200, 800),
+            CropRect::default(),
+            0.0,
+            4.0,
+        );
+        assert_ne!(drawings[0].points, original[0].points);
+        remap_drawings_for_straighten(
+            &mut drawings,
+            (1200, 800),
+            CropRect::default(),
+            4.0,
+            0.0,
+        );
+        for (actual, expected) in drawings[0].points.iter().zip(&original[0].points) {
+            assert!((actual.0 - expected.0).abs() < 0.002, "x: {actual:?} vs {expected:?}");
+            assert!((actual.1 - expected.1).abs() < 0.002, "y: {actual:?} vs {expected:?}");
+        }
+        assert!((drawings[0].width - original[0].width).abs() < 0.0001);
+    }
 
     #[test]
     fn export_refuses_to_silently_omit_a_missing_visible_logo() {

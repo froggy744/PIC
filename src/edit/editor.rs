@@ -1404,15 +1404,32 @@ pub fn build(
         history_button_updater(session.clone(), undo.clone(), redo.clone());
     update_history_buttons();
 
-    connect_scale(
-        &controls.straighten,
-        session.clone(),
-        syncing.clone(),
-        queue_preview.clone(),
-        update_history_buttons.clone(),
-        0.0,
-        |recipe, value| recipe.straighten = value,
-    );
+    {
+        let rotation = active_rotation.clone();
+        let source_size = (photo.width().max(1) as u32, photo.height().max(1) as u32);
+        connect_scale(
+            &controls.straighten,
+            session.clone(),
+            syncing.clone(),
+            queue_preview.clone(),
+            update_history_buttons.clone(),
+            0.0,
+            move |recipe, value| {
+                let mut size = source_size;
+                if matches!(rotation.get().rem_euclid(360), 90 | 270) {
+                    size = (size.1, size.0);
+                }
+                super::render::remap_drawings_for_straighten(
+                    &mut recipe.drawings,
+                    size,
+                    recipe.crop,
+                    recipe.straighten,
+                    value,
+                );
+                recipe.straighten = value;
+            },
+        );
+    }
     connect_scale(
         &controls.exposure,
         session.clone(),

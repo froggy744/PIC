@@ -6352,6 +6352,19 @@ fn start_photo_export_single(
         let settings_window = settings_window_for_switch.clone();
         let start_next_scan = start_next_scan.clone();
         Rc::new(move |id: &str| -> Result<(), String> {
+            let target = db::known_libraries()
+                .map_err(|error| format!("{error:#}"))?
+                .into_iter()
+                .find(|library| library.id == id)
+                .ok_or_else(|| "Library is no longer registered".to_owned())?;
+            if !target.path.is_file() {
+                return Err(format!(
+                    "Library '{}' was not found at {}",
+                    target.name,
+                    target.path.display()
+                ));
+            }
+
             {
                 let mut job = scan_job.borrow_mut();
                 if let Some(active) = job.active.take() {

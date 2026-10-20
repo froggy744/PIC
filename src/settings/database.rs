@@ -265,13 +265,24 @@ pub(super) fn page(
     }
 
     let refresh: Rc<dyn Fn()> = {
+        let parent = parent.clone();
         let current = current.clone();
         let name = name.clone();
         let description = description.clone();
         let known = known.clone();
         let management = management.clone();
         let status = status.clone();
-        Rc::new(move || refresh_page(&current, &name, &description, &known, &status, &management))
+        Rc::new(move || {
+            refresh_page(
+                &parent,
+                &current,
+                &name,
+                &description,
+                &known,
+                &status,
+                &management,
+            )
+        })
     };
     refresh();
 
@@ -325,6 +336,7 @@ pub(super) fn page(
             let status = status.clone();
             let refresh = refresh.clone();
             let management = management.clone();
+            let parent_for_result = parent.clone();
             chooser.open(Some(&parent), None::<&gio::Cancellable>, move |result| {
                 if let Ok(file) = result {
                     if let Some(path) = file.path() {
@@ -348,7 +360,12 @@ pub(super) fn page(
                                 status.set_text(&format!("Opened {}.", library.name));
                                 refresh();
                             }
-                            Err(error) => status.set_text(&format!("Could not open database: {error:#}")),
+                            Err(error) => show_library_error(
+                                &parent_for_result,
+                                &status,
+                                "Could not open library",
+                                &format!("{error:#}"),
+                            ),
                         }
                     }
                 }
@@ -405,6 +422,7 @@ pub(super) fn page(
 }
 
 fn refresh_page(
+    parent: &adw::Window,
     current_label: &gtk::Label,
     name: &gtk::Entry,
     description: &gtk::Entry,
@@ -459,7 +477,7 @@ fn refresh_page(
         labels.append(&path);
         labels.set_hexpand(true);
         row.append(&labels);
-        let switch = gtk::Button::with_label("Open / Switch");
+        let switch = gtk::Button::with_label("Open");
         switch.set_sensitive(
             !active
                 .as_ref()
@@ -472,10 +490,14 @@ fn refresh_page(
         let description = description.clone();
         let list_for_switch = list.clone();
         let status = status.clone();
+        let parent = parent.clone();
+        let library_name = library.name.clone();
+        let library_path = library.path.clone();
         switch.connect_clicked(move |_| match (management.switch_library)(&id) {
             Ok(()) => {
                 status.set_text("Library switched.");
                 refresh_page(
+                    &parent,
                     &current_label,
                     &name,
                     &description,
@@ -485,12 +507,38 @@ fn refresh_page(
                 );
             }
             Err(error) => {
-                status.set_text(&format!("Could not switch photo library: {error}"));
+                if !library_path.is_file() {
+                    show_library_error(
+                        &parent,
+                        &status,
+                        "Library not found",
+                        &format!(
+                            "{library_name} could not be found at:\n{}\n\nIf it was moved, use Open Existing… to select its new location.",
+                            library_path.display()
+                        ),
+                    );
+                } else {
+                    show_library_error(
+                        &parent,
+                        &status,
+                        "Could not switch library",
+                        &error,
+                    );
+                }
             }
         });
         row.append(&switch);
         list.append(&row);
     }
+}
+
+fn show_library_error(parent: &adw::Window, status: &gtk::Label, heading: &str, message: &str) {
+    status.set_text(message);
+    let dialog = adw::AlertDialog::new(Some(heading), Some(message));
+    dialog.add_response("close", "Close");
+    dialog.set_default_response(Some("close"));
+    dialog.set_close_response("close");
+    dialog.present(Some(parent));
 }
 
 fn create_dialog(

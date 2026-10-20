@@ -634,7 +634,7 @@ impl Lightbox {
         let root_for_scroll = root.clone();
         let zoom_for_scroll = zoom.clone();
         let applied_for_scroll = applied_native_scale.clone();
-        let native_texture_for_scroll = native_texture.clone();
+        let display_texture_cache_for_scroll = display_texture_cache.clone();
         let native_quality_pending_for_scroll = native_quality_pending.clone();
         let one_to_one_for_scroll = one_to_one_active.clone();
         let one_to_one_sync_for_scroll = one_to_one_sync.clone();
@@ -805,6 +805,14 @@ impl Lightbox {
                 if next_scale <= fit_scale * 1.001 {
                     zoom_for_scroll.set(0.0);
                     applied_for_scroll.set(0.0);
+                    if let Some(photo) = photos_for_scroll.borrow().get(index_for_scroll.get()) {
+                        restore_fit_texture(
+                            &picture_for_scroll,
+                            photo,
+                            &root_for_scroll,
+                            &display_texture_cache_for_scroll,
+                        );
+                    }
                 } else {
                     zoom_for_scroll.set(next_scale / fit_scale.max(f64::EPSILON));
                     // Ctrl+wheel knows the native scale it landed on, so the
@@ -824,14 +832,14 @@ impl Lightbox {
                     "ctrl-wheel",
                 );
                 if zoom_for_scroll.get() > 0.0 {
-                    ensure_native_zoom_texture(
+                    ensure_zoom_texture(
                         &picture_for_scroll,
                         &root_for_scroll,
                         photos_for_scroll.clone(),
                         index_for_scroll.clone(),
                         zoom_for_scroll.clone(),
                         one_to_one_for_scroll.clone(),
-                        native_texture_for_scroll.clone(),
+                        display_texture_cache_for_scroll.clone(),
                         native_quality_pending_for_scroll.clone(),
                         &photo,
                     );
@@ -987,6 +995,14 @@ impl Lightbox {
                 glib::Propagation::Stop
             } else if key == gtk::gdk::Key::_0 {
                 set_zoom_state(&zoom_for_key, &applied_for_key, 0.0);
+                if let Some(photo) = photos_for_key.borrow().get(index_for_key.get()) {
+                    restore_fit_texture(
+                        &picture_for_key,
+                        photo,
+                        &root_for_escape,
+                        &display_cache_for_key,
+                    );
+                }
                 fit_picture(
                     &picture_for_key,
                     &photos_for_key.borrow(),
@@ -1247,15 +1263,15 @@ impl Lightbox {
         self.apply_manual_zoom_scale(native_scale, false, "slider");
     }
 
-    fn ensure_native_zoom_texture(&self, photo: &PhotoObject) {
-        ensure_native_zoom_texture(
+    fn ensure_zoom_texture(&self, photo: &PhotoObject) {
+        ensure_zoom_texture(
             &self.picture,
             &self.root,
             self.photos.clone(),
             self.index.clone(),
             self.zoom.clone(),
             self.one_to_one_active.clone(),
-            self.native_texture.clone(),
+            self.display_texture_cache.clone(),
             self.native_quality_pending.clone(),
             photo,
         );
@@ -1301,6 +1317,12 @@ impl Lightbox {
 
         if native_scale <= 0.0 || native_scale <= fit_scale * 1.001 {
             self.set_zoom(0.0);
+            restore_fit_texture(
+                &self.picture,
+                &photo,
+                &self.root,
+                &self.display_texture_cache,
+            );
             fit_picture(
                 &self.picture,
                 &self.photos.borrow(),
@@ -1352,7 +1374,7 @@ impl Lightbox {
             );
         }
 
-        self.ensure_native_zoom_texture(&photo);
+        self.ensure_zoom_texture(&photo);
         zoom_trace(format!(
             "slider_geometry source={source} native={native_scale:.5} fit={fit_scale:.5} zoom={:.5} commit_us={}",
             self.zoom.get(),
@@ -1502,6 +1524,15 @@ impl Lightbox {
         } else {
             // 1:1 off always returns to fit-to-window.
             self.set_zoom(0.0);
+            let photo = self.photos.borrow().get(self.index.get()).cloned();
+            let restored_fit = photo.as_ref().is_some_and(|photo| {
+                restore_fit_texture(
+                    &self.picture,
+                    photo,
+                    &self.root,
+                    &self.display_texture_cache,
+                )
+            });
             fit_picture(
                 &self.picture,
                 &self.photos.borrow(),
@@ -1509,11 +1540,18 @@ impl Lightbox {
                 self.root.width(),
                 self.root.height(),
                 0.0,
-                "one-to-one-off",
+                if restored_fit {
+                    "one-to-one-off-cache"
+                } else {
+                    "one-to-one-off"
+                },
             );
             self.picture.queue_resize();
             self.picture_viewport.queue_resize();
             reset_viewport(&self.picture_viewport);
+            if !restored_fit && self.root.is_visible() {
+                self.refresh_current();
+            }
             return;
         }
 

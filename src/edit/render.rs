@@ -258,7 +258,8 @@ fn blend_filter_amount(image: &mut RgbaImage, original: &RgbaImage, amount: f32)
         });
 }
 
-pub(super) fn apply_tone(mut image: RgbaImage, recipe: &EditRecipe) -> RgbaImage {
+pub(crate) fn apply_tone(mut image: RgbaImage, recipe: &EditRecipe) -> RgbaImage {
+    let tone_started = std::time::Instant::now();
     // Keep the unedited image as-is. Besides avoiding a full pixel loop for
     // the common zero-adjustment state, this preserves every decoded detail
     // and makes reset pixel-identical to the source preview.
@@ -281,6 +282,7 @@ pub(super) fn apply_tone(mut image: RgbaImage, recipe: &EditRecipe) -> RgbaImage
         return image;
     }
     let filter_amount = recipe.filter_amount.clamp(0.0, 1.0);
+    let filter_started = std::time::Instant::now();
     if recipe.filter != filters::FilterPreset::None && filter_amount > 0.0 {
         if filter_amount >= 1.0 {
             // Keep the legacy 100% path identical, with no extra copy.
@@ -291,17 +293,39 @@ pub(super) fn apply_tone(mut image: RgbaImage, recipe: &EditRecipe) -> RgbaImage
             blend_filter_amount(&mut image, &unfiltered, filter_amount);
         }
     }
+    if std::env::var_os("PICASA_TRACE").is_some() {
+        eprintln!(
+            "PIC_EDIT_EFFECT op=filter dimensions={}x{} elapsed_ms={:.3} preset={:?} amount={:.3}",
+            image.width(),
+            image.height(),
+            filter_started.elapsed().as_secs_f64() * 1000.0,
+            recipe.filter,
+            filter_amount,
+        );
+    }
 
+    let auto_started = std::time::Instant::now();
     if recipe.auto_color {
         apply_auto_color(&mut image);
     }
     if recipe.auto_contrast {
         apply_auto_contrast(&mut image);
     }
+    if std::env::var_os("PICASA_TRACE").is_some() {
+        eprintln!(
+            "PIC_EDIT_EFFECT op=auto_adjust dimensions={}x{} elapsed_ms={:.3} auto_color={} auto_contrast={}",
+            image.width(),
+            image.height(),
+            auto_started.elapsed().as_secs_f64() * 1000.0,
+            recipe.auto_color,
+            recipe.auto_contrast,
+        );
+    }
 
     let exposure = 2.0_f32.powf(recipe.exposure);
     let temperature = recipe.temperature;
     let saturation = 1.0 + recipe.saturation;
+    let tone_map_started = std::time::Instant::now();
     image.as_mut().par_chunks_mut(4).for_each(|pixel| {
         let alpha = pixel[3];
         let mut r = pixel[0] as f32 / 255.0;
@@ -375,9 +399,28 @@ pub(super) fn apply_tone(mut image: RgbaImage, recipe: &EditRecipe) -> RgbaImage
             alpha,
         ]);
     });
+    if std::env::var_os("PICASA_TRACE").is_some() {
+        eprintln!(
+            "PIC_EDIT_EFFECT op=tone_map dimensions={}x{} elapsed_ms={:.3}",
+            image.width(),
+            image.height(),
+            tone_map_started.elapsed().as_secs_f64() * 1000.0,
+        );
+    }
 
+    let clarity_started = std::time::Instant::now();
     if recipe.clarity.abs() > 0.001 && image.width() > 2 && image.height() > 2 {
         apply_clarity(&mut image, recipe.clarity);
+    }
+    if std::env::var_os("PICASA_TRACE").is_some() {
+        eprintln!(
+            "PIC_EDIT_EFFECT op=clarity dimensions={}x{} elapsed_ms={:.3} amount={:.3} enabled={}",
+            image.width(),
+            image.height(),
+            clarity_started.elapsed().as_secs_f64() * 1000.0,
+            recipe.clarity,
+            recipe.clarity.abs() > 0.001,
+        );
     }
 
     if recipe.sharpen > 0.001 && image.width() > 2 && image.height() > 2 {
@@ -409,8 +452,25 @@ pub(super) fn apply_tone(mut image: RgbaImage, recipe: &EditRecipe) -> RgbaImage
             );
         }
     }
+    let grain_started = std::time::Instant::now();
     if recipe.grain > 0.001 {
         filters::apply_grain(&mut image, recipe.grain * 0.24);
+    }
+    if std::env::var_os("PICASA_TRACE").is_some() {
+        eprintln!(
+            "PIC_EDIT_EFFECT op=grain dimensions={}x{} apply_ms={:.3} amount={:.3} enabled={}",
+            image.width(),
+            image.height(),
+            grain_started.elapsed().as_secs_f64() * 1000.0,
+            recipe.grain,
+            recipe.grain > 0.001,
+        );
+        eprintln!(
+            "PIC_EDIT_EFFECT op=tone_total dimensions={}x{} elapsed_ms={:.3}",
+            image.width(),
+            image.height(),
+            tone_started.elapsed().as_secs_f64() * 1000.0,
+        );
     }
     image
 }

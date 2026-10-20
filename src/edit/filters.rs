@@ -5,6 +5,7 @@
 //! the look of each preset can be tuned without changing recipe plumbing.
 
 use image::{Rgba, RgbaImage};
+use rayon::prelude::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum FilterPreset {
@@ -386,15 +387,25 @@ fn apply_newspaper(image: &mut RgbaImage) {
 
 /// Fixed coordinate noise keeps redraws deterministic (no preview flicker).
 pub(crate) fn apply_grain(image: &mut RgbaImage, strength: f32) {
-    for (x, y, pixel) in image.enumerate_pixels_mut() {
-        let mut hash = x.wrapping_mul(374761393) ^ y.wrapping_mul(668265263) ^ 0x9e3779b9;
-        hash = (hash ^ (hash >> 13)).wrapping_mul(1274126177);
-        hash ^= hash >> 16;
-        let noise = ((hash & 65535) as f32 / 65535.0 - 0.5) * strength * 255.0;
-        for channel in 0..3 {
-            pixel[channel] = (pixel[channel] as f32 + noise).round().clamp(0.0, 255.0) as u8;
-        }
-    }
+    let row_bytes = image.width() as usize * 4;
+    image
+        .as_mut()
+        .par_chunks_mut(row_bytes)
+        .enumerate()
+        .for_each(|(y, row)| {
+            let y = y as u32;
+            for (x, pixel) in row.chunks_exact_mut(4).enumerate() {
+                let x = x as u32;
+                let mut hash = x.wrapping_mul(374761393) ^ y.wrapping_mul(668265263) ^ 0x9e3779b9;
+                hash = (hash ^ (hash >> 13)).wrapping_mul(1274126177);
+                hash ^= hash >> 16;
+                let noise = ((hash & 65535) as f32 / 65535.0 - 0.5) * strength * 255.0;
+                for channel in 0..3 {
+                    pixel[channel] =
+                        (pixel[channel] as f32 + noise).round().clamp(0.0, 255.0) as u8;
+                }
+            }
+        });
 }
 
 fn apply_glow(image: &mut RgbaImage) {

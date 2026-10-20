@@ -1,39 +1,73 @@
-// Wheel and slider zoom share the native source request and cache.
-fn ensure_native_zoom_texture(
+// Wheel and slider zoom share a render sized for the current presentation.
+// Applying scale-sensitive edits at the screen resolution keeps sharpen and
+// grain consistent as the user zooms; the native source is reserved for 1:1.
+fn ensure_zoom_texture(
     picture: &gtk::Picture,
     root: &gtk::Overlay,
     photos: Rc<RefCell<Vec<PhotoObject>>>,
     index: Rc<Cell<usize>>,
     zoom: Rc<Cell<f64>>,
     one_to_one: Rc<Cell<bool>>,
-    native_texture: Rc<RefCell<Option<NativeTextureCache>>>,
+    display_texture_cache: DisplayTextureCache,
     pending: Rc<Cell<bool>>,
     photo: &PhotoObject,
 ) {
     let path = photo.path();
     let rotation = photo.rotation();
     let edit_recipe = photo.edit_recipe();
-
-    if let Some(cache) = native_texture.borrow().as_ref() {
-        if cache.path == path && cache.rotation == rotation && cache.edit_recipe == edit_recipe {
-            let request = picture.size_request();
-            picture.set_paintable(Some(&cache.texture));
-            if picture.size_request() != request {
-                picture.set_size_request(request.0, request.1);
-            }
-            picture.queue_draw();
-            return;
+    let (target_width, target_height) =
+        viewer_zoom_decode_target(root, rotation, zoom.get());
+    let cache_lookup_started = std::time::Instant::now();
+    let cached_texture = display_texture_cache_lookup(
+        &display_texture_cache,
+        &path,
+        rotation,
+        &edit_recipe,
+        target_width,
+        target_height,
+    );
+    viewer_trace(format!(
+        "cache_lookup lane=zoom-render result={} elapsed_us={} target={}x{} uri={}",
+        if cached_texture.is_some() { "hit" } else { "miss" },
+        cache_lookup_started.elapsed().as_micros(),
+        target_width,
+        target_height,
+        viewer_trace_uri(&path),
+    ));
+    if let Some(texture) = cached_texture {
+        let request = picture.size_request();
+        let apply_started = std::time::Instant::now();
+        picture.set_paintable(Some(&texture));
+        if picture.size_request() != request {
+            picture.set_size_request(request.0, request.1);
         }
+        picture.queue_draw();
+        viewer_trace(format!(
+            "zoom_texture_apply source=cache apply_ms={:.3} uri={} texture={}x{} request={:?}",
+            apply_started.elapsed().as_secs_f64() * 1000.0,
+            viewer_trace_uri(&path),
+            texture.width(),
+            texture.height(),
+            request,
+        ));
+        return;
     }
 
     if !photo.original_available() {
+        viewer_trace(format!(
+            "request_skip lane=zoom-render reason=missing_source uri={}",
+            viewer_trace_uri(&path),
+        ));
         return;
     }
     if pending.replace(true) {
+        viewer_trace(format!(
+            "request_skip lane=zoom-render reason=pending uri={}",
+            viewer_trace_uri(&path),
+        ));
         return;
     }
 
-    let (target_width, target_height, _, _, _, _) = viewer_decode_target(&root, rotation, true);
     let key = ViewerRequestKey {
         path: path.clone(),
         mtime: photo.mtime(),
@@ -45,7 +79,7 @@ fn ensure_native_zoom_texture(
     };
     let (request, lease, claim) = claim_viewer_request(&key, true);
     viewer_trace(format!(
-        "request lane=native-zoom action={} uri={} variant={}x{}",
+        "request lane=zoom-render action={} uri={} variant={}x{}",
         match claim {
             ViewerRequestClaim::New => "new",
             ViewerRequestClaim::JoinedForeground => "join",
@@ -65,14 +99,20 @@ fn ensure_native_zoom_texture(
     let index = index.clone();
     let zoom = zoom.clone();
     let one_to_one = one_to_one.clone();
-    let native_texture = native_texture.clone();
+    let display_texture_cache = display_texture_cache.clone();
     let pending = pending.clone();
     let expected_path = path.clone();
     let expected_rotation = rotation;
     let expected_recipe = edit_recipe.clone();
 
     glib::MainContext::default().spawn_local(async move {
+        let wait_started = std::time::Instant::now();
         let result = ViewerResultSlot::wait(request.result.clone()).await;
+        viewer_trace(format!(
+            "result_wait lane=zoom-render elapsed_ms={:.3} uri={}",
+            wait_started.elapsed().as_secs_f64() * 1000.0,
+            viewer_trace_uri(&expected_path),
+        ));
         pending.set(false);
 
         if lease.cancelled() || !root.is_visible() {
@@ -91,6 +131,7 @@ fn ensure_native_zoom_texture(
         }
 
         if let Ok(result) = result {
+            let texture_started = std::time::Instant::now();
             let bytes = glib::Bytes::from_owned(result.pixels.clone());
             let texture = gtk::gdk::MemoryTexture::new(
                 result.width as i32,
@@ -99,30 +140,69 @@ fn ensure_native_zoom_texture(
                 &bytes,
                 result.width as usize * 4,
             );
-            *native_texture.borrow_mut() = Some(NativeTextureCache {
-                path: expected_path.clone(),
-                rotation: expected_rotation,
-                edit_recipe: expected_recipe.clone(),
-                texture: texture.clone(),
-            });
+            viewer_trace(format!(
+                "stage=memory_texture_create elapsed_ms={:.3} size={}x{} bytes={} uri={}",
+                texture_started.elapsed().as_secs_f64() * 1000.0,
+                result.width,
+                result.height,
+                result.pixels.len(),
+                viewer_trace_uri(&expected_path),
+            ));
+            let cache_insert_started = std::time::Instant::now();
+            display_texture_cache_insert(
+                &display_texture_cache,
+                expected_path.clone(),
+                expected_rotation,
+                expected_recipe.clone(),
+                target_width,
+                target_height,
+                texture.clone(),
+            );
+            viewer_trace(format!(
+                "cache_insert lane=zoom-render elapsed_us={} size={}x{} uri={}",
+                cache_insert_started.elapsed().as_micros(),
+                result.width,
+                result.height,
+                viewer_trace_uri(&expected_path),
+            ));
 
-            // Replace only the source texture, never the current zoom
-            // geometry. This turns the temporary viewport-sized preview
-            // into a sharp native source without moving the photo.
-            if zoom.get() > 0.0 && !one_to_one.get() {
+            let desired_target =
+                viewer_zoom_decode_target(&root, expected_rotation, zoom.get());
+            if zoom.get() > 0.0 && !one_to_one.get() && desired_target == (target_width, target_height) {
                 let request = picture.size_request();
+                let apply_started = std::time::Instant::now();
                 picture.set_paintable(Some(&texture));
                 if picture.size_request() != request {
                     picture.set_size_request(request.0, request.1);
                 }
                 picture.queue_draw();
                 viewer_trace(format!(
-                    "native_zoom_apply uri={} texture={}x{} request={:?}",
+                    "zoom_texture_apply source=decode apply_ms={:.3} uri={} texture={}x{} target={}x{} request={:?}",
+                    apply_started.elapsed().as_secs_f64() * 1000.0,
                     viewer_trace_uri(&expected_path),
                     texture.width(),
                     texture.height(),
+                    target_width,
+                    target_height,
                     request,
                 ));
+            } else if zoom.get() > 0.0 && !one_to_one.get() {
+                let current_photo = photos.borrow().get(index.get()).cloned();
+                if let Some(current_photo) = current_photo {
+                    lease.release();
+                    ensure_zoom_texture(
+                        &picture,
+                        &root,
+                        photos.clone(),
+                        index.clone(),
+                        zoom.clone(),
+                        one_to_one.clone(),
+                        display_texture_cache.clone(),
+                        pending.clone(),
+                        &current_photo,
+                    );
+                    return;
+                }
             }
         }
         lease.release();
@@ -291,7 +371,13 @@ fn show_photo(
     let opening_decode_result_for_result = opening_decode_result.clone();
     let opening_decode_ready_for_result = opening_decode_ready.clone();
     glib::MainContext::default().spawn_local(async move {
+        let wait_started = std::time::Instant::now();
         let result = ViewerResultSlot::wait(request.result.clone()).await;
+        viewer_trace(format!(
+            "result_wait lane=foreground elapsed_ms={:.3} uri={}",
+            wait_started.elapsed().as_secs_f64() * 1000.0,
+            viewer_trace_uri(&cache_path),
+        ));
 
         let stale =
             !viewer_generation_current(generation.get(), expected_generation) || lease.cancelled();
@@ -335,6 +421,14 @@ fn show_photo(
                     &bytes,
                     result.width as usize * 4,
                 );
+                viewer_trace(format!(
+                    "stage=memory_texture_create elapsed_ms={:.3} size={}x{} bytes={} uri={}",
+                    display_started.elapsed().as_secs_f64() * 1000.0,
+                    result.width,
+                    result.height,
+                    result.pixels.len(),
+                    viewer_trace_uri(&cache_path),
+                ));
 
                 // Never overwrite PhotoObject's source dimensions with the
                 // dimensions of a display-sized viewer decode. The original
@@ -348,15 +442,18 @@ fn show_photo(
                     });
                 }
 
+                let paintable_started = std::time::Instant::now();
                 picture.set_paintable(Some(&texture));
+                let paintable_ms = paintable_started.elapsed().as_secs_f64() * 1000.0;
                 set_opening_decode_result(
                     &opening_decode_result_for_result,
                     &opening_decode_ready_for_result,
                     true,
                 );
                 viewer_trace(format!(
-                    "display_apply elapsed_ms={} uri={}",
+                    "display_apply elapsed_ms={} paintable_ms={:.3} uri={}",
                     display_started.elapsed().as_millis(),
+                    paintable_ms,
                     viewer_trace_uri(&cache_path),
                 ));
                 viewer_trace(format!(
@@ -674,6 +771,26 @@ fn start_viewer_request(key: ViewerRequestKey, request: Arc<ViewerRequest>) {
                     size_bytes: worker_key.size_bytes,
                 }),
             );
+            viewer_trace(format!(
+                "recipe uri={} target={}x{} rotation={} straighten={:.3} crop={:.4},{:.4},{:.4},{:.4} exposure={:.3} contrast={:.3} clarity={:.3} sharpen={:.3} grain={:.3} overlays={} text_layers={}",
+                viewer_trace_uri(&worker_key.path),
+                worker_key.target_width,
+                worker_key.target_height,
+                worker_key.rotation,
+                recipe.straighten,
+                recipe.crop.left,
+                recipe.crop.top,
+                recipe.crop.right,
+                recipe.crop.bottom,
+                recipe.exposure,
+                recipe.contrast,
+                recipe.clarity,
+                recipe.sharpen,
+                recipe.grain,
+                recipe.overlays.len(),
+                recipe.text_layers.len(),
+            ));
+            let base_decode_started = std::time::Instant::now();
             let result = crate::thumbnail::decode_for_viewer_with_cancel(
                 &worker_key.path,
                 worker_key.target_width,
@@ -682,14 +799,66 @@ fn start_viewer_request(key: ViewerRequestKey, request: Arc<ViewerRequest>) {
                 || !request_for_worker.has_consumers(),
             )
             .map(|image| {
-                let image = crate::edit::render::apply_recipe(
-                    rotate_image(image, worker_key.rotation),
-                    &recipe,
-                );
+                viewer_trace(format!(
+                    "stage=base_decode elapsed_ms={:.3} size={}x{} uri={}",
+                    base_decode_started.elapsed().as_secs_f64() * 1000.0,
+                    image.width(),
+                    image.height(),
+                    viewer_trace_uri(&worker_key.path),
+                ));
+                let rotation_started = std::time::Instant::now();
+                let image = rotate_image(image, worker_key.rotation);
+                viewer_trace(format!(
+                    "stage=library_rotation elapsed_ms={:.3} size={}x{} rotation={} uri={}",
+                    rotation_started.elapsed().as_secs_f64() * 1000.0,
+                    image.width(),
+                    image.height(),
+                    worker_key.rotation,
+                    viewer_trace_uri(&worker_key.path),
+                ));
+                let geometry_started = std::time::Instant::now();
+                let image = crate::edit::render::apply_geometry(image, &recipe);
+                viewer_trace(format!(
+                    "stage=geometry elapsed_ms={:.3} size={}x{} uri={}",
+                    geometry_started.elapsed().as_secs_f64() * 1000.0,
+                    image.width(),
+                    image.height(),
+                    viewer_trace_uri(&worker_key.path),
+                ));
+                let tone_started = std::time::Instant::now();
+                let image = crate::edit::render::apply_tone(image, &recipe);
+                viewer_trace(format!(
+                    "stage=tone elapsed_ms={:.3} size={}x{} uri={}",
+                    tone_started.elapsed().as_secs_f64() * 1000.0,
+                    image.width(),
+                    image.height(),
+                    viewer_trace_uri(&worker_key.path),
+                ));
+                let overlay_started = std::time::Instant::now();
+                let image = crate::edit::overlays::composite_overlays(image, &recipe);
+                viewer_trace(format!(
+                    "stage=overlays elapsed_ms={:.3} size={}x{} uri={}",
+                    overlay_started.elapsed().as_secs_f64() * 1000.0,
+                    image.width(),
+                    image.height(),
+                    viewer_trace_uri(&worker_key.path),
+                ));
+                let pack_started = std::time::Instant::now();
+                let width = image.width();
+                let height = image.height();
+                let pixels = image.into_raw();
+                viewer_trace(format!(
+                    "stage=pack_pixels elapsed_ms={:.3} bytes={} size={}x{} uri={}",
+                    pack_started.elapsed().as_secs_f64() * 1000.0,
+                    pixels.len(),
+                    width,
+                    height,
+                    viewer_trace_uri(&worker_key.path),
+                ));
                 Arc::new(ViewerDecodeResult {
-                    width: image.width(),
-                    height: image.height(),
-                    pixels: image.into_raw(),
+                    width,
+                    height,
+                    pixels,
                 })
             })
             .map_err(|error| Arc::from(error.to_string()));
@@ -797,6 +966,40 @@ fn display_texture_cache_insert(
             total,
         ));
     }
+}
+
+/// Restore the processed, fit-sized lightbox texture after leaving 1:1 mode.
+/// Full-resolution effects such as sharpening and grain are scale-sensitive;
+/// scaling the native render in GTK does not match the dedicated fit render.
+pub(super) fn restore_fit_texture(
+    picture: &gtk::Picture,
+    photo: &PhotoObject,
+    root: &gtk::Overlay,
+    display_texture_cache: &DisplayTextureCache,
+) -> bool {
+    let (target_width, target_height, _, _, _, _) =
+        viewer_decode_target(root, photo.rotation(), false);
+    let Some(texture) = display_texture_cache_lookup(
+        display_texture_cache,
+        &photo.path(),
+        photo.rotation(),
+        &photo.edit_recipe(),
+        target_width,
+        target_height,
+    ) else {
+        return false;
+    };
+    set_fit_geometry_from_intrinsic(
+        picture,
+        photo,
+        root,
+        0.0,
+        texture.width(),
+        texture.height(),
+    );
+    picture.set_can_shrink(true);
+    picture.set_paintable(Some(&texture));
+    true
 }
 
 thread_local! {
@@ -1418,6 +1621,13 @@ fn viewer_decode_target(
         scale_factor,
         fallback,
     )
+}
+
+fn viewer_zoom_decode_target(root: &gtk::Overlay, rotation: i32, zoom: f64) -> (u32, u32) {
+    let (base_width, base_height, _, _, _, _) = viewer_decode_target(root, rotation, false);
+    let zoom = zoom.max(1.0);
+    let scale = |value: u32| (f64::from(value) * zoom).round().clamp(1.0, u32::MAX as f64) as u32;
+    (scale(base_width), scale(base_height))
 }
 
 fn rotate_image(image: image::RgbaImage, rotation: i32) -> image::RgbaImage {

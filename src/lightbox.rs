@@ -309,7 +309,7 @@ struct NativeTextureCache {
     texture: gtk::gdk::MemoryTexture,
 }
 
-struct DisplayTextureCacheEntry {
+pub(super) struct DisplayTextureCacheEntry {
     path: String,
     rotation: i32,
     edit_recipe: String,
@@ -320,7 +320,7 @@ struct DisplayTextureCacheEntry {
     bytes: usize,
 }
 
-type DisplayTextureCache = Rc<RefCell<VecDeque<DisplayTextureCacheEntry>>>;
+pub(super) type DisplayTextureCache = Rc<RefCell<VecDeque<DisplayTextureCacheEntry>>>;
 
 // Full-size RAW/NEF viewer decodes can be expensive. Keep enough recently
 // viewed display textures in RAM that stepping back through a burst is served

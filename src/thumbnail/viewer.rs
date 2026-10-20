@@ -242,10 +242,26 @@ fn decode_local_raw_for_viewer<F>(
 where
     F: Fn() -> bool,
 {
+    let materialize_started = std::time::Instant::now();
     let local_path = crate::source::materialize(reference)?;
+    if std::env::var_os("PICASA_TRACE").is_some() {
+        eprintln!(
+            "PIC_DECODE stage=raw_materialize elapsed_ms={:.3}",
+            materialize_started.elapsed().as_secs_f64() * 1000.0,
+        );
+    }
     check_viewer_cancelled(cancelled, "after_materialize")?;
 
-    if let Some(bytes) = nef_embedded_preview(&local_path)? {
+    let embedded_preview_started = std::time::Instant::now();
+    let embedded_preview = nef_embedded_preview(&local_path)?;
+    if std::env::var_os("PICASA_TRACE").is_some() {
+        eprintln!(
+            "PIC_DECODE stage=nef_embedded_preview elapsed_ms={:.3} found={}",
+            embedded_preview_started.elapsed().as_secs_f64() * 1000.0,
+            embedded_preview.is_some(),
+        );
+    }
+    if let Some(bytes) = embedded_preview {
         check_viewer_cancelled(cancelled, "after_embedded_preview_read")?;
         let (source_width, source_height) = jpeg_dimensions(&bytes)?;
         let (target_width, target_height) = viewer_target_dimensions(
@@ -257,15 +273,32 @@ where
         );
 
         check_viewer_cancelled(cancelled, "before_turbojpeg_decode")?;
+        let jpeg_decode_started = std::time::Instant::now();
         let decoded = match decode_jpeg_turbo_with_target(&bytes, target_width, target_height) {
             Ok(decoded) => decoded,
             Err(_) => decode_with_image(&bytes)?,
         };
         check_viewer_cancelled(cancelled, "after_turbojpeg_decode")?;
+        if std::env::var_os("PICASA_TRACE").is_some() {
+            eprintln!(
+                "PIC_DECODE stage=nef_embedded_jpeg_decode elapsed_ms={:.3} output={}x{} bytes={}",
+                jpeg_decode_started.elapsed().as_secs_f64() * 1000.0,
+                decoded.image.width(),
+                decoded.image.height(),
+                bytes.len(),
+            );
+        }
         // Embedded Nikon JPEGs can carry a non-sRGB ICC profile. Match the
         // ordinary JPEG viewer path before the editor/export tags sRGB.
+        let color_started = std::time::Instant::now();
         let corrected = color::color_manage_jpeg_rgb(&bytes, decoded.image, reference);
         check_viewer_cancelled(cancelled, "after_nef_jpeg_color_conversion")?;
+        if std::env::var_os("PICASA_TRACE").is_some() {
+            eprintln!(
+                "PIC_DECODE stage=nef_embedded_jpeg_color elapsed_ms={:.3}",
+                color_started.elapsed().as_secs_f64() * 1000.0,
+            );
+        }
         return Ok((
             DynamicImage::ImageRgb8(corrected),
             target_width,
@@ -468,7 +501,8 @@ where
     F: Fn() -> bool,
 {
     let decode_started = std::time::Instant::now();
-    let mut source_read_ms = 0;
+    let mut source_read_ms = 0.0;
+    let orientation_started = std::time::Instant::now();
     check_viewer_cancelled(&cancelled, "before_orientation_metadata")?;
     // HEIF container transforms are applied by heif-oxide during decode.
     let mut orientation = if is_heif(reference) || is_svg(reference) {
@@ -477,7 +511,15 @@ where
         exif_orientation(reference)
     };
     check_viewer_cancelled(&cancelled, "after_orientation_metadata")?;
+    if std::env::var_os("PICASA_TRACE").is_some() {
+        eprintln!(
+            "PIC_DECODE stage=orientation_metadata elapsed_ms={:.3} orientation={}",
+            orientation_started.elapsed().as_secs_f64() * 1000.0,
+            orientation,
+        );
+    }
 
+    let source_decode_started = std::time::Instant::now();
     let (image, target_width, target_height) = if is_raw(reference) {
         #[cfg(target_os = "linux")]
         if crate::network_shares::private(reference) {
@@ -513,7 +555,7 @@ where
                 check_viewer_cancelled(&cancelled, "before_remote_dng_read")?;
                 let source_started = std::time::Instant::now();
                 let bytes = read_viewer_source(reference, read_context)?;
-                source_read_ms += source_started.elapsed().as_millis();
+                source_read_ms += source_started.elapsed().as_secs_f64() * 1000.0;
                 check_viewer_cancelled(&cancelled, "after_remote_dng_read")?;
                 orientation = orientation_from_container(&mut Cursor::new(bytes.as_ref()));
                 let image = decode_remote_dng_for_viewer(reference, &bytes)?;
@@ -557,7 +599,7 @@ where
         check_viewer_cancelled(&cancelled, "before_source_read")?;
         let source_started = std::time::Instant::now();
         let bytes = read_viewer_source(reference, read_context)?;
-        source_read_ms += source_started.elapsed().as_millis();
+        source_read_ms += source_started.elapsed().as_secs_f64() * 1000.0;
         let (source_width, source_height) = jpeg_dimensions(&bytes)?;
         let (target_width, target_height) = viewer_target_dimensions(
             source_width,
@@ -584,7 +626,7 @@ where
         check_viewer_cancelled(&cancelled, "before_source_read")?;
         let source_started = std::time::Instant::now();
         let bytes = read_viewer_source(reference, read_context)?;
-        source_read_ms += source_started.elapsed().as_millis();
+        source_read_ms += source_started.elapsed().as_secs_f64() * 1000.0;
         check_viewer_cancelled(&cancelled, "before_svg_decode")?;
         let (image, _, _) = decode_svg_rgba(&bytes, viewport_width, viewport_height)?;
         check_viewer_cancelled(&cancelled, "after_svg_decode")?;
@@ -599,7 +641,7 @@ where
         check_viewer_cancelled(&cancelled, "before_source_read")?;
         let source_started = std::time::Instant::now();
         let bytes = read_viewer_source(reference, read_context)?;
-        source_read_ms += source_started.elapsed().as_millis();
+        source_read_ms += source_started.elapsed().as_secs_f64() * 1000.0;
         check_viewer_cancelled(&cancelled, "before_heif_decode")?;
         let decoded = decode_heif(&bytes)?;
         check_viewer_cancelled(&cancelled, "after_heif_decode")?;
@@ -618,7 +660,7 @@ where
         check_viewer_cancelled(&cancelled, "before_source_read")?;
         let source_started = std::time::Instant::now();
         let bytes = read_viewer_source(reference, read_context)?;
-        source_read_ms += source_started.elapsed().as_millis();
+        source_read_ms += source_started.elapsed().as_secs_f64() * 1000.0;
         let reader = ImageReader::new(Cursor::new(bytes)).with_guessed_format()?;
         check_viewer_cancelled(&cancelled, "before_generic_decode")?;
         let image = reader.decode()?;
@@ -635,21 +677,59 @@ where
         (image, target_width, target_height)
     };
 
-    check_viewer_cancelled(&cancelled, "before_pixel_conversion")?;
     let decoded_width = image.width();
     let decoded_height = image.height();
+    if std::env::var_os("PICASA_TRACE").is_some() {
+        eprintln!(
+            "PIC_DECODE stage=source_decode format={} elapsed_ms={:.3} source_read_ms={:.3} decoded={}x{} target={}x{}",
+            crate::image_format::for_path(reference).map_or("unknown", |f| f.id),
+            source_decode_started.elapsed().as_secs_f64() * 1000.0,
+            source_read_ms,
+            decoded_width,
+            decoded_height,
+            target_width,
+            target_height,
+        );
+    }
+
+    check_viewer_cancelled(&cancelled, "before_pixel_conversion")?;
+    let conversion_started = std::time::Instant::now();
     let image = image.into_rgba8();
+    if std::env::var_os("PICASA_TRACE").is_some() {
+        eprintln!(
+            "PIC_DECODE stage=rgba_conversion elapsed_ms={:.3} output={}x{}",
+            conversion_started.elapsed().as_secs_f64() * 1000.0,
+            image.width(),
+            image.height(),
+        );
+    }
 
     // Resize before orientation. Rotating only display-sized pixels avoids a
     // large copy for orientations 5-8.
     check_viewer_cancelled(&cancelled, "before_resize")?;
+    let resize_started = std::time::Instant::now();
     let image = resize_viewer_rgba(image, target_width, target_height)?;
     check_viewer_cancelled(&cancelled, "after_resize")?;
+    if std::env::var_os("PICASA_TRACE").is_some() {
+        eprintln!(
+            "PIC_DECODE stage=resize elapsed_ms={:.3} output={}x{}",
+            resize_started.elapsed().as_secs_f64() * 1000.0,
+            image.width(),
+            image.height(),
+        );
+    }
 
     check_viewer_cancelled(&cancelled, "before_final_orientation")?;
+    let orientation_apply_started = std::time::Instant::now();
     let oriented = apply_orientation(DynamicImage::ImageRgba8(image), orientation).into_rgba8();
     check_viewer_cancelled(&cancelled, "after_final_orientation")?;
     if std::env::var_os("PICASA_TRACE").is_some() {
+        eprintln!(
+            "PIC_DECODE stage=orientation_apply elapsed_ms={:.3} output={}x{}",
+            orientation_apply_started.elapsed().as_secs_f64() * 1000.0,
+            oriented.width(),
+            oriented.height(),
+        );
         eprintln!(
             "PIC_DECODE viewer format={} requested={}x{} decoded={}x{} output={}x{} orientation={}",
             crate::image_format::for_path(reference).map_or("unknown", |f| f.id),
@@ -661,11 +741,10 @@ where
             oriented.height(),
             orientation,
         );
-        let total_ms = decode_started.elapsed().as_millis();
         eprintln!(
-            "PIC_VIEWER decode_stage source_ms={} cpu_ms={} uri={}",
+            "PIC_VIEWER decode_stage source_ms={:.3} cpu_ms={:.3} uri={}",
             source_read_ms,
-            total_ms.saturating_sub(source_read_ms),
+            (decode_started.elapsed().as_secs_f64() * 1000.0 - source_read_ms).max(0.0),
             viewer_trace_reference(reference),
         );
     }

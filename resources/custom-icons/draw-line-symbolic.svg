@@ -1,5 +1,15 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
-  <path d="M6 18 18 6" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.8"/>
-  <circle cx="5" cy="19" r="2" fill="currentColor"/>
-  <circle cx="19" cy="5" r="2" fill="currentColor"/>
+<!-- @license lucide-static v0.468.0 - ISC -->
+<svg
+  class="lucide lucide-minus"
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M5 12h14" />
 </svg>

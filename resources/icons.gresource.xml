@@ -3,13 +3,29 @@
   <gresource prefix="/picrs">
     <file alias="icons/metadata-filter-symbolic.svg" compressed="true" preprocess="xml-stripblanks">custom-icons/metadata-filter-symbolic.svg</file>
     <file alias="icons/draw-arrow-symbolic.svg" compressed="true" preprocess="xml-stripblanks">custom-icons/draw-arrow-symbolic.svg</file>
+    <file alias="icons/draw-arrow-dark.svg" compressed="true" preprocess="xml-stripblanks">custom-icons/draw-arrow-dark.svg</file>
+    <file alias="icons/draw-arrow-light.svg" compressed="true" preprocess="xml-stripblanks">custom-icons/draw-arrow-light.svg</file>
     <file alias="icons/draw-ellipse-symbolic.svg" compressed="true" preprocess="xml-stripblanks">custom-icons/draw-ellipse-symbolic.svg</file>
+    <file alias="icons/draw-ellipse-dark.svg" compressed="true" preprocess="xml-stripblanks">custom-icons/draw-ellipse-dark.svg</file>
+    <file alias="icons/draw-ellipse-light.svg" compressed="true" preprocess="xml-stripblanks">custom-icons/draw-ellipse-light.svg</file>
     <file alias="icons/draw-eraser-symbolic.svg" compressed="true" preprocess="xml-stripblanks">custom-icons/draw-eraser-symbolic.svg</file>
+    <file alias="icons/draw-eraser-dark.svg" compressed="true" preprocess="xml-stripblanks">custom-icons/draw-eraser-dark.svg</file>
+    <file alias="icons/draw-eraser-light.svg" compressed="true" preprocess="xml-stripblanks">custom-icons/draw-eraser-light.svg</file>
     <file alias="icons/draw-highlighter-symbolic.svg" compressed="true" preprocess="xml-stripblanks">custom-icons/draw-highlighter-symbolic.svg</file>
+    <file alias="icons/draw-highlighter-dark.svg" compressed="true" preprocess="xml-stripblanks">custom-icons/draw-highlighter-dark.svg</file>
+    <file alias="icons/draw-highlighter-light.svg" compressed="true" preprocess="xml-stripblanks">custom-icons/draw-highlighter-light.svg</file>
     <file alias="icons/draw-line-symbolic.svg" compressed="true" preprocess="xml-stripblanks">custom-icons/draw-line-symbolic.svg</file>
+    <file alias="icons/draw-line-dark.svg" compressed="true" preprocess="xml-stripblanks">custom-icons/draw-line-dark.svg</file>
+    <file alias="icons/draw-line-light.svg" compressed="true" preprocess="xml-stripblanks">custom-icons/draw-line-light.svg</file>
     <file alias="icons/draw-pen-symbolic.svg" compressed="true" preprocess="xml-stripblanks">custom-icons/draw-pen-symbolic.svg</file>
+    <file alias="icons/draw-pen-dark.svg" compressed="true" preprocess="xml-stripblanks">custom-icons/draw-pen-dark.svg</file>
+    <file alias="icons/draw-pen-light.svg" compressed="true" preprocess="xml-stripblanks">custom-icons/draw-pen-light.svg</file>
     <file alias="icons/draw-rectangle-symbolic.svg" compressed="true" preprocess="xml-stripblanks">custom-icons/draw-rectangle-symbolic.svg</file>
+    <file alias="icons/draw-rectangle-dark.svg" compressed="true" preprocess="xml-stripblanks">custom-icons/draw-rectangle-dark.svg</file>
+    <file alias="icons/draw-rectangle-light.svg" compressed="true" preprocess="xml-stripblanks">custom-icons/draw-rectangle-light.svg</file>
     <file alias="icons/draw-select-symbolic.svg" compressed="true" preprocess="xml-stripblanks">custom-icons/draw-select-symbolic.svg</file>
+    <file alias="icons/draw-select-dark.svg" compressed="true" preprocess="xml-stripblanks">custom-icons/draw-select-dark.svg</file>
+    <file alias="icons/draw-select-light.svg" compressed="true" preprocess="xml-stripblanks">custom-icons/draw-select-light.svg</file>
     <file compressed="true" preprocess="xml-stripblanks">icons/ac-adapter-symbolic.svg</file>
     <file compressed="true" preprocess="xml-stripblanks">icons/accessories-calculator-symbolic.svg</file>
     <file compressed="true" preprocess="xml-stripblanks">icons/accessories-character-map-symbolic.svg</file>

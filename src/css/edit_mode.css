@@ -59,8 +59,8 @@
 }
 
 .draw-tool-grid button.draw-tool-button {
-  min-width: 40px;
-  min-height: 40px;
+  min-width: 38px;
+  min-height: 38px;
   padding: 0;
   color: @theme_fg_color;
   background-color: transparent;
@@ -69,6 +69,11 @@
   border-radius: 9px;
   box-shadow: none;
   transition: background-color 140ms ease, border-color 140ms ease;
+}
+
+.draw-tool-grid button.draw-tool-button image {
+  color: @theme_fg_color;
+  opacity: 1;
 }
 
 .draw-tool-grid button.draw-tool-button:hover {

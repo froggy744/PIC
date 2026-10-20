@@ -26,10 +26,23 @@ struct DrawGesture {
 
 fn draw_tool_button(icon_name: &str, label: &str) -> gtk::ToggleButton {
     let button = gtk::ToggleButton::new();
-    let icon = gtk::Image::from_icon_name(icon_name);
+    let icon = gtk::Image::new();
     icon.set_pixel_size(22);
+    let resource_base = icon_name.trim_end_matches("-symbolic").to_owned();
+    let set_icon_resource = move |image: &gtk::Image, dark: bool| {
+        let theme = if dark { "dark" } else { "light" };
+        image.set_resource(Some(&format!("/picrs/icons/{resource_base}-{theme}.svg")));
+    };
+    let style_manager = adw::StyleManager::default();
+    set_icon_resource(&icon, style_manager.is_dark());
+    let weak_icon = icon.downgrade();
+    style_manager.connect_dark_notify(move |manager| {
+        if let Some(icon) = weak_icon.upgrade() {
+            set_icon_resource(&icon, manager.is_dark());
+        }
+    });
     button.set_child(Some(&icon));
-    button.set_size_request(40, 40);
+    button.set_size_request(38, 38);
     button.set_tooltip_text(Some(label));
     button.update_property(&[gtk::accessible::Property::Label(label)]);
     button.add_css_class("flat");

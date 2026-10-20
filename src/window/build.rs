@@ -808,28 +808,9 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     // Destructive maintenance actions for the Settings → Library page. The
     // settings window owns the buttons and confirmation dialogs; the actual
     // behaviour stays here where the gallery and refresh context live.
+    let maintenance_cancel_scans: Rc<RefCell<Option<Rc<dyn Fn()>>>> =
+        Rc::new(RefCell::new(None));
     let settings_maintenance = crate::settings::LibraryMaintenance {
-        clear_thumbnails: {
-            let connection = connection.clone();
-            let gallery = gallery.clone();
-            let filter = filter.clone();
-            let search = search_text.clone();
-            let sort = sort.clone();
-            let availability_refresh = availability_refresh.clone();
-            Rc::new(move || {
-                if let Err(error) = crate::thumbnail::clear_cache() {
-                    eprintln!("Could not clear thumbnails: {error}");
-                }
-                refresh_grid(
-                    &connection,
-                    filter.get(),
-                    &search.borrow(),
-                    sort.get(),
-                    &gallery,
-                );
-                availability_refresh();
-            })
-        },
         clear_database: {
             let connection = connection.clone();
             let gallery = gallery.clone();
@@ -837,10 +818,24 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             let search = search_text.clone();
             let sort = sort.clone();
             let availability_refresh = availability_refresh.clone();
+            let cancel_scans = maintenance_cancel_scans.clone();
             Rc::new(move || {
-                if let Err(error) = db::clear_photos(&connection.borrow()) {
-                    eprintln!("Could not clear database: {error}");
+                let traced = std::env::var_os("PIC_LIBRARY_MAINTENANCE_TRACE").is_some();
+                if let Some(cancel) = cancel_scans.borrow().as_ref() {
+                    cancel();
                 }
+                if traced {
+                    eprintln!("PIC_LIBRARY_MAINTENANCE action=clear_database phase=delete_start");
+                }
+                let result = db::clear_photos(&connection.borrow())
+                    .map_err(|error| format!("{error:#}"));
+                if traced {
+                    match &result {
+                        Ok(()) => eprintln!("PIC_LIBRARY_MAINTENANCE action=clear_database phase=delete_complete"),
+                        Err(error) => eprintln!("PIC_LIBRARY_MAINTENANCE action=clear_database phase=delete_failed error={error}"),
+                    }
+                }
+                result?;
                 refresh_grid(
                     &connection,
                     filter.get(),
@@ -849,6 +844,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                     &gallery,
                 );
                 availability_refresh();
+                Ok(())
             })
         },
         clear_all: {
@@ -858,12 +854,19 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             let search = search_text.clone();
             let sort = sort.clone();
             let availability_refresh = availability_refresh.clone();
+            let rebuild_folder_watches = rebuild_folder_watches.clone();
+            let cancel_scans = maintenance_cancel_scans.clone();
             Rc::new(move || {
-                if let Err(error) = db::clear_all(&connection.borrow()) {
-                    eprintln!("Could not clear database: {error}");
+                let traced = std::env::var_os("PIC_LIBRARY_MAINTENANCE_TRACE").is_some();
+                if let Some(cancel) = cancel_scans.borrow().as_ref() {
+                    cancel();
                 }
-                if let Err(error) = crate::thumbnail::clear_cache() {
-                    eprintln!("Could not clear thumbnails: {error}");
+                if traced {
+                    eprintln!("PIC_LIBRARY_MAINTENANCE action=clear_all phase=database_delete_start");
+                }
+                db::clear_all(&connection.borrow()).map_err(|error| format!("{error:#}"))?;
+                if traced {
+                    eprintln!("PIC_LIBRARY_MAINTENANCE action=clear_all phase=database_delete_complete");
                 }
                 refresh_grid(
                     &connection,
@@ -873,6 +876,8 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                     &gallery,
                 );
                 availability_refresh();
+                rebuild_folder_watches();
+                Ok(())
             })
         },
     };
@@ -5057,6 +5062,27 @@ fn start_photo_export_single(
         std::sync::mpsc::channel::<RefreshPrepareEvent>();
 
     let scan_job = Rc::new(RefCell::new(ScanJobState::default()));
+    maintenance_cancel_scans.replace(Some({
+        let scan_job = scan_job.clone();
+        let pending_watch_refreshes = pending_watch_refreshes.clone();
+        Rc::new(move || {
+            let traced = std::env::var_os("PIC_LIBRARY_MAINTENANCE_TRACE").is_some();
+            let mut job = scan_job.borrow_mut();
+            if let Some(active) = job.active.take() {
+                active.interrupt();
+            }
+            job.generation = job.generation.wrapping_add(1);
+            job.kind = None;
+            job.active_root = None;
+            job.pending.clear();
+            job.resume_roots.clear();
+            job.stop_requested = true;
+            pending_watch_refreshes.borrow_mut().clear();
+            if traced {
+                eprintln!("PIC_LIBRARY_MAINTENANCE action=cancel_scans phase=complete");
+            }
+        })
+    }));
     sidebar::bind_refresh_gate(&sidebar, &refresh);
     // Keep cancellation reachable after the notification itself is dismissed.
     let dismissed_stop = gtk::Button::with_label("Stop");

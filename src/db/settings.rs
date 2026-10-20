@@ -137,14 +137,27 @@ pub fn set_trashed(connection: &Connection, id: i64, trashed: bool) -> Result<()
 }
 
 pub fn clear_photos(connection: &Connection) -> Result<()> {
-    connection.execute_batch("DELETE FROM album_photos; DELETE FROM photos;")?;
+    let transaction = connection.unchecked_transaction()?;
+    transaction.execute("DELETE FROM album_photos", [])?;
+    // Reset persisted scan progress so a future refresh can repopulate every
+    // registered folder after the indexed photos are cleared.
+    transaction.execute("DELETE FROM network_import_jobs", [])?;
+    transaction.execute("DELETE FROM photos", [])?;
+    // Photo rows cascade to event items, while the event rows themselves have
+    // no photo foreign key. Remove those now-unreferenced history records too.
+    transaction.execute("DELETE FROM editing_events", [])?;
+    transaction.commit()?;
     Ok(())
 }
 
 pub fn clear_all(connection: &Connection) -> Result<()> {
-    connection.execute_batch(
-        "DELETE FROM album_photos; DELETE FROM albums; DELETE FROM photos; DELETE FROM folders;",
-    )?;
+    let transaction = connection.unchecked_transaction()?;
+    transaction.execute("DELETE FROM album_photos", [])?;
+    transaction.execute("DELETE FROM albums", [])?;
+    transaction.execute("DELETE FROM photos", [])?;
+    transaction.execute("DELETE FROM editing_events", [])?;
+    transaction.execute("DELETE FROM folders", [])?;
+    transaction.commit()?;
     Ok(())
 }
 

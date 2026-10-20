@@ -80,6 +80,7 @@ fn valid_cache_paths_in(directory: &Path, connection: &Connection) -> Result<Has
 /// the materialized remote RAW sources under `thumbs/source`), symlinks and
 /// unrelated files are never touched, and neither are the originals.
 pub fn cleanup_cache(valid: &HashSet<PathBuf>) -> Result<CacheCleanup> {
+    let _cache_guard = cache_maintenance_guard()?;
     // A thumbnail being generated right now may not be part of the key
     // snapshot yet. Both registries cover every `create()` destination that
     // can be mid-write, so reserve them instead of racing the workers.
@@ -94,9 +95,9 @@ fn cleanup_cache_in(
 ) -> Result<CacheCleanup> {
     let mut cleanup = CacheCleanup::default();
     for entry in read_cache_entries(directory)? {
-        let Ok(file_type) = entry.file_type() else {
-            continue;
-        };
+        let file_type = entry.file_type().with_context(|| {
+            format!("could not inspect cache entry {}", entry.path().display())
+        })?;
         // Only regular files are candidates; this also skips directories that
         // merely carry a thumbnail-looking name.
         if !file_type.is_file() {
@@ -112,8 +113,8 @@ fn cleanup_cache_in(
             } else {
                 // Read the size before the file disappears; DirEntry::metadata
                 // no longer resolves once the entry is deleted.
-                let bytes = entry_len(&entry);
-                if fs::remove_file(&path).is_ok() {
+                let bytes = entry_len(&entry)?;
+                if remove_cache_file(&path)? {
                     cleanup.removed += 1;
                     cleanup.bytes_freed += bytes;
                 }
@@ -121,14 +122,24 @@ fn cleanup_cache_in(
         } else if name.ends_with(".failed") {
             let thumbnail = path.with_extension("jpg");
             if !valid.contains(&thumbnail) && !reserved.contains(&thumbnail) {
-                let bytes = entry_len(&entry);
-                if fs::remove_file(&path).is_ok() {
+                let bytes = entry_len(&entry)?;
+                if remove_cache_file(&path)? {
                     cleanup.bytes_freed += bytes;
                 }
             }
         }
     }
     Ok(cleanup)
+}
+
+fn remove_cache_file(path: &Path) -> Result<bool> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(true),
+        // A concurrent cache reader or writer may already have removed it.
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(anyhow::Error::new(error)
+            .context(format!("could not remove cache entry {}", path.display()))),
+    }
 }
 
 /// Measure the cache directory against the current photo cache keys.
@@ -155,14 +166,14 @@ fn cache_stats_in(directory: &Path, valid: &HashSet<PathBuf>) -> Result<CacheSta
         ..CacheStats::default()
     };
     for entry in read_cache_entries(directory)? {
-        let Ok(file_type) = entry.file_type() else {
-            continue;
-        };
+        let file_type = entry.file_type().with_context(|| {
+            format!("could not inspect cache entry {}", entry.path().display())
+        })?;
         if !file_type.is_file() {
             continue;
         }
         let path = entry.path();
-        stats.bytes += entry_len(&entry);
+        stats.bytes += entry_len(&entry)?;
         let is_jpg = path
             .file_name()
             .and_then(|name| name.to_str())
@@ -189,16 +200,47 @@ fn read_cache_entries(directory: &Path) -> Result<Vec<fs::DirEntry>> {
             )))
         }
     };
-    let mut result: Vec<_> = entries.flatten().collect();
+    let mut result = Vec::new();
+    for entry in entries {
+        result.push(entry.with_context(|| {
+            format!("could not inspect cache directory {}", directory.display())
+        })?);
+    }
     // Thumbnail shards have one known level beneath `files`. Deliberately do
     // not recurse through arbitrary cache directories: materialized RAW
     // sources and unrelated cache data must never be treated as thumbnails.
     let files_root = directory.join("files");
-    if let Ok(shards) = fs::read_dir(files_root) {
-        for shard in shards.flatten() {
-            if shard.file_type().map(|kind| kind.is_dir()).unwrap_or(false) {
-                if let Ok(files) = fs::read_dir(shard.path()) {
-                    result.extend(files.flatten());
+    let shards = match fs::read_dir(&files_root) {
+        Ok(shards) => Some(shards),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => {
+            return Err(anyhow::Error::new(error).context(format!(
+                "could not read thumbnail shard directory {}",
+                files_root.display()
+            )))
+        }
+    };
+    if let Some(shards) = shards {
+        for shard in shards {
+            let shard = shard.with_context(|| {
+                format!("could not inspect thumbnail shard directory {}", files_root.display())
+            })?;
+            if shard.file_type()?.is_dir() {
+                let shard_path = shard.path();
+                let files = match fs::read_dir(&shard_path) {
+                    Ok(files) => files,
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                    Err(error) => {
+                        return Err(anyhow::Error::new(error).context(format!(
+                            "could not read thumbnail shard {}",
+                            shard_path.display()
+                        )))
+                    }
+                };
+                for file in files {
+                    result.push(file.with_context(|| {
+                        format!("could not inspect thumbnail shard {}", shard_path.display())
+                    })?);
                 }
             }
         }
@@ -206,11 +248,11 @@ fn read_cache_entries(directory: &Path) -> Result<Vec<fs::DirEntry>> {
     Ok(result)
 }
 
-fn entry_len(entry: &fs::DirEntry) -> u64 {
+fn entry_len(entry: &fs::DirEntry) -> Result<u64> {
     entry
         .metadata()
         .map(|metadata| metadata.len())
-        .unwrap_or_default()
+        .with_context(|| format!("could not read cache entry size {}", entry.path().display()))
 }
 
 /// Destinations a thumbnail worker may be writing right now: `create()`

@@ -1,4 +1,19 @@
 static CACHE_DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+static CACHE_MAINTENANCE_LOCK: OnceLock<RwLock<()>> = OnceLock::new();
+
+fn cache_generation_guard() -> Result<RwLockReadGuard<'static, ()>> {
+    CACHE_MAINTENANCE_LOCK
+        .get_or_init(|| RwLock::new(()))
+        .read()
+        .map_err(|_| anyhow::anyhow!("thumbnail cache maintenance lock poisoned"))
+}
+
+pub(crate) fn cache_maintenance_guard() -> Result<RwLockWriteGuard<'static, ()>> {
+    CACHE_MAINTENANCE_LOCK
+        .get_or_init(|| RwLock::new(()))
+        .write()
+        .map_err(|_| anyhow::anyhow!("thumbnail cache maintenance lock poisoned"))
+}
 
 pub fn cache_dir() -> Result<PathBuf> {
     // Cache the resolved directory: this is called once per PhotoObject built
@@ -141,6 +156,7 @@ fn existing_cache_path_in(
 }
 
 pub fn create(path: &str, mtime: Option<i64>, size_bytes: Option<i64>) -> Result<PathBuf> {
+    let _cache_guard = cache_generation_guard()?;
     let started = std::time::Instant::now();
     let destination = cache_path(path, mtime, size_bytes)?;
     let failure_marker = destination.with_extension("failed");

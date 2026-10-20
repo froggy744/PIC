@@ -70,20 +70,39 @@ fn thumbnail_worker_threads(items: &[(String, Option<i64>, Option<i64>)]) -> usi
 }
 
 pub fn clear_cache() -> Result<()> {
+    let _cache_guard = cache_maintenance_guard()?;
+    let traced = std::env::var_os("PIC_LIBRARY_MAINTENANCE_TRACE").is_some();
+    let started = std::time::Instant::now();
     let directory = cache_dir()?;
     if !directory.is_dir() {
+        if traced {
+            eprintln!("PIC_LIBRARY_MAINTENANCE action=clear_cache phase=complete files=0 dirs=0 elapsed_ms={}", started.elapsed().as_millis());
+        }
         return Ok(());
     }
 
-    for entry in fs::read_dir(directory)? {
-        let path = entry?.path();
+    let mut files_removed = 0usize;
+    let mut dirs_removed = 0usize;
+    for entry in fs::read_dir(&directory)
+        .with_context(|| format!("could not read thumbnail cache {}", directory.display()))?
+    {
+        let path = entry
+            .with_context(|| format!("could not inspect thumbnail cache {}", directory.display()))?
+            .path();
         if path.is_file() {
-            fs::remove_file(path)?;
+            fs::remove_file(&path)
+                .with_context(|| format!("could not remove cache file {}", path.display()))?;
+            files_removed += 1;
         } else if path.file_name().is_some_and(|name| name == "files") {
             // Only the thumbnail shard root is cleared. Other cache siblings
             // are not originals and must remain outside this operation.
-            fs::remove_dir_all(path)?;
+            fs::remove_dir_all(&path)
+                .with_context(|| format!("could not remove thumbnail shard {}", path.display()))?;
+            dirs_removed += 1;
         }
+    }
+    if traced {
+        eprintln!("PIC_LIBRARY_MAINTENANCE action=clear_cache phase=complete files={files_removed} dirs={dirs_removed} elapsed_ms={}", started.elapsed().as_millis());
     }
     Ok(())
 }

@@ -5,14 +5,12 @@ const BACKUP_HISTORY: usize = 5;
 #[derive(Clone, Copy)]
 enum BackupKind {
     Automatic,
-    Manual,
 }
 
 impl BackupKind {
     fn prefix(self) -> &'static str {
         match self {
             Self::Automatic => "auto",
-            Self::Manual => "manual",
         }
     }
 }
@@ -92,6 +90,33 @@ pub fn active_library() -> Result<LibraryEntry> {
 pub fn known_libraries() -> Result<Vec<LibraryEntry>> {
     let _guard = registry_lock();
     Ok(load_or_create_registry()?.libraries)
+}
+
+/// Remove every library except the active one from PIC's registry. Database
+/// files remain on disk and can be registered again with Open Existing.
+pub fn remove_old_libraries_from_registry() -> Result<Vec<LibraryEntry>> {
+    let active_path = active_database_path()?;
+    let _guard = registry_lock();
+    let mut registry = load_or_create_registry()?;
+    let active_id = registry
+        .libraries
+        .iter()
+        .find(|library| library.path == active_path)
+        .map(|library| library.id.clone())
+        .unwrap_or_else(|| registry.current.clone());
+
+    let mut removed = Vec::new();
+    registry.libraries.retain(|library| {
+        let keep = library.id == active_id || library.path == active_path;
+        if !keep {
+            removed.push(library.clone());
+        }
+        keep
+    });
+    if !removed.is_empty() {
+        save_registry(&registry)?;
+    }
+    Ok(removed)
 }
 
 pub fn create_library(path: &Path, name: &str, description: &str) -> Result<LibraryEntry> {
@@ -194,6 +219,34 @@ pub fn library_directory() -> Result<PathBuf> {
         .join("libraries"))
 }
 
+/// Find database files in PIC's default data directory, including managed
+/// libraries and backups nested under their standard folders.
+pub fn default_library_database_files() -> Result<Vec<PathBuf>> {
+    let root = dirs::data_dir()
+        .context("could not determine the user's data directory")?
+        .join(crate::app_paths::APP_DIRECTORY);
+    if !root.is_dir() {
+        return Ok(Vec::new());
+    }
+
+    let mut paths = Vec::new();
+    for entry in walkdir::WalkDir::new(&root).follow_links(false) {
+        let entry = entry.with_context(|| {
+            format!("could not scan library database folder {}", root.display())
+        })?;
+        if entry.file_type().is_file()
+            && entry
+                .path()
+                .extension()
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("db"))
+        {
+            paths.push(entry.into_path());
+        }
+    }
+    paths.sort();
+    Ok(paths)
+}
+
 pub fn suggested_library_path(name: &str) -> Result<PathBuf> {
     let directory = library_directory()?;
     std::fs::create_dir_all(&directory)?;
@@ -207,10 +260,49 @@ pub fn suggested_library_path(name: &str) -> Result<PathBuf> {
     Ok(candidate)
 }
 
-/// Create a consistent SQLite snapshot. This deliberately uses SQLite's
-/// online backup API rather than copying a WAL-backed database file.
-pub fn backup_library(library: &LibraryEntry) -> Result<PathBuf> {
-    backup_library_with_kind(library, BackupKind::Manual)
+/// Write a manual snapshot to a user-selected path without replacing an
+/// existing file. The same SQLite backup and integrity checks used for
+/// managed backups are applied here.
+pub fn backup_library_to_path(library: &LibraryEntry, destination: &Path) -> Result<PathBuf> {
+    let _guard = BACKUP_LOCK
+        .get_or_init(|| std::sync::Mutex::new(()))
+        .lock()
+        .expect("backup lock poisoned");
+    let destination = if destination.is_absolute() {
+        destination.to_path_buf()
+    } else {
+        std::env::current_dir()?.join(destination)
+    };
+    if destination.exists() {
+        anyhow::bail!("a file already exists at {}", destination.display());
+    }
+    let parent = destination
+        .parent()
+        .context("backup destination has no parent folder")?;
+    std::fs::create_dir_all(parent)?;
+    let temporary = destination.with_extension("db.partial");
+    if temporary.exists() {
+        anyhow::bail!("a temporary backup already exists at {}", temporary.display());
+    }
+    let source = open_existing(&library.path)?;
+    let mut target = Connection::open(&temporary)?;
+    target.busy_timeout(std::time::Duration::from_secs(2))?;
+    {
+        let backup = rusqlite::backup::Backup::new(&source, &mut target)?;
+        backup.run_to_completion(128, std::time::Duration::from_millis(10), None)?;
+    }
+    let integrity: String = target.query_row("PRAGMA integrity_check", [], |row| row.get(0))?;
+    if integrity != "ok" {
+        drop(target);
+        let _ = std::fs::remove_file(&temporary);
+        anyhow::bail!("backup integrity check failed: {integrity}");
+    }
+    drop(target);
+    if let Err(error) = std::fs::rename(&temporary, &destination) {
+        let _ = std::fs::remove_file(&temporary);
+        return Err(error.into());
+    }
+    Ok(destination)
 }
 
 fn backup_library_with_kind(library: &LibraryEntry, kind: BackupKind) -> Result<PathBuf> {

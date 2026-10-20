@@ -15,9 +15,8 @@ pub(crate) mod menus;
 /// window (build.rs) where the gallery, filter, and refresh context exist.
 #[derive(Clone)]
 pub struct LibraryMaintenance {
-    pub clear_thumbnails: Rc<dyn Fn()>,
-    pub clear_database: Rc<dyn Fn()>,
-    pub clear_all: Rc<dyn Fn()>,
+    pub clear_database: Rc<dyn Fn() -> std::result::Result<(), String>>,
+    pub clear_all: Rc<dyn Fn() -> std::result::Result<(), String>>,
 }
 
 #[derive(Clone)]

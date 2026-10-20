@@ -424,30 +424,14 @@ pub(crate) fn apply_tone(mut image: RgbaImage, recipe: &EditRecipe) -> RgbaImage
     }
 
     if recipe.sharpen > 0.001 && image.width() > 2 && image.height() > 2 {
-        let blur_started = std::time::Instant::now();
-        let blurred = image::imageops::blur(&image, 1.1);
-        let blur_ms = blur_started.elapsed().as_secs_f64() * 1000.0;
-        let apply_started = std::time::Instant::now();
-        let amount = recipe.sharpen * 1.6;
-        image
-            .as_mut()
-            .par_chunks_mut(4)
-            .zip(blurred.as_raw().par_chunks(4))
-            .for_each(|(pixel, blurred)| {
-                for channel in 0..3 {
-                    let original = pixel[channel] as f32;
-                    let soft = blurred[channel] as f32;
-                    pixel[channel] = (original + (original - soft) * amount)
-                        .clamp(0.0, 255.0)
-                        .round() as u8;
-                }
-            });
+        let sharpen_started = std::time::Instant::now();
+        sharpen_unsharp(&mut image, 1.1, recipe.sharpen * 1.6);
         if std::env::var_os("PICASA_TRACE").is_some() {
             eprintln!(
-                "PIC_EDIT_EFFECT op=sharpen dimensions={}x{} blur_ms={blur_ms:.3} apply_ms={:.3} amount={:.3}",
+                "PIC_EDIT_EFFECT op=sharpen dimensions={}x{} elapsed_ms={:.3} amount={:.3}",
                 image.width(),
                 image.height(),
-                apply_started.elapsed().as_secs_f64() * 1000.0,
+                sharpen_started.elapsed().as_secs_f64() * 1000.0,
                 recipe.sharpen,
             );
         }
@@ -497,45 +481,215 @@ fn map_tone_regions(y: f32, recipe: &EditRecipe) -> f32 {
         + (highlights - y) * highlight_mask * 0.92).clamp(0.0, 1.0)
 }
 
+/// Normalised 1-D Gaussian taps (radius = ceil(3 sigma)).
+fn gaussian_taps(sigma: f32) -> Vec<f32> {
+    let radius = (sigma * 3.0).ceil().max(1.0) as usize;
+    let mut taps: Vec<f32> = (0..=2 * radius)
+        .map(|i| {
+            let d = i as f32 - radius as f32;
+            (-(d * d) / (2.0 * sigma * sigma)).exp()
+        })
+        .collect();
+    let sum: f32 = taps.iter().sum();
+    taps.iter_mut().for_each(|t| *t /= sum);
+    taps
+}
+
+/// Unsharp mask with a separable Gaussian, done in two parallel row passes.
+/// Pass 1 blurs horizontally into a scratch buffer; pass 2 blurs vertically
+/// and writes the sharpened pixel straight back. Both passes run in parallel,
+/// and alpha is left untouched.
+fn sharpen_unsharp(image: &mut RgbaImage, sigma: f32, amount: f32) {
+    let (w, h) = (image.width() as usize, image.height() as usize);
+    let stride = w * 4;
+    let taps = gaussian_taps(sigma);
+    let r = taps.len() / 2;
+    let mut scratch = vec![0u8; stride * h];
+
+    image
+        .as_raw()
+        .par_chunks(stride)
+        .zip(scratch.par_chunks_mut(stride))
+        .for_each_init(
+            || vec![0f32; stride],
+            |acc, (src, dst)| {
+                acc.fill(0.0);
+                let interior = r..w.saturating_sub(r);
+                if !interior.is_empty() {
+                    let (lo, hi) = (interior.start * 4, interior.end * 4);
+                    for (j, &t) in taps.iter().enumerate() {
+                        let start = lo + j * 4 - r * 4;
+                        let s = &src[start..start + (hi - lo)];
+                        for (a, &v) in acc[lo..hi].iter_mut().zip(s) {
+                            *a += t * v as f32;
+                        }
+                    }
+                }
+                for x in (0..r.min(w)).chain(w.saturating_sub(r).max(r)..w) {
+                    for c in 0..3 {
+                        let mut sum = 0.0;
+                        for (j, &t) in taps.iter().enumerate() {
+                            let sx = (x + j).saturating_sub(r).min(w - 1);
+                            sum += t * src[sx * 4 + c] as f32;
+                        }
+                        acc[x * 4 + c] = sum;
+                    }
+                }
+                for (i, (d, &a)) in dst.iter_mut().zip(acc.iter()).enumerate() {
+                    *d = if i % 4 == 3 { src[i] } else { (a + 0.5) as u8 };
+                }
+            },
+        );
+
+    image
+        .as_mut()
+        .par_chunks_mut(stride)
+        .enumerate()
+        .for_each_init(
+            || vec![0f32; stride],
+            |acc, (y, row)| {
+                acc.fill(0.0);
+                for (j, &t) in taps.iter().enumerate() {
+                    let sy = (y + j).saturating_sub(r).min(h - 1);
+                    let s = &scratch[sy * stride..(sy + 1) * stride];
+                    for (a, &v) in acc.iter_mut().zip(s) {
+                        *a += t * v as f32;
+                    }
+                }
+                for (i, (p, &soft)) in row.iter_mut().zip(acc.iter()).enumerate() {
+                    if i % 4 == 3 {
+                        continue;
+                    }
+                    let original = *p as f32;
+                    *p = (original + (original - soft) * amount)
+                        .clamp(0.0, 255.0)
+                        .round() as u8;
+                }
+            },
+        );
+}
+
+/// Separable Gaussian blur of a single f32 plane, parallel by row.
+fn blur_plane(plane: &mut Vec<f32>, w: usize, h: usize, sigma: f32) {
+    let taps = gaussian_taps(sigma);
+    let r = taps.len() / 2;
+    let mut tmp = vec![0f32; w * h];
+    plane
+        .par_chunks(w)
+        .zip(tmp.par_chunks_mut(w))
+        .for_each(|(src, dst)| {
+            let interior = r..w.saturating_sub(r);
+            if !interior.is_empty() {
+                let (lo, hi) = (interior.start, interior.end);
+                dst[lo..hi].fill(0.0);
+                for (j, &t) in taps.iter().enumerate() {
+                    let s = &src[j..j + (hi - lo)];
+                    for (d, &v) in dst[lo..hi].iter_mut().zip(s) {
+                        *d += t * v;
+                    }
+                }
+            }
+            for x in (0..r.min(w)).chain(w.saturating_sub(r).max(r)..w) {
+                let mut sum = 0.0;
+                for (j, &t) in taps.iter().enumerate() {
+                    sum += t * src[(x + j).saturating_sub(r).min(w - 1)];
+                }
+                dst[x] = sum;
+            }
+        });
+    plane
+        .par_chunks_mut(w)
+        .enumerate()
+        .for_each(|(y, out)| {
+            out.fill(0.0);
+            for (j, &t) in taps.iter().enumerate() {
+                let sy = (y + j).saturating_sub(r).min(h - 1);
+                for (o, &v) in out.iter_mut().zip(&tmp[sy * w..(sy + 1) * w]) {
+                    *o += t * v;
+                }
+            }
+        });
+}
+
 /// Clarity is a broad local-contrast boost in luminance only, strongest in
-/// midtones. Downsample before Gaussian blur to keep 24MP+ exports tractable
-/// and to give previews and exports comparable scene-relative detail radius.
+/// midtones. The local-average map is built at <=1200 px (box-averaged
+/// straight from the source in parallel), blurred there, and sampled
+/// bilinearly inside the final per-pixel pass, so nothing full-size is
+/// allocated, resized or processed single-threaded.
 fn apply_clarity(image: &mut RgbaImage, amount: f32) {
     let (width, height) = image.dimensions();
     if width < 3 || height < 3 {
         return;
     }
-    let luma = image::GrayImage::from_fn(width, height, |x, y| {
-        let p = image.get_pixel(x, y);
-        image::Luma([rgb_luma(
-            p[0] as f32, p[1] as f32, p[2] as f32,
-        ).round().clamp(0.0, 255.0) as u8])
-    });
+    let (w, h) = (width as usize, height as usize);
+    let stride = w * 4;
     let downsample = (width.max(height) as f32 / 1200.0).max(1.0);
-    let small_width = ((width as f32 / downsample).round() as u32).max(1);
-    let small_height = ((height as f32 / downsample).round() as u32).max(1);
-    let reduced = image::imageops::resize(
-        &luma, small_width, small_height, image::imageops::FilterType::Triangle,
-    );
-    let sigma = (small_width.min(small_height) as f32 * 0.008).clamp(1.5, 20.0);
-    let softened = image::imageops::blur(&reduced, sigma);
-    let local = image::imageops::resize(
-        &softened, width, height, image::imageops::FilterType::Triangle,
-    );
-    image.as_mut().par_chunks_mut(4).zip(local.as_raw().par_iter()).for_each(|(p, &blurred)| {
-        if p[3] == 0 {
-            return;
-        }
-        let y = rgb_luma(p[0] as f32, p[1] as f32, p[2] as f32) / 255.0;
-        let midtones = (4.0 * y * (1.0 - y)).clamp(0.0, 1.0);
-        let local_y = blurred as f32 / 255.0;
-        let detail = (y - local_y).clamp(-0.24, 0.24);
-        let target = (y + detail * midtones * amount * 1.85).clamp(0.0, 1.0);
-        let gain = (target / y.max(0.01)).clamp(0.25, 3.0);
-        for channel in &mut p[0..3] {
-            *channel = (*channel as f32 * gain).round().clamp(0.0, 255.0) as u8;
-        }
-    });
+    let sw = ((width as f32 / downsample).round() as usize).max(1);
+    let sh = ((height as f32 / downsample).round() as usize).max(1);
+
+    // 1. Box-average luma (0..255 scale) into the small map.
+    let mut small = vec![0f32; sw * sh];
+    {
+        let raw = image.as_raw();
+        small.par_chunks_mut(sw).enumerate().for_each(|(sy, out)| {
+            let y0 = sy * h / sh;
+            let y1 = (((sy + 1) * h / sh).max(y0 + 1)).min(h);
+            for (sx, o) in out.iter_mut().enumerate() {
+                let x0 = sx * w / sw;
+                let x1 = (((sx + 1) * w / sw).max(x0 + 1)).min(w);
+                let mut sum = 0u32;
+                for y in y0..y1 {
+                    let row = &raw[y * stride + x0 * 4..y * stride + x1 * 4];
+                    for p in row.chunks_exact(4) {
+                        sum += 54 * p[0] as u32 + 183 * p[1] as u32 + 19 * p[2] as u32;
+                    }
+                }
+                *o = sum as f32 / (256.0 * ((y1 - y0) * (x1 - x0)) as f32);
+            }
+        });
+    }
+
+    // 2. Blur the small map.
+    let sigma = (sw.min(sh) as f32 * 0.008).clamp(1.5, 20.0);
+    blur_plane(&mut small, sw, sh, sigma);
+
+    // 3. Bilinear-sample the blurred map while applying local contrast.
+    let sample_axis = |len: usize, small_len: usize| -> Vec<(usize, usize, f32)> {
+        let scale = small_len as f32 / len as f32;
+        (0..len)
+            .map(|i| {
+                let s = ((i as f32 + 0.5) * scale - 0.5).clamp(0.0, (small_len - 1) as f32);
+                let i0 = s as usize;
+                (i0, (i0 + 1).min(small_len - 1), s - i0 as f32)
+            })
+            .collect()
+    };
+    let xs = sample_axis(w, sw);
+    let ys = sample_axis(h, sh);
+    image
+        .as_mut()
+        .par_chunks_mut(stride)
+        .enumerate()
+        .for_each(|(y, row)| {
+            let (y0, y1, fy) = ys[y];
+            let (r0, r1) = (&small[y0 * sw..(y0 + 1) * sw], &small[y1 * sw..(y1 + 1) * sw]);
+            for (p, &(x0, x1, fx)) in row.chunks_exact_mut(4).zip(xs.iter()) {
+                if p[3] == 0 {
+                    continue;
+                }
+                let top = r0[x0] + (r0[x1] - r0[x0]) * fx;
+                let bottom = r1[x0] + (r1[x1] - r1[x0]) * fx;
+                let local_y = (top + (bottom - top) * fy) / 255.0;
+                let y = rgb_luma(p[0] as f32, p[1] as f32, p[2] as f32) / 255.0;
+                let midtones = (4.0 * y * (1.0 - y)).clamp(0.0, 1.0);
+                let detail = (y - local_y).clamp(-0.24, 0.24);
+                let target = (y + detail * midtones * amount * 1.85).clamp(0.0, 1.0);
+                let gain = (target / y.max(0.01)).clamp(0.25, 3.0);
+                for channel in &mut p[0..3] {
+                    *channel = (*channel as f32 * gain).round().clamp(0.0, 255.0) as u8;
+                }
+            }
+        });
 }
 
 fn rgb_luma(r: f32, g: f32, b: f32) -> f32 {

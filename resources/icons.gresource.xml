@@ -5,6 +5,7 @@
     <file alias="icons/draw-arrow-symbolic.svg" compressed="true" preprocess="xml-stripblanks">custom-icons/draw-arrow-symbolic.svg</file>
     <file alias="icons/draw-ellipse-symbolic.svg" compressed="true" preprocess="xml-stripblanks">custom-icons/draw-ellipse-symbolic.svg</file>
     <file alias="icons/draw-eraser-symbolic.svg" compressed="true" preprocess="xml-stripblanks">custom-icons/draw-eraser-symbolic.svg</file>
+    <file alias="icons/draw-highlighter-symbolic.svg" compressed="true" preprocess="xml-stripblanks">custom-icons/draw-highlighter-symbolic.svg</file>
     <file alias="icons/draw-line-symbolic.svg" compressed="true" preprocess="xml-stripblanks">custom-icons/draw-line-symbolic.svg</file>
     <file alias="icons/draw-pen-symbolic.svg" compressed="true" preprocess="xml-stripblanks">custom-icons/draw-pen-symbolic.svg</file>
     <file alias="icons/draw-rectangle-symbolic.svg" compressed="true" preprocess="xml-stripblanks">custom-icons/draw-rectangle-symbolic.svg</file>

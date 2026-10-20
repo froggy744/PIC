@@ -54,6 +54,61 @@
   opacity: 0.42;
 }
 
+.draw-tool-grid {
+  margin-bottom: 6px;
+}
+
+.draw-tool-grid button.draw-tool-button {
+  min-width: 40px;
+  min-height: 40px;
+  padding: 0;
+  color: @theme_fg_color;
+  background-color: transparent;
+  background-image: none;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  box-shadow: none;
+  transition: background-color 140ms ease, border-color 140ms ease;
+}
+
+.draw-tool-grid button.draw-tool-button:hover {
+  background-color: alpha(@theme_fg_color, 0.08);
+  border-color: alpha(@theme_fg_color, 0.1);
+}
+
+.draw-tool-grid button.draw-tool-button:checked,
+.draw-tool-grid button.draw-tool-button:checked:hover {
+  background-color: alpha(@accent_bg_color, 0.19);
+  border-color: alpha(@accent_bg_color, 0.38);
+  box-shadow: inset 0 0 0 1px alpha(@accent_bg_color, 0.16);
+}
+
+.draw-tool-grid button.draw-tool-button:focus-visible {
+  outline: 2px solid @accent_bg_color;
+  outline-offset: -2px;
+}
+
+.draw-adjustment-row {
+  min-height: 32px;
+  margin-bottom: 2px;
+}
+
+.draw-adjustment-row > label:first-child {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.draw-adjustment-row scale {
+  min-width: 0;
+  margin-top: -2px;
+}
+
+.draw-adjustment-value {
+  min-width: 42px;
+  color: alpha(@theme_fg_color, 0.72);
+  font-variant-numeric: tabular-nums;
+}
+
 .edit-mode-toolbar .edit-toolbar-actions button.edit-toolbar-icon-button {
   min-width: 36px;
   min-height: 36px;

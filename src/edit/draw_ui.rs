@@ -8,6 +8,7 @@ enum DrawTool {
     Arrow,
     Rectangle,
     Ellipse,
+    Highlighter,
     Eraser,
 }
 
@@ -26,13 +27,60 @@ struct DrawGesture {
 fn draw_tool_button(icon_name: &str, label: &str) -> gtk::ToggleButton {
     let button = gtk::ToggleButton::new();
     let icon = gtk::Image::from_icon_name(icon_name);
-    icon.set_pixel_size(18);
+    icon.set_pixel_size(22);
     button.set_child(Some(&icon));
+    button.set_size_request(40, 40);
     button.set_tooltip_text(Some(label));
     button.update_property(&[gtk::accessible::Property::Label(label)]);
     button.add_css_class("flat");
     button.add_css_class("draw-tool-button");
     button
+}
+
+fn draw_slider_row(
+    parent: &gtk::Box,
+    label: &str,
+    min: f64,
+    max: f64,
+    step: f64,
+    initial: f64,
+    percent: bool,
+) -> (gtk::Scale, gtk::Label) {
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    row.set_hexpand(true);
+    row.add_css_class("edit-adjustment-row");
+    row.add_css_class("draw-adjustment-row");
+    let title = gtk::Label::new(Some(label));
+    title.set_width_chars(10);
+    title.set_xalign(0.0);
+    let scale = gtk::Scale::with_range(gtk::Orientation::Horizontal, min, max, step);
+    scale.set_value(initial);
+    scale.set_draw_value(false);
+    scale.set_hexpand(true);
+    scale.set_tooltip_text(Some(label));
+    scale.add_css_class("edit-adjustment-scale");
+    let value = gtk::Label::new(None);
+    value.set_width_chars(5);
+    value.set_xalign(1.0);
+    value.add_css_class("edit-adjustment-value");
+    value.add_css_class("draw-adjustment-value");
+    let format = move |n: f64| {
+        if percent {
+            format!("{n:.0}%")
+        } else {
+            format!("{n:.0}")
+        }
+    };
+    value.set_text(&format(initial));
+    {
+        let value_label = value.clone();
+        scale.connect_value_changed(move |scale| value_label.set_text(&format(scale.value())));
+    }
+    row.append(&title);
+    row.append(&scale);
+    row.append(&value);
+    parent.append(&row);
+    (scale, value)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -53,33 +101,47 @@ fn build_draw_panel(
     let selected = Rc::new(Cell::new(None::<usize>));
     let selected_many = Rc::new(RefCell::new(Vec::<usize>::new()));
     let gesture = Rc::new(RefCell::new(DrawGesture::default()));
-    let tool_row = gtk::Box::new(gtk::Orientation::Horizontal, 2);
-    tool_row.add_css_class("linked");
-    let tool_row_second = gtk::Box::new(gtk::Orientation::Horizontal, 2);
-    tool_row_second.add_css_class("linked");
-    let select = draw_tool_button("draw-select-symbolic", "Select and move annotations");
+    let tool_grid = gtk::Grid::new();
+    tool_grid.set_halign(gtk::Align::Center);
+    tool_grid.set_column_homogeneous(true);
+    tool_grid.set_row_homogeneous(true);
+    tool_grid.set_column_spacing(4);
+    tool_grid.set_row_spacing(4);
+    tool_grid.add_css_class("draw-tool-grid");
+    let select = draw_tool_button("draw-select-symbolic", "Select");
     select.set_active(false);
-    let pen = draw_tool_button("draw-pen-symbolic", "Freehand pen");
+    let pen = draw_tool_button("draw-pen-symbolic", "Pen");
     pen.set_active(true);
-    let line = draw_tool_button("draw-line-symbolic", "Straight line");
+    let line = draw_tool_button("draw-line-symbolic", "Line");
     let arrow = draw_tool_button("draw-arrow-symbolic", "Arrow");
     let rect = draw_tool_button("draw-rectangle-symbolic", "Rectangle");
     let ellipse = draw_tool_button("draw-ellipse-symbolic", "Ellipse");
-    let eraser = draw_tool_button("draw-eraser-symbolic", "Erase an annotation or selection");
-    for button in [&pen, &line, &arrow, &rect, &ellipse, &eraser] {
+    let highlighter = draw_tool_button("draw-highlighter-symbolic", "Highlighter");
+    let eraser = draw_tool_button("draw-eraser-symbolic", "Eraser");
+    for button in [&pen, &line, &arrow, &rect, &ellipse, &highlighter, &eraser] {
         button.set_group(Some(&select));
     }
-    for b in [&select, &pen, &line, &arrow] {
-        tool_row.append(b);
+    for (index, button) in [
+        &select,
+        &pen,
+        &line,
+        &arrow,
+        &rect,
+        &ellipse,
+        &highlighter,
+        &eraser,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        tool_grid.attach(button, (index % 4) as i32, (index / 4) as i32, 1, 1);
     }
-    parent.append(&tool_row);
-    for b in [&rect, &ellipse, &eraser] {
-        tool_row_second.append(b);
-    }
-    parent.append(&tool_row_second);
+    parent.append(&tool_grid);
     let arrow_row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     let arrow_start = gtk::CheckButton::with_label("Start head");
     let arrow_end = gtk::CheckButton::with_label("End head");
+    arrow_start.set_tooltip_text(Some("Add an arrowhead at the start"));
+    arrow_end.set_tooltip_text(Some("Add an arrowhead at the end"));
     arrow_end.set_active(true);
     arrow_row.append(&arrow_start);
     arrow_row.append(&arrow_end);
@@ -140,30 +202,12 @@ fn build_draw_panel(
     colour_row.append(&colour_swatches);
     parent.append(&colour_row);
 
-    let width = gtk::Scale::with_range(gtk::Orientation::Horizontal, 1.0, 36.0, 1.0);
-    width.set_value(5.0);
-    width.set_draw_value(true);
-    width.set_hexpand(true);
-    width.set_tooltip_text(Some("Stroke thickness"));
-    parent.append(&gtk::Label::new(Some("Thickness")));
-    parent.append(&width);
-    let opacity = gtk::Scale::with_range(gtk::Orientation::Horizontal, 5.0, 100.0, 5.0);
-    opacity.set_value(100.0);
-    opacity.set_draw_value(true);
-    opacity.set_hexpand(true);
-    opacity.set_tooltip_text(Some("Stroke opacity"));
-    parent.append(&gtk::Label::new(Some("Opacity")));
-    parent.append(&opacity);
+    let (width, _width_value) = draw_slider_row(parent, "Thickness", 1.0, 36.0, 1.0, 5.0, false);
+    let (opacity, _opacity_value) =
+        draw_slider_row(parent, "Opacity", 5.0, 100.0, 5.0, 100.0, true);
     let delete = gtk::Button::with_label("Delete selected");
     delete.set_sensitive(false);
     parent.append(&delete);
-    let helper = gtk::Label::new(Some(
-        "Drag to draw. Select: click, Shift/Ctrl-click, or drag a marquee. Escape cancels.",
-    ));
-    helper.set_wrap(true);
-    helper.add_css_class("dim-label");
-    parent.append(&helper);
-
     for (b, tool) in [
         (&select, DrawTool::Select),
         (&pen, DrawTool::Pen),
@@ -171,6 +215,7 @@ fn build_draw_panel(
         (&arrow, DrawTool::Arrow),
         (&rect, DrawTool::Rectangle),
         (&ellipse, DrawTool::Ellipse),
+        (&highlighter, DrawTool::Highlighter),
         (&eraser, DrawTool::Eraser),
     ] {
         let tools = tools.clone();
@@ -403,14 +448,18 @@ fn build_draw_panel(
                 let (start_head, end_head) = arrowheads.get();
                 let preview = DrawAnnotation {
                     kind: tool_kind(tools.get()),
-                    points: if tools.get() == DrawTool::Pen {
+                    points: if matches!(tools.get(), DrawTool::Pen | DrawTool::Highlighter) {
                         state.points.clone()
                     } else {
                         vec![state.start, state.current]
                     },
                     color: color.get(),
                     width: (width.value() as f32 / 1000.).clamp(0.001, 0.04),
-                    opacity: (opacity.value() / 100.) as f32,
+                    opacity: if tools.get() == DrawTool::Highlighter {
+                        (opacity.value() / 100.).min(0.35) as f32
+                    } else {
+                        (opacity.value() / 100.) as f32
+                    },
                     arrow_start: start_head,
                     arrow_end: end_head,
                 };
@@ -614,7 +663,7 @@ fn build_draw_panel(
             let mut s = gesture.borrow_mut();
             s.current = (nx as f32, ny as f32);
             match tools.get() {
-                DrawTool::Pen => {
+                DrawTool::Pen | DrawTool::Highlighter => {
                     let p = s.current;
                     if s.points
                         .last()
@@ -701,7 +750,7 @@ fn build_draw_panel(
             let s = gesture.borrow().clone();
             let tool = tools.get();
             if is_drawing_tool(tool) {
-                let points = if tool == DrawTool::Pen {
+                let points = if matches!(tool, DrawTool::Pen | DrawTool::Highlighter) {
                     s.points.clone()
                 } else {
                     vec![s.start, s.current]
@@ -717,7 +766,11 @@ fn build_draw_panel(
                         points,
                         color: color.get(),
                         width: width_norm,
-                        opacity: alpha,
+                        opacity: if tool == DrawTool::Highlighter {
+                            alpha.min(0.35)
+                        } else {
+                            alpha
+                        },
                         arrow_start: tool == DrawTool::Arrow && arrow_start,
                         arrow_end: tool == DrawTool::Arrow && arrow_end,
                     };
@@ -818,6 +871,7 @@ fn tool_kind(tool: DrawTool) -> super::model::DrawKind {
         DrawTool::Arrow => Arrow,
         DrawTool::Rectangle => Rectangle,
         DrawTool::Ellipse => Ellipse,
+        DrawTool::Highlighter => Highlighter,
         _ => Pen,
     }
 }
@@ -833,7 +887,12 @@ fn cursor_for_tool(tool: DrawTool) -> &'static str {
 fn is_drawing_tool(tool: DrawTool) -> bool {
     matches!(
         tool,
-        DrawTool::Pen | DrawTool::Line | DrawTool::Arrow | DrawTool::Rectangle | DrawTool::Ellipse
+        DrawTool::Pen
+            | DrawTool::Line
+            | DrawTool::Arrow
+            | DrawTool::Rectangle
+            | DrawTool::Ellipse
+            | DrawTool::Highlighter
     )
 }
 

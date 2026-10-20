@@ -401,6 +401,44 @@
                 }
             }
         },
+        {
+            let parent: gtk::Window = window.clone().upcast();
+            let connection = connection.clone();
+            let filter = filter.clone();
+            let destination_click = destination_click.clone();
+            Rc::new(move || {
+                let dialog = adw::AlertDialog::new(
+                    Some("Clear History?"),
+                    Some("This removes History entries only. It does not remove photos, undo edits, or delete collage projects."),
+                );
+                dialog.add_response("cancel", "Cancel");
+                dialog.add_response("clear", "Clear History");
+                dialog.set_response_appearance("clear", adw::ResponseAppearance::Destructive);
+                dialog.set_default_response(Some("cancel"));
+                dialog.set_close_response("cancel");
+                let connection = connection.clone();
+                let filter = filter.clone();
+                let destination_click = destination_click.clone();
+                let error_parent: gtk::Widget = parent.clone().upcast();
+                dialog.choose(Some(&parent), None::<&gio::Cancellable>, move |response| {
+                    if response != "clear" {
+                        return;
+                    }
+                    match db::clear_edit_history(&connection.borrow()) {
+                        Ok(()) => {
+                            if filter.get() == sidebar::SidebarFilter::History {
+                                destination_click(sidebar::SidebarFilter::History);
+                            }
+                        }
+                        Err(error) => show_error(
+                            &error_parent,
+                            "Could not clear History",
+                            &error.to_string(),
+                        ),
+                    }
+                });
+            })
+        },
         create_album.clone(),
         import_folder.clone(),
         add_network_share.clone(),

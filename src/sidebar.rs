@@ -135,6 +135,7 @@ impl Default for SidebarState {
 
 const STATE_KEY: &str = "picasa-sidebar-state";
 const LIBRARY_LIST_KEY: &str = "picasa-sidebar-library-list";
+const HISTORY_CLEAR_CALLBACK_KEY: &str = "picasa-sidebar-history-clear-callback";
 const LIBRARY_HEADING_KEY: &str = "picasa-sidebar-library-heading";
 const LIBRARY_REVEALER_KEY: &str = "picasa-sidebar-library-revealer";
 const LIBRARY_INDICATOR_KEY: &str = "picasa-sidebar-library-indicator";
@@ -194,6 +195,7 @@ pub fn build(
     albums: &[Album],
     counts: SidebarCounts,
     on_filter: impl Fn(SidebarFilter) + 'static,
+    on_clear_history: Rc<dyn Fn()>,
     on_create_album: Rc<dyn Fn()>,
     on_import_folder: Rc<dyn Fn()>,
     on_add_share: Rc<dyn Fn()>,
@@ -219,6 +221,9 @@ pub fn build(
     // GtkScrolledWindow. The outer scroller itself never scrolls; only the
     // dedicated folder scroller below is allowed to scroll.
     let outer = gtk::ScrolledWindow::new();
+    unsafe {
+        outer.set_data(HISTORY_CLEAR_CALLBACK_KEY, on_clear_history.clone());
+    }
     outer.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Never);
     outer.set_hexpand(true);
     outer.set_vexpand(true);
@@ -246,7 +251,7 @@ pub fn build(
     root.append(&library_heading);
 
     let library_list = section_list();
-    populate_library(&library_list, counts, &on_unavailable);
+    populate_library(&library_list, counts, &on_unavailable, &on_clear_history);
     connect_filter_list(&library_list, on_filter.clone(), filter_syncing.clone());
     let library_revealer = gtk::Revealer::new();
     library_revealer.set_transition_type(gtk::RevealerTransitionType::SlideDown);
@@ -1301,7 +1306,12 @@ pub fn refresh(
     let folder_scroll_value = folder_scroll_value(scrolled);
 
     clear_list(&library_list);
-    populate_library(&library_list, counts, &on_unavailable);
+    populate_library(
+        &library_list,
+        counts,
+        &on_unavailable,
+        &stored_history_clear_callback(scrolled),
+    );
 
     clear_list(&album_list);
     populate_albums(&album_list, albums, &on_delete_album);
@@ -1365,7 +1375,12 @@ pub fn refresh_library_counts(
     };
 
     clear_list(&library_list);
-    populate_library(&library_list, counts, on_unavailable);
+    populate_library(
+        &library_list,
+        counts,
+        on_unavailable,
+        &stored_history_clear_callback(scrolled),
+    );
     apply_library_visibility(scrolled, sidebar_visibility(scrolled));
 
     if let Some(filter) = current_filter(scrolled) {
@@ -2020,6 +2035,15 @@ where
     }
 }
 
+fn stored_history_clear_callback(scrolled: &gtk::ScrolledWindow) -> Rc<dyn Fn()> {
+    unsafe {
+        scrolled
+            .data::<Rc<dyn Fn()>>(HISTORY_CLEAR_CALLBACK_KEY)
+            .map(|callback| callback.as_ref().clone())
+            .unwrap_or_else(|| Rc::new(|| {}))
+    }
+}
+
 fn select_matching_row(scrolled: &gtk::ScrolledWindow, list_key: &str, filter: SidebarFilter) {
     let Some(list) = stored_widget::<gtk::ListBox>(scrolled, list_key) else {
         return;
@@ -2132,7 +2156,12 @@ fn apply_library_visibility(scrolled: &gtk::ScrolledWindow, visibility: SidebarV
     }
 }
 
-fn populate_library(list: &gtk::ListBox, counts: SidebarCounts, on_unavailable: &Rc<dyn Fn()>) {
+fn populate_library(
+    list: &gtk::ListBox,
+    counts: SidebarCounts,
+    on_unavailable: &Rc<dyn Fn()>,
+    on_clear_history: &Rc<dyn Fn()>,
+) {
     append_filter(
         list,
         "image-x-generic-symbolic",
@@ -2163,7 +2192,7 @@ fn populate_library(list: &gtk::ListBox, counts: SidebarCounts, on_unavailable: 
         false,
         on_unavailable,
     );
-    append_filter(
+    let history = append_filter(
         list,
         "document-open-recent-symbolic",
         "History",
@@ -2173,6 +2202,34 @@ fn populate_library(list: &gtk::ListBox, counts: SidebarCounts, on_unavailable: 
         false,
         on_unavailable,
     );
+    attach_history_context_menu(&history, on_clear_history.clone());
+}
+
+fn attach_history_context_menu(row: &gtk::ListBoxRow, on_clear_history: Rc<dyn Fn()>) {
+    let row_for_menu = row.clone();
+    let right_click = gtk::GestureClick::new();
+    right_click.set_button(3);
+    right_click.connect_pressed(move |gesture, _, x, y| {
+        let popover = gtk::Popover::new();
+        popover.set_has_arrow(false);
+        popover.add_css_class("sidebar-section-tooltip-menu");
+        popover.set_parent(&row_for_menu);
+        let clear = gtk::Button::with_label("Clear History");
+        clear.add_css_class("flat");
+        clear.add_css_class("destructive-action");
+        clear.add_css_class("sidebar-section-tooltip-item");
+        let popover_for_clear = popover.clone();
+        let clear_history = on_clear_history.clone();
+        clear.connect_clicked(move |_| {
+            popover_for_clear.popdown();
+            clear_history();
+        });
+        popover.set_child(Some(&clear));
+        popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
+        popover.popup();
+        gesture.set_state(gtk::EventSequenceState::Claimed);
+    });
+    row.add_controller(right_click);
 }
 
 fn list_natural_height_for_rows(list: &gtk::ListBox, max_rows: usize) -> i32 {
@@ -3816,6 +3873,7 @@ mod tests {
                 favorites: 2,
                 recently_added: 10,
             },
+            &no_args,
             &no_args,
         );
         let all_row = row_for_filter(&list, SidebarFilter::All).unwrap();

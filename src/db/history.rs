@@ -73,6 +73,16 @@ pub fn browse_history_photos(connection: &Connection) -> Result<Vec<Photo>> {
         history_photos_filtered(connection, -1, &filters)
     }
 }
+
+/// Remove the edit timeline while preserving photos, edit recipes, and collage projects.
+pub fn clear_edit_history(connection: &Connection) -> Result<()> {
+    let transaction = connection.unchecked_transaction()?;
+    transaction.execute("DELETE FROM recently_edited", [])?;
+    transaction.execute("DELETE FROM editing_events", [])?;
+    transaction.commit()?;
+    Ok(())
+}
+
 fn history_photos_filtered(
     connection: &Connection,
     limit: i64,

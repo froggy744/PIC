@@ -47,6 +47,9 @@ impl Lightbox {
         let one_to_one_active = Rc::new(Cell::new(false));
         let native_texture: Rc<RefCell<Option<NativeTextureCache>>> = Rc::new(RefCell::new(None));
         let native_quality_pending = Rc::new(Cell::new(false));
+        let zoom_render_debounce = Rc::new(Cell::new(0));
+        let zoom_render_lease: Rc<RefCell<Option<Arc<ViewerRequestLease>>>> =
+            Rc::new(RefCell::new(None));
         let display_texture_cache: DisplayTextureCache = Rc::new(RefCell::new(VecDeque::new()));
 
         // Native-size 1:1 panning. Keep the drag gesture on the picture itself:
@@ -244,6 +247,7 @@ impl Lightbox {
             let closing = close_in_progress.clone();
             let load_generation = load_generation.clone();
             let decode_cancel = decode_cancel.clone();
+            let zoom_render_lease = zoom_render_lease.clone();
             Rc::new(move || {
                 let Some(root) = weak_root.upgrade() else {
                     return;
@@ -258,6 +262,9 @@ impl Lightbox {
                 cancel_lightbox_prefetch();
                 load_generation.set(load_generation.get().wrapping_add(1));
                 if let Some(active) = decode_cancel.borrow_mut().take() {
+                    active.cancel();
+                }
+                if let Some(active) = zoom_render_lease.borrow_mut().take() {
                     active.cancel();
                 }
                 // Prepare the selected grid tile while the viewer still covers it.
@@ -366,6 +373,7 @@ impl Lightbox {
         let close_generation_for_visibility = close_generation.clone();
         let close_in_progress_for_visibility = close_in_progress.clone();
         let offline_for_visibility = offline.clone();
+        let zoom_render_lease_for_visibility = zoom_render_lease.clone();
         root.connect_visible_notify(move |root| {
             if !root.is_visible() {
                 // The viewer now owns its context menu overlay. Dismiss it
@@ -381,6 +389,9 @@ impl Lightbox {
                 root.set_opacity(1.0);
                 offline_for_visibility.disconnect();
                 offline_for_visibility.online();
+                if let Some(active) = zoom_render_lease_for_visibility.borrow_mut().take() {
+                    active.cancel();
+                }
                 let mut child = root.first_child();
                 while let Some(widget) = child {
                     child = widget.next_sibling();
@@ -636,6 +647,8 @@ impl Lightbox {
         let applied_for_scroll = applied_native_scale.clone();
         let display_texture_cache_for_scroll = display_texture_cache.clone();
         let native_quality_pending_for_scroll = native_quality_pending.clone();
+        let zoom_render_debounce_for_scroll = zoom_render_debounce.clone();
+        let zoom_render_lease_for_scroll = zoom_render_lease.clone();
         let one_to_one_for_scroll = one_to_one_active.clone();
         let one_to_one_sync_for_scroll = one_to_one_sync.clone();
         let zoom_sync_for_scroll = zoom_sync.clone();
@@ -657,6 +670,7 @@ impl Lightbox {
             let viewport = picture_viewport.clone();
             let native_texture = native_texture.clone();
             let native_quality_pending = native_quality_pending.clone();
+            let zoom_render_lease = zoom_render_lease.clone();
             let display_cache = display_texture_cache.clone();
             let one_to_one = one_to_one_active.clone();
             let key_navigation_ready = key_navigation_ready.clone();
@@ -693,6 +707,9 @@ impl Lightbox {
                 index.set(next);
                 set_zoom_state(&zoom, &applied_native_scale, 0.0);
                 one_to_one.set(false);
+                if let Some(active) = zoom_render_lease.borrow_mut().take() {
+                    active.cancel();
+                }
                 native_texture.borrow_mut().take();
                 // A pending native-quality request belongs to the photo that
                 // just left the viewer. The completion path checks identity
@@ -805,6 +822,9 @@ impl Lightbox {
                 if next_scale <= fit_scale * 1.001 {
                     zoom_for_scroll.set(0.0);
                     applied_for_scroll.set(0.0);
+                    if let Some(active) = zoom_render_lease_for_scroll.borrow_mut().take() {
+                        active.cancel();
+                    }
                     if let Some(photo) = photos_for_scroll.borrow().get(index_for_scroll.get()) {
                         restore_fit_texture(
                             &picture_for_scroll,
@@ -841,6 +861,8 @@ impl Lightbox {
                         one_to_one_for_scroll.clone(),
                         display_texture_cache_for_scroll.clone(),
                         native_quality_pending_for_scroll.clone(),
+                        zoom_render_debounce_for_scroll.clone(),
+                        zoom_render_lease_for_scroll.clone(),
                         &photo,
                     );
                 }
@@ -1162,6 +1184,8 @@ impl Lightbox {
             one_to_one_active,
             native_texture,
             native_quality_pending,
+            zoom_render_debounce,
+            zoom_render_lease,
             display_texture_cache,
             load_generation,
             decode_cancel,
@@ -1273,6 +1297,8 @@ impl Lightbox {
             self.one_to_one_active.clone(),
             self.display_texture_cache.clone(),
             self.native_quality_pending.clone(),
+            self.zoom_render_debounce.clone(),
+            self.zoom_render_lease.clone(),
             photo,
         );
     }
@@ -1317,6 +1343,9 @@ impl Lightbox {
 
         if native_scale <= 0.0 || native_scale <= fit_scale * 1.001 {
             self.set_zoom(0.0);
+            if let Some(active) = self.zoom_render_lease.borrow_mut().take() {
+                active.cancel();
+            }
             restore_fit_texture(
                 &self.picture,
                 &photo,
@@ -1461,6 +1490,11 @@ impl Lightbox {
         }
 
         self.one_to_one_active.set(enabled);
+        if enabled {
+            if let Some(active) = self.zoom_render_lease.borrow_mut().take() {
+                active.cancel();
+            }
+        }
         if let Some(handler) = self.one_to_one_sync.borrow().as_ref() {
             handler(enabled);
         }
@@ -1615,6 +1649,9 @@ impl Lightbox {
         }
 
         self.index.set(selected.min(len - 1));
+        if let Some(active) = self.zoom_render_lease.borrow_mut().take() {
+            active.cancel();
+        }
         self.set_zoom(0.0);
         self.zoom_before_one_to_one.set(0.0);
         self.one_to_one_active.set(false);
@@ -2163,6 +2200,9 @@ impl Lightbox {
 
         self.key_navigation_ready.set(false);
         self.index.set(next);
+        if let Some(active) = self.zoom_render_lease.borrow_mut().take() {
+            active.cancel();
+        }
         self.set_zoom(0.0);
         self.one_to_one_active.set(false);
         self.native_texture.borrow_mut().take();
@@ -2314,6 +2354,9 @@ impl Lightbox {
         self.load_generation
             .set(self.load_generation.get().wrapping_add(1));
         if let Some(active) = self.decode_cancel.borrow_mut().take() {
+            active.cancel();
+        }
+        if let Some(active) = self.zoom_render_lease.borrow_mut().take() {
             active.cancel();
         }
         self.one_to_one_active.set(false);

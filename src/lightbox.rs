@@ -400,6 +400,10 @@ pub struct Lightbox {
     // starts one native-quality decode and shares it with every subsequent
     // slider event instead of spawning duplicate full-resolution work.
     native_quality_pending: Rc<Cell<bool>>,
+    // Invalidate zoom-render timers as the requested size changes so only
+    // the most recent size starts an expensive render after input settles.
+    zoom_render_debounce: Rc<Cell<u64>>,
+    zoom_render_lease: Rc<RefCell<Option<Arc<ViewerRequestLease>>>>,
     display_texture_cache: DisplayTextureCache,
     load_generation: Rc<Cell<u64>>,
     decode_cancel: Rc<RefCell<Option<Arc<ViewerRequestLease>>>>,

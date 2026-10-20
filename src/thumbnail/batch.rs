@@ -167,6 +167,10 @@ mod viewer_tests {
         let (scale, label) = native_scale_for_dimensions(6016, 4016, 698, 466);
         assert_eq!(label, "1/8");
         assert_eq!((scale.scale(6016), scale.scale(4016)), (752, 502));
+
+        let (scale, label) = native_scale_for_dimensions(6016, 4016, 3114, 2079);
+        assert_eq!(label, "5/8");
+        assert_eq!((scale.scale(6016), scale.scale(4016)), (3760, 2510));
     }
 
     #[test]

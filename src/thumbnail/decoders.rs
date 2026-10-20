@@ -87,6 +87,57 @@ fn decode_jpeg_turbo_with_target(
     })
 }
 
+fn decode_jpeg_turbo_rgba_with_target(
+    bytes: &[u8],
+    target_width: u32,
+    target_height: u32,
+) -> Result<image::RgbaImage> {
+    let mut decompressor = Decompressor::new()
+        .map_err(|error| anyhow::anyhow!("TurboJPEG initialization failed: {error}"))?;
+    let header = decompressor
+        .read_header(bytes)
+        .map_err(|error| anyhow::anyhow!("TurboJPEG header decode failed: {error}"))?;
+    if header.is_lossless {
+        anyhow::bail!("lossless JPEG is not supported by scaled TurboJPEG decode");
+    }
+    let (scale, scale_label) =
+        native_scale_for_dimensions(header.width, header.height, target_width, target_height);
+    decompressor
+        .set_scaling_factor(scale)
+        .map_err(|error| anyhow::anyhow!("TurboJPEG scale selection failed: {error}"))?;
+    let scaled = header.scaled(scale);
+    let mut pixels = vec![0u8; scaled.width * scaled.height * 4];
+    decompressor
+        .decompress(
+            bytes,
+            TurboImage {
+                pixels: pixels.as_mut_slice(),
+                width: scaled.width,
+                pitch: scaled.width * 4,
+                height: scaled.height,
+                format: PixelFormat::RGBA,
+            },
+        )
+        .map_err(|error| anyhow::anyhow!("TurboJPEG pixel decode failed: {error}"))?;
+    let image = image::RgbaImage::from_raw(
+        scaled.width as u32,
+        scaled.height as u32,
+        pixels,
+    )
+    .context("TurboJPEG returned an invalid RGBA buffer")?;
+    if std::env::var_os("PICASA_TRACE").is_some() {
+        eprintln!(
+            "PIC_DECODE turbojpeg source={}x{} decoded={}x{} scale={} format=RGBA",
+            header.width,
+            header.height,
+            scaled.width,
+            scaled.height,
+            scale_label,
+        );
+    }
+    Ok(image)
+}
+
 fn decode_jpeg_turbo_with_max(bytes: &[u8], max_size: u32) -> Result<DecodedThumbnailSource> {
     decode_jpeg_turbo_with_scale(bytes, |header| {
         native_scale_for(header.width.max(header.height), max_size)
@@ -153,7 +204,11 @@ fn native_scale_for_dimensions(
     [
         (ScalingFactor::ONE_EIGHTH, "1/8"),
         (ScalingFactor::ONE_QUARTER, "1/4"),
+        (ScalingFactor::new(3, 8), "3/8"),
         (ScalingFactor::ONE_HALF, "1/2"),
+        (ScalingFactor::new(5, 8), "5/8"),
+        (ScalingFactor::new(3, 4), "3/4"),
+        (ScalingFactor::new(7, 8), "7/8"),
         (ScalingFactor::ONE, "1/1"),
     ]
     .into_iter()
@@ -166,15 +221,19 @@ fn native_scale_for_dimensions(
 }
 
 fn native_scale_for(longest_dimension: usize, target: u32) -> (ScalingFactor, &'static str) {
-    if longest_dimension / 8 >= target as usize {
-        (ScalingFactor::ONE_EIGHTH, "1/8")
-    } else if longest_dimension / 4 >= target as usize {
-        (ScalingFactor::ONE_QUARTER, "1/4")
-    } else if longest_dimension / 2 >= target as usize {
-        (ScalingFactor::ONE_HALF, "1/2")
-    } else {
-        (ScalingFactor::ONE, "1/1")
-    }
+    [
+        (ScalingFactor::ONE_EIGHTH, "1/8"),
+        (ScalingFactor::ONE_QUARTER, "1/4"),
+        (ScalingFactor::new(3, 8), "3/8"),
+        (ScalingFactor::ONE_HALF, "1/2"),
+        (ScalingFactor::new(5, 8), "5/8"),
+        (ScalingFactor::new(3, 4), "3/4"),
+        (ScalingFactor::new(7, 8), "7/8"),
+        (ScalingFactor::ONE, "1/1"),
+    ]
+    .into_iter()
+    .find(|(factor, _)| factor.scale(longest_dimension) >= target as usize)
+    .unwrap_or((ScalingFactor::ONE, "1/1"))
 }
 
 

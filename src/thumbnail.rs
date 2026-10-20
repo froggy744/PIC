@@ -7,7 +7,9 @@ use std::sync::{Arc, Condvar, Mutex, OnceLock, RwLock, RwLockReadGuard, RwLockWr
 
 use anyhow::{Context, Result};
 use fast_image_resize::{
-    images::Image, pixels::PixelType, FilterType, ResizeAlg, ResizeOptions, Resizer,
+    images::{Image, ImageRef},
+    pixels::PixelType,
+    FilterType, ResizeAlg, ResizeOptions, Resizer,
 };
 use image::codecs::jpeg::JpegEncoder;
 use image::ImageEncoder;

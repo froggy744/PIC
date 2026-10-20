@@ -103,6 +103,10 @@ fn jpeg_icc_profile(bytes: &[u8]) -> Result<Option<EmbeddedIcc>> {
     }))
 }
 
+pub(super) fn jpeg_has_icc_profile(bytes: &[u8]) -> bool {
+    jpeg_icc_profile(bytes).map_or(true, |profile| profile.is_some())
+}
+
 /// Bound embedded ICC header/tag declarations before passing them to LCMS.
 /// LCMS validates the tag contents and supported profile/transform types.
 fn validate_icc(icc: &[u8]) -> Result<()> {

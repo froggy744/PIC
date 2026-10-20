@@ -1,6 +1,8 @@
 // Wheel and slider zoom share a render sized for the current presentation.
 // Applying scale-sensitive edits at the screen resolution keeps sharpen and
 // grain consistent as the user zooms; the native source is reserved for 1:1.
+const ZOOM_RENDER_DEBOUNCE_MS: u64 = 60;
+
 fn ensure_zoom_texture(
     picture: &gtk::Picture,
     root: &gtk::Overlay,
@@ -10,6 +12,155 @@ fn ensure_zoom_texture(
     one_to_one: Rc<Cell<bool>>,
     display_texture_cache: DisplayTextureCache,
     pending: Rc<Cell<bool>>,
+    debounce: Rc<Cell<u64>>,
+    active_lease: Rc<RefCell<Option<Arc<ViewerRequestLease>>>>,
+    photo: &PhotoObject,
+) {
+    if !root.is_visible() || zoom.get() <= 0.0 || one_to_one.get() {
+        return;
+    }
+
+    let path = photo.path();
+    let rotation = photo.rotation();
+    let edit_recipe = photo.edit_recipe();
+    let (target_width, target_height) =
+        viewer_zoom_decode_target(root, rotation, zoom.get());
+    let desired_key = ViewerRequestKey {
+        path: path.clone(),
+        mtime: photo.mtime(),
+        size_bytes: photo.size_bytes(),
+        rotation,
+        edit_recipe: edit_recipe.clone(),
+        target_width,
+        target_height,
+    };
+    let cancel_active = active_lease
+        .borrow()
+        .as_ref()
+        .is_some_and(|active| active.key != desired_key);
+    if cancel_active {
+        if let Some(active) = active_lease.borrow_mut().take() {
+            viewer_trace(format!(
+                "request_cancel lane=zoom-render reason=target_changed uri={}",
+                viewer_trace_uri(&active.key.path),
+            ));
+            active.cancel();
+        }
+    }
+    let cache_lookup_started = std::time::Instant::now();
+    let cached_texture = display_texture_cache_lookup(
+        &display_texture_cache,
+        &path,
+        rotation,
+        &edit_recipe,
+        target_width,
+        target_height,
+    );
+    viewer_trace(format!(
+        "cache_lookup lane=zoom-render result={} elapsed_us={} target={}x{} uri={}",
+        if cached_texture.is_some() { "hit" } else { "miss" },
+        cache_lookup_started.elapsed().as_micros(),
+        target_width,
+        target_height,
+        viewer_trace_uri(&path),
+    ));
+    if let Some(texture) = cached_texture {
+        let request = picture.size_request();
+        let apply_started = std::time::Instant::now();
+        picture.set_paintable(Some(&texture));
+        if picture.size_request() != request {
+            picture.set_size_request(request.0, request.1);
+        }
+        picture.queue_draw();
+        viewer_trace(format!(
+            "zoom_texture_apply source=cache apply_ms={:.3} uri={} texture={}x{} request={:?}",
+            apply_started.elapsed().as_secs_f64() * 1000.0,
+            viewer_trace_uri(&path),
+            texture.width(),
+            texture.height(),
+            request,
+        ));
+        return;
+    }
+    if !photo.original_available() {
+        return;
+    }
+
+    let generation = debounce.get().wrapping_add(1);
+    debounce.set(generation);
+    viewer_trace(format!(
+        "request_debounce lane=zoom-render delay_ms={} target={}x{} uri={}",
+        ZOOM_RENDER_DEBOUNCE_MS,
+        target_width,
+        target_height,
+        viewer_trace_uri(&path),
+    ));
+
+    let picture = picture.clone();
+    let root = root.clone();
+    let photos_for_timer = photos.clone();
+    let index_for_timer = index.clone();
+    let zoom_for_timer = zoom.clone();
+    let one_to_one_for_timer = one_to_one.clone();
+    let cache_for_timer = display_texture_cache.clone();
+    let pending_for_timer = pending.clone();
+    let debounce_for_timer = debounce.clone();
+    let active_lease_for_timer = active_lease.clone();
+    let expected_path = path.clone();
+    let expected_rotation = rotation;
+    let expected_recipe = edit_recipe.clone();
+
+    glib::timeout_add_local_once(
+        std::time::Duration::from_millis(ZOOM_RENDER_DEBOUNCE_MS),
+        move || {
+            if debounce_for_timer.get() != generation
+                || !root.is_visible()
+                || zoom_for_timer.get() <= 0.0
+                || one_to_one_for_timer.get()
+            {
+                return;
+            }
+            let current_photo = photos_for_timer
+                .borrow()
+                .get(index_for_timer.get())
+                .cloned();
+            let Some(current_photo) = current_photo else {
+                return;
+            };
+            if current_photo.path() != expected_path
+                || current_photo.rotation() != expected_rotation
+                || current_photo.edit_recipe() != expected_recipe
+            {
+                return;
+            }
+            start_zoom_texture(
+                &picture,
+                &root,
+                photos_for_timer,
+                index_for_timer,
+                zoom_for_timer,
+                one_to_one_for_timer,
+                cache_for_timer,
+                pending_for_timer,
+                debounce_for_timer,
+                active_lease_for_timer,
+                &current_photo,
+            );
+        },
+    );
+}
+
+fn start_zoom_texture(
+    picture: &gtk::Picture,
+    root: &gtk::Overlay,
+    photos: Rc<RefCell<Vec<PhotoObject>>>,
+    index: Rc<Cell<usize>>,
+    zoom: Rc<Cell<f64>>,
+    one_to_one: Rc<Cell<bool>>,
+    display_texture_cache: DisplayTextureCache,
+    pending: Rc<Cell<bool>>,
+    debounce: Rc<Cell<u64>>,
+    active_lease: Rc<RefCell<Option<Arc<ViewerRequestLease>>>>,
     photo: &PhotoObject,
 ) {
     let path = photo.path();
@@ -92,6 +243,13 @@ fn ensure_zoom_texture(
     if matches!(claim, ViewerRequestClaim::New) {
         start_viewer_request(key, request.clone());
     }
+    if let Some(previous) = active_lease.borrow_mut().replace(lease.clone()) {
+        if previous.key != lease.key {
+            previous.cancel();
+        } else {
+            previous.release();
+        }
+    }
 
     let picture = picture.clone();
     let root = root.clone();
@@ -101,6 +259,8 @@ fn ensure_zoom_texture(
     let one_to_one = one_to_one.clone();
     let display_texture_cache = display_texture_cache.clone();
     let pending = pending.clone();
+    let debounce = debounce.clone();
+    let active_lease = active_lease.clone();
     let expected_path = path.clone();
     let expected_rotation = rotation;
     let expected_recipe = edit_recipe.clone();
@@ -115,8 +275,34 @@ fn ensure_zoom_texture(
         ));
         pending.set(false);
 
+        let is_active_lease = active_lease
+            .borrow()
+            .as_ref()
+            .is_some_and(|active| Arc::ptr_eq(active, &lease));
+        if is_active_lease {
+            active_lease.borrow_mut().take();
+        }
+
         if lease.cancelled() || !root.is_visible() {
             lease.release();
+            if root.is_visible() && zoom.get() > 0.0 && !one_to_one.get() {
+                let current_photo = photos.borrow().get(index.get()).cloned();
+                if let Some(current_photo) = current_photo {
+                    ensure_zoom_texture(
+                        &picture,
+                        &root,
+                        photos.clone(),
+                        index.clone(),
+                        zoom.clone(),
+                        one_to_one.clone(),
+                        display_texture_cache.clone(),
+                        pending.clone(),
+                        debounce.clone(),
+                        active_lease.clone(),
+                        &current_photo,
+                    );
+                }
+            }
             return;
         }
 
@@ -190,7 +376,7 @@ fn ensure_zoom_texture(
                 let current_photo = photos.borrow().get(index.get()).cloned();
                 if let Some(current_photo) = current_photo {
                     lease.release();
-                    ensure_zoom_texture(
+                    start_zoom_texture(
                         &picture,
                         &root,
                         photos.clone(),
@@ -199,6 +385,8 @@ fn ensure_zoom_texture(
                         one_to_one.clone(),
                         display_texture_cache.clone(),
                         pending.clone(),
+                        debounce.clone(),
+                        active_lease.clone(),
                         &current_photo,
                     );
                     return;
@@ -791,14 +979,18 @@ fn start_viewer_request(key: ViewerRequestKey, request: Arc<ViewerRequest>) {
                 recipe.text_layers.len(),
             ));
             let base_decode_started = std::time::Instant::now();
+            let cancelled = || !request_for_worker.has_consumers();
             let result = crate::thumbnail::decode_for_viewer_with_cancel(
                 &worker_key.path,
                 worker_key.target_width,
                 worker_key.target_height,
                 Some(&read_context),
-                || !request_for_worker.has_consumers(),
+                &cancelled,
             )
-            .map(|image| {
+            .and_then(|image| {
+                if cancelled() {
+                    anyhow::bail!("viewer request cancelled after base decode");
+                }
                 viewer_trace(format!(
                     "stage=base_decode elapsed_ms={:.3} size={}x{} uri={}",
                     base_decode_started.elapsed().as_secs_f64() * 1000.0,
@@ -808,6 +1000,9 @@ fn start_viewer_request(key: ViewerRequestKey, request: Arc<ViewerRequest>) {
                 ));
                 let rotation_started = std::time::Instant::now();
                 let image = rotate_image(image, worker_key.rotation);
+                if cancelled() {
+                    anyhow::bail!("viewer request cancelled after rotation");
+                }
                 viewer_trace(format!(
                     "stage=library_rotation elapsed_ms={:.3} size={}x{} rotation={} uri={}",
                     rotation_started.elapsed().as_secs_f64() * 1000.0,
@@ -818,6 +1013,9 @@ fn start_viewer_request(key: ViewerRequestKey, request: Arc<ViewerRequest>) {
                 ));
                 let geometry_started = std::time::Instant::now();
                 let image = crate::edit::render::apply_geometry(image, &recipe);
+                if cancelled() {
+                    anyhow::bail!("viewer request cancelled after geometry");
+                }
                 viewer_trace(format!(
                     "stage=geometry elapsed_ms={:.3} size={}x{} uri={}",
                     geometry_started.elapsed().as_secs_f64() * 1000.0,
@@ -826,7 +1024,15 @@ fn start_viewer_request(key: ViewerRequestKey, request: Arc<ViewerRequest>) {
                     viewer_trace_uri(&worker_key.path),
                 ));
                 let tone_started = std::time::Instant::now();
-                let image = crate::edit::render::apply_tone(image, &recipe);
+                let image = crate::edit::render::apply_tone_with_cancel(
+                    image,
+                    &recipe,
+                    &cancelled,
+                )
+                .ok_or_else(|| anyhow::anyhow!("viewer request cancelled during tone effects"))?;
+                if cancelled() {
+                    anyhow::bail!("viewer request cancelled after tone effects");
+                }
                 viewer_trace(format!(
                     "stage=tone elapsed_ms={:.3} size={}x{} uri={}",
                     tone_started.elapsed().as_secs_f64() * 1000.0,
@@ -836,6 +1042,9 @@ fn start_viewer_request(key: ViewerRequestKey, request: Arc<ViewerRequest>) {
                 ));
                 let overlay_started = std::time::Instant::now();
                 let image = crate::edit::overlays::composite_overlays(image, &recipe);
+                if cancelled() {
+                    anyhow::bail!("viewer request cancelled after overlays");
+                }
                 viewer_trace(format!(
                     "stage=overlays elapsed_ms={:.3} size={}x{} uri={}",
                     overlay_started.elapsed().as_secs_f64() * 1000.0,
@@ -855,11 +1064,11 @@ fn start_viewer_request(key: ViewerRequestKey, request: Arc<ViewerRequest>) {
                     height,
                     viewer_trace_uri(&worker_key.path),
                 ));
-                Arc::new(ViewerDecodeResult {
+                Ok(Arc::new(ViewerDecodeResult {
                     width,
                     height,
                     pixels,
-                })
+                }))
             })
             .map_err(|error| Arc::from(error.to_string()));
             viewer_trace(format!(

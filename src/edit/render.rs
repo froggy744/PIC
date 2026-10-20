@@ -258,7 +258,22 @@ fn blend_filter_amount(image: &mut RgbaImage, original: &RgbaImage, amount: f32)
         });
 }
 
-pub(crate) fn apply_tone(mut image: RgbaImage, recipe: &EditRecipe) -> RgbaImage {
+pub(crate) fn apply_tone(image: RgbaImage, recipe: &EditRecipe) -> RgbaImage {
+    apply_tone_with_cancel(image, recipe, || false)
+        .expect("tone rendering with a non-cancelled request always completes")
+}
+
+pub(crate) fn apply_tone_with_cancel<F>(
+    mut image: RgbaImage,
+    recipe: &EditRecipe,
+    cancelled: F,
+) -> Option<RgbaImage>
+where
+    F: Fn() -> bool,
+{
+    if cancelled() {
+        return None;
+    }
     let tone_started = std::time::Instant::now();
     // Keep the unedited image as-is. Besides avoiding a full pixel loop for
     // the common zero-adjustment state, this preserves every decoded detail
@@ -279,7 +294,7 @@ pub(crate) fn apply_tone(mut image: RgbaImage, recipe: &EditRecipe) -> RgbaImage
         && recipe.sharpen == 0.0
         && recipe.grain == 0.0
     {
-        return image;
+        return Some(image);
     }
     let filter_amount = recipe.filter_amount.clamp(0.0, 1.0);
     let filter_started = std::time::Instant::now();
@@ -303,6 +318,9 @@ pub(crate) fn apply_tone(mut image: RgbaImage, recipe: &EditRecipe) -> RgbaImage
             filter_amount,
         );
     }
+    if cancelled() {
+        return None;
+    }
 
     let auto_started = std::time::Instant::now();
     if recipe.auto_color {
@@ -320,6 +338,9 @@ pub(crate) fn apply_tone(mut image: RgbaImage, recipe: &EditRecipe) -> RgbaImage
             recipe.auto_color,
             recipe.auto_contrast,
         );
+    }
+    if cancelled() {
+        return None;
     }
 
     let exposure = 2.0_f32.powf(recipe.exposure);
@@ -407,6 +428,9 @@ pub(crate) fn apply_tone(mut image: RgbaImage, recipe: &EditRecipe) -> RgbaImage
             tone_map_started.elapsed().as_secs_f64() * 1000.0,
         );
     }
+    if cancelled() {
+        return None;
+    }
 
     let clarity_started = std::time::Instant::now();
     if recipe.clarity.abs() > 0.001 && image.width() > 2 && image.height() > 2 {
@@ -422,6 +446,9 @@ pub(crate) fn apply_tone(mut image: RgbaImage, recipe: &EditRecipe) -> RgbaImage
             recipe.clarity.abs() > 0.001,
         );
     }
+    if cancelled() {
+        return None;
+    }
 
     if recipe.sharpen > 0.001 && image.width() > 2 && image.height() > 2 {
         let sharpen_started = std::time::Instant::now();
@@ -435,6 +462,9 @@ pub(crate) fn apply_tone(mut image: RgbaImage, recipe: &EditRecipe) -> RgbaImage
                 recipe.sharpen,
             );
         }
+    }
+    if cancelled() {
+        return None;
     }
     let grain_started = std::time::Instant::now();
     if recipe.grain > 0.001 {
@@ -456,7 +486,10 @@ pub(crate) fn apply_tone(mut image: RgbaImage, recipe: &EditRecipe) -> RgbaImage
             tone_started.elapsed().as_secs_f64() * 1000.0,
         );
     }
-    image
+    if cancelled() {
+        return None;
+    }
+    Some(image)
 }
 
 /// Smooth transition between tonal regions (no abrupt masks or banding).

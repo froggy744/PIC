@@ -6,6 +6,20 @@ struct DecodedThumbnailSource {
 }
 
 static VIEWER_ORIENTATION_CACHE: OnceLock<Mutex<HashMap<(PathBuf, u128), u16>>> = OnceLock::new();
+const VIEWER_NEF_SOURCE_CACHE_BYTES: usize = 128 * 1024 * 1024;
+
+struct ViewerNefSourceCacheEntry {
+    path: PathBuf,
+    modified_ns: u128,
+    file_size: u64,
+    source_width: u32,
+    source_height: u32,
+    image: Arc<DynamicImage>,
+    bytes: usize,
+}
+
+static VIEWER_NEF_SOURCE_CACHE: OnceLock<Mutex<VecDeque<ViewerNefSourceCacheEntry>>> =
+    OnceLock::new();
 #[cfg(target_os = "linux")]
 static REMOTE_JPEG_ORIENTATION_CACHE: OnceLock<Mutex<HashMap<(String, i64, i64), u16>>> =
     OnceLock::new();
@@ -44,6 +58,118 @@ fn is_nikon_raw(path: &str) -> bool {
 
 fn is_dng(path: &str) -> bool {
     crate::image_format::for_path(path).is_some_and(|format| format.id == "dng")
+}
+
+fn decode_viewer_jpeg(
+    bytes: &[u8],
+    target_width: u32,
+    target_height: u32,
+    reference: &str,
+) -> Result<DynamicImage> {
+    if !color::jpeg_has_icc_profile(bytes) {
+        if std::env::var_os("PICASA_TRACE").is_some() {
+            eprintln!(
+                "COLOR TRACE jpeg_icc path={} status=none assume=sRGB",
+                viewer_trace_reference(reference),
+            );
+        }
+        if let Ok(image) = decode_jpeg_turbo_rgba_with_target(bytes, target_width, target_height) {
+            return Ok(DynamicImage::ImageRgba8(image));
+        }
+    }
+    let decoded = decode_jpeg_turbo_with_target(bytes, target_width, target_height)
+        .or_else(|_| decode_with_image(bytes))?;
+    let corrected = color::color_manage_jpeg_rgb(bytes, decoded.image, reference);
+    Ok(DynamicImage::ImageRgb8(corrected))
+}
+
+fn viewer_nef_source_fingerprint(path: &Path) -> Option<(u128, u64)> {
+    let metadata = std::fs::metadata(path).ok()?;
+    let modified_ns = metadata
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_nanos();
+    Some((modified_ns, metadata.len()))
+}
+
+fn viewer_nef_source_cache_lookup(
+    path: &Path,
+    orientation: u16,
+    viewport_width: u32,
+    viewport_height: u32,
+) -> Option<(Arc<DynamicImage>, u32, u32)> {
+    let (modified_ns, file_size) = viewer_nef_source_fingerprint(path)?;
+    let cache = VIEWER_NEF_SOURCE_CACHE.get_or_init(|| Mutex::new(VecDeque::new()));
+    let mut cache = cache.lock().ok()?;
+    let position = cache.iter().position(|entry| {
+        entry.path == path
+            && entry.modified_ns == modified_ns
+            && entry.file_size == file_size
+    })?;
+    let entry = cache.remove(position)?;
+    let (target_width, target_height) = viewer_target_dimensions(
+        entry.source_width,
+        entry.source_height,
+        orientation,
+        viewport_width,
+        viewport_height,
+    );
+    if entry.image.width() < target_width || entry.image.height() < target_height {
+        cache.push_front(entry);
+        return None;
+    }
+    let image = entry.image.clone();
+    cache.push_front(entry);
+    Some((image, target_width, target_height))
+}
+
+fn viewer_nef_source_cache_insert(
+    path: &Path,
+    source_width: u32,
+    source_height: u32,
+    image: Arc<DynamicImage>,
+) {
+    let Some((modified_ns, file_size)) = viewer_nef_source_fingerprint(path) else {
+        return;
+    };
+    let bytes = match image.as_ref() {
+        DynamicImage::ImageRgb8(image) => image.as_raw().len(),
+        DynamicImage::ImageRgba8(image) => image.as_raw().len(),
+        _ => return,
+    };
+    if bytes > VIEWER_NEF_SOURCE_CACHE_BYTES {
+        return;
+    }
+    let cache = VIEWER_NEF_SOURCE_CACHE.get_or_init(|| Mutex::new(VecDeque::new()));
+    let mut cache = cache.lock().expect("NEF source cache lock");
+    cache.retain(|entry| entry.path != path);
+    cache.push_front(ViewerNefSourceCacheEntry {
+        path: path.to_path_buf(),
+        modified_ns,
+        file_size,
+        source_width,
+        source_height,
+        image,
+        bytes,
+    });
+    let mut total_bytes: usize = cache.iter().map(|entry| entry.bytes).sum();
+    if std::env::var_os("PICASA_TRACE").is_some() {
+        let entry = cache.front().expect("inserted NEF source cache entry");
+        eprintln!(
+            "PIC_DECODE source_frame_cache result=insert size={}x{} bytes={} retained_bytes={}",
+            entry.image.width(),
+            entry.image.height(),
+            entry.bytes,
+            total_bytes,
+        );
+    }
+    while total_bytes > VIEWER_NEF_SOURCE_CACHE_BYTES && cache.len() > 1 {
+        if let Some(removed) = cache.pop_back() {
+            total_bytes = total_bytes.saturating_sub(removed.bytes);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -238,7 +364,7 @@ fn decode_local_raw_for_viewer<F>(
     viewport_width: u32,
     viewport_height: u32,
     cancelled: &F,
-) -> Result<(DynamicImage, u32, u32)>
+) -> Result<(Arc<DynamicImage>, u32, u32)>
 where
     F: Fn() -> bool,
 {
@@ -251,6 +377,31 @@ where
         );
     }
     check_viewer_cancelled(cancelled, "after_materialize")?;
+
+    let cached_source = is_nikon_raw(reference)
+        .then(|| {
+            viewer_nef_source_cache_lookup(
+                &local_path,
+                orientation,
+                viewport_width,
+                viewport_height,
+            )
+        })
+        .flatten();
+    if let Some((image, target_width, target_height)) = cached_source {
+        if std::env::var_os("PICASA_TRACE").is_some() {
+            eprintln!(
+                "PIC_DECODE source_frame_cache result=hit size={}x{} target={}x{}",
+                image.width(),
+                image.height(),
+                target_width,
+                target_height,
+            );
+        }
+        return Ok((image, target_width, target_height));
+    } else if is_nikon_raw(reference) && std::env::var_os("PICASA_TRACE").is_some() {
+        eprintln!("PIC_DECODE source_frame_cache result=miss");
+    }
 
     let embedded_preview_started = std::time::Instant::now();
     let embedded_preview = nef_embedded_preview(&local_path)?;
@@ -274,36 +425,25 @@ where
 
         check_viewer_cancelled(cancelled, "before_turbojpeg_decode")?;
         let jpeg_decode_started = std::time::Instant::now();
-        let decoded = match decode_jpeg_turbo_with_target(&bytes, target_width, target_height) {
-            Ok(decoded) => decoded,
-            Err(_) => decode_with_image(&bytes)?,
-        };
+        let image = decode_viewer_jpeg(&bytes, target_width, target_height, reference)?;
         check_viewer_cancelled(cancelled, "after_turbojpeg_decode")?;
         if std::env::var_os("PICASA_TRACE").is_some() {
             eprintln!(
                 "PIC_DECODE stage=nef_embedded_jpeg_decode elapsed_ms={:.3} output={}x{} bytes={}",
                 jpeg_decode_started.elapsed().as_secs_f64() * 1000.0,
-                decoded.image.width(),
-                decoded.image.height(),
+                image.width(),
+                image.height(),
                 bytes.len(),
             );
         }
-        // Embedded Nikon JPEGs can carry a non-sRGB ICC profile. Match the
-        // ordinary JPEG viewer path before the editor/export tags sRGB.
-        let color_started = std::time::Instant::now();
-        let corrected = color::color_manage_jpeg_rgb(&bytes, decoded.image, reference);
-        check_viewer_cancelled(cancelled, "after_nef_jpeg_color_conversion")?;
-        if std::env::var_os("PICASA_TRACE").is_some() {
-            eprintln!(
-                "PIC_DECODE stage=nef_embedded_jpeg_color elapsed_ms={:.3}",
-                color_started.elapsed().as_secs_f64() * 1000.0,
-            );
-        }
-        return Ok((
-            DynamicImage::ImageRgb8(corrected),
-            target_width,
-            target_height,
-        ));
+        let image = Arc::new(image);
+        viewer_nef_source_cache_insert(
+            &local_path,
+            source_width,
+            source_height,
+            image.clone(),
+        );
+        return Ok((image, target_width, target_height));
     }
 
     check_viewer_cancelled(cancelled, "before_raw_preview_decode")?;
@@ -344,7 +484,7 @@ where
         viewport_width,
         viewport_height,
     );
-    Ok((image, target_width, target_height))
+    Ok((Arc::new(image), target_width, target_height))
 }
 
 #[cfg(target_os = "linux")]
@@ -539,18 +679,9 @@ where
                     viewport_width,
                     viewport_height,
                 );
-                let decoded = decode_jpeg_turbo_with_target(&bytes, target_width, target_height)
-                    .or_else(|_| decode_with_image(&bytes))?;
+                let image = decode_viewer_jpeg(&bytes, target_width, target_height, reference)?;
                 check_viewer_cancelled(&cancelled, "after_remote_nef_jpeg_decode")?;
-                // Apply the same embedded ICC transform as local NEFs and
-                // standalone JPEGs before the output is labelled sRGB.
-                let corrected = color::color_manage_jpeg_rgb(&bytes, decoded.image, reference);
-                check_viewer_cancelled(&cancelled, "after_remote_nef_jpeg_color_conversion")?;
-                (
-                    DynamicImage::ImageRgb8(corrected),
-                    target_width,
-                    target_height,
-                )
+                (Arc::new(image), target_width, target_height)
             } else if is_dng(reference) {
                 check_viewer_cancelled(&cancelled, "before_remote_dng_read")?;
                 let source_started = std::time::Instant::now();
@@ -569,7 +700,7 @@ where
                     viewport_width,
                     viewport_height,
                 );
-                (image, target_width, target_height)
+                (Arc::new(image), target_width, target_height)
             } else {
                 anyhow::bail!(
                     "Remote RAW preview is unsupported for this format; original was not downloaded"
@@ -610,18 +741,9 @@ where
         );
 
         check_viewer_cancelled(&cancelled, "before_jpeg_decode")?;
-        let decoded = match decode_jpeg_turbo_with_target(&bytes, target_width, target_height) {
-            Ok(decoded) => decoded,
-            Err(_) => decode_with_image(&bytes)?,
-        };
+        let image = decode_viewer_jpeg(&bytes, target_width, target_height, reference)?;
         check_viewer_cancelled(&cancelled, "after_jpeg_decode")?;
-        let corrected = color::color_manage_jpeg_rgb(&bytes, decoded.image, reference);
-        check_viewer_cancelled(&cancelled, "after_jpeg_color_conversion")?;
-        (
-            DynamicImage::ImageRgb8(corrected),
-            target_width,
-            target_height,
-        )
+        (Arc::new(image), target_width, target_height)
     } else if is_svg(reference) {
         check_viewer_cancelled(&cancelled, "before_source_read")?;
         let source_started = std::time::Instant::now();
@@ -633,7 +755,7 @@ where
         let target_width = image.width();
         let target_height = image.height();
         (
-            DynamicImage::ImageRgba8(image),
+            Arc::new(DynamicImage::ImageRgba8(image)),
             target_width,
             target_height,
         )
@@ -655,7 +777,7 @@ where
             viewport_width,
             viewport_height,
         );
-        (image, target_width, target_height)
+        (Arc::new(image), target_width, target_height)
     } else {
         check_viewer_cancelled(&cancelled, "before_source_read")?;
         let source_started = std::time::Instant::now();
@@ -674,7 +796,7 @@ where
             viewport_width,
             viewport_height,
         );
-        (image, target_width, target_height)
+        (Arc::new(image), target_width, target_height)
     };
 
     let decoded_width = image.width();
@@ -692,23 +814,11 @@ where
         );
     }
 
-    check_viewer_cancelled(&cancelled, "before_pixel_conversion")?;
-    let conversion_started = std::time::Instant::now();
-    let image = image.into_rgba8();
-    if std::env::var_os("PICASA_TRACE").is_some() {
-        eprintln!(
-            "PIC_DECODE stage=rgba_conversion elapsed_ms={:.3} output={}x{}",
-            conversion_started.elapsed().as_secs_f64() * 1000.0,
-            image.width(),
-            image.height(),
-        );
-    }
-
     // Resize before orientation. Rotating only display-sized pixels avoids a
     // large copy for orientations 5-8.
     check_viewer_cancelled(&cancelled, "before_resize")?;
     let resize_started = std::time::Instant::now();
-    let image = resize_viewer_rgba(image, target_width, target_height)?;
+    let image = resize_viewer_image(&image, target_width, target_height)?;
     check_viewer_cancelled(&cancelled, "after_resize")?;
     if std::env::var_os("PICASA_TRACE").is_some() {
         eprintln!(
@@ -809,26 +919,49 @@ fn viewer_target_dimensions(
     }
 }
 
+fn resize_viewer_rgb(
+    source: &image::RgbImage,
+    destination_width: u32,
+    destination_height: u32,
+) -> Result<image::RgbImage> {
+    if source.width() == destination_width && source.height() == destination_height {
+        return Ok(source.clone());
+    }
+    let source_image = ImageRef::new(
+        source.width(),
+        source.height(),
+        source.as_raw(),
+        PixelType::U8x3,
+    )?;
+    let mut destination_image = Image::new(destination_width, destination_height, PixelType::U8x3);
+    // Hamming is the resizer's compact photographic downscale filter. It has
+    // bilinear-class cost with sharper downscale quality and avoids the much
+    // wider default Lanczos3 kernel used by ResizeOptions::default().
+    let options = ResizeOptions::new().resize_alg(ResizeAlg::Convolution(FilterType::Hamming));
+    Resizer::new().resize(&source_image, &mut destination_image, &options)?;
+    image::RgbImage::from_raw(
+        destination_width,
+        destination_height,
+        destination_image.into_vec(),
+    )
+    .context("viewer RGB resizer returned an invalid buffer")
+}
+
 fn resize_viewer_rgba(
-    source: image::RgbaImage,
+    source: &image::RgbaImage,
     destination_width: u32,
     destination_height: u32,
 ) -> Result<image::RgbaImage> {
     if source.width() == destination_width && source.height() == destination_height {
-        return Ok(source);
+        return Ok(source.clone());
     }
-    let source_width = source.width();
-    let source_height = source.height();
-    let source_image = Image::from_vec_u8(
-        source_width,
-        source_height,
-        source.into_raw(),
+    let source_image = ImageRef::new(
+        source.width(),
+        source.height(),
+        source.as_raw(),
         PixelType::U8x4,
     )?;
     let mut destination_image = Image::new(destination_width, destination_height, PixelType::U8x4);
-    // Hamming is the resizer's compact photographic downscale filter. It has
-    // bilinear-class cost with sharper downscale quality and avoids the much
-    // wider default Lanczos3 kernel used by ResizeOptions::default().
     let options = ResizeOptions::new().resize_alg(ResizeAlg::Convolution(FilterType::Hamming));
     Resizer::new().resize(&source_image, &mut destination_image, &options)?;
     image::RgbaImage::from_raw(
@@ -836,7 +969,47 @@ fn resize_viewer_rgba(
         destination_height,
         destination_image.into_vec(),
     )
-    .context("viewer resizer returned an invalid buffer")
+    .context("viewer RGBA resizer returned an invalid buffer")
+}
+
+fn resize_viewer_image(
+    source: &DynamicImage,
+    destination_width: u32,
+    destination_height: u32,
+) -> Result<image::RgbaImage> {
+    match source {
+        DynamicImage::ImageRgb8(source) => {
+            let started = std::time::Instant::now();
+            let rgb = resize_viewer_rgb(source, destination_width, destination_height)?;
+            if std::env::var_os("PICASA_TRACE").is_some() {
+                eprintln!(
+                    "PIC_DECODE stage=rgba_conversion elapsed_ms={:.3} output={}x{} source=rgb_resized",
+                    started.elapsed().as_secs_f64() * 1000.0,
+                    destination_width,
+                    destination_height,
+                );
+            }
+            Ok(DynamicImage::ImageRgb8(rgb).into_rgba8())
+        }
+        DynamicImage::ImageRgba8(source) => resize_viewer_rgba(
+            source,
+            destination_width,
+            destination_height,
+        ),
+        _ => {
+            let started = std::time::Instant::now();
+            let rgba = source.to_rgba8();
+            if std::env::var_os("PICASA_TRACE").is_some() {
+                eprintln!(
+                    "PIC_DECODE stage=rgba_conversion elapsed_ms={:.3} output={}x{} source=full",
+                    started.elapsed().as_secs_f64() * 1000.0,
+                    rgba.width(),
+                    rgba.height(),
+                );
+            }
+            resize_viewer_rgba(&rgba, destination_width, destination_height)
+        }
+    }
 }
 
 pub fn exif_orientation(reference: &str) -> u16 {

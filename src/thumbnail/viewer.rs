@@ -83,6 +83,17 @@ fn decode_viewer_jpeg(
     Ok(DynamicImage::ImageRgb8(corrected))
 }
 
+fn decode_nef_jpeg_thumbnail(
+    bytes: &[u8],
+    max_edge: u32,
+    reference: &str,
+) -> Result<DecodedThumbnailSource> {
+    let mut decoded = decode_jpeg_turbo_with_max(bytes, max_edge)
+        .or_else(|_| decode_with_image(bytes))?;
+    decoded.image = color::color_manage_jpeg_rgb(bytes, decoded.image, reference);
+    Ok(decoded)
+}
+
 fn viewer_nef_source_fingerprint(path: &Path) -> Option<(u128, u64)> {
     let metadata = std::fs::metadata(path).ok()?;
     let modified_ns = metadata
@@ -212,9 +223,7 @@ fn decode_raw_thumbnail_inner(reference: &str, max_edge: u32) -> Result<DecodedT
                 Ok(Some(bytes)) => {
                     // Preserve preview quality while TurboJPEG decodes directly
                     // at thumbnail scale rather than at camera resolution.
-                    match decode_jpeg_turbo_with_max(&bytes, max_edge)
-                        .or_else(|_| decode_with_image(&bytes))
-                    {
+                    match decode_nef_jpeg_thumbnail(&bytes, max_edge, reference) {
                         Ok(mut decoded) => {
                             decoded.scale = if largest {
                                 "embedded JPEG preview"
@@ -500,8 +509,7 @@ fn decode_remote_raw_thumbnail(reference: &str, max_edge: u32) -> Result<(Decode
     if is_nikon_raw(reference) {
         let bytes = remote_nef_embedded_jpeg(reference, false)?
             .context("Remote NEF has no embedded JPEG thumbnail")?;
-        let decoded = decode_jpeg_turbo_with_max(&bytes, max_edge)
-            .or_else(|_| decode_with_image(&bytes))?;
+        let decoded = decode_nef_jpeg_thumbnail(&bytes, max_edge, reference)?;
         return Ok((decoded, exif_orientation(reference)));
     }
 
@@ -1355,6 +1363,11 @@ mod embedded_nef_color_profile_tests {
             (128, 96)
         );
         assert_eq!(thumbnail.image.dimensions(), (64, 48));
+        let thumbnail_pixel = thumbnail.image.get_pixel(16, 16).0;
+        for (actual, expected) in thumbnail_pixel.into_iter().zip([191u8, 53, 29]) {
+            assert!(actual.abs_diff(expected) <= 8,
+                "cached NEF thumbnail lost its embedded JPEG ICC transform: {thumbnail_pixel:?}");
+        }
 
         let (decoded, w, h) = decode_local_raw_for_viewer(
             reference, 1, 128, 96, &|| false,

@@ -1,5 +1,7 @@
 # NEF export quality investigation
 
+> NEF quality investigation complete for the V1 camera-JPEG workflow. The [viewer/editor quality fix plan](nef-viewer-editor-quality-fix-plan.md) records the verified rotation, HiDPI, ICC, and export results. Lightroom parity and sensor RAW development are outside the evidence and scope of this fix.
+
 ## Success criteria
 
 - Export receives the original NEF path and never reads the thumbnail cache.
@@ -8,7 +10,7 @@
 - Saved Edit Mode adjustments, crop, rotation, and overlays remain applied to export.
 - A real local NEF regression proves Export uses the original's full-resolution decode even when catalog dimensions are thumbnail-sized; it does not mislabel embedded-JPEG decoding as sensor RAW development.
 - NEF, JPEG, PNG, and WebP export regressions pass, and the original NEF remains byte-identical.
-- No unrelated behavior changes; no revert, merge, commit, or push before investigation and verification finish.
+- Keep changes scoped; no revert or merge to `main`. Commit and push on the release branch after the investigation and checks finish.
 
 ## Design boundary
 

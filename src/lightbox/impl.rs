@@ -231,6 +231,7 @@ impl Lightbox {
         let index = Rc::new(Cell::new(0usize));
         let last_width = Rc::new(Cell::new(0i32));
         let last_height = Rc::new(Cell::new(0i32));
+        let last_surface_scale = Rc::new(Cell::new(0.0));
         let opening_fit_pending = Rc::new(Cell::new(false));
         let zoom = Rc::new(Cell::new(0.0)); // 0 means fit-to-window
         let zoom_before_one_to_one = Rc::new(Cell::new(0.0));
@@ -546,6 +547,8 @@ impl Lightbox {
         let index_for_fit = index.clone();
         let last_width_for_fit = last_width.clone();
         let last_height_for_fit = last_height.clone();
+        let last_surface_scale_for_fit = last_surface_scale.clone();
+        let viewport_for_fit = picture_viewport.clone();
         let opening_fit_pending_for_fit = opening_fit_pending.clone();
         let zoom_for_fit = zoom.clone();
         let applied_native_scale_for_fit = applied_native_scale.clone();
@@ -558,18 +561,39 @@ impl Lightbox {
             // the clicked thumbnail's oriented axes. The generic resize path
             // has only catalog dimensions while the decode is pending.
             if opening_fit_pending_for_fit.get() {
+                last_surface_scale_for_fit.set(0.0);
                 return glib::ControlFlow::Continue;
             }
 
             let width = root.width();
             let height = root.height();
+            let current_surface_scale = surface_scale(root);
             let old_width = last_width_for_fit.get();
             let old_height = last_height_for_fit.get();
+            let old_surface_scale = last_surface_scale_for_fit.get();
+            let surface_scale_changed = old_width > 0
+                && old_height > 0
+                && old_surface_scale > 0.0
+                && (current_surface_scale - old_surface_scale).abs() > f64::EPSILON;
+            if old_surface_scale <= 0.0 {
+                last_surface_scale_for_fit.set(current_surface_scale);
+            }
 
             if width > 0
                 && height > 0
-                && (width != old_width || height != old_height)
+                && (width != old_width || height != old_height || surface_scale_changed)
             {
+                // A monitor move can change the physical surface scale while
+                // the logical allocation stays fixed. Preserve the normalized
+                // image point under the pointer (or viewport centre) across
+                // that geometry change.
+                let scale_anchor = surface_scale_changed.then(|| {
+                    capture_viewport_zoom_anchor(
+                        &picture_for_fit,
+                        &viewport_for_fit,
+                        None,
+                    )
+                });
                 // Fit mode follows the window. Manual zoom does not: 125%
                 // must remain 125% while only the viewport grows/shrinks.
                 //
@@ -591,6 +615,11 @@ impl Lightbox {
                                 old_height,
                                 intrinsic_width,
                                 intrinsic_height,
+                                if old_surface_scale > 0.0 {
+                                    old_surface_scale
+                                } else {
+                                    current_surface_scale
+                                },
                             );
                             old_fit_scale * resize_zoom
                         } else {
@@ -600,6 +629,7 @@ impl Lightbox {
                                 height,
                                 intrinsic_width,
                                 intrinsic_height,
+                                current_surface_scale,
                             );
                             current_fit_scale * resize_zoom
                         };
@@ -610,6 +640,7 @@ impl Lightbox {
                             height,
                             intrinsic_width,
                             intrinsic_height,
+                            current_surface_scale,
                         );
                         resize_zoom = native_scale / new_fit_scale.max(f64::EPSILON);
                         zoom_for_fit.set(resize_zoom);
@@ -619,6 +650,7 @@ impl Lightbox {
 
                 last_width_for_fit.set(width);
                 last_height_for_fit.set(height);
+                last_surface_scale_for_fit.set(current_surface_scale);
 
                 zoom_trace(format!(
                     "resize_tick old={}x{} new={}x{} zoom={resize_zoom:.6} applied_native={:.6} picture_req={:?}",
@@ -638,6 +670,15 @@ impl Lightbox {
                     resize_zoom,
                     "resize",
                 );
+                if let Some(anchor) = scale_anchor {
+                    let (picture_width, picture_height) = picture_for_fit.size_request();
+                    prime_viewport_for_picture_size(
+                        &viewport_for_fit,
+                        picture_width,
+                        picture_height,
+                    );
+                    apply_viewport_zoom_anchor(&picture_for_fit, &viewport_for_fit, anchor);
+                }
             }
 
             glib::ControlFlow::Continue
@@ -823,6 +864,7 @@ impl Lightbox {
                     root_for_scroll.height(),
                     intrinsic_width,
                     intrinsic_height,
+                    surface_scale(&picture_for_scroll),
                 );
                 let current_scale = current_native_zoom_scale(
                     was_one_to_one,
@@ -1012,6 +1054,7 @@ impl Lightbox {
                             root_for_escape.height(),
                             intrinsic_width,
                             intrinsic_height,
+                            surface_scale(&picture_for_key),
                         )
                     })
                     .unwrap_or(1.0);
@@ -1068,6 +1111,7 @@ impl Lightbox {
                             root_for_escape.height(),
                             intrinsic_width,
                             intrinsic_height,
+                            surface_scale(&picture_for_key),
                         )
                     })
                     .unwrap_or(1.0);
@@ -1417,6 +1461,7 @@ impl Lightbox {
             self.root.height(),
             intrinsic_width,
             intrinsic_height,
+            surface_scale(&self.picture),
         );
         zoom_trace(format!(
             "apply_manual source={source} native_req={native_scale:.6} fit={fit_scale:.6} intrinsic={}x{} root={}x{} current_zoom={:.6} applied_native={:.6}",
@@ -1515,6 +1560,7 @@ impl Lightbox {
             self.root.height(),
             intrinsic_width,
             intrinsic_height,
+            surface_scale(&self.picture),
         )
     }
 
@@ -1535,6 +1581,7 @@ impl Lightbox {
             self.root.height(),
             intrinsic_width,
             intrinsic_height,
+            surface_scale(&self.picture),
         ) * self.zoom.get()
     }
 
@@ -1566,7 +1613,7 @@ impl Lightbox {
                         &self.picture,
                         self.picture_viewport.width(),
                         self.picture_viewport.height(),
-                        self.picture_viewport.scale_factor(),
+                        surface_scale(&self.picture_viewport),
                     )
                 });
             if photo_fits {
@@ -1599,7 +1646,8 @@ impl Lightbox {
             handler(if enabled { 1.0 } else { 0.0 });
         }
         // Keep the Fit preview at its existing size while native pixels load.
-        // On a cached hit (or after decode) it switches to non-shrinking 1:1.
+        // The native texture can be smaller than its pixel dimensions in GTK
+        // logical units on HiDPI surfaces while still mapping 1:1 physically.
         self.picture.set_can_shrink(true);
         self.picture_viewport
             .set_cursor_from_name(if enabled { Some("grab") } else { None });
@@ -1625,7 +1673,7 @@ impl Lightbox {
                     && cache.rotation == rotation
                     && cache.edit_recipe == edit_recipe
                 {
-                    self.picture.set_can_shrink(false);
+                    self.picture.set_can_shrink(true);
                     self.picture.set_paintable(Some(&cache.texture));
                     fit_centered_picture(
                         &self.picture,

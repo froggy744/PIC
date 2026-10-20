@@ -116,7 +116,7 @@ fn apply_native_preview_layout(
     native_one_to_one: Rc<Cell<bool>>,
 ) {
     apply_canvas_one_to_one(picture, scroll, dimensions);
-    let (width, height) = dimensions;
+    let (width, height) = native_canvas_size(scroll, dimensions);
     scroll.add_tick_callback(move |scroll, frame_clock| {
         // A queued allocation must not move the image after returning to Fit.
         if !native_one_to_one.get() {
@@ -605,6 +605,15 @@ pub fn build(
                 (width / dimensions.0.max(1) as f64)
                     .min(height / dimensions.1.max(1) as f64)
             };
+            let device_scale = widget_device_scale(gpu_canvas.widget().upcast_ref());
+            let physical_scale = if native_one_to_one.get() {
+                1.0
+            } else if canvas_zoom.get() > 0.0 {
+                fit_scale * canvas_zoom.get()
+            } else {
+                scale * device_scale
+            };
+            let scale = logical_scale_for_physical(physical_scale, device_scale);
             let pad_x = ((width - dimensions.0 as f64 * scale) * 0.5).max(0.0);
             let pad_y = ((height - dimensions.1 as f64 * scale) * 0.5).max(0.0);
             gpu_canvas.set_view(
@@ -620,9 +629,51 @@ pub fn build(
     } else {
         Rc::new(|| {})
     };
-    if gpu_canvas.is_some() {
+    let last_canvas_scale = Rc::new(Cell::new(widget_device_scale(
+        picture_scroll.upcast_ref(),
+    )));
+    {
         let sync_gpu_view = sync_gpu_view.clone();
-        picture_scroll.add_tick_callback(move |_, _| {
+        let picture = picture.clone();
+        let picture_scroll = picture_scroll.clone();
+        let preview_dimensions = preview_dimensions.clone();
+        let canvas_zoom = canvas_zoom.clone();
+        let native_one_to_one = native_one_to_one.clone();
+        picture_scroll.add_tick_callback(move |scroll, _| {
+            let current_scale = widget_device_scale(scroll.upcast_ref());
+            let previous_scale = last_canvas_scale.replace(current_scale);
+            if (current_scale - previous_scale).abs() > f64::EPSILON {
+                let dimensions = preview_dimensions.get();
+                if native_one_to_one.get() {
+                    // Preserve the image point at the viewport centre while
+                    // the source-pixel canvas changes logical dimensions.
+                    let hadj = scroll.hadjustment();
+                    let vadj = scroll.vadjustment();
+                    let pointer_x = hadj.page_size() * 0.5;
+                    let pointer_y = vadj.page_size() * 0.5;
+                    let old_width = picture.width().max(1) as f64;
+                    let old_height = picture.height().max(1) as f64;
+                    let old_pad_x = ((hadj.page_size() - old_width) * 0.5).max(0.0);
+                    let old_pad_y = ((vadj.page_size() - old_height) * 0.5).max(0.0);
+                    let anchor = OneToOneAnchor::Cursor {
+                        normalized_x: ((hadj.value() + pointer_x - old_pad_x) / old_width)
+                            .clamp(0.0, 1.0),
+                        normalized_y: ((vadj.value() + pointer_y - old_pad_y) / old_height)
+                            .clamp(0.0, 1.0),
+                        pointer_x,
+                        pointer_y,
+                    };
+                    apply_native_preview_layout(
+                        &picture,
+                        scroll,
+                        dimensions,
+                        Some(anchor),
+                        native_one_to_one.clone(),
+                    );
+                } else if canvas_zoom.get() > 0.0 {
+                    apply_canvas_zoom(&picture, scroll, dimensions, canvas_zoom.get());
+                }
+            }
             sync_gpu_view();
             glib::ControlFlow::Continue
         });
@@ -1098,7 +1149,7 @@ pub fn build(
                         recipe.clone()
                     };
                     let (canvas_width, canvas_height) =
-                        preview_target_dimensions(photo.width(), photo.height(), decode_rotation);
+                        preview_target_dimensions(photo.width(), photo.height());
                     let (target_width, target_height) = (canvas_width, canvas_height);
                     let source_full = true;
 
@@ -2113,7 +2164,8 @@ pub fn build(
                     canvas_zoom.get()
                 };
                 let (old_width, old_height) = if native_one_to_one.get() {
-                    (dimensions.0.max(1) as f64, dimensions.1.max(1) as f64)
+                    let (width, height) = native_canvas_size(&picture_scroll, dimensions);
+                    (width as f64, height as f64)
                 } else {
                     canvas_size_for_zoom(&picture_scroll, dimensions, multiplier)
                 };

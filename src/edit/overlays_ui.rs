@@ -496,7 +496,8 @@ fn configure_overlay_canvas(
             let zoom = canvas_zoom.get();
             let native = native_one_to_one.get();
             let (content_w, content_h) = if native {
-                (photo_w.max(1) as f64, photo_h.max(1) as f64)
+                let (width, height) = native_canvas_size(&picture_scroll, (photo_w, photo_h));
+                (width as f64, height as f64)
             } else if zoom > 0.0 {
                 canvas_size_for_zoom(&picture_scroll, (photo_w, photo_h), zoom)
             } else {
@@ -1806,13 +1807,21 @@ mod overlay_geometry_tests {
     }
 
     #[test]
-    fn native_mode_uses_the_photo_pixels_as_content_size() {
+    fn native_mode_overlay_geometry_uses_logical_size_and_keeps_normalized_points() {
+        // At scale 2, an 800 x 600 source occupies 400 x 300 GTK logical
+        // units. Pointer coordinates stay logical while annotations stay
+        // normalized to the complete source image.
+        let (content_w, content_h) = logical_canvas_size((800, 600), 1.0, 2.0);
         let display = overlay_display_rect(
-            1200.0, 900.0, 800.0, 600.0, 0.0, true, 800.0, 600.0, 0.0, 0.0,
+            600.0, 500.0, 800.0, 600.0, 0.0, true, content_w, content_h, 0.0, 0.0,
         );
-        assert!((display.0 - 200.0).abs() < 1e-6);
-        assert!((display.1 - 150.0).abs() < 1e-6);
-        assert!((display.2 - 800.0).abs() < 1e-6);
+        assert!((display.0 - 100.0).abs() < 1e-6);
+        assert!((display.1 - 100.0).abs() < 1e-6);
+        assert!((display.2 - 400.0).abs() < 1e-6);
+        assert!((display.3 - 300.0).abs() < 1e-6);
+        let (nx, ny) = screen_to_normalized(display, 300.0, 250.0);
+        assert!((nx - 0.5).abs() < 1e-9);
+        assert!((ny - 0.5).abs() < 1e-9);
     }
 
     #[test]

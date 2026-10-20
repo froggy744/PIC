@@ -397,7 +397,8 @@ fn build_draw_panel(
         move |w: f64, h: f64| {
             let (pw, ph) = preview_dimensions.get();
             let (cw, ch) = if native_one_to_one.get() {
-                (pw as f64, ph as f64)
+                let (width, height) = native_canvas_size(&scroll, (pw, ph));
+                (width as f64, height as f64)
             } else if canvas_zoom.get() > 0.0 {
                 canvas_size_for_zoom(&scroll, (pw, ph), canvas_zoom.get())
             } else {

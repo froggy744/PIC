@@ -18,15 +18,12 @@ impl PreviewBase {
 
 const PREVIEW_BASE_CACHE_CAPACITY: usize = 2;
 
-fn preview_target_dimensions(
-    source_width: i64,
-    source_height: i64,
-    rotation: i32,
-) -> (u32, u32) {
-    // Edit renders retain the full source resolution at every zoom level.
-    // The canvas scales that texture for Fit mode; keeping the source pixels
-    // avoids a resolution drop when an adjustment is applied.
-    let (mut width, mut height) = (
+fn preview_target_dimensions(source_width: i64, source_height: i64) -> (u32, u32) {
+    // These are decode bounds, so they must stay in the source's unrotated
+    // coordinate system. decode_base_for_viewer applies the library rotation
+    // only after decoding; swapping bounds here makes a quarter-turned image
+    // get downscaled before the rotation is applied.
+    (
         if source_width > 0 {
             source_width as u32
         } else {
@@ -37,11 +34,7 @@ fn preview_target_dimensions(
         } else {
             u32::MAX
         },
-    );
-    if matches!(rotation.rem_euclid(360), 90 | 270) {
-        std::mem::swap(&mut width, &mut height);
-    }
-    (width, height)
+    )
 }
 
 fn cached_preview_base(
@@ -286,9 +279,54 @@ mod tests {
     #[test]
     fn edit_preview_at_fit_and_one_to_one_keeps_source_resolution() {
         let source = (3936, 2624);
-        assert_eq!(preview_target_dimensions(3936, 2624, 0), source);
-        assert_eq!(preview_target_dimensions(3936, 2624, 90), (2624, 3936));
-        assert_eq!(preview_target_dimensions(0, 0, 0), (u32::MAX, u32::MAX));
+        assert_eq!(preview_target_dimensions(3936, 2624), source);
+        assert_eq!(preview_target_dimensions(0, 0), (u32::MAX, u32::MAX));
+    }
+
+    #[test]
+    fn cpu_preview_rotates_after_decoding_at_full_source_resolution() {
+        const WIDTH: u32 = 1800;
+        const HEIGHT: u32 = 1200;
+        let path = std::env::temp_dir().join(format!(
+            "pic-edit-rotated-preview-{}-{}.jpg",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let source = image::RgbImage::from_fn(WIDTH, HEIGHT, |x, y| {
+            let stripe = ((x / 5 + y / 11) % 2) as u8;
+            let value = if stripe == 0 { 48 } else { 205 };
+            image::Rgb([value, value, value])
+        });
+        source.save(&path).unwrap();
+        let reference = path.to_string_lossy().into_owned();
+        let cache = Arc::new(Mutex::new(Vec::new()));
+
+        for (generation, rotation) in [(1, 90), (2, 270)] {
+            let (target_width, target_height) =
+                preview_target_dimensions(WIDTH as i64, HEIGHT as i64);
+            let (sender, _receiver) = std::sync::mpsc::channel();
+            let job = PreviewJob {
+                generation,
+                path: reference.clone(),
+                rotation,
+                target_width,
+                target_height,
+                recipe: EditRecipe::default(),
+                result_sender: sender,
+            };
+            let mut geometry_cache = None;
+            let rendered = render_preview_job(&job, &cache, &mut geometry_cache).unwrap();
+            assert_eq!(
+                rendered.dimensions(),
+                (HEIGHT, WIDTH),
+                "rotation {rotation} must retain every decoded source pixel"
+            );
+        }
+
+        std::fs::remove_file(path).unwrap();
     }
 
     #[test]
@@ -380,39 +418,67 @@ mod tests {
     fn real_photo_zero_exposure_reset_keep_editor_preview_resolution() {
         let reference = std::env::var("PIC_TEST_EDIT_REFERENCE")
             .expect("set PIC_TEST_EDIT_REFERENCE to a local path or NFS URI");
-        let cache = Arc::new(Mutex::new(Vec::new()));
-        let mut geometry_cache = None;
-        let render =
-            |generation, recipe: EditRecipe, geometry_cache: &mut Option<PreviewGeometry>| {
-                let (sender, _receiver) = std::sync::mpsc::channel();
-                let job = PreviewJob {
-                    generation,
-                    path: reference.clone(),
-                    rotation: 0,
-                    target_width: 3960,
-                    target_height: 2640,
-                    recipe,
-                    result_sender: sender,
-                };
-                render_preview_job(&job, &cache, geometry_cache).unwrap()
-            };
-
-        let original = render(1, EditRecipe::default(), &mut geometry_cache);
-        let mut recipe = EditRecipe::default();
-        recipe.exposure = -0.03;
-        let edited = render(2, recipe, &mut geometry_cache);
-        let reset = render(3, EditRecipe::default(), &mut geometry_cache);
-        let dimensions = (original.width(), original.height());
-        assert!(dimensions.0 > 2000 && dimensions.1 > 1000, "unexpected source resolution: {dimensions:?}");
-        assert_eq!((edited.width(), edited.height()), dimensions);
-        assert_eq!((reset.width(), reset.height()), dimensions);
-        assert_eq!(original, reset);
-        eprintln!(
-            "PIC_EDIT real_photo dimensions={}x{} exposure_dimensions={}x{} reset=identical",
-            dimensions.0,
-            dimensions.1,
-            edited.width(),
-            edited.height(),
+        let native = crate::thumbnail::decode_for_viewer(&reference, u32::MAX, u32::MAX).unwrap();
+        let source_dimensions = native.dimensions();
+        let source_pixels = native.clone();
+        assert!(
+            source_dimensions.0 > 2000 && source_dimensions.1 > 1000,
+            "unexpected source resolution: {source_dimensions:?}"
         );
+        let cache = Arc::new(Mutex::new(Vec::new()));
+        for (index, rotation) in [0, 90, 270].into_iter().enumerate() {
+            let (target_width, target_height) = preview_target_dimensions(
+                source_dimensions.0 as i64,
+                source_dimensions.1 as i64,
+            );
+            let mut geometry_cache = None;
+            let render =
+                |generation, recipe: EditRecipe, geometry_cache: &mut Option<PreviewGeometry>| {
+                    let (sender, _receiver) = std::sync::mpsc::channel();
+                    let job = PreviewJob {
+                        generation,
+                        path: reference.clone(),
+                        rotation,
+                        target_width,
+                        target_height,
+                        recipe,
+                        result_sender: sender,
+                    };
+                    render_preview_job(&job, &cache, geometry_cache).unwrap()
+                };
+
+            let generation = (index as u64) * 3;
+            let original = render(generation + 1, EditRecipe::default(), &mut geometry_cache);
+            let mut recipe = EditRecipe::default();
+            recipe.exposure = -0.03;
+            let edited = render(generation + 2, recipe, &mut geometry_cache);
+            let reset = render(generation + 3, EditRecipe::default(), &mut geometry_cache);
+            let expected_original = match rotation {
+                90 => image::imageops::rotate90(&source_pixels),
+                270 => image::imageops::rotate270(&source_pixels),
+                _ => source_pixels.clone(),
+            };
+            let expected_dimensions = if matches!(rotation, 90 | 270) {
+                (source_dimensions.1, source_dimensions.0)
+            } else {
+                source_dimensions
+            };
+            assert_eq!(original.dimensions(), expected_dimensions, "rotation {rotation}");
+            assert_eq!(
+                original, expected_original,
+                "neutral CPU preview changed embedded-JPEG pixels at rotation {rotation}"
+            );
+            assert_eq!(edited.dimensions(), expected_dimensions, "rotation {rotation}");
+            assert_eq!(reset.dimensions(), expected_dimensions, "rotation {rotation}");
+            assert_eq!(original, reset, "reset after rotation {rotation}");
+            eprintln!(
+                "PIC_EDIT real_photo rotation={} source={}x{} exposure={}x{} reset=identical",
+                rotation,
+                source_dimensions.0,
+                source_dimensions.1,
+                edited.width(),
+                edited.height(),
+            );
+        }
     }
 }

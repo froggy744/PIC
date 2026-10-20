@@ -678,7 +678,7 @@ fn show_photo(
                     // adjustments after pasted effects, losing a 1:1 pan.
                     // Geometry changes (rotate/crop or initial 1:1) still use
                     // the existing fit-and-centre path.
-                    picture.set_can_shrink(false);
+                    picture.set_can_shrink(true);
                     if fit_geometry_fixed {
                         picture.queue_draw();
                         viewer_trace(format!(
@@ -1490,6 +1490,7 @@ fn set_fit_geometry_from_intrinsic(
         root.width(),
         root.height(),
         zoom,
+        surface_scale(picture),
     );
     picture.set_size_request(width, height);
 }
@@ -1535,13 +1536,16 @@ fn presentation_fit_scale_from_source(
     source_height: f64,
     viewport_width: i32,
     viewport_height: i32,
+    surface_scale: f64,
 ) -> f64 {
-    let available_width = (viewport_width - VIEWER_PADDING).max(1) as f64;
-    let available_height = (viewport_height - VIEWER_PADDING).max(1) as f64;
+    let surface_scale = surface_scale.max(f64::EPSILON);
+    let available_width = f64::from((viewport_width - VIEWER_PADDING).max(1)) * surface_scale;
+    let available_height = f64::from((viewport_height - VIEWER_PADDING).max(1)) * surface_scale;
     let fit_scale =
         (available_width / source_width.max(1.0)).min(available_height / source_height.max(1.0));
-    // Fit never enlarges the decoded image. If catalog dimensions are
-    // unknown, the paintable dimensions are the best available source size.
+    // Scale is measured in physical display pixels per source pixel. Fit
+    // never enlarges the decoded image, and unknown catalog dimensions fall
+    // back to the paintable dimensions.
     fit_scale.min(1.0).max(f64::EPSILON)
 }
 
@@ -1551,6 +1555,7 @@ fn presentation_fit_scale(
     viewport_height: i32,
     intrinsic_width: i32,
     intrinsic_height: i32,
+    surface_scale: f64,
 ) -> f64 {
     let (native_width, native_height) = presentation_native_dimensions(photo);
     let (source_width, source_height, _) = presentation_source_dimensions(
@@ -1565,7 +1570,21 @@ fn presentation_fit_scale(
         source_height,
         viewport_width,
         viewport_height,
+        surface_scale,
     )
+}
+
+/// Return the physical-pixel scale of the GTK surface hosting this widget.
+/// Widget::scale_factor() rounds fractional monitor scales, so use the GDK
+/// surface value whenever the widget is attached to a native surface.
+fn surface_scale<W: IsA<gtk::Widget>>(widget: &W) -> f64 {
+    let widget: &gtk::Widget = widget.as_ref();
+    widget
+        .native()
+        .and_then(|native| native.surface())
+        .map(|surface| surface.scale())
+        .filter(|scale| scale.is_finite() && *scale > 0.0)
+        .unwrap_or_else(|| f64::from(widget.scale_factor().max(1)))
 }
 
 fn presentation_native_dimensions_from_values(
@@ -1598,7 +1617,7 @@ fn photo_fits_lightbox(
     picture: &gtk::Picture,
     viewport_width: i32,
     viewport_height: i32,
-    scale_factor: i32,
+    surface_scale: f64,
 ) -> bool {
     let native = presentation_native_dimensions(photo);
     let known = native.0 > 0 && native.1 > 0;
@@ -1608,7 +1627,7 @@ fn photo_fits_lightbox(
         let (width, height) = picture_intrinsic_dimensions(picture);
         (f64::from(width), f64::from(height))
     };
-    let scale = f64::from(scale_factor.max(1));
+    let scale = surface_scale.max(f64::EPSILON);
     let viewport_width = f64::from(viewport_width.max(1)) * scale;
     let viewport_height = f64::from(viewport_height.max(1)) * scale;
     let margin = if known { 1.0 } else { 0.9 };
@@ -2008,6 +2027,7 @@ fn fit_picture(
         viewport_width,
         viewport_height,
         zoom,
+        surface_scale(picture),
     );
     if zoom == 0.0 {
         zoom_trace(format!(
@@ -2106,6 +2126,7 @@ fn fitted_picture_dimensions(
     viewport_width: i32,
     viewport_height: i32,
     zoom: f64,
+    surface_scale: f64,
 ) -> (i32, i32) {
     let (source_width, source_height, _) = presentation_source_dimensions(
         native_width,
@@ -2119,21 +2140,23 @@ fn fitted_picture_dimensions(
         source_height,
         viewport_width,
         viewport_height,
+        surface_scale,
     );
-    // At 1:1 the decoded texture is the limit, so its pixels are presented
-    // unscaled; a RAW embedded preview may differ from the catalog's sensor
-    // dimensions. Fit and every slider step are relative to the same fitted
-    // size, which is what keeps `zoom` a stable fraction of the real range.
-    let scale = if zoom < 0.0 {
+    // Zoom scale is physical display pixels per source pixel. Convert to GTK
+    // logical dimensions only after choosing the physical scale so 1:1 stays
+    // one source pixel per physical display pixel on HiDPI and fractional
+    // scale surfaces. Fit and slider zoom remain relative to the same scale.
+    let physical_scale = if zoom < 0.0 {
         1.0
     } else if zoom == 0.0 {
         fit_scale
     } else {
         fit_scale * zoom
     };
+    let logical_scale = physical_scale / surface_scale.max(f64::EPSILON);
 
     (
-        (source_width * scale).round().max(1.0) as i32,
-        (source_height * scale).round().max(1.0) as i32,
+        (source_width * logical_scale).round().max(1.0) as i32,
+        (source_height * logical_scale).round().max(1.0) as i32,
     )
 }

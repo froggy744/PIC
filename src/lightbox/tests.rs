@@ -113,7 +113,7 @@ mod viewer_presentation_tests {
     #[test]
     fn large_photo_preview_uses_final_fitted_size() {
         assert_eq!(
-            fitted_picture_dimensions(6016, 4016, 320, 214, 1036, 794, 0.0),
+            fitted_picture_dimensions(6016, 4016, 320, 214, 1036, 794, 0.0, 1.0),
             (1036, 692)
         );
     }
@@ -121,7 +121,7 @@ mod viewer_presentation_tests {
     #[test]
     fn oriented_preview_swaps_native_axes_before_fitting() {
         assert_eq!(
-            fitted_picture_dimensions(6016, 4016, 214, 320, 1036, 794, 0.0),
+            fitted_picture_dimensions(6016, 4016, 214, 320, 1036, 794, 0.0, 1.0),
             (530, 794)
         );
     }
@@ -129,7 +129,7 @@ mod viewer_presentation_tests {
     #[test]
     fn small_native_photo_is_not_upscaled() {
         assert_eq!(
-            fitted_picture_dimensions(226, 320, 226, 320, 1036, 794, 0.0),
+            fitted_picture_dimensions(226, 320, 226, 320, 1036, 794, 0.0, 1.0),
             (226, 320)
         );
     }
@@ -137,7 +137,7 @@ mod viewer_presentation_tests {
     #[test]
     fn metadata_unknown_small_photo_keeps_its_native_size_in_fit_mode() {
         assert_eq!(
-            fitted_picture_dimensions(0, 0, 240, 320, 1036, 794, 0.0),
+            fitted_picture_dimensions(0, 0, 240, 320, 1036, 794, 0.0, 1.0),
             (240, 320)
         );
     }
@@ -145,7 +145,7 @@ mod viewer_presentation_tests {
     #[test]
     fn one_to_one_uses_decoded_raw_preview_dimensions() {
         assert_eq!(
-            fitted_picture_dimensions(6016, 4016, 1620, 1080, 1036, 794, -1.0),
+            fitted_picture_dimensions(6016, 4016, 1620, 1080, 1036, 794, -1.0, 1.0),
             (1620, 1080)
         );
     }
@@ -153,8 +153,42 @@ mod viewer_presentation_tests {
     #[test]
     fn one_to_one_uses_intrinsic_dimensions_when_metadata_is_unknown() {
         assert_eq!(
-            fitted_picture_dimensions(0, 0, 3936, 2624, 1036, 794, -1.0),
+            fitted_picture_dimensions(0, 0, 3936, 2624, 1036, 794, -1.0, 1.0),
             (3936, 2624)
+        );
+    }
+
+    #[test]
+    fn one_to_one_geometry_maps_source_pixels_to_physical_pixels() {
+        assert_eq!(
+            fitted_picture_dimensions(6016, 4016, 6016, 4016, 1036, 794, -1.0, 2.0),
+            (3008, 2008),
+            "at scale 2, one source pixel occupies one physical pixel"
+        );
+        assert_eq!(
+            fitted_picture_dimensions(6016, 4016, 6016, 4016, 1036, 794, -1.0, 1.5),
+            (4011, 2677),
+            "fractional surface scales round logical geometry to the nearest GTK pixel"
+        );
+    }
+
+    #[test]
+    fn fit_relative_native_zoom_stays_one_physical_pixel_per_source_pixel() {
+        let fit_scale = presentation_fit_scale_from_source(6016.0, 4016.0, 1036, 794, 2.0);
+        assert!(fit_scale < 1.0);
+        assert_eq!(
+            fitted_picture_dimensions(
+                6016,
+                4016,
+                6016,
+                4016,
+                1036,
+                794,
+                1.0 / fit_scale,
+                2.0,
+            ),
+            (3008, 2008),
+            "the slider's physical native scale remains 100% on scale-2 surfaces"
         );
     }
 
@@ -322,6 +356,7 @@ mod viewer_presentation_tests {
             source_height,
             viewport.0,
             viewport.1,
+            1.0,
         );
         assert_eq!(fit, 937.0 / 6016.0);
 
@@ -335,6 +370,7 @@ mod viewer_presentation_tests {
                 viewport.0,
                 viewport.1,
                 1.0 / fit,
+                1.0,
             ),
             (4016, 6016)
         );
@@ -410,7 +446,7 @@ mod one_to_one_layout_regression {
             1200 * 4,
         );
         lightbox.picture.set_paintable(Some(&native));
-        lightbox.picture.set_can_shrink(false);
+        lightbox.picture.set_can_shrink(true);
         fit_centered_picture(
             &lightbox.picture,
             &lightbox.picture_viewport,
@@ -445,10 +481,14 @@ mod one_to_one_layout_regression {
         assert!((bounds.y() + v.value() as f32).abs() < 1.0);
         // The window manager and window decorations determine the actual
         // content allocation; set_default_size does not guarantee 200×120.
-        assert!(h.page_size() < 1200.0, "test must overflow horizontally");
-        assert!(v.page_size() < 800.0, "test must overflow vertically");
-        let expected_h = ((1200.0 - h.page_size()) / 2.0).round_ties_even();
-        let expected_v = ((800.0 - v.page_size()) / 2.0).round_ties_even();
+        let (native_width, native_height) = lightbox.picture.size_request();
+        let scale = surface_scale(&lightbox.picture);
+        assert!(h.page_size() < f64::from(native_width), "test must overflow horizontally");
+        assert!(v.page_size() < f64::from(native_height), "test must overflow vertically");
+        assert!((f64::from(native_width) * scale - 1200.0).abs() <= scale);
+        assert!((f64::from(native_height) * scale - 800.0).abs() <= scale);
+        let expected_h = ((f64::from(native_width) - h.page_size()) / 2.0).round_ties_even();
+        let expected_v = ((f64::from(native_height) - v.page_size()) / 2.0).round_ties_even();
         assert!((h.value() - expected_h).abs() < 1.0);
         assert!((v.value() - expected_v).abs() < 1.0);
 
@@ -573,16 +613,21 @@ mod one_to_one_quality_regression {
         window.set_child(Some(&lightbox.root));
         window.present();
         lightbox.open(vec![photo], 0);
+        let scale = surface_scale(&lightbox.picture);
+        let expected_fit_size = (
+            (640.0 / scale).round() as i32,
+            (426.0 / scale).round() as i32,
+        );
         let context = glib::MainContext::default();
         let deadline = Instant::now() + Duration::from_secs(5);
         while (picture_intrinsic_dimensions(&lightbox.picture) != (640, 426)
-            || lightbox.picture.size_request() != (640, 426))
+            || lightbox.picture.size_request() != expected_fit_size)
             && Instant::now() < deadline {
             while context.pending() { context.iteration(false); }
             std::thread::sleep(Duration::from_millis(10));
         }
         assert_eq!(picture_intrinsic_dimensions(&lightbox.picture), (640, 426));
-        assert_eq!(lightbox.picture.size_request(), (640, 426),
+        assert_eq!(lightbox.picture.size_request(), expected_fit_size,
             "Fit must not enlarge the recovered preview to fill the lightbox");
         lightbox.set_one_to_one(true);
         assert!(!lightbox.one_to_one_active.get(),
@@ -647,6 +692,16 @@ mod one_to_one_quality_regression {
             std::thread::sleep(Duration::from_millis(10));
         }
         assert_eq!(picture_intrinsic_dimensions(&lightbox.picture), (800, 600));
+        let display_scale = surface_scale(&lightbox.picture);
+        let (logical_width, logical_height) = lightbox.picture.size_request();
+        assert!(
+            (f64::from(logical_width) * display_scale - 800.0).abs() <= display_scale,
+            "1:1 width must map to native source pixels at surface scale {display_scale}: request={logical_width}"
+        );
+        assert!(
+            (f64::from(logical_height) * display_scale - 600.0).abs() <= display_scale,
+            "1:1 height must map to native source pixels at surface scale {display_scale}: request={logical_height}"
+        );
         let expected_h = zoom_axis_value_at_pointer(
             f64::from(anchor.old_width),
             f64::from(lightbox.picture.size_request().0),
@@ -669,8 +724,8 @@ mod one_to_one_quality_regression {
         );
         assert!((lightbox.picture_viewport.hadjustment().value() - expected_h).abs() < 1.0);
         assert!((lightbox.picture_viewport.vadjustment().value() - expected_v).abs() < 1.0);
-        assert!(!lightbox.picture.can_shrink(),
-            "native texture must use non-shrinking 1:1 geometry");
+        assert!(lightbox.picture.can_shrink(),
+            "native texture must scale into the logical allocation used for physical 1:1");
         lightbox.set_one_to_one(false);
         assert!(picture_intrinsic_dimensions(&lightbox.picture).0 < 800,
             "returning to fit must restore the fit-sized processed preview");

@@ -508,6 +508,31 @@ struct GpuView {
     scale: f32,
 }
 
+fn surface_device_scale(widget: &gtk::Widget) -> f64 {
+    widget
+        .root()
+        .and_then(|root| root.surface())
+        .map(|surface| surface.scale())
+        .filter(|scale| scale.is_finite() && *scale > 0.0)
+        .unwrap_or_else(|| widget.scale_factor().max(1) as f64)
+}
+
+fn gpu_physical_scale(logical_scale: f64, device_scale: f64) -> f64 {
+    logical_scale.max(0.0) * device_scale.max(f64::EPSILON)
+}
+
+fn gpu_uses_minification(physical_scale: f64) -> bool {
+    physical_scale < 1.0
+}
+
+fn gpu_minification_lod(physical_scale: f64) -> f32 {
+    if gpu_uses_minification(physical_scale) {
+        (1.0 / physical_scale.max(0.0001)).log2().max(0.0) as f32
+    } else {
+        0.0
+    }
+}
+
 /// Raster inputs are prepared only when the overlay/text recipe changes.
 /// The source photo and all layer blending remain on the GPU.
 #[derive(Clone)]
@@ -778,6 +803,7 @@ impl LiveGpuCanvas {
             let view_width = area.width().max(1);
             let view_height = area.height().max(1);
             let device_scale = area.scale_factor().max(1);
+            let surface_scale = surface_device_scale(area.upcast_ref());
             let oversized_source = {
                 let state = render_state.borrow();
                 let dimensions = state.source.as_ref().map(|(width, height, _)| (*width, *height));
@@ -809,6 +835,7 @@ impl LiveGpuCanvas {
                 let overlay_revision = state.overlay_revision;
                 let overlay_visible = state.overlay_visible;
                 let view = state.view;
+                let physical_scale = gpu_physical_scale(view.scale as f64, surface_scale);
                 #[cfg(test)]
                 let gpu_timer_requested = state.gpu_timer_requested;
                 let objects = state.objects.as_mut().expect("GL initialized");
@@ -863,7 +890,7 @@ impl LiveGpuCanvas {
                         }
                     }
 
-                    let filter = if view.scale < 1.0 {
+                    let filter = if gpu_uses_minification(physical_scale) {
                         gl::LINEAR_MIPMAP_LINEAR
                     } else {
                         gl::NEAREST
@@ -911,14 +938,11 @@ impl LiveGpuCanvas {
                     uniform_2f(objects.program, "uScroll", view.scroll_x, view.scroll_y);
                     uniform_2f(objects.program, "uPadding", view.pad_x, view.pad_y);
                     uniform_1f(objects.program, "uScale", view.scale.max(0.0001));
+                    uniform_1f(objects.program, "uPhysicalScale", physical_scale as f32);
                     uniform_1f(
                         objects.program,
                         "uMinificationLod",
-                        if view.scale < 1.0 {
-                            (1.0 / view.scale.max(0.0001)).log2().max(0.0)
-                        } else {
-                            0.0
-                        },
+                        gpu_minification_lod(physical_scale),
                     );
                     uniform_1f(objects.program, "uExposure", tone.exposure);
                     uniform_1f(objects.program, "uContrast", tone.contrast);
@@ -1042,7 +1066,7 @@ impl LiveGpuCanvas {
                     uniform_1i(objects.program, "uClarityLuma", 1);
                     gl::ActiveTexture(gl::TEXTURE0);
                     gl::BindTexture(gl::TEXTURE_2D, objects.texture);
-                    let use_processed_source = view.scale < 1.0
+                    let use_processed_source = gpu_uses_minification(physical_scale)
                         && source.is_some()
                         && !tone.is_neutral();
                     if use_processed_source {
@@ -1059,6 +1083,7 @@ impl LiveGpuCanvas {
                                 view_width * device_scale,
                                 view_height * device_scale,
                                 view.scale,
+                                physical_scale as f32,
                             );
                             objects.processed_source_revision = source_revision;
                             objects.processed_tone_revision = tone_revision;
@@ -1676,6 +1701,7 @@ uniform vec2 uViewSize;
 uniform vec2 uScroll;
 uniform vec2 uPadding;
 uniform float uScale;
+uniform float uPhysicalScale;
 uniform float uMinificationLod;
 uniform float uDeviceScale;
 uniform float uExposure;
@@ -1900,7 +1926,7 @@ vec4 namedFilterPixel(vec4 px, ivec2 coord) {
     }
     if (uNamedGrain > 0.0) {
         // Source-scale grain averages down with the display footprint.
-        float noise = stableNoise(coord) * uNamedGrain * min(uScale, 1.0) * 255.0;
+        float noise = stableNoise(coord) * uNamedGrain * min(uPhysicalScale, 1.0) * 255.0;
         c = round(clamp(c * 255.0 + vec3(noise), 0.0, 255.0)) / 255.0;
     }
     // CPU blend_filter_amount mixes two already-quantized byte images using
@@ -1962,7 +1988,7 @@ vec3 sharpened(ivec2 coord) {
 vec3 grainPixel(ivec2 coord, vec3 rgb) {
     if (uGrain <= 0.001) return rgb;
     // Avoid turning source-scale grain into coarse screen-space noise at Fit.
-    float noise = stableNoise(coord) * uGrain * min(uScale, 1.0) * 0.24 * 255.0;
+    float noise = stableNoise(coord) * uGrain * min(uPhysicalScale, 1.0) * 0.24 * 255.0;
     return round(clamp(rgb * 255.0 + vec3(noise), 0.0, 255.0)) / 255.0;
 }
 vec3 processedPixel(ivec2 coord) {
@@ -2009,7 +2035,7 @@ void main() {
         // At an exact half-size preview, match the CPU's byte-space 2x2 box
         // filter directly. Driver-generated RGBA8 mip levels can round a
         // channel two levels away from the CPU result on high-contrast edges.
-        if (abs(uMinificationLod - 1.0) < 0.001 && abs(uDeviceScale - 1.0) < 0.001) {
+        if (abs(uMinificationLod - 1.0) < 0.001 && abs(uPhysicalScale - 0.5) < 0.001) {
             ivec2 centre = ivec2(floor(sourcePos));
             ivec2 first = centre - ivec2(1);
             vec4 sum = texelFetch(uProcessedSource, first, 0)
@@ -2025,7 +2051,7 @@ void main() {
     // The source texture's mip pyramid integrates a footprint-sized area.
     // Trilinear LOD selection is stable at fractional zooms and suppresses
     // checkerboard/moiré detail at Fit. LOD zero preserves exact 1:1 fetches.
-    if (uScale < 1.0) {
+    if (uPhysicalScale < 1.0) {
         vec2 outputCoord = sourcePos - vec2(0.5);
         ivec2 coord = ivec2(floor(outputCoord));
         if (uSharpen > 0.0001 || uGrain > 0.001 || abs(uClarity) > 0.001 || uNamedFilter >= 0.5) {
@@ -2430,6 +2456,7 @@ unsafe fn render_processed_source(
     viewport_width: i32,
     viewport_height: i32,
     view_scale: f32,
+    physical_scale: f32,
 ) {
     let mut previous_framebuffer = 0;
     gl::GetIntegerv(gl::FRAMEBUFFER_BINDING, &mut previous_framebuffer);
@@ -2479,6 +2506,7 @@ unsafe fn render_processed_source(
     // Grain is generated in source coordinates here; mip filtering naturally
     // reduces its variance at Fit rather than scaling screen-space noise.
     uniform_1f(objects.program, "uScale", 1.0);
+    uniform_1f(objects.program, "uPhysicalScale", 1.0);
     // The source sampler remains on unit 0. Unbind the target from its regular
     // sampler unit during the FBO pass to avoid a texture feedback loop.
     gl::BindTexture(gl::TEXTURE_2D, 0);
@@ -2488,9 +2516,18 @@ unsafe fn render_processed_source(
     uniform_1f(
         objects.program,
         "uMinificationLod",
-        (1.0 / view_scale.max(0.0001)).log2().max(0.0),
+        if physical_scale < 1.0 {
+            (1.0 / physical_scale.max(0.0001)).log2().max(0.0)
+        } else {
+            0.0
+        },
     );
     uniform_1f(objects.program, "uScale", view_scale.max(0.0001));
+    uniform_1f(
+        objects.program,
+        "uPhysicalScale",
+        physical_scale.max(0.0001),
+    );
     gl::ActiveTexture(gl::TEXTURE5);
     gl::BindTexture(gl::TEXTURE_2D, objects.processed_texture);
     gl::GenerateMipmap(gl::TEXTURE_2D);
@@ -3272,6 +3309,54 @@ unsafe fn uniform_3f(program: u32, name: &str, x: f32, y: f32, z: f32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn native_view_reference(
+        image: &image::RgbaImage,
+        source_x: u32,
+        source_y: u32,
+        logical_width: i32,
+        logical_height: i32,
+        gl_scale: usize,
+        surface_scale: f64,
+    ) -> Vec<u8> {
+        let width = logical_width.max(1) as usize * gl_scale;
+        let height = logical_height.max(1) as usize * gl_scale;
+        let mut output = vec![0; width * height * 4];
+        for y in 0..height {
+            let source_offset_y =
+                ((y as f64 + 0.5) * surface_scale / gl_scale as f64).floor() as u32;
+            for x in 0..width {
+                let source_offset_x =
+                    ((x as f64 + 0.5) * surface_scale / gl_scale as f64).floor() as u32;
+                let sx = source_x + source_offset_x;
+                let sy = source_y + source_offset_y;
+                if sx < image.width() && sy < image.height() {
+                    let source = image.get_pixel(sx, sy).0;
+                    let offset = (y * width + x) * 4;
+                    output[offset..offset + 4].copy_from_slice(&source);
+                }
+            }
+        }
+        output
+    }
+
+    #[test]
+    fn gpu_filter_scale_uses_physical_pixels_per_source_pixel() {
+        for device_scale in [1.0, 2.0, 1.5, 1.75] {
+            let native_logical_scale = 1.0 / device_scale;
+            let native_physical_scale = gpu_physical_scale(native_logical_scale, device_scale);
+            assert!((native_physical_scale - 1.0).abs() < 1e-12);
+            assert!(!gpu_uses_minification(native_physical_scale));
+            assert_eq!(gpu_minification_lod(native_physical_scale), 0.0);
+
+            let half_size_logical_scale = 0.5 / device_scale;
+            let half_size_physical_scale =
+                gpu_physical_scale(half_size_logical_scale, device_scale);
+            assert!((half_size_physical_scale - 0.5).abs() < 1e-12);
+            assert!(gpu_uses_minification(half_size_physical_scale));
+            assert_eq!(gpu_minification_lod(half_size_physical_scale), 1.0);
+        }
+    }
 
     #[test]
     fn renderer_mode_defaults_to_capability_checked_auto() {
@@ -5241,6 +5326,7 @@ mod tests {
 
     /// Optional private full-resolution regression:
     /// PIC_TEST_EDIT_REFERENCE=/path/to/DSC_5791.NEF
+    /// Set GDK_SCALE=2 under X11 to exercise physical 1:1 on HiDPI.
     ///
     /// With no reference, CI generates an anonymous high-frequency 3936x2624
     /// fixture instead. Never commit personal photographs to the public repo.
@@ -5281,11 +5367,37 @@ mod tests {
         let x = width / 2 - VIEW as u32 / 2;
         let y = height / 2 - VIEW as u32 / 2;
         let renderer = LiveGpuCanvas::new();
-        renderer.widget().set_size_request(VIEW, VIEW);
         let window = gtk::Window::new();
-        window.set_default_size(VIEW, VIEW);
         window.set_child(Some(&renderer.widget()));
         window.present();
+
+        let context = glib::MainContext::default();
+        let map_deadline = Instant::now() + std::time::Duration::from_secs(5);
+        while renderer
+            .widget()
+            .root()
+            .and_then(|root| root.surface())
+            .is_none()
+        {
+            while context.pending() {
+                context.iteration(false);
+            }
+            assert!(
+                Instant::now() < map_deadline,
+                "GLArea did not get a surface"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        let surface_scale = surface_device_scale(renderer.widget().upcast_ref());
+        let gl_scale = renderer.widget().scale_factor().max(1) as usize;
+        let logical_view = (VIEW as f64 / surface_scale).round().max(1.0) as i32;
+        renderer
+            .widget()
+            .set_size_request(logical_view, logical_view);
+        window.set_default_size(logical_view, logical_view);
+        while context.pending() {
+            context.iteration(false);
+        }
 
         let reference = EditRecipe::default();
         renderer.set_source(
@@ -5296,9 +5408,22 @@ mod tests {
             height as i32,
             glib::Bytes::from_owned(image.clone().into_raw()),
         );
-        renderer.set_view(x as f64, y as f64, VIEW as f64, VIEW as f64, 1.0, 0.0, 0.0);
+        let native_logical_scale = 1.0 / surface_scale;
+        let native_physical_scale = gpu_physical_scale(native_logical_scale, surface_scale);
+        assert!((native_physical_scale - 1.0).abs() < 1e-12);
+        eprintln!(
+            "PIC_EDIT_GPU native_scale surface={surface_scale:.3} logical={native_logical_scale:.3} gl_factor={gl_scale}"
+        );
+        renderer.set_view(
+            x as f64 * native_logical_scale,
+            y as f64 * native_logical_scale,
+            logical_view as f64,
+            logical_view as f64,
+            native_logical_scale,
+            0.0,
+            0.0,
+        );
 
-        let context = glib::MainContext::default();
         let read_frame = |recipe: &EditRecipe| {
             renderer.set_recipe(recipe);
             renderer.request_readback();
@@ -5316,16 +5441,42 @@ mod tests {
                 );
                 std::thread::sleep(std::time::Duration::from_millis(5));
             };
-            let scale = renderer.widget().scale_factor().max(1) as usize;
-            assert_eq!(result.len(), (VIEW as usize * scale).pow(2) * 4);
+            let width = renderer.widget().width().max(1) as usize * gl_scale;
+            let height = renderer.widget().height().max(1) as usize * gl_scale;
+            assert_eq!(result.len(), width * height * 4);
             result
-                .chunks_exact(VIEW as usize * scale * 4)
+                .chunks_exact(width * 4)
                 .rev()
                 .flatten()
                 .copied()
                 .collect::<Vec<u8>>()
         };
         let neutral = read_frame(&reference);
+        let frame_width = renderer.widget().width().max(1) as usize * gl_scale;
+        // A neutral identity render at 1:1 must preserve the decoded source
+        // bytes exactly. This also checks the real NEF's camera-JPEG colour
+        // values through texture upload, sampling, and framebuffer readback.
+        let expected_neutral = native_view_reference(
+            &image,
+            x,
+            y,
+            logical_view,
+            logical_view,
+            gl_scale,
+            surface_scale,
+        );
+        let neutral_max_delta = neutral
+            .iter()
+            .zip(&expected_neutral)
+            .map(|(a, b)| (*a as i16 - *b as i16).abs())
+            .max()
+            .unwrap_or_default();
+        assert_eq!(neutral.len(), expected_neutral.len());
+        assert_eq!(
+            neutral_max_delta, 0,
+            "neutral 1:1 GPU frame changed decoded source pixels"
+        );
+        eprintln!("PIC_EDIT_GPU native_source_quality max_channel_delta={neutral_max_delta}");
         let revision = renderer.uploaded_revision();
         let mut exposure = reference.clone();
         exposure.exposure = -0.03;
@@ -5336,19 +5487,15 @@ mod tests {
             "Exposure-only edit must reuse the full-size uploaded texture"
         );
         let cpu = super::super::render::apply_tone(image.clone(), &exposure);
-        let expected = image::imageops::crop_imm(&cpu, x, y, VIEW as u32, VIEW as u32).to_image();
-        let scale = renderer.widget().scale_factor().max(1) as u32;
-        let expected = if scale == 1 {
-            expected
-        } else {
-            image::imageops::resize(
-                &expected,
-                VIEW as u32 * scale,
-                VIEW as u32 * scale,
-                image::imageops::FilterType::Nearest,
-            )
-        }
-        .into_raw();
+        let expected = native_view_reference(
+            &cpu,
+            x,
+            y,
+            logical_view,
+            logical_view,
+            gl_scale,
+            surface_scale,
+        );
         assert_eq!(exposed.len(), expected.len());
         let max_delta = exposed
             .iter()
@@ -5363,10 +5510,10 @@ mod tests {
         // RGB edge strength within the same native 1:1 viewport. Exposure must
         // not resample or erase the image texture's one-pixel detail.
         let edge_energy = |rgba: &[u8]| -> f64 {
-            let stride = VIEW as usize * scale as usize * 4;
+            let stride = frame_width * 4;
             let mut sum = 0u64;
             for row in rgba.chunks_exact(stride) {
-                for x in 1..(VIEW as usize * scale as usize) {
+                for x in 1..frame_width {
                     let idx = x * 4;
                     for channel in 0..3 {
                         sum += (row[idx + channel] as i16 - row[idx - 4 + channel] as i16)
@@ -5393,19 +5540,15 @@ mod tests {
         assert!(gpu_tone_supported(&automatic));
         let auto_gpu = read_frame(&automatic);
         let auto_cpu = super::super::render::apply_tone(image.clone(), &automatic);
-        let auto_cpu =
-            image::imageops::crop_imm(&auto_cpu, x, y, VIEW as u32, VIEW as u32).to_image();
-        let auto_cpu = if scale == 1 {
-            auto_cpu
-        } else {
-            image::imageops::resize(
-                &auto_cpu,
-                VIEW as u32 * scale,
-                VIEW as u32 * scale,
-                image::imageops::FilterType::Nearest,
-            )
-        }
-        .into_raw();
+        let auto_cpu = native_view_reference(
+            &auto_cpu,
+            x,
+            y,
+            logical_view,
+            logical_view,
+            gl_scale,
+            surface_scale,
+        );
         let auto_delta = auto_gpu
             .iter()
             .zip(&auto_cpu)
@@ -5425,19 +5568,15 @@ mod tests {
         assert!(gpu_tone_supported(&both));
         let both_gpu = read_frame(&both);
         let both_cpu = super::super::render::apply_tone(image.clone(), &both);
-        let both_cpu =
-            image::imageops::crop_imm(&both_cpu, x, y, VIEW as u32, VIEW as u32).to_image();
-        let both_cpu = if scale == 1 {
-            both_cpu
-        } else {
-            image::imageops::resize(
-                &both_cpu,
-                VIEW as u32 * scale,
-                VIEW as u32 * scale,
-                image::imageops::FilterType::Nearest,
-            )
-        }
-        .into_raw();
+        let both_cpu = native_view_reference(
+            &both_cpu,
+            x,
+            y,
+            logical_view,
+            logical_view,
+            gl_scale,
+            surface_scale,
+        );
         let combined_delta = both_gpu
             .iter()
             .zip(&both_cpu)

@@ -167,7 +167,7 @@ fn cpu_fallback_reason(recipe: &EditRecipe) -> &'static str {
         "grain"
     } else if recipe.filter != FilterPreset::None {
         "filter"
-    } else if recipe.auto_color || recipe.auto_contrast {
+    } else if recipe.auto_color || recipe.auto_contrast || recipe.auto_brightness {
         "auto_adjustment"
     } else if recipe.black_white || recipe.sepia {
         "look"
@@ -789,20 +789,26 @@ pub fn build(
     picture_scroll.add_controller(pan_drag);
 
     add_section_label(&filters_box, "QUICK FIXES");
-    let auto_row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    let auto_row = gtk::Grid::new();
     auto_row.add_css_class("quick-fix-row");
+    auto_row.set_column_spacing(6);
+    auto_row.set_row_spacing(6);
+    auto_row.set_column_homogeneous(true);
     let auto_contrast = gtk::ToggleButton::with_label("Auto Contrast");
     let auto_color = gtk::ToggleButton::with_label("Auto Colour");
+    let auto_brightness = gtk::ToggleButton::with_label("Auto Brightness");
     auto_contrast.set_hexpand(true);
     auto_color.set_hexpand(true);
-    auto_row.append(&auto_contrast);
-    auto_row.append(&auto_color);
+    auto_brightness.set_hexpand(true);
+    auto_row.attach(&auto_contrast, 0, 0, 2, 1);
+    auto_row.attach(&auto_color, 0, 1, 1, 1);
+    auto_row.attach(&auto_brightness, 1, 1, 1, 1);
     filters_box.append(&auto_row);
 
     // Consistent with preset intensity controls: 100% is the existing full
     // look, 0% leaves the creative filter unapplied. Manual tools stay intact.
     let filter_amount = add_slider(&filters_box, "Filter Amount (%)", 0.0, 100.0, 1.0, 0);
-    filter_amount.set_tooltip_text(Some("Adjust the selected filter's strength (0–100%). Does not change Auto Contrast or Auto Colour."));
+    filter_amount.set_tooltip_text(Some("Adjust the selected filter's strength (0–100%). Does not change automatic fixes."));
 
     add_section_label(&filters_box, "FILTERS");
     let filter_grid = gtk::FlowBox::new();
@@ -976,6 +982,7 @@ pub fn build(
         vignette,
         auto_contrast,
         auto_color,
+        auto_brightness,
         filter_amount,
         black_white,
         sepia,
@@ -1661,6 +1668,11 @@ pub fn build(
         queue_preview.clone(),
         update_history_buttons.clone(),
         |r, v| r.auto_color = v,
+    );
+    connect_toggle(
+        &controls.auto_brightness,
+        session.clone(), syncing.clone(), queue_preview.clone(), update_history_buttons.clone(),
+        |r, v| r.auto_brightness = v,
     );
     {
         let session = session.clone();

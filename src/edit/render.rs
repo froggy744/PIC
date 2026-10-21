@@ -288,6 +288,7 @@ where
     if recipe.filter == filters::FilterPreset::None
         && !recipe.auto_color
         && !recipe.auto_contrast
+        && !recipe.auto_brightness
         && recipe.exposure == 0.0
         && recipe.temperature == 0.0
         && recipe.tint == 0.0
@@ -342,14 +343,18 @@ where
     if recipe.auto_contrast {
         apply_auto_contrast(&mut image);
     }
+    if recipe.auto_brightness {
+        apply_auto_brightness(&mut image);
+    }
     if std::env::var_os("PICASA_TRACE").is_some() {
         eprintln!(
-            "PIC_EDIT_EFFECT op=auto_adjust dimensions={}x{} elapsed_ms={:.3} auto_color={} auto_contrast={}",
+            "PIC_EDIT_EFFECT op=auto_adjust dimensions={}x{} elapsed_ms={:.3} auto_color={} auto_contrast={} auto_brightness={}",
             image.width(),
             image.height(),
             auto_started.elapsed().as_secs_f64() * 1000.0,
             recipe.auto_color,
             recipe.auto_contrast,
+            recipe.auto_brightness,
         );
     }
     if cancelled() {
@@ -985,6 +990,70 @@ fn apply_auto_contrast(image: &mut RgbaImage) {
     });
 }
 
+/// Lift underexposed frames, or just their shadows when the background is
+/// already bright. The lower decile finds dark detail and the median decides
+/// whether the rest of the frame needs brightening too.
+fn apply_auto_brightness(image: &mut RgbaImage) {
+    let mut histogram = [0u64; 256];
+    let step = ((image.width() as u64 * image.height() as u64) / 250_000).max(1) as usize;
+    let mut samples = 0u64;
+    for pixel in image.pixels().step_by(step) {
+        if pixel[3] < 16 { continue; }
+        let bucket = rgb_luma(pixel[0] as f32, pixel[1] as f32, pixel[2] as f32)
+            .round().clamp(0.0, 255.0) as usize;
+        histogram[bucket] += 1;
+        samples += 1;
+    }
+    if samples < 4 { return; }
+    let mut cumulative = 0u64;
+    let mut shadow = 0usize;
+    let mut median = 0usize;
+    let mut found_shadow = false;
+    for (bucket, count) in histogram.iter().enumerate() {
+        cumulative += count;
+        if !found_shadow && cumulative > samples / 10 {
+            shadow = bucket;
+            found_shadow = true;
+        }
+        if cumulative > samples / 2 {
+            median = bucket;
+            break;
+        }
+    }
+    let shadow = shadow as f32 / 255.0;
+    let median = median as f32 / 255.0;
+    let (gamma, lift_shadows_only) = if (0.02..0.42).contains(&shadow) && median < 0.82 {
+        // When the midtones are dim too, brighten the entire frame. A
+        // shadow-only curve leaves walls and clothing looking underexposed.
+        ((0.87_f32.ln() / median.max(0.02).ln()).clamp(0.4, 1.0), false)
+    } else if median >= 0.82 && (0.02..0.72).contains(&shadow) {
+        // Even a bright wall can make the whole image look fine by its
+        // median while the subject sits in dull midtones.
+        ((0.68_f32.ln() / shadow.ln()).clamp(0.55, 1.0), true)
+    } else if shadow > 0.68 && median > 0.72 && median < 0.98 {
+        ((0.60_f32.ln() / median.ln()).clamp(1.0, 2.4), false)
+    } else {
+        if std::env::var_os("PICASA_TRACE").is_some() {
+            eprintln!("PIC_EDIT_AUTO brightness skipped=balanced shadow={shadow:.3} median={median:.3} samples={samples}");
+        }
+        return;
+    };
+    if std::env::var_os("PICASA_TRACE").is_some() {
+        eprintln!("PIC_EDIT_AUTO brightness shadow={shadow:.3} median={median:.3} gamma={gamma:.3} shadows_only={lift_shadows_only} samples={samples}");
+    }
+    image.as_mut().par_chunks_mut(4).for_each(|pixel| {
+        if pixel[3] < 16 { return; }
+        let y = rgb_luma(pixel[0] as f32, pixel[1] as f32, pixel[2] as f32) / 255.0;
+        if y <= 0.0001 { return; }
+        let mapped = y.clamp(0.0, 1.0).powf(gamma);
+        let weight = if lift_shadows_only { 1.0 - smoothstep(0.42, 0.86, y) } else { 1.0 };
+        let gain = ((y + (mapped - y) * weight) / y).clamp(0.3, 3.0);
+        for channel in &mut pixel[..3] {
+            *channel = (*channel as f32 * gain).round().clamp(0.0, 255.0) as u8;
+        }
+    });
+}
+
 fn rotate_autocrop(source: &RgbaImage, angle: f32) -> RgbaImage {
     if angle.abs() < 0.0001 || source.width() < 2 || source.height() < 2 {
         return source.clone();
@@ -1567,6 +1636,76 @@ mod tests {
         let output = apply_recipe(source, &recipe);
         assert!(output.get_pixel(48, 0)[0] < 45);
         assert!(output.get_pixel(208, 0)[0] > 211);
+    }
+
+    #[test]
+    fn auto_brightness_corrects_dark_and_bright_midtone_scenes() {
+        let mut recipe = EditRecipe::default();
+        recipe.auto_brightness = true;
+        let dark = RgbaImage::from_pixel(24, 24, Rgba([65, 70, 75, 211]));
+        let bright = RgbaImage::from_pixel(24, 24, Rgba([190, 195, 200, 211]));
+        let corrected_dark = apply_recipe(dark, &recipe).get_pixel(0, 0).0;
+        let corrected_bright = apply_recipe(bright, &recipe).get_pixel(0, 0).0;
+        assert!(corrected_dark[1] > 100);
+        assert!(corrected_bright[1] < 160);
+        assert_eq!(corrected_dark[3], 211);
+        assert_eq!(corrected_bright[3], 211);
+    }
+
+    #[test]
+    fn auto_brightness_leaves_good_midtone_alone_despite_outliers() {
+        let mut recipe = EditRecipe::default();
+        recipe.auto_brightness = true;
+        let mut source = RgbaImage::from_pixel(101, 1, Rgba([115, 115, 115, 255]));
+        source.put_pixel(0, 0, Rgba([0, 0, 0, 255]));
+        source.put_pixel(100, 0, Rgba([255, 255, 255, 255]));
+        let output = apply_recipe(source.clone(), &recipe);
+        assert_eq!(output, source);
+    }
+
+    #[test]
+    fn auto_brightness_lifts_dark_subject_without_dimming_bright_background() {
+        // A portrait against a white wall: the wall owns the median, but the
+        // subject needs light. This caught the old global-median gamma curve.
+        let source = RgbaImage::from_fn(100, 100, |x, _| {
+            if x < 15 { Rgba([72, 77, 82, 255]) }
+            else { Rgba([225, 225, 225, 255]) }
+        });
+        let mut recipe = EditRecipe::default();
+        recipe.auto_brightness = true;
+        let output = apply_recipe(source, &recipe);
+        assert!(output.get_pixel(5, 50)[1] >= 105, "dark subject should be lifted");
+        assert!(output.get_pixel(80, 50)[1] >= 220, "white background should stay bright");
+    }
+
+    #[test]
+    fn auto_brightness_lifts_dim_portrait_and_background_together() {
+        // A dim portrait can still have a fairly high median because a wall
+        // fills most of the frame. Lifting only shadows leaves it looking dim.
+        let source = RgbaImage::from_fn(100, 100, |x, _| {
+            if x < 15 { Rgba([60, 65, 70, 255]) }
+            else { Rgba([189, 189, 189, 255]) }
+        });
+        let mut recipe = EditRecipe::default();
+        recipe.auto_brightness = true;
+        let output = apply_recipe(source, &recipe);
+        assert!(output.get_pixel(5, 50)[1] >= 125, "dark subject should be clearly brighter");
+        assert!(output.get_pixel(80, 50)[1] >= 215, "dim background should be brighter too");
+    }
+
+    #[test]
+    fn auto_brightness_lifts_midtone_subject_against_white_wall() {
+        // The supplied bright-wall portrait has a lower decile near 144 and
+        // a median near 225. The old cutoff skipped the entire adjustment.
+        let source = RgbaImage::from_fn(100, 100, |x, _| {
+            if x < 15 { Rgba([139, 144, 149, 255]) }
+            else { Rgba([225, 225, 225, 255]) }
+        });
+        let mut recipe = EditRecipe::default();
+        recipe.auto_brightness = true;
+        let output = apply_recipe(source, &recipe);
+        assert!(output.get_pixel(5, 50)[1] >= 160, "midtone subject should be visibly brighter");
+        assert!(output.get_pixel(80, 50)[1] >= 220, "white wall should stay bright");
     }
 
     #[test]

@@ -908,6 +908,7 @@ pub struct EditRecipe {
     pub vibrance: f32,
     pub auto_contrast: bool,
     pub auto_color: bool,
+    pub auto_brightness: bool,
     pub black_white: bool,
     pub sepia: bool,
     pub filter: super::filters::FilterPreset,
@@ -947,6 +948,7 @@ impl Default for EditRecipe {
             vibrance: 0.0,
             auto_contrast: false,
             auto_color: false,
+            auto_brightness: false,
             black_white: false,
             sepia: false,
             filter: super::filters::FilterPreset::None,
@@ -1005,6 +1007,7 @@ impl EditRecipe {
                 "vibrance" => recipe.vibrance = number().unwrap_or(0.0).clamp(-1.0, 1.0),
                 "autocontrast" => recipe.auto_contrast = flag(),
                 "autocolor" => recipe.auto_color = flag(),
+                "autobrightness" => recipe.auto_brightness = flag(),
                 "bw" => recipe.black_white = flag(),
                 "sepia" => recipe.sepia = flag(),
                 "filter" => recipe.filter = super::filters::FilterPreset::decode(value),
@@ -1028,7 +1031,7 @@ impl EditRecipe {
             return String::new();
         }
         let mut encoded = format!(
-            "v=1|crop={:.5},{:.5},{:.5},{:.5}|straighten={:.4}|exposure={:.4}|contrast={:.4}|fill={:.4}|highlights={:.4}|shadows={:.4}|whites={:.4}|blacks={:.4}|temp={:.4}|tint={:.4}|sat={:.4}|vibrance={:.4}|autocontrast={}|autocolor={}|bw={}|sepia={}|filter={}|filteramount={:.4}|sharpen={:.4}|clarity={:.4}|smooth={:.4}|grain={:.4}|vignette={:.4}",
+            "v=1|crop={:.5},{:.5},{:.5},{:.5}|straighten={:.4}|exposure={:.4}|contrast={:.4}|fill={:.4}|highlights={:.4}|shadows={:.4}|whites={:.4}|blacks={:.4}|temp={:.4}|tint={:.4}|sat={:.4}|vibrance={:.4}|autocontrast={}|autocolor={}|autobrightness={}|bw={}|sepia={}|filter={}|filteramount={:.4}|sharpen={:.4}|clarity={:.4}|smooth={:.4}|grain={:.4}|vignette={:.4}",
             self.crop.left,
             self.crop.top,
             self.crop.right,
@@ -1047,6 +1050,7 @@ impl EditRecipe {
             self.vibrance,
             self.auto_contrast as u8,
             self.auto_color as u8,
+            self.auto_brightness as u8,
             self.black_white as u8,
             self.sepia as u8,
             self.filter.key(),
@@ -1088,6 +1092,7 @@ impl EditRecipe {
             && self.vibrance.abs() < 0.0001
             && !self.auto_contrast
             && !self.auto_color
+            && !self.auto_brightness
             && !self.black_white
             && !self.sepia
             && self.filter == super::filters::FilterPreset::None
@@ -1230,6 +1235,7 @@ mod tests {
         recipe.tint = -0.3;
         recipe.vibrance = 0.65;
         recipe.auto_color = true;
+        recipe.auto_brightness = true;
         recipe.sepia = true;
         recipe.filter = FilterPreset::Valencia;
         recipe.filter_amount = 0.42;
@@ -1247,6 +1253,7 @@ mod tests {
         assert!((decoded.tint + 0.3).abs() < 0.001);
         assert!((decoded.vibrance - 0.65).abs() < 0.001);
         assert!(decoded.auto_color);
+        assert!(decoded.auto_brightness);
         assert!(decoded.sepia);
         assert_eq!(decoded.filter, FilterPreset::Valencia);
         assert!((decoded.filter_amount - 0.42).abs() < 0.001);
@@ -1260,6 +1267,7 @@ mod tests {
     #[test]
     fn old_filter_recipes_remain_full_strength_and_amount_is_clamped() {
         let old = EditRecipe::decode("v=1|filter=newspaper|exposure=0.2500");
+        assert!(!old.auto_brightness);
         assert_eq!((old.whites, old.blacks, old.smooth), (0.0, 0.0, 0.0));
         assert_eq!((old.tint, old.vibrance, old.vignette), (0.0, 0.0, 0.0));
         assert_eq!(old.filter, FilterPreset::Newspaper);

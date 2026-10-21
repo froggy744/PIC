@@ -1602,7 +1602,8 @@ pub fn gpu_tone_supported(recipe: &EditRecipe) -> bool {
     // CPU for creative looks and non-identity geometry until strict parity is
     // proven. Standalone/both autos on plain, uncropped photos are verified.
     let geometry_changes_pixels = !recipe.crop.is_full() || recipe.straighten.abs() >= 0.01;
-    recipe.smooth <= 0.001
+    !recipe.auto_brightness
+        && recipe.smooth <= 0.001
         && recipe.vignette.abs() <= 0.001
         && (recipe.filter == FilterPreset::None || !(recipe.auto_color || recipe.auto_contrast))
         && !(geometry_changes_pixels && (recipe.auto_color || recipe.auto_contrast))
@@ -1646,6 +1647,7 @@ pub fn gpu_base_recipe(recipe: &EditRecipe) -> EditRecipe {
     base.sepia = false;
     base.auto_color = false;
     base.auto_contrast = false;
+    base.auto_brightness = false;
     // In LiveGPU mode geometry is applied directly to the RAW source texture.
     // Do not first straighten/crop it on the CPU and then reapply on the GPU.
     base.crop = CropRect::default();
@@ -3605,6 +3607,7 @@ mod tests {
         assert!(!base.sepia);
         assert!(!base.auto_color);
         assert!(!base.auto_contrast);
+        assert!(!base.auto_brightness);
         assert_eq!(base.crop, CropRect::default());
         assert_eq!(base.straighten, 0.0);
     }
@@ -3646,6 +3649,9 @@ mod tests {
         assert!(gpu_tone_supported(&auto_contrast));
         auto_contrast.auto_color = true;
         assert!(gpu_tone_supported(&auto_contrast));
+        auto_contrast.auto_brightness = true;
+        assert!(!gpu_tone_supported(&auto_contrast));
+        auto_contrast.auto_brightness = false;
         auto_contrast.filter = FilterPreset::Clarendon;
         assert!(!gpu_tone_supported(&auto_contrast));
         let mut cropped_auto = EditRecipe::default();

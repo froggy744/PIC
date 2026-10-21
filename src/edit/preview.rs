@@ -277,6 +277,42 @@ mod tests {
     use super::*;
 
     #[test]
+    fn auto_brightness_changes_decoded_preview_pixels() {
+        let path = std::env::temp_dir().join(format!(
+            "pic-auto-brightness-preview-{}-{}.png",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let source = image::RgbaImage::from_fn(100, 100, |x, _| {
+            if x < 15 { image::Rgba([60, 65, 70, 255]) }
+            else { image::Rgba([189, 189, 189, 255]) }
+        });
+        source.save(&path).unwrap();
+        let reference = path.to_string_lossy().into_owned();
+        let cache = Arc::new(Mutex::new(Vec::new()));
+        let mut geometry_cache = None;
+        let (result_sender, _result_receiver) = std::sync::mpsc::channel();
+        let mut job = PreviewJob {
+            generation: 1,
+            path: reference,
+            rotation: 0,
+            target_width: 100,
+            target_height: 100,
+            recipe: EditRecipe::default(),
+            result_sender,
+        };
+        let before = render_preview_job(&job, &cache, &mut geometry_cache).unwrap();
+        job.recipe.auto_brightness = true;
+        let after = render_preview_job(&job, &cache, &mut geometry_cache).unwrap();
+        assert!(after.get_pixel(5, 50)[1] >= before.get_pixel(5, 50)[1] + 55);
+        assert!(after.get_pixel(80, 50)[1] >= before.get_pixel(80, 50)[1] + 25);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
     fn edit_preview_at_fit_and_one_to_one_keeps_source_resolution() {
         let source = (3936, 2624);
         assert_eq!(preview_target_dimensions(3936, 2624), source);

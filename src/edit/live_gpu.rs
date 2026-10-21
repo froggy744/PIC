@@ -375,10 +375,14 @@ impl GpuTone {
         self.exposure == 0.0
             && self.contrast == 0.0
             && self.saturation == 0.0
+            && self.vibrance == 0.0
             && self.temperature == 0.0
+            && self.tint == 0.0
             && self.fill_light == 0.0
             && self.shadows == 0.0
             && self.highlights == 0.0
+            && self.whites == 0.0
+            && self.blacks == 0.0
             && self.sharpen == 0.0
             && self.grain == 0.0
             && self.clarity == 0.0
@@ -403,10 +407,14 @@ struct GpuTone {
     exposure: f32,
     contrast: f32,
     saturation: f32,
+    vibrance: f32,
     temperature: f32,
+    tint: f32,
     fill_light: f32,
     shadows: f32,
     highlights: f32,
+    whites: f32,
+    blacks: f32,
     sharpen: f32,
     grain: f32,
     clarity: f32,
@@ -947,10 +955,14 @@ impl LiveGpuCanvas {
                     uniform_1f(objects.program, "uExposure", tone.exposure);
                     uniform_1f(objects.program, "uContrast", tone.contrast);
                     uniform_1f(objects.program, "uSaturation", tone.saturation);
+                    uniform_1f(objects.program, "uVibrance", tone.vibrance);
                     uniform_1f(objects.program, "uTemperature", tone.temperature);
+                    uniform_1f(objects.program, "uTint", tone.tint);
                     uniform_1f(objects.program, "uFillLight", tone.fill_light);
                     uniform_1f(objects.program, "uShadows", tone.shadows);
                     uniform_1f(objects.program, "uHighlights", tone.highlights);
+                    uniform_1f(objects.program, "uWhites", tone.whites);
+                    uniform_1f(objects.program, "uBlacks", tone.blacks);
                     uniform_1f(objects.program, "uSharpen", tone.sharpen);
                     uniform_1f(objects.program, "uClarity", tone.clarity);
                     uniform_1f(objects.program, "uGrain", tone.grain);
@@ -1392,10 +1404,14 @@ impl LiveGpuCanvas {
             exposure: recipe.exposure,
             contrast: recipe.contrast,
             saturation: recipe.saturation,
+            vibrance: recipe.vibrance,
             temperature: recipe.temperature,
+            tint: recipe.tint,
             fill_light: recipe.fill_light,
             shadows: recipe.shadows,
             highlights: recipe.highlights,
+            whites: recipe.whites,
+            blacks: recipe.blacks,
             sharpen: recipe.sharpen,
             grain: recipe.grain,
             clarity: recipe.clarity,
@@ -1584,7 +1600,9 @@ pub fn gpu_tone_supported(recipe: &EditRecipe) -> bool {
     // CPU for creative looks and non-identity geometry until strict parity is
     // proven. Standalone/both autos on plain, uncropped photos are verified.
     let geometry_changes_pixels = !recipe.crop.is_full() || recipe.straighten.abs() >= 0.01;
-    (recipe.filter == FilterPreset::None || !(recipe.auto_color || recipe.auto_contrast))
+    recipe.smooth <= 0.001
+        && recipe.vignette.abs() <= 0.001
+        && (recipe.filter == FilterPreset::None || !(recipe.auto_color || recipe.auto_contrast))
         && !(geometry_changes_pixels && (recipe.auto_color || recipe.auto_contrast))
 }
 
@@ -1608,13 +1626,19 @@ pub fn gpu_base_recipe(recipe: &EditRecipe) -> EditRecipe {
     base.exposure = 0.0;
     base.contrast = 0.0;
     base.saturation = 0.0;
+    base.vibrance = 0.0;
     base.temperature = 0.0;
+    base.tint = 0.0;
     base.fill_light = 0.0;
     base.shadows = 0.0;
     base.highlights = 0.0;
+    base.whites = 0.0;
+    base.blacks = 0.0;
     base.sharpen = 0.0;
     base.grain = 0.0;
     base.clarity = 0.0;
+    base.smooth = 0.0;
+    base.vignette = 0.0;
     base.filter = FilterPreset::None;
     base.black_white = false;
     base.sepia = false;
@@ -1707,10 +1731,14 @@ uniform float uDeviceScale;
 uniform float uExposure;
 uniform float uContrast;
 uniform float uSaturation;
+uniform float uVibrance;
 uniform float uTemperature;
+uniform float uTint;
 uniform float uFillLight;
 uniform float uShadows;
 uniform float uHighlights;
+uniform float uWhites;
+uniform float uBlacks;
 uniform float uSharpen;
 uniform float uGrain;
 uniform float uClarity;
@@ -1769,7 +1797,7 @@ vec4 tonePixel(vec4 px) {
         if (sums.a >= 0.5) {
             vec3 means = sums.rgb / sums.a;
             float neutral = dot(means, vec3(0.2126,0.7152,0.0722));
-            vec3 gains = vec3(1.0) + (clamp(vec3(neutral) / max(means,vec3(1.0)), vec3(0.82), vec3(1.22)) - vec3(1.0)) * 0.65;
+            vec3 gains = clamp(vec3(neutral) / max(means,vec3(1.0)), vec3(0.75), vec3(1.35));
             corrected = round(clamp(corrected * gains, 0.0, 1.0) * 255.0) / 255.0;
         }
     }
@@ -1806,11 +1834,25 @@ vec4 tonePixel(vec4 px) {
             c *= clamp(target / y, 0.12, 5.0);
         }
     }
+    if (abs(uBlacks) > 0.0001 || abs(uWhites) > 0.0001) {
+        float y = clamp(luma(c), 0.0, 1.0);
+        float blackMask = 1.0 - smoothMask(0.04, 0.42, y);
+        float whiteMask = smoothMask(0.58, 0.96, y);
+        float offset = 0.22 * (uBlacks * blackMask * blackMask +
+                               uWhites * whiteMask * whiteMask);
+        c += vec3(offset);
+    }
     c.r *= 1.0 + uTemperature * 0.18;
     c.b *= 1.0 - uTemperature * 0.18;
     c.g *= 1.0 + abs(uTemperature) * 0.015;
+    c *= vec3(1.0 + uTint * 0.10, 1.0 - uTint * 0.12, 1.0 + uTint * 0.10);
     float gray = luma(c);
     c = vec3(gray) + (c - vec3(gray)) * (1.0 + uSaturation);
+    if (abs(uVibrance) > 0.0001) {
+        float chroma = clamp(max(c.r, max(c.g, c.b)) - min(c.r, min(c.g, c.b)), 0.0, 1.0);
+        float factor = 1.0 + uVibrance * (1.0 - chroma) * 0.8;
+        c = vec3(gray) + (c - vec3(gray)) * factor;
+    }
     if (abs(uContrast) > 0.0001) {
         c.r = contrastCurve(c.r, uContrast);
         c.g = contrastCurve(c.g, uContrast);
@@ -2213,7 +2255,7 @@ void main() {
         if (sums.a >= 0.5) {
             vec3 means = sums.rgb / sums.a;
             float neutral = luma(means);
-            vec3 gains = vec3(1.0) + (clamp(vec3(neutral) / max(means,vec3(1.0)),vec3(0.82),vec3(1.22))-vec3(1.0))*0.65;
+            vec3 gains = clamp(vec3(neutral) / max(means,vec3(1.0)),vec3(0.75),vec3(1.35));
             px.rgb = round(clamp(px.rgb*gains,0.0,1.0)*255.0)/255.0;
         }
     }
@@ -2263,10 +2305,8 @@ void main() {
     }
     if (high <= low + 6) { color = vec4(0.0); return; }
     float span = float(high - low) / 255.0;
-    float contrast = clamp(0.85 / span, 1.0, 3.2);
-    color = contrast > 1.001
-        ? vec4(float(low) / 255.0, float(high) / 255.0, contrast, 1.0)
-        : vec4(0.0);
+    float contrast = clamp(0.95 / span, 1.12, 3.2);
+    color = vec4(float(low) / 255.0, float(high) / 255.0, contrast, 1.0);
 }"#,
     )?;
 
@@ -3517,6 +3557,12 @@ mod tests {
         recipe.fill_light = 0.5;
         recipe.shadows = -0.4;
         recipe.highlights = 0.3;
+        recipe.whites = 0.2;
+        recipe.blacks = -0.2;
+        recipe.smooth = 0.5;
+        recipe.vibrance = 0.4;
+        recipe.tint = -0.2;
+        recipe.vignette = -0.3;
         recipe.crop.left = 0.1;
         let base = gpu_base_recipe(&recipe);
         assert_eq!(base.exposure, 0.0);
@@ -3526,6 +3572,12 @@ mod tests {
         assert_eq!(base.fill_light, 0.0);
         assert_eq!(base.shadows, 0.0);
         assert_eq!(base.highlights, 0.0);
+        assert_eq!(base.whites, 0.0);
+        assert_eq!(base.blacks, 0.0);
+        assert_eq!(base.smooth, 0.0);
+        assert_eq!(base.vibrance, 0.0);
+        assert_eq!(base.tint, 0.0);
+        assert_eq!(base.vignette, 0.0);
         assert_eq!(base.sharpen, 0.0);
         assert_eq!(base.grain, 0.0);
         assert_eq!(base.clarity, 0.0);
@@ -3542,6 +3594,18 @@ mod tests {
     fn gpu_support_includes_clarity_grain_and_monochrome_looks() {
         let recipe = EditRecipe::default();
         assert!(gpu_tone_supported(&recipe));
+        let mut endpoint_adjustments = recipe.clone();
+        endpoint_adjustments.whites = 0.4;
+        endpoint_adjustments.blacks = -0.4;
+        assert!(gpu_tone_supported(&endpoint_adjustments));
+        endpoint_adjustments.smooth = 0.4;
+        assert!(!gpu_tone_supported(&endpoint_adjustments));
+        endpoint_adjustments.smooth = 0.0;
+        endpoint_adjustments.vibrance = 0.3;
+        endpoint_adjustments.tint = -0.2;
+        assert!(gpu_tone_supported(&endpoint_adjustments));
+        endpoint_adjustments.vignette = 0.4;
+        assert!(!gpu_tone_supported(&endpoint_adjustments));
         let mut sharpened = recipe.clone();
         sharpened.sharpen = 0.35;
         assert!(gpu_tone_supported(&sharpened));
@@ -4551,6 +4615,10 @@ mod tests {
         edited.fill_light = 0.2;
         edited.shadows = -0.15;
         edited.highlights = 0.1;
+        edited.vibrance = 0.23;
+        edited.tint = -0.18;
+        edited.whites = 0.18;
+        edited.blacks = -0.22;
         edited.sharpen = 0.35;
         // Native-size regression coverage includes Sharpen. Grain below and
         // Clarity later in this test use the same 1:1 CPU parity helper.

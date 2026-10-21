@@ -290,16 +290,22 @@ where
         && !recipe.auto_contrast
         && recipe.exposure == 0.0
         && recipe.temperature == 0.0
+        && recipe.tint == 0.0
         && recipe.saturation == 0.0
+        && recipe.vibrance == 0.0
         && recipe.fill_light == 0.0
         && recipe.shadows == 0.0
+        && recipe.whites == 0.0
+        && recipe.blacks == 0.0
         && recipe.highlights == 0.0
         && recipe.contrast == 0.0
         && !recipe.black_white
         && !recipe.sepia
         && recipe.clarity == 0.0
+        && recipe.smooth == 0.0
         && recipe.sharpen == 0.0
         && recipe.grain == 0.0
+        && recipe.vignette == 0.0
     {
         return Some(image);
     }
@@ -352,7 +358,9 @@ where
 
     let exposure = 2.0_f32.powf(recipe.exposure);
     let temperature = recipe.temperature;
+    let tint = recipe.tint;
     let saturation = 1.0 + recipe.saturation;
+    let vibrance = recipe.vibrance;
     let tone_map_started = std::time::Instant::now();
     image.as_mut().par_chunks_mut(4).for_each(|pixel| {
         let alpha = pixel[3];
@@ -382,14 +390,38 @@ where
             }
         }
 
+        // Endpoint controls act on a narrower range than Shadows/Highlights.
+        // The equal RGB offset lets Blacks lift true black and Whites lower
+        // true white, which luminance gain alone cannot do.
+        if recipe.blacks.abs() > 0.0001 || recipe.whites.abs() > 0.0001 {
+            let y = rgb_luma(r, g, b).clamp(0.0, 1.0);
+            let black_mask = 1.0 - smoothstep(0.04, 0.42, y);
+            let white_mask = smoothstep(0.58, 0.96, y);
+            let offset = 0.22 * (recipe.blacks * black_mask * black_mask
+                + recipe.whites * white_mask * white_mask);
+            r += offset;
+            g += offset;
+            b += offset;
+        }
+
         r *= 1.0 + temperature * 0.18;
         b *= 1.0 - temperature * 0.18;
         g *= 1.0 + temperature.abs() * 0.015;
+        r *= 1.0 + tint * 0.10;
+        g *= 1.0 - tint * 0.12;
+        b *= 1.0 + tint * 0.10;
 
         let gray = 0.2126 * r + 0.7152 * g + 0.0722 * b;
         r = gray + (r - gray) * saturation;
         g = gray + (g - gray) * saturation;
         b = gray + (b - gray) * saturation;
+        if vibrance.abs() > 0.0001 {
+            let chroma = (r.max(g).max(b) - r.min(g).min(b)).clamp(0.0, 1.0);
+            let factor = 1.0 + vibrance * (1.0 - chroma) * 0.8;
+            r = gray + (r - gray) * factor;
+            g = gray + (g - gray) * factor;
+            b = gray + (b - gray) * factor;
+        }
 
         if recipe.contrast.abs() > 0.0001 {
             r = apply_contrast_curve(r, recipe.contrast);
@@ -457,6 +489,21 @@ where
         return None;
     }
 
+    if recipe.smooth > 0.001 && image.width() > 2 && image.height() > 2 {
+        let smooth_started = std::time::Instant::now();
+        smooth_detail(&mut image, recipe.smooth);
+        if std::env::var_os("PICASA_TRACE").is_some() {
+            eprintln!(
+                "PIC_EDIT_EFFECT op=smooth dimensions={}x{} elapsed_ms={:.3} amount={:.3}",
+                image.width(), image.height(), smooth_started.elapsed().as_secs_f64() * 1000.0,
+                recipe.smooth,
+            );
+        }
+    }
+    if cancelled() {
+        return None;
+    }
+
     if recipe.sharpen > 0.001 && image.width() > 2 && image.height() > 2 {
         let sharpen_started = std::time::Instant::now();
         sharpen_unsharp(&mut image, 1.1, recipe.sharpen * 1.6);
@@ -476,6 +523,9 @@ where
     let grain_started = std::time::Instant::now();
     if recipe.grain > 0.001 {
         filters::apply_grain(&mut image, recipe.grain * 0.24);
+    }
+    if recipe.vignette.abs() > 0.001 {
+        apply_vignette(&mut image, recipe.vignette);
     }
     if std::env::var_os("PICASA_TRACE").is_some() {
         eprintln!(
@@ -732,6 +782,73 @@ fn apply_clarity(image: &mut RgbaImage, amount: f32) {
         });
 }
 
+/// Edge-aware 5x5 colour average for fine texture. Alpha and strong borders
+/// are preserved, and amount zero takes the unmodified fast path.
+fn smooth_detail(image: &mut RgbaImage, amount: f32) {
+    let (width, height) = (image.width() as usize, image.height() as usize);
+    let source = image.as_raw().clone();
+    let row_bytes = width * 4;
+    // Make the middle of the control useful without making the final step jump.
+    let strength = 1.0 - (1.0 - amount).powi(2);
+    image.as_mut().par_chunks_mut(row_bytes).enumerate().for_each(|(y, row)| {
+        for (x, pixel) in row.chunks_exact_mut(4).enumerate() {
+            if pixel[3] < 16 { continue; }
+            let center = rgb_luma(pixel[0] as f32, pixel[1] as f32, pixel[2] as f32);
+            let mut sum = [pixel[0] as f32, pixel[1] as f32, pixel[2] as f32];
+            let mut total = 1.0_f32;
+            for ny in y.saturating_sub(2)..=(y + 2).min(height - 1) {
+                for nx in x.saturating_sub(2)..=(x + 2).min(width - 1) {
+                    if nx == x && ny == y { continue; }
+                    let offset = ny * row_bytes + nx * 4;
+                    let other = &source[offset..offset + 4];
+                    if other[3] < 16 { continue; }
+                    let difference = (center - rgb_luma(
+                        other[0] as f32, other[1] as f32, other[2] as f32,
+                    )).abs();
+                    let range = difference / 32.0;
+                    let edge = 1.0 / (1.0 + range * range * range * range);
+                    let dx = nx.abs_diff(x) as f32;
+                    let dy = ny.abs_diff(y) as f32;
+                    let spatial = 1.0 / (1.0 + dx * dx + dy * dy);
+                    let weight = spatial * edge;
+                    for channel in 0..3 { sum[channel] += other[channel] as f32 * weight; }
+                    total += weight;
+                }
+            }
+            for channel in 0..3 {
+                let averaged = sum[channel] / total;
+                pixel[channel] = (pixel[channel] as f32
+                    + (averaged - pixel[channel] as f32) * strength)
+                    .round().clamp(0.0, 255.0) as u8;
+            }
+        }
+    });
+}
+
+/// Radial edge shading in cropped output coordinates, after all tone/detail
+/// operations so the visible photo edges determine the falloff.
+fn apply_vignette(image: &mut RgbaImage, amount: f32) {
+    let (width, height) = (image.width() as usize, image.height() as usize);
+    let row_bytes = width * 4;
+    image.as_mut().par_chunks_mut(row_bytes).enumerate().for_each(|(y, row)| {
+        let dy = (y as f32 + 0.5) * 2.0 / height as f32 - 1.0;
+        for (x, pixel) in row.chunks_exact_mut(4).enumerate() {
+            if pixel[3] < 16 { continue; }
+            let dx = (x as f32 + 0.5) * 2.0 / width as f32 - 1.0;
+            let mask = smoothstep(0.15, 1.65, dx * dx + dy * dy);
+            for channel in &mut pixel[..3] {
+                let value = *channel as f32;
+                let adjusted = if amount >= 0.0 {
+                    value * (1.0 - amount * 0.7 * mask)
+                } else {
+                    value + (255.0 - value) * (-amount * 0.5 * mask)
+                };
+                *channel = adjusted.round().clamp(0.0, 255.0) as u8;
+            }
+        }
+    });
+}
+
 fn rgb_luma(r: f32, g: f32, b: f32) -> f32 {
     0.2126 * r + 0.7152 * g + 0.0722 * b
 }
@@ -767,15 +884,26 @@ fn apply_auto_color(image: &mut RgbaImage) {
         sums[2] += b * weight;
         count += weight;
     }
-    if count < 0.5 { return; }
+    if count < 0.5 {
+        if std::env::var_os("PICASA_TRACE").is_some() {
+            eprintln!("PIC_EDIT_AUTO color skipped=no_neutral_samples samples={count:.1}");
+        }
+        return;
+    }
 
     let means = [sums[0] / count, sums[1] / count, sums[2] / count];
     let neutral = 0.2126 * means[0] + 0.7152 * means[1] + 0.0722 * means[2];
     let gains = [
-        1.0 + ((neutral / means[0].max(1.0)).clamp(0.82, 1.22) - 1.0) * 0.65,
-        1.0 + ((neutral / means[1].max(1.0)).clamp(0.82, 1.22) - 1.0) * 0.65,
-        1.0 + ((neutral / means[2].max(1.0)).clamp(0.82, 1.22) - 1.0) * 0.65,
+        (neutral / means[0].max(1.0)).clamp(0.75, 1.35),
+        (neutral / means[1].max(1.0)).clamp(0.75, 1.35),
+        (neutral / means[2].max(1.0)).clamp(0.75, 1.35),
     ];
+    if std::env::var_os("PICASA_TRACE").is_some() {
+        eprintln!(
+            "PIC_EDIT_AUTO color samples={count:.1} gains={:.3},{:.3},{:.3}",
+            gains[0], gains[1], gains[2],
+        );
+    }
     image.as_mut().par_chunks_mut(4).for_each(|pixel| {
         if pixel[3] < 16 { return; }
         for c in 0..3 {
@@ -796,7 +924,12 @@ fn apply_auto_contrast(image: &mut RgbaImage) {
         histogram[bucket] += 1;
         samples += 1;
     }
-    if samples < 4 { return; }
+    if samples < 4 {
+        if std::env::var_os("PICASA_TRACE").is_some() {
+            eprintln!("PIC_EDIT_AUTO contrast skipped=too_few_samples samples={samples}");
+        }
+        return;
+    }
 
     // Robust percentile bounds: small specular reflections and individual
     // dark pixels must not decide the whole photo's black/white points.
@@ -815,16 +948,25 @@ fn apply_auto_contrast(image: &mut RgbaImage) {
         total += *count;
         if total > clip { high = i; break; }
     }
-    if high <= low + 6 { return; }
+    if high <= low + 6 {
+        if std::env::var_os("PICASA_TRACE").is_some() {
+            eprintln!("PIC_EDIT_AUTO contrast skipped=narrow_range low={low} high={high}");
+        }
+        return;
+    }
     let low = low as f32 / 255.0;
     let high = high as f32 / 255.0;
     let span = high - low;
     // Protect compressed-histogram/low-light photographs from a huge global
     // stretch. Anchor the contrast about scene luminance rather than forcing
     // arbitrary percentile samples all the way to pure black or white.
-    let contrast = (0.85 / span).clamp(1.0, 3.2);
-    if contrast <= 1.001 { return; }
+    let contrast = (0.95 / span).clamp(1.12, 3.2);
     let pivot = (low + high) * 0.5;
+    if std::env::var_os("PICASA_TRACE").is_some() {
+        eprintln!(
+            "PIC_EDIT_AUTO contrast samples={samples} low={low:.3} high={high:.3} gain={contrast:.3}",
+        );
+    }
 
     image.as_mut().par_chunks_mut(4).for_each(|pixel| {
         if pixel[3] < 16 { return; }
@@ -1416,6 +1558,18 @@ mod tests {
     }
 
     #[test]
+    fn auto_contrast_changes_an_already_wide_histogram() {
+        let source = RgbaImage::from_fn(256, 1, |x, _| {
+            Rgba([x as u8, x as u8, x as u8, 255])
+        });
+        let mut recipe = EditRecipe::default();
+        recipe.auto_contrast = true;
+        let output = apply_recipe(source, &recipe);
+        assert!(output.get_pixel(48, 0)[0] < 45);
+        assert!(output.get_pixel(208, 0)[0] > 211);
+    }
+
+    #[test]
     fn fill_shadows_and_highlights_affect_different_tonal_regions() {
         let levels = [30_u8, 74, 145, 224];
         let source = RgbaImage::from_fn(4, 1, |x, _| {
@@ -1436,6 +1590,81 @@ mod tests {
         assert_ne!(a.as_raw(), b.as_raw(), "Fill and Shadows must be independent");
         assert!(c.get_pixel(3, 0)[0] < source.get_pixel(3, 0)[0]);
         assert!((c.get_pixel(0, 0)[0] as i16 - 30).abs() <= 2);
+    }
+
+    #[test]
+    fn whites_and_blacks_move_endpoints_independently() {
+        let source = RgbaImage::from_fn(3, 1, |x, _| {
+            let value = [0, 128, 255][x as usize];
+            Rgba([value, value, value, 255])
+        });
+        let mut blacks = EditRecipe::default();
+        blacks.blacks = 0.8;
+        let raised = apply_recipe(source.clone(), &blacks);
+        assert!(raised.get_pixel(0, 0)[0] > 35);
+        assert_eq!(raised.get_pixel(2, 0)[0], 255);
+
+        let mut whites = EditRecipe::default();
+        whites.whites = -0.8;
+        let lowered = apply_recipe(source, &whites);
+        assert_eq!(lowered.get_pixel(0, 0)[0], 0);
+        assert!(lowered.get_pixel(2, 0)[0] < 220);
+    }
+
+    #[test]
+    fn smooth_reduces_fine_texture_without_blurring_a_strong_edge() {
+        let source = RgbaImage::from_fn(16, 16, |x, y| {
+            let base = if x < 8 { 80 } else { 200 };
+            let noise = if (x + y) % 2 == 0 { 9 } else { -9 };
+            let value = (base + noise) as u8;
+            Rgba([value, value, value, 173])
+        });
+        let mut recipe = EditRecipe::default();
+        recipe.smooth = 1.0;
+        let output = apply_recipe(source.clone(), &recipe);
+        let difference_before = source.get_pixel(2, 8)[0].abs_diff(source.get_pixel(3, 8)[0]);
+        let difference_after = output.get_pixel(2, 8)[0].abs_diff(output.get_pixel(3, 8)[0]);
+        assert!(difference_after * 2 < difference_before);
+        assert!(output.get_pixel(8, 8)[0] as i16 - output.get_pixel(7, 8)[0] as i16 > 90);
+        assert_eq!(output.get_pixel(7, 8)[3], 173);
+    }
+
+    #[test]
+    fn vibrance_favours_muted_colours_and_tint_shifts_green_magenta() {
+        let source = RgbaImage::from_fn(2, 1, |x, _| {
+            if x == 0 { Rgba([132, 112, 112, 255]) }
+            else { Rgba([255, 0, 0, 255]) }
+        });
+        let mut recipe = EditRecipe::default();
+        recipe.vibrance = 1.0;
+        let output = apply_recipe(source.clone(), &recipe);
+        let muted_before = source.get_pixel(0, 0)[0] - source.get_pixel(0, 0)[1];
+        let muted_after = output.get_pixel(0, 0)[0] - output.get_pixel(0, 0)[1];
+        assert!(muted_after > muted_before + 10);
+        assert_eq!(output.get_pixel(1, 0), source.get_pixel(1, 0));
+
+        let gray = RgbaImage::from_pixel(1, 1, Rgba([128, 128, 128, 255]));
+        recipe = EditRecipe::default();
+        recipe.tint = 1.0;
+        let magenta = apply_recipe(gray.clone(), &recipe).get_pixel(0, 0).0;
+        assert!(magenta[0] > magenta[1] && magenta[2] > magenta[1]);
+        recipe.tint = -1.0;
+        let green = apply_recipe(gray, &recipe).get_pixel(0, 0).0;
+        assert!(green[1] > green[0] && green[1] > green[2]);
+    }
+
+    #[test]
+    fn vignette_changes_edges_but_preserves_center_and_alpha() {
+        let source = RgbaImage::from_pixel(21, 21, Rgba([128, 128, 128, 177]));
+        let mut recipe = EditRecipe::default();
+        recipe.vignette = 1.0;
+        let dark = apply_recipe(source.clone(), &recipe);
+        assert_eq!(dark.get_pixel(10, 10).0, [128, 128, 128, 177]);
+        assert!(dark.get_pixel(0, 0)[0] < 70);
+        assert_eq!(dark.get_pixel(0, 0)[3], 177);
+        recipe.vignette = -1.0;
+        let light = apply_recipe(source, &recipe);
+        assert!(light.get_pixel(0, 0)[0] > 175);
     }
 
     #[test]
@@ -1473,7 +1702,7 @@ mod tests {
         let mut recipe = EditRecipe::default();
         recipe.auto_color = true;
         let p = apply_recipe(cast, &recipe).get_pixel(0, 0).0;
-        assert!((p[0] as i16 - p[2] as i16).abs() < 23);
+        assert!((p[0] as i16 - p[2] as i16).abs() <= 4);
     }
 
     #[test]

@@ -900,8 +900,12 @@ pub struct EditRecipe {
     pub fill_light: f32,
     pub highlights: f32,
     pub shadows: f32,
+    pub whites: f32,
+    pub blacks: f32,
     pub temperature: f32,
+    pub tint: f32,
     pub saturation: f32,
+    pub vibrance: f32,
     pub auto_contrast: bool,
     pub auto_color: bool,
     pub black_white: bool,
@@ -912,7 +916,9 @@ pub struct EditRecipe {
     pub filter_amount: f32,
     pub sharpen: f32,
     pub clarity: f32,
+    pub smooth: f32,
     pub grain: f32,
+    pub vignette: f32,
     /// Non-destructive image overlays, painted after crop, rotation and tone.
     /// Paint order follows vector order (later entries stack on top).
     pub overlays: Vec<OverlaySpec>,
@@ -933,8 +939,12 @@ impl Default for EditRecipe {
             fill_light: 0.0,
             highlights: 0.0,
             shadows: 0.0,
+            whites: 0.0,
+            blacks: 0.0,
             temperature: 0.0,
+            tint: 0.0,
             saturation: 0.0,
+            vibrance: 0.0,
             auto_contrast: false,
             auto_color: false,
             black_white: false,
@@ -943,7 +953,9 @@ impl Default for EditRecipe {
             filter_amount: 1.0,
             sharpen: 0.0,
             clarity: 0.0,
+            smooth: 0.0,
             grain: 0.0,
+            vignette: 0.0,
             overlays: Vec::new(),
             text_layers: Vec::new(),
             drawings: Vec::new(),
@@ -985,8 +997,12 @@ impl EditRecipe {
                 "fill" => recipe.fill_light = number().unwrap_or(0.0).clamp(-1.0, 1.0),
                 "highlights" => recipe.highlights = number().unwrap_or(0.0).clamp(-1.0, 1.0),
                 "shadows" => recipe.shadows = number().unwrap_or(0.0).clamp(-1.0, 1.0),
+                "whites" => recipe.whites = number().unwrap_or(0.0).clamp(-1.0, 1.0),
+                "blacks" => recipe.blacks = number().unwrap_or(0.0).clamp(-1.0, 1.0),
                 "temp" => recipe.temperature = number().unwrap_or(0.0).clamp(-1.0, 1.0),
+                "tint" => recipe.tint = number().unwrap_or(0.0).clamp(-1.0, 1.0),
                 "sat" => recipe.saturation = number().unwrap_or(0.0).clamp(-1.0, 1.0),
+                "vibrance" => recipe.vibrance = number().unwrap_or(0.0).clamp(-1.0, 1.0),
                 "autocontrast" => recipe.auto_contrast = flag(),
                 "autocolor" => recipe.auto_color = flag(),
                 "bw" => recipe.black_white = flag(),
@@ -995,7 +1011,9 @@ impl EditRecipe {
                 "filteramount" => recipe.filter_amount = number().unwrap_or(1.0).clamp(0.0, 1.0),
                 "sharpen" => recipe.sharpen = number().unwrap_or(0.0).clamp(0.0, 1.0),
                 "clarity" => recipe.clarity = number().unwrap_or(0.0).clamp(-1.0, 1.0),
+                "smooth" => recipe.smooth = number().unwrap_or(0.0).clamp(0.0, 1.0),
                 "grain" => recipe.grain = number().unwrap_or(0.0).clamp(0.0, 1.0),
+                "vignette" => recipe.vignette = number().unwrap_or(0.0).clamp(-1.0, 1.0),
                 "ov" => recipe.overlays = decode_overlays(value),
                 "tl" => recipe.text_layers = decode_text_layers(value),
                 "dr" => recipe.drawings = decode_draw(value),
@@ -1010,7 +1028,7 @@ impl EditRecipe {
             return String::new();
         }
         let mut encoded = format!(
-            "v=1|crop={:.5},{:.5},{:.5},{:.5}|straighten={:.4}|exposure={:.4}|contrast={:.4}|fill={:.4}|highlights={:.4}|shadows={:.4}|temp={:.4}|sat={:.4}|autocontrast={}|autocolor={}|bw={}|sepia={}|filter={}|filteramount={:.4}|sharpen={:.4}|clarity={:.4}|grain={:.4}",
+            "v=1|crop={:.5},{:.5},{:.5},{:.5}|straighten={:.4}|exposure={:.4}|contrast={:.4}|fill={:.4}|highlights={:.4}|shadows={:.4}|whites={:.4}|blacks={:.4}|temp={:.4}|tint={:.4}|sat={:.4}|vibrance={:.4}|autocontrast={}|autocolor={}|bw={}|sepia={}|filter={}|filteramount={:.4}|sharpen={:.4}|clarity={:.4}|smooth={:.4}|grain={:.4}|vignette={:.4}",
             self.crop.left,
             self.crop.top,
             self.crop.right,
@@ -1021,8 +1039,12 @@ impl EditRecipe {
             self.fill_light,
             self.highlights,
             self.shadows,
+            self.whites,
+            self.blacks,
             self.temperature,
+            self.tint,
             self.saturation,
+            self.vibrance,
             self.auto_contrast as u8,
             self.auto_color as u8,
             self.black_white as u8,
@@ -1031,7 +1053,9 @@ impl EditRecipe {
             self.filter_amount,
             self.sharpen,
             self.clarity,
+            self.smooth,
             self.grain,
+            self.vignette,
         );
         if !self.overlays.is_empty() {
             encoded.push_str("|ov=");
@@ -1056,8 +1080,12 @@ impl EditRecipe {
             && self.fill_light.abs() < 0.0001
             && self.highlights.abs() < 0.0001
             && self.shadows.abs() < 0.0001
+            && self.whites.abs() < 0.0001
+            && self.blacks.abs() < 0.0001
             && self.temperature.abs() < 0.0001
+            && self.tint.abs() < 0.0001
             && self.saturation.abs() < 0.0001
+            && self.vibrance.abs() < 0.0001
             && !self.auto_contrast
             && !self.auto_color
             && !self.black_white
@@ -1065,7 +1093,9 @@ impl EditRecipe {
             && self.filter == super::filters::FilterPreset::None
             && self.sharpen.abs() < 0.0001
             && self.clarity.abs() < 0.0001
+            && self.smooth.abs() < 0.0001
             && self.grain.abs() < 0.0001
+            && self.vignette.abs() < 0.0001
             && self.overlays.is_empty()
             && self.text_layers.is_empty()
             && self.drawings.is_empty()
@@ -1195,29 +1225,43 @@ mod tests {
         };
         recipe.exposure = 0.7;
         recipe.contrast = 0.45;
+        recipe.whites = 0.35;
+        recipe.blacks = -0.4;
+        recipe.tint = -0.3;
+        recipe.vibrance = 0.65;
         recipe.auto_color = true;
         recipe.sepia = true;
         recipe.filter = FilterPreset::Valencia;
         recipe.filter_amount = 0.42;
         recipe.sharpen = 0.4;
         recipe.clarity = 0.55;
+        recipe.smooth = 0.6;
+        recipe.vignette = -0.25;
         recipe.grain = 0.25;
         let decoded = EditRecipe::decode(&recipe.encode());
         assert!((decoded.crop.left - 0.1).abs() < 0.001);
         assert!((decoded.exposure - 0.7).abs() < 0.001);
         assert!((decoded.contrast - 0.45).abs() < 0.001);
+        assert!((decoded.whites - 0.35).abs() < 0.001);
+        assert!((decoded.blacks + 0.4).abs() < 0.001);
+        assert!((decoded.tint + 0.3).abs() < 0.001);
+        assert!((decoded.vibrance - 0.65).abs() < 0.001);
         assert!(decoded.auto_color);
         assert!(decoded.sepia);
         assert_eq!(decoded.filter, FilterPreset::Valencia);
         assert!((decoded.filter_amount - 0.42).abs() < 0.001);
         assert!((decoded.sharpen - 0.4).abs() < 0.001);
         assert!((decoded.clarity - 0.55).abs() < 0.001);
+        assert!((decoded.smooth - 0.6).abs() < 0.001);
+        assert!((decoded.vignette + 0.25).abs() < 0.001);
         assert!((decoded.grain - 0.25).abs() < 0.001);
     }
 
     #[test]
     fn old_filter_recipes_remain_full_strength_and_amount_is_clamped() {
         let old = EditRecipe::decode("v=1|filter=newspaper|exposure=0.2500");
+        assert_eq!((old.whites, old.blacks, old.smooth), (0.0, 0.0, 0.0));
+        assert_eq!((old.tint, old.vibrance, old.vignette), (0.0, 0.0, 0.0));
         assert_eq!(old.filter, FilterPreset::Newspaper);
         assert_eq!(old.filter_amount, 1.0);
         let zero = EditRecipe::decode("v=1|filter=old_photo|filteramount=-3");

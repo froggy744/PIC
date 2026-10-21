@@ -103,11 +103,17 @@ struct Controls {
     fill_light: gtk::Scale,
     highlights: gtk::Scale,
     shadows: gtk::Scale,
+    whites: gtk::Scale,
+    blacks: gtk::Scale,
     temperature: gtk::Scale,
+    tint: gtk::Scale,
     saturation: gtk::Scale,
+    vibrance: gtk::Scale,
     sharpen: gtk::Scale,
     clarity: gtk::Scale,
+    smooth: gtk::Scale,
     grain: gtk::Scale,
+    vignette: gtk::Scale,
     auto_contrast: gtk::ToggleButton,
     auto_color: gtk::ToggleButton,
     filter_amount: gtk::Scale,
@@ -124,11 +130,17 @@ impl Controls {
         self.fill_light.set_value(recipe.fill_light as f64);
         self.highlights.set_value(recipe.highlights as f64);
         self.shadows.set_value(recipe.shadows as f64);
+        self.whites.set_value(recipe.whites as f64);
+        self.blacks.set_value(recipe.blacks as f64);
         self.temperature.set_value(recipe.temperature as f64);
+        self.tint.set_value(recipe.tint as f64);
         self.saturation.set_value(recipe.saturation as f64);
+        self.vibrance.set_value(recipe.vibrance as f64);
         self.sharpen.set_value(recipe.sharpen as f64);
         self.clarity.set_value(recipe.clarity as f64);
+        self.smooth.set_value(recipe.smooth as f64);
         self.grain.set_value(recipe.grain as f64);
+        self.vignette.set_value(recipe.vignette as f64);
         self.auto_contrast.set_active(recipe.auto_contrast);
         self.auto_color.set_active(recipe.auto_color);
         self.filter_amount.set_value((recipe.filter_amount * 100.0) as f64);

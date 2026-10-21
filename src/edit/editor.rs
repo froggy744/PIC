@@ -159,6 +159,10 @@ fn apply_native_preview_layout(
 fn cpu_fallback_reason(recipe: &EditRecipe) -> &'static str {
     if recipe.clarity != 0.0 {
         "clarity"
+    } else if recipe.smooth != 0.0 {
+        "smooth"
+    } else if recipe.vignette != 0.0 {
+        "vignette"
     } else if recipe.grain != 0.0 {
         "grain"
     } else if recipe.filter != FilterPreset::None {
@@ -922,6 +926,10 @@ pub fn build(
     let fill_light = add_slider(&light_box, "Fill Light", -1.0, 1.0, 0.02, 2);
     let highlights = add_slider(&light_box, "Highlights", -1.0, 1.0, 0.02, 2);
     let shadows = add_slider(&light_box, "Shadows", -1.0, 1.0, 0.02, 2);
+    let whites = add_slider(&light_box, "Whites", -1.0, 1.0, 0.02, 2);
+    whites.set_tooltip_text(Some("Adjust the brightest tones and white point"));
+    let blacks = add_slider(&light_box, "Blacks", -1.0, 1.0, 0.02, 2);
+    blacks.set_tooltip_text(Some("Adjust the darkest tones and black point"));
 
     add_section_label(&tools_box, "COLOUR");
     let colour_box = gtk::Box::new(gtk::Orientation::Vertical, 8);
@@ -929,7 +937,11 @@ pub fn build(
     tools_box.append(&colour_box);
 
     let saturation = add_slider(&colour_box, "Saturation", -1.0, 1.0, 0.02, 2);
+    let vibrance = add_slider(&colour_box, "Vibrance", -1.0, 1.0, 0.02, 2);
+    vibrance.set_tooltip_text(Some("Adjust muted colours more than vivid colours"));
     let temperature = add_slider(&colour_box, "Warmth", -1.0, 1.0, 0.02, 2);
+    let tint = add_slider(&colour_box, "Tint", -1.0, 1.0, 0.02, 2);
+    tint.set_tooltip_text(Some("Shift colour balance between green and magenta"));
 
     add_section_label(&tools_box, "DETAIL");
     let detail_box = gtk::Box::new(gtk::Orientation::Vertical, 8);
@@ -938,7 +950,11 @@ pub fn build(
 
     let sharpen = add_slider(&detail_box, "Sharpen", 0.0, 1.0, 0.02, 2);
     let clarity = add_slider(&detail_box, "Clarity", -1.0, 1.0, 0.02, 2);
+    let smooth = add_slider(&detail_box, "Smooth", 0.0, 1.0, 0.02, 2);
+    smooth.set_tooltip_text(Some("Soften fine texture while preserving strong edges"));
     let grain = add_slider(&detail_box, "Grain", 0.0, 1.0, 0.02, 2);
+    let vignette = add_slider(&detail_box, "Vignette", -1.0, 1.0, 0.02, 2);
+    vignette.set_tooltip_text(Some("Darken edges with positive values, brighten them with negative values"));
 
     let controls = Controls {
         straighten,
@@ -947,11 +963,17 @@ pub fn build(
         fill_light,
         highlights,
         shadows,
+        whites,
+        blacks,
         temperature,
+        tint,
         saturation,
+        vibrance,
         sharpen,
         clarity,
+        smooth,
         grain,
+        vignette,
         auto_contrast,
         auto_color,
         filter_amount,
@@ -1062,11 +1084,17 @@ pub fn build(
         &controls.fill_light,
         &controls.highlights,
         &controls.shadows,
+        &controls.whites,
+        &controls.blacks,
         &controls.temperature,
+        &controls.tint,
         &controls.saturation,
+        &controls.vibrance,
         &controls.sharpen,
         &controls.clarity,
+        &controls.smooth,
         &controls.grain,
+        &controls.vignette,
     ] {
         configure_scale_scroll(scale, &tools_scroll);
     }
@@ -1533,6 +1561,16 @@ pub fn build(
         |r, v| r.shadows = v,
     );
     connect_scale(
+        &controls.whites,
+        session.clone(), syncing.clone(), queue_preview.clone(), update_history_buttons.clone(),
+        0.0, |r, v| r.whites = v,
+    );
+    connect_scale(
+        &controls.blacks,
+        session.clone(), syncing.clone(), queue_preview.clone(), update_history_buttons.clone(),
+        0.0, |r, v| r.blacks = v,
+    );
+    connect_scale(
         &controls.temperature,
         session.clone(),
         syncing.clone(),
@@ -1542,6 +1580,11 @@ pub fn build(
         |r, v| r.temperature = v,
     );
     connect_scale(
+        &controls.tint,
+        session.clone(), syncing.clone(), queue_preview.clone(), update_history_buttons.clone(),
+        0.0, |r, v| r.tint = v,
+    );
+    connect_scale(
         &controls.saturation,
         session.clone(),
         syncing.clone(),
@@ -1549,6 +1592,11 @@ pub fn build(
         update_history_buttons.clone(),
         0.0,
         |r, v| r.saturation = v,
+    );
+    connect_scale(
+        &controls.vibrance,
+        session.clone(), syncing.clone(), queue_preview.clone(), update_history_buttons.clone(),
+        0.0, |r, v| r.vibrance = v,
     );
     connect_scale(
         &controls.sharpen,
@@ -1569,6 +1617,11 @@ pub fn build(
         |r, v| r.clarity = v,
     );
     connect_scale(
+        &controls.smooth,
+        session.clone(), syncing.clone(), queue_preview.clone(), update_history_buttons.clone(),
+        0.0, |r, v| r.smooth = v,
+    );
+    connect_scale(
         &controls.grain,
         session.clone(),
         syncing.clone(),
@@ -1576,6 +1629,11 @@ pub fn build(
         update_history_buttons.clone(),
         0.0,
         |r, v| r.grain = v,
+    );
+    connect_scale(
+        &controls.vignette,
+        session.clone(), syncing.clone(), queue_preview.clone(), update_history_buttons.clone(),
+        0.0, |r, v| r.vignette = v,
     );
 
     connect_scale(

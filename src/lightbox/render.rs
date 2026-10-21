@@ -427,6 +427,7 @@ fn show_photo(
     offline: Rc<OfflinePresentation>,
 ) {
     let navigation_started = std::time::Instant::now();
+    set_raw_loading_spinner(root, false);
     let Some(photo) = photos.get(index) else {
         return;
     };
@@ -547,6 +548,11 @@ fn show_photo(
     if matches!(claim, ViewerRequestClaim::New) {
         start_viewer_request(key, request.clone());
     }
+    let waiting_for_raw_native = zoom.get() < 0.0
+        && crate::image_format::uses(path.as_str(), crate::image_format::DecoderKind::Raw);
+    if waiting_for_raw_native {
+        set_raw_loading_spinner(root, true);
+    }
     *decode_cancel.borrow_mut() = Some(lease.clone());
 
     let picture = picture.clone();
@@ -571,6 +577,9 @@ fn show_photo(
         let stale =
             !viewer_generation_current(generation.get(), expected_generation) || lease.cancelled();
         if stale {
+            if viewer_generation_current(generation.get(), expected_generation) {
+                set_raw_loading_spinner(&root, false);
+            }
             viewer_trace(format!(
                 "display_discard lane=foreground uri={} reason=stale",
                 viewer_trace_uri(&cache_path),
@@ -601,6 +610,9 @@ fn show_photo(
 
         match result {
             Ok(result) => {
+                if waiting_for_raw_native {
+                    set_raw_loading_spinner(&root, false);
+                }
                 let display_started = std::time::Instant::now();
                 let bytes = glib::Bytes::from_owned(result.pixels.clone());
                 let texture = gtk::gdk::MemoryTexture::new(
@@ -718,6 +730,9 @@ fn show_photo(
                 }
             }
             Err(_) => {
+                if waiting_for_raw_native {
+                    set_raw_loading_spinner(&root, false);
+                }
                 show_offline_preview(
                     &picture, photo, &root, zoom, generation,
                     expected_generation, offline, false,

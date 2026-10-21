@@ -381,6 +381,7 @@ pub struct Lightbox {
     backdrop: gtk::Box,
     picture: gtk::Picture,
     picture_viewport: gtk::ScrolledWindow,
+    raw_loading_spinner: gtk::Spinner,
     zoom_pointer: Rc<Cell<Option<(f64, f64)>>>,
     pending_one_to_one_anchor: Rc<Cell<Option<ViewportZoomAnchor>>>,
     photos: Rc<RefCell<Vec<PhotoObject>>>,
@@ -428,6 +429,20 @@ pub struct Lightbox {
     close_ready: Rc<RefCell<Option<Rc<dyn Fn() -> bool>>>>,
     close_generation: Rc<Cell<u64>>,
     close_in_progress: Rc<Cell<bool>>,
+}
+
+fn set_raw_loading_spinner(root: &gtk::Overlay, spinning: bool) {
+    let mut child = root.first_child();
+    while let Some(widget) = child {
+        child = widget.next_sibling();
+        if widget.widget_name() == "lightbox-raw-loading-spinner" {
+            if let Ok(spinner) = widget.downcast::<gtk::Spinner>() {
+                spinner.set_spinning(spinning);
+                spinner.set_visible(spinning);
+            }
+            return;
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]

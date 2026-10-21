@@ -44,6 +44,14 @@ impl Lightbox {
         picture_viewport.set_child(Some(&picture));
         root.add_overlay(&picture_viewport);
 
+        let raw_loading_spinner = gtk::Spinner::new();
+        raw_loading_spinner.set_widget_name("lightbox-raw-loading-spinner");
+        raw_loading_spinner.set_halign(gtk::Align::Center);
+        raw_loading_spinner.set_valign(gtk::Align::Center);
+        raw_loading_spinner.set_can_target(false);
+        raw_loading_spinner.set_visible(false);
+        root.add_overlay(&raw_loading_spinner);
+
         // Keep the last point inside the image viewport. The 1:1 control is
         // outside the picture, so its click event cannot itself supply the
         // image point that should remain under the cursor after enlargement.
@@ -1297,6 +1305,7 @@ impl Lightbox {
             backdrop,
             picture,
             picture_viewport,
+            raw_loading_spinner,
             zoom_pointer,
             pending_one_to_one_anchor,
             photos,
@@ -1602,6 +1611,10 @@ impl Lightbox {
         if self.one_to_one_active.get() == enabled {
             return;
         }
+        if !enabled {
+            self.raw_loading_spinner.set_spinning(false);
+            self.raw_loading_spinner.set_visible(false);
+        }
         if enabled {
             let photo_fits = self
                 .photos
@@ -1673,6 +1686,8 @@ impl Lightbox {
                     && cache.rotation == rotation
                     && cache.edit_recipe == edit_recipe
                 {
+                    self.raw_loading_spinner.set_spinning(false);
+                    self.raw_loading_spinner.set_visible(false);
                     self.picture.set_can_shrink(true);
                     self.picture.set_paintable(Some(&cache.texture));
                     fit_centered_picture(

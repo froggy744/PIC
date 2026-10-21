@@ -99,7 +99,7 @@ fn read_nef_jpeg_from_reader(
     file_size: u64,
     largest: bool,
 ) -> Result<Option<Vec<u8>>> {
-    let Some((offset, length)) = nef_jpeg_stream(reader, largest)? else {
+    let Some((offset, length)) = nef_jpeg_stream(reader, file_size, largest)? else {
         return Ok(None);
     };
     // A malformed tag must never request an unbounded allocation or seek.
@@ -201,7 +201,8 @@ impl std::io::Seek for RemoteNefReader<'_> {
 #[cfg(target_os = "linux")]
 fn remote_nef_embedded_jpeg(reference: &str, largest: bool) -> Result<Option<Vec<u8>>> {
     let mut file = RemoteNefReader::open(reference)?;
-    let Some((offset, length)) = nef_jpeg_stream(&mut file, largest)? else {
+    let file_size = file.size;
+    let Some((offset, length)) = nef_jpeg_stream(&mut file, file_size, largest)? else {
         return Ok(None);
     };
     if length == 0
@@ -260,7 +261,11 @@ fn tiff_root_orientation(file: &mut (impl Read + Seek)) -> Option<u16> {
 
 /// Locate JPEGInterchangeFormat streams in classic TIFF IFDs, including the
 /// Nikon SubIFDs that kamadak-exif deliberately does not expose as IFD1.
-fn nef_jpeg_stream(file: &mut (impl Read + Seek), largest: bool) -> Result<Option<(u32, u32)>> {
+fn nef_jpeg_stream(
+    file: &mut (impl Read + Seek),
+    file_size: u64,
+    largest: bool,
+) -> Result<Option<(u32, u32)>> {
     let mut header = [0; 8];
     file.read_exact(&mut header)?;
     let little_endian = match &header[..2] {
@@ -284,8 +289,8 @@ fn nef_jpeg_stream(file: &mut (impl Read + Seek), largest: bool) -> Result<Optio
         if count > 1024 {
             continue;
         }
-        let mut jpeg_offset = None;
-        let mut jpeg_length = None;
+        let (mut jpeg_offset, mut jpeg_length, mut jpeg_width, mut jpeg_height) =
+            (None, None, None, None);
         for _ in 0..count {
             let mut entry = [0; 12];
             file.read_exact(&mut entry)?;
@@ -293,7 +298,14 @@ fn nef_jpeg_stream(file: &mut (impl Read + Seek), largest: bool) -> Result<Optio
             let field_type = tiff_u16(&entry[2..4], little_endian);
             let item_count = tiff_u32(&entry[4..8], little_endian);
             let value = tiff_u32(&entry[8..12], little_endian);
+            let scalar = match (field_type, item_count) {
+                (3, 1) => Some(u32::from(tiff_u16(&entry[8..10], little_endian))),
+                (4, 1) => Some(value),
+                _ => None,
+            };
             match tag {
+                0x0100 if scalar.is_some() => jpeg_width = scalar,
+                0x0101 if scalar.is_some() => jpeg_height = scalar,
                 0x0201 if item_count == 1 && matches!(field_type, 3 | 4) => {
                     jpeg_offset = Some(value)
                 }
@@ -319,18 +331,166 @@ fn nef_jpeg_stream(file: &mut (impl Read + Seek), largest: bool) -> Result<Optio
             }
         }
         if let (Some(offset), Some(length)) = (jpeg_offset, jpeg_length) {
-            candidates.push((offset, length));
+            candidates.push((offset, length, jpeg_width, jpeg_height));
         }
         pending.push(read_tiff_u32(file, little_endian)?);
     }
-    // The smallest JPEG stream is Nikon's fast thumbnail. Larger streams are
-    // full camera previews and are selected by the lightbox.
-    let candidates = candidates.into_iter().filter(|(_, length)| *length > 0);
+    // Nikon's JpgFromRaw stream often has no dimensions in its TIFF IFD. Read
+    // only its JPEG header to find the actual pixel size; compressed byte size
+    // can rank a lower-resolution OtherImage above the full-size camera frame.
+    if largest {
+        for (offset, length, width, height) in &mut candidates {
+            if width.is_none() || height.is_none() {
+                let end = u64::from(*offset).checked_add(u64::from(*length));
+                if end.is_some_and(|end| end <= file_size) {
+                    if let Some((jpeg_width, jpeg_height)) =
+                        nef_jpeg_dimensions_at(file, *offset, *length)?
+                    {
+                        *width = Some(jpeg_width);
+                        *height = Some(jpeg_height);
+                    }
+                }
+            }
+        }
+    }
+
+    // The thumbnail path keeps its existing byte-size choice for fast reads.
+    // The Lightbox path instead selects by pixel area and uses byte length as
+    // a tie-breaker or fallback when dimensions cannot be recovered.
+    let candidates = candidates.into_iter().filter(|(_, length, _, _)| *length > 0);
     Ok(if largest {
-        candidates.max_by_key(|(_, length)| *length)
+        candidates
+            .max_by_key(|(_, length, width, height)| {
+                (
+                    width
+                        .zip(*height)
+                        .map(|(width, height)| u64::from(width) * u64::from(height))
+                        .unwrap_or(0),
+                    *length,
+                )
+            })
+            .map(|(offset, length, _, _)| (offset, length))
     } else {
-        candidates.min_by_key(|(_, length)| *length)
+        candidates
+            .min_by_key(|(_, length, _, _)| *length)
+            .map(|(offset, length, _, _)| (offset, length))
     })
+}
+
+fn nef_jpeg_dimensions_at(
+    file: &mut (impl Read + Seek),
+    offset: u32,
+    length: u32,
+) -> Result<Option<(u32, u32)>> {
+    if length < 2 {
+        return Ok(None);
+    }
+    let end = u64::from(offset) + u64::from(length);
+    file.seek(SeekFrom::Start(u64::from(offset)))?;
+    let mut soi = [0; 2];
+    file.read_exact(&mut soi)?;
+    if soi != [0xff, 0xd8] {
+        return Ok(None);
+    }
+
+    loop {
+        if file.stream_position()? >= end {
+            return Ok(None);
+        }
+        let mut byte = [0; 1];
+        file.read_exact(&mut byte)?;
+        if byte[0] != 0xff {
+            continue;
+        }
+        loop {
+            if file.stream_position()? >= end {
+                return Ok(None);
+            }
+            file.read_exact(&mut byte)?;
+            if byte[0] != 0xff {
+                break;
+            }
+        }
+        let marker = byte[0];
+        if marker == 0xd9 || marker == 0xda {
+            return Ok(None);
+        }
+        if marker == 0x01 || (0xd0..=0xd7).contains(&marker) {
+            continue;
+        }
+
+        if file
+            .stream_position()?
+            .checked_add(2)
+            .is_none_or(|next| next > end)
+        {
+            return Ok(None);
+        }
+        let mut segment_length = [0; 2];
+        file.read_exact(&mut segment_length)?;
+        let segment_length = u16::from_be_bytes(segment_length);
+        if segment_length < 2 {
+            return Ok(None);
+        }
+        let segment_end = file.stream_position()? + u64::from(segment_length - 2);
+        if segment_end > end {
+            return Ok(None);
+        }
+        if matches!(marker, 0xc0..=0xc3 | 0xc5..=0xc7 | 0xc9..=0xcb | 0xcd..=0xcf) {
+            if segment_length < 7 {
+                return Ok(None);
+            }
+            let mut frame = [0; 5];
+            file.read_exact(&mut frame)?;
+            let height = u32::from(u16::from_be_bytes([frame[1], frame[2]]));
+            let width = u32::from(u16::from_be_bytes([frame[3], frame[4]]));
+            return Ok((width > 0 && height > 0).then_some((width, height)));
+        }
+        file.seek(SeekFrom::Start(segment_end))?;
+    }
+}
+
+#[cfg(test)]
+mod nef_jpeg_selection_tests {
+    use super::*;
+
+    fn append_ifd(bytes: &mut Vec<u8>, offset: u32, length: u32, next: u32) {
+        bytes.extend(2u16.to_le_bytes());
+        for (tag, value) in [(0x0201u16, offset), (0x0202u16, length)] {
+            bytes.extend(tag.to_le_bytes());
+            bytes.extend(4u16.to_le_bytes());
+            bytes.extend(1u32.to_le_bytes());
+            bytes.extend(value.to_le_bytes());
+        }
+        bytes.extend(next.to_le_bytes());
+    }
+
+    fn append_jpeg(bytes: &mut Vec<u8>, width: u16, height: u16, length: usize) {
+        bytes.extend([0xff, 0xd8, 0xff, 0xc0, 0, 11, 8]);
+        bytes.extend(height.to_be_bytes());
+        bytes.extend(width.to_be_bytes());
+        bytes.extend([1, 1, 0x11, 0, 0xff, 0xd9]);
+        bytes.resize(bytes.len() + length - 17, 0);
+    }
+
+    #[test]
+    fn selects_nef_jpegs_by_pixel_area_not_compressed_bytes() {
+        let first_ifd = 8u32;
+        let second_ifd = first_ifd + 2 + 2 * 12 + 4;
+        let first_jpeg = second_ifd + 2 + 2 * 12 + 4;
+        let second_jpeg = first_jpeg + 100;
+        let mut bytes = b"II\x2a\0\x08\0\0\0".to_vec();
+        append_ifd(&mut bytes, first_jpeg, 100, second_ifd);
+        append_ifd(&mut bytes, second_jpeg, 20, 0);
+        append_jpeg(&mut bytes, 640, 424, 100);
+        append_jpeg(&mut bytes, 3936, 2624, 20);
+
+        assert_eq!(
+            nef_jpeg_stream(&mut Cursor::new(&bytes), bytes.len() as u64, true).unwrap(),
+            Some((second_jpeg, 20)),
+            "the full-size JPEG must win even when it compresses to fewer bytes"
+        );
+    }
 }
 
 fn read_tiff_u16(file: &mut impl Read, little_endian: bool) -> Result<u16> {

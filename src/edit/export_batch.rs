@@ -1432,15 +1432,15 @@ mod tests {
             full_export.width(),
             full_export.height()
         );
-        let full_sensor = crate::thumbnail::decode_for_viewer(
+        let full_reference = crate::thumbnail::decode_for_viewer(
             &reference,
             source_width.max(source_height),
             source_width.max(source_height),
         )
-        .expect("develop the original RAW's sensor data at full size");
+        .expect("decode the original RAW's full-resolution viewer source");
         assert_eq!(
-            full_export, full_sensor,
-            "full-size Export must match decoding the original RAW, not its cached thumbnail"
+            full_export, full_reference,
+            "full-size Export must match the native viewer source, not a cached thumbnail"
         );
         let stale_catalog_export = super::super::render::render_for_export(
             &reference,
@@ -1451,29 +1451,64 @@ mod tests {
         )
         .expect("stale thumbnail-sized catalog bounds must not limit RAW Export");
         assert_eq!(
-            stale_catalog_export, full_sensor,
-            "RAW Export must develop the original at full size despite stale thumbnail-sized catalog dimensions"
+            stale_catalog_export, full_reference,
+            "RAW Export must retain full-size source pixels despite stale thumbnail-sized catalog dimensions"
         );
 
-        let mut recipe = EditRecipe::default();
-        recipe.filter = FilterPreset::Valencia;
-        recipe.filter_amount = 0.7;
-        recipe.exposure = 0.2;
-        recipe.contrast = 0.12;
-        recipe.saturation = 0.1;
-        recipe.sharpen = 0.2;
-        recipe.crop = CropRect {
-            left: 0.1, top: 0.1, right: 0.9, bottom: 0.9,
+        let recipe = match std::env::var("PIC_TEST_EDIT_RECIPE") {
+            Ok(recipe) => EditRecipe::decode(&recipe),
+            Err(_) => {
+                let mut recipe = EditRecipe::default();
+                recipe.filter = FilterPreset::Valencia;
+                recipe.filter_amount = 0.7;
+                recipe.exposure = 0.2;
+                recipe.contrast = 0.12;
+                recipe.saturation = 0.1;
+                recipe.sharpen = 0.2;
+                recipe.crop = CropRect {
+                    left: 0.1,
+                    top: 0.1,
+                    right: 0.9,
+                    bottom: 0.9,
+                };
+                recipe
+            }
         };
+        let rotation = std::env::var("PIC_TEST_EDIT_ROTATION")
+            .ok()
+            .and_then(|value| value.parse::<i32>().ok())
+            .unwrap_or(90);
         let job = ExportJob::from_record(
-            reference.clone(), 90, recipe.encode(),
-            i64::from(source_width), i64::from(source_height), "raw.NEF",
+            reference.clone(),
+            rotation,
+            recipe.encode(),
+            i64::from(source_width),
+            i64::from(source_height),
+            "raw.NEF",
         );
         let expected = render_job(&job)
             .expect("RAW viewer decode and CPU Edit rendering must succeed");
         assert!(expected.width().min(expected.height()) >= 1500,
             "RAW Export appears to have used a small thumbnail: {}x{}",
             expected.width(), expected.height());
+
+        let edit_preview = super::super::render::render_for_viewer(
+            &reference,
+            rotation,
+            &recipe,
+            source_width,
+            source_height,
+        )
+        .expect("render the same saved recipe through the Edit Mode decode path");
+        assert_eq!(
+            edit_preview, expected,
+            "Edit Mode and full-resolution Export must render the same saved recipe"
+        );
+        if let Some(output) = std::env::var_os("PIC_TEST_EDIT_OUTPUT") {
+            expected
+                .save(output)
+                .expect("save optional real-RAW edit render");
+        }
 
         let dir = std::env::temp_dir().join(format!(
             "pic-private-raw-export-{}-{}",

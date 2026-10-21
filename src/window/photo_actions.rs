@@ -2298,6 +2298,137 @@ mod photo_actions_tests {
 
     #[test]
     #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+    fn copy_and_paste_edits_menu_persists_the_recipe_for_export() {
+        use gtk::prelude::*;
+        use crate::edit::export_batch::{export_job_to, render_job, ExportFormat, ExportJob};
+
+        gtk::init().unwrap();
+        let directory = std::env::temp_dir().join(format!(
+            "pic-copy-paste-edits-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        let destination_path = directory.join("destination.png");
+        let original = image::RgbaImage::from_fn(32, 24, |x, y| {
+            image::Rgba([(x * 7) as u8, (y * 9) as u8, ((x + y) * 3) as u8, 255])
+        });
+        image::DynamicImage::ImageRgba8(original.clone())
+            .save(&destination_path)
+            .unwrap();
+        let connection = Rc::new(RefCell::new(db::open(&directory.join("library.db")).unwrap()));
+        connection
+            .borrow()
+            .execute(
+                "INSERT INTO photos (id, path, width, height) VALUES (1, 'source.NEF', 32, 24), (2, ?1, 32, 24)",
+                rusqlite::params![destination_path.to_string_lossy()],
+            )
+            .unwrap();
+        let mut recipe = crate::edit::EditRecipe::default();
+        recipe.exposure = 0.31;
+        recipe.contrast = 0.22;
+        recipe.sharpen = 0.15;
+        let encoded = recipe.encode();
+        db::set_edit_recipe(&connection.borrow(), 1, &encoded).unwrap();
+        let source = crate::photo_object::PhotoObject::from_photo(
+            &db::photo(&connection.borrow(), 1).unwrap().unwrap(),
+        );
+        let destination = crate::photo_object::PhotoObject::from_photo(
+            &db::photo(&connection.borrow(), 2).unwrap().unwrap(),
+        );
+
+        let overlay = gtk::Overlay::new();
+        let window = adw::ApplicationWindow::builder()
+            .title("PIC copy and paste edits test")
+            .default_width(640)
+            .default_height(480)
+            .content(&overlay)
+            .build();
+        window.present();
+        settle_gtk_layout();
+
+        let context = PhotoActionContext {
+            connection: connection.clone(),
+            gallery: Rc::new(RefCell::new(std::rc::Weak::new())),
+            filter: Rc::new(Cell::new(sidebar::SidebarFilter::All)),
+            search: Rc::new(RefCell::new(String::new())),
+            sort: Rc::new(Cell::new(PhotoSort {
+                field: SortField::DateTaken,
+                direction: SortDirection::Descending,
+            })),
+            info: Rc::new(InfoBar::new()),
+            selected_photo: Rc::new(RefCell::new(Some(destination.clone()))),
+            lightbox: std::rc::Weak::new(),
+            sidebar: Rc::new(RefCell::new(None)),
+            create_album: Rc::new(|| {}),
+            import_folder: Rc::new(|| {}),
+            delete_album: Rc::new(|_| {}),
+            on_unavailable: Rc::new(|| {}),
+            refresh_albums_home: Rc::new(|_| {}),
+            navigate_to_folder: Rc::new(|_, _| {}),
+            open_collage: Rc::new(|_| {}),
+            open_edit: Rc::new(|_| {}),
+            edit_clipboard: Rc::new(RefCell::new(None)),
+            export: Rc::new(|| {}),
+            window: window.upcast_ref::<gtk::Window>().downgrade(),
+            context_menu_host: Rc::new(RefCell::new(Some(overlay.clone().downgrade()))),
+            operation_progress: OperationProgressUi::new(),
+        };
+
+        show_photo_context_menu(source, overlay.clone().upcast(), context.clone(), 10.0, 10.0);
+        let copy = find_action(&menu(), "Copy Edits").unwrap();
+        assert!(copy.is_sensitive());
+        copy.emit_clicked();
+        assert_eq!(context.edit_clipboard.borrow().as_deref(), Some(encoded.as_str()));
+
+        show_photo_context_menu(
+            destination.clone(), overlay.clone().upcast(), context.clone(), 10.0, 10.0,
+        );
+        let paste = find_action(&menu(), "Paste Edits").unwrap();
+        assert!(paste.is_sensitive());
+        paste.emit_clicked();
+        settle_gtk_layout();
+
+        let stored = db::photo(&connection.borrow(), 2).unwrap().unwrap().edit_recipe;
+        assert_eq!(stored, encoded, "paste must persist the copied recipe");
+        assert_eq!(destination.edit_recipe(), encoded,
+            "the selected photo object must refresh so Export sees the pasted recipe");
+        assert_eq!(context.selected_photo.borrow().as_ref().unwrap().edit_recipe(), encoded);
+
+        let record = db::photo(&connection.borrow(), 2).unwrap().unwrap();
+        let job = ExportJob::from_record(
+            record.path,
+            record.rotation,
+            record.edit_recipe,
+            32,
+            24,
+            "destination.png",
+        );
+        let expected = render_job(&job).unwrap();
+        let export_path = directory.join("destination_edit.png");
+        export_job_to(
+            &job,
+            &export_path,
+            0,
+            95,
+            ExportFormat::Png,
+            &render_job,
+        )
+        .unwrap();
+        let exported = image::open(export_path).unwrap().to_rgba8();
+        assert_eq!(exported, expected, "Export must use the pasted saved recipe");
+        assert_ne!(exported, original, "the copied adjustments must affect Export");
+
+        window.close();
+        drop(connection);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
     fn add_to_album_popover_scrolls_when_the_album_list_is_long() {
         gtk::init().unwrap();
         let directory = std::env::temp_dir().join(format!(

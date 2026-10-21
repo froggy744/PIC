@@ -1,6 +1,8 @@
 # NEF detail and colour: viewer, Edit Mode, and Export
 
-Status: the initial V1 camera-JPEG workflow was verified, then a follow-up reproduced the user's remaining issue: native Lightbox, Edit Mode, and Export still used embedded JPEG pixels. The follow-up now develops Nikon sensor data for native-size requests, keeps embedded JPEGs for fast Fit and thumbnail paths, and passes real-NEF CPU, GPU, export, and native-app checks.
+> **Current implementation:** see [Nikon NEF Edit and Export](guides/nef-edit-export.md). This file is a historical record of the sensor-development experiment. Its status and checklists below describe that earlier experiment and are superseded by the current guide.
+
+Historical status: the initial V1 camera-JPEG workflow was followed by an experiment that developed Nikon sensor data for native-size requests. That experiment did not preserve Nikon's camera rendering. The current implementation again uses the largest embedded camera JPEG for native viewing, Edit Mode, and Export, with sensor development only as a missing-preview fallback.
 
 The reported symptoms are soft/pixelated detail and wrong brightness/colours in NEF 1:1 viewing and Edit Mode. The first investigation retained embedded-JPEG rendering. The user then confirmed this still showed only the embedded JPEG and authorized a sensor-rendered native-detail path.
 

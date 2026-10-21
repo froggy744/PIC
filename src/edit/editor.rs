@@ -1087,6 +1087,7 @@ pub fn build(
         let pending_one_to_one_anchor = pending_one_to_one_anchor.clone();
         let crop_overlay = crop_overlay.clone();
         let overlay_layer = overlay_layer.clone();
+        let draw_layer = draw_layer.clone();
         let preview_debounce = preview_debounce.clone();
         let preview_worker = preview_worker.clone();
         let gpu_canvas = gpu_canvas.clone();
@@ -1115,6 +1116,7 @@ pub fn build(
             let pending_one_to_one_anchor = pending_one_to_one_anchor.clone();
             let crop_overlay = crop_overlay.clone();
             let overlay_layer = overlay_layer.clone();
+            let draw_layer = draw_layer.clone();
             let preview_debounce_for_fire = preview_debounce.clone();
             let preview_worker = preview_worker.clone();
             let gpu_canvas = gpu_canvas.clone();
@@ -1208,6 +1210,7 @@ pub fn build(
                     let native_one_to_one = native_one_to_one.clone();
                     let crop_overlay = crop_overlay.clone();
                     let overlay_layer = overlay_layer.clone();
+                    let draw_layer = draw_layer.clone();
                     let gpu_canvas = gpu_canvas.clone();
                     let sync_gpu_view = sync_gpu_view.clone();
                     let gpu_recipe = gpu_recipe.clone();
@@ -1341,6 +1344,7 @@ pub fn build(
                                         status.set_text(&format!("{} × {} preview", width, height));
                                         crop_overlay.queue_draw();
                                         overlay_layer.queue_draw();
+                                        draw_layer.queue_draw();
                                     }
                                     Err(error) => {
                                         status.set_text(&format!("Preview failed: {error}"));
@@ -1387,6 +1391,7 @@ pub fn build(
         let preview_debounce = preview_debounce.clone();
         let generation = generation.clone();
         let busy = busy.clone();
+        let draw_layer = draw_layer.clone();
         Rc::new(move || {
             let recipe = session.borrow().recipe.clone();
             if let Some(gpu_canvas) = &gpu_canvas {
@@ -1431,6 +1436,7 @@ pub fn build(
                         picture.set_opacity(0.0);
                         gpu_canvas.set_recipe(&recipe);
                         sync_gpu_view();
+                        draw_layer.queue_draw();
                         return;
                     }
                 }
@@ -1881,6 +1887,7 @@ pub fn build(
     let fit_action: Rc<dyn Fn()> = {
         let picture = picture.clone();
         let picture_scroll = picture_scroll.clone();
+        let draw_layer = draw_layer.clone();
         let preview_dimensions = preview_dimensions.clone();
         let canvas_zoom = canvas_zoom.clone();
         let native_one_to_one = native_one_to_one.clone();
@@ -1896,6 +1903,7 @@ pub fn build(
             let dimensions = preview_dimensions.get();
             canvas_zoom.set(0.0);
             apply_canvas_zoom(&picture, &picture_scroll, dimensions, 0.0);
+            draw_layer.queue_draw();
             if let Some(handler) = zoom_sync.borrow().as_ref() {
                 handler(0.0, fit_zoom_for_canvas(&picture_scroll, dimensions));
             }
@@ -1908,6 +1916,7 @@ pub fn build(
     let zoom_out_action: Rc<dyn Fn()> = {
         let picture = picture.clone();
         let picture_scroll = picture_scroll.clone();
+        let draw_layer = draw_layer.clone();
         let preview_dimensions = preview_dimensions.clone();
         let canvas_zoom = canvas_zoom.clone();
         let native_one_to_one = native_one_to_one.clone();
@@ -1929,6 +1938,7 @@ pub fn build(
             let next_multiplier = (current_multiplier - 0.10).clamp(0.25, 8.0);
             canvas_zoom.set(next_multiplier);
             apply_canvas_zoom(&picture, &picture_scroll, dimensions, next_multiplier);
+            draw_layer.queue_draw();
             if let Some(handler) = zoom_sync.borrow().as_ref() {
                 let fit = fit_zoom_for_canvas(&picture_scroll, dimensions);
                 handler(fit * next_multiplier, fit);
@@ -1938,6 +1948,7 @@ pub fn build(
     let zoom_in_action: Rc<dyn Fn()> = {
         let picture = picture.clone();
         let picture_scroll = picture_scroll.clone();
+        let draw_layer = draw_layer.clone();
         let preview_dimensions = preview_dimensions.clone();
         let canvas_zoom = canvas_zoom.clone();
         let native_one_to_one = native_one_to_one.clone();
@@ -1959,6 +1970,7 @@ pub fn build(
             let next_multiplier = (current_multiplier + 0.10).clamp(0.25, 8.0);
             canvas_zoom.set(next_multiplier);
             apply_canvas_zoom(&picture, &picture_scroll, dimensions, next_multiplier);
+            draw_layer.queue_draw();
             if let Some(handler) = zoom_sync.borrow().as_ref() {
                 let fit = fit_zoom_for_canvas(&picture_scroll, dimensions);
                 handler(fit * next_multiplier, fit);
@@ -1968,6 +1980,7 @@ pub fn build(
     let set_manual_zoom_action: Rc<dyn Fn(f64)> = {
         let picture = picture.clone();
         let picture_scroll = picture_scroll.clone();
+        let draw_layer = draw_layer.clone();
         let preview_dimensions = preview_dimensions.clone();
         let canvas_zoom = canvas_zoom.clone();
         let native_one_to_one = native_one_to_one.clone();
@@ -1986,6 +1999,7 @@ pub fn build(
             if native_scale <= 0.0 || native_scale <= fit * 1.001 {
                 canvas_zoom.set(0.0);
                 apply_canvas_zoom(&picture, &picture_scroll, dimensions, 0.0);
+                draw_layer.queue_draw();
                 if let Some(handler) = zoom_sync.borrow().as_ref() {
                     handler(0.0, fit);
                 }
@@ -1996,6 +2010,7 @@ pub fn build(
             let multiplier = (native_scale / fit.max(f64::EPSILON)).clamp(0.25, 8.0);
             canvas_zoom.set(multiplier);
             apply_canvas_zoom(&picture, &picture_scroll, dimensions, multiplier);
+            draw_layer.queue_draw();
             if let Some(handler) = zoom_sync.borrow().as_ref() {
                 handler(native_scale, fit);
             }

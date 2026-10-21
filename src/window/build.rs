@@ -4882,11 +4882,19 @@ fn start_photo_export_single(
 
             if control && !disallowed_modifier && matches!(key, gtk::gdk::Key::a | gtk::gdk::Key::A) {
                 if photos_page && !lightbox_for_keys.root.is_visible() {
-                    let folder_id = match filter_for_keys.get() {
-                        sidebar::SidebarFilter::Folder(sidebar_folder_id) => {
-                            gallery_for_keys.selected_folder_id().or(Some(sidebar_folder_id))
+                    // Ctrl+A should select the complete visible result set.
+                    // A folder normally scopes selection to the active folder,
+                    // but search can return matches from elsewhere in the
+                    // catalogue, so its filtered gallery is the scope.
+                    let folder_id = if search_for_keys.borrow().is_empty() {
+                        match filter_for_keys.get() {
+                            sidebar::SidebarFilter::Folder(sidebar_folder_id) => {
+                                gallery_for_keys.selected_folder_id().or(Some(sidebar_folder_id))
+                            }
+                            _ => None,
                         }
-                        _ => None,
+                    } else {
+                        None
                     };
                     if std::env::var_os("PICASA_TRACE").is_some() {
                         eprintln!("UI TRACE ctrl_a folder_id={folder_id:?}");

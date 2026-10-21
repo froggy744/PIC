@@ -160,7 +160,8 @@ fn transition_source_in(
 
 impl Gallery {
     pub fn set_search_result_activation(&self, enabled: bool) {
-        self.root.set_single_click_activate(enabled);
+        // GridView keeps double-click activation so rubber-band selection can
+        // start on a photo. Photo Wall retains its existing click behavior.
         self.sectioned_folder.search_single_click.set(enabled);
     }
 
@@ -417,6 +418,9 @@ impl Gallery {
         let root = gtk::GridView::new(Some(selection.clone()), Some(factory));
         root.set_min_columns(5);
         root.set_max_columns(5);
+        // Keep this disabled for search results too. GTK's single-click
+        // activation opens the pressed photo before a rubber-band drag can
+        // select multiple results.
         root.set_single_click_activate(false);
         root.set_enable_rubberband(true);
         root.set_hexpand(true);

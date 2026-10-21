@@ -25,10 +25,14 @@ pub enum FilterPreset {
     GoldenHour,
     OldPhoto,
     Newspaper,
+    Noir,
+    Duotone,
+    BleachBypass,
+    InfraredBw,
 }
 
 impl FilterPreset {
-    pub const ALL: [FilterPreset; 14] = [
+    pub const ALL: [FilterPreset; 18] = [
         FilterPreset::Clarendon,
         FilterPreset::Gingham,
         FilterPreset::Juno,
@@ -43,6 +47,10 @@ impl FilterPreset {
         Self::GoldenHour,
         Self::OldPhoto,
         Self::Newspaper,
+        Self::Noir,
+        Self::Duotone,
+        Self::BleachBypass,
+        Self::InfraredBw,
     ];
 
     pub fn label(self) -> &'static str {
@@ -62,6 +70,10 @@ impl FilterPreset {
             Self::GoldenHour => "Golden Hour",
             Self::OldPhoto => "Old Photo",
             Self::Newspaper => "Newspaper",
+            Self::Noir => "Noir",
+            Self::Duotone => "Duotone",
+            Self::BleachBypass => "Bleach Bypass",
+            Self::InfraredBw => "Infrared B&W",
         }
     }
 
@@ -82,6 +94,10 @@ impl FilterPreset {
             Self::GoldenHour => "golden_hour",
             Self::OldPhoto => "old_photo",
             Self::Newspaper => "newspaper",
+            Self::Noir => "noir",
+            Self::Duotone => "duotone",
+            Self::BleachBypass => "bleach_bypass",
+            Self::InfraredBw => "infrared_bw",
         }
     }
 
@@ -101,6 +117,10 @@ impl FilterPreset {
             "golden_hour" => Self::GoldenHour,
             "old_photo" => Self::OldPhoto,
             "newspaper" => Self::Newspaper,
+            "noir" => Self::Noir,
+            "duotone" => Self::Duotone,
+            "bleach_bypass" => Self::BleachBypass,
+            "infrared_bw" => Self::InfraredBw,
             _ => Self::None,
         }
     }
@@ -247,7 +267,23 @@ pub(crate) fn params(preset: FilterPreset) -> FilterParams {
             contrast: -0.20,
             vignette: 0.24,
         },
-        FilterPreset::None | FilterPreset::PencilSketch | FilterPreset::Newspaper => FilterParams {
+        FilterPreset::Noir => FilterParams {
+            exposure: 1.02,
+            saturation: 0.0,
+            contrast: 0.78,
+            vignette: 0.17,
+            ..params(FilterPreset::None)
+        },
+        FilterPreset::BleachBypass => FilterParams {
+            exposure: 1.015,
+            tint: (1.015, 1.01, 0.99),
+            saturation: 0.28,
+            contrast: 0.65,
+            vignette: 0.10,
+            ..params(FilterPreset::None)
+        },
+        FilterPreset::None | FilterPreset::PencilSketch | FilterPreset::Newspaper
+        | FilterPreset::Duotone | FilterPreset::InfraredBw => FilterParams {
             exposure: 1.0,
             shadow_lift: 0.0,
             tint: (1.0, 1.0, 1.0),
@@ -274,6 +310,24 @@ pub fn apply_filter(image: &mut RgbaImage, preset: FilterPreset) {
     }
     if preset == FilterPreset::Newspaper {
         apply_newspaper(image);
+        return;
+    }
+    if preset == FilterPreset::Duotone || preset == FilterPreset::InfraredBw {
+        image.pixels_mut().for_each(|pixel| {
+            let r = pixel[0] as f32 / 255.0;
+            let g = pixel[1] as f32 / 255.0;
+            let b = pixel[2] as f32 / 255.0;
+            let colour = if preset == FilterPreset::Duotone {
+                let y = contrast_curve(0.2126 * r + 0.7152 * g + 0.0722 * b, 0.25);
+                [0.08 + 0.92 * y, 0.14 + 0.59 * y, 0.32 + 0.19 * y]
+            } else {
+                let y = contrast_curve((0.55 * r + 0.65 * g - 0.20 * b).clamp(0.0, 1.0), 0.65);
+                [y, y, y]
+            };
+            for channel in 0..3 {
+                pixel[channel] = (colour[channel].clamp(0.0, 1.0) * 255.0).round() as u8;
+            }
+        });
         return;
     }
     let p = params(preset);
@@ -472,6 +526,34 @@ mod tests {
             apply_filter(&mut image, preset);
             assert_ne!(image.as_raw(), before.as_raw(), "{preset:?} did nothing");
         }
+    }
+
+    #[test]
+    fn new_presets_have_distinct_tonal_treatments() {
+        let source = RgbaImage::from_fn(3, 1, |x, _| match x {
+            0 => Rgba([30, 140, 30, 255]),
+            1 => Rgba([30, 30, 140, 255]),
+            _ => Rgba([170, 115, 80, 255]),
+        });
+        let mut noir = source.clone();
+        apply_filter(&mut noir, FilterPreset::Noir);
+        assert!(noir.pixels().all(|p| p[0] == p[1] && p[1] == p[2]));
+
+        let mut infrared = source.clone();
+        apply_filter(&mut infrared, FilterPreset::InfraredBw);
+        assert!(infrared.get_pixel(0, 0)[0] > infrared.get_pixel(1, 0)[0] + 60);
+        assert!(infrared.pixels().all(|p| p[0] == p[1] && p[1] == p[2]));
+
+        let mut duotone = source.clone();
+        apply_filter(&mut duotone, FilterPreset::Duotone);
+        assert!(duotone.get_pixel(1, 0)[2] > duotone.get_pixel(1, 0)[1]);
+        assert!(duotone.get_pixel(2, 0)[0] > duotone.get_pixel(2, 0)[2]);
+
+        let mut bleach = source.clone();
+        apply_filter(&mut bleach, FilterPreset::BleachBypass);
+        let original_chroma = source.get_pixel(2, 0)[0] - source.get_pixel(2, 0)[2];
+        let bleach_chroma = bleach.get_pixel(2, 0)[0].abs_diff(bleach.get_pixel(2, 0)[2]);
+        assert!(bleach_chroma < original_chroma / 2);
     }
 
     #[test]

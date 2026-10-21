@@ -974,6 +974,8 @@ impl LiveGpuCanvas {
                     let params = filters::params(tone.filter);
                     uniform_1f(objects.program, "uNamedFilter", if tone.filter == FilterPreset::None { 0.0 } else { 1.0 });
                     uniform_1f(objects.program, "uNewspaper", if tone.filter == FilterPreset::Newspaper { 1.0 } else { 0.0 });
+                    uniform_1f(objects.program, "uDuotone", if tone.filter == FilterPreset::Duotone { 1.0 } else { 0.0 });
+                    uniform_1f(objects.program, "uInfraredBw", if tone.filter == FilterPreset::InfraredBw { 1.0 } else { 0.0 });
                     uniform_1f(objects.program, "uPencilSketch", if tone.filter == FilterPreset::PencilSketch { 1.0 } else { 0.0 });
                     uniform_1f(objects.program, "uDreamGlow", if tone.filter == FilterPreset::DreamGlow { 1.0 } else { 0.0 });
                     uniform_1f(objects.program, "uFilterExposure", params.exposure);
@@ -1750,6 +1752,8 @@ uniform float uSepia;
 uniform float uFilterAmount;
 uniform float uNamedFilter;
 uniform float uNewspaper;
+uniform float uDuotone;
+uniform float uInfraredBw;
 uniform float uPencilSketch;
 uniform float uDreamGlow;
 uniform sampler2D uEffectBlur;
@@ -1944,6 +1948,21 @@ vec4 namedFilterPixel(vec4 px, ivec2 coord) {
             ? vec3(36.0, 34.0, 31.0) / 255.0
             : vec3(231.0, 220.0, 196.0) / 255.0;
         return vec4(round(mix(px.rgb, halftone, clamp(uFilterAmount, 0.0, 1.0)) * 255.0) / 255.0, px.a);
+    }
+    if (uDuotone > 0.5 || uInfraredBw > 0.5) {
+        vec3 mapped;
+        if (uDuotone > 0.5) {
+            float y = contrastCurve(luma(px.rgb), 0.25);
+            mapped = vec3(0.08 + 0.92 * y, 0.14 + 0.59 * y, 0.32 + 0.19 * y);
+        } else {
+            float y = contrastCurve(clamp(0.55 * px.r + 0.65 * px.g - 0.20 * px.b, 0.0, 1.0), 0.65);
+            mapped = vec3(y);
+        }
+        vec3 originalBytes = round(px.rgb * 255.0);
+        vec3 filteredBytes = round(clamp(mapped, 0.0, 1.0) * 255.0);
+        vec3 mixed = round(clamp(originalBytes + (filteredBytes - originalBytes) *
+                         clamp(uFilterAmount, 0.0, 1.0), 0.0, 255.0)) / 255.0;
+        return vec4(mixed, px.a);
     }
     vec3 c = px.rgb * uFilterExposure;
     c += vec3(uFilterShadowLift) * (vec3(1.0) - c);
@@ -4664,6 +4683,10 @@ mod tests {
             FilterPreset::GoldenHour,
             FilterPreset::OldPhoto,
             FilterPreset::Newspaper,
+            FilterPreset::Noir,
+            FilterPreset::Duotone,
+            FilterPreset::BleachBypass,
+            FilterPreset::InfraredBw,
         ] {
             let mut recipe = reset_recipe.clone();
             recipe.filter = preset;

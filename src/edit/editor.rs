@@ -901,7 +901,7 @@ pub fn build(
     crop_action_row.add_css_class("crop-action-row");
     let apply_crop_button = gtk::Button::with_label("Apply Crop");
     apply_crop_button.set_hexpand(true);
-    apply_crop_button.set_tooltip_text(Some("Commit the pending crop and stay in Crop"));
+    apply_crop_button.set_tooltip_text(Some("Commit the crop and leave selection mode"));
     apply_crop_button.add_css_class("suggested-action");
     apply_crop_button.add_css_class("crop-apply-button");
     let reset_crop = gtk::Button::with_label("Reset Crop");
@@ -2304,14 +2304,16 @@ pub fn build(
         })
     };
 
-    let apply_crop: Rc<dyn Fn(bool)> = {
+    let apply_crop: Rc<dyn Fn()> = {
         let session = session.clone();
         let preview_dimensions = preview_dimensions.clone();
         let crop_overlay = crop_overlay.clone();
+        let overlay_layer = overlay_layer.clone();
+        let apply_crop_button = apply_crop_button.clone();
         let pending_crop = pending_crop.clone();
         let queue_preview = queue_preview.clone();
         let update_history_buttons = update_history_buttons.clone();
-        Rc::new(move |keep_crop_open| {
+        Rc::new(move || {
             if !crop_overlay.is_visible() {
                 return;
             }
@@ -2327,10 +2329,13 @@ pub fn build(
             }
 
             pending_crop.replace(CropRect::default());
-            crop_overlay.set_visible(keep_crop_open);
-            if keep_crop_open {
-                crop_overlay.queue_draw();
-            }
+            crop_overlay.set_visible(false);
+            overlay_layer.set_visible(true);
+            overlay_layer.set_can_target(false);
+            overlay_layer.set_cursor_from_name(None);
+            overlay_layer.queue_draw();
+            apply_crop_button.set_label("Crop Again");
+            apply_crop_button.set_tooltip_text(Some("Start another crop selection"));
 
             if changed {
                 update_history_buttons();
@@ -2340,7 +2345,7 @@ pub fn build(
     };
 
     // Entering the Crop tab activates the on-canvas crop overlay. Leaving the
-    // tab commits the pending crop. Apply Crop and Enter keep Crop active.
+    // tab commits the pending crop. Apply Crop hides the selector in this tab.
     {
         let crop_overlay = crop_overlay.clone();
         let overlay_layer = overlay_layer.clone();
@@ -2352,6 +2357,7 @@ pub fn build(
         let picture_scroll = picture_scroll.clone();
         let preview_dimensions = preview_dimensions.clone();
         let apply_crop = apply_crop.clone();
+        let apply_crop_button = apply_crop_button.clone();
         crop_toggle.connect_toggled(move |button| {
             if button.is_active() {
                 canvas_zoom.set(0.0);
@@ -2368,8 +2374,10 @@ pub fn build(
                 overlay_layer.set_visible(false);
                 crop_overlay.set_visible(true);
                 crop_overlay.queue_draw();
+                apply_crop_button.set_label("Apply Crop");
+                apply_crop_button.set_tooltip_text(Some("Commit the crop and leave selection mode"));
             } else {
-                apply_crop(false);
+                apply_crop();
                 overlay_layer.set_visible(true);
                 overlay_layer.queue_draw();
             }
@@ -2480,8 +2488,20 @@ pub fn build(
 
     {
         let apply_crop = apply_crop.clone();
-        apply_crop_button.connect_clicked(move |_| {
-            apply_crop(true);
+        let crop_overlay = crop_overlay.clone();
+        let overlay_layer = overlay_layer.clone();
+        let pending_crop = pending_crop.clone();
+        apply_crop_button.connect_clicked(move |button| {
+            if crop_overlay.is_visible() {
+                apply_crop();
+            } else {
+                pending_crop.replace(CropRect::default());
+                overlay_layer.set_visible(false);
+                crop_overlay.set_visible(true);
+                crop_overlay.queue_draw();
+                button.set_label("Apply Crop");
+                button.set_tooltip_text(Some("Commit the crop and leave selection mode"));
+            }
         });
     }
 
@@ -2497,7 +2517,7 @@ pub fn build(
                 gtk::gdk::Key::Return | gtk::gdk::Key::KP_Enter
                     if crop_overlay.is_visible() =>
                 {
-                    apply_crop(true);
+                    apply_crop();
                     glib::Propagation::Stop
                 }
                 gtk::gdk::Key::Escape => {
@@ -2671,10 +2691,7 @@ pub fn build(
         photo.clone(),
         session.clone(),
         active_rotation.clone(),
-        {
-            let apply_crop = apply_crop.clone();
-            Rc::new(move || apply_crop(false))
-        },
+        apply_crop.clone(),
         start_export.clone(),
     );
 
@@ -2687,7 +2704,7 @@ pub fn build(
         let parent = parent.clone();
         let apply_crop = apply_crop.clone();
         done.connect_clicked(move |_| {
-            apply_crop(false);
+            apply_crop();
             let encoded = session.borrow().recipe.encode();
             if let Err(error) =
                 crate::db::set_edit_recipe(&connection.borrow(), photo.id(), &encoded)

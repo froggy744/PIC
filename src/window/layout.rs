@@ -54,26 +54,13 @@
                 open_in_folder_exact_target.set(None);
                 gallery.set_pending_open_in_folder_photo(None);
             }
-            let folder_target = if let sidebar::SidebarFilter::Folder(folder_id) = new_filter {
-                folder_cache
-                    .borrow()
-                    .iter()
-                    .find(|folder| folder.id == folder_id)
-                    .map(|folder| (folder_id, folder.path.clone()))
-                    .or_else(|| {
-                        // A selected sidebar row can arrive before the
-                        // in-memory folder cache has caught up. Resolve that
-                        // uncommon miss from the database so Folder-to-Folder
-                        // navigation can still reuse the loaded stream.
-                        db::folders(&connection.borrow())
-                            .ok()?
-                            .into_iter()
-                            .find(|folder| folder.id == folder_id)
-                            .map(|folder| (folder_id, folder.path))
-                    })
-            } else {
-                None
-            };
+            // A selected row may precede a sidebar cache update. Resolve it
+            // from the database before deciding whether this is a miss.
+            let folder_target = folder_navigation_target(
+                new_filter,
+                &folder_cache.borrow(),
+                &connection.borrow(),
+            );
             // Once the continuous Folder stream is loaded, clicking another
             // folder should be a scroll operation, not another database query
             // and model rebuild. An active global search is the exception: its
@@ -235,12 +222,10 @@
                         );
                         Some(REFRESH_GENERATION.load(std::sync::atomic::Ordering::Relaxed))
                     } else {
-                        if matches!(new_filter, sidebar::SidebarFilter::Folder(_)) {
-                            // The sidebar's folder cache can briefly lag the
-                            // selected row. Resolve the folder from the DB and
-                            // build its view instead of sending a Folder
-                            // destination through the non-folder navigation
-                            // refresh path.
+                        if no_target_refresh(new_filter) == NoTargetRefresh::Folder {
+                            // The selected folder is absent from both the
+                            // sidebar cache and the DB lookup. Build the
+                            // Folder view through its normal refresh path.
                             refresh_grid(&connection, new_filter, "", sort.get(), &gallery);
                         } else {
                             // Switching views is not a scan or filter mutation:

@@ -23,6 +23,15 @@
 static int trace_enabled(void);
 static void fail(char *error, size_t cap, const char *operation);
 
+/* Samba reports some guest-session signing diagnostics at debug level zero,
+ * even when directory listing succeeds. Keep those library messages out of
+ * PIC's terminal output; operation failures are returned through `error`.
+ * PICASA_TRACE still exposes the original Samba diagnostics when needed. */
+static void smb_log(void *private_ptr, int level, const char *message) {
+    (void)private_ptr; (void)level;
+    if (trace_enabled() && message) fputs(message, stderr);
+}
+
 /* Default credentials when a server does not prompt for a login. Mirror what
  * smbclient -N and GNOME's accepted "cancel" do: the current OS account with
  * an empty password. Windows file servers commonly deny the literal "guest"
@@ -59,6 +68,7 @@ static int init_smb(char *error, size_t cap) {
         }
         smbc_setFunctionAuthData(context, guest_auth);
         smbc_setDebug(context, 0);
+        smbc_setLogCallback(context, NULL, smb_log);
         if (!smbc_init_context(context)) {
             fail(error, cap, "smbc_init_context");
             smbc_free_context(context, 0);
@@ -89,6 +99,8 @@ int pic_smb_scan(const char *uri, scan_callback cb, void *context, char *error, 
         scan_context = smbc_new_context();
         if (!scan_context) { snprintf(error, cap, "smbc_new_context failed"); return -1; }
         smbc_setFunctionAuthData(scan_context, guest_auth);
+        smbc_setDebug(scan_context, 0);
+        smbc_setLogCallback(scan_context, NULL, smb_log);
         smbc_setTimeout(scan_context, 5000);
         if (!smbc_init_context(scan_context)) {
             fail(error, cap, "smbc_init_context"); pic_smb_scan_close(); return -1;

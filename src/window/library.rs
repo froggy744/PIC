@@ -30,6 +30,41 @@ fn invalidate_pending_grid_navigation() {
     REFRESH_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 }
 
+fn folder_navigation_target(
+    filter: sidebar::SidebarFilter,
+    cached_folders: &[db::Folder],
+    connection: &Connection,
+) -> Option<(i64, String)> {
+    let sidebar::SidebarFilter::Folder(folder_id) = filter else {
+        return None;
+    };
+    cached_folders
+        .iter()
+        .find(|folder| folder.id == folder_id)
+        .map(|folder| (folder_id, folder.path.clone()))
+        .or_else(|| {
+            db::folders(connection)
+                .ok()?
+                .into_iter()
+                .find(|folder| folder.id == folder_id)
+                .map(|folder| (folder_id, folder.path))
+        })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NoTargetRefresh {
+    Folder,
+    Navigation,
+}
+
+fn no_target_refresh(filter: sidebar::SidebarFilter) -> NoTargetRefresh {
+    if matches!(filter, sidebar::SidebarFilter::Folder(_)) {
+        NoTargetRefresh::Folder
+    } else {
+        NoTargetRefresh::Navigation
+    }
+}
+
 fn refresh_grid(
     connection: &Rc<RefCell<Connection>>,
     filter: sidebar::SidebarFilter,
@@ -772,11 +807,33 @@ fn pixel_count(width: Option<i64>, height: Option<i64>) -> Option<i128> {
 mod photo_action_tests {
     use crate::grid;
     use super::{
-        apply_rating_filter, folder_stream_order, sort_folder_stream, sort_photos,
+        apply_rating_filter, folder_navigation_target, folder_stream_order, no_target_refresh,
+        sort_folder_stream, sort_photos, NoTargetRefresh,
         valid_file_name, wallpaper_layout, PhotoSort, RatingFilter, SortDirection, SortField,
         WallpaperLayout,
     };
     use crate::db::{Folder, Photo};
+
+    #[test]
+    fn missing_folder_destination_uses_folder_refresh() {
+        use crate::sidebar::SidebarFilter;
+        let connection = rusqlite::Connection::open_in_memory().unwrap();
+        connection.execute_batch(crate::db::SCHEMA).unwrap();
+
+        // The clicked row can outlive both the sidebar cache and the DB row.
+        // This was the exact path that sent Folder into the navigation-only
+        // refresh and tripped its debug assertion.
+        assert!(folder_navigation_target(SidebarFilter::Folder(42), &[], &connection).is_none());
+        assert_eq!(no_target_refresh(SidebarFilter::Folder(42)), NoTargetRefresh::Folder);
+        assert_eq!(no_target_refresh(SidebarFilter::All), NoTargetRefresh::Navigation);
+
+        // A cache miss with a live DB row still resolves to a scroll target.
+        connection.execute("INSERT INTO folders(id,path,name,imported_root) VALUES (42,'/photos/trip','trip',1)", []).unwrap();
+        assert_eq!(
+            folder_navigation_target(SidebarFilter::Folder(42), &[], &connection),
+            Some((42, "/photos/trip".into()))
+        );
+    }
 
     #[test]
     fn viewport_restore_prefers_the_photo_nearest_the_viewport_center() {

@@ -5454,8 +5454,8 @@ mod tests {
         let neutral = read_frame(&reference);
         let frame_width = renderer.widget().width().max(1) as usize * gl_scale;
         // A neutral identity render at 1:1 must preserve the decoded source
-        // bytes exactly. This also checks the real NEF's camera-JPEG colour
-        // values through texture upload, sampling, and framebuffer readback.
+        // bytes exactly. This checks camera-look-corrected sensor pixels
+        // through texture upload, sampling, and framebuffer readback.
         let expected_neutral = native_view_reference(
             &image,
             x,

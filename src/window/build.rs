@@ -4366,7 +4366,7 @@ fn show_photo_export_dialog(
             .is_some_and(|format| format.id == "nikon_raw")
     });
     let size_help = gtk::Label::new(Some(if includes_nikon_raw {
-        "NEF exports use the camera's largest embedded JPEG. Size limits the long edge; JPEG quality controls compression."
+        "NEF exports use full-resolution sensor data. Size limits the long edge; JPEG quality controls compression."
     } else {
         "Size limits the long edge; JPEG quality controls compression."
     }));

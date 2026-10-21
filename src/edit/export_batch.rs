@@ -1432,14 +1432,14 @@ mod tests {
             full_export.width(),
             full_export.height()
         );
-        let full_preview = crate::thumbnail::decode_for_viewer(
+        let full_sensor = crate::thumbnail::decode_for_viewer(
             &reference,
             source_width.max(source_height),
             source_width.max(source_height),
         )
-        .expect("decode the original RAW's largest available preview at full size");
+        .expect("develop the original RAW's sensor data at full size");
         assert_eq!(
-            full_export, full_preview,
+            full_export, full_sensor,
             "full-size Export must match decoding the original RAW, not its cached thumbnail"
         );
         let stale_catalog_export = super::super::render::render_for_export(
@@ -1451,8 +1451,8 @@ mod tests {
         )
         .expect("stale thumbnail-sized catalog bounds must not limit RAW Export");
         assert_eq!(
-            stale_catalog_export, full_preview,
-            "RAW Export must decode the original at full size despite stale thumbnail-sized catalog dimensions"
+            stale_catalog_export, full_sensor,
+            "RAW Export must develop the original at full size despite stale thumbnail-sized catalog dimensions"
         );
 
         let mut recipe = EditRecipe::default();

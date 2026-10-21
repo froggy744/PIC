@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import re
 import signal
 import sqlite3
 import subprocess
@@ -432,6 +433,35 @@ def gallery_photo_cells(app, filenames: set[str]):
     return cells
 
 
+def native_nef_frame_ready(reference: Path) -> bool:
+    if not APP_LOG.exists():
+        return False
+    lines = APP_LOG.read_text(errors="replace").splitlines()
+    sensor_lines = [line for line in lines if "PIC_DECODE stage=nef_sensor_frame" in line]
+    base_lines = [
+        (index, line)
+        for index, line in enumerate(lines)
+        if "stage=base_decode" in line and f"uri={reference}" in line
+    ]
+    if not sensor_lines or not base_lines:
+        return False
+    sensor_match = re.search(r"output=(\d+)x(\d+)", sensor_lines[-1])
+    if sensor_match is None:
+        return False
+    base_index, base_line = base_lines[-1]
+    sensor_index = max(
+        index
+        for index, line in enumerate(lines)
+        if "PIC_DECODE stage=nef_sensor_frame" in line
+    )
+    base_match = re.search(r"stage=base_decode .*size=(\d+)x(\d+)", base_line)
+    return (
+        base_index > sensor_index
+        and base_match is not None
+        and base_match.groups() == sensor_match.groups()
+    )
+
+
 def run_automated_smoke() -> None:
     print("NATIVE AUTO 1/5: Starting isolated Wayland/Vulkan session", flush=True)
     start_input_daemon()
@@ -493,6 +523,11 @@ def run_automated_smoke() -> None:
         lambda: native_lightbox_evidence(APP_LOG.read_text(errors="replace"))[1],
         "1:1 zoom update", timeout=12)
     STATE["confirmations"]["zoom_1_to_1"] = True
+    if Path(cell.name).suffix.lower() == ".nef":
+        selected_nef = (Path(STATE["source_folder"]) / cell.name).resolve()
+        wait_for_accessible(
+            lambda: native_nef_frame_ready(selected_nef),
+            "sensor-developed full-resolution NEF frame in Lightbox", timeout=30)
 
     one_to_one = find_accessible(pic_accessible(), role="toggle button", name="1:1")
     try:

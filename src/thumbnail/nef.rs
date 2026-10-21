@@ -86,7 +86,20 @@ fn nef_embedded_preview(path: &std::path::Path) -> Result<Option<Vec<u8>>> {
 fn read_nef_jpeg(path: &std::path::Path, largest: bool) -> Result<Option<Vec<u8>>> {
     let mut file = fs::File::open(path)?;
     let file_size = file.metadata()?.len();
-    let Some((offset, length)) = nef_jpeg_stream(&mut file, largest)? else {
+    read_nef_jpeg_from_reader(&mut file, file_size, largest)
+}
+
+fn nef_embedded_preview_from_bytes(bytes: &[u8]) -> Result<Option<Vec<u8>>> {
+    let mut cursor = Cursor::new(bytes);
+    read_nef_jpeg_from_reader(&mut cursor, bytes.len() as u64, true)
+}
+
+fn read_nef_jpeg_from_reader(
+    reader: &mut (impl Read + Seek),
+    file_size: u64,
+    largest: bool,
+) -> Result<Option<Vec<u8>>> {
+    let Some((offset, length)) = nef_jpeg_stream(reader, largest)? else {
         return Ok(None);
     };
     // A malformed tag must never request an unbounded allocation or seek.
@@ -96,9 +109,9 @@ fn read_nef_jpeg(path: &std::path::Path, largest: bool) -> Result<Option<Vec<u8>
     {
         return Ok(None);
     }
-    file.seek(SeekFrom::Start(u64::from(offset)))?;
+    reader.seek(SeekFrom::Start(u64::from(offset)))?;
     let mut bytes = vec![0; length as usize];
-    file.read_exact(&mut bytes)?;
+    reader.read_exact(&mut bytes)?;
     Ok((bytes.starts_with(&[0xff, 0xd8])).then_some(bytes))
 }
 #[cfg(target_os = "linux")]

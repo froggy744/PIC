@@ -94,6 +94,200 @@ fn decode_nef_jpeg_thumbnail(
     Ok(decoded)
 }
 
+const NEF_CAMERA_MATCH_SAMPLE_STRIDE: usize = 8;
+
+/// Fit a small colour matrix from the sensor-developed image
+/// to Nikon's embedded full-size JPEG. The JPEG supplies the camera look; the
+/// output pixels still come from demosaiced sensor data.
+fn nef_camera_color_matrix(
+    sensor: &image::ImageBuffer<image::Rgb<u16>, Vec<u16>>,
+    camera: &image::RgbImage,
+) -> Option<[[f64; 4]; 3]> {
+    if sensor.dimensions() != camera.dimensions() {
+        return None;
+    }
+
+    let mut gram = [[0.0f64; 4]; 4];
+    let mut right_hand = [[0.0f64; 3]; 4];
+    let mut sample_count = 0usize;
+    for y in (0..sensor.height()).step_by(NEF_CAMERA_MATCH_SAMPLE_STRIDE) {
+        for x in (0..sensor.width()).step_by(NEF_CAMERA_MATCH_SAMPLE_STRIDE) {
+            let raw = sensor.get_pixel(x, y).0;
+            let target = camera.get_pixel(x, y).0;
+            let feature = [
+                f64::from(raw[0]) / f64::from(u16::MAX),
+                f64::from(raw[1]) / f64::from(u16::MAX),
+                f64::from(raw[2]) / f64::from(u16::MAX),
+                1.0,
+            ];
+            for row in 0..4 {
+                for column in 0..4 {
+                    gram[row][column] += feature[row] * feature[column];
+                }
+                for channel in 0..3 {
+                    right_hand[row][channel] += feature[row] * f64::from(target[channel]);
+                }
+            }
+            sample_count += 1;
+        }
+    }
+    if sample_count < 64 {
+        return None;
+    }
+
+    // Keep uniform and near-monochrome scenes well-conditioned. The prior is
+    // the identity sRGB mapping; the image samples supply the camera-specific
+    // correction when the scene contains enough colour variation.
+    let regularization = sample_count as f64 * 0.001;
+    for (index, row) in gram.iter_mut().enumerate() {
+        row[index] += regularization;
+    }
+    let mut matrix = [[0.0f64; 4]; 3];
+    for channel in 0..3 {
+        matrix[channel] = solve_nef_camera_channel(
+            gram,
+            std::array::from_fn(|row| {
+                let identity_prior = if row == channel { 255.0 } else { 0.0 };
+                right_hand[row][channel] + regularization * identity_prior
+            }),
+        )?;
+    }
+
+    Some(matrix)
+}
+
+fn solve_nef_camera_channel(
+    matrix: [[f64; 4]; 4],
+    values: [f64; 4],
+) -> Option<[f64; 4]> {
+    let mut augmented = [[0.0f64; 5]; 4];
+    for row in 0..4 {
+        augmented[row][..4].copy_from_slice(&matrix[row]);
+        augmented[row][4] = values[row];
+    }
+    for column in 0..4 {
+        let pivot = (column..4).max_by(|&left, &right| {
+            augmented[left][column]
+                .abs()
+                .total_cmp(&augmented[right][column].abs())
+        })?;
+        if augmented[pivot][column].abs() < 1e-12 {
+            return None;
+        }
+        augmented.swap(column, pivot);
+        let divisor = augmented[column][column];
+        for index in column..5 {
+            augmented[column][index] /= divisor;
+        }
+        for row in 0..4 {
+            if row == column {
+                continue;
+            }
+            let factor = augmented[row][column];
+            for index in column..5 {
+                augmented[row][index] -= factor * augmented[column][index];
+            }
+        }
+    }
+    Some(std::array::from_fn(|row| augmented[row][4]))
+}
+
+fn nef_camera_render_pixel(
+    raw: [u16; 3],
+    matrix: &[[f64; 4]; 3],
+) -> image::Rgb<u8> {
+    let feature = [
+        f64::from(raw[0]) / f64::from(u16::MAX),
+        f64::from(raw[1]) / f64::from(u16::MAX),
+        f64::from(raw[2]) / f64::from(u16::MAX),
+        1.0,
+    ];
+    image::Rgb(std::array::from_fn(|channel| {
+        let predicted = (0..4)
+            .map(|index| matrix[channel][index] * feature[index])
+            .sum::<f64>();
+        predicted.round().clamp(0.0, 255.0) as u8
+    }))
+}
+
+fn match_nef_sensor_to_camera_jpeg(
+    sensor: DynamicImage,
+    camera_jpeg: &[u8],
+    reference: &str,
+) -> Result<DynamicImage> {
+    let started = std::time::Instant::now();
+    let sensor = sensor.to_rgb16();
+    let (camera_width, camera_height) = jpeg_dimensions(camera_jpeg)?;
+    let camera = decode_jpeg_turbo_with_target(camera_jpeg, camera_width, camera_height)
+        .or_else(|_| decode_with_image(camera_jpeg))?;
+    let camera = color::color_manage_jpeg_rgb(camera_jpeg, camera.image, reference);
+    if sensor.dimensions() != camera.dimensions() {
+        if std::env::var_os("PICASA_TRACE").is_some() {
+            eprintln!(
+                "PIC_DECODE stage=nef_camera_render_match skipped=sensor_jpeg_dimensions sensor={}x{} jpeg={}x{}",
+                sensor.width(), sensor.height(), camera.width(), camera.height(),
+            );
+        }
+        return Ok(DynamicImage::ImageRgb16(sensor));
+    }
+
+    let Some(matrix) = nef_camera_color_matrix(&sensor, &camera) else {
+        return Ok(DynamicImage::ImageRgb16(sensor));
+    };
+    if std::env::var_os("PICASA_TRACE").is_some() {
+        eprintln!("PIC_DECODE stage=nef_camera_render_profile matrix={matrix:?}");
+    }
+    let output = image::RgbImage::from_fn(sensor.width(), sensor.height(), |x, y| {
+        nef_camera_render_pixel(sensor.get_pixel(x, y).0, &matrix)
+    });
+    if std::env::var_os("PICASA_TRACE").is_some() {
+        eprintln!(
+            "PIC_DECODE stage=nef_camera_render_match elapsed_ms={:.3} samples={} pixels=sensor_render camera_reference=embedded_jpeg output={}x{}",
+            started.elapsed().as_secs_f64() * 1000.0,
+            (sensor.width() as usize / NEF_CAMERA_MATCH_SAMPLE_STRIDE)
+                * (sensor.height() as usize / NEF_CAMERA_MATCH_SAMPLE_STRIDE),
+            output.width(),
+            output.height(),
+        );
+    }
+    Ok(DynamicImage::ImageRgb8(output))
+}
+
+fn develop_nef_sensor(raw_source: &rawler::rawsource::RawSource, reference: &str) -> Result<DynamicImage> {
+    let started = std::time::Instant::now();
+    let image = rawler_decode(reference, "nef_sensor_demosaic", || {
+        let decoder = rawler::get_decoder(raw_source)?;
+        let params = rawler::decoders::RawDecodeParams::default();
+        let pixels = decoder.raw_image(raw_source, &params, false)?;
+        rawler::imgop::develop::RawDevelop::default()
+            .develop_intermediate(&pixels)?
+            .to_dynamic_image()
+            .ok_or_else(|| anyhow::anyhow!("Nikon RAW developer returned no RGB image"))
+    })?;
+    if std::env::var_os("PICASA_TRACE").is_some() {
+        eprintln!(
+            "PIC_DECODE stage=nef_sensor_demosaic elapsed_ms={:.3} output={}x{} color={:?}",
+            started.elapsed().as_secs_f64() * 1000.0,
+            image.width(),
+            image.height(),
+            image.color(),
+        );
+    }
+    Ok(image)
+}
+
+fn develop_nef_sensor_frame(
+    raw_source: &rawler::rawsource::RawSource,
+    reference: &str,
+    camera_jpeg: Option<&[u8]>,
+) -> Result<DynamicImage> {
+    let sensor = develop_nef_sensor(raw_source, reference)?;
+    match camera_jpeg {
+        Some(bytes) => match_nef_sensor_to_camera_jpeg(sensor, bytes, reference),
+        None => Ok(sensor),
+    }
+}
+
 fn viewer_nef_source_fingerprint(path: &Path) -> Option<(u128, u64)> {
     let metadata = std::fs::metadata(path).ok()?;
     let modified_ns = metadata
@@ -353,8 +547,9 @@ fn decode_dng_sensor_thumbnail_with_max(
 
 /// Decode a display-quality image for the lightbox. `viewport_width` and
 /// `viewport_height` are physical display pixels, already adjusted for any
-/// user rotation. RAW files prefer the largest embedded JPEG preview and JPEG
-/// sources use TurboJPEG's native DCT scaling before the final small resize.
+/// user rotation. Nikon NEF detail uses demosaiced sensor pixels, calibrated
+/// to the embedded camera JPEG's tone and colour response. JPEG sources use
+/// TurboJPEG's native DCT scaling before the final small resize.
 pub fn decode_for_viewer(
     reference: &str,
     viewport_width: u32,
@@ -364,17 +559,17 @@ pub fn decode_for_viewer(
 }
 
 /// Decode a RAW original for Export without a viewport-size limit or thumbnail
-/// cache input. Nikon NEF uses its largest embedded camera JPEG; this preserves
-/// the fast camera-rendered V1.01 path and is not sensor RAW development.
+/// cache input. Nikon NEF is developed from sensor pixels; the embedded JPEG
+/// supplies the camera rendering reference, not the exported image pixels.
 pub fn decode_raw_source_for_export(reference: &str) -> Result<image::RgbaImage> {
     anyhow::ensure!(is_raw(reference), "not a supported RAW source: {reference}");
     decode_for_viewer(reference, u32::MAX, u32::MAX)
 }
 
-/// Decode a local RAW file for the lightbox: prefer the embedded NEF preview,
-/// then rawler's preview/full decode as fallbacks. Returns the image plus the
-/// already-computed viewer target dimensions (before EXIF orientation is
-/// applied, matching every other viewer branch).
+/// Decode a local RAW file for the lightbox. Nikon NEF uses its sensor data and
+/// the embedded camera JPEG only to match the initial camera rendering. Other
+/// RAW formats retain their existing embedded-preview/fallback behavior.
+/// Returns the image plus target dimensions before EXIF orientation.
 fn decode_local_raw_for_viewer<F>(
     reference: &str,
     orientation: u16,
@@ -420,6 +615,7 @@ where
         eprintln!("PIC_DECODE source_frame_cache result=miss");
     }
 
+    check_viewer_cancelled(cancelled, "before_embedded_preview_read")?;
     let embedded_preview_started = std::time::Instant::now();
     let embedded_preview = nef_embedded_preview(&local_path)?;
     if std::env::var_os("PICASA_TRACE").is_some() {
@@ -429,6 +625,59 @@ where
             embedded_preview.is_some(),
         );
     }
+
+    let needs_sensor = if is_nikon_raw(reference) {
+        match embedded_preview.as_deref() {
+            Some(bytes) => {
+                let (source_width, source_height) = jpeg_dimensions(bytes)?;
+                viewer_requests_native_pixels(
+                    source_width,
+                    source_height,
+                    orientation,
+                    viewport_width,
+                    viewport_height,
+                )
+            }
+            None => true,
+        }
+    } else {
+        false
+    };
+    if needs_sensor {
+        check_viewer_cancelled(cancelled, "before_nef_sensor_develop")?;
+        let raw_source = rawler::rawsource::RawSource::new(&local_path)?;
+        let image = develop_nef_sensor_frame(
+            &raw_source,
+            reference,
+            embedded_preview.as_deref(),
+        )?;
+        check_viewer_cancelled(cancelled, "after_nef_sensor_develop")?;
+        check_viewer_cancelled(cancelled, "after_nef_camera_render_match")?;
+        let source_width = image.width();
+        let source_height = image.height();
+        let (target_width, target_height) = viewer_target_dimensions(
+            source_width,
+            source_height,
+            orientation,
+            viewport_width,
+            viewport_height,
+        );
+        let image = Arc::new(image);
+        viewer_nef_source_cache_insert(
+            &local_path,
+            source_width,
+            source_height,
+            image.clone(),
+        );
+        if std::env::var_os("PICASA_TRACE").is_some() {
+            eprintln!(
+                "PIC_DECODE stage=nef_sensor_frame output={}x{} target={}x{}",
+                source_width, source_height, target_width, target_height,
+            );
+        }
+        return Ok((image, target_width, target_height));
+    }
+
     if let Some(bytes) = embedded_preview {
         check_viewer_cancelled(cancelled, "after_embedded_preview_read")?;
         let (source_width, source_height) = jpeg_dimensions(&bytes)?;
@@ -680,24 +929,92 @@ where
         #[cfg(target_os = "linux")]
         if crate::network_shares::private(reference) {
             if is_nikon_raw(reference) {
-                check_viewer_cancelled(&cancelled, "before_remote_embedded_preview")?;
-                let bytes = remote_nef_embedded_jpeg(reference, true)?.ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "Remote NEF has no embedded JPEG preview; original was not downloaded"
+                let camera_reference = if (viewport_width, viewport_height)
+                    == (u32::MAX, u32::MAX)
+                {
+                    None
+                } else {
+                    check_viewer_cancelled(&cancelled, "before_remote_embedded_preview")?;
+                    let preview_started = std::time::Instant::now();
+                    let bytes = remote_nef_embedded_jpeg(reference, true)?.ok_or_else(|| {
+                        anyhow::anyhow!("Remote NEF has no embedded JPEG preview")
+                    })?;
+                    if std::env::var_os("PICASA_TRACE").is_some() {
+                        eprintln!(
+                            "PIC_DECODE stage=remote_nef_embedded_preview elapsed_ms={:.3} bytes={}",
+                            preview_started.elapsed().as_secs_f64() * 1000.0,
+                            bytes.len(),
+                        );
+                    }
+                    Some(bytes)
+                };
+                let needs_sensor = match camera_reference.as_deref() {
+                    Some(bytes) => {
+                        let (source_width, source_height) = jpeg_dimensions(bytes)?;
+                        viewer_requests_native_pixels(
+                            source_width,
+                            source_height,
+                            orientation,
+                            viewport_width,
+                            viewport_height,
+                        )
+                    }
+                    None => true,
+                };
+                if needs_sensor {
+                    check_viewer_cancelled(&cancelled, "before_remote_nef_sensor_read")?;
+                    let source_started = std::time::Instant::now();
+                    let bytes = read_viewer_source(reference, read_context)?;
+                    source_read_ms += source_started.elapsed().as_secs_f64() * 1000.0;
+                    check_viewer_cancelled(&cancelled, "after_remote_nef_sensor_read")?;
+                    let raw_source = rawler::rawsource::RawSource::new_from_shared_vec(
+                        Arc::new(bytes.as_ref().to_vec()),
                     )
-                })?;
-                check_viewer_cancelled(&cancelled, "after_remote_embedded_preview")?;
-                let (source_width, source_height) = jpeg_dimensions(&bytes)?;
-                let (target_width, target_height) = viewer_target_dimensions(
-                    source_width,
-                    source_height,
-                    orientation,
-                    viewport_width,
-                    viewport_height,
-                );
-                let image = decode_viewer_jpeg(&bytes, target_width, target_height, reference)?;
-                check_viewer_cancelled(&cancelled, "after_remote_nef_jpeg_decode")?;
-                (Arc::new(image), target_width, target_height)
+                    .with_path(Path::new(reference));
+                    let embedded_reference = match camera_reference {
+                        Some(jpeg) => Some(jpeg),
+                        None => nef_embedded_preview_from_bytes(&bytes)?,
+                    };
+                    let image = develop_nef_sensor_frame(
+                        &raw_source,
+                        reference,
+                        embedded_reference.as_deref(),
+                    )?;
+                    check_viewer_cancelled(&cancelled, "after_remote_nef_sensor_develop")?;
+                    let (source_width, source_height) = (image.width(), image.height());
+                    let (target_width, target_height) = viewer_target_dimensions(
+                        source_width,
+                        source_height,
+                        orientation,
+                        viewport_width,
+                        viewport_height,
+                    );
+                    if std::env::var_os("PICASA_TRACE").is_some() {
+                        eprintln!(
+                            "PIC_DECODE stage=remote_nef_sensor_frame source_read_ms={source_read_ms:.3} source={}x{} target={}x{}",
+                            source_width, source_height, target_width, target_height,
+                        );
+                    }
+                    (Arc::new(image), target_width, target_height)
+                } else {
+                    let bytes = camera_reference.expect("bounded NEF has a camera preview");
+                    let (source_width, source_height) = jpeg_dimensions(&bytes)?;
+                    let (target_width, target_height) = viewer_target_dimensions(
+                        source_width,
+                        source_height,
+                        orientation,
+                        viewport_width,
+                        viewport_height,
+                    );
+                    let image = decode_viewer_jpeg(
+                        &bytes,
+                        target_width,
+                        target_height,
+                        reference,
+                    )?;
+                    check_viewer_cancelled(&cancelled, "after_remote_nef_jpeg_decode")?;
+                    (Arc::new(image), target_width, target_height)
+                }
             } else if is_dng(reference) {
                 check_viewer_cancelled(&cancelled, "before_remote_dng_read")?;
                 let source_started = std::time::Instant::now();
@@ -933,6 +1250,22 @@ fn viewer_target_dimensions(
     } else {
         (target_oriented_width, target_oriented_height)
     }
+}
+
+fn viewer_requests_native_pixels(
+    source_width: u32,
+    source_height: u32,
+    orientation: u16,
+    viewport_width: u32,
+    viewport_height: u32,
+) -> bool {
+    viewer_target_dimensions(
+        source_width,
+        source_height,
+        orientation,
+        viewport_width,
+        viewport_height,
+    ) == (source_width, source_height)
 }
 
 fn resize_viewer_rgb(
@@ -1349,6 +1682,11 @@ mod embedded_nef_color_profile_tests {
         nef.extend_from_slice(&0u32.to_le_bytes());
         assert_eq!(nef.len(), 38);
         nef.extend_from_slice(&jpeg);
+        assert_eq!(
+            nef_embedded_preview_from_bytes(&nef).unwrap().as_deref(),
+            Some(jpeg.as_slice()),
+            "remote bounded viewer must find the same embedded camera JPEG"
+        );
         let path = std::env::temp_dir().join(format!(
             "pic-nef-icc-{}-{}.NEF", std::process::id(),
             std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
@@ -1369,17 +1707,165 @@ mod embedded_nef_color_profile_tests {
                 "cached NEF thumbnail lost its embedded JPEG ICC transform: {thumbnail_pixel:?}");
         }
 
-        let (decoded, w, h) = decode_local_raw_for_viewer(
-            reference, 1, 128, 96, &|| false,
-        ).unwrap();
-        assert_eq!((w, h), (128, 96));
+        let decoded = decode_viewer_jpeg(&jpeg, 128, 96, reference).unwrap();
         let pixel = decoded.to_rgb8().get_pixel(32, 32).0;
-        // Independently verified ProPhoto RGB -> sRGB transform from
-        // thumbnail::color::tests, tolerating a few JPEG codec levels.
+        // This is the calibrated camera-look reference consumed by the sensor
+        // renderer. Independently verified ProPhoto RGB -> sRGB transform.
         for (actual, expected) in pixel.into_iter().zip([191u8, 53, 29]) {
             assert!(actual.abs_diff(expected) <= 8,
-                "embedded NEF preview lost its ICC transform: {pixel:?}");
+                "embedded NEF camera reference lost its ICC transform: {pixel:?}");
         }
         std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn nef_camera_color_matrix_tracks_cross_channel_transform() {
+        let sensor = image::ImageBuffer::<image::Rgb<u16>, Vec<u16>>::from_fn(128, 128, |x, y| {
+            let seed = x
+                .wrapping_mul(73_856_093)
+                .wrapping_add(y.wrapping_mul(19_349_663))
+                .wrapping_add((x * y).wrapping_mul(83_492_791));
+            image::Rgb([
+                seed.wrapping_mul(2_654_435_761) as u16,
+                seed.wrapping_add(0x9e37_79b9).wrapping_mul(2_246_822_519) as u16,
+                seed.wrapping_add(0x85eb_ca6b).wrapping_mul(3_266_489_917) as u16,
+            ])
+        });
+        let camera = image::RgbImage::from_fn(128, 128, |x, y| {
+            let raw = sensor.get_pixel(x, y).0;
+            let input = raw.map(|value| f64::from(value) / 257.0);
+            image::Rgb([
+                (input[0] * 0.72 + input[1] * 0.10 + input[2] * 0.06 + 12.0)
+                    .clamp(0.0, 255.0) as u8,
+                (input[0] * 0.08 + input[1] * 0.82 + input[2] * 0.04 + 9.0)
+                    .clamp(0.0, 255.0) as u8,
+                (input[0] * 0.04 + input[1] * 0.14 + input[2] * 0.78 + 18.0)
+                    .clamp(0.0, 255.0) as u8,
+            ])
+        });
+        let matrix = nef_camera_color_matrix(&sensor, &camera).unwrap();
+        for (x, y) in [(16, 24), (32, 40), (56, 16), (88, 104)] {
+            let actual = nef_camera_render_pixel(sensor.get_pixel(x, y).0, &matrix).0;
+            let expected = camera.get_pixel(x, y).0;
+            for channel in 0..3 {
+                assert!(actual[channel].abs_diff(expected[channel]) <= 4,
+                    "channel={channel} actual={} expected={}", actual[channel], expected[channel]);
+            }
+        }
+    }
+
+    #[test]
+    fn nef_camera_color_matrix_stays_neutral_for_monochrome_scenes() {
+        let sensor = image::ImageBuffer::<image::Rgb<u16>, Vec<u16>>::from_fn(80, 80, |x, y| {
+            let value = (x * 937 + y * 613) as u16;
+            image::Rgb([value, value, value])
+        });
+        let camera = image::RgbImage::from_fn(80, 80, |x, y| {
+            let value = (sensor.get_pixel(x, y).0[0] >> 8) as u32;
+            let value = (value * 9 / 10 + 12).min(255) as u8;
+            image::Rgb([value, value, value])
+        });
+        let matrix = nef_camera_color_matrix(&sensor, &camera)
+            .expect("regularized camera match should support low-colour scenes");
+        for (x, y) in [(8, 8), (24, 32), (56, 48)] {
+            let actual = nef_camera_render_pixel(sensor.get_pixel(x, y).0, &matrix).0;
+            let expected = camera.get_pixel(x, y).0;
+            assert!(actual[0].abs_diff(actual[1]) <= 2);
+            assert!(actual[1].abs_diff(actual[2]) <= 2);
+            assert!(actual[0].abs_diff(expected[0]) <= 6);
+        }
+    }
+
+    /// Run with PIC_TEST_RAW pointing at a local NEF to prove the detailed
+    /// viewer output is sensor-developed and not the embedded JPEG frame.
+    #[test]
+    #[ignore = "requires PIC_TEST_RAW pointing to a local Nikon NEF"]
+    fn real_nef_sensor_render_uses_full_source_and_camera_look_reference() {
+        let reference = std::env::var("PIC_TEST_RAW")
+            .expect("set PIC_TEST_RAW to a local Nikon NEF");
+        let source = std::path::Path::new(&reference);
+        let source_bytes = std::fs::read(source).unwrap();
+        let source_hash = blake3::hash(&source_bytes);
+        let embedded = nef_embedded_preview(source).unwrap().unwrap();
+        let (width, height) = jpeg_dimensions(&embedded).unwrap();
+        let orientation = exif_orientation(&reference);
+        let (fit_target_width, fit_target_height) =
+            viewer_target_dimensions(width, height, orientation, 128, 96);
+        let fit_reference = decode_viewer_jpeg(
+            &embedded,
+            fit_target_width,
+            fit_target_height,
+            &reference,
+        )
+        .unwrap();
+        let (fit, fit_width, fit_height) = decode_local_raw_for_viewer(
+            &reference,
+            orientation,
+            128,
+            96,
+            &|| false,
+        )
+        .expect("decode the fast embedded-JPEG Fit path");
+        assert_eq!((fit_width, fit_height), (fit_target_width, fit_target_height));
+        assert_eq!(fit.to_rgb8(), fit_reference.to_rgb8(),
+            "bounded Fit requests should retain Nikon's camera-rendered JPEG");
+
+        let (image, target_width, target_height) = decode_local_raw_for_viewer(
+            &reference,
+            orientation,
+            u32::MAX,
+            u32::MAX,
+            &|| false,
+        )
+        .expect("develop NEF sensor pixels for the detailed viewer");
+        assert_eq!((target_width, target_height), (image.width(), image.height()));
+        assert!(image.width() >= 5000 && image.height() >= 3000,
+            "sensor render is not full resolution: {}x{}", image.width(), image.height());
+
+        assert_eq!((image.width(), image.height()), (width, height));
+        let camera = decode_viewer_jpeg(&embedded, width, height, &reference)
+            .unwrap()
+            .to_rgb8();
+        let developed = image.to_rgb8();
+        let mut different = 0usize;
+        let mut total_delta = 0u64;
+        let mut channel_delta = [0u64; 3];
+        let mut samples = 0usize;
+        for y in (0..height).step_by(16) {
+            for x in (0..width).step_by(16) {
+                let actual = developed.get_pixel(x, y).0;
+                let expected = camera.get_pixel(x, y).0;
+                let delta: u64 = (0..3)
+                    .map(|channel| u64::from(actual[channel].abs_diff(expected[channel])))
+                    .sum();
+                total_delta += delta;
+                for channel in 0..3 {
+                    channel_delta[channel] +=
+                        u64::from(actual[channel].abs_diff(expected[channel]));
+                }
+                different += usize::from(delta > 0);
+                samples += 1;
+            }
+        }
+        assert!(different > samples / 4,
+            "viewer is still copying embedded JPEG pixels: {different}/{samples} sample pixels differ");
+        for (channel, total) in channel_delta.into_iter().enumerate() {
+            let mean_delta = total as f64 / samples as f64;
+            assert!(mean_delta < 25.0,
+                "camera look has a channel cast: channel={channel} mean_abs_delta={mean_delta:.2}");
+        }
+        assert_eq!(blake3::hash(&std::fs::read(source).unwrap()), source_hash,
+            "sensor development must leave the original NEF unchanged");
+        if let Some(output) = std::env::var_os("PIC_TEST_OUTPUT") {
+            image
+                .to_rgb8()
+                .save(output)
+                .expect("write optional real-NEF render for visual inspection");
+        }
+        eprintln!(
+            "PIC_TEST_NEF sensor_output={}x{} samples={} differing_pixels={} mean_abs_rgb_delta={:.2}",
+            image.width(), image.height(), samples, different,
+            total_delta as f64 / (samples * 3) as f64,
+        );
     }
 }

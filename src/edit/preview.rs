@@ -466,7 +466,7 @@ mod tests {
             assert_eq!(original.dimensions(), expected_dimensions, "rotation {rotation}");
             assert_eq!(
                 original, expected_original,
-                "neutral CPU preview changed embedded-JPEG pixels at rotation {rotation}"
+                "neutral CPU preview changed decoded sensor-render pixels at rotation {rotation}"
             );
             assert_eq!(edited.dimensions(), expected_dimensions, "rotation {rotation}");
             assert_eq!(reset.dimensions(), expected_dimensions, "rotation {rotation}");

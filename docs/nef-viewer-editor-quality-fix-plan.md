@@ -1,10 +1,22 @@
 # NEF detail and colour: viewer, Edit Mode, and Export
 
-Status: implementation and verification complete for the V1 camera-JPEG workflow. The confirmed Edit Mode rotation, HiDPI 1:1 presentation, and embedded-NEF thumbnail ICC issues are fixed. The real NEF passes source-pixel checks through CPU Edit, GPU Edit readback, and Export; Lightbox uses the same verified full-size camera JPEG and reaches physical 1:1 in the app.
+Status: the initial V1 camera-JPEG workflow was verified, then a follow-up reproduced the user's remaining issue: native Lightbox, Edit Mode, and Export still used embedded JPEG pixels. The follow-up now develops Nikon sensor data for native-size requests, keeps embedded JPEGs for fast Fit and thumbnail paths, and passes real-NEF CPU, GPU, export, and native-app checks.
 
-The reported symptoms are soft/pixelated detail and wrong brightness/colours in NEF 1:1 viewing and Edit Mode. This investigation follows the agreed camera-preview contract: fast embedded-JPEG thumbnails, largest embedded JPEG for detailed viewing, the current GPU Edit pipeline, and full-resolution export with saved adjustments. This is not sensor RAW development.
+The reported symptoms are soft/pixelated detail and wrong brightness/colours in NEF 1:1 viewing and Edit Mode. The first investigation retained embedded-JPEG rendering. The user then confirmed this still showed only the embedded JPEG and authorized a sensor-rendered native-detail path.
 
-## Progress and evidence (2026-10-20)
+## Follow-up: native Nikon sensor rendering (2026-10-21)
+
+- The previous fix passed its own comparisons because Lightbox, Edit Mode, and Export all used `JpgFromRaw`. That proved source consistency, not sensor-RAW rendering. The real-app trace reproduced the problem: Fit decoded a 1504×1004 camera JPEG, and the original native-size request also entered the embedded-JPEG decoder.
+- Nikon NEF thumbnails still use the embedded camera JPEG. Bounded Lightbox Fit requests still decode the largest embedded JPEG with TurboJPEG. Native-size Lightbox, full-resolution Edit Mode, and Export decode the sensor mosaic through Rawler's demosaic/develop path.
+- The sensor-developed frame is calibrated with a sampled 3×4 linear colour transform fitted against the embedded full-size camera JPEG. The transform corrects global colour/exposure differences while the rendered image pixels remain derived from sensor data. It does not reproduce Nikon's local tone, sharpening, or Lightroom edits exactly.
+- Full-size sensor output is cached in the existing 128 MiB in-process source-frame cache. Fit requests remain eligible for the bounded JPEG path; a small cached Fit frame cannot satisfy a native-size request.
+- Verified `DSC_2306.NEF` and `DSC_4728.NEF`, both Nikon Z 5. Each produced a 6016×4016 sensor-developed frame from a 6040×4032 mosaic. At sampled points, the render differs from the camera JPEG while remaining within 25 mean RGB levels per channel. The original files remained byte-identical.
+- The native Wayland/Vulkan app trace shows a 17 ms thumbnail cache write, a 22 ms Fit JPEG decode, then a 936 ms sensor demosaic and 6016×4016 Lightbox frame on 1:1. The separate GL Edit regression uses the same sensor frame and matches CPU/GPU readback exactly for the tested neutral and edits.
+- The native harness now waits for the sensor-developed frame and its matching full-size Lightbox decode before it reports a NEF 1:1 pass. The first harness attempt had closed the viewer as soon as the 1:1 request was queued, before demosaic completed; that run was not treated as verification.
+
+## Initial V1 phase: camera-JPEG detail path (2026-10-20)
+
+This phase records the earlier implementation and the tests that passed before the user reproduced the remaining source-selection bug. Its camera-JPEG-only detail contract is superseded by the 2026-10-21 follow-up above.
 
 - [x] Used the available original `DSC_2086.NEF` (6040×4032 sensor; Nikon `JpgFromRaw` 6016×4016) without changing it.
 - [x] Independent ExifTool inspection found JPEG candidates at 6016×4016, 1620×1080, and 640×424. The largest is the camera-generated `JpgFromRaw`; Nikon metadata declares sRGB and Vivid picture control. The embedded JPEG has no ICC profile.
@@ -18,9 +30,9 @@ The reported symptoms are soft/pixelated detail and wrong brightness/colours in 
 - [x] Compared the full-size embedded `JpgFromRaw` bytes independently with PIC's decoded source and CPU/GPU neutral output. Pixel values match exactly. Opened the same NEF in the native Wayland/Vulkan app, viewed it in Lightbox at 1:1, entered Edit Mode, and confirmed the GPU editor decoded 6016×4016 and reached native scale.
 - [x] Completed the isolated native Wayland/Vulkan harness: import, visible gallery, Lightbox, 1:1, close, and restart persistence all passed. A separate live Edit Mode check selected the same NEF, opened the GPU editor, and activated Edit Mode 1:1. See `reports/gui-tests/native-nef-final/report.md` and `reports/gui-tests/native-nef-final/screenshots/editor-1to1.png`.
 - [x] Compared Edit/export outputs through the real-NEF CPU/GPU and export fidelity regressions; the source NEF hash remained unchanged.
-- [ ] A matching Lightroom export with its profile, edits, sharpening, and crop settings was not available. No claim is made that Nikon's embedded Vivid JPEG reproduces Lightroom's rendering. Sensor RAW development remains outside this V1 fix.
+- [ ] A matching Lightroom export with its profile, edits, sharpening, and crop settings was not available. No claim is made that the app's sensor rendering reproduces Lightroom's rendering or Nikon's full local processing.
 
-Regression runs completed on the final working tree: `cargo test --locked edit:: -- --test-threads=1` (177 passed, 11 ignored); `cargo test --locked viewer_presentation_tests -- --test-threads=1` (26 passed); the wide-gamut embedded-NEF colour test (1 passed); scale-2 Lightbox allocation test (1 passed); five established software-GL parity tests (each passed in its own GTK test process); real-NEF CPU rotation/edit/reset, GPU native-pixel checks at scales 1 and 2, export fidelity/privacy, and thumbnail timing; `cargo check --locked`; and the native Wayland/Vulkan app harness (PASS). GTK OpenGL tests must run in separate processes because GTK cannot be initialized on successive Rust test threads in one process. `cargo fmt --check` is not a clean-repository check here: it reports extensive pre-existing formatting differences across unrelated files. No unrelated product files were changed.
+Initial V1 regression runs completed before the follow-up changes: `cargo test --locked edit:: -- --test-threads=1` (177 passed, 11 ignored); `cargo test --locked viewer_presentation_tests -- --test-threads=1` (26 passed); the wide-gamut embedded-NEF colour test (1 passed); scale-2 Lightbox allocation test (1 passed); five established software-GL parity tests; real-NEF CPU rotation/edit/reset, export fidelity/privacy, thumbnail timing, and the native Wayland/Vulkan harness. Follow-up-specific results are recorded above and in the release checklist. GTK OpenGL tests must run in separate processes because GTK cannot be initialized on successive Rust test threads in one process.
 
 ## What the previous work established
 
@@ -58,13 +70,13 @@ Acceptance for this step: a repeatable failing sequence, aligned reference/app c
 
 The Lightroom JPEG is a useful visual comparison, but its saved edits, output size, and sharpening must be recorded. The existing 2800-pixel Lightroom output and a 6016-pixel embedded JPEG have different magnification at 1:1. Use matched framing and scale to assess detail, while retaining a true native-pixel check for each source.
 
-### 2. Confirm the image-source contract
+### 2. Confirm the initial V1 image-source contract (historical)
 
 - [x] Determine whether PIC's selected largest embedded JPEG is the camera-generated image: ExifTool identifies it as Nikon `JpgFromRaw` at 6016×4016, with sRGB/Vivid metadata; exact source bytes and decoded neutral output match.
-- [x] Retain the agreed camera-JPEG architecture; repair the proven CPU rotation stage where it reduced detail.
-- [x] The selected reference is the camera-generated Vivid/sRGB JPEG, not a sensor-developed rendering. Sensor development remains a separate explicit scope decision; it is not silently substituted here.
+- [x] The initial phase retained the agreed camera-JPEG architecture and repaired the proven CPU rotation stage.
+- [x] The initial phase selected the camera-generated Vivid/sRGB JPEG. The user's later reproduction showed this did not satisfy native-detail expectations; the follow-up now uses sensor-developed pixels for native-size viewing, Edit Mode, and Export.
 
-The starting scope is the agreed V1.01 behavior: fast embedded-JPEG thumbnails and browsing, the existing GPU Edit pipeline, and full-size export with saved adjustments. A switch to sensor development must be explicit and consistent across detailed viewing, editing, and export; a decoder swap alone is not a complete solution.
+The starting scope for the first phase was the agreed V1.01 camera-JPEG behavior. The follow-up keeps embedded-JPEG thumbnails and Fit browsing, and switches only native-detail requests, full-resolution Edit Mode, and Export to sensor development so the path is consistent across those uses.
 
 ### 3. Repair only the proven source/detail failures
 
@@ -120,4 +132,4 @@ real_raw_export_fidelity_and_privacy
 - [x] Confirm the thumbnail path still uses the largest embedded JPEG and generated the real NEF cache preview in 23 ms; this measurement is local and is not a network-share baseline.
 - [x] Capture the live Edit Mode 1:1 view and retain it for review at `reports/gui-tests/native-nef-final/screenshots/editor-1to1.png`. This verifies the current camera-JPEG contract; it is not a Lightroom parity claim.
 
-The verified code fixes and local real-NEF workflow are complete. Remaining evidence limits are a matched Lightroom reference, the unavailable `DSC_8030.NEF`, and network-share timing. The implementation retains the agreed camera-embedded-JPEG workflow and does not add sensor RAW development.
+The follow-up code and local real-NEF workflow are complete. The available `DSC_2306.NEF` and `DSC_4728.NEF` fixtures pass Fit-versus-native source checks, Edit Mode CPU/GPU checks, Export checks, and a native Wayland/Vulkan 1:1 run. Remaining evidence limits are a matched Lightroom export, the unavailable `DSC_8030.NEF`, and remote-share native-render timing.

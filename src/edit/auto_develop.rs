@@ -321,8 +321,11 @@ fn map_luminance(y: f32, plan: Plan) -> f32 {
     }
     if plan.shadow_lift > 0.0 {
         let black_protect = smoothstep(0.01, 0.10, y);
-        let highlight_protect = 1.0 - smoothstep(0.46, 0.69, y);
-        mapped += plan.shadow_lift * black_protect * highlight_protect;
+        // Roll shadow recovery off before it reaches ordinary midtones. A
+        // broad fade through 0.46–0.69 noticeably brightened already-correct
+        // photos whose median fell just below the exposure target.
+        let shadow_mask = 1.0 - smoothstep(0.22, 0.36, y);
+        mapped += plan.shadow_lift * black_protect * shadow_mask;
     }
     if plan.contrast > 0.0 {
         mapped += plan.contrast * 4.0 * (mapped - 0.5) * mapped * (1.0 - mapped);
@@ -577,6 +580,35 @@ mod tests {
         };
         let plan = Plan::estimate(stats, false, false, true);
         assert!(plan.exposure > 1.0 && plan.exposure <= 2.0_f32.powf(0.42));
+    }
+
+    #[test]
+    fn auto_enhance_preserves_midtones_while_recovering_deep_shadows() {
+        let mut image = RgbaImage::from_fn(100, 100, |x, _| {
+            let level = if x < 12 {
+                45
+            } else if x < 50 {
+                80
+            } else if x < 88 {
+                145
+            } else {
+                210
+            };
+            Rgba([level, level, level, 255])
+        });
+
+        apply(&mut image, true, true, true);
+
+        let deep_shadow = image.get_pixel(5, 50)[0];
+        let midtone = image.get_pixel(30, 50)[0];
+        assert!(
+            deep_shadow >= 50,
+            "deep shadows should recover: {deep_shadow}"
+        );
+        assert!(
+            midtone <= 86,
+            "well-exposed midtones rose too far: {midtone}"
+        );
     }
 
     #[test]

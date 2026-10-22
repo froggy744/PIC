@@ -1026,16 +1026,22 @@ fn apply_auto_brightness(image: &mut RgbaImage) {
     }
     let shadow = shadow as f32 / 255.0;
     let median = median as f32 / 255.0;
-    let (gamma, lift_shadows_only) = if (0.02..0.42).contains(&shadow) && median < 0.82 {
-        // When the midtones are dim too, brighten the entire frame. A
-        // shadow-only curve leaves walls and clothing looking underexposed.
-        ((0.87_f32.ln() / median.max(0.02).ln()).clamp(0.4, 1.0), false)
+    let (gamma, shadow_range) = if (0.02..0.42).contains(&shadow) && median < 0.82 {
+        // Recover underexposed shadows without pushing ordinary midtones
+        // toward 0.87 as the old whole-frame gamma curve did.
+        (
+            (0.87_f32.ln() / median.max(0.02).ln()).clamp(
+                if (0.40..0.70).contains(&median) { 0.70 } else { 0.4 },
+                1.0,
+            ),
+            Some((0.22, 0.35)),
+        )
     } else if median >= 0.82 && (0.02..0.72).contains(&shadow) {
         // Even a bright wall can make the whole image look fine by its
         // median while the subject sits in dull midtones.
-        ((0.68_f32.ln() / shadow.ln()).clamp(0.55, 1.0), true)
+        ((0.68_f32.ln() / shadow.ln()).clamp(0.55, 1.0), Some((0.42, 0.86)))
     } else if shadow > 0.68 && median > 0.72 && median < 0.98 {
-        ((0.60_f32.ln() / median.ln()).clamp(1.0, 2.4), false)
+        ((0.60_f32.ln() / median.ln()).clamp(1.0, 2.4), None)
     } else {
         if std::env::var_os("PICASA_TRACE").is_some() {
             eprintln!("PIC_EDIT_AUTO brightness skipped=balanced shadow={shadow:.3} median={median:.3} samples={samples}");
@@ -1043,14 +1049,19 @@ fn apply_auto_brightness(image: &mut RgbaImage) {
         return;
     };
     if std::env::var_os("PICASA_TRACE").is_some() {
-        eprintln!("PIC_EDIT_AUTO brightness shadow={shadow:.3} median={median:.3} gamma={gamma:.3} shadows_only={lift_shadows_only} samples={samples}");
+        eprintln!(
+            "PIC_EDIT_AUTO brightness shadow={shadow:.3} median={median:.3} gamma={gamma:.3} shadows_only={} samples={samples}",
+            shadow_range.is_some()
+        );
     }
     image.as_mut().par_chunks_mut(4).for_each(|pixel| {
         if pixel[3] < 16 { return; }
         let y = rgb_luma(pixel[0] as f32, pixel[1] as f32, pixel[2] as f32) / 255.0;
         if y <= 0.0001 { return; }
         let mapped = y.clamp(0.0, 1.0).powf(gamma);
-        let weight = if lift_shadows_only { 1.0 - smoothstep(0.42, 0.86, y) } else { 1.0 };
+        let weight = shadow_range
+            .map(|(start, end)| 1.0 - smoothstep(start, end, y))
+            .unwrap_or(1.0);
         let gain = ((y + (mapped - y) * weight) / y).clamp(0.3, 3.0);
         for channel in &mut pixel[..3] {
             *channel = (*channel as f32 * gain).round().clamp(0.0, 255.0) as u8;
@@ -1702,6 +1713,61 @@ mod tests {
     }
 
     #[test]
+    fn auto_brightness_preserves_midtone_while_lifting_deep_shadows() {
+        let source = RgbaImage::from_fn(100, 100, |x, _| {
+            let level = if x < 12 {
+                45
+            } else if x < 50 {
+                115
+            } else if x < 88 {
+                160
+            } else {
+                225
+            };
+            Rgba([level, level, level, 255])
+        });
+        let mut recipe = EditRecipe::default();
+        recipe.auto_brightness = true;
+
+        let output = apply_recipe(source, &recipe);
+        let deep_shadow = output.get_pixel(5, 50)[0];
+        let midtone = output.get_pixel(30, 50)[0];
+        let upper_midtone = output.get_pixel(70, 50)[0];
+        assert!(deep_shadow >= 60, "deep shadows should recover: {deep_shadow}");
+        assert!(midtone <= 120, "well-exposed midtones rose too far: {midtone}");
+        assert_eq!(upper_midtone, 160, "already-bright midtones should stay stable");
+    }
+
+    #[test]
+    fn auto_brightness_does_not_overlift_dark_regions_in_bright_scenes() {
+        // The supplied meerkat photo has a lower decile near 53 and a median
+        // near 166. Its bright surroundings must not make darker detail nearly
+        // white when Auto Brightness recovers the shadows.
+        let source = RgbaImage::from_fn(100, 100, |x, _| {
+            let level = if x < 12 {
+                53
+            } else if x < 25 {
+                82
+            } else if x < 65 {
+                166
+            } else if x < 90 {
+                206
+            } else {
+                230
+            };
+            Rgba([level, level, level, 255])
+        });
+        let mut recipe = EditRecipe::default();
+        recipe.auto_brightness = true;
+
+        let output = apply_recipe(source, &recipe);
+        let dark_detail = output.get_pixel(5, 50)[0];
+        assert!(dark_detail > 53, "dark detail should lift: {dark_detail}");
+        assert!(dark_detail <= 90, "dark detail was over-lifted: {dark_detail}");
+        assert_eq!(output.get_pixel(70, 50)[0], 206, "bright surroundings should stay stable");
+    }
+
+    #[test]
     fn auto_brightness_lifts_dark_subject_without_dimming_bright_background() {
         // A portrait against a white wall: the wall owns the median, but the
         // subject needs light. This caught the old global-median gamma curve.
@@ -1717,9 +1783,9 @@ mod tests {
     }
 
     #[test]
-    fn auto_brightness_lifts_dim_portrait_and_background_together() {
-        // A dim portrait can still have a fairly high median because a wall
-        // fills most of the frame. Lifting only shadows leaves it looking dim.
+    fn auto_brightness_lifts_dim_portrait_without_brightening_the_wall() {
+        // The wall owns the median, but it is already well lit. Recover the
+        // subject's shadows without applying the same lift to the background.
         let source = RgbaImage::from_fn(100, 100, |x, _| {
             if x < 15 { Rgba([60, 65, 70, 255]) }
             else { Rgba([189, 189, 189, 255]) }
@@ -1728,7 +1794,7 @@ mod tests {
         recipe.auto_brightness = true;
         let output = apply_recipe(source, &recipe);
         assert!(output.get_pixel(5, 50)[1] >= 125, "dark subject should be clearly brighter");
-        assert!(output.get_pixel(80, 50)[1] >= 215, "dim background should be brighter too");
+        assert_eq!(output.get_pixel(80, 50)[1], 189, "well-lit wall should stay stable");
     }
 
     #[test]

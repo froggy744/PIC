@@ -909,6 +909,7 @@ pub struct EditRecipe {
     pub auto_contrast: bool,
     pub auto_color: bool,
     pub auto_brightness: bool,
+    pub auto_enhance: bool,
     pub black_white: bool,
     pub sepia: bool,
     pub filter: super::filters::FilterPreset,
@@ -949,6 +950,7 @@ impl Default for EditRecipe {
             auto_contrast: false,
             auto_color: false,
             auto_brightness: false,
+            auto_enhance: false,
             black_white: false,
             sepia: false,
             filter: super::filters::FilterPreset::None,
@@ -1008,6 +1010,7 @@ impl EditRecipe {
                 "autocontrast" => recipe.auto_contrast = flag(),
                 "autocolor" => recipe.auto_color = flag(),
                 "autobrightness" => recipe.auto_brightness = flag(),
+                "autoenhance" => recipe.auto_enhance = flag(),
                 "bw" => recipe.black_white = flag(),
                 "sepia" => recipe.sepia = flag(),
                 "filter" => recipe.filter = super::filters::FilterPreset::decode(value),
@@ -1031,7 +1034,7 @@ impl EditRecipe {
             return String::new();
         }
         let mut encoded = format!(
-            "v=1|crop={:.5},{:.5},{:.5},{:.5}|straighten={:.4}|exposure={:.4}|contrast={:.4}|fill={:.4}|highlights={:.4}|shadows={:.4}|whites={:.4}|blacks={:.4}|temp={:.4}|tint={:.4}|sat={:.4}|vibrance={:.4}|autocontrast={}|autocolor={}|autobrightness={}|bw={}|sepia={}|filter={}|filteramount={:.4}|sharpen={:.4}|clarity={:.4}|smooth={:.4}|grain={:.4}|vignette={:.4}",
+            "v=1|crop={:.5},{:.5},{:.5},{:.5}|straighten={:.4}|exposure={:.4}|contrast={:.4}|fill={:.4}|highlights={:.4}|shadows={:.4}|whites={:.4}|blacks={:.4}|temp={:.4}|tint={:.4}|sat={:.4}|vibrance={:.4}|autocontrast={}|autocolor={}|autobrightness={}|autoenhance={}|bw={}|sepia={}|filter={}|filteramount={:.4}|sharpen={:.4}|clarity={:.4}|smooth={:.4}|grain={:.4}|vignette={:.4}",
             self.crop.left,
             self.crop.top,
             self.crop.right,
@@ -1051,6 +1054,7 @@ impl EditRecipe {
             self.auto_contrast as u8,
             self.auto_color as u8,
             self.auto_brightness as u8,
+            self.auto_enhance as u8,
             self.black_white as u8,
             self.sepia as u8,
             self.filter.key(),
@@ -1093,6 +1097,7 @@ impl EditRecipe {
             && !self.auto_contrast
             && !self.auto_color
             && !self.auto_brightness
+            && !self.auto_enhance
             && !self.black_white
             && !self.sepia
             && self.filter == super::filters::FilterPreset::None
@@ -1262,6 +1267,32 @@ mod tests {
         assert!((decoded.smooth - 0.6).abs() < 0.001);
         assert!((decoded.vignette + 0.25).abs() < 0.001);
         assert!((decoded.grain - 0.25).abs() < 0.001);
+    }
+
+    #[test]
+    fn auto_enhance_persists_and_defaults_off_for_legacy_recipes() {
+        let mut recipe = EditRecipe::default();
+        assert!(recipe.is_default());
+        recipe.auto_enhance = true;
+        let encoded = recipe.encode();
+        assert!(encoded.contains("autoenhance=1"));
+        assert!(EditRecipe::decode(&encoded).auto_enhance);
+        assert!(!EditRecipe::decode("v=1|autocolor=1|autobrightness=1").auto_enhance);
+        assert!(!recipe.is_default());
+        assert!(EditRecipe::decode("").is_default());
+    }
+
+    #[test]
+    fn auto_enhance_participates_in_undo_redo_and_reset() {
+        let mut session = EditSession::new(EditRecipe::default());
+        session.mutate(|recipe| recipe.auto_enhance = true);
+        assert!(session.recipe.auto_enhance);
+        assert!(session.undo());
+        assert!(!session.recipe.auto_enhance);
+        assert!(session.redo());
+        assert!(session.recipe.auto_enhance);
+        session.reset();
+        assert!(!session.recipe.auto_enhance);
     }
 
     #[test]

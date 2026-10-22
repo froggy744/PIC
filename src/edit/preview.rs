@@ -313,6 +313,60 @@ mod tests {
     }
 
     #[test]
+    fn auto_enhance_matches_fit_one_to_one_and_jpeg_export_pixels() {
+        let path = std::env::temp_dir().join(format!(
+            "pic-auto-enhance-parity-{}-{}.jpg",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let source = image::RgbImage::from_fn(160, 120, |x, y| {
+            let value = 20 + ((x * 3 + y * 2) % 42) as u8;
+            image::Rgb([value, value.saturating_add(3), value.saturating_add(6)])
+        });
+        source.save(&path).unwrap();
+        let reference = path.to_string_lossy().into_owned();
+        let cache = Arc::new(Mutex::new(Vec::new()));
+        let mut geometry_cache = None;
+        let (sender, _receiver) = std::sync::mpsc::channel();
+        let recipe = EditRecipe {
+            auto_enhance: true,
+            ..EditRecipe::default()
+        };
+        let mut render_preview = |generation| {
+            render_preview_job(
+                &PreviewJob {
+                    generation,
+                    path: reference.clone(),
+                    rotation: 0,
+                    target_width: 160,
+                    target_height: 120,
+                    recipe: recipe.clone(),
+                    result_sender: sender.clone(),
+                },
+                &cache,
+                &mut geometry_cache,
+            )
+            .unwrap()
+        };
+        let fit = render_preview(1);
+        let one_to_one = render_preview(2);
+        let export = super::super::render::render_for_export(
+            &reference,
+            0,
+            &recipe.encode(),
+            160,
+            120,
+        )
+        .unwrap();
+        assert_eq!(fit, one_to_one);
+        assert_eq!(fit, export);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
     fn edit_preview_at_fit_and_one_to_one_keeps_source_resolution() {
         let source = (3936, 2624);
         assert_eq!(preview_target_dimensions(3936, 2624), source);

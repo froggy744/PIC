@@ -169,6 +169,8 @@ fn cpu_fallback_reason(recipe: &EditRecipe) -> &'static str {
         "filter"
     } else if recipe.auto_color || recipe.auto_contrast || recipe.auto_brightness {
         "auto_adjustment"
+    } else if recipe.auto_enhance {
+        "auto_enhance"
     } else if recipe.black_white || recipe.sepia {
         "look"
     } else {
@@ -797,10 +799,14 @@ pub fn build(
     let auto_contrast = gtk::ToggleButton::with_label("Auto Contrast");
     let auto_color = gtk::ToggleButton::with_label("Auto Colour");
     let auto_brightness = gtk::ToggleButton::with_label("Auto Brightness");
+    let auto_enhance = gtk::ToggleButton::with_label("Auto Enhance");
+    auto_enhance.set_tooltip_text(Some("Recover low-light detail while protecting portraits and highlights"));
+    auto_enhance.set_hexpand(true);
     auto_contrast.set_hexpand(true);
     auto_color.set_hexpand(true);
     auto_brightness.set_hexpand(true);
-    auto_row.attach(&auto_contrast, 0, 0, 2, 1);
+    auto_row.attach(&auto_enhance, 0, 0, 1, 1);
+    auto_row.attach(&auto_contrast, 1, 0, 1, 1);
     auto_row.attach(&auto_color, 0, 1, 1, 1);
     auto_row.attach(&auto_brightness, 1, 1, 1, 1);
     filters_box.append(&auto_row);
@@ -983,6 +989,7 @@ pub fn build(
         auto_contrast,
         auto_color,
         auto_brightness,
+        auto_enhance,
         filter_amount,
         black_white,
         sepia,
@@ -1673,6 +1680,14 @@ pub fn build(
         &controls.auto_brightness,
         session.clone(), syncing.clone(), queue_preview.clone(), update_history_buttons.clone(),
         |r, v| r.auto_brightness = v,
+    );
+    connect_toggle(
+        &controls.auto_enhance,
+        session.clone(),
+        syncing.clone(),
+        queue_preview.clone(),
+        update_history_buttons.clone(),
+        |r, v| r.auto_enhance = v,
     );
     {
         let session = session.clone();

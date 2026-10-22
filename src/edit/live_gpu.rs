@@ -1603,6 +1603,7 @@ pub fn gpu_tone_supported(recipe: &EditRecipe) -> bool {
     // proven. Standalone/both autos on plain, uncropped photos are verified.
     let geometry_changes_pixels = !recipe.crop.is_full() || recipe.straighten.abs() >= 0.01;
     !recipe.auto_brightness
+        && !recipe.auto_enhance
         && recipe.smooth <= 0.001
         && recipe.vignette.abs() <= 0.001
         && (recipe.filter == FilterPreset::None || !(recipe.auto_color || recipe.auto_contrast))
@@ -3566,6 +3567,21 @@ mod tests {
             gpu_tone_supported_for_view(&plain, false, 90),
             "non-automatic edits retain GPU FIT and rotation support"
         );
+    }
+
+    #[test]
+    fn auto_enhance_uses_cpu_fallback_without_disabling_other_gpu_edits() {
+        let plain = EditRecipe::default();
+        assert!(gpu_tone_supported(&plain));
+        let mut enhanced = plain.clone();
+        enhanced.auto_enhance = true;
+        assert!(!gpu_tone_supported(&enhanced));
+        assert!(!gpu_tone_supported_for_view(&enhanced, true, 0));
+
+        let mut supported = plain;
+        supported.exposure = 0.2;
+        assert!(gpu_tone_supported(&supported));
+        assert!(gpu_tone_supported_for_view(&supported, false, 90));
     }
 
     #[test]

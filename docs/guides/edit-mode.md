@@ -34,7 +34,9 @@ The left panel has five tabs:
 
 This is where the everyday corrections live, in three friendly groups:
 
-**Quick fixes** are on the Filters tab: Auto Contrast, Auto Colour, B&W, and Sepia. The automatic tools use conservative image-adaptive adjustments, not guaranteed exposure or white-balance recovery.
+**Quick fixes** are on the Filters tab in a two-column grid: Auto Enhance, Auto Contrast, Auto Colour, and Auto Brightness. Auto Enhance combines conservative colour, contrast, and brightness analysis, with low-light and shadow recovery that protects detected portrait skin and bright sunset/high-key detail. It is stored separately from the three individual automatic controls. All four are non-destructive and can be undone, redone, or reset with the rest of the recipe.
+
+Auto Enhance processes the decoded display-referred image. For RAW files it cannot restore sensor detail already clipped or discarded by the RAW decoder, and editor previews may use a camera preview until native detail is requested.
 
 **Filter Amount** sits immediately below Auto Contrast and Auto Colour. Adjust the strength of Newspaper, Old Photo, any named filter, B&W or Sepia from **0% (unfiltered) to 100% (full style)**. The slider is disabled while Original is selected. It affects only the creative filter, not Auto Contrast/Colour, Fill Light, Shadows or other manual tools. Amount is stored in the non-destructive recipe; older saved photos default to 100%.
 
@@ -63,7 +65,7 @@ Move any slider and the preview updates instantly. The little numbers next to ea
 
 The Filters tab shows your photo as a grid of **live preview tiles** — every filter rendered on *your actual photo*, so what you see is exactly what you get. Try **Clarendon, Gingham, Juno, Lark, Valencia, Walden**, plus fun ones like **Pencil Sketch, Disposable Film, Digicam Flash, Dream Glow, Cinematic** and **Golden Hour**, **Old Photo** (warm, faded film texture), and **Newspaper** (warm paper and ordered black-ink halftone). Click a tile to apply it, click **Original** to return to the unfiltered recipe.
 
-Filter looks, Clarity, Grain, Auto Contrast and Auto Colour all use the same non-destructive recipe for editing and export. Auto Contrast protects against extreme percentile stretches; Auto Colour uses near-neutral areas rather than neutralising intentional sunsets or colourful subjects.
+Filter looks, Clarity, Grain, Auto Contrast, Auto Colour, Auto Brightness and Auto Enhance all use the same non-destructive recipe for editing and export. Auto Contrast protects against extreme percentile stretches; Auto Colour uses near-neutral areas rather than neutralising intentional sunsets or colourful subjects. Auto Enhance uses the CPU reference path while active; other GPU-supported edits retain GPU acceleration.
 
 ![PIC V1 — edit mode - filters](../../screenshots/screenshots-V1/edit%20mode%20-%20filters.jpg)
 

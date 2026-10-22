@@ -289,6 +289,7 @@ where
         && !recipe.auto_color
         && !recipe.auto_contrast
         && !recipe.auto_brightness
+        && !recipe.auto_enhance
         && recipe.exposure == 0.0
         && recipe.temperature == 0.0
         && recipe.tint == 0.0
@@ -345,6 +346,9 @@ where
     }
     if recipe.auto_brightness {
         apply_auto_brightness(&mut image);
+    }
+    if recipe.auto_enhance {
+        super::auto_develop::apply(&mut image, true, true, true);
     }
     if std::env::var_os("PICASA_TRACE").is_some() {
         eprintln!(
@@ -1301,6 +1305,40 @@ mod tests {
             assert!((actual.1 - expected.1).abs() < 0.002, "y: {actual:?} vs {expected:?}");
         }
         assert!((drawings[0].width - original[0].width).abs() < 0.0001);
+    }
+
+    #[test]
+    fn auto_enhance_recovers_a_low_light_scene_without_changing_dimensions() {
+        let source = RgbaImage::from_pixel(96, 72, Rgba([28, 31, 34, 255]));
+        let mut recipe = EditRecipe::default();
+        recipe.auto_enhance = true;
+        let enhanced = apply_tone(source.clone(), &recipe);
+        assert_eq!((enhanced.width(), enhanced.height()), (source.width(), source.height()));
+        assert!(enhanced.get_pixel(48, 36)[1] >= source.get_pixel(48, 36)[1] + 20);
+        assert!(!recipe.auto_color && !recipe.auto_contrast && !recipe.auto_brightness);
+    }
+
+    #[test]
+    fn auto_enhance_limits_lift_on_a_dim_portrait() {
+        let source = RgbaImage::from_fn(128, 128, |x, y| {
+            let dx = x as i32 - 64;
+            let dy = y as i32 - 60;
+            if dx * dx * 2 + dy * dy < 34 * 34 {
+                Rgba([88, 59, 47, 255])
+            } else {
+                Rgba([18, 18, 20, 255])
+            }
+        });
+        let before = *source.get_pixel(64, 60);
+        let mut recipe = EditRecipe::default();
+        recipe.auto_enhance = true;
+        let enhanced = apply_tone(source, &recipe);
+        let after = enhanced.get_pixel(64, 60);
+        let luma = |rgb: &[u8]| 0.2126 * rgb[0] as f32 + 0.7152 * rgb[1] as f32 + 0.0722 * rgb[2] as f32;
+        assert!(luma(&after.0) > luma(&before.0) * 1.05,
+            "Auto Enhance should still recover portrait shadows");
+        assert!(luma(&after.0) <= luma(&before.0) * 1.25,
+            "portrait skin luminance rose from {:.1} to {:.1}", luma(&before.0), luma(&after.0));
     }
 
     #[test]

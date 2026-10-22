@@ -117,6 +117,7 @@ struct Controls {
     auto_contrast: gtk::ToggleButton,
     auto_color: gtk::ToggleButton,
     auto_brightness: gtk::ToggleButton,
+    auto_enhance: gtk::ToggleButton,
     filter_amount: gtk::Scale,
     black_white: gtk::ToggleButton,
     sepia: gtk::ToggleButton,
@@ -145,6 +146,7 @@ impl Controls {
         self.auto_contrast.set_active(recipe.auto_contrast);
         self.auto_color.set_active(recipe.auto_color);
         self.auto_brightness.set_active(recipe.auto_brightness);
+        self.auto_enhance.set_active(recipe.auto_enhance);
         self.filter_amount.set_value((recipe.filter_amount * 100.0) as f64);
         self.filter_amount.set_sensitive(
             recipe.filter != FilterPreset::None || recipe.black_white || recipe.sepia

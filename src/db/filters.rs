@@ -28,9 +28,11 @@ pub enum Field {
     Favorite,
     Edited,
     Metadata,
+    /// The imported folder a photo belongs to, derived from `photos.folder_id`.
+    SourceFolder,
 }
 impl Field {
-    pub const ALL: [Self; 19] = [
+    pub const ALL: [Self; 20] = [
         Self::Camera,
         Self::CameraMake,
         Self::Lens,
@@ -50,6 +52,7 @@ impl Field {
         Self::Favorite,
         Self::Edited,
         Self::Metadata,
+        Self::SourceFolder,
     ];
     pub fn label(self) -> &'static str {
         match self {
@@ -72,6 +75,7 @@ impl Field {
             Self::Favorite => "Favourite",
             Self::Edited => "Edited",
             Self::Metadata => "EXIF metadata",
+            Self::SourceFolder => "Source folder",
         }
     }
     pub fn numeric(self) -> bool {
@@ -107,6 +111,8 @@ impl Field {
             Self::Favorite => "mp.favorite",
             Self::Edited => "(mp.edit_recipe != '' OR mp.rotation != 0)",
             Self::Metadata => "m.has_exif",
+            // Both predicate and facet builders provide this join.
+            Self::SourceFolder => "sf.path",
         }
     }
     pub fn display(self, value: &str) -> String {
@@ -239,6 +245,15 @@ impl Filters {
             for value in &selection.values {
                 if value == MISSING {
                     or.push(format!("{expr} IS NULL"));
+                } else if *field == Field::SourceFolder {
+                    let n = first + args.len();
+                    args.push(Value::Text(value.clone()));
+                    or.push(format!(
+                        "mp.folder_id IN (WITH RECURSIVE descendants(id) AS (
+                            SELECT id FROM folders WHERE path = ?{n}
+                            UNION SELECT child.id FROM folders child JOIN descendants d ON child.parent_id = d.id
+                        ) SELECT id FROM descendants)"
+                    ));
                 } else {
                     let n = first + args.len();
                     args.push(Value::Text(value.clone()));
@@ -276,7 +291,7 @@ impl Filters {
             return (rating, vec![]);
         }
         let (sql, args) = self.clauses(first);
-        (format!("p.id IN (SELECT mp.id FROM photos mp LEFT JOIN photo_metadata m ON m.photo_id=mp.id WHERE {sql}) AND {rating}"),args)
+        (format!("p.id IN (SELECT mp.id FROM photos mp LEFT JOIN photo_metadata m ON m.photo_id=mp.id LEFT JOIN folders sf ON sf.id=mp.folder_id WHERE {sql}) AND {rating}"),args)
     }
 }
 
@@ -326,7 +341,7 @@ pub fn facets(
     params.append(&mut args);
     let rating = rating_predicate(&scope.rating, "mp");
     let expr = field.expression();
-    let sql=format!("SELECT CAST({expr} AS TEXT),COUNT(*) FROM photos mp LEFT JOIN photo_metadata m ON m.photo_id=mp.id
+    let sql=format!("SELECT CAST({expr} AS TEXT),COUNT(*) FROM photos mp LEFT JOIN photo_metadata m ON m.photo_id=mp.id LEFT JOIN folders sf ON sf.id=mp.folder_id
         WHERE mp.trashed=0 AND (?1 IS NULL OR mp.folder_id IN (WITH RECURSIVE descendants(id) AS (
         SELECT id FROM folders WHERE id=?1 UNION ALL SELECT f.id FROM folders f JOIN descendants d ON f.parent_id=d.id) SELECT id FROM descendants))
         AND (?2 IS NULL OR mp.id IN (SELECT photo_id FROM album_photos WHERE album_id=?2))
@@ -518,6 +533,56 @@ mod tests {
         f.categories.clear();
         f.toggle(Field::Iso, MISSING.into(), true);
         assert_eq!(ids(&c, &f), vec![4, 5]);
+    }
+    #[test]
+    fn source_folder_facets_and_selection_include_only_descendants() {
+        let c = catalog();
+        c.execute_batch(
+            "INSERT INTO folders(id,path,name,parent_id) VALUES (3,'/a/child','child',1);
+             INSERT INTO photos(id,path,folder_id) VALUES
+                 (6,'/a/child/photo.jpg',3), (7,'/no-folder.jpg',NULL),
+                 (8,'/unknown-folder.jpg',999);",
+        )
+        .unwrap();
+
+        let facets = facets(
+            &c,
+            &Scope::default(),
+            &Filters::default(),
+            Field::SourceFolder,
+        )
+        .unwrap()
+        .into_iter()
+        .map(|facet| (facet.value, facet.count))
+        .collect::<Vec<_>>();
+        assert_eq!(
+            facets,
+            vec![
+                (MISSING.into(), 2),
+                ("/a".into(), 3),
+                ("/a/child".into(), 1),
+                ("/b".into(), 1),
+            ]
+        );
+
+        let mut filters = Filters::default();
+        filters.toggle(Field::SourceFolder, "/a".into(), true);
+        assert_eq!(ids(&c, &filters), vec![1, 2, 4, 6]);
+
+        filters.categories.clear();
+        filters.toggle(Field::SourceFolder, "/a/child".into(), true);
+        assert_eq!(ids(&c, &filters), vec![6]);
+
+        filters.toggle(Field::SourceFolder, "/b".into(), true);
+        assert_eq!(ids(&c, &filters), vec![3, 6]);
+
+        filters.categories.clear();
+        filters.toggle(Field::SourceFolder, MISSING.into(), true);
+        assert_eq!(ids(&c, &filters), vec![7, 8]);
+
+        filters.categories.clear();
+        filters.toggle(Field::SourceFolder, "/removed".into(), true);
+        assert!(ids(&c, &filters).is_empty());
     }
     #[test]
     fn metadata_folder_album_search_and_existing_rating() {

@@ -13,6 +13,7 @@ pub struct OverlayAsset {
 
 /// Insert or refresh an overlay asset record. Re-importing identical content
 /// (same hash) updates the original filename but keeps a single row.
+#[cfg(test)]
 pub fn upsert_overlay_asset(
     connection: &Connection,
     hash: &str,

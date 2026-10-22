@@ -295,6 +295,36 @@ pub fn build(
     toolbar_actions.append(&done);
     root.append(&toolbar);
 
+    let missing_overlay_warning = gtk::Revealer::new();
+    missing_overlay_warning.set_transition_type(gtk::RevealerTransitionType::SlideDown);
+    let warning_content = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    warning_content.set_margin_top(8);
+    warning_content.set_margin_bottom(8);
+    warning_content.set_margin_start(12);
+    warning_content.set_margin_end(12);
+    warning_content.add_css_class("card");
+    let warning_icon = gtk::Image::from_icon_name("dialog-warning-symbolic");
+    warning_icon.set_pixel_size(18);
+    warning_icon.add_css_class("warning");
+    warning_content.append(&warning_icon);
+    let warning_label = gtk::Label::new(Some(
+        "An overlay image is missing or unreadable. Restore the file at its saved location to show it again.",
+    ));
+    warning_label.set_xalign(0.0);
+    warning_label.set_wrap(true);
+    warning_label.set_hexpand(true);
+    warning_content.append(&warning_label);
+    let show_overlays = gtk::Button::with_label("Show Overlays");
+    show_overlays.add_css_class("flat");
+    show_overlays.connect_clicked({
+        let overlays_toggle = overlays_toggle.clone();
+        move |_| overlays_toggle.set_active(true)
+    });
+    warning_content.append(&show_overlays);
+    missing_overlay_warning.set_child(Some(&warning_content));
+    missing_overlay_warning.set_reveal_child(false);
+    root.append(&missing_overlay_warning);
+
     // The editor tools use a real split pane, matching the adjustable main
     // sidebar. Users can drag the divider to give the controls or preview more
     // room instead of being locked to one fixed editing-panel width.
@@ -545,6 +575,20 @@ pub fn build(
     }
     let session = Rc::new(RefCell::new(EditSession::new(recipe)));
     let syncing = Rc::new(Cell::new(false));
+    let refresh_missing_overlay_warning: Rc<dyn Fn()> = {
+        let session = session.clone();
+        let warning = missing_overlay_warning.clone();
+        Rc::new(move || {
+            let missing = session
+                .borrow()
+                .recipe
+                .overlays
+                .iter()
+                .any(|overlay| !super::overlays::asset_file_readable(&overlay.asset));
+            warning.set_reveal_child(missing);
+        })
+    };
+    refresh_missing_overlay_warning();
     // Index into recipe.overlays of the overlay selected for canvas/panel
     // editing; None when nothing is selected.
     let selected_overlay: Rc<Cell<Option<usize>>> = Rc::new(Cell::new(None));
@@ -1892,6 +1936,7 @@ pub fn build(
         let draw_layer = draw_layer.clone();
         let sync_overlays_slot = sync_overlays_slot.clone();
         let sync_text_slot = sync_text_slot.clone();
+        let refresh_missing_overlay_warning = refresh_missing_overlay_warning.clone();
         Rc::new(move || {
             syncing.set(true);
             controls.sync(&session.borrow().recipe);
@@ -1902,6 +1947,7 @@ pub fn build(
             if let Some(sync_text) = sync_text_slot.borrow().as_ref() {
                 sync_text();
             }
+            refresh_missing_overlay_warning();
             draw_layer.queue_draw();
         })
     };
@@ -2725,6 +2771,7 @@ pub fn build(
         redraw_overlay_canvas.clone(),
         update_canvas_input.clone(),
         overlays_toggle.clone(),
+        refresh_missing_overlay_warning.clone(),
     );
     sync_overlays_slot.replace(Some(sync_overlays_panel.clone()));
 

@@ -16,24 +16,6 @@ fn migrate_stored_paths(connection: &Connection) -> Result<()> {
     }
     let transaction = connection.unchecked_transaction()?;
     let config = dirs::config_dir().context("could not determine configuration directory")?;
-    if let (Some(data), Some(cache)) = (dirs::data_dir(), dirs::cache_dir()) {
-        for legacy in crate::app_paths::legacy_storage_roots(&data, &config, "data") {
-            for name in ["picasa-rs", "pic-rs"] {
-                rewrite_stored_paths(
-                    &transaction,
-                    &legacy.join(name).join("overlays"),
-                    &cache.join("pic-rs/thumbs/overlay"),
-                )?;
-            }
-        }
-        for name in ["picasa-rs", "pic-rs"] {
-            rewrite_stored_paths(
-                &transaction,
-                &data.join(name).join("overlays"),
-                &cache.join("pic-rs/thumbs/overlay"),
-            )?;
-        }
-    }
     for (root, kind) in [
         (dirs::data_dir(), "data"),
         (Some(config.clone()), "config"),
@@ -68,7 +50,6 @@ fn migrate_stored_paths(connection: &Connection) -> Result<()> {
 fn rewrite_stored_paths(connection: &Connection, old: &Path, new: &Path) -> Result<()> {
     for (table, column) in [
         ("photos", "path"),
-        ("photos", "edit_recipe"),
         ("folders", "path"),
         ("settings", "value"),
         ("collage_projects", "draft"),

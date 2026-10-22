@@ -97,30 +97,6 @@ pub fn migrate_roots(data: &Path, config: &Path, cache: &Path) -> io::Result<()>
     for (source, destination) in &moves {
         check_conflicts(source, destination)?;
     }
-    // Check all overlay locations before moving any user data.
-    let mut overlay_sources = vec![
-        data.join(LEGACY_DIRECTORY).join("overlays"),
-        data.join(APP_DIRECTORY).join("overlays"),
-    ];
-    for legacy in legacy_storage_roots(data, config, "data") {
-        for directory in [LEGACY_DIRECTORY, APP_DIRECTORY] {
-            overlay_sources.push(legacy.join(directory).join("overlays"));
-        }
-    }
-    let mut overlay_destinations = vec![
-        cache.join(APP_DIRECTORY).join("thumbs/overlay"),
-        cache.join(LEGACY_DIRECTORY).join("thumbs/overlay"),
-    ];
-    for legacy in legacy_storage_roots(cache, config, "cache") {
-        for directory in [LEGACY_DIRECTORY, APP_DIRECTORY] {
-            overlay_destinations.push(legacy.join(directory).join("thumbs/overlay"));
-        }
-    }
-    for source in &overlay_sources {
-        for destination in &overlay_destinations {
-            check_conflicts(source, destination)?;
-        }
-    }
     // Two legacy roots must not silently replace one another either.
     for (index, (source, destination)) in moves.iter().enumerate() {
         for (other_source, other_destination) in &moves[index + 1..] {
@@ -132,10 +108,7 @@ pub fn migrate_roots(data: &Path, config: &Path, cache: &Path) -> io::Result<()>
     for (source, destination) in &moves {
         move_directory(source, destination)?;
     }
-    move_directory(
-        &data.join(APP_DIRECTORY).join("overlays"),
-        &cache.join(APP_DIRECTORY).join("thumbs/overlay"),
-    )
+    Ok(())
 }
 
 fn is_sqlite_shm(path: &Path) -> bool {
@@ -328,7 +301,7 @@ mod tests {
     }
 
     #[test]
-    fn flatpak_host_roots_also_migrate_old_sandbox_assets() {
+    fn flatpak_host_roots_keep_overlay_assets_in_data_storage() {
         let f = Fixture::new();
         let data = f.0.join("share");
         let cache = f.0.join("cache");
@@ -339,7 +312,8 @@ mod tests {
         fs::write(old_app.join("data/picasa-rs/overlays/hash.png"), b"overlay").unwrap();
         migrate_roots(&data, &app.join("config"), &cache).unwrap();
         assert!(data.join("pic-rs/library.db").is_file());
-        assert!(cache.join("pic-rs/thumbs/overlay/hash.png").is_file());
+        assert!(data.join("pic-rs/overlays/hash.png").is_file());
+        assert!(!cache.join("pic-rs/thumbs/overlay/hash.png").exists());
     }
 
     #[test]
@@ -355,7 +329,8 @@ mod tests {
         fs::write(old_app.join("config/picasa-rs/libraries.json"), b"registry").unwrap();
         migrate_roots(&app.join("data"), &app.join("config"), &app.join("cache")).unwrap();
         assert!(app.join("data/pic-rs/library.db").is_file());
-        assert!(app.join("cache/pic-rs/thumbs/overlay/hash.png").is_file());
+        assert!(app.join("data/pic-rs/overlays/hash.png").is_file());
+        assert!(!app.join("cache/pic-rs/thumbs/overlay/hash.png").exists());
         assert!(app.join("config/pic-rs/libraries.json").is_file());
         assert_eq!(
             storage_path(
@@ -369,7 +344,7 @@ mod tests {
     }
 
     #[test]
-    fn overlay_conflict_stops_before_any_storage_moves() {
+    fn cache_overlays_do_not_replace_user_location_overlays() {
         let f = Fixture::new();
         let data = f.0.join("data");
         let config = f.0.join("config");
@@ -378,13 +353,19 @@ mod tests {
         fs::create_dir_all(cache.join("pic-rs/thumbs/overlay")).unwrap();
         fs::write(data.join("picasa-rs/overlays/hash.png"), b"old").unwrap();
         fs::write(cache.join("pic-rs/thumbs/overlay/hash.png"), b"new").unwrap();
-        assert!(migrate_roots(&data, &config, &cache).is_err());
-        assert!(data.join("picasa-rs/overlays/hash.png").is_file());
-        assert!(!data.join("pic-rs").exists());
+        migrate_roots(&data, &config, &cache).unwrap();
+        assert_eq!(
+            fs::read(data.join("pic-rs/overlays/hash.png")).unwrap(),
+            b"old"
+        );
+        assert_eq!(
+            fs::read(cache.join("pic-rs/thumbs/overlay/hash.png")).unwrap(),
+            b"new"
+        );
     }
 
     #[test]
-    fn overlays_move_under_thumbnails_and_migration_is_repeatable() {
+    fn data_overlays_stay_out_of_thumbnails_and_migration_is_repeatable() {
         let f = Fixture::new();
         let data = f.0.join("data");
         let config = f.0.join("config");
@@ -395,11 +376,11 @@ mod tests {
         fs::write(config.join("picasa-rs/libraries.json"), b"registry").unwrap();
         migrate_roots(&data, &config, &cache).unwrap();
         assert_eq!(
-            fs::read(cache.join("pic-rs/thumbs/overlay/hash.jpg")).unwrap(),
+            fs::read(data.join("pic-rs/overlays/hash.jpg")).unwrap(),
             b"overlay"
         );
         assert!(config.join("pic-rs/libraries.json").is_file());
-        assert!(!data.join("pic-rs/overlays").exists());
+        assert!(!cache.join("pic-rs/thumbs/overlay/hash.jpg").exists());
         migrate_roots(&data, &config, &cache).unwrap();
     }
 

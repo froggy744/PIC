@@ -1,12 +1,11 @@
-//! Content-addressed overlay assets and CPU compositing.
+//! User-file overlays and CPU compositing.
 //!
-//! Imported PNG/JPG overlays are copied into an application-managed directory
-//! keyed by the blake3 content hash of their bytes. Edit recipes reference
-//! only that hash, so:
+//! New overlay imports retain a URI to the user's selected PNG/JPG file. Edit
+//! recipes reference that file directly, so:
 //!
-//! * the original file path never has to remain available,
-//! * the same logo imported onto many photographs is stored exactly once,
-//! * no photograph's edit record embeds overlay image data.
+//! * overlay assets stay at their user-selected locations,
+//! * deleting or moving a source is reported instead of silently using a copy,
+//! * legacy content-addressed assets remain readable.
 //!
 //! Decoded assets are kept in a small process-wide cache so batch operations
 //! (thumbnail rendering, batch export of 100 photos sharing one logo) decode
@@ -17,6 +16,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
 
 use anyhow::{Context, Result};
+use gio::prelude::FileExt;
 use image::RgbaImage;
 use rayon::prelude::*;
 
@@ -98,28 +98,35 @@ fn asset_cache() -> &'static AssetCache {
     ASSET_CACHE.get_or_init(|| Mutex::new(Vec::new()))
 }
 
-/// Application-managed directory holding every imported overlay asset.
+/// Durable location retained for older hash-based overlay references.
 pub fn overlays_dir() -> PathBuf {
     if let Some(dir) = std::env::var_os(OVERLAY_DIR_ENV_VAR) {
         return PathBuf::from(dir);
     }
-    crate::thumbnail::cache_dir()
-        .unwrap_or_else(|error| {
-            eprintln!("Could not resolve thumbnail directory for overlays: {error:#}");
-            dirs::cache_dir().unwrap_or_else(std::env::temp_dir).join("pic-rs/thumbs")
+    dirs::data_dir()
+        .unwrap_or_else(|| {
+            eprintln!("Could not resolve application data directory for legacy overlays");
+            dirs::home_dir()
+                .unwrap_or_else(std::env::temp_dir)
+                .join(".local/share")
         })
-        .join("overlay")
+        .join(crate::app_paths::APP_DIRECTORY)
+        .join("overlays")
 }
 
-/// An overlay image decoded and hashed, ready to be stored.
+/// Validated image dimensions used to size the imported overlay.
 #[derive(Debug)]
 pub struct PreparedOverlay {
+    #[cfg(test)]
     pub hash: String,
     pub width: u32,
     pub height: u32,
     /// "png" or "jpg"
+    #[cfg(test)]
     pub format: String,
+    #[cfg(test)]
     pub original_name: String,
+    #[cfg(test)]
     pub bytes: Vec<u8>,
 }
 
@@ -140,13 +147,20 @@ pub fn prepare_overlay_asset(source: &Path) -> Result<PreparedOverlay> {
 /// matching the file picker's filters.
 pub fn prepare_overlay_bytes(
     bytes: &[u8],
-    original_name: impl Into<String>,
+    _original_name: impl Into<String>,
 ) -> Result<PreparedOverlay> {
-    let format = match image::guess_format(bytes) {
-        Ok(image::ImageFormat::Png) => "png",
-        Ok(image::ImageFormat::Jpeg) => "jpg",
-        _ => anyhow::bail!("Only PNG and JPG overlay images are supported"),
+    let image_format = image::guess_format(bytes)?;
+    if !matches!(image_format, image::ImageFormat::Png | image::ImageFormat::Jpeg) {
+        anyhow::bail!("Only PNG and JPG overlay images are supported");
+    }
+    #[cfg(test)]
+    let format = match image_format {
+        image::ImageFormat::Png => "png",
+        image::ImageFormat::Jpeg => "jpg",
+        _ => unreachable!(),
     };
+    #[cfg(test)]
+    let original_name = _original_name.into();
     let started = Instant::now();
     let decoded = image::load_from_memory(bytes).context("could not decode the overlay image")?;
     let (width, height) = (decoded.width(), decoded.height());
@@ -157,17 +171,23 @@ pub fn prepare_overlay_bytes(
         eprintln!("PIC_OVERLAY import_decode size={}x{} elapsed_us={}", width, height, started.elapsed().as_micros());
     }
     Ok(PreparedOverlay {
+        #[cfg(test)]
         hash: blake3::hash(bytes).to_hex().to_string(),
         width,
         height,
+        #[cfg(test)]
         format: format.to_string(),
-        original_name: original_name.into(),
+        #[cfg(test)]
+        original_name,
+        #[cfg(test)]
         bytes: bytes.to_vec(),
     })
 }
 
 /// Write the asset into the managed directory (idempotent for identical
-/// content) and record it in the library database.
+/// content) and record it in the library database. Kept for legacy asset tests;
+/// new imports store a URI to the user's selected file instead.
+#[cfg(test)]
 pub fn store_overlay_asset(
     connection: &rusqlite::Connection,
     prepared: &PreparedOverlay,
@@ -201,14 +221,46 @@ pub fn asset_file_path(hash: &str) -> Option<PathBuf> {
     if hash.is_empty() {
         return None;
     }
-    let directory = overlays_dir();
-    for extension in ["png", "jpg", "jpeg"] {
-        let candidate = directory.join(format!("{hash}.{extension}"));
-        if candidate.is_file() {
-            return Some(candidate);
+    if let Some(path) = source_file_path(hash) {
+        return path.is_file().then_some(path);
+    }
+    let mut directories = vec![overlays_dir()];
+    if std::env::var_os(OVERLAY_DIR_ENV_VAR).is_none() {
+        if let Ok(thumbnails) = crate::thumbnail::cache_dir() {
+            directories.push(thumbnails.join("overlay"));
+        }
+    }
+    for directory in directories {
+        for extension in ["png", "jpg", "jpeg"] {
+            let candidate = directory.join(format!("{hash}.{extension}"));
+            if candidate.is_file() {
+                return Some(candidate);
+            }
         }
     }
     None
+}
+
+fn source_file_path(asset: &str) -> Option<PathBuf> {
+    asset
+        .starts_with("file:")
+        .then(|| gio::File::for_uri(asset).path())
+        .flatten()
+}
+
+/// Display name for a directly referenced source file, including when it has
+/// gone missing. Hash-based legacy references use their database metadata.
+pub fn source_file_name(asset: &str) -> Option<String> {
+    source_file_path(asset)?
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+}
+
+/// Whether the managed asset is currently present and can be opened from disk.
+/// This deliberately bypasses the decoded-image cache so UI status can detect
+/// an asset removed while PIC is still running.
+pub fn asset_file_readable(hash: &str) -> bool {
+    asset_file_path(hash).is_some_and(|path| std::fs::File::open(path).is_ok())
 }
 
 /// Decode (or fetch from the process-wide cache) an overlay asset.
@@ -216,6 +268,18 @@ pub fn asset_file_path(hash: &str) -> Option<PathBuf> {
 /// instead of failing the whole render.
 pub fn load_asset(hash: &str) -> Option<Arc<RgbaImage>> {
     if hash.is_empty() {
+        return None;
+    }
+    let Some(path) = asset_file_path(hash) else {
+        if let Ok(mut cache) = asset_cache().lock() {
+            cache.retain(|(key, _)| key != hash);
+        }
+        return None;
+    };
+    if std::fs::File::open(&path).is_err() {
+        if let Ok(mut cache) = asset_cache().lock() {
+            cache.retain(|(key, _)| key != hash);
+        }
         return None;
     }
     {
@@ -226,7 +290,6 @@ pub fn load_asset(hash: &str) -> Option<Arc<RgbaImage>> {
             return cache.last().map(|(_, image)| image.clone());
         }
     }
-    let path = asset_file_path(hash)?;
     let decoded = image::ImageReader::open(&path)
         .ok()?
         .with_guessed_format()

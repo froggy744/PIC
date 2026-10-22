@@ -1124,12 +1124,13 @@ fn build_overlays_panel(
     redraw_canvas: Rc<dyn Fn()>,
     update_canvas_input: Rc<dyn Fn()>,
     overlays_toggle: gtk::ToggleButton,
+    refresh_missing_overlay_warning: Rc<dyn Fn()>,
 ) -> Rc<dyn Fn()> {
     let action_row = gtk::Box::new(gtk::Orientation::Vertical, 6);
     let import = gtk::Button::with_label("Add Overlay");
     import.set_hexpand(true);
     import.set_tooltip_text(Some(
-        "Add a PNG or JPG logo, badge or banner on top of this photo",
+        "Add a PNG or JPG from its current location. Keep the file there to keep the overlay available.",
     ));
     import.add_css_class("crop-apply-button");
     let remove = gtk::Button::with_label("Remove Overlay");
@@ -1241,6 +1242,7 @@ fn build_overlays_panel(
         let preview_dimensions = preview_dimensions.clone();
         let redraw_canvas = redraw_canvas.clone();
         let update_canvas_input = update_canvas_input.clone();
+        let refresh_missing_overlay_warning = refresh_missing_overlay_warning.clone();
         Rc::new(move || {
             syncing.set(true);
             let overlays = session.borrow().recipe.overlays.clone();
@@ -1266,17 +1268,31 @@ fn build_overlays_panel(
                 label.set_single_line_mode(true);
                 label.set_max_width_chars(24);
                 label.set_ellipsize(gtk::pango::EllipsizeMode::End);
-                let name = crate::db::overlay_asset(&connection, &overlay.asset)
-                    .ok()
-                    .flatten()
-                    .map(|asset| asset.original_name)
+                let name = super::overlays::source_file_name(&overlay.asset)
+                    .or_else(|| {
+                        crate::db::overlay_asset(&connection, &overlay.asset)
+                            .ok()
+                            .flatten()
+                            .map(|asset| asset.original_name)
+                    })
                     .unwrap_or_else(|| {
                         let short = overlay.asset.chars().take(8).collect::<String>();
                         format!("Overlay {short}")
                     });
                 let visibility = if overlay.visible { "" } else { " · hidden" };
                 label.set_text(&format!("{name}{visibility}"));
-                row.set_child(Some(&label));
+                let row_content = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+                row_content.append(&label);
+                if !super::overlays::asset_file_readable(&overlay.asset) {
+                    let warning = gtk::Image::from_icon_name("dialog-warning-symbolic");
+                    warning.set_pixel_size(16);
+                    warning.add_css_class("warning");
+                    warning.set_tooltip_text(Some(
+                        "Overlay image is missing or unreadable. Restore the file at its saved location to show it again.",
+                    ));
+                    row_content.append(&warning);
+                }
+                row.set_child(Some(&row_content));
                 list.append(&row);
                 if Some(index) == active {
                     list.select_row(Some(&row));
@@ -1302,6 +1318,7 @@ fn build_overlays_panel(
                 offset_y.set_value(0.0);
             }
             syncing.set(false);
+            refresh_missing_overlay_warning();
             redraw_canvas();
             update_canvas_input();
         })
@@ -1548,11 +1565,10 @@ fn build_overlays_panel(
         });
     }
 
-    // Import: decode and hash off-thread, then store bytes + DB row and push
-    // a centred overlay onto the recipe on the main thread.
+    // Import: validate and decode off-thread, then reference the selected
+    // source URI from the edit recipe on the main thread.
     {
         let session = session.clone();
-        let connection = connection.clone();
         let parent_window = parent_window.clone();
         let selected = selected.clone();
         let update_history_buttons = update_history_buttons.clone();
@@ -1578,7 +1594,6 @@ fn build_overlays_panel(
                 .build();
 
             let session = session.clone();
-            let connection = connection.clone();
             let selected = selected.clone();
             let update_history_buttons = update_history_buttons.clone();
             let sync = sync.clone();
@@ -1590,14 +1605,14 @@ fn build_overlays_panel(
                     return;
                 };
                 let session = session.clone();
-                let connection = connection.clone();
                 let selected = selected.clone();
                 let update_history_buttons = update_history_buttons.clone();
                 let sync = sync.clone();
                 let overlays_toggle = overlays_toggle.clone();
                 let preview_dimensions = preview_dimensions.clone();
                 let button = button.clone();
-                // Decode + hash on a worker thread; only the PathBuf crosses
+                let asset_uri = gio::File::for_path(&path).uri().to_string();
+                // Validate and decode on a worker thread; only the PathBuf crosses
                 // the thread boundary. GTK/session state stays on the main
                 // thread and is resumed when the channel delivers.
                 let (result_tx, result_rx) = std::sync::mpsc::channel();
@@ -1630,20 +1645,7 @@ fn build_overlays_panel(
                             return glib::ControlFlow::Break;
                         }
                     };
-                    {
-                        let connection = connection.borrow();
-                        if let Err(error) =
-                            super::overlays::store_overlay_asset(&connection, &prepared)
-                        {
-                            show_overlay_error(
-                                &button,
-                                "Could not store overlay",
-                                &error.to_string(),
-                            );
-                            return glib::ControlFlow::Break;
-                        }
-                    }
-                    let hash = prepared.hash.clone();
+                    let asset_uri = asset_uri.clone();
                     let aspect = if prepared.height > 0 {
                         prepared.width as f32 / prepared.height as f32
                     } else {
@@ -1651,7 +1653,7 @@ fn build_overlays_panel(
                     };
                     let (photo_w, photo_h) = preview_dimensions.get();
                     session.borrow_mut().mutate(|recipe| {
-                        let mut overlay = OverlaySpec::new_centered(hash.clone());
+                        let mut overlay = OverlaySpec::new_centered(asset_uri);
                         overlay.width = overlay.width.min(OverlaySpec::max_fitting_width(
                             photo_w.max(1) as f32,
                             photo_h.max(1) as f32,

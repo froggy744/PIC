@@ -120,8 +120,15 @@ Theme folder names are stable saved ids. The current shipped folders are
 
 Photo Wall and Masonry use a provider above the appearance theme to keep tiles
 borderless and selection outlines inset. Both use `@accent_bg_color`; Photo
-Wall has square corners, while Masonry follows thumbnail corner settings.
-The square-corner setting also overrides Grid and album cover radii.
+Wall stays square-edged, while Masonry follows the user's **Corner style**.
+
+The **Settings → Interface → Appearance → Corner style** choice applies
+application-wide: **Balanced** (default) uses restrained 5–8px radii,
+**Rounded** defers to the selected theme's softer geometry, and **Square**
+flattens photo tiles and most PIC controls. Native window buttons and
+decorative framed album art are left to the system/theme. PIC reads the
+legacy `thumbnail-square-corners` preference only when no new choice exists,
+so users who enabled Square explicitly retain that choice.
 
 Shared album component styles load above the appearance theme and use
 `@theme_fg_color` and `@accent_bg_color` for plain covers. Framed album covers

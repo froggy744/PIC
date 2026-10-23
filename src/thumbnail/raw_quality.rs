@@ -227,6 +227,46 @@ mod tests {
         assert!(report_pair(&a, &b).is_none());
     }
 
+    fn describe_camera_metadata(raw: &rawler::RawImage) {
+        use rawler::imgop::xyz::Illuminant;
+        // Report exactly the WB coefficients and the preferred illuminant
+        // matrix used by PIC's current RAW developer. These are Nikon
+        // metadata/decoder results, never coefficients fitted to the JPEG.
+        let selected = raw.color_matrix_find_first([
+            Illuminant::D65,
+            Illuminant::A,
+            Illuminant::B,
+            Illuminant::C,
+            Illuminant::D50,
+            Illuminant::D55,
+            Illuminant::D75,
+            Illuminant::Daylight,
+            Illuminant::Flash,
+        ]);
+        eprintln!(
+            "PIC_RAW_QA_META make={:?} model={:?} bits_per_sample={} \
+             white_balance_RGBE={:?} white_balance_available={} \
+             matrix_illuminants={:?}",
+            raw.clean_make, raw.clean_model, raw.bps,
+            raw.wb_coeffs, raw.wb_coeffs[0].is_finite(),
+            raw.color_matrix.keys().collect::<Vec<_>>(),
+        );
+        if let Some((illuminant, matrix)) = selected {
+            eprintln!(
+                "PIC_RAW_QA_META selected_illuminant={illuminant:?} \
+                 selected_xyz_to_camera_matrix={matrix:?} \
+                 blacklevels={:?} whitelevels={:?}",
+                raw.blacklevel, raw.whitelevel,
+            );
+        } else {
+            eprintln!(
+                "PIC_RAW_QA_META selected_illuminant=none matrix=identity_fallback \
+                 blacklevels={:?} whitelevels={:?}",
+                raw.blacklevel, raw.whitelevel,
+            );
+        }
+    }
+
     fn write_comparison_preview(rgb: &RgbImage, path: &Path) {
         // 1400px reference images are small enough to share without sending
         // a 150MB TIFF or the original identifiable NEF to a public repository.
@@ -252,10 +292,19 @@ mod tests {
 
         let started = Instant::now();
         let raw_source = rawler::rawsource::RawSource::new(path).expect("open test RAW");
-        // Intentionally bypass match_nef_sensor_to_camera_jpeg(): this test
-        // measures the existing RAW developer independently of any
-        // per-photograph fitting or reference JPEG corrections.
-        let sensor = develop_nef_sensor(&raw_source, &filename).expect("develop sensor only");
+        // Decode once, inspect Nikon metadata BEFORE colour development,
+        // then apply the same unchanged RawDevelop::default() path used by PIC.
+        // The diagnostic does not regress JPEG pixels or change photo data.
+        let sensor = rawler_decode(&filename, "nef_qa_sensor_demosaic", || {
+            let decoder = rawler::get_decoder(&raw_source)?;
+            let params = rawler::decoders::RawDecodeParams::default();
+            let raw = decoder.raw_image(&raw_source, &params, false)?;
+            describe_camera_metadata(&raw);
+            rawler::imgop::develop::RawDevelop::default()
+                .develop_intermediate(&raw)?
+                .to_dynamic_image()
+                .ok_or_else(|| anyhow::anyhow!("Nikon RAW developer returned no RGB image"))
+        }).expect("develop sensor only");
         let sensor_ms = started.elapsed().as_secs_f64() * 1000.0;
         let sensor_kind = format!("{:?}", sensor.color());
         let (camera_w, camera_h) = jpeg_dimensions(&camera_jpeg).expect("read JPEG dimensions");

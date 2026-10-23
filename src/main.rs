@@ -42,7 +42,7 @@ mod window;
 /// bundles ship no icon theme at all, leaving every symbolic icon blank.
 /// The bundled subset guarantees all referenced names resolve everywhere.
 fn register_bundled_icons() {
-    const ICONS_GRESOURCE: &[u8] = include_bytes!("../resources/icons.gresource");
+    const ICONS_GRESOURCE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/icons.gresource"));
     let resource = gio::Resource::from_data(&glib::Bytes::from_static(ICONS_GRESOURCE))
         .expect("bundled icon resource is valid");
     gio::resources_register(&resource);

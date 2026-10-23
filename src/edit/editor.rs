@@ -385,6 +385,7 @@ pub fn build(
     crop_box.set_margin_start(14);
     crop_box.set_margin_end(14);
     let overlays_box = gtk::Box::new(gtk::Orientation::Vertical, 10);
+    overlays_box.add_css_class("pic-editor-overlay-controls");
     overlays_box.set_hexpand(true);
     overlays_box.set_vexpand(true);
     overlays_box.set_margin_top(12);
@@ -392,6 +393,7 @@ pub fn build(
     overlays_box.set_margin_start(14);
     overlays_box.set_margin_end(14);
     let text_box = gtk::Box::new(gtk::Orientation::Vertical, 10);
+    text_box.add_css_class("pic-editor-text-controls");
     text_box.set_hexpand(true);
     text_box.set_vexpand(true);
     text_box.set_halign(gtk::Align::Fill);
@@ -400,6 +402,7 @@ pub fn build(
     text_box.set_margin_start(14);
     text_box.set_margin_end(14);
     let draw_box = gtk::Box::new(gtk::Orientation::Vertical, 10);
+    draw_box.add_css_class("pic-editor-draw-controls");
     draw_box.set_hexpand(true);
     draw_box.set_vexpand(true);
     draw_box.set_margin_top(12);

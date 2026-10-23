@@ -689,17 +689,9 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     // Resolved size for views that only need a number (album covers).
     let grid_thumbnail_size = saved_grid_thumbnail_size.unwrap_or(DEFAULT_GRID_THUMBNAIL_SIZE);
 
-    // Thumbnail appearance (Settings > Interface). Square corners toggle a CSS
-    // class on the main window; whole-photo fit is applied to the gallery and
-    // re-applied live when the toggles change.
-    if crate::settings::saved_bool(
-        &connection.borrow(),
-        crate::db::THUMBNAIL_SQUARE_CORNERS_SETTING_KEY,
-    )
-    .unwrap_or(false)
-    {
-        window.add_css_class("square-corners");
-    }
+    // Corner style belongs to the whole application, not just thumbnails.
+    // Balanced is the default; prior square-thumbnail settings migrate.
+    crate::settings::CornerStyle::saved(&connection.borrow()).apply(&window);
     gallery.set_fit_whole_photo(
         crate::settings::saved_bool(
             &connection.borrow(),
@@ -941,6 +933,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         let thumbs_window = settings_surface.clone();
         let thumbs_gallery = settings_gallery_for_thumbs.clone();
         let thumbs_connection = settings_connection.clone();
+        let thumbs_theme_engine = settings_theme_engine.clone();
         let visibility_connection = settings_connection.clone();
         let visibility_sidebar = settings_sidebar.clone();
         let switch_library_slot = settings_switch_library_slot.clone();
@@ -973,11 +966,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             }),
             Rc::new(move || {
                 crate::window::debug_log("THUMB SETTINGS: apply callback entered");
-                let square = crate::settings::saved_bool(
-                    &thumbs_connection.borrow(),
-                    crate::db::THUMBNAIL_SQUARE_CORNERS_SETTING_KEY,
-                )
-                .unwrap_or(false);
+                let corner_style = thumbs_theme_engine.effective_corner_style();
                 let fit = crate::settings::saved_bool(
                     &thumbs_connection.borrow(),
                     crate::db::THUMBNAIL_FIT_WHOLE_PHOTO_SETTING_KEY,
@@ -1001,13 +990,9 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                     }
                     thumbs_gallery.refresh_thumbnails();
                 }
-                if square {
-                    thumbs_window.add_css_class("square-corners");
-                } else {
-                    thumbs_window.remove_css_class("square-corners");
-                }
+                corner_style.apply(&thumbs_window);
                 crate::window::debug_log(&format!(
-                    "THUMB SETTINGS: css class applied (square={square}), deferring fit={fit} to idle, high_quality={high_quality}"
+                    "THUMB SETTINGS: corner style applied ({corner_style:?}), deferring fit={fit} to idle, high_quality={high_quality}"
                 ));
                 // Defer the tile walk out of the switch notification so the
                 // settings UI settles before the gallery relayouts.
@@ -6633,16 +6618,7 @@ fn start_photo_export_single(
                     .as_deref(),
             );
             gallery.set_folder_catalog(&folders, &folder_stream_order(&folders, display_mode));
-            let square = crate::settings::saved_bool(
-                &connection.borrow(),
-                crate::db::THUMBNAIL_SQUARE_CORNERS_SETTING_KEY,
-            )
-            .unwrap_or(false);
-            if square {
-                window.add_css_class("square-corners");
-            } else {
-                window.remove_css_class("square-corners");
-            }
+            crate::settings::CornerStyle::saved(&connection.borrow()).apply(&window);
             gallery.set_fit_whole_photo(
                 crate::settings::saved_bool(
                     &connection.borrow(),

@@ -1,0 +1,13 @@
+/* The radio choice is the source of truth for the selected theme. */
+.settings-theme-list row.theme-option-row {
+    transition: background-color 120ms ease;
+}
+.settings-theme-list row.theme-option-row:hover {
+    background-color: alpha(@accent_bg_color, 0.12);
+}
+.settings-theme-list row.theme-option-row.theme-active {
+    background-color: alpha(@accent_bg_color, 0.20);
+}
+.settings-theme-list row.theme-option-row.theme-active:hover {
+    background-color: alpha(@accent_bg_color, 0.27);
+}

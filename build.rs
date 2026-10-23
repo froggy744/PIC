@@ -69,6 +69,11 @@ fn main() {
     println!("cargo:rerun-if-changed=screenshots");
 
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
+    // Always compile the icon manifest that belongs to this checkout.
+    // A prebuilt icons.gresource otherwise silently omits new icons when
+    // XML/SVG files change (the Refresh library icon was one such case).
+    compile_bundled_icons(&manifest_dir);
+
     // OUT_DIR looks like <target>/<profile>/build/<pkg>-<hash>/out, so three
     // levels up is the profile directory that holds the binaries.
     let Some(profile_dir) = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR"))
@@ -98,6 +103,34 @@ fn main() {
         if name_text.starts_with("wiz-") && name_text.ends_with(".jpg") {
             fs::copy(entry.path(), screenshots.join(&name)).expect("stage tour screenshot");
         }
+    }
+}
+
+fn compile_bundled_icons(manifest_dir: &Path) {
+    let source_dir = manifest_dir.join("resources");
+    let manifest = source_dir.join("icons.gresource.xml");
+    let output = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR"))
+        .join("icons.gresource");
+
+    println!("cargo:rerun-if-changed={}", manifest.display());
+    for folder in ["icons", "custom-icons"] {
+        emit_tree_watchlist(&source_dir.join(folder));
+    }
+    let result = std::process::Command::new("glib-compile-resources")
+        .arg(&manifest)
+        .arg("--sourcedir")
+        .arg(&source_dir)
+        .arg("--target")
+        .arg(&output)
+        .output()
+        .unwrap_or_else(|error| {
+            panic!("glib-compile-resources is required to embed PIC icons: {error}");
+        });
+    if !result.status.success() {
+        panic!(
+            "Could not compile PIC icons: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
     }
 }
 

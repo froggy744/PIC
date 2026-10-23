@@ -1,5 +1,5 @@
 /* Album-index component styling shared across appearance themes. */
-.albums-index-title { font-size: 24px; font-weight: 700; text-shadow: none; }
+.albums-index-title { font-size: 22px; font-weight: 700; text-shadow: none; }
 /* Framed art supplies its own translucent surface and shadow. Let its alpha
    channel composite with the Albums page or bookshelf scene below it. */
 .album-cover.framed-album-cover { background: transparent; background-image: none; border: none; border-radius: 0; box-shadow: none; }
@@ -17,3 +17,28 @@
 .albums-bookshelf button.album-card { padding: 0; border: none; background: transparent; background-image: none; box-shadow: none; }
 .albums-bookshelf button.album-card.framed-album-card { color: #302014; }
 button.album-card.framed-album-card:hover { opacity: 0.90; }
+
+
+/* Elevated album cards without changing the themed bookshelf treatment. */
+.albums-index-title { font-size: 24px; font-weight: 750; }
+.albums-standard > flowboxchild { padding: 5px; }
+.albums-standard button.album-card {
+  padding: 9px;
+  border: 1px solid transparent;
+  border-radius: 14px;
+  transition: background-color 150ms ease, border-color 150ms ease;
+}
+.albums-standard button.album-card:hover {
+  background: alpha(@theme_fg_color, 0.055);
+  border-color: alpha(@theme_fg_color, 0.12);
+}
+.albums-standard button.album-card:focus-visible {
+  outline: 2px solid @accent_bg_color;
+  outline-offset: 1px;
+}
+.albums-standard .plain-album-cover {
+  border-radius: 11px;
+  border-color: alpha(@theme_fg_color, 0.2);
+}
+.albums-standard .album-name { font-size: 15px; font-weight: 650; }
+.albums-standard .album-photo-count { color: alpha(@theme_fg_color, 0.66); }

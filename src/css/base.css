@@ -1,11 +1,11 @@
 .edit-panel-tabs { margin-bottom: 0; }
-    .edit-panel-tabs button { min-height: 34px; padding: 4px 10px; font-weight: 600; }
-    .edit-toolbar-actions button { min-width: 0; min-height: 26px; padding: 2px 7px; border-radius: 8px; }
+    .edit-panel-tabs button { min-height: 36px; padding: 0 13px; font-weight: 600; }
+    .edit-toolbar-actions button { min-width: 0; min-height: 36px; padding: 0 7px; border-radius: 8px; }
     .edit-toolbar-actions button.edit-toolbar-icon-only { padding: 2px 6px; }
     .edit-toolbar-actions separator { min-width: 1px; background: alpha(@theme_fg_color, 0.14); }
     .edit-panel-pages { background: @window_bg_color; }
     paned.edit-body-paned > separator { min-width: 6px; background: transparent; border: 0; border-left: 1px solid alpha(@theme_fg_color, 0.28); box-shadow: none; }
-    .edit-section-label { font-size: 11px; font-weight: 700; color: alpha(@theme_fg_color, 0.62); }
+    .edit-section-label { font-size: 12px; font-weight: 600; color: alpha(@theme_fg_color, 0.62); }
     .edit-adjustment-group { margin-bottom: 6px; }
     .edit-adjustment-row { margin-bottom: 3px; }
     .edit-adjustment-value { font-variant-numeric: tabular-nums; min-width: 42px; }
@@ -39,13 +39,14 @@
     button.text-swatch-green { background-color: #1fb848; }
     button.text-swatch-blue { background-color: #266bff; }
     button.text-swatch-purple { background-color: #ad4de0; }
-    .quick-fix-row button { min-height: 30px; padding: 4px 8px; }
+    .quick-fix-row button { min-height: 32px; padding: 4px 8px; }
     .filter-grid > flowboxchild { padding: 0; margin: 0; min-width: 0; background: transparent; }
     button.filter-tile, button.filter-tile:hover, button.filter-tile:active, button.filter-tile:checked { min-width: 0; padding: 0; border: none; background: transparent; box-shadow: none; outline: none; }
     .filter-tile-preview { padding: 0; border: 2px solid transparent; border-radius: 9px; background: alpha(@theme_fg_color, 0.04); box-shadow: none; }
     button.filter-tile:hover .filter-tile-preview { border-color: alpha(@theme_fg_color, 0.18); }
     button.filter-tile:checked .filter-tile-preview { border-color: @accent_bg_color; }
-    .filter-tile-label { font-size: 11px; font-weight: 600; }
+button.filter-tile:focus-visible .filter-tile-preview { border-color: @accent_bg_color; outline: 2px solid @accent_bg_color; outline-offset: 2px; }
+    .filter-tile-label { font-size: 12px; font-weight: 600; }
     .text-font-picker { min-width: 0; }
 
 /* An untagged photo keeps the heart clickable, but its icon should read as inactive. */
@@ -201,7 +202,7 @@ button.infobar-selected-thumb:hover {
 .metadata-filter-toggle.metadata-filter-active {
     border-color: alpha(@accent_bg_color, 0.55);
 }
-.metadata-filter-toolbar { min-height: 34px; }
+.metadata-filter-toolbar { min-height: 32px; }
 .metadata-filter-controls { min-width: 0; }
 .metadata-filter-summary { margin-left: 6px; }
 .metadata-filter-active-count { color: @accent_color; }
@@ -215,7 +216,7 @@ button.infobar-selected-thumb:hover {
 .metadata-filter-controls .metadata-filter-utility { padding: 3px; }
 .metadata-explorer-column {
     min-width: 0;
-    padding: 0 8px 0 2px;
+    padding: 8px 10px 10px;
     border-right: 1px solid alpha(@theme_fg_color, 0.12);
 }
 .metadata-explorer-column:last-child { border-right: 0; }
@@ -231,7 +232,7 @@ button.infobar-selected-thumb:hover {
     color: @theme_fg_color;
     border: 1px solid alpha(@theme_fg_color, 0.14);
     border-radius: 11px;
-    margin: 2px 8px 8px;
+    margin: 2px 0 2px;
 }
 .metadata-filter-toggle label,
 .metadata-filter-controls button label { font-weight: 500; }
@@ -241,3 +242,23 @@ button.infobar-selected-thumb:hover {
     border: 0;
     background: transparent;
 }
+
+
+/* V1.01 visual hierarchy: generous edit controls, quiet metadata, clear focus. */
+.edit-section-label {
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.3px;
+    color: alpha(@theme_fg_color, 0.78);
+}
+.edit-adjustment-group { margin-bottom: 12px; }
+.edit-adjustment-row { margin-bottom: 7px; }
+.edit-adjustment-value { font-weight: 600; }
+.edit-filter-tile:focus-visible { outline: 2px solid @accent_bg_color; outline-offset: 2px; }
+.metadata-explorer {
+    border-radius: 14px;
+    border-color: alpha(@theme_fg_color, 0.18);
+}
+/* Native title buttons are intentionally controlled by GTK/libadwaita,
+ * separate from PIC's compact action strip. */
+.layout-right-header windowcontrols { margin-left: 8px; }

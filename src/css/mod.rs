@@ -54,7 +54,7 @@ pub(crate) fn install_foundation(display: &gtk::gdk::Display) {
     );
 
     // Metadata controls use consistent native desktop geometry in every theme.
-    // Theme palette variables still supply colours; square corners win at +4.
+    // Theme palette variables supply colours; corner-style overrides win at +13.
     let metadata = gtk::CssProvider::new();
     metadata.load_from_string(include_str!("components/metadata_filter_layout.css"));
     gtk::style_context_add_provider_for_display(
@@ -66,7 +66,7 @@ pub(crate) fn install_foundation(display: &gtk::gdk::Display) {
     // The edit toolbar is shared by every appearance theme. Keep its visual
     // contract in one place and resolve colors from the active theme palette.
     // This scoped provider sits above theme-wide button rules while remaining
-    // below user geometry overrides such as square corners.
+    // below the user-selectable corner style.
     let edit_mode = gtk::CssProvider::new();
     edit_mode.load_from_string(EDIT_MODE);
     gtk::style_context_add_provider_for_display(
@@ -113,6 +113,16 @@ pub(crate) fn install_foundation(display: &gtk::gdk::Display) {
         gtk::STYLE_PROVIDER_PRIORITY_APPLICATION + 6,
     );
 
+    // Theme rows show the radio choice and pointer hover independently of
+    // the selected theme's generic boxed-list styling.
+    let theme_picker = gtk::CssProvider::new();
+    theme_picker.load_from_string(include_str!("components/theme_picker.css"));
+    gtk::style_context_add_provider_for_display(
+        display,
+        &theme_picker,
+        gtk::STYLE_PROVIDER_PRIORITY_APPLICATION + 6,
+    );
+
     // Screensaver controls live in a separate window from the main/settings
     // window. Keep its headings readable even under overlays with broad
     // heading rules; the selector is scoped to those two labels only.
@@ -124,9 +134,30 @@ pub(crate) fn install_foundation(display: &gtk::gdk::Display) {
         gtk::STYLE_PROVIDER_PRIORITY_APPLICATION + 11,
     );
 
-    // Always loaded; rules only match while the main window carries the
-    // "square-corners" class (Settings > Library). Priority sits above the
-    // theme (+1) and album (+3) providers so border-radius: 0 wins.
+    // A single hover contract for top-bar and InfoBar action buttons must
+    // outrank the selected theme (+1/+3) and platform styling (+10).
+    // Native window controls and other app buttons remain untouched.
+    let toolbar_actions = gtk::CssProvider::new();
+    toolbar_actions.load_from_string(include_str!("components/toolbar_action_consistency.css"));
+    gtk::style_context_add_provider_for_display(
+        display,
+        &toolbar_actions,
+        gtk::STYLE_PROVIDER_PRIORITY_APPLICATION + 12,
+    );
+
+    // User-selectable corner geometry is intentionally more specific than
+    // per-theme radii (+1/+3) and shared toolbar hover geometry (+12).
+    // It is scoped to windows carrying a corner-style-* class.
+    let corner_style = gtk::CssProvider::new();
+    corner_style.load_from_string(include_str!("components/corner_style.css"));
+    gtk::style_context_add_provider_for_display(
+        display,
+        &corner_style,
+        gtk::STYLE_PROVIDER_PRIORITY_APPLICATION + 13,
+    );
+
+    // Legacy square-tile rules remain active when Corner style is Square,
+    // preserving the Photo Wall/Masonry behaviour and older UI tests.
     let square_corners = gtk::CssProvider::new();
     square_corners.load_from_string(SQUARE_CORNERS);
     gtk::style_context_add_provider_for_display(

@@ -4,4 +4,5 @@ window, button, entry, label, text, .navigation-sidebar { font-family: "Segoe UI
 .folder-section-title, .section-heading { font-size: 14px; font-weight: 700; }
 .folder-section-count, .album-photo-count { font-size: 12px; }
 .info-title, .metric-val, .section-count { font-size: 13px; }
-.metric-key, .navigation-sidebar .heading, .edit-section-label, .filter-tile-label { font-size: 11px; }
+.metric-key, .navigation-sidebar .heading { font-size: 11px; }
+.edit-section-label, .filter-tile-label { font-size: 12px; }

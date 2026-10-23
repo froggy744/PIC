@@ -1,0 +1,98 @@
+/* PIC icon-action contract — top header and bottom InfoBar.
+ *
+ * A single 34px target / 16px glyph / 8px hover surface for actionable
+ * icons. Only explicitly tagged InfoBar actions (including controls moved
+ * into the More menu) and PIC header actions are affected; native window
+ * buttons and unrelated content controls keep their own styling.
+ *
+ * GtkMenuButton is a menubutton wrapper containing a real button. Style the
+ * child only, not the wrapper, to prevent a second larger circular badge.
+ * Priority +12 (in css/mod.rs) wins over theme hover rules, including the
+ * PIC-Default/PIC-Dark providers at +3 and platform overrides at +10.
+ */
+.pic-header-tools button.pic-header-action,
+.pic-header-tools menubutton.pic-header-action > button,
+button.pic-toolbar-action,
+menubutton.pic-toolbar-action > button {
+    min-width: 32px;
+    min-height: 32px;
+    margin: 0;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    color: inherit;
+    background: transparent;
+    background-image: none;
+    box-shadow: none;
+    transition: background-color 140ms ease, border-color 140ms ease;
+}
+.pic-header-tools menubutton.pic-header-action,
+menubutton.pic-toolbar-action {
+    margin: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    background-image: none;
+    box-shadow: none;
+}
+.pic-header-tools button.pic-header-action image,
+.pic-header-tools menubutton.pic-header-action > button image,
+button.pic-toolbar-action image,
+menubutton.pic-toolbar-action > button image {
+    -gtk-icon-size: 16px;
+}
+.pic-header-tools button.pic-header-action:hover,
+.pic-header-tools menubutton.pic-header-action > button:hover,
+button.pic-toolbar-action:hover,
+menubutton.pic-toolbar-action > button:hover {
+    border-radius: 8px;
+    border-color: transparent;
+    background: alpha(@theme_fg_color, 0.09);
+    background-image: none;
+    box-shadow: none;
+}
+.pic-header-tools button.pic-header-action:active,
+.pic-header-tools menubutton.pic-header-action > button:active,
+button.pic-toolbar-action:active,
+menubutton.pic-toolbar-action > button:active {
+    background: alpha(@theme_fg_color, 0.15);
+    background-image: none;
+    box-shadow: none;
+}
+.pic-header-tools button.pic-header-action:checked,
+.pic-header-tools button.pic-header-action:checked:hover,
+.pic-header-tools menubutton.pic-header-action > button:checked,
+.pic-header-tools menubutton.pic-header-action > button:checked:hover,
+button.pic-toolbar-action:checked,
+button.pic-toolbar-action:checked:hover,
+menubutton.pic-toolbar-action > button:checked,
+menubutton.pic-toolbar-action > button:checked:hover {
+    border-radius: 8px;
+    border-color: alpha(@accent_bg_color, 0.32);
+    background: alpha(@accent_bg_color, 0.19);
+    background-image: none;
+    box-shadow: none;
+}
+.pic-header-tools button.pic-header-action:focus-visible,
+.pic-header-tools menubutton.pic-header-action > button:focus-visible,
+button.pic-toolbar-action:focus-visible,
+menubutton.pic-toolbar-action > button:focus-visible {
+    border-radius: 8px;
+    outline: 2px solid @accent_bg_color;
+    outline-offset: -2px;
+}
+.pic-header-tools button.pic-header-action:disabled,
+.pic-header-tools menubutton.pic-header-action > button:disabled,
+button.pic-toolbar-action:disabled,
+menubutton.pic-toolbar-action > button:disabled {
+    opacity: 0.45;
+}
+
+.photo-actions-menu .photo-actions-menu-row {
+    border-radius: 8px;
+    transition: background-color 140ms ease;
+}
+.photo-actions-menu .photo-actions-menu-row:hover,
+.photo-actions-menu .photo-actions-menu-row:focus-within {
+    background-color: alpha(@theme_fg_color, 0.09);
+}

@@ -5,6 +5,7 @@
    color-scheme: theme
    mode: overlay
    window-controls: native
+   corner-style: user
 */
 
 /* ==========================================================================
@@ -36,6 +37,8 @@
        `traffic-light` to have PIC show macOS-style gel buttons (Close /
        Minimize / Maximize) instead — style them with the block at the
        bottom of this file.
+     - `corner-style: user` follows the saved choice in Settings → Themes.
+       Use `rounded`, `balanced`, or `square` to set this theme's shape.
      - Colors: use `@name` references after defining them below. `alpha(color,
        0.5)` derives translucent variants, so define fewer colors and derive
        the rest.

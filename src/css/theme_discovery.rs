@@ -35,6 +35,13 @@ pub(crate) enum WindowControls {
     TrafficLight,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ThemeCornerStyle {
+    Rounded,
+    Balanced,
+    Square,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DiscoveredTheme {
     /// Stable identifier: the theme folder's name. Stored in the settings
@@ -52,6 +59,8 @@ pub(crate) struct DiscoveredTheme {
     pub(crate) is_base: bool,
     /// Window control style the theme opts into (native by default).
     pub(crate) window_controls: WindowControls,
+    /// Optional corner style used while this theme is active.
+    pub(crate) corner_style: Option<ThemeCornerStyle>,
     /// Full stylesheet text, ready for a `CssProvider`.
     pub(crate) css: String,
 }
@@ -91,6 +100,7 @@ pub(crate) fn discover(directory: &Path) -> Vec<DiscoveredTheme> {
             pins_color_scheme: metadata.pins_color_scheme,
             is_base: metadata.is_base,
             window_controls: metadata.window_controls,
+            corner_style: metadata.corner_style,
             css,
         });
     }
@@ -149,6 +159,7 @@ struct ThemeMetadata {
     pins_color_scheme: bool,
     is_base: bool,
     window_controls: WindowControls,
+    corner_style: Option<ThemeCornerStyle>,
 }
 
 /// Parse the `picasa-theme` metadata comment. The first comment block in the
@@ -227,6 +238,18 @@ fn metadata_from_css(css: &str) -> ThemeMetadata {
                     }
                 }
             }
+            "corner-style" => {
+                metadata.corner_style = match value.to_ascii_lowercase().as_str() {
+                    "rounded" => Some(ThemeCornerStyle::Rounded),
+                    "balanced" => Some(ThemeCornerStyle::Balanced),
+                    "square" => Some(ThemeCornerStyle::Square),
+                    "" | "user" => None,
+                    other => {
+                        eprintln!("Theme metadata: ignoring unrecognized corner-style value '{other}' (expected user, rounded, balanced, or square)");
+                        None
+                    }
+                };
+            }
             _ => {}
         }
     }
@@ -301,6 +324,20 @@ mod tests {
         assert_eq!(metadata.name.as_deref(), Some("Deep Ocean"));
         assert!(metadata.dark);
         assert!(metadata.is_base);
+    }
+
+    #[test]
+    fn corner_style_metadata_and_terminal_preference() {
+        let metadata = metadata_from_css(
+            "/* picasa-theme\n   corner-style: square\n*/\n.window {}",
+        );
+        assert_eq!(metadata.corner_style, Some(ThemeCornerStyle::Square));
+        let inherited = metadata_from_css("/* picasa-theme\n   corner-style: user\n*/");
+        assert_eq!(inherited.corner_style, None);
+
+        let themes = discover(&Path::new(env!("CARGO_MANIFEST_DIR")).join("themes"));
+        let terminal = themes.iter().find(|theme| theme.id == "Terminal").unwrap();
+        assert_eq!(terminal.corner_style, Some(ThemeCornerStyle::Square));
     }
 
     #[test]
@@ -517,6 +554,7 @@ mod tests {
             pins_color_scheme: false,
             is_base: false,
             window_controls: WindowControls::Native,
+            corner_style: None,
             css: String::new(),
         };
         let themes = [theme("superman"), theme("standard"), theme("teal")];

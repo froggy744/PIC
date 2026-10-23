@@ -1,5 +1,9 @@
 {
-    let refresh = gtk::Button::from_icon_name("view-refresh-symbolic");
+    let refresh = {
+        let button = gtk::Button::new();
+        button.set_child(Some(&gtk::Image::from_icon_name("library-refresh-symbolic")));
+        button
+    };
     refresh.set_tooltip_text(Some("Refresh library"));
 
     let sort_button = gtk::MenuButton::new();
@@ -466,9 +470,16 @@
             })
         },
     );
-    let header_tools = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    // Compact toolbar follows the bottom InfoBar's icon/target scale.
+    let header_tools = gtk::Box::new(gtk::Orientation::Horizontal, 2);
+    header_tools.add_css_class("pic-header-tools");
+    header_tools.set_valign(gtk::Align::Center);
+    header_tools.set_margin_end(6);
+    sort_button.add_css_class("pic-header-action");
+    metadata_panel.button.add_css_class("pic-header-action");
+    rating_filter_button.add_css_class("pic-header-action");
+    info.view_toggle.add_css_class("pic-header-action");
     header_tools.append(&sort_button);
-    // Restore the original top-bar rating selector and keep metadata beside Sort.
     header_tools.append(&metadata_panel.button);
     header_tools.append(&rating_filter_button);
     header_tools.append(&info.view_toggle);

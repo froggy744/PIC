@@ -189,16 +189,9 @@ impl MetadataPanel {
         button.update_property(&[gtk::accessible::Property::Label("Filters")]);
         // Icon-only beside Sort and the existing rating button in the top bar.
         let title = gtk::Box::new(gtk::Orientation::Horizontal, 3);
-        // Prefer the standard GTK icon when available. The bundled symbolic
-        // filter icon is a reliable fallback on themes without view-filter.
-        let filter_icon_name = gtk::gdk::Display::default()
-            .map(|display| gtk::IconTheme::for_display(&display).has_icon("view-filter-symbolic"))
-            .unwrap_or(false);
-        title.append(&gtk::Image::from_icon_name(if filter_icon_name {
-            "view-filter-symbolic"
-        } else {
-            "metadata-filter-symbolic"
-        }));
+        title.set_halign(gtk::Align::Center);
+        title.set_valign(gtk::Align::Center);
+        title.append(&gtk::Image::from_icon_name("metadata-filter-symbolic"));
         let indicator = gtk::Label::new(None);
         indicator.add_css_class("caption");
         title.append(&indicator);
@@ -292,7 +285,11 @@ impl MetadataPanel {
         clear.set_tooltip_text(Some("Clear all filters"));
         clear.update_property(&[gtk::accessible::Property::Label("Clear all filters")]);
         summary.append(&clear);
-        let refresh_button = gtk::Button::from_icon_name("view-refresh-symbolic");
+        let refresh_button = {
+        let button = gtk::Button::new();
+        button.set_child(Some(&gtk::Image::from_icon_name("library-refresh-symbolic")));
+        button
+    };
         refresh_button.add_css_class("metadata-filter-utility");
         refresh_button.set_tooltip_text(Some("Refresh library"));
         refresh_button.update_property(&[gtk::accessible::Property::Label("Refresh library")]);

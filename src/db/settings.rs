@@ -1,6 +1,7 @@
 pub const RECENTLY_ADDED_LIMIT_SETTING_KEY: &str = "recently-added-limit";
 pub const DEFAULT_RECENTLY_ADDED_LIMIT: usize = 100;
 const MAX_RECENTLY_ADDED_LIMIT: usize = 1_000_000;
+pub const CORNER_STYLE_SETTING_KEY: &str = "corner-style";
 pub const THUMBNAIL_SQUARE_CORNERS_SETTING_KEY: &str = "thumbnail-square-corners";
 pub const THUMBNAIL_FIT_WHOLE_PHOTO_SETTING_KEY: &str = "thumbnail-fit-whole-photo";
 pub const THUMBNAIL_FILE_NAMES_SETTING_KEY: &str = "thumbnail-file-names";

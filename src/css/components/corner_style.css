@@ -1,0 +1,226 @@
+/* PIC Corner Style (Settings > Interface)
+ *
+ * "balanced" is the professional default: restrained 5–8px radii.
+ * "rounded" deliberately defers to each existing GTK/theme stylesheet.
+ * "square" retains the historical square photo tiles and also flattens
+ * application chrome. The native minimize/maximize/close buttons, custom
+ * album frames and the frameless Photo Wall remain theme/native owned.
+ *
+ * This provider is installed after the currently selected appearance theme
+ * and the shared InfoBar control stylesheet, so changes take effect live.
+ */
+
+/* BALANCED: photo surfaces, cards, panels and section containers. */
+.corner-style-balanced .photo-tile,
+.corner-style-balanced .thumbnail,
+.corner-style-balanced .filter-tile-preview,
+.corner-style-balanced .plain-album-cover,
+.corner-style-balanced .info-preview,
+.corner-style-balanced .edit-preview {
+    border-radius: 6px;
+}
+.corner-style-balanced .metadata-explorer,
+.corner-style-balanced .overlay-list,
+.corner-style-balanced .edit-mode-toolbar .edit-panel-tabs,
+.corner-style-balanced .search-field,
+.corner-style-balanced .albums-standard button.album-card,
+.corner-style-balanced .metadata-filter-panel .metadata-explorer-column,
+.corner-style-balanced .photo-actions-popover > contents {
+    border-radius: 8px;
+}
+.corner-style-balanced .albums-standard .thumbnail,
+.corner-style-balanced .plain-album-cover .thumbnail {
+    border-radius: 5px;
+}
+
+/* Balanced common commands: reserve 6px rounding for small controls. */
+.corner-style-balanced .navigation-sidebar button,
+.corner-style-balanced .navigation-sidebar row,
+.corner-style-balanced .metadata-filter-panel button,
+.corner-style-balanced .metadata-filter-panel entry,
+.corner-style-balanced .edit-mode-toolbar button,
+.corner-style-balanced .edit-panel-pages button,
+.corner-style-balanced .draw-tool-grid button,
+.corner-style-balanced .photo-info-bar button,
+.corner-style-balanced .photo-actions-menu button,
+.corner-style-balanced .pic-header-tools button,
+.corner-style-balanced .albums-standard button.album-card,
+.settings-window.corner-style-balanced button,
+.settings-window.corner-style-balanced entry,
+.settings-window.corner-style-balanced dropdown,
+.corner-style-balanced .metadata-column-actions-popover button,
+.corner-style-balanced .sort-popover-content checkbutton,
+.corner-style-balanced .rating-filter-popover-content checkbutton {
+    border-radius: 6px;
+}
+
+/* GtkMenuButton has an inner button; match it to ordinary icon buttons. */
+.corner-style-balanced .pic-header-tools menubutton > button,
+.corner-style-balanced .photo-info-bar menubutton > button,
+.corner-style-balanced .photo-actions-menu menubutton > button {
+    border-radius: 6px;
+}
+.corner-style-balanced popover > contents {
+    border-radius: 8px;
+}
+
+/* Keep the justified Photo Wall edge-to-edge; only Masonry is rounded. */
+.corner-style-balanced .photo-wall-tile:not(.masonry-tile),
+.corner-style-balanced .photo-wall-tile:not(.masonry-tile) .photo-frame.photo-tile,
+.corner-style-balanced .photo-wall-tile:not(.masonry-tile) .thumbnail {
+    border-radius: 0;
+}
+.corner-style-balanced .masonry-tile .photo-frame.photo-tile {
+    border-radius: 7px;
+}
+.corner-style-balanced .masonry-tile .thumbnail {
+    border-radius: 6px;
+}
+
+/* SQUARE: app chrome uses crisp 2px edges, photographic tiles 0px. */
+.corner-style-square .photo-tile,
+.corner-style-square .thumbnail,
+.corner-style-square .filter-tile-preview,
+.corner-style-square .plain-album-cover,
+.corner-style-square .album-cover,
+.corner-style-square .info-preview,
+.corner-style-square .edit-preview,
+.corner-style-square .masonry-tile .photo-frame.photo-tile,
+.corner-style-square .masonry-tile .thumbnail {
+    border-radius: 0;
+}
+.corner-style-square .metadata-explorer,
+.corner-style-square .overlay-list,
+.corner-style-square .edit-mode-toolbar .edit-panel-tabs,
+.corner-style-square .search-field,
+.corner-style-square .albums-standard button.album-card,
+.corner-style-square .photo-actions-popover > contents,
+.corner-style-square popover > contents {
+    border-radius: 2px;
+}
+.corner-style-square .navigation-sidebar button,
+.corner-style-square .navigation-sidebar row,
+.corner-style-square .metadata-filter-panel button,
+.corner-style-square .metadata-filter-panel entry,
+.corner-style-square .edit-mode-toolbar button,
+.corner-style-square .edit-panel-pages button,
+.corner-style-square .draw-tool-grid button,
+.corner-style-square .photo-info-bar button,
+.corner-style-square .photo-actions-menu button,
+.corner-style-square .pic-header-tools button,
+.corner-style-square .albums-standard button.album-card,
+.settings-window.corner-style-square button,
+.settings-window.corner-style-square entry,
+.settings-window.corner-style-square dropdown,
+.corner-style-square .metadata-column-actions-popover button,
+.corner-style-square .pic-header-tools menubutton > button,
+.corner-style-square .photo-info-bar menubutton > button,
+.corner-style-square .photo-actions-menu menubutton > button {
+    border-radius: 2px;
+}
+
+
+/* Editor overlay controls share the same setting as the rest of PIC.
+ * These classes are on the actual sidebar panel roots (editor.rs), not
+ * painted image overlays. This must never alter photo pixels or exports.
+ *
+ * Includes: overlay/text layer lists, selection rows, anchor grids, FIT/
+ * Reset buttons, offset spinbuttons, the Text editor, font chooser, colour
+ * swatches and Draw tools. Keep menu popovers under the shared rule above.
+ */
+
+/* Rounded: intentionally soft controls, including the controls which had
+ * hard-coded square/4px corners in the original editor CSS. */
+.corner-style-rounded .pic-editor-overlay-controls .overlay-list,
+.corner-style-rounded .pic-editor-text-controls .overlay-list,
+.corner-style-rounded .pic-editor-text-controls .pic-text-editor-surface,
+.corner-style-rounded .pic-editor-text-controls .pic-text-editor-surface textview {
+    border-radius: 12px;
+}
+.corner-style-rounded .pic-editor-overlay-controls .overlay-list row,
+.corner-style-rounded .pic-editor-text-controls .overlay-list row,
+.corner-style-rounded .pic-editor-overlay-controls button,
+.corner-style-rounded .pic-editor-text-controls button,
+.corner-style-rounded .pic-editor-draw-controls button,
+.corner-style-rounded .pic-editor-overlay-controls spinbutton,
+.corner-style-rounded .pic-editor-text-controls spinbutton,
+.corner-style-rounded .pic-editor-overlay-controls spinbutton > text,
+.corner-style-rounded .pic-editor-text-controls spinbutton > text,
+.corner-style-rounded .pic-editor-text-controls dropdown,
+.corner-style-rounded .pic-editor-text-controls dropdown > button {
+    border-radius: 10px;
+}
+.corner-style-rounded .pic-editor-overlay-controls .text-position-grid button,
+.corner-style-rounded .pic-editor-text-controls .text-position-grid button,
+.corner-style-rounded .pic-editor-text-controls button.text-colour-swatch,
+.corner-style-rounded .pic-editor-draw-controls button.text-colour-swatch {
+    border-radius: 8px;
+}
+
+/* Balanced: the same 6px button corners and 8px surfaces used elsewhere. */
+.corner-style-balanced .pic-editor-overlay-controls .overlay-list,
+.corner-style-balanced .pic-editor-text-controls .overlay-list,
+.corner-style-balanced .pic-editor-text-controls .pic-text-editor-surface,
+.corner-style-balanced .pic-editor-text-controls .pic-text-editor-surface textview {
+    border-radius: 8px;
+}
+.corner-style-balanced .pic-editor-overlay-controls .overlay-list row,
+.corner-style-balanced .pic-editor-text-controls .overlay-list row,
+.corner-style-balanced .pic-editor-overlay-controls button,
+.corner-style-balanced .pic-editor-text-controls button,
+.corner-style-balanced .pic-editor-draw-controls button,
+.corner-style-balanced .pic-editor-overlay-controls spinbutton,
+.corner-style-balanced .pic-editor-text-controls spinbutton,
+.corner-style-balanced .pic-editor-overlay-controls spinbutton > text,
+.corner-style-balanced .pic-editor-text-controls spinbutton > text,
+.corner-style-balanced .pic-editor-text-controls dropdown,
+.corner-style-balanced .pic-editor-text-controls dropdown > button {
+    border-radius: 6px;
+}
+.corner-style-balanced .pic-editor-overlay-controls .text-position-grid button,
+.corner-style-balanced .pic-editor-text-controls .text-position-grid button,
+.corner-style-balanced .pic-editor-text-controls button.text-colour-swatch,
+.corner-style-balanced .pic-editor-draw-controls button.text-colour-swatch {
+    border-radius: 5px;
+}
+
+/* Square: the same crisp chrome in Overlays, Text and Draw as the main UI. */
+.corner-style-square .pic-editor-overlay-controls .overlay-list,
+.corner-style-square .pic-editor-text-controls .overlay-list,
+.corner-style-square .pic-editor-text-controls .pic-text-editor-surface,
+.corner-style-square .pic-editor-text-controls .pic-text-editor-surface textview {
+    border-radius: 2px;
+}
+.corner-style-square .pic-editor-overlay-controls .overlay-list row,
+.corner-style-square .pic-editor-text-controls .overlay-list row,
+.corner-style-square .pic-editor-overlay-controls button,
+.corner-style-square .pic-editor-text-controls button,
+.corner-style-square .pic-editor-draw-controls button,
+.corner-style-square .pic-editor-overlay-controls spinbutton,
+.corner-style-square .pic-editor-text-controls spinbutton,
+.corner-style-square .pic-editor-overlay-controls spinbutton > text,
+.corner-style-square .pic-editor-text-controls spinbutton > text,
+.corner-style-square .pic-editor-text-controls dropdown,
+.corner-style-square .pic-editor-text-controls dropdown > button {
+    border-radius: 2px;
+}
+.corner-style-square .pic-editor-overlay-controls .text-position-grid button,
+.corner-style-square .pic-editor-text-controls .text-position-grid button,
+.corner-style-square .pic-editor-text-controls button.text-colour-swatch,
+.corner-style-square .pic-editor-draw-controls button.text-colour-swatch {
+    border-radius: 0;
+}
+
+/* Preserve the intended joined (Bold/Italic, Left/Centre/Right) text
+ * controls instead of rounding their internal seams independently. */
+.corner-style-rounded .pic-editor-text-controls .linked > button,
+.corner-style-balanced .pic-editor-text-controls .linked > button,
+.corner-style-square .pic-editor-text-controls .linked > button {
+    border-radius: 0;
+}
+.corner-style-rounded .pic-editor-text-controls .linked > button:first-child { border-radius: 10px 0 0 10px; }
+.corner-style-rounded .pic-editor-text-controls .linked > button:last-child  { border-radius: 0 10px 10px 0; }
+.corner-style-balanced .pic-editor-text-controls .linked > button:first-child { border-radius: 6px 0 0 6px; }
+.corner-style-balanced .pic-editor-text-controls .linked > button:last-child  { border-radius: 0 6px 6px 0; }
+.corner-style-square .pic-editor-text-controls .linked > button:first-child { border-radius: 2px 0 0 2px; }
+.corner-style-square .pic-editor-text-controls .linked > button:last-child  { border-radius: 0 2px 2px 0; }

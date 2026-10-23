@@ -58,6 +58,7 @@ fn build_text_panel(
 
     add_section_label(&selected_section, "TEXT CONTENT");
     let text_scroll = gtk::ScrolledWindow::new();
+    text_scroll.add_css_class("pic-text-editor-surface");
     text_scroll.set_hexpand(true);
     text_scroll.set_halign(gtk::Align::Fill);
     text_scroll.set_direction(gtk::TextDirection::Ltr);

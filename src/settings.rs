@@ -3,12 +3,125 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use gtk4 as gtk;
+use gtk::glib::prelude::IsA;
 use libadwaita as adw;
 use libadwaita::prelude::*;
 use rusqlite::Connection;
 
 mod database;
 pub(crate) mod menus;
+
+/* A single corner style across photo surfaces and UI chrome. The legacy
+ * square-thumbnail preference is read only for migration, so existing
+ * users keep their deliberate square look until choosing another style. */
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CornerStyle {
+    Rounded,
+    Balanced,
+    Square,
+}
+
+impl From<crate::css::theme_discovery::ThemeCornerStyle> for CornerStyle {
+    fn from(style: crate::css::theme_discovery::ThemeCornerStyle) -> Self {
+        use crate::css::theme_discovery::ThemeCornerStyle;
+        match style {
+            ThemeCornerStyle::Rounded => Self::Rounded,
+            ThemeCornerStyle::Balanced => Self::Balanced,
+            ThemeCornerStyle::Square => Self::Square,
+        }
+    }
+}
+
+impl CornerStyle {
+    pub(crate) fn saved(connection: &Connection) -> Self {
+        match crate::db::setting(connection, crate::db::CORNER_STYLE_SETTING_KEY)
+            .ok()
+            .flatten()
+            .as_deref()
+        {
+            Some("rounded") => Self::Rounded,
+            Some("balanced") => Self::Balanced,
+            Some("square") => Self::Square,
+            _ => {
+                if saved_bool(connection, crate::db::THUMBNAIL_SQUARE_CORNERS_SETTING_KEY)
+                    .unwrap_or(false)
+                {
+                    Self::Square
+                } else {
+                    Self::Balanced
+                }
+            }
+        }
+    }
+
+    fn from_index(index: u32) -> Self {
+        match index {
+            0 => Self::Rounded,
+            2 => Self::Square,
+            _ => Self::Balanced,
+        }
+    }
+
+    fn index(self) -> u32 {
+        match self {
+            Self::Rounded => 0,
+            Self::Balanced => 1,
+            Self::Square => 2,
+        }
+    }
+
+    fn setting_value(self) -> &'static str {
+        match self {
+            Self::Rounded => "rounded",
+            Self::Balanced => "balanced",
+            Self::Square => "square",
+        }
+    }
+
+    pub(crate) fn apply(self, widget: &impl IsA<gtk::Widget>) {
+        for class in [
+            "corner-style-rounded",
+            "corner-style-balanced",
+            "corner-style-square",
+            "square-corners",
+        ] {
+            widget.remove_css_class(class);
+        }
+        let class = match self {
+            Self::Rounded => "corner-style-rounded",
+            Self::Balanced => "corner-style-balanced",
+            Self::Square => "corner-style-square",
+        };
+        widget.add_css_class(class);
+        // Keep the existing Photo Wall/Masonry square-corner rules working.
+        if self == Self::Square {
+            widget.add_css_class("square-corners");
+        }
+    }
+}
+
+#[derive(Default)]
+struct CornerStylePickers {
+    interface: RefCell<Option<gtk::glib::WeakRef<gtk::DropDown>>>,
+    themes: RefCell<Option<gtk::glib::WeakRef<gtk::DropDown>>>,
+    syncing: Cell<bool>,
+}
+
+impl CornerStylePickers {
+    fn refresh(&self, connection: &Connection, engine: &crate::window::theme::ThemeEngine) {
+        self.syncing.set(true);
+        if let Some(dropdown) = self.interface.borrow().as_ref().and_then(|item| item.upgrade()) {
+            dropdown.set_selected(CornerStyle::saved(connection).index());
+        }
+        if let Some(dropdown) = self.themes.borrow().as_ref().and_then(|item| item.upgrade()) {
+            dropdown.set_selected(engine.effective_corner_style().index());
+            let theme_controls_corners = engine.active_corner_style().is_some();
+            dropdown.set_sensitive(!theme_controls_corners);
+            dropdown.set_tooltip_text(theme_controls_corners.then_some("The selected theme sets the corner style"));
+        }
+        self.syncing.set(false);
+    }
+}
 
 /// Destructive library maintenance actions. The settings window only owns the
 /// buttons and their confirmation dialogs; the behaviour lives in the main
@@ -65,6 +178,7 @@ impl SettingsWindow {
         initial_page: Option<&str>,
     ) {
         if let Some(window) = self.window.borrow().upgrade() {
+            theme_engine.effective_corner_style().apply(&window);
             if let (Some(page), Some(stack)) = (initial_page, self.stack.borrow().upgrade()) {
                 stack.set_visible_child_name(page);
             }
@@ -79,6 +193,7 @@ impl SettingsWindow {
 
         let window = adw::Window::new();
         window.add_css_class("settings-window");
+        theme_engine.effective_corner_style().apply(&window);
         window.set_title(Some("Settings"));
         window.set_default_size(860, 620);
         window.set_transient_for(Some(parent));
@@ -109,12 +224,14 @@ impl SettingsWindow {
         stack.set_hhomogeneous(false);
         stack.set_vhomogeneous(false);
         stack.set_transition_type(gtk::StackTransitionType::None);
+        let corner_pickers = Rc::new(CornerStylePickers::default());
 
         stack.add_titled(
-            &interface_page(
+            &interface_page_with_corner_style(
                 connection.clone(),
+                Some((window.clone(), theme_engine.clone(), corner_pickers.clone())),
                 theme_changed.clone(),
-                thumbnail_changed,
+                thumbnail_changed.clone(),
                 zoom_animations_changed,
                 clear_saved_views,
             ),
@@ -124,7 +241,13 @@ impl SettingsWindow {
 
         stack.add_titled(&self.menu_controls.page(connection.clone()), Some("menus"), "Menus");
 
-        let (themes_page, refresh_appearance) = themes_page(theme_engine);
+        let (themes_page, refresh_appearance) = themes_page(
+            theme_engine,
+            connection.clone(),
+            window.clone(),
+            thumbnail_changed,
+            corner_pickers,
+        );
         self.refresh_appearance
             .borrow_mut()
             .replace(refresh_appearance);
@@ -1478,8 +1601,46 @@ fn set_album_view_style(connection: &Connection, style: AlbumViewStyle) -> anyho
 
 fn themes_page(
     theme_engine: Rc<crate::window::theme::ThemeEngine>,
+    connection: Rc<RefCell<Connection>>,
+    settings_window: adw::Window,
+    thumbnail_changed: Rc<dyn Fn()>,
+    corner_pickers: Rc<CornerStylePickers>,
 ) -> (gtk::ScrolledWindow, Rc<dyn Fn()>) {
     let content = page_content("Themes", "Customize theme options.");
+
+    let corner_style = gtk::DropDown::from_strings(&["Rounded", "Balanced", "Square"]);
+    corner_style.set_valign(gtk::Align::Center);
+    *corner_pickers.themes.borrow_mut() = Some(corner_style.downgrade());
+    corner_pickers.refresh(&connection.borrow(), &theme_engine);
+    let refresh_corner_style: Rc<dyn Fn()> = {
+        let engine = theme_engine.clone();
+        let connection = connection.clone();
+        let pickers = corner_pickers.clone();
+        Rc::new(move || pickers.refresh(&connection.borrow(), &engine))
+    };
+    {
+        let connection = connection.clone();
+        let settings_window = settings_window.clone();
+        let engine = theme_engine.clone();
+        let pickers = corner_pickers.clone();
+        corner_style.connect_selected_notify(move |dropdown| {
+            if pickers.syncing.get() {
+                return;
+            }
+            let style = CornerStyle::from_index(dropdown.selected());
+            if let Err(error) = crate::db::set_setting(
+                &connection.borrow(),
+                crate::db::CORNER_STYLE_SETTING_KEY,
+                style.setting_value(),
+            ) {
+                eprintln!("Could not save corner style: {error}");
+                return;
+            }
+            style.apply(&settings_window);
+            pickers.refresh(&connection.borrow(), &engine);
+            thumbnail_changed();
+        });
+    }
 
     // Appearance: one radio row per theme folder found in the themes folder. The
     // section is rebuilt from a fresh scan every time the settings window is
@@ -1490,7 +1651,9 @@ fn themes_page(
     let rebuild_appearance: Rc<dyn Fn()> = {
         let engine = theme_engine.clone();
         let section = appearance_section.clone();
+        let refresh_corner_style = refresh_corner_style.clone();
         Rc::new(move || {
+            refresh_corner_style();
             while let Some(child) = section.first_child() {
                 section.remove(&child);
             }
@@ -1528,7 +1691,9 @@ fn themes_page(
             let has_themes = groups.iter().any(|(_, themes)| !themes.is_empty());
             let list = settings_list();
             list.set_selection_mode(gtk::SelectionMode::Single);
+            list.add_css_class("settings-theme-list");
             let mut group_leader: Option<gtk::CheckButton> = None;
+            let mut theme_rows = Vec::new();
             for (title, themes) in groups {
                 if themes.is_empty() {
                     continue;
@@ -1562,22 +1727,40 @@ fn themes_page(
                     // Set the active state before connecting the handler so a
                     // rebuild never re-applies the already-active theme.
                     check.set_active(theme.id == engine.active_id());
-                    {
-                        let engine = engine.clone();
-                        let theme = theme.clone();
-                        check.connect_toggled(move |button| {
-                            if button.is_active() {
-                                engine.select(&theme);
-                            }
-                        });
-                    }
                     append_row(&list, &theme.name, None, Some(check.upcast_ref()));
                     let row = list
                         .last_child()
                         .and_then(|child| child.downcast::<gtk::ListBoxRow>().ok())
                         .expect("theme row was just appended");
+                    row.add_css_class("theme-option-row");
+                    if check.is_active() {
+                        row.add_css_class("theme-active");
+                    }
                     row.set_activatable(true);
                     row.set_focusable(true);
+                    {
+                        let engine = engine.clone();
+                        let theme = theme.clone();
+                        let row = row.downgrade();
+                        let list = list.downgrade();
+                        let refresh_corner_style = refresh_corner_style.clone();
+                        check.connect_toggled(move |button| {
+                            if let Some(row) = row.upgrade() {
+                                if button.is_active() {
+                                    row.add_css_class("theme-active");
+                                    if let Some(list) = list.upgrade() {
+                                        list.select_row(Some(&row));
+                                    }
+                                } else {
+                                    row.remove_css_class("theme-active");
+                                }
+                            }
+                            if button.is_active() {
+                                engine.select(&theme);
+                                refresh_corner_style();
+                            }
+                        });
+                    }
                     let row_check = check.clone();
                     row.connect_activate(move |_| row_check.set_active(true));
 
@@ -1596,8 +1779,17 @@ fn themes_page(
                         }
                     });
                     row.add_controller(keys);
+                    theme_rows.push((row, check));
                 }
             }
+            list.connect_row_selected(move |_, selected| {
+                if let Some((_, check)) = theme_rows
+                    .iter()
+                    .find(|(row, _)| Some(row) == selected)
+                {
+                    check.set_active(true);
+                }
+            });
             append_empty_state(&list, "No themes found in the themes folder", !has_themes);
 
             section.append(&list);
@@ -1605,9 +1797,19 @@ fn themes_page(
     };
     rebuild_appearance();
 
+    let corner_list = settings_list();
+    append_row(
+        &corner_list,
+        "Corner style",
+        Some("Choose the shape for themes without a corner preference. Terminal uses Square automatically."),
+        Some(corner_style.upcast_ref()),
+    );
+    content.append(&corner_list);
+
     (scroll_page(content), rebuild_appearance)
 }
 
+#[cfg(test)]
 fn interface_page(
     connection: Rc<RefCell<Connection>>,
     theme_changed: Rc<dyn Fn()>,
@@ -1615,10 +1817,70 @@ fn interface_page(
     zoom_animations_changed: Rc<dyn Fn()>,
     clear_saved_views: Rc<dyn Fn()>,
 ) -> gtk::ScrolledWindow {
-    let content = page_content("Interface", "Customize thumbnail appearance and interface effects.");
+    interface_page_with_corner_style(
+        connection,
+        None,
+        theme_changed,
+        thumbnail_changed,
+        zoom_animations_changed,
+        clear_saved_views,
+    )
+}
 
-    // Thumbnail appearance toggles apply live through thumbnail_changed and
-    // are re-read at startup.
+fn interface_page_with_corner_style(
+    connection: Rc<RefCell<Connection>>,
+    corner_context: Option<(
+        adw::Window,
+        Rc<crate::window::theme::ThemeEngine>,
+        Rc<CornerStylePickers>,
+    )>,
+    theme_changed: Rc<dyn Fn()>,
+    thumbnail_changed: Rc<dyn Fn()>,
+    zoom_animations_changed: Rc<dyn Fn()>,
+    clear_saved_views: Rc<dyn Fn()>,
+) -> gtk::ScrolledWindow {
+    let content = page_content("Interface", "Customize thumbnails and interface effects.");
+
+    if let Some((settings_window, theme_engine, corner_pickers)) = corner_context {
+        let corner_style = gtk::DropDown::from_strings(&["Rounded", "Balanced", "Square"]);
+        corner_style.set_valign(gtk::Align::Center);
+        *corner_pickers.interface.borrow_mut() = Some(corner_style.downgrade());
+        corner_pickers.refresh(&connection.borrow(), &theme_engine);
+        {
+            let connection = connection.clone();
+            let settings_window = settings_window.clone();
+            let theme_engine = theme_engine.clone();
+            let pickers = corner_pickers.clone();
+            let thumbnail_changed = thumbnail_changed.clone();
+            corner_style.connect_selected_notify(move |dropdown| {
+                if pickers.syncing.get() {
+                    return;
+                }
+                let style = CornerStyle::from_index(dropdown.selected());
+                if let Err(error) = crate::db::set_setting(
+                    &connection.borrow(),
+                    crate::db::CORNER_STYLE_SETTING_KEY,
+                    style.setting_value(),
+                ) {
+                    eprintln!("Could not save corner style: {error}");
+                    return;
+                }
+                theme_engine.effective_corner_style().apply(&settings_window);
+                pickers.refresh(&connection.borrow(), &theme_engine);
+                thumbnail_changed();
+            });
+        }
+        let corner_list = settings_list();
+        append_row(
+            &corner_list,
+            "Corner style",
+            Some("Default shape for themes without a corner preference."),
+            Some(corner_style.upcast_ref()),
+        );
+        content.append(&corner_list);
+    }
+
+    // Thumbnail appearance toggles apply live and are re-read at startup.
     let thumbnail_heading = gtk::Label::new(Some("Thumbnails"));
     thumbnail_heading.set_halign(gtk::Align::Start);
     thumbnail_heading.set_hexpand(true);
@@ -1627,36 +1889,6 @@ fn interface_page(
     content.append(&thumbnail_heading);
 
     let thumbnail_list = settings_list();
-    let square_corners = gtk::Switch::new();
-    square_corners.set_valign(gtk::Align::Center);
-    square_corners.set_active(
-        saved_bool(&connection.borrow(), crate::db::THUMBNAIL_SQUARE_CORNERS_SETTING_KEY)
-            .unwrap_or(false),
-    );
-    {
-        let connection = connection.clone();
-        let thumbnail_changed = thumbnail_changed.clone();
-        square_corners.connect_active_notify(move |toggle| {
-            let state = toggle.is_active();
-            crate::window::debug_log(&format!("SETTINGS: square corners switch -> {state}"));
-            if let Err(error) = crate::db::set_setting(
-                &connection.borrow(),
-                crate::db::THUMBNAIL_SQUARE_CORNERS_SETTING_KEY,
-                &state.to_string(),
-            ) {
-                eprintln!("Could not save square thumbnail corners: {error}");
-                return;
-            }
-            thumbnail_changed();
-        });
-    }
-    append_row(
-        &thumbnail_list,
-        "Square thumbnail corners",
-        Some("Show thumbnails without rounded corners."),
-        Some(square_corners.upcast_ref()),
-    );
-
     let fit_whole_photo = gtk::Switch::new();
     fit_whole_photo.set_valign(gtk::Align::Center);
     fit_whole_photo.set_active(

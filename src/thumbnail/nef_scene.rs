@@ -291,8 +291,10 @@ mod tests {
 
     #[test]
     fn exposure_is_bounded_and_independent_of_camera_jpeg() {
-        let dark = vec![[0.008; 3]; 256];
-        let bright = vec![[0.9; 3]; 256];
+        // With a 64-pixel sampling stride we need at least 2048 pixels
+        // to hit the 32-sample robustness threshold.
+        let dark = vec![[0.008; 3]; 4096];
+        let bright = vec![[0.9; 3]; 4096];
         assert_eq!(scene_exposure_gain(&dark), 2.7);
         assert_eq!(scene_exposure_gain(&bright), 0.65);
         assert_eq!(scene_exposure_gain(&[]), 1.0);

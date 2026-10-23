@@ -1090,9 +1090,18 @@ fn auto_brightness_colour_safe_gain(pixel: &[u8], requested_gain: f32) -> f32 {
     // Very saturated colours get just 10% of the lift, not the aggressive
     // neutral-shadow correction.
     let colour_weight = 1.0 - 0.9 * smoothstep(0.45, 0.85, chroma);
-    let lifted = 1.0 + (requested_gain - 1.0) * colour_weight;
-    // Preserve existing clipped source channels instead of darkening them.
-    lifted.min((253.0 / max).max(1.0))
+    let desired_lift = (requested_gain - 1.0) * colour_weight;
+    let headroom = (253.0 / max - 1.0).max(0.0);
+    // A hard min() creates a clipping plateau. Approach that limit
+    // continuously as the brightest RGB channel approaches white,
+    // while preserving ordinary neutral-shadow lift.
+    let hard_safe_lift = desired_lift.min(headroom);
+    if headroom <= 0.0 {
+        return 1.0;
+    }
+    let shoulder_lift = headroom * (1.0 - (-desired_lift / headroom).exp());
+    let bright_weight = smoothstep(160.0, 224.0, max);
+    1.0 + hard_safe_lift * (1.0 - bright_weight) + shoulder_lift * bright_weight
 }
 
 fn rotate_autocrop(source: &RgbaImage, angle: f32) -> RgbaImage {
@@ -1760,6 +1769,25 @@ mod tests {
         assert!(shadow[1] > 46,
             "neutral shadow recovery was disabled: {shadow:?}");
         assert_eq!(red[3], 255);
+    }
+
+    #[test]
+    fn auto_brightness_highlight_gain_avoids_hard_clipping_plateaus() {
+        // Adjacent red garment pixels must not acquire discontinuous
+        // 255-valued highlights when Auto Brightness lifts the shadows.
+        let mut prior = 0u8;
+        for level in 200u8..=255 {
+            let gain = auto_brightness_colour_safe_gain(&[level, 10, 20, 255], 2.1);
+            let adjusted = (level as f32 * gain).round() as u8;
+            assert!(adjusted >= prior,
+                "red highlight order reversed: {level} became {adjusted}");
+            assert!(adjusted <= 253 || level > 253,
+                "introduced clipped red channel: {level} became {adjusted}");
+            prior = adjusted;
+        }
+        let near_white = auto_brightness_colour_safe_gain(&[245, 10, 20, 255], 2.0);
+        assert!(near_white < 253.0 / 245.0,
+            "soft headroom must not saturate a bright red pixel");
     }
 
     #[test]

@@ -83,7 +83,8 @@ Unknown keys are ignored, so adding `version: 1` today is forward-compatible.
   panel (Mosaic / Smart / Grid).
 - Check Grid, Photo Wall and Masonry, including hover and multi-selection.
   Photo Wall stays borderless with square corners; Masonry is borderless and
-  follows the thumbnail corner setting. Their inset highlights use your accent.
+  follows Settings → Interface → Corner style (Rounded / Balanced / Square).
+  Their inset highlights use your accent.
 - Check plain albums, framed albums and bookshelf views, plus context-menu
   submenus, disabled actions and inactive/active favourite icons.
 - Invalid metadata values are dropped with a warning on the console; the

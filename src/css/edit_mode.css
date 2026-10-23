@@ -184,3 +184,44 @@
 .edit-mode-toolbar .edit-toolbar-actions button.edit-toolbar-done:disabled {
   opacity: 0.42;
 }
+
+
+/* V1.01: clearer editor hierarchy, more generous targets, and consistent states. */
+.edit-mode-toolbar { border-bottom-color: alpha(@theme_fg_color, 0.16); }
+.edit-mode-toolbar .edit-panel-tabs {
+  padding: 4px;
+  border: 1px solid alpha(@theme_fg_color, 0.09);
+  border-radius: 12px;
+}
+.edit-mode-toolbar .edit-panel-tabs > button.flat {
+  min-height: 40px;
+  padding: 0 17px;
+  border-radius: 8px;
+}
+.edit-mode-toolbar .edit-panel-tabs > button.flat:first-child,
+.edit-mode-toolbar .edit-panel-tabs > button.flat:last-child { border-radius: 8px; }
+.edit-mode-toolbar .edit-panel-tabs > button.flat:checked {
+  background-color: alpha(@accent_bg_color, 0.23);
+  box-shadow: inset 0 0 0 1px alpha(@accent_bg_color, 0.26);
+}
+.edit-mode-toolbar .edit-toolbar-actions button.edit-toolbar-icon-button {
+  min-width: 40px;
+  min-height: 40px;
+  border-radius: 10px;
+}
+.edit-mode-toolbar .edit-toolbar-actions button.edit-toolbar-done {
+  min-height: 40px;
+  padding: 0 22px;
+}
+.edit-mode-toolbar .edit-toolbar-actions button.edit-toolbar-icon-button:focus-visible,
+.edit-mode-toolbar .edit-toolbar-actions button.edit-toolbar-done:focus-visible {
+  outline: 2px solid @accent_bg_color;
+  outline-offset: 2px;
+}
+.draw-tool-grid button.draw-tool-button {
+  min-width: 42px;
+  min-height: 42px;
+  border-radius: 11px;
+}
+.draw-adjustment-row { min-height: 38px; margin-bottom: 6px; }
+.draw-adjustment-value { font-weight: 600; }

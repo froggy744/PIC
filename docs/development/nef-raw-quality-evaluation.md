@@ -1,6 +1,6 @@
 # PIC Nikon Z 5 RAW quality baseline — independent implementation
 
-**Branch:** \`feature/nef-raw-quality-harness\` (based on \`release/v1.0.1-rc1\`).
+**Branch:** `feature/nef-raw-quality-harness` (based on `release/v1.0.1-rc1`).
 **Status:** Diagnostic only. No release renderer replacement, no new dependencies.
 
 ## No copied RAW engines or code
@@ -12,16 +12,16 @@ RawTherapee, darktable, or LibRaw code is incorporated. The diagnostic is
 original PIC code using libraries **already present** in PIC.
 
 PIC itself is MIT licensed. Existing third-party dependencies have their own
-licences: notably \`rawler 0.8\` declares LGPL-2.1. An audit of existing runtime
+licences: notably `rawler 0.8` declares LGPL-2.1. An audit of existing runtime
 and distribution obligations is a distinct, necessary packaging task.
 "Free to use" does not mean "without licence obligations"; do not add or vendor
 third-party code without checking the complete dependency tree.
 
 ## Why this experiment is different
 
-The old \`src/thumbnail/viewer.rs\` attempted to estimate a per-photo colour
+The old `src/thumbnail/viewer.rs` attempted to estimate a per-photo colour
 transform by regressing the native sensor-rendered pixels against Nikon's
-embedded JPEG. Real photographs \`DSC_4814.NEF\` and \`DSC_8104.NEF\` proved that
+embedded JPEG. Real photographs `DSC_4814.NEF` and `DSC_8104.NEF` proved that
 this can produce severe colour casts. Making another such transform would
 not fix the root cause.
 
@@ -45,26 +45,28 @@ cropping and spatial alignment. They cannot replace visual inspection.
 From an isolated checkout/worktree of this branch, with the Nikon RAW file
 on the machine:
 
-\`\`\`sh
+```sh
 mkdir -p /tmp/pic-nef-evaluation
 PIC_TEST_RAW="/absolute/path/to/DSC_4814.NEF" \
 PIC_TEST_OUTPUT_DIR="/tmp/pic-nef-evaluation" \
 cargo test --locked raw_quality::tests::real_nef_reference_report \
   -- --ignored --nocapture --test-threads=1
-\`\`\`
+```
 
 Output:
-- \`/tmp/pic-nef-evaluation/camera-embedded.jpg\` — Nikon's JPEG bytes
-- \`/tmp/pic-nef-evaluation/rawler-sensor16.tiff\` — rawler sensor-derived, developed RGB16 (gamma-encoded; not scene-linear)
-- \`PIC_RAW_QA\` diagnostic residuals, neutral and warm candidates, dimensions, development duration
+- `/tmp/pic-nef-evaluation/camera-embedded.jpg` — Nikon's JPEG bytes
+- `/tmp/pic-nef-evaluation/rawler-sensor16.tiff` — rawler sensor-derived, developed RGB16 (gamma-encoded; not scene-linear)
+- `PIC_RAW_QA` diagnostic residuals, neutral and warm candidates, dimensions, development duration
+- `PIC_RAW_QA_LIGHT`: linear-sRGB luminance ratios and normalized RGB channel-share differences, to separate brightness from colour casts (diagnostic only)
+- `nikon-preview.png` and `sensor-preview.png`: matching 1400px PNGs for direct visual inspection without sharing large TIFF files
 
 Never commit real portraits, NEFs, or their reports to the public repository.
 
 ## Opt-in normal GUI sensor-only comparison
 
-\`\`\`sh
+```sh
 PIC_NEF_EVALUATION_SENSOR_ONLY=1 PICASA_TRACE=1 cargo run
-\`\`\`
+```
 
 This disables the old JPEG colour fit for native sensor development only.
 It is strictly experimental; **the default remains untouched**, FIT still
@@ -87,5 +89,5 @@ colour errors, including the effects of camera matrices and white balance.
   become the release renderer.
 
 **Release/merge gate:** visible skin and neutral fidelity on at least
-\`DSC_4814.NEF\`, \`DSC_8104.NEF\`, and different ISO/lighting samples, stable
+`DSC_4814.NEF`, `DSC_8104.NEF`, and different ISO/lighting samples, stable
 FIT/1:1/Edit/Export behaviour, speed regression, CI and a licence audit.

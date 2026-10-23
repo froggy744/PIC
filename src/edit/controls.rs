@@ -148,9 +148,7 @@ impl Controls {
         self.auto_brightness.set_active(recipe.auto_brightness);
         self.auto_enhance.set_active(recipe.auto_enhance);
         self.filter_amount.set_value((recipe.filter_amount * 100.0) as f64);
-        self.filter_amount.set_sensitive(
-            recipe.filter != FilterPreset::None || recipe.black_white || recipe.sepia
-        );
+        self.filter_amount.set_sensitive(recipe.has_adjustable_effect());
         self.black_white.set_active(recipe.black_white);
         self.sepia.set_active(recipe.sepia);
         for (preset, button) in &self.filters {
@@ -550,18 +548,21 @@ fn configure_scale_scroll(scale: &gtk::Scale, tools_scroll: &gtk::ScrolledWindow
 
 fn connect_toggle(
     button: &gtk::ToggleButton,
+    effect_amount: &gtk::Scale,
     session: Rc<RefCell<EditSession>>,
     syncing: Rc<Cell<bool>>,
     queue_preview: Rc<dyn Fn()>,
     update_history: Rc<dyn Fn()>,
     assign: impl Fn(&mut EditRecipe, bool) + 'static,
 ) {
+    let effect_amount = effect_amount.clone();
     button.connect_toggled(move |button| {
         if syncing.get() {
             return;
         }
         let value = button.is_active();
         session.borrow_mut().mutate(|recipe| assign(recipe, value));
+        effect_amount.set_sensitive(session.borrow().recipe.has_adjustable_effect());
         update_history();
         queue_preview();
     });

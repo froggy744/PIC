@@ -162,6 +162,38 @@ fn apply_camera_calibration(camera: [f32; 3], wb: [f32; 4], matrix: &CameraMatri
     })
 }
 
+/// Sensor highlights saturate *before* camera white balance. Applying the
+/// recorded WB gains to a fully clipped neutral patch can make the red and
+/// blue channels much brighter than green (a false magenta window), although
+/// the underlying sensor channels all report white. Reconstruct only those
+/// nearly white sensor highlights as neutral, leaving skin, saturated red
+/// clothing, ordinary whites and all unclipped colours unmodified.
+///
+/// No embedded JPEG, colour fitting, external profile or additional library.
+fn recover_neutral_sensor_highlight(
+    camera: [f32; 3],
+    calibrated: [f32; 3],
+) -> [f32; 3] {
+    if camera.iter().chain(calibrated.iter()).any(|v| !v.is_finite()) {
+        return calibrated;
+    }
+    let low = camera.iter().copied().fold(f32::INFINITY, f32::min);
+    let high = camera.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+    // Reconstruct *only* a highlight in which all three sensor channels
+    // have approached saturation. Intense red fabric has a low G/B sensor
+    // channel and must never be neutralised.
+    if low < 0.85 || high < 0.98 {
+        return calibrated;
+    }
+    let smooth = |start: f32, end: f32, value: f32| {
+        let x = ((value - start) / (end - start)).clamp(0.0, 1.0);
+        x * x * (3.0 - 2.0 * x)
+    };
+    let neutral_weight = smooth(0.85, 0.99, low) * smooth(0.98, 1.0, high);
+    let neutral = luminance(calibrated);
+    calibrated.map(|v| v + (neutral - v) * neutral_weight)
+}
+
 fn develop_scene_linear(raw: &rawler::RawImage) -> Result<rawler::pixarray::Color2D<f32, 3>> {
     // Ask the existing RAW decoder only for its standardized, scaled sensor
     // demosaic and geometric cropping. PIC owns this candidate's camera
@@ -195,7 +227,9 @@ fn develop_scene_linear(raw: &rawler::RawImage) -> Result<rawler::pixarray::Colo
         [1.0; 4]
     };
     camera.data.par_iter_mut().for_each(|pixel| {
-        *pixel = apply_camera_calibration(*pixel, wb, &scene_matrix);
+        let sensor = *pixel;
+        let developed = apply_camera_calibration(sensor, wb, &scene_matrix);
+        *pixel = recover_neutral_sensor_highlight(sensor, developed);
     });
     Ok(camera)
 }
@@ -378,6 +412,47 @@ mod tests {
         }
         let white = apply_camera_calibration([1.0; 3], [1.0; 4], &m);
         assert!(white.iter().all(|v| (*v - 1.0).abs() < 0.0001));
+    }
+
+    #[test]
+    fn clipped_neutral_sensor_white_does_not_turn_magenta_after_wb() {
+        // A blown-out neutral window in a D300S-era Bayer NEF may have all
+        // three sensor channels clipped before the camera's WB multipliers.
+        let sensor = [1.0, 1.0, 1.0];
+        let wb = [1.8, 1.0, 1.55, f32::NAN];
+        let identity = [
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+        ];
+        let calibrated = apply_camera_calibration(sensor, wb, &identity);
+        assert!(calibrated[0] > calibrated[1] && calibrated[2] > calibrated[1]);
+        let recovered = recover_neutral_sensor_highlight(sensor, calibrated);
+        assert!((recovered[0] - recovered[1]).abs() < 1e-5);
+        assert!((recovered[2] - recovered[1]).abs() < 1e-5);
+        assert!((luminance(recovered) - luminance(calibrated)).abs() < 1e-5,
+            "neutral recovery must retain the highlight luminance");
+    }
+
+    #[test]
+    fn clipped_highlight_recovery_does_not_change_skin_or_vivid_red() {
+        for (sensor, linear) in [
+            ([0.40, 0.29, 0.24], [0.48, 0.32, 0.27]), // Skin
+            ([1.0, 0.12, 0.08], [1.9, 0.15, 0.10]),  // Bright red clothing
+            ([0.90, 0.86, 0.84], [1.45, 0.92, 0.91]), // Bright but not clipped
+        ] {
+            assert_eq!(recover_neutral_sensor_highlight(sensor, linear), linear);
+        }
+    }
+
+    #[test]
+    fn partially_clipped_highlights_have_bounded_smooth_recovery() {
+        let scene = [1.7, 1.0, 1.6];
+        let at_edge = recover_neutral_sensor_highlight([0.981, 0.9, 0.99], scene);
+        assert!(at_edge[0] <= scene[0] && at_edge[0] > 1.0);
+        assert!(at_edge[1] >= scene[1] && at_edge[1] < 1.7);
+        assert!((luminance(at_edge) - luminance(scene)).abs() < 1e-5);
+        assert_eq!(recover_neutral_sensor_highlight([f32::NAN, 1.0, 1.0], scene), scene);
     }
 
     #[test]

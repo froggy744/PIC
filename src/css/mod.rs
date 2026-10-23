@@ -135,6 +135,17 @@ pub(crate) fn install_foundation(display: &gtk::gdk::Display) {
         gtk::STYLE_PROVIDER_PRIORITY_APPLICATION + 12,
     );
 
+    // User-selectable corner geometry is intentionally more specific than
+    // per-theme radii (+1/+3) and shared toolbar hover geometry (+12).
+    // It is scoped to windows carrying a corner-style-* class.
+    let corner_style = gtk::CssProvider::new();
+    corner_style.load_from_string(include_str!("components/corner_style.css"));
+    gtk::style_context_add_provider_for_display(
+        display,
+        &corner_style,
+        gtk::STYLE_PROVIDER_PRIORITY_APPLICATION + 13,
+    );
+
     // Always loaded; rules only match while the main window carries the
     // "square-corners" class (Settings > Library). Priority sits above the
     // theme (+1) and album (+3) providers so border-radius: 0 wins.

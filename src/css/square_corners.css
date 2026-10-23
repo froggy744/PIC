@@ -1,7 +1,6 @@
-/* Optional flat look (Settings > Library): square corners for every photo
-   surface. Loaded as its own provider above the theme (+1) and album (+3)
-   providers so the zero radius always wins while the "square-corners" class
-   is present on the main window. */
+/* Legacy square-tile geometry, now driven by Settings > Interface >
+   Corner style = Square. The shared corner-style provider also handles
+   controls and panels; retain these selectors for tiles and existing tests. */
 .square-corners .photo-tile,
 .square-corners .thumbnail,
 .square-corners .info-preview,

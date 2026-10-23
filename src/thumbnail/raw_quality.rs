@@ -1,0 +1,552 @@
+//! Independent PIC RAW quality diagnostics.
+//!
+//! This is PIC-authored evaluation code, not another JPEG-to-RAW colour
+//! transform. It never changes the on-screen photograph or saved recipe.
+//! A genuine Nikon file stays local and is never included in the repository.
+//!
+//! To run:
+//! PIC_TEST_RAW="/path/to/DSC_4814.NEF" \
+//! PIC_TEST_OUTPUT_DIR="/tmp/pic-nef-evaluation" \
+//! cargo test --locked raw_quality::tests::real_nef_reference_report \
+//!   -- --ignored --nocapture --test-threads=1
+//!
+//! The diagnostic outputs two *different* pictures:
+//!   camera-embedded.jpg: Nikon's camera-developed JPEG, unchanged bytes
+//!   rawler-sensor16.tiff: rawler's 16-bit developed sensor data
+//!
+//! Comparing these tells us where colour rendering differs. It is NOT a
+//! photographic-quality pass/fail gate and it DOES NOT estimate a colour
+//! transform from one photograph.
+
+#[cfg(test)]
+mod tests {
+    use super::super::*;
+    use image::RgbImage;
+    use std::path::Path;
+    use std::time::Instant;
+
+    // Reference and sensor RGB values are display encoded. Decode to linear
+    // sRGB for luminance and relative channel-share measurements. The latter
+    // separates brightness mismatch from white balance / hue mismatch, but
+    // is only a diagnostic (not perceptual Delta E or camera calibration).
+    fn srgb_linear(value: u8) -> f64 {
+        let x = f64::from(value) / 255.0;
+        if x <= 0.04045 {
+            x / 12.92
+        } else {
+            ((x + 0.055) / 1.055).powf(2.4)
+        }
+    }
+
+    #[derive(Default, Debug)]
+    struct GroupColor {
+        count: u64,
+        linear_luma_sensor: f64,
+        linear_luma_camera: f64,
+        chroma_delta: [f64; 3],
+    }
+
+    impl GroupColor {
+        fn record(&mut self, sensor: [u8; 3], camera: [u8; 3]) {
+            let s = sensor.map(srgb_linear);
+            let c = camera.map(srgb_linear);
+            let ssum: f64 = s.iter().sum();
+            let csum: f64 = c.iter().sum();
+            // Near-black or clipped material cannot determine relative
+            // colour accurately. Do not let those pixels dominate hue stats.
+            if ssum < 0.025 || csum < 0.025
+                || sensor.iter().any(|&v| v >= 252)
+                || camera.iter().any(|&v| v >= 252) {
+                return;
+            }
+            self.count += 1;
+            self.linear_luma_sensor += 0.2126 * s[0] + 0.7152 * s[1] + 0.0722 * s[2];
+            self.linear_luma_camera += 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+            for i in 0..3 {
+                self.chroma_delta[i] += s[i] / ssum - c[i] / csum;
+            }
+        }
+
+        fn print(&self, label: &str) {
+            if self.count == 0 {
+                eprintln!("PIC_RAW_QA_LIGHT group={label} valid=0");
+                return;
+            }
+            let n = self.count as f64;
+            eprintln!(
+                "PIC_RAW_QA_LIGHT group={} valid={} mean_linear_luma_sensor={:.4} camera={:.4} \
+                 relative_luma_ratio={:.3} chroma_fraction_delta_RGB={:+.4},{:+.4},{:+.4}",
+                label,
+                self.count,
+                self.linear_luma_sensor / n,
+                self.linear_luma_camera / n,
+                self.linear_luma_sensor / self.linear_luma_camera.max(f64::EPSILON),
+                self.chroma_delta[0] / n,
+                self.chroma_delta[1] / n,
+                self.chroma_delta[2] / n,
+            );
+        }
+    }
+
+    #[derive(Default, Debug)]
+    struct Report {
+        samples: u64,
+        error: [u64; 3],
+        signed: [i64; 3],
+        neutral_samples: u64,
+        neutral_signed: [i64; 3],
+        skin_candidate_samples: u64,
+        skin_signed: [i64; 3],
+        scene_color: GroupColor,
+        neutral_color: GroupColor,
+        warm_color: GroupColor,
+    }
+
+    impl Report {
+        fn record(&mut self, actual: [u8; 3], reference: [u8; 3]) {
+            self.samples += 1;
+            self.scene_color.record(actual, reference);
+            for i in 0..3 {
+                self.error[i] += u64::from(actual[i].abs_diff(reference[i]));
+                self.signed[i] += i64::from(actual[i]) - i64::from(reference[i]);
+            }
+            let (max, min) = (
+                *reference.iter().max().unwrap_or(&0),
+                *reference.iter().min().unwrap_or(&0),
+            );
+            // White/gray objects are a useful diagnostic for channel casts.
+            // This is a heuristic only: clipped whites and backgrounds do
+            // not constitute a measured colour calibration target.
+            if max.saturating_sub(min) <= 20 && min >= 48 && max <= 242 {
+                self.neutral_color.record(actual, reference);
+                self.neutral_samples += 1;
+                for i in 0..3 {
+                    self.neutral_signed[i] +=
+                        i64::from(actual[i]) - i64::from(reference[i]);
+                }
+            }
+            // Warm diffuse colour candidates, NOT a face/skin detector.
+            // Their errors are informational and cannot establish fidelity.
+            if reference[0] > reference[1].saturating_add(12)
+                && reference[1] > reference[2].saturating_add(8)
+                && reference[0] > 75
+                && reference[0] < 240
+            {
+                self.warm_color.record(actual, reference);
+                self.skin_candidate_samples += 1;
+                for i in 0..3 {
+                    self.skin_signed[i] +=
+                        i64::from(actual[i]) - i64::from(reference[i]);
+                }
+            }
+        }
+
+        fn print(&self) {
+            let denom = self.samples.max(1) as f64;
+            eprintln!(
+                "PIC_RAW_QA sampled={} mean_absolute_RGB={:.2},{:.2},{:.2} mean_signed_RGB={:+.2},{:+.2},{:+.2}",
+                self.samples,
+                self.error[0] as f64 / denom,
+                self.error[1] as f64 / denom,
+                self.error[2] as f64 / denom,
+                self.signed[0] as f64 / denom,
+                self.signed[1] as f64 / denom,
+                self.signed[2] as f64 / denom,
+            );
+            for (label, count, signed) in [
+                ("camera_neutral_candidates", self.neutral_samples, self.neutral_signed),
+                ("camera_warm_candidates", self.skin_candidate_samples, self.skin_signed),
+            ] {
+                if count == 0 {
+                    eprintln!("PIC_RAW_QA group={label} count=0 (not sampled)");
+                    continue;
+                }
+                let d = count as f64;
+                eprintln!(
+                    "PIC_RAW_QA group={} count={} mean_signed_RGB={:+.2},{:+.2},{:+.2}",
+                    label, count,
+                    signed[0] as f64 / d,
+                    signed[1] as f64 / d,
+                    signed[2] as f64 / d,
+                );
+            }
+            self.scene_color.print("all_nonclipped");
+            self.neutral_color.print("camera_neutral_candidates");
+            self.warm_color.print("camera_warm_candidates");
+        }
+    }
+
+    fn report_pair(actual: &RgbImage, reference: &RgbImage) -> Option<Report> {
+        if actual.dimensions() != reference.dimensions() {
+            return None;
+        }
+        let mut report = Report::default();
+        for y in (0..actual.height()).step_by(16) {
+            for x in (0..actual.width()).step_by(16) {
+                report.record(actual.get_pixel(x, y).0, reference.get_pixel(x, y).0);
+            }
+        }
+        Some(report)
+    }
+
+    #[test]
+    fn diagnostic_reports_channel_cast_without_modifying_pixels() {
+        let camera = RgbImage::from_pixel(32, 32, image::Rgb([140, 140, 140]));
+        let raw = RgbImage::from_pixel(32, 32, image::Rgb([115, 170, 125]));
+        let report = report_pair(&raw, &camera).expect("equal sizes");
+        assert_eq!(report.samples, 4);
+        assert_eq!(report.signed, [-100, 120, -60]);
+        assert_eq!(report.neutral_samples, 4);
+        assert_eq!(camera.get_pixel(0, 0).0, [140, 140, 140]);
+    }
+
+    #[test]
+    fn colour_statistics_separate_brightness_from_cast() {
+        // Same channel ratios, different brightness: luminance changes,
+        // relative chroma stays close (allow sRGB transfer curvature).
+        let reference = [120, 120, 120];
+        let dark = [80, 80, 80];
+        let green = [80, 150, 80];
+        let mut brightness = GroupColor::default();
+        brightness.record(dark, reference);
+        assert_eq!(brightness.count, 1);
+        assert!(brightness.linear_luma_sensor < brightness.linear_luma_camera);
+        assert!(brightness.chroma_delta.iter().all(|v| v.abs() < 1e-6));
+
+        let mut colour = GroupColor::default();
+        colour.record(green, reference);
+        assert_eq!(colour.count, 1);
+        assert!(colour.chroma_delta[1] > 0.20, "strong green cast must be measurable");
+        assert!(colour.chroma_delta[0] < 0.0);
+    }
+
+    #[test]
+    fn brightness_only_neutral_gain_cannot_recolour_warm_samples() {
+        let camera = RgbImage::from_pixel(128, 128, image::Rgb([140, 140, 140]));
+        let sensor = RgbImage::from_pixel(128, 128, image::Rgb([90, 90, 90]));
+        let gain = relative_exposure_from_neutrals(&sensor, &camera)
+            .expect("enough neutral samples");
+        assert!(gain > 2.0 && gain < 3.5);
+        let adjusted = exposed_for_diagnostic([90, 90, 90], gain);
+        assert!(adjusted.iter().all(|&value| value.abs_diff(140) <= 1));
+
+        let warm = [90u8, 60u8, 40u8];
+        let corrected = exposed_for_diagnostic(warm, gain);
+        let linear = warm.map(srgb_linear);
+        let boosted = corrected.map(srgb_linear);
+        // An exposure-only adjustment preserves channel ratios away from
+        // clipping, so it cannot cure a large red/green hue discrepancy.
+        let before = linear[0] / linear[1];
+        let after = boosted[0] / boosted[1];
+        assert!((before - after).abs() < 0.04);
+    }
+
+    #[test]
+    fn diagnostic_rejects_misaligned_rasters() {
+        let a = RgbImage::new(32, 32);
+        let b = RgbImage::new(32, 33);
+        assert!(report_pair(&a, &b).is_none());
+    }
+
+    fn describe_camera_metadata(raw: &rawler::RawImage) {
+        use rawler::imgop::xyz::Illuminant;
+        // Report exactly the WB coefficients and the preferred illuminant
+        // matrix used by PIC's current RAW developer. These are Nikon
+        // metadata/decoder results, never coefficients fitted to the JPEG.
+        let selected = raw.color_matrix_find_first([
+            Illuminant::D65,
+            Illuminant::A,
+            Illuminant::B,
+            Illuminant::C,
+            Illuminant::D50,
+            Illuminant::D55,
+            Illuminant::D75,
+            Illuminant::Daylight,
+            Illuminant::Flash,
+        ]);
+        eprintln!(
+            "PIC_RAW_QA_META make={:?} model={:?} bits_per_sample={} \
+             white_balance_RGBE={:?} white_balance_available={} \
+             matrix_illuminants={:?}",
+            raw.clean_make, raw.clean_model, raw.bps,
+            raw.wb_coeffs, raw.wb_coeffs[0].is_finite(),
+            raw.color_matrix.keys().collect::<Vec<_>>(),
+        );
+        if let Some((illuminant, matrix)) = selected {
+            eprintln!(
+                "PIC_RAW_QA_META selected_illuminant={illuminant:?} \
+                 selected_xyz_to_camera_matrix={matrix:?} \
+                 blacklevels={:?} whitelevels={:?}",
+                raw.blacklevel, raw.whitelevel,
+            );
+        } else {
+            eprintln!(
+                "PIC_RAW_QA_META selected_illuminant=none matrix=identity_fallback \
+                 blacklevels={:?} whitelevels={:?}",
+                raw.blacklevel, raw.whitelevel,
+            );
+        }
+    }
+
+    // Evaluate whether a SINGLE neutral-anchored exposure adjustment explains
+    // the JPEG/RAW difference. This is a measurement, not a developer setting,
+    // new camera look, or a pixelwise RAW/JPEG blend.
+    fn relative_exposure_from_neutrals(raw: &RgbImage, camera: &RgbImage) -> Option<f64> {
+        if raw.dimensions() != camera.dimensions() {
+            return None;
+        }
+        let mut ratios = Vec::new();
+        for y in (0..camera.height()).step_by(16) {
+            for x in (0..camera.width()).step_by(16) {
+                let target = camera.get_pixel(x, y).0;
+                let (high, low) = (
+                    *target.iter().max().unwrap_or(&0),
+                    *target.iter().min().unwrap_or(&0),
+                );
+                // Choose non-clipped camera-neutral candidates. JPEG regions
+                // are only a statistical reference, not a calibration chart.
+                if high.saturating_sub(low) > 20 || low < 48 || high > 242 {
+                    continue;
+                }
+                let source = raw.get_pixel(x, y).0;
+                if source.iter().any(|&value| value >= 252) {
+                    continue;
+                }
+                let camera_y = linear_luma(target);
+                let sensor_y = linear_luma(source);
+                if camera_y > 0.03 && sensor_y > 0.005 {
+                    let ratio = camera_y / sensor_y;
+                    if ratio.is_finite() && (0.2..=16.0).contains(&ratio) {
+                        ratios.push(ratio);
+                    }
+                }
+            }
+        }
+        if ratios.len() < 32 {
+            return None;
+        }
+        ratios.sort_by(f64::total_cmp);
+        // Robust to mislabeled neutrals. A median luminance ratio is NOT a
+        // camera tone curve; it lets us exclude exposure as the only issue.
+        Some(ratios[ratios.len() / 2].clamp(0.25, 8.0))
+    }
+
+    fn linear_luma(rgb: [u8; 3]) -> f64 {
+        let c = rgb.map(srgb_linear);
+        0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+    }
+
+    fn linear_to_srgb(value: f64) -> u8 {
+        let linear = value.clamp(0.0, 1.0);
+        let encoded = if linear <= 0.0031308 {
+            12.92 * linear
+        } else {
+            1.055 * linear.powf(1.0 / 2.4) - 0.055
+        };
+        (encoded * 255.0).round().clamp(0.0, 255.0) as u8
+    }
+
+    fn exposed_for_diagnostic(pixel: [u8; 3], gain: f64) -> [u8; 3] {
+        pixel.map(|channel| linear_to_srgb(srgb_linear(channel) * gain))
+    }
+
+    fn report_single_gain(raw: &RgbImage, camera: &RgbImage) -> Option<f64> {
+        let gain = relative_exposure_from_neutrals(raw, camera)?;
+        let mut all = GroupColor::default();
+        let mut neutrals = GroupColor::default();
+        let mut warm = GroupColor::default();
+        let mut absolute_delta = [0u64; 3];
+        let mut samples = 0u64;
+        for y in (0..raw.height()).step_by(16) {
+            for x in (0..raw.width()).step_by(16) {
+                let target = camera.get_pixel(x, y).0;
+                let corrected = exposed_for_diagnostic(raw.get_pixel(x, y).0, gain);
+                samples += 1;
+                for ch in 0..3 {
+                    absolute_delta[ch] += u64::from(corrected[ch].abs_diff(target[ch]));
+                }
+                all.record(corrected, target);
+                let max = *target.iter().max().unwrap_or(&0);
+                let min = *target.iter().min().unwrap_or(&0);
+                if max.saturating_sub(min) <= 20 && min >= 48 && max <= 242 {
+                    neutrals.record(corrected, target);
+                }
+                if target[0] > target[1].saturating_add(12)
+                    && target[1] > target[2].saturating_add(8)
+                    && target[0] > 75 && target[0] < 240
+                {
+                    warm.record(corrected, target);
+                }
+            }
+        }
+        eprintln!(
+            "PIC_RAW_QA_GAIN neutral_median_linear_gain={gain:.3} stops={:.2} \
+             diagnostic_only=true mean_absolute_RGB_after={:.2},{:.2},{:.2}",
+            gain.log2(),
+            absolute_delta[0] as f64 / samples.max(1) as f64,
+            absolute_delta[1] as f64 / samples.max(1) as f64,
+            absolute_delta[2] as f64 / samples.max(1) as f64,
+        );
+        all.print("exposure_only_all");
+        neutrals.print("exposure_only_camera_neutrals");
+        warm.print("exposure_only_camera_warm");
+        Some(gain)
+    }
+
+    fn write_gain_preview(rgb: &RgbImage, gain: f64, path: &Path) {
+        let long = rgb.width().max(rgb.height()).max(1);
+        let width = ((u64::from(rgb.width()) * 1400) / u64::from(long)).max(1) as u32;
+        let height = ((u64::from(rgb.height()) * 1400) / u64::from(long)).max(1) as u32;
+        let mut reduced = image::imageops::resize(
+            rgb, width, height, image::imageops::FilterType::Lanczos3
+        );
+        for pixel in reduced.pixels_mut() {
+            pixel.0 = exposed_for_diagnostic(pixel.0, gain);
+        }
+        reduced.save(path).expect("write exposure-only diagnostic PNG");
+    }
+
+    fn write_comparison_preview(rgb: &RgbImage, path: &Path) {
+        // 1400px reference images are small enough to share without sending
+        // a 150MB TIFF or the original identifiable NEF to a public repository.
+        let long = rgb.width().max(rgb.height()).max(1);
+        let width = ((u64::from(rgb.width()) * 1400) / u64::from(long)).max(1) as u32;
+        let height = ((u64::from(rgb.height()) * 1400) / u64::from(long)).max(1) as u32;
+        let reduced = image::imageops::resize(
+            rgb, width, height, image::imageops::FilterType::Lanczos3
+        );
+        reduced.save(path).expect("write colour comparison PNG");
+    }
+
+    #[test]
+    #[ignore = "requires PIC_TEST_RAW pointing to a local Nikon NEF; NEVER commit the test image"]
+    fn real_nef_reference_report() {
+        let filename = std::env::var("PIC_TEST_RAW").expect("set PIC_TEST_RAW to an existing Nikon NEF");
+        assert!(is_nikon_raw(&filename), "the fixture must be Nikon NEF/NRW");
+        let path = Path::new(&filename);
+        let original_sha = blake3::hash(&std::fs::read(path).expect("read source NEF"));
+        let camera_jpeg = nef_embedded_preview(path)
+            .expect("inspect Nikon embedded JPEG")
+            .expect("Nikon JPEG required for reference comparison");
+
+        let started = Instant::now();
+        let raw_source = rawler::rawsource::RawSource::new(path).expect("open test RAW");
+        // Decode once, inspect Nikon metadata BEFORE colour development,
+        // then apply the same unchanged RawDevelop::default() path used by PIC.
+        // The diagnostic does not regress JPEG pixels or change photo data.
+        let compare_a = std::env::var("PIC_NEF_EVALUATION_COMPARE_MATRIX_A")
+            .ok().as_deref() == Some("1");
+        let (sensor, sensor_a) = rawler_decode(&filename, "nef_qa_sensor_demosaic", || {
+            let decoder = rawler::get_decoder(&raw_source)?;
+            let params = rawler::decoders::RawDecodeParams::default();
+            let mut raw = decoder.raw_image(&raw_source, &params, false)?;
+            describe_camera_metadata(&raw);
+            let sensor = rawler::imgop::develop::RawDevelop::default()
+                .develop_intermediate(&raw)?
+                .to_dynamic_image()
+                .ok_or_else(|| anyhow::anyhow!("Nikon RAW developer returned no RGB image"))?;
+            // Strictly local experiment. Rawler currently chooses D65 first.
+            // Removing D65 from this *temporary* decoded object lets its
+            // existing illuminant-A + Bradford path run without copying,
+            // implementing or modifying any third-party colour algorithm.
+            // Nothing here changes a user's normal viewer or RAW file.
+            let alternative = if compare_a {
+                use rawler::imgop::xyz::Illuminant;
+                if raw.color_matrix.contains_key(&Illuminant::A)
+                    && raw.color_matrix.remove(&Illuminant::D65).is_some()
+                {
+                    Some(
+                        rawler::imgop::develop::RawDevelop::default()
+                            .develop_intermediate(&raw)?
+                            .to_dynamic_image()
+                            .ok_or_else(|| anyhow::anyhow!("Alternative A developer returned no RGB image"))?
+                    )
+                } else {
+                    eprintln!("PIC_RAW_QA_MATRIX candidate=A result=unavailable");
+                    None
+                }
+            } else {
+                None
+            };
+            Ok((sensor, alternative))
+        }).expect("develop sensor only");
+        let sensor_ms = started.elapsed().as_secs_f64() * 1000.0;
+        let sensor_kind = format!("{:?}", sensor.color());
+        let (camera_w, camera_h) = jpeg_dimensions(&camera_jpeg).expect("read JPEG dimensions");
+
+        eprintln!(
+            "PIC_RAW_QA source={} sensor={}x{} kind={} sensor_develop_ms={:.2} camera={}x{}",
+            path.file_name().and_then(|name| name.to_str()).unwrap_or("unknown"),
+            sensor.width(), sensor.height(), sensor_kind,
+            sensor_ms, camera_w, camera_h
+        );
+        let reference = decode_viewer_jpeg(&camera_jpeg, camera_w, camera_h, &filename)
+            .expect("colour-manage Nikon JPEG").to_rgb8();
+        let actual = sensor.to_rgb8();
+        let alternate_rgb = sensor_a.map(|alt| alt.to_rgb8());
+        if let Some(ref alternate) = alternate_rgb {
+            if let Some(stats) = report_pair(alternate, &reference) {
+                let d = stats.samples.max(1) as f64;
+                eprintln!(
+                    "PIC_RAW_QA_MATRIX candidate=A adaptation=rawler_existing_bradford                      samples={} mean_absolute_RGB={:.2},{:.2},{:.2}                      note=diagnostic_not_camera_profile",
+                    stats.samples,
+                    stats.error[0] as f64 / d,
+                    stats.error[1] as f64 / d,
+                    stats.error[2] as f64 / d,
+                );
+                stats.scene_color.print("matrix_A_all");
+                stats.neutral_color.print("matrix_A_neutrals");
+                stats.warm_color.print("matrix_A_warm");
+                if let Some(gain) = relative_exposure_from_neutrals(alternate, &reference) {
+                    eprintln!(
+                        "PIC_RAW_QA_MATRIX candidate=A neutral_gain={gain:.3} stops={:.2}",
+                        gain.log2()
+                    );
+                }
+            } else {
+                eprintln!("PIC_RAW_QA_MATRIX candidate=A result=dimensions_mismatch");
+            }
+        }
+        // The ratio deliberately uses only the Nikon reference's plausible
+        // neutral samples; it is not applied to PIC viewing or exporting.
+        let diagnostic_gain = report_single_gain(&actual, &reference);
+
+        match report_pair(&actual, &reference) {
+            Some(report) => report.print(),
+            None => eprintln!(
+                "PIC_RAW_QA result=dimensions_mismatch sensor={}x{} camera={}x{} \
+                 statistical comparison skipped: raster alignment must be established first",
+                actual.width(), actual.height(), camera_w, camera_h
+            ),
+        }
+        if let Some(dir) = std::env::var_os("PIC_TEST_OUTPUT_DIR") {
+            std::fs::create_dir_all(&dir).expect("create private report directory");
+            let folder = Path::new(&dir);
+            std::fs::write(folder.join("camera-embedded.jpg"), &camera_jpeg)
+                .expect("write camera JPEG unchanged");
+            sensor.save(folder.join("rawler-sensor16.tiff"))
+                .expect("write 16-bit sensor-developed TIFF");
+            write_comparison_preview(&reference, &folder.join("nikon-preview.png"));
+            write_comparison_preview(&actual, &folder.join("sensor-preview.png"));
+            if let Some(ref alternate) = alternate_rgb {
+                write_comparison_preview(alternate, &folder.join("sensor-matrix-A.png"));
+                if let Some(gain) = relative_exposure_from_neutrals(alternate, &reference) {
+                    write_gain_preview(
+                        alternate, gain, &folder.join("sensor-matrix-A-exposure-only.png")
+                    );
+                }
+            }
+            if let Some(gain) = diagnostic_gain {
+                write_gain_preview(&actual, gain, &folder.join("sensor-exposure-only.png"));
+            }
+            eprintln!(
+                "PIC_RAW_QA outputs={} comparison=nikon-preview.png,sensor-preview.png",
+                folder.display()
+            );
+        }
+        assert_eq!(
+            original_sha, blake3::hash(&std::fs::read(path).expect("re-read original NEF")),
+            "diagnostic must not modify the source image"
+        );
+    }
+}

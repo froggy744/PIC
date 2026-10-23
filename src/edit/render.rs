@@ -338,17 +338,31 @@ where
     }
 
     let auto_started = std::time::Instant::now();
-    if recipe.auto_color {
-        apply_auto_color(&mut image);
-    }
-    if recipe.auto_contrast {
-        apply_auto_contrast(&mut image);
-    }
-    if recipe.auto_brightness {
-        apply_auto_brightness(&mut image);
-    }
-    if recipe.auto_enhance {
-        super::auto_develop::apply(&mut image, true, true, true);
+    let has_auto = recipe.auto_color
+        || recipe.auto_contrast
+        || recipe.auto_brightness
+        || recipe.auto_enhance;
+    if has_auto && filter_amount > 0.0 {
+        // Preserve the identical existing 100% automatic correction path.
+        // At partial strength, apply *all* enabled Quick Fixes together, then
+        // blend back toward the pre-auto image. This is one shared amount
+        // (including creative looks); manual tone/exposure follows separately.
+        let before_auto = (filter_amount < 1.0).then(|| image.clone());
+        if recipe.auto_color {
+            apply_auto_color(&mut image);
+        }
+        if recipe.auto_contrast {
+            apply_auto_contrast(&mut image);
+        }
+        if recipe.auto_brightness {
+            apply_auto_brightness(&mut image);
+        }
+        if recipe.auto_enhance {
+            super::auto_develop::apply(&mut image, true, true, true);
+        }
+        if let Some(original) = before_auto {
+            blend_filter_amount(&mut image, &original, filter_amount);
+        }
     }
     if std::env::var_os("PICASA_TRACE").is_some() {
         eprintln!(
@@ -1551,6 +1565,64 @@ mod tests {
                 assert_eq!(mid[3], 196);
             }
         }
+    }
+
+    #[test]
+    fn shared_amount_scales_each_quick_fix_without_changing_full_strength() {
+        let source = RgbaImage::from_fn(96, 64, |x, _| {
+            let level = if x < 20 { 37 } else if x < 76 { 82 } else { 181 };
+            Rgba([level + 16, level + 4, level.saturating_sub(7), 213])
+        });
+        for fix in 0..5 {
+            let mut recipe = EditRecipe::default();
+            match fix {
+                0 => recipe.auto_color = true,
+                1 => recipe.auto_contrast = true,
+                2 => recipe.auto_brightness = true,
+                3 => recipe.auto_enhance = true,
+                _ => {
+                    recipe.auto_color = true;
+                    recipe.auto_contrast = true;
+                    recipe.auto_brightness = true;
+                    recipe.auto_enhance = true;
+                }
+            };
+            recipe.filter_amount = 0.0;
+            let off = apply_tone(source.clone(), &recipe);
+            assert_eq!(off, source, "0% should bypass enabled Quick Fixes");
+            recipe.filter_amount = 1.0;
+            let full = apply_tone(source.clone(), &recipe);
+            assert_ne!(full, off, "fixture must exercise quick fix {fix}");
+            recipe.filter_amount = 0.5;
+            let half = apply_tone(source.clone(), &recipe);
+            for ((unadjusted, adjusted), actual) in
+                off.pixels().zip(full.pixels()).zip(half.pixels())
+            {
+                for c in 0..3 {
+                    let expected = (unadjusted[c] as f32 + adjusted[c] as f32) * 0.5;
+                    assert!((actual[c] as f32 - expected).abs() <= 0.51,
+                        "quick fix {fix} half amount channel {c}: {} vs {expected}", actual[c]);
+                }
+                assert_eq!(actual[3], 213);
+            }
+        }
+    }
+
+    #[test]
+    fn zero_quick_fix_amount_preserves_manual_edits_and_creative_look_independence() {
+        let source = RgbaImage::from_pixel(24, 24, Rgba([78, 85, 90, 255]));
+        let mut manual = EditRecipe::default();
+        manual.exposure = 0.35;
+        let manual_only = apply_tone(source.clone(), &manual);
+
+        manual.auto_brightness = true;
+        manual.auto_color = true;
+        manual.filter_amount = 0.0;
+        assert_eq!(apply_tone(source.clone(), &manual), manual_only,
+            "the effect slider must not scale manual exposure");
+        manual.filter_amount = 1.0;
+        assert_ne!(apply_tone(source, &manual), manual_only,
+            "100% Quick Fixes must still apply with manual exposure");
     }
 
     #[test]

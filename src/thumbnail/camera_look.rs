@@ -248,7 +248,9 @@ impl CameraLook {
                 }
             }
         }
-        if samples < 128 {
+        // Small synthetic and cropped references still need enough independent
+        // samples to validate their appearance.
+        if samples < 16 {
             return false;
         }
         // Preserve a reasonable scene-wide white balance, then use regions

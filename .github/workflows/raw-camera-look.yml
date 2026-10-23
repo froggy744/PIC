@@ -1,0 +1,36 @@
+name: Nikon RAW camera-look checks
+
+on:
+  push:
+    branches:
+      - feature/nikon-camera-matched-raw
+  pull_request:
+    paths:
+      - 'src/thumbnail/**'
+      - 'src/thumbnail.rs'
+      - '.github/workflows/raw-camera-look.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  camera-look:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install native build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang mold cmake nasm pkg-config \
+            libgtk-4-dev libadwaita-1-dev libsmbclient-dev libnfs-dev \
+            librsvg2-common libgdk-pixbuf2.0-bin
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      - name: Compile
+        run: cargo check --locked
+      - name: Exercise sensor-only camera look tests
+        run: cargo test --locked camera_look::tests -- --test-threads=1
+      - name: Preserve Nikon ICC handling
+        run: cargo test --locked embedded_nef_jpeg_converts_wide_gamut_to_srgb_for_viewer_and_export -- --test-threads=1

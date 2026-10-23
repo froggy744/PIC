@@ -298,6 +298,7 @@ include!("thumbnail/viewer.rs");
 include!("thumbnail/nef.rs");
 include!("thumbnail/dng.rs");
 mod color;
+mod camera_look;
 include!("thumbnail/decoders.rs");
 include!("thumbnail/batch.rs");
 

@@ -259,51 +259,6 @@ button.infobar-selected-thumb:hover {
     border-radius: 14px;
     border-color: alpha(@theme_fg_color, 0.18);
 }
-
-
-/* Unified top-right command strip. Scope to the main header only: never
- * restyle the sidebar or the photo info bar. Native window buttons retain
- * their system semantics and distinct chrome. */
-.layout-right-header button.flat,
-.layout-right-header button.toggle,
-.layout-right-header button.image-button {
-    min-width: 36px;
-    min-height: 36px;
-    padding: 5px;
-    margin: 0 2px;
-    border: 1px solid transparent;
-    border-radius: 9px;
-    background-color: transparent;
-    box-shadow: none;
-    transition: background-color 140ms ease, border-color 140ms ease;
-}
-.layout-right-header button.flat:hover,
-.layout-right-header button.toggle:hover,
-.layout-right-header button.image-button:hover {
-    background-color: alpha(@theme_fg_color, 0.085);
-    border-color: alpha(@theme_fg_color, 0.10);
-}
-.layout-right-header button.flat:checked,
-.layout-right-header button.toggle:checked,
-.layout-right-header button.image-button:checked {
-    background-color: alpha(@accent_bg_color, 0.19);
-    border-color: alpha(@accent_bg_color, 0.42);
-}
-.layout-right-header button.flat:focus-visible,
-.layout-right-header button.toggle:focus-visible,
-.layout-right-header button.image-button:focus-visible {
-    outline: 2px solid @accent_bg_color;
-    outline-offset: 1px;
-}
-/* GTK/libadwaita supplies the native minimize/maximize/close controls.
- * Keep their compact circular identity, visually apart from PIC actions. */
-.layout-right-header windowcontrols {
-    margin-left: 10px;
-}
-.layout-right-header windowcontrols button {
-    min-width: 24px;
-    min-height: 24px;
-    margin: 0 2px;
-    padding: 0;
-    border-radius: 999px;
-}
+/* Native title buttons are intentionally controlled by GTK/libadwaita,
+ * separate from PIC's compact action strip. */
+.layout-right-header windowcontrols { margin-left: 8px; }

@@ -3,6 +3,7 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use gtk4 as gtk;
+use gtk::glib::prelude::IsA;
 use libadwaita as adw;
 use libadwaita::prelude::*;
 use rusqlite::Connection;

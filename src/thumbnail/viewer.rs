@@ -282,6 +282,18 @@ fn develop_nef_sensor_frame(
     camera_jpeg: Option<&[u8]>,
 ) -> Result<DynamicImage> {
     let sensor = develop_nef_sensor(raw_source, reference)?;
+    // Diagnostic only: view the existing rawler pipeline with no
+    // photo-specific JPEG fit. Never enable this automatically. It isolates
+    // sensor development from PIC's experimental Nikon colour matching.
+    // Note: the legacy viewer/export interfaces still quantize to RGBA8.
+    if std::env::var("PIC_NEF_EVALUATION_SENSOR_ONLY").ok().as_deref() == Some("1") {
+        if std::env::var_os("PICASA_TRACE").is_some() {
+            eprintln!(
+                "PIC_DECODE stage=nef_camera_render_match evaluation=sensor_only source=rawler_default no_jpeg_matching=true"
+            );
+        }
+        return Ok(sensor);
+    }
     match camera_jpeg {
         Some(bytes) => match_nef_sensor_to_camera_jpeg(sensor, bytes, reference),
         None => Ok(sensor),

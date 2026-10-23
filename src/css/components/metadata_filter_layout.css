@@ -257,3 +257,26 @@ button.metadata-header-toggle.metadata-filter-active:not(:checked) {
 .metadata-column-actions-popover button.metadata-column-action:hover {
     background-color: alpha(@theme_fg_color, 0.08);
 }
+
+
+/* Stronger filter affordances and consistent accessible keyboard targets. */
+button.metadata-header-toggle {
+    min-width: 38px;
+    min-height: 38px;
+    border-radius: 10px;
+}
+button.metadata-header-toggle:focus-visible,
+.metadata-column-actions-popover button.metadata-column-action:focus-visible {
+    outline: 2px solid @accent_bg_color;
+    outline-offset: 1px;
+}
+button.metadata-header-toggle:checked {
+    background: alpha(@accent_bg_color, 0.24);
+    border-color: alpha(@accent_bg_color, 0.48);
+}
+.metadata-filter-panel .metadata-filter-toolbar { min-height: 38px; }
+.metadata-column-actions-popover button.metadata-column-action {
+    min-height: 36px;
+    border-radius: 9px;
+}
+.photo-info-bar .info-title { font-weight: 650; }

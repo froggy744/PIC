@@ -44,6 +44,17 @@ button.metadata-header-toggle.metadata-filter-active:not(:checked) {
 .metadata-filter-panel .metadata-filter-options checkbutton label {
     font-size: 11px;
 }
+.sort-popover-content checkbutton,
+.sort-popover-content checkbutton label,
+.rating-filter-popover-content checkbutton,
+.rating-filter-popover-content checkbutton label {
+    font-size: 11px;
+}
+.sort-popover-content > .heading,
+.rating-filter-popover-content > .heading {
+    font-size: 12px;
+    font-weight: 700;
+}
 .metadata-filter-panel button.metadata-filter-all:hover {
     background-color: alpha(@theme_fg_color, 0.09);
 }
@@ -64,6 +75,10 @@ button.metadata-header-toggle.metadata-filter-active:not(:checked) {
 }
 .metadata-filter-panel .metadata-filter-controls button,
 .metadata-filter-panel .metadata-filter-controls button label {
+    font-size: 11px;
+}
+.metadata-filter-panel .metadata-filter-summary button,
+.metadata-filter-panel .metadata-filter-summary button label {
     font-size: 11px;
 }
 .metadata-filter-panel .metadata-filter-toggle:hover,

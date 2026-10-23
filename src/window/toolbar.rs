@@ -11,6 +11,7 @@
 
     let sort_popover = gtk::Popover::new();
     let sort_box = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    sort_box.add_css_class("sort-popover-content");
     sort_box.set_margin_top(8);
     sort_box.set_margin_bottom(8);
     sort_box.set_margin_start(8);
@@ -256,6 +257,7 @@
 
     let rating_filter_popover = gtk::Popover::new();
     let rating_filter_box = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    rating_filter_box.add_css_class("rating-filter-popover-content");
     rating_filter_box.set_margin_top(8);
     rating_filter_box.set_margin_bottom(8);
     rating_filter_box.set_margin_start(8);

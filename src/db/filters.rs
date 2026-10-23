@@ -24,6 +24,7 @@ pub enum Field {
     WhiteBalance,
     Width,
     Height,
+    Orientation,
     Gps,
     Favorite,
     Edited,
@@ -32,7 +33,7 @@ pub enum Field {
     SourceFolder,
 }
 impl Field {
-    pub const ALL: [Self; 20] = [
+    pub const ALL: [Self; 21] = [
         Self::Camera,
         Self::CameraMake,
         Self::Lens,
@@ -48,6 +49,7 @@ impl Field {
         Self::WhiteBalance,
         Self::Width,
         Self::Height,
+        Self::Orientation,
         Self::Gps,
         Self::Favorite,
         Self::Edited,
@@ -71,6 +73,7 @@ impl Field {
             Self::WhiteBalance => "White balance",
             Self::Width => "Width (pixels)",
             Self::Height => "Height (pixels)",
+            Self::Orientation => "Orientation",
             Self::Gps => "GPS",
             Self::Favorite => "Favourite",
             Self::Edited => "Edited",
@@ -107,6 +110,7 @@ impl Field {
             Self::WhiteBalance => "m.white_balance",
             Self::Width => "NULLIF(mp.width,0)",
             Self::Height => "NULLIF(mp.height,0)",
+            Self::Orientation => "CASE WHEN mp.width IS NULL OR mp.height IS NULL OR mp.width<=0 OR mp.height<=0 THEN 'Unknown' WHEN mp.width<mp.height THEN 'Portrait' WHEN mp.width>mp.height THEN 'Landscape' ELSE 'Square' END",
             Self::Gps => "m.gps",
             Self::Favorite => "mp.favorite",
             Self::Edited => "(mp.edit_recipe != '' OR mp.rotation != 0)",

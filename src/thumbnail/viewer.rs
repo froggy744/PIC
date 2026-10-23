@@ -287,8 +287,8 @@ fn develop_nef_scene_frame(
     let image = rawler_decode(reference, "nef_scene_v2", || {
         let decoder = rawler::get_decoder(raw_source)?;
         let params = rawler::decoders::RawDecodeParams::default();
-        let pixels = decoder.raw_image(raw_source, &params, false)?;
-        nef_scene::develop(&pixels)
+        let mut pixels = decoder.raw_image(raw_source, &params, false)?;
+        nef_scene::develop(&mut pixels)
     })?;
     if std::env::var_os("PICASA_TRACE").is_some() {
         eprintln!(

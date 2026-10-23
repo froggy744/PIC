@@ -257,3 +257,36 @@ tests; agent-driven verification must precede a final requested acceptance.
 LUT or third-party rendering implementation has been copied into PIC. The
 existing `rawler` licence obligations still require packaging review.
 
+
+## 2026-10-23: isolated float-tone and bounded cache follow-up
+
+The experimental `PIC_NEF_SCENE_RENDER=1` path develops Nikon pixels through
+`rawler` in floating-point RGB, applies an estimated as-shot interpolation
+of the two *embedded* camera illuminant matrices, then performs an original
+scene-derived exposure, monotonic highlight shoulder and restrained neutral-
+preserving global contrast/chroma processing in linear light before one sRGB
+encoding to RGB16. No embedded-JPEG pixel matching, copied camera profile,
+third-party shader/LUT, or new dependency is involved. This is an **opt-in
+photographic candidate**, not verified Nikon colour fidelity. The downstream
+editor still uses RGBA8; end-to-end higher-precision editing is not yet done.
+
+The native-source cache previously discarded `ImageRgb16` entirely. A
+Nikon Z 5 `6016×4016` RGB16 frame requires about 145 MiB, above the old
+128 MiB maximum even if RGB16 had been supported. The experimental branch
+now counts and caches RGB16 buffers by their actual 2-byte samples under a
+192 MiB bounded source cache, and separates cache entries by experimental
+renderer mode. This should prevent unnecessary native RAW regeneration
+between 1:1 and Edit; **end-to-end latency improvement has not been
+benchmarked**. The 8-bit and embedded preview paths are unchanged by default.
+
+A private *independent* system RAW-developer simulation with the existing
+uploaded `DSC_4814.NEF` demonstrates that restrained global contrast/chroma
+can improve a flat-looking preview, but **does not prove that PIC's real
+`rawler` output is visually acceptable**. The earlier independently rendered
+photo had an unacceptable green tint. None of those private source files or
+renders were committed to this repository; no external engine was integrated.
+
+Acceptance requires an actual PIC-generated NEF preview, evaluated against
+Nikon's embedded image and natural skin/neutral colours, before this mode may
+become default. Do not merge this branch into V1.01 or `main` on the basis
+of synthetic tests or simulation alone.

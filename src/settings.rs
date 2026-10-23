@@ -10,6 +10,84 @@ use rusqlite::Connection;
 mod database;
 pub(crate) mod menus;
 
+/* A single corner style across photo surfaces and UI chrome. The legacy
+ * square-thumbnail preference is read only for migration, so existing
+ * users keep their deliberate square look until choosing another style. */
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CornerStyle {
+    Rounded,
+    Balanced,
+    Square,
+}
+
+impl CornerStyle {
+    pub(crate) fn saved(connection: &Connection) -> Self {
+        match crate::db::setting(connection, crate::db::CORNER_STYLE_SETTING_KEY)
+            .ok()
+            .flatten()
+            .as_deref()
+        {
+            Some("rounded") => Self::Rounded,
+            Some("balanced") => Self::Balanced,
+            Some("square") => Self::Square,
+            _ => {
+                if saved_bool(connection, crate::db::THUMBNAIL_SQUARE_CORNERS_SETTING_KEY)
+                    .unwrap_or(false)
+                {
+                    Self::Square
+                } else {
+                    Self::Balanced
+                }
+            }
+        }
+    }
+
+    fn from_index(index: u32) -> Self {
+        match index {
+            0 => Self::Rounded,
+            2 => Self::Square,
+            _ => Self::Balanced,
+        }
+    }
+
+    fn index(self) -> u32 {
+        match self {
+            Self::Rounded => 0,
+            Self::Balanced => 1,
+            Self::Square => 2,
+        }
+    }
+
+    fn setting_value(self) -> &'static str {
+        match self {
+            Self::Rounded => "rounded",
+            Self::Balanced => "balanced",
+            Self::Square => "square",
+        }
+    }
+
+    pub(crate) fn apply(self, widget: &impl IsA<gtk::Widget>) {
+        for class in [
+            "corner-style-rounded",
+            "corner-style-balanced",
+            "corner-style-square",
+            "square-corners",
+        ] {
+            widget.remove_css_class(class);
+        }
+        let class = match self {
+            Self::Rounded => "corner-style-rounded",
+            Self::Balanced => "corner-style-balanced",
+            Self::Square => "corner-style-square",
+        };
+        widget.add_css_class(class);
+        // Keep the existing Photo Wall/Masonry square-corner rules working.
+        if self == Self::Square {
+            widget.add_css_class("square-corners");
+        }
+    }
+}
+
 /// Destructive library maintenance actions. The settings window only owns the
 /// buttons and their confirmation dialogs; the behaviour lives in the main
 /// window (build.rs) where the gallery, filter, and refresh context exist.
@@ -79,6 +157,7 @@ impl SettingsWindow {
 
         let window = adw::Window::new();
         window.add_css_class("settings-window");
+        CornerStyle::saved(&connection.borrow()).apply(&window);
         window.set_title(Some("Settings"));
         window.set_default_size(860, 620);
         window.set_transient_for(Some(parent));
@@ -113,6 +192,7 @@ impl SettingsWindow {
         stack.add_titled(
             &interface_page(
                 connection.clone(),
+                window.clone(),
                 theme_changed.clone(),
                 thumbnail_changed,
                 zoom_animations_changed,
@@ -1610,6 +1690,7 @@ fn themes_page(
 
 fn interface_page(
     connection: Rc<RefCell<Connection>>,
+    settings_window: adw::Window,
     theme_changed: Rc<dyn Fn()>,
     thumbnail_changed: Rc<dyn Fn()>,
     zoom_animations_changed: Rc<dyn Fn()>,
@@ -1627,34 +1708,34 @@ fn interface_page(
     content.append(&thumbnail_heading);
 
     let thumbnail_list = settings_list();
-    let square_corners = gtk::Switch::new();
-    square_corners.set_valign(gtk::Align::Center);
-    square_corners.set_active(
-        saved_bool(&connection.borrow(), crate::db::THUMBNAIL_SQUARE_CORNERS_SETTING_KEY)
-            .unwrap_or(false),
-    );
+    // One choice replaces the old thumbnail-only Square corners toggle.
+    // Balanced is the default, and the saved choice applies instantly.
+    let corner_style = gtk::DropDown::from_strings(&["Rounded", "Balanced", "Square"]);
+    corner_style.set_valign(gtk::Align::Center);
+    corner_style.set_selected(CornerStyle::saved(&connection.borrow()).index());
     {
         let connection = connection.clone();
         let thumbnail_changed = thumbnail_changed.clone();
-        square_corners.connect_active_notify(move |toggle| {
-            let state = toggle.is_active();
-            crate::window::debug_log(&format!("SETTINGS: square corners switch -> {state}"));
+        let settings_window = settings_window.clone();
+        corner_style.connect_selected_notify(move |dropdown| {
+            let style = CornerStyle::from_index(dropdown.selected());
             if let Err(error) = crate::db::set_setting(
                 &connection.borrow(),
-                crate::db::THUMBNAIL_SQUARE_CORNERS_SETTING_KEY,
-                &state.to_string(),
+                crate::db::CORNER_STYLE_SETTING_KEY,
+                style.setting_value(),
             ) {
-                eprintln!("Could not save square thumbnail corners: {error}");
+                eprintln!("Could not save corner style: {error}");
                 return;
             }
+            style.apply(&settings_window);
             thumbnail_changed();
         });
     }
     append_row(
         &thumbnail_list,
-        "Square thumbnail corners",
-        Some("Show thumbnails without rounded corners."),
-        Some(square_corners.upcast_ref()),
+        "Corner style",
+        Some("Balanced keeps a restrained 5–8 px radius throughout PIC. Rounded restores a softer look; Square removes most rounding."),
+        Some(corner_style.upcast_ref()),
     );
 
     let fit_whole_photo = gtk::Switch::new();

@@ -154,9 +154,10 @@ decoder was copied into PIC.
   mean brightness: median HSV-style saturation approximately **0.558**
   versus **0.679** (Nikon). This cross-check demonstrates that matching
   average exposure cannot reproduce the camera's picture processing.
-- The independent sensor-derived reference produced plausible skin tones
-  with muted greens and less vibrant contrast, without the gross per-image
-  red/green cast seen in the failed PIC matrix-fitting experiment.
+- **Visual acceptance failed:** the project owner identified a strong green
+  cast in the independent sensor-derived reference. A technically decodable,
+  exposed RAW image is not necessarily a correctly colour-developed image.
+  The independent render must NOT be treated as a known-good colour baseline.
 
 Interpretation: The real camera JPEG contains a developed appearance including
 tone, saturation and potentially local processing, beyond demosaic/WB alone.
@@ -169,4 +170,26 @@ Next development should be a **camera-independent, scene-referred tone and
 output colour pipeline** with preserved precision, followed by multi-scene
 private validation. Keep the JPEG-fit experimental renderer out of V1.01.
 No additional user terminal-run loops are part of the normal development plan.
+
+
+### Corrective cross-check: DSC_4814.NEF, independent render (same day)
+
+The Nikon Z 5 file's *own* camera as-shot white balance read through the
+system-installed RAW decoder was red/green/blue **1.869140625 / 1 /
+1.369140625**. Earlier `DSC_8030.NEF` white balance was
+**1.625 / 1 / 1.5019531**. These differ naturally between photographs;
+copying one scene's multipliers into another was not a legitimate profile.
+
+A private sensor render of `DSC_4814.NEF` with its **actual** as-shot WB
+still looked cooler/greenish than the Nikon camera JPEG and did not produce
+acceptable colours. The renderer's default daylight-WB look was warmer but
+was still visibly unlike the camera JPEG in greens/contrast/saturation.
+This rejects the earlier suggestion that merely applying camera WB is a
+solution, and rejects that independent system render as a validated target.
+
+**Do not change PIC's default RAW renderer on this evidence.** A real RAW
+working-colour pipeline needs sensor decode, valid per-file WB, illuminant-
+dependent colour calibration and an intentional output tone/look. The JPEG
+is a reference only, not a substitute for preserving sensor-derived data.
+No outside implementation, camera profile or colour LUT was copied into PIC.
 

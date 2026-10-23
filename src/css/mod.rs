@@ -124,6 +124,17 @@ pub(crate) fn install_foundation(display: &gtk::gdk::Display) {
         gtk::STYLE_PROVIDER_PRIORITY_APPLICATION + 11,
     );
 
+    // A single hover contract for top-bar and InfoBar action buttons must
+    // outrank the selected theme (+1/+3) and platform styling (+10).
+    // Native window controls and other app buttons remain untouched.
+    let toolbar_actions = gtk::CssProvider::new();
+    toolbar_actions.load_from_string(include_str!("components/toolbar_action_consistency.css"));
+    gtk::style_context_add_provider_for_display(
+        display,
+        &toolbar_actions,
+        gtk::STYLE_PROVIDER_PRIORITY_APPLICATION + 12,
+    );
+
     // Always loaded; rules only match while the main window carries the
     // "square-corners" class (Settings > Library). Priority sits above the
     // theme (+1) and album (+3) providers so border-radius: 0 wins.

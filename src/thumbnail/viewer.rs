@@ -1656,20 +1656,29 @@ mod embedded_nef_color_profile_tests {
 
         let decoded = decode_viewer_jpeg(&jpeg, 128, 96, reference).unwrap();
         let pixel = decoded.to_rgb8().get_pixel(32, 32).0;
-        // This is the calibrated camera-look reference consumed by the sensor
-        // renderer. Independently verified ProPhoto RGB -> sRGB transform.
+        // The Nikon JPEG must retain its ICC conversion through both FIT and
+        // the default full-resolution native viewing path.
         for (actual, expected) in pixel.into_iter().zip([191u8, 53, 29]) {
             assert!(actual.abs_diff(expected) <= 8,
                 "embedded NEF camera reference lost its ICC transform: {pixel:?}");
         }
+        if use_nikon_camera_jpeg() {
+            let (native, target_width, target_height) = decode_local_raw_for_viewer(
+                reference, 1, u32::MAX, u32::MAX, &|| false
+            ).expect("native Nikon JPEG display must not require sensor demosaicing");
+            assert_eq!((target_width, target_height), (128, 96));
+            assert_eq!(native.to_rgb8(), decoded.to_rgb8(),
+                "native Nikon colour must match the embedded camera JPEG exactly");
+        }
         std::fs::remove_file(path).unwrap();
     }
 
-    /// Run with PIC_TEST_RAW pointing at a local NEF to prove the detailed
-    /// viewer output is sensor-developed and not the embedded JPEG frame.
+    /// Compare native output against the camera JPEG on a real local NEF.
+    /// Default native output must match exactly. Only the opt-in experimental
+    /// sensor developer is allowed to depart from those original JPEG pixels.
     #[test]
     #[ignore = "requires PIC_TEST_RAW pointing to a local Nikon NEF"]
-    fn real_nef_sensor_render_uses_full_source_and_camera_look_reference() {
+    fn real_nef_native_matches_camera_jpeg_unless_sensor_opt_in() {
         let reference = std::env::var("PIC_TEST_RAW")
             .expect("set PIC_TEST_RAW to a local Nikon NEF");
         let source = std::path::Path::new(&reference);
@@ -1706,10 +1715,10 @@ mod embedded_nef_color_profile_tests {
             u32::MAX,
             &|| false,
         )
-        .expect("develop NEF sensor pixels for the detailed viewer");
+        .expect("decode Nikon native image for the detailed viewer");
         assert_eq!((target_width, target_height), (image.width(), image.height()));
         assert!(image.width() >= 5000 && image.height() >= 3000,
-            "sensor render is not full resolution: {}x{}", image.width(), image.height());
+            "native image is not full resolution: {}x{}", image.width(), image.height());
 
         assert_eq!((image.width(), image.height()), (width, height));
         let camera = decode_viewer_jpeg(&embedded, width, height, &reference)
@@ -1736,12 +1745,17 @@ mod embedded_nef_color_profile_tests {
                 samples += 1;
             }
         }
-        assert!(different > samples / 4,
-            "viewer is still copying embedded JPEG pixels: {different}/{samples} sample pixels differ");
-        for (channel, total) in channel_delta.into_iter().enumerate() {
-            let mean_delta = total as f64 / samples as f64;
-            assert!(mean_delta < 25.0,
-                "camera look has a channel cast: channel={channel} mean_abs_delta={mean_delta:.2}");
+        if use_nikon_camera_jpeg() {
+            assert_eq!(different, 0,
+                "native Nikon JPEG diverges from camera pixels on {different}/{samples} samples");
+        } else {
+            assert!(different > samples / 4,
+                "experimental sensor renderer unexpectedly copies JPEG pixels");
+            for (channel, total) in channel_delta.into_iter().enumerate() {
+                let mean_delta = total as f64 / samples as f64;
+                assert!(mean_delta < 25.0,
+                    "experimental camera look has a channel cast: channel={channel} mean_abs_delta={mean_delta:.2}");
+            }
         }
         assert_eq!(blake3::hash(&std::fs::read(source).unwrap()), source_hash,
             "sensor development must leave the original NEF unchanged");

@@ -9,6 +9,7 @@ on:
       - 'src/thumbnail.rs'
       - 'src/thumbnail/viewer.rs'
       - 'src/thumbnail/raw_quality.rs'
+      - 'src/thumbnail/nef_scene.rs'
       - '.github/workflows/nef-quality-harness.yml'
 
 permissions:
@@ -32,5 +33,7 @@ jobs:
         run: cargo check --locked
       - name: Check original diagnostic invariants
         run: cargo test --locked raw_quality::tests -- --test-threads=1
+      - name: Test scene-linear Nikon rendering invariants
+        run: cargo test --locked nef_scene::tests -- --test-threads=1
       - name: Verify Nikon ICC input handling
         run: cargo test --locked embedded_nef_jpeg_converts_wide_gamut_to_srgb_for_viewer_and_export -- --test-threads=1

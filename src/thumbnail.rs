@@ -298,6 +298,7 @@ include!("thumbnail/viewer.rs");
 include!("thumbnail/nef.rs");
 include!("thumbnail/dng.rs");
 mod color;
+mod nef_scene;
 #[cfg(test)]
 mod raw_quality;
 include!("thumbnail/decoders.rs");

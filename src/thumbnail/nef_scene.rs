@@ -1,10 +1,10 @@
 //! PIC-owned experimental scene-linear Nikon rendering.
 //!
 //! Deliberately isolated from the production JPEG matching and other RAW
-//! formats. `RawDevelop` provides sensor demosaicing, camera white
-//! balance and the camera-to-sRGB calibration already used by PIC. This module
-//! performs its own highlight-safe tone rendering *before* sRGB encoding and
-//! before quantizing RGB data to 16 bits. The embedded JPEG is never read here.
+//! formats. `RawDevelop` provides only sensor demosaicing and crops for
+//! this opt-in path. PIC independently applies the file's camera colour
+//! matrix, WB, scene tone and sRGB encoding in float before quantizing
+//! to 16 bits. The embedded JPEG is never read here.
 //!
 //! Enable only for controlled development with PIC_NEF_SCENE_RENDER=1.
 //! No third-party rendering algorithm, LUT, profile, or asset is copied.
@@ -90,6 +90,114 @@ fn select_as_shot_calibration(raw: &mut rawler::RawImage) -> Option<f32> {
         blended.into_iter().flatten().collect(),
     );
     Some(fraction)
+}
+
+// Published IEC sRGB primary transformation into CIE XYZ with D65 white.
+// The inverse of the camera's XYZ->sensor profile is the physical basis for
+// transforming neutralized camera RGB back into a display colour space.
+const SRGB_TO_XYZ: CameraMatrix = [
+    [0.4124564, 0.3575761, 0.1804375],
+    [0.2126729, 0.7151522, 0.0721750],
+    [0.0193339, 0.1191920, 0.9503041],
+];
+
+fn multiply_matrix(left: &CameraMatrix, right: &CameraMatrix) -> CameraMatrix {
+    std::array::from_fn(|row| {
+        std::array::from_fn(|column| {
+            (0..3).map(|k| left[row][k] * right[k][column]).sum()
+        })
+    })
+}
+
+fn invert_matrix(m: &CameraMatrix) -> Option<CameraMatrix> {
+    // Cofactors for a real 3x3 linear transform. All terms are evaluated
+    // directly here, independently of any external RAW renderer.
+    let a = m[0][0]; let b = m[0][1]; let c = m[0][2];
+    let d = m[1][0]; let e = m[1][1]; let f = m[1][2];
+    let g = m[2][0]; let h = m[2][1]; let i = m[2][2];
+    let a11 = e * i - f * h;
+    let a12 = c * h - b * i;
+    let a13 = b * f - c * e;
+    let a21 = f * g - d * i;
+    let a22 = a * i - c * g;
+    let a23 = c * d - a * f;
+    let a31 = d * h - e * g;
+    let a32 = b * g - a * h;
+    let a33 = a * e - b * d;
+    let det = a * a11 + b * a21 + c * a31;
+    if !det.is_finite() || det.abs() < 1e-7 {
+        return None;
+    }
+    let adj = [[a11, a12, a13], [a21, a22, a23], [a31, a32, a33]];
+    let inverse = adj.map(|row| row.map(|value| value / det));
+    inverse.iter().flatten().all(|v| v.is_finite()).then_some(inverse)
+}
+
+/// Return a matrix that maps white-balanced sensor channels to scene-linear
+/// sRGB. Normalize each camera response to a unit D65 neutral first, so
+/// equal neutralized camera signals yield equal linear display channels.
+///
+/// Unlike the existing renderer this matrix never clips the sensor values;
+/// highlight rolloff happens later and all steps use floating-point buffers.
+fn sensor_to_scene_matrix(xyz_to_camera: &CameraMatrix) -> Option<CameraMatrix> {
+    let mut rgb_to_camera = multiply_matrix(xyz_to_camera, &SRGB_TO_XYZ);
+    for row in &mut rgb_to_camera {
+        let white = row.iter().sum::<f32>();
+        if !white.is_finite() || white <= 0.00001 {
+            return None;
+        }
+        for element in row {
+            *element /= white;
+        }
+    }
+    invert_matrix(&rgb_to_camera)
+}
+
+fn apply_camera_calibration(camera: [f32; 3], wb: [f32; 4], matrix: &CameraMatrix) -> [f32; 3] {
+    let corrected = std::array::from_fn::<f32, 3, _>(|channel| {
+        camera[channel] * wb[channel]
+    });
+    std::array::from_fn(|row| {
+        (0..3).map(|col| matrix[row][col] * corrected[col]).sum()
+    })
+}
+
+fn develop_scene_linear(raw: &rawler::RawImage) -> Result<rawler::pixarray::Color2D<f32, 3>> {
+    // Ask the existing RAW decoder only for its standardized, scaled sensor
+    // demosaic and geometric cropping. PIC owns this candidate's camera
+    // calibration, keeping >1.0 highlights and signed gamut components until
+    // output rolloff. Do not modify any upstream crate.
+    let mut steps = RawDevelop::default().steps;
+    steps.retain(|step| {
+        !matches!(
+            step,
+            ProcessingStep::WhiteBalance | ProcessingStep::Calibrate | ProcessingStep::SRgb
+        )
+    });
+    let intermediate = RawDevelop::new_with(&steps).develop_intermediate(raw)?;
+    let Intermediate::ThreeColor(mut camera) = intermediate else {
+        anyhow::bail!("Nikon Bayer demosaic did not return three camera channels");
+    };
+    let raw_matrix = raw.color_matrix.get(&Illuminant::D65)
+        .context("Nikon NEF has no D65 camera colour matrix")?;
+    let matrix = matrix_from_flat(raw_matrix)
+        .context("Nikon NEF contains an invalid D65 camera colour matrix")?;
+    let scene_matrix = sensor_to_scene_matrix(&matrix)
+        .context("Nikon camera colour matrix is singular or non-neutral")?;
+    let wb = if raw.wb_coeffs[..3]
+        .iter().all(|v| v.is_finite() && *v > 0.0)
+    {
+        raw.wb_coeffs
+    } else {
+        if std::env::var_os("PICASA_TRACE").is_some() {
+            eprintln!("PIC_DECODE stage=nef_scene_wb source=unavailable fallback=unit");
+        }
+        [1.0; 4]
+    };
+    camera.data.par_iter_mut().for_each(|pixel| {
+        *pixel = apply_camera_calibration(*pixel, wb, &scene_matrix);
+    });
+    Ok(camera)
 }
 
 const SAMPLE_STRIDE: usize = 64;
@@ -212,12 +320,7 @@ pub(super) fn develop(raw: &mut rawler::RawImage) -> Result<DynamicImage> {
     }
     // Preserve float values through tone rendering: never convert rawler's
     // calibrated linear pixels to RGB8 or sRGB-encoded RGB16 first.
-    let mut steps = RawDevelop::default().steps;
-    steps.retain(|step| *step != ProcessingStep::SRgb);
-    let intermediate = RawDevelop::new_with(&steps).develop_intermediate(raw)?;
-    let Intermediate::ThreeColor(linear) = intermediate else {
-        anyhow::bail!("Nikon Bayer RAW development did not return RGB sensor pixels");
-    };
+    let linear = develop_scene_linear(raw)?;
     let width = u32::try_from(linear.width).context("RAW image width exceeds u32")?;
     let height = u32::try_from(linear.height).context("RAW image height exceeds u32")?;
     let gain = scene_exposure_gain(&linear.data);
@@ -247,6 +350,47 @@ pub(super) fn develop(raw: &mut rawler::RawImage) -> Result<DynamicImage> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn camera_matrix_roundtrip_preserves_scene_values_above_white() {
+        let profile: CameraMatrix = [
+            [0.95, -0.20, 0.05],
+            [-0.28, 1.21, 0.11],
+            [0.03, -0.08, 0.88],
+        ];
+        let m = sensor_to_scene_matrix(&profile).expect("invertible camera profile");
+        let rgb_to_camera = {
+            let mut x = multiply_matrix(&profile, &SRGB_TO_XYZ);
+            for row in &mut x {
+                let sum: f32 = row.iter().sum();
+                row.iter_mut().for_each(|v| *v /= sum);
+            }
+            x
+        };
+        for scene in [[1.0, 1.0, 1.0], [2.0, 1.0, 0.4], [0.3, 0.2, 0.8]] {
+            let camera = std::array::from_fn::<f32, 3, _>(|i| {
+                (0..3).map(|j| rgb_to_camera[i][j] * scene[j]).sum()
+            });
+            let restored = apply_camera_calibration(camera, [1.0; 4], &m);
+            for channel in 0..3 {
+                assert!((restored[channel] - scene[channel]).abs() < 0.0001);
+            }
+        }
+        let white = apply_camera_calibration([1.0; 3], [1.0; 4], &m);
+        assert!(white.iter().all(|v| (*v - 1.0).abs() < 0.0001));
+    }
+
+    #[test]
+    fn camera_calibration_does_not_clip_hdr_values() {
+        let identity: CameraMatrix = [
+            [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]
+        ];
+        let out = apply_camera_calibration([1.5, 0.25, 0.1], [2.0, 1.0, 1.0, f32::NAN], &identity);
+        assert!(out[0] > 1.0, "highlight headroom must remain until tone mapping");
+        assert!((out[0] - 3.0).abs() < 1e-6);
+        assert!((out[1] - 0.25).abs() < 1e-6);
+        assert!(invert_matrix(&[[0.0; 3]; 3]).is_none());
+    }
 
     #[test]
     fn calibration_weights_reach_measured_illuminant_endpoints() {

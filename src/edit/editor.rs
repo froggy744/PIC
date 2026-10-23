@@ -857,8 +857,8 @@ pub fn build(
 
     // Consistent with preset intensity controls: 100% is the existing full
     // look, 0% leaves the creative filter unapplied. Manual tools stay intact.
-    let filter_amount = add_slider(&filters_box, "Filter Amount (%)", 0.0, 100.0, 1.0, 0);
-    filter_amount.set_tooltip_text(Some("Adjust the selected filter's strength (0–100%). Does not change automatic fixes."));
+    let filter_amount = add_slider(&filters_box, "Filter / Quick Fix Amount (%)", 0.0, 100.0, 1.0, 0);
+    filter_amount.set_tooltip_text(Some("Shared intensity for enabled Quick Fixes and creative filters (0–100%). Manual adjustments stay unchanged."));
 
     add_section_label(&filters_box, "FILTERS");
     let filter_grid = gtk::FlowBox::new();
@@ -1706,6 +1706,7 @@ pub fn build(
 
     connect_toggle(
         &controls.auto_contrast,
+        &controls.filter_amount,
         session.clone(),
         syncing.clone(),
         queue_preview.clone(),
@@ -1714,6 +1715,7 @@ pub fn build(
     );
     connect_toggle(
         &controls.auto_color,
+        &controls.filter_amount,
         session.clone(),
         syncing.clone(),
         queue_preview.clone(),
@@ -1722,11 +1724,13 @@ pub fn build(
     );
     connect_toggle(
         &controls.auto_brightness,
+        &controls.filter_amount,
         session.clone(), syncing.clone(), queue_preview.clone(), update_history_buttons.clone(),
         |r, v| r.auto_brightness = v,
     );
     connect_toggle(
         &controls.auto_enhance,
+        &controls.filter_amount,
         session.clone(),
         syncing.clone(),
         queue_preview.clone(),
@@ -1776,7 +1780,9 @@ pub fn build(
                     recipe.sepia = false;
                 }
             });
-            filter_amount_scale.set_sensitive(active);
+            filter_amount_scale.set_sensitive(
+                session.borrow().recipe.has_adjustable_effect()
+            );
             update_history_buttons();
             queue_preview();
         });
@@ -1824,7 +1830,9 @@ pub fn build(
                     recipe.black_white = false;
                 }
             });
-            filter_amount_scale.set_sensitive(active);
+            filter_amount_scale.set_sensitive(
+                session.borrow().recipe.has_adjustable_effect()
+            );
             update_history_buttons();
             queue_preview();
         });
@@ -1874,7 +1882,9 @@ pub fn build(
                 recipe.black_white = false;
                 recipe.sepia = false;
             });
-            filter_amount_scale.set_sensitive(active && preset != FilterPreset::None);
+            filter_amount_scale.set_sensitive(
+                session.borrow().recipe.has_adjustable_effect()
+            );
             update_history_buttons();
             queue_preview();
         });

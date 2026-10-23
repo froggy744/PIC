@@ -248,6 +248,7 @@ impl MetadataPanel {
         filters_button.set_tooltip_text(Some("Choose filter categories to show"));
         let filters_popover = gtk::Popover::new();
         let filters_list = gtk::Box::new(gtk::Orientation::Vertical, 2);
+        filters_list.add_css_class("metadata-filter-options");
         filters_list.set_margin_start(10);
         filters_list.set_margin_end(10);
         filters_list.set_margin_top(8);

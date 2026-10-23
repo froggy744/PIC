@@ -34,7 +34,15 @@ button.metadata-header-toggle.metadata-filter-active:not(:checked) {
     border-radius: 8px;
     background-color: alpha(@theme_fg_color, 0.045);
     box-shadow: none;
+    font-size: 11px;
     font-weight: 600;
+}
+.metadata-filter-panel button.metadata-filter-all label {
+    font-size: 11px;
+}
+.metadata-filter-panel .metadata-filter-options checkbutton,
+.metadata-filter-panel .metadata-filter-options checkbutton label {
+    font-size: 11px;
 }
 .metadata-filter-panel button.metadata-filter-all:hover {
     background-color: alpha(@theme_fg_color, 0.09);

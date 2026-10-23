@@ -1049,6 +1049,9 @@ fn configure_action_button<W: IsA<gtk::Widget>>(button: &W) {
     widget.set_vexpand(false);
     widget.set_halign(gtk::Align::Center);
     widget.set_valign(gtk::Align::Center);
+    // One hover geometry for normal buttons, toggles, and MenuButtons.
+    // The menu wrapper remains transparent; CSS styles its inner button.
+    widget.add_css_class("pic-toolbar-action");
     // MenuButton draws its own inner button. Giving its outer widget the
     // theme's action-button surface paints a second badge on hover.
     if !widget.is::<gtk::MenuButton>() {

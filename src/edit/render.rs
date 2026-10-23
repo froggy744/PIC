@@ -1030,10 +1030,11 @@ fn apply_auto_brightness(image: &mut RgbaImage) {
         // Recover underexposed shadows without pushing ordinary midtones
         // toward 0.87 as the old whole-frame gamma curve did.
         (
-            (0.87_f32.ln() / median.max(0.02).ln()).clamp(
-                if (0.40..0.70).contains(&median) { 0.70 } else { 0.4 },
-                1.0,
-            ),
+            // The earlier 0.4 floor produced 2–3× luma gains in normal
+            // shadows on older/high-ISO Nikon RAWs. In DSC_8437.NEF that
+            // magnified chroma noise and skin detail into false-colour specks.
+            // Use a restrained gamma; never force midtones toward 87% white.
+            (0.87_f32.ln() / median.max(0.02).ln()).clamp(0.70, 1.0),
             Some((0.22, 0.35)),
         )
     } else if median >= 0.82 && (0.02..0.72).contains(&shadow) {
@@ -1063,9 +1064,20 @@ fn apply_auto_brightness(image: &mut RgbaImage) {
             .map(|(start, end)| 1.0 - smoothstep(start, end, y))
             .unwrap_or(1.0);
         let requested_gain = ((y + (mapped - y) * weight) / y).clamp(0.3, 3.0);
-        // Saturated reds may be nearly clipped even though their luminance is
-        // dark. Lift RGB together, but protect vivid colours and headroom.
-        let gain = auto_brightness_colour_safe_gain(pixel, requested_gain);
+        // A low-luminance histogram can trigger enormous positive boosts
+        // on sensor-developed high-ISO RAWs. Bound *only positive* exposure
+        // with a smooth shoulder, so the resulting shadow detail stays
+        // photographic rather than revealing amplified RGB noise. The
+        // negative bright-scene correction is preserved unchanged.
+        let gentle_gain = if requested_gain > 1.0 {
+            const MAX_SHADOW_LIFT: f32 = 0.60; // asymptotic maximum 1.6x
+            1.0 + MAX_SHADOW_LIFT
+                * (1.0 - (-(requested_gain - 1.0) / MAX_SHADOW_LIFT).exp())
+        } else {
+            requested_gain
+        };
+        // Keep the existing single-gain chroma/headroom safety rule.
+        let gain = auto_brightness_colour_safe_gain(pixel, gentle_gain);
         for channel in &mut pixel[..3] {
             *channel = (*channel as f32 * gain).round().clamp(0.0, 255.0) as u8;
         }
@@ -1721,10 +1733,46 @@ mod tests {
         let bright = RgbaImage::from_pixel(24, 24, Rgba([190, 195, 200, 211]));
         let corrected_dark = apply_recipe(dark, &recipe).get_pixel(0, 0).0;
         let corrected_bright = apply_recipe(bright, &recipe).get_pixel(0, 0).0;
-        assert!(corrected_dark[1] > 100);
+        // A restrained automatic correction must improve a dim frame
+        // without pushing its midtones into a noisy or washed-out look.
+        assert!(corrected_dark[1] >= 85 && corrected_dark[1] <= 100);
         assert!(corrected_bright[1] < 160);
         assert_eq!(corrected_dark[3], 211);
         assert_eq!(corrected_bright[3], 211);
+    }
+
+    #[test]
+    fn auto_brightness_restrains_noisy_low_light_raw_shadows() {
+        // Real-photo regression: DSC_8437.NEF's earlier Auto Brightness
+        // used gamma 0.4 and boosted shadow details by roughly 2–3x,
+        // revealing extreme high-ISO chroma noise on faces and clothing.
+        // Build a deterministic lower-decile/median luma distribution
+        // matching the photo, without storing private RAW pixels.
+        let source = RgbaImage::from_fn(100, 100, |x, _| {
+            if x < 12 {
+                Rgba([33, 35, 37, 255]) // lower decile ~0.136
+            } else if x < 50 {
+                Rgba([55, 60, 62, 255])
+            } else if x < 88 {
+                Rgba([72, 75, 80, 255]) // median ~0.29
+            } else {
+                Rgba([160, 170, 175, 255])
+            }
+        });
+        let mut recipe = EditRecipe::default();
+        recipe.auto_brightness = true;
+        let output = apply_recipe(source.clone(), &recipe);
+        for x in [5, 25, 65, 95] {
+            let original = source.get_pixel(x, 50);
+            let corrected = output.get_pixel(x, 50);
+            assert!(corrected[1] >= original[1], "Auto Brightness darkened a shadow");
+            assert!(corrected[1] as f32 <= original[1] as f32 * 1.61 + 1.0,
+                "Auto Brightness over-amplified a noisy RAW shadow at {x}: {original:?} -> {corrected:?}");
+        }
+        assert!(output.get_pixel(5, 50)[1] > 40,
+            "Auto Brightness must still improve shadow detail");
+        assert_eq!(output.get_pixel(95, 50), source.get_pixel(95, 50),
+            "well-exposed background should not be brightened");
     }
 
     #[test]
@@ -1865,7 +1913,9 @@ mod tests {
         let mut recipe = EditRecipe::default();
         recipe.auto_brightness = true;
         let output = apply_recipe(source, &recipe);
-        assert!(output.get_pixel(5, 50)[1] >= 125, "dark subject should be clearly brighter");
+        let subject = output.get_pixel(5, 50)[1];
+        assert!((85..=110).contains(&subject),
+            "dim subject should brighten without a high-ISO noise explosion: {subject}");
         assert_eq!(output.get_pixel(80, 50)[1], 189, "well-lit wall should stay stable");
     }
 

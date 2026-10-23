@@ -56,6 +56,16 @@ fn is_nikon_raw(path: &str) -> bool {
     crate::image_format::for_path(path).is_some_and(|format| format.id == "nikon_raw")
 }
 
+/// Camera-original Nikon JPEG is the safe default for native viewing and
+/// JPEG-derived adjustments. Our experimental sensor colour match has failed
+/// real-photo quality tests (including DSC_4814 and DSC_8104).
+///
+/// Set PIC_NEF_EXPERIMENTAL_SENSOR=1 only for explicit development comparisons.
+/// This is deliberately not a camera RAW colour profile.
+fn use_nikon_camera_jpeg() -> bool {
+    std::env::var("PIC_NEF_EXPERIMENTAL_SENSOR").ok().as_deref() != Some("1")
+}
+
 fn is_dng(path: &str) -> bool {
     crate::image_format::for_path(path).is_some_and(|format| format.id == "dng")
 }
@@ -467,17 +477,20 @@ pub fn decode_for_viewer(
     decode_for_viewer_with_cancel(reference, viewport_width, viewport_height, None, || false)
 }
 
-/// Decode a RAW original for Export without a viewport-size limit or thumbnail
-/// cache input. Nikon NEF is developed from sensor pixels; the embedded JPEG supplies the
-/// camera rendering reference, not the exported image pixels.
+/// Decode a RAW original for export at native image dimensions.
+/// Until a photographically validated Nikon sensor pipeline exists, NEF files
+/// with a full-size embedded camera JPEG use that JPEG as their colour-accurate
+/// source. Adjustments remain non-destructive, but the *base is JPEG-derived*,
+/// not a 16-bit sensor development. Other RAW formats are unchanged.
+/// PIC_NEF_EXPERIMENTAL_SENSOR=1 opts into the unreleased sensor experiment.
 pub fn decode_raw_source_for_export(reference: &str) -> Result<image::RgbaImage> {
     anyhow::ensure!(is_raw(reference), "not a supported RAW source: {reference}");
     decode_for_viewer(reference, u32::MAX, u32::MAX)
 }
 
-/// Decode a local RAW file for the lightbox. Nikon NEF uses sensor data,
-/// calibrated to the largest embedded camera JPEG when available. Other RAW
-/// formats retain their existing embedded-preview/fallback behavior.
+/// Decode a local RAW file for the lightbox. Nikon NEF uses the embedded
+/// camera JPEG at native resolution by default; unvalidated sensor processing
+/// is an explicit opt-in. Other RAW formats are unchanged.
 /// Returns the image plus target dimensions before EXIF orientation.
 fn decode_local_raw_for_viewer<F>(
     reference: &str,
@@ -554,12 +567,23 @@ where
     };
     if needs_full_resolution_frame {
         check_viewer_cancelled(cancelled, "before_nef_camera_frame_decode")?;
-        let raw_source = rawler::rawsource::RawSource::new(&local_path)?;
-        let image = develop_nef_sensor_frame(
-            &raw_source,
-            reference,
-            embedded_preview.as_deref(),
-        )?;
+        let image = if let Some(bytes) = embedded_preview.as_deref().filter(|_| use_nikon_camera_jpeg()) {
+            let (width, height) = jpeg_dimensions(bytes)?;
+            if std::env::var_os("PICASA_TRACE").is_some() {
+                eprintln!(
+                    "PIC_DECODE stage=nef_native_camera_jpeg mode=stable source=nikon_embedded_jpeg dimensions={}x{}",
+                    width, height,
+                );
+            }
+            decode_viewer_jpeg(bytes, width, height, reference)?
+        } else {
+            let raw_source = rawler::rawsource::RawSource::new(&local_path)?;
+            develop_nef_sensor_frame(
+                &raw_source,
+                reference,
+                embedded_preview.as_deref(),
+            )?
+        };
         check_viewer_cancelled(cancelled, "after_nef_camera_frame_decode")?;
         let source_width = image.width();
         let source_height = image.height();
@@ -579,8 +603,13 @@ where
         );
         if std::env::var_os("PICASA_TRACE").is_some() {
             eprintln!(
-                "PIC_DECODE stage=nef_full_resolution_frame output={}x{} target={}x{} source=sensor_render",
+                "PIC_DECODE stage=nef_full_resolution_frame output={}x{} target={}x{} source={}",
                 source_width, source_height, target_width, target_height,
+                if use_nikon_camera_jpeg() && embedded_preview.is_some() {
+                    "nikon_embedded_jpeg"
+                } else {
+                    "sensor_render"
+                },
             );
         }
         return Ok((image, target_width, target_height));
@@ -837,25 +866,19 @@ where
         #[cfg(target_os = "linux")]
         if crate::network_shares::private(reference) {
             if is_nikon_raw(reference) {
-                let camera_reference = if (viewport_width, viewport_height)
-                    == (u32::MAX, u32::MAX)
-                {
-                    None
-                } else {
-                    check_viewer_cancelled(&cancelled, "before_remote_embedded_preview")?;
-                    let preview_started = std::time::Instant::now();
-                    let bytes = remote_nef_embedded_jpeg(reference, true)?.ok_or_else(|| {
-                        anyhow::anyhow!("Remote NEF has no embedded JPEG preview")
-                    })?;
-                    if std::env::var_os("PICASA_TRACE").is_some() {
-                        eprintln!(
-                            "PIC_DECODE stage=remote_nef_embedded_preview elapsed_ms={:.3} bytes={}",
-                            preview_started.elapsed().as_secs_f64() * 1000.0,
-                            bytes.len(),
-                        );
-                    }
-                    Some(bytes)
-                };
+                // Always query the bounded JPEG range, including native/Export.
+                // Avoid fetching the full NFS/SMB RAW and demosaicing it merely
+                // to reproduce the manufacturer's already-embedded rendering.
+                check_viewer_cancelled(&cancelled, "before_remote_embedded_preview")?;
+                let preview_started = std::time::Instant::now();
+                let camera_reference = remote_nef_embedded_jpeg(reference, true)?;
+                if std::env::var_os("PICASA_TRACE").is_some() {
+                    eprintln!(
+                        "PIC_DECODE stage=remote_nef_embedded_preview elapsed_ms={:.3} bytes={}",
+                        preview_started.elapsed().as_secs_f64() * 1000.0,
+                        camera_reference.as_ref().map_or(0, Vec::len),
+                    );
+                }
                 let needs_full_resolution_frame = match camera_reference.as_deref() {
                     Some(bytes) => {
                         let (source_width, source_height) = jpeg_dimensions(bytes)?;
@@ -869,7 +892,23 @@ where
                     }
                     None => true,
                 };
-                if needs_full_resolution_frame {
+                if needs_full_resolution_frame && use_nikon_camera_jpeg()
+                    && camera_reference.is_some()
+                {
+                    let bytes = camera_reference.as_deref().expect("checked above");
+                    let (source_width, source_height) = jpeg_dimensions(bytes)?;
+                    let (target_width, target_height) = viewer_target_dimensions(
+                        source_width, source_height, orientation, viewport_width, viewport_height
+                    );
+                    let image = decode_viewer_jpeg(bytes, source_width, source_height, reference)?;
+                    if std::env::var_os("PICASA_TRACE").is_some() {
+                        eprintln!(
+                            "PIC_DECODE stage=remote_nef_full_resolution_frame source=nikon_embedded_jpeg dimensions={}x{} target={}x{}",
+                            source_width, source_height, target_width, target_height,
+                        );
+                    }
+                    (Arc::new(image), target_width, target_height)
+                } else if needs_full_resolution_frame {
                     check_viewer_cancelled(&cancelled, "before_remote_nef_camera_frame_read")?;
                     let source_started = std::time::Instant::now();
                     let bytes = read_viewer_source(reference, read_context)?;

@@ -242,3 +242,20 @@ button.infobar-selected-thumb:hover {
     border: 0;
     background: transparent;
 }
+
+
+/* V1.01 visual hierarchy: generous edit controls, quiet metadata, clear focus. */
+.edit-section-label {
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.3px;
+    color: alpha(@theme_fg_color, 0.78);
+}
+.edit-adjustment-group { margin-bottom: 12px; }
+.edit-adjustment-row { margin-bottom: 7px; }
+.edit-adjustment-value { font-weight: 600; }
+.edit-filter-tile:focus-visible { outline: 2px solid @accent_bg_color; outline-offset: 2px; }
+.metadata-explorer {
+    border-radius: 14px;
+    border-color: alpha(@theme_fg_color, 0.18);
+}

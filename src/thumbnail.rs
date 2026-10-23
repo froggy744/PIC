@@ -298,6 +298,8 @@ include!("thumbnail/viewer.rs");
 include!("thumbnail/nef.rs");
 include!("thumbnail/dng.rs");
 mod color;
+#[cfg(test)]
+mod raw_quality;
 include!("thumbnail/decoders.rs");
 include!("thumbnail/batch.rs");
 

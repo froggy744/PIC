@@ -94,122 +94,9 @@ fn decode_nef_jpeg_thumbnail(
     Ok(decoded)
 }
 
-const NEF_CAMERA_MATCH_SAMPLE_STRIDE: usize = 8;
-
-/// Fit a small colour matrix from the sensor-developed image
-/// to Nikon's embedded full-size JPEG. The JPEG supplies the camera look; the
-/// output pixels still come from demosaiced sensor data.
-fn nef_camera_color_matrix(
-    sensor: &image::ImageBuffer<image::Rgb<u16>, Vec<u16>>,
-    camera: &image::RgbImage,
-) -> Option<[[f64; 4]; 3]> {
-    if sensor.dimensions() != camera.dimensions() {
-        return None;
-    }
-
-    let mut gram = [[0.0f64; 4]; 4];
-    let mut right_hand = [[0.0f64; 3]; 4];
-    let mut sample_count = 0usize;
-    for y in (0..sensor.height()).step_by(NEF_CAMERA_MATCH_SAMPLE_STRIDE) {
-        for x in (0..sensor.width()).step_by(NEF_CAMERA_MATCH_SAMPLE_STRIDE) {
-            let raw = sensor.get_pixel(x, y).0;
-            let target = camera.get_pixel(x, y).0;
-            let feature = [
-                f64::from(raw[0]) / f64::from(u16::MAX),
-                f64::from(raw[1]) / f64::from(u16::MAX),
-                f64::from(raw[2]) / f64::from(u16::MAX),
-                1.0,
-            ];
-            for row in 0..4 {
-                for column in 0..4 {
-                    gram[row][column] += feature[row] * feature[column];
-                }
-                for channel in 0..3 {
-                    right_hand[row][channel] += feature[row] * f64::from(target[channel]);
-                }
-            }
-            sample_count += 1;
-        }
-    }
-    if sample_count < 64 {
-        return None;
-    }
-
-    // Keep uniform and near-monochrome scenes well-conditioned. The prior is
-    // the identity sRGB mapping; the image samples supply the camera-specific
-    // correction when the scene contains enough colour variation.
-    let regularization = sample_count as f64 * 0.001;
-    for (index, row) in gram.iter_mut().enumerate() {
-        row[index] += regularization;
-    }
-    let mut matrix = [[0.0f64; 4]; 3];
-    for channel in 0..3 {
-        matrix[channel] = solve_nef_camera_channel(
-            gram,
-            std::array::from_fn(|row| {
-                let identity_prior = if row == channel { 255.0 } else { 0.0 };
-                right_hand[row][channel] + regularization * identity_prior
-            }),
-        )?;
-    }
-
-    Some(matrix)
-}
-
-fn solve_nef_camera_channel(
-    matrix: [[f64; 4]; 4],
-    values: [f64; 4],
-) -> Option<[f64; 4]> {
-    let mut augmented = [[0.0f64; 5]; 4];
-    for row in 0..4 {
-        augmented[row][..4].copy_from_slice(&matrix[row]);
-        augmented[row][4] = values[row];
-    }
-    for column in 0..4 {
-        let pivot = (column..4).max_by(|&left, &right| {
-            augmented[left][column]
-                .abs()
-                .total_cmp(&augmented[right][column].abs())
-        })?;
-        if augmented[pivot][column].abs() < 1e-12 {
-            return None;
-        }
-        augmented.swap(column, pivot);
-        let divisor = augmented[column][column];
-        for index in column..5 {
-            augmented[column][index] /= divisor;
-        }
-        for row in 0..4 {
-            if row == column {
-                continue;
-            }
-            let factor = augmented[row][column];
-            for index in column..5 {
-                augmented[row][index] -= factor * augmented[column][index];
-            }
-        }
-    }
-    Some(std::array::from_fn(|row| augmented[row][4]))
-}
-
-fn nef_camera_render_pixel(
-    raw: [u16; 3],
-    matrix: &[[f64; 4]; 3],
-) -> image::Rgb<u8> {
-    let feature = [
-        f64::from(raw[0]) / f64::from(u16::MAX),
-        f64::from(raw[1]) / f64::from(u16::MAX),
-        f64::from(raw[2]) / f64::from(u16::MAX),
-        1.0,
-    ];
-    image::Rgb(std::array::from_fn(|channel| {
-        let predicted = (0..4)
-            .map(|index| matrix[channel][index] * feature[index])
-            .sum::<f64>();
-        predicted.round().clamp(0.0, 255.0) as u8
-    }))
-}
-
+/// Estimate a Nikon-like look from a DCT-downscaled embedded JPEG and apply
+/// that *single global colour/tone transform* to sensor pixels. Unlike the
+/// abandoned pic-strata prototype, no JPEG pixels are fused with the RAW image.
 fn match_nef_sensor_to_camera_jpeg(
     sensor: DynamicImage,
     camera_jpeg: &[u8],
@@ -217,40 +104,46 @@ fn match_nef_sensor_to_camera_jpeg(
 ) -> Result<DynamicImage> {
     let started = std::time::Instant::now();
     let sensor = sensor.to_rgb16();
-    let (camera_width, camera_height) = jpeg_dimensions(camera_jpeg)?;
-    let camera = decode_jpeg_turbo_with_target(camera_jpeg, camera_width, camera_height)
-        .or_else(|_| decode_with_image(camera_jpeg))?;
-    let camera = color::color_manage_jpeg_rgb(camera_jpeg, camera.image, reference);
-    if sensor.dimensions() != camera.dimensions() {
+    let (camera_width, camera_height) = match jpeg_dimensions(camera_jpeg) {
+        Ok(dimensions) => dimensions,
+        Err(_) => return Ok(DynamicImage::ImageRgb16(sensor)),
+    };
+    if sensor.dimensions() != (camera_width, camera_height) {
         if std::env::var_os("PICASA_TRACE").is_some() {
             eprintln!(
-                "PIC_DECODE stage=nef_camera_render_match skipped=sensor_jpeg_dimensions sensor={}x{} jpeg={}x{}",
-                sensor.width(), sensor.height(), camera.width(), camera.height(),
+                "PIC_DECODE stage=nef_camera_render_match skipped=unaligned_dimensions sensor={}x{} jpeg={}x{}",
+                sensor.width(), sensor.height(), camera_width, camera_height,
             );
         }
         return Ok(DynamicImage::ImageRgb16(sensor));
     }
 
-    let Some(matrix) = nef_camera_color_matrix(&sensor, &camera) else {
-        return Ok(DynamicImage::ImageRgb16(sensor));
+    // TurboJPEG's 1/8 native DCT scaling decodes the Nikon JPEG to about
+    // 752x502 on a 24MP Z 5, instead of allocating another 24MP image.
+    // If its scaled JPEG cannot be decoded, retain the unmodified sensor
+    // development rather than silently inventing a colour transform.
+    let camera = match decode_jpeg_turbo_with_max(camera_jpeg, 1024) {
+        Ok(camera) => camera,
+        Err(error) => {
+            if std::env::var_os("PICASA_TRACE").is_some() {
+                eprintln!("PIC_DECODE stage=nef_camera_render_match fallback=raw reason={error:#}");
+            }
+            return Ok(DynamicImage::ImageRgb16(sensor));
+        }
     };
-    if std::env::var_os("PICASA_TRACE").is_some() {
-        eprintln!("PIC_DECODE stage=nef_camera_render_profile matrix={matrix:?}");
-    }
-    let output = image::RgbImage::from_fn(sensor.width(), sensor.height(), |x, y| {
-        nef_camera_render_pixel(sensor.get_pixel(x, y).0, &matrix)
-    });
+    let camera = color::color_manage_jpeg_rgb(camera_jpeg, camera.image, reference);
+    let output = camera_look::render(&sensor, &camera);
     if std::env::var_os("PICASA_TRACE").is_some() {
         eprintln!(
-            "PIC_DECODE stage=nef_camera_render_match elapsed_ms={:.3} samples={} pixels=sensor_render camera_reference=embedded_jpeg output={}x{}",
+            "PIC_DECODE stage=nef_camera_render_match elapsed_ms={:.3} reference={}x{} output={}x{} method=global_matrix_monotone_tone sensor_only=true",
             started.elapsed().as_secs_f64() * 1000.0,
-            (sensor.width() as usize / NEF_CAMERA_MATCH_SAMPLE_STRIDE)
-                * (sensor.height() as usize / NEF_CAMERA_MATCH_SAMPLE_STRIDE),
-            output.width(),
-            output.height(),
+            camera.width(), camera.height(), sensor.width(), sensor.height(),
         );
     }
-    Ok(DynamicImage::ImageRgb8(output))
+    Ok(match output {
+        Some(image) => DynamicImage::ImageRgb8(image),
+        None => DynamicImage::ImageRgb16(sensor),
+    })
 }
 
 fn develop_nef_sensor(raw_source: &rawler::rawsource::RawSource, reference: &str) -> Result<DynamicImage> {

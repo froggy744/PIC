@@ -396,8 +396,8 @@ impl MetadataPanel {
             let popover = gtk::Popover::new();
             let content = gtk::Box::new(gtk::Orientation::Vertical, 2);
             content.add_css_class("metadata-filter-value-choices");
-            content.set_margin_start(8);
-            content.set_margin_end(8);
+            content.set_margin_start(2);
+            content.set_margin_end(2);
             content.set_margin_top(8);
             content.set_margin_bottom(8);
             popover.set_child(Some(&content));

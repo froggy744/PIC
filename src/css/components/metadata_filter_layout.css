@@ -44,13 +44,13 @@ button.metadata-header-toggle.metadata-filter-active:not(:checked) {
 .metadata-filter-panel .metadata-filter-options checkbutton label {
     font-size: 11px;
 }
-.metadata-filter-panel .metadata-filter-value-choices checkbutton,
-.metadata-filter-panel .metadata-filter-value-choices checkbutton label {
+.metadata-filter-value-choices checkbutton,
+.metadata-filter-value-choices checkbutton label {
     min-height: 27px;
     padding: 2px 1px;
     font-size: 11px;
 }
-.metadata-filter-panel .metadata-filter-value-choices checkbutton:hover,
+.metadata-filter-value-choices checkbutton:hover,
 .metadata-filter-panel .metadata-filter-options checkbutton:hover {
     border-radius: 5px;
     background-color: alpha(@accent_bg_color, 0.12);

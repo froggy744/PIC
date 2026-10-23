@@ -292,7 +292,15 @@ impl MetadataPanel {
         clear.set_tooltip_text(Some("Clear all filters"));
         clear.update_property(&[gtk::accessible::Property::Label("Clear all filters")]);
         summary.append(&clear);
-        let refresh_button = gtk::Button::from_icon_name("library-refresh-symbolic");
+        let refresh_button = {
+        let button = gtk::Button::new();
+        // Load directly from the embedded icon bundle, not the desktop icon
+        // theme cache (which may not contain PIC's custom rescan symbol).
+        button.set_child(Some(&gtk::Image::from_resource(
+            "/picrs/icons/library-refresh-symbolic.svg",
+        )));
+        button
+    };
         refresh_button.add_css_class("metadata-filter-utility");
         refresh_button.set_tooltip_text(Some("Refresh library"));
         refresh_button.update_property(&[gtk::accessible::Property::Label("Refresh library")]);

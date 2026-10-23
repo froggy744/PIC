@@ -22,13 +22,13 @@ button.metadata-header-toggle.metadata-filter-active:not(:checked) {
 /* PIC metadata explorer: photo-first geometry, theme-inherited colours.
    Loaded above theme button rules; square-corner setting still wins. */
 .metadata-filter-panel .metadata-filter-toolbar {
-    min-height: 38px;
+    min-height: 32px;
 }
 /* ALL is a mode switch, not an individual filter or a "select everything"
    command. It stays visible in both metadata presentation modes. */
 .metadata-filter-panel button.metadata-filter-all {
     min-width: 44px;
-    min-height: 32px;
+    min-height: 28px;
     padding: 0 11px;
     border: 1px solid alpha(@theme_fg_color, 0.11);
     border-radius: 8px;
@@ -81,7 +81,7 @@ button.metadata-header-toggle.metadata-filter-active:not(:checked) {
 .metadata-filter-panel .metadata-filter-toggle,
 .metadata-filter-panel .metadata-filter-controls button,
 .metadata-filter-panel .metadata-filter-summary button {
-    min-height: 32px;
+    min-height: 28px;
     padding: 0 7px;
     border-radius: 8px;
     border: 1px solid alpha(@theme_fg_color, 0.11);
@@ -121,8 +121,10 @@ button.metadata-header-toggle.metadata-filter-active:not(:checked) {
     font-weight: 600;
 }
 .metadata-filter-panel .metadata-filter-summary .metadata-filter-utility {
-    min-width: 32px;
+    min-width: 28px;
+    min-height: 28px;
     padding: 0 7px;
+    -gtk-icon-size: 11px;
 }
 .metadata-filter-panel .metadata-explorer {
     margin: 2px 0 2px;

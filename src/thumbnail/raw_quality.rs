@@ -25,6 +25,69 @@ mod tests {
     use std::path::Path;
     use std::time::Instant;
 
+    // Reference and sensor RGB values are display encoded. Decode to linear
+    // sRGB for luminance and relative channel-share measurements. The latter
+    // separates brightness mismatch from white balance / hue mismatch, but
+    // is only a diagnostic (not perceptual Delta E or camera calibration).
+    fn srgb_linear(value: u8) -> f64 {
+        let x = f64::from(value) / 255.0;
+        if x <= 0.04045 {
+            x / 12.92
+        } else {
+            ((x + 0.055) / 1.055).powf(2.4)
+        }
+    }
+
+    #[derive(Default, Debug)]
+    struct GroupColor {
+        count: u64,
+        linear_luma_sensor: f64,
+        linear_luma_camera: f64,
+        chroma_delta: [f64; 3],
+    }
+
+    impl GroupColor {
+        fn record(&mut self, sensor: [u8; 3], camera: [u8; 3]) {
+            let s = sensor.map(srgb_linear);
+            let c = camera.map(srgb_linear);
+            let ssum: f64 = s.iter().sum();
+            let csum: f64 = c.iter().sum();
+            // Near-black or clipped material cannot determine relative
+            // colour accurately. Do not let those pixels dominate hue stats.
+            if ssum < 0.025 || csum < 0.025
+                || sensor.iter().any(|&v| v >= 252)
+                || camera.iter().any(|&v| v >= 252) {
+                return;
+            }
+            self.count += 1;
+            self.linear_luma_sensor += 0.2126 * s[0] + 0.7152 * s[1] + 0.0722 * s[2];
+            self.linear_luma_camera += 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+            for i in 0..3 {
+                self.chroma_delta[i] += s[i] / ssum - c[i] / csum;
+            }
+        }
+
+        fn print(&self, label: &str) {
+            if self.count == 0 {
+                eprintln!("PIC_RAW_QA_LIGHT group={label} valid=0");
+                return;
+            }
+            let n = self.count as f64;
+            eprintln!(
+                "PIC_RAW_QA_LIGHT group={} valid={} mean_linear_luma_sensor={:.4} camera={:.4} \
+                 relative_luma_ratio={:.3} chroma_fraction_delta_RGB={:+.4},{:+.4},{:+.4}",
+                label,
+                self.count,
+                self.linear_luma_sensor / n,
+                self.linear_luma_camera / n,
+                self.linear_luma_sensor / self.linear_luma_camera.max(f64::EPSILON),
+                self.chroma_delta[0] / n,
+                self.chroma_delta[1] / n,
+                self.chroma_delta[2] / n,
+            );
+        }
+    }
+
     #[derive(Default, Debug)]
     struct Report {
         samples: u64,
@@ -34,11 +97,15 @@ mod tests {
         neutral_signed: [i64; 3],
         skin_candidate_samples: u64,
         skin_signed: [i64; 3],
+        scene_color: GroupColor,
+        neutral_color: GroupColor,
+        warm_color: GroupColor,
     }
 
     impl Report {
         fn record(&mut self, actual: [u8; 3], reference: [u8; 3]) {
             self.samples += 1;
+            self.scene_color.record(actual, reference);
             for i in 0..3 {
                 self.error[i] += u64::from(actual[i].abs_diff(reference[i]));
                 self.signed[i] += i64::from(actual[i]) - i64::from(reference[i]);
@@ -51,6 +118,7 @@ mod tests {
             // This is a heuristic only: clipped whites and backgrounds do
             // not constitute a measured colour calibration target.
             if max.saturating_sub(min) <= 20 && min >= 48 && max <= 242 {
+                self.neutral_color.record(actual, reference);
                 self.neutral_samples += 1;
                 for i in 0..3 {
                     self.neutral_signed[i] +=
@@ -64,6 +132,7 @@ mod tests {
                 && reference[0] > 75
                 && reference[0] < 240
             {
+                self.warm_color.record(actual, reference);
                 self.skin_candidate_samples += 1;
                 for i in 0..3 {
                     self.skin_signed[i] +=
@@ -101,6 +170,9 @@ mod tests {
                     signed[2] as f64 / d,
                 );
             }
+            self.scene_color.print("all_nonclipped");
+            self.neutral_color.print("camera_neutral_candidates");
+            self.warm_color.print("camera_warm_candidates");
         }
     }
 
@@ -129,10 +201,42 @@ mod tests {
     }
 
     #[test]
+    fn colour_statistics_separate_brightness_from_cast() {
+        // Same channel ratios, different brightness: luminance changes,
+        // relative chroma stays close (allow sRGB transfer curvature).
+        let reference = [120, 120, 120];
+        let dark = [80, 80, 80];
+        let green = [80, 150, 80];
+        let mut brightness = GroupColor::default();
+        brightness.record(dark, reference);
+        assert_eq!(brightness.count, 1);
+        assert!(brightness.linear_luma_sensor < brightness.linear_luma_camera);
+        assert!(brightness.chroma_delta.iter().all(|v| v.abs() < 1e-6));
+
+        let mut colour = GroupColor::default();
+        colour.record(green, reference);
+        assert_eq!(colour.count, 1);
+        assert!(colour.chroma_delta[1] > 0.20, "strong green cast must be measurable");
+        assert!(colour.chroma_delta[0] < 0.0);
+    }
+
+    #[test]
     fn diagnostic_rejects_misaligned_rasters() {
         let a = RgbImage::new(32, 32);
         let b = RgbImage::new(32, 33);
         assert!(report_pair(&a, &b).is_none());
+    }
+
+    fn write_comparison_preview(rgb: &RgbImage, path: &Path) {
+        // 1400px reference images are small enough to share without sending
+        // a 150MB TIFF or the original identifiable NEF to a public repository.
+        let long = rgb.width().max(rgb.height()).max(1);
+        let width = ((u64::from(rgb.width()) * 1400) / u64::from(long)).max(1) as u32;
+        let height = ((u64::from(rgb.height()) * 1400) / u64::from(long)).max(1) as u32;
+        let reduced = image::imageops::resize(
+            rgb, width, height, image::imageops::FilterType::Lanczos3
+        );
+        reduced.save(path).expect("write colour comparison PNG");
     }
 
     #[test]
@@ -181,7 +285,12 @@ mod tests {
                 .expect("write camera JPEG unchanged");
             sensor.save(folder.join("rawler-sensor16.tiff"))
                 .expect("write 16-bit sensor-developed TIFF");
-            eprintln!("PIC_RAW_QA outputs={}", folder.display());
+            write_comparison_preview(&reference, &folder.join("nikon-preview.png"));
+            write_comparison_preview(&actual, &folder.join("sensor-preview.png"));
+            eprintln!(
+                "PIC_RAW_QA outputs={} comparison=nikon-preview.png,sensor-preview.png",
+                folder.display()
+            );
         }
         assert_eq!(
             original_sha, blake3::hash(&std::fs::read(path).expect("re-read original NEF")),

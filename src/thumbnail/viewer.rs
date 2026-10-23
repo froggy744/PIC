@@ -6,12 +6,18 @@ struct DecodedThumbnailSource {
 }
 
 static VIEWER_ORIENTATION_CACHE: OnceLock<Mutex<HashMap<(PathBuf, u128), u16>>> = OnceLock::new();
-const VIEWER_NEF_SOURCE_CACHE_BYTES: usize = 128 * 1024 * 1024;
+// A 24MP Nikon developed into RGB16 occupies ~145 MiB. Allow one such
+// source frame to survive the transition from 1:1 into Edit without
+// forcing a second sensor decode, while keeping the cache bounded.
+const VIEWER_NEF_SOURCE_CACHE_BYTES: usize = 192 * 1024 * 1024;
 
 struct ViewerNefSourceCacheEntry {
     path: PathBuf,
     modified_ns: u128,
     file_size: u64,
+    // Avoid serving a source frame developed under a different opt-in
+    // experimental renderer when a test switches env modes within a process.
+    renderer_mode: u8,
     source_width: u32,
     source_height: u32,
     image: Arc<DynamicImage>,
@@ -328,6 +334,27 @@ fn develop_nef_sensor_frame(
     }
 }
 
+fn viewer_nef_renderer_mode() -> u8 {
+    if std::env::var("PIC_NEF_SCENE_RENDER").ok().as_deref() == Some("1") {
+        2
+    } else if std::env::var("PIC_NEF_EVALUATION_SENSOR_ONLY").ok().as_deref() == Some("1") {
+        1
+    } else {
+        0
+    }
+}
+
+/// Account for the real pixel storage, not the 8-bit display representation.
+fn viewer_nef_cached_image_bytes(image: &DynamicImage) -> Option<usize> {
+    match image {
+        DynamicImage::ImageRgb8(pixels) => Some(pixels.as_raw().len()),
+        DynamicImage::ImageRgba8(pixels) => Some(pixels.as_raw().len()),
+        DynamicImage::ImageRgb16(pixels) => pixels.as_raw().len().checked_mul(2),
+        DynamicImage::ImageRgba16(pixels) => pixels.as_raw().len().checked_mul(2),
+        _ => None,
+    }
+}
+
 fn viewer_nef_source_fingerprint(path: &Path) -> Option<(u128, u64)> {
     let metadata = std::fs::metadata(path).ok()?;
     let modified_ns = metadata
@@ -339,6 +366,30 @@ fn viewer_nef_source_fingerprint(path: &Path) -> Option<(u128, u64)> {
     Some((modified_ns, metadata.len()))
 }
 
+#[cfg(test)]
+mod nef_high_precision_cache_tests {
+    use super::*;
+
+    #[test]
+    fn accurately_counts_high_precision_frame_bytes() {
+        let rgb = DynamicImage::ImageRgb16(image::ImageBuffer::from_pixel(
+            6016, 4016, image::Rgb([0u16; 3])
+        ));
+        let bytes = viewer_nef_cached_image_bytes(&rgb).expect("RGB16 supported");
+        assert_eq!(bytes, 6016 * 4016 * 3 * 2);
+        assert!(bytes <= VIEWER_NEF_SOURCE_CACHE_BYTES,
+            "24MP 16-bit sensor frame should be cacheable");
+    }
+
+    #[test]
+    fn counts_8bit_and_16bit_buffers_using_actual_storage() {
+        let rgb8 = DynamicImage::ImageRgb8(image::RgbImage::new(2, 3));
+        let rgb16 = DynamicImage::ImageRgb16(image::Rgb16Image::new(2, 3));
+        assert_eq!(viewer_nef_cached_image_bytes(&rgb8), Some(18));
+        assert_eq!(viewer_nef_cached_image_bytes(&rgb16), Some(36));
+    }
+}
+
 fn viewer_nef_source_cache_lookup(
     path: &Path,
     orientation: u16,
@@ -348,10 +399,12 @@ fn viewer_nef_source_cache_lookup(
     let (modified_ns, file_size) = viewer_nef_source_fingerprint(path)?;
     let cache = VIEWER_NEF_SOURCE_CACHE.get_or_init(|| Mutex::new(VecDeque::new()));
     let mut cache = cache.lock().ok()?;
+    let renderer_mode = viewer_nef_renderer_mode();
     let position = cache.iter().position(|entry| {
         entry.path == path
             && entry.modified_ns == modified_ns
             && entry.file_size == file_size
+            && entry.renderer_mode == renderer_mode
     })?;
     let entry = cache.remove(position)?;
     let (target_width, target_height) = viewer_target_dimensions(
@@ -379,10 +432,8 @@ fn viewer_nef_source_cache_insert(
     let Some((modified_ns, file_size)) = viewer_nef_source_fingerprint(path) else {
         return;
     };
-    let bytes = match image.as_ref() {
-        DynamicImage::ImageRgb8(image) => image.as_raw().len(),
-        DynamicImage::ImageRgba8(image) => image.as_raw().len(),
-        _ => return,
+    let Some(bytes) = viewer_nef_cached_image_bytes(image.as_ref()) else {
+        return;
     };
     if bytes > VIEWER_NEF_SOURCE_CACHE_BYTES {
         return;
@@ -394,6 +445,7 @@ fn viewer_nef_source_cache_insert(
         path: path.to_path_buf(),
         modified_ns,
         file_size,
+        renderer_mode: viewer_nef_renderer_mode(),
         source_width,
         source_height,
         image,

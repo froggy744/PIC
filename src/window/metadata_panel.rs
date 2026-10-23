@@ -53,12 +53,8 @@ fn load_explorer_fields(connection: &Connection) -> Vec<Field> {
         .ok()
         .flatten()
         .and_then(|raw| serde_json::from_str::<Vec<Field>>(&raw).ok())
+        .map(unique_explorer_fields)
         .map(|fields| {
-            let fields = fields
-                .into_iter()
-                .filter(|field| Field::ALL.contains(field))
-                .take(8)
-                .collect::<Vec<_>>();
             if fields == [Field::Camera, Field::Lens, Field::Iso, Field::FileType] {
                 vec![Field::Camera, Field::Aperture, Field::Shutter]
             } else {
@@ -69,6 +65,40 @@ fn load_explorer_fields(connection: &Connection) -> Vec<Field> {
         .unwrap_or_else(|| vec![Field::Camera, Field::Aperture, Field::Shutter])
 }
 
+fn unique_explorer_fields(fields: Vec<Field>) -> Vec<Field> {
+    let mut unique = Vec::new();
+    for field in fields
+        .into_iter()
+        .filter(|field| Field::ALL.contains(field))
+    {
+        if unique.len() == 8 {
+            break;
+        }
+        if !unique.contains(&field) {
+            unique.push(field);
+        }
+    }
+    unique
+}
+
+#[cfg(test)]
+mod explorer_field_tests {
+    use super::*;
+
+    #[test]
+    fn saved_explorer_columns_drop_duplicate_categories_and_keep_order() {
+        assert_eq!(
+            unique_explorer_fields(vec![
+                Field::Camera,
+                Field::FileType,
+                Field::Camera,
+                Field::Lens
+            ]),
+            vec![Field::Camera, Field::FileType, Field::Lens]
+        );
+    }
+}
+
 struct ExplorerColumn {
     root: gtk::Box,
     choose: gtk::DropDown,
@@ -77,6 +107,7 @@ struct ExplorerColumn {
     width: Rc<Cell<i32>>,
     add: gtk::Button,
     remove: gtk::Button,
+    field: Rc<Cell<Field>>,
 }
 
 pub(super) struct MetadataPanel {
@@ -674,6 +705,7 @@ impl MetadataPanel {
             .map(|item| item.label())
             .collect::<Vec<_>>();
         let choose = gtk::DropDown::from_strings(&names);
+        let selected_field = Rc::new(Cell::new(field));
         choose.add_css_class("metadata-column-choice");
         choose.set_hexpand(true);
         choose.set_selected(
@@ -736,6 +768,7 @@ impl MetadataPanel {
             width: width.clone(),
             add: add.clone(),
             remove: remove.clone(),
+            field: selected_field.clone(),
         });
 
         let weak = Rc::downgrade(self);
@@ -744,6 +777,19 @@ impl MetadataPanel {
         choose.connect_selected_notify(move |choice| {
             if let Some(panel) = weak.upgrade() {
                 let field = Field::ALL[choice.selected() as usize];
+                let duplicate = panel.explorer.borrow().iter().any(|column| {
+                    !Rc::ptr_eq(&column.field, &selected_field) && column.field.get() == field
+                });
+                if duplicate {
+                    choice.set_selected(
+                        Field::ALL
+                            .iter()
+                            .position(|item| *item == selected_field.get())
+                            .unwrap_or(0) as u32,
+                    );
+                    return;
+                }
+                selected_field.set(field);
                 panel.populate_column_choices(field, &search_for_choice, &content);
                 search_for_choice.set_text("");
                 search_for_choice.set_placeholder_text(Some(&format!(

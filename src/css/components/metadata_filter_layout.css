@@ -50,6 +50,11 @@ button.metadata-header-toggle.metadata-filter-active:not(:checked) {
 .rating-filter-popover-content checkbutton label {
     font-size: 11px;
 }
+.sort-popover-content checkbutton,
+.rating-filter-popover-content checkbutton {
+    min-height: 24px;
+    padding: 0 2px;
+}
 .sort-popover-content > .heading,
 .rating-filter-popover-content > .heading {
     font-size: 12px;

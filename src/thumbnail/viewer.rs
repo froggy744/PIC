@@ -103,7 +103,7 @@ fn match_nef_sensor_to_camera_jpeg(
     reference: &str,
 ) -> Result<DynamicImage> {
     let started = std::time::Instant::now();
-    let sensor = sensor.to_rgb16();
+    let sensor = sensor.into_rgb16();
     let (camera_width, camera_height) = match jpeg_dimensions(camera_jpeg) {
         Ok(dimensions) => dimensions,
         Err(_) => return Ok(DynamicImage::ImageRgb16(sensor)),

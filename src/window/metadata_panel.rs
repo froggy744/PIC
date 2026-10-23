@@ -395,6 +395,7 @@ impl MetadataPanel {
             menu.set_visible(panel.filter_selection.borrow().fields.contains(&field));
             let popover = gtk::Popover::new();
             let content = gtk::Box::new(gtk::Orientation::Vertical, 6);
+            content.add_css_class("metadata-filter-value-choices");
             content.set_margin_start(10);
             content.set_margin_end(10);
             content.set_margin_top(10);

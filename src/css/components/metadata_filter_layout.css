@@ -44,6 +44,12 @@ button.metadata-header-toggle.metadata-filter-active:not(:checked) {
 .metadata-filter-panel .metadata-filter-options checkbutton label {
     font-size: 11px;
 }
+.metadata-filter-panel .metadata-filter-value-choices checkbutton,
+.metadata-filter-panel .metadata-filter-value-choices checkbutton label {
+    min-height: 27px;
+    padding: 2px 1px;
+    font-size: 11px;
+}
 .sort-popover-content checkbutton,
 .sort-popover-content checkbutton label,
 .rating-filter-popover-content checkbutton,

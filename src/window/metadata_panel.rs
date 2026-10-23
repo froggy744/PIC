@@ -394,12 +394,12 @@ impl MetadataPanel {
             });
             menu.set_visible(panel.filter_selection.borrow().fields.contains(&field));
             let popover = gtk::Popover::new();
-            let content = gtk::Box::new(gtk::Orientation::Vertical, 6);
+            let content = gtk::Box::new(gtk::Orientation::Vertical, 2);
             content.add_css_class("metadata-filter-value-choices");
-            content.set_margin_start(10);
-            content.set_margin_end(10);
-            content.set_margin_top(10);
-            content.set_margin_bottom(10);
+            content.set_margin_start(8);
+            content.set_margin_end(8);
+            content.set_margin_top(8);
+            content.set_margin_bottom(8);
             popover.set_child(Some(&content));
             menu.set_popover(Some(&popover));
             let weak = Rc::downgrade(&panel);

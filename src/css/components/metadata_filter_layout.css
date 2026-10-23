@@ -50,6 +50,11 @@ button.metadata-header-toggle.metadata-filter-active:not(:checked) {
     padding: 2px 1px;
     font-size: 11px;
 }
+.metadata-filter-panel .metadata-filter-value-choices checkbutton:hover,
+.metadata-filter-panel .metadata-filter-options checkbutton:hover {
+    border-radius: 5px;
+    background-color: alpha(@accent_bg_color, 0.12);
+}
 .sort-popover-content checkbutton,
 .sort-popover-content checkbutton label,
 .rating-filter-popover-content checkbutton,
@@ -67,7 +72,7 @@ button.metadata-header-toggle.metadata-filter-active:not(:checked) {
     font-weight: 700;
 }
 .metadata-filter-panel button.metadata-filter-all:hover {
-    background-color: alpha(@theme_fg_color, 0.09);
+    background-color: alpha(@accent_bg_color, 0.12);
 }
 .metadata-filter-panel button.metadata-filter-all:checked {
     background-color: alpha(@accent_bg_color, 0.18);
@@ -77,7 +82,7 @@ button.metadata-header-toggle.metadata-filter-active:not(:checked) {
 .metadata-filter-panel .metadata-filter-controls button,
 .metadata-filter-panel .metadata-filter-summary button {
     min-height: 32px;
-    padding: 0 11px;
+    padding: 0 7px;
     border-radius: 8px;
     border: 1px solid alpha(@theme_fg_color, 0.11);
     background-color: alpha(@theme_fg_color, 0.045);
@@ -95,7 +100,7 @@ button.metadata-header-toggle.metadata-filter-active:not(:checked) {
 .metadata-filter-panel .metadata-filter-toggle:hover,
 .metadata-filter-panel .metadata-filter-controls button:hover,
 .metadata-filter-panel .metadata-filter-summary button:hover {
-    background-color: alpha(@theme_fg_color, 0.09);
+    background-color: alpha(@accent_bg_color, 0.12);
 }
 .metadata-filter-panel .metadata-filter-toggle:checked,
 .metadata-filter-panel .metadata-filter-controls button:checked {
@@ -148,7 +153,7 @@ button.metadata-header-toggle.metadata-filter-active:not(:checked) {
     font-weight: 600;
 }
 .metadata-filter-panel dropdown.metadata-column-choice > button:hover {
-    background-color: alpha(@theme_fg_color, 0.07);
+    background-color: alpha(@accent_bg_color, 0.12);
 }
 .metadata-filter-panel .metadata-column-menu {
     min-width: 28px;
@@ -160,7 +165,7 @@ button.metadata-header-toggle.metadata-filter-active:not(:checked) {
     background: transparent;
 }
 .metadata-filter-panel .metadata-column-menu:hover {
-    background-color: alpha(@theme_fg_color, 0.08);
+    background-color: alpha(@accent_bg_color, 0.12);
 }
 .metadata-filter-panel .metadata-column-resize {
     min-width: 8px;
@@ -231,7 +236,7 @@ button.metadata-header-toggle.metadata-filter-active:not(:checked) {
     box-shadow: none;
 }
 .metadata-filter-panel .metadata-active-chip:hover {
-    background-color: alpha(@accent_bg_color, 0.17);
+    background-color: alpha(@accent_bg_color, 0.22);
 }
 .metadata-column-actions-popover button.metadata-column-action {
     min-height: 30px;

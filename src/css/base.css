@@ -216,7 +216,7 @@ button.infobar-selected-thumb:hover {
 .metadata-filter-controls .metadata-filter-utility { padding: 3px; }
 .metadata-explorer-column {
     min-width: 0;
-    padding: 0 8px 0 2px;
+    padding: 8px 10px 10px;
     border-right: 1px solid alpha(@theme_fg_color, 0.12);
 }
 .metadata-explorer-column:last-child { border-right: 0; }
@@ -232,7 +232,7 @@ button.infobar-selected-thumb:hover {
     color: @theme_fg_color;
     border: 1px solid alpha(@theme_fg_color, 0.14);
     border-radius: 11px;
-    margin: 2px 8px 8px;
+    margin: 2px 0 2px;
 }
 .metadata-filter-toggle label,
 .metadata-filter-controls button label { font-weight: 500; }

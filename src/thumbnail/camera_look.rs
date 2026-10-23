@@ -191,6 +191,85 @@ impl CameraLook {
         Some(Self { matrix, tone, saturation })
     }
 
+    /// Reject a global fit that matches foliage/scene averages but produces
+    /// tinted white clothing or incorrect skin. The first real Nikon Z 5
+    /// regression exposed precisely this failure: the full-image fit looked
+    /// plausible numerically, yet changed white material to green.
+    ///
+    /// Assess sparse reference pixels BEFORE allocating/rendering the 24MP
+    /// sensor result. The reference supplies colour statistics only.
+    fn matches_camera_neutrals(&self, sensor: &SensorImage, reference: &RgbImage) -> bool {
+        let (w, h) = reference.dimensions();
+        let mut neutral_delta = [0.0f64; 3];
+        let mut skin_delta = [0.0f64; 3];
+        let mut scene_delta = [0.0f64; 3];
+        let mut neutrals = 0usize;
+        let mut skin = 0usize;
+        let mut samples = 0usize;
+        for y in (2..h.saturating_sub(2)).step_by(4) {
+            for x in (2..w.saturating_sub(2)).step_by(4) {
+                let target = reference.get_pixel(x, y).0;
+                // Pixelwise differences on high-frequency edges measure
+                // demosaicing/jpg sharpening, not a camera colour cast.
+                let neighbor = reference.get_pixel(x + 1, y).0;
+                if target.iter().zip(neighbor)
+                    .any(|(&a, b)| a.abs_diff(b) > 22) {
+                    continue;
+                }
+                let src = sensor_at(sensor, x, y, w, h);
+                let pixel = self.pixel([
+                    (src[0] * 65535.0).round() as u16,
+                    (src[1] * 65535.0).round() as u16,
+                    (src[2] * 65535.0).round() as u16,
+                ]);
+                let difference: [f64; 3] =
+                    std::array::from_fn(|ch| f64::from(pixel[ch]) - f64::from(target[ch]));
+                for ch in 0..3 {
+                    scene_delta[ch] += difference[ch];
+                }
+                samples += 1;
+                let max = *target.iter().max().unwrap_or(&0);
+                let min = *target.iter().min().unwrap_or(&0);
+                if max.saturating_sub(min) <= 28 && max > 80 && max < 245 {
+                    for ch in 0..3 {
+                        neutral_delta[ch] += difference[ch];
+                    }
+                    neutrals += 1;
+                }
+                if target[0] > target[1].saturating_add(12)
+                    && target[1] > target[2].saturating_add(7)
+                    && target[0] > 90
+                    && target[0] < 245
+                {
+                    for ch in 0..3 {
+                        skin_delta[ch] += difference[ch];
+                    }
+                    skin += 1;
+                }
+            }
+        }
+        if samples < 128 {
+            return false;
+        }
+        // Preserve a reasonable scene-wide white balance, then use regions
+        // likely to expose casts. Ignore poorly populated classes.
+        if scene_delta.iter().any(|d| (d / samples as f64).abs() > 16.0) {
+            return false;
+        }
+        if neutrals >= 32 && neutral_delta.iter().any(|d| (d / neutrals as f64).abs() > 12.0) {
+            return false;
+        }
+        if skin >= 64 {
+            let dr = skin_delta[0] / skin as f64;
+            let dg = skin_delta[1] / skin as f64;
+            let db = skin_delta[2] / skin as f64;
+            if (dr - dg).abs() > 12.0 || (db - dg).abs() > 12.0 {
+                return false;
+            }
+        }
+        true
+    }
+
     fn pixel(&self, raw: [u16; 3]) -> [u8; 3] {
         let input = [
             raw[0] as f32 / 65535.0,
@@ -219,6 +298,9 @@ impl CameraLook {
 /// Peak additional storage: a single RGB8 output and a scaled JPEG reference.
 pub(super) fn render(sensor: &SensorImage, reference: &RgbImage) -> Option<RgbImage> {
     let look = CameraLook::estimate(sensor, reference)?;
+    if !look.matches_camera_neutrals(sensor, reference) {
+        return None;
+    }
     let mut pixels = vec![0u8; sensor.as_raw().len()];
     pixels.par_chunks_exact_mut(3)
         .zip(sensor.as_raw().par_chunks_exact(3))
@@ -270,6 +352,27 @@ mod tests {
             let b = result.get_pixel(x, 120)[0];
             assert!(b >= a, "tone correction inverted a gradient at {x}");
         }
+    }
+
+    #[test]
+    fn rejects_green_cast_on_camera_neutral_pixels() {
+        let sensor = SensorImage::from_pixel(256, 256, Rgb([35000, 35000, 35000]));
+        let reference = RgbImage::from_pixel(128, 128, Rgb([139, 140, 139]));
+        let mut tone = [0.0f32; 256];
+        for (i, slot) in tone.iter_mut().enumerate() {
+            *slot = i as f32;
+        }
+        let bad = CameraLook {
+            matrix: [
+                [255.0, 0.0, 0.0, 0.0],
+                [0.0, 255.0, 0.0, 45.0],
+                [0.0, 0.0, 255.0, 0.0],
+            ],
+            tone,
+            saturation: 1.0,
+        };
+        assert!(!bad.matches_camera_neutrals(&sensor, &reference),
+            "green-tinted white clothing must fail the camera-look gate");
     }
 
     #[test]

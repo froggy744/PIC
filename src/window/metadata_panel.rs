@@ -292,7 +292,7 @@ impl MetadataPanel {
         clear.set_tooltip_text(Some("Clear all filters"));
         clear.update_property(&[gtk::accessible::Property::Label("Clear all filters")]);
         summary.append(&clear);
-        let refresh_button = gtk::Button::from_icon_name("view-refresh-symbolic");
+        let refresh_button = gtk::Button::from_icon_name("folder-download-symbolic");
         refresh_button.add_css_class("metadata-filter-utility");
         refresh_button.set_tooltip_text(Some("Refresh library"));
         refresh_button.update_property(&[gtk::accessible::Property::Label("Refresh library")]);

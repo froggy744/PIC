@@ -1070,7 +1070,8 @@ fn apply_auto_brightness(image: &mut RgbaImage) {
             *channel = (*channel as f32 * gain).round().clamp(0.0, 255.0) as u8;
         }
     });
-}
+}
+
 /// A positive Auto Brightness gain can clip an already-near-white red/blue
 /// channel even when the pixel's luma suggests a dark shadow. Constrain the
 /// positive gain for saturated pixels, preserve a single RGB scalar (hue),

@@ -290,3 +290,28 @@ Acceptance requires an actual PIC-generated NEF preview, evaluated against
 Nikon's embedded image and natural skin/neutral colours, before this mode may
 become default. Do not merge this branch into V1.01 or `main` on the basis
 of synthetic tests or simulation alone.
+
+
+## 2026-10-23: unclipped camera-to-scene calibration candidate
+
+The experimental renderer was extended after inspection showed that the
+pre-existing `rawler` calibration stage can clip scene-linear channel values
+before PIC's tone shoulder runs. This defeats one purpose of real RAW editing:
+highlight headroom. The experimental code now asks existing `rawler` only to
+rescale, demosaic and crop Nikon Bayer data. PIC applies an independently
+written 3×3 camera-to-linear-sRGB transform in floating point, using only
+the file's existing colour matrix and white-balance multipliers. The matrix
+is normalized to preserve a D65 neutral response, with a guarded inverse.
+Values over 1.0 are retained until PIC's highlight shoulder and final 16-bit
+output encoding. The code has mathematical round-trip, neutral and HDR
+retention tests.
+
+The published sRGB/XYZ colourimetry constants are mathematical standards;
+no outside application algorithm implementation, source code, LUT, profile or
+shader is copied. The decoder crate is the same already-included `rawler 0.8`
+(LGPL-2.1): third-party licensing and distribution must still be audited.
+
+**Photographic acceptance is still open.** The new conversion has not yet
+been validated with a privately rendered PIC output against Nikon's
+embedded camera JPEG, nor stress-tested for noise, performance or GPU/CPU
+parity. Do not turn on by default or merge for V1.01 solely on code tests.

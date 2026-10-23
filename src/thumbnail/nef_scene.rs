@@ -182,14 +182,18 @@ fn recover_neutral_sensor_highlight(
     // Reconstruct *only* a highlight in which all three sensor channels
     // have approached saturation. Intense red fabric has a low G/B sensor
     // channel and must never be neutralised.
-    if low < 0.85 || high < 0.98 {
+    if low < 0.84 || high < 0.98 {
         return calibrated;
     }
     let smooth = |start: f32, end: f32, value: f32| {
         let x = ((value - start) / (end - start)).clamp(0.0, 1.0);
         x * x * (3.0 - 2.0 * x)
     };
-    let neutral_weight = smooth(0.85, 0.99, low) * smooth(0.98, 1.0, high);
+    // Nikon D300S sensor-highlight probe: a nominal white window yielded
+    // ~[1.0, 0.938, 1.0] in camera RGB. This is already irrecoverably
+    // sensor-clipped; a gradual full-neutral transition by 0.945 restores
+    // whites without ever touching ordinary subject pixels.
+    let neutral_weight = smooth(0.84, 0.945, low) * smooth(0.98, 1.0, high);
     let neutral = luminance(calibrated);
     calibrated.map(|v| v + (neutral - v) * neutral_weight)
 }
@@ -432,6 +436,19 @@ mod tests {
         assert!((recovered[2] - recovered[1]).abs() < 1e-5);
         assert!((luminance(recovered) - luminance(calibrated)).abs() < 1e-5,
             "neutral recovery must retain the highlight luminance");
+    }
+
+    #[test]
+    fn nearly_saturated_window_from_d300s_remains_neutral_after_wb() {
+        // Independent sensor-channel probe of the user-supplied D300S NEF:
+        // two channels reach 1.0 while the green channel is about 0.938.
+        // The numbers are a synthetic fixture, not copied image pixels.
+        let camera = [1.0, 0.938, 1.0];
+        let wb_result = [1.80, 0.938, 1.55];
+        let fixed = recover_neutral_sensor_highlight(camera, wb_result);
+        assert!((fixed[0] - fixed[1]).abs() < 0.03, "{fixed:?}");
+        assert!((fixed[2] - fixed[1]).abs() < 0.03, "{fixed:?}");
+        assert!((luminance(fixed) - luminance(wb_result)).abs() < 1e-5);
     }
 
     #[test]

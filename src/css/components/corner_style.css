@@ -1,0 +1,120 @@
+/* PIC Corner Style (Settings > Interface)
+ *
+ * "balanced" is the professional default: restrained 5–8px radii.
+ * "rounded" deliberately defers to each existing GTK/theme stylesheet.
+ * "square" retains the historical square photo tiles and also flattens
+ * application chrome. The native minimize/maximize/close buttons, custom
+ * album frames and the frameless Photo Wall remain theme/native owned.
+ *
+ * This provider is installed after the currently selected appearance theme
+ * and the shared InfoBar control stylesheet, so changes take effect live.
+ */
+
+/* BALANCED: photo surfaces, cards, panels and section containers. */
+.corner-style-balanced .photo-tile,
+.corner-style-balanced .thumbnail,
+.corner-style-balanced .filter-tile-preview,
+.corner-style-balanced .plain-album-cover,
+.corner-style-balanced .info-preview,
+.corner-style-balanced .edit-preview {
+    border-radius: 6px;
+}
+.corner-style-balanced .metadata-explorer,
+.corner-style-balanced .overlay-list,
+.corner-style-balanced .edit-mode-toolbar .edit-panel-tabs,
+.corner-style-balanced .search-field,
+.corner-style-balanced .albums-standard button.album-card,
+.corner-style-balanced .metadata-filter-panel .metadata-explorer-column,
+.corner-style-balanced .photo-actions-popover > contents {
+    border-radius: 8px;
+}
+.corner-style-balanced .albums-standard .thumbnail,
+.corner-style-balanced .plain-album-cover .thumbnail {
+    border-radius: 5px;
+}
+
+/* Balanced common commands: reserve 6px rounding for small controls. */
+.corner-style-balanced .navigation-sidebar button,
+.corner-style-balanced .navigation-sidebar row,
+.corner-style-balanced .metadata-filter-panel button,
+.corner-style-balanced .metadata-filter-panel entry,
+.corner-style-balanced .edit-mode-toolbar button,
+.corner-style-balanced .edit-panel-pages button,
+.corner-style-balanced .draw-tool-grid button,
+.corner-style-balanced .photo-info-bar button,
+.corner-style-balanced .photo-actions-menu button,
+.corner-style-balanced .pic-header-tools button,
+.corner-style-balanced .albums-standard button.album-card,
+.corner-style-balanced .settings-window button,
+.corner-style-balanced .settings-window entry,
+.corner-style-balanced .settings-window dropdown,
+.corner-style-balanced .metadata-column-actions-popover button,
+.corner-style-balanced .sort-popover-content checkbutton,
+.corner-style-balanced .rating-filter-popover-content checkbutton {
+    border-radius: 6px;
+}
+
+/* GtkMenuButton has an inner button; match it to ordinary icon buttons. */
+.corner-style-balanced .pic-header-tools menubutton > button,
+.corner-style-balanced .photo-info-bar menubutton > button,
+.corner-style-balanced .photo-actions-menu menubutton > button {
+    border-radius: 6px;
+}
+.corner-style-balanced popover > contents {
+    border-radius: 8px;
+}
+
+/* Keep the justified Photo Wall edge-to-edge; only Masonry is rounded. */
+.corner-style-balanced .photo-wall-tile:not(.masonry-tile),
+.corner-style-balanced .photo-wall-tile:not(.masonry-tile) .photo-frame.photo-tile,
+.corner-style-balanced .photo-wall-tile:not(.masonry-tile) .thumbnail {
+    border-radius: 0;
+}
+.corner-style-balanced .masonry-tile .photo-frame.photo-tile {
+    border-radius: 7px;
+}
+.corner-style-balanced .masonry-tile .thumbnail {
+    border-radius: 6px;
+}
+
+/* SQUARE: app chrome uses crisp 2px edges, photographic tiles 0px. */
+.corner-style-square .photo-tile,
+.corner-style-square .thumbnail,
+.corner-style-square .filter-tile-preview,
+.corner-style-square .plain-album-cover,
+.corner-style-square .album-cover,
+.corner-style-square .info-preview,
+.corner-style-square .edit-preview,
+.corner-style-square .masonry-tile .photo-frame.photo-tile,
+.corner-style-square .masonry-tile .thumbnail {
+    border-radius: 0;
+}
+.corner-style-square .metadata-explorer,
+.corner-style-square .overlay-list,
+.corner-style-square .edit-mode-toolbar .edit-panel-tabs,
+.corner-style-square .search-field,
+.corner-style-square .albums-standard button.album-card,
+.corner-style-square .photo-actions-popover > contents,
+.corner-style-square popover > contents {
+    border-radius: 2px;
+}
+.corner-style-square .navigation-sidebar button,
+.corner-style-square .navigation-sidebar row,
+.corner-style-square .metadata-filter-panel button,
+.corner-style-square .metadata-filter-panel entry,
+.corner-style-square .edit-mode-toolbar button,
+.corner-style-square .edit-panel-pages button,
+.corner-style-square .draw-tool-grid button,
+.corner-style-square .photo-info-bar button,
+.corner-style-square .photo-actions-menu button,
+.corner-style-square .pic-header-tools button,
+.corner-style-square .albums-standard button.album-card,
+.corner-style-square .settings-window button,
+.corner-style-square .settings-window entry,
+.corner-style-square .settings-window dropdown,
+.corner-style-square .metadata-column-actions-popover button,
+.corner-style-square .pic-header-tools menubutton > button,
+.corner-style-square .photo-info-bar menubutton > button,
+.corner-style-square .photo-actions-menu menubutton > button {
+    border-radius: 2px;
+}

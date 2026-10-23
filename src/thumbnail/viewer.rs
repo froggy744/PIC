@@ -282,9 +282,10 @@ fn develop_nef_sensor(raw_source: &rawler::rawsource::RawSource, reference: &str
     Ok(image)
 }
 
-/// Isolated V2 sensor-to-display experiment. The embedded JPEG is not
-/// examined or blended: rawler supplies scene-linear calibrated sensor RGB,
-/// and PIC owns the exposure/tone/encoding stage. Never enabled by default.
+/// Nikon sensor-to-display rendering (native detail, Edit, full-size Export).
+/// The embedded JPEG is not examined or blended into this sensor-derived
+/// output. PIC applies the file's calibration and its own tone/colour stage.
+/// The older JPEG-matched renderer remains an explicit diagnostic fallback.
 fn develop_nef_scene_frame(
     raw_source: &rawler::rawsource::RawSource,
     reference: &str,
@@ -312,7 +313,11 @@ fn develop_nef_sensor_frame(
     reference: &str,
     camera_jpeg: Option<&[u8]>,
 ) -> Result<DynamicImage> {
-    if std::env::var("PIC_NEF_SCENE_RENDER").ok().as_deref() == Some("1") {
+    // The owner accepted the colour and export of this exact scene renderer
+    // on real Nikon photos. Make it the default for full-resolution RAW only,
+    // leaving thumbnail/Fit browsing on Nikon's fast embedded preview.
+    // PIC_NEF_SCENE_RENDER=0 restores the former JPEG-match path.
+    if viewer_nef_renderer_mode() == 2 {
         return develop_nef_scene_frame(raw_source, reference);
     }
     let sensor = develop_nef_sensor(raw_source, reference)?;
@@ -320,7 +325,7 @@ fn develop_nef_sensor_frame(
     // photo-specific JPEG fit. Never enable this automatically. It isolates
     // sensor development from PIC's experimental Nikon colour matching.
     // Note: the legacy viewer/export interfaces still quantize to RGBA8.
-    if std::env::var("PIC_NEF_EVALUATION_SENSOR_ONLY").ok().as_deref() == Some("1") {
+    if viewer_nef_renderer_mode() == 1 {
         if std::env::var_os("PICASA_TRACE").is_some() {
             eprintln!(
                 "PIC_DECODE stage=nef_camera_render_match evaluation=sensor_only source=rawler_default no_jpeg_matching=true"
@@ -334,14 +339,21 @@ fn develop_nef_sensor_frame(
     }
 }
 
-fn viewer_nef_renderer_mode() -> u8 {
-    if std::env::var("PIC_NEF_SCENE_RENDER").ok().as_deref() == Some("1") {
-        2
-    } else if std::env::var("PIC_NEF_EVALUATION_SENSOR_ONLY").ok().as_deref() == Some("1") {
-        1
-    } else {
-        0
+/// 2 = accepted scene renderer; 1 = unmodified rawler diagnostic;
+/// 0 = previous JPEG-matched fallback. No renderer setting persists in photos.
+fn resolve_nef_renderer_mode(scene: Option<&str>, rawler_only: Option<&str>) -> u8 {
+    match scene {
+        Some("0") => 0, // Explicit recovery switch if a scene regresses.
+        Some("1") => 2, // Preserves compatibility with the approved test run.
+        _ if rawler_only == Some("1") => 1,
+        _ => 2, // Approved sensor renderer is now the default for native RAW.
     }
+}
+
+fn viewer_nef_renderer_mode() -> u8 {
+    let scene = std::env::var("PIC_NEF_SCENE_RENDER").ok();
+    let rawler_only = std::env::var("PIC_NEF_EVALUATION_SENSOR_ONLY").ok();
+    resolve_nef_renderer_mode(scene.as_deref(), rawler_only.as_deref())
 }
 
 /// Account for the real pixel storage, not the 8-bit display representation.
@@ -382,6 +394,22 @@ mod nef_high_precision_cache_tests {
     }
 
     #[test]
+    fn approved_scene_renderer_is_default_and_fallback_is_explicit() {
+        assert_eq!(resolve_nef_renderer_mode(None, None), 2);
+        assert_eq!(resolve_nef_renderer_mode(Some("1"), None), 2);
+        assert_eq!(resolve_nef_renderer_mode(Some("0"), None), 0);
+        assert_eq!(resolve_nef_renderer_mode(None, Some("1")), 1);
+        assert_eq!(resolve_nef_renderer_mode(Some("1"), Some("1")), 2);
+        assert_eq!(resolve_nef_renderer_mode(Some("0"), Some("1")), 0);
+    }
+
+    #[test]
+    fn embedded_nef_fit_never_reuses_sensor_cache_frame() {
+        assert!(!viewer_requests_native_pixels(6016, 4016, 1, 1440, 900));
+        assert!(viewer_requests_native_pixels(6016, 4016, 1, u32::MAX, u32::MAX));
+    }
+
+    #[test]
     fn counts_8bit_and_16bit_buffers_using_actual_storage() {
         let rgb8 = DynamicImage::ImageRgb8(image::RgbImage::new(2, 3));
         let rgb16 = DynamicImage::ImageRgb16(image::ImageBuffer::<image::Rgb<u16>, Vec<u16>>::new(2, 3));
@@ -407,6 +435,19 @@ fn viewer_nef_source_cache_lookup(
             && entry.renderer_mode == renderer_mode
     })?;
     let entry = cache.remove(position)?;
+    // A cached full-resolution sensor frame must never replace Nikon's
+    // embedded camera JPEG during Fit/bounded browsing. Cache only serves
+    // native-resolution requests; the preview path remains instant.
+    if !viewer_requests_native_pixels(
+        entry.source_width,
+        entry.source_height,
+        orientation,
+        viewport_width,
+        viewport_height,
+    ) {
+        cache.push_front(entry);
+        return None;
+    }
     let (target_width, target_height) = viewer_target_dimensions(
         entry.source_width,
         entry.source_height,
@@ -639,9 +680,9 @@ fn decode_dng_sensor_thumbnail_with_max(
 
 /// Decode a display-quality image for the lightbox. `viewport_width` and
 /// `viewport_height` are physical display pixels, already adjusted for any
-/// user rotation. Nikon NEF detail uses demosaiced sensor pixels, calibrated
-/// to the embedded camera JPEG's tone and colour response. JPEG sources use
-/// TurboJPEG's native DCT scaling before the final small resize.
+/// user rotation. Nikon Fit uses the embedded JPEG; native detail uses the
+/// sensor-derived scene renderer with the per-file camera colour calibration.
+/// JPEG sources retain TurboJPEG's native DCT scaling.
 pub fn decode_for_viewer(
     reference: &str,
     viewport_width: u32,
@@ -651,16 +692,16 @@ pub fn decode_for_viewer(
 }
 
 /// Decode a RAW original for Export without a viewport-size limit or thumbnail
-/// cache input. Nikon NEF is developed from sensor pixels; the embedded JPEG supplies the
-/// camera rendering reference, not the exported image pixels.
+/// cache input. Nikon NEF is developed from full-resolution sensor pixels,
+/// never from its embedded JPEG.
 pub fn decode_raw_source_for_export(reference: &str) -> Result<image::RgbaImage> {
     anyhow::ensure!(is_raw(reference), "not a supported RAW source: {reference}");
     decode_for_viewer(reference, u32::MAX, u32::MAX)
 }
 
-/// Decode a local RAW file for the lightbox. Nikon NEF uses sensor data,
-/// calibrated to the largest embedded camera JPEG when available. Other RAW
-/// formats retain their existing embedded-preview/fallback behavior.
+/// Decode a local RAW file for the lightbox. Nikon FIT uses the embedded
+/// camera JPEG; Nikon native detail/Edit/Export uses sensor-developed RGB.
+/// Other RAW formats keep their existing embedded-preview/fallback behavior.
 /// Returns the image plus target dimensions before EXIF orientation.
 fn decode_local_raw_for_viewer<F>(
     reference: &str,

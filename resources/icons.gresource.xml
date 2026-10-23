@@ -2,6 +2,7 @@
 <gresources>
   <gresource prefix="/picrs">
     <file alias="icons/metadata-filter-symbolic.svg" compressed="true" preprocess="xml-stripblanks">custom-icons/metadata-filter-symbolic.svg</file>
+    <file alias="icons/library-refresh-symbolic.svg" compressed="true" preprocess="xml-stripblanks">custom-icons/library-refresh-symbolic.svg</file>
     <file alias="icons/draw-arrow-symbolic.svg" compressed="true" preprocess="xml-stripblanks">custom-icons/draw-arrow-symbolic.svg</file>
     <file alias="icons/draw-arrow-dark.svg" compressed="true" preprocess="xml-stripblanks">custom-icons/draw-arrow-dark.svg</file>
     <file alias="icons/draw-arrow-light.svg" compressed="true" preprocess="xml-stripblanks">custom-icons/draw-arrow-light.svg</file>

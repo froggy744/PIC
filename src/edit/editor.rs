@@ -156,6 +156,13 @@ fn apply_native_preview_layout(
     });
 }
 
+/// A newly chosen creative filter starts at full effect strength. Keep this
+/// in the same recipe mutation as the filter choice so Undo restores both
+/// filter and previous slider amount together.
+fn reset_amount_on_creative_filter_selection(recipe: &mut EditRecipe) {
+    recipe.filter_amount = 1.0;
+}
+
 fn cpu_fallback_reason(recipe: &EditRecipe) -> &'static str {
     if recipe.clarity != 0.0 {
         "clarity"
@@ -857,8 +864,8 @@ pub fn build(
 
     // Consistent with preset intensity controls: 100% is the existing full
     // look, 0% leaves the creative filter unapplied. Manual tools stay intact.
-    let filter_amount = add_slider(&filters_box, "Filter Amount (%)", 0.0, 100.0, 1.0, 0);
-    filter_amount.set_tooltip_text(Some("Adjust the selected filter's strength (0–100%). Does not change automatic fixes."));
+    let filter_amount = add_slider(&filters_box, "Filter / Quick Fix Amount (%)", 0.0, 100.0, 1.0, 0);
+    filter_amount.set_tooltip_text(Some("Shared intensity for enabled Quick Fixes and creative filters (0–100%). Manual adjustments stay unchanged."));
 
     add_section_label(&filters_box, "FILTERS");
     let filter_grid = gtk::FlowBox::new();
@@ -1010,7 +1017,20 @@ pub fn build(
     smooth.set_tooltip_text(Some("Soften fine texture while preserving strong edges"));
     let grain = add_slider(&detail_box, "Grain", 0.0, 1.0, 0.02, 2);
     let vignette = add_slider(&detail_box, "Vignette", -1.0, 1.0, 0.02, 2);
-    vignette.set_tooltip_text(Some("Darken edges with positive values, brighten them with negative values"));
+    vignette.set_tooltip_text(Some("Drag left to lighten photo edges, right to darken them; the centre is neutral"));
+    // Make the existing left=light/right=dark behaviour discoverable.
+    // The CPU renderer already implements this sign convention.
+    let vignette_direction = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let lighten = gtk::Label::new(Some("← Lighter edges"));
+    lighten.set_xalign(0.0);
+    lighten.set_hexpand(true);
+    lighten.add_css_class("dim-label");
+    let darken = gtk::Label::new(Some("Darker edges →"));
+    darken.set_xalign(1.0);
+    darken.add_css_class("dim-label");
+    vignette_direction.append(&lighten);
+    vignette_direction.append(&darken);
+    detail_box.append(&vignette_direction);
 
     let controls = Controls {
         straighten,
@@ -1706,6 +1726,7 @@ pub fn build(
 
     connect_toggle(
         &controls.auto_contrast,
+        &controls.filter_amount,
         session.clone(),
         syncing.clone(),
         queue_preview.clone(),
@@ -1714,6 +1735,7 @@ pub fn build(
     );
     connect_toggle(
         &controls.auto_color,
+        &controls.filter_amount,
         session.clone(),
         syncing.clone(),
         queue_preview.clone(),
@@ -1722,11 +1744,13 @@ pub fn build(
     );
     connect_toggle(
         &controls.auto_brightness,
+        &controls.filter_amount,
         session.clone(), syncing.clone(), queue_preview.clone(), update_history_buttons.clone(),
         |r, v| r.auto_brightness = v,
     );
     connect_toggle(
         &controls.auto_enhance,
+        &controls.filter_amount,
         session.clone(),
         syncing.clone(),
         queue_preview.clone(),
@@ -1774,9 +1798,20 @@ pub fn build(
                 recipe.filter = FilterPreset::None;
                 if active {
                     recipe.sepia = false;
+                    reset_amount_on_creative_filter_selection(recipe);
                 }
             });
-            filter_amount_scale.set_sensitive(active);
+            if active {
+                // Recipe and thumb reset together as one undoable filter choice.
+                // Suppress the scale's own change handler to avoid a second
+                // mutation/preview request.
+                syncing.set(true);
+                filter_amount_scale.set_value(100.0);
+                syncing.set(false);
+            }
+            filter_amount_scale.set_sensitive(
+                session.borrow().recipe.has_adjustable_effect()
+            );
             update_history_buttons();
             queue_preview();
         });
@@ -1822,9 +1857,17 @@ pub fn build(
                 recipe.filter = FilterPreset::None;
                 if active {
                     recipe.black_white = false;
+                    reset_amount_on_creative_filter_selection(recipe);
                 }
             });
-            filter_amount_scale.set_sensitive(active);
+            if active {
+                syncing.set(true);
+                filter_amount_scale.set_value(100.0);
+                syncing.set(false);
+            }
+            filter_amount_scale.set_sensitive(
+                session.borrow().recipe.has_adjustable_effect()
+            );
             update_history_buttons();
             queue_preview();
         });
@@ -1873,8 +1916,15 @@ pub fn build(
                 recipe.filter = if active { preset } else { FilterPreset::None };
                 recipe.black_white = false;
                 recipe.sepia = false;
+                // Includes Original; Quick Fix toggles leave the amount alone.
+                reset_amount_on_creative_filter_selection(recipe);
             });
-            filter_amount_scale.set_sensitive(active && preset != FilterPreset::None);
+            syncing.set(true);
+            filter_amount_scale.set_value(100.0);
+            syncing.set(false);
+            filter_amount_scale.set_sensitive(
+                session.borrow().recipe.has_adjustable_effect()
+            );
             update_history_buttons();
             queue_preview();
         });
@@ -2946,6 +2996,34 @@ mod panel_tests {
             }
         }
         count
+    }
+
+    #[test]
+    fn picking_creative_filter_resets_amount_as_one_undoable_action() {
+        let mut session = EditSession::new(EditRecipe::default());
+        session.mutate(|recipe| {
+            recipe.auto_brightness = true;
+            recipe.filter_amount = 0.25;
+            recipe.exposure = 0.40;
+        });
+        session.mutate(|recipe| {
+            recipe.filter = FilterPreset::Clarendon;
+            reset_amount_on_creative_filter_selection(recipe);
+        });
+        assert_eq!(session.recipe.filter, FilterPreset::Clarendon);
+        assert_eq!(session.recipe.filter_amount, 1.0);
+        assert!(session.recipe.auto_brightness);
+        assert!((session.recipe.exposure - 0.40).abs() < 0.0001);
+        assert!(session.undo(), "filter selection must be undoable");
+        assert_eq!(session.recipe.filter, FilterPreset::None);
+        assert_eq!(session.recipe.filter_amount, 0.25,
+            "Undo restores the old slider amount with the prior filter");
+        assert!(session.redo());
+        assert_eq!(session.recipe.filter_amount, 1.0);
+        // B&W, Sepia and Original use the same reset helper as named filters.
+        session.recipe.filter_amount = 0.1;
+        reset_amount_on_creative_filter_selection(&mut session.recipe);
+        assert_eq!(session.recipe.filter_amount, 1.0);
     }
 
     #[test]

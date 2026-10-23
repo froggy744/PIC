@@ -1080,6 +1080,18 @@ impl EditRecipe {
         encoded
     }
 
+    /// One intensity slider controls creative looks and enabled Quick Fixes.
+    /// Manual exposure/colour sliders are intentionally independent.
+    pub fn has_adjustable_effect(&self) -> bool {
+        self.filter != super::filters::FilterPreset::None
+            || self.black_white
+            || self.sepia
+            || self.auto_color
+            || self.auto_contrast
+            || self.auto_brightness
+            || self.auto_enhance
+    }
+
     pub fn is_default(&self) -> bool {
         self.crop.is_full()
             && self.straighten.abs() < 0.0001
@@ -1267,6 +1279,37 @@ mod tests {
         assert!((decoded.smooth - 0.6).abs() < 0.001);
         assert!((decoded.vignette + 0.25).abs() < 0.001);
         assert!((decoded.grain - 0.25).abs() < 0.001);
+    }
+
+    #[test]
+    fn shared_amount_is_available_for_quick_fixes_and_creative_looks() {
+        let mut recipe = EditRecipe::default();
+        assert!(!recipe.has_adjustable_effect());
+        recipe.auto_color = true;
+        assert!(recipe.has_adjustable_effect());
+        recipe.auto_color = false;
+        recipe.auto_contrast = true;
+        assert!(recipe.has_adjustable_effect());
+        recipe.auto_contrast = false;
+        recipe.auto_brightness = true;
+        assert!(recipe.has_adjustable_effect());
+        recipe.auto_brightness = false;
+        recipe.auto_enhance = true;
+        assert!(recipe.has_adjustable_effect());
+        recipe.auto_enhance = false;
+        recipe.black_white = true;
+        assert!(recipe.has_adjustable_effect());
+        recipe.black_white = false;
+        recipe.sepia = true;
+        assert!(recipe.has_adjustable_effect());
+        recipe.sepia = false;
+        recipe.filter = super::super::filters::FilterPreset::Clarendon;
+        assert!(recipe.has_adjustable_effect());
+        recipe.filter = super::super::filters::FilterPreset::None;
+        assert!(!recipe.has_adjustable_effect());
+        recipe.exposure = 0.25;
+        assert!(!recipe.has_adjustable_effect(),
+            "manual adjustments must not enable the shared effect slider");
     }
 
     #[test]

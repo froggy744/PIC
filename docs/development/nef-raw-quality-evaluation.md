@@ -78,6 +78,23 @@ Nikon Z 5; WB [1.625, 1, 1.5019531, NaN] (the fourth component is unused on
 3-channel Bayer); D65 and A matrices present, D65 selected; black 1008,
 white 15520. These values do not alone demonstrate broken WB or matrix.
 
+### Illuminant A versus D65 test (optional)
+
+The Nikon Z 5 `DSC_8030.NEF` has camera matrices for both daylight (D65)
+and tungsten (A). Existing `rawler 0.8` preferentially selects D65, even
+when the photograph was taken under other lighting. To test the alternative
+**without changing PIC or copying any third-party code**, run the same ignored
+test with `PIC_NEF_EVALUATION_COMPARE_MATRIX_A=1`. The test temporarily removes
+the D65 entry from *its decoded metadata clone*, allowing rawler's existing
+illuminant A and chromatic adaptation path to run as a second candidate.
+It writes `sensor-matrix-A.png` and `sensor-matrix-A-exposure-only.png`
+and prints `PIC_RAW_QA_MATRIX` and `PIC_RAW_QA_LIGHT group=matrix_A_...`.
+
+This is *not* dual-illuminant interpolation and may produce worse results.
+No profile settings or colour processing are applied to the normal PIC viewer,
+editor or export. Compare both matrix candidates visually and using the warm
+and neutral channel-share residuals before any integration decision.
+
 Never commit real portraits, NEFs, or their reports to the public repository.
 
 ## Opt-in normal GUI sensor-only comparison

@@ -94,6 +94,10 @@ fn select_as_shot_calibration(raw: &mut rawler::RawImage) -> Option<f32> {
 
 const SAMPLE_STRIDE: usize = 64;
 const HIGHLIGHT_KNEE: f32 = 0.62;
+// A restrained, global photographic look. No scene-specific colour fitting,
+// copied profile, imported LUT or embedded-JPEG-derived transformation.
+const LUMINANCE_CONTRAST: f32 = 0.38;
+const LINEAR_CHROMA_GAIN: f32 = 1.12;
 const TARGET_MEDIAN: f32 = 0.23;
 const TARGET_P85: f32 = 0.68;
 
@@ -133,17 +137,21 @@ fn scene_exposure_gain(pixels: &[[f32; 3]]) -> f32 {
     (mid_gain * high_gain).sqrt().clamp(0.65, 2.7)
 }
 
-/// A continuous luminance shoulder. Up to the knee the mapping is exactly
-/// linear; above it, headroom is compressed without hard clipping at 1.0.
-/// The derivative is 1.0 on both sides of the knee.
+/// A continuous luminance shoulder. The highlight compression is applied
+/// before midtone contrast so input luminances remain ordered and the two
+/// transformations affect all colour channels by one shared scalar.
 fn tone_luminance(x: f32) -> f32 {
     let x = x.max(0.0);
-    if x <= HIGHLIGHT_KNEE {
+    let shoulder = if x <= HIGHLIGHT_KNEE {
         x
     } else {
         let range = 1.0 - HIGHLIGHT_KNEE;
         HIGHLIGHT_KNEE + range * (1.0 - (-(x - HIGHLIGHT_KNEE) / range).exp())
-    }
+    };
+    // Symmetric S curve with fixed endpoints. Its derivative is strictly
+    // positive throughout [0,1] when contrast is below 1.0.
+    shoulder + LUMINANCE_CONTRAST
+        * shoulder * (1.0 - shoulder) * (2.0 * shoulder - 1.0)
 }
 
 /// IEC 61966-2-1 display transfer function; encoded only once after all
@@ -174,13 +182,19 @@ fn render_pixel(linear: [f32; 3], exposure: f32) -> [u16; 3] {
     }
     let tone_scale = tone_luminance(y) / y;
     let mapped = source.map(|v| v * tone_scale);
-    let brightest = mapped.iter().copied().fold(0.0f32, f32::max);
+    // Restore a restrained amount of chroma lost in basic RAW development,
+    // using the same scene-linear luminance anchor for all three channels.
+    // Neutral grays are unchanged. This is not a per-channel colour cast
+    // correction: a later camera-profile evaluation must validate its hues.
+    let neutral = luminance(mapped);
+    let vivid = mapped.map(|v| (neutral + LINEAR_CHROMA_GAIN * (v - neutral)).max(0.0));
+    let brightest = vivid.iter().copied().fold(0.0f32, f32::max);
     let gamut_scale = if brightest > 1.0 {
         1.0 / brightest
     } else {
         1.0
     };
-    mapped.map(|v| encode_srgb(v * gamut_scale))
+    vivid.map(|v| encode_srgb(v * gamut_scale))
 }
 
 /// Develop sensor pixels to a true full-resolution, high-precision displayed
@@ -259,12 +273,15 @@ mod tests {
 
     #[test]
     fn highlight_shoulder_is_continuous_and_bounded() {
-        assert!((tone_luminance(HIGHLIGHT_KNEE) - HIGHLIGHT_KNEE).abs() < 1e-6);
-        assert!(tone_luminance(0.8) > HIGHLIGHT_KNEE);
+        assert!(tone_luminance(HIGHLIGHT_KNEE) > 0.0);
+        assert!(tone_luminance(0.8) > tone_luminance(HIGHLIGHT_KNEE));
         assert!(tone_luminance(2.0) > tone_luminance(1.0));
         assert!(tone_luminance(100.0) <= 1.0);
         assert!((tone_luminance(HIGHLIGHT_KNEE + 0.00001)
             - tone_luminance(HIGHLIGHT_KNEE - 0.00001)).abs() < 0.00003);
+        let levels: Vec<_> = (0..=200).map(|i| tone_luminance(i as f32 / 100.0)).collect();
+        assert!(levels.windows(2).all(|w| w[1] > w[0]),
+            "tone contrast must never reverse highlight or shadow order");
     }
 
     #[test]
@@ -277,16 +294,20 @@ mod tests {
     }
 
     #[test]
-    fn coloured_midtones_preserve_linear_channel_ratio() {
+    fn coloured_midtones_preserve_channel_order_and_increase_chroma() {
         let source = [0.16, 0.10, 0.06];
         let rgb16 = render_pixel(source, 1.0);
+        assert!(rgb16[0] > rgb16[1] && rgb16[1] > rgb16[2]);
         let inverse = |v: u16| {
             let v = f32::from(v) / 65535.0;
             if v <= 0.04045 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) }
         };
-        let a = rgb16.map(inverse);
-        assert!((a[0] / a[1] - source[0] / source[1]).abs() < 0.005);
-        assert!((a[2] / a[1] - source[2] / source[1]).abs() < 0.005);
+        let actual = rgb16.map(inverse);
+        let actual_luma = luminance(actual);
+        let before = source[0] / luminance(source);
+        let after = actual[0] / actual_luma;
+        assert!(after > before, "fixed global chroma boost should not desaturate warm RGB");
+        assert!(actual.iter().all(|value| *value >= 0.0 && *value <= 1.0));
     }
 
     #[test]

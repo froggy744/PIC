@@ -1062,11 +1062,36 @@ fn apply_auto_brightness(image: &mut RgbaImage) {
         let weight = shadow_range
             .map(|(start, end)| 1.0 - smoothstep(start, end, y))
             .unwrap_or(1.0);
-        let gain = ((y + (mapped - y) * weight) / y).clamp(0.3, 3.0);
+        let requested_gain = ((y + (mapped - y) * weight) / y).clamp(0.3, 3.0);
+        // Saturated reds may be nearly clipped even though their luminance is
+        // dark. Lift RGB together, but protect vivid colours and headroom.
+        let gain = auto_brightness_colour_safe_gain(pixel, requested_gain);
         for channel in &mut pixel[..3] {
             *channel = (*channel as f32 * gain).round().clamp(0.0, 255.0) as u8;
         }
     });
+}
+/// A positive Auto Brightness gain can clip an already-near-white red/blue
+/// channel even when the pixel's luma suggests a dark shadow. Constrain the
+/// positive gain for saturated pixels, preserve a single RGB scalar (hue),
+/// and avoid introducing hard clipping in the 8-bit editor intermediate.
+fn auto_brightness_colour_safe_gain(pixel: &[u8], requested_gain: f32) -> f32 {
+    if requested_gain <= 1.0 {
+        return requested_gain;
+    }
+    let max = pixel[..3].iter().copied().max().unwrap_or(0) as f32;
+    if max <= 0.0 {
+        return requested_gain;
+    }
+    let min = pixel[..3].iter().copied().min().unwrap_or(0) as f32;
+    let chroma = (max - min) / max;
+    // The automatic shadow boost remains fully effective for neutral pixels.
+    // Very saturated colours get just 10% of the lift, not the aggressive
+    // neutral-shadow correction.
+    let colour_weight = 1.0 - 0.9 * smoothstep(0.45, 0.85, chroma);
+    let lifted = 1.0 + (requested_gain - 1.0) * colour_weight;
+    // Preserve existing clipped source channels instead of darkening them.
+    lifted.min((253.0 / max).max(1.0))
 }
 
 fn rotate_autocrop(source: &RgbaImage, angle: f32) -> RgbaImage {
@@ -1699,6 +1724,52 @@ mod tests {
         assert!(corrected_bright[1] < 160);
         assert_eq!(corrected_dark[3], 211);
         assert_eq!(corrected_bright[3], 211);
+    }
+
+    #[test]
+    fn auto_brightness_protects_bright_red_clothing_and_warm_skin() {
+        // Regression: low-luma vivid red was boosted into an 8-bit clip.
+        // The independent skin/neutral regions must retain their colour.
+        let source = RgbaImage::from_fn(100, 100, |x, _| {
+            if x < 12 {
+                Rgba([42, 46, 50, 255])
+            } else if x < 45 {
+                Rgba([235, 18, 30, 255])
+            } else if x < 70 {
+                Rgba([176, 112, 96, 255])
+            } else {
+                Rgba([192, 192, 192, 255])
+            }
+        });
+        let mut recipe = EditRecipe::default();
+        recipe.auto_brightness = true;
+        let result = apply_recipe(source.clone(), &recipe);
+        let red = result.get_pixel(22, 45).0;
+        let skin = result.get_pixel(54, 45).0;
+        let shadow = result.get_pixel(5, 45).0;
+        let wall = result.get_pixel(85, 45).0;
+        assert!(red[0] >= 235 && red[0] <= 253,
+            "Auto Brightness clipped vivid clothing: {red:?}");
+        assert!(red[1] <= 22 && red[2] <= 35,
+            "Auto Brightness exaggerated vivid colour: {red:?}");
+        assert_eq!(skin, source.get_pixel(54, 45).0,
+            "correctly lit skin should not change");
+        assert_eq!(wall, source.get_pixel(85, 45).0,
+            "well-exposed neutral background should remain unchanged");
+        assert!(shadow[1] > 46,
+            "neutral shadow recovery was disabled: {shadow:?}");
+        assert_eq!(red[3], 255);
+    }
+
+    #[test]
+    fn auto_brightness_gain_preserves_neutrals_and_avoids_new_clips() {
+        assert!((auto_brightness_colour_safe_gain(&[40, 40, 40, 255], 1.6) - 1.6).abs() < 1e-6);
+        assert_eq!(auto_brightness_colour_safe_gain(&[255, 2, 7, 255], 2.5), 1.0);
+        assert!(auto_brightness_colour_safe_gain(&[245, 7, 9, 255], 2.0) <= 253.0 / 245.0);
+        assert_eq!(auto_brightness_colour_safe_gain(&[245, 7, 9, 255], 0.75), 0.75);
+        let warm_skin = auto_brightness_colour_safe_gain(&[200, 120, 90, 255], 1.5);
+        assert!(warm_skin > 1.0 && warm_skin < 1.5,
+            "warm skin should get a restrained lift");
     }
 
     #[test]

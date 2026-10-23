@@ -14,6 +14,7 @@ const DEFAULT_VISIBLE_FILTERS: &[Field] = &[
     Field::CameraMake,
     Field::CaptureDate,
     Field::FileType,
+    Field::Orientation,
 ];
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]

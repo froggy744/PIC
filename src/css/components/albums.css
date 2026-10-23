@@ -1,5 +1,5 @@
 /* Album-index component styling shared across appearance themes. */
-.albums-index-title { font-size: 24px; font-weight: 700; text-shadow: none; }
+.albums-index-title { font-size: 22px; font-weight: 700; text-shadow: none; }
 /* Framed art supplies its own translucent surface and shadow. Let its alpha
    channel composite with the Albums page or bookshelf scene below it. */
 .album-cover.framed-album-cover { background: transparent; background-image: none; border: none; border-radius: 0; box-shadow: none; }

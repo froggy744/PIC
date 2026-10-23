@@ -1,5 +1,13 @@
 {
-    let refresh = gtk::Button::from_icon_name("library-refresh-symbolic");
+    let refresh = {
+        let button = gtk::Button::new();
+        // Load directly from the embedded icon bundle, not the desktop icon
+        // theme cache (which may not contain PIC's custom rescan symbol).
+        button.set_child(Some(&gtk::Image::from_resource(
+            "/picrs/icons/library-refresh-symbolic.svg",
+        )));
+        button
+    };
     refresh.set_tooltip_text(Some("Refresh library"));
 
     let sort_button = gtk::MenuButton::new();

@@ -384,7 +384,7 @@ mod nef_high_precision_cache_tests {
     #[test]
     fn counts_8bit_and_16bit_buffers_using_actual_storage() {
         let rgb8 = DynamicImage::ImageRgb8(image::RgbImage::new(2, 3));
-        let rgb16 = DynamicImage::ImageRgb16(image::Rgb16Image::new(2, 3));
+        let rgb16 = DynamicImage::ImageRgb16(image::ImageBuffer::<image::Rgb<u16>, Vec<u16>>::new(2, 3));
         assert_eq!(viewer_nef_cached_image_bytes(&rgb8), Some(18));
         assert_eq!(viewer_nef_cached_image_bytes(&rgb16), Some(36));
     }

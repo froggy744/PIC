@@ -54,7 +54,7 @@ pub(crate) fn install_foundation(display: &gtk::gdk::Display) {
     );
 
     // Metadata controls use consistent native desktop geometry in every theme.
-    // Theme palette variables still supply colours; square corners win at +4.
+    // Theme palette variables supply colours; corner-style overrides win at +13.
     let metadata = gtk::CssProvider::new();
     metadata.load_from_string(include_str!("components/metadata_filter_layout.css"));
     gtk::style_context_add_provider_for_display(
@@ -66,7 +66,7 @@ pub(crate) fn install_foundation(display: &gtk::gdk::Display) {
     // The edit toolbar is shared by every appearance theme. Keep its visual
     // contract in one place and resolve colors from the active theme palette.
     // This scoped provider sits above theme-wide button rules while remaining
-    // below user geometry overrides such as square corners.
+    // below the user-selectable corner style.
     let edit_mode = gtk::CssProvider::new();
     edit_mode.load_from_string(EDIT_MODE);
     gtk::style_context_add_provider_for_display(
@@ -146,9 +146,8 @@ pub(crate) fn install_foundation(display: &gtk::gdk::Display) {
         gtk::STYLE_PROVIDER_PRIORITY_APPLICATION + 13,
     );
 
-    // Always loaded; rules only match while the main window carries the
-    // "square-corners" class (Settings > Library). Priority sits above the
-    // theme (+1) and album (+3) providers so border-radius: 0 wins.
+    // Legacy square-tile rules remain active when Corner style is Square,
+    // preserving the Photo Wall/Masonry behaviour and older UI tests.
     let square_corners = gtk::CssProvider::new();
     square_corners.load_from_string(SQUARE_CORNERS);
     gtk::style_context_add_provider_for_display(

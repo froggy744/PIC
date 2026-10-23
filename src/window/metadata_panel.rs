@@ -81,6 +81,18 @@ fn unique_explorer_fields(fields: Vec<Field>) -> Vec<Field> {
     unique
 }
 
+fn explorer_field_choices(selected: &[Field], current_index: usize) -> Vec<Field> {
+    Field::ALL
+        .into_iter()
+        .filter(|candidate| {
+            !selected
+                .iter()
+                .enumerate()
+                .any(|(index, field)| index != current_index && field == candidate)
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod explorer_field_tests {
     use super::*;
@@ -97,6 +109,20 @@ mod explorer_field_tests {
             vec![Field::Camera, Field::FileType, Field::Lens]
         );
     }
+
+    #[test]
+    fn dropdown_choices_hide_categories_used_by_other_columns() {
+        assert_eq!(
+            explorer_field_choices(
+                &[Field::Camera, Field::FileType, Field::Lens],
+                1
+            ),
+            Field::ALL
+                .into_iter()
+                .filter(|field| ![Field::Camera, Field::Lens].contains(field))
+                .collect::<Vec<_>>()
+        );
+    }
 }
 
 struct ExplorerColumn {
@@ -108,6 +134,8 @@ struct ExplorerColumn {
     add: gtk::Button,
     remove: gtk::Button,
     field: Rc<Cell<Field>>,
+    choices: Rc<RefCell<Vec<Field>>>,
+    updating_choices: Rc<Cell<bool>>,
 }
 
 pub(super) struct MetadataPanel {
@@ -658,7 +686,7 @@ impl MetadataPanel {
             .explorer
             .borrow()
             .iter()
-            .map(|column| Field::ALL[column.choose.selected() as usize])
+            .map(|column| column.field.get())
             .collect::<Vec<_>>();
         if let Ok(value) = serde_json::to_string(&fields) {
             let _ = db::set_setting(&self.connection.borrow(), EXPLORER_COLUMNS_SETTING, &value);
@@ -706,6 +734,8 @@ impl MetadataPanel {
             .collect::<Vec<_>>();
         let choose = gtk::DropDown::from_strings(&names);
         let selected_field = Rc::new(Cell::new(field));
+        let choices = Rc::new(RefCell::new(Field::ALL.to_vec()));
+        let updating_choices = Rc::new(Cell::new(false));
         choose.add_css_class("metadata-column-choice");
         choose.set_hexpand(true);
         choose.set_selected(
@@ -769,27 +799,30 @@ impl MetadataPanel {
             add: add.clone(),
             remove: remove.clone(),
             field: selected_field.clone(),
+            choices: choices.clone(),
+            updating_choices: updating_choices.clone(),
         });
+        self.sync_explorer_dropdowns();
 
         let weak = Rc::downgrade(self);
         let content = list.clone();
         let search_for_choice = search.clone();
+        let options_for_choice = choices.clone();
+        let updating_for_choice = updating_choices.clone();
         choose.connect_selected_notify(move |choice| {
+            if updating_for_choice.get() {
+                return;
+            }
             if let Some(panel) = weak.upgrade() {
-                let field = Field::ALL[choice.selected() as usize];
-                let duplicate = panel.explorer.borrow().iter().any(|column| {
-                    !Rc::ptr_eq(&column.field, &selected_field) && column.field.get() == field
-                });
-                if duplicate {
-                    choice.set_selected(
-                        Field::ALL
-                            .iter()
-                            .position(|item| *item == selected_field.get())
-                            .unwrap_or(0) as u32,
-                    );
+                let Some(field) = options_for_choice
+                    .borrow()
+                    .get(choice.selected() as usize)
+                    .copied()
+                else {
                     return;
-                }
+                };
                 selected_field.set(field);
+                panel.sync_explorer_dropdowns();
                 panel.populate_column_choices(field, &search_for_choice, &content);
                 search_for_choice.set_text("");
                 search_for_choice.set_placeholder_text(Some(&format!(
@@ -812,7 +845,7 @@ impl MetadataPanel {
                     .explorer
                     .borrow()
                     .iter()
-                    .map(|column| Field::ALL[column.choose.selected() as usize])
+                    .map(|column| column.field.get())
                     .collect::<Vec<_>>();
                 let next = Field::ALL
                     .iter()
@@ -852,12 +885,36 @@ impl MetadataPanel {
                     .explorer
                     .borrow_mut()
                     .retain(|column| column.root != root);
+                panel.sync_explorer_dropdowns();
                 panel.save_explorer_columns();
             }
         });
         self.save_explorer_columns();
         if self.explorer_revealer.reveals_child() {
             self.populate_column_choices(field, &search, &list);
+        }
+    }
+    fn sync_explorer_dropdowns(&self) {
+        let selected = self
+            .explorer
+            .borrow()
+            .iter()
+            .map(|column| column.field.get())
+            .collect::<Vec<_>>();
+        for (index, column) in self.explorer.borrow().iter().enumerate() {
+            let choices = explorer_field_choices(&selected, index);
+            let names = choices.iter().map(|field| field.label()).collect::<Vec<_>>();
+            let model = gtk::StringList::new(&names);
+            column.updating_choices.set(true);
+            column.choose.set_model(Some(&model));
+            column.choose.set_selected(
+                choices
+                    .iter()
+                    .position(|field| *field == selected[index])
+                    .unwrap_or(0) as u32,
+            );
+            column.choices.replace(choices);
+            column.updating_choices.set(false);
         }
     }
     fn filter_column_values(list: &gtk::Box, query: &str) {
@@ -879,7 +936,7 @@ impl MetadataPanel {
     fn refresh_explorer(self: &Rc<Self>) {
         for column in self.explorer.borrow().iter() {
             self.populate_column_choices_preserving(
-                Field::ALL[column.choose.selected() as usize],
+                column.field.get(),
                 &column.search,
                 &column.list,
             );

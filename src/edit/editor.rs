@@ -1010,7 +1010,20 @@ pub fn build(
     smooth.set_tooltip_text(Some("Soften fine texture while preserving strong edges"));
     let grain = add_slider(&detail_box, "Grain", 0.0, 1.0, 0.02, 2);
     let vignette = add_slider(&detail_box, "Vignette", -1.0, 1.0, 0.02, 2);
-    vignette.set_tooltip_text(Some("Darken edges with positive values, brighten them with negative values"));
+    vignette.set_tooltip_text(Some("Drag left to lighten photo edges, right to darken them; the centre is neutral"));
+    // Make the existing left=light/right=dark behaviour discoverable.
+    // The CPU renderer already implements this sign convention.
+    let vignette_direction = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let lighten = gtk::Label::new(Some("← Lighter edges"));
+    lighten.set_xalign(0.0);
+    lighten.set_hexpand(true);
+    lighten.add_css_class("dim-label");
+    let darken = gtk::Label::new(Some("Darker edges →"));
+    darken.set_xalign(1.0);
+    darken.add_css_class("dim-label");
+    vignette_direction.append(&lighten);
+    vignette_direction.append(&darken);
+    detail_box.append(&vignette_direction);
 
     let controls = Controls {
         straighten,
@@ -1778,8 +1791,17 @@ pub fn build(
                 recipe.filter = FilterPreset::None;
                 if active {
                     recipe.sepia = false;
+                    recipe.filter_amount = 1.0;
                 }
             });
+            if active {
+                // Recipe and thumb reset together as one undoable filter choice.
+                // Suppress the scale's own change handler to avoid a second
+                // mutation/preview request.
+                syncing.set(true);
+                filter_amount_scale.set_value(100.0);
+                syncing.set(false);
+            }
             filter_amount_scale.set_sensitive(
                 session.borrow().recipe.has_adjustable_effect()
             );
@@ -1828,8 +1850,14 @@ pub fn build(
                 recipe.filter = FilterPreset::None;
                 if active {
                     recipe.black_white = false;
+                    recipe.filter_amount = 1.0;
                 }
             });
+            if active {
+                syncing.set(true);
+                filter_amount_scale.set_value(100.0);
+                syncing.set(false);
+            }
             filter_amount_scale.set_sensitive(
                 session.borrow().recipe.has_adjustable_effect()
             );
@@ -1881,7 +1909,13 @@ pub fn build(
                 recipe.filter = if active { preset } else { FilterPreset::None };
                 recipe.black_white = false;
                 recipe.sepia = false;
+                // Selecting any creative filter tile, including Original,
+                // starts at full strength. Quick Fix toggles do not reset it.
+                recipe.filter_amount = 1.0;
             });
+            syncing.set(true);
+            filter_amount_scale.set_value(100.0);
+            syncing.set(false);
             filter_amount_scale.set_sensitive(
                 session.borrow().recipe.has_adjustable_effect()
             );

@@ -14,6 +14,84 @@ use image::{DynamicImage, ImageBuffer, Rgb};
 use rayon::prelude::*;
 use rawler::imgop::develop::{Intermediate, ProcessingStep, RawDevelop};
 
+use rawler::imgop::chromatic_adaption::adapt_bradford;
+use rawler::imgop::xyz::{
+    Illuminant, CIE_1931_TRISTIMULUS_A, CIE_1931_TRISTIMULUS_D65,
+};
+
+type CameraMatrix = [[f32; 3]; 3];
+
+fn matrix_from_flat(values: &[f32]) -> Option<CameraMatrix> {
+    let values: &[f32; 9] = values.try_into().ok()?;
+    let result = std::array::from_fn(|row| {
+        std::array::from_fn(|column| values[row * 3 + column])
+    });
+    values.iter().all(|v| v.is_finite()).then_some(result)
+}
+
+fn sensor_white_ratio(matrix: &CameraMatrix, white_xyz: [f32; 3]) -> Option<[f32; 2]> {
+    let sensor_response = std::array::from_fn::<f32, 3, _>(|row| {
+        (0..3).map(|column| matrix[row][column] * white_xyz[column]).sum()
+    });
+    let [red, green, blue] = sensor_response;
+    (red > 0.0 && green > 0.0 && blue > 0.0)
+        .then_some([red / green, blue / green])
+}
+
+/// Use recorded *as-shot* camera-neutral response as a rough estimator of
+/// where the scene lies between the two camera calibration illuminants.
+/// Endpoints come from the NEF's own colour matrices and published CIE white
+/// tristimulus values. No known photo pixels or camera JPEG are involved.
+///
+/// This interpolation is a guarded engineering candidate, not a claim to
+/// exactly reproduce Adobe DNG dual-illuminant colour calibration.
+fn illuminant_a_fraction(wb: [f32; 4], a: &CameraMatrix, d65: &CameraMatrix) -> Option<f32> {
+    if wb[..3].iter().any(|v| !v.is_finite() || *v <= 0.0) {
+        return None;
+    }
+    let a_response = sensor_white_ratio(a, CIE_1931_TRISTIMULUS_A)?;
+    let d_response = sensor_white_ratio(d65, CIE_1931_TRISTIMULUS_D65)?;
+    let target = [wb[1] / wb[0], wb[1] / wb[2]];
+    if target.iter().any(|v| !v.is_finite() || *v <= 0.0) {
+        return None;
+    }
+    let x = a_response.map(f32::ln);
+    let y = d_response.map(f32::ln);
+    let t = target.map(f32::ln);
+    let direction = [x[0] - y[0], x[1] - y[1]];
+    let denom = direction[0] * direction[0] + direction[1] * direction[1];
+    if denom < 1e-5 || !denom.is_finite() {
+        return None;
+    }
+    let projection = ((t[0] - y[0]) * direction[0]
+        + (t[1] - y[1]) * direction[1]) / denom;
+    projection.is_finite().then_some(projection.clamp(0.0, 1.0))
+}
+
+/// Inject one estimated daylight-adapted matrix into an *ephemeral decoded*
+/// rawler object, then use rawler's existing colour conversion unchanged.
+/// Illuminant-A calibration is adapted to D65 through rawler's already-linked
+/// API. Nothing is saved into a user's file, recipe or global profile.
+fn select_as_shot_calibration(raw: &mut rawler::RawImage) -> Option<f32> {
+    let a = matrix_from_flat(raw.color_matrix.get(&Illuminant::A)?)?;
+    let d65 = matrix_from_flat(raw.color_matrix.get(&Illuminant::D65)?)?;
+    let fraction = illuminant_a_fraction(raw.wb_coeffs, &a, &d65)?;
+    let adapted_a = adapt_bradford(&Illuminant::A, &Illuminant::D65, &a);
+    let blended: CameraMatrix = std::array::from_fn(|i| {
+        std::array::from_fn(|j| {
+            d65[i][j] * (1.0 - fraction) + adapted_a[i][j] * fraction
+        })
+    });
+    if blended.iter().flatten().any(|v| !v.is_finite()) {
+        return None;
+    }
+    raw.color_matrix.insert(
+        Illuminant::D65,
+        blended.into_iter().flatten().collect(),
+    );
+    Some(fraction)
+}
+
 const SAMPLE_STRIDE: usize = 64;
 const HIGHLIGHT_KNEE: f32 = 0.62;
 const TARGET_MEDIAN: f32 = 0.23;
@@ -109,7 +187,15 @@ fn render_pixel(linear: [f32; 3], exposure: f32) -> [u16; 3] {
 /// raster. The existing GTK editor still consumes RGBA8 afterwards; that
 /// downstream quantization must be fixed separately before claiming a
 /// complete 16-bit non-destructive editing pipeline.
-pub(super) fn develop(raw: &rawler::RawImage) -> Result<DynamicImage> {
+pub(super) fn develop(raw: &mut rawler::RawImage) -> Result<DynamicImage> {
+    let a_fraction = select_as_shot_calibration(raw);
+    if std::env::var_os("PICASA_TRACE").is_some() {
+        eprintln!(
+            "PIC_DECODE stage=nef_dual_illuminant_calibration selection={} A_weight={:?} source=NEF_metadata",
+            if a_fraction.is_some() { "estimated_as_shot" } else { "default_D65" },
+            a_fraction,
+        );
+    }
     // Preserve float values through tone rendering: never convert rawler's
     // calibrated linear pixels to RGB8 or sRGB-encoded RGB16 first.
     let mut steps = RawDevelop::default().steps;
@@ -147,6 +233,29 @@ pub(super) fn develop(raw: &rawler::RawImage) -> Result<DynamicImage> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn calibration_weights_reach_measured_illuminant_endpoints() {
+        let d65: CameraMatrix = [
+            [0.9, -0.2, 0.0],
+            [-0.4, 1.2, 0.2],
+            [-0.1, 0.2, 0.8],
+        ];
+        let a: CameraMatrix = [
+            [1.05, -0.15, 0.0],
+            [-0.3, 1.15, 0.15],
+            [-0.1, 0.16, 1.10],
+        ];
+        let camera_neutral_for = |matrix: &CameraMatrix, white: [f32; 3]| {
+            let ratio = sensor_white_ratio(matrix, white).expect("positive white response");
+            [1.0 / ratio[0], 1.0, 1.0 / ratio[1], f32::NAN]
+        };
+        let d_wb = camera_neutral_for(&d65, CIE_1931_TRISTIMULUS_D65);
+        let a_wb = camera_neutral_for(&a, CIE_1931_TRISTIMULUS_A);
+        assert!(illuminant_a_fraction(d_wb, &a, &d65).unwrap() < 0.001);
+        assert!(illuminant_a_fraction(a_wb, &a, &d65).unwrap() > 0.999);
+        assert!(illuminant_a_fraction([f32::NAN; 4], &a, &d65).is_none());
+    }
 
     #[test]
     fn highlight_shoulder_is_continuous_and_bounded() {

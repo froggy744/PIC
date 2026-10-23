@@ -126,3 +126,47 @@ colour errors, including the effects of camera matrices and white balance.
 **Release/merge gate:** visible skin and neutral fidelity on at least
 `DSC_4814.NEF`, `DSC_8104.NEF`, and different ISO/lighting samples, stable
 FIT/1:1/Edit/Export behaviour, speed regression, CI and a licence audit.
+
+
+## 2026-10-23: independent offline cross-check using uploaded NEF
+
+The project owner has run more than enough manual tests and has asked PIC's
+agent to own further verification. **Do not request repetitive terminal tests
+from the user.** Use prior evidence, existing private uploads and automated
+tests first. Request at most a *final* real-device acceptance after an
+independently inspected candidate meets basic requirements.
+
+A separate, private analysis session successfully opened the previously
+provided `DSC_4814.NEF`, independently developed its sensor data using
+a system-installed decoder for *diagnosis only*, and compared a JPEG preview
+against Nikon's camera JPEG. No photo or decoded raster was committed, no
+new PIC dependency was added, and no source code or implementation from that
+decoder was copied into PIC.
+
+- Independent sensor decode produced **6040 × 4032** developed RGB16; camera
+  embedded reference was **6016 × 4016**. These images have different borders,
+  so there was no claim of pixelwise colour accuracy.
+- On matching rescaled scene previews, mean display-space luminance was
+  roughly **0.401** (independent developer) versus **0.408** (Nikon camera).
+  The test used automatic brightness for this independent diagnostic, not a
+  new PIC RAW rendering option.
+- Saturation was visually and statistically different despite very similar
+  mean brightness: median HSV-style saturation approximately **0.558**
+  versus **0.679** (Nikon). This cross-check demonstrates that matching
+  average exposure cannot reproduce the camera's picture processing.
+- The independent sensor-derived reference produced plausible skin tones
+  with muted greens and less vibrant contrast, without the gross per-image
+  red/green cast seen in the failed PIC matrix-fitting experiment.
+
+Interpretation: The real camera JPEG contains a developed appearance including
+tone, saturation and potentially local processing, beyond demosaic/WB alone.
+The `DSC_8030.NEF` illuminant-A candidate improved warm-colour residuals
+but also shifted neutral colour shares and remained substantially too dark.
+Do not mistake an improvement on one file for a calibrated or generalizable
+Nikon colour profile. Do not apply either candidate matrix globally.
+
+Next development should be a **camera-independent, scene-referred tone and
+output colour pipeline** with preserved precision, followed by multi-scene
+private validation. Keep the JPEG-fit experimental renderer out of V1.01.
+No additional user terminal-run loops are part of the normal development plan.
+

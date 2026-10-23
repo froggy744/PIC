@@ -54,6 +54,10 @@ button.metadata-header-toggle.metadata-filter-active:not(:checked) {
     box-shadow: none;
     font-weight: 500;
 }
+.metadata-filter-panel .metadata-filter-controls button,
+.metadata-filter-panel .metadata-filter-controls button label {
+    font-size: 11px;
+}
 .metadata-filter-panel .metadata-filter-toggle:hover,
 .metadata-filter-panel .metadata-filter-controls button:hover,
 .metadata-filter-panel .metadata-filter-summary button:hover {

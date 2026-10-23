@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
+  <!-- Folder identifies the library; two short arrows indicate rescanning. -->
+  <path fill="none" stroke="currentColor" stroke-width="1.35" stroke-linejoin="round" d="M1.2 3.1h4.2l1.3 1.5h7.2c.5 0 .9.4.9.9v7.4c0 .5-.4.9-.9.9H2.1c-.5 0-.9-.4-.9-.9V4c0-.5.4-.9.9-.9z"/>
+  <path fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" d="M5.1 9.2a2.9 2.9 0 0 1 5.2-1.5m0 0V6m0 1.7H8.6m2.3 1.1a2.9 2.9 0 0 1-5.2 1.5m0 0V12m0-1.7h1.7"/>
+</svg>

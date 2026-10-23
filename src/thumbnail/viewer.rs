@@ -276,11 +276,39 @@ fn develop_nef_sensor(raw_source: &rawler::rawsource::RawSource, reference: &str
     Ok(image)
 }
 
+/// Isolated V2 sensor-to-display experiment. The embedded JPEG is not
+/// examined or blended: rawler supplies scene-linear calibrated sensor RGB,
+/// and PIC owns the exposure/tone/encoding stage. Never enabled by default.
+fn develop_nef_scene_frame(
+    raw_source: &rawler::rawsource::RawSource,
+    reference: &str,
+) -> Result<DynamicImage> {
+    let started = std::time::Instant::now();
+    let image = rawler_decode(reference, "nef_scene_v2", || {
+        let decoder = rawler::get_decoder(raw_source)?;
+        let params = rawler::decoders::RawDecodeParams::default();
+        let pixels = decoder.raw_image(raw_source, &params, false)?;
+        nef_scene::develop(&pixels)
+    })?;
+    if std::env::var_os("PICASA_TRACE").is_some() {
+        eprintln!(
+            "PIC_DECODE stage=nef_scene_v2 elapsed_ms={:.3} image={}x{}",
+            started.elapsed().as_secs_f64() * 1000.0,
+            image.width(),
+            image.height()
+        );
+    }
+    Ok(image)
+}
+
 fn develop_nef_sensor_frame(
     raw_source: &rawler::rawsource::RawSource,
     reference: &str,
     camera_jpeg: Option<&[u8]>,
 ) -> Result<DynamicImage> {
+    if std::env::var("PIC_NEF_SCENE_RENDER").ok().as_deref() == Some("1") {
+        return develop_nef_scene_frame(raw_source, reference);
+    }
     let sensor = develop_nef_sensor(raw_source, reference)?;
     // Diagnostic only: view the existing rawler pipeline with no
     // photo-specific JPEG fit. Never enable this automatically. It isolates

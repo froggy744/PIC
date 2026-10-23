@@ -60,6 +60,24 @@ Output:
 - `PIC_RAW_QA_LIGHT`: linear-sRGB luminance ratios and normalized RGB channel-share differences, to separate brightness from colour casts (diagnostic only)
 - `nikon-preview.png` and `sensor-preview.png`: matching 1400px PNGs for direct visual inspection without sharing large TIFF files
 
+The diagnostic also reports `PIC_RAW_QA_GAIN` and the three
+`PIC_RAW_QA_LIGHT group=exposure_only_...` summaries. A single robust
+neutral-region gain is applied **only in memory to the comparison**, never to
+PIC's viewer, editor, saved recipes or exports. The optional
+`sensor-exposure-only.png` shows the result of that one global brightness
+adjustment. Colour-channel ratios in non-clipped pixels should not be
+substantially corrected by gain alone: this test is intended to prove whether
+brightness and colour must be treated as separate problems. The PNG is
+JPEG-reference-assisted diagnostic material, **not** the final RAW rendering.
+
+For DSC_8030.NEF the original rawler output (without any experimental fitting)
+measured ~40.6% of the reference JPEG's scene-linear brightness, ~44.4% in
+neutral candidates and ~35.2% in warm-colour candidates. Neutral colour shares
+were close, while warm-region red share was substantially lower. Camera data:
+Nikon Z 5; WB [1.625, 1, 1.5019531, NaN] (the fourth component is unused on
+3-channel Bayer); D65 and A matrices present, D65 selected; black 1008,
+white 15520. These values do not alone demonstrate broken WB or matrix.
+
 Never commit real portraits, NEFs, or their reports to the public repository.
 
 ## Opt-in normal GUI sensor-only comparison

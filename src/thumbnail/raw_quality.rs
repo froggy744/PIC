@@ -434,15 +434,41 @@ mod tests {
         // Decode once, inspect Nikon metadata BEFORE colour development,
         // then apply the same unchanged RawDevelop::default() path used by PIC.
         // The diagnostic does not regress JPEG pixels or change photo data.
-        let sensor = rawler_decode(&filename, "nef_qa_sensor_demosaic", || {
+        let compare_a = std::env::var("PIC_NEF_EVALUATION_COMPARE_MATRIX_A")
+            .ok().as_deref() == Some("1");
+        let (sensor, sensor_a) = rawler_decode(&filename, "nef_qa_sensor_demosaic", || {
             let decoder = rawler::get_decoder(&raw_source)?;
             let params = rawler::decoders::RawDecodeParams::default();
-            let raw = decoder.raw_image(&raw_source, &params, false)?;
+            let mut raw = decoder.raw_image(&raw_source, &params, false)?;
             describe_camera_metadata(&raw);
-            rawler::imgop::develop::RawDevelop::default()
+            let sensor = rawler::imgop::develop::RawDevelop::default()
                 .develop_intermediate(&raw)?
                 .to_dynamic_image()
-                .ok_or_else(|| anyhow::anyhow!("Nikon RAW developer returned no RGB image"))
+                .ok_or_else(|| anyhow::anyhow!("Nikon RAW developer returned no RGB image"))?;
+            // Strictly local experiment. Rawler currently chooses D65 first.
+            // Removing D65 from this *temporary* decoded object lets its
+            // existing illuminant-A + Bradford path run without copying,
+            // implementing or modifying any third-party colour algorithm.
+            // Nothing here changes a user's normal viewer or RAW file.
+            let alternative = if compare_a {
+                use rawler::imgop::xyz::Illuminant;
+                if raw.color_matrix.contains_key(&Illuminant::A)
+                    && raw.color_matrix.remove(&Illuminant::D65).is_some()
+                {
+                    Some(
+                        rawler::imgop::develop::RawDevelop::default()
+                            .develop_intermediate(&raw)?
+                            .to_dynamic_image()
+                            .ok_or_else(|| anyhow::anyhow!("Alternative A developer returned no RGB image"))?
+                    )
+                } else {
+                    eprintln!("PIC_RAW_QA_MATRIX candidate=A result=unavailable");
+                    None
+                }
+            } else {
+                None
+            };
+            Ok((sensor, alternative))
         }).expect("develop sensor only");
         let sensor_ms = started.elapsed().as_secs_f64() * 1000.0;
         let sensor_kind = format!("{:?}", sensor.color());
@@ -457,6 +483,30 @@ mod tests {
         let reference = decode_viewer_jpeg(&camera_jpeg, camera_w, camera_h, &filename)
             .expect("colour-manage Nikon JPEG").to_rgb8();
         let actual = sensor.to_rgb8();
+        let alternate_rgb = sensor_a.map(|alt| alt.to_rgb8());
+        if let Some(ref alternate) = alternate_rgb {
+            if let Some(stats) = report_pair(alternate, &reference) {
+                let d = stats.samples.max(1) as f64;
+                eprintln!(
+                    "PIC_RAW_QA_MATRIX candidate=A adaptation=rawler_existing_bradford                      samples={} mean_absolute_RGB={:.2},{:.2},{:.2}                      note=diagnostic_not_camera_profile",
+                    stats.samples,
+                    stats.error[0] as f64 / d,
+                    stats.error[1] as f64 / d,
+                    stats.error[2] as f64 / d,
+                );
+                stats.scene_color.print("matrix_A_all");
+                stats.neutral_color.print("matrix_A_neutrals");
+                stats.warm_color.print("matrix_A_warm");
+                if let Some(gain) = relative_exposure_from_neutrals(alternate, &reference) {
+                    eprintln!(
+                        "PIC_RAW_QA_MATRIX candidate=A neutral_gain={gain:.3} stops={:.2}",
+                        gain.log2()
+                    );
+                }
+            } else {
+                eprintln!("PIC_RAW_QA_MATRIX candidate=A result=dimensions_mismatch");
+            }
+        }
         // The ratio deliberately uses only the Nikon reference's plausible
         // neutral samples; it is not applied to PIC viewing or exporting.
         let diagnostic_gain = report_single_gain(&actual, &reference);
@@ -478,6 +528,14 @@ mod tests {
                 .expect("write 16-bit sensor-developed TIFF");
             write_comparison_preview(&reference, &folder.join("nikon-preview.png"));
             write_comparison_preview(&actual, &folder.join("sensor-preview.png"));
+            if let Some(ref alternate) = alternate_rgb {
+                write_comparison_preview(alternate, &folder.join("sensor-matrix-A.png"));
+                if let Some(gain) = relative_exposure_from_neutrals(alternate, &reference) {
+                    write_gain_preview(
+                        alternate, gain, &folder.join("sensor-matrix-A-exposure-only.png")
+                    );
+                }
+            }
             if let Some(gain) = diagnostic_gain {
                 write_gain_preview(&actual, gain, &folder.join("sensor-exposure-only.png"));
             }

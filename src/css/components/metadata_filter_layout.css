@@ -34,21 +34,21 @@ button.metadata-header-toggle.metadata-filter-active:not(:checked) {
     border-radius: 8px;
     background-color: alpha(@theme_fg_color, 0.045);
     box-shadow: none;
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 600;
 }
 .metadata-filter-panel button.metadata-filter-all label {
-    font-size: 11px;
+    font-size: 12px;
 }
 .metadata-filter-panel .metadata-filter-options checkbutton,
 .metadata-filter-panel .metadata-filter-options checkbutton label {
-    font-size: 11px;
+    font-size: 12px;
 }
 .metadata-filter-value-choices checkbutton,
 .metadata-filter-value-choices checkbutton label {
     min-height: 27px;
     padding: 2px 1px;
-    font-size: 11px;
+    font-size: 12px;
 }
 .metadata-filter-value-choices checkbutton:hover,
 .metadata-filter-panel .metadata-filter-options checkbutton:hover {
@@ -59,7 +59,7 @@ button.metadata-header-toggle.metadata-filter-active:not(:checked) {
 .sort-popover-content checkbutton label,
 .rating-filter-popover-content checkbutton,
 .rating-filter-popover-content checkbutton label {
-    font-size: 11px;
+    font-size: 12px;
 }
 .sort-popover-content checkbutton,
 .rating-filter-popover-content checkbutton {
@@ -91,11 +91,11 @@ button.metadata-header-toggle.metadata-filter-active:not(:checked) {
 }
 .metadata-filter-panel .metadata-filter-controls button,
 .metadata-filter-panel .metadata-filter-controls button label {
-    font-size: 11px;
+    font-size: 12px;
 }
 .metadata-filter-panel .metadata-filter-summary button,
 .metadata-filter-panel .metadata-filter-summary button label {
-    font-size: 11px;
+    font-size: 12px;
 }
 .metadata-filter-panel .metadata-filter-toggle:hover,
 .metadata-filter-panel .metadata-filter-controls button:hover,
@@ -189,17 +189,17 @@ button.metadata-header-toggle.metadata-filter-active:not(:checked) {
 .metadata-filter-panel .metadata-column-search,
 .metadata-filter-panel .metadata-column-search entry,
 .metadata-filter-panel .metadata-column-search text {
-    font-size: 11px;
+    font-size: 12px;
 }
 .metadata-filter-panel .metadata-explorer-column checkbutton,
 .metadata-filter-panel .metadata-explorer-column checkbutton label {
+    font-size: 12px;
+}
+ .metadata-filter-panel .metadata-filter-active-count {
     font-size: 11px;
 }
-.metadata-filter-panel .metadata-filter-active-count {
-    font-size: 10px;
-}
 .metadata-filter-panel .metadata-filter-summary .dim-label {
-    font-size: 10px;
+    font-size: 11px;
 }
 .metadata-filter-panel .metadata-explorer-column checkbutton {
     min-height: 27px;
@@ -222,14 +222,14 @@ button.metadata-header-toggle.metadata-filter-active:not(:checked) {
     padding: 0;
 }
 .metadata-filter-panel .metadata-selected-chips button.metadata-active-chip {
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 500;
     min-height: 26px;
     padding: 1px 7px;
     border-radius: 6px;
 }
 .metadata-filter-panel .metadata-active-chip {
-    min-height: 25px;
+    min-height: 26px;
     padding: 1px 9px;
     border-radius: 7px;
     border: 1px solid alpha(@accent_bg_color, 0.32);
@@ -250,9 +250,9 @@ button.metadata-header-toggle.metadata-filter-active:not(:checked) {
 }
 
 /* Bottom photo metadata is intentionally quieter than gallery content. */
-.photo-info-bar .metric-key { font-size: 10px; }
+.photo-info-bar .metric-key { font-size: 11px; }
 .photo-info-bar .metric-val,
-.photo-info-bar .info-title { font-size: 11px; }
+.photo-info-bar .info-title { font-size: 12px; }
 .photo-info-bar .metric-val { min-width: 0; }
 .metadata-column-actions-popover button.metadata-column-action:hover {
     background-color: alpha(@theme_fg_color, 0.08);

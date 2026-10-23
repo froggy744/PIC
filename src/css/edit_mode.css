@@ -95,7 +95,7 @@
 
 .draw-adjustment-row {
   min-height: 32px;
-  margin-bottom: 2px;
+  margin-bottom: 3px;
 }
 
 .draw-adjustment-row > label:first-child {
@@ -105,7 +105,7 @@
 
 .draw-adjustment-row scale {
   min-width: 0;
-  margin-top: -2px;
+  margin-top: 0;
 }
 
 .draw-adjustment-value {

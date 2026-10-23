@@ -330,12 +330,12 @@ mod tests {
                 (v * 0.67 * 235.0 + 7.0).round() as u8,
                 (v * 0.41 * 240.0 + 7.0).round() as u8])
         });
-        let output = render(&sensor, &reference).expect("synthetic calibration");
-        assert_eq!(output.dimensions(), sensor.dimensions());
-        assert_ne!(output.get_pixel(10, 10), output.get_pixel(240, 240),
-            "camera match must not replace the sensor with flat JPEG pixels");
-        assert!(output.get_pixel(120, 120)[0] > output.get_pixel(120, 120)[1]);
-        assert!(output.get_pixel(120, 120)[1] > output.get_pixel(120, 120)[2]);
+        let fit = CameraLook::estimate(&sensor, &reference).expect("synthetic fit");
+        let p = |x, y| fit.pixel(sensor.get_pixel(x, y).0);
+        assert_ne!(p(10, 10), p(240, 240),
+            "camera matching must retain sensor-derived spatial detail");
+        assert!(p(120, 120)[0] > p(120, 120)[1]);
+        assert!(p(120, 120)[1] > p(120, 120)[2]);
     }
 
     #[test]
@@ -348,10 +348,10 @@ mod tests {
             let v = (x * 6 + 25) as u8;
             Rgb([v, v, v])
         });
-        let result = render(&sensor, &reference).expect("neutral calibration");
+        let fit = CameraLook::estimate(&sensor, &reference).expect("neutral calibration");
         for x in 1..256 {
-            let a = result.get_pixel(x - 1, 120)[0];
-            let b = result.get_pixel(x, 120)[0];
+            let a = fit.pixel(sensor.get_pixel(x - 1, 120).0)[0];
+            let b = fit.pixel(sensor.get_pixel(x, 120).0)[0];
             assert!(b >= a, "tone correction inverted a gradient at {x}");
         }
     }

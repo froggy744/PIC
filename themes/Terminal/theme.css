@@ -5,6 +5,7 @@
    color-scheme: theme
    mode: overlay
    window-controls: native
+   corner-style: square
 */
 
 /* Terminal: phosphor-green text on near-black panels, monospace labels,

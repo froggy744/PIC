@@ -53,6 +53,7 @@ the stylesheet:
 | `color-scheme` | `theme` or `system` | `system` | `system` follows GNOME's preference for light palettes. `theme` pins light palettes to light GTK/libadwaita chrome. Dark palettes always force dark chrome and a dark lightbox backdrop. |
 | `mode` | `overlay` or `base` | `overlay` | `base` marks the one theme that is always loaded beneath every overlay theme (the shipped iDark). |
 | `window-controls` | `native` or `traffic-light` | `native` | `traffic-light` replaces the native GTK minimize/maximize/close buttons with the app's gel-style traffic lights while the theme is active; style them via `button.traffic-light-*` (see the template). |
+| `corner-style` | `user`, `rounded`, `balanced`, or `square` | `user` | Sets the corner style while the theme is active. `user` follows the saved default in Settings → Interface → Corner style. |
 
 The header only counts as metadata when its first line contains the marker
 `picasa-theme`; ordinary licence comments are ignored.
@@ -122,8 +123,8 @@ Photo Wall and Masonry use a provider above the appearance theme to keep tiles
 borderless and selection outlines inset. Both use `@accent_bg_color`; Photo
 Wall stays square-edged, while Masonry follows the user's **Corner style**.
 
-The **Settings → Interface → Appearance → Corner style** choice applies
-application-wide: **Balanced** (default) uses restrained 5–8px radii,
+The **Settings → Interface → Corner style** choice sets the application-wide
+default: **Balanced** (default) uses restrained 5–8px radii,
 **Rounded** defers to the selected theme's softer geometry, and **Square**
 flattens photo tiles and most PIC controls. Native window buttons and
 decorative framed album art are left to the system/theme. PIC reads the

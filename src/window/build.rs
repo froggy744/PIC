@@ -933,6 +933,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         let thumbs_window = settings_surface.clone();
         let thumbs_gallery = settings_gallery_for_thumbs.clone();
         let thumbs_connection = settings_connection.clone();
+        let thumbs_theme_engine = settings_theme_engine.clone();
         let visibility_connection = settings_connection.clone();
         let visibility_sidebar = settings_sidebar.clone();
         let switch_library_slot = settings_switch_library_slot.clone();
@@ -965,8 +966,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             }),
             Rc::new(move || {
                 crate::window::debug_log("THUMB SETTINGS: apply callback entered");
-                let corner_style =
-                    crate::settings::CornerStyle::saved(&thumbs_connection.borrow());
+                let corner_style = thumbs_theme_engine.effective_corner_style();
                 let fit = crate::settings::saved_bool(
                     &thumbs_connection.borrow(),
                     crate::db::THUMBNAIL_FIT_WHOLE_PHOTO_SETTING_KEY,

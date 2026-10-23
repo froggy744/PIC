@@ -12,7 +12,7 @@
 //! The Themes page in Settings is the single picker; the header-bar button
 //! opens it and doubles as the sun/moon appearance indicator.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use std::rc::Rc;
 
@@ -42,6 +42,7 @@ pub(crate) struct ThemeEngine {
     base_id: RefCell<Option<String>>,
     overlay_provider: RefCell<Option<gtk::CssProvider>>,
     active_id: RefCell<String>,
+    active_corner_style: Cell<Option<theme_discovery::ThemeCornerStyle>>,
     appearance_button: RefCell<Option<gtk::Button>>,
     /// Runs after the user switches themes: redraws the albums home so its
     /// covers pick up the new palette. Not invoked during startup, when the
@@ -69,6 +70,7 @@ impl ThemeEngine {
             base_id: RefCell::new(None),
             overlay_provider: RefCell::new(None),
             active_id: RefCell::new(String::new()),
+            active_corner_style: Cell::new(None),
             appearance_button: RefCell::new(None),
             post_apply: RefCell::new(None),
             window_controls_hook: RefCell::new(None),
@@ -101,6 +103,17 @@ impl ThemeEngine {
 
     pub(crate) fn active_id(&self) -> String {
         self.active_id.borrow().clone()
+    }
+
+    pub(crate) fn active_corner_style(&self) -> Option<theme_discovery::ThemeCornerStyle> {
+        self.active_corner_style.get()
+    }
+
+    pub(crate) fn effective_corner_style(&self) -> crate::settings::CornerStyle {
+        self.active_corner_style
+            .get()
+            .map(Into::into)
+            .unwrap_or_else(|| crate::settings::CornerStyle::saved(&self.connection.borrow()))
     }
 
     pub(crate) fn active_is_dark(&self) -> bool {
@@ -229,6 +242,11 @@ impl ThemeEngine {
             self.overlay_provider.borrow_mut().replace(provider);
         }
         *self.active_id.borrow_mut() = theme.id.clone();
+        self.active_corner_style.set(theme.corner_style);
+        let corner_style = self.effective_corner_style();
+        for window in gtk::Window::list_toplevels() {
+            corner_style.apply(&window);
+        }
         if let Some(hook) = self.window_controls_hook.borrow().as_ref() {
             hook(theme.window_controls);
         }

@@ -87,3 +87,12 @@ button.pic-toolbar-action:disabled,
 menubutton.pic-toolbar-action > button:disabled {
     opacity: 0.45;
 }
+
+.photo-actions-menu .photo-actions-menu-row {
+    border-radius: 8px;
+    transition: background-color 140ms ease;
+}
+.photo-actions-menu .photo-actions-menu-row:hover,
+.photo-actions-menu .photo-actions-menu-row:focus-within {
+    background-color: alpha(@theme_fg_color, 0.09);
+}

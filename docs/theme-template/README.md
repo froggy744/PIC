@@ -29,6 +29,7 @@ rename it, recolor the palette — done.
       color-scheme: theme
       mode: overlay
       window-controls: native
+      corner-style: user
    */
    ```
 
@@ -67,6 +68,7 @@ rename it, recolor the palette — done.
 | `color-scheme` | `theme` / `system` | `theme` pins a light palette to light GTK chrome; `system` (default) follows the desktop for light palettes. Dark palettes always force dark chrome. |
 | `mode` | `overlay` / `base` | Leave `overlay`. `base` identifies the theme loaded beneath all overlays, above the embedded foundation — advanced use only. |
 | `window-controls` | `native` / `traffic-light` | `traffic-light` swaps the native GTK minimize/maximize/close buttons for PIC's gel-style traffic lights while your theme is active (style them via the section 10 block in `theme.css`). |
+| `corner-style` | `user` / `rounded` / `balanced` / `square` | `user` follows the saved default in Settings → Interface → Corner style; the other values set the corner style while your theme is active. |
 
 Unknown keys are ignored, so adding `version: 1` today is forward-compatible.
 

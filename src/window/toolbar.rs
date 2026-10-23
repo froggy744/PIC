@@ -1,11 +1,7 @@
 {
     let refresh = {
         let button = gtk::Button::new();
-        // Load directly from the embedded icon bundle, not the desktop icon
-        // theme cache (which may not contain PIC's custom rescan symbol).
-        button.set_child(Some(&gtk::Image::from_resource(
-            "/picrs/icons/library-refresh-symbolic.svg",
-        )));
+        button.set_child(Some(&gtk::Image::from_icon_name("library-refresh-symbolic")));
         button
     };
     refresh.set_tooltip_text(Some("Refresh library"));
@@ -475,7 +471,6 @@
         },
     );
     // Compact toolbar follows the bottom InfoBar's icon/target scale.
-    // Keep all four controls functional and group view switching separately.
     let header_tools = gtk::Box::new(gtk::Orientation::Horizontal, 2);
     header_tools.add_css_class("pic-header-tools");
     header_tools.set_valign(gtk::Align::Center);
@@ -487,9 +482,6 @@
     header_tools.append(&sort_button);
     header_tools.append(&metadata_panel.button);
     header_tools.append(&rating_filter_button);
-    let header_separator = gtk::Separator::new(gtk::Orientation::Vertical);
-    header_separator.add_css_class("pic-header-divider");
-    header_tools.append(&header_separator);
     header_tools.append(&info.view_toggle);
     info.append_menu_action(&settings, "Appearance");
     let screensaver = gtk::Button::from_icon_name("media-playback-start-symbolic");

@@ -76,6 +76,7 @@ impl InfoBar {
         let label = gtk::Label::new(Some(title));
         label.set_xalign(0.0);
         row.append(&label);
+        make_photo_action_row_clickable(&row, button.upcast_ref());
         let menu = self
             .overflow_popover
             .child()
@@ -457,6 +458,7 @@ impl InfoBar {
             let label = gtk::Label::new(Some(title));
             label.set_xalign(0.0);
             row.append(&label);
+            make_photo_action_row_clickable(&row, &control);
             if title != "Rotate" && title != "Favourites" {
                 if let Some(button) = control.downcast_ref::<gtk::Button>() {
                     let popover = overflow_popover.downgrade();
@@ -1038,6 +1040,43 @@ fn toolbar_separator() -> gtk::Separator {
     separator.set_valign(gtk::Align::Center);
     separator.set_height_request(24);
     separator
+}
+
+fn make_photo_action_row_clickable(row: &gtk::Box, control: &gtk::Widget) {
+    row.set_cursor_from_name(Some("pointer"));
+    let click = gtk::GestureClick::new();
+    click.set_button(1);
+    click.set_propagation_phase(gtk::PropagationPhase::Bubble);
+    let row_weak = row.downgrade();
+    let control_weak = control.downgrade();
+    click.connect_released(move |_, _, x, y| {
+        let (Some(row), Some(control)) = (row_weak.upgrade(), control_weak.upgrade()) else {
+            return;
+        };
+        if !control.is_sensitive() {
+            return;
+        }
+        let Some(bounds) = control.compute_bounds(&row) else {
+            return;
+        };
+        let left = f64::from(bounds.x());
+        let top = f64::from(bounds.y());
+        if x >= left
+            && x < left + f64::from(bounds.width())
+            && y >= top
+            && y < top + f64::from(bounds.height())
+        {
+            return;
+        }
+        if let Some(button) = control.downcast_ref::<gtk::Button>() {
+            button.emit_clicked();
+        } else if let Some(menu) = control.downcast_ref::<gtk::MenuButton>() {
+            menu.popup();
+        } else {
+            control.grab_focus();
+        }
+    });
+    row.add_controller(click);
 }
 
 fn configure_action_button<W: IsA<gtk::Widget>>(button: &W) {

@@ -113,6 +113,16 @@ pub(crate) fn install_foundation(display: &gtk::gdk::Display) {
         gtk::STYLE_PROVIDER_PRIORITY_APPLICATION + 6,
     );
 
+    // Theme rows show the radio choice and pointer hover independently of
+    // the selected theme's generic boxed-list styling.
+    let theme_picker = gtk::CssProvider::new();
+    theme_picker.load_from_string(include_str!("components/theme_picker.css"));
+    gtk::style_context_add_provider_for_display(
+        display,
+        &theme_picker,
+        gtk::STYLE_PROVIDER_PRIORITY_APPLICATION + 6,
+    );
+
     // Screensaver controls live in a separate window from the main/settings
     // window. Keep its headings readable even under overlays with broad
     // heading rules; the selector is scoped to those two labels only.

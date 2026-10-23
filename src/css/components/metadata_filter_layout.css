@@ -50,6 +50,10 @@ button.metadata-header-toggle.metadata-filter-active:not(:checked) {
     padding: 2px 1px;
     font-size: 12px;
 }
+.metadata-filter-value-choices entry,
+.metadata-filter-value-choices entry text {
+    font-size: 12px;
+}
 .metadata-filter-value-choices checkbutton:hover,
 .metadata-filter-panel .metadata-filter-options checkbutton:hover {
     border-radius: 5px;

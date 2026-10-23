@@ -1696,18 +1696,15 @@ fn interface_page(
     zoom_animations_changed: Rc<dyn Fn()>,
     clear_saved_views: Rc<dyn Fn()>,
 ) -> gtk::ScrolledWindow {
-    let content = page_content("Interface", "Customize thumbnail appearance and interface effects.");
+    let content = page_content("Interface", "Customize PIC appearance, thumbnails and interface effects.");
 
-    // Thumbnail appearance toggles apply live through thumbnail_changed and
-    // are re-read at startup.
-    let thumbnail_heading = gtk::Label::new(Some("Thumbnails"));
-    thumbnail_heading.set_halign(gtk::Align::Start);
-    thumbnail_heading.set_hexpand(true);
-    thumbnail_heading.set_ellipsize(gtk::pango::EllipsizeMode::End);
-    thumbnail_heading.add_css_class("heading");
-    content.append(&thumbnail_heading);
+    let appearance_heading = gtk::Label::new(Some("Appearance"));
+    appearance_heading.set_halign(gtk::Align::Start);
+    appearance_heading.set_hexpand(true);
+    appearance_heading.add_css_class("heading");
+    content.append(&appearance_heading);
 
-    let thumbnail_list = settings_list();
+    let appearance_list = settings_list();
     // One choice replaces the old thumbnail-only Square corners toggle.
     // Balanced is the default, and the saved choice applies instantly.
     let corner_style = gtk::DropDown::from_strings(&["Rounded", "Balanced", "Square"]);
@@ -1732,12 +1729,23 @@ fn interface_page(
         });
     }
     append_row(
-        &thumbnail_list,
+        &appearance_list,
         "Corner style",
         Some("Balanced keeps a restrained 5–8 px radius throughout PIC. Rounded restores a softer look; Square removes most rounding."),
         Some(corner_style.upcast_ref()),
     );
 
+    content.append(&appearance_list);
+
+    // Thumbnail appearance toggles apply live and are re-read at startup.
+    let thumbnail_heading = gtk::Label::new(Some("Thumbnails"));
+    thumbnail_heading.set_halign(gtk::Align::Start);
+    thumbnail_heading.set_hexpand(true);
+    thumbnail_heading.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    thumbnail_heading.add_css_class("heading");
+    content.append(&thumbnail_heading);
+
+    let thumbnail_list = settings_list();
     let fit_whole_photo = gtk::Switch::new();
     fit_whole_photo.set_valign(gtk::Align::Center);
     fit_whole_photo.set_active(

@@ -221,6 +221,27 @@ mod tests {
     }
 
     #[test]
+    fn brightness_only_neutral_gain_cannot_recolour_warm_samples() {
+        let camera = RgbImage::from_pixel(128, 128, image::Rgb([140, 140, 140]));
+        let sensor = RgbImage::from_pixel(128, 128, image::Rgb([90, 90, 90]));
+        let gain = relative_exposure_from_neutrals(&sensor, &camera)
+            .expect("enough neutral samples");
+        assert!(gain > 2.0 && gain < 3.5);
+        let adjusted = exposed_for_diagnostic([90, 90, 90], gain);
+        assert!(adjusted.iter().all(|&value| value.abs_diff(140) <= 1));
+
+        let warm = [90u8, 60u8, 40u8];
+        let corrected = exposed_for_diagnostic(warm, gain);
+        let linear = warm.map(srgb_linear);
+        let boosted = corrected.map(srgb_linear);
+        // An exposure-only adjustment preserves channel ratios away from
+        // clipping, so it cannot cure a large red/green hue discrepancy.
+        let before = linear[0] / linear[1];
+        let after = boosted[0] / boosted[1];
+        assert!((before - after).abs() < 0.04);
+    }
+
+    #[test]
     fn diagnostic_rejects_misaligned_rasters() {
         let a = RgbImage::new(32, 32);
         let b = RgbImage::new(32, 33);
@@ -265,6 +286,124 @@ mod tests {
                 raw.blacklevel, raw.whitelevel,
             );
         }
+    }
+
+    // Evaluate whether a SINGLE neutral-anchored exposure adjustment explains
+    // the JPEG/RAW difference. This is a measurement, not a developer setting,
+    // new camera look, or a pixelwise RAW/JPEG blend.
+    fn relative_exposure_from_neutrals(raw: &RgbImage, camera: &RgbImage) -> Option<f64> {
+        if raw.dimensions() != camera.dimensions() {
+            return None;
+        }
+        let mut ratios = Vec::new();
+        for y in (0..camera.height()).step_by(16) {
+            for x in (0..camera.width()).step_by(16) {
+                let target = camera.get_pixel(x, y).0;
+                let (high, low) = (
+                    *target.iter().max().unwrap_or(&0),
+                    *target.iter().min().unwrap_or(&0),
+                );
+                // Choose non-clipped camera-neutral candidates. JPEG regions
+                // are only a statistical reference, not a calibration chart.
+                if high.saturating_sub(low) > 20 || low < 48 || high > 242 {
+                    continue;
+                }
+                let source = raw.get_pixel(x, y).0;
+                if source.iter().any(|&value| value >= 252) {
+                    continue;
+                }
+                let camera_y = linear_luma(target);
+                let sensor_y = linear_luma(source);
+                if camera_y > 0.03 && sensor_y > 0.005 {
+                    let ratio = camera_y / sensor_y;
+                    if ratio.is_finite() && (0.2..=16.0).contains(&ratio) {
+                        ratios.push(ratio);
+                    }
+                }
+            }
+        }
+        if ratios.len() < 32 {
+            return None;
+        }
+        ratios.sort_by(f64::total_cmp);
+        // Robust to mislabeled neutrals. A median luminance ratio is NOT a
+        // camera tone curve; it lets us exclude exposure as the only issue.
+        Some(ratios[ratios.len() / 2].clamp(0.25, 8.0))
+    }
+
+    fn linear_luma(rgb: [u8; 3]) -> f64 {
+        let c = rgb.map(srgb_linear);
+        0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+    }
+
+    fn linear_to_srgb(value: f64) -> u8 {
+        let linear = value.clamp(0.0, 1.0);
+        let encoded = if linear <= 0.0031308 {
+            12.92 * linear
+        } else {
+            1.055 * linear.powf(1.0 / 2.4) - 0.055
+        };
+        (encoded * 255.0).round().clamp(0.0, 255.0) as u8
+    }
+
+    fn exposed_for_diagnostic(pixel: [u8; 3], gain: f64) -> [u8; 3] {
+        pixel.map(|channel| linear_to_srgb(srgb_linear(channel) * gain))
+    }
+
+    fn report_single_gain(raw: &RgbImage, camera: &RgbImage) -> Option<f64> {
+        let gain = relative_exposure_from_neutrals(raw, camera)?;
+        let mut all = GroupColor::default();
+        let mut neutrals = GroupColor::default();
+        let mut warm = GroupColor::default();
+        let mut absolute_delta = [0u64; 3];
+        let mut samples = 0u64;
+        for y in (0..raw.height()).step_by(16) {
+            for x in (0..raw.width()).step_by(16) {
+                let target = camera.get_pixel(x, y).0;
+                let corrected = exposed_for_diagnostic(raw.get_pixel(x, y).0, gain);
+                samples += 1;
+                for ch in 0..3 {
+                    absolute_delta[ch] += u64::from(corrected[ch].abs_diff(target[ch]));
+                }
+                all.record(corrected, target);
+                let max = *target.iter().max().unwrap_or(&0);
+                let min = *target.iter().min().unwrap_or(&0);
+                if max.saturating_sub(min) <= 20 && min >= 48 && max <= 242 {
+                    neutrals.record(corrected, target);
+                }
+                if target[0] > target[1].saturating_add(12)
+                    && target[1] > target[2].saturating_add(8)
+                    && target[0] > 75 && target[0] < 240
+                {
+                    warm.record(corrected, target);
+                }
+            }
+        }
+        eprintln!(
+            "PIC_RAW_QA_GAIN neutral_median_linear_gain={gain:.3} stops={:.2} \
+             diagnostic_only=true mean_absolute_RGB_after={:.2},{:.2},{:.2}",
+            gain.log2(),
+            absolute_delta[0] as f64 / samples.max(1) as f64,
+            absolute_delta[1] as f64 / samples.max(1) as f64,
+            absolute_delta[2] as f64 / samples.max(1) as f64,
+        );
+        all.print("exposure_only_all");
+        neutrals.print("exposure_only_camera_neutrals");
+        warm.print("exposure_only_camera_warm");
+        Some(gain)
+    }
+
+    fn write_gain_preview(rgb: &RgbImage, gain: f64, path: &Path) {
+        let long = rgb.width().max(rgb.height()).max(1);
+        let width = ((u64::from(rgb.width()) * 1400) / u64::from(long)).max(1) as u32;
+        let height = ((u64::from(rgb.height()) * 1400) / u64::from(long)).max(1) as u32;
+        let mut reduced = image::imageops::resize(
+            rgb, width, height, image::imageops::FilterType::Lanczos3
+        );
+        for pixel in reduced.pixels_mut() {
+            pixel.0 = exposed_for_diagnostic(pixel.0, gain);
+        }
+        reduced.save(path).expect("write exposure-only diagnostic PNG");
     }
 
     fn write_comparison_preview(rgb: &RgbImage, path: &Path) {
@@ -318,6 +457,9 @@ mod tests {
         let reference = decode_viewer_jpeg(&camera_jpeg, camera_w, camera_h, &filename)
             .expect("colour-manage Nikon JPEG").to_rgb8();
         let actual = sensor.to_rgb8();
+        // The ratio deliberately uses only the Nikon reference's plausible
+        // neutral samples; it is not applied to PIC viewing or exporting.
+        let diagnostic_gain = report_single_gain(&actual, &reference);
 
         match report_pair(&actual, &reference) {
             Some(report) => report.print(),
@@ -336,6 +478,9 @@ mod tests {
                 .expect("write 16-bit sensor-developed TIFF");
             write_comparison_preview(&reference, &folder.join("nikon-preview.png"));
             write_comparison_preview(&actual, &folder.join("sensor-preview.png"));
+            if let Some(gain) = diagnostic_gain {
+                write_gain_preview(&actual, gain, &folder.join("sensor-exposure-only.png"));
+            }
             eprintln!(
                 "PIC_RAW_QA outputs={} comparison=nikon-preview.png,sensor-preview.png",
                 folder.display()

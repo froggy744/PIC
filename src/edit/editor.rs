@@ -156,6 +156,13 @@ fn apply_native_preview_layout(
     });
 }
 
+/// A newly chosen creative filter starts at full effect strength. Keep this
+/// in the same recipe mutation as the filter choice so Undo restores both
+/// filter and previous slider amount together.
+fn reset_amount_on_creative_filter_selection(recipe: &mut EditRecipe) {
+    recipe.filter_amount = 1.0;
+}
+
 fn cpu_fallback_reason(recipe: &EditRecipe) -> &'static str {
     if recipe.clarity != 0.0 {
         "clarity"
@@ -1791,7 +1798,7 @@ pub fn build(
                 recipe.filter = FilterPreset::None;
                 if active {
                     recipe.sepia = false;
-                    recipe.filter_amount = 1.0;
+                    reset_amount_on_creative_filter_selection(recipe);
                 }
             });
             if active {
@@ -1850,7 +1857,7 @@ pub fn build(
                 recipe.filter = FilterPreset::None;
                 if active {
                     recipe.black_white = false;
-                    recipe.filter_amount = 1.0;
+                    reset_amount_on_creative_filter_selection(recipe);
                 }
             });
             if active {
@@ -1909,9 +1916,8 @@ pub fn build(
                 recipe.filter = if active { preset } else { FilterPreset::None };
                 recipe.black_white = false;
                 recipe.sepia = false;
-                // Selecting any creative filter tile, including Original,
-                // starts at full strength. Quick Fix toggles do not reset it.
-                recipe.filter_amount = 1.0;
+                // Includes Original; Quick Fix toggles leave the amount alone.
+                reset_amount_on_creative_filter_selection(recipe);
             });
             syncing.set(true);
             filter_amount_scale.set_value(100.0);
@@ -2990,6 +2996,34 @@ mod panel_tests {
             }
         }
         count
+    }
+
+    #[test]
+    fn picking_creative_filter_resets_amount_as_one_undoable_action() {
+        let mut session = EditSession::new(EditRecipe::default());
+        session.mutate(|recipe| {
+            recipe.auto_brightness = true;
+            recipe.filter_amount = 0.25;
+            recipe.exposure = 0.40;
+        });
+        session.mutate(|recipe| {
+            recipe.filter = FilterPreset::Clarendon;
+            reset_amount_on_creative_filter_selection(recipe);
+        });
+        assert_eq!(session.recipe.filter, FilterPreset::Clarendon);
+        assert_eq!(session.recipe.filter_amount, 1.0);
+        assert!(session.recipe.auto_brightness);
+        assert!((session.recipe.exposure - 0.40).abs() < 0.0001);
+        assert!(session.undo(), "filter selection must be undoable");
+        assert_eq!(session.recipe.filter, FilterPreset::None);
+        assert_eq!(session.recipe.filter_amount, 0.25,
+            "Undo restores the old slider amount with the prior filter");
+        assert!(session.redo());
+        assert_eq!(session.recipe.filter_amount, 1.0);
+        // B&W, Sepia and Original use the same reset helper as named filters.
+        session.recipe.filter_amount = 0.1;
+        reset_amount_on_creative_filter_selection(&mut session.recipe);
+        assert_eq!(session.recipe.filter_amount, 1.0);
     }
 
     #[test]

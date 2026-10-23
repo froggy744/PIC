@@ -1604,6 +1604,11 @@ pub fn gpu_tone_supported(recipe: &EditRecipe) -> bool {
     let geometry_changes_pixels = !recipe.crop.is_full() || recipe.straighten.abs() >= 0.01;
     !recipe.auto_brightness
         && !recipe.auto_enhance
+        // Shader Auto Colour/Contrast assumes 100% strength. Until
+        // shared intensity blending has GPU/CPU parity, force partial
+        // Quick Fixes onto the CPU export-equivalent pipeline.
+        && (!(recipe.auto_color || recipe.auto_contrast)
+            || recipe.filter_amount >= 1.0)
         && recipe.smooth <= 0.001
         && recipe.vignette.abs() <= 0.001
         && (recipe.filter == FilterPreset::None || !(recipe.auto_color || recipe.auto_contrast))
@@ -3665,6 +3670,12 @@ mod tests {
         assert!(gpu_tone_supported(&auto_contrast));
         auto_contrast.auto_color = true;
         assert!(gpu_tone_supported(&auto_contrast));
+        auto_contrast.filter_amount = 0.5;
+        assert!(!gpu_tone_supported(&auto_contrast),
+            "partial-strength Auto Colour/Contrast must use CPU for export parity");
+        auto_contrast.filter_amount = 1.0;
+        assert!(gpu_tone_supported(&auto_contrast),
+            "full-strength Quick Fixes retain the established GPU path");
         auto_contrast.auto_brightness = true;
         assert!(!gpu_tone_supported(&auto_contrast));
         auto_contrast.auto_brightness = false;

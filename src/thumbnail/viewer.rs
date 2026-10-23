@@ -142,7 +142,23 @@ fn match_nef_sensor_to_camera_jpeg(
     }
     Ok(match output {
         Some(image) => DynamicImage::ImageRgb8(image),
-        None => DynamicImage::ImageRgb16(sensor),
+        None => {
+            // A camera-matched sensor transform must pass photographed
+            // neutral/skin checks. If it does not, show Nikon's exact
+            // embedded full-resolution JPEG rather than a visibly green
+            // sensor image. The JPEG is a *fallback*, never blended with RAW.
+            //
+            // Keep the original RAW untouched for later improved profiling.
+            if std::env::var_os("PICASA_TRACE").is_some() {
+                eprintln!(
+                    "PIC_DECODE stage=nef_camera_render_match result=quality_rejected fallback=nikon_full_resolution_jpeg"
+                );
+            }
+            match decode_viewer_jpeg(camera_jpeg, camera_width, camera_height, reference) {
+                Ok(image) => image,
+                Err(_) => DynamicImage::ImageRgb16(sensor),
+            }
+        }
     })
 }
 

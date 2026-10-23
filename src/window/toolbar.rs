@@ -1,5 +1,5 @@
 {
-    let refresh = gtk::Button::from_icon_name("view-refresh-symbolic");
+    let refresh = gtk::Button::from_icon_name("folder-sync-symbolic");
     refresh.set_tooltip_text(Some("Refresh library"));
 
     let sort_button = gtk::MenuButton::new();

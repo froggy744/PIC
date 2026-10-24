@@ -19,6 +19,7 @@ pub enum Field {
     FocalLength,
     CaptureDate,
     FileType,
+    Rating,
     Flash,
     Exposure,
     WhiteBalance,
@@ -33,7 +34,7 @@ pub enum Field {
     SourceFolder,
 }
 impl Field {
-    pub const ALL: [Self; 21] = [
+    pub const ALL: [Self; 22] = [
         Self::Camera,
         Self::CameraMake,
         Self::Lens,
@@ -44,6 +45,7 @@ impl Field {
         Self::FocalLength,
         Self::CaptureDate,
         Self::FileType,
+        Self::Rating,
         Self::Flash,
         Self::Exposure,
         Self::WhiteBalance,
@@ -68,6 +70,7 @@ impl Field {
             Self::FocalLength => "Focal length",
             Self::CaptureDate => "Capture date",
             Self::FileType => "File type",
+            Self::Rating => "Rating",
             Self::Flash => "Flash used",
             Self::Exposure => "Exposure compensation",
             Self::WhiteBalance => "White balance",
@@ -105,6 +108,7 @@ impl Field {
             Self::FocalLength => "NULLIF(mp.focal_length,0)",
             Self::CaptureDate => "substr(m.captured_at,1,10)",
             Self::FileType => "m.file_type",
+            Self::Rating => "mp.rating",
             Self::Flash => "m.flash",
             Self::Exposure => "mp.exposure_bias",
             Self::WhiteBalance => "m.white_balance",
@@ -127,6 +131,17 @@ impl Field {
                 "Missing / unknown"
             }
             .into();
+        }
+        if self == Self::Rating {
+            return match value {
+                "0" => "Unrated".into(),
+                "1" => "1 star".into(),
+                "2" => "2 stars".into(),
+                "3" => "3 stars".into(),
+                "4" => "4 stars".into(),
+                "5" => "5 stars".into(),
+                _ => value.into(),
+            };
         }
         if matches!(
             self,
@@ -343,7 +358,11 @@ pub fn facets(
         search,
     ];
     params.append(&mut args);
-    let rating = rating_predicate(&scope.rating, "mp");
+    let rating = if field == Field::Rating {
+        "1".into()
+    } else {
+        rating_predicate(&scope.rating, "mp")
+    };
     let expr = field.expression();
     let sql=format!("SELECT CAST({expr} AS TEXT),COUNT(*) FROM photos mp LEFT JOIN photo_metadata m ON m.photo_id=mp.id LEFT JOIN folders sf ON sf.id=mp.folder_id
         WHERE mp.trashed=0 AND (?1 IS NULL OR mp.folder_id IN (WITH RECURSIVE descendants(id) AS (
@@ -471,6 +490,28 @@ mod tests {
         .unwrap();
         c.execute_batch("INSERT INTO album_photos VALUES (1,1),(1,3); UPDATE photos SET rating=3 WHERE id=1; UPDATE photos SET favorite=1 WHERE id=2;").unwrap();
         c
+    }
+
+    #[test]
+    fn rating_column_lists_all_ratings_even_when_toolbar_rating_is_active() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch(SCHEMA).unwrap();
+        connection.execute_batch(
+            "INSERT INTO folders(id,path) VALUES (1,'/a');
+             INSERT INTO photos(id,path,folder_id,rating) VALUES
+                (101,'/a/unrated.jpg',1,0),
+                (102,'/a/three.jpg',1,3),
+                (103,'/a/five.jpg',1,5);",
+        ).unwrap();
+        let scope = Scope {
+            rating: "3".into(),
+            ..Scope::default()
+        };
+        let rows = facets(&connection, &scope, &Filters::default(), Field::Rating).unwrap();
+        assert_eq!(
+            rows.iter().map(|row| (row.value.as_str(), row.count)).collect::<Vec<_>>(),
+            [("0", 1), ("3", 1), ("5", 1)]
+        );
     }
     fn ids(c: &Connection, f: &Filters) -> Vec<i64> {
         let mut ids = photos_limited_filtered(c, None, false, None, -1, f)

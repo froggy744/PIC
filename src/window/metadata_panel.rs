@@ -123,6 +123,11 @@ mod explorer_field_tests {
                 .collect::<Vec<_>>()
         );
     }
+
+    #[test]
+    fn rating_is_available_as_an_all_view_column() {
+        assert!(explorer_field_choices(&[Field::Camera], 0).contains(&Field::Rating));
+    }
 }
 
 struct ExplorerColumn {
@@ -382,6 +387,9 @@ impl MetadataPanel {
             explorer: RefCell::new(Vec::new()),
         });
         for field in Field::ALL {
+            if field == Field::Rating {
+                continue;
+            }
             let menu = gtk::MenuButton::new();
             menu.add_css_class("metadata-filter-choice");
             menu.set_label(if field == Field::CameraMake {
@@ -478,6 +486,10 @@ impl MetadataPanel {
         rating_button.set_visible(rating_visible);
         rating_option.set_active(rating_visible);
         filters_list.append(&rating_option);
+        panel
+            .filter_buttons
+            .borrow_mut()
+            .push((Field::Rating, rating_button.clone()));
         let weak = Rc::downgrade(&panel);
         rating_option.connect_toggled(move |check| {
             if let Some(panel) = weak.upgrade() {
@@ -663,7 +675,11 @@ impl MetadataPanel {
     fn sync_filter_visibility(&self) {
         let selection = self.filter_selection.borrow().clone();
         for (field, button) in self.filter_buttons.borrow().iter() {
-            button.set_visible(selection.fields.contains(field));
+            button.set_visible(if *field == Field::Rating {
+                selection.rating
+            } else {
+                selection.fields.contains(field)
+            });
         }
         for (field, option) in self.filter_options.borrow().iter() {
             let active = match field {
@@ -821,14 +837,26 @@ impl MetadataPanel {
                     return;
                 };
                 selected_field.set(field);
-                panel.sync_explorer_dropdowns();
-                panel.populate_column_choices(field, &search_for_choice, &content);
-                search_for_choice.set_text("");
-                search_for_choice.set_placeholder_text(Some(&format!(
-                    "Search {}…",
-                    field.label().to_lowercase()
-                )));
-                panel.save_explorer_columns();
+                let weak = Rc::downgrade(&panel);
+                let search = search_for_choice.clone();
+                let content = content.clone();
+                let selected_field = selected_field.clone();
+                glib::idle_add_local_once(move || {
+                    let Some(panel) = weak.upgrade() else {
+                        return;
+                    };
+                    if selected_field.get() != field {
+                        return;
+                    }
+                    panel.sync_explorer_dropdowns();
+                    panel.populate_column_choices(field, &search, &content);
+                    search.set_text("");
+                    search.set_placeholder_text(Some(&format!(
+                        "Search {}…",
+                        field.label().to_lowercase()
+                    )));
+                    panel.save_explorer_columns();
+                });
             }
         });
         let content = list.clone();
@@ -1302,13 +1330,7 @@ impl MetadataPanel {
         mut rows: Vec<Facet>,
         search: Option<&gtk::SearchEntry>,
     ) {
-        let selected = self
-            .state
-            .borrow()
-            .categories
-            .get(&field)
-            .map(|s| s.values.clone())
-            .unwrap_or_default();
+        let selected = self.selected_values(field);
         for value in &selected {
             if !rows.iter().any(|r| &r.value == value) {
                 rows.push(Facet {
@@ -1321,6 +1343,22 @@ impl MetadataPanel {
             list.append(&gtk::Label::new(Some("No values in this collection")));
         }
         self.append_choice_page(field, list, rows, selected, search.cloned());
+    }
+    fn selected_values(&self, field: Field) -> Vec<String> {
+        if field == Field::Rating {
+            let rating = (self.scope)().rating;
+            return match rating.as_str() {
+                "unrated" | "0" => vec!["0".into()],
+                "1" | "2" | "3" | "4" | "5" => vec![rating],
+                _ => Vec::new(),
+            };
+        }
+        self.state
+            .borrow()
+            .categories
+            .get(&field)
+            .map(|selection| selection.values.clone())
+            .unwrap_or_default()
     }
     // Reorder existing checkbox widgets immediately, including inside open
     // popovers, so selected items do not wait for a fresh database facet query.
@@ -1400,11 +1438,28 @@ impl MetadataPanel {
                     if let Some(list) = list_for_reorder.upgrade() {
                         Self::move_selected_choices_first(&list);
                     }
-                    panel
-                        .state
-                        .borrow_mut()
-                        .toggle(field, row.value.clone(), b.is_active());
-                    panel.apply();
+                    if field == Field::Rating {
+                        let key = if !b.is_active() {
+                            "all".to_owned()
+                        } else if row.value == "0" {
+                            "unrated".to_owned()
+                        } else {
+                            row.value.clone()
+                        };
+                        let weak = Rc::downgrade(&panel);
+                        glib::idle_add_local_once(move || {
+                            if let Some(panel) = weak.upgrade() {
+                                (panel.rating)(&key);
+                                panel.sync();
+                            }
+                        });
+                    } else {
+                        panel
+                            .state
+                            .borrow_mut()
+                            .toggle(field, row.value.clone(), b.is_active());
+                        panel.apply();
+                    }
                 }
             });
             list.append(&check);
@@ -1423,13 +1478,7 @@ impl MetadataPanel {
                     remaining.borrow_mut().take(),
                 ) {
                     list.remove(button);
-                    let selected = panel
-                        .state
-                        .borrow()
-                        .categories
-                        .get(&field)
-                        .map(|s| s.values.clone())
-                        .unwrap_or_default();
+                    let selected = panel.selected_values(field);
                     let search = search_weak.as_ref().and_then(|entry| entry.upgrade());
                     panel.append_choice_page(field, &list, rows, selected, search);
                 }
@@ -1694,6 +1743,157 @@ mod app_tests {
             );
             std::thread::sleep(Duration::from_millis(10));
         }
+    }
+    #[test]
+    #[ignore = "requires isolated GTK display; run individually with --ignored"]
+    fn opening_flash_choices_loads_indexed_values() {
+        adw::init().unwrap();
+        let dir = std::env::temp_dir().join(format!("pic-flash-choices-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let database_path = dir.join("library.db");
+        let connection = if let Some(source) = std::env::var_os("PIC_TEST_METADATA_DB") {
+            std::fs::copy(source, &database_path).unwrap();
+            db::open_existing(&database_path).unwrap()
+        } else {
+            let connection = db::open(&database_path).unwrap();
+            let folder = db::insert_folder(&connection, dir.to_str().unwrap()).unwrap();
+            for (name, flash) in [("flash.jpg", true), ("no-flash.jpg", false)] {
+                let path = dir.join(name);
+                image::RgbImage::from_pixel(32, 24, image::Rgb([80, 140, 210]))
+                    .save(&path)
+                    .unwrap();
+                db::upsert_photo(
+                    &connection,
+                    &path,
+                    Some(folder),
+                    &db::PhotoMetadata {
+                        searchable: db::metadata::SearchMetadata {
+                            flash: Some(flash),
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+            }
+            connection
+        };
+        let selected_rating = Rc::new(RefCell::new(String::from("all")));
+        let scope_rating = selected_rating.clone();
+        let callback_rating = selected_rating.clone();
+        let panel = MetadataPanel::new(
+            Rc::new(RefCell::new(connection)),
+            Rc::new(move || Scope {
+                rating: scope_rating.borrow().clone(),
+                ..Scope::default()
+            }),
+            Rc::new(|| {}),
+            Rc::new(move |key| *callback_rating.borrow_mut() = key.to_owned()),
+        );
+        let app = adw::Application::builder()
+            .application_id("io.pic.FlashChoicesTest")
+            .build();
+        app.register(None::<&gio::Cancellable>).unwrap();
+        let window = adw::ApplicationWindow::new(&app);
+        let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        content.append(&panel.button);
+        content.append(&panel.root);
+        window.set_content(Some(&content));
+        window.present();
+        panel.button.set_active(true);
+        let option = panel
+            .filter_options
+            .borrow()
+            .iter()
+            .find(|(field, _)| *field == Some(Field::Flash))
+            .unwrap()
+            .1
+            .clone();
+        option.set_active(true);
+        let menu = panel
+            .filter_buttons
+            .borrow()
+            .iter()
+            .find(|(field, _)| *field == Field::Flash)
+            .unwrap()
+            .1
+            .clone();
+        menu.popup();
+        let popover = menu.popover().unwrap();
+        wait_until(|| {
+            let labels = walk(popover.upcast_ref())
+                .iter()
+                .filter_map(|widget| widget.downcast_ref::<gtk::CheckButton>())
+                .filter_map(|button| button.label())
+                .collect::<Vec<_>>();
+            labels.iter().any(|label| label.starts_with("Yes ("))
+                && labels.iter().any(|label| label.starts_with("No ("))
+        });
+        popover.popdown();
+        panel.all_button.set_active(true);
+        let (choose, list, choices) = {
+            let explorer = panel.explorer.borrow();
+            let column = &explorer[0];
+            (column.choose.clone(), column.list.clone(), column.choices.clone())
+        };
+        let flash_index = choices
+            .borrow()
+            .iter()
+            .position(|field| *field == Field::Flash)
+            .unwrap();
+        choose.set_selected(flash_index as u32);
+        wait_until(|| {
+            let labels = walk(list.upcast_ref())
+                .iter()
+                .filter_map(|widget| widget.downcast_ref::<gtk::CheckButton>())
+                .filter_map(|button| button.label())
+                .collect::<Vec<_>>();
+            labels.iter().any(|label| label.starts_with("Yes ("))
+                && labels.iter().any(|label| label.starts_with("No ("))
+        });
+        let rating_index = choices
+            .borrow()
+            .iter()
+            .position(|field| *field == Field::Rating)
+            .unwrap();
+        choose.set_selected(rating_index as u32);
+        wait_until(|| {
+            walk(list.upcast_ref())
+                .iter()
+                .filter_map(|widget| widget.downcast_ref::<gtk::CheckButton>())
+                .filter_map(|button| button.label())
+                .any(|label| label.starts_with("Unrated ("))
+        });
+        let unrated = walk(list.upcast_ref())
+            .into_iter()
+            .filter_map(|widget| widget.downcast::<gtk::CheckButton>().ok())
+            .find(|button| button.label().is_some_and(|label| label.starts_with("Unrated (")))
+            .unwrap();
+        unrated.set_active(true);
+        wait_until(|| selected_rating.borrow().as_str() == "unrated");
+        panel.all_button.set_active(false);
+        let rating_option = panel
+            .filter_options
+            .borrow()
+            .iter()
+            .find(|(field, _)| field.is_none())
+            .unwrap()
+            .1
+            .clone();
+        let rating_menu = panel
+            .filter_buttons
+            .borrow()
+            .iter()
+            .find(|(field, _)| *field == Field::Rating)
+            .unwrap()
+            .1
+            .clone();
+        rating_option.set_active(false);
+        assert!(!rating_menu.is_visible());
+        rating_option.set_active(true);
+        assert!(rating_menu.is_visible());
+        window.close();
+        std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]
     #[ignore = "requires isolated GTK display; run individually with --ignored"]

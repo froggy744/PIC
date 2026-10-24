@@ -233,6 +233,7 @@ pub struct SidebarCounts {
     pub photos: i64,
     pub favorites: i64,
     pub recently_added: i64,
+    pub ratings: [i64; 5],
 }
 
 /// Normalise only trailing directory separators. Do not lowercase paths:

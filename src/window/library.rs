@@ -256,6 +256,9 @@ fn refresh_grid_inner(
                 sidebar::SidebarFilter::All | sidebar::SidebarFilter::RecentlyAdded => {
                     (None, false)
                 }
+                sidebar::SidebarFilter::Ratings | sidebar::SidebarFilter::Rating(_) => {
+                    (None, false)
+                }
                 sidebar::SidebarFilter::Favorites => (None, true),
                 // Picasa-style Folder mode is a single continuous stream.
                 // The selected folder is a scroll destination, not a query
@@ -275,7 +278,7 @@ fn refresh_grid_inner(
         if search.is_empty() {
             limit_recently_added(&connection, filter, &mut photos);
         }
-        apply_rating_filter(&mut photos, rating_filter);
+        apply_collection_rating_filter(&mut photos, filter, rating_filter);
         if folder_stream {
             let folders = db::folders(&connection).unwrap_or_default();
             let display_mode = sidebar::FolderDisplayMode::from_setting(
@@ -639,6 +642,22 @@ fn apply_rating_filter(photos: &mut Vec<db::Photo>, filter: RatingFilter) {
     }
 }
 
+fn apply_collection_rating_filter(
+    photos: &mut Vec<db::Photo>,
+    collection: sidebar::SidebarFilter,
+    toolbar_filter: RatingFilter,
+) {
+    match collection {
+        sidebar::SidebarFilter::Ratings => {
+            photos.retain(|photo| (1..=5).contains(&photo.rating));
+        }
+        sidebar::SidebarFilter::Rating(rating) => {
+            photos.retain(|photo| photo.rating == i32::from(rating));
+        }
+        _ => apply_rating_filter(photos, toolbar_filter),
+    }
+}
+
 fn sort_photos(photos: &mut [db::Photo], sort: PhotoSort) {
     photos.sort_by(|left, right| photo_ordering(left, right, sort));
 }
@@ -805,14 +824,16 @@ fn pixel_count(width: Option<i64>, height: Option<i64>) -> Option<i128> {
 
 #[cfg(test)]
 mod photo_action_tests {
-    use crate::grid;
     use super::{
-        apply_rating_filter, folder_navigation_target, folder_stream_order, no_target_refresh,
-        sort_folder_stream, sort_photos, NoTargetRefresh,
-        valid_file_name, wallpaper_layout, PhotoSort, RatingFilter, SortDirection, SortField,
+        apply_collection_rating_filter, apply_rating_filter, folder_navigation_target,
+        folder_stream_order, no_target_refresh, sort_folder_stream, sort_photos, valid_file_name,
+        wallpaper_layout, NoTargetRefresh, PhotoSort, RatingFilter, SortDirection, SortField,
         WallpaperLayout,
     };
-    use crate::db::{Folder, Photo};
+    use crate::db::{self, Folder, Photo};
+    use crate::grid;
+    use crate::sidebar;
+    use rusqlite::Connection;
 
     #[test]
     fn missing_folder_destination_uses_folder_refresh() {
@@ -1396,6 +1417,55 @@ mod photo_action_tests {
             assert_eq!(RatingFilter::from_key(filter.key()), filter);
         }
         assert_eq!(RatingFilter::from_key("0"), RatingFilter::Unrated);
+    }
+
+    #[test]
+    fn sidebar_rating_destinations_are_independent_of_toolbar_and_favourites() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch(db::SCHEMA).unwrap();
+        connection.execute_batch(
+            "INSERT INTO folders(id,path,name) VALUES (1,'/photos','photos');
+             INSERT INTO photos(id,path,folder_id,favorite,rating,trashed) VALUES
+                (1,'/photos/favourite-unrated.jpg',1,1,0,0),
+                (2,'/photos/favourite-rated.jpg',1,1,2,0),
+                (3,'/photos/other-three.jpg',1,0,3,0),
+                (4,'/photos/other-five.jpg',1,0,5,0),
+                (5,'/photos/trashed.jpg',1,0,4,1);",
+        ).unwrap();
+
+        let mut ratings = db::browse_photos(&connection, None, false, None).unwrap();
+        apply_collection_rating_filter(
+            &mut ratings,
+            sidebar::SidebarFilter::Ratings,
+            RatingFilter::Unrated,
+        );
+        let mut rating_ids = ratings.iter().map(|photo| photo.id).collect::<Vec<_>>();
+        rating_ids.sort_unstable();
+        assert_eq!(rating_ids, [2, 3, 4]);
+
+        let mut threes = db::browse_photos(&connection, None, false, None).unwrap();
+        apply_collection_rating_filter(
+            &mut threes,
+            sidebar::SidebarFilter::Rating(3),
+            RatingFilter::Unrated,
+        );
+        assert_eq!(threes.iter().map(|photo| photo.id).collect::<Vec<_>>(), [3]);
+
+        let mut favourites = db::browse_photos(&connection, None, true, None).unwrap();
+        apply_collection_rating_filter(
+            &mut favourites,
+            sidebar::SidebarFilter::Favorites,
+            RatingFilter::All,
+        );
+        let mut favourite_ids = favourites.iter().map(|photo| photo.id).collect::<Vec<_>>();
+        favourite_ids.sort_unstable();
+        assert_eq!(favourite_ids, [1, 2]);
+
+        let mut all = db::browse_photos(&connection, None, false, None).unwrap();
+        apply_collection_rating_filter(&mut all, sidebar::SidebarFilter::All, RatingFilter::All);
+        let mut all_ids = all.iter().map(|photo| photo.id).collect::<Vec<_>>();
+        all_ids.sort_unstable();
+        assert_eq!(all_ids, [1, 2, 3, 4]);
     }
 
     #[test]

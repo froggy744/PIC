@@ -239,6 +239,8 @@ fn is_library_filter(filter: sidebar::SidebarFilter) -> bool {
         filter,
         sidebar::SidebarFilter::All
             | sidebar::SidebarFilter::Favorites
+            | sidebar::SidebarFilter::Ratings
+            | sidebar::SidebarFilter::Rating(_)
             | sidebar::SidebarFilter::RecentlyAdded
     )
 }
@@ -294,6 +296,8 @@ fn sidebar_filter_setting(filter: sidebar::SidebarFilter) -> String {
         sidebar::SidebarFilter::Library => "library".into(),
         sidebar::SidebarFilter::All => "all".into(),
         sidebar::SidebarFilter::Favorites => "favorites".into(),
+        sidebar::SidebarFilter::Ratings => "ratings".into(),
+        sidebar::SidebarFilter::Rating(rating) => format!("rating:{rating}"),
         sidebar::SidebarFilter::RecentlyAdded => "recently-added".into(),
         sidebar::SidebarFilter::History => "history".into(),
         sidebar::SidebarFilter::Albums => "albums".into(),
@@ -314,6 +318,13 @@ fn sidebar_filter_from_setting(
         "library" => sidebar::SidebarFilter::Library,
         "all" => sidebar::SidebarFilter::All,
         "favorites" => sidebar::SidebarFilter::Favorites,
+        "ratings" => sidebar::SidebarFilter::Ratings,
+        value if value.starts_with("rating:") => value[7..]
+            .parse::<u8>()
+            .ok()
+            .filter(|rating| (1..=5).contains(rating))
+            .map(sidebar::SidebarFilter::Rating)
+            .unwrap_or(sidebar::SidebarFilter::Ratings),
         "albums" => sidebar::SidebarFilter::Albums,
         "recently-added" => sidebar::SidebarFilter::RecentlyAdded,
         "history" => sidebar::SidebarFilter::History,
@@ -346,6 +357,8 @@ mod session_restore_tests {
     fn every_sidebar_destination_has_a_stable_setting() {
         assert_eq!(sidebar_filter_setting(SidebarFilter::All), "all");
         assert_eq!(sidebar_filter_setting(SidebarFilter::Favorites), "favorites");
+        assert_eq!(sidebar_filter_setting(SidebarFilter::Ratings), "ratings");
+        assert_eq!(sidebar_filter_setting(SidebarFilter::Rating(3)), "rating:3");
         assert_eq!(
             sidebar_filter_setting(SidebarFilter::RecentlyAdded),
             "recently-added"
@@ -355,6 +368,10 @@ mod session_restore_tests {
         assert_eq!(
             sidebar_filter_from_setting(Some("history"), &[], &[]),
             SidebarFilter::History
+        );
+        assert_eq!(
+            sidebar_filter_from_setting(Some("rating:3"), &[], &[]),
+            SidebarFilter::Rating(3)
         );
         assert_eq!(sidebar_filter_setting(SidebarFilter::Folder(42)), "folder:42");
         assert_eq!(sidebar_filter_setting(SidebarFilter::Album(17)), "album:17");

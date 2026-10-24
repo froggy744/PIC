@@ -17,6 +17,8 @@ pub enum SidebarFilter {
     Library,
     All,
     Favorites,
+    Ratings,
+    Rating(u8),
     RecentlyAdded,
     History,
     Albums,
@@ -135,6 +137,9 @@ impl Default for SidebarState {
 
 const STATE_KEY: &str = "picasa-sidebar-state";
 const LIBRARY_LIST_KEY: &str = "picasa-sidebar-library-list";
+const RATING_EXPANDED_KEY: &str = "picasa-sidebar-rating-expanded";
+const RATING_HEADER_KEY: &str = "picasa-sidebar-rating-header";
+const RATING_INDICATOR_KEY: &str = "picasa-sidebar-rating-indicator";
 const HISTORY_CLEAR_CALLBACK_KEY: &str = "picasa-sidebar-history-clear-callback";
 const LIBRARY_HEADING_KEY: &str = "picasa-sidebar-library-heading";
 const LIBRARY_REVEALER_KEY: &str = "picasa-sidebar-library-revealer";
@@ -251,7 +256,13 @@ pub fn build(
     root.append(&library_heading);
 
     let library_list = section_list();
-    populate_library(&library_list, counts, &on_unavailable, &on_clear_history);
+    populate_library(
+        &library_list,
+        counts,
+        &on_unavailable,
+        &on_clear_history,
+        &outer,
+    );
     connect_filter_list(&library_list, on_filter.clone(), filter_syncing.clone());
     let library_revealer = gtk::Revealer::new();
     library_revealer.set_transition_type(gtk::RevealerTransitionType::SlideDown);
@@ -1311,6 +1322,7 @@ pub fn refresh(
         counts,
         &on_unavailable,
         &stored_history_clear_callback(scrolled),
+        scrolled,
     );
 
     clear_list(&album_list);
@@ -1380,6 +1392,7 @@ pub fn refresh_library_counts(
         counts,
         on_unavailable,
         &stored_history_clear_callback(scrolled),
+        scrolled,
     );
     apply_library_visibility(scrolled, sidebar_visibility(scrolled));
 
@@ -1388,7 +1401,7 @@ pub fn refresh_library_counts(
     }
 }
 
-/// Update the three library counters without replacing sidebar rows. Scan
+/// Update library counters without replacing sidebar rows. Scan
 /// progress calls this frequently, so preserving row identity avoids repeated
 /// layout, selection changes, and signal reconnection on the GTK thread.
 pub fn update_library_counts(scrolled: &gtk::ScrolledWindow, counts: SidebarCounts) {
@@ -1405,6 +1418,14 @@ pub fn update_library_counts(scrolled: &gtk::ScrolledWindow, counts: SidebarCoun
         };
         if let Some(label) = unsafe { row.data::<gtk::Label>(FILTER_COUNT_LABEL_KEY) } {
             unsafe { label.as_ref() }.set_text(&format_count(count));
+        }
+    }
+    for rating in 1..=5_u8 {
+        if let Some(row) = rating_row(&list, rating) {
+            if let Some(label) = unsafe { row.data::<gtk::Label>(FILTER_COUNT_LABEL_KEY) } {
+                unsafe { label.as_ref() }
+                    .set_text(&format_count(counts.ratings[(rating - 1) as usize]));
+            }
         }
     }
 }
@@ -1761,6 +1782,9 @@ pub fn set_active_filter(scrolled: &gtk::ScrolledWindow, filter: SidebarFilter) 
     unsafe {
         scrolled.set_data(CURRENT_FILTER_KEY, filter);
     }
+    if matches!(filter, SidebarFilter::Rating(_)) {
+        set_rating_expanded(scrolled, true);
+    }
 
     // The old scroll-location marker is separate from ListBox selection. Once
     // a real destination becomes active it must be cleared even for Folder
@@ -1804,6 +1828,8 @@ fn sync_filter_selection(scrolled: &gtk::ScrolledWindow, filter: SidebarFilter) 
     match filter {
         SidebarFilter::All
         | SidebarFilter::Favorites
+        | SidebarFilter::Ratings
+        | SidebarFilter::Rating(_)
         | SidebarFilter::RecentlyAdded
         | SidebarFilter::History => {
             select_matching_row(scrolled, LIBRARY_LIST_KEY, filter);
@@ -2044,6 +2070,39 @@ fn stored_history_clear_callback(scrolled: &gtk::ScrolledWindow) -> Rc<dyn Fn()>
     }
 }
 
+fn stored_rating_expanded(scrolled: &gtk::ScrolledWindow) -> Rc<Cell<bool>> {
+    unsafe {
+        if let Some(expanded) = scrolled
+            .data::<Rc<Cell<bool>>>(RATING_EXPANDED_KEY)
+            .map(|expanded| expanded.as_ref().clone())
+        {
+            return expanded;
+        }
+    }
+    let expanded = Rc::new(Cell::new(false));
+    unsafe { scrolled.set_data(RATING_EXPANDED_KEY, expanded.clone()) };
+    expanded
+}
+
+fn set_rating_expanded(scrolled: &gtk::ScrolledWindow, show: bool) {
+    stored_rating_expanded(scrolled).set(show);
+    if let Some(indicator) = stored_widget::<gtk::Button>(scrolled, RATING_INDICATOR_KEY) {
+        indicator.set_icon_name(if show {
+            "pan-down-symbolic"
+        } else {
+            "pan-end-symbolic"
+        });
+        indicator.set_tooltip_text(Some(if show { "Collapse" } else { "Expand" }));
+    }
+    if let Some(list) = stored_widget::<gtk::ListBox>(scrolled, LIBRARY_LIST_KEY) {
+        for rating in 1..=5_u8 {
+            if let Some(row) = rating_row(&list, rating) {
+                row.set_visible(show);
+            }
+        }
+    }
+}
+
 fn select_matching_row(scrolled: &gtk::ScrolledWindow, list_key: &str, filter: SidebarFilter) {
     let Some(list) = stored_widget::<gtk::ListBox>(scrolled, list_key) else {
         return;
@@ -2161,6 +2220,7 @@ fn populate_library(
     counts: SidebarCounts,
     on_unavailable: &Rc<dyn Fn()>,
     on_clear_history: &Rc<dyn Fn()>,
+    scrolled: &gtk::ScrolledWindow,
 ) {
     append_filter(
         list,
@@ -2182,6 +2242,7 @@ fn populate_library(
         false,
         on_unavailable,
     );
+    append_rating_section(list, counts.ratings, scrolled);
     append_filter(
         list,
         "appointment-soon-symbolic",
@@ -2203,6 +2264,119 @@ fn populate_library(
         on_unavailable,
     );
     attach_history_context_menu(&history, on_clear_history.clone());
+}
+
+fn append_rating_section(
+    parent: &gtk::ListBox,
+    counts: [i64; 5],
+    scrolled: &gtk::ScrolledWindow,
+) {
+    let expanded = stored_rating_expanded(scrolled).get();
+    let header = gtk::ListBoxRow::new();
+    header.set_margin_top(2);
+    header.set_margin_bottom(2);
+    unsafe { header.set_data("picasa-filter", SidebarFilter::Ratings) };
+    let header_content = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    header_content.set_margin_top(6);
+    header_content.set_margin_bottom(6);
+    header_content.set_margin_start(8);
+    header_content.set_margin_end(8);
+    let title_area = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    title_area.set_hexpand(true);
+    let icon = gtk::Image::from_icon_name("starred-symbolic");
+    icon.set_pixel_size(18);
+    title_area.append(&icon);
+    let heading = gtk::Label::new(Some("Ratings"));
+    heading.set_xalign(0.0);
+    heading.set_hexpand(true);
+    title_area.append(&heading);
+    title_area.set_tooltip_text(Some("Show all rated photos"));
+    header_content.append(&title_area);
+    let indicator = gtk::Button::from_icon_name(if expanded {
+        "pan-down-symbolic"
+    } else {
+        "pan-end-symbolic"
+    });
+    indicator.add_css_class("flat");
+    indicator.set_focusable(false);
+    indicator.set_size_request(24, 24);
+    indicator.set_tooltip_text(Some(if expanded { "Collapse" } else { "Expand" }));
+    header_content.append(&indicator);
+    header.set_child(Some(&header_content));
+    unsafe {
+        scrolled.set_data(RATING_HEADER_KEY, header.clone());
+        scrolled.set_data(RATING_INDICATOR_KEY, indicator.clone());
+    }
+    parent.append(&header);
+
+    for rating in 1..=5_u8 {
+        let row = gtk::ListBoxRow::new();
+        row.set_margin_top(1);
+        row.set_margin_bottom(1);
+        row.set_visible(expanded);
+        unsafe {
+            row.set_data("picasa-filter", SidebarFilter::Rating(rating));
+            row.set_data("picasa-rating", rating);
+        }
+        let content = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        content.set_margin_top(5);
+        content.set_margin_bottom(5);
+        content.set_margin_start(34);
+        content.set_margin_end(8);
+        let label = gtk::Label::new(Some(&format!("{} {}", "★".repeat(rating as usize), rating)));
+        label.set_xalign(0.0);
+        label.set_hexpand(true);
+        content.append(&label);
+        let count = gtk::Label::new(Some(&format_count(counts[(rating - 1) as usize])));
+        count.set_xalign(1.0);
+        count.set_valign(gtk::Align::Center);
+        count.add_css_class("dim-label");
+        count.add_css_class("sidebar-count");
+        content.append(&count);
+        unsafe { row.set_data(FILTER_COUNT_LABEL_KEY, count) };
+        row.set_child(Some(&content));
+        parent.append(&row);
+    }
+
+    let toggle_expanded: Rc<dyn Fn()> = {
+        let scrolled = scrolled.clone();
+        Rc::new(move || {
+            let show = !stored_rating_expanded(&scrolled).get();
+            set_rating_expanded(&scrolled, show);
+        })
+    };
+    indicator.connect_clicked({
+        let toggle_expanded = toggle_expanded.clone();
+        move |_| toggle_expanded()
+    });
+    let heading_click = gtk::GestureClick::new();
+    heading_click.set_button(1);
+    heading_click.connect_pressed({
+        let toggle_expanded = toggle_expanded.clone();
+        move |gesture, press_count, _, _| {
+            if press_count == 2 {
+                toggle_expanded();
+                gesture.set_state(gtk::EventSequenceState::Claimed);
+            }
+        }
+    });
+    title_area.add_controller(heading_click);
+}
+
+fn rating_row(list: &gtk::ListBox, rating: u8) -> Option<gtk::ListBoxRow> {
+    let mut child = list.first_child();
+    while let Some(widget) = child {
+        child = widget.next_sibling();
+        let Ok(row) = widget.downcast::<gtk::ListBoxRow>() else {
+            continue;
+        };
+        if unsafe { row.data::<u8>("picasa-rating") }
+            .is_some_and(|value| unsafe { *value.as_ref() } == rating)
+        {
+            return Some(row);
+        }
+    }
+    None
 }
 
 fn attach_history_context_menu(row: &gtk::ListBoxRow, on_clear_history: Rc<dyn Fn()>) {
@@ -3503,6 +3677,7 @@ mod tests {
                 photos: 30,
                 favorites: 0,
                 recently_added: 0,
+                ratings: [0; 5],
             },
             |_| {},
             noop.clone(),
@@ -3867,21 +4042,23 @@ mod tests {
         gtk::init().unwrap();
         let no_args: Rc<dyn Fn()> = Rc::new(|| {});
         let list = gtk::ListBox::new();
+        let sidebar = gtk::ScrolledWindow::new();
+        unsafe {
+            sidebar.set_data(LIBRARY_LIST_KEY, list.clone());
+        }
         populate_library(
             &list,
             SidebarCounts {
                 photos: 10,
                 favorites: 2,
                 recently_added: 10,
+                ratings: [1, 2, 3, 4, 5],
             },
             &no_args,
             &no_args,
+            &sidebar,
         );
         let all_row = row_for_filter(&list, SidebarFilter::All).unwrap();
-        let sidebar = gtk::ScrolledWindow::new();
-        unsafe {
-            sidebar.set_data(LIBRARY_LIST_KEY, list);
-        }
 
         update_library_counts(
             &sidebar,
@@ -3889,6 +4066,7 @@ mod tests {
                 photos: 12_345,
                 favorites: 7,
                 recently_added: 100,
+                ratings: [10, 20, 30, 40, 50],
             },
         );
 
@@ -3903,6 +4081,86 @@ mod tests {
                 .unwrap()
         };
         assert_eq!(unsafe { count.as_ref() }.text(), "12,345");
+    }
+
+    #[test]
+    #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+    fn rating_rows_are_independent_sidebar_destinations() {
+        gtk::init().unwrap();
+        let sidebar = gtk::ScrolledWindow::new();
+        let main_list = section_list();
+        let syncing = Rc::new(Cell::new(false));
+        let selected = Rc::new(Cell::new(None));
+        let selected_for_callback = selected.clone();
+        let on_filter: Rc<dyn Fn(SidebarFilter)> =
+            Rc::new(move |filter| selected_for_callback.set(Some(filter)));
+        unsafe {
+            sidebar.set_data(LIBRARY_LIST_KEY, main_list.clone());
+            sidebar.set_data(FILTER_SYNCING_KEY, syncing.clone());
+        }
+        let noop: Rc<dyn Fn()> = Rc::new(|| {});
+        populate_library(
+            &main_list,
+            SidebarCounts {
+                photos: 15,
+                favorites: 3,
+                recently_added: 15,
+                ratings: [1, 2, 3, 4, 5],
+            },
+            &noop,
+            &noop,
+            &sidebar,
+        );
+        connect_filter_list(&main_list, on_filter, syncing);
+
+        let header = row_for_filter(&main_list, SidebarFilter::Ratings).unwrap();
+        assert_eq!(header, stored_widget::<gtk::ListBoxRow>(&sidebar, RATING_HEADER_KEY).unwrap());
+        let header_content = header.child().unwrap().downcast::<gtk::Box>().unwrap();
+        let title_area = header_content.first_child().unwrap().downcast::<gtk::Box>().unwrap();
+        let header_icon = title_area.first_child().unwrap().downcast::<gtk::Image>().unwrap();
+        assert_eq!(header_icon.icon_name().as_deref(), Some("starred-symbolic"));
+        for rating in 1..=5_u8 {
+            let row = row_for_filter(&main_list, SidebarFilter::Rating(rating)).unwrap();
+            let count = unsafe { row.data::<gtk::Label>(FILTER_COUNT_LABEL_KEY).unwrap() };
+            assert_eq!(unsafe { count.as_ref() }.text(), rating.to_string());
+            assert!(!row.is_visible());
+        }
+
+        main_list.select_row(Some(&header));
+        assert_eq!(selected.get(), Some(SidebarFilter::Ratings));
+        assert!(!stored_rating_expanded(&sidebar).get());
+        let header_gesture = title_area
+            .observe_controllers()
+            .iter::<glib::Object>()
+            .filter_map(Result::ok)
+            .find_map(|controller| controller.downcast::<gtk::GestureClick>().ok())
+            .unwrap();
+        header_gesture.emit_by_name::<()>("pressed", &[&2_i32, &0_f64, &0_f64]);
+        assert!(stored_rating_expanded(&sidebar).get());
+        assert!((1..=5_u8).all(|rating| rating_row(&main_list, rating).unwrap().is_visible()));
+
+        let row_five = row_for_filter(&main_list, SidebarFilter::Rating(5)).unwrap();
+        main_list.select_row(Some(&row_five));
+        assert_eq!(selected.get(), Some(SidebarFilter::Rating(5)));
+        set_active_filter(&sidebar, SidebarFilter::Rating(3));
+        assert_eq!(main_list.selected_row(), row_for_filter(&main_list, SidebarFilter::Rating(3)));
+        assert_eq!(current_filter(&sidebar), Some(SidebarFilter::Rating(3)));
+
+        update_library_counts(
+            &sidebar,
+            SidebarCounts {
+                photos: 15,
+                favorites: 3,
+                recently_added: 15,
+                ratings: [10, 20, 30, 40, 50],
+            },
+        );
+        let count = unsafe { row_five.data::<gtk::Label>(FILTER_COUNT_LABEL_KEY).unwrap() };
+        assert_eq!(unsafe { count.as_ref() }.text(), "50");
+        let arrow = header_content.last_child().unwrap().downcast::<gtk::Button>().unwrap();
+        arrow.emit_by_name::<()>("clicked", &[]);
+        assert!(!stored_rating_expanded(&sidebar).get());
+        assert_eq!(selected.get(), Some(SidebarFilter::Rating(5)));
     }
 
     #[test]
@@ -3965,6 +4223,7 @@ mod tests {
                 photos: 4,
                 favorites: 0,
                 recently_added: 0,
+                ratings: [0; 5],
             },
             |_| {},
             no_args.clone(),

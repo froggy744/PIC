@@ -134,7 +134,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         initial_filter,
         &mut photos,
     );
-    apply_rating_filter(&mut photos, rating_filter.get());
+    apply_collection_rating_filter(&mut photos, initial_filter, rating_filter.get());
     if matches!(initial_filter, sidebar::SidebarFilter::Folder(_)) {
         let display_mode = sidebar::FolderDisplayMode::from_setting(
             db::setting(
@@ -1361,6 +1361,8 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             }
             sidebar::SidebarFilter::All
             | sidebar::SidebarFilter::Favorites
+            | sidebar::SidebarFilter::Ratings
+            | sidebar::SidebarFilter::Rating(_)
             | sidebar::SidebarFilter::RecentlyAdded => {
                 // Photos connects forward to Favorites at its last item.
                 if current_filter == sidebar::SidebarFilter::All && direction > 0 {
@@ -3694,6 +3696,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         let rating_filter_for_rating = rating_filter.clone();
         let filter_for_rating = filter.clone();
         let search_for_rating = search_text.clone();
+        let sidebar_for_rating = sidebar_for_unavailable.clone();
         let rating = (index + 1) as i32;
         button.connect_clicked(move |_| {
             let Some(photo) = selected_for_rating.borrow().clone() else {
@@ -3711,10 +3714,20 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             photo.set_rating(target);
             info_for_rating.set_photo(Some(&photo));
             refresh_lightbox_properties(&photo);
+            if let (Some(sidebar), Ok(counts)) = (
+                sidebar_for_rating.borrow().as_ref(),
+                db::sidebar_counts(&db_for_rating.borrow()),
+            ) {
+                sidebar::update_library_counts(sidebar, counts);
+            }
 
             // Rebuild only when this edit can change visible membership or
             // ordering. Otherwise rating remains a cheap in-place badge update.
             if rating_filter_for_rating.get() != RatingFilter::All
+                || matches!(
+                    filter_for_rating.get(),
+                    sidebar::SidebarFilter::Ratings | sidebar::SidebarFilter::Rating(_)
+                )
                 || sort_for_rating.get().field == SortField::Rating
             {
                 refresh_grid(
@@ -4796,6 +4809,7 @@ fn start_photo_export_single(
         let sort_for_keys = sort.clone();
         let rating_filter_for_keys = rating_filter.clone();
         let search_for_keys = search_text.clone();
+        let sidebar_for_keys = sidebar_for_unavailable.clone();
 
         let photo_keys = gtk::EventControllerKey::new();
         photo_keys.set_propagation_phase(gtk::PropagationPhase::Capture);
@@ -4930,8 +4944,18 @@ fn start_photo_export_single(
                                 photo.set_rating(rating);
                                 info_for_keys.set_photo(Some(&photo));
                                 refresh_lightbox_properties(&photo);
+                                if let (Some(sidebar), Ok(counts)) = (
+                                    sidebar_for_keys.borrow().as_ref(),
+                                    db::sidebar_counts(&db_for_keys.borrow()),
+                                ) {
+                                    sidebar::update_library_counts(sidebar, counts);
+                                }
 
                                 if rating_filter_for_keys.get() != RatingFilter::All
+                                    || matches!(
+                                        filter_for_keys.get(),
+                                        sidebar::SidebarFilter::Ratings | sidebar::SidebarFilter::Rating(_)
+                                    )
                                     || sort_for_keys.get().field == SortField::Rating
                                 {
                                     refresh_grid(
@@ -6600,6 +6624,7 @@ fn start_photo_export_single(
             };
             retain_enabled_formats(&new_connection, &mut photos);
             limit_recently_added(&new_connection, new_filter, &mut photos);
+            apply_collection_rating_filter(&mut photos, new_filter, RatingFilter::All);
             if matches!(new_filter, sidebar::SidebarFilter::Folder(_)) {
                 let display_mode = sidebar::FolderDisplayMode::from_setting(
                     db::setting(&new_connection, sidebar::FOLDER_DISPLAY_MODE_SETTING_KEY)

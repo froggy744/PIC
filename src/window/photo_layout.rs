@@ -7,6 +7,7 @@ fn section_key(filter: SidebarFilter) -> &'static str {
     match filter {
         SidebarFilter::All => "photo_layout.all",
         SidebarFilter::Favorites => "photo_layout.favorites",
+        SidebarFilter::Ratings | SidebarFilter::Rating(_) => "photo_layout.ratings",
         SidebarFilter::RecentlyAdded => "photo_layout.recently_added",
         SidebarFilter::History => "photo_layout.history",
         SidebarFilter::Folder(_) => "photo_layout.folders",

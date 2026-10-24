@@ -88,7 +88,7 @@ pub fn library_counts(connection: &Connection) -> Result<LibraryCounts> {
     })
 }
 
-/// Counts shown beside the top-level Library destinations in the sidebar.
+/// Counts shown in the Library sidebar, including exact-rating totals.
 /// `RecentlyAdded` currently uses the same photo set as All Photos, so keep
 /// its count aligned with what that destination actually displays.
 pub fn sidebar_counts(connection: &Connection) -> Result<SidebarCounts> {
@@ -102,10 +102,22 @@ pub fn sidebar_counts(connection: &Connection) -> Result<SidebarCounts> {
         [],
         |row| row.get(0),
     )?;
+    let mut ratings = [0_i64; 5];
+    let mut statement = connection.prepare(
+        "SELECT rating, COUNT(*) FROM photos WHERE trashed = 0 AND rating BETWEEN 1 AND 5 GROUP BY rating",
+    )?;
+    let rows = statement.query_map([], |row| {
+        Ok((row.get::<_, usize>(0)?, row.get::<_, i64>(1)?))
+    })?;
+    for row in rows {
+        let (rating, count) = row?;
+        ratings[rating - 1] = count;
+    }
     Ok(SidebarCounts {
         photos,
         favorites,
         recently_added: photos.min(recently_added_limit(connection) as i64),
+        ratings,
     })
 }
 
@@ -192,5 +204,33 @@ mod zoom_animation_tests {
         assert!(!zoom_animations_enabled(&connection));
         set_setting(&connection, ZOOM_ANIMATIONS_ENABLED_SETTING_KEY, "true").unwrap();
         assert!(zoom_animations_enabled(&connection));
+    }
+
+    #[test]
+    fn sidebar_rating_counts_exclude_trashed_photos() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch(crate::db::SCHEMA).unwrap();
+        for (id, rating, favorite, trashed) in [
+            (1, 1, 1, 0),
+            (2, 1, 0, 0),
+            (3, 2, 0, 0),
+            (4, 3, 0, 0),
+            (5, 4, 0, 0),
+            (6, 5, 0, 0),
+            (7, 5, 0, 1),
+        ] {
+            connection
+                .execute(
+                    "INSERT INTO photos(id, path, rating, favorite, trashed) VALUES (?1, ?2, ?3, ?4, ?5)",
+                    rusqlite::params![id, format!("/{id}.jpg"), rating, favorite, trashed],
+                )
+                .unwrap();
+        }
+
+        let counts = sidebar_counts(&connection).unwrap();
+
+        assert_eq!(counts.ratings, [2, 1, 1, 1, 1]);
+        assert_eq!(counts.photos, 6);
+        assert_eq!(counts.favorites, 1);
     }
 }

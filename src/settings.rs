@@ -443,6 +443,11 @@ fn sidebar_page(
             crate::sidebar::FAVOURITES_VISIBLE_SETTING_KEY,
         ),
         (
+            "Ratings",
+            "Show Ratings in the Library section.",
+            crate::sidebar::RATINGS_VISIBLE_SETTING_KEY,
+        ),
+        (
             "Recently Added",
             "Show Recently Added in the Library section.",
             crate::sidebar::RECENTLY_ADDED_VISIBLE_SETTING_KEY,

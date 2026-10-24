@@ -1219,7 +1219,17 @@ impl Gallery {
         let mut candidates: Vec<(f32, SquareTile)> = Vec::new();
 
         for tile in tiles {
-            if !tile.is_mapped() || tile.height() <= 0 || tile.imp().visual_loaded.get() {
+            if !tile.is_mapped() || tile.height() <= 0 {
+                continue;
+            }
+            let Some(photo) = tile.imp().photo.borrow().as_ref().cloned() else {
+                continue;
+            };
+            if !visible_thumbnail_candidate(
+                tile.imp().visual_loaded.get(),
+                photo.thumbnail_available(),
+                photo.corrupt(),
+            ) {
                 continue;
             }
             let Some(bounds) = tile.compute_bounds(&self.root) else {
@@ -1533,7 +1543,17 @@ impl Gallery {
         let mut candidates: Vec<(f32, SquareTile)> = Vec::new();
 
         for tile in tiles {
-            if tile.height() <= 0 || tile.imp().visual_loaded.get() {
+            if tile.height() <= 0 {
+                continue;
+            }
+            let Some(photo) = tile.imp().photo.borrow().as_ref().cloned() else {
+                continue;
+            };
+            if !visible_thumbnail_candidate(
+                tile.imp().visual_loaded.get(),
+                photo.thumbnail_available(),
+                photo.corrupt(),
+            ) {
                 continue;
             }
             let Some(bounds) = tile.compute_bounds(&root) else {
@@ -1547,13 +1567,21 @@ impl Gallery {
         }
 
         candidates.sort_by(|left, right| left.0.total_cmp(&right.0));
-        let mut queued = 0usize;
+        let mut requests = Vec::new();
         for (_, tile) in candidates.into_iter().take(budget) {
-            if tile.queue_folder_cached_visual_async(true) {
-                queued += 1;
+            let Some(photo) = tile.imp().photo.borrow().as_ref().cloned() else {
+                continue;
+            };
+            let Some(request) = photo_presentation_request(&photo, true) else {
+                continue;
+            };
+            if let Some(paintable) = folder_thumbnail_cache_get(&request.key) {
+                tile.apply_presentation_paintable(&request.key, &paintable);
+            } else {
+                requests.push(request);
             }
         }
-        queued
+        crate::thumbnail_display::replace_visible_requests(requests)
     }
 
     /// Folder counterpart of apply_visible_grid_cached_paintables: paint RAM
@@ -1842,6 +1870,16 @@ impl Gallery {
         let mut loaded = HashMap::<String, gtk::gdk::Paintable>::new();
         let mut missing = HashSet::<String>::new();
         for completion in completions {
+            let completion_outcome = match &completion.outcome {
+                crate::thumbnail_display::DisplayOutcome::Loaded { .. } => "loaded",
+                crate::thumbnail_display::DisplayOutcome::Missing => "missing",
+                crate::thumbnail_display::DisplayOutcome::Failed => "failed",
+            };
+            crate::thumbnail_trace::event(
+                &completion.source_path,
+                "completion_delivery",
+                completion_outcome,
+            );
             match completion.outcome {
                 crate::thumbnail_display::DisplayOutcome::Loaded {
                     width,
@@ -1884,6 +1922,7 @@ impl Gallery {
                 continue;
             };
             if due_retries.contains(&key) && tile.is_mapped() {
+                crate::thumbnail_trace::event(&photo.path(), "display_retry", "due_visible_tile");
                 if let Some(request) = photo_presentation_request(&photo, true) {
                     crate::thumbnail_display::submit_latest_visible(request);
                 }
@@ -2062,6 +2101,7 @@ impl Gallery {
             .map(|path| path.to_string_lossy().into_owned())
             .collect::<HashSet<_>>();
         if std::env::var_os("PICASA_TRACE").is_some() { eprintln!("PIC_NAV thumbnail_refresh_paths count={}", paths.len()); }
+        let mut refreshed = HashSet::new();
         let mut tiles = Vec::new();
         collect_tiles(self.root.upcast_ref(), &mut tiles);
         collect_tiles(self.folder_root.upcast_ref(), &mut tiles);
@@ -2075,12 +2115,17 @@ impl Gallery {
                 .is_some_and(|photo| paths.contains(&photo.path()));
             if matches {
                 if let Some(photo) = tile.imp().photo.borrow().as_ref() {
+                    refreshed.insert(photo.path());
+                    crate::thumbnail_trace::event(&photo.path(), "tile_refresh", "matching_tile");
                     if let Some(key) = photo_presentation_key(photo) {
                         crate::thumbnail_display::invalidate_retry(&key);
                     }
                 }
                 tile.refresh_thumbnail();
             }
+        }
+        for path in paths.difference(&refreshed) {
+            crate::thumbnail_trace::event(path, "tile_refresh", "no_matching_realized_tile");
         }
     }
 
@@ -2968,10 +3013,19 @@ fn rebuild_folder_rows_for(
 
 }
 
+fn visible_thumbnail_candidate(
+    visual_loaded: bool,
+    thumbnail_available: bool,
+    corrupt: bool,
+) -> bool {
+    !corrupt && (!visual_loaded || !thumbnail_available)
+}
 
 #[cfg(test)]
 mod zoom_anchor_unit_tests {
-    use super::{clamp_zoom_adjustment, zoom_anchor_correction};
+    use super::{
+        clamp_zoom_adjustment, visible_thumbnail_candidate, zoom_anchor_correction,
+    };
 
     #[test]
     fn correction_preserves_the_requested_viewport_y() {
@@ -2985,5 +3039,12 @@ mod zoom_anchor_unit_tests {
         assert_eq!(clamp_zoom_adjustment(-50.0, 0.0, 1000.0, 300.0), 0.0);
         assert_eq!(clamp_zoom_adjustment(900.0, 0.0, 1000.0, 300.0), 700.0);
         assert_eq!(clamp_zoom_adjustment(420.0, 0.0, 1000.0, 300.0), 420.0);
+    }
+
+    #[test]
+    fn visible_missing_placeholder_remains_a_generation_candidate() {
+        assert!(visible_thumbnail_candidate(true, false, false));
+        assert!(!visible_thumbnail_candidate(true, true, false));
+        assert!(!visible_thumbnail_candidate(true, false, true));
     }
 }

@@ -158,9 +158,11 @@ fn existing_cache_path_in(
 pub fn create(path: &str, mtime: Option<i64>, size_bytes: Option<i64>) -> Result<PathBuf> {
     let _cache_guard = cache_generation_guard()?;
     let started = std::time::Instant::now();
+    crate::thumbnail_trace::event(path, "cache_generation", "start");
     let destination = cache_path(path, mtime, size_bytes)?;
     let failure_marker = destination.with_extension("failed");
     if destination.is_file() {
+        crate::thumbnail_trace::event(path, "cache_generation", "already_ready");
         if std::env::var_os("PICASA_TRACE").is_some() {
             eprintln!(
                 "PIC_THUMBNAIL cache_hit uri={path} cache={}",
@@ -171,12 +173,14 @@ pub fn create(path: &str, mtime: Option<i64>, size_bytes: Option<i64>) -> Result
     }
     let legacy = flat_cache_path(path, mtime, size_bytes)?;
     if legacy.is_file() {
+        crate::thumbnail_trace::event(path, "cache_generation", "legacy_cache_ready");
         // Do not move an entry from a GTK-visible lookup path. Keeping it is
         // safe, avoids a blocking migration, and preserves offline access.
         return Ok(legacy);
     }
     let legacy_failure_marker = legacy.with_extension("failed");
     if legacy_failure_marker.is_file() && known_decode_failure(path, &legacy) {
+        crate::thumbnail_trace::event(path, "cache_generation", "legacy_decode_failure_suppressed");
         return Ok(legacy);
     }
     if failure_marker.is_file() {
@@ -185,6 +189,7 @@ pub fn create(path: &str, mtime: Option<i64>, size_bytes: Option<i64>) -> Result
             // once; only confirmed decode failures now suppress future work.
             let _ = fs::remove_file(&failure_marker);
         } else {
+            crate::thumbnail_trace::event(path, "cache_generation", "decode_failure_suppressed");
             return Ok(destination);
         }
     }
@@ -194,6 +199,7 @@ pub fn create(path: &str, mtime: Option<i64>, size_bytes: Option<i64>) -> Result
         .map_err(|_| anyhow::anyhow!("thumbnail in-flight registry poisoned"))?
         .insert(destination.clone());
     if !claimed {
+        crate::thumbnail_trace::event(path, "cache_generation", "already_in_flight");
         return Ok(destination);
     }
 
@@ -228,6 +234,11 @@ pub fn create(path: &str, mtime: Option<i64>, size_bytes: Option<i64>) -> Result
             Err(error) => eprintln!("PIC_THUMBNAIL failed uri={path} error={error:#}"),
         }
     }
+    let outcome = match &result {
+        Ok(_) => "ready".to_owned(),
+        Err(error) => format!("error={error:#}"),
+    };
+    crate::thumbnail_trace::event(path, "cache_generation", &outcome);
     result
 }
 

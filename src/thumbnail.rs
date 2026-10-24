@@ -112,6 +112,7 @@ fn release_discarded_generation_from(
     pending: &mut HashMap<PathBuf, ThumbnailWorkState>, jobs: Vec<PriorityRequest>,
 ) {
     for job in jobs {
+        crate::thumbnail_trace::event(&job.0, "generation_request", "discarded_by_viewport");
         if pending.get(&job.3) == Some(&ThumbnailWorkState::Queued) { pending.remove(&job.3); }
     }
 }
@@ -187,6 +188,7 @@ impl Drop for PendingGuard {
 /// ahead of prefetch work and ownership lasts through generation.
 pub fn request_priority(path: String, mtime: Option<i64>, size_bytes: Option<i64>, visible: bool) {
     let Ok(destination) = cache_path(&path, mtime, size_bytes) else {
+        crate::thumbnail_trace::event(&path, "generation_request", "cache_path_error");
         return;
     };
     if existing_cache_path(&path, mtime, size_bytes)
@@ -194,12 +196,15 @@ pub fn request_priority(path: String, mtime: Option<i64>, size_bytes: Option<i64
         .flatten()
         .is_some()
     {
+        crate::thumbnail_trace::event(&path, "generation_request", "already_cached");
         return;
     }
     if known_decode_failure(&path, &destination) {
+        crate::thumbnail_trace::event(&path, "generation_request", "decode_failure_suppressed");
         return;
     }
     if !crate::source::cached_file_available(&path) {
+        crate::thumbnail_trace::event(&path, "generation_request", "unavailable_suppressed");
         if std::env::var_os("PICASA_TRACE").is_some() {
             eprintln!("PIC_THUMBNAIL skip reason=unavailable uri={path}");
         }
@@ -215,14 +220,17 @@ pub fn request_priority(path: String, mtime: Option<i64>, size_bytes: Option<i64
         let wanted = NETWORK_PREFETCH_WANTED.get_or_init(|| Mutex::new(HashSet::new()))
             .lock().expect("network prefetch lock");
         if requested_visible || !wanted.contains(&path) || !network_prefetch_has_capacity(&jobs) {
+            crate::thumbnail_trace::event(&path, "generation_request", "network_prefetch_suppressed");
             return;
         }
     }
     let pending = PRIORITY_PENDING.get_or_init(|| Mutex::new(HashMap::new()));
     let Ok(mut pending) = pending.lock() else {
+        crate::thumbnail_trace::event(&path, "generation_request", "pending_lock_failed");
         return;
     };
     if pending.contains_key(&destination) {
+        crate::thumbnail_trace::event(&path, "generation_request", "already_pending");
         if visible {
             if let Some(job) = jobs.iter_mut().find(|job| job.3 == destination) {
                 job.6 = true;
@@ -247,9 +255,15 @@ pub fn request_priority(path: String, mtime: Option<i64>, size_bytes: Option<i64
             .or_else(|| visible.then(|| jobs.len() - 1));
         let Some(eviction) = eviction else {
             drop(PendingGuard(destination));
+            crate::thumbnail_trace::event(&path, "generation_request", "queue_capacity_rejected");
             return;
         };
-        if let Some((_, _, _, evicted, _, quality, _)) = jobs.remove(eviction) {
+        if let Some((evicted_path, _, _, evicted, _, quality, _)) = jobs.remove(eviction) {
+            crate::thumbnail_trace::event(
+                &evicted_path,
+                "generation_request",
+                "evicted_for_visible_request",
+            );
             if let Some(request) = quality {
                 crate::thumbnail_display::retry_wall_request(request.key);
             }
@@ -262,7 +276,7 @@ pub fn request_priority(path: String, mtime: Option<i64>, size_bytes: Option<i64
         }
     }
     jobs.push_front((
-        path,
+        path.clone(),
         mtime,
         size_bytes,
         destination.clone(),
@@ -270,6 +284,11 @@ pub fn request_priority(path: String, mtime: Option<i64>, size_bytes: Option<i64
         None,
         visible,
     ));
+    crate::thumbnail_trace::event(
+        &path,
+        "generation_request",
+        if visible { "queued_visible" } else { "queued_prefetch" },
+    );
     wake.notify_all();
 }
 
@@ -603,6 +622,7 @@ fn priority_queue() -> &'static Arc<PriorityQueue> {
                 let failure_marker = destination.with_extension("failed");
                 let _pending_guard = PendingGuard(destination.clone());
                 let deadline = started + PRIORITY_HANDOFF_TIMEOUT;
+                crate::thumbnail_trace::event(&path, "generation_worker", "start");
                 while !destination.is_file() && !known_decode_failure(&path, &destination) {
                     if cache_entry_in_flight(&destination) {
                         if std::time::Instant::now() >= deadline {
@@ -623,12 +643,20 @@ fn priority_queue() -> &'static Arc<PriorityQueue> {
                     std::thread::sleep(std::time::Duration::from_millis(100));
                 }
                 if destination.is_file() {
+                    crate::thumbnail_trace::event(&path, "generation_complete", "cache_ready");
                     if let Ok(mut completions) = PRIORITY_COMPLETIONS
                         .get_or_init(|| Mutex::new(Vec::new()))
                         .lock()
                     {
                         completions.push(PathBuf::from(&path));
                     }
+                }
+                if !destination.is_file() {
+                    crate::thumbnail_trace::event(
+                        &path,
+                        "generation_complete",
+                        if known_decode_failure(&path, &destination) { "decode_failure" } else { "no_cache_before_timeout_or_error" },
+                    );
                 }
             });
         }
@@ -701,6 +729,7 @@ pub fn request_wall_quality(request: crate::thumbnail_display::DisplayRequest) -
         request.clone(),
     );
     if pending.contains_key(&destination) {
+        crate::thumbnail_trace::event(&request.source_path, "generation_request", "already_pending");
         if visible {
             if let Some(job) = jobs.iter_mut().find(|job| job.3 == destination) {
                 job.6 = true;

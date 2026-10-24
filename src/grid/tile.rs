@@ -884,6 +884,7 @@ impl SquareTile {
         photo.set_thumbnail_available(true);
         self.imp().visual_loaded.set(true);
         *self.imp().applied_visual_key.borrow_mut() = Some(expected_key.to_owned());
+        crate::thumbnail_trace::event(&photo.path(), "tile_apply", "paintable_applied");
         if std::env::var_os("PICASA_TRACE").is_some() {
             eprintln!(
                 "PIC_THUMBNAIL paintable_assign elapsed_us={}",
@@ -930,6 +931,7 @@ impl SquareTile {
         // not requeue the same missing cache file continuously. A targeted
         // ThumbnailCreated/priority completion invalidates this state.
         self.imp().visual_loaded.set(true);
+        crate::thumbnail_trace::event(&photo.path(), "tile_apply", "missing_placeholder_settled");
         true
     }
 
@@ -1085,6 +1087,7 @@ impl SquareTile {
 
     fn bind_photo(&self, photo: &PhotoObject) {
         let started = std::time::Instant::now();
+        crate::thumbnail_trace::event(&photo.path(), "tile_bind", "grid_photo");
         self.set_photo_deferred(photo);
         self.load_visual();
         if std::env::var_os("PICASA_TRACE").is_some() { eprintln!("PIC_THUMBNAIL gtk_bind elapsed_us={} id={}", started.elapsed().as_micros(), photo.id()); }
@@ -1097,6 +1100,7 @@ impl SquareTile {
     /// generation, or render RAW/edit transforms here. Those operations turn
     /// harmless widget recycling into synchronous main-thread work.
     fn bind_photo_folder_fast(&self, photo: &PhotoObject, photo_index: usize) {
+        crate::thumbnail_trace::event(&photo.path(), "tile_bind", "folder_fast_photo");
         // Folder bind immediately paints the correct paintable, so replace the
         // photo in place instead of running the full unload path. The old path
         // cleared the paintable and toggled CSS on every recycled tile, which
@@ -1175,6 +1179,7 @@ impl SquareTile {
                 .and_then(folder_thumbnail_cache_get)
         });
         if let Some(paintable) = memory_hit.as_ref() {
+            crate::thumbnail_trace::event(&bound.path(), "tile_apply", "folder_ram_paintable_applied");
             picture.set_paintable(Some(paintable));
             if picture.has_css_class("missing-thumbnail") {
                 picture.remove_css_class("missing-thumbnail");
@@ -1400,6 +1405,7 @@ impl SquareTile {
         let Some(photo) = self.imp().photo.borrow().clone() else {
             return;
         };
+        crate::thumbnail_trace::event(&photo.path(), "tile_refresh", "thumbnail_refresh_requested");
         if let Some(key) = photo_presentation_key(&photo) {
             folder_thumbnail_cache_remove(&key);
         }

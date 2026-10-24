@@ -34,6 +34,7 @@ mod smooth_scroll;
 mod source;
 mod startup_trace;
 mod thumbnail;
+mod thumbnail_trace;
 mod thumbnail_display;
 mod window;
 

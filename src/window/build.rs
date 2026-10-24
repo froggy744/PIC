@@ -3492,6 +3492,8 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 edit_page.remove(&child);
             }
             let photo = crate::photo_object::PhotoObject::from_photo(&db_photo);
+            let trace_uri = photo.path();
+            crate::thumbnail_trace::event(&trace_uri, "editor", "opened");
             info.one_to_one.set_active(false);
             let close = {
                 let main_stack = main_stack.clone();
@@ -3506,7 +3508,9 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 let collage_editing = collage_editing.clone();
                 let collage_editor = collage_editor.clone();
                 let connection = connection.clone();
+                let trace_uri = trace_uri.clone();
                 Rc::new(move || {
+                    crate::thumbnail_trace::event(&trace_uri, "editor", "closed");
                     edit_space_slot.borrow_mut().take();
                     edit_escape_slot.borrow_mut().take();
                     one_to_one.set_active(false);
@@ -3554,7 +3558,9 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 let gallery = gallery.clone();
                 let selected_photo = selected_photo.clone();
                 let info = info.clone();
+                let trace_uri = trace_uri.clone();
                 Rc::new(move |photo: crate::photo_object::PhotoObject| {
+                    crate::thumbnail_trace::event(&trace_uri, "editor", "saved");
                     gallery.update_edit_recipe(photo.id(), &photo.edit_recipe());
                     selected_photo.replace(Some(photo.clone()));
                     info.set_photo(Some(&photo));
@@ -5836,7 +5842,14 @@ fn start_photo_export_single(
         // Drain event-triggered recovery requests once the current scan ends.
         // With no request, this checks only a flag and performs no disk probes.
         start_thumbnail_recovery();
-        priority_thumbnail_paths.extend(crate::thumbnail::take_priority_completions());
+        for path in crate::thumbnail::take_priority_completions() {
+            crate::thumbnail_trace::event(
+                &path.to_string_lossy(),
+                "generation_ui_handoff",
+                "delivered_to_event_loop",
+            );
+            priority_thumbnail_paths.push(path);
+        }
         let priority_completions = priority_thumbnail_paths.len();
         let priority_pending = crate::thumbnail::priority_pending_count();
         
@@ -6193,6 +6206,11 @@ fn start_photo_export_single(
 
                 scanner::ScanEvent::ThumbnailCreated { path } => {
                     scan_count += 1;
+                    crate::thumbnail_trace::event(
+                        &path.to_string_lossy(),
+                        "generation_ui_handoff",
+                        "thumbnail_created_event_received",
+                    );
                     
                     // Coalesce source paths received in this timer tick and
                     // refresh only matching realized tiles. Non-realized rows

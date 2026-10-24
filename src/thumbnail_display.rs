@@ -115,6 +115,7 @@ pub enum DisplayOutcome {
 #[derive(Debug)]
 pub struct DisplayCompletion {
     pub key: String,
+    pub source_path: String,
     pub outcome: DisplayOutcome,
 }
 
@@ -189,13 +190,20 @@ pub fn submit_latest_visible(mut request: DisplayRequest) -> bool {
 
 fn submit_with_policy(request: DisplayRequest, newest_visible_first: bool) -> bool {
     if !display_retry_allowed(&request.key) {
+        crate::thumbnail_trace::event(&request.source_path, "display_submit", "retry_suppressed");
         return false;
     }
     let pending = DISPLAY_PENDING.get_or_init(|| Mutex::new(HashSet::new()));
     let Ok(mut pending) = pending.lock() else {
+        crate::thumbnail_trace::event(
+            &request.source_path,
+            "display_submit",
+            "pending_lock_failed",
+        );
         return false;
     };
     if !pending.insert(request.key.clone()) {
+        crate::thumbnail_trace::event(&request.source_path, "display_submit", "duplicate_pending");
         return false;
     }
     drop(pending);
@@ -220,6 +228,7 @@ fn submit_with_policy(request: DisplayRequest, newest_visible_first: bool) -> bo
         {
             pending.remove(&request.key);
         }
+        crate::thumbnail_trace::event(&request.source_path, "display_submit", "queue_lock_failed");
         return false;
     };
 
@@ -231,9 +240,23 @@ fn submit_with_policy(request: DisplayRequest, newest_visible_first: bool) -> bo
             // is different: when the queue is entirely visible work, the tail
             // is necessarily older than the tile being bound now, so evict it.
             if let Some(index) = jobs.iter().rposition(|job| !job.visible_priority) {
-                evicted_key = jobs.remove(index).map(|job| job.key);
+                if let Some(job) = jobs.remove(index) {
+                    crate::thumbnail_trace::event(
+                        &job.source_path,
+                        "display_submit",
+                        "evicted_for_visible_request",
+                    );
+                    evicted_key = Some(job.key);
+                }
             } else if newest_visible_first {
-                evicted_key = jobs.pop_back().map(|job| job.key);
+                if let Some(job) = jobs.pop_back() {
+                    crate::thumbnail_trace::event(
+                        &job.source_path,
+                        "display_submit",
+                        "evicted_for_newer_visible_request",
+                    );
+                    evicted_key = Some(job.key);
+                }
             } else {
                 drop(jobs);
                 if let Ok(mut pending) = DISPLAY_PENDING
@@ -242,6 +265,11 @@ fn submit_with_policy(request: DisplayRequest, newest_visible_first: bool) -> bo
                 {
                     pending.remove(&request.key);
                 }
+                crate::thumbnail_trace::event(
+                    &request.source_path,
+                    "display_submit",
+                    "capacity_rejected",
+                );
                 return false;
             }
         } else {
@@ -252,10 +280,21 @@ fn submit_with_policy(request: DisplayRequest, newest_visible_first: bool) -> bo
             {
                 pending.remove(&request.key);
             }
+            crate::thumbnail_trace::event(
+                &request.source_path,
+                "display_submit",
+                "capacity_rejected",
+            );
             return false;
         }
     }
 
+    let trace_uri = request.source_path.clone();
+    let trace_outcome = if request.visible_priority {
+        "queued_visible"
+    } else {
+        "queued_prefetch"
+    };
     if request.visible_priority {
         if newest_visible_first {
             jobs.push_front(request);
@@ -269,6 +308,7 @@ fn submit_with_policy(request: DisplayRequest, newest_visible_first: bool) -> bo
     } else {
         jobs.push_back(request);
     }
+    crate::thumbnail_trace::event(&trace_uri, "display_submit", trace_outcome);
     wake.notify_one();
     drop(jobs);
 
@@ -331,6 +371,11 @@ pub fn replace_visible_requests(mut requests: Vec<DisplayRequest>) -> usize {
     let mut retained = VecDeque::with_capacity(jobs.len());
     while let Some(job) = jobs.pop_front() {
         if job.visible_priority {
+            crate::thumbnail_trace::event(
+                &job.source_path,
+                "display_queue",
+                "discarded_by_viewport",
+            );
             pending.remove(&job.key);
         } else {
             retained.push_back(job);
@@ -367,6 +412,11 @@ pub fn replace_visible_requests(mut requests: Vec<DisplayRequest>) -> usize {
                 break;
             };
             if let Some(evicted) = jobs.remove(index) {
+                crate::thumbnail_trace::event(
+                    &evicted.source_path,
+                    "display_queue",
+                    "evicted_for_visible_request",
+                );
                 if is_wall_key(&evicted.key) {
                     retry_wall_request(evicted.key.clone());
                 }
@@ -420,7 +470,22 @@ fn worker_loop(queue: Arc<Queue>) {
                 .expect("thumbnail display queue was checked above")
         };
 
+        crate::thumbnail_trace::event(
+            &request.source_path,
+            "display_worker",
+            if request.visible_priority {
+                "start_visible"
+            } else {
+                "start_prefetch"
+            },
+        );
         let outcome = load_display_thumbnail(&request);
+        let outcome_name = match &outcome {
+            DisplayOutcome::Loaded { .. } => "loaded",
+            DisplayOutcome::Missing => "missing",
+            DisplayOutcome::Failed => "failed",
+        };
+        crate::thumbnail_trace::event(&request.source_path, "display_worker", outcome_name);
         if let Ok(mut retries) = DISPLAY_RETRIES
             .get_or_init(|| Mutex::new(DisplayRetries::default()))
             .lock()
@@ -432,6 +497,7 @@ fn worker_loop(queue: Arc<Queue>) {
         }
         let completion = DisplayCompletion {
             key: request.key.clone(),
+            source_path: request.source_path.clone(),
             outcome,
         };
         if let Ok(mut completions) = DISPLAY_COMPLETIONS
@@ -488,6 +554,7 @@ fn load_thumbnail_with_policy(request: &DisplayRequest, regenerate: bool) -> Dis
         .unwrap_or(canonical)
     };
     if !path.is_file() {
+        crate::thumbnail_trace::event(&request.source_path, "thumbnail_cache", "miss");
         if quality {
             if regenerate && !crate::thumbnail::request_wall_quality(request.clone()) {
                 retry_wall_request(request.key.clone());
@@ -514,6 +581,8 @@ fn load_thumbnail_with_policy(request: &DisplayRequest, regenerate: bool) -> Dis
         );
         return DisplayOutcome::Missing;
     }
+
+    crate::thumbnail_trace::event(&request.source_path, "thumbnail_cache", "hit");
 
     let mut image = match image::open(&path) {
         Ok(image) => image.to_rgba8(),
@@ -757,6 +826,7 @@ pub fn complete_wall_request(request: DisplayRequest) {
     {
         completions.push(DisplayCompletion {
             key: request.key,
+            source_path: request.source_path.clone(),
             outcome,
         });
     }

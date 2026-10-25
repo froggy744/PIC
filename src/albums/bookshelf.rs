@@ -307,10 +307,17 @@ fn bookshelf_columns_for_width(width: i32, _card_width: i32) -> usize {
         return BOOKSHELF_MAX_COLUMNS;
     }
 
-    let usable_width = (width - BOOKSHELF_SIDE_PADDING * 2).max(BOOKSHELF_MIN_CARD_WIDTH);
-    let per_card = BOOKSHELF_MIN_CARD_WIDTH + BOOKSHELF_COLUMN_GAP;
-    ((usable_width + BOOKSHELF_COLUMN_GAP) / per_card).clamp(1, BOOKSHELF_MAX_COLUMNS as i32)
-        as usize
+    // Choose a comfortable cover density at the *content* width, not the
+    // physical monitor resolution. This also works with a collapsed sidebar.
+    // At 1366px four columns remain legible; at 1080p five; at QHD six.
+    match width {
+        2050.. => 6,
+        1450..=2049 => 5,
+        1050..=1449 => 4,
+        760..=1049 => 3,
+        510..=759 => 2,
+        _ => 1,
+    }.min(BOOKSHELF_MAX_COLUMNS)
 }
 
 fn bookshelf_target_card_width(width: i32, columns: usize) -> i32 {

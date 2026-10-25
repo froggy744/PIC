@@ -368,11 +368,13 @@ fn bookshelf_row_count(card_count: usize, columns: usize) -> usize {
 }
 
 fn bookshelf_rows_for_viewport(card_count: usize, columns: usize, available_height: i32) -> usize {
-    // Do not manufacture empty shelves just to fill a tall viewport.
-    // The existing row artwork remains untouched; only populated rows (and
-    // the minimum visual pair) participate in the adaptive layout.
-    let _ = available_height;
+    // The bookshelf is a continuous surface, not a short island of wood
+    // ending above a large dark blank area. Add background-only rows to
+    // fill the visible viewport while keeping the populated rows unchanged.
+    let background_rows = (available_height.max(1) + BOOKSHELF_ROW_HEIGHT - 1)
+        / BOOKSHELF_ROW_HEIGHT;
     bookshelf_row_count(card_count, columns)
+        .max(background_rows.clamp(BOOKSHELF_MIN_ROWS as i32, BOOKSHELF_MAX_VIEWPORT_ROWS as i32) as usize)
 }
 
 fn bookshelf_available_height(scrolled: &gtk::ScrolledWindow, rows: &gtk::Box) -> i32 {
@@ -466,8 +468,9 @@ mod bookshelf_responsive_sizing_tests {
 
     #[test]
     fn four_shelves_wait_until_each_can_keep_a_readable_book_size() {
-        assert_eq!(bookshelf_rows_for_viewport(8, 4, 819), 2);
-        assert_eq!(bookshelf_rows_for_viewport(8, 4, 820), 2);
+        assert_eq!(bookshelf_rows_for_viewport(8, 4, 819), 3);
+        assert_eq!(bookshelf_rows_for_viewport(8, 4, 820), 3);
+        assert_eq!(bookshelf_rows_for_viewport(8, 4, 1150), 4);
         assert_eq!(bookshelf_row_height_for_viewport(4, 820, 0, &theme()), 205);
     }
 }

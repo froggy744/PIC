@@ -175,6 +175,7 @@ impl SettingsWindow {
         maintenance: LibraryMaintenance,
         database_management: DatabaseManagement,
         theme_engine: Rc<crate::window::theme::ThemeEngine>,
+        ui_layout_changed: Rc<dyn Fn()>,
         initial_page: Option<&str>,
     ) {
         if let Some(window) = self.window.borrow().upgrade() {
@@ -234,6 +235,7 @@ impl SettingsWindow {
                 thumbnail_changed.clone(),
                 zoom_animations_changed,
                 clear_saved_views,
+                ui_layout_changed,
             ),
             Some("interface"),
             "Interface",
@@ -1829,6 +1831,7 @@ fn interface_page(
         thumbnail_changed,
         zoom_animations_changed,
         clear_saved_views,
+        Rc::new(|| {}),
     )
 }
 
@@ -1843,8 +1846,48 @@ fn interface_page_with_corner_style(
     thumbnail_changed: Rc<dyn Fn()>,
     zoom_animations_changed: Rc<dyn Fn()>,
     clear_saved_views: Rc<dyn Fn()>,
+    ui_layout_changed: Rc<dyn Fn()>,
 ) -> gtk::ScrolledWindow {
     let content = page_content("Interface", "Customize thumbnails and interface effects.");
+
+    // A layout preference, independent of the theme and responsive sidebar.
+    // Existing libraries remain Standard until the user explicitly opts in.
+    let layout_heading = gtk::Label::new(Some("Workspace layout"));
+    layout_heading.set_halign(gtk::Align::Start);
+    layout_heading.add_css_class("heading");
+    content.append(&layout_heading);
+    let layout_list = settings_list();
+    let layout_choice = gtk::DropDown::from_strings(&["Standard", "Compact"]);
+    layout_choice.set_selected(
+        crate::window::compact_ui::UiLayoutStyle::saved(&connection.borrow()).index(),
+    );
+    layout_choice.set_tooltip_text(Some("Switch between the classic workspace and the icon-only compact workspace"));
+    {
+        let connection = connection.clone();
+        layout_choice.connect_selected_notify(move |dropdown| {
+            let chosen = crate::window::compact_ui::UiLayoutStyle::from_index(dropdown.selected());
+            if let Err(error) = crate::db::set_setting(
+                &connection.borrow(),
+                crate::window::compact_ui::UI_LAYOUT_SETTING_KEY,
+                chosen.setting_value(),
+            ) {
+                eprintln!("Could not save PIC layout preference: {error}");
+                dropdown.set_selected(
+                    crate::window::compact_ui::UiLayoutStyle::saved(&connection.borrow()).index(),
+                );
+                return;
+            }
+            ui_layout_changed();
+        });
+    }
+    append_row(
+        &layout_list,
+        "Workspace style",
+        Some("Compact uses an icon rail and temporary photo tools instead of permanent side and bottom bars."),
+        Some(layout_choice.upcast_ref()),
+    );
+    content.append(&layout_list);
+
 
     if let Some((settings_window, theme_engine, corner_pickers)) = corner_context {
         let corner_style = gtk::DropDown::from_strings(&["Rounded", "Balanced", "Square"]);

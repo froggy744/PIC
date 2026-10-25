@@ -1,0 +1,42 @@
+/* Workspace geometry only. Never alter the Standard layout or themes. */
+.pic-compact-ui .compact-nav-rail {
+    min-width: 56px;
+    padding: 2px 0;
+    border-right: 1px solid alpha(currentColor, 0.12);
+}
+.pic-compact-ui .compact-nav-button {
+    min-width: 40px;
+    min-height: 40px;
+    padding: 6px;
+    border-radius: 8px;
+    margin: 1px 0;
+    background: transparent;
+}
+.pic-compact-ui .compact-nav-button:hover,
+.pic-compact-ui .compact-nav-button:focus-visible {
+    background: alpha(currentColor, 0.10);
+}
+.pic-compact-ui .compact-nav-button.compact-nav-active {
+    background: alpha(currentColor, 0.17);
+    box-shadow: inset 3px 0 alpha(currentColor, 0.60);
+}
+.compact-library-flyout {
+    min-width: 300px;
+}
+.pic-compact-ui .compact-header-action {
+    min-width: 32px;
+    min-height: 32px;
+    border-radius: 8px;
+    padding: 4px;
+}
+.pic-compact-ui .compact-selection-actions {
+    margin: 0 4px;
+    border-radius: 8px;
+    background: alpha(currentColor, 0.09);
+}
+.pic-compact-ui .compact-selection-actions label {
+    font-weight: 600;
+    font-size: 0.9em;
+}
+.compact-photo-tools-scroll { min-width: 300px; }
+.compact-photo-tools-scroll .photo-info-bar { min-height: 58px; }

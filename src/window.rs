@@ -24,6 +24,7 @@ use layout_settle::{
 };
 
 pub(crate) mod theme;
+pub(crate) mod compact_ui;
 
 const THEME_SETTING_KEY: &str = "appearance-theme";
 

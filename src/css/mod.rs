@@ -145,6 +145,15 @@ pub(crate) fn install_foundation(display: &gtk::gdk::Display) {
         gtk::STYLE_PROVIDER_PRIORITY_APPLICATION + 12,
     );
 
+    // Compact chrome only: the current Standard layout and theme CSS remain unchanged.
+    let compact = gtk::CssProvider::new();
+    compact.load_from_string(include_str!("components/compact_layout.css"));
+    gtk::style_context_add_provider_for_display(
+        display,
+        &compact,
+        gtk::STYLE_PROVIDER_PRIORITY_APPLICATION + 11,
+    );
+
     // User-selectable corner geometry is intentionally more specific than
     // per-theme radii (+1/+3) and shared toolbar hover geometry (+12).
     // It is scoped to windows carrying a corner-style-* class.

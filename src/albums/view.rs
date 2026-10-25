@@ -468,18 +468,16 @@ pub fn refresh_presentation(scrolled: &gtk::ScrolledWindow, connection: &Connect
     } else {
         scrolled.remove_css_class("albums-bookshelf");
     }
-    // Repeat the selected art on the shelf-rows box, not on the scrolled
-    // window. The box wraps exactly the drawn rows, so its tiles start at the
-    // top of the first row and scroll with the rows: a page-sized background on
-    // the scrolled window stays put while the rows move, which drew a second,
-    // offset set of shelves in the gaps above and below the album rows.
+    // The viewport owns the repeating background. It must continue behind
+    // every empty portion of the page, independent of the number of albums.
+    // Populated row pictures stay aligned with their physical shelf surfaces.
     if let Some(rows) = find_descendant_with_css_class(scrolled.upcast_ref(), "albums-bookshelf-rows") {
         remove_bookshelf_background_classes(&rows);
-        if has_theme { if let Some(background_class) = bookshelf_background_css_class(connection) {
-            rows.add_css_class(&background_class);
-        }}
-    } else if let Some(background_class) = bookshelf_background_css_class(connection) {
-        scrolled.add_css_class(&background_class);
+    }
+    if has_theme {
+        if let Some(background_class) = bookshelf_background_css_class(connection) {
+            scrolled.add_css_class(&background_class);
+        }
     }
 }
 

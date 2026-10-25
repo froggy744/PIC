@@ -330,6 +330,13 @@ fn bookshelf_row(theme: &BookshelfTheme) -> gtk::Overlay {
     row.set_overflow(gtk::Overflow::Hidden);
     row.add_css_class("albums-bookshelf-row");
 
+    // A Picture as the main child requests height from its image aspect ratio.
+    // On wide/tall windows GTK can grant that natural height, stretching the
+    // shelf artwork away from the fixed surface_y used by cards and reflections.
+    let surface = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    surface.set_height_request(theme.row_height);
+    row.set_child(Some(&surface));
+
     let background = gtk::Picture::new();
     background.set_filename(Some(&theme.image_path));
     background.set_content_fit(gtk::ContentFit::Fill);
@@ -339,7 +346,8 @@ fn bookshelf_row(theme: &BookshelfTheme) -> gtk::Overlay {
     background.set_halign(gtk::Align::Fill);
     background.set_valign(gtk::Align::Fill);
     background.set_can_target(false);
-    row.set_child(Some(&background));
+    row.add_overlay(&background);
+    row.set_measure_overlay(&background, false);
     row
 }
 
@@ -563,8 +571,10 @@ fn resize_bookshelf_cards(rows: &gtk::Box, target_width: i32, theme: &BookshelfT
             content.set_size_request(card_width, -1);
             let mut child = content.first_child();
             while let Some(widget) = child {
-                widget.set_width_request(card_width);
-                widget.set_size_request(card_width, -1);
+                // Preserve the cover's height request for subsequent resizes.
+                if widget.is::<gtk::Label>() {
+                    widget.set_width_request(card_width);
+                }
                 child = widget.next_sibling();
             }
         }

@@ -1306,6 +1306,46 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+    fn bookshelf_row_height_stays_fixed_when_widened() {
+        gtk::init().unwrap();
+        let themes = bookshelf_themes_in(Path::new(BOOKSHELF_THEME_DIRECTORY));
+        assert!(!themes.is_empty());
+        for theme in &themes {
+            let row = bookshelf_row(theme);
+            for width in [300, 800, 1100, 1486, 2200, 2560] {
+                let (minimum, natural, _, _) = row.measure(gtk::Orientation::Vertical, width);
+                assert_eq!(
+                    (minimum, natural),
+                    (theme.row_height, theme.row_height),
+                    "{} at width {width}: shelf artwork must not move the shelf surface",
+                    theme.id,
+                );
+            }
+        }
+
+        let theme = &themes[0];
+        let row = bookshelf_row(theme);
+        let rows = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        rows.set_valign(gtk::Align::Start);
+        rows.append(&row);
+        let scroll = gtk::ScrolledWindow::new();
+        scroll.set_child(Some(&rows));
+        let window = gtk::Window::builder().child(&scroll).build();
+        for (width, height) in [(1366, 768), (1486, 1084), (2560, 1440), (800, 1400)] {
+            window.set_default_size(width, height);
+            window.present();
+            settle_gtk_layout();
+            assert_eq!((window.width(), window.height()), (width, height));
+            assert_eq!(
+                row.height(), theme.row_height,
+                "allocated shelf height changed in a {width}x{height} window",
+            );
+        }
+        window.close();
+    }
+
+    #[test]
     fn responsive_bookshelf_columns_follow_available_width() {
         assert_eq!(bookshelf_columns_for_width(2000, 220), 4);
         assert_eq!(bookshelf_columns_for_width(1400, 220), 4);

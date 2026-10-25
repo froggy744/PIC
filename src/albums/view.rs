@@ -283,15 +283,17 @@ fn build_inner(
             row_height,
             theme.row_height,
         );
-        if columns != runtime_for_resize.last_columns.get()
+        let geometry_changed = columns != runtime_for_resize.last_columns.get()
             || row_count != runtime_for_resize.last_row_count.get()
-            || row_height != runtime_for_resize.last_row_height.get()
-        {
+            || row_height != runtime_for_resize.last_row_height.get();
+        if geometry_changed {
             reflow_bookshelf_rows(&runtime_for_resize, columns, row_count, &row_theme);
             runtime_for_resize.last_row_height.set(row_height);
         }
 
-        if target_card_width != runtime_for_resize.last_card_width.get() {
+        // Always re-anchor covers after reflow, even when target width did
+        // not change: the shelf baseline may have moved on a window resize.
+        if geometry_changed || target_card_width != runtime_for_resize.last_card_width.get() {
             resize_bookshelf_cards(&runtime_for_resize.rows, target_card_width, &row_theme);
             runtime_for_resize.last_card_width.set(target_card_width);
         }

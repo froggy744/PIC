@@ -625,75 +625,16 @@ fn collect_bookshelf_cards(root: &gtk::Widget, cards: &mut Vec<gtk::Button>) {
     }
 }
 
-fn resize_bookshelf_cards(rows: &gtk::Box, target_width: i32, theme: &BookshelfTheme) {
+// Book size is set when its card is created, never by the viewport.
+// On window resize the layout may change columns, but not cover dimensions.
+fn resize_bookshelf_cards(rows: &gtk::Box, _target_width: i32, theme: &BookshelfTheme) {
     let mut cards = Vec::new();
     collect_bookshelf_cards(rows.upcast_ref(), &mut cards);
-
     for card in cards {
-        let Some(cover) = find_descendant_with_css_class(card.upcast_ref(), "album-cover")
-            .and_then(|widget| widget.downcast::<gtk::Overlay>().ok())
-        else {
-            continue;
-        };
-
-        let current_width = cover.width_request();
-        let current_height = cover.height_request();
-        if current_width <= 0 || current_height <= 0 {
-            continue;
-        }
-        // Height/shelf position can change independently of cover width.
-        // Anchor the existing cover before the same-width fast path.
-        if current_width == target_width {
-            card.set_margin_top(bookshelf_card_margin_top(theme.surface_y, current_height));
-            continue;
-        }
-
-        let opening = unsafe {
-            cover
-                .data::<PhotoOpening>(FRAME_OPENING_KEY)
-                .map(|opening| *opening.as_ref())
-        };
-
-        let scale_x = target_width as f64 / current_width as f64;
-        let card_width = target_width;
-        let target_height =
-            ((current_height as f64 * scale_x).round() as i32).clamp(1, theme.surface_y.max(1));
-
-        cover.set_width_request(card_width);
-        cover.set_height_request(target_height);
-        cover.set_size_request(card_width, target_height);
-        if let Some(surface) = cover.child() {
-            surface.set_size_request(card_width, target_height);
-        }
-
-        // Framed covers place the photo in a transparent window in the PNG.
-        // Recompute its inset as the bookshelf resizes the complete book.
-        if let Some(opening) = opening {
-            let (left, top, right, bottom) = photo_margins(opening, card_width, target_height);
-            for class_name in ["thumbnail", "album-cover-placeholder"] {
-                if let Some(widget) = find_descendant_with_css_class(cover.upcast_ref(), class_name)
-                {
-                    widget.set_margin_start(left);
-                    widget.set_margin_top(top);
-                    widget.set_margin_end(right);
-                    widget.set_margin_bottom(bottom);
-                }
-            }
-        }
-
-        card.set_width_request(card_width);
-        card.set_margin_top(bookshelf_card_margin_top(theme.surface_y, target_height));
-
-        if let Some(content) = card.child() {
-            content.set_width_request(card_width);
-            content.set_size_request(card_width, -1);
-            let mut child = content.first_child();
-            while let Some(widget) = child {
-                // Preserve the cover's height request for subsequent resizes.
-                if widget.is::<gtk::Label>() {
-                    widget.set_width_request(card_width);
-                }
-                child = widget.next_sibling();
+        if let Some(cover) = find_descendant_with_css_class(card.upcast_ref(), "album-cover") {
+            let height = cover.height_request();
+            if height > 0 {
+                card.set_margin_top(bookshelf_card_margin_top(theme.surface_y, height));
             }
         }
     }

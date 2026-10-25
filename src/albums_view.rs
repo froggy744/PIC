@@ -34,6 +34,8 @@ const FRAME_OPENING_KEY: &str = "picasa-album-frame-opening";
 // Album UI implementation is split by responsibility but included into this
 // module so the refactor does not change callback visibility or state wiring.
 include!("albums/bookshelf.rs");
+#[path = "albums/coverflow_input.rs"]
+mod coverflow_input;
 include!("albums/coverflow.rs");
 include!("albums/card.rs");
 include!("albums/actions.rs");
@@ -2315,7 +2317,7 @@ mod tests {
     #[test]
     #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
     fn album_layout_control_shows_coverflow_and_persists_it() {
-        gtk::init().unwrap();
+        adw::init().unwrap();
         let path = std::env::temp_dir().join(format!(
             "pic-coverflow-layout-{}-{}.db",
             std::process::id(),
@@ -2327,7 +2329,7 @@ mod tests {
         let connection = Rc::new(RefCell::new(db::open(&path).unwrap()));
         let mut cached_thumbnails = Vec::new();
         let mut photo_files = Vec::new();
-        for index in 0..7 {
+        for index in 0..8 {
             let name = format!("Album {}", char::from(b'A' + index));
             let album = db::create_album(&connection.borrow(), &name).unwrap();
             let photo_path = path.with_file_name(format!("cover-{index}.png"));
@@ -2379,16 +2381,29 @@ mod tests {
         );
         let screenshot_dir = std::env::temp_dir().join("pic-coverflow-gui-validation");
         std::fs::create_dir_all(&screenshot_dir).unwrap();
-        let window = gtk::Window::builder()
+        let app = adw::Application::builder().application_id("io.pic.CoverflowRegression").build();
+        app.register(None::<&gio::Cancellable>).unwrap();
+        let full_app = std::env::var_os("PIC_COVERFLOW_FULL_APP").is_some();
+        let window = if full_app {
+            db::set_setting(&connection.borrow(), "last-view", "albums").unwrap();
+            db::set_setting(&connection.borrow(), "onboarding-never-show", "true").unwrap();
+            let window = crate::window::build(&app, db::open(&path).unwrap());
+            window.set_title(Some("PIC Cover Flow Wheel Validation"));
+            window.upcast::<gtk::Window>()
+        } else { gtk::Window::builder()
             .title("PIC Cover Flow Wheel Validation")
             .decorated(false)
             .default_width(1200)
             .default_height(850)
             .child(&view)
-            .build();
+            .build() };
         window.present();
         settle_gtk_layout();
         settle_gtk_layout();
+        let view = if full_app {
+            let grid = find_descendant_with_css_class(window.upcast_ref(), "albums-home-grid").unwrap();
+            grid.ancestor(gtk::ScrolledWindow::static_type()).unwrap().downcast::<gtk::ScrolledWindow>().unwrap()
+        } else { view };
         let layout = find_descendant_with_css_class(view.upcast_ref(), "albums-layout")
             .unwrap()
             .downcast::<gtk::DropDown>()
@@ -2423,8 +2438,8 @@ mod tests {
         save_album_snapshot(&window, &screenshot_dir.join("01-focus-a-wide.png"));
 
         let bounds = flow.compute_bounds(&window).unwrap();
-        let x = (bounds.x() + bounds.width() / 2.0).round() as i32;
-        let y = (bounds.y() + 220.0).round() as i32;
+        let x = Cell::new((bounds.x() + bounds.width() / 2.0).round() as i32);
+        let y = Cell::new((bounds.y() + 220.0).round() as i32);
         let window_id = std::process::Command::new("xdotool")
             .args([
                 "search",
@@ -2441,19 +2456,52 @@ mod tests {
             .expect("xdotool should return a window ID")
             .to_string();
         let wheel = |button: &str| {
-            let output = std::process::Command::new("xdotool")
-                .args([
-                    "mousemove",
-                    "--window",
-                    &window_id,
-                    &x.to_string(),
-                    &y.to_string(),
-                    "click",
-                    button,
-                ])
+            let geometry = std::process::Command::new("xdotool")
+                .args(["getwindowgeometry", "--shell", &window_id])
                 .output()
-                .expect("send mouse wheel event");
-            assert!(output.status.success(), "xdotool mouse wheel failed");
+                .expect("get GTK window screen origin");
+            assert!(geometry.status.success(), "could not get GTK window geometry");
+            let geometry = String::from_utf8_lossy(&geometry.stdout);
+            let origin = |key: &str| -> i32 {
+                geometry
+                    .lines()
+                    .find_map(|line| line.strip_prefix(key))
+                    .and_then(|value| value.parse().ok())
+                    .unwrap_or_else(|| panic!("missing {key} in xdotool geometry: {geometry}"))
+            };
+            let screen_x = origin("X=") + x.get();
+            let screen_y = origin("Y=") + y.get();
+            let output = std::process::Command::new("xdotool")
+                .args(["mousemove", "--sync", &screen_x.to_string(), &screen_y.to_string()])
+                .output()
+                .expect("position pointer over Cover Flow");
+            assert!(output.status.success(), "xdotool pointer positioning failed");
+            let location = std::process::Command::new("xdotool")
+                .args(["getmouselocation", "--shell"])
+                .output()
+                .expect("verify pointer location");
+            assert!(location.status.success(), "xdotool could not report pointer location");
+            let location = String::from_utf8_lossy(&location.stdout);
+            eprintln!(
+                "Cover Flow pointer widget=({}, {}) screen=({}, {}) actual=[{}]",
+                x.get(), y.get(), screen_x, screen_y, location.trim().replace('\n', " ")
+            );
+            assert!(location.lines().any(|line| line == format!("X={screen_x}")));
+            assert!(location.lines().any(|line| line == format!("Y={screen_y}")));
+            let local_x = (screen_x - origin("X=")) as f64;
+            let local_y = (screen_y - origin("Y=")) as f64;
+            let picked = window.pick(local_x, local_y, gtk::PickFlags::DEFAULT);
+            eprintln!(
+                "Cover Flow GTK pick at ({local_x:.0}, {local_y:.0}): {:?}; canvas_target={} canvas_bounds=({}, {}, {}, {})",
+                picked.as_ref().map(|widget| widget.type_().name()),
+                picked.as_ref().is_some_and(|widget| *widget == flow || widget.is_ancestor(&flow)),
+                bounds.x(), bounds.y(), bounds.width(), bounds.height()
+            );
+            let click = std::process::Command::new("xdotool")
+                .args(["click", button])
+                .output()
+                .expect("send physical-style X11 wheel button event");
+            assert!(click.status.success(), "xdotool mouse wheel failed");
             let context = gtk::glib::MainContext::default();
             let deadline = std::time::Instant::now() + std::time::Duration::from_millis(700);
             while std::time::Instant::now() < deadline {
@@ -2477,7 +2525,7 @@ mod tests {
             "horizontal wheel advances album focus"
         );
         save_album_snapshot(&window, &screenshot_dir.join("03-focus-c-wheel-right.png"));
-        for index in 3..7 {
+        for index in 3..8 {
             wheel("5");
             let expected = format!("Album {}", char::from(b'A' + index));
             assert_eq!(
@@ -2490,8 +2538,8 @@ mod tests {
                 &screenshot_dir.join(format!("focus-{}.png", char::from(b'A' + index))),
             );
         }
-        assert_eq!(name.text().as_str(), "Album G", "wheel stops at the final album");
-        for index in (0..6).rev() {
+        assert_eq!(name.text().as_str(), "Album H", "wheel stops at the final album");
+        for index in (0..7).rev() {
             wheel("4");
             let expected = format!("Album {}", char::from(b'A' + index));
             assert_eq!(
@@ -2527,6 +2575,43 @@ mod tests {
             "Cover Flow adapts to a narrower window"
         );
         save_album_snapshot(&window, &screenshot_dir.join("04-focus-a-narrow.png"));
+        // Exercise the same event path when the parent scroller has overflow.
+        assert!(std::process::Command::new("xdotool")
+            .args(["windowsize", &window_id, "760", "480"]).status().unwrap().success());
+        settle_gtk_layout();
+        settle_gtk_layout();
+        view.vadjustment().set_value(0.0);
+        settle_gtk_layout();
+        // The full application animates its responsive sidebar drawer.
+        // Wait until GTK actually picks the gallery, not the modal shade.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        loop {
+            let bounds = flow.compute_bounds(&window).unwrap();
+            let picked = window.pick((bounds.x() + bounds.width() / 2.0) as f64,
+                (bounds.y() + 160.0) as f64, gtk::PickFlags::DEFAULT);
+            if picked.as_ref().is_some_and(|w| *w == flow || w.is_ancestor(&flow)) { break; }
+            if std::time::Instant::now() >= deadline {
+                panic!("responsive sidebar still intercepts gallery pointer: {:?}", picked.map(|w| w.type_().name()));
+            }
+            settle_gtk_layout();
+        }
+        let bounds = flow.compute_bounds(&window).unwrap();
+        x.set((bounds.x() + bounds.width() * 0.5) as i32);
+        y.set((bounds.y() + 160.0) as i32);
+        save_album_snapshot(&window, &screenshot_dir.join("short-before-wheel.png"));
+        wheel("5");
+        assert_eq!(name.text().as_str(), "Album B", "wheel must navigate in a short, overflowing page");
+        wheel("4");
+        assert_eq!(name.text().as_str(), "Album A");
+        x.set((bounds.x() + bounds.width() * 0.8) as i32);
+        wheel("5");
+        assert_eq!(name.text().as_str(), "Album B", "wheel over side cover");
+        x.set((bounds.x() + 12.0) as i32);
+        y.set((bounds.y() + 12.0) as i32);
+        wheel("4");
+        assert_eq!(name.text().as_str(), "Album A", "wheel over empty background");
+        wheel("4");
+        assert_eq!(name.text().as_str(), "Album A", "first boundary");
         window.close();
         drop(view);
         drop(connection);

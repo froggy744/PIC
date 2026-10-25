@@ -1679,6 +1679,9 @@ fn themes_page(
                 return;
             }
             style.apply(&settings_window);
+            if let Some(parent) = settings_window.transient_for() {
+                apply_coverflow_corner_style(parent.upcast_ref(), style);
+            }
             pickers.refresh(&connection.borrow(), &engine);
             thumbnail_changed();
         });
@@ -1849,6 +1852,17 @@ fn themes_page(
     content.append(&corner_list);
 
     (scroll_page(content), rebuild_appearance)
+}
+
+fn apply_coverflow_corner_style(widget: &gtk::Widget, style: CornerStyle) {
+    if widget.has_css_class("albums-coverflow-canvas") {
+        style.apply(widget);
+    }
+    let mut child = widget.first_child();
+    while let Some(current) = child {
+        child = current.next_sibling();
+        apply_coverflow_corner_style(&current, style);
+    }
 }
 
 #[cfg(test)]

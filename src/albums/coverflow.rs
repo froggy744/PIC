@@ -5,7 +5,7 @@ use std::ops::Range;
 pub(crate) struct AlbumFlowCanvas { gl: crate::coverflow::CoverflowGlArea }
 impl AlbumFlowCanvas {
     fn new() -> Self {
-        let gl = crate::coverflow::CoverflowGlArea::new("albums-coverflow-canvas", 490);
+        let gl = crate::coverflow::CoverflowGlArea::new("albums-coverflow-canvas", 430);
         gl.widget().set_can_target(true);
         gl.widget().set_focusable(true);
         Self { gl }
@@ -177,6 +177,7 @@ fn build_album_coverflow(
     root.add_css_class("albums-coverflow");
     root.set_hexpand(true);
     let canvas = Rc::new(AlbumFlowCanvas::new());
+    crate::settings::CornerStyle::saved(&connection.borrow()).apply(canvas.widget());
     root.append(canvas.widget());
     let name = gtk::Label::new(None);
     name.add_css_class("albums-coverflow-name");
@@ -259,17 +260,29 @@ fn build_album_coverflow(
     let canvas_for_scroll = canvas.clone();
     let name_for_scroll = name.downgrade();
     let count_for_scroll = count.downgrade();
-    scroll.connect_scroll(move |_, dx, dy| {
+    let accumulator = Rc::new(RefCell::new(coverflow_input::ScrollNavigation::default()));
+    let begin = accumulator.clone();
+    scroll.connect_scroll_begin(move |_| begin.borrow_mut().reset());
+    let end = accumulator.clone();
+    scroll.connect_scroll_end(move |_| end.borrow_mut().reset());
+    scroll.connect_scroll(move |controller, dx, dy| {
         let current = state_for_scroll.borrow().selected;
         let len = state_for_scroll.borrow().albums.len();
         let delta = if dy.abs() >= dx.abs() { dy } else { dx };
-        let next = if delta > 0.0 {
+        let step = accumulator.borrow_mut().step(delta,
+            controller.unit() == gdk::ScrollUnit::Surface,
+            controller.current_event_time());
+        let next = if step > 0 {
             (current + 1).min(len - 1)
-        } else if delta < 0.0 {
+        } else if step < 0 {
             current.saturating_sub(1)
         } else {
             current
         };
+        if std::env::var_os("PIC_COVERFLOW_TRACE").is_some() {
+            eprintln!("PIC_COVERFLOW input unit={:?} dx={dx:.3} dy={dy:.3} step={step} focus={current}->{next}", controller.unit());
+        }
+        if next == current { return gtk::glib::Propagation::Stop; }
         if let (Some(name), Some(count)) = (
             name_for_scroll.upgrade(),
             count_for_scroll.upgrade(),
@@ -294,7 +307,7 @@ fn build_album_coverflow(
         let viewport = (canvas.widget().width() as f64, canvas.widget().height() as f64);
         let nearest = visible_album_indices(state.selected, state.albums.len())
             .filter_map(|index| {
-                crate::coverflow::coverflow_pose(
+                crate::coverflow::album_coverflow_pose(
                     index,
                     state.selected as f64,
                     state.albums.len(),

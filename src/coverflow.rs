@@ -8,6 +8,7 @@ use std::sync::OnceLock;
 use gtk::prelude::*;
 use gtk::{gdk, gsk};
 use gtk4 as gtk;
+use libadwaita as adw;
 use libloading::Library;
 
 pub(crate) const VISIBLE_RADIUS: usize = 4;
@@ -39,6 +40,27 @@ pub(crate) fn coverflow_pose(
     count: usize,
     viewport: (f64, f64),
 ) -> Option<CoverflowPose> {
+    coverflow_pose_profile(index, focus, count, viewport, false)
+}
+
+/// Album-index variant: compact gallery sizing while the fullscreen
+/// screensaver retains its original Cover Flow proportions.
+pub(crate) fn album_coverflow_pose(
+    index: usize,
+    focus: f64,
+    count: usize,
+    viewport: (f64, f64),
+) -> Option<CoverflowPose> {
+    coverflow_pose_profile(index, focus, count, viewport, true)
+}
+
+fn coverflow_pose_profile(
+    index: usize,
+    focus: f64,
+    count: usize,
+    viewport: (f64, f64),
+    compact: bool,
+) -> Option<CoverflowPose> {
     let (vw, vh) = viewport;
     if count == 0 || index >= count || vw <= 0.0 || vh <= 0.0 {
         return None;
@@ -49,19 +71,36 @@ pub(crate) fn coverflow_pose(
         return None;
     }
 
-    let card_height = (vh * 0.58).min(vw * 0.40).max(1.0);
-    let card_width = card_height;
-    let side_distance = (distance - 1.0).max(0.0);
-    let lateral = if distance <= 1.0 {
-        offset * 0.72 * card_width
+    let base_height = if compact {
+        (vh * 0.48).min(vw * 0.19).clamp(105.0, 245.0)
     } else {
-        offset.signum() * (0.72 + side_distance * 0.25) * card_width
+        (vh * 0.60).min(vw * 0.38).max(1.0)
+    };
+    let scale = if compact {
+        if distance < 1.0 {
+            1.14 - 0.23 * distance
+        } else {
+            0.91 * 0.86_f64.powf(distance - 1.0)
+        }
+    } else if distance < 1.0 {
+        1.18 - 0.24 * distance
+    } else {
+        0.94 * 0.84_f64.powf(distance - 1.0)
+    };
+    let card_height = base_height * scale;
+    let card_width = base_height * scale;
+    let side_distance = (distance - 1.0).max(0.0);
+    let (near_spacing, row_spacing) = if compact { (0.80, 0.28) } else { (0.94, 0.38) };
+    let lateral = if distance <= 1.0 {
+        offset * near_spacing * base_height
+    } else {
+        offset.signum() * (near_spacing + side_distance * row_spacing) * base_height
     };
     let rotation_y = -offset.signum() * SIDE_ANGLE * distance.min(1.0);
-    let center_y = vh * 0.36;
-    let center_z = -side_distance * card_height * 0.22;
+    let center_y = vh * if compact { 0.49 } else { 0.40 };
+    let center_z = -side_distance * base_height * if compact { 0.22 } else { 0.28 };
     let camera_distance = vh * 3.4;
-    let opacity = (1.0 - distance * 0.07).clamp(0.68, 1.0);
+    let opacity = (1.0 - distance * 0.16).clamp(0.48, 1.0);
     let mut bounds = (
         f64::INFINITY,
         f64::INFINITY,
@@ -112,6 +151,8 @@ struct Scene {
     count: usize,
     focus: f64,
     target: f64,
+    animation_start_focus: f64,
+    animation_elapsed_us: i64,
     last_tick: i64,
     animating: bool,
     items: Vec<CoverflowItem>,
@@ -212,7 +253,14 @@ impl CoverflowGlArea {
         if first || !animate || !self.area.settings().is_gtk_enable_animations() {
             scene.focus = scene.target;
             scene.animating = false;
-        } else if (scene.target - scene.focus).abs() > 0.0001 && !scene.animating {
+        } else if (scene.target - scene.focus).abs() > 0.0001 {
+            scene.animation_start_focus = scene.focus;
+            scene.animation_elapsed_us = 0;
+            if scene.animating {
+                drop(scene);
+                self.area.queue_render();
+                return;
+            }
             scene.animating = true;
             scene.last_tick = 0;
             let weak_scene = Rc::downgrade(&self.scene);
@@ -227,10 +275,13 @@ impl CoverflowGlArea {
                 } else {
                     (clock.frame_time() - previous).clamp(1_000, 50_000)
                 };
-                let blend = 1.0 - (-(dt as f64) / 105_000.0).exp();
+                scene.animation_elapsed_us += dt;
+                let progress = (scene.animation_elapsed_us as f64 / 500_000.0).clamp(0.0, 1.0);
+                let eased = progress * progress * (3.0 - 2.0 * progress);
                 let target = scene.target;
-                let next = scene.focus + (target - scene.focus) * blend;
-                if (target - next).abs() < 0.0015 {
+                let next = scene.animation_start_focus
+                    + (target - scene.animation_start_focus) * eased;
+                if progress >= 1.0 {
                     scene.focus = target;
                     scene.animating = false;
                     widget.queue_render();
@@ -403,7 +454,9 @@ fn draw_frame(area: &gtk::GLArea, scene: &mut Scene) -> Result<(), String> {
     });
     unsafe {
         gl::Viewport(0, 0, viewport_width, viewport_height);
-        gl::ClearColor(0.0, 0.0, 0.0, 1.0);
+        let dark = adw::StyleManager::default().is_dark();
+        let (red, green, blue) = if dark { (0.12, 0.12, 0.12) } else { (0.97, 0.97, 0.97) };
+        gl::ClearColor(red as f32, green as f32, blue as f32, 1.0);
         gl::Clear(gl::COLOR_BUFFER_BIT);
         gl::UseProgram(resources.program);
         gl::BindVertexArray(resources.vao);
@@ -415,8 +468,24 @@ fn draw_frame(area: &gtk::GLArea, scene: &mut Scene) -> Result<(), String> {
             viewport_height as f32,
         );
         uniform_1i(resources.program, "uReflection", 0);
+        let album_flow = area.has_css_class("albums-coverflow-canvas");
+        let radius = if area.has_css_class("corner-style-rounded") {
+            0.08_f32
+        } else if area.has_css_class("corner-style-balanced") {
+            0.045_f32
+        } else {
+            0.0
+        };
+        uniform_1f(resources.program, "uCornerRadius", radius);
+        uniform_1f(resources.program, "uReflectionHeight", if album_flow { 0.36 } else { 0.32 });
+        uniform_1f(resources.program, "uReflectionOpacity", if album_flow { 0.30 } else { 0.20 });
         for item in draw_order {
-            let Some(pose) = coverflow_pose(item.index, scene.focus, scene.count, logical_viewport)
+            let pose = if album_flow {
+                album_coverflow_pose(item.index, scene.focus, scene.count, logical_viewport)
+            } else {
+                coverflow_pose(item.index, scene.focus, scene.count, logical_viewport)
+            };
+            let Some(pose) = pose
             else {
                 continue;
             };
@@ -472,6 +541,8 @@ uniform vec3 uCenter;
 uniform float uYaw;
 uniform float uCameraDistance;
 uniform int uReflection;
+uniform float uCornerRadius;
+uniform float uReflectionHeight;
 out vec2 vTexCoord;
 out float vReflectFade;
 void main() {
@@ -487,7 +558,10 @@ void main() {
     vec2 uv = texCoords[gl_VertexID];
     float x = corner.x * uCardSize.x;
     float y = corner.y * uCardSize.y;
-    if (uReflection != 0) y = -uCardSize.y - y;
+    if (uReflection != 0) {
+        y = -uCardSize.y * 0.5 - (corner.y + 0.5) * uCardSize.y * uReflectionHeight;
+        uv.y = mix(1.0, 1.0 - uReflectionHeight, corner.y + 0.5);
+    }
     float cosine = cos(uYaw);
     float sine = sin(uYaw);
     float rotatedX = x * cosine;
@@ -500,22 +574,28 @@ void main() {
     gl_Position = vec4(screenX / uViewport.x * 2.0 - 1.0,
                        1.0 - screenY / uViewport.y * 2.0, 0.0, 1.0);
     vTexCoord = uv;
-    vReflectFade = uReflection != 0 ? clamp((-y - uCardSize.y * 0.5) / (uCardSize.y * 0.52), 0.0, 1.0) : 0.0;
+    vReflectFade = uReflection != 0 ? clamp(corner.y + 0.5, 0.0, 1.0) : 0.0;
 }"#;
 
 const FRAGMENT_SHADER: &str = r#"#version 150
 uniform sampler2D uTexture;
 uniform int uReflection;
 uniform float uOpacity;
+uniform float uCornerRadius;
+uniform float uReflectionOpacity;
 in vec2 vTexCoord;
 in float vReflectFade;
 out vec4 outColor;
 void main() {
     vec2 uv = vTexCoord;
+    vec2 p = uv - vec2(0.5);
+    vec2 q = abs(p) - vec2(0.5 - uCornerRadius);
+    float rounded_distance = length(max(q, vec2(0.0))) + min(max(q.x, q.y), 0.0) - uCornerRadius;
+    if (uCornerRadius > 0.0 && rounded_distance > 0.0) discard;
     vec4 color = texture(uTexture, uv);
     if (uReflection != 0) {
         color.rgb *= 0.90;
-        color.a *= uOpacity * 0.45 * pow(max(0.0, 1.0 - vReflectFade), 2.0);
+        color.a *= uOpacity * uReflectionOpacity * pow(max(0.0, 1.0 - vReflectFade), 2.2);
     } else {
         color.a *= uOpacity;
     }

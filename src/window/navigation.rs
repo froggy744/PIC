@@ -305,6 +305,15 @@ fn install_smooth_gallery_scroll(
     let last_pointer_for_scroll = last_pointer.clone();
     let zoom_viewport_for_scroll = zoom_viewport.clone();
     controller.connect_scroll(move |controller, _, dy| {
+        // Cover Flow owns wheel navigation. This ancestor runs before its
+        // controller in capture phase, so consuming here silently steals
+        // detents even when the page adjustment has no scrollable range.
+        if zoom_viewport_for_scroll.has_css_class("albums-coverflow-active") {
+            active_for_scroll.set(false);
+            velocity_for_scroll.set(0.0);
+            target_for_scroll.set(adjustment_for_scroll.value());
+            return glib::Propagation::Proceed;
+        }
         if controller
             .current_event_state()
             .contains(gtk::gdk::ModifierType::CONTROL_MASK)

@@ -43,10 +43,10 @@ button.album-card.framed-album-card:hover { opacity: 0.90; }
 .albums-standard .album-name { font-size: 15px; font-weight: 650; }
 .albums-standard .album-photo-count { color: alpha(@theme_fg_color, 0.66); }
 
-.albums-coverflow { padding: 0 20px 28px; background: #000; }
+.albums-coverflow { padding: 0 20px 18px; background: @theme_bg_color; }
 .albums-coverflow-canvas:focus-visible { outline: 2px solid @accent_bg_color; outline-offset: -3px; }
-.albums-coverflow-name { font-size: 21px; font-weight: 700; color: #fff; }
-.albums-coverflow-count { color: rgba(255, 255, 255, 0.68); }
+.albums-coverflow-name { font-size: 21px; font-weight: 700; color: @theme_fg_color; }
+.albums-coverflow-count { color: alpha(@theme_fg_color, 0.68); }
 .albums-coverflow-open { margin-top: 6px; }
 
 .albums-bookshelf .album-cover { box-shadow: 0 7px 15px alpha(black, 0.24); }

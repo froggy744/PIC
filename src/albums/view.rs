@@ -383,6 +383,11 @@ pub fn refresh(
 pub fn refresh_presentation(scrolled: &gtk::ScrolledWindow, connection: &Connection) {
     let appearance = settings::album_appearance(connection);
     let layout = settings::album_layout(connection);
+    if layout == settings::AlbumLayout::CoverFlow {
+        scrolled.add_css_class("albums-coverflow-active");
+    } else {
+        scrolled.remove_css_class("albums-coverflow-active");
+    }
     if let Some(content) = find_descendant_with_css_class(scrolled.upcast_ref(), "albums-index-content") {
         content.set_margin_bottom(if layout == settings::AlbumLayout::CoverFlow { 0 } else { 32 });
     }

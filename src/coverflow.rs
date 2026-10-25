@@ -13,6 +13,7 @@ use libloading::Library;
 
 pub(crate) const VISIBLE_RADIUS: usize = 4;
 const SIDE_ANGLE: f64 = 60.0_f64.to_radians();
+const ALBUM_SIDE_ANGLE: f64 = 32.0_f64.to_radians();
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct CoverflowPose {
@@ -67,10 +68,6 @@ fn coverflow_pose_profile(
     }
     let offset = index as f64 - focus.clamp(0.0, (count - 1) as f64);
     let distance = offset.abs();
-    if distance > VISIBLE_RADIUS as f64 + 0.5 {
-        return None;
-    }
-
     let base_height = if compact {
         (vh * 0.48).min(vw * 0.19).clamp(105.0, 245.0)
     } else {
@@ -78,9 +75,9 @@ fn coverflow_pose_profile(
     };
     let scale = if compact {
         if distance < 1.0 {
-            1.14 - 0.23 * distance
+            1.20 - 0.16 * distance
         } else {
-            0.91 * 0.86_f64.powf(distance - 1.0)
+            1.04
         }
     } else if distance < 1.0 {
         1.18 - 0.24 * distance
@@ -90,17 +87,46 @@ fn coverflow_pose_profile(
     let card_height = base_height * scale;
     let card_width = base_height * scale;
     let side_distance = (distance - 1.0).max(0.0);
-    let (near_spacing, row_spacing) = if compact { (0.80, 0.28) } else { (0.94, 0.38) };
-    let lateral = if distance <= 1.0 {
-        offset * near_spacing * base_height
+    let rotation_y = -offset.signum()
+        * if compact { ALBUM_SIDE_ANGLE } else { SIDE_ANGLE }
+        * distance.min(1.0);
+    let (center_y, center_z, opacity, visible_radius, lateral) = if compact {
+        let side_width = base_height * 1.04 * ALBUM_SIDE_ANGLE.cos();
+        let gap = (base_height * 0.22).clamp(36.0, 56.0);
+        let first_step = card_width * 0.5 + side_width * 0.5 + gap;
+        let lateral = if distance <= 1.0 {
+            offset * first_step
+        } else {
+            offset.signum() * (first_step + (distance - 1.0) * (side_width + gap))
+        };
+        (
+            vh * 0.49,
+            -side_distance * base_height * 0.08,
+            (1.0 - side_distance * 0.025).clamp(0.90, 1.0),
+            VISIBLE_RADIUS as f64 + 0.5,
+            lateral,
+        )
     } else {
-        offset.signum() * (near_spacing + side_distance * row_spacing) * base_height
+        if distance > VISIBLE_RADIUS as f64 + 0.5 {
+            return None;
+        }
+        let lateral = if distance <= 1.0 {
+            offset * 0.94 * base_height
+        } else {
+            offset.signum() * (0.94 + side_distance * 0.38) * base_height
+        };
+        (
+            vh * 0.40,
+            -side_distance * base_height * 0.28,
+            (1.0 - distance * 0.16).clamp(0.48, 1.0),
+            VISIBLE_RADIUS as f64 + 0.5,
+            lateral,
+        )
     };
-    let rotation_y = -offset.signum() * SIDE_ANGLE * distance.min(1.0);
-    let center_y = vh * if compact { 0.49 } else { 0.40 };
-    let center_z = -side_distance * base_height * if compact { 0.22 } else { 0.28 };
+    if distance > visible_radius {
+        return None;
+    }
     let camera_distance = vh * 3.4;
-    let opacity = (1.0 - distance * 0.16).clamp(0.48, 1.0);
     let mut bounds = (
         f64::INFINITY,
         f64::INFINITY,
@@ -122,6 +148,9 @@ fn coverflow_pose_profile(
         bounds.1 = bounds.1.min(screen_y);
         bounds.2 = bounds.2.max(screen_x);
         bounds.3 = bounds.3.max(screen_y);
+    }
+    if compact && (bounds.2 <= 0.0 || bounds.0 >= vw) {
+        return None;
     }
     Some(CoverflowPose {
         x: bounds.0,
@@ -151,11 +180,11 @@ struct Scene {
     count: usize,
     focus: f64,
     target: f64,
-    animation_start_focus: f64,
-    animation_elapsed_us: i64,
+    focus_velocity: f64,
     last_tick: i64,
     animating: bool,
     items: Vec<CoverflowItem>,
+    target_items: Vec<CoverflowItem>,
     resources: Option<GlResources>,
     error: Option<String>,
 }
@@ -247,51 +276,73 @@ impl CoverflowGlArea {
         let mut scene = self.scene.borrow_mut();
         let first = scene.count == 0;
         scene.count = count;
-        scene.items = items;
         scene.target = focus.clamp(0.0, count.saturating_sub(1) as f64);
         scene.error = None;
         if first || !animate || !self.area.settings().is_gtk_enable_animations() {
             scene.focus = scene.target;
+            scene.focus_velocity = 0.0;
             scene.animating = false;
-        } else if (scene.target - scene.focus).abs() > 0.0001 {
-            scene.animation_start_focus = scene.focus;
-            scene.animation_elapsed_us = 0;
-            if scene.animating {
-                drop(scene);
-                self.area.queue_render();
-                return;
+            scene.items = items;
+            scene.target_items = scene.items.clone();
+        } else {
+            scene.target_items = items;
+            let mut retained: HashMap<usize, CoverflowItem> = scene
+                .items
+                .iter()
+                .filter(|item| {
+                    (item.index as f64 - scene.focus).abs()
+                        <= VISIBLE_RADIUS as f64 + 0.5
+                })
+                .cloned()
+                .map(|item| (item.index, item))
+                .collect();
+            for item in &scene.target_items {
+                retained.insert(item.index, item.clone());
             }
-            scene.animating = true;
-            scene.last_tick = 0;
-            let weak_scene = Rc::downgrade(&self.scene);
-            self.area.add_tick_callback(move |widget, clock| {
-                let Some(scene) = weak_scene.upgrade() else {
-                    return glib::ControlFlow::Break;
-                };
-                let mut scene = scene.borrow_mut();
-                let previous = std::mem::replace(&mut scene.last_tick, clock.frame_time());
-                let dt = if previous == 0 {
-                    16_000
-                } else {
-                    (clock.frame_time() - previous).clamp(1_000, 50_000)
-                };
-                scene.animation_elapsed_us += dt;
-                let progress = (scene.animation_elapsed_us as f64 / 500_000.0).clamp(0.0, 1.0);
-                let eased = progress * progress * (3.0 - 2.0 * progress);
-                let target = scene.target;
-                let next = scene.animation_start_focus
-                    + (target - scene.animation_start_focus) * eased;
-                if progress >= 1.0 {
-                    scene.focus = target;
-                    scene.animating = false;
-                    widget.queue_render();
-                    glib::ControlFlow::Break
-                } else {
-                    scene.focus = next;
-                    widget.queue_render();
-                    glib::ControlFlow::Continue
-                }
-            });
+            scene.items = retained.into_values().collect();
+            if (scene.target - scene.focus).abs() <= 0.0001
+                && scene.focus_velocity.abs() <= 0.001
+            {
+                scene.focus = scene.target;
+                scene.focus_velocity = 0.0;
+                scene.animating = false;
+                scene.items = scene.target_items.clone();
+            } else if !scene.animating {
+                scene.animating = true;
+                scene.last_tick = 0;
+                let weak_scene = Rc::downgrade(&self.scene);
+                self.area.add_tick_callback(move |widget, clock| {
+                    let Some(scene) = weak_scene.upgrade() else {
+                        return glib::ControlFlow::Break;
+                    };
+                    let mut scene = scene.borrow_mut();
+                    let previous = std::mem::replace(&mut scene.last_tick, clock.frame_time());
+                    let dt = if previous == 0 {
+                        16_000
+                    } else {
+                        (clock.frame_time() - previous).clamp(1_000, 50_000)
+                    } as f64
+                        / 1_000_000.0;
+                    let omega = 8.0_f64;
+                    let acceleration = (scene.target - scene.focus) * omega * omega
+                        - 2.0 * omega * scene.focus_velocity;
+                    scene.focus_velocity += acceleration * dt;
+                    scene.focus += scene.focus_velocity * dt;
+                    if (scene.target - scene.focus).abs() < 0.001
+                        && scene.focus_velocity.abs() < 0.01
+                    {
+                        scene.focus = scene.target;
+                        scene.focus_velocity = 0.0;
+                        scene.animating = false;
+                        scene.items = scene.target_items.clone();
+                        widget.queue_render();
+                        glib::ControlFlow::Break
+                    } else {
+                        widget.queue_render();
+                        glib::ControlFlow::Continue
+                    }
+                });
+            }
         }
         drop(scene);
         self.area.queue_render();
@@ -455,8 +506,18 @@ fn draw_frame(area: &gtk::GLArea, scene: &mut Scene) -> Result<(), String> {
     unsafe {
         gl::Viewport(0, 0, viewport_width, viewport_height);
         let dark = adw::StyleManager::default().is_dark();
-        let (red, green, blue) = if dark { (0.12, 0.12, 0.12) } else { (0.97, 0.97, 0.97) };
-        gl::ClearColor(red as f32, green as f32, blue as f32, 1.0);
+        let background = area
+            .style_context()
+            .lookup_color("theme_bg_color")
+            .or_else(|| area.style_context().lookup_color("window_bg_color"))
+            .unwrap_or_else(|| {
+                if dark {
+                    gdk::RGBA::new(0.12, 0.12, 0.12, 1.0)
+                } else {
+                    gdk::RGBA::new(0.97, 0.97, 0.97, 1.0)
+                }
+            });
+        gl::ClearColor(background.red(), background.green(), background.blue(), 1.0);
         gl::Clear(gl::COLOR_BUFFER_BIT);
         gl::UseProgram(resources.program);
         gl::BindVertexArray(resources.vao);
@@ -478,7 +539,7 @@ fn draw_frame(area: &gtk::GLArea, scene: &mut Scene) -> Result<(), String> {
         };
         uniform_1f(resources.program, "uCornerRadius", radius);
         uniform_1f(resources.program, "uReflectionHeight", if album_flow { 0.36 } else { 0.32 });
-        uniform_1f(resources.program, "uReflectionOpacity", if album_flow { 0.30 } else { 0.20 });
+        uniform_1f(resources.program, "uReflectionOpacity", if album_flow { 0.50 } else { 0.20 });
         for item in draw_order {
             let pose = if album_flow {
                 album_coverflow_pose(item.index, scene.focus, scene.count, logical_viewport)
@@ -591,11 +652,16 @@ void main() {
     vec2 p = uv - vec2(0.5);
     vec2 q = abs(p) - vec2(0.5 - uCornerRadius);
     float rounded_distance = length(max(q, vec2(0.0))) + min(max(q.x, q.y), 0.0) - uCornerRadius;
-    if (uCornerRadius > 0.0 && rounded_distance > 0.0) discard;
+    float corner_coverage = 1.0;
+    if (uCornerRadius > 0.0) {
+        float edge_width = max(fwidth(rounded_distance), 0.0001);
+        corner_coverage = 1.0 - smoothstep(-edge_width, edge_width, rounded_distance);
+    }
     vec4 color = texture(uTexture, uv);
+    color.a *= corner_coverage;
     if (uReflection != 0) {
         color.rgb *= 0.90;
-        color.a *= uOpacity * uReflectionOpacity * pow(max(0.0, 1.0 - vReflectFade), 2.2);
+        color.a *= uOpacity * uReflectionOpacity * pow(max(0.0, 1.0 - vReflectFade), 1.5);
     } else {
         color.a *= uOpacity;
     }

@@ -258,8 +258,8 @@ fn build_album_coverflow(
     scroll.set_propagation_phase(gtk::PropagationPhase::Capture);
     let state_for_scroll = state.clone();
     let canvas_for_scroll = canvas.clone();
-    let name_for_scroll = name.downgrade();
-    let count_for_scroll = count.downgrade();
+    let name_for_scroll = name.clone();
+    let count_for_scroll = count.clone();
     let accumulator = Rc::new(RefCell::new(coverflow_input::ScrollNavigation::default()));
     let begin = accumulator.clone();
     scroll.connect_scroll_begin(move |_| begin.borrow_mut().reset());
@@ -283,12 +283,13 @@ fn build_album_coverflow(
             eprintln!("PIC_COVERFLOW input unit={:?} dx={dx:.3} dy={dy:.3} step={step} focus={current}->{next}", controller.unit());
         }
         if next == current { return gtk::glib::Propagation::Stop; }
-        if let (Some(name), Some(count)) = (
-            name_for_scroll.upgrade(),
-            count_for_scroll.upgrade(),
-        ) {
-            show_album_focus(&state_for_scroll, &canvas_for_scroll, &name, &count, next);
-        }
+        show_album_focus(
+            &state_for_scroll,
+            &canvas_for_scroll,
+            &name_for_scroll,
+            &count_for_scroll,
+            next,
+        );
         gtk::glib::Propagation::Stop
     });
     root.add_controller(scroll);

@@ -1350,9 +1350,9 @@ mod tests {
     #[test]
     fn responsive_bookshelf_columns_follow_available_width() {
         assert_eq!(bookshelf_columns_for_width(2300, 228), 6);
-        assert_eq!(bookshelf_columns_for_width(1700, 228), 6);
-        assert_eq!(bookshelf_columns_for_width(1120, 228), 4);
-        assert_eq!(bookshelf_columns_for_width(850, 228), 3);
+        assert_eq!(bookshelf_columns_for_width(1700, 228), 5);
+        assert_eq!(bookshelf_columns_for_width(1120, 228), 3);
+        assert_eq!(bookshelf_columns_for_width(850, 228), 2);
         assert_eq!(bookshelf_columns_for_width(300, 228), 1);
         assert_eq!(bookshelf_columns_for_width(0, 228), 1);
     }

@@ -177,6 +177,7 @@ fn build_inner(
         focused_album_id: Rc::new(Cell::new(None)),
         focused_index: Rc::new(Cell::new(0)),
         last_width: Rc::new(Cell::new(0)),
+        cover_preset: Rc::new(Cell::new(BookshelfCoverPreset::Standard)),
         selected_theme: Rc::new(RefCell::new(None)),
         standard_width: Rc::new(Cell::new(0)),
         last_standard_width: Rc::new(Cell::new(0)),

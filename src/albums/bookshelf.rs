@@ -16,6 +16,38 @@ struct BookshelfTheme {
     reflection_strength: u8,
 }
 
+// These are scene widths after the sidebar has taken its space. The gap
+// keeps a dragging window from switching sizes back and forth at one pixel.
+const BOOKSHELF_LARGE_ENTER_WIDTH: i32 = 2040;
+const BOOKSHELF_LARGE_EXIT_WIDTH: i32 = 1960;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum BookshelfCoverPreset {
+    #[default]
+    Standard,
+    Large,
+}
+
+impl BookshelfCoverPreset {
+    fn dimension(self, standard: i32) -> i32 {
+        match self {
+            Self::Standard => standard,
+            Self::Large => (standard * 128 + 50) / 100,
+        }
+    }
+}
+
+fn bookshelf_cover_preset(width: i32, current: BookshelfCoverPreset) -> BookshelfCoverPreset {
+    if width <= 0 { return current; }
+    match current {
+        BookshelfCoverPreset::Standard if width >= BOOKSHELF_LARGE_ENTER_WIDTH =>
+            BookshelfCoverPreset::Large,
+        BookshelfCoverPreset::Large if width < BOOKSHELF_LARGE_EXIT_WIDTH =>
+            BookshelfCoverPreset::Standard,
+        _ => current,
+    }
+}
+
 fn bookshelf_reflection_strength(directory: &Path) -> u8 {
     std::fs::read_to_string(directory.join("theme.conf")).ok()
         .and_then(|text| text.lines().filter_map(|line| line.split_once('='))
@@ -41,6 +73,7 @@ struct BookshelfRuntime {
     focused_album_id: Rc<Cell<Option<i64>>>,
     focused_index: Rc<Cell<usize>>,
     last_width: Rc<Cell<i32>>,
+    cover_preset: Rc<Cell<BookshelfCoverPreset>>,
     selected_theme: Rc<RefCell<Option<BookshelfTheme>>>,
     standard_width: Rc<Cell<i32>>,
     last_standard_width: Rc<Cell<i32>>,
@@ -49,9 +82,50 @@ struct BookshelfRuntime {
 #[derive(Clone)]
 struct BookshelfItem {
     card: gtk::Button,
+    cover: gtk::Overlay,
     reflection: Option<ShelfReflection>,
+    standard_width: i32,
+    standard_cover_width: i32,
+    standard_cover_height: i32,
     width: i32,
     cover_height: i32,
+}
+
+impl BookshelfItem {
+    fn set_preset(&mut self, preset: BookshelfCoverPreset) {
+        let width = preset.dimension(self.standard_width);
+        let cover_width = preset.dimension(self.standard_cover_width);
+        let cover_height = preset.dimension(self.standard_cover_height);
+        self.card.set_width_request(width);
+        if let Some(content) = self.card.child() {
+            content.set_width_request(cover_width);
+        }
+        self.cover.set_size_request(cover_width, cover_height);
+        if let Some(surface) = self.cover.child() {
+            surface.set_size_request(cover_width, cover_height);
+        }
+        if let Some(name) = find_descendant_with_css_class(self.card.upcast_ref(), "album-name") {
+            name.set_width_request(cover_width);
+        }
+        if let Some(opening) = unsafe { self.cover.data::<PhotoOpening>(FRAME_OPENING_KEY) } {
+            let (left, top, right, bottom) = photo_margins(
+                unsafe { *opening.as_ref() }, cover_width, cover_height,
+            );
+            for class in ["thumbnail", "album-cover-placeholder"] {
+                if let Some(widget) = find_descendant_with_css_class(self.cover.upcast_ref(), class) {
+                    widget.set_margin_start(left);
+                    widget.set_margin_top(top);
+                    widget.set_margin_end(right);
+                    widget.set_margin_bottom(bottom);
+                }
+            }
+        }
+        if let Some(reflection) = &self.reflection {
+            reflection.set_width_request(width);
+        }
+        self.width = width;
+        self.cover_height = cover_height;
+    }
 }
 
 struct BookshelfMotion {
@@ -363,6 +437,21 @@ mod bookshelf_responsive_sizing_tests {
     use super::*;
 
     #[test]
+    fn large_cover_preset_uses_content_width_with_hysteresis() {
+        use BookshelfCoverPreset::{Large, Standard};
+        assert_eq!(bookshelf_cover_preset(1490, Standard), Standard);
+        assert_eq!(bookshelf_cover_preset(1920, Large), Standard);
+        assert_eq!(bookshelf_cover_preset(2039, Standard), Standard);
+        assert_eq!(bookshelf_cover_preset(2040, Standard), Large);
+        assert_eq!(bookshelf_cover_preset(2000, Large), Large);
+        assert_eq!(bookshelf_cover_preset(1959, Large), Standard);
+        assert_eq!(bookshelf_cover_preset(0, Large), Large);
+        assert_eq!(Large.dimension(220), 282);
+        assert_eq!(Large.dimension(137), 175);
+        assert_eq!(Standard.dimension(220), 220);
+    }
+
+    #[test]
     fn bookshelf_layout_reserves_only_occupied_rows() {
         assert_eq!(bookshelf_row_count(0, 4), 0);
         assert_eq!(bookshelf_row_count(8, 4), 2);
@@ -474,6 +563,7 @@ fn clear_bookshelf_layout(runtime: &BookshelfRuntime) {
     runtime.items.borrow_mut().clear();
     runtime.motion.borrow_mut().take();
     runtime.last_width.set(0);
+    runtime.cover_preset.set(BookshelfCoverPreset::Standard);
 }
 
 fn install_bookshelf_cards(runtime: &BookshelfRuntime, cards: &[gtk::Button], theme: &BookshelfTheme) {
@@ -481,19 +571,24 @@ fn install_bookshelf_cards(runtime: &BookshelfRuntime, cards: &[gtk::Button], th
     let mut items = runtime.items.borrow_mut();
     for card in cards {
         let cover = find_descendant_with_css_class(card.upcast_ref(), "album-cover")
-            .expect("an album card has a cover");
+            .and_then(|cover| cover.downcast::<gtk::Overlay>().ok())
+            .expect("an album card has a cover overlay");
         let width = card.width_request().max(cover.width_request());
         let cover_height = cover.height_request();
         card.set_margin_top(0);
         card.set_halign(gtk::Align::Start);
         let reflection = (reflection_height > 0).then(|| {
-            let reflection = ShelfReflection::new(&cover, theme.reflection_strength, reflection_height);
+            let reflection = ShelfReflection::new(cover.upcast_ref(), theme.reflection_strength, reflection_height);
             reflection.set_width_request(width);
             runtime.layout.put(&reflection, 0.0, 0.0);
             reflection
         });
         runtime.layout.put(card, 0.0, 0.0);
-        items.push(BookshelfItem { card: card.clone(), reflection, width, cover_height });
+        items.push(BookshelfItem {
+            card: card.clone(), cover: cover.clone(), reflection,
+            standard_width: width, standard_cover_width: cover.width_request(),
+            standard_cover_height: cover_height, width, cover_height,
+        });
     }
 }
 
@@ -503,6 +598,20 @@ fn reflow_bookshelf_layout(
     available_height: i32,
     theme: &BookshelfTheme,
 ) {
+    let preset = bookshelf_cover_preset(width, runtime.cover_preset.get());
+    if preset != runtime.cover_preset.get() {
+        for item in runtime.items.borrow_mut().iter_mut() {
+            let (x, y) = runtime.layout.child_position(&item.card);
+            let old_height = item.cover_height;
+            item.set_preset(preset);
+            let anchored_y = y + (old_height - item.cover_height) as f64;
+            runtime.layout.move_(&item.card, x, anchored_y);
+            if let Some(reflection) = &item.reflection {
+                runtime.layout.move_(reflection, x, y + old_height as f64 + 4.0);
+            }
+        }
+        runtime.cover_preset.set(preset);
+    }
     let items = runtime.items.borrow();
     let slot_width = items.iter().map(|item| item.width).max().unwrap_or(1);
     let columns = bookshelf_columns_for_width(width, slot_width);

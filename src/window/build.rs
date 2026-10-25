@@ -929,7 +929,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         Rc::new(RefCell::new(None));
     // Live layout switching gets installed after layout.rs builds the rail.
     let compact_style_active = Rc::new(Cell::new(false));
-    let compact_rail_slot: Rc<RefCell<Option<Rc<crate::window::compact_ui::CompactRail>>>> =
+    let compact_rail_slot: Rc<RefCell<Option<Weak<crate::window::compact_ui::CompactRail>>>> =
         Rc::new(RefCell::new(None));
     let compact_apply_slot: Rc<RefCell<Option<Rc<dyn Fn(crate::window::compact_ui::UiLayoutStyle)>>>> =
         Rc::new(RefCell::new(None));

@@ -119,7 +119,7 @@
                 }
             });
             filter.set(new_filter);
-            if let Some(rail) = compact_rail_slot.borrow().as_ref() {
+            if let Some(rail) = compact_rail_slot.borrow().as_ref().and_then(Weak::upgrade) {
                 rail.update_active(new_filter);
                 rail.explorer.popdown();
             }
@@ -846,7 +846,7 @@
         },
     ));
     compact_rail.update_active(filter.get());
-    compact_rail_slot.replace(Some(compact_rail.clone()));
+    compact_rail_slot.replace(Some(Rc::downgrade(&compact_rail)));
     let workspace_content = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     workspace_content.set_hexpand(true);
     workspace_content.set_vexpand(true);

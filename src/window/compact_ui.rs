@@ -143,4 +143,35 @@ mod tests {
         assert_eq!(UiLayoutStyle::from_setting(Some("compact")), UiLayoutStyle::Compact);
         assert_eq!(UiLayoutStyle::from_index(99), UiLayoutStyle::Standard);
     }
+
+    #[test]
+    fn style_preference_persists_without_a_schema_migration() {
+        let db = rusqlite::Connection::open_in_memory().unwrap();
+        db.execute_batch("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)").unwrap();
+        assert_eq!(UiLayoutStyle::saved(&db), UiLayoutStyle::Standard);
+        for style in [UiLayoutStyle::Compact, UiLayoutStyle::Standard] {
+            crate::db::set_setting(&db, UI_LAYOUT_SETTING_KEY, style.setting_value()).unwrap();
+            assert_eq!(UiLayoutStyle::saved(&db), style);
+            assert_eq!(UiLayoutStyle::from_index(style.index()), style);
+        }
+        crate::db::set_setting(&db, UI_LAYOUT_SETTING_KEY, "something-unknown").unwrap();
+        assert_eq!(UiLayoutStyle::saved(&db), UiLayoutStyle::Standard);
+    }
+
+    #[test]
+    #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+    fn compact_sidebar_reparents_the_single_navigation_widget() {
+        gtk::init().unwrap();
+        let rail = CompactRail::new(Rc::new(|_| {}), Rc::new(|| {}));
+        let sidebar = gtk::ScrolledWindow::new();
+        let standard = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        standard.append(&sidebar);
+        assert_eq!(sidebar.parent().as_ref(), Some(standard.upcast_ref()));
+        standard.remove(&sidebar);
+        rail.explorer.set_child(Some(&sidebar));
+        assert_eq!(rail.explorer.child().as_ref(), Some(sidebar.upcast_ref()));
+        rail.explorer.set_child(None::<&gtk::Widget>);
+        standard.append(&sidebar);
+        assert_eq!(sidebar.parent().as_ref(), Some(standard.upcast_ref()));
+    }
 }

@@ -1563,14 +1563,18 @@ mod tests {
             db::open(&directory.join("library.db")).unwrap(),
         ));
         let album = db::create_album(&connection.borrow(), "Holiday").unwrap();
-        connection
-            .borrow()
-            .execute_batch(
-                "INSERT INTO photos (id, path) VALUES
-                   (1, 'screenshots/all photos.jpg'),
-                   (2, 'screenshots/rations stars.jpg');",
-            )
+        let automatic_path = directory.join("automatic.png");
+        let chosen_path = directory.join("chosen.png");
+        image::RgbImage::from_pixel(32, 32, image::Rgb([15, 30, 220]))
+            .save(&automatic_path)
             .unwrap();
+        image::RgbImage::from_pixel(32, 32, image::Rgb([230, 12, 18]))
+            .save(&chosen_path)
+            .unwrap();
+        connection.borrow().execute(
+            "INSERT INTO photos (id, path) VALUES (1, ?1), (2, ?2)",
+            rusqlite::params![automatic_path.to_string_lossy(), chosen_path.to_string_lossy()],
+        ).unwrap();
         // Photo 2 is only the chosen cover; it never joined the album.
         db::set_album_cover_photo(&connection.borrow(), album.id, 2).unwrap();
 
@@ -1589,17 +1593,59 @@ mod tests {
             .child(&view)
             .build();
         window.present();
-        settle_gtk_layout();
+        for layout in [settings::AlbumLayout::Grid, settings::AlbumLayout::Bookshelf] {
+            settings::set_album_layout(&connection.borrow(), layout).unwrap();
+            let albums = db::albums(&connection.borrow()).unwrap();
+            refresh(
+                &view,
+                &albums,
+                connection.clone(),
+                136,
+                Rc::new(|_| {}),
+                Rc::new(|| {}),
+            );
+            settle_gtk_layout();
 
-        let card = find_descendant_with_css_class(view.upcast_ref(), "album-card").unwrap();
-        let picture = find_descendant_with_css_class(card.upcast_ref(), "thumbnail")
-            .unwrap()
-            .downcast::<gtk::Picture>()
-            .unwrap();
-        let drawn = picture.file().and_then(|file| file.path()).unwrap();
+            let card = find_descendant_with_css_class(view.upcast_ref(), "album-card").unwrap();
+            let picture = find_descendant_with_css_class(card.upcast_ref(), "thumbnail")
+                .unwrap()
+                .downcast::<gtk::Picture>()
+                .unwrap();
+            let drawn = picture.file().and_then(|file| file.path()).unwrap();
+            assert!(
+                drawn.ends_with("chosen.png"),
+                "{layout:?} card drew {drawn:?}"
+            );
+        }
+
+        let flow_album = db::albums(&connection.borrow()).unwrap().remove(0);
+        let flow_state = AlbumFlowState {
+            albums: vec![flow_album.clone()],
+            connection: connection.clone(),
+            placeholder_color: gtk::gdk::RGBA::new(0.9, 0.9, 0.9, 1.0),
+            fit_whole_photo: false,
+            selected: 0,
+            cached: HashMap::new(),
+            focused_album_id: Rc::new(Cell::new(Some(flow_album.id))),
+            focused_index: Rc::new(Cell::new(0)),
+        };
+        assert_eq!(flow_album.cover_photo_id, Some(2));
+        let flow_photos = db::browse_photos_in_album(&connection.borrow(), flow_album.id, None)
+            .unwrap_or_default();
+        assert_eq!(
+            album_cover_photo(&connection.borrow(), &flow_album, &flow_photos).map(|photo| photo.id),
+            Some(2)
+        );
+        let node = album_flow_node(&flow_state, &flow_album);
+        let texture = window.renderer().unwrap().render_texture(&node, None);
+        let width = texture.width() as usize;
+        let mut pixels = vec![0_u8; width * texture.height() as usize * 4];
+        texture.download(&mut pixels, width * 4);
+        let center = (texture.height() as usize / 2 * width + width / 2) * 4;
         assert!(
-            drawn.ends_with("screenshots/rations stars.jpg"),
-            "card drew {drawn:?}"
+            pixels[center + 2] > 200 && pixels[center + 1] < 30 && pixels[center] < 30,
+            "Cover Flow center pixel should use the chosen red cover: {:?}",
+            &pixels[center..center + 4]
         );
 
         window.close();

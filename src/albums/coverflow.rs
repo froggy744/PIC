@@ -85,7 +85,7 @@ fn album_flow_node(state: &AlbumFlowState, album: &Album) -> gsk::RenderNode {
     let photo = {
         let connection = state.connection.borrow();
         let photos = db::browse_photos_in_album(&connection, album.id, None).unwrap_or_default();
-        automatic_album_cover_photo(&photos)
+        album_cover_photo(&connection, album, &photos)
     };
     let mut has_cover = false;
     if let Some(photo) = photo {
@@ -93,22 +93,27 @@ fn album_flow_node(state: &AlbumFlowState, album: &Album) -> gsk::RenderNode {
             crate::thumbnail::existing_cache_path(&photo.path, photo.mtime, photo.size_bytes)
                 .ok()
                 .flatten();
-        if let Some(path) = cache {
-            let path_text = path.to_string_lossy();
-            let paintable = crate::photo_texture::edited_thumbnail(
-                &path_text,
-                photo.rotation,
-                &photo.edit_recipe,
-            )
+        let path = cache
+            .as_deref()
+            .unwrap_or_else(|| std::path::Path::new(photo.path.as_str()));
+        let path_text = path.to_string_lossy();
+        let photo_object = crate::photo_object::PhotoObject::from_photo(&photo);
+        let paintable = crate::grid::raw_cached_thumbnail(&photo_object, &path_text)
             .or_else(|| {
-                gdk::Texture::from_filename(&path)
+                crate::photo_texture::edited_thumbnail(
+                    &path_text,
+                    photo.rotation,
+                    &photo.edit_recipe,
+                )
+            })
+            .or_else(|| {
+                gdk::Texture::from_filename(path)
                     .ok()
                     .map(|texture| texture.upcast())
             });
-            if let Some(paintable) = paintable {
-                paint_photo_inside(&snapshot, &paintable, full, state.fit_whole_photo);
-                has_cover = true;
-            }
+        if let Some(paintable) = paintable {
+            paint_photo_inside(&snapshot, &paintable, full, state.fit_whole_photo);
+            has_cover = true;
         }
     }
     if !has_cover {

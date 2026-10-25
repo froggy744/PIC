@@ -436,7 +436,7 @@ fn album_card(
     fit_whole_photo: bool,
     menu_connection: Rc<RefCell<Connection>>,
     on_appearance_changed: Rc<dyn Fn()>,
-    allow_custom_cover: bool,
+    allow_cover_design_actions: bool,
 ) -> gtk::Button {
     let card = gtk::Button::new();
     card.set_has_frame(false);
@@ -509,11 +509,7 @@ fn album_card(
     let photos = db::browse_photos_in_album(connection, album.id, None).unwrap_or_default();
     // The chosen cover wins over the automatic pick, even before its cached
     // thumbnail exists.
-    let selected_photo = if allow_custom_cover {
-        album_cover_photo(connection, album, &photos)
-    } else {
-        automatic_album_cover_photo(&photos)
-    };
+    let selected_photo = album_cover_photo(connection, album, &photos);
     let cover_photo = selected_photo.map(|photo| {
         let cached =
             crate::thumbnail::existing_cache_path(&photo.path, photo.mtime, photo.size_bytes)
@@ -666,7 +662,7 @@ fn album_card(
         menu_connection,
         album.clone(),
         on_appearance_changed,
-        allow_custom_cover,
+        allow_cover_design_actions,
     );
 
     

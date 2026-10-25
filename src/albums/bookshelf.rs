@@ -307,7 +307,9 @@ fn bookshelf_columns_for_width(width: i32, _card_width: i32) -> usize {
     // Continuous width calculation: do not abruptly resize existing covers
     // just because a physical display-resolution breakpoint was crossed.
     let usable = (width - BOOKSHELF_SIDE_PADDING * 2).max(1);
-    let pitch = BOOKSHELF_MIN_CARD_WIDTH + BOOKSHELF_COLUMN_GAP;
+    // Frame PNGs can request more than the nominal min width. Reserve a
+    // generous physical slot so GTK does not compress them during reflow.
+    let pitch = BOOKSHELF_MIN_CARD_WIDTH.max(270) + BOOKSHELF_COLUMN_GAP;
     ((usable + BOOKSHELF_COLUMN_GAP) / pitch)
         .clamp(1, BOOKSHELF_MAX_COLUMNS as i32) as usize
 }
@@ -362,14 +364,16 @@ fn bookshelf_rows_for_viewport(card_count: usize, columns: usize, available_heig
     // The bookshelf is a continuous surface, not a short island of wood
     // ending above a large dark blank area. Add background-only rows to
     // fill the visible viewport while keeping the populated rows unchanged.
-    let background_rows = (available_height.max(1) + BOOKSHELF_ROW_HEIGHT - 1)
-        / BOOKSHELF_ROW_HEIGHT;
-    bookshelf_row_count(card_count, columns)
-        .max(background_rows.clamp(BOOKSHELF_MIN_ROWS as i32, BOOKSHELF_MAX_VIEWPORT_ROWS as i32) as usize)
+    // Reserve enough full rows to cover the whole viewport, including the
+    // last partially visible shelf. Never cap scenery rows at four.
+    let background_rows = available_height.max(1).div_ceil(BOOKSHELF_ROW_HEIGHT) + 1;
+    bookshelf_row_count(card_count, columns).max(background_rows as usize)
 }
 
 fn bookshelf_available_height(scrolled: &gtk::ScrolledWindow, rows: &gtk::Box) -> i32 {
-    let page_height = scrolled.vadjustment().page_size().round() as i32;
+    // The vertical adjustment reports a transient zero during GTK resize.
+    // The actual widget allocation is the reliable fallback.
+    let page_height = scrolled.height().max(scrolled.vadjustment().page_size().round() as i32);
     let Some(content) = rows.parent().and_downcast::<gtk::Box>() else {
         return 0;
     };

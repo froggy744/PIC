@@ -361,14 +361,11 @@ fn bookshelf_row_count(card_count: usize, columns: usize) -> usize {
 }
 
 fn bookshelf_rows_for_viewport(card_count: usize, columns: usize, available_height: i32) -> usize {
-    let viewport_rows = if available_height
-        >= BOOKSHELF_MIN_EXPANDED_ROW_HEIGHT * BOOKSHELF_MAX_VIEWPORT_ROWS as i32
-    {
-        BOOKSHELF_MAX_VIEWPORT_ROWS
-    } else {
-        BOOKSHELF_MIN_ROWS
-    };
-    bookshelf_row_count(card_count, columns).max(viewport_rows)
+    // Do not manufacture empty shelves just to fill a tall viewport.
+    // The existing row artwork remains untouched; only populated rows (and
+    // the minimum visual pair) participate in the adaptive layout.
+    let _ = available_height;
+    bookshelf_row_count(card_count, columns)
 }
 
 fn bookshelf_available_height(scrolled: &gtk::ScrolledWindow, rows: &gtk::Box) -> i32 {
@@ -462,8 +459,8 @@ mod bookshelf_responsive_sizing_tests {
 
     #[test]
     fn four_shelves_wait_until_each_can_keep_a_readable_book_size() {
-        assert_eq!(bookshelf_rows_for_viewport(8, 4, 819), 3);
-        assert_eq!(bookshelf_rows_for_viewport(8, 4, 820), 4);
+        assert_eq!(bookshelf_rows_for_viewport(8, 4, 819), 2);
+        assert_eq!(bookshelf_rows_for_viewport(8, 4, 820), 2);
         assert_eq!(bookshelf_row_height_for_viewport(4, 820, 0, &theme()), 205);
     }
 }
@@ -601,6 +598,9 @@ fn build_bookshelf_rows(
             slot.set_halign(gtk::Align::Fill);
             slot.set_valign(gtk::Align::Start);
             if let Some(card) = chunk.get(index) {
+                // Align the book and its reflection in the same centered slot;
+                // never stretch a sparse last row across the entire shelf.
+                card.set_halign(gtk::Align::Center);
                 slot.append(card);
             }
             slots.append(&slot);

@@ -1280,10 +1280,16 @@ mod tests {
 
     #[test]
     fn responsive_bookshelf_geometry_keeps_cover_bottoms_on_the_surface() {
+        let theme = BookshelfTheme {
+            id: "test".into(), image_path: PathBuf::new(), kind: BookshelfThemeKind::Row,
+            row_height: 288, surface_y: 235, reflection_strength: 0,
+        };
         for (cover_height, expected_top) in [(91, 144), (137, 98), (186, 49)] {
-            let top = bookshelf_card_margin_top(235, cover_height);
-            assert_eq!(top, expected_top);
-            assert_eq!(top + cover_height, 235);
+            let (_, top) = bookshelf_card_position(
+                850, 240, 240, 3, 0, cover_height, &theme, BookshelfCoverPreset::Standard,
+            );
+            assert_eq!(top, expected_top as f64);
+            assert_eq!(top + cover_height as f64, 235.0);
         }
 
         assert_eq!(BOOKSHELF_ROW_HEIGHT, 288);
@@ -1305,8 +1311,8 @@ mod tests {
         let themes = bookshelf_themes_in(Path::new(BOOKSHELF_THEME_DIRECTORY));
         assert!(!themes.is_empty());
         for theme in &themes {
-            let narrow = bookshelf_card_position(850, 240, 240, 3, 0, 149, theme);
-            let wide = bookshelf_card_position(1920, 240, 240, 6, 0, 149, theme);
+            let narrow = bookshelf_card_position(850, 240, 240, 3, 0, 149, theme, BookshelfCoverPreset::Standard);
+            let wide = bookshelf_card_position(1920, 240, 240, 6, 0, 149, theme, BookshelfCoverPreset::Standard);
             assert_eq!(narrow.1 + 149.0, theme.surface_y as f64);
             assert_eq!(wide.1 + 149.0, theme.surface_y as f64);
             assert_ne!(narrow.0, wide.0);
@@ -1327,8 +1333,8 @@ mod tests {
     fn bookshelf_card_position_centers_a_fixed_cover_in_its_slot() {
         let theme = bookshelf_themes_in(Path::new(BOOKSHELF_THEME_DIRECTORY))
             .into_iter().find(|theme| theme.id == "darkwood").unwrap();
-        let first = bookshelf_card_position(1120, 240, 200, 4, 0, 149, &theme);
-        let next = bookshelf_card_position(1120, 240, 200, 4, 1, 149, &theme);
+        let first = bookshelf_card_position(1120, 240, 200, 4, 0, 149, &theme, BookshelfCoverPreset::Standard);
+        let next = bookshelf_card_position(1120, 240, 200, 4, 1, 149, &theme, BookshelfCoverPreset::Standard);
         assert_eq!(next.0 - first.0, 264.0);
         assert_eq!(first.1 + 149.0, 225.0);
     }

@@ -18,13 +18,15 @@ struct BookshelfTheme {
 
 // These are scene widths after the sidebar has taken its space. The gap
 // keeps a dragging window from switching sizes back and forth at one pixel.
-const BOOKSHELF_LARGE_ENTER_WIDTH: i32 = 2040;
-const BOOKSHELF_LARGE_EXIT_WIDTH: i32 = 1960;
+const BOOKSHELF_WIDE_ENTER_WIDTH: i32 = 2040;
+const BOOKSHELF_WIDE_EXIT_WIDTH: i32 = 1960;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum BookshelfCoverPreset {
     #[default]
     Standard,
+    Compact,
+    Wide,
     Large,
 }
 
@@ -32,20 +34,34 @@ impl BookshelfCoverPreset {
     fn dimension(self, standard: i32) -> i32 {
         match self {
             Self::Standard => standard,
-            Self::Large => (standard * 128 + 50) / 100,
+            Self::Compact => (standard * 75 + 50) / 100,
+            Self::Wide => (standard * 128 + 50) / 100,
+            Self::Large => standard * 2,
         }
     }
 }
 
-fn bookshelf_cover_preset(width: i32, current: BookshelfCoverPreset) -> BookshelfCoverPreset {
+fn bookshelf_cover_preset(width: i32, current: BookshelfCoverPreset, size: u32) -> BookshelfCoverPreset {
+    if size == 0 { return BookshelfCoverPreset::Compact; }
+    if size == 2 { return BookshelfCoverPreset::Large; }
     if width <= 0 { return current; }
     match current {
-        BookshelfCoverPreset::Standard if width >= BOOKSHELF_LARGE_ENTER_WIDTH =>
-            BookshelfCoverPreset::Large,
-        BookshelfCoverPreset::Large if width < BOOKSHELF_LARGE_EXIT_WIDTH =>
+        BookshelfCoverPreset::Standard if width >= BOOKSHELF_WIDE_ENTER_WIDTH =>
+            BookshelfCoverPreset::Wide,
+        BookshelfCoverPreset::Wide if width < BOOKSHELF_WIDE_EXIT_WIDTH =>
             BookshelfCoverPreset::Standard,
-        _ => current,
+        BookshelfCoverPreset::Wide => BookshelfCoverPreset::Wide,
+        _ if width >= BOOKSHELF_WIDE_ENTER_WIDTH => BookshelfCoverPreset::Wide,
+        _ => BookshelfCoverPreset::Standard,
     }
+}
+
+fn bookshelf_shelf_index(preset: BookshelfCoverPreset, album_row: usize) -> usize {
+    if preset == BookshelfCoverPreset::Large { 1 + album_row * 2 } else { album_row }
+}
+
+fn bookshelf_occupied_shelf_rows(preset: BookshelfCoverPreset, album_rows: usize) -> usize {
+    if album_rows == 0 { 0 } else { bookshelf_shelf_index(preset, album_rows - 1) + 1 }
 }
 
 fn bookshelf_reflection_strength(directory: &Path) -> u8 {
@@ -74,6 +90,7 @@ struct BookshelfRuntime {
     focused_index: Rc<Cell<usize>>,
     last_width: Rc<Cell<i32>>,
     cover_preset: Rc<Cell<BookshelfCoverPreset>>,
+    requested_size: Rc<Cell<u32>>,
     selected_theme: Rc<RefCell<Option<BookshelfTheme>>>,
     standard_width: Rc<Cell<i32>>,
     last_standard_width: Rc<Cell<i32>>,
@@ -336,10 +353,6 @@ fn bookshelf_background_path(directory: &Path, index: usize) -> Option<PathBuf> 
     (!themes.is_empty()).then(|| themes[index % themes.len()].image_path.clone())
 }
 
-fn bookshelf_card_margin_top(surface_y: i32, cover_height: i32) -> i32 {
-    (surface_y - cover_height).max(0)
-}
-
 #[cfg(test)]
 mod bookshelf_theme_defaults_tests {
     use super::*;
@@ -437,18 +450,45 @@ mod bookshelf_responsive_sizing_tests {
     use super::*;
 
     #[test]
-    fn large_cover_preset_uses_content_width_with_hysteresis() {
-        use BookshelfCoverPreset::{Large, Standard};
-        assert_eq!(bookshelf_cover_preset(1490, Standard), Standard);
-        assert_eq!(bookshelf_cover_preset(1920, Large), Standard);
-        assert_eq!(bookshelf_cover_preset(2039, Standard), Standard);
-        assert_eq!(bookshelf_cover_preset(2040, Standard), Large);
-        assert_eq!(bookshelf_cover_preset(2000, Large), Large);
-        assert_eq!(bookshelf_cover_preset(1959, Large), Standard);
-        assert_eq!(bookshelf_cover_preset(0, Large), Large);
-        assert_eq!(Large.dimension(220), 282);
-        assert_eq!(Large.dimension(137), 175);
+    fn comfortable_cover_preset_uses_content_width_with_hysteresis() {
+        use BookshelfCoverPreset::{Compact, Large, Standard, Wide};
+        assert_eq!(bookshelf_cover_preset(1490, Standard, 1), Standard);
+        assert_eq!(bookshelf_cover_preset(1920, Wide, 1), Standard);
+        assert_eq!(bookshelf_cover_preset(2039, Standard, 1), Standard);
+        assert_eq!(bookshelf_cover_preset(2040, Standard, 1), Wide);
+        assert_eq!(bookshelf_cover_preset(2000, Wide, 1), Wide);
+        assert_eq!(bookshelf_cover_preset(1959, Wide, 1), Standard);
+        assert_eq!(bookshelf_cover_preset(0, Wide, 1), Wide);
+        assert_eq!(bookshelf_cover_preset(1490, Standard, 0), Compact);
+        assert_eq!(bookshelf_cover_preset(1490, Standard, 2), Large);
+        assert_eq!(Wide.dimension(220), 282);
+        assert_eq!(Large.dimension(220), 440);
+        assert_eq!(Large.dimension(137), 274);
         assert_eq!(Standard.dimension(220), 220);
+    }
+
+    #[test]
+    fn doubled_covers_use_every_second_shelf_without_stretching_artwork() {
+        use BookshelfCoverPreset::{Large, Standard};
+        assert_eq!(bookshelf_shelf_index(Standard, 0), 0);
+        assert_eq!(bookshelf_shelf_index(Standard, 1), 1);
+        assert_eq!(bookshelf_shelf_index(Large, 0), 1);
+        assert_eq!(bookshelf_shelf_index(Large, 1), 3);
+        assert_eq!(bookshelf_occupied_shelf_rows(Large, 2), 4);
+        assert_eq!(bookshelf_occupied_shelf_rows(Standard, 2), 2);
+    }
+
+    #[test]
+    fn doubled_cover_bottom_lands_on_the_second_shelf_surface() {
+        let theme = BookshelfTheme {
+            id: "test".into(), image_path: PathBuf::new(), kind: BookshelfThemeKind::Row,
+            row_height: 288, surface_y: 225, reflection_strength: 0,
+        };
+        let (_, top) = bookshelf_card_position(
+            1366, 440, 440, 2, 0, 274, &theme, BookshelfCoverPreset::Large,
+        );
+        assert_eq!(top, 239.0);
+        assert_eq!(top + 274.0, 513.0);
     }
 
     #[test]
@@ -542,6 +582,7 @@ fn bookshelf_card_position(
     index: usize,
     cover_height: i32,
     theme: &BookshelfTheme,
+    preset: BookshelfCoverPreset,
 ) -> (f64, f64) {
     let columns = columns.max(1);
     let used_width = columns as i32 * slot_width
@@ -551,8 +592,10 @@ fn bookshelf_card_position(
     let row = index / columns;
     let x = left + column as i32 * (slot_width + BOOKSHELF_COLUMN_GAP)
         + (slot_width - item_width) / 2;
-    let y = row as i32 * theme.row_height
-        + bookshelf_card_margin_top(theme.surface_y, cover_height);
+    // Large covers begin above their occupied tile, in the empty tile we
+    // reserve before them. Do not clamp the offset or they sink below the shelf.
+    let y = bookshelf_shelf_index(preset, row) as i32 * theme.row_height
+        + theme.surface_y - cover_height;
     (x as f64, y as f64)
 }
 
@@ -598,7 +641,7 @@ fn reflow_bookshelf_layout(
     available_height: i32,
     theme: &BookshelfTheme,
 ) {
-    let preset = bookshelf_cover_preset(width, runtime.cover_preset.get());
+    let preset = bookshelf_cover_preset(width, runtime.cover_preset.get(), runtime.requested_size.get());
     if preset != runtime.cover_preset.get() {
         for item in runtime.items.borrow_mut().iter_mut() {
             let (x, y) = runtime.layout.child_position(&item.card);
@@ -615,7 +658,8 @@ fn reflow_bookshelf_layout(
     let items = runtime.items.borrow();
     let slot_width = items.iter().map(|item| item.width).max().unwrap_or(1);
     let columns = bookshelf_columns_for_width(width, slot_width);
-    let occupied_height = bookshelf_row_count(items.len(), columns) as i32 * theme.row_height;
+    let album_rows = bookshelf_row_count(items.len(), columns);
+    let occupied_height = bookshelf_occupied_shelf_rows(preset, album_rows) as i32 * theme.row_height;
     // The scene paints every tile through the visible viewport, even for an
     // empty library. Extra space leaves the last row's labels unclipped.
     runtime.scene.set_height_request(available_height.max(occupied_height + 56).max(theme.row_height));
@@ -623,7 +667,7 @@ fn reflow_bookshelf_layout(
         return;
     }
     let to: Vec<_> = items.iter().enumerate().map(|(index, item)| {
-        bookshelf_card_position(width, slot_width, item.width, columns, index, item.cover_height, theme)
+        bookshelf_card_position(width, slot_width, item.width, columns, index, item.cover_height, theme, preset)
     }).collect();
     let from: Vec<_> = items.iter().map(|item| runtime.layout.child_position(&item.card)).collect();
     let first_layout = runtime.last_width.replace(width) == 0;

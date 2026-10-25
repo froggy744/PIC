@@ -178,6 +178,7 @@ fn build_inner(
         focused_index: Rc::new(Cell::new(0)),
         last_width: Rc::new(Cell::new(0)),
         cover_preset: Rc::new(Cell::new(BookshelfCoverPreset::Standard)),
+        requested_size: Rc::new(Cell::new(1)),
         selected_theme: Rc::new(RefCell::new(None)),
         standard_width: Rc::new(Cell::new(0)),
         last_standard_width: Rc::new(Cell::new(0)),
@@ -432,7 +433,8 @@ pub fn refresh_presentation(scrolled: &gtk::ScrolledWindow, connection: &Connect
     }
     for class in ["albums-size", "albums-size-label"] {
         if let Some(widget) = find_descendant_with_css_class(scrolled.upcast_ref(), class) {
-            widget.set_visible(layout == settings::AlbumLayout::Grid && !appearance.covers_enabled);
+            widget.set_visible((layout == settings::AlbumLayout::Grid && !appearance.covers_enabled)
+                || layout == settings::AlbumLayout::Bookshelf);
         }
     }
     remove_bookshelf_background_classes(scrolled.upcast_ref());
@@ -545,8 +547,9 @@ fn populate(
         .cloned();
     let responsive_bookshelf = layout == settings::AlbumLayout::Bookshelf && row_theme.is_some();
     let standard = layout == settings::AlbumLayout::Grid && !appearance.covers_enabled;
-    let preferred_width =
-        [180, 240, 280][index_setting(&connection.borrow(), ALBUM_SIZE_KEY, 1, 2) as usize];
+    let size_index = index_setting(&connection.borrow(), ALBUM_SIZE_KEY, 1, 2);
+    bookshelf_runtime.requested_size.set(size_index);
+    let preferred_width = [180, 240, 280][size_index as usize];
     bookshelf_runtime
         .standard_width
         .set(if standard { preferred_width } else { 0 });

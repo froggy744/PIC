@@ -303,21 +303,13 @@ fn bookshelf_background_css_class(connection: &Connection) -> Option<String> {
 }
 
 fn bookshelf_columns_for_width(width: i32, _card_width: i32) -> usize {
-    if width <= 0 {
-        return BOOKSHELF_MAX_COLUMNS;
-    }
-
-    // Choose a comfortable cover density at the *content* width, not the
-    // physical monitor resolution. This also works with a collapsed sidebar.
-    // At 1366px four columns remain legible; at 1080p five; at QHD six.
-    match width {
-        2050.. => 6,
-        1450..=2049 => 5,
-        1050..=1449 => 4,
-        760..=1049 => 3,
-        510..=759 => 2,
-        _ => 1,
-    }.min(BOOKSHELF_MAX_COLUMNS)
+    if width <= 0 { return 1; }
+    // Continuous width calculation: do not abruptly resize existing covers
+    // just because a physical display-resolution breakpoint was crossed.
+    let usable = (width - BOOKSHELF_SIDE_PADDING * 2).max(1);
+    let pitch = BOOKSHELF_MIN_CARD_WIDTH + BOOKSHELF_COLUMN_GAP;
+    ((usable + BOOKSHELF_COLUMN_GAP) / pitch)
+        .clamp(1, BOOKSHELF_MAX_COLUMNS as i32) as usize
 }
 
 fn bookshelf_target_card_width(width: i32, columns: usize) -> i32 {
@@ -325,10 +317,9 @@ fn bookshelf_target_card_width(width: i32, columns: usize) -> i32 {
         return BOOKSHELF_MIN_CARD_WIDTH;
     }
 
-    let usable_width = (width - BOOKSHELF_SIDE_PADDING * 2).max(BOOKSHELF_MIN_CARD_WIDTH);
+    let usable_width = (width - BOOKSHELF_SIDE_PADDING * 2).max(1);
     let slot_width = usable_width / columns as i32;
-    ((slot_width as f64 * BOOKSHELF_CARD_FILL_RATIO).round() as i32)
-        .clamp(BOOKSHELF_MIN_CARD_WIDTH, BOOKSHELF_MAX_CARD_WIDTH)
+    (slot_width - BOOKSHELF_COLUMN_GAP).clamp(140, BOOKSHELF_MAX_CARD_WIDTH)
 }
 
 fn bookshelf_row(theme: &BookshelfTheme) -> gtk::Overlay {
@@ -416,12 +407,10 @@ fn bookshelf_row_height_for_viewport(
     row_spacing: i32,
     theme: &BookshelfTheme,
 ) -> i32 {
-    if row_count < BOOKSHELF_MAX_VIEWPORT_ROWS {
-        return theme.row_height;
-    }
-    let gaps = row_spacing.max(0) * row_count.saturating_sub(1) as i32;
-    ((available_height - gaps).max(1) / row_count as i32)
-        .clamp(BOOKSHELF_MIN_EXPANDED_ROW_HEIGHT, theme.row_height)
+    // A shelf is physical scenery; its pitch never shrinks to fit a window.
+    // The scroll container clips/scrolls complete rows at shorter heights.
+    let _ = (row_count, available_height, row_spacing);
+    theme.row_height
 }
 
 fn bookshelf_theme_with_row_height(theme: &BookshelfTheme, row_height: i32) -> BookshelfTheme {
@@ -439,8 +428,9 @@ fn bookshelf_card_width_for_row_height(
     row_height: i32,
     base_row_height: i32,
 ) -> i32 {
-    ((target_width as f64 * row_height as f64 / base_row_height.max(1) as f64).round() as i32)
-        .clamp(140, target_width)
+    // Covers are independent of viewport height.
+    let _ = (row_height, base_row_height);
+    target_width
 }
 
 #[cfg(test)]
@@ -461,9 +451,9 @@ mod bookshelf_responsive_sizing_tests {
     #[test]
     fn four_rows_fit_the_available_bookshelf_height() {
         let theme = theme();
-        assert_eq!(bookshelf_row_height_for_viewport(4, 820, 0, &theme), 205);
+        assert_eq!(bookshelf_row_height_for_viewport(4, 820, 0, &theme), 288);
         assert_eq!(bookshelf_row_height_for_viewport(3, 820, 0, &theme), 288);
-        assert_eq!(bookshelf_card_width_for_row_height(230, 205, 288), 164);
+        assert_eq!(bookshelf_card_width_for_row_height(218, 205, 288), 218);
     }
 
     #[test]
@@ -471,7 +461,7 @@ mod bookshelf_responsive_sizing_tests {
         assert_eq!(bookshelf_rows_for_viewport(8, 4, 819), 3);
         assert_eq!(bookshelf_rows_for_viewport(8, 4, 820), 3);
         assert_eq!(bookshelf_rows_for_viewport(8, 4, 1150), 4);
-        assert_eq!(bookshelf_row_height_for_viewport(4, 820, 0, &theme()), 205);
+        assert_eq!(bookshelf_row_height_for_viewport(4, 820, 0, &theme()), 288);
     }
 }
 

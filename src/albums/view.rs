@@ -144,12 +144,23 @@ fn build_inner(
     cards.set_margin_end(32);
     cards.add_css_class("albums-home-grid");
 
-    let bookshelf_rows = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    bookshelf_rows.set_hexpand(true);
-    bookshelf_rows.set_vexpand(false);
-    bookshelf_rows.set_valign(gtk::Align::Start);
-    bookshelf_rows.set_visible(false);
-    bookshelf_rows.add_css_class("albums-bookshelf-rows");
+    let bookshelf_scene = gtk::Overlay::new();
+    bookshelf_scene.set_hexpand(true);
+    bookshelf_scene.set_vexpand(false);
+    bookshelf_scene.set_valign(gtk::Align::Start);
+    bookshelf_scene.set_visible(false);
+    bookshelf_scene.add_css_class("albums-bookshelf-scene");
+    let backdrop = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    backdrop.set_hexpand(true);
+    backdrop.set_vexpand(true);
+    backdrop.set_can_target(false);
+    bookshelf_scene.set_child(Some(&backdrop));
+    let bookshelf_layout = gtk::Fixed::new();
+    bookshelf_layout.set_hexpand(true);
+    bookshelf_layout.set_vexpand(true);
+    bookshelf_layout.set_overflow(gtk::Overflow::Visible);
+    bookshelf_scene.add_overlay(&bookshelf_layout);
+    bookshelf_scene.set_measure_overlay(&bookshelf_layout, false);
 
     let coverflow = gtk::Box::new(gtk::Orientation::Vertical, 0);
     coverflow.add_css_class("albums-coverflow-host");
@@ -158,15 +169,14 @@ fn build_inner(
     coverflow.set_visible(false);
 
     let bookshelf_runtime = BookshelfRuntime {
-        rows: bookshelf_rows.clone(),
+        scene: bookshelf_scene.clone(),
+        layout: bookshelf_layout,
+        items: Rc::new(RefCell::new(Vec::new())),
+        motion: Rc::new(RefCell::new(None)),
         coverflow: coverflow.clone(),
         focused_album_id: Rc::new(Cell::new(None)),
         focused_index: Rc::new(Cell::new(0)),
-        last_columns: Rc::new(Cell::new(0)),
-        last_row_count: Rc::new(Cell::new(0)),
-        last_row_height: Rc::new(Cell::new(0)),
-        last_card_width: Rc::new(Cell::new(0)),
-        album_count: Rc::new(Cell::new(0)),
+        last_width: Rc::new(Cell::new(0)),
         selected_theme: Rc::new(RefCell::new(None)),
         standard_width: Rc::new(Cell::new(0)),
         last_standard_width: Rc::new(Cell::new(0)),
@@ -176,7 +186,7 @@ fn build_inner(
     }
 
     content.append(&cards);
-    content.append(&bookshelf_rows);
+    content.append(&bookshelf_scene);
     content.append(&coverflow);
     scrolled.set_child(Some(&content));
     {
@@ -252,47 +262,15 @@ fn build_inner(
                 runtime_for_resize.last_standard_width.set(width);
             }
         }
-        if !runtime_for_resize.rows.is_visible() {
-            return glib::ControlFlow::Continue;
-        }
-        let Some(theme) = runtime_for_resize.selected_theme.borrow().clone() else {
-            return glib::ControlFlow::Continue;
-        };
-        let width = runtime_for_resize.rows.width();
-        if width <= 0 {
-            return glib::ControlFlow::Continue;
-        }
-
-        let columns = bookshelf_columns_for_width(width, BOOKSHELF_MIN_CARD_WIDTH);
-        let available_height =
-            bookshelf_available_height(&bookshelf_viewport, &runtime_for_resize.rows);
-        let row_count = bookshelf_rows_for_viewport(
-            runtime_for_resize.album_count.get(),
-            columns,
-            available_height,
-        );
-        let row_height = bookshelf_row_height_for_viewport(
-            row_count,
-            available_height,
-            runtime_for_resize.rows.spacing(),
-            &theme,
-        );
-        let row_theme = bookshelf_theme_with_row_height(&theme, row_height);
-        // Do not resize covers as columns change. Card art stays its original size.
-        let target_card_width = 0;
-        let geometry_changed = columns != runtime_for_resize.last_columns.get()
-            || row_count != runtime_for_resize.last_row_count.get()
-            || row_height != runtime_for_resize.last_row_height.get();
-        if geometry_changed {
-            reflow_bookshelf_rows(&runtime_for_resize, columns, row_count, &row_theme);
-            runtime_for_resize.last_row_height.set(row_height);
-        }
-
-        // Always re-anchor covers after reflow, even when target width did
-        // not change: the shelf baseline may have moved on a window resize.
-        if geometry_changed || target_card_width != runtime_for_resize.last_card_width.get() {
-            resize_bookshelf_cards(&runtime_for_resize.rows, target_card_width, &row_theme);
-            runtime_for_resize.last_card_width.set(target_card_width);
+        if runtime_for_resize.scene.is_visible() {
+            if let Some(theme) = runtime_for_resize.selected_theme.borrow().clone() {
+                let width = runtime_for_resize.scene.width();
+                let available_height = bookshelf_available_height(
+                    &bookshelf_viewport, &runtime_for_resize.scene,
+                );
+                reflow_bookshelf_layout(&runtime_for_resize, width, available_height, &theme);
+                advance_bookshelf_motion(&runtime_for_resize);
+            }
         }
 
         glib::ControlFlow::Continue
@@ -468,15 +446,22 @@ pub fn refresh_presentation(scrolled: &gtk::ScrolledWindow, connection: &Connect
     } else {
         scrolled.remove_css_class("albums-bookshelf");
     }
-    // The viewport owns the repeating background. It must continue behind
-    // every empty portion of the page, independent of the number of albums.
-    // Populated row pictures stay aligned with their physical shelf surfaces.
-    if let Some(rows) = find_descendant_with_css_class(scrolled.upcast_ref(), "albums-bookshelf-rows") {
-        remove_bookshelf_background_classes(&rows);
+    if let Some(content) = find_descendant_with_css_class(scrolled.upcast_ref(), "albums-index-content") {
+        content.set_margin_bottom(if has_theme { 0 } else { 32 });
     }
-    if has_theme {
-        if let Some(background_class) = bookshelf_background_css_class(connection) {
-            scrolled.add_css_class(&background_class);
+    // Row artwork belongs to the scene, whose minimum height fills the
+    // viewport and whose tiles move with the scroll content. Legacy page
+    // artwork retains its original scrolled-window treatment.
+    if let Some(scene) = find_descendant_with_css_class(scrolled.upcast_ref(), "albums-bookshelf-scene") {
+        remove_bookshelf_background_classes(&scene);
+        if has_theme {
+            if let Some(background_class) = bookshelf_background_css_class(connection) {
+                if bookshelf_theme(connection).is_some_and(|theme| theme.kind == BookshelfThemeKind::Row) {
+                    scene.add_css_class(&background_class);
+                } else {
+                    scrolled.add_css_class(&background_class);
+                }
+            }
         }
     }
 }
@@ -487,9 +472,8 @@ fn remove_bookshelf_background_classes(widget: &gtk::Widget) {
         .into_iter()
         .filter(|name|
             name.starts_with("albums-bookshelf-")
-                // The marker names the rows box that carries the artwork, so
-                // only the numbered background classes may be swapped.
-                && name != "albums-bookshelf-rows"
+                // Keep the scene marker while swapping numbered theme classes.
+                && name != "albums-bookshelf-scene"
         )
     {
         widget.remove_css_class(&class_name);
@@ -528,12 +512,7 @@ fn populate(
     while let Some(child) = cards.first_child() {
         cards.remove(&child);
     }
-    clear_box(&bookshelf_runtime.rows);
-    bookshelf_runtime.last_columns.set(0);
-    bookshelf_runtime.last_row_count.set(0);
-    bookshelf_runtime.last_row_height.set(0);
-    bookshelf_runtime.last_card_width.set(0);
-    bookshelf_runtime.album_count.set(albums.len());
+    clear_bookshelf_layout(bookshelf_runtime);
     bookshelf_runtime.selected_theme.replace(None);
 
     count.set_text(&format!(
@@ -595,10 +574,11 @@ fn populate(
         }
     });
 
-    cards.set_visible(layout == settings::AlbumLayout::Grid);
+    cards.set_visible(layout == settings::AlbumLayout::Grid
+        || (layout == settings::AlbumLayout::Bookshelf && row_theme.is_none()));
     cards.set_vexpand(false);
     cards.set_valign(gtk::Align::Start);
-    bookshelf_runtime.rows.set_visible(responsive_bookshelf);
+    bookshelf_runtime.scene.set_visible(responsive_bookshelf);
     bookshelf_runtime.coverflow.set_visible(layout == settings::AlbumLayout::CoverFlow);
     bookshelf_runtime.selected_theme.replace(row_theme.clone());
 
@@ -655,14 +635,8 @@ fn populate(
         ));
         empty.set_xalign(0.0);
         empty.add_css_class("dim-label");
-        if let Some(theme) = row_theme {
-            let row = bookshelf_row(&theme);
-            let holder = gtk::Box::new(gtk::Orientation::Vertical, 0);
-            holder.set_margin_top(24);
-            holder.set_margin_start(24);
-            holder.append(&empty);
-            row.add_overlay(&holder);
-            bookshelf_runtime.rows.append(&row);
+        if row_theme.is_some() {
+            bookshelf_runtime.layout.put(&empty, 24.0, 24.0);
         } else {
             insert_child(cards, &empty, None, None);
         }
@@ -696,11 +670,6 @@ fn populate(
         };
         let frame = selected_frame
         .map(|index| &frames[index]);
-        let actual_cover_height = if frame.is_some() {
-            frame_height
-        } else {
-            cover_height(thumbnail_width)
-        };
         let card = album_card(
             album,
             &connection.borrow(),
@@ -717,12 +686,7 @@ fn populate(
             card.set_width_request(card_width);
         }
 
-        if let Some(theme) = row_theme.as_ref() {
-            card.set_margin_top(bookshelf_card_margin_top(
-                theme.surface_y,
-                actual_cover_height,
-            ));
-            card.set_halign(gtk::Align::Center);
+        if row_theme.is_some() {
             bookshelf_cards.push(card);
         } else if standard {
             if !fit_whole_photo {
@@ -739,24 +703,8 @@ fn populate(
     }
 
     if let Some(theme) = row_theme {
-        let width = bookshelf_runtime.rows.width();
-        let columns = bookshelf_columns_for_width(width, card_width);
-        let row_count = bookshelf_row_count(bookshelf_cards.len(), columns);
-        build_bookshelf_rows(
-            &bookshelf_runtime.rows,
-            &bookshelf_cards,
-            columns,
-            row_count,
-            &theme,
-        );
-        bookshelf_runtime.last_columns.set(columns);
-        bookshelf_runtime.last_row_count.set(row_count);
-        bookshelf_runtime.last_row_height.set(theme.row_height);
-
-        if width > 0 {
-            resize_bookshelf_cards(&bookshelf_runtime.rows, 0, &theme);
-            bookshelf_runtime.last_card_width.set(0);
-        }
+        install_bookshelf_cards(bookshelf_runtime, &bookshelf_cards, &theme);
+        reflow_bookshelf_layout(bookshelf_runtime, bookshelf_runtime.scene.width(), 0, &theme);
     }
 }
 

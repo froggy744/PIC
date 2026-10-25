@@ -2,7 +2,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::time::SystemTime;
+use std::time::{Instant, SystemTime};
 
 use gtk4 as gtk;
 use libadwaita as adw;
@@ -19,17 +19,10 @@ const BOOKSHELF_SURFACE_Y: i32 = 235;
 const BOOKSHELF_TOP_INSET: i32 = 28;
 const ALBUM_COVER_THEME_DIRECTORY: &str = "images/theme/album-covers";
 const BOOKSHELF_THEME_DIRECTORY: &str = "images/theme/bookshelf";
-// Four columns keep eight albums balanced, while the cover width cap keeps
-// their visual size steady across monitor resolutions.
 const BOOKSHELF_MAX_COLUMNS: usize = 6;
-const BOOKSHELF_MIN_ROWS: usize = 2;
-const BOOKSHELF_MAX_VIEWPORT_ROWS: usize = 4;
-const BOOKSHELF_MIN_EXPANDED_ROW_HEIGHT: i32 = 205;
 const BOOKSHELF_COLUMN_GAP: i32 = 24;
 const BOOKSHELF_SIDE_PADDING: i32 = 24;
-const BOOKSHELF_MIN_CARD_WIDTH: i32 = 228;
-const BOOKSHELF_MAX_CARD_WIDTH: i32 = 218;
-const BOOKSHELF_CARD_FILL_RATIO: f64 = 0.95;
+const BOOKSHELF_MOVE_DURATION: f64 = 0.2;
 const BOOKSHELF_RUNTIME_KEY: &str = "picasa-bookshelf-runtime";
 const ALBUM_SIZE_KEY: &str = "albums-index-size";
 const ALBUM_SORT_KEY: &str = "albums-index-sort";
@@ -1298,9 +1291,9 @@ mod tests {
     }
 
     #[test]
-    fn bookshelf_only_reserves_two_rows_for_small_libraries() {
-        assert_eq!(bookshelf_row_count(0, 5), 2);
-        assert_eq!(bookshelf_row_count(1, 5), 2);
+    fn bookshelf_only_reserves_occupied_rows() {
+        assert_eq!(bookshelf_row_count(0, 5), 0);
+        assert_eq!(bookshelf_row_count(1, 5), 1);
         assert_eq!(bookshelf_row_count(10, 5), 2);
         assert_eq!(bookshelf_row_count(10, 4), 3);
         assert_eq!(bookshelf_row_count(10, 3), 4);
@@ -1308,62 +1301,36 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
-    fn bookshelf_row_height_stays_fixed_when_widened() {
-        gtk::init().unwrap();
+    fn bookshelf_card_baseline_stays_fixed_when_widened() {
         let themes = bookshelf_themes_in(Path::new(BOOKSHELF_THEME_DIRECTORY));
         assert!(!themes.is_empty());
         for theme in &themes {
-            let row = bookshelf_row(theme);
-            for width in [300, 800, 1100, 1486, 2200, 2560] {
-                let (minimum, natural, _, _) = row.measure(gtk::Orientation::Vertical, width);
-                assert_eq!(
-                    (minimum, natural),
-                    (theme.row_height, theme.row_height),
-                    "{} at width {width}: shelf artwork must not move the shelf surface",
-                    theme.id,
-                );
-            }
+            let narrow = bookshelf_card_position(850, 240, 240, 3, 0, 149, theme);
+            let wide = bookshelf_card_position(1920, 240, 240, 6, 0, 149, theme);
+            assert_eq!(narrow.1 + 149.0, theme.surface_y as f64);
+            assert_eq!(wide.1 + 149.0, theme.surface_y as f64);
+            assert_ne!(narrow.0, wide.0);
         }
-
-        let theme = &themes[0];
-        let row = bookshelf_row(theme);
-        let rows = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        rows.set_valign(gtk::Align::Start);
-        rows.append(&row);
-        let scroll = gtk::ScrolledWindow::new();
-        scroll.set_child(Some(&rows));
-        let window = gtk::Window::builder().child(&scroll).build();
-        for (width, height) in [(1366, 768), (1486, 1084), (2560, 1440), (800, 1400)] {
-            window.set_default_size(width, height);
-            window.present();
-            settle_gtk_layout();
-            assert_eq!((window.width(), window.height()), (width, height));
-            assert_eq!(
-                row.height(), theme.row_height,
-                "allocated shelf height changed in a {width}x{height} window",
-            );
-        }
-        window.close();
     }
 
     #[test]
     fn responsive_bookshelf_columns_follow_available_width() {
-        assert_eq!(bookshelf_columns_for_width(2300, 228), 6);
-        assert_eq!(bookshelf_columns_for_width(1700, 228), 5);
-        assert_eq!(bookshelf_columns_for_width(1120, 228), 3);
-        assert_eq!(bookshelf_columns_for_width(850, 228), 2);
-        assert_eq!(bookshelf_columns_for_width(300, 228), 1);
-        assert_eq!(bookshelf_columns_for_width(0, 228), 1);
+        assert_eq!(bookshelf_columns_for_width(2300, 240), 6);
+        assert_eq!(bookshelf_columns_for_width(1700, 240), 6);
+        assert_eq!(bookshelf_columns_for_width(1120, 240), 4);
+        assert_eq!(bookshelf_columns_for_width(850, 240), 3);
+        assert_eq!(bookshelf_columns_for_width(300, 240), 1);
+        assert_eq!(bookshelf_columns_for_width(0, 240), 1);
     }
 
     #[test]
-    fn responsive_bookshelf_cards_grow_on_wide_windows() {
-        assert_eq!(bookshelf_target_card_width(850, 3), 218);
-        assert_eq!(bookshelf_target_card_width(1120, 4), 218);
-        assert_eq!(bookshelf_target_card_width(1400, 5), 218);
-        assert_eq!(bookshelf_target_card_width(1760, 6), 218);
-        assert_eq!(bookshelf_target_card_width(2200, 6), 218);
+    fn bookshelf_card_position_centers_a_fixed_cover_in_its_slot() {
+        let theme = bookshelf_themes_in(Path::new(BOOKSHELF_THEME_DIRECTORY))
+            .into_iter().find(|theme| theme.id == "darkwood").unwrap();
+        let first = bookshelf_card_position(1120, 240, 200, 4, 0, 149, &theme);
+        let next = bookshelf_card_position(1120, 240, 200, 4, 1, 149, &theme);
+        assert_eq!(next.0 - first.0, 264.0);
+        assert_eq!(first.1 + 149.0, 225.0);
     }
 
     #[test]
@@ -2018,7 +1985,7 @@ mod tests {
                 let cover =
                     find_descendant_with_css_class(button.upcast_ref(), "album-cover").unwrap();
                 let rows =
-                    find_descendant_with_css_class(view.upcast_ref(), "albums-bookshelf-rows")
+                    find_descendant_with_css_class(view.upcast_ref(), "albums-bookshelf-scene")
                         .unwrap();
                 assert!(!cards.is_visible());
                 assert!(rows.is_visible());
@@ -2049,10 +2016,6 @@ mod tests {
                 assert!((count_color.blue() - 15.0 / 255.0).abs() < 0.01);
                 let theme = bookshelf_theme(&connection.borrow())
                 .unwrap();
-                assert_eq!(
-                    button.margin_top() + cover.height_request(),
-                    theme.surface_y
-                );
                 let row = button
                     .ancestor(gtk::Overlay::static_type())
                     .unwrap()
@@ -2126,7 +2089,7 @@ mod tests {
             .unwrap();
         assert!(!unframed_cards.is_visible());
         assert!(
-            find_descendant_with_css_class(view.upcast_ref(), "albums-bookshelf-rows")
+            find_descendant_with_css_class(view.upcast_ref(), "albums-bookshelf-scene")
                 .unwrap()
                 .is_visible()
         );
@@ -2147,7 +2110,7 @@ mod tests {
             .unwrap();
             refresh(&view, &albums, connection.clone(), 136, Rc::new(|_| {}), Rc::new(|| {}));
             settle_gtk_layout();
-            let rows = find_descendant_with_css_class(view.upcast_ref(), "albums-bookshelf-rows")
+            let rows = find_descendant_with_css_class(view.upcast_ref(), "albums-bookshelf-scene")
                 .unwrap();
             assert!(rows.has_css_class(&format!("albums-bookshelf-{index}")));
             let cover = find_descendant_with_css_class(&rows, "album-cover").unwrap();
@@ -2164,7 +2127,7 @@ mod tests {
                 theme.surface_y
             );
         }
-        let rows = find_descendant_with_css_class(view.upcast_ref(), "albums-bookshelf-rows")
+        let rows = find_descendant_with_css_class(view.upcast_ref(), "albums-bookshelf-scene")
             .unwrap();
         let before = rows.compute_point(&view, &gtk::graphene::Point::new(0.0, 0.0)).unwrap().y();
         let adjustment = view.vadjustment();
@@ -2188,7 +2151,7 @@ mod tests {
             .unwrap();
         assert!(!empty_cards.is_visible());
         assert!(
-            find_descendant_with_css_class(view.upcast_ref(), "albums-bookshelf-rows")
+            find_descendant_with_css_class(view.upcast_ref(), "albums-bookshelf-scene")
                 .unwrap()
                 .is_visible()
         );

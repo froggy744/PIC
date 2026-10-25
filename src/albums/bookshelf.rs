@@ -33,18 +33,31 @@ fn bookshelf_reflection_height(theme: &BookshelfTheme) -> i32 {
 
 #[derive(Clone)]
 struct BookshelfRuntime {
-    rows: gtk::Box,
+    scene: gtk::Overlay,
+    layout: gtk::Fixed,
+    items: Rc<RefCell<Vec<BookshelfItem>>>,
+    motion: Rc<RefCell<Option<BookshelfMotion>>>,
     coverflow: gtk::Box,
     focused_album_id: Rc<Cell<Option<i64>>>,
     focused_index: Rc<Cell<usize>>,
-    last_columns: Rc<Cell<usize>>,
-    last_row_count: Rc<Cell<usize>>,
-    last_row_height: Rc<Cell<i32>>,
-    last_card_width: Rc<Cell<i32>>,
-    album_count: Rc<Cell<usize>>,
+    last_width: Rc<Cell<i32>>,
     selected_theme: Rc<RefCell<Option<BookshelfTheme>>>,
     standard_width: Rc<Cell<i32>>,
     last_standard_width: Rc<Cell<i32>>,
+}
+
+#[derive(Clone)]
+struct BookshelfItem {
+    card: gtk::Button,
+    reflection: Option<ShelfReflection>,
+    width: i32,
+    cover_height: i32,
+}
+
+struct BookshelfMotion {
+    started: Instant,
+    from: Vec<(f64, f64)>,
+    to: Vec<(f64, f64)>,
 }
 
 fn bookshelf_theme_image_in(directory: &Path) -> Option<PathBuf> {
@@ -272,11 +285,9 @@ fn bookshelf_background_rules(directory: &Path) -> String {
         .enumerate()
         .map(|(index, theme)| {
             let uri = gio::File::for_path(theme.image_path).uri();
-            // The class lands on the shelf-rows box, whose top edge is the top
-            // of the first row and whose height is a whole number of rows. A
-            // tile that is exactly one row tall and starts at the box top is
-            // therefore drawn at the same y as the row it sits behind, and it
-            // scrolls with the rows instead of staying fixed in the viewport.
+            // The scene begins at the first shelf and grows to the viewport or
+            // the album content, whichever is taller. Its image tiles scroll
+            // with the albums, including through the empty part of the scene.
             let size = match theme.kind {
                 BookshelfThemeKind::Row => format!("100% {}px", theme.row_height),
                 BookshelfThemeKind::Legacy => "100% auto".to_string(),
@@ -302,93 +313,33 @@ fn bookshelf_background_css_class(connection: &Connection) -> Option<String> {
     Some(format!("albums-bookshelf-{index}"))
 }
 
-fn bookshelf_columns_for_width(width: i32, _card_width: i32) -> usize {
-    if width <= 0 { return 1; }
-    // Continuous width calculation: do not abruptly resize existing covers
-    // just because a physical display-resolution breakpoint was crossed.
-    let usable = (width - BOOKSHELF_SIDE_PADDING * 2).max(1);
-    // Frame PNGs can request more than the nominal min width. Reserve a
-    // generous physical slot so GTK does not compress them during reflow.
-    // Book PNGs are wider than the nominal card minimum. Never allocate a
-    // slot narrower than a book's native width plus breathing room.
-    let pitch = BOOKSHELF_MIN_CARD_WIDTH.max(300) + BOOKSHELF_COLUMN_GAP;
-    ((usable + BOOKSHELF_COLUMN_GAP) / pitch)
+fn bookshelf_row_count(card_count: usize, columns: usize) -> usize {
+    card_count.div_ceil(columns.max(1))
+}
+
+fn bookshelf_columns_for_width(width: i32, card_width: i32) -> usize {
+    let pitch = card_width.max(1) + BOOKSHELF_COLUMN_GAP;
+    ((width - 2 * BOOKSHELF_SIDE_PADDING + BOOKSHELF_COLUMN_GAP) / pitch)
         .clamp(1, BOOKSHELF_MAX_COLUMNS as i32) as usize
 }
 
-fn bookshelf_target_card_width(width: i32, columns: usize) -> i32 {
-    if width <= 0 || columns == 0 {
-        return BOOKSHELF_MIN_CARD_WIDTH;
-    }
-
-    let usable_width = (width - BOOKSHELF_SIDE_PADDING * 2).max(1);
-    let slot_width = usable_width / columns as i32;
-    (slot_width - BOOKSHELF_COLUMN_GAP).clamp(140, BOOKSHELF_MAX_CARD_WIDTH)
-}
-
-fn bookshelf_row(theme: &BookshelfTheme) -> gtk::Overlay {
-    let row = gtk::Overlay::new();
-    row.set_hexpand(true);
-    row.set_vexpand(false);
-    row.set_height_request(theme.row_height);
-    row.set_size_request(-1, theme.row_height);
-    row.set_overflow(gtk::Overflow::Hidden);
-    row.add_css_class("albums-bookshelf-row");
-
-    // A Picture as the main child requests height from its image aspect ratio.
-    // On wide/tall windows GTK can grant that natural height, stretching the
-    // shelf artwork away from the fixed surface_y used by cards and reflections.
-    let surface = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    surface.set_height_request(theme.row_height);
-    row.set_child(Some(&surface));
-
-    let background = gtk::Picture::new();
-    background.set_filename(Some(&theme.image_path));
-    background.set_content_fit(gtk::ContentFit::Fill);
-    background.set_can_shrink(true);
-    background.set_hexpand(true);
-    background.set_vexpand(true);
-    background.set_halign(gtk::Align::Fill);
-    background.set_valign(gtk::Align::Fill);
-    background.set_can_target(false);
-    row.add_overlay(&background);
-    row.set_measure_overlay(&background, false);
-    row
-}
-
-fn bookshelf_row_count(card_count: usize, columns: usize) -> usize {
-    let columns = columns.max(1);
-    let required = card_count.div_ceil(columns);
-    required.max(BOOKSHELF_MIN_ROWS)
-}
-
-fn bookshelf_rows_for_viewport(card_count: usize, columns: usize, available_height: i32) -> usize {
-    // The bookshelf is a continuous surface, not a short island of wood
-    // ending above a large dark blank area. Add background-only rows to
-    // fill the visible viewport while keeping the populated rows unchanged.
-    // Reserve enough full rows to cover the whole viewport, including the
-    // last partially visible shelf. Never cap scenery rows at four.
-    let background_rows = available_height.max(1).div_ceil(BOOKSHELF_ROW_HEIGHT) + 1;
-    bookshelf_row_count(card_count, columns).max(background_rows as usize)
-}
-
-fn bookshelf_available_height(scrolled: &gtk::ScrolledWindow, rows: &gtk::Box) -> i32 {
+fn bookshelf_available_height(scrolled: &gtk::ScrolledWindow, scene: &gtk::Overlay) -> i32 {
     // The vertical adjustment reports a transient zero during GTK resize.
     // The actual widget allocation is the reliable fallback.
     let page_height = scrolled.height().max(scrolled.vadjustment().page_size().round() as i32);
-    let Some(content) = rows.parent().and_downcast::<gtk::Box>() else {
+    let Some(content) = scene.parent().and_downcast::<gtk::Box>() else {
         return 0;
     };
 
-    let rows_widget = rows.upcast_ref::<gtk::Widget>();
+    let scene_widget = scene.upcast_ref::<gtk::Widget>();
     let mut reserved = content.margin_top()
         + content.margin_bottom()
-        + rows.margin_top()
-        + rows.margin_bottom();
+        + scene.margin_top()
+        + scene.margin_bottom();
     let mut previous_visible = false;
     let mut child = content.first_child();
     while let Some(widget) = child {
-        if std::ptr::eq(widget.as_ptr(), rows_widget.as_ptr()) {
+        if std::ptr::eq(widget.as_ptr(), scene_widget.as_ptr()) {
             if previous_visible {
                 reserved += content.spacing();
             }
@@ -407,67 +358,15 @@ fn bookshelf_available_height(scrolled: &gtk::ScrolledWindow, rows: &gtk::Box) -
     (page_height - reserved).max(0)
 }
 
-fn bookshelf_row_height_for_viewport(
-    row_count: usize,
-    available_height: i32,
-    row_spacing: i32,
-    theme: &BookshelfTheme,
-) -> i32 {
-    // A shelf is physical scenery; its pitch never shrinks to fit a window.
-    // The scroll container clips/scrolls complete rows at shorter heights.
-    let _ = (row_count, available_height, row_spacing);
-    theme.row_height
-}
-
-fn bookshelf_theme_with_row_height(theme: &BookshelfTheme, row_height: i32) -> BookshelfTheme {
-    let surface_y = (theme.surface_y as f64 * row_height as f64 / theme.row_height.max(1) as f64)
-        .round() as i32;
-    BookshelfTheme {
-        row_height,
-        surface_y: surface_y.clamp(0, row_height),
-        ..theme.clone()
-    }
-}
-
-fn bookshelf_card_width_for_row_height(
-    target_width: i32,
-    row_height: i32,
-    base_row_height: i32,
-) -> i32 {
-    // Covers are independent of viewport height.
-    let _ = (row_height, base_row_height);
-    target_width
-}
-
 #[cfg(test)]
 mod bookshelf_responsive_sizing_tests {
     use super::*;
 
-    fn theme() -> BookshelfTheme {
-        BookshelfTheme {
-            id: "test".into(),
-            image_path: PathBuf::new(),
-            kind: BookshelfThemeKind::Row,
-            row_height: BOOKSHELF_ROW_HEIGHT,
-            surface_y: BOOKSHELF_SURFACE_Y,
-            reflection_strength: 0,
-        }
-    }
-
     #[test]
-    fn four_rows_fit_the_available_bookshelf_height() {
-        let theme = theme();
-        assert_eq!(bookshelf_row_height_for_viewport(4, 820, 0, &theme), 288);
-        assert_eq!(bookshelf_row_height_for_viewport(3, 820, 0, &theme), 288);
-        assert_eq!(bookshelf_card_width_for_row_height(218, 205, 288), 218);
-    }
-
-    #[test]
-    fn four_shelves_wait_until_each_can_keep_a_readable_book_size() {
-        assert_eq!(bookshelf_rows_for_viewport(8, 4, 819), 3);
-        assert_eq!(bookshelf_rows_for_viewport(8, 4, 820), 3);
-        assert_eq!(bookshelf_rows_for_viewport(8, 4, 1150), 4);
-        assert_eq!(bookshelf_row_height_for_viewport(4, 820, 0, &theme()), 288);
+    fn bookshelf_layout_reserves_only_occupied_rows() {
+        assert_eq!(bookshelf_row_count(0, 4), 0);
+        assert_eq!(bookshelf_row_count(8, 4), 2);
+        assert_eq!(bookshelf_row_count(9, 4), 3);
     }
 }
 
@@ -545,79 +444,111 @@ impl ShelfReflection {
     }
 }
 
-fn build_bookshelf_rows(
-    rows: &gtk::Box,
-    cards: &[gtk::Button],
+// Album coordinates are independent of the backdrop and of GTK's row allocation.
+fn bookshelf_card_position(
+    viewport_width: i32,
+    slot_width: i32,
+    item_width: i32,
     columns: usize,
-    row_count: usize,
+    index: usize,
+    cover_height: i32,
     theme: &BookshelfTheme,
-) {
-    clear_box(rows);
-    let columns = columns.clamp(1, BOOKSHELF_MAX_COLUMNS);
-    let row_count = row_count.max(bookshelf_row_count(cards.len(), columns));
+) -> (f64, f64) {
+    let columns = columns.max(1);
+    let used_width = columns as i32 * slot_width
+        + (columns as i32 - 1) * BOOKSHELF_COLUMN_GAP;
+    let left = ((viewport_width - used_width) / 2).max(0);
+    let column = index % columns;
+    let row = index / columns;
+    let x = left + column as i32 * (slot_width + BOOKSHELF_COLUMN_GAP)
+        + (slot_width - item_width) / 2;
+    let y = row as i32 * theme.row_height
+        + bookshelf_card_margin_top(theme.surface_y, cover_height);
+    (x as f64, y as f64)
+}
 
-    for row_index in 0..row_count {
-        let start = (row_index * columns).min(cards.len());
-        let end = (start + columns).min(cards.len());
-        let chunk = &cards[start..end];
+fn clear_bookshelf_layout(runtime: &BookshelfRuntime) {
+    while let Some(child) = runtime.layout.first_child() {
+        runtime.layout.remove(&child);
+    }
+    runtime.items.borrow_mut().clear();
+    runtime.motion.borrow_mut().take();
+    runtime.last_width.set(0);
+}
 
-        let row = bookshelf_row(theme);
-        let reflection_height = bookshelf_reflection_height(theme);
-        if reflection_height > 0 {
-            let reflections = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-            reflections.set_homogeneous(true);
-            reflections.set_hexpand(true);
-            reflections.set_halign(gtk::Align::Fill);
-            reflections.set_valign(gtk::Align::Start);
-            reflections.set_height_request(theme.row_height);
-            reflections.set_can_target(false);
-            for index in 0..columns {
-                let slot = gtk::Box::new(gtk::Orientation::Vertical, 0);
-                slot.set_hexpand(true);
-                slot.set_halign(gtk::Align::Fill);
-                if let Some(card) = chunk.get(index) {
-                    if let Some(cover) = find_descendant_with_css_class(
-                        card.upcast_ref(), "album-cover") {
-                        let reflection = ShelfReflection::new(
-                            &cover, theme.reflection_strength, reflection_height,
-                        );
-                        reflection.set_margin_top(theme.surface_y + 4);
-                        slot.append(&reflection);
-                    }
-                }
-                reflections.append(&slot);
-            }
-            row.add_overlay(&reflections);
-        }
-        let slots = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-        slots.set_homogeneous(true);
-        slots.set_hexpand(true);
-        slots.set_vexpand(false);
-        slots.set_halign(gtk::Align::Fill);
-        slots.set_valign(gtk::Align::Start);
-        slots.set_height_request(theme.row_height);
-
-        for index in 0..columns {
-            let slot = gtk::Box::new(gtk::Orientation::Vertical, 0);
-            slot.set_hexpand(true);
-            slot.set_vexpand(false);
-            slot.set_halign(gtk::Align::Fill);
-            slot.set_valign(gtk::Align::Start);
-            if let Some(card) = chunk.get(index) {
-                // Prevent GtkBox allocation from squeezing the entire
-                // card/cover when a window crosses a column breakpoint.
-                slot.set_width_request(card.width_request().max(1));
-                card.set_halign(gtk::Align::Center);
-                slot.append(card);
-            }
-            slots.append(&slot);
-        }
-
-        row.add_overlay(&slots);
-        rows.append(&row);
+fn install_bookshelf_cards(runtime: &BookshelfRuntime, cards: &[gtk::Button], theme: &BookshelfTheme) {
+    let reflection_height = bookshelf_reflection_height(theme);
+    let mut items = runtime.items.borrow_mut();
+    for card in cards {
+        let cover = find_descendant_with_css_class(card.upcast_ref(), "album-cover")
+            .expect("an album card has a cover");
+        let width = card.width_request().max(cover.width_request());
+        let cover_height = cover.height_request();
+        card.set_margin_top(0);
+        card.set_halign(gtk::Align::Start);
+        let reflection = (reflection_height > 0).then(|| {
+            let reflection = ShelfReflection::new(&cover, theme.reflection_strength, reflection_height);
+            reflection.set_width_request(width);
+            runtime.layout.put(&reflection, 0.0, 0.0);
+            reflection
+        });
+        runtime.layout.put(card, 0.0, 0.0);
+        items.push(BookshelfItem { card: card.clone(), reflection, width, cover_height });
     }
 }
 
+fn reflow_bookshelf_layout(
+    runtime: &BookshelfRuntime,
+    width: i32,
+    available_height: i32,
+    theme: &BookshelfTheme,
+) {
+    let items = runtime.items.borrow();
+    let slot_width = items.iter().map(|item| item.width).max().unwrap_or(1);
+    let columns = bookshelf_columns_for_width(width, slot_width);
+    let occupied_height = bookshelf_row_count(items.len(), columns) as i32 * theme.row_height;
+    // The scene paints every tile through the visible viewport, even for an
+    // empty library. Extra space leaves the last row's labels unclipped.
+    runtime.scene.set_height_request(available_height.max(occupied_height + 56).max(theme.row_height));
+    if width <= 0 || width == runtime.last_width.get() {
+        return;
+    }
+    let to: Vec<_> = items.iter().enumerate().map(|(index, item)| {
+        bookshelf_card_position(width, slot_width, item.width, columns, index, item.cover_height, theme)
+    }).collect();
+    let from: Vec<_> = items.iter().map(|item| runtime.layout.child_position(&item.card)).collect();
+    let first_layout = runtime.last_width.replace(width) == 0;
+    if first_layout {
+        for (item, &(x, y)) in items.iter().zip(&to) {
+            runtime.layout.move_(&item.card, x, y);
+            if let Some(reflection) = &item.reflection {
+                runtime.layout.move_(reflection, x, y + item.cover_height as f64 + 4.0);
+            }
+        }
+        runtime.motion.borrow_mut().take();
+    } else if from != to {
+        runtime.motion.replace(Some(BookshelfMotion { started: Instant::now(), from, to }));
+    }
+}
+
+fn advance_bookshelf_motion(runtime: &BookshelfRuntime) {
+    let mut motion = runtime.motion.borrow_mut();
+    let Some(active) = motion.as_ref() else { return; };
+    let progress = (active.started.elapsed().as_secs_f64() / BOOKSHELF_MOVE_DURATION).min(1.0);
+    let eased = progress * progress * (3.0 - 2.0 * progress);
+    for (item, (&from, &to)) in runtime.items.borrow().iter()
+        .zip(active.from.iter().zip(&active.to)) {
+        let x = from.0 + (to.0 - from.0) * eased;
+        let y = from.1 + (to.1 - from.1) * eased;
+        runtime.layout.move_(&item.card, x, y);
+        if let Some(reflection) = &item.reflection {
+            runtime.layout.move_(reflection, x, y + item.cover_height as f64 + 4.0);
+        }
+    }
+    if progress >= 1.0 { motion.take(); }
+}
+
+// Also used by the standard FlowBox sizing path.
 fn collect_bookshelf_cards(root: &gtk::Widget, cards: &mut Vec<gtk::Button>) {
     if let Some(button) = root.downcast_ref::<gtk::Button>() {
         if button.has_css_class("album-card") {
@@ -630,48 +561,6 @@ fn collect_bookshelf_cards(root: &gtk::Widget, cards: &mut Vec<gtk::Button>) {
         collect_bookshelf_cards(&current, cards);
         child = current.next_sibling();
     }
-}
-
-// Book size is set when its card is created, never by the viewport.
-// On window resize the layout may change columns, but not cover dimensions.
-fn resize_bookshelf_cards(rows: &gtk::Box, _target_width: i32, theme: &BookshelfTheme) {
-    let mut cards = Vec::new();
-    collect_bookshelf_cards(rows.upcast_ref(), &mut cards);
-    for card in cards {
-        if let Some(cover) = find_descendant_with_css_class(card.upcast_ref(), "album-cover") {
-            let height = cover.height_request();
-            if height > 0 {
-                card.set_margin_top(bookshelf_card_margin_top(theme.surface_y, height));
-            }
-        }
-    }
-}
-
-fn reflow_bookshelf_rows(
-    runtime: &BookshelfRuntime,
-    columns: usize,
-    row_count: usize,
-    theme: &BookshelfTheme,
-) {
-    let mut cards = Vec::new();
-    collect_bookshelf_cards(runtime.rows.upcast_ref(), &mut cards);
-    if cards.is_empty() {
-        runtime.last_columns.set(columns);
-        runtime.last_row_count.set(row_count);
-        return;
-    }
-
-    // Keep strong references while detaching cards from their old slot boxes.
-    for card in &cards {
-        if let Some(parent) = card.parent().and_downcast::<gtk::Box>() {
-            parent.remove(card);
-        }
-    }
-    build_bookshelf_rows(&runtime.rows, &cards, columns, row_count, theme);
-    runtime.last_columns.set(columns);
-    runtime.last_row_count.set(row_count);
-
-    
 }
 
 fn insert_child(

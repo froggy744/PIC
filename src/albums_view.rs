@@ -21,15 +21,15 @@ const ALBUM_COVER_THEME_DIRECTORY: &str = "images/theme/album-covers";
 const BOOKSHELF_THEME_DIRECTORY: &str = "images/theme/bookshelf";
 // Four columns keep eight albums balanced, while the cover width cap keeps
 // their visual size steady across monitor resolutions.
-const BOOKSHELF_MAX_COLUMNS: usize = 4;
-const BOOKSHELF_MIN_ROWS: usize = 3;
+const BOOKSHELF_MAX_COLUMNS: usize = 6;
+const BOOKSHELF_MIN_ROWS: usize = 2;
 const BOOKSHELF_MAX_VIEWPORT_ROWS: usize = 4;
 const BOOKSHELF_MIN_EXPANDED_ROW_HEIGHT: i32 = 205;
-const BOOKSHELF_COLUMN_GAP: i32 = 28;
-const BOOKSHELF_SIDE_PADDING: i32 = 28;
-const BOOKSHELF_MIN_CARD_WIDTH: i32 = 220;
-const BOOKSHELF_MAX_CARD_WIDTH: i32 = 230;
-const BOOKSHELF_CARD_FILL_RATIO: f64 = 0.86;
+const BOOKSHELF_COLUMN_GAP: i32 = 24;
+const BOOKSHELF_SIDE_PADDING: i32 = 24;
+const BOOKSHELF_MIN_CARD_WIDTH: i32 = 250;
+const BOOKSHELF_MAX_CARD_WIDTH: i32 = 320;
+const BOOKSHELF_CARD_FILL_RATIO: f64 = 0.95;
 const BOOKSHELF_RUNTIME_KEY: &str = "picasa-bookshelf-runtime";
 const ALBUM_SIZE_KEY: &str = "albums-index-size";
 const ALBUM_SORT_KEY: &str = "albums-index-sort";
@@ -1298,10 +1298,10 @@ mod tests {
     }
 
     #[test]
-    fn bookshelf_keeps_at_least_three_visible_rows() {
-        assert_eq!(bookshelf_row_count(0, 5), 3);
-        assert_eq!(bookshelf_row_count(1, 5), 3);
-        assert_eq!(bookshelf_row_count(10, 5), 3);
+    fn bookshelf_only_reserves_two_rows_for_small_libraries() {
+        assert_eq!(bookshelf_row_count(0, 5), 2);
+        assert_eq!(bookshelf_row_count(1, 5), 2);
+        assert_eq!(bookshelf_row_count(10, 5), 2);
         assert_eq!(bookshelf_row_count(10, 4), 3);
         assert_eq!(bookshelf_row_count(10, 3), 4);
         assert_eq!(bookshelf_row_count(20, 5), 4);
@@ -1349,21 +1349,21 @@ mod tests {
 
     #[test]
     fn responsive_bookshelf_columns_follow_available_width() {
-        assert_eq!(bookshelf_columns_for_width(2000, 220), 4);
-        assert_eq!(bookshelf_columns_for_width(1400, 220), 4);
-        assert_eq!(bookshelf_columns_for_width(1120, 220), 4);
-        assert_eq!(bookshelf_columns_for_width(850, 220), 3);
-        assert_eq!(bookshelf_columns_for_width(300, 220), 1);
-        assert_eq!(bookshelf_columns_for_width(0, 220), 4);
+        assert_eq!(bookshelf_columns_for_width(2300, 250), 6); // QHD
+        assert_eq!(bookshelf_columns_for_width(1700, 250), 6); // Full HD, wide sidebar
+        assert_eq!(bookshelf_columns_for_width(1120, 250), 4); // 1366px laptop
+        assert_eq!(bookshelf_columns_for_width(850, 250), 3);
+        assert_eq!(bookshelf_columns_for_width(300, 250), 1);
+        assert_eq!(bookshelf_columns_for_width(0, 250), 6);
     }
 
     #[test]
     fn responsive_bookshelf_cards_grow_on_wide_windows() {
-        assert_eq!(bookshelf_target_card_width(850, 3), 227);
-        assert_eq!(bookshelf_target_card_width(1120, 4), 229);
-        assert_eq!(bookshelf_target_card_width(1400, 4), 230);
-        assert_eq!(bookshelf_target_card_width(1760, 4), 230);
-        assert_eq!(bookshelf_target_card_width(2200, 4), 230);
+        assert_eq!(bookshelf_target_card_width(850, 3), 254);
+        assert_eq!(bookshelf_target_card_width(1120, 4), 255);
+        assert_eq!(bookshelf_target_card_width(1400, 5), 257);
+        assert_eq!(bookshelf_target_card_width(1760, 6), 271);
+        assert_eq!(bookshelf_target_card_width(2200, 6), 320);
     }
 
     #[test]

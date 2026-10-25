@@ -264,14 +264,16 @@ fn build_inner(
         }
 
         let columns = bookshelf_columns_for_width(width, BOOKSHELF_MIN_CARD_WIDTH);
+        let available_height =
+            bookshelf_available_height(&bookshelf_viewport, &runtime_for_resize.rows);
         let row_count = bookshelf_rows_for_viewport(
             runtime_for_resize.album_count.get(),
             columns,
-            bookshelf_viewport.height(),
+            available_height,
         );
         let row_height = bookshelf_row_height_for_viewport(
             row_count,
-            bookshelf_available_height(&bookshelf_viewport, &runtime_for_resize.rows),
+            available_height,
             runtime_for_resize.rows.spacing(),
             &theme,
         );

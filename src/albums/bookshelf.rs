@@ -360,8 +360,10 @@ fn bookshelf_row_count(card_count: usize, columns: usize) -> usize {
     required.max(BOOKSHELF_MIN_ROWS)
 }
 
-fn bookshelf_rows_for_viewport(card_count: usize, columns: usize, viewport_height: i32) -> usize {
-    let viewport_rows = if viewport_height >= BOOKSHELF_EXPANDED_VIEW_HEIGHT {
+fn bookshelf_rows_for_viewport(card_count: usize, columns: usize, available_height: i32) -> usize {
+    let viewport_rows = if available_height
+        >= BOOKSHELF_MIN_EXPANDED_ROW_HEIGHT * BOOKSHELF_MAX_VIEWPORT_ROWS as i32
+    {
         BOOKSHELF_MAX_VIEWPORT_ROWS
     } else {
         BOOKSHELF_MIN_ROWS
@@ -412,7 +414,8 @@ fn bookshelf_row_height_for_viewport(
         return theme.row_height;
     }
     let gaps = row_spacing.max(0) * row_count.saturating_sub(1) as i32;
-    ((available_height - gaps).max(1) / row_count as i32).clamp(160, theme.row_height)
+    ((available_height - gaps).max(1) / row_count as i32)
+        .clamp(BOOKSHELF_MIN_EXPANDED_ROW_HEIGHT, theme.row_height)
 }
 
 fn bookshelf_theme_with_row_height(theme: &BookshelfTheme, row_height: i32) -> BookshelfTheme {
@@ -455,6 +458,13 @@ mod bookshelf_responsive_sizing_tests {
         assert_eq!(bookshelf_row_height_for_viewport(4, 820, 0, &theme), 205);
         assert_eq!(bookshelf_row_height_for_viewport(3, 820, 0, &theme), 288);
         assert_eq!(bookshelf_card_width_for_row_height(230, 205, 288), 164);
+    }
+
+    #[test]
+    fn four_shelves_wait_until_each_can_keep_a_readable_book_size() {
+        assert_eq!(bookshelf_rows_for_viewport(8, 4, 819), 3);
+        assert_eq!(bookshelf_rows_for_viewport(8, 4, 820), 4);
+        assert_eq!(bookshelf_row_height_for_viewport(4, 820, 0, &theme()), 205);
     }
 }
 

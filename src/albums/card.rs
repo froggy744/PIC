@@ -315,6 +315,20 @@ fn selected_frame_index(
     frames.iter().position(|path| path == &selected)
 }
 
+fn automatic_frame_index(
+    album: &Album,
+    root: &Path,
+    frames: &[PathBuf],
+    cover_index: usize,
+) -> Option<usize> {
+    if frames.is_empty() {
+        return None;
+    }
+    let themes = cover_themes(root, frames);
+    let selected = automatic_frame(album, &themes, cover_index)?;
+    frames.iter().position(|path| path == selected)
+}
+
 /// `Next Album Cover` steps to the next theme folder while keeping the
 /// album's stable variant inside it, so five themes cycle in five steps.
 fn next_theme_identifier(
@@ -397,6 +411,10 @@ fn album_cover_photo(
             return chosen;
         }
     }
+    automatic_album_cover_photo(photos)
+}
+
+fn automatic_album_cover_photo(photos: &[db::Photo]) -> Option<db::Photo> {
     photos
         .iter()
         .find(|photo| {
@@ -418,6 +436,7 @@ fn album_card(
     fit_whole_photo: bool,
     menu_connection: Rc<RefCell<Connection>>,
     on_appearance_changed: Rc<dyn Fn()>,
+    allow_custom_cover: bool,
 ) -> gtk::Button {
     let card = gtk::Button::new();
     card.set_has_frame(false);
@@ -490,7 +509,12 @@ fn album_card(
     let photos = db::browse_photos_in_album(connection, album.id, None).unwrap_or_default();
     // The chosen cover wins over the automatic pick, even before its cached
     // thumbnail exists.
-    let cover_photo = album_cover_photo(connection, album, &photos).map(|photo| {
+    let selected_photo = if allow_custom_cover {
+        album_cover_photo(connection, album, &photos)
+    } else {
+        automatic_album_cover_photo(&photos)
+    };
+    let cover_photo = selected_photo.map(|photo| {
         let cached =
             crate::thumbnail::existing_cache_path(&photo.path, photo.mtime, photo.size_bytes)
                 .ok()
@@ -545,6 +569,7 @@ fn album_card(
     placeholder.set_halign(gtk::Align::Center);
     placeholder.set_valign(gtk::Align::Center);
     placeholder.add_css_class("dim-label");
+    placeholder.add_css_class("album-cover-placeholder");
     placeholder.set_visible(cover_photo.is_none());
     cover.add_overlay(&placeholder);
     cover.set_measure_overlay(&placeholder, false);
@@ -636,7 +661,13 @@ fn album_card(
     content.append(&photo_count);
 
     card.set_child(Some(&content));
-    install_album_context_menu(&card, menu_connection, album.clone(), on_appearance_changed);
+    install_album_context_menu(
+        &card,
+        menu_connection,
+        album.clone(),
+        on_appearance_changed,
+        allow_custom_cover,
+    );
 
     
 

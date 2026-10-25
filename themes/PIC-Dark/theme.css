@@ -168,7 +168,7 @@ scrollbar slider:active { background: alpha(@pic_text_color, 0.55); background-c
 }
 
 /* ---- Gallery, albums, photo tiles ---- */
-.photo-grid, .albums-home-grid { background: @pic_background_surface; color: @pic_text_color; }
+.photo-grid { background: @pic_background_surface; color: @pic_text_color; }
 .group-heading-bar { background: transparent; padding: 0; }
 .section-heading-box { margin-top: 14px; margin-bottom: 7px; }
 .section-heading, .folder-section-title {

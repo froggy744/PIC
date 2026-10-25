@@ -969,6 +969,10 @@ fn append_album_appearance(
                 eprintln!("Could not save bookshelf background: {error}");
                 return;
             }
+            if let Err(error) = set_bookshelf_enabled(&connection.borrow(), true) {
+                eprintln!("Could not enable bookshelf appearance: {error}");
+                return;
+            }
             updating.set(true);
             bookshelf.set_active(true);
             updating.set(false);
@@ -1585,13 +1589,17 @@ pub(crate) fn next_bookshelf_background(
     if background_count == 0 {
         anyhow::bail!("no bookshelf backgrounds are available");
     }
-    let next = (album_appearance(connection).background_index + 1) % background_count;
+    let current = crate::db::setting(connection, ALBUM_BOOKSHELF_BACKGROUND_SETTING_KEY)
+        .ok()
+        .flatten()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or_else(crate::albums_view::default_bookshelf_background_index);
+    let next = (current + 1) % background_count;
     crate::db::set_setting(
         connection,
         ALBUM_BOOKSHELF_BACKGROUND_SETTING_KEY,
         &next.to_string(),
     )?;
-    set_bookshelf_enabled(connection, true)?;
     Ok(next)
 }
 
@@ -1611,6 +1619,15 @@ pub(crate) fn next_album_covers(
 pub(crate) fn disable_all_album_themes(connection: &Connection) -> anyhow::Result<()> {
     set_bookshelf_enabled(connection, false)?;
     set_covers_enabled(connection, false)
+}
+
+pub(crate) fn reset_bookshelf_theme(connection: &Connection) -> anyhow::Result<()> {
+    let default = crate::albums_view::default_bookshelf_background_index();
+    crate::db::set_setting(
+        connection,
+        ALBUM_BOOKSHELF_BACKGROUND_SETTING_KEY,
+        &default.to_string(),
+    )
 }
 
 /// Forget every theme choice: the switches, both page indexes, the legacy
@@ -2417,7 +2434,7 @@ mod tests {
     }
 
     #[test]
-    fn next_bookshelf_background_enables_bookshelf_and_wraps() {
+    fn next_bookshelf_background_wraps_without_changing_appearance_flags() {
         use super::*;
 
         let connection = Connection::open_in_memory().unwrap();
@@ -2425,11 +2442,51 @@ mod tests {
             .execute_batch("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
             .unwrap();
 
+        crate::db::set_setting(
+            &connection,
+            ALBUM_BOOKSHELF_BACKGROUND_SETTING_KEY,
+            "0",
+        )
+        .unwrap();
+        set_bookshelf_enabled(&connection, false).unwrap();
+        set_covers_enabled(&connection, true).unwrap();
+
         assert_eq!(next_bookshelf_background(&connection, 4).unwrap(), 1);
-        assert!(album_appearance(&connection).bookshelf_enabled);
+        let appearance = album_appearance(&connection);
+        assert!(!appearance.bookshelf_enabled);
+        assert!(appearance.covers_enabled);
         assert_eq!(next_bookshelf_background(&connection, 4).unwrap(), 2);
         assert_eq!(next_bookshelf_background(&connection, 4).unwrap(), 3);
         assert_eq!(next_bookshelf_background(&connection, 4).unwrap(), 0);
+    }
+
+    #[test]
+    fn reset_bookshelf_theme_preserves_other_appearance_settings() {
+        use super::*;
+
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+            .unwrap();
+        set_bookshelf_enabled(&connection, false).unwrap();
+        set_covers_enabled(&connection, true).unwrap();
+        crate::db::set_setting(&connection, ALBUM_BOOKSHELF_BACKGROUND_SETTING_KEY, "3")
+            .unwrap();
+
+        reset_bookshelf_theme(&connection).unwrap();
+
+        let default = crate::albums_view::default_bookshelf_background_index();
+        assert_eq!(
+            crate::db::setting(&connection, ALBUM_BOOKSHELF_BACKGROUND_SETTING_KEY).unwrap(),
+            Some(default.to_string())
+        );
+        let appearance = album_appearance(&connection);
+        assert!(!appearance.bookshelf_enabled);
+        assert!(appearance.covers_enabled);
+        assert_eq!(
+            next_bookshelf_background(&connection, 4).unwrap(),
+            (default + 1) % 4
+        );
     }
 
     #[test]

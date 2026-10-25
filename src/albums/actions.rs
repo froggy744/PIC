@@ -5,6 +5,7 @@ enum AlbumAppearanceAction {
     ToggleCovers,
     NextCovers,
     DisableAll,
+    ResetBookshelfTheme,
     OpenThemeSettings,
 }
 
@@ -69,6 +70,9 @@ fn install_context_menu(
     click.set_propagation_phase(gtk::PropagationPhase::Bubble);
     let anchor = scrolled.clone();
     click.connect_pressed(move |_, _, x, y| {
+        if settings::album_layout(&connection.borrow()) == settings::AlbumLayout::CoverFlow {
+            return;
+        }
         show_context_menu(
             &anchor,
             x,
@@ -86,6 +90,7 @@ fn install_album_context_menu(
     connection: Rc<RefCell<Connection>>,
     album: Album,
     on_appearance_changed: Rc<dyn Fn()>,
+    allow_custom_cover: bool,
 ) {
     let click = gtk::GestureClick::new();
     click.set_button(gtk::gdk::BUTTON_SECONDARY);
@@ -99,6 +104,7 @@ fn install_album_context_menu(
             connection.clone(),
             album.clone(),
             on_appearance_changed.clone(),
+            allow_custom_cover,
         );
     });
     card.add_controller(click);
@@ -111,6 +117,7 @@ fn show_album_context_menu(
     connection: Rc<RefCell<Connection>>,
     album: Album,
     on_appearance_changed: Rc<dyn Fn()>,
+    allow_custom_cover: bool,
 ) {
     let frame_root = crate::css::resolve_runtime_dir(Path::new(ALBUM_COVER_THEME_DIRECTORY));
     let frames = album_frame_paths_in(&frame_root);
@@ -160,62 +167,64 @@ fn show_album_context_menu(
     menu.append(&rename);
     menu.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
 
-    let next_frame = gtk::Button::with_label("Next Album Cover");
-    next_frame.set_halign(gtk::Align::Fill);
-    next_frame.set_sensitive(!frames.is_empty());
-    next_frame.add_css_class("flat");
-    next_frame.add_css_class("next-album-frame-action");
-    let popover_for_action = popover.clone();
-    let reset_connection = connection.clone();
-    let reset_album = album.clone();
-    let reset_appearance_changed = on_appearance_changed.clone();
-    let album_has_own_cover = album.cover_frame.is_some() || album.cover_photo_id.is_some();
-    next_frame.connect_clicked(move |_| {
-        popover_for_action.popdown();
-        let result = (|| {
-            settings::set_covers_enabled(&connection.borrow(), true)?;
-            let cover_index = settings::album_appearance(&connection.borrow()).cover_index;
-            change_to_next_album_cover(
-                &connection.borrow(),
-                &album,
-                &frame_root,
-                &frames,
-                cover_index,
-            )?;
-            anyhow::Ok(())
-        })();
-        if let Err(error) = result {
-            eprintln!("Could not change album cover: {error}");
-            return;
-        }
-        on_appearance_changed();
-    });
-    menu.append(&next_frame);
+    if allow_custom_cover {
+        let next_frame = gtk::Button::with_label("Next Album Cover");
+        next_frame.set_halign(gtk::Align::Fill);
+        next_frame.set_sensitive(!frames.is_empty());
+        next_frame.add_css_class("flat");
+        next_frame.add_css_class("next-album-frame-action");
+        let popover_for_action = popover.clone();
+        let reset_connection = connection.clone();
+        let reset_album = album.clone();
+        let reset_appearance_changed = on_appearance_changed.clone();
+        let album_has_own_cover = album.cover_frame.is_some() || album.cover_photo_id.is_some();
+        next_frame.connect_clicked(move |_| {
+            popover_for_action.popdown();
+            let result = (|| {
+                settings::set_covers_enabled(&connection.borrow(), true)?;
+                let cover_index = settings::album_appearance(&connection.borrow()).cover_index;
+                change_to_next_album_cover(
+                    &connection.borrow(),
+                    &album,
+                    &frame_root,
+                    &frames,
+                    cover_index,
+                )?;
+                anyhow::Ok(())
+            })();
+            if let Err(error) = result {
+                eprintln!("Could not change album cover: {error}");
+                return;
+            }
+            on_appearance_changed();
+        });
+        menu.append(&next_frame);
 
-    // Only an album with a cover of its own can lose one, so the reset stays
-    // disabled for albums that already follow the page-wide design and its
-    // automatic thumbnail.
-    let reset_frame = gtk::Button::with_label("Reset Album Cover");
-    reset_frame.set_halign(gtk::Align::Fill);
-    reset_frame.set_sensitive(album_has_own_cover);
-    reset_frame.add_css_class("flat");
-    reset_frame.add_css_class("reset-album-frame-action");
-    let popover_for_reset = popover.clone();
-    reset_frame.connect_clicked(move |_| {
-        popover_for_reset.popdown();
-        let result = (|| {
-            let connection = reset_connection.borrow();
-            db::clear_album_cover_frame(&connection, reset_album.id)?;
-            db::clear_album_cover_photo(&connection, reset_album.id)?;
-            anyhow::Ok(())
-        })();
-        if let Err(error) = result {
-            eprintln!("Could not reset album cover: {error}");
-            return;
-        }
-        reset_appearance_changed();
-    });
-    menu.append(&reset_frame);
+        // Only an album with a cover of its own can lose one, so the reset stays
+        // disabled for albums that already follow the page-wide design and its
+        // automatic thumbnail.
+        let reset_frame = gtk::Button::with_label("Reset Album Cover");
+        reset_frame.set_halign(gtk::Align::Fill);
+        reset_frame.set_sensitive(album_has_own_cover);
+        reset_frame.add_css_class("flat");
+        reset_frame.add_css_class("reset-album-frame-action");
+        let popover_for_reset = popover.clone();
+        reset_frame.connect_clicked(move |_| {
+            popover_for_reset.popdown();
+            let result = (|| {
+                let connection = reset_connection.borrow();
+                db::clear_album_cover_frame(&connection, reset_album.id)?;
+                db::clear_album_cover_photo(&connection, reset_album.id)?;
+                anyhow::Ok(())
+            })();
+            if let Err(error) = result {
+                eprintln!("Could not reset album cover: {error}");
+                return;
+            }
+            reset_appearance_changed();
+        });
+        menu.append(&reset_frame);
+    }
 
     popover.set_child(Some(&menu));
     popover.set_parent(anchor);
@@ -295,47 +304,28 @@ fn show_context_menu(
     menu.set_margin_start(6);
     menu.set_margin_end(6);
 
-    let heading = gtk::Label::new(Some("Album Appearance"));
-    heading.set_xalign(0.0);
-    heading.set_margin_start(8);
-    heading.set_margin_end(8);
-    heading.set_margin_top(4);
-    heading.set_margin_bottom(4);
-    heading.add_css_class("heading");
-    menu.append(&heading);
-
     let current_layout = settings::album_layout(&connection.borrow());
-    for (label, layout) in [
-        ("Grid", settings::AlbumLayout::Grid),
-        ("Bookshelf Layout", settings::AlbumLayout::Bookshelf),
-        ("Cover Flow", settings::AlbumLayout::CoverFlow),
-    ] {
-        let button = gtk::Button::new();
-        button.add_css_class("flat");
-        let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        let mark = gtk::Image::from_icon_name("object-select-symbolic");
-        mark.set_visible(current_layout == layout);
-        mark.set_size_request(16, 16);
-        row.append(&mark);
-        row.append(&gtk::Label::new(Some(label)));
-        button.set_child(Some(&row));
-        let connection_for_layout = connection.clone();
-        let changed_for_layout = on_appearance_changed.clone();
-        let popover_for_layout = popover.clone();
-        button.connect_clicked(move |_| {
-            popover_for_layout.popdown();
-            if let Err(error) = settings::set_album_layout(&connection_for_layout.borrow(), layout) {
-                eprintln!("Could not save album layout: {error}");
-            } else { changed_for_layout(); }
-        });
-        menu.append(&button);
-    }
-    menu.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
-
-    for item in album_context_menu_items(appearance) {
+    for mut item in album_context_menu_items(appearance) {
+        if current_layout == settings::AlbumLayout::Bookshelf
+            && item.action == AlbumAppearanceAction::DisableAll
+        {
+            item.label = "Reset";
+            item.action = AlbumAppearanceAction::ResetBookshelfTheme;
+            item.sensitive = true;
+        }
+        if current_layout == settings::AlbumLayout::CoverFlow
+            && matches!(
+                item.action,
+                AlbumAppearanceAction::ToggleBookshelf | AlbumAppearanceAction::NextBackground
+            )
+        {
+            continue;
+        }
         if matches!(
             item.action,
-            AlbumAppearanceAction::DisableAll | AlbumAppearanceAction::OpenThemeSettings
+            AlbumAppearanceAction::DisableAll
+                | AlbumAppearanceAction::ResetBookshelfTheme
+                | AlbumAppearanceAction::OpenThemeSettings
         ) {
             menu.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
         }
@@ -391,6 +381,9 @@ fn show_context_menu(
                 }
                 AlbumAppearanceAction::DisableAll => {
                     settings::disable_all_album_themes(&connection.borrow())
+                }
+                AlbumAppearanceAction::ResetBookshelfTheme => {
+                    settings::reset_bookshelf_theme(&connection.borrow())
                 }
                 AlbumAppearanceAction::OpenThemeSettings => unreachable!(),
             };

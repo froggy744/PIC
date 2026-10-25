@@ -22,8 +22,7 @@ impl AlbumFlowCanvas {
 struct AlbumFlowState {
     albums: Vec<Album>,
     connection: Rc<RefCell<Connection>>,
-    frames: Vec<FrameAsset>,
-    appearance: AlbumAppearance,
+    placeholder_color: gdk::RGBA,
     fit_whole_photo: bool,
     selected: usize,
     cached: HashMap<usize, gsk::RenderNode>,
@@ -57,41 +56,38 @@ fn paint_photo_inside(
     snapshot.restore();
 }
 
+fn append_empty_album_placeholder(
+    snapshot: &gtk::Snapshot,
+    bounds: &graphene::Rect,
+    background: &gdk::RGBA,
+) {
+    snapshot.append_color(background, bounds);
+    let context = snapshot.append_cairo(bounds);
+    context.set_source_rgba(0.48, 0.50, 0.53, 0.72);
+    context.set_line_width(3.0);
+    context.set_line_join(gtk::cairo::LineJoin::Round);
+    context.set_line_cap(gtk::cairo::LineCap::Round);
+    context.rectangle(131.5, 133.5, 37.0, 33.0);
+    let _ = context.stroke();
+    context.arc(159.0, 142.0, 3.0, 0.0, std::f64::consts::TAU);
+    let _ = context.stroke();
+    context.move_to(134.0, 162.0);
+    context.line_to(145.0, 151.0);
+    context.line_to(152.0, 158.0);
+    context.line_to(158.0, 152.0);
+    context.line_to(166.0, 162.0);
+    let _ = context.stroke();
+}
+
 fn album_flow_node(state: &AlbumFlowState, album: &Album) -> gsk::RenderNode {
     let snapshot = gtk::Snapshot::new();
     let full = graphene::Rect::new(0.0, 0.0, 300.0, 300.0);
-    snapshot.append_color(&gdk::RGBA::new(0.14, 0.15, 0.18, 1.0), &full);
-    let root = crate::css::resolve_runtime_dir(Path::new(ALBUM_COVER_THEME_DIRECTORY));
-    let frame_paths: Vec<_> = state
-        .frames
-        .iter()
-        .map(|frame| frame.path.clone())
-        .collect();
-    let frame = selected_frame_index(album, &root, &frame_paths, state.appearance.cover_index)
-        .and_then(|index| state.frames.get(index));
-    let frame_rect = if let Some(frame) = frame {
-        let ratio = frame.texture.width().max(1) as f32 / frame.texture.height().max(1) as f32;
-        let height = (300.0 / ratio).min(300.0);
-        graphene::Rect::new(0.0, (300.0 - height) * 0.5, 300.0, height)
-    } else {
-        full
-    };
-    let photo_rect = if let Some(frame) = frame {
-        let o = frame.opening;
-        graphene::Rect::new(
-            frame_rect.x() + frame_rect.width() * o.x as f32,
-            frame_rect.y() + frame_rect.height() * o.y as f32,
-            frame_rect.width() * o.width as f32,
-            frame_rect.height() * o.height as f32,
-        )
-    } else {
-        full
-    };
     let photo = {
         let connection = state.connection.borrow();
         let photos = db::browse_photos_in_album(&connection, album.id, None).unwrap_or_default();
-        album_cover_photo(&connection, album, &photos)
+        automatic_album_cover_photo(&photos)
     };
+    let mut has_cover = false;
     if let Some(photo) = photo {
         let cache =
             crate::thumbnail::existing_cache_path(&photo.path, photo.mtime, photo.size_bytes)
@@ -110,14 +106,17 @@ fn album_flow_node(state: &AlbumFlowState, album: &Album) -> gsk::RenderNode {
                     .map(|texture| texture.upcast())
             });
             if let Some(paintable) = paintable {
-                paint_photo_inside(&snapshot, &paintable, photo_rect, state.fit_whole_photo);
+                paint_photo_inside(&snapshot, &paintable, full, state.fit_whole_photo);
+                has_cover = true;
             }
         }
     }
-    if let Some(frame) = frame {
-        snapshot.append_scaled_texture(&frame.texture, gsk::ScalingFilter::Trilinear, &frame_rect);
+    if !has_cover {
+        append_empty_album_placeholder(&snapshot, &full, &state.placeholder_color);
     }
-    snapshot.to_node().expect("album cover node")
+    snapshot.to_node().unwrap_or_else(|| {
+        gsk::ColorNode::new(&gdk::RGBA::new(0.0, 0.0, 0.0, 0.0), &full).upcast()
+    })
 }
 
 fn show_album_focus(
@@ -165,8 +164,6 @@ fn show_album_focus(
 fn build_album_coverflow(
     albums: &[Album],
     connection: Rc<RefCell<Connection>>,
-    frames: &[FrameAsset],
-    appearance: AlbumAppearance,
     fit_whole_photo: bool,
     focus: usize,
     focused_album_id: Rc<Cell<Option<i64>>>,
@@ -201,8 +198,17 @@ fn build_album_coverflow(
     let state = Rc::new(RefCell::new(AlbumFlowState {
         albums: albums.to_vec(),
         connection,
-        frames: frames.to_vec(),
-        appearance,
+        placeholder_color: canvas
+            .widget()
+            .style_context()
+            .lookup_color("theme_base_color")
+            .unwrap_or_else(|| {
+                if adw::StyleManager::default().is_dark() {
+                    gdk::RGBA::new(0.18, 0.18, 0.18, 1.0)
+                } else {
+                    gdk::RGBA::new(0.94, 0.94, 0.94, 1.0)
+                }
+            }),
         fit_whole_photo,
         selected: focus,
         cached: HashMap::new(),

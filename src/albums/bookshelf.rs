@@ -208,13 +208,36 @@ fn bookshelf_themes_in(directory: &Path) -> Vec<BookshelfTheme> {
     themes
 }
 
-fn bookshelf_theme_for_appearance(appearance: AlbumAppearance) -> Option<BookshelfTheme> {
-    if !appearance.bookshelf_enabled {
-        return None;
-    }
-    let themes =
-        bookshelf_themes_in(&crate::css::resolve_runtime_dir(Path::new(BOOKSHELF_THEME_DIRECTORY)));
-    (!themes.is_empty()).then(|| themes[appearance.background_index % themes.len()].clone())
+fn bookshelf_background_index(themes: &[BookshelfTheme], saved_index: Option<usize>) -> usize {
+    let fallback = themes
+        .iter()
+        .position(|theme| theme.id == "darkwood")
+        .unwrap_or(0);
+    saved_index.unwrap_or(fallback) % themes.len().max(1)
+}
+
+pub(crate) fn default_bookshelf_background_index() -> usize {
+    let themes = bookshelf_themes_in(
+        &crate::css::resolve_runtime_dir(Path::new(BOOKSHELF_THEME_DIRECTORY)),
+    );
+    bookshelf_background_index(&themes, None)
+}
+
+fn saved_bookshelf_background_index(connection: &Connection) -> Option<usize> {
+    crate::db::setting(connection, crate::settings::ALBUM_BOOKSHELF_BACKGROUND_SETTING_KEY)
+        .ok()
+        .flatten()
+        .and_then(|value| value.parse().ok())
+}
+
+fn bookshelf_theme(connection: &Connection) -> Option<BookshelfTheme> {
+    let themes = bookshelf_themes_in(
+        &crate::css::resolve_runtime_dir(Path::new(BOOKSHELF_THEME_DIRECTORY)),
+    );
+    (!themes.is_empty()).then(|| {
+        themes[bookshelf_background_index(&themes, saved_bookshelf_background_index(connection))]
+            .clone()
+    })
 }
 
 #[cfg(test)]
@@ -225,6 +248,19 @@ fn bookshelf_background_path(directory: &Path, index: usize) -> Option<PathBuf> 
 
 fn bookshelf_card_margin_top(surface_y: i32, cover_height: i32) -> i32 {
     (surface_y - cover_height).max(0)
+}
+
+#[cfg(test)]
+mod bookshelf_theme_defaults_tests {
+    use super::*;
+
+    #[test]
+    fn bookshelf_defaults_to_darkwood_and_honors_saved_theme_index() {
+        let themes = bookshelf_themes_in(Path::new(BOOKSHELF_THEME_DIRECTORY));
+        let default = bookshelf_background_index(&themes, None);
+        assert_eq!(themes[default].id, "darkwood");
+        assert_eq!(bookshelf_background_index(&themes, Some(0)), 0);
+    }
 }
 
 fn bookshelf_background_rules(directory: &Path) -> String {
@@ -252,13 +288,14 @@ fn bookshelf_background_rules(directory: &Path) -> String {
         .collect()
 }
 
-fn bookshelf_background_css_class(appearance: AlbumAppearance) -> Option<String> {
-    let themes =
-        bookshelf_themes_in(&crate::css::resolve_runtime_dir(Path::new(BOOKSHELF_THEME_DIRECTORY)));
-    if !appearance.bookshelf_enabled || themes.is_empty() {
+fn bookshelf_background_css_class(connection: &Connection) -> Option<String> {
+    let themes = bookshelf_themes_in(
+        &crate::css::resolve_runtime_dir(Path::new(BOOKSHELF_THEME_DIRECTORY)),
+    );
+    if themes.is_empty() {
         return None;
     }
-    let index = appearance.background_index % themes.len();
+    let index = bookshelf_background_index(&themes, saved_bookshelf_background_index(connection));
     Some(format!("albums-bookshelf-{index}"))
 }
 

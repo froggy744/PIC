@@ -665,6 +665,7 @@ mod tests {
             connection.clone(),
             albums[0].clone(),
             Rc::new(|| {}),
+            true,
         );
         settle_gtk_layout();
         assert!(
@@ -810,7 +811,7 @@ mod tests {
     #[test]
     fn every_shipped_bookshelf_theme_pins_its_own_shelf_surface() {
         let themes = bookshelf_themes_in(Path::new(BOOKSHELF_THEME_DIRECTORY));
-        assert_eq!(themes.len(), 8);
+        assert_eq!(themes.len(), 7);
         // Shipped artwork is photographic, so each folder ships the conf that
         // states where its drawn shelf edge is; a packaging slip that loses the
         // file has to be visible as missing geometry, not as a silent page-wide
@@ -831,7 +832,6 @@ mod tests {
             ("concrete", 227),
             ("darkwood", 225),
             ("darkwood-small", 232),
-            ("frontwall-white", 234),
             ("light-wood", 225),
             ("marble", 236),
             ("shelf", 227),
@@ -839,10 +839,6 @@ mod tests {
         ] {
             assert!(themes.iter().any(|theme| theme.id == id && theme.surface_y == surface_y));
         }
-        assert!(themes.iter().any(|theme| {
-            theme.id == "frontwall-white"
-                && theme.image_path.file_name().is_some_and(|name| name == "bookshelf.jpg")
-        }));
     }
 
     #[test]
@@ -930,6 +926,7 @@ mod tests {
             album_cover_photo(&connection, &album, &photos).map(|photo| photo.id),
             Some(2)
         );
+        assert_eq!(automatic_album_cover_photo(&photos).map(|photo| photo.id), None);
 
         // A chosen photo still resolves when it is not an album member.
         db::set_album_cover_photo(&connection, album.id, 3).unwrap();
@@ -972,6 +969,40 @@ mod tests {
             next_theme_identifier(&album, root, &frames, 0).as_deref(),
             Some("standard/standard-frame.png")
         );
+    }
+
+    #[test]
+    fn automatic_frame_index_ignores_album_frame_override() {
+        let root = Path::new("images/theme/album-covers");
+        let frames = vec![
+            root.join("standard/standard-frame.png"),
+            root.join("vintage/blue-frame.png"),
+            root.join("vintage/green-frame.png"),
+        ];
+        let album = album(19);
+        let automatic = automatic_frame_index(&album, root, &frames, 0).unwrap();
+        let custom = (automatic + 1) % frames.len();
+        let mut customized = album;
+        customized.cover_frame = frame_identifier(root, &frames[custom]);
+
+        assert_eq!(selected_frame_index(&customized, root, &frames, 0), Some(custom));
+        assert_eq!(automatic_frame_index(&customized, root, &frames, 0), Some(automatic));
+    }
+
+    #[test]
+    fn album_layouts_keep_separate_cover_frame_policies() {
+        let root = Path::new("images/theme/album-covers");
+        let appearance = AlbumAppearance {
+            covers_enabled: true,
+            ..AlbumAppearance::default()
+        };
+
+        assert!(!album_frame_paths_for_layout(root, appearance, settings::AlbumLayout::Grid).is_empty());
+        assert_eq!(
+            album_frame_paths_for_layout(root, appearance, settings::AlbumLayout::Bookshelf),
+            vec![root.join("standard/standard-frame.png")]
+        );
+        assert!(album_frame_paths_for_layout(root, appearance, settings::AlbumLayout::CoverFlow).is_empty());
     }
 
     #[test]
@@ -1274,7 +1305,7 @@ mod tests {
         assert!(rules.contains("background-size: 100% 288px"));
         assert!(rules.contains("background-position: center top"));
         assert!(rules.contains("background-size: 100% auto"));
-        assert!(crate::css::ALBUMS.contains(".albums-bookshelf-photo-count"));
+        assert!(crate::css::ALBUMS.contains(".albums-bookshelf .album-photo-count"));
         std::fs::remove_dir_all(directory).unwrap();
     }
 
@@ -1435,6 +1466,7 @@ mod tests {
             connection.clone(),
             album.clone(),
             Rc::new(move || changed_for_callback.set(changed_for_callback.get() + 1)),
+            true,
         );
         let action = find_descendant_with_css_class(anchor.upcast_ref(), "next-album-frame-action")
             .unwrap()
@@ -1496,6 +1528,7 @@ mod tests {
             connection.clone(),
             album,
             Rc::new(move || changed_for_callback.set(changed_for_callback.get() + 1)),
+            true,
         );
         let reset = find_descendant_with_css_class(anchor.upcast_ref(), "reset-album-frame-action")
             .unwrap()
@@ -1857,9 +1890,7 @@ mod tests {
                 assert!(rows.is_visible());
                 assert!(rows.height() >= BOOKSHELF_ROW_HEIGHT);
                 assert!(
-                    bookshelf_background_css_class(settings::album_appearance(
-                        &connection.borrow(),
-                    ))
+                    bookshelf_background_css_class(&connection.borrow())
                         .is_some_and(|background_class|
                             rows.has_css_class(&background_class),
                         ),
@@ -1882,9 +1913,7 @@ mod tests {
                 assert!((count_color.red() - 58.0 / 255.0).abs() < 0.01);
                 assert!((count_color.green() - 33.0 / 255.0).abs() < 0.01);
                 assert!((count_color.blue() - 15.0 / 255.0).abs() < 0.01);
-                let theme = bookshelf_theme_for_appearance(settings::album_appearance(
-                    &connection.borrow(),
-                ))
+                let theme = bookshelf_theme(&connection.borrow())
                 .unwrap();
                 assert_eq!(
                     button.margin_top() + cover.height_request(),

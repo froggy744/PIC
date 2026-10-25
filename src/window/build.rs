@@ -2541,11 +2541,33 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     crate::startup_trace::mark("albums_widgets_done", Some(albums_started));
     if initial_filter == sidebar::SidebarFilter::Albums {
         let albums_home = albums_home.clone();
-        let albums = albums.clone();
         let connection = connection.clone();
         let on_album = open_album.clone();
         let on_appearance_changed = album_theme_changed.clone();
         let initialized = Rc::new(Cell::new(false));
+        let populated = Rc::new(Cell::new(false));
+        let populate_albums = {
+            let albums_home = albums_home.clone();
+            let connection = connection.clone();
+            let on_album = on_album.clone();
+            let on_appearance_changed = on_appearance_changed.clone();
+            Rc::new(move || {
+                if populated.replace(true) {
+                    return;
+                }
+                let started = Instant::now();
+                let albums = db::browse_albums(&connection.borrow()).unwrap_or_default();
+                albums_view::refresh(
+                    &albums_home,
+                    &albums,
+                    connection.clone(),
+                    grid_thumbnail_size,
+                    on_album.clone(),
+                    on_appearance_changed.clone(),
+                );
+                crate::startup_trace::mark("initial_albums_populated", Some(started));
+            })
+        };
         window.connect_map(move |window| {
             if initialized.replace(true) {
                 return;
@@ -2553,28 +2575,23 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             if let Some(surface) = window.surface() {
                 let painted = Rc::new(Cell::new(false));
                 let painted_once = painted.clone();
-                let albums_home = albums_home.clone();
-                let albums = albums.clone();
-                let connection = connection.clone();
-                let on_album = on_album.clone();
-                let on_appearance_changed = on_appearance_changed.clone();
+                let populate_albums = populate_albums.clone();
                 surface.frame_clock().connect_after_paint(move |_| {
                     if painted_once.replace(true) {
                         return;
                     }
-                    let albums_home = albums_home.clone();
-                    let albums = albums.clone();
-                    let connection = connection.clone();
-                    let on_album = on_album.clone();
-                    let on_appearance_changed = on_appearance_changed.clone();
+                    let populate_albums = populate_albums.clone();
                     glib::idle_add_local_once(move || {
-                        let started = Instant::now();
-                        albums_view::refresh(&albums_home, &albums, connection,
-                            grid_thumbnail_size, on_album, on_appearance_changed);
-                        crate::startup_trace::mark("initial_albums_populated", Some(started));
+                        populate_albums();
                     });
                 });
             }
+            // Keep the deferred first paint fast, but do not leave the Albums
+            // page empty if this surface never emits after-paint.
+            let populate_albums = populate_albums.clone();
+            glib::timeout_add_local_once(Duration::from_millis(750), move || {
+                populate_albums();
+            });
         });
     }
     // Albums home is a separate ScrolledWindow, so it needs the same wheel

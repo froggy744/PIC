@@ -183,10 +183,11 @@ fn build_inner(
         let changed = on_appearance_changed.clone();
         layout.connect_selected_notify(move |choice| {
             let chosen = settings::AlbumLayout::from_index(choice.selected());
-            if settings::album_layout(&connection.borrow()) == chosen { return; }
-            if let Err(error) = settings::set_album_layout(&connection.borrow(), chosen) {
-                eprintln!("Could not save album layout: {error}");
-                return;
+            if settings::album_layout(&connection.borrow()) != chosen {
+                if let Err(error) = settings::set_album_layout(&connection.borrow(), chosen) {
+                    eprintln!("Could not save album layout: {error}");
+                    return;
+                }
             }
             if let Some(view) = weak_view.upgrade() {
                 let albums = db::albums(&connection.borrow()).unwrap_or_default();
@@ -338,6 +339,21 @@ fn resize_standard_cards(grid: &gtk::FlowBox, available: i32, preferred: i32) {
     }
 }
 
+fn album_frame_paths_for_layout(
+    root: &Path,
+    appearance: AlbumAppearance,
+    layout: settings::AlbumLayout,
+) -> Vec<PathBuf> {
+    match layout {
+        settings::AlbumLayout::Grid => album_frame_paths_for_appearance(root, appearance),
+        settings::AlbumLayout::Bookshelf => {
+            let standard = root.join("standard/standard-frame.png");
+            standard.is_file().then_some(standard).into_iter().collect()
+        }
+        settings::AlbumLayout::CoverFlow => Vec::new(),
+    }
+}
+
 pub fn refresh(
     scrolled: &gtk::ScrolledWindow,
     albums: &[Album],
@@ -406,7 +422,7 @@ pub fn refresh_presentation(scrolled: &gtk::ScrolledWindow, connection: &Connect
     }
 
     let has_theme = layout == settings::AlbumLayout::Bookshelf
-        && appearance.bookshelf_enabled && bookshelf_background_count() > 0;
+        && bookshelf_background_count() > 0;
     if has_theme {
         scrolled.add_css_class("albums-bookshelf");
     } else {
@@ -419,10 +435,10 @@ pub fn refresh_presentation(scrolled: &gtk::ScrolledWindow, connection: &Connect
     // offset set of shelves in the gaps above and below the album rows.
     if let Some(rows) = find_descendant_with_css_class(scrolled.upcast_ref(), "albums-bookshelf-rows") {
         remove_bookshelf_background_classes(&rows);
-        if has_theme { if let Some(background_class) = bookshelf_background_css_class(appearance) {
+        if has_theme { if let Some(background_class) = bookshelf_background_css_class(connection) {
             rows.add_css_class(&background_class);
         }}
-    } else if let Some(background_class) = bookshelf_background_css_class(appearance) {
+    } else if let Some(background_class) = bookshelf_background_css_class(connection) {
         scrolled.add_css_class(&background_class);
     }
 }
@@ -494,10 +510,12 @@ fn populate(
         crate::db::THUMBNAIL_FIT_WHOLE_PHOTO_SETTING_KEY,
     )
     .unwrap_or(false);
-    let bookshelf_theme = bookshelf_theme_for_appearance(appearance);
+    let bookshelf_theme = bookshelf_theme(&connection.borrow());
     let row_theme = bookshelf_theme
         .as_ref()
-        .filter(|theme| theme.kind == BookshelfThemeKind::Row)
+        .filter(|theme| {
+            layout == settings::AlbumLayout::Bookshelf && theme.kind == BookshelfThemeKind::Row
+        })
         .cloned();
     let responsive_bookshelf = layout == settings::AlbumLayout::Bookshelf && row_theme.is_some();
     let standard = layout == settings::AlbumLayout::Grid && !appearance.covers_enabled;
@@ -538,11 +556,11 @@ fn populate(
     bookshelf_runtime.coverflow.set_visible(layout == settings::AlbumLayout::CoverFlow);
     bookshelf_runtime.selected_theme.replace(row_theme.clone());
 
-    let frames: Vec<FrameAsset> = album_frame_paths_for_appearance(
-        &crate::css::resolve_runtime_dir(Path::new(ALBUM_COVER_THEME_DIRECTORY)),
-        appearance,
-    )
-            .into_iter()
+    let cover_root = crate::css::resolve_runtime_dir(Path::new(ALBUM_COVER_THEME_DIRECTORY));
+    let frame_paths = album_frame_paths_for_layout(&cover_root, appearance, layout);
+    let frames: Vec<FrameAsset> = frame_paths
+        .iter()
+        .cloned()
             .filter_map(|path| {
                 gtk::gdk::Texture::from_filename(&path).ok().map(|texture| {
                     let opening = frame_photo_opening(&path);
@@ -560,8 +578,8 @@ fn populate(
         clear_box(&bookshelf_runtime.coverflow);
         let focus = restored_album_focus(&albums,
             bookshelf_runtime.focused_album_id.get(), bookshelf_runtime.focused_index.get());
-        let flow = build_album_coverflow(&albums, connection.clone(), &frames,
-            appearance, fit_whole_photo, focus, bookshelf_runtime.focused_album_id.clone(),
+        let flow = build_album_coverflow(&albums, connection.clone(),
+            fit_whole_photo, focus, bookshelf_runtime.focused_album_id.clone(),
             bookshelf_runtime.focused_index.clone(), on_album);
         bookshelf_runtime.coverflow.append(&flow);
         return;
@@ -625,12 +643,12 @@ fn populate(
     let mut bookshelf_cards = Vec::with_capacity(albums.len());
 
     for album in &albums {
-        let frame = selected_frame_index(
-            album,
-            &crate::css::resolve_runtime_dir(Path::new(ALBUM_COVER_THEME_DIRECTORY)),
-            &frame_paths,
-            appearance.cover_index,
-        )
+        let selected_frame = if layout == settings::AlbumLayout::Bookshelf {
+            automatic_frame_index(album, &cover_root, &frame_paths, 0)
+        } else {
+            selected_frame_index(album, &cover_root, &frame_paths, appearance.cover_index)
+        };
+        let frame = selected_frame
         .map(|index| &frames[index]);
         let actual_cover_height = if frame.is_some() {
             frame_height
@@ -647,6 +665,7 @@ fn populate(
             fit_whole_photo,
             connection.clone(),
             on_appearance_changed.clone(),
+            layout == settings::AlbumLayout::Grid,
         );
         if framed {
             card.set_width_request(card_width);

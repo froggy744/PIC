@@ -2,100 +2,20 @@
 use gtk::subclass::prelude::*;
 use gtk::{gdk, graphene, gsk};
 use std::ops::Range;
-
-mod album_flow_imp {
-    use super::*;
-    #[derive(Default)]
-    pub struct AlbumFlowCanvas {
-        pub scene: RefCell<Vec<(usize, gsk::RenderNode)>>,
-        pub focus: Cell<f64>,
-        pub target: Cell<f64>,
-        pub animating: Cell<bool>,
-        pub last_tick: Cell<i64>,
-        pub count: Cell<usize>,
-    }
-    #[gtk::glib::object_subclass]
-    impl ObjectSubclass for AlbumFlowCanvas {
-        const NAME: &'static str = "PicAlbumFlowCanvas";
-        type Type = super::AlbumFlowCanvas;
-        type ParentType = gtk::Widget;
-    }
-    impl ObjectImpl for AlbumFlowCanvas {}
-    impl WidgetImpl for AlbumFlowCanvas {
-        fn snapshot(&self, snapshot: &gtk::Snapshot) {
-            let widget = self.obj();
-            let viewport = (widget.width() as f64, widget.height() as f64);
-            let mut entries = self.scene.borrow().clone();
-            entries.sort_by(|a, b| {
-                let a_distance = (a.0 as f64 - self.focus.get()).abs();
-                let b_distance = (b.0 as f64 - self.focus.get()).abs();
-                b_distance.total_cmp(&a_distance)
-            });
-            let shadow = gdk::RGBA::new(0.0, 0.0, 0.0, 0.38);
-            for (index, node) in entries {
-                if let Some(pose) = crate::coverflow::coverflow_pose(
-                    index,
-                    self.focus.get(),
-                    self.count.get(),
-                    viewport,
-                ) {
-                    crate::coverflow::paint_cover(snapshot, &node, pose, 0.72, &shadow);
-                }
-            }
-        }
-    }
-}
-gtk::glib::wrapper! {
-    pub struct AlbumFlowCanvas(ObjectSubclass<album_flow_imp::AlbumFlowCanvas>)
-        @extends gtk::Widget,
-        @implements gtk::Accessible, gtk::Buildable, gtk::ConstraintTarget;
-}
+pub(crate) struct AlbumFlowCanvas { gl: crate::coverflow::CoverflowGlArea }
 impl AlbumFlowCanvas {
     fn new() -> Self {
-        let canvas: Self = gtk::glib::Object::new();
-        canvas.set_focusable(true);
-        canvas.set_hexpand(true);
-        canvas.set_vexpand(true);
-        canvas.set_size_request(-1, 490);
-        canvas.add_css_class("albums-coverflow-canvas");
-        canvas
+        let gl = crate::coverflow::CoverflowGlArea::new("albums-coverflow-canvas", 490);
+        gl.widget().set_can_target(true);
+        gl.widget().set_focusable(true);
+        Self { gl }
     }
+    fn widget(&self) -> &gtk::GLArea { self.gl.widget() }
     fn set_scene(&self, count: usize, focus: f64, scene: Vec<(usize, gsk::RenderNode)>) {
-        let previous_count = self.imp().count.get();
-        self.imp().count.set(count);
-        self.imp().target.set(focus);
-        *self.imp().scene.borrow_mut() = scene;
-        if previous_count == 0
-            || !self.settings().is_gtk_enable_animations()
-            || (self.imp().focus.get() - focus).abs() > 1.5
-        {
-            self.imp().focus.set(focus);
-        } else if !self.imp().animating.replace(true) {
-            self.imp().last_tick.set(0);
-            self.add_tick_callback(|widget, clock| {
-                let imp = widget.imp();
-                let previous = imp.last_tick.replace(clock.frame_time());
-                let dt = if previous == 0 {
-                    16_000
-                } else {
-                    (clock.frame_time() - previous).clamp(1_000, 50_000)
-                };
-                let blend = 1.0 - (-(dt as f64) / 95_000.0).exp();
-                let target = imp.target.get();
-                let next = imp.focus.get() + (target - imp.focus.get()) * blend;
-                if (target - next).abs() < 0.002 {
-                    imp.focus.set(target);
-                    imp.animating.set(false);
-                    widget.queue_draw();
-                    gtk::glib::ControlFlow::Break
-                } else {
-                    imp.focus.set(next);
-                    widget.queue_draw();
-                    gtk::glib::ControlFlow::Continue
-                }
-            });
-        }
-        self.queue_draw();
+        let items = scene.into_iter().map(|(index, node)| crate::coverflow::CoverflowItem {
+            index, revision: index as u64, node,
+        }).collect();
+        self.gl.set_scene(count, focus, items, true);
     }
 }
 
@@ -221,7 +141,7 @@ fn show_album_focus(
         selected.photo_count,
         if selected.photo_count == 1 { "" } else { "s" }
     ));
-    canvas.update_property(&[gtk::accessible::Property::Label(&format!(
+    canvas.widget().update_property(&[gtk::accessible::Property::Label(&format!(
         "Album {} of {}: {}. {} photos. Arrow keys browse, Enter opens.",
         state.selected + 1,
         state.albums.len(),
@@ -256,8 +176,8 @@ fn build_album_coverflow(
     let root = gtk::Box::new(gtk::Orientation::Vertical, 8);
     root.add_css_class("albums-coverflow");
     root.set_hexpand(true);
-    let canvas = AlbumFlowCanvas::new();
-    root.append(&canvas);
+    let canvas = Rc::new(AlbumFlowCanvas::new());
+    root.append(canvas.widget());
     let name = gtk::Label::new(None);
     name.add_css_class("albums-coverflow-name");
     name.set_ellipsize(gtk::pango::EllipsizeMode::End);
@@ -273,7 +193,7 @@ fn build_album_coverflow(
     if albums.is_empty() {
         name.set_text("Your albums start here");
         count.set_text("Choose New Album to make a collection.");
-        canvas.set_visible(false);
+        canvas.widget().set_visible(false);
         open.set_visible(false);
         return root;
     }
@@ -298,7 +218,7 @@ fn build_album_coverflow(
 
     let keys = gtk::EventControllerKey::new();
     let state_for_keys = state.clone();
-    let canvas_for_keys = canvas.downgrade();
+    let canvas_for_keys = Rc::downgrade(&canvas);
     let name_for_keys = name.downgrade();
     let count_for_keys = count.downgrade();
     let on_keys = on_album.clone();
@@ -329,14 +249,14 @@ fn build_album_coverflow(
             gtk::glib::Propagation::Proceed
         }
     });
-    canvas.add_controller(keys);
+    canvas.widget().add_controller(keys);
 
     let scroll = gtk::EventControllerScroll::new(
         gtk::EventControllerScrollFlags::VERTICAL | gtk::EventControllerScrollFlags::HORIZONTAL,
     );
     scroll.set_propagation_phase(gtk::PropagationPhase::Capture);
     let state_for_scroll = state.clone();
-    let canvas_for_scroll = canvas.downgrade();
+    let canvas_for_scroll = canvas.clone();
     let name_for_scroll = name.downgrade();
     let count_for_scroll = count.downgrade();
     scroll.connect_scroll(move |_, dx, dy| {
@@ -350,12 +270,11 @@ fn build_album_coverflow(
         } else {
             current
         };
-        if let (Some(canvas), Some(name), Some(count)) = (
-            canvas_for_scroll.upgrade(),
+        if let (Some(name), Some(count)) = (
             name_for_scroll.upgrade(),
             count_for_scroll.upgrade(),
         ) {
-            show_album_focus(&state_for_scroll, &canvas, &name, &count, next);
+            show_album_focus(&state_for_scroll, &canvas_for_scroll, &name, &count, next);
         }
         gtk::glib::Propagation::Stop
     });
@@ -363,16 +282,16 @@ fn build_album_coverflow(
 
     let click = gtk::GestureClick::new();
     let state_for_click = state.clone();
-    let canvas_for_click = canvas.downgrade();
+    let canvas_for_click = Rc::downgrade(&canvas);
     let name_for_click = name.downgrade();
     let count_for_click = count.downgrade();
     click.connect_pressed(move |_, _, x, y| {
         let Some(canvas) = canvas_for_click.upgrade() else {
             return;
         };
-        canvas.grab_focus();
+        canvas.widget().grab_focus();
         let state = state_for_click.borrow();
-        let viewport = (canvas.width() as f64, canvas.height() as f64);
+        let viewport = (canvas.widget().width() as f64, canvas.widget().height() as f64);
         let nearest = visible_album_indices(state.selected, state.albums.len())
             .filter_map(|index| {
                 crate::coverflow::coverflow_pose(
@@ -402,7 +321,7 @@ fn build_album_coverflow(
             }
         }
     });
-    canvas.add_controller(click);
+    canvas.widget().add_controller(click);
     root
 }
 

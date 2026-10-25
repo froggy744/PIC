@@ -61,6 +61,7 @@ fn build_inner(
     crate::startup_trace::mark("albums_background_rules_done", Some(album_started));
 
     let content = gtk::Box::new(gtk::Orientation::Vertical, 18);
+    content.add_css_class("albums-index-content");
     // Keep page controls inset while allowing bookshelf art to span the album
     // index edge to edge.
     content.set_margin_start(0);
@@ -382,6 +383,9 @@ pub fn refresh(
 pub fn refresh_presentation(scrolled: &gtk::ScrolledWindow, connection: &Connection) {
     let appearance = settings::album_appearance(connection);
     let layout = settings::album_layout(connection);
+    if let Some(content) = find_descendant_with_css_class(scrolled.upcast_ref(), "albums-index-content") {
+        content.set_margin_bottom(if layout == settings::AlbumLayout::CoverFlow { 0 } else { 32 });
+    }
     if let Some(choice) = find_descendant_with_css_class(scrolled.upcast_ref(), "albums-layout")
         .and_then(|widget| widget.downcast::<gtk::DropDown>().ok()) {
         if choice.selected() != layout.index() { choice.set_selected(layout.index()); }

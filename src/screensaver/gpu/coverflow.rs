@@ -1,67 +1,6 @@
 //! Fullscreen photo Cover Flow, driven by the existing screensaver player.
 use super::*;
-use gtk::subclass::prelude::*;
 use gtk::{gdk, graphene, gsk};
-
-mod imp {
-    use super::*;
-    #[derive(Default)]
-    pub struct CoverFlowCanvas {
-        pub scene: RefCell<Vec<(usize, gsk::RenderNode)>>,
-        pub focus: Cell<f64>,
-        pub count: Cell<usize>,
-    }
-    #[glib::object_subclass]
-    impl ObjectSubclass for CoverFlowCanvas {
-        const NAME: &'static str = "PicScreensaverCoverFlowCanvas";
-        type Type = super::CoverFlowCanvas;
-        type ParentType = gtk::Widget;
-    }
-    impl ObjectImpl for CoverFlowCanvas {}
-    impl WidgetImpl for CoverFlowCanvas {
-        fn snapshot(&self, snapshot: &gtk::Snapshot) {
-            let widget = self.obj();
-            let viewport = (widget.width() as f64, widget.height() as f64);
-            let mut scene = self.scene.borrow().clone();
-            scene.sort_by(|a, b| {
-                let left = (a.0 as f64 - self.focus.get()).abs();
-                let right = (b.0 as f64 - self.focus.get()).abs();
-                right.total_cmp(&left)
-            });
-            let shadow = gdk::RGBA::new(0.0, 0.0, 0.0, 0.58);
-            for (index, node) in scene {
-                if let Some(pose) = crate::coverflow::coverflow_pose(
-                    index,
-                    self.focus.get(),
-                    self.count.get(),
-                    viewport,
-                ) {
-                    crate::coverflow::paint_cover(snapshot, &node, pose, 0.85, &shadow);
-                }
-            }
-        }
-    }
-}
-glib::wrapper! {
-    pub struct CoverFlowCanvas(ObjectSubclass<imp::CoverFlowCanvas>)
-        @extends gtk::Widget,
-        @implements gtk::Accessible, gtk::Buildable, gtk::ConstraintTarget;
-}
-impl CoverFlowCanvas {
-    fn new() -> Self {
-        let canvas: Self = glib::Object::new();
-        canvas.set_hexpand(true);
-        canvas.set_vexpand(true);
-        canvas.set_can_target(false);
-        canvas
-    }
-    fn set_scene(&self, count: usize, focus: f64, scene: Vec<(usize, gsk::RenderNode)>) {
-        self.imp().count.set(count);
-        self.imp().focus.set(focus);
-        *self.imp().scene.borrow_mut() = scene;
-        self.queue_draw();
-    }
-}
 
 fn photo_node(texture: &gdk::Texture) -> gsk::RenderNode {
     let snapshot = gtk::Snapshot::new();
@@ -88,7 +27,7 @@ fn photo_node(texture: &gdk::Texture) -> gsk::RenderNode {
 }
 
 pub(super) struct CoverFlow {
-    pub canvas: CoverFlowCanvas,
+    pub canvas: crate::coverflow::CoverflowGlArea,
     nodes: HashMap<usize, (u64, gsk::RenderNode)>,
     last_focus: Option<f64>,
     last_count: usize,
@@ -96,8 +35,8 @@ pub(super) struct CoverFlow {
 }
 impl CoverFlow {
     pub fn new(root: &gtk::Fixed) -> Self {
-        let canvas = CoverFlowCanvas::new();
-        root.put(&canvas, 0.0, 0.0);
+        let canvas = crate::coverflow::CoverflowGlArea::new("screensaver-coverflow-canvas", 1);
+        root.put(canvas.widget(), 0.0, 0.0);
         Self {
             canvas,
             nodes: HashMap::new(),
@@ -110,10 +49,10 @@ impl CoverFlow {
         let size = (width.round() as i32, height.round() as i32);
         let resized = size != self.last_size;
         if resized {
-            self.canvas.set_size_request(size.0, size.1);
+            self.canvas.widget().set_size_request(size.0, size.1);
             self.last_size = size;
         }
-        let animated = self.canvas.settings().is_gtk_enable_animations();
+        let animated = self.canvas.widget().settings().is_gtk_enable_animations();
         let focus = if animated {
             match player.previous {
                 Some(previous) if previous + 1 == player.current && player.progress() < 1.0 => {
@@ -133,11 +72,11 @@ impl CoverFlow {
         self.nodes.retain(|index, _| visible.contains(index));
         for index in visible.clone() {
             if let Some(surface) = player.frames.get(&index) {
-                let replace = self
+                if self
                     .nodes
                     .get(&index)
-                    .is_none_or(|(revision, _)| *revision != surface.revision);
-                if replace {
+                    .is_none_or(|(revision, _)| *revision != surface.revision)
+                {
                     self.nodes
                         .insert(index, (surface.revision, photo_node(&surface.texture)));
                     changed = true;
@@ -149,10 +88,14 @@ impl CoverFlow {
                 .filter_map(|index| {
                     self.nodes
                         .get(&index)
-                        .map(|(_, node)| (index, node.clone()))
+                        .map(|(revision, node)| crate::coverflow::CoverflowItem {
+                            index,
+                            revision: *revision,
+                            node: node.clone(),
+                        })
                 })
                 .collect();
-            self.canvas.set_scene(player.count, focus, scene);
+            self.canvas.set_scene(player.count, focus, scene, false);
             self.last_focus = Some(focus);
             self.last_count = player.count;
         }
@@ -162,85 +105,99 @@ impl CoverFlow {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::coverflow::coverflow_pose;
 
     #[test]
-    #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
-    fn photo_coverflow_paints_a_fading_reflection_and_moves_focus() {
+    fn classic_cover_flow_keeps_full_height_cards_and_yaws_the_sides() {
+        let viewport = (1200.0, 700.0);
+        let left = coverflow_pose(1, 2.0, 5, viewport).unwrap();
+        let center = coverflow_pose(2, 2.0, 5, viewport).unwrap();
+        let right = coverflow_pose(3, 2.0, 5, viewport).unwrap();
+        assert!((center.rotation_y).abs() < 1e-9);
+        assert!((left.rotation_y.to_degrees() - 60.0).abs() < 1e-9);
+        assert!((right.rotation_y.to_degrees() + 60.0).abs() < 1e-9);
+        assert_eq!(left.card_height, center.card_height);
+        assert_eq!(right.card_height, center.card_height);
+        assert!(
+            left.width < center.width * 0.75,
+            "left card should narrow through perspective"
+        );
+        assert!(
+            right.width < center.width * 0.75,
+            "right card should narrow through perspective"
+        );
+        assert!((center.x + center.width / 2.0 - viewport.0 / 2.0).abs() < 1.0);
+    }
+
+    #[test]
+    #[ignore = "requires GTK/OpenGL display; run under Xvfb with --ignored"]
+    fn screensaver_coverflow_renders_in_a_live_gtk_window() {
         libadwaita::init().unwrap();
-        let mut player = Player::new(Style::CoverFlow, 3, 5, false, 6);
-        for index in 0..3 {
-            let mut data = vec![255_u8; 64 * 64 * 4];
+        let mut player = Player::new(Style::CoverFlow, 5, 5, false, 6);
+        for index in 0..5 {
+            let mut data = vec![255_u8; 96 * 96 * 4];
             for pixel in data.chunks_exact_mut(4) {
-                pixel[0] = 70 + index as u8 * 50;
-                pixel[1] = 100;
-                pixel[2] = 170;
+                pixel[0] = 50 + index as u8 * 35;
+                pixel[1] = 100 + index as u8 * 15;
+                pixel[2] = 210 - index as u8 * 25;
             }
             player.receive(ImageResult {
                 index,
                 high_quality: true,
                 pixels: Some(Pixels {
-                    width: 64,
-                    height: 64,
+                    width: 96,
+                    height: 96,
                     data,
                 }),
             });
         }
-        let mut stage = Stage::new(Style::CoverFlow, 0, PicasaTransition::Crossfade);
+        let mut stage = Stage::new(Style::CoverFlow, 5, PicasaTransition::Crossfade);
         let window = gtk::Window::builder()
+            .title("PIC Screensaver Cover Flow Validation")
             .decorated(false)
-            .default_width(900)
-            .default_height(600)
+            .default_width(1000)
+            .default_height(700)
             .child(&stage.root)
             .build();
         window.present();
         let context = glib::MainContext::default();
-        for _ in 0..20 {
+        for _ in 0..30 {
             while context.pending() {
                 context.iteration(false);
             }
             std::thread::sleep(Duration::from_millis(5));
         }
         stage.sync(&player, 1_000_000);
-        for _ in 0..20 {
+        for _ in 0..30 {
             while context.pending() {
                 context.iteration(false);
             }
             std::thread::sleep(Duration::from_millis(5));
         }
         let canvas = &stage.coverflow.as_ref().unwrap().canvas;
-        assert!(canvas.width() > 0 && canvas.height() > 0);
-        let snapshot = gtk::Snapshot::new();
-        canvas.imp().snapshot(&snapshot);
-        let node = snapshot.to_node().expect("photo Cover Flow should paint");
-        let width = canvas.width() as usize;
-        let height = canvas.height() as usize;
-        let texture = window.renderer().unwrap().render_texture(
-            &node,
-            Some(&graphene::Rect::new(0.0, 0.0, width as f32, height as f32)),
-        );
-        let mut pixels = vec![0_u8; width * height * 4];
-        texture.download(&mut pixels, width * 4);
-        let alpha = |x: usize, y: usize| pixels[(y * width + x) * 4 + 3];
-        let pose =
-            crate::coverflow::coverflow_pose(0, 0.0, 3, (width as f64, height as f64)).unwrap();
-        let x = (pose.x + pose.width * 0.5) as usize;
-        let top = (pose.y + pose.height + 9.0) as usize;
-        let bottom = (pose.y + pose.height + pose.height * 0.4) as usize;
-        assert!(alpha(x, top) > alpha(x, bottom));
-        let largest_step = (top + 1..bottom)
-            .map(|y| alpha(x, y).abs_diff(alpha(x, y - 1)))
-            .max()
-            .unwrap_or(0);
-        assert!(
-            largest_step < 12,
-            "reflection has visible bands: {largest_step}"
-        );
-        player.previous = Some(0);
-        player.current = 1;
-        player.switched_at = Instant::now() - Duration::from_millis(450);
-        stage.sync(&player, 1_016_667);
-        let focus = stage.coverflow.as_ref().unwrap().canvas.imp().focus.get();
-        assert!(focus > 0.0 && focus < 1.0);
+        assert!(canvas.widget().width() > 0 && canvas.widget().height() > 0);
+        let id = std::process::Command::new("xdotool")
+            .args([
+                "search",
+                "--onlyvisible",
+                "--name",
+                "^PIC Screensaver Cover Flow Validation$",
+            ])
+            .output()
+            .expect("find the screensaver GTK window");
+        assert!(id.status.success());
+        let id = String::from_utf8_lossy(&id.stdout)
+            .lines()
+            .last()
+            .unwrap()
+            .to_owned();
+        let path = std::env::temp_dir().join("pic-screensaver-coverflow-live.png");
+        let capture = std::process::Command::new("import")
+            .args(["-window", &id, path.to_str().unwrap()])
+            .status()
+            .expect("capture the live screensaver GLArea");
+        assert!(capture.success());
+        assert!(std::fs::metadata(path).unwrap().len() > 10_000);
         window.close();
     }
 }

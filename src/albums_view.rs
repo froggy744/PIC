@@ -235,19 +235,16 @@ mod tests {
     }
 
     fn save_album_snapshot(window: &gtk::Window, path: &Path) {
-        let snapshot = gtk::Snapshot::new();
-        gtk::WidgetPaintable::new(Some(window)).snapshot(
-            &snapshot,
-            window.width() as f64,
-            window.height() as f64,
-        );
-        let node = snapshot.to_node().expect("album page snapshot");
-        window
-            .renderer()
-            .expect("GTK window renderer")
-            .render_texture(&node, None)
-            .save_to_png(path)
-            .unwrap();
+        let id = std::process::Command::new("xdotool")
+            .args(["search", "--onlyvisible", "--name", "^PIC Cover Flow Wheel Validation$"])
+            .output().expect("find the actual GTK test window");
+        assert!(id.status.success(), "could not find the live GTK window");
+        let id = String::from_utf8_lossy(&id.stdout).lines().last().unwrap().to_owned();
+        let capture = std::process::Command::new("import")
+            .args(["-window", &id, path.to_str().unwrap()]).status()
+            .expect("capture the actual GTK window, including its GLArea");
+        assert!(capture.success(), "ImageMagick could not capture the GTK window");
+        assert!(window.width() > 0);
     }
 
     #[test]

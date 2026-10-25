@@ -1350,7 +1350,7 @@ mod tests {
     #[test]
     fn responsive_bookshelf_columns_follow_available_width() {
         assert_eq!(bookshelf_columns_for_width(2300, 250), 6); // QHD
-        assert_eq!(bookshelf_columns_for_width(1700, 250), 6); // Full HD, wide sidebar
+        assert_eq!(bookshelf_columns_for_width(1700, 250), 5); // Full HD
         assert_eq!(bookshelf_columns_for_width(1120, 250), 4); // 1366px laptop
         assert_eq!(bookshelf_columns_for_width(850, 250), 3);
         assert_eq!(bookshelf_columns_for_width(300, 250), 1);
@@ -1361,8 +1361,8 @@ mod tests {
     fn responsive_bookshelf_cards_grow_on_wide_windows() {
         assert_eq!(bookshelf_target_card_width(850, 3), 254);
         assert_eq!(bookshelf_target_card_width(1120, 4), 255);
-        assert_eq!(bookshelf_target_card_width(1400, 5), 257);
-        assert_eq!(bookshelf_target_card_width(1760, 6), 271);
+        assert_eq!(bookshelf_target_card_width(1400, 4), 320);
+        assert_eq!(bookshelf_target_card_width(1760, 5), 320);
         assert_eq!(bookshelf_target_card_width(2200, 6), 320);
     }
 

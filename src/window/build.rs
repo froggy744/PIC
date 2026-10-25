@@ -2708,22 +2708,26 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             // supersession. Reusing the original picture at full opacity would
             // visibly jump backward halfway through an earlier crossfade.
             let previous = active.borrow_mut().take();
-            let frozen = if let Some(ref previous) = previous {
-                let blended = composite_source.current_image();
-                if blended.intrinsic_width() > 1 && blended.intrinsic_height() > 1 {
-                    Some(blended)
+            let frozen = if layout_destination {
+                if let Some(ref previous) = previous {
+                    let blended = composite_source.current_image();
+                    if blended.intrinsic_width() > 1 && blended.intrinsic_height() > 1 {
+                        Some(blended)
+                    } else {
+                        previous.paintable().map(|image| image.current_image())
+                    }
+                } else if main_stack.is_mapped()
+                    && main_stack.width() > 1
+                    && main_stack.height() > 1
+                    && matches!(
+                        main_stack.visible_child_name().as_deref(),
+                        Some("photos" | "library" | "albums")
+                    )
+                {
+                    Some(source.current_image())
                 } else {
-                    previous.paintable().map(|image| image.current_image())
+                    None
                 }
-            } else if main_stack.is_mapped()
-                && main_stack.width() > 1
-                && main_stack.height() > 1
-                && matches!(
-                    main_stack.visible_child_name().as_deref(),
-                    Some("photos" | "library" | "albums")
-                )
-            {
-                Some(source.current_image())
             } else {
                 None
             };
@@ -2733,19 +2737,53 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             // GTK's animation setting also reflects the desktop's reduced-
             // motion preference. Do not create or retain transition pictures
             // when animations are disabled.
-            if gtk::Settings::default().is_some_and(|settings| {
-                !settings.property::<bool>("gtk-enable-animations")
-            }) {
+            if layout_destination
+                && gtk::Settings::default().is_some_and(|settings| {
+                    !settings.property::<bool>("gtk-enable-animations")
+                })
+            {
                 crate::nav_transition_trace!("stage=crossfade_skip reason=animations_disabled");
                 return;
             }
-            let Some(frozen) = frozen else {
-                return;
+            let outgoing = if layout_destination {
+                let Some(frozen) = frozen else {
+                    return;
+                };
+                if frozen.intrinsic_width() <= 1 || frozen.intrinsic_height() <= 1 {
+                    return;
+                }
+                gtk::Picture::for_paintable(&frozen)
+            } else {
+                // Keep the outgoing album or index from showing while its
+                // replacement is loading. The solid texture uses PIC's active
+                // theme surface color; Grid and Photo Wall rendering stay as-is.
+                let background = main_stack
+                    .style_context()
+                    .lookup_color("theme_bg_color")
+                    .or_else(|| main_stack.style_context().lookup_color("window_bg_color"))
+                    .unwrap_or_else(|| {
+                        if adw::StyleManager::default().is_dark() {
+                            gtk::gdk::RGBA::new(0.12, 0.12, 0.12, 1.0)
+                        } else {
+                            gtk::gdk::RGBA::new(0.97, 0.97, 0.97, 1.0)
+                        }
+                    });
+                let channel = |value: f32| (value.clamp(0.0, 1.0) * 255.0).round() as u8;
+                let pixels = glib::Bytes::from_owned(vec![
+                    channel(background.red()),
+                    channel(background.green()),
+                    channel(background.blue()),
+                    255,
+                ]);
+                let texture = gtk::gdk::MemoryTexture::new(
+                    1,
+                    1,
+                    gtk::gdk::MemoryFormat::R8g8b8a8,
+                    &pixels,
+                    4,
+                );
+                gtk::Picture::for_paintable(&texture)
             };
-            if frozen.intrinsic_width() <= 1 || frozen.intrinsic_height() <= 1 {
-                return;
-            }
-            let outgoing = gtk::Picture::for_paintable(&frozen);
             outgoing.set_content_fit(gtk::ContentFit::Fill);
             outgoing.set_hexpand(true);
             outgoing.set_vexpand(true);

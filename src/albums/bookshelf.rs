@@ -309,7 +309,9 @@ fn bookshelf_columns_for_width(width: i32, _card_width: i32) -> usize {
     let usable = (width - BOOKSHELF_SIDE_PADDING * 2).max(1);
     // Frame PNGs can request more than the nominal min width. Reserve a
     // generous physical slot so GTK does not compress them during reflow.
-    let pitch = BOOKSHELF_MIN_CARD_WIDTH.max(270) + BOOKSHELF_COLUMN_GAP;
+    // Book PNGs are wider than the nominal card minimum. Never allocate a
+    // slot narrower than a book's native width plus breathing room.
+    let pitch = BOOKSHELF_MIN_CARD_WIDTH.max(300) + BOOKSHELF_COLUMN_GAP;
     ((usable + BOOKSHELF_COLUMN_GAP) / pitch)
         .clamp(1, BOOKSHELF_MAX_COLUMNS as i32) as usize
 }
@@ -602,8 +604,9 @@ fn build_bookshelf_rows(
             slot.set_halign(gtk::Align::Fill);
             slot.set_valign(gtk::Align::Start);
             if let Some(card) = chunk.get(index) {
-                // Align the book and its reflection in the same centered slot;
-                // never stretch a sparse last row across the entire shelf.
+                // Prevent GtkBox allocation from squeezing the entire
+                // card/cover when a window crosses a column breakpoint.
+                slot.set_width_request(card.width_request().max(1));
                 card.set_halign(gtk::Align::Center);
                 slot.append(card);
             }

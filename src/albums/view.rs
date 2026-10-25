@@ -95,6 +95,14 @@ fn build_inner(
     header.append(&heading);
 
     let controls = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let layout = gtk::DropDown::from_strings(&["Grid", "Bookshelf", "Cover Flow"]);
+    layout.add_css_class("albums-layout");
+    layout.set_tooltip_text(Some("Album layout"));
+    layout.set_selected(settings::album_layout(&connection.borrow()).index());
+    let layout_label = gtk::Label::new(Some("Layout"));
+    layout_label.set_mnemonic_widget(Some(&layout));
+    controls.append(&layout_label);
+    controls.append(&layout);
     let sort =
         gtk::DropDown::from_strings(&["Name A–Z", "Name Z–A", "Newest first", "Most photos"]);
     sort.add_css_class("albums-sort");
@@ -142,8 +150,17 @@ fn build_inner(
     bookshelf_rows.set_visible(false);
     bookshelf_rows.add_css_class("albums-bookshelf-rows");
 
+    let coverflow = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    coverflow.add_css_class("albums-coverflow-host");
+    coverflow.set_hexpand(true);
+    coverflow.set_vexpand(true);
+    coverflow.set_visible(false);
+
     let bookshelf_runtime = BookshelfRuntime {
         rows: bookshelf_rows.clone(),
+        coverflow: coverflow.clone(),
+        focused_album_id: Rc::new(Cell::new(None)),
+        focused_index: Rc::new(Cell::new(0)),
         last_columns: Rc::new(Cell::new(0)),
         last_card_width: Rc::new(Cell::new(0)),
         selected_theme: Rc::new(RefCell::new(None)),
@@ -156,7 +173,27 @@ fn build_inner(
 
     content.append(&cards);
     content.append(&bookshelf_rows);
+    content.append(&coverflow);
     scrolled.set_child(Some(&content));
+    {
+        let weak_view = scrolled.downgrade();
+        let connection = connection.clone();
+        let on_album = on_album.clone();
+        let changed = on_appearance_changed.clone();
+        layout.connect_selected_notify(move |choice| {
+            let chosen = settings::AlbumLayout::from_index(choice.selected());
+            if settings::album_layout(&connection.borrow()) == chosen { return; }
+            if let Err(error) = settings::set_album_layout(&connection.borrow(), chosen) {
+                eprintln!("Could not save album layout: {error}");
+                return;
+            }
+            if let Some(view) = weak_view.upgrade() {
+                let albums = db::albums(&connection.borrow()).unwrap_or_default();
+                refresh(&view, &albums, connection.clone(), thumbnail_width,
+                    on_album.clone(), changed.clone());
+            }
+        });
+    }
     for (control, key) in [(sort, ALBUM_SORT_KEY), (size, ALBUM_SIZE_KEY)] {
         let weak_view = scrolled.downgrade();
         let connection = connection.clone();
@@ -344,9 +381,14 @@ pub fn refresh(
 
 pub fn refresh_presentation(scrolled: &gtk::ScrolledWindow, connection: &Connection) {
     let appearance = settings::album_appearance(connection);
+    let layout = settings::album_layout(connection);
+    if let Some(choice) = find_descendant_with_css_class(scrolled.upcast_ref(), "albums-layout")
+        .and_then(|widget| widget.downcast::<gtk::DropDown>().ok()) {
+        if choice.selected() != layout.index() { choice.set_selected(layout.index()); }
+    }
     for class in ["albums-size", "albums-size-label"] {
         if let Some(widget) = find_descendant_with_css_class(scrolled.upcast_ref(), class) {
-            widget.set_visible(!appearance.bookshelf_enabled && !appearance.covers_enabled);
+            widget.set_visible(layout == settings::AlbumLayout::Grid && !appearance.covers_enabled);
         }
     }
     remove_bookshelf_background_classes(scrolled.upcast_ref());
@@ -354,7 +396,8 @@ pub fn refresh_presentation(scrolled: &gtk::ScrolledWindow, connection: &Connect
         remove_bookshelf_background_classes(&cards);
     }
 
-    let has_theme = appearance.bookshelf_enabled && bookshelf_background_count() > 0;
+    let has_theme = layout == settings::AlbumLayout::Bookshelf
+        && appearance.bookshelf_enabled && bookshelf_background_count() > 0;
     if has_theme {
         scrolled.add_css_class("albums-bookshelf");
     } else {
@@ -367,9 +410,9 @@ pub fn refresh_presentation(scrolled: &gtk::ScrolledWindow, connection: &Connect
     // offset set of shelves in the gaps above and below the album rows.
     if let Some(rows) = find_descendant_with_css_class(scrolled.upcast_ref(), "albums-bookshelf-rows") {
         remove_bookshelf_background_classes(&rows);
-        if let Some(background_class) = bookshelf_background_css_class(appearance) {
+        if has_theme { if let Some(background_class) = bookshelf_background_css_class(appearance) {
             rows.add_css_class(&background_class);
-        }
+        }}
     } else if let Some(background_class) = bookshelf_background_css_class(appearance) {
         scrolled.add_css_class(&background_class);
     }
@@ -436,6 +479,7 @@ fn populate(
 
 
     let appearance = settings::album_appearance(&connection.borrow());
+    let layout = settings::album_layout(&connection.borrow());
     let fit_whole_photo = settings::saved_bool(
         &connection.borrow(),
         crate::db::THUMBNAIL_FIT_WHOLE_PHOTO_SETTING_KEY,
@@ -446,8 +490,8 @@ fn populate(
         .as_ref()
         .filter(|theme| theme.kind == BookshelfThemeKind::Row)
         .cloned();
-    let responsive_bookshelf = row_theme.is_some();
-    let standard = !appearance.bookshelf_enabled && !appearance.covers_enabled;
+    let responsive_bookshelf = layout == settings::AlbumLayout::Bookshelf && row_theme.is_some();
+    let standard = layout == settings::AlbumLayout::Grid && !appearance.covers_enabled;
     let preferred_width =
         [180, 240, 280][index_setting(&connection.borrow(), ALBUM_SIZE_KEY, 1, 2) as usize];
     bookshelf_runtime
@@ -478,10 +522,11 @@ fn populate(
         }
     });
 
-    cards.set_visible(!responsive_bookshelf);
+    cards.set_visible(layout == settings::AlbumLayout::Grid);
     cards.set_vexpand(false);
     cards.set_valign(gtk::Align::Start);
     bookshelf_runtime.rows.set_visible(responsive_bookshelf);
+    bookshelf_runtime.coverflow.set_visible(layout == settings::AlbumLayout::CoverFlow);
     bookshelf_runtime.selected_theme.replace(row_theme.clone());
 
     let frames: Vec<FrameAsset> = album_frame_paths_for_appearance(
@@ -502,6 +547,16 @@ fn populate(
             .collect();
     crate::startup_trace::mark("albums_frames_loaded", Some(populate_started));
     let framed = !frames.is_empty();
+    if layout == settings::AlbumLayout::CoverFlow {
+        clear_box(&bookshelf_runtime.coverflow);
+        let focus = restored_album_focus(&albums,
+            bookshelf_runtime.focused_album_id.get(), bookshelf_runtime.focused_index.get());
+        let flow = build_album_coverflow(&albums, connection.clone(), &frames,
+            appearance, fit_whole_photo, focus, bookshelf_runtime.focused_album_id.clone(),
+            bookshelf_runtime.focused_index.clone(), on_album);
+        bookshelf_runtime.coverflow.append(&flow);
+        return;
+    }
     cards.set_row_spacing(if standard {
         32
     } else if framed {

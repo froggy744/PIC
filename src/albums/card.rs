@@ -25,6 +25,7 @@ impl PhotoOpening {
 
 /// A discovered cover frame with its decoded art and the opening that art
 /// exposes, so every design keeps its own photo geometry.
+#[derive(Clone)]
 struct FrameAsset {
     path: PathBuf,
     texture: gtk::gdk::Texture,

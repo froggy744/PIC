@@ -137,6 +137,15 @@ and bookshelf artwork are discovered independently under `images/theme/`.
 See the [template README](theme-template/README.md#album-cover-and-bookshelf-assets)
 for current asset paths, row geometry and refresh guidance.
 
+The Albums page has Grid, Bookshelf and Cover Flow layouts. Cover Flow reflects
+the composited album cover, including its selected frame. Bookshelf row themes
+may set `reflection_strength=0.0` through `1.0` in their `theme.conf`; zero
+disables the effect, and missing or invalid values default to zero. The app
+clips the reflection to the space below `surface_y` and keeps album labels in
+front of it. The shipped marble, darkwood and single row themes enable it.
+Appearance themes can style `.albums-coverflow`, `.albums-coverflow-name`,
+`.albums-coverflow-count`, and `.albums-bookshelf-reflection` using GTK CSS.
+
 ## V1 theme gallery and screenshots
 
 PIC V1 includes multiple distinctive appearance choices, from restrained desktop palettes to more expressive themes. Themes change the visual treatment of bars, surfaces, buttons, selected rows and editor controls; album-cover and bookshelf artwork can be configured separately. The [community theme template](theme-template/README.md) explains custom CSS and asset discovery.

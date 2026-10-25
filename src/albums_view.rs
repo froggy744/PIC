@@ -34,6 +34,7 @@ const FRAME_OPENING_KEY: &str = "picasa-album-frame-opening";
 // Album UI implementation is split by responsibility but included into this
 // module so the refactor does not change callback visibility or state wiring.
 include!("albums/bookshelf.rs");
+include!("albums/coverflow.rs");
 include!("albums/card.rs");
 include!("albums/actions.rs");
 include!("albums/view.rs");
@@ -2138,5 +2139,410 @@ mod tests {
             selected.insert(index);
         }
         assert!(selected.len() > 1);
+    }
+
+    #[test]
+    fn coverflow_visible_window_is_bounded_and_focus_survives_reorder() {
+        assert_eq!(visible_album_indices(0, 1000), 0..5);
+        assert_eq!(visible_album_indices(500, 1000), 496..505);
+        assert_eq!(visible_album_indices(999, 1000), 995..1000);
+        assert_eq!(visible_album_indices(0, 0), 0..0);
+        let albums = vec![album(3), album(7), album(11)];
+        assert_eq!(restored_album_focus(&albums, Some(7), 0), 1);
+        assert_eq!(restored_album_focus(&albums, Some(9), 2), 2);
+    }
+
+    #[test]
+    fn bookshelf_reflection_strength_is_bounded_and_uses_surface_room() {
+        let directory = std::env::temp_dir().join(format!(
+            "pic-reflection-theme-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::write(directory.join("row.png"), []).unwrap();
+        std::fs::write(
+            directory.join("theme.conf"),
+            "row_height=288\nsurface_y=240\nreflection_strength=0.35\n",
+        )
+        .unwrap();
+        let theme = bookshelf_themes_in(directory.parent().unwrap())
+            .into_iter()
+            .find(|theme| theme.image_path == directory.join("row.png"))
+            .unwrap();
+        assert_eq!(theme.reflection_strength, 35);
+        assert_eq!(bookshelf_reflection_height(&theme), 44);
+        std::fs::write(
+            directory.join("theme.conf"),
+            "row_height=288\nsurface_y=284\nreflection_strength=2.0\n",
+        )
+        .unwrap();
+        let theme = bookshelf_themes_in(directory.parent().unwrap())
+            .into_iter()
+            .find(|theme| theme.image_path == directory.join("row.png"))
+            .unwrap();
+        assert_eq!(theme.reflection_strength, 0);
+        assert_eq!(bookshelf_reflection_height(&theme), 0);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn shipped_light_and_dark_shelves_enable_reflection() {
+        let themes = bookshelf_themes_in(Path::new(BOOKSHELF_THEME_DIRECTORY));
+        for id in ["marble", "darkwood"] {
+            let theme = themes.iter().find(|theme| theme.id == id).unwrap();
+            assert!(theme.reflection_strength > 0);
+            assert!(bookshelf_reflection_height(theme) > 0);
+        }
+    }
+
+    #[test]
+    #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+    fn bookshelf_reflection_fades_below_a_live_album_cover() {
+        gtk::init().unwrap();
+        let directory = std::env::temp_dir().join(format!(
+            "pic-shelf-reflection-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        let photo_path = directory.join("red.png");
+        image::RgbImage::from_pixel(120, 80, image::Rgb([240, 30, 20]))
+            .save(&photo_path)
+            .unwrap();
+        let connection = Rc::new(RefCell::new(
+            db::open(&directory.join("library.db")).unwrap(),
+        ));
+        let album = db::create_album(&connection.borrow(), "Red").unwrap();
+        connection
+            .borrow()
+            .execute(
+                "INSERT INTO photos (path) VALUES (?1)",
+                [photo_path.to_string_lossy().as_ref()],
+            )
+            .unwrap();
+        let id = connection.borrow().last_insert_rowid();
+        db::add_photos_to_album(&connection.borrow(), album.id, &[id]).unwrap();
+        db::set_album_cover_photo(&connection.borrow(), album.id, id).unwrap();
+        settings::set_album_layout(&connection.borrow(), settings::AlbumLayout::Bookshelf).unwrap();
+        let themes = bookshelf_themes_in(Path::new(BOOKSHELF_THEME_DIRECTORY));
+        let marble = themes
+            .iter()
+            .position(|theme| theme.id == "marble")
+            .unwrap();
+        db::set_setting(
+            &connection.borrow(),
+            settings::ALBUM_BOOKSHELF_BACKGROUND_SETTING_KEY,
+            &marble.to_string(),
+        )
+        .unwrap();
+        let albums = db::albums(&connection.borrow()).unwrap();
+        let view = build(
+            &albums,
+            connection.clone(),
+            136,
+            Rc::new(|_| {}),
+            Rc::new(|| {}),
+            Rc::new(|| {}),
+        );
+        let window = gtk::Window::builder()
+            .default_width(1000)
+            .default_height(780)
+            .child(&view)
+            .build();
+        window.present();
+        settle_gtk_layout();
+        let reflection =
+            find_descendant_with_css_class(view.upcast_ref(), "albums-bookshelf-reflection")
+                .expect("reflection missing");
+        assert!(reflection.height() > 15);
+        assert!(reflection.is_mapped());
+        let reflection_impl = reflection.clone().downcast::<ShelfReflection>().unwrap();
+        let snapshot = gtk::Snapshot::new();
+        reflection_impl.imp().snapshot(&snapshot);
+        let node = snapshot.to_node().expect("reflection should paint");
+        let texture = window.renderer().unwrap().render_texture(&node, None);
+        let width = texture.width() as usize;
+        let height = texture.height() as usize;
+        let mut pixels = vec![0_u8; width * height * 4];
+        texture.download(&mut pixels, width * 4);
+        let alpha = |x: usize, y: usize| pixels[(y * width + x) * 4 + 3];
+        assert!(alpha(width / 2, 2) > alpha(width / 2, height - 3));
+        let marble_alpha = alpha(width / 2, 2);
+        let darkwood = themes
+            .iter()
+            .position(|theme| theme.id == "darkwood")
+            .unwrap();
+        db::set_setting(
+            &connection.borrow(),
+            settings::ALBUM_BOOKSHELF_BACKGROUND_SETTING_KEY,
+            &darkwood.to_string(),
+        )
+        .unwrap();
+        refresh(
+            &view,
+            &albums,
+            connection.clone(),
+            136,
+            Rc::new(|_| {}),
+            Rc::new(|| {}),
+        );
+        settle_gtk_layout();
+        let darker =
+            find_descendant_with_css_class(view.upcast_ref(), "albums-bookshelf-reflection")
+                .unwrap()
+                .downcast::<ShelfReflection>()
+                .unwrap();
+        let snapshot = gtk::Snapshot::new();
+        darker.imp().snapshot(&snapshot);
+        let node = snapshot
+            .to_node()
+            .expect("new shelf reflection should paint");
+        let texture = window.renderer().unwrap().render_texture(&node, None);
+        let width = texture.width() as usize;
+        let mut pixels = vec![0_u8; width * texture.height() as usize * 4];
+        texture.download(&mut pixels, width * 4);
+        assert!(pixels[(2 * width + width / 2) * 4 + 3] < marble_alpha);
+        window.close();
+        drop(view);
+        drop(connection);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+    fn album_layout_control_shows_coverflow_and_persists_it() {
+        gtk::init().unwrap();
+        let path = std::env::temp_dir().join(format!(
+            "pic-coverflow-layout-{}-{}.db",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let connection = Rc::new(RefCell::new(db::open(&path).unwrap()));
+        let mut cached_thumbnails = Vec::new();
+        let mut photo_files = Vec::new();
+        for index in 0..7 {
+            let name = format!("Album {}", char::from(b'A' + index));
+            let album = db::create_album(&connection.borrow(), &name).unwrap();
+            let photo_path = path.with_file_name(format!("cover-{index}.png"));
+            let photo = image::RgbImage::from_fn(320, 320, |x, y| {
+                if x < 12 || y < 12 || x >= 308 || y >= 308 {
+                    image::Rgb([245, 245, 245])
+                } else if x < 54 && y < 54 {
+                    image::Rgb([255, 220, 35])
+                } else {
+                    image::Rgb([
+                        35 + index as u8 * 25,
+                        80 + index as u8 * 13,
+                        190 - index as u8 * 17,
+                    ])
+                }
+            });
+            photo.save(&photo_path).unwrap();
+            photo_files.push(photo_path.clone());
+            let size_bytes = std::fs::metadata(&photo_path).unwrap().len() as i64;
+            connection
+                .borrow()
+                .execute(
+                    "INSERT INTO photos(path, width, height, size_bytes, mtime, added_at) \
+                 VALUES (?1, 320, 320, ?2, 0, ?3)",
+                    rusqlite::params![photo_path.to_string_lossy().as_ref(), size_bytes, index],
+                )
+                .unwrap();
+            let photo_id = connection.borrow().last_insert_rowid();
+            db::add_photos_to_album(&connection.borrow(), album.id, &[photo_id]).unwrap();
+            db::set_album_cover_photo(&connection.borrow(), album.id, photo_id).unwrap();
+            let cache_path = crate::thumbnail::cache_path(
+                &photo_path.to_string_lossy(),
+                Some(0),
+                Some(size_bytes),
+            )
+            .unwrap();
+            std::fs::create_dir_all(cache_path.parent().unwrap()).unwrap();
+            std::fs::copy(&photo_path, &cache_path).unwrap();
+            cached_thumbnails.push(cache_path);
+        }
+        let albums = db::albums(&connection.borrow()).unwrap();
+        let view = build(
+            &albums,
+            connection.clone(),
+            136,
+            Rc::new(|_| {}),
+            Rc::new(|| {}),
+            Rc::new(|| {}),
+        );
+        let screenshot_dir = std::env::temp_dir().join("pic-coverflow-gui-validation");
+        std::fs::create_dir_all(&screenshot_dir).unwrap();
+        let window = gtk::Window::builder()
+            .title("PIC Cover Flow Wheel Validation")
+            .decorated(false)
+            .default_width(1200)
+            .default_height(850)
+            .child(&view)
+            .build();
+        window.present();
+        settle_gtk_layout();
+        settle_gtk_layout();
+        let layout = find_descendant_with_css_class(view.upcast_ref(), "albums-layout")
+            .unwrap()
+            .downcast::<gtk::DropDown>()
+            .unwrap();
+        layout.set_selected(2);
+        settle_gtk_layout();
+        assert_eq!(
+            settings::album_layout(&connection.borrow()),
+            settings::AlbumLayout::CoverFlow
+        );
+        let flow = find_descendant_with_css_class(view.upcast_ref(), "albums-coverflow-canvas")
+            .expect("Cover Flow canvas should be mounted");
+        assert!(flow.is_visible());
+        let name = find_descendant_with_css_class(view.upcast_ref(), "albums-coverflow-name")
+            .unwrap()
+            .downcast::<gtk::Label>()
+            .unwrap();
+        assert_eq!(name.text().as_str(), "Album A");
+        let canvas_bounds = flow.compute_bounds(&window).unwrap();
+        let title_bounds = name.compute_bounds(&window).unwrap();
+        assert!(
+            ((canvas_bounds.x() + canvas_bounds.width() / 2.0)
+                - (title_bounds.x() + title_bounds.width() / 2.0))
+                .abs()
+                < 2.0,
+            "focused album title is centered below the Cover Flow"
+        );
+        assert!(
+            title_bounds.y() >= canvas_bounds.y() + canvas_bounds.height(),
+            "focused album title sits below the reflections"
+        );
+        save_album_snapshot(&window, &screenshot_dir.join("01-focus-a-wide.png"));
+
+        let bounds = flow.compute_bounds(&window).unwrap();
+        let x = (bounds.x() + bounds.width() / 2.0).round() as i32;
+        let y = (bounds.y() + 220.0).round() as i32;
+        let window_id = std::process::Command::new("xdotool")
+            .args([
+                "search",
+                "--onlyvisible",
+                "--name",
+                "^PIC Cover Flow Wheel Validation$",
+            ])
+            .output()
+            .expect("xdotool is required for the GTK wheel interaction test");
+        assert!(window_id.status.success(), "could not find the test window");
+        let window_id = String::from_utf8_lossy(&window_id.stdout)
+            .lines()
+            .last()
+            .expect("xdotool should return a window ID")
+            .to_string();
+        let wheel = |button: &str| {
+            let output = std::process::Command::new("xdotool")
+                .args([
+                    "mousemove",
+                    "--window",
+                    &window_id,
+                    &x.to_string(),
+                    &y.to_string(),
+                    "click",
+                    button,
+                ])
+                .output()
+                .expect("send mouse wheel event");
+            assert!(output.status.success(), "xdotool mouse wheel failed");
+            let context = gtk::glib::MainContext::default();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_millis(700);
+            while std::time::Instant::now() < deadline {
+                while context.pending() {
+                    context.iteration(false);
+                }
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+        };
+        wheel("5");
+        assert_eq!(
+            name.text().as_str(),
+            "Album B",
+            "wheel down advances album focus"
+        );
+        save_album_snapshot(&window, &screenshot_dir.join("02-focus-b-wheel-down.png"));
+        wheel("7");
+        assert_eq!(
+            name.text().as_str(),
+            "Album C",
+            "horizontal wheel advances album focus"
+        );
+        save_album_snapshot(&window, &screenshot_dir.join("03-focus-c-wheel-right.png"));
+        for index in 3..7 {
+            wheel("5");
+            let expected = format!("Album {}", char::from(b'A' + index));
+            assert_eq!(
+                name.text().as_str(),
+                expected,
+                "wheel down advances to {expected}"
+            );
+            save_album_snapshot(
+                &window,
+                &screenshot_dir.join(format!("focus-{}.png", char::from(b'A' + index))),
+            );
+        }
+        assert_eq!(name.text().as_str(), "Album G", "wheel stops at the final album");
+        for index in (0..6).rev() {
+            wheel("4");
+            let expected = format!("Album {}", char::from(b'A' + index));
+            assert_eq!(
+                name.text().as_str(),
+                expected,
+                "wheel up moves back to {expected}"
+            );
+        }
+        wheel("7");
+        assert_eq!(
+            name.text().as_str(),
+            "Album B",
+            "horizontal wheel moves album focus right"
+        );
+        save_album_snapshot(&window, &screenshot_dir.join("wheel-right.png"));
+        wheel("6");
+        assert_eq!(
+            name.text().as_str(),
+            "Album A",
+            "horizontal wheel moves album focus left"
+        );
+
+        let wide_canvas_width = flow.width();
+        let resized = std::process::Command::new("xdotool")
+            .args(["windowsize", &window_id, "760", "680"])
+            .status()
+            .expect("resize the GTK test window");
+        assert!(resized.success(), "xdotool could not resize the GTK window");
+        settle_gtk_layout();
+        settle_gtk_layout();
+        assert!(
+            flow.width() < wide_canvas_width,
+            "Cover Flow adapts to a narrower window"
+        );
+        save_album_snapshot(&window, &screenshot_dir.join("04-focus-a-narrow.png"));
+        window.close();
+        drop(view);
+        drop(connection);
+        for cache_path in cached_thumbnails {
+            let _ = std::fs::remove_file(cache_path);
+        }
+        for photo_file in photo_files {
+            let _ = std::fs::remove_file(photo_file);
+        }
+        std::fs::remove_file(path).unwrap();
+        eprintln!(
+            "Cover Flow visual validation screenshots: {}",
+            screenshot_dir.display()
+        );
     }
 }

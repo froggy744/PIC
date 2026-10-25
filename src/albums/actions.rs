@@ -304,6 +304,34 @@ fn show_context_menu(
     heading.add_css_class("heading");
     menu.append(&heading);
 
+    let current_layout = settings::album_layout(&connection.borrow());
+    for (label, layout) in [
+        ("Grid", settings::AlbumLayout::Grid),
+        ("Bookshelf Layout", settings::AlbumLayout::Bookshelf),
+        ("Cover Flow", settings::AlbumLayout::CoverFlow),
+    ] {
+        let button = gtk::Button::new();
+        button.add_css_class("flat");
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let mark = gtk::Image::from_icon_name("object-select-symbolic");
+        mark.set_visible(current_layout == layout);
+        mark.set_size_request(16, 16);
+        row.append(&mark);
+        row.append(&gtk::Label::new(Some(label)));
+        button.set_child(Some(&row));
+        let connection_for_layout = connection.clone();
+        let changed_for_layout = on_appearance_changed.clone();
+        let popover_for_layout = popover.clone();
+        button.connect_clicked(move |_| {
+            popover_for_layout.popdown();
+            if let Err(error) = settings::set_album_layout(&connection_for_layout.borrow(), layout) {
+                eprintln!("Could not save album layout: {error}");
+            } else { changed_for_layout(); }
+        });
+        menu.append(&button);
+    }
+    menu.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+
     for item in album_context_menu_items(appearance) {
         if matches!(
             item.action,

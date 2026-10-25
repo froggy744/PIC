@@ -43,7 +43,7 @@ Import from folders and supported cameras or SD cards; browse **SMB and NFS** sh
 Adjust light and colour, apply filters, crop and straighten, add overlays or text, and use Undo/Redo. PIC stores edits as **non-destructive recipes**; export creates a separate finished image. Compose **Grid, Mosaic and Smart AI** collages and enjoy your photos with the built-in screensaver.
 
 ### Make it yours
-Choose from appearance themes, customise the gallery, and explore album covers and bookshelf-style album presentation. PIC is built with **Rust + GTK4/libadwaita** for Linux.
+Choose from appearance themes, customise the gallery, and explore album covers in Grid, Bookshelf and Cover Flow layouts. The screensaver also offers a photo Cover Flow. PIC is built with **Rust + GTK4/libadwaita** for Linux.
 
 ![PIC V1 — theme-nord](screenshots/screenshots-V1/theme-nord.jpg)
 

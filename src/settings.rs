@@ -1439,6 +1439,7 @@ pub fn refresh_library_availability_stats(_connection: Rc<RefCell<Connection>>) 
 // Keep the original key so existing bookshelf preferences survive the theme expansion.
 pub(crate) const BOOKSHELF_SETTING_KEY: &str = "iphone-bookshelf-albums";
 pub(crate) const ALBUM_VIEW_STYLE_SETTING_KEY: &str = "albums-home-style";
+pub(crate) const ALBUM_LAYOUT_SETTING_KEY: &str = "albums-index-layout";
 pub(crate) const ALBUM_BOOKSHELF_ENABLED_SETTING_KEY: &str = "albums-bookshelf-enabled";
 pub(crate) const ALBUM_COVERS_ENABLED_SETTING_KEY: &str = "albums-covers-enabled";
 pub(crate) const ALBUM_BOOKSHELF_BACKGROUND_SETTING_KEY: &str = "albums-bookshelf-background";
@@ -1452,6 +1453,42 @@ pub(crate) struct AlbumAppearance {
     /// Shifts the design every album without its own frame is drawn with, so
     /// "Next Album Covers" advances the whole page by one design.
     pub cover_index: usize,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum AlbumLayout {
+    #[default]
+    Grid,
+    Bookshelf,
+    CoverFlow,
+}
+
+impl AlbumLayout {
+    pub(crate) fn index(self) -> u32 {
+        match self { Self::Grid => 0, Self::Bookshelf => 1, Self::CoverFlow => 2 }
+    }
+    pub(crate) fn from_index(index: u32) -> Self {
+        match index { 1 => Self::Bookshelf, 2 => Self::CoverFlow, _ => Self::Grid }
+    }
+    fn key(self) -> &'static str {
+        match self { Self::Grid => "grid", Self::Bookshelf => "bookshelf", Self::CoverFlow => "coverflow" }
+    }
+}
+
+pub(crate) fn album_layout(connection: &Connection) -> AlbumLayout {
+    match crate::db::setting(connection, ALBUM_LAYOUT_SETTING_KEY).ok().flatten().as_deref() {
+        Some("grid") => AlbumLayout::Grid,
+        Some("bookshelf") => AlbumLayout::Bookshelf,
+        Some("coverflow") => AlbumLayout::CoverFlow,
+        _ if album_appearance(connection).bookshelf_enabled => AlbumLayout::Bookshelf,
+        _ => AlbumLayout::Grid,
+    }
+}
+
+pub(crate) fn set_album_layout(connection: &Connection, layout: AlbumLayout) -> anyhow::Result<()> {
+    crate::db::set_setting(connection, ALBUM_LAYOUT_SETTING_KEY, layout.key())?;
+    if layout == AlbumLayout::Bookshelf { set_bookshelf_enabled(connection, true)?; }
+    Ok(())
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -2666,6 +2703,20 @@ mod tests {
                 .as_deref(),
             Some("219")
         );
+    }
+
+    #[test]
+    fn album_layout_persists_separately_from_bookshelf_appearance() {
+        use super::*;
+        use rusqlite::Connection;
+        let connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)").unwrap();
+        assert_eq!(album_layout(&connection), AlbumLayout::Grid);
+        set_bookshelf_enabled(&connection, true).unwrap();
+        assert_eq!(album_layout(&connection), AlbumLayout::Bookshelf);
+        set_album_layout(&connection, AlbumLayout::CoverFlow).unwrap();
+        assert_eq!(album_layout(&connection), AlbumLayout::CoverFlow);
+        assert!(album_appearance(&connection).bookshelf_enabled);
     }
 
 }

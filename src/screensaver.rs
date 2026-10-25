@@ -42,11 +42,11 @@ const PREFETCH: usize = 3;
 const HQ_PATIENCE: Duration = Duration::from_secs(3);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Style { Mosaic, Grid, PicturePile, Floating, IPhoto, Fade, Surprise, MatrixRain, MatrixKenBurns }
+enum Style { Mosaic, Grid, PicturePile, Floating, IPhoto, Fade, CoverFlow, Surprise, MatrixRain, MatrixKenBurns }
 impl Style {
-    const CHOICES: [Self; 9] = [
+    const CHOICES: [Self; 10] = [
         Self::Mosaic, Self::Grid, Self::PicturePile, Self::Floating,
-        Self::IPhoto, Self::Fade, Self::Surprise, Self::MatrixRain, Self::MatrixKenBurns,
+        Self::IPhoto, Self::Fade, Self::CoverFlow, Self::Surprise, Self::MatrixRain, Self::MatrixKenBurns,
     ];
     fn from_saved(v: &str) -> Self {
         match v {
@@ -55,6 +55,7 @@ impl Style {
             "floating" => Self::Floating,
             "iphoto" => Self::IPhoto,
             "fade" => Self::Fade,
+            "coverflow" => Self::CoverFlow,
             "surprise" => Self::Surprise,
             "matrix-rain" => Self::MatrixRain,
             "matrix-ken-burns" => Self::MatrixKenBurns,
@@ -66,6 +67,7 @@ impl Style {
             Self::Mosaic => "mosaic", Self::Grid => "grid",
             Self::PicturePile => "pile", Self::Floating => "floating",
             Self::IPhoto => "iphoto", Self::Fade => "fade",
+            Self::CoverFlow => "coverflow",
             Self::Surprise => "surprise",
             Self::MatrixRain => "matrix-rain",
             Self::MatrixKenBurns => "matrix-ken-burns",
@@ -76,10 +78,10 @@ impl Style {
     }
     fn resolved(self) -> Self {
         if self != Self::Surprise { return self; }
-        // Surprise stays within the six ordinary styles in every theme.
-        Self::CHOICES[random_seed() as usize % 6]
+        // Surprise stays within the ordinary styles in every theme.
+        Self::CHOICES[random_seed() as usize % 7]
     }
-    fn single_photo(self) -> bool { matches!(self, Self::IPhoto | Self::Fade | Self::MatrixRain | Self::MatrixKenBurns) }
+    fn single_photo(self) -> bool { matches!(self, Self::IPhoto | Self::Fade | Self::CoverFlow | Self::MatrixRain | Self::MatrixKenBurns) }
     fn matrix(self) -> bool { matches!(self, Self::MatrixRain | Self::MatrixKenBurns) }
     fn uses_photos(self) -> bool { self != Self::MatrixRain }
     // Easter egg: follow the white rabbit; Matrix modes only appear in Terminal.
@@ -95,6 +97,7 @@ impl Style {
             Self::Floating => "Floating Prints",
             Self::IPhoto => "Ken Burns",
             Self::Fade => "Fullscreen Fade",
+            Self::CoverFlow => "Cover Flow",
             Self::Surprise => "Surprise Me",
             Self::MatrixRain => "Matrix Rain",
             Self::MatrixKenBurns => "Matrix Ken Burns",
@@ -108,6 +111,7 @@ impl Style {
             Self::Floating => "Scattered framed pictures",
             Self::IPhoto => "Cinematic pan and zoom",
             Self::Fade => "Gentle full-screen slideshow",
+            Self::CoverFlow => "Browse photos as a reflective Cover Flow",
             Self::Surprise => "Random style on launch",
             Self::MatrixRain => "Animated Katakana rain on black, no photos",
             Self::MatrixKenBurns => "Green photo with fixed Katakana streams and slow pan and zoom",
@@ -395,6 +399,15 @@ fn style_preview(style: Style) -> gtk::DrawingArea {
                 cr.set_line_width(1.0);
                 cr.rectangle(13.5, 9.5, 39.0, 23.0);
                 let _ = cr.stroke();
+            }
+            Style::CoverFlow => {
+                for (x, y, width, tint) in [(5.0, 8.0, 17.0, 2), (22.0, 4.0, 25.0, 0),
+                    (47.0, 8.0, 14.0, 1)] {
+                    photo(x, y, width, 24.0, tint);
+                    cr.set_source_rgba(0.7, 0.8, 0.9, 0.18);
+                    cr.rectangle(x, y + 25.0, width, 7.0);
+                    let _ = cr.fill();
+                }
             }
             Style::MatrixRain | Style::MatrixKenBurns => {
                 rect(0., 0., 66., 42., (0.0, 0.025, 0.008));
@@ -882,6 +895,7 @@ fn start_decode_worker(
                         else if mosaic_tiles <= 36 { (960, 640) }
                         else { (640, 430) }
                     }
+                    Style::CoverFlow => (960, 960),
                     _ => (2560, 1600),
                 };
                 let started = Instant::now();
@@ -1029,7 +1043,14 @@ impl Player {
     }
     fn prefetch(&mut self, tx: &Sender<usize>) {
         if self.count == 0 { return; }
-        if self.style.single_photo() {
+        if self.style == Style::CoverFlow {
+            for index in coverflow_neighbor_indices(self.current, self.count) {
+                self.request(index, tx);
+            }
+            for offset in 1..=PREFETCH {
+                self.request((self.current + offset) % self.count, tx);
+            }
+        } else if self.style.single_photo() {
             for i in 0..PREFETCH {
                 self.request((self.current + i) % self.count, tx);
             }
@@ -1125,7 +1146,8 @@ impl Player {
         self.order.retain(|index| *index != result.index);
         self.order.push_back(result.index);
         // Preserve every active tile plus a small prefetch margin.
-        let max_frames = if self.style.single_photo() { 5 }
+        let max_frames = if self.style == Style::CoverFlow { 11 }
+            else if self.style.single_photo() { 5 }
             else { self.slots.len() + PREFETCH + 2 };
         while self.frames.len() > max_frames {
             let protected = |id: usize| id == self.current
@@ -1259,6 +1281,13 @@ impl Player {
 fn smootherstep(t: f64) -> f64 {
     let t = t.clamp(0.0, 1.0);
     t * t * (3.0 - 2.0 * t)
+}
+
+fn coverflow_neighbor_indices(current: usize, count: usize) -> std::ops::Range<usize> {
+    if count == 0 { return 0..0; }
+    let current = current.min(count - 1);
+    current.saturating_sub(crate::coverflow::VISIBLE_RADIUS)
+        ..current.saturating_add(crate::coverflow::VISIBLE_RADIUS + 1).min(count)
 }
 
 /// GPU camera movement in actual CSS pixels, never GTK's unsupported
@@ -1490,6 +1519,66 @@ fn start_screensaver(parent: &adw::ApplicationWindow, slides: Vec<Slide>, prefs:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn coverflow_style_round_trips_and_prefetches_a_bounded_neighbor_window() {
+        assert_eq!(Style::from_saved("coverflow"), Style::CoverFlow);
+        assert_eq!(Style::CoverFlow.key(), "coverflow");
+        assert!(Style::CoverFlow.single_photo());
+        assert!(Style::CoverFlow.available(false));
+        assert_eq!(coverflow_neighbor_indices(0, 1), 0..1);
+        assert_eq!(coverflow_neighbor_indices(0, 20), 0..5);
+        assert_eq!(coverflow_neighbor_indices(10, 20), 6..15);
+        assert_eq!(coverflow_neighbor_indices(19, 20), 15..20);
+        let mut player = Player::new(Style::CoverFlow, 20, 5, false, 20);
+        let (tx, rx) = mpsc::channel();
+        player.prefetch(&tx);
+        assert_eq!(rx.try_iter().collect::<Vec<_>>(), vec![0, 1, 2, 3, 4]);
+        assert!(player.frames.len() <= 11);
+        let mut end = Player::new(Style::CoverFlow, 20, 5, false, 20);
+        end.current = 19;
+        let (tx, rx) = mpsc::channel();
+        end.prefetch(&tx);
+        assert_eq!(rx.try_iter().collect::<Vec<_>>(), vec![15, 16, 17, 18, 19, 0, 1, 2]);
+        for index in 0..20 {
+            player.receive(ImageResult { index, high_quality: true,
+                pixels: Some(Pixels { width: 2, height: 2, data: vec![255; 16] }) });
+        }
+        assert!(player.frames.len() <= 11);
+    }
+
+    #[test]
+    fn coverflow_screensaver_preference_survives_reopening_settings() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+            .unwrap();
+        let mut preferences = Preferences::load(&connection);
+        preferences.style = Style::CoverFlow;
+        preferences.source = Source::Album(37).key();
+        preferences.save(&connection);
+        let loaded = Preferences::load(&connection);
+        assert_eq!(loaded.style, Style::CoverFlow);
+        assert_eq!(loaded.source, "album:37");
+    }
+
+    #[test]
+    fn coverflow_advances_past_a_failed_photo_and_wraps() {
+        let mut player = Player::new(Style::CoverFlow, 3, 1, false, 6);
+        let pixels = || Pixels { width: 2, height: 2, data: vec![255; 16] };
+        player.receive(ImageResult { index: 0, high_quality: true, pixels: Some(pixels()) });
+        player.receive(ImageResult { index: 1, high_quality: true, pixels: None });
+        player.receive(ImageResult { index: 2, high_quality: true, pixels: Some(pixels()) });
+        let (tx, _) = mpsc::channel();
+        player.update(&tx);
+        assert_eq!(player.current, 0);
+        player.switched_at -= Duration::from_secs(2);
+        player.update(&tx);
+        assert_eq!(player.current, 2);
+        player.switched_at -= Duration::from_secs(2);
+        player.update(&tx);
+        assert_eq!(player.current, 0);
+        assert!(player.frames.len() <= 11);
+    }
 
     #[test]
     fn last_screensaver_settings_round_trip_in_library_db() {

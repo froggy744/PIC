@@ -90,7 +90,11 @@ Existing JPEG thumbnails from before this fix are regenerated through normal laz
 
 ## V1 albums and bookshelf display
 
-The Albums page supports album-cover presentation and a bookshelf-style layout. Cover and bookshelf artwork is configured separately from the app's appearance theme. Use the albums page's available presentation controls to change the look; photo membership remains virtual and original folders are untouched.
+The Albums page offers Grid, Bookshelf and Cover Flow layouts. Choose one from the **Layout** control above the albums or the page's context menu. Cover Flow centers the selected album and shows neighboring covers with reflections. Use Left/Right or Home/End to browse, the wheel or touchpad to move one album at a time, and Enter or **Open Album** to open the selected album. Click a neighboring cover to bring it to the center; click the centered cover to open it. GTK's reduced-motion setting turns off the sweep animation.
+
+Cover and bookshelf artwork is configured separately from the app's appearance theme. Bookshelf themes can add short reflections and cover shadows where the shelf art leaves room. Switching layouts keeps the chosen cover frame and bookshelf background. Photo membership remains virtual and original folders are untouched.
+
+The screensaver also has a **Cover Flow** style. It displays individual photos from the source chosen in screensaver settings, including an album, folder, favourites or selected photos. The existing shuffle, portrait exclusion, captions, clock and timing settings continue to apply. It advances automatically and wraps to the start; reduced motion keeps each focused photo still between advances.
 
 **Three gallery layouts:** Grid, Photo Wall and Masonry. Rating controls and rating filtering work in the catalogue and folder browsing views; filter by an individual star level, all rated pictures or unrated pictures.
 

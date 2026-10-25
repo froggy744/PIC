@@ -7,6 +7,8 @@ mod pile;
 use pile::Pile;
 mod cinema;
 use cinema::Cinema;
+mod coverflow;
+use coverflow::CoverFlow;
 
 // 60 steps with per-frame CSS transform interpolation gives a smooth
 // GSK-composited flip without creating new thumbnails or touching the layout.
@@ -397,6 +399,7 @@ pub(super) struct Stage {
     tiles: Vec<Tile>,
     desired_tiles: usize,
     cinema: Option<Cinema>,
+    coverflow: Option<CoverFlow>,
     pile: Option<Pile>,
     trace: bool,
     traced_change: Option<usize>,
@@ -415,9 +418,10 @@ impl Stage {
         // Clip nested images/rotated prints to this monitor's window bounds.
         root.set_overflow(gtk::Overflow::Hidden);
         root.add_css_class("screensaver-stage");
-        let cinema = if style.single_photo() {
+        let cinema = if style.single_photo() && style != Style::CoverFlow {
             Some(Cinema::new(&root))
         } else { None };
+        let coverflow = (style == Style::CoverFlow).then(|| CoverFlow::new(&root));
         // Avoid blocking GTK with the creation of thousands of overlays
         // before the fullscreen surface appears. Additional square tiles are
         // materialised in small frame-clock batches.
@@ -434,7 +438,7 @@ impl Stage {
             eprintln!("PIC_SCREEN init style={style:?} transition={transition:?} count={count}");
         }
         Self {
-            root, style, transition, tiles: Vec::new(), desired_tiles, cinema, pile,
+            root, style, transition, tiles: Vec::new(), desired_tiles, cinema, coverflow, pile,
             trace, traced_change: None, traced_settle: None, last_tick: None,
             synced_revision: None, synced_geometry: None,
             active_tile: None, synced_change: None,
@@ -482,6 +486,10 @@ impl Stage {
         if w < 2.0 || h < 2.0 { return; }
         if let Some(cinema) = self.cinema.as_mut() {
             cinema.sync(player, w, h, frame_time, matches!(self.style, Style::IPhoto | Style::MatrixKenBurns));
+            return;
+        }
+        if let Some(coverflow) = self.coverflow.as_mut() {
+            coverflow.sync(player, w, h);
             return;
         }
         if let Some(pile) = self.pile.as_mut() {

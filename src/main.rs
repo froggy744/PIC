@@ -1,6 +1,7 @@
 mod albums_view;
 mod app_paths;
 mod collage;
+mod coverflow;
 mod css;
 mod db;
 mod diagnostics;

@@ -33,6 +33,20 @@ surface stops and its vertical face begins, then convert it to rendered pixels:
 | shelf | 571 | 227 |
 | single | 620 | 247 |
 
+For a polished shelf, add `reflection_strength` to `theme.conf` beside
+`row_height` and `surface_y`:
+
+```ini
+row_height=288
+surface_y=236
+reflection_strength=0.28
+```
+
+The value is between `0.0` and `1.0`; omit it or use `0.0` for artwork whose
+board front is matte or too shallow. PIC reflects only the visible album cover,
+fades it down the board front, and clips it before the next row. Allow some
+space between `surface_y` and `row_height` for the reflection.
+
 ## Export
 
 1. Replace the placeholder artwork on the `ARTWORK - replace this` layer.

@@ -13,11 +13,30 @@ struct BookshelfTheme {
     kind: BookshelfThemeKind,
     row_height: i32,
     surface_y: i32,
+    reflection_strength: u8,
+}
+
+fn bookshelf_reflection_strength(directory: &Path) -> u8 {
+    std::fs::read_to_string(directory.join("theme.conf")).ok()
+        .and_then(|text| text.lines().filter_map(|line| line.split_once('='))
+            .find(|(key, _)| key.trim() == "reflection_strength")
+            .and_then(|(_, value)| value.trim().parse::<f64>().ok()))
+        .filter(|value| value.is_finite() && (0.0..=1.0).contains(value))
+        .map(|value| (value * 100.0).round() as u8)
+        .unwrap_or(0)
+}
+
+fn bookshelf_reflection_height(theme: &BookshelfTheme) -> i32 {
+    if theme.kind != BookshelfThemeKind::Row || theme.reflection_strength == 0 { return 0; }
+    (theme.row_height - theme.surface_y - 4).clamp(0, 56)
 }
 
 #[derive(Clone)]
 struct BookshelfRuntime {
     rows: gtk::Box,
+    coverflow: gtk::Box,
+    focused_album_id: Rc<Cell<Option<i64>>>,
+    focused_index: Rc<Cell<usize>>,
     last_columns: Rc<Cell<usize>>,
     last_card_width: Rc<Cell<i32>>,
     selected_theme: Rc<RefCell<Option<BookshelfTheme>>>,
@@ -152,6 +171,7 @@ fn bookshelf_themes_in(directory: &Path) -> Vec<BookshelfTheme> {
                         kind: BookshelfThemeKind::Row,
                         row_height,
                         surface_y,
+                        reflection_strength: bookshelf_reflection_strength(&path),
                     });
                 }
             } else if path
@@ -172,6 +192,7 @@ fn bookshelf_themes_in(directory: &Path) -> Vec<BookshelfTheme> {
                     kind: BookshelfThemeKind::Legacy,
                     row_height: BOOKSHELF_ROW_HEIGHT,
                     surface_y: BOOKSHELF_SURFACE_Y,
+                    reflection_strength: 0,
                 });
             }
         }
@@ -291,6 +312,80 @@ fn bookshelf_row_count(card_count: usize, columns: usize) -> usize {
     required.max(BOOKSHELF_MIN_ROWS)
 }
 
+mod shelf_reflection_imp {
+    use super::*;
+    #[derive(Default)]
+    pub struct ShelfReflection {
+        pub paintable: RefCell<Option<gtk::WidgetPaintable>>,
+        pub strength: Cell<f64>,
+    }
+    #[gtk::glib::object_subclass]
+    impl ObjectSubclass for ShelfReflection {
+        const NAME: &'static str = "PicShelfReflection";
+        type Type = super::ShelfReflection;
+        type ParentType = gtk::Widget;
+    }
+    impl ObjectImpl for ShelfReflection {}
+    impl WidgetImpl for ShelfReflection {
+        fn snapshot(&self, snapshot: &gtk::Snapshot) {
+            let Some(paintable) = self.paintable.borrow().clone() else { return; };
+            let Some(source) = paintable.widget() else { return; };
+            let w = source.width().max(source.width_request()).max(1) as f32;
+            let h = source.height().max(source.height_request()).max(1) as f32;
+            let canvas_w = self.obj().width() as f32;
+            let reflection_h = self.obj().height().max(0) as f32;
+            if reflection_h <= 0.0 { return; }
+            let x = (canvas_w - w) * 0.5;
+            snapshot.save();
+            snapshot.push_clip(&graphene::Rect::new(x, 0.0, w, reflection_h));
+            snapshot.push_mask(gtk::gsk::MaskMode::Alpha);
+            snapshot.append_linear_gradient(
+                &graphene::Rect::new(x, 0.0, w, reflection_h),
+                &graphene::Point::new(x, 0.0),
+                &graphene::Point::new(x, reflection_h),
+                &[
+                    gtk::gsk::ColorStop::new(0.0, gtk::gdk::RGBA::new(1.0, 1.0, 1.0, self.strength.get() as f32)),
+                    gtk::gsk::ColorStop::new(1.0, gtk::gdk::RGBA::new(1.0, 1.0, 1.0, 0.0)),
+                ],
+            );
+            snapshot.pop();
+            snapshot.translate(&graphene::Point::new(x, h));
+            snapshot.scale(1.0, -1.0);
+            paintable.snapshot(snapshot, w as f64, h as f64);
+            snapshot.pop();
+            snapshot.pop();
+            snapshot.restore();
+        }
+    }
+}
+gtk::glib::wrapper! {
+    pub struct ShelfReflection(ObjectSubclass<shelf_reflection_imp::ShelfReflection>)
+        @extends gtk::Widget,
+        @implements gtk::Accessible, gtk::Buildable, gtk::ConstraintTarget;
+}
+impl ShelfReflection {
+    fn new(cover: &gtk::Widget, strength: u8, height: i32) -> Self {
+        let reflection: Self = gtk::glib::Object::new();
+        reflection.set_hexpand(true);
+        reflection.set_halign(gtk::Align::Fill);
+        reflection.set_height_request(height);
+        reflection.set_can_target(false);
+        reflection.add_css_class("albums-bookshelf-reflection");
+        reflection.imp().strength.set(strength as f64 / 100.0);
+        let paintable = gtk::WidgetPaintable::new(Some(cover));
+        let weak = reflection.downgrade();
+        paintable.connect_invalidate_contents(move |_| {
+            if let Some(reflection) = weak.upgrade() { reflection.queue_draw(); }
+        });
+        let weak = reflection.downgrade();
+        paintable.connect_invalidate_size(move |_| {
+            if let Some(reflection) = weak.upgrade() { reflection.queue_draw(); }
+        });
+        reflection.imp().paintable.replace(Some(paintable));
+        reflection
+    }
+}
+
 fn build_bookshelf_rows(
     rows: &gtk::Box,
     cards: &[gtk::Button],
@@ -307,6 +402,33 @@ fn build_bookshelf_rows(
         let chunk = &cards[start..end];
 
         let row = bookshelf_row(theme);
+        let reflection_height = bookshelf_reflection_height(theme);
+        if reflection_height > 0 {
+            let reflections = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+            reflections.set_homogeneous(true);
+            reflections.set_hexpand(true);
+            reflections.set_halign(gtk::Align::Fill);
+            reflections.set_valign(gtk::Align::Start);
+            reflections.set_height_request(theme.row_height);
+            reflections.set_can_target(false);
+            for index in 0..columns {
+                let slot = gtk::Box::new(gtk::Orientation::Vertical, 0);
+                slot.set_hexpand(true);
+                slot.set_halign(gtk::Align::Fill);
+                if let Some(card) = chunk.get(index) {
+                    if let Some(cover) = find_descendant_with_css_class(
+                        card.upcast_ref(), "album-cover") {
+                        let reflection = ShelfReflection::new(
+                            &cover, theme.reflection_strength, reflection_height,
+                        );
+                        reflection.set_margin_top(theme.surface_y + 4);
+                        slot.append(&reflection);
+                    }
+                }
+                reflections.append(&slot);
+            }
+            row.add_overlay(&reflections);
+        }
         let slots = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         slots.set_homogeneous(true);
         slots.set_hexpand(true);

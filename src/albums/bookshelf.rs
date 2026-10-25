@@ -648,7 +648,13 @@ fn resize_bookshelf_cards(rows: &gtk::Box, target_width: i32, theme: &BookshelfT
 
         let current_width = cover.width_request();
         let current_height = cover.height_request();
-        if current_width <= 0 || current_height <= 0 || current_width == target_width {
+        if current_width <= 0 || current_height <= 0 {
+            continue;
+        }
+        // Height/shelf position can change independently of cover width.
+        // Anchor the existing cover before the same-width fast path.
+        if current_width == target_width {
+            card.set_margin_top(bookshelf_card_margin_top(theme.surface_y, current_height));
             continue;
         }
 

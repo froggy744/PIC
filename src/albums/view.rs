@@ -164,6 +164,7 @@ fn build_inner(
         focused_index: Rc::new(Cell::new(0)),
         last_columns: Rc::new(Cell::new(0)),
         last_row_count: Rc::new(Cell::new(0)),
+        last_row_height: Rc::new(Cell::new(0)),
         last_card_width: Rc::new(Cell::new(0)),
         album_count: Rc::new(Cell::new(0)),
         selected_theme: Rc::new(RefCell::new(None)),
@@ -268,18 +269,29 @@ fn build_inner(
             columns,
             bookshelf_viewport.height(),
         );
+        let row_height = bookshelf_row_height_for_viewport(
+            row_count,
+            bookshelf_available_height(&bookshelf_viewport, &runtime_for_resize.rows),
+            runtime_for_resize.rows.spacing(),
+            &theme,
+        );
+        let row_theme = bookshelf_theme_with_row_height(&theme, row_height);
+        let target_card_width = bookshelf_card_width_for_row_height(
+            bookshelf_target_card_width(width, columns),
+            row_height,
+            theme.row_height,
+        );
         if columns != runtime_for_resize.last_columns.get()
             || row_count != runtime_for_resize.last_row_count.get()
+            || row_height != runtime_for_resize.last_row_height.get()
         {
-            reflow_bookshelf_rows(&runtime_for_resize, columns, row_count, &theme);
+            reflow_bookshelf_rows(&runtime_for_resize, columns, row_count, &row_theme);
+            runtime_for_resize.last_row_height.set(row_height);
         }
 
-        let target_card_width = bookshelf_target_card_width(width, columns);
         if target_card_width != runtime_for_resize.last_card_width.get() {
-            resize_bookshelf_cards(&runtime_for_resize.rows, target_card_width, &theme);
+            resize_bookshelf_cards(&runtime_for_resize.rows, target_card_width, &row_theme);
             runtime_for_resize.last_card_width.set(target_card_width);
-
-
         }
 
         glib::ControlFlow::Continue
@@ -520,6 +532,7 @@ fn populate(
     clear_box(&bookshelf_runtime.rows);
     bookshelf_runtime.last_columns.set(0);
     bookshelf_runtime.last_row_count.set(0);
+    bookshelf_runtime.last_row_height.set(0);
     bookshelf_runtime.last_card_width.set(0);
     bookshelf_runtime.album_count.set(albums.len());
     bookshelf_runtime.selected_theme.replace(None);
@@ -739,6 +752,7 @@ fn populate(
         );
         bookshelf_runtime.last_columns.set(columns);
         bookshelf_runtime.last_row_count.set(row_count);
+        bookshelf_runtime.last_row_height.set(theme.row_height);
 
         if width > 0 {
             let target_card_width = bookshelf_target_card_width(width, columns);

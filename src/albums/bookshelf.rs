@@ -39,6 +39,7 @@ struct BookshelfRuntime {
     focused_index: Rc<Cell<usize>>,
     last_columns: Rc<Cell<usize>>,
     last_row_count: Rc<Cell<usize>>,
+    last_row_height: Rc<Cell<i32>>,
     last_card_width: Rc<Cell<i32>>,
     album_count: Rc<Cell<usize>>,
     selected_theme: Rc<RefCell<Option<BookshelfTheme>>>,
@@ -366,6 +367,95 @@ fn bookshelf_rows_for_viewport(card_count: usize, columns: usize, viewport_heigh
         BOOKSHELF_MIN_ROWS
     };
     bookshelf_row_count(card_count, columns).max(viewport_rows)
+}
+
+fn bookshelf_available_height(scrolled: &gtk::ScrolledWindow, rows: &gtk::Box) -> i32 {
+    let page_height = scrolled.vadjustment().page_size().round() as i32;
+    let Some(content) = rows.parent().and_downcast::<gtk::Box>() else {
+        return 0;
+    };
+
+    let rows_widget = rows.upcast_ref::<gtk::Widget>();
+    let mut reserved = content.margin_top()
+        + content.margin_bottom()
+        + rows.margin_top()
+        + rows.margin_bottom();
+    let mut previous_visible = false;
+    let mut child = content.first_child();
+    while let Some(widget) = child {
+        if std::ptr::eq(widget.as_ptr(), rows_widget.as_ptr()) {
+            if previous_visible {
+                reserved += content.spacing();
+            }
+            break;
+        }
+        if widget.is_visible() {
+            if previous_visible {
+                reserved += content.spacing();
+            }
+            reserved += widget.height();
+            previous_visible = true;
+        }
+        child = widget.next_sibling();
+    }
+
+    (page_height - reserved).max(0)
+}
+
+fn bookshelf_row_height_for_viewport(
+    row_count: usize,
+    available_height: i32,
+    row_spacing: i32,
+    theme: &BookshelfTheme,
+) -> i32 {
+    if row_count < BOOKSHELF_MAX_VIEWPORT_ROWS {
+        return theme.row_height;
+    }
+    let gaps = row_spacing.max(0) * row_count.saturating_sub(1) as i32;
+    ((available_height - gaps).max(1) / row_count as i32).clamp(160, theme.row_height)
+}
+
+fn bookshelf_theme_with_row_height(theme: &BookshelfTheme, row_height: i32) -> BookshelfTheme {
+    let surface_y = (theme.surface_y as f64 * row_height as f64 / theme.row_height.max(1) as f64)
+        .round() as i32;
+    BookshelfTheme {
+        row_height,
+        surface_y: surface_y.clamp(0, row_height),
+        ..theme.clone()
+    }
+}
+
+fn bookshelf_card_width_for_row_height(
+    target_width: i32,
+    row_height: i32,
+    base_row_height: i32,
+) -> i32 {
+    ((target_width as f64 * row_height as f64 / base_row_height.max(1) as f64).round() as i32)
+        .clamp(140, target_width)
+}
+
+#[cfg(test)]
+mod bookshelf_responsive_sizing_tests {
+    use super::*;
+
+    fn theme() -> BookshelfTheme {
+        BookshelfTheme {
+            id: "test".into(),
+            image_path: PathBuf::new(),
+            kind: BookshelfThemeKind::Row,
+            row_height: BOOKSHELF_ROW_HEIGHT,
+            surface_y: BOOKSHELF_SURFACE_Y,
+            reflection_strength: 0,
+        }
+    }
+
+    #[test]
+    fn four_rows_fit_the_available_bookshelf_height() {
+        let theme = theme();
+        assert_eq!(bookshelf_row_height_for_viewport(4, 820, 0, &theme), 205);
+        assert_eq!(bookshelf_row_height_for_viewport(3, 820, 0, &theme), 288);
+        assert_eq!(bookshelf_card_width_for_row_height(230, 205, 288), 164);
+    }
 }
 
 mod shelf_reflection_imp {

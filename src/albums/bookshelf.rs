@@ -522,15 +522,11 @@ fn resize_bookshelf_cards(rows: &gtk::Box, target_width: i32, theme: &BookshelfT
             continue;
         }
 
-        let is_framed = unsafe { cover.data::<PhotoOpening>(FRAME_OPENING_KEY) }.is_some();
-        // Framed covers use transparent PNG art with a photo fitted to that
-        // frame's opening. Keep their dimensions identical with the bookshelf
-        // background enabled or disabled; stretching them to fill a shelf
-        // column makes the same cover visibly change size when the background
-        // toggle is used. Card alignment supplies the remaining column space.
-        if is_framed {
-            continue;
-        }
+        let opening = unsafe {
+            cover
+                .data::<PhotoOpening>(FRAME_OPENING_KEY)
+                .map(|opening| *opening.as_ref())
+        };
 
         let scale_x = target_width as f64 / current_width as f64;
         let card_width = target_width;
@@ -540,6 +536,24 @@ fn resize_bookshelf_cards(rows: &gtk::Box, target_width: i32, theme: &BookshelfT
         cover.set_width_request(card_width);
         cover.set_height_request(target_height);
         cover.set_size_request(card_width, target_height);
+        if let Some(surface) = cover.child() {
+            surface.set_size_request(card_width, target_height);
+        }
+
+        // Framed covers place the photo in a transparent window in the PNG.
+        // Recompute its inset as the bookshelf resizes the complete book.
+        if let Some(opening) = opening {
+            let (left, top, right, bottom) = photo_margins(opening, card_width, target_height);
+            for class_name in ["thumbnail", "album-cover-placeholder"] {
+                if let Some(widget) = find_descendant_with_css_class(cover.upcast_ref(), class_name)
+                {
+                    widget.set_margin_start(left);
+                    widget.set_margin_top(top);
+                    widget.set_margin_end(right);
+                    widget.set_margin_bottom(bottom);
+                }
+            }
+        }
 
         card.set_width_request(card_width);
         card.set_margin_top(bookshelf_card_margin_top(theme.surface_y, target_height));
@@ -547,6 +561,12 @@ fn resize_bookshelf_cards(rows: &gtk::Box, target_width: i32, theme: &BookshelfT
         if let Some(content) = card.child() {
             content.set_width_request(card_width);
             content.set_size_request(card_width, -1);
+            let mut child = content.first_child();
+            while let Some(widget) = child {
+                widget.set_width_request(card_width);
+                widget.set_size_request(card_width, -1);
+                child = widget.next_sibling();
+            }
         }
     }
 }

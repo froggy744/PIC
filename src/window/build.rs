@@ -2757,10 +2757,16 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 // Keep the outgoing album or index from showing while its
                 // replacement is loading. The solid texture uses PIC's active
                 // theme surface color; Grid and Photo Wall rendering stay as-is.
-                let background = main_stack
-                    .style_context()
-                    .lookup_color("theme_bg_color")
-                    .or_else(|| main_stack.style_context().lookup_color("window_bg_color"))
+                let background = crate::coverflow::lookup_theme_color(
+                    main_stack.upcast_ref(),
+                    "theme_bg_color",
+                )
+                    .or_else(|| {
+                        crate::coverflow::lookup_theme_color(
+                            main_stack.upcast_ref(),
+                            "window_bg_color",
+                        )
+                    })
                     .unwrap_or_else(|| {
                         if adw::StyleManager::default().is_dark() {
                             gtk::gdk::RGBA::new(0.12, 0.12, 0.12, 1.0)

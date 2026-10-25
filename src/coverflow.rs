@@ -15,6 +15,15 @@ pub(crate) const VISIBLE_RADIUS: usize = 4;
 const SIDE_ANGLE: f64 = 60.0_f64.to_radians();
 const ALBUM_SIDE_ANGLE: f64 = 32.0_f64.to_radians();
 
+// GTK 4.10 deprecated computed style color lookups without providing a
+// replacement for resolving theme-defined background colors. Keep this
+// compatibility call isolated so the rest of the app builds warning-free.
+#[allow(deprecated)]
+pub(crate) fn lookup_theme_color(widget: &gtk::Widget, name: &str) -> Option<gdk::RGBA> {
+    let style = widget.style_context();
+    style.lookup_color(name)
+}
+
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct CoverflowPose {
     /// Projected bounds for pointer hit testing, in logical pixels.
@@ -506,10 +515,8 @@ fn draw_frame(area: &gtk::GLArea, scene: &mut Scene) -> Result<(), String> {
     unsafe {
         gl::Viewport(0, 0, viewport_width, viewport_height);
         let dark = adw::StyleManager::default().is_dark();
-        let background = area
-            .style_context()
-            .lookup_color("theme_bg_color")
-            .or_else(|| area.style_context().lookup_color("window_bg_color"))
+        let background = lookup_theme_color(area.upcast_ref(), "theme_bg_color")
+            .or_else(|| lookup_theme_color(area.upcast_ref(), "window_bg_color"))
             .unwrap_or_else(|| {
                 if dark {
                     gdk::RGBA::new(0.12, 0.12, 0.12, 1.0)

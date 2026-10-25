@@ -203,10 +203,10 @@ fn build_album_coverflow(
     let state = Rc::new(RefCell::new(AlbumFlowState {
         albums: albums.to_vec(),
         connection,
-        placeholder_color: canvas
-            .widget()
-            .style_context()
-            .lookup_color("theme_base_color")
+        placeholder_color: crate::coverflow::lookup_theme_color(
+            canvas.widget().upcast_ref(),
+            "theme_base_color",
+        )
             .unwrap_or_else(|| {
                 if adw::StyleManager::default().is_dark() {
                     gdk::RGBA::new(0.18, 0.18, 0.18, 1.0)

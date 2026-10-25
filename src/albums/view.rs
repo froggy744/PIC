@@ -278,11 +278,8 @@ fn build_inner(
             &theme,
         );
         let row_theme = bookshelf_theme_with_row_height(&theme, row_height);
-        let target_card_width = bookshelf_card_width_for_row_height(
-            bookshelf_target_card_width(width, columns),
-            row_height,
-            theme.row_height,
-        );
+        // Do not resize covers as columns change. Card art stays its original size.
+        let target_card_width = 0;
         let geometry_changed = columns != runtime_for_resize.last_columns.get()
             || row_count != runtime_for_resize.last_row_count.get()
             || row_height != runtime_for_resize.last_row_height.get();
@@ -759,9 +756,8 @@ fn populate(
         bookshelf_runtime.last_row_height.set(theme.row_height);
 
         if width > 0 {
-            let target_card_width = bookshelf_target_card_width(width, columns);
-            resize_bookshelf_cards(&bookshelf_runtime.rows, target_card_width, &theme);
-            bookshelf_runtime.last_card_width.set(target_card_width);
+            resize_bookshelf_cards(&bookshelf_runtime.rows, 0, &theme);
+            bookshelf_runtime.last_card_width.set(0);
         }
     }
 }

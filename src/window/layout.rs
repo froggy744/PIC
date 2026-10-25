@@ -11,6 +11,7 @@
         let cleared_query = cleared_search_query.clone();
         let filter = filter.clone();
         let info = info.clone();
+        let compact_rail_slot = compact_rail_slot.clone();
         let connection = connection.clone();
         let folder_cache = folder_cache.clone();
         let gallery = gallery.clone();
@@ -118,6 +119,10 @@
                 }
             });
             filter.set(new_filter);
+            if let Some(rail) = compact_rail_slot.borrow().as_ref() {
+                rail.update_active(new_filter);
+                rail.explorer.popdown();
+            }
             restore_section_layout(&connection.borrow(), &gallery, &info, new_filter);
             if let Err(error) = db::set_setting(
                 &connection.borrow(),
@@ -824,8 +829,26 @@
     right_column.set_hexpand(true);
     right_column.set_vexpand(true);
 
+    // The rail participates in normal content allocation, not in the
+    // OverlaySplitView's responsive sidebar. This avoids an overlapping
+    // persistent sidebar at narrow sizes.
+    let compact_rail = Rc::new(crate::window::compact_ui::CompactRail::new(
+        destination_click.clone(),
+        {
+            let present_settings = present_settings.clone();
+            Rc::new(move || present_settings(Some("interface")))
+        },
+    ));
+    compact_rail.update_active(filter.get());
+    compact_rail_slot.replace(Some(compact_rail.clone()));
+    let workspace_content = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    workspace_content.set_hexpand(true);
+    workspace_content.set_vexpand(true);
+    workspace_content.append(&compact_rail.root);
+    workspace_content.append(&right_column);
+
     main_split.set_sidebar(Some(&sidebar_shell));
-    main_split.set_content(Some(&right_column));
+    main_split.set_content(Some(&workspace_content));
     main_split.set_min_sidebar_width(SIDEBAR_MIN_WIDTH);
     main_split.set_max_sidebar_width(SIDEBAR_MAX_WIDTH);
     let saved_sidebar_fraction = numeric_setting::<f64>(
@@ -891,12 +914,14 @@
     main_surface.add_overlay(&sidebar_hover_reveal);
 
     let sidebar_hover_motion = gtk::EventControllerMotion::new();
+    let compact_style_for_hover = compact_style_active.clone();
     let main_split_for_hover_reveal = main_split.clone();
     let sidebar_for_hover_reveal = sidebar.clone();
     let gallery_for_hover_reveal = gallery.clone();
     let sidebar_hover_layout_freeze_for_reveal = sidebar_hover_layout_freeze.clone();
     let sidebar_hover_freeze_generation_for_reveal = sidebar_hover_freeze_generation.clone();
     sidebar_hover_motion.connect_enter(move |_, _, _| {
+        if compact_style_for_hover.get() { return; }
         // The breakpoint auto-hides even a pinned sidebar on narrow windows,
         // so edge-hover must still peek it open while collapsed. In the
         // expanded layout the pin gate still applies: a pinned sidebar the
@@ -938,6 +963,7 @@
     sidebar_shell.add_controller(sidebar_leave_motion);
 
     let sidebar_hover_reveal_for_state = sidebar_hover_reveal.clone();
+    let compact_style_for_show = compact_style_active.clone();
     let sidebar_for_show_state = sidebar.clone();
     let sidebar_hover_layout_freeze_for_state = sidebar_hover_layout_freeze.clone();
     let sidebar_hover_freeze_generation_for_state = sidebar_hover_freeze_generation.clone();
@@ -950,7 +976,7 @@
         gallery_for_sidebar_visibility.cancel_resize_flip();
 
         let sidebar_visible = split.shows_sidebar();
-        sidebar_hover_reveal_for_state.set_visible(!sidebar_visible);
+        sidebar_hover_reveal_for_state.set_visible(!sidebar_visible && !compact_style_for_show.get());
         // Every reveal path (hover, pin button, breakpoint restore) funnels
         // through this notify, so this is the one place that keeps the pin
         // button's tooltip/icon in sync with how the sidebar was opened.
@@ -1199,6 +1225,7 @@
     right_header.pack_start(&show_sidebar);
 
     let show_sidebar_for_state = show_sidebar.clone();
+    let compact_style_for_button = compact_style_active.clone();
     // Theme-overridable window controls: the mode cell is written by the
     // ThemeEngine hook (build.rs) whenever a theme activates; placement runs
     // on every sidebar transition and mirrors the native title buttons'
@@ -1253,7 +1280,7 @@
     let place_for_notify = place_window_controls.clone();
     main_split.connect_show_sidebar_notify(move |split| {
         let sidebar_visible = split.shows_sidebar();
-        show_sidebar_for_state.set_visible(!sidebar_visible);
+        show_sidebar_for_state.set_visible(!sidebar_visible && !compact_style_for_button.get());
         // Keep window controls (native title buttons or theme traffic lights)
         // at the window's top-left corner in every sidebar state, and never
         // render them in both headers at once (which would also duplicate
@@ -1870,5 +1897,9 @@
         right_column,
         right_header,
         search,
+        compact_rail,
+        left_column,
+        sidebar_hover_reveal,
+        show_sidebar,
     )
 }

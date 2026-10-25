@@ -165,6 +165,19 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
 
     let info = Rc::new(InfoBar::new());
     info.set_photo(None);
+    // The selection strip lives in the compact header only; the existing
+    // InfoBar still owns selection thumbnails and all photo callbacks.
+    let compact_selection = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+    compact_selection.add_css_class("compact-selection-actions");
+    compact_selection.set_valign(gtk::Align::Center);
+    let compact_selection_label = gtk::Label::new(None);
+    compact_selection_label.set_margin_start(8);
+    compact_selection.append(&compact_selection_label);
+    let compact_clear = gtk::Button::from_icon_name("edit-clear-all-symbolic");
+    compact_clear.set_tooltip_text(Some("Clear selected photos"));
+    compact_clear.add_css_class("flat");
+    compact_selection.append(&compact_clear);
+    compact_selection.set_visible(false);
 
     let selected_photo = Rc::new(RefCell::new(None));
 
@@ -617,7 +630,11 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     gallery.connect_selection_preview_changed(SELECTION_INFOBAR_PREVIEW_LIMIT, {
         let info = Rc::downgrade(&info);
         let lightbox = Rc::downgrade(&lightbox);
+        let compact_selection = compact_selection.clone();
+        let compact_selection_label = compact_selection_label.clone();
         move |count, photos| {
+            compact_selection_label.set_label(&format!("{count} selected"));
+            compact_selection.set_visible(count > 0);
             if let (Some(info), Some(lightbox)) = (info.upgrade(), lightbox.upgrade()) {
                 if !lightbox.root.is_visible() {
                     info.set_selected_photos(count, &photos);
@@ -636,6 +653,14 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     {
         let gallery = Rc::downgrade(&gallery);
         info.selection_clear.connect_clicked(move |_| {
+            if let Some(gallery) = gallery.upgrade() {
+                gallery.clear_keyboard_selection();
+            }
+        });
+    }
+    {
+        let gallery = Rc::downgrade(&gallery);
+        compact_clear.connect_clicked(move |_| {
             if let Some(gallery) = gallery.upgrade() {
                 gallery.clear_keyboard_selection();
             }
@@ -896,6 +921,12 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
 
     let switch_library_slot: Rc<RefCell<Option<Rc<dyn Fn(&str) -> Result<(), String>>>>> =
         Rc::new(RefCell::new(None));
+    // Live layout switching gets installed after layout.rs builds the rail.
+    let compact_style_active = Rc::new(Cell::new(false));
+    let compact_rail_slot: Rc<RefCell<Option<Rc<crate::window::compact_ui::CompactRail>>>> =
+        Rc::new(RefCell::new(None));
+    let compact_apply_slot: Rc<RefCell<Option<Rc<dyn Fn(crate::window::compact_ui::UiLayoutStyle)>>>> =
+        Rc::new(RefCell::new(None));
     let settings_window = crate::settings::SettingsWindow::default();
     let menu_controls = settings_window.menu_controls.clone();
     let settings_window_for_switch = settings_window.clone();
@@ -915,6 +946,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let settings_theme_engine = theme_engine.clone();
     let settings_switch_library_slot = switch_library_slot.clone();
     let settings_clear_saved_views = clear_saved_views.clone();
+    let settings_compact_apply_slot = compact_apply_slot.clone();
     let present_settings: Rc<dyn Fn(Option<&'static str>)> = Rc::new(move |initial_page| {
         let connection = settings_connection.clone();
         let gallery = settings_gallery.clone();
@@ -1051,6 +1083,15 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 }),
             },
             settings_theme_engine.clone(),
+            {
+                let connection = settings_connection.clone();
+                let apply = settings_compact_apply_slot.clone();
+                Rc::new(move || {
+                    if let Some(switch) = apply.borrow().as_ref() {
+                        switch(crate::window::compact_ui::UiLayoutStyle::saved(&connection.borrow()));
+                    }
+                })
+            },
             initial_page,
         );
     });
@@ -4791,6 +4832,10 @@ fn start_photo_export_single(
         right_column,
         right_header,
         _search,
+        compact_rail,
+        left_column,
+        sidebar_hover_reveal,
+        show_sidebar,
     ) = include!("layout.rs");
     crate::startup_trace::mark("layout_widgets_done", Some(layout_started));
 
@@ -5069,6 +5114,122 @@ fn start_photo_export_single(
     info.root.set_hexpand(true);
     info.root.set_valign(gtk::Align::End);
     right_column.append(&info.root);
+
+    // Compact header: quick actions remain predictable; the Photo Tools
+    // palette hosts the actual InfoBar widget, retaining every connected
+    // edit/rotate/rate/album/export/print/zoom callback and nested menu.
+    let compact_header = gtk::Box::new(gtk::Orientation::Horizontal, 3);
+    compact_header.add_css_class("compact-header-actions");
+    compact_header.set_valign(gtk::Align::Center);
+    let compact_quick = gtk::Box::new(gtk::Orientation::Horizontal, 2);
+    compact_quick.set_valign(gtk::Align::Center);
+    for (icon, title, target) in [
+        ("document-open-symbolic", "Import photos", info.import_photos.clone()),
+        ("document-edit-symbolic", "Edit photo", info.edit.clone()),
+        ("document-save-symbolic", "Export photos", info.export.clone()),
+    ] {
+        let button = gtk::Button::from_icon_name(icon);
+        button.set_tooltip_text(Some(title));
+        button.add_css_class("flat");
+        button.add_css_class("compact-header-action");
+        button.connect_clicked(move |_| target.emit_clicked());
+        compact_quick.append(&button);
+    }
+    compact_header.append(&compact_quick);
+    compact_header.append(&compact_selection);
+    let compact_photo_tools = gtk::MenuButton::new();
+    compact_photo_tools.set_icon_name("view-more-symbolic");
+    compact_photo_tools.set_tooltip_text(Some("Photo tools · actions, rating, zoom, import and settings"));
+    compact_photo_tools.add_css_class("flat");
+    compact_photo_tools.add_css_class("compact-header-action");
+    let compact_photo_popover = gtk::Popover::new();
+    compact_photo_popover.add_css_class("compact-photo-tools-popover");
+    compact_photo_popover.set_position(gtk::PositionType::Bottom);
+    let compact_photo_scroll = gtk::ScrolledWindow::new();
+    compact_photo_scroll.add_css_class("compact-photo-tools-scroll");
+    compact_photo_scroll.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Never);
+    compact_photo_scroll.set_min_content_width(300);
+    compact_photo_scroll.set_max_content_width(840);
+    compact_photo_popover.set_child(Some(&compact_photo_scroll));
+    compact_photo_tools.set_popover(Some(&compact_photo_popover));
+    compact_header.append(&compact_photo_tools);
+    compact_header.set_visible(false);
+    right_header.pack_end(&compact_header);
+
+    let applied_layout = Rc::new(Cell::new(crate::window::compact_ui::UiLayoutStyle::Standard));
+    let compact_apply: Rc<dyn Fn(crate::window::compact_ui::UiLayoutStyle)> = {
+        let applied = applied_layout.clone();
+        let compact_active = compact_style_active.clone();
+        let window = window.clone();
+        let split = main_split.clone();
+        let rail = compact_rail.clone();
+        let sidebar = sidebar.clone();
+        let left = left_column.clone();
+        let right = right_column.clone();
+        let info = info.clone();
+        let tools = compact_photo_tools.clone();
+        let scroll = compact_photo_scroll.clone();
+        let compact_header = compact_header.clone();
+        let hover = sidebar_hover_reveal.clone();
+        let show_sidebar = show_sidebar.clone();
+        let filter = filter.clone();
+        Rc::new(move |style| {
+            if applied.get() == style { return; }
+            let compact = style == crate::window::compact_ui::UiLayoutStyle::Compact;
+            compact_active.set(compact);
+            rail.explorer.popdown();
+            if compact {
+                // The one real sidebar moves to the temporary rail flyout.
+                if sidebar.parent().is_some() { left.remove(&sidebar); }
+                rail.explorer.set_child(Some(&sidebar));
+                // The real InfoBar (including its menus, state and handlers)
+                // moves to an on-demand palette: no persistent bottom strip.
+                if info.root.parent().is_some() { right.remove(&info.root); }
+                scroll.set_child(Some(&info.root));
+                split.set_show_sidebar(false);
+                split.set_enable_show_gesture(false);
+                split.set_enable_hide_gesture(false);
+                hover.set_visible(false);
+                show_sidebar.set_visible(false);
+                rail.root.set_visible(true);
+                compact_header.set_visible(true);
+                window.add_css_class("pic-compact-ui");
+            } else {
+                if rail.explorer.parent().is_some() { rail.explorer.unparent(); }
+                rail.explorer.set_child(None::<&gtk::Widget>);
+                left.append(&sidebar);
+                tools.popdown();
+                scroll.set_child(None::<&gtk::Widget>);
+                right.append(&info.root);
+                rail.root.set_visible(false);
+                compact_header.set_visible(false);
+                split.set_enable_show_gesture(true);
+                split.set_enable_hide_gesture(true);
+                hover.set_visible(!split.shows_sidebar());
+                show_sidebar.set_visible(!split.shows_sidebar());
+                if !split.is_collapsed() && sidebar::is_pinned(&sidebar) {
+                    split.set_show_sidebar(true);
+                }
+                window.remove_css_class("pic-compact-ui");
+            }
+            rail.update_active(filter.get());
+            applied.set(style);
+        })
+    };
+    compact_apply_slot.replace(Some(compact_apply.clone()));
+    compact_apply(crate::window::compact_ui::UiLayoutStyle::saved(&connection.borrow()));
+    // Prevent narrow headers from losing Search: quick actions fall back to
+    // the always-visible Photo Tools palette.
+    {
+        let quick = compact_quick.clone();
+        let compact_active = compact_style_active.clone();
+        let last = Rc::new(Cell::new(true));
+        window.add_tick_callback(move |window, _| {
+            let visible = compact_active.get() && window.width() >= 1100;
+            if last.replace(visible) != visible { quick.set_visible(visible); }
+            glib::ControlFlow::Continue
+        });
+    }
     {
         let panel=metadata_panel.clone();
         window.connect_close_request(move |_| {panel.cancel_index();glib::Propagation::Proceed});
@@ -5133,10 +5294,17 @@ fn start_photo_export_single(
     {
         let main_split_for_breakpoint = main_split.clone();
         let sidebar_for_breakpoint = sidebar.clone();
+        let compact_style_for_breakpoint = compact_style_active.clone();
         let transition = sidebar_breakpoint_transition.clone();
         let generation = sidebar_breakpoint_generation.clone();
 
         window.add_tick_callback(move |window, _| {
+            if compact_style_for_breakpoint.get() {
+                if main_split_for_breakpoint.shows_sidebar() {
+                    main_split_for_breakpoint.set_show_sidebar(false);
+                }
+                return glib::ControlFlow::Continue;
+            }
             let width = window.width();
 
             if !main_split_for_breakpoint.is_collapsed()

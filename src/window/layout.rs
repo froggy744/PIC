@@ -835,8 +835,14 @@
     let compact_rail = Rc::new(crate::window::compact_ui::CompactRail::new(
         destination_click.clone(),
         {
-            let present_settings = present_settings.clone();
-            Rc::new(move || present_settings(Some("interface")))
+            // No cycle: the settings presenter owns a callback which in turn
+            // references the style controller and the rail.
+            let present_settings = Rc::downgrade(&present_settings);
+            Rc::new(move || {
+                if let Some(present) = present_settings.upgrade() {
+                    present(Some("interface"));
+                }
+            })
         },
     ));
     compact_rail.update_active(filter.get());

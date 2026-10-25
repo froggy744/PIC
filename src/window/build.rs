@@ -634,9 +634,10 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         let compact_selection_label = compact_selection_label.clone();
         move |count, photos| {
             compact_selection_label.set_label(&format!("{count} selected"));
-            compact_selection.set_visible(count > 0);
             if let (Some(info), Some(lightbox)) = (info.upgrade(), lightbox.upgrade()) {
-                if !lightbox.root.is_visible() {
+                let viewer_visible = lightbox.root.is_visible();
+                compact_selection.set_visible(count > 0 && !viewer_visible);
+                if !viewer_visible {
                     info.set_selected_photos(count, &photos);
                 }
             }
@@ -669,14 +670,19 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     {
         let gallery = Rc::downgrade(&gallery);
         let info = Rc::downgrade(&info);
+        let compact_selection = compact_selection.clone();
+        let compact_selection_label = compact_selection_label.clone();
         lightbox.root.connect_visible_notify(move |root| {
             let (Some(gallery), Some(info)) = (gallery.upgrade(), info.upgrade()) else {
                 return;
             };
             if root.is_visible() {
+                compact_selection.set_visible(false);
                 info.show_photo_metadata();
             } else {
                 let (count, photos) = gallery.selected_photo_preview(SELECTION_INFOBAR_PREVIEW_LIMIT);
+                compact_selection_label.set_label(&format!("{count} selected"));
+                compact_selection.set_visible(count > 0);
                 info.set_selected_photos(count, &photos);
             }
         });

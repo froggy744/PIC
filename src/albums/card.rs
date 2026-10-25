@@ -155,6 +155,14 @@ pub(crate) fn album_cover_theme_count() -> usize {
     cover_themes(&root, &album_frame_paths_in(&root)).len()
 }
 
+pub(crate) fn default_bookshelf_cover_index() -> usize {
+    let root = crate::css::resolve_runtime_dir(Path::new(ALBUM_COVER_THEME_DIRECTORY));
+    cover_themes(&root, &album_frame_paths_in(&root))
+        .iter()
+        .position(|theme| theme.name == "standard")
+        .unwrap_or(0)
+}
+
 fn collect_matching_files(
     directory: &Path,
     paths: &mut Vec<PathBuf>,

@@ -346,12 +346,29 @@ fn album_frame_paths_for_layout(
 ) -> Vec<PathBuf> {
     match layout {
         settings::AlbumLayout::Grid => album_frame_paths_for_appearance(root, appearance),
-        settings::AlbumLayout::Bookshelf => {
-            let standard = root.join("standard/standard-frame.png");
-            standard.is_file().then_some(standard).into_iter().collect()
-        }
+        // The Bookshelf context menu cycles these designs independently from
+        // the shelf backgrounds.
+        settings::AlbumLayout::Bookshelf => album_frame_paths_in(root),
         settings::AlbumLayout::CoverFlow => Vec::new(),
     }
+}
+
+fn bookshelf_frame_index(
+    album: &Album,
+    root: &Path,
+    frames: &[PathBuf],
+    cover_index: usize,
+) -> Option<usize> {
+    if let Some(selected) = album.cover_frame.as_deref() {
+        if let Some(index) = frames
+            .iter()
+            .position(|path| frame_identifier(root, path).as_deref() == Some(selected))
+        {
+            return Some(index);
+        }
+    }
+
+    automatic_frame_index(album, root, frames, cover_index)
 }
 
 pub fn refresh(
@@ -505,6 +522,11 @@ fn populate(
 
     let appearance = settings::album_appearance(&connection.borrow());
     let layout = settings::album_layout(&connection.borrow());
+    let bookshelf_cover_index = if layout == settings::AlbumLayout::Bookshelf {
+        settings::bookshelf_cover_index(&connection.borrow())
+    } else {
+        0
+    };
     let fit_whole_photo = settings::saved_bool(
         &connection.borrow(),
         crate::db::THUMBNAIL_FIT_WHOLE_PHOTO_SETTING_KEY,
@@ -644,7 +666,7 @@ fn populate(
 
     for album in &albums {
         let selected_frame = if layout == settings::AlbumLayout::Bookshelf {
-            automatic_frame_index(album, &cover_root, &frame_paths, 0)
+            bookshelf_frame_index(album, &cover_root, &frame_paths, bookshelf_cover_index)
         } else {
             selected_frame_index(album, &cover_root, &frame_paths, appearance.cover_index)
         };

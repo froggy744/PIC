@@ -990,19 +990,63 @@ mod tests {
     }
 
     #[test]
-    fn album_layouts_keep_separate_cover_frame_policies() {
+    fn bookshelf_covers_follow_global_index_and_keep_album_overrides() {
         let root = Path::new("images/theme/album-covers");
-        let appearance = AlbumAppearance {
+        let covers_enabled = AlbumAppearance {
             covers_enabled: true,
             ..AlbumAppearance::default()
         };
+        let covers_disabled = AlbumAppearance {
+            covers_enabled: false,
+            ..AlbumAppearance::default()
+        };
 
-        assert!(!album_frame_paths_for_layout(root, appearance, settings::AlbumLayout::Grid).is_empty());
-        assert_eq!(
-            album_frame_paths_for_layout(root, appearance, settings::AlbumLayout::Bookshelf),
-            vec![root.join("standard/standard-frame.png")]
+        assert!(
+            !album_frame_paths_for_layout(root, covers_enabled, settings::AlbumLayout::Grid)
+                .is_empty()
         );
-        assert!(album_frame_paths_for_layout(root, appearance, settings::AlbumLayout::CoverFlow).is_empty());
+
+        let bookshelf_frames =
+            album_frame_paths_for_layout(root, covers_disabled, settings::AlbumLayout::Bookshelf);
+        assert_eq!(bookshelf_frames, album_frame_paths_in(root));
+        let default_index = default_bookshelf_cover_index();
+        let next_index = (default_index + 1) % album_cover_theme_count();
+        let first_default =
+            bookshelf_frame_index(&album(19), root, &bookshelf_frames, default_index).unwrap();
+        let next_default =
+            bookshelf_frame_index(&album(19), root, &bookshelf_frames, next_index).unwrap();
+        assert_eq!(
+            Some(first_default),
+            automatic_frame_index(&album(19), root, &bookshelf_frames, default_index)
+        );
+        assert_eq!(
+            Some(next_default),
+            automatic_frame_index(&album(19), root, &bookshelf_frames, next_index)
+        );
+        assert_ne!(
+            cover_theme_name(root, &bookshelf_frames[first_default]),
+            cover_theme_name(root, &bookshelf_frames[next_default])
+        );
+        assert_eq!(
+            cover_theme_name(root, &bookshelf_frames[first_default]).as_deref(),
+            Some("standard")
+        );
+
+        let mut chosen = album(19);
+        chosen.cover_frame = Some("vintage/blue-frame.png".to_string());
+        assert_eq!(
+            bookshelf_frame_index(&chosen, root, &bookshelf_frames, next_index),
+            bookshelf_frames
+                .iter()
+                .position(|path| path == &root.join("vintage/blue-frame.png"))
+        );
+
+        assert!(album_frame_paths_for_layout(
+            root,
+            covers_enabled,
+            settings::AlbumLayout::CoverFlow
+        )
+        .is_empty());
     }
 
     #[test]
@@ -1392,6 +1436,7 @@ mod tests {
             .borrow()
             .execute_batch("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
             .unwrap();
+        settings::set_album_layout(&connection.borrow(), settings::AlbumLayout::Grid).unwrap();
         let changed = Rc::new(std::cell::Cell::new(0));
         let changed_for_callback = changed.clone();
         let view = gtk::ScrolledWindow::new();

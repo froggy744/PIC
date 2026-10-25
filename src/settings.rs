@@ -1448,14 +1448,15 @@ pub(crate) const ALBUM_BOOKSHELF_ENABLED_SETTING_KEY: &str = "albums-bookshelf-e
 pub(crate) const ALBUM_COVERS_ENABLED_SETTING_KEY: &str = "albums-covers-enabled";
 pub(crate) const ALBUM_BOOKSHELF_BACKGROUND_SETTING_KEY: &str = "albums-bookshelf-background";
 pub(crate) const ALBUM_COVER_FRAME_SETTING_KEY: &str = "albums-cover-frame";
+pub(crate) const ALBUM_BOOKSHELF_COVER_FRAME_SETTING_KEY: &str = "albums-bookshelf-cover-frame";
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct AlbumAppearance {
     pub bookshelf_enabled: bool,
     pub covers_enabled: bool,
     pub background_index: usize,
-    /// Shifts the design every album without its own frame is drawn with, so
-    /// "Next Album Covers" advances the whole page by one design.
+    /// Shifts the design every album without its own frame is drawn with in
+    /// Grid; Bookshelf keeps a separate cover index.
     pub cover_index: usize,
 }
 
@@ -1566,6 +1567,14 @@ pub(crate) fn album_appearance(connection: &Connection) -> AlbumAppearance {
     }
 }
 
+pub(crate) fn bookshelf_cover_index(connection: &Connection) -> usize {
+    crate::db::setting(connection, ALBUM_BOOKSHELF_COVER_FRAME_SETTING_KEY)
+        .ok()
+        .flatten()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or_else(crate::albums_view::default_bookshelf_cover_index)
+}
+
 pub(crate) fn set_bookshelf_enabled(connection: &Connection, enabled: bool) -> anyhow::Result<()> {
     crate::db::set_setting(
         connection,
@@ -1616,6 +1625,22 @@ pub(crate) fn next_album_covers(
     Ok(next)
 }
 
+pub(crate) fn next_bookshelf_covers(
+    connection: &Connection,
+    frame_count: usize,
+) -> anyhow::Result<usize> {
+    if frame_count == 0 {
+        anyhow::bail!("no album cover frames are available");
+    }
+    let next = (bookshelf_cover_index(connection) + 1) % frame_count;
+    crate::db::set_setting(
+        connection,
+        ALBUM_BOOKSHELF_COVER_FRAME_SETTING_KEY,
+        &next.to_string(),
+    )?;
+    Ok(next)
+}
+
 pub(crate) fn disable_all_album_themes(connection: &Connection) -> anyhow::Result<()> {
     set_bookshelf_enabled(connection, false)?;
     set_covers_enabled(connection, false)
@@ -1627,6 +1652,12 @@ pub(crate) fn reset_bookshelf_theme(connection: &Connection) -> anyhow::Result<(
         connection,
         ALBUM_BOOKSHELF_BACKGROUND_SETTING_KEY,
         &default.to_string(),
+    )?;
+    let default_cover = crate::albums_view::default_bookshelf_cover_index();
+    crate::db::set_setting(
+        connection,
+        ALBUM_BOOKSHELF_COVER_FRAME_SETTING_KEY,
+        &default_cover.to_string(),
     )
 }
 
@@ -1639,6 +1670,7 @@ pub(crate) fn reset_all_album_themes(connection: &Connection) -> anyhow::Result<
         ALBUM_COVERS_ENABLED_SETTING_KEY,
         ALBUM_BOOKSHELF_BACKGROUND_SETTING_KEY,
         ALBUM_COVER_FRAME_SETTING_KEY,
+        ALBUM_BOOKSHELF_COVER_FRAME_SETTING_KEY,
         ALBUM_VIEW_STYLE_SETTING_KEY,
         BOOKSHELF_SETTING_KEY,
     ] {
@@ -2470,8 +2502,9 @@ mod tests {
             .unwrap();
         set_bookshelf_enabled(&connection, false).unwrap();
         set_covers_enabled(&connection, true).unwrap();
-        crate::db::set_setting(&connection, ALBUM_BOOKSHELF_BACKGROUND_SETTING_KEY, "3")
-            .unwrap();
+        crate::db::set_setting(&connection, ALBUM_BOOKSHELF_BACKGROUND_SETTING_KEY, "3").unwrap();
+        crate::db::set_setting(&connection, ALBUM_COVER_FRAME_SETTING_KEY, "2").unwrap();
+        crate::db::set_setting(&connection, ALBUM_BOOKSHELF_COVER_FRAME_SETTING_KEY, "3").unwrap();
 
         reset_bookshelf_theme(&connection).unwrap();
 
@@ -2483,6 +2516,11 @@ mod tests {
         let appearance = album_appearance(&connection);
         assert!(!appearance.bookshelf_enabled);
         assert!(appearance.covers_enabled);
+        assert_eq!(appearance.cover_index, 2);
+        assert_eq!(
+            bookshelf_cover_index(&connection),
+            crate::albums_view::default_bookshelf_cover_index()
+        );
         assert_eq!(
             next_bookshelf_background(&connection, 4).unwrap(),
             (default + 1) % 4
@@ -2490,7 +2528,7 @@ mod tests {
     }
 
     #[test]
-    fn next_album_covers_enables_covers_and_wraps() {
+    fn bookshelf_and_global_cover_indexes_advance_independently() {
         use super::*;
 
         let connection = Connection::open_in_memory().unwrap();
@@ -2498,7 +2536,18 @@ mod tests {
             .execute_batch("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
             .unwrap();
 
+        let shelf_default = crate::albums_view::default_bookshelf_cover_index();
+        let frame_count = crate::albums_view::album_cover_theme_count();
+        let shelf_next = (shelf_default + 1) % frame_count;
         assert!(!album_appearance(&connection).covers_enabled);
+        assert_eq!(
+            next_bookshelf_covers(&connection, frame_count).unwrap(),
+            shelf_next
+        );
+        assert_eq!(bookshelf_cover_index(&connection), shelf_next);
+        assert_eq!(album_appearance(&connection).cover_index, 0);
+        assert!(!album_appearance(&connection).covers_enabled);
+
         assert_eq!(next_album_covers(&connection, 3).unwrap(), 1);
         let appearance = album_appearance(&connection);
         assert!(appearance.covers_enabled);
@@ -2506,7 +2555,18 @@ mod tests {
         assert_eq!(next_album_covers(&connection, 3).unwrap(), 2);
         assert_eq!(next_album_covers(&connection, 3).unwrap(), 0);
 
+        assert_eq!(
+            next_bookshelf_covers(&connection, frame_count).unwrap(),
+            (shelf_next + 1) % frame_count
+        );
+        assert_eq!(
+            next_bookshelf_covers(&connection, frame_count).unwrap(),
+            (shelf_next + 2) % frame_count
+        );
+        assert_eq!(album_appearance(&connection).cover_index, 0);
+
         assert!(next_album_covers(&connection, 0).is_err());
+        assert!(next_bookshelf_covers(&connection, 0).is_err());
     }
 
     #[test]

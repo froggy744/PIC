@@ -376,8 +376,13 @@ fn show_context_menu(
                     !settings::album_appearance(&connection.borrow()).covers_enabled,
                 ),
                 AlbumAppearanceAction::NextCovers => {
-                    settings::next_album_covers(&connection.borrow(), album_cover_theme_count())
-                        .map(|_| ())
+                    let frame_count = album_cover_theme_count();
+                    if current_layout == settings::AlbumLayout::Bookshelf {
+                        settings::next_bookshelf_covers(&connection.borrow(), frame_count)
+                            .map(|_| ())
+                    } else {
+                        settings::next_album_covers(&connection.borrow(), frame_count).map(|_| ())
+                    }
                 }
                 AlbumAppearanceAction::DisableAll => {
                     settings::disable_all_album_themes(&connection.borrow())

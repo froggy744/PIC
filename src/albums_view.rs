@@ -19,12 +19,14 @@ const BOOKSHELF_SURFACE_Y: i32 = 235;
 const BOOKSHELF_TOP_INSET: i32 = 28;
 const ALBUM_COVER_THEME_DIRECTORY: &str = "images/theme/album-covers";
 const BOOKSHELF_THEME_DIRECTORY: &str = "images/theme/bookshelf";
-const BOOKSHELF_MAX_COLUMNS: usize = 5;
+// Four columns keep eight albums balanced, while the cover width cap keeps
+// their visual size steady across monitor resolutions.
+const BOOKSHELF_MAX_COLUMNS: usize = 4;
 const BOOKSHELF_MIN_ROWS: usize = 3;
 const BOOKSHELF_COLUMN_GAP: i32 = 28;
 const BOOKSHELF_SIDE_PADDING: i32 = 28;
 const BOOKSHELF_MIN_CARD_WIDTH: i32 = 220;
-const BOOKSHELF_MAX_CARD_WIDTH: i32 = 330;
+const BOOKSHELF_MAX_CARD_WIDTH: i32 = 230;
 const BOOKSHELF_CARD_FILL_RATIO: f64 = 0.86;
 const BOOKSHELF_RUNTIME_KEY: &str = "picasa-bookshelf-runtime";
 const ALBUM_SIZE_KEY: &str = "albums-index-size";
@@ -1305,22 +1307,21 @@ mod tests {
 
     #[test]
     fn responsive_bookshelf_columns_follow_available_width() {
-        assert_eq!(bookshelf_columns_for_width(2000, 220), 5);
-        assert_eq!(bookshelf_columns_for_width(1400, 220), 5);
+        assert_eq!(bookshelf_columns_for_width(2000, 220), 4);
+        assert_eq!(bookshelf_columns_for_width(1400, 220), 4);
         assert_eq!(bookshelf_columns_for_width(1120, 220), 4);
         assert_eq!(bookshelf_columns_for_width(850, 220), 3);
         assert_eq!(bookshelf_columns_for_width(300, 220), 1);
-        assert_eq!(bookshelf_columns_for_width(0, 220), 5);
+        assert_eq!(bookshelf_columns_for_width(0, 220), 4);
     }
 
     #[test]
     fn responsive_bookshelf_cards_grow_on_wide_windows() {
         assert_eq!(bookshelf_target_card_width(850, 3), 227);
         assert_eq!(bookshelf_target_card_width(1120, 4), 229);
-        assert_eq!(bookshelf_target_card_width(1400, 5), 230);
-        assert!(bookshelf_target_card_width(1760, 5) > 240);
-        assert!(bookshelf_target_card_width(1760, 5) > 196);
-        assert_eq!(bookshelf_target_card_width(2200, 5), 330);
+        assert_eq!(bookshelf_target_card_width(1400, 4), 230);
+        assert_eq!(bookshelf_target_card_width(1760, 4), 230);
+        assert_eq!(bookshelf_target_card_width(2200, 4), 230);
     }
 
     #[test]

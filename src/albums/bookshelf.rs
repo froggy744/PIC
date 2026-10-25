@@ -38,7 +38,9 @@ struct BookshelfRuntime {
     focused_album_id: Rc<Cell<Option<i64>>>,
     focused_index: Rc<Cell<usize>>,
     last_columns: Rc<Cell<usize>>,
+    last_row_count: Rc<Cell<usize>>,
     last_card_width: Rc<Cell<i32>>,
+    album_count: Rc<Cell<usize>>,
     selected_theme: Rc<RefCell<Option<BookshelfTheme>>>,
     standard_width: Rc<Cell<i32>>,
     last_standard_width: Rc<Cell<i32>>,
@@ -357,6 +359,15 @@ fn bookshelf_row_count(card_count: usize, columns: usize) -> usize {
     required.max(BOOKSHELF_MIN_ROWS)
 }
 
+fn bookshelf_rows_for_viewport(card_count: usize, columns: usize, viewport_height: i32) -> usize {
+    let viewport_rows = if viewport_height >= BOOKSHELF_EXPANDED_VIEW_HEIGHT {
+        BOOKSHELF_MAX_VIEWPORT_ROWS
+    } else {
+        BOOKSHELF_MIN_ROWS
+    };
+    bookshelf_row_count(card_count, columns).max(viewport_rows)
+}
+
 mod shelf_reflection_imp {
     use super::*;
     #[derive(Default)]
@@ -435,11 +446,12 @@ fn build_bookshelf_rows(
     rows: &gtk::Box,
     cards: &[gtk::Button],
     columns: usize,
+    row_count: usize,
     theme: &BookshelfTheme,
 ) {
     clear_box(rows);
     let columns = columns.clamp(1, BOOKSHELF_MAX_COLUMNS);
-    let row_count = bookshelf_row_count(cards.len(), columns);
+    let row_count = row_count.max(bookshelf_row_count(cards.len(), columns));
 
     for row_index in 0..row_count {
         let start = (row_index * columns).min(cards.len());
@@ -581,11 +593,17 @@ fn resize_bookshelf_cards(rows: &gtk::Box, target_width: i32, theme: &BookshelfT
     }
 }
 
-fn reflow_bookshelf_rows(runtime: &BookshelfRuntime, columns: usize, theme: &BookshelfTheme) {
+fn reflow_bookshelf_rows(
+    runtime: &BookshelfRuntime,
+    columns: usize,
+    row_count: usize,
+    theme: &BookshelfTheme,
+) {
     let mut cards = Vec::new();
     collect_bookshelf_cards(runtime.rows.upcast_ref(), &mut cards);
     if cards.is_empty() {
         runtime.last_columns.set(columns);
+        runtime.last_row_count.set(row_count);
         return;
     }
 
@@ -595,8 +613,9 @@ fn reflow_bookshelf_rows(runtime: &BookshelfRuntime, columns: usize, theme: &Boo
             parent.remove(card);
         }
     }
-    build_bookshelf_rows(&runtime.rows, &cards, columns, theme);
+    build_bookshelf_rows(&runtime.rows, &cards, columns, row_count, theme);
     runtime.last_columns.set(columns);
+    runtime.last_row_count.set(row_count);
 
     
 }

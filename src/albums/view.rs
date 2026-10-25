@@ -163,7 +163,9 @@ fn build_inner(
         focused_album_id: Rc::new(Cell::new(None)),
         focused_index: Rc::new(Cell::new(0)),
         last_columns: Rc::new(Cell::new(0)),
+        last_row_count: Rc::new(Cell::new(0)),
         last_card_width: Rc::new(Cell::new(0)),
+        album_count: Rc::new(Cell::new(0)),
         selected_theme: Rc::new(RefCell::new(None)),
         standard_width: Rc::new(Cell::new(0)),
         last_standard_width: Rc::new(Cell::new(0)),
@@ -238,6 +240,7 @@ fn build_inner(
     crate::startup_trace::mark("albums_populate_done", Some(album_started));
 
     let runtime_for_resize = bookshelf_runtime.clone();
+    let bookshelf_viewport = scrolled.clone();
     let standard_cards = cards.clone();
     scrolled.add_tick_callback(move |_, _| {
         let preferred = runtime_for_resize.standard_width.get();
@@ -260,8 +263,15 @@ fn build_inner(
         }
 
         let columns = bookshelf_columns_for_width(width, BOOKSHELF_MIN_CARD_WIDTH);
-        if columns != runtime_for_resize.last_columns.get() {
-            reflow_bookshelf_rows(&runtime_for_resize, columns, &theme);
+        let row_count = bookshelf_rows_for_viewport(
+            runtime_for_resize.album_count.get(),
+            columns,
+            bookshelf_viewport.height(),
+        );
+        if columns != runtime_for_resize.last_columns.get()
+            || row_count != runtime_for_resize.last_row_count.get()
+        {
+            reflow_bookshelf_rows(&runtime_for_resize, columns, row_count, &theme);
         }
 
         let target_card_width = bookshelf_target_card_width(width, columns);
@@ -509,7 +519,9 @@ fn populate(
     }
     clear_box(&bookshelf_runtime.rows);
     bookshelf_runtime.last_columns.set(0);
+    bookshelf_runtime.last_row_count.set(0);
     bookshelf_runtime.last_card_width.set(0);
+    bookshelf_runtime.album_count.set(albums.len());
     bookshelf_runtime.selected_theme.replace(None);
 
     count.set_text(&format!(
@@ -717,8 +729,16 @@ fn populate(
     if let Some(theme) = row_theme {
         let width = bookshelf_runtime.rows.width();
         let columns = bookshelf_columns_for_width(width, card_width);
-        build_bookshelf_rows(&bookshelf_runtime.rows, &bookshelf_cards, columns, &theme);
+        let row_count = bookshelf_row_count(bookshelf_cards.len(), columns);
+        build_bookshelf_rows(
+            &bookshelf_runtime.rows,
+            &bookshelf_cards,
+            columns,
+            row_count,
+            &theme,
+        );
         bookshelf_runtime.last_columns.set(columns);
+        bookshelf_runtime.last_row_count.set(row_count);
 
         if width > 0 {
             let target_card_width = bookshelf_target_card_width(width, columns);

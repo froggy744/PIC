@@ -45,9 +45,9 @@ pub(crate) struct StartupWizard {
     library_has_photos: Cell<bool>,
     header: adw::HeaderBar,
     content: gtk::Box,
+    scroll: gtk::ScrolledWindow,
     branding: gtk::Box,
-    logo: gtk::Image,
-    photo_visual: adw::Clamp,
+    logo: gtk::Picture,
     welcome_spacer: gtk::Box,
     heading: gtk::Label,
     description: gtk::Label,
@@ -80,6 +80,16 @@ fn button(text: &str) -> gtk::Button {
     }
     button
 }
+fn set_welcome_logo(logo: &gtk::Picture, dark: bool) {
+    let bytes = if dark {
+        &include_bytes!("../../logo/logo-big-PNG.png")[..]
+    } else {
+        &include_bytes!("../../logo/logo-big-PNG-dark.svg")[..]
+    };
+    if let Ok(texture) = gtk::gdk::Texture::from_bytes(&glib::Bytes::from_static(bytes)) {
+        logo.set_paintable(Some(&texture));
+    }
+}
 impl StartupWizard {
     pub(crate) fn new(
         parent: &adw::ApplicationWindow,
@@ -104,51 +114,25 @@ impl StartupWizard {
             set(&content, 24);
         }
         let heading = label("Welcome to PIC");
-        heading.add_css_class("title-1");
-        let branding = gtk::Box::new(gtk::Orientation::Vertical, 6);
-        let logo_texture = gtk::gdk::Texture::from_bytes(&glib::Bytes::from_static(
-            include_bytes!("../../icon/pic-128.png"),
-        ))
-        .expect("bundled PIC logo is valid");
-        let logo = gtk::Image::from_paintable(Some(&logo_texture));
-        // Welcome camera size
-        //  in logical pixels; increase to enlarge it.
-        logo.set_pixel_size(155);
+        let branding = gtk::Box::new(gtk::Orientation::Vertical, 10);
+        branding.set_halign(gtk::Align::Center);
+        let logo = gtk::Picture::new();
+        logo.set_can_shrink(true);
+        logo.set_content_fit(gtk::ContentFit::Contain);
+        logo.set_size_request(360, 198);
         logo.set_halign(gtk::Align::Center);
+        logo.set_alternative_text(Some("PIC — Personal Image Catalogue"));
+        let style_manager = adw::StyleManager::default();
+        set_welcome_logo(&logo, style_manager.is_dark());
+        let weak_logo = logo.downgrade();
+        style_manager.connect_dark_notify(move |manager| {
+            if let Some(logo) = weak_logo.upgrade() {
+                set_welcome_logo(&logo, manager.is_dark());
+            }
+        });
+        branding.append(&logo);
         branding.append(&heading);
-        logo.set_valign(gtk::Align::End);
-        // Increase this bottom margin to move the camera upward.
-        logo.set_margin_bottom(20);
-        logo.add_css_class("welcome-camera");
-        let photos_texture = gtk::gdk::Texture::from_bytes(&glib::Bytes::from_static(
-            include_bytes!("../../images/onboarding/welcome-photos.png"),
-        ))
-        .expect("bundled welcome photos are valid");
-        let photos = gtk::Picture::for_paintable(&photos_texture);
-        photos.set_can_shrink(true);
-        photos.set_content_fit(gtk::ContentFit::Contain);
-        photos.set_size_request(-1, 176);
-        photos.set_alternative_text(Some(
-            "Photo prints of wildflowers, a mountain lake and a beach.",
-        ));
-        let photo_visual = adw::Clamp::new();
-        photo_visual.set_maximum_size(400);
-        photo_visual.set_tightening_threshold(400);
-        // Reserve room below the prints for the foreground camera, centred
-        // across the middle print's lower border.
-        let composition = gtk::Overlay::new();
-        let photo_canvas = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        photo_canvas.append(&photos);
-        let lower_space = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        lower_space.set_size_request(-1, 32);
-        photo_canvas.append(&lower_space);
-        composition.set_child(Some(&photo_canvas));
-        composition.add_overlay(&logo);
-        photo_visual.set_child(Some(&composition));
-        photo_visual.set_margin_top(4);
-        photo_visual.set_margin_bottom(4);
         content.append(&branding);
-        content.append(&photo_visual);
         let description = label("");
         let folder = label("");
         folder.add_css_class("heading");
@@ -169,14 +153,13 @@ impl StartupWizard {
         choose.add_css_class("suggested-action");
         choose.add_css_class("pill");
         let retry = button("Continue adding photos");
-        let tutorial = gtk::Button::with_label("Tutorial");
+        let tutorial = gtk::Button::with_label("Take a Tour");
         tutorial.add_css_class("flat");
         tutorial.set_halign(gtk::Align::Center);
         let open_library = button("Open Library");
         let skip = button("Skip for now");
         skip.add_css_class("flat");
-        skip.add_css_class("caption");
-        skip.add_css_class("dim-label");
+        skip.add_css_class("onboarding-skip");
         for child in [&choose, &tutorial, &retry, &open_library] {
             content.append(child);
         }
@@ -184,19 +167,24 @@ impl StartupWizard {
         welcome_spacer.set_vexpand(true);
         content.append(&welcome_spacer);
         let preference_row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-        preference_row.set_halign(gtk::Align::Center);
-        preference_row.set_margin_top(8);
+        preference_row.set_halign(gtk::Align::Fill);
+        preference_row.set_hexpand(true);
+        preference_row.set_margin_top(12);
+        preference_row.add_css_class("onboarding-preferences");
         let preference_label = label("Don’t show this automatically again");
-        preference_label.add_css_class("caption");
-        preference_label.add_css_class("dim-label");
+        preference_label.add_css_class("onboarding-preferences-label");
         let never_show = gtk::CheckButton::new();
         never_show.set_child(Some(&preference_label));
         never_show.set_valign(gtk::Align::Center);
+        never_show.set_halign(gtk::Align::End);
         never_show.set_active(prefs.never_show);
         never_show.update_property(&[gtk::accessible::Property::Label(
             "Don’t show this automatically again",
         )]);
         preference_row.append(&skip);
+        let footer_spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        footer_spacer.set_hexpand(true);
+        preference_row.append(&footer_spacer);
         preference_row.append(&never_show);
         content.append(&preference_row);
         let preference_error = label("");
@@ -227,9 +215,9 @@ impl StartupWizard {
             library_has_photos: Cell::new(false),
             header,
             content,
+            scroll,
             branding,
             logo,
-            photo_visual,
             welcome_spacer,
             heading,
             description,
@@ -359,18 +347,32 @@ impl StartupWizard {
             "Adding photos"
         });
         self.header.set_show_title(!welcome);
+        self.scroll.set_vscrollbar_policy(if welcome {
+            gtk::PolicyType::Never
+        } else {
+            gtk::PolicyType::Automatic
+        });
         self.logo.set_visible(welcome);
-        self.photo_visual.set_visible(welcome);
         self.welcome_spacer.set_visible(welcome);
-        self.content.set_spacing(if welcome { 8 } else { 12 });
-        self.content.set_margin_top(if welcome { 4 } else { 24 });
+        self.content.set_spacing(if welcome { 10 } else { 12 });
+        self.content.set_margin_top(if welcome { 12 } else { 24 });
         self.content
-            .set_margin_bottom(if welcome { 16 } else { 24 });
+            .set_margin_bottom(if welcome { 20 } else { 24 });
         self.branding.set_halign(if welcome {
             gtk::Align::Center
         } else {
             gtk::Align::Fill
         });
+        if welcome {
+            self.heading.add_css_class("onboarding-welcome-heading");
+            self.heading.remove_css_class("title-1");
+            self.description.add_css_class("onboarding-welcome-tagline");
+        } else {
+            self.heading.remove_css_class("onboarding-welcome-heading");
+            self.heading.add_css_class("title-1");
+            self.description
+                .remove_css_class("onboarding-welcome-tagline");
+        }
         self.heading.set_xalign(if welcome { 0.5 } else { 0.0 });
         self.description.set_xalign(if welcome { 0.5 } else { 0.0 });
         self.description.set_justify(if welcome {
@@ -384,7 +386,7 @@ impl StartupWizard {
             gtk::Align::Fill
         });
         self.choose.set_margin_top(if welcome { 8 } else { 0 });
-        self.skip.set_halign(gtk::Align::Center);
+        self.skip.set_halign(gtk::Align::Start);
         if welcome {
             self.choose.add_css_class("pill");
         } else {
@@ -401,7 +403,7 @@ impl StartupWizard {
             }
         });
         self.description.set_text(if welcome {
-            "All your photos. One place. On your computer."
+            "Your photos. Beautifully organised. Always yours."
         } else {
             match mode {
                 ImportPresentation::Recovery => "PIC was adding photos from:",

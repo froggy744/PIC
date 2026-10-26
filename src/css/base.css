@@ -133,7 +133,23 @@ popover.sidebar-section-tooltip-menu button.sidebar-section-tooltip-item:active 
 }
 
 .tour-heading { font-size: 22px; font-weight: 700; }
-.welcome-camera { -gtk-icon-shadow: 0 2px 4px rgba(0, 0, 0, 0.24); }
+.onboarding-welcome-heading { font-size: 20px; font-weight: 600; }
+.onboarding-welcome-tagline {
+  font-size: 15px;
+  color: alpha(@theme_fg_color, 0.82);
+}
+.onboarding-preferences {
+  padding-top: 8px;
+  border-top: 1px solid alpha(@theme_fg_color, 0.18);
+}
+.onboarding-preferences button.onboarding-skip {
+  color: alpha(@theme_fg_color, 0.90);
+  font-weight: 500;
+}
+.onboarding-preferences-label {
+  color: alpha(@theme_fg_color, 0.86);
+  font-size: 12px;
+}
 
 /* AdwAlertDialog builds its sheet inside a dialog window. Keep the sheet,
  * message, and responses on the active appearance palette for every theme. */

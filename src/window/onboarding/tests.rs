@@ -175,10 +175,10 @@ fn wizard_interrupted_import_does_not_enqueue_automatically_and_continue_queues_
     assert!(has_label(dialog.upcast_ref(), "Welcome to PIC"));
     assert!(has_label(
         dialog.upcast_ref(),
-        "All your photos. One place. On your computer."
+        "Your photos. Beautifully organised. Always yours."
     ));
     assert_eq!(queued.get(), 0);
-    click(&parent, "Tutorial");
+    click(&parent, "Take a Tour");
     assert!(!coordinator.is_visible());
     assert_eq!(queued.get(), 0, "tutorial must not resume an import");
     let tour = parent.visible_dialog().unwrap();
@@ -662,7 +662,7 @@ fn wizard_actual_window_recovery_import_and_library_card() {
         window.visible_dialog().unwrap().title().as_str(),
         "Welcome to PIC"
     );
-    click(&window, "Tutorial");
+    click(&window, "Take a Tour");
     assert_eq!(
         window.visible_dialog().unwrap().title().as_str(),
         "Discover PIC"

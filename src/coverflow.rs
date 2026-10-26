@@ -147,10 +147,8 @@ fn coverflow_pose_profile(
         } else {
             1.04
         }
-    } else if distance < 1.0 {
-        1.18 - 0.24 * distance
     } else {
-        0.94 * 0.84_f64.powf(distance - 1.0)
+        1.0
     };
     let card_height = base_height * scale;
     let card_width = base_height * scale;

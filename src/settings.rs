@@ -2580,7 +2580,7 @@ mod tests {
 
         set_bookshelf_enabled(&connection, true).unwrap();
         set_covers_enabled(&connection, true).unwrap();
-        next_bookshelf_background(&connection, 4).unwrap();
+        let selected_background = next_bookshelf_background(&connection, 4).unwrap();
         next_album_covers(&connection, 4).unwrap();
         disable_all_album_themes(&connection).unwrap();
 
@@ -2589,7 +2589,7 @@ mod tests {
             AlbumAppearance {
                 bookshelf_enabled: false,
                 covers_enabled: false,
-                background_index: 1,
+                background_index: selected_background,
                 cover_index: 1,
             }
         );

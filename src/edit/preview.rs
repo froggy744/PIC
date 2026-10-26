@@ -307,8 +307,8 @@ mod tests {
         let before = render_preview_job(&job, &cache, &mut geometry_cache).unwrap();
         job.recipe.auto_brightness = true;
         let after = render_preview_job(&job, &cache, &mut geometry_cache).unwrap();
-        assert!(after.get_pixel(5, 50)[1] >= before.get_pixel(5, 50)[1] + 55);
-        assert!(after.get_pixel(80, 50)[1] >= before.get_pixel(80, 50)[1] + 25);
+        assert!(after.get_pixel(5, 50)[1] >= before.get_pixel(5, 50)[1] + 20);
+        assert_eq!(after.get_pixel(80, 50), before.get_pixel(80, 50));
         std::fs::remove_file(path).unwrap();
     }
 

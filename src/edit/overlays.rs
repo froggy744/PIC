@@ -565,7 +565,11 @@ mod tests {
         assert_eq!(prepared.height, 4);
         assert_eq!(prepared.hash.len(), 64);
 
-        let error = prepare_overlay_bytes(b"not an image", "logo.png").unwrap_err();
+        let mut unsupported_image = Vec::new();
+        image::codecs::bmp::BmpEncoder::new(&mut unsupported_image)
+            .encode(&[10, 20, 30], 1, 1, image::ExtendedColorType::Rgb8)
+            .unwrap();
+        let error = prepare_overlay_bytes(&unsupported_image, "logo.bmp").unwrap_err();
         assert!(error.to_string().contains("PNG and JPG"));
     }
 

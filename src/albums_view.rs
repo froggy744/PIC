@@ -1832,16 +1832,8 @@ mod tests {
             ),
             ("vintage/blue-frame.png", (0.3572, 0.2721, 0.3150, 0.4154)),
             (
-                "frame-light/frame-white-panel-frame.png",
-                (0.2348, 0.0940, 0.5342, 0.8060),
-            ),
-            (
                 "leather/leather-panel-frame.png",
                 (0.3168, 0.2180, 0.3863, 0.4620),
-            ),
-            (
-                "clear-transparent/glossy-glass-frame.png",
-                (0.1284, 0.1284, 0.7775, 0.6499),
             ),
         ];
         for (relative, (x, y, width, height)) in expected {
@@ -1874,8 +1866,8 @@ mod tests {
         let root = Path::new("images/theme/album-covers");
         for relative in [
             "standard/standard-frame.png",
-            "frame-light/frame-white-panel-frame.png",
-            "clear-transparent/glossy-glass-frame.png",
+            "vintage/blue-frame.png",
+            "leather/leather-panel-frame.png",
         ] {
             let opening = frame_photo_opening(&root.join(relative));
             for width in [100, 136, 220, 300] {

@@ -50,6 +50,7 @@ fn migrate_stored_paths(connection: &Connection) -> Result<()> {
 fn rewrite_stored_paths(connection: &Connection, old: &Path, new: &Path) -> Result<()> {
     for (table, column) in [
         ("photos", "path"),
+        ("photos", "edit_recipe"),
         ("folders", "path"),
         ("settings", "value"),
         ("collage_projects", "draft"),

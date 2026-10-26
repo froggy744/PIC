@@ -900,12 +900,22 @@ if [ -n "\${APPDIR:-}" ] && [ -d "\$APPDIR/usr/share/$BIN_NAME" ]; then
         PIC_CACHE_ROOT="\${XDG_CACHE_HOME:-\${HOME:-/tmp}/.cache}/pic-rs"
         mkdir -p "\$PIC_CACHE_ROOT"
         GDK_PIXBUF_MODULE_FILE="\$PIC_CACHE_ROOT/gdk-pixbuf-svg-loaders.cache"
-        if "\$PIXBUF_QUERY" "\$PIXBUF_SVG_LOADER" > "\$GDK_PIXBUF_MODULE_FILE.tmp"; then
-            mv -f "\$GDK_PIXBUF_MODULE_FILE.tmp" "\$GDK_PIXBUF_MODULE_FILE"
+        # Every launch gets a separate temporary file; multiple PIC windows must
+        # never truncate one another's GdkPixbuf loader cache.
+        PIXBUF_CACHE_TMP="\$GDK_PIXBUF_MODULE_FILE.\$\$.tmp"
+        if "\$PIXBUF_QUERY" "\$PIXBUF_SVG_LOADER" > "\$PIXBUF_CACHE_TMP" &&
+           [ -s "\$PIXBUF_CACHE_TMP" ] &&
+           grep -Fq "\$PIXBUF_SVG_LOADER" "\$PIXBUF_CACHE_TMP"; then
+            mv -f "\$PIXBUF_CACHE_TMP" "\$GDK_PIXBUF_MODULE_FILE"
             export GDK_PIXBUF_MODULE_FILE
         else
-            rm -f "\$GDK_PIXBUF_MODULE_FILE.tmp"
-            echo "PIC warning: could not initialize bundled SVG image loader" >&2
+            rm -f "\$PIXBUF_CACHE_TMP"
+            if [ -s "\$GDK_PIXBUF_MODULE_FILE" ] &&
+               grep -Fq "\$PIXBUF_SVG_LOADER" "\$GDK_PIXBUF_MODULE_FILE"; then
+                export GDK_PIXBUF_MODULE_FILE
+            else
+                echo "PIC warning: could not initialize bundled SVG image loader" >&2
+            fi
         fi
     fi
 else

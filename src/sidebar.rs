@@ -332,7 +332,7 @@ pub fn build(
         library_heading.add_controller(double_click);
     }
 
-    // FOLDERS + ALBUMS: use GTK's native vertical split control. GtkPaned
+    // ALBUMS + FOLDERS: use GTK's native vertical split control. GtkPaned
     // owns pointer tracking and allocation while the divider is dragged, which
     // avoids the feedback loop caused by resizing a widget underneath a
     // GestureDrag attached to that same moving divider.
@@ -419,7 +419,7 @@ pub fn build(
     folder_section.set_vexpand(false);
     folder_section.append(&folder_heading);
 
-    // SHARED: registered smb:// and nfs:// roots, listed after Albums.
+    // SHARED: registered smb:// and nfs:// roots, listed after Folders.
     let (share_heading, share_indicator) = collapsible_heading(
         "Shared",
         Some(on_add_share.clone()),
@@ -514,7 +514,7 @@ pub fn build(
             refresh_network_shares(&sidebar, &folders, &state, &on_unavailable);
         });
     }
-    // Shared follows Albums in a second native split, preserving both
+    // Shared follows Folders in a second native split, preserving both
     // draggable height dividers.
     let share_section = gtk::Box::new(gtk::Orientation::Vertical, 0);
     share_section.set_hexpand(true);
@@ -525,24 +525,24 @@ pub fn build(
     folder_share_paned.add_css_class("sidebar-section-paned");
     folder_share_paned.set_hexpand(true);
     folder_share_paned.set_vexpand(true);
-    // Albums keeps its height when the window changes and Shared absorbs the
+    // Folders keeps its height when the window changes and Shared absorbs the
     // difference.
     folder_share_paned.set_resize_start_child(false);
     folder_share_paned.set_resize_end_child(true);
     folder_share_paned.set_shrink_start_child(true);
     folder_share_paned.set_shrink_end_child(false);
-    folder_share_paned.set_start_child(Some(&album_revealer));
+    folder_share_paned.set_start_child(Some(&folder_revealer));
     folder_share_paned.set_end_child(Some(&share_section));
 
-    // Keep the Albums heading outside the draggable pane so collapsing its
+    // Keep the Folders heading outside the draggable pane so collapsing its
     // rows cannot shrink the heading out of view.
-    let album_shared_section = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    album_shared_section.set_hexpand(true);
-    album_shared_section.set_vexpand(true);
-    album_shared_section.append(&album_heading);
-    album_shared_section.append(&folder_share_paned);
+    let folder_shared_section = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    folder_shared_section.set_hexpand(true);
+    folder_shared_section.set_vexpand(true);
+    folder_shared_section.append(&folder_section);
+    folder_shared_section.append(&folder_share_paned);
 
-    // Folders remains above the Albums/Shared pair in the outer split.
+    // Albums remains above the Folders/Shared pair in the outer split.
     let section_paned = gtk::Paned::new(gtk::Orientation::Vertical);
     section_paned.add_css_class("sidebar-section-paned");
     section_paned.set_hexpand(true);
@@ -551,9 +551,9 @@ pub fn build(
     section_paned.set_resize_end_child(true);
     section_paned.set_shrink_start_child(true);
     section_paned.set_shrink_end_child(false);
-    section_paned.set_start_child(Some(&folder_revealer));
-    section_paned.set_end_child(Some(&album_shared_section));
-    root.append(&folder_section);
+    section_paned.set_start_child(Some(&album_revealer));
+    section_paned.set_end_child(Some(&folder_shared_section));
+    root.append(&album_heading);
     root.append(&section_paned);
 
     // Match the existing Folders pane behavior: remember its divider position
@@ -565,7 +565,7 @@ pub fn build(
         let state = state.clone();
         let saved_position = saved_folder_pane_position.clone();
         let animating = folder_pane_animating.clone();
-        section_paned.connect_position_notify(move |paned| {
+        folder_share_paned.connect_position_notify(move |paned| {
             let position = paned.position();
             // Only treat native user dragging as a new saved position. During
             // our collapse/expand animation the pane position changes every
@@ -591,7 +591,7 @@ pub fn build(
         let state = state.clone();
         let saved_position = saved_album_pane_position.clone();
         let animating = album_pane_animating.clone();
-        folder_share_paned.connect_position_notify(move |paned| {
+        section_paned.connect_position_notify(move |paned| {
             let position = paned.position();
             // Only treat native user dragging as a new saved position. During
             // our collapse/expand animation the pane position changes every
@@ -616,7 +616,7 @@ pub fn build(
 
     let set_albums_expanded: Rc<dyn Fn(bool)> = {
         let state = state.clone();
-        let paned = folder_share_paned.clone();
+        let paned = section_paned.clone();
         let revealer = album_revealer.clone();
         let indicator = album_indicator.clone();
         let saved_position = saved_album_pane_position.clone();
@@ -751,7 +751,7 @@ pub fn build(
 
     let set_folders_expanded: Rc<dyn Fn(bool)> = {
         let state = state.clone();
-        let paned = section_paned.clone();
+        let paned = folder_share_paned.clone();
         let revealer = folder_revealer.clone();
         let indicator = folder_indicator.clone();
         let saved_position = saved_folder_pane_position.clone();
@@ -952,12 +952,12 @@ pub fn build(
     // fixed pixel height, so font/theme/DPI changes keep the startup split
     // correct. A short album list still uses only its natural height.
     {
-        let paned = folder_share_paned.clone();
+        let paned = section_paned.clone();
         let album_list = album_list.clone();
         let saved_position = saved_album_pane_position.clone();
         let applied = Rc::new(Cell::new(false));
         let applied_for_map = applied.clone();
-        folder_share_paned.connect_map(move |_| {
+        section_paned.connect_map(move |_| {
             if applied_for_map.replace(true) {
                 return;
             }
@@ -991,7 +991,7 @@ pub fn build(
     {
         let sidebar = outer.downgrade();
         let applied = Cell::new(false);
-        section_paned.connect_map(move |_| {
+        folder_share_paned.connect_map(move |_| {
             if applied.replace(true) {
                 return;
             }
@@ -1037,7 +1037,7 @@ pub fn build(
         outer.set_data(FOLDER_INDICATOR_KEY, folder_indicator);
         outer.set_data(FOLDER_MODE_TOGGLE_KEY, folder_mode_toggle);
         outer.set_data(FOLDER_MODE_CHANGED_KEY, on_folder_display_mode_changed);
-        outer.set_data(FOLDER_SHARE_PANED_KEY, section_paned.clone());
+        outer.set_data(FOLDER_SHARE_PANED_KEY, folder_share_paned);
         outer.set_data(FOLDER_PANE_SAVED_KEY, saved_folder_pane_position);
         outer.set_data(FOLDER_PANE_ANIMATING_KEY, folder_pane_animating);
         outer.set_data(FOLDER_LAYOUT_GENERATION_KEY, Rc::new(Cell::new(0_u64)));
@@ -3056,8 +3056,8 @@ fn add_folder_context_menu(list: &gtk::ListBox, row: &gtk::ListBoxRow, folder: &
     row.add_controller(right_click);
 }
 
-/// Bound Folders rows by the outer split. GTK's max position already reserves
-/// the nested Albums/Shared pane's minimum size and the native resize handle.
+/// Bound Folders rows by their split with Shared. GTK's max position already
+/// reserves the Shared section's minimum size and the native resize handle.
 fn folder_expansion_target(sidebar: &gtk::ScrolledWindow, current: i32) -> Option<i32> {
     let paned = stored_widget::<gtk::Paned>(sidebar, FOLDER_SHARE_PANED_KEY)?;
     let list = stored_widget::<gtk::ListBox>(sidebar, FOLDER_LIST_KEY)?;

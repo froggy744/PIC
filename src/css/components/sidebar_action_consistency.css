@@ -1,4 +1,4 @@
-/* Header actions in Library, Ratings, Folders, Shared and Albums. */
+/* Header actions and row markers in Library, Ratings, Folders, Shared and Albums. */
 .navigation-sidebar button.sidebar-section-action {
     min-width: 28px;
     min-height: 28px;
@@ -38,4 +38,9 @@
 
 .navigation-sidebar button.sidebar-section-action:disabled {
     opacity: 0.45;
+}
+
+/* Keep the scroll-follow row highlight without the theme-specific accent stripe. */
+.navigation-sidebar row.sidebar-scroll-location {
+    box-shadow: none;
 }

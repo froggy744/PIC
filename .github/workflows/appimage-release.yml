@@ -4,7 +4,9 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: ['.github/workflows/appimage-release.yml']
+    paths:
+      - '.github/workflows/appimage-release.yml'
+      - 'scripts/PIC-build-linux-one-script.sh'
   release:
     types: [published]
 

@@ -1003,7 +1003,7 @@ copy_source_tree() {
 build_native() {
     log "Testing/building Rust release binary OFFLINE"
     if [[ "$SKIP_TESTS" != 1 ]]; then
-        (cd "$SOURCE_DIR" && cargo test --release --locked --offline) || \
+        (cd "$SOURCE_DIR" && cargo test --release --locked --offline -- --test-threads=1) || \
             die "cargo test failed; refusing to create a release package."
     else
         warn "Tests skipped (--skip-tests / PIC_SKIP_TESTS=1)."
@@ -1312,7 +1312,7 @@ run_flatpak_tests() {
             set -eu
             for test_binary in /app/libexec/pic-build-tests/*; do
                 [ -x "$test_binary" ] || { echo "Compiled Flatpak tests are unavailable" >&2; exit 1; }
-                "$test_binary"
+                "$test_binary" --test-threads=1
             done
         ' || status=$?
     rm -f "$test_metadata"

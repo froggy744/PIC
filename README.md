@@ -5,7 +5,7 @@
 <div align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="logo/logo-long-SVG.svg">
-    <img src="docs/assets/github/pic-logo-light.svg" alt="PIC — Personal Image Catalogue" width="380">
+    <img src="logo/logo-long-SVG-dark.svg" alt="PIC — Personal Image Catalogue" width="380">
   </picture>
   <h3>Your photos. Your folders. Your way.</h3>
   <p><strong>The classic photo-library experience, reimagined for Linux.</strong></p>

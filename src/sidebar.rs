@@ -372,12 +372,6 @@ pub fn build(
     album_revealer.set_vexpand(true);
     album_revealer.set_child(Some(&album_scroll));
 
-    let album_section = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    album_section.set_hexpand(true);
-    album_section.set_vexpand(true);
-    album_section.append(&album_heading);
-    album_section.append(&album_revealer);
-
     let (folder_heading, folder_indicator) = collapsible_heading(
         "Folders",
         Some(on_import_folder.clone()),
@@ -537,8 +531,16 @@ pub fn build(
     folder_share_paned.set_resize_end_child(true);
     folder_share_paned.set_shrink_start_child(true);
     folder_share_paned.set_shrink_end_child(false);
-    folder_share_paned.set_start_child(Some(&album_section));
+    folder_share_paned.set_start_child(Some(&album_revealer));
     folder_share_paned.set_end_child(Some(&share_section));
+
+    // Keep the Albums heading outside the draggable pane so collapsing its
+    // rows cannot shrink the heading out of view.
+    let album_shared_section = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    album_shared_section.set_hexpand(true);
+    album_shared_section.set_vexpand(true);
+    album_shared_section.append(&album_heading);
+    album_shared_section.append(&folder_share_paned);
 
     // Folders remains above the Albums/Shared pair in the outer split.
     let section_paned = gtk::Paned::new(gtk::Orientation::Vertical);
@@ -550,7 +552,7 @@ pub fn build(
     section_paned.set_shrink_start_child(true);
     section_paned.set_shrink_end_child(false);
     section_paned.set_start_child(Some(&folder_revealer));
-    section_paned.set_end_child(Some(&folder_share_paned));
+    section_paned.set_end_child(Some(&album_shared_section));
     root.append(&folder_section);
     root.append(&section_paned);
 
@@ -616,7 +618,6 @@ pub fn build(
         let state = state.clone();
         let paned = folder_share_paned.clone();
         let revealer = album_revealer.clone();
-        let heading = album_heading.clone();
         let indicator = album_indicator.clone();
         let saved_position = saved_album_pane_position.clone();
         let animating = album_pane_animating.clone();
@@ -663,11 +664,7 @@ pub fn build(
             } else {
                 let from = paned.position().max(0);
                 revealer.set_reveal_child(false);
-                // GtkPaned can report zero as its minimum when the start child
-                // is shrinkable. Keep enough room for the Albums heading while
-                // collapsing only its rows.
-                let heading_height = heading.measure(gtk::Orientation::Vertical, paned.width()).0;
-                let target = paned.min_position().max(heading_height);
+                let target = paned.min_position();
                 animate_sidebar_pane_position(
                     &paned,
                     from,

@@ -6,6 +6,7 @@ pub(crate) struct AlbumFlowCanvas { gl: crate::coverflow::CoverflowGlArea }
 impl AlbumFlowCanvas {
     fn new() -> Self {
         let gl = crate::coverflow::CoverflowGlArea::new("albums-coverflow-canvas", 430);
+        gl.widget().add_css_class("coverflow-album-style");
         gl.widget().set_can_target(true);
         gl.widget().set_focusable(true);
         Self { gl }
@@ -13,7 +14,7 @@ impl AlbumFlowCanvas {
     fn widget(&self) -> &gtk::GLArea { self.gl.widget() }
     fn set_scene(&self, count: usize, focus: f64, scene: Vec<(usize, gsk::RenderNode)>) {
         let items = scene.into_iter().map(|(index, node)| crate::coverflow::CoverflowItem {
-            index, revision: index as u64, node,
+            index, revision: index as u64, aspect_ratio: 1.0, node,
         }).collect();
         self.gl.set_scene(count, focus, items, true);
     }

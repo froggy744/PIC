@@ -53,8 +53,7 @@ pub(crate) fn coverflow_pose(
     coverflow_pose_profile(index, focus, count, viewport, false)
 }
 
-/// Album-index variant: compact gallery sizing while the fullscreen
-/// screensaver retains its original Cover Flow proportions.
+/// Album-style variant shared by the album index and screensaver.
 pub(crate) fn album_coverflow_pose(
     index: usize,
     focus: f64,
@@ -62,6 +61,66 @@ pub(crate) fn album_coverflow_pose(
     viewport: (f64, f64),
 ) -> Option<CoverflowPose> {
     coverflow_pose_profile(index, focus, count, viewport, true)
+}
+
+pub(crate) fn screensaver_coverflow_pose(
+    index: usize,
+    focus: f64,
+    count: usize,
+    viewport: (f64, f64),
+    aspect_ratio: f64,
+    focus_aspect_ratio: f64,
+) -> Option<CoverflowPose> {
+    let mut pose = coverflow_pose_profile(index, focus, count, viewport, false)?;
+    let ratio = aspect_ratio.max(0.1);
+    let (vw, vh) = viewport;
+    let height = (vh * 0.55).min(vw * 0.30).max(1.0);
+    let distance = (index as f64 - focus.clamp(0.0, (count - 1) as f64)).abs();
+    let scale = if distance < 1.0 { 1.08 - 0.12 * distance } else { 0.96 };
+    pose.card_height = height * scale;
+    pose.card_width = pose.card_height * ratio;
+    pose.center_y = vh * 0.47;
+    // Keep adjacent frames separated according to their actual proportions.
+    let gap = (height * 0.10).clamp(28.0, 64.0);
+    let offset = index as f64 - focus.clamp(0.0, (count - 1) as f64);
+    let focus_width = height * focus_aspect_ratio.max(0.1);
+    let first_step = (focus_width + pose.card_width) * ALBUM_SIDE_ANGLE.cos() * 0.5 + gap;
+    let side_step = pose.card_width * ALBUM_SIDE_ANGLE.cos() + gap;
+    pose.center_x = if distance <= 1.0 {
+        offset * first_step
+    } else {
+        offset.signum() * (first_step + (distance - 1.0) * side_step)
+    };
+    let side_distance = (distance - 1.0).max(0.0);
+    pose.center_z = -side_distance * height * 0.08;
+    pose.rotation_y = -(index as f64 - focus.clamp(0.0, (count - 1) as f64)).signum()
+        * ALBUM_SIDE_ANGLE
+        * distance.min(1.0);
+    pose.opacity = (1.0 - side_distance * 0.025).clamp(0.90, 1.0);
+    pose.camera_distance = vh * 3.4;
+    // Recalculate hit bounds for the actual card aspect ratio.
+    let mut bounds = (f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY);
+    for (local_x, local_y) in [
+        (-pose.card_width * 0.5, -pose.card_height * 0.5),
+        (pose.card_width * 0.5, -pose.card_height * 0.5),
+        (-pose.card_width * 0.5, pose.card_height * 0.5),
+        (pose.card_width * 0.5, pose.card_height * 0.5),
+    ] {
+        let rotated_x = local_x * pose.rotation_y.cos();
+        let rotated_z = pose.center_z - local_x * pose.rotation_y.sin();
+        let perspective = pose.camera_distance / (pose.camera_distance - rotated_z).max(1.0);
+        let x = vw * 0.5 + (pose.center_x + rotated_x) * perspective;
+        let y = pose.center_y - local_y * perspective;
+        bounds.0 = bounds.0.min(x);
+        bounds.1 = bounds.1.min(y);
+        bounds.2 = bounds.2.max(x);
+        bounds.3 = bounds.3.max(y);
+    }
+    pose.x = bounds.0;
+    pose.y = bounds.1;
+    pose.width = bounds.2 - bounds.0;
+    pose.height = bounds.3 - bounds.1;
+    Some(pose)
 }
 
 fn coverflow_pose_profile(
@@ -181,6 +240,7 @@ fn coverflow_pose_profile(
 pub(crate) struct CoverflowItem {
     pub index: usize,
     pub revision: u64,
+    pub aspect_ratio: f64,
     pub node: gsk::RenderNode,
 }
 
@@ -477,7 +537,11 @@ fn draw_frame(area: &gtk::GLArea, scene: &mut Scene) -> Result<(), String> {
         unsafe {
             gl::GenTextures(1, &mut gl_texture);
             gl::BindTexture(gl::TEXTURE_2D, gl_texture);
-            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR as i32);
+            gl::TexParameteri(
+                gl::TEXTURE_2D,
+                gl::TEXTURE_MIN_FILTER,
+                gl::LINEAR_MIPMAP_LINEAR as i32,
+            );
             gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR as i32);
             gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as i32);
             gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as i32);
@@ -494,6 +558,7 @@ fn draw_frame(area: &gtk::GLArea, scene: &mut Scene) -> Result<(), String> {
                 gl::UNSIGNED_BYTE,
                 bytes.as_ptr().cast(),
             );
+            gl::GenerateMipmap(gl::TEXTURE_2D);
             gl::PixelStorei(gl::UNPACK_ROW_LENGTH, 0);
         }
         resources.textures.insert(
@@ -536,7 +601,7 @@ fn draw_frame(area: &gtk::GLArea, scene: &mut Scene) -> Result<(), String> {
             viewport_height as f32,
         );
         uniform_1i(resources.program, "uReflection", 0);
-        let album_flow = area.has_css_class("albums-coverflow-canvas");
+        let album_flow = area.has_css_class("coverflow-album-style");
         let radius = if area.has_css_class("corner-style-rounded") {
             0.08_f32
         } else if area.has_css_class("corner-style-balanced") {
@@ -549,7 +614,27 @@ fn draw_frame(area: &gtk::GLArea, scene: &mut Scene) -> Result<(), String> {
         uniform_1f(resources.program, "uReflectionOpacity", if album_flow { 0.50 } else { 0.20 });
         for item in draw_order {
             let pose = if album_flow {
-                album_coverflow_pose(item.index, scene.focus, scene.count, logical_viewport)
+                if area.has_css_class("screensaver-coverflow-canvas") {
+                    let focus_aspect_ratio = scene
+                        .items
+                        .iter()
+                        .min_by(|a, b| {
+                            (a.index as f64 - scene.focus)
+                                .abs()
+                                .total_cmp(&(b.index as f64 - scene.focus).abs())
+                        })
+                        .map_or(1.0, |focus| focus.aspect_ratio);
+                    screensaver_coverflow_pose(
+                        item.index,
+                        scene.focus,
+                        scene.count,
+                        logical_viewport,
+                        item.aspect_ratio,
+                        focus_aspect_ratio,
+                    )
+                } else {
+                    album_coverflow_pose(item.index, scene.focus, scene.count, logical_viewport)
+                }
             } else {
                 coverflow_pose(item.index, scene.focus, scene.count, logical_viewport)
             };

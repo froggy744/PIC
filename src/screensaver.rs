@@ -895,7 +895,10 @@ fn start_decode_worker(
                         else if mosaic_tiles <= 36 { (960, 640) }
                         else { (640, 430) }
                     }
-                    Style::CoverFlow => (960, 960),
+                    // Cover Flow shows a few large cards on screen, so decode
+                    // source photos at display resolution instead of using
+                    // the low-resolution preview path.
+                    Style::CoverFlow => (2560, 1600),
                     _ => (2560, 1600),
                 };
                 let started = Instant::now();
@@ -927,26 +930,29 @@ fn start_decode_worker(
         });
     }
 
-    // The preview worker never opens an original or tests an NFS mount.
-    // It can still fill the photo wall when the network decoder is stalled.
+    // Other styles can show a cached preview while the original loads. Cover
+    // Flow skips that path so its large cards are always made from source
+    // photos; the original worker remains responsible for source access.
     std::thread::spawn(move || {
         while let Ok(index) = requests.recv() {
             if cancelled.load(Ordering::Relaxed) { break; }
             let Some(photo) = slides.get(index) else { continue; };
-            let started = Instant::now();
-            let cached = decode_cached_preview(photo);
-            if cancelled.load(Ordering::Relaxed) { break; }
-            if std::env::var_os("PIC_SCREENSAVER_TRACE").is_some() {
-                eprintln!(
-                    "PIC_SCREEN decode kind=cache index={index} hit={} ms={}",
-                    cached.is_some(), started.elapsed().as_millis(),
-                );
+            if style != Style::CoverFlow {
+                let started = Instant::now();
+                let cached = decode_cached_preview(photo);
+                if cancelled.load(Ordering::Relaxed) { break; }
+                if std::env::var_os("PIC_SCREENSAVER_TRACE").is_some() {
+                    eprintln!(
+                        "PIC_SCREEN decode kind=cache index={index} hit={} ms={}",
+                        cached.is_some(), started.elapsed().as_millis(),
+                    );
+                }
+                if results.send(ImageResult {
+                    index, high_quality: false, pixels: cached
+                        .and_then(|pixels| accept_orientation(pixels, exclude_portraits))
+                        .map(|pixels| matrix::prepare(pixels, style)),
+                }).is_err() { break; }
             }
-            if results.send(ImageResult {
-                index, high_quality: false, pixels: cached
-                    .and_then(|pixels| accept_orientation(pixels, exclude_portraits))
-                    .map(|pixels| matrix::prepare(pixels, style)),
-            }).is_err() { break; }
 
             // Source availability checks belong to the other workers, not
             // this cache-only path (even mount-backed local paths may block).

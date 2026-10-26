@@ -2,27 +2,18 @@
 use super::*;
 use gtk::{gdk, graphene, gsk};
 
+const COVER_TEXTURE_HEIGHT: f32 = 1600.0;
+
 fn photo_node(texture: &gdk::Texture) -> gsk::RenderNode {
     let snapshot = gtk::Snapshot::new();
-    let outer = graphene::Rect::new(0.0, 0.0, 300.0, 300.0);
-    let inside = graphene::Rect::new(7.0, 7.0, 286.0, 286.0);
-    snapshot.append_color(&gdk::RGBA::new(0.9, 0.9, 0.88, 1.0), &outer);
-    snapshot.append_color(&gdk::RGBA::new(0.045, 0.05, 0.06, 1.0), &inside);
-    let iw = texture.width().max(1) as f32;
-    let ih = texture.height().max(1) as f32;
-    let scale = (inside.width() / iw).min(inside.height() / ih);
-    let width = iw * scale;
-    let height = ih * scale;
-    snapshot.append_scaled_texture(
-        texture,
-        gsk::ScalingFilter::Trilinear,
-        &graphene::Rect::new(
-            inside.x() + (inside.width() - width) * 0.5,
-            inside.y() + (inside.height() - height) * 0.5,
-            width,
-            height,
-        ),
+    let aspect_ratio = texture.width().max(1) as f32 / texture.height().max(1) as f32;
+    let bounds = graphene::Rect::new(
+        0.0,
+        0.0,
+        COVER_TEXTURE_HEIGHT * aspect_ratio,
+        COVER_TEXTURE_HEIGHT,
     );
+    snapshot.append_scaled_texture(texture, gsk::ScalingFilter::Trilinear, &bounds);
     snapshot.to_node().expect("photo cover node")
 }
 
@@ -36,6 +27,8 @@ pub(super) struct CoverFlow {
 impl CoverFlow {
     pub fn new(root: &gtk::Fixed) -> Self {
         let canvas = crate::coverflow::CoverflowGlArea::new("screensaver-coverflow-canvas", 1);
+        canvas.widget().add_css_class("coverflow-album-style");
+        canvas.widget().add_css_class("screensaver-coverflow-canvas");
         root.put(canvas.widget(), 0.0, 0.0);
         Self {
             canvas,
@@ -91,6 +84,8 @@ impl CoverFlow {
                         .map(|(revision, node)| crate::coverflow::CoverflowItem {
                             index,
                             revision: *revision,
+                            aspect_ratio: player.frames[&index].texture.width().max(1) as f64
+                                / player.frames[&index].texture.height().max(1) as f64,
                             node: node.clone(),
                         })
                 })

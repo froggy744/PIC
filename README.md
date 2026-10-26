@@ -23,9 +23,9 @@
 
 ## Download PIC
 
-**[Get the latest release](https://github.com/froggy744/PIC/releases/latest)** · [AppImage](https://github.com/froggy744/PIC/releases/download/V1.0.0/PIC-1.0.0-c82781221d-x86_64.AppImage) · [Flatpak](https://github.com/froggy744/PIC/releases/download/V1.0.0/PIC-1.0.0-c82781221d-x86_64.flatpak) · [Installation guide](docs/build/linux.md)
+**[Get the latest release](https://github.com/froggy744/PIC/releases/tag/v1.0.1)** · [AppImage](https://github.com/froggy744/PIC/releases/download/v1.0.1/PIC-1.0.1-1103d0da98-x86_64.AppImage) · [Flatpak](https://github.com/froggy744/PIC/releases/download/v1.0.1/PIC-1.0.1-1103d0da98-x86_64.flatpak) · [Source (tar.gz)](https://github.com/froggy744/PIC/archive/refs/tags/v1.0.1.tar.gz) · [Source (zip)](https://github.com/froggy744/PIC/archive/refs/tags/v1.0.1.zip) · [Installation guide](docs/build/linux.md)
 
-The latest published release is **V1.0.0**. Both packages above are attached to the [GitHub release](https://github.com/froggy744/PIC/releases/tag/V1.0.0). PIC is Linux-focused; Windows builds are experimental and are not a supported V1 download.
+The latest published release is **v1.0.1**. Both packages above are attached to the [GitHub release](https://github.com/froggy744/PIC/releases/tag/v1.0.1). PIC is Linux-focused; Windows builds are experimental and are not a supported V1 download.
 
 <p align="center">
   <img src="docs/assets/github/pic-hero.jpg" alt="PIC photo library and editing experience" width="100%">
@@ -59,7 +59,7 @@ Explore the [full screenshot gallery](docs/SHOWCASE.md) for albums, editing, col
 
 ## Install
 
-Download an [AppImage](https://github.com/froggy744/PIC/releases/download/V1.0.0/PIC-1.0.0-c82781221d-x86_64.AppImage) or [Flatpak](https://github.com/froggy744/PIC/releases/download/V1.0.0/PIC-1.0.0-c82781221d-x86_64.flatpak) from [GitHub Releases](https://github.com/froggy744/PIC/releases/latest). See [Linux installation guide](docs/build/linux.md) for setup details.
+Download an [AppImage](https://github.com/froggy744/PIC/releases/download/v1.0.1/PIC-1.0.1-1103d0da98-x86_64.AppImage) or [Flatpak](https://github.com/froggy744/PIC/releases/download/v1.0.1/PIC-1.0.1-1103d0da98-x86_64.flatpak) from the [v1.0.1 release](https://github.com/froggy744/PIC/releases/tag/v1.0.1). See the [Linux installation guide](docs/build/linux.md) for setup details, or download the [source code](https://github.com/froggy744/PIC/archive/refs/tags/v1.0.1.tar.gz) to build it yourself.
 
 New to PIC? Start with the [getting started guide](docs/guides/getting-started.md) for first launch, import and browsing.
 

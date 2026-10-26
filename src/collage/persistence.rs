@@ -46,8 +46,7 @@ pub(super) fn export_project(
             ..Default::default()
         };
         anyhow::ensure!(
-            validate_destination(connection, photo_id, path, confirmed_replace)?
-                == target_photo_id,
+            validate_destination(connection, photo_id, path, confirmed_replace)? == target_photo_id,
             "Destination library item changed while exporting"
         );
         let had_previous = path.exists();

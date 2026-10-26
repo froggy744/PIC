@@ -8,35 +8,35 @@ mod diagnostics;
 mod edit;
 mod grid;
 mod image_format;
-mod metadata_index;
 mod infobar;
-mod sd_import;
-mod lightbox;
 mod library_home;
-#[cfg(target_os="linux")]
-mod private_smb;
-#[cfg(target_os="linux")]
-mod private_nfs;
-#[cfg(target_os="linux")]
-mod network_shares;
-#[cfg(target_os="linux")]
-mod network_picker;
-mod onboarding;
+mod lightbox;
+mod metadata_index;
 mod nav_transition_trace;
+#[cfg(target_os = "linux")]
+mod network_picker;
+#[cfg(target_os = "linux")]
+mod network_shares;
+mod onboarding;
 mod photo_object;
 mod photo_texture;
 mod platform;
-mod scanner;
+#[cfg(target_os = "linux")]
+mod private_nfs;
+#[cfg(target_os = "linux")]
+mod private_smb;
 mod save_dialog;
+mod scanner;
 mod screensaver;
+mod sd_import;
 mod settings;
 mod sidebar;
 mod smooth_scroll;
 mod source;
 mod startup_trace;
 mod thumbnail;
-mod thumbnail_trace;
 mod thumbnail_display;
+mod thumbnail_trace;
 mod window;
 
 /// Register the bundled hicolor icon subset (resources/icons.gresource).

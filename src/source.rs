@@ -40,11 +40,7 @@ pub struct ViewerReadContext {
 }
 
 impl ViewerReadContext {
-    pub fn new<L, C>(
-        lane: L,
-        cancelled: C,
-        fingerprint: Option<ViewerSourceFingerprint>,
-    ) -> Self
+    pub fn new<L, C>(lane: L, cancelled: C, fingerprint: Option<ViewerSourceFingerprint>) -> Self
     where
         L: Fn() -> ViewerReadLane + Send + Sync + 'static,
         C: Fn() -> bool + Send + Sync + 'static,
@@ -196,9 +192,10 @@ impl ViewerSourceCache {
         reference: &str,
         fingerprint: ViewerSourceFingerprint,
     ) -> Option<Arc<[u8]>> {
-        let position = self.entries.iter().position(|entry| {
-            entry.reference == reference && entry.fingerprint == fingerprint
-        })?;
+        let position = self
+            .entries
+            .iter()
+            .position(|entry| entry.reference == reference && entry.fingerprint == fingerprint)?;
         let entry = self.entries.remove(position)?;
         let bytes = entry.bytes.clone();
         self.entries.push_front(entry);
@@ -214,9 +211,11 @@ impl ViewerSourceCache {
         if bytes.len() > self.max_bytes || self.max_entries == 0 {
             return Vec::new();
         }
-        if let Some(position) = self.entries.iter().position(|entry| {
-            entry.reference == reference && entry.fingerprint == fingerprint
-        }) {
+        if let Some(position) = self
+            .entries
+            .iter()
+            .position(|entry| entry.reference == reference && entry.fingerprint == fingerprint)
+        {
             if let Some(entry) = self.entries.remove(position) {
                 self.total_bytes = self.total_bytes.saturating_sub(entry.bytes.len());
             }
@@ -284,7 +283,8 @@ fn query_exists(reference: &str, directory: bool) -> bool {
     #[cfg(target_os = "linux")]
     if crate::network_shares::private(reference) {
         return crate::network_shares::stat(reference)
-            .map(|metadata| metadata.is_dir == directory).unwrap_or(false);
+            .map(|metadata| metadata.is_dir == directory)
+            .unwrap_or(false);
     }
     file(reference).query_exists(gio::Cancellable::NONE)
 }
@@ -299,7 +299,12 @@ pub fn cached_source_available(reference: &str) -> bool {
     #[cfg(target_os = "linux")]
     if crate::network_shares::private(reference) {
         // Never block GTK to probe DietPi; explicit import/refresh workers probe.
-        return availability_cache().lock().unwrap().get(&key).copied().unwrap_or(true);
+        return availability_cache()
+            .lock()
+            .unwrap()
+            .get(&key)
+            .copied()
+            .unwrap_or(true);
     }
     let mut cache = availability_cache().lock().unwrap();
     *cache
@@ -316,7 +321,12 @@ pub fn cached_file_available(reference: &str) -> bool {
     let key = format!("file:{reference}");
     #[cfg(target_os = "linux")]
     if crate::network_shares::private(reference) {
-        return availability_cache().lock().unwrap().get(&key).copied().unwrap_or(true);
+        return availability_cache()
+            .lock()
+            .unwrap()
+            .get(&key)
+            .copied()
+            .unwrap_or(true);
     }
     let mut cache = availability_cache().lock().unwrap();
     *cache
@@ -330,14 +340,24 @@ pub fn refresh_availability() {
 
 /// Probe only imported network roots off the GTK thread, then populate the
 /// per-root cache used by db::folders() and all descendants' offline badges.
-#[cfg(target_os="linux")]
+#[cfg(target_os = "linux")]
 pub fn probe_network_roots(roots: &[String]) {
-    let probes=roots.iter().filter(|root|crate::network_shares::private(root))
-        .map(|root|(format!("source:{root}"),
-            crate::network_shares::stat(root).map(|stat|stat.is_dir).unwrap_or(false)))
+    let probes = roots
+        .iter()
+        .filter(|root| crate::network_shares::private(root))
+        .map(|root| {
+            (
+                format!("source:{root}"),
+                crate::network_shares::stat(root)
+                    .map(|stat| stat.is_dir)
+                    .unwrap_or(false),
+            )
+        })
         .collect::<Vec<_>>();
-    let mut cache=availability_cache().lock().unwrap();
-    for (key,available) in probes {cache.insert(key,available);}
+    let mut cache = availability_cache().lock().unwrap();
+    for (key, available) in probes {
+        cache.insert(key, available);
+    }
 }
 
 /// A stored location is either a local path or a GIO URI (such as nfs://...).
@@ -395,18 +415,28 @@ pub fn read(reference: &str) -> Result<Vec<u8>> {
         .with_context(|| format!("could not read {reference}"))?;
     Ok(contents.as_ref().to_vec())
 }
-pub fn read_range(reference:&str,offset:u64,length:usize)->Result<Vec<u8>>{
-    #[cfg(target_os="linux")]
-    if crate::network_shares::private(reference){return crate::network_shares::read_range(reference,offset,length)}
-    use std::io::{Read,Seek,SeekFrom};let mut file=std::fs::File::open(reference)?;file.seek(SeekFrom::Start(offset))?;
-    let mut bytes=vec![0;length];let read=file.read(&mut bytes)?;bytes.truncate(read);Ok(bytes)
+pub fn read_range(reference: &str, offset: u64, length: usize) -> Result<Vec<u8>> {
+    #[cfg(target_os = "linux")]
+    if crate::network_shares::private(reference) {
+        return crate::network_shares::read_range(reference, offset, length);
+    }
+    use std::io::{Read, Seek, SeekFrom};
+    let mut file = std::fs::File::open(reference)?;
+    file.seek(SeekFrom::Start(offset))?;
+    let mut bytes = vec![0; length];
+    let read = file.read(&mut bytes)?;
+    bytes.truncate(read);
+    Ok(bytes)
 }
 
 fn trace_reference(reference: &str) -> String {
     let Some((scheme, rest)) = reference.split_once("://") else {
         return reference.to_owned();
     };
-    let safe_rest = rest.rsplit_once('@').map(|(_, value)| value).unwrap_or(rest);
+    let safe_rest = rest
+        .rsplit_once('@')
+        .map(|(_, value)| value)
+        .unwrap_or(rest);
     format!("{scheme}://{safe_rest}")
 }
 
@@ -459,10 +489,7 @@ where
 /// foreground-aware and removes cancelled waiters before they enter FFI.
 /// Successful network bytes are retained before the caller's stale check, so
 /// reversing direction can reuse work that the original consumer no longer needs.
-pub fn read_for_viewer(
-    reference: &str,
-    context: &ViewerReadContext,
-) -> Result<ViewerSourceRead> {
+pub fn read_for_viewer(reference: &str, context: &ViewerReadContext) -> Result<ViewerSourceRead> {
     if context.cancelled() {
         anyhow::bail!("cancelled before source read");
     }
@@ -779,16 +806,12 @@ mod viewer_read_tests {
         let cache = Mutex::new(ViewerSourceCache::new(4, 1024));
         let mut reads = 0;
         for source in [fingerprint(10, 4), fingerprint(11, 4)] {
-            let result = read_cached_network_with(
-                &cache,
-                "nfs://server/export/photo.jpg",
-                source,
-                || {
+            let result =
+                read_cached_network_with(&cache, "nfs://server/export/photo.jpg", source, || {
                     reads += 1;
                     Ok(vec![reads as u8; 4])
-                },
-            )
-            .unwrap();
+                })
+                .unwrap();
             assert!(!result.cache_hit);
         }
         assert_eq!(reads, 2);
@@ -799,12 +822,20 @@ mod viewer_read_tests {
         let mut cache = ViewerSourceCache::new(2, 5);
         cache.insert("smb://server/a.jpg", fingerprint(1, 2), Arc::from([1, 1]));
         cache.insert("smb://server/b.jpg", fingerprint(1, 2), Arc::from([2, 2]));
-        assert!(cache.lookup("smb://server/a.jpg", fingerprint(1, 2)).is_some());
+        assert!(cache
+            .lookup("smb://server/a.jpg", fingerprint(1, 2))
+            .is_some());
         cache.insert("smb://server/c.jpg", fingerprint(1, 2), Arc::from([3, 3]));
 
-        assert!(cache.lookup("smb://server/a.jpg", fingerprint(1, 2)).is_some());
-        assert!(cache.lookup("smb://server/b.jpg", fingerprint(1, 2)).is_none());
-        assert!(cache.lookup("smb://server/c.jpg", fingerprint(1, 2)).is_some());
+        assert!(cache
+            .lookup("smb://server/a.jpg", fingerprint(1, 2))
+            .is_some());
+        assert!(cache
+            .lookup("smb://server/b.jpg", fingerprint(1, 2))
+            .is_none());
+        assert!(cache
+            .lookup("smb://server/c.jpg", fingerprint(1, 2))
+            .is_some());
         assert!(cache.total_bytes <= 5);
         assert!(cache.entries.len() <= 2);
     }

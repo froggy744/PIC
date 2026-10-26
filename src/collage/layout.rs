@@ -25,9 +25,7 @@ pub fn apply_spacing(project: &mut CollageProject) {
     match project.layout {
         LayoutKind::Grid => grid(project),
         LayoutKind::Mosaic if !project.keep_photo_aspect => mosaic(project),
-        LayoutKind::Mosaic | LayoutKind::SmartMosaic => {
-            super::smart_mosaic::apply_spacing(project)
-        }
+        LayoutKind::Mosaic | LayoutKind::SmartMosaic => super::smart_mosaic::apply_spacing(project),
     }
 }
 
@@ -331,7 +329,10 @@ mod tests {
             project.orientation,
             crate::collage::model::CollageOrientation::Portrait
         );
-        assert_eq!(project.aspect, crate::collage::model::AspectRatio::SixteenNine);
+        assert_eq!(
+            project.aspect,
+            crate::collage::model::AspectRatio::SixteenNine
+        );
 
         for item in &mut project.items {
             item.photo.aspect_ratio = 1.5;
@@ -623,29 +624,51 @@ mod tests {
             project.layout = layout;
             project.keep_photo_aspect = true;
             project.relayout();
-            let original_order = project.items.iter().map(|item| item.photo.id).collect::<Vec<_>>();
+            let original_order = project
+                .items
+                .iter()
+                .map(|item| item.photo.id)
+                .collect::<Vec<_>>();
             let original_seed = project.seed;
             let initial_topology = format!("{:?}", project.cached_layout);
             assert!(project.cached_layout.is_some());
-            let mut previous_centers = project.items.iter().map(|item| {
-                (item.x + item.width / 2.0, item.y + item.height / 2.0)
-            }).collect::<Vec<_>>();
+            let mut previous_centers = project
+                .items
+                .iter()
+                .map(|item| (item.x + item.width / 2.0, item.y + item.height / 2.0))
+                .collect::<Vec<_>>();
             for step in 0..=80 {
                 project.spacing = step as f32 * 0.001;
                 project.relayout_spacing();
                 assert_eq!(project.seed, original_seed);
                 assert_eq!(format!("{:?}", project.cached_layout), initial_topology);
-                assert_eq!(project.items.iter().map(|item| item.photo.id).collect::<Vec<_>>(), original_order);
-                assert!(inside(&project), "out-of-bounds at spacing={}", project.spacing);
+                assert_eq!(
+                    project
+                        .items
+                        .iter()
+                        .map(|item| item.photo.id)
+                        .collect::<Vec<_>>(),
+                    original_order
+                );
+                assert!(
+                    inside(&project),
+                    "out-of-bounds at spacing={}",
+                    project.spacing
+                );
                 for (item, (last_x, last_y)) in project.items.iter().zip(&previous_centers) {
                     let cx = item.x + item.width / 2.0;
                     let cy = item.y + item.height / 2.0;
-                    assert!((cx - last_x).abs() < 0.025 && (cy - last_y).abs() < 0.025,
-                        "unexpected jump layout={layout:?} step={step}, photo={}", item.photo.id);
+                    assert!(
+                        (cx - last_x).abs() < 0.025 && (cy - last_y).abs() < 0.025,
+                        "unexpected jump layout={layout:?} step={step}, photo={}",
+                        item.photo.id
+                    );
                 }
-                previous_centers = project.items.iter().map(|item| {
-                    (item.x + item.width / 2.0, item.y + item.height / 2.0)
-                }).collect();
+                previous_centers = project
+                    .items
+                    .iter()
+                    .map(|item| (item.x + item.width / 2.0, item.y + item.height / 2.0))
+                    .collect();
             }
             // Explicit Shuffle remains the action that can choose a new
             // composition; the saved optimisation cache is then replaced.

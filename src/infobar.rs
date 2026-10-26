@@ -179,8 +179,7 @@ impl InfoBar {
         selection_clear.add_css_class("flat");
         selection_controls.append(&selection_clear);
         root.append(&selection_controls);
-        let selection_remove: Rc<RefCell<Option<Rc<dyn Fn(i64)>>>> =
-            Rc::new(RefCell::new(None));
+        let selection_remove: Rc<RefCell<Option<Rc<dyn Fn(i64)>>>> = Rc::new(RefCell::new(None));
         metadata.append(&preview);
 
         let text = gtk::Box::new(gtk::Orientation::Vertical, 2);
@@ -751,14 +750,16 @@ impl InfoBar {
             return;
         }
 
-        self.selection_count.set_text(&crate::window::format_count(count));
+        self.selection_count
+            .set_text(&crate::window::format_count(count));
         self.selection_controls.set_visible(true);
 
         // A selection of thousands only samples a bounded set of thumbnails.
         // When that sample has not changed, avoid repeated image decodes and
         // Gtk widget churn just because the selected count changed.
         let rendered_ids = photos.iter().map(PhotoObject::id).collect::<Vec<_>>();
-        let needs_refresh = self.selection_rendered_ids.borrow().as_slice() != rendered_ids.as_slice();
+        let needs_refresh =
+            self.selection_rendered_ids.borrow().as_slice() != rendered_ids.as_slice();
         if needs_refresh {
             while let Some(child) = self.selection_thumbnails.first_child() {
                 self.selection_thumbnails.remove(&child);
@@ -772,9 +773,12 @@ impl InfoBar {
                 thumbnail.set_size_request(38, 38);
                 // GtkImage::pixel-size applies to icons, not file pixbufs.
                 // Decode at display size to preserve the InfoBar height.
-                let pixbuf = photo.cached_thumbnail_path()
+                let pixbuf = photo
+                    .cached_thumbnail_path()
                     .filter(|path| Path::new(path).is_file())
-                    .and_then(|path| gdk_pixbuf::Pixbuf::from_file_at_scale(path, 38, 38, true).ok());
+                    .and_then(|path| {
+                        gdk_pixbuf::Pixbuf::from_file_at_scale(path, 38, 38, true).ok()
+                    });
                 if let Some(pixbuf) = pixbuf {
                     let texture = gtk::gdk::Texture::for_pixbuf(&pixbuf);
                     thumbnail.set_paintable(Some(&texture));
@@ -815,9 +819,7 @@ impl InfoBar {
         let layout = self.photo_layout.clone();
         self.view_toggle.connect_clicked(move |_| {
             let requested = layout.get();
-            crate::nav_transition_trace!(
-                "stage=view_toggle_dispatched requested={requested:?}"
-            );
+            crate::nav_transition_trace!("stage=view_toggle_dispatched requested={requested:?}");
             changed(requested);
         });
     }
@@ -1256,7 +1258,10 @@ mod layout_tests {
             info.selection_clear.parent().unwrap(),
             info.selection_controls.clone().upcast::<gtk::Widget>()
         );
-        assert_eq!(info.metadata_stack.visible_child_name().as_deref(), Some("selection"));
+        assert_eq!(
+            info.metadata_stack.visible_child_name().as_deref(),
+            Some("selection")
+        );
 
         // Viewer/single selection restores photo metadata and frees the room.
         info.show_photo_metadata();
@@ -1266,7 +1271,10 @@ mod layout_tests {
         assert!(info.selection_controls.is_visible());
         info.set_selected_photos(1, &[]);
         assert!(!info.selection_controls.is_visible());
-        assert_eq!(info.metadata_stack.visible_child_name().as_deref(), Some("photo"));
+        assert_eq!(
+            info.metadata_stack.visible_child_name().as_deref(),
+            Some("photo")
+        );
     }
 }
 

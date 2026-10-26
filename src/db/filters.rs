@@ -496,20 +496,24 @@ mod tests {
     fn rating_column_lists_all_ratings_even_when_toolbar_rating_is_active() {
         let connection = Connection::open_in_memory().unwrap();
         connection.execute_batch(SCHEMA).unwrap();
-        connection.execute_batch(
-            "INSERT INTO folders(id,path) VALUES (1,'/a');
+        connection
+            .execute_batch(
+                "INSERT INTO folders(id,path) VALUES (1,'/a');
              INSERT INTO photos(id,path,folder_id,rating) VALUES
                 (101,'/a/unrated.jpg',1,0),
                 (102,'/a/three.jpg',1,3),
                 (103,'/a/five.jpg',1,5);",
-        ).unwrap();
+            )
+            .unwrap();
         let scope = Scope {
             rating: "3".into(),
             ..Scope::default()
         };
         let rows = facets(&connection, &scope, &Filters::default(), Field::Rating).unwrap();
         assert_eq!(
-            rows.iter().map(|row| (row.value.as_str(), row.count)).collect::<Vec<_>>(),
+            rows.iter()
+                .map(|row| (row.value.as_str(), row.count))
+                .collect::<Vec<_>>(),
             [("0", 1), ("3", 1), ("5", 1)]
         );
     }

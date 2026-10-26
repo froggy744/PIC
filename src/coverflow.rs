@@ -76,7 +76,11 @@ pub(crate) fn screensaver_coverflow_pose(
     let (vw, vh) = viewport;
     let height = (vh * 0.55).min(vw * 0.30).max(1.0);
     let distance = (index as f64 - focus.clamp(0.0, (count - 1) as f64)).abs();
-    let scale = if distance < 1.0 { 1.08 - 0.12 * distance } else { 0.96 };
+    let scale = if distance < 1.0 {
+        1.08 - 0.12 * distance
+    } else {
+        0.96
+    };
     pose.card_height = height * scale;
     pose.card_width = pose.card_height * ratio;
     pose.center_y = vh * 0.47;
@@ -99,7 +103,12 @@ pub(crate) fn screensaver_coverflow_pose(
     pose.opacity = (1.0 - side_distance * 0.025).clamp(0.90, 1.0);
     pose.camera_distance = vh * 3.4;
     // Recalculate hit bounds for the actual card aspect ratio.
-    let mut bounds = (f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY);
+    let mut bounds = (
+        f64::INFINITY,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::NEG_INFINITY,
+    );
     for (local_x, local_y) in [
         (-pose.card_width * 0.5, -pose.card_height * 0.5),
         (pose.card_width * 0.5, -pose.card_height * 0.5),
@@ -154,7 +163,11 @@ fn coverflow_pose_profile(
     let card_width = base_height * scale;
     let side_distance = (distance - 1.0).max(0.0);
     let rotation_y = -offset.signum()
-        * if compact { ALBUM_SIDE_ANGLE } else { SIDE_ANGLE }
+        * if compact {
+            ALBUM_SIDE_ANGLE
+        } else {
+            SIDE_ANGLE
+        }
         * distance.min(1.0);
     let (center_y, center_z, opacity, visible_radius, lateral) = if compact {
         let side_width = base_height * 1.04 * ALBUM_SIDE_ANGLE.cos();
@@ -357,8 +370,7 @@ impl CoverflowGlArea {
                 .items
                 .iter()
                 .filter(|item| {
-                    (item.index as f64 - scene.focus).abs()
-                        <= VISIBLE_RADIUS as f64 + 0.5
+                    (item.index as f64 - scene.focus).abs() <= VISIBLE_RADIUS as f64 + 0.5
                 })
                 .cloned()
                 .map(|item| (item.index, item))
@@ -367,9 +379,7 @@ impl CoverflowGlArea {
                 retained.insert(item.index, item.clone());
             }
             scene.items = retained.into_values().collect();
-            if (scene.target - scene.focus).abs() <= 0.0001
-                && scene.focus_velocity.abs() <= 0.001
-            {
+            if (scene.target - scene.focus).abs() <= 0.0001 && scene.focus_velocity.abs() <= 0.001 {
                 scene.focus = scene.target;
                 scene.focus_velocity = 0.0;
                 scene.animating = false;
@@ -608,8 +618,16 @@ fn draw_frame(area: &gtk::GLArea, scene: &mut Scene) -> Result<(), String> {
             0.0
         };
         uniform_1f(resources.program, "uCornerRadius", radius);
-        uniform_1f(resources.program, "uReflectionHeight", if album_flow { 0.36 } else { 0.32 });
-        uniform_1f(resources.program, "uReflectionOpacity", if album_flow { 0.50 } else { 0.20 });
+        uniform_1f(
+            resources.program,
+            "uReflectionHeight",
+            if album_flow { 0.36 } else { 0.32 },
+        );
+        uniform_1f(
+            resources.program,
+            "uReflectionOpacity",
+            if album_flow { 0.50 } else { 0.20 },
+        );
         for item in draw_order {
             let pose = if album_flow {
                 if area.has_css_class("screensaver-coverflow-canvas") {
@@ -636,8 +654,7 @@ fn draw_frame(area: &gtk::GLArea, scene: &mut Scene) -> Result<(), String> {
             } else {
                 coverflow_pose(item.index, scene.focus, scene.count, logical_viewport)
             };
-            let Some(pose) = pose
-            else {
+            let Some(pose) = pose else {
                 continue;
             };
             let Some(texture) = resources.textures.get(&item.index) else {

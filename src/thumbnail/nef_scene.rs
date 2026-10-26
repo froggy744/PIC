@@ -11,31 +11,28 @@
 
 use anyhow::{Context, Result};
 use image::{DynamicImage, ImageBuffer, Rgb};
-use rayon::prelude::*;
 use rawler::imgop::develop::{Intermediate, ProcessingStep, RawDevelop};
+use rayon::prelude::*;
 
 use rawler::imgop::chromatic_adaption::adapt_bradford;
-use rawler::imgop::xyz::{
-    Illuminant, CIE_1931_TRISTIMULUS_A, CIE_1931_TRISTIMULUS_D65,
-};
+use rawler::imgop::xyz::{Illuminant, CIE_1931_TRISTIMULUS_A, CIE_1931_TRISTIMULUS_D65};
 
 type CameraMatrix = [[f32; 3]; 3];
 
 fn matrix_from_flat(values: &[f32]) -> Option<CameraMatrix> {
     let values: &[f32; 9] = values.try_into().ok()?;
-    let result = std::array::from_fn(|row| {
-        std::array::from_fn(|column| values[row * 3 + column])
-    });
+    let result = std::array::from_fn(|row| std::array::from_fn(|column| values[row * 3 + column]));
     values.iter().all(|v| v.is_finite()).then_some(result)
 }
 
 fn sensor_white_ratio(matrix: &CameraMatrix, white_xyz: [f32; 3]) -> Option<[f32; 2]> {
     let sensor_response = std::array::from_fn::<f32, 3, _>(|row| {
-        (0..3).map(|column| matrix[row][column] * white_xyz[column]).sum()
+        (0..3)
+            .map(|column| matrix[row][column] * white_xyz[column])
+            .sum()
     });
     let [red, green, blue] = sensor_response;
-    (red > 0.0 && green > 0.0 && blue > 0.0)
-        .then_some([red / green, blue / green])
+    (red > 0.0 && green > 0.0 && blue > 0.0).then_some([red / green, blue / green])
 }
 
 /// Use recorded *as-shot* camera-neutral response as a rough estimator of
@@ -63,8 +60,7 @@ fn illuminant_a_fraction(wb: [f32; 4], a: &CameraMatrix, d65: &CameraMatrix) -> 
     if denom < 1e-5 || !denom.is_finite() {
         return None;
     }
-    let projection = ((t[0] - y[0]) * direction[0]
-        + (t[1] - y[1]) * direction[1]) / denom;
+    let projection = ((t[0] - y[0]) * direction[0] + (t[1] - y[1]) * direction[1]) / denom;
     projection.is_finite().then_some(projection.clamp(0.0, 1.0))
 }
 
@@ -78,17 +74,13 @@ fn select_as_shot_calibration(raw: &mut rawler::RawImage) -> Option<f32> {
     let fraction = illuminant_a_fraction(raw.wb_coeffs, &a, &d65)?;
     let adapted_a = adapt_bradford(&Illuminant::A, &Illuminant::D65, &a);
     let blended: CameraMatrix = std::array::from_fn(|i| {
-        std::array::from_fn(|j| {
-            d65[i][j] * (1.0 - fraction) + adapted_a[i][j] * fraction
-        })
+        std::array::from_fn(|j| d65[i][j] * (1.0 - fraction) + adapted_a[i][j] * fraction)
     });
     if blended.iter().flatten().any(|v| !v.is_finite()) {
         return None;
     }
-    raw.color_matrix.insert(
-        Illuminant::D65,
-        blended.into_iter().flatten().collect(),
-    );
+    raw.color_matrix
+        .insert(Illuminant::D65, blended.into_iter().flatten().collect());
     Some(fraction)
 }
 
@@ -103,18 +95,22 @@ const SRGB_TO_XYZ: CameraMatrix = [
 
 fn multiply_matrix(left: &CameraMatrix, right: &CameraMatrix) -> CameraMatrix {
     std::array::from_fn(|row| {
-        std::array::from_fn(|column| {
-            (0..3).map(|k| left[row][k] * right[k][column]).sum()
-        })
+        std::array::from_fn(|column| (0..3).map(|k| left[row][k] * right[k][column]).sum())
     })
 }
 
 fn invert_matrix(m: &CameraMatrix) -> Option<CameraMatrix> {
     // Cofactors for a real 3x3 linear transform. All terms are evaluated
     // directly here, independently of any external RAW renderer.
-    let a = m[0][0]; let b = m[0][1]; let c = m[0][2];
-    let d = m[1][0]; let e = m[1][1]; let f = m[1][2];
-    let g = m[2][0]; let h = m[2][1]; let i = m[2][2];
+    let a = m[0][0];
+    let b = m[0][1];
+    let c = m[0][2];
+    let d = m[1][0];
+    let e = m[1][1];
+    let f = m[1][2];
+    let g = m[2][0];
+    let h = m[2][1];
+    let i = m[2][2];
     let a11 = e * i - f * h;
     let a12 = c * h - b * i;
     let a13 = b * f - c * e;
@@ -130,7 +126,11 @@ fn invert_matrix(m: &CameraMatrix) -> Option<CameraMatrix> {
     }
     let adj = [[a11, a12, a13], [a21, a22, a23], [a31, a32, a33]];
     let inverse = adj.map(|row| row.map(|value| value / det));
-    inverse.iter().flatten().all(|v| v.is_finite()).then_some(inverse)
+    inverse
+        .iter()
+        .flatten()
+        .all(|v| v.is_finite())
+        .then_some(inverse)
 }
 
 /// Return a matrix that maps white-balanced sensor channels to scene-linear
@@ -154,12 +154,8 @@ fn sensor_to_scene_matrix(xyz_to_camera: &CameraMatrix) -> Option<CameraMatrix> 
 }
 
 fn apply_camera_calibration(camera: [f32; 3], wb: [f32; 4], matrix: &CameraMatrix) -> [f32; 3] {
-    let corrected = std::array::from_fn::<f32, 3, _>(|channel| {
-        camera[channel] * wb[channel]
-    });
-    std::array::from_fn(|row| {
-        (0..3).map(|col| matrix[row][col] * corrected[col]).sum()
-    })
+    let corrected = std::array::from_fn::<f32, 3, _>(|channel| camera[channel] * wb[channel]);
+    std::array::from_fn(|row| (0..3).map(|col| matrix[row][col] * corrected[col]).sum())
 }
 
 fn develop_scene_linear(raw: &rawler::RawImage) -> Result<rawler::pixarray::Color2D<f32, 3>> {
@@ -178,15 +174,15 @@ fn develop_scene_linear(raw: &rawler::RawImage) -> Result<rawler::pixarray::Colo
     let Intermediate::ThreeColor(mut camera) = intermediate else {
         anyhow::bail!("Nikon Bayer demosaic did not return three camera channels");
     };
-    let raw_matrix = raw.color_matrix.get(&Illuminant::D65)
+    let raw_matrix = raw
+        .color_matrix
+        .get(&Illuminant::D65)
         .context("Nikon NEF has no D65 camera colour matrix")?;
     let matrix = matrix_from_flat(raw_matrix)
         .context("Nikon NEF contains an invalid D65 camera colour matrix")?;
     let scene_matrix = sensor_to_scene_matrix(&matrix)
         .context("Nikon camera colour matrix is singular or non-neutral")?;
-    let wb = if raw.wb_coeffs[..3]
-        .iter().all(|v| v.is_finite() && *v > 0.0)
-    {
+    let wb = if raw.wb_coeffs[..3].iter().all(|v| v.is_finite() && *v > 0.0) {
         raw.wb_coeffs
     } else {
         if std::env::var_os("PICASA_TRACE").is_some() {
@@ -213,9 +209,7 @@ const TARGET_P85: f32 = 0.68;
 /// space. CIE/sRGB luminance weights are published colourimetry constants.
 #[inline]
 fn luminance(rgb: [f32; 3]) -> f32 {
-    0.2126 * rgb[0].max(0.0)
-        + 0.7152 * rgb[1].max(0.0)
-        + 0.0722 * rgb[2].max(0.0)
+    0.2126 * rgb[0].max(0.0) + 0.7152 * rgb[1].max(0.0) + 0.0722 * rgb[2].max(0.0)
 }
 
 /// A bounded, scene-derived exposure starting point, not a reproduction of
@@ -258,8 +252,7 @@ fn tone_luminance(x: f32) -> f32 {
     };
     // Symmetric S curve with fixed endpoints. Its derivative is strictly
     // positive throughout [0,1] when contrast is below 1.0.
-    shoulder + LUMINANCE_CONTRAST
-        * shoulder * (1.0 - shoulder) * (2.0 * shoulder - 1.0)
+    shoulder + LUMINANCE_CONTRAST * shoulder * (1.0 - shoulder) * (2.0 * shoulder - 1.0)
 }
 
 /// IEC 61966-2-1 display transfer function; encoded only once after all
@@ -325,7 +318,11 @@ pub(super) fn develop(raw: &mut rawler::RawImage) -> Result<DynamicImage> {
     let height = u32::try_from(linear.height).context("RAW image height exceeds u32")?;
     let gain = scene_exposure_gain(&linear.data);
 
-    let elements = linear.data.len().checked_mul(3).context("RAW pixel count overflow")?;
+    let elements = linear
+        .data
+        .len()
+        .checked_mul(3)
+        .context("RAW pixel count overflow")?;
     let mut output = vec![0u16; elements];
     output
         .par_chunks_exact_mut(3)
@@ -341,9 +338,8 @@ pub(super) fn develop(raw: &mut rawler::RawImage) -> Result<DynamicImage> {
             height,
         );
     }
-    let image: ImageBuffer<Rgb<u16>, Vec<u16>> =
-        ImageBuffer::from_raw(width, height, output)
-            .context("RAW scene renderer returned an invalid pixel buffer")?;
+    let image: ImageBuffer<Rgb<u16>, Vec<u16>> = ImageBuffer::from_raw(width, height, output)
+        .context("RAW scene renderer returned an invalid pixel buffer")?;
     Ok(DynamicImage::ImageRgb16(image))
 }
 
@@ -382,11 +378,12 @@ mod tests {
 
     #[test]
     fn camera_calibration_does_not_clip_hdr_values() {
-        let identity: CameraMatrix = [
-            [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]
-        ];
+        let identity: CameraMatrix = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
         let out = apply_camera_calibration([1.5, 0.25, 0.1], [2.0, 1.0, 1.0, f32::NAN], &identity);
-        assert!(out[0] > 1.0, "highlight headroom must remain until tone mapping");
+        assert!(
+            out[0] > 1.0,
+            "highlight headroom must remain until tone mapping"
+        );
         assert!((out[0] - 3.0).abs() < 1e-6);
         assert!((out[1] - 0.25).abs() < 1e-6);
         assert!(invert_matrix(&[[0.0; 3]; 3]).is_none());
@@ -394,16 +391,8 @@ mod tests {
 
     #[test]
     fn calibration_weights_reach_measured_illuminant_endpoints() {
-        let d65: CameraMatrix = [
-            [0.9, -0.2, 0.0],
-            [-0.4, 1.2, 0.2],
-            [-0.1, 0.2, 0.8],
-        ];
-        let a: CameraMatrix = [
-            [1.05, -0.15, 0.0],
-            [-0.3, 1.15, 0.15],
-            [-0.1, 0.16, 1.10],
-        ];
+        let d65: CameraMatrix = [[0.9, -0.2, 0.0], [-0.4, 1.2, 0.2], [-0.1, 0.2, 0.8]];
+        let a: CameraMatrix = [[1.05, -0.15, 0.0], [-0.3, 1.15, 0.15], [-0.1, 0.16, 1.10]];
         let camera_neutral_for = |matrix: &CameraMatrix, white: [f32; 3]| {
             let ratio = sensor_white_ratio(matrix, white).expect("positive white response");
             [1.0 / ratio[0], 1.0, 1.0 / ratio[1], f32::NAN]
@@ -421,11 +410,18 @@ mod tests {
         assert!(tone_luminance(0.8) > tone_luminance(HIGHLIGHT_KNEE));
         assert!(tone_luminance(2.0) > tone_luminance(1.0));
         assert!(tone_luminance(100.0) <= 1.0);
-        assert!((tone_luminance(HIGHLIGHT_KNEE + 0.00001)
-            - tone_luminance(HIGHLIGHT_KNEE - 0.00001)).abs() < 0.00003);
-        let levels: Vec<_> = (0..=200).map(|i| tone_luminance(i as f32 / 100.0)).collect();
-        assert!(levels.windows(2).all(|w| w[1] > w[0]),
-            "tone contrast must never reverse highlight or shadow order");
+        assert!(
+            (tone_luminance(HIGHLIGHT_KNEE + 0.00001) - tone_luminance(HIGHLIGHT_KNEE - 0.00001))
+                .abs()
+                < 0.00003
+        );
+        let levels: Vec<_> = (0..=200)
+            .map(|i| tone_luminance(i as f32 / 100.0))
+            .collect();
+        assert!(
+            levels.windows(2).all(|w| w[1] > w[0]),
+            "tone contrast must never reverse highlight or shadow order"
+        );
     }
 
     #[test]
@@ -444,13 +440,20 @@ mod tests {
         assert!(rgb16[0] > rgb16[1] && rgb16[1] > rgb16[2]);
         let inverse = |v: u16| {
             let v = f32::from(v) / 65535.0;
-            if v <= 0.04045 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) }
+            if v <= 0.04045 {
+                v / 12.92
+            } else {
+                ((v + 0.055) / 1.055).powf(2.4)
+            }
         };
         let actual = rgb16.map(inverse);
         let actual_luma = luminance(actual);
         let before = source[0] / luminance(source);
         let after = actual[0] / actual_luma;
-        assert!(after > before, "fixed global chroma boost should not desaturate warm RGB");
+        assert!(
+            after > before,
+            "fixed global chroma boost should not desaturate warm RGB"
+        );
         assert!(actual.iter().all(|value| *value >= 0.0 && *value <= 1.0));
     }
 

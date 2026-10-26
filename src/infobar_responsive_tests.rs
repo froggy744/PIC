@@ -207,7 +207,10 @@ fn compact_toolbar_keeps_actions_usable_and_restores_wide_layout() {
         .unwrap();
     overflow.popup();
     settle();
-    assert!(menu.get_visible(), "menu must be open before toggling Menu only");
+    assert!(
+        menu.get_visible(),
+        "menu must be open before toggling Menu only"
+    );
     hide_buttons.set_active(true);
     settle();
     assert!(overflow.is_visible());

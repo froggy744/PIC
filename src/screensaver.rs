@@ -5,8 +5,8 @@ use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use gtk::prelude::*;
@@ -42,11 +42,30 @@ const PREFETCH: usize = 3;
 const HQ_PATIENCE: Duration = Duration::from_secs(3);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Style { Mosaic, Grid, PicturePile, Floating, IPhoto, Fade, CoverFlow, Surprise, MatrixRain, MatrixKenBurns }
+enum Style {
+    Mosaic,
+    Grid,
+    PicturePile,
+    Floating,
+    IPhoto,
+    Fade,
+    CoverFlow,
+    Surprise,
+    MatrixRain,
+    MatrixKenBurns,
+}
 impl Style {
     const CHOICES: [Self; 10] = [
-        Self::Mosaic, Self::Grid, Self::PicturePile, Self::Floating,
-        Self::IPhoto, Self::Fade, Self::CoverFlow, Self::Surprise, Self::MatrixRain, Self::MatrixKenBurns,
+        Self::Mosaic,
+        Self::Grid,
+        Self::PicturePile,
+        Self::Floating,
+        Self::IPhoto,
+        Self::Fade,
+        Self::CoverFlow,
+        Self::Surprise,
+        Self::MatrixRain,
+        Self::MatrixKenBurns,
     ];
     fn from_saved(v: &str) -> Self {
         match v {
@@ -64,9 +83,12 @@ impl Style {
     }
     fn key(self) -> &'static str {
         match self {
-            Self::Mosaic => "mosaic", Self::Grid => "grid",
-            Self::PicturePile => "pile", Self::Floating => "floating",
-            Self::IPhoto => "iphoto", Self::Fade => "fade",
+            Self::Mosaic => "mosaic",
+            Self::Grid => "grid",
+            Self::PicturePile => "pile",
+            Self::Floating => "floating",
+            Self::IPhoto => "iphoto",
+            Self::Fade => "fade",
             Self::CoverFlow => "coverflow",
             Self::Surprise => "surprise",
             Self::MatrixRain => "matrix-rain",
@@ -74,20 +96,40 @@ impl Style {
         }
     }
     fn dropdown_index(self) -> u32 {
-        Self::CHOICES.iter().position(|style| *style == self).unwrap_or(0) as u32
+        Self::CHOICES
+            .iter()
+            .position(|style| *style == self)
+            .unwrap_or(0) as u32
     }
     fn resolved(self) -> Self {
-        if self != Self::Surprise { return self; }
+        if self != Self::Surprise {
+            return self;
+        }
         // Surprise stays within the ordinary styles in every theme.
         Self::CHOICES[random_seed() as usize % 7]
     }
-    fn single_photo(self) -> bool { matches!(self, Self::IPhoto | Self::Fade | Self::CoverFlow | Self::MatrixRain | Self::MatrixKenBurns) }
-    fn matrix(self) -> bool { matches!(self, Self::MatrixRain | Self::MatrixKenBurns) }
-    fn uses_photos(self) -> bool { self != Self::MatrixRain }
+    fn single_photo(self) -> bool {
+        matches!(
+            self,
+            Self::IPhoto | Self::Fade | Self::CoverFlow | Self::MatrixRain | Self::MatrixKenBurns
+        )
+    }
+    fn matrix(self) -> bool {
+        matches!(self, Self::MatrixRain | Self::MatrixKenBurns)
+    }
+    fn uses_photos(self) -> bool {
+        self != Self::MatrixRain
+    }
     // Easter egg: follow the white rabbit; Matrix modes only appear in Terminal.
-    fn available(self, terminal: bool) -> bool { terminal || !self.matrix() }
+    fn available(self, terminal: bool) -> bool {
+        terminal || !self.matrix()
+    }
     fn for_theme(self, terminal: bool) -> Self {
-        if self.available(terminal) { self } else { Self::Mosaic }
+        if self.available(terminal) {
+            self
+        } else {
+            Self::Mosaic
+        }
     }
     fn label(self) -> &'static str {
         match self {
@@ -121,7 +163,11 @@ impl Style {
 
 /// Picasa-specific tile transitions; iPhoto always uses its cinematic fade.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum PicasaTransition { Flip, Crossfade, Cut }
+enum PicasaTransition {
+    Flip,
+    Crossfade,
+    Cut,
+}
 impl PicasaTransition {
     fn from_saved(value: &str) -> Self {
         match value {
@@ -153,7 +199,9 @@ impl PicasaTransition {
     }
     /// A two-sided horizontal card turn, edge-on at midpoint.
     fn flip_width(self, progress: f64) -> f64 {
-        if self != Self::Flip { return 1.0; }
+        if self != Self::Flip {
+            return 1.0;
+        }
         let eased = smootherstep(progress.clamp(0.0, 1.0));
         ((std::f64::consts::PI * eased).cos()).abs().max(0.025)
     }
@@ -181,10 +229,16 @@ impl Source {
         match self {
             Self::All => db::photos(connection, None, false, None),
             Self::Favorites => db::photos(connection, None, true, None),
-            Self::Selected(ids) => ids.iter()
+            Self::Selected(ids) => ids
+                .iter()
                 .map(|id| db::photo(connection, *id))
                 .collect::<anyhow::Result<Vec<_>>>()
-                .map(|rows| rows.into_iter().flatten().filter(|photo| !photo.trashed).collect()),
+                .map(|rows| {
+                    rows.into_iter()
+                        .flatten()
+                        .filter(|photo| !photo.trashed)
+                        .collect()
+                }),
             Self::Album(id) => db::photos_in_album(connection, *id, None),
             Self::Folder(id) => db::photos(connection, Some(*id), false, None),
         }
@@ -207,18 +261,32 @@ struct Preferences {
 }
 impl Preferences {
     fn load(connection: &Connection) -> Self {
-        let setting = |key| db::setting(connection, key).ok().flatten().unwrap_or_default();
+        let setting = |key| {
+            db::setting(connection, key)
+                .ok()
+                .flatten()
+                .unwrap_or_default()
+        };
         Self {
             style: Style::from_saved(&setting(STYLE_KEY)),
             source: setting(SOURCE_KEY),
-            seconds: setting(DURATION_KEY).parse::<u32>().unwrap_or(6).clamp(3, 30),
+            seconds: setting(DURATION_KEY)
+                .parse::<u32>()
+                .unwrap_or(6)
+                .clamp(3, 30),
             shuffle: setting(SHUFFLE_KEY) != "false",
             exclude_portraits: setting(EXCLUDE_PORTRAITS_KEY) == "true",
             shuffle_tiles: setting(SHUFFLE_TILES_KEY) != "false",
-            mosaic_tiles: setting(MOSAIC_TILES_KEY).parse::<usize>()
-                .ok().filter(|count| *count > 0).unwrap_or(DEFAULT_MOSAIC_TILES),
+            mosaic_tiles: setting(MOSAIC_TILES_KEY)
+                .parse::<usize>()
+                .ok()
+                .filter(|count| *count > 0)
+                .unwrap_or(DEFAULT_MOSAIC_TILES),
             picasa_transition: PicasaTransition::from_saved(&setting(PICASA_TRANSITION_KEY)),
-            transition_ms: setting(TRANSITION_KEY).parse::<u32>().unwrap_or(900).clamp(200, 2500),
+            transition_ms: setting(TRANSITION_KEY)
+                .parse::<u32>()
+                .unwrap_or(900)
+                .clamp(200, 2500),
             captions: setting(CAPTION_KEY) == "true",
             clock: setting(CLOCK_KEY) == "true",
         }
@@ -232,7 +300,10 @@ impl Preferences {
             (EXCLUDE_PORTRAITS_KEY, self.exclude_portraits.to_string()),
             (SHUFFLE_TILES_KEY, self.shuffle_tiles.to_string()),
             (MOSAIC_TILES_KEY, self.mosaic_tiles.to_string()),
-            (PICASA_TRANSITION_KEY, self.picasa_transition.key().to_string()),
+            (
+                PICASA_TRANSITION_KEY,
+                self.picasa_transition.key().to_string(),
+            ),
             (TRANSITION_KEY, self.transition_ms.to_string()),
             (CAPTION_KEY, self.captions.to_string()),
             (CLOCK_KEY, self.clock.to_string()),
@@ -258,7 +329,11 @@ impl From<db::Photo> for Slide {
         let filename = crate::source::filename(&photo.path);
         let date = photo.taken_at.as_deref().unwrap_or_default();
         let date = date.get(..10).unwrap_or(date);
-        let caption = if date.is_empty() { filename } else { format!("{filename}  ·  {date}") };
+        let caption = if date.is_empty() {
+            filename
+        } else {
+            format!("{filename}  ·  {date}")
+        };
         Self {
             path: photo.path,
             mtime: photo.mtime,
@@ -272,17 +347,28 @@ impl From<db::Photo> for Slide {
 
 /// Classify the edited image as the viewer presents it. Unknown metadata is
 /// checked again after decode so it cannot put a portrait on screen.
-fn displayed_is_portrait(width: Option<i64>, height: Option<i64>, rotation: i32, recipe: &str) -> Option<bool> {
+fn displayed_is_portrait(
+    width: Option<i64>,
+    height: Option<i64>,
+    rotation: i32,
+    recipe: &str,
+) -> Option<bool> {
     let mut width = u32::try_from(width?).ok().filter(|value| *value > 0)?;
     let mut height = u32::try_from(height?).ok().filter(|value| *value > 0)?;
-    if rotation.rem_euclid(180) == 90 { std::mem::swap(&mut width, &mut height); }
+    if rotation.rem_euclid(180) == 90 {
+        std::mem::swap(&mut width, &mut height);
+    }
     let recipe = edit::EditRecipe::decode(recipe);
     let (width, height) = edit::render::estimated_output_dimensions(width, height, &recipe);
     Some(height > width)
 }
 
 fn accept_orientation(pixels: Pixels, exclude_portraits: bool) -> Option<Pixels> {
-    if exclude_portraits && pixels.height > pixels.width { None } else { Some(pixels) }
+    if exclude_portraits && pixels.height > pixels.width {
+        None
+    } else {
+        Some(pixels)
+    }
 }
 
 /// Read local time only when the displayed minute changes. The overlay is
@@ -336,43 +422,66 @@ fn style_preview(style: Style) -> gtk::DrawingArea {
         };
         let photo = |x: f64, y: f64, w: f64, h: f64, tint: usize| {
             let sky = [
-                (0.42, 0.68, 0.80), (0.78, 0.61, 0.47),
-                (0.49, 0.66, 0.63), (0.57, 0.57, 0.79),
+                (0.42, 0.68, 0.80),
+                (0.78, 0.61, 0.47),
+                (0.49, 0.66, 0.63),
+                (0.57, 0.57, 0.79),
             ][tint % 4];
             let ground = [
-                (0.25, 0.42, 0.38), (0.55, 0.42, 0.28),
-                (0.29, 0.45, 0.37), (0.40, 0.38, 0.58),
+                (0.25, 0.42, 0.38),
+                (0.55, 0.42, 0.28),
+                (0.29, 0.45, 0.37),
+                (0.40, 0.38, 0.58),
             ][tint % 4];
             rect(x, y, w, h, sky);
             rect(x, y + h * 0.64, w, h * 0.36, ground);
-            rect(x + w * 0.68, y + h * 0.16, w * 0.12, h * 0.13, (0.98, 0.86, 0.61));
+            rect(
+                x + w * 0.68,
+                y + h * 0.16,
+                w * 0.12,
+                h * 0.13,
+                (0.98, 0.86, 0.61),
+            );
         };
         rect(0.0, 0.0, 66.0, 42.0, (0.12, 0.16, 0.21));
         match style {
             Style::Mosaic => {
                 for row in 0..2 {
                     for col in 0..3 {
-                        photo(3.0 + col as f64 * 21.0, 3.0 + row as f64 * 19.0,
-                            18.0, 16.0, row * 3 + col);
+                        photo(
+                            3.0 + col as f64 * 21.0,
+                            3.0 + row as f64 * 19.0,
+                            18.0,
+                            16.0,
+                            row * 3 + col,
+                        );
                     }
                 }
             }
             Style::Grid => {
                 for row in 0..2 {
                     for col in 0..3 {
-                        photo(col as f64 * 22.0, row as f64 * 21.0, 21.0, 20.0,
-                            row * 3 + col);
+                        photo(
+                            col as f64 * 22.0,
+                            row as f64 * 21.0,
+                            21.0,
+                            20.0,
+                            row * 3 + col,
+                        );
                     }
                 }
             }
             Style::Floating => {
-                for (x, y, tilt, tint) in [(6., 4., -0.09, 0), (36., 3., 0.08, 1),
-                    (3., 22., 0.10, 2), (32., 21., -0.1, 3)]
-                {
+                for (x, y, tilt, tint) in [
+                    (6., 4., -0.09, 0),
+                    (36., 3., 0.08, 1),
+                    (3., 22., 0.10, 2),
+                    (32., 21., -0.1, 3),
+                ] {
                     let _ = cr.save();
-                    cr.translate(x+13.,y+9.);
+                    cr.translate(x + 13., y + 9.);
                     cr.rotate(tilt);
-                    rect(-13., -9., 26., 18., (0.95,0.95,0.92));
+                    rect(-13., -9., 26., 18., (0.95, 0.95, 0.92));
                     photo(-11., -7., 22., 14., tint);
                     let _ = cr.restore();
                 }
@@ -389,7 +498,7 @@ fn style_preview(style: Style) -> gtk::DrawingArea {
             }
             Style::Fade => {
                 photo(2., 0., 62., 42., 2);
-                rect(9., 6., 48., 30., (0.22,0.27,0.33));
+                rect(9., 6., 48., 30., (0.22, 0.27, 0.33));
                 photo(11., 8., 44., 26., 0);
             }
             Style::IPhoto => {
@@ -401,8 +510,11 @@ fn style_preview(style: Style) -> gtk::DrawingArea {
                 let _ = cr.stroke();
             }
             Style::CoverFlow => {
-                for (x, y, width, tint) in [(5.0, 8.0, 17.0, 2), (22.0, 4.0, 25.0, 0),
-                    (47.0, 8.0, 14.0, 1)] {
+                for (x, y, width, tint) in [
+                    (5.0, 8.0, 17.0, 2),
+                    (22.0, 4.0, 25.0, 0),
+                    (47.0, 8.0, 14.0, 1),
+                ] {
                     photo(x, y, width, 24.0, tint);
                     cr.set_source_rgba(0.7, 0.8, 0.9, 0.18);
                     cr.rectangle(x, y + 25.0, width, 7.0);
@@ -412,13 +524,18 @@ fn style_preview(style: Style) -> gtk::DrawingArea {
             Style::MatrixRain | Style::MatrixKenBurns => {
                 rect(0., 0., 66., 42., (0.0, 0.025, 0.008));
                 let layout = pangocairo::functions::create_layout(cr);
-                layout.set_font_description(Some(&gtk::pango::FontDescription::from_string("Sans 7")));
+                layout.set_font_description(Some(&gtk::pango::FontDescription::from_string(
+                    "Sans 7",
+                )));
                 for col in 0..11 {
                     for row in 0..5 {
                         let bright = ((col * 3 + row * 7) % 9) as f64 / 10.0;
                         cr.set_source_rgb(0.02, 0.22 + bright * 0.7, 0.08);
                         cr.move_to(col as f64 * 6., row as f64 * 8. + 7.);
-                        layout.set_text(&matrix::KATAKANA[(col * 7 + row * 13) % matrix::KATAKANA.len()].to_string());
+                        layout.set_text(
+                            &matrix::KATAKANA[(col * 7 + row * 13) % matrix::KATAKANA.len()]
+                                .to_string(),
+                        );
                         pangocairo::functions::show_layout(cr, &layout);
                     }
                 }
@@ -447,9 +564,11 @@ fn style_preview(style: Style) -> gtk::DrawingArea {
 /// is stored in a Cell and propagated to related controls by the callback.
 /// A directly visible horizontal gallery of vector
 /// previews. Scrolling does not decode photographs or touch remote storage.
-fn style_picker(initial: Style, terminal: bool, on_change: impl Fn(Style) + 'static)
-    -> (gtk::ScrolledWindow, Rc<Cell<Style>>)
-{
+fn style_picker(
+    initial: Style,
+    terminal: bool,
+    on_change: impl Fn(Style) + 'static,
+) -> (gtk::ScrolledWindow, Rc<Cell<Style>>) {
     let chosen = Rc::new(Cell::new(initial));
     let scroller = gtk::ScrolledWindow::new();
     scroller.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Never);
@@ -466,7 +585,10 @@ fn style_picker(initial: Style, terminal: bool, on_change: impl Fn(Style) + 'sta
     cards.set_margin_end(2);
     let buttons: Rc<RefCell<Vec<gtk::ToggleButton>>> = Rc::new(RefCell::new(Vec::new()));
     let on_change: Rc<dyn Fn(Style)> = Rc::new(on_change);
-    for candidate in Style::CHOICES.into_iter().filter(|style| style.available(terminal)) {
+    for candidate in Style::CHOICES
+        .into_iter()
+        .filter(|style| style.available(terminal))
+    {
         let card = gtk::ToggleButton::new();
         card.set_size_request(110, 85);
         card.set_active(candidate == initial);
@@ -500,7 +622,12 @@ fn style_picker(initial: Style, terminal: bool, on_change: impl Fn(Style) + 'sta
 }
 
 /// Opens the settings/launch dialog without changing PIC's current viewer.
-pub fn open(parent: &adw::ApplicationWindow, connection: Rc<RefCell<Connection>>, selected_ids: Vec<i64>, theme_id: &str) {
+pub fn open(
+    parent: &adw::ApplicationWindow,
+    connection: Rc<RefCell<Connection>>,
+    selected_ids: Vec<i64>,
+    theme_id: &str,
+) {
     let terminal = theme_id.eq_ignore_ascii_case("Terminal");
     let mut current = Preferences::load(&connection.borrow());
     if terminal {
@@ -514,21 +641,28 @@ pub fn open(parent: &adw::ApplicationWindow, connection: Rc<RefCell<Connection>>
         ("Favourites".to_owned(), Source::Favorites),
     ];
     if !selected_ids.is_empty() {
-        sources.insert(0, (
-            format!("Selected Photos ({})", selected_ids.len()),
-            Source::Selected(selected_ids),
-        ));
+        sources.insert(
+            0,
+            (
+                format!("Selected Photos ({})", selected_ids.len()),
+                Source::Selected(selected_ids),
+            ),
+        );
     }
     if let Ok(albums) = db::albums(&connection.borrow()) {
         sources.extend(
-            albums.into_iter().map(|album| (format!("Album · {}", album.name), Source::Album(album.id))),
+            albums
+                .into_iter()
+                .map(|album| (format!("Album · {}", album.name), Source::Album(album.id))),
         );
     }
     if let Ok(folders) = db::folders(&connection.borrow()) {
-        sources.extend(
-            folders.into_iter()
-                .map(|folder| (format!("Folder · {}", folder.name), Source::Folder(folder.id))),
-        );
+        sources.extend(folders.into_iter().map(|folder| {
+            (
+                format!("Folder · {}", folder.name),
+                Source::Folder(folder.id),
+            )
+        }));
     }
 
     let dialog = gtk::Window::builder()
@@ -561,7 +695,7 @@ pub fn open(parent: &adw::ApplicationWindow, connection: Rc<RefCell<Connection>>
     mosaic_tiles.set_width_chars(8);
     mosaic_tiles.set_input_purpose(gtk::InputPurpose::Digits);
     mosaic_tiles.set_tooltip_text(Some(
-        "Positive whole number of photos on screen (Picture Pile and Floating Prints: up to 64)"
+        "Positive whole number of photos on screen (Picture Pile and Floating Prints: up to 64)",
     ));
 
     let shuffle_tiles_button = gtk::CheckButton::with_label("Shuffle tiles");
@@ -585,10 +719,14 @@ pub fn open(parent: &adw::ApplicationWindow, connection: Rc<RefCell<Connection>>
     let source = gtk::DropDown::from_strings(&names);
     // Playing an explicit selection should default to precisely those images,
     // even if the saved source was an album or All Photos.
-    let selected = if matches!(sources.first().map(|(_, kind)| kind), Some(Source::Selected(_))) {
+    let selected = if matches!(
+        sources.first().map(|(_, kind)| kind),
+        Some(Source::Selected(_))
+    ) {
         0
     } else {
-        sources.iter()
+        sources
+            .iter()
             .position(|(_, kind)| kind.key() == current.source)
             .unwrap_or(0)
     };
@@ -597,7 +735,9 @@ pub fn open(parent: &adw::ApplicationWindow, connection: Rc<RefCell<Connection>>
     body.append(&source_field);
     let exclude_portraits = gtk::CheckButton::with_label("Exclude portrait photos");
     exclude_portraits.set_active(current.exclude_portraits);
-    exclude_portraits.set_tooltip_text(Some("Skip photos taller than they are wide after rotation and crop"));
+    exclude_portraits.set_tooltip_text(Some(
+        "Skip photos taller than they are wide after rotation and crop",
+    ));
     body.append(&exclude_portraits);
 
     let duration = gtk::SpinButton::with_range(3.0, 30.0, 1.0);
@@ -657,7 +797,9 @@ pub fn open(parent: &adw::ApplicationWindow, connection: Rc<RefCell<Connection>>
     captions_button.set_tooltip_text(Some("Show photo filename and date from the library"));
     let clock_button = gtk::CheckButton::with_label("Clock");
     clock_button.set_active(current.clock);
-    clock_button.set_tooltip_text(Some("Show a discreet local-time clock in the top-right corner"));
+    clock_button.set_tooltip_text(Some(
+        "Show a discreet local-time clock in the top-right corner",
+    ));
     overlays_row.append(&captions_button);
     overlays_row.append(&clock_button);
     advanced.append(&field("Overlays", &overlays_row));
@@ -675,18 +817,25 @@ pub fn open(parent: &adw::ApplicationWindow, connection: Rc<RefCell<Connection>>
     advanced_toggle.connect_toggled(move |button| {
         let expanded = button.is_active();
         reveal_for_toggle.set_reveal_child(expanded);
-        button.set_label(if expanded { "Advanced settings  ▴" }
-            else { "Advanced settings  ▾" });
+        button.set_label(if expanded {
+            "Advanced settings  ▴"
+        } else {
+            "Advanced settings  ▾"
+        });
     });
     body.append(&advanced_toggle);
     body.append(&revealer);
 
     let photo_controls: Vec<gtk::Widget> = vec![
-        source_field.clone().upcast(), exclude_portraits.clone().upcast(),
+        source_field.clone().upcast(),
+        exclude_portraits.clone().upcast(),
         timing_row.clone().upcast(),
-        advanced_toggle.clone().upcast(), revealer.clone().upcast(),
+        advanced_toggle.clone().upcast(),
+        revealer.clone().upcast(),
     ];
-    for widget in &photo_controls { widget.set_visible(current.style.uses_photos()); }
+    for widget in &photo_controls {
+        widget.set_visible(current.style.uses_photos());
+    }
     rain_note.set_visible(!current.style.uses_photos());
     let transition_for_style = picasa_transition.clone();
     let mosaic_for_style = mosaic_tiles.clone();
@@ -696,7 +845,9 @@ pub fn open(parent: &adw::ApplicationWindow, connection: Rc<RefCell<Connection>>
         transition_for_style.set_sensitive(!style.single_photo());
         mosaic_for_style.set_sensitive(!style.single_photo());
         shuffle_for_style.set_sensitive(!style.single_photo());
-        for widget in &photo_controls { widget.set_visible(style.uses_photos()); }
+        for widget in &photo_controls {
+            widget.set_visible(style.uses_photos());
+        }
         note_for_style.set_visible(!style.uses_photos());
     });
     picasa_transition.set_sensitive(!current.style.single_photo());
@@ -821,20 +972,24 @@ struct ImageResult {
 }
 fn texture_pixels(image: image::RgbaImage) -> Pixels {
     let (width, height) = image.dimensions();
-    Pixels { width: width as i32, height: height as i32, data: image.into_raw() }
+    Pixels {
+        width: width as i32,
+        height: height as i32,
+        data: image.into_raw(),
+    }
 }
 
 /// Decode the already-generated local cache without touching the original.
 /// Remote NFS/SMB reads MUST NOT run on this worker: a reachable server with
 /// missing exports can block source reads indefinitely.
 fn decode_cached_preview(slide: &Slide) -> Option<Pixels> {
-    let path = thumbnail::existing_cache_path(
-        &slide.path, slide.mtime, slide.size_bytes,
-    ).ok().flatten()?;
+    let path = thumbnail::existing_cache_path(&slide.path, slide.mtime, slide.size_bytes)
+        .ok()
+        .flatten()?;
     let recipe = edit::EditRecipe::decode(&slide.edit_recipe);
-    edit::render::render_thumbnail(
-        path.to_str()?, slide.rotation, &recipe,
-    ).ok().map(texture_pixels)
+    edit::render::render_thumbnail(path.to_str()?, slide.rotation, &recipe)
+        .ok()
+        .map(texture_pixels)
 }
 
 fn decode_original(
@@ -843,13 +998,20 @@ fn decode_original(
     cancelled: &AtomicBool,
 ) -> anyhow::Result<Pixels> {
     let decoded = thumbnail::decode_for_viewer_with_cancel(
-        &slide.path, dimensions.0, dimensions.1, None,
+        &slide.path,
+        dimensions.0,
+        dimensions.1,
+        None,
         || cancelled.load(Ordering::Relaxed),
     )?;
-    anyhow::ensure!(!cancelled.load(Ordering::Relaxed), "screensaver decode cancelled");
+    anyhow::ensure!(
+        !cancelled.load(Ordering::Relaxed),
+        "screensaver decode cancelled"
+    );
     let recipe = edit::EditRecipe::decode(&slide.edit_recipe);
     Ok(texture_pixels(edit::render::apply_recipe(
-        edit::render::apply_library_rotation(decoded, slide.rotation), &recipe,
+        edit::render::apply_library_rotation(decoded, slide.rotation),
+        &recipe,
     )))
 }
 
@@ -874,26 +1036,44 @@ fn start_decode_worker(
         let cancelled = Arc::clone(&cancelled);
         std::thread::spawn(move || {
             while let Ok(index) = receiver.recv() {
-                if cancelled.load(Ordering::Relaxed) { break; }
-                let Some(photo) = slides.get(index) else { continue; };
+                if cancelled.load(Ordering::Relaxed) {
+                    break;
+                }
+                let Some(photo) = slides.get(index) else {
+                    continue;
+                };
                 let dimensions = match style {
                     Style::Mosaic | Style::Grid => {
-                        let edge = if mosaic_tiles <= 6 { 1536 }
-                            else if mosaic_tiles <= 12 { 1152 }
-                            else if mosaic_tiles <= 30 { 896 }
-                            else if mosaic_tiles <= 100 { 640 }
-                            else if mosaic_tiles <= 400 { 384 }
-                            else if mosaic_tiles <= 1600 { 192 }
-                            else if mosaic_tiles <= 6400 { 96 }
-                            else { 48 };
+                        let edge = if mosaic_tiles <= 6 {
+                            1536
+                        } else if mosaic_tiles <= 12 {
+                            1152
+                        } else if mosaic_tiles <= 30 {
+                            896
+                        } else if mosaic_tiles <= 100 {
+                            640
+                        } else if mosaic_tiles <= 400 {
+                            384
+                        } else if mosaic_tiles <= 1600 {
+                            192
+                        } else if mosaic_tiles <= 6400 {
+                            96
+                        } else {
+                            48
+                        };
                         (edge, edge)
                     }
                     Style::PicturePile | Style::Floating => {
                         // Prints are small when there are many of them.
-                        if mosaic_tiles <= 6 { (1920, 1280) }
-                        else if mosaic_tiles <= 16 { (1280, 860) }
-                        else if mosaic_tiles <= 36 { (960, 640) }
-                        else { (640, 430) }
+                        if mosaic_tiles <= 6 {
+                            (1920, 1280)
+                        } else if mosaic_tiles <= 16 {
+                            (1280, 860)
+                        } else if mosaic_tiles <= 36 {
+                            (960, 640)
+                        } else {
+                            (640, 430)
+                        }
                     }
                     // Cover Flow shows a few large cards on screen, so decode
                     // source photos at display resolution instead of using
@@ -909,7 +1089,9 @@ fn start_decode_worker(
                 } else {
                     Err(anyhow::anyhow!("original is currently offline"))
                 };
-                if cancelled.load(Ordering::Relaxed) { break; }
+                if cancelled.load(Ordering::Relaxed) {
+                    break;
+                }
                 if std::env::var_os("PIC_SCREENSAVER_TRACE").is_some() {
                     eprintln!(
                         "PIC_SCREEN decode kind=original network={is_remote} index={index} ok={} ms={}",
@@ -917,15 +1099,24 @@ fn start_decode_worker(
                     );
                 }
                 if let Err(error) = &decoded {
-                    eprintln!("PIC screensaver: original unavailable {}: {error}", photo.path);
+                    eprintln!(
+                        "PIC screensaver: original unavailable {}: {error}",
+                        photo.path
+                    );
                 }
-                if results.send(ImageResult {
-                    index,
-                    high_quality: true,
-                    pixels: decoded.ok()
-                        .and_then(|pixels| accept_orientation(pixels, exclude_portraits))
-                        .map(|pixels| matrix::prepare(pixels, style)),
-                }).is_err() { break; }
+                if results
+                    .send(ImageResult {
+                        index,
+                        high_quality: true,
+                        pixels: decoded
+                            .ok()
+                            .and_then(|pixels| accept_orientation(pixels, exclude_portraits))
+                            .map(|pixels| matrix::prepare(pixels, style)),
+                    })
+                    .is_err()
+                {
+                    break;
+                }
             }
         });
     }
@@ -935,23 +1126,37 @@ fn start_decode_worker(
     // photos; the original worker remains responsible for source access.
     std::thread::spawn(move || {
         while let Ok(index) = requests.recv() {
-            if cancelled.load(Ordering::Relaxed) { break; }
-            let Some(photo) = slides.get(index) else { continue; };
+            if cancelled.load(Ordering::Relaxed) {
+                break;
+            }
+            let Some(photo) = slides.get(index) else {
+                continue;
+            };
             if style != Style::CoverFlow {
                 let started = Instant::now();
                 let cached = decode_cached_preview(photo);
-                if cancelled.load(Ordering::Relaxed) { break; }
+                if cancelled.load(Ordering::Relaxed) {
+                    break;
+                }
                 if std::env::var_os("PIC_SCREENSAVER_TRACE").is_some() {
                     eprintln!(
                         "PIC_SCREEN decode kind=cache index={index} hit={} ms={}",
-                        cached.is_some(), started.elapsed().as_millis(),
+                        cached.is_some(),
+                        started.elapsed().as_millis(),
                     );
                 }
-                if results.send(ImageResult {
-                    index, high_quality: false, pixels: cached
-                        .and_then(|pixels| accept_orientation(pixels, exclude_portraits))
-                        .map(|pixels| matrix::prepare(pixels, style)),
-                }).is_err() { break; }
+                if results
+                    .send(ImageResult {
+                        index,
+                        high_quality: false,
+                        pixels: cached
+                            .and_then(|pixels| accept_orientation(pixels, exclude_portraits))
+                            .map(|pixels| matrix::prepare(pixels, style)),
+                    })
+                    .is_err()
+                {
+                    break;
+                }
             }
 
             // Source availability checks belong to the other workers, not
@@ -996,7 +1201,13 @@ struct Player {
     next_revision: u64,
 }
 impl Player {
-    fn new(style: Style, count: usize, seconds: u32, shuffle_tiles: bool, mosaic_tiles: usize) -> Self {
+    fn new(
+        style: Style,
+        count: usize,
+        seconds: u32,
+        shuffle_tiles: bool,
+        mosaic_tiles: usize,
+    ) -> Self {
         let desired_slots = match style {
             Style::Mosaic | Style::Grid => mosaic_tiles.max(1),
             Style::PicturePile | Style::Floating => mosaic_tiles.clamp(1, PRINT_MAX_SLOTS),
@@ -1008,7 +1219,8 @@ impl Player {
             shuffle(&mut tile_order);
         }
         Self {
-            style, count,
+            style,
+            count,
             interval: Duration::from_secs(seconds as u64),
             transition: Duration::from_millis(900),
             switched_at: Instant::now(),
@@ -1033,7 +1245,9 @@ impl Player {
         }
     }
     fn request(&mut self, index: usize, tx: &Sender<usize>) {
-        if self.count == 0 { return; }
+        if self.count == 0 {
+            return;
+        }
         let index = index % self.count;
         // A loaded image or a known-bad source must not be repeatedly queued.
         // requested stays set until its original upgrade completes, even
@@ -1048,7 +1262,9 @@ impl Player {
         }
     }
     fn prefetch(&mut self, tx: &Sender<usize>) {
-        if self.count == 0 { return; }
+        if self.count == 0 {
+            return;
+        }
         if self.style == Style::CoverFlow {
             for index in coverflow_neighbor_indices(self.current, self.count) {
                 self.request(index, tx);
@@ -1076,15 +1292,19 @@ impl Player {
             // Queue at most one candidate per failed slot, and wait for the
             // result before requesting another. This avoids scanning entire
             // libraries and flooding a stalled NFS share.
-            let blank_slots = self.slots.iter()
+            let blank_slots = self
+                .slots
+                .iter()
                 .filter(|id| self.failed.contains(id) && !self.frames.contains_key(id))
                 .count();
             let mut available = blank_slots.saturating_sub(self.backfill_pending.len());
             while available > 0 && self.backfill_cursor < self.count {
                 let index = self.backfill_cursor;
                 self.backfill_cursor += 1;
-                if self.slots.contains(&index) || self.requested.contains(&index)
-                    || self.frames.contains_key(&index) || self.failed.contains(&index)
+                if self.slots.contains(&index)
+                    || self.requested.contains(&index)
+                    || self.frames.contains_key(&index)
+                    || self.failed.contains(&index)
                 {
                     continue;
                 }
@@ -1106,9 +1326,9 @@ impl Player {
         {
             return None;
         }
-        self.slots.iter().position(|id| {
-            self.failed.contains(id) && !self.frames.contains_key(id)
-        })
+        self.slots
+            .iter()
+            .position(|id| self.failed.contains(id) && !self.frames.contains_key(id))
     }
     fn receive(&mut self, result: ImageResult) {
         // Remember the candidate before completing its original request.
@@ -1128,19 +1348,31 @@ impl Player {
             }
             return;
         };
-        if self.frames.get(&result.index).is_some_and(|f| f.high_quality && !result.high_quality) {
+        if self
+            .frames
+            .get(&result.index)
+            .is_some_and(|f| f.high_quality && !result.high_quality)
+        {
             return;
         }
         let bytes = glib::Bytes::from_owned(pixels.data);
         let texture: gtk::gdk::Texture = gtk::gdk::MemoryTexture::new(
-            pixels.width, pixels.height, gtk::gdk::MemoryFormat::R8g8b8a8,
-            &bytes, pixels.width as usize * 4
-        ).upcast();
+            pixels.width,
+            pixels.height,
+            gtk::gdk::MemoryFormat::R8g8b8a8,
+            &bytes,
+            pixels.width as usize * 4,
+        )
+        .upcast();
         self.next_revision = self.next_revision.wrapping_add(1);
-        self.frames.insert(result.index, Surface {
-            texture, high_quality: result.high_quality,
-            revision: self.next_revision,
-        });
+        self.frames.insert(
+            result.index,
+            Surface {
+                texture,
+                high_quality: result.high_quality,
+                revision: self.next_revision,
+            },
+        );
         self.failed.remove(&result.index);
         if let Some(blank_slot) = replacement_slot {
             // Never replace a tile merely because its decode is pending.
@@ -1152,16 +1384,26 @@ impl Player {
         self.order.retain(|index| *index != result.index);
         self.order.push_back(result.index);
         // Preserve every active tile plus a small prefetch margin.
-        let max_frames = if self.style == Style::CoverFlow { 11 }
-            else if self.style.single_photo() { 5 }
-            else { self.slots.len() + PREFETCH + 2 };
+        let max_frames = if self.style == Style::CoverFlow {
+            11
+        } else if self.style.single_photo() {
+            5
+        } else {
+            self.slots.len() + PREFETCH + 2
+        };
         while self.frames.len() > max_frames {
-            let protected = |id: usize| id == self.current
-                || self.previous == Some(id)
-                || self.slots.contains(&id)
-                || self.fading_slot.is_some_and(|(_, old)| old == id);
-            let Some(pos) = self.order.iter().position(|id| !protected(*id)) else { break };
-            let Some(old) = self.order.remove(pos) else { break };
+            let protected = |id: usize| {
+                id == self.current
+                    || self.previous == Some(id)
+                    || self.slots.contains(&id)
+                    || self.fading_slot.is_some_and(|(_, old)| old == id)
+            };
+            let Some(pos) = self.order.iter().position(|id| !protected(*id)) else {
+                break;
+            };
+            let Some(old) = self.order.remove(pos) else {
+                break;
+            };
             self.frames.remove(&old);
             // Do not clear requested: the original might still be decoding.
             // Clearing it here requeues the same network RAW every frame.
@@ -1174,7 +1416,9 @@ impl Player {
     /// (or its definitive failure) so a tile never changes sharpness after it
     /// appears; if the original is slow they fall back to the preview.
     fn ready(&self, index: usize) -> bool {
-        let Some(frame) = self.frames.get(&index) else { return false };
+        let Some(frame) = self.frames.get(&index) else {
+            return false;
+        };
         frame.high_quality
             || !self.requested.contains(&index)
             || self.elapsed() > self.interval + HQ_PATIENCE
@@ -1190,14 +1434,21 @@ impl Player {
         if self.style.single_photo() && !self.started {
             // Begin the first slide only when it can actually be displayed.
             if !self.available(self.current) {
-                if !self.failed.contains(&self.current) { return; }
+                if !self.failed.contains(&self.current) {
+                    return;
+                }
                 let Some(index) = (1..self.count)
                     .map(|offset| (self.current + offset) % self.count)
-                    .find(|index| !self.failed.contains(index)) else { return; };
+                    .find(|index| !self.failed.contains(index))
+                else {
+                    return;
+                };
                 self.current = index;
                 self.next = (index + 1) % self.count;
                 self.request(index, tx);
-                if !self.available(index) { return; }
+                if !self.available(index) {
+                    return;
+                }
             }
             self.started = true;
             self.switched_at = self.paused_at.unwrap_or_else(Instant::now);
@@ -1265,7 +1516,9 @@ impl Player {
         self.prefetch(tx);
     }
     fn elapsed(&self) -> Duration {
-        self.paused_at.unwrap_or_else(Instant::now).duration_since(self.switched_at)
+        self.paused_at
+            .unwrap_or_else(Instant::now)
+            .duration_since(self.switched_at)
     }
     fn pause_or_resume(&mut self) -> bool {
         if let Some(then) = self.paused_at.take() {
@@ -1277,10 +1530,8 @@ impl Player {
         }
     }
     fn progress(&self) -> f64 {
-        (self.elapsed().as_secs_f64() / self.transition.as_secs_f64().max(0.2))
-            .clamp(0.0, 1.0)
+        (self.elapsed().as_secs_f64() / self.transition.as_secs_f64().max(0.2)).clamp(0.0, 1.0)
     }
-
 }
 
 // Smooth start/finish and alternate pan directions per photograph.
@@ -1290,10 +1541,14 @@ fn smootherstep(t: f64) -> f64 {
 }
 
 fn coverflow_neighbor_indices(current: usize, count: usize) -> std::ops::Range<usize> {
-    if count == 0 { return 0..0; }
+    if count == 0 {
+        return 0..0;
+    }
     let current = current.min(count - 1);
     current.saturating_sub(crate::coverflow::VISIBLE_RADIUS)
-        ..current.saturating_add(crate::coverflow::VISIBLE_RADIUS + 1).min(count)
+        ..current
+            .saturating_add(crate::coverflow::VISIBLE_RADIUS + 1)
+            .min(count)
 }
 
 /// GPU camera movement in actual CSS pixels, never GTK's unsupported
@@ -1316,9 +1571,15 @@ fn cinematic_motion(index: usize, progress: f64) -> (f64, f64, f64) {
 
 fn start_screensaver(parent: &adw::ApplicationWindow, slides: Vec<Slide>, prefs: Preferences) {
     let style = prefs.style.resolved();
-    if slides.is_empty() && style.uses_photos() { return; }
+    if slides.is_empty() && style.uses_photos() {
+        return;
+    }
     let player = Rc::new(RefCell::new(Player::new(
-        style, slides.len(), prefs.seconds, prefs.shuffle_tiles, prefs.mosaic_tiles,
+        style,
+        slides.len(),
+        prefs.seconds,
+        prefs.shuffle_tiles,
+        prefs.mosaic_tiles,
     )));
     player.borrow_mut().transition =
         Duration::from_millis(prefs.transition_ms.clamp(200, 2500) as u64);
@@ -1333,8 +1594,15 @@ fn start_screensaver(parent: &adw::ApplicationWindow, slides: Vec<Slide>, prefs:
     // requested count (e.g. 10,000 requested from a three-photo collection).
     let active_mosaic_tiles = player.borrow().slots.len().max(1);
     if style.uses_photos() {
-        start_decode_worker(slides, style, active_mosaic_tiles, prefs.exclude_portraits,
-            request_rx, result_tx, Arc::clone(&cancelled));
+        start_decode_worker(
+            slides,
+            style,
+            active_mosaic_tiles,
+            prefs.exclude_portraits,
+            request_rx,
+            result_tx,
+            Arc::clone(&cancelled),
+        );
     }
 
     // Fullscreen surfaces should be independent application windows on
@@ -1347,7 +1615,9 @@ fn start_screensaver(parent: &adw::ApplicationWindow, slides: Vec<Slide>, prefs:
     screen.set_application(parent.application().as_ref());
     gpu::install_css();
     let stage = Rc::new(RefCell::new(gpu::Stage::new(
-        style, player.borrow().slots.len(), prefs.picasa_transition,
+        style,
+        player.borrow().slots.len(),
+        prefs.picasa_transition,
     )));
     stage.borrow().root.set_focusable(true);
     let stage_overlay = gtk::Overlay::new();
@@ -1398,7 +1668,9 @@ fn start_screensaver(parent: &adw::ApplicationWindow, slides: Vec<Slide>, prefs:
     let weak_for_exit = screen.downgrade();
     let cancel_for_exit = Arc::clone(&cancelled);
     let request_exit: Rc<dyn Fn()> = Rc::new(move || {
-        if closing.replace(true) { return; }
+        if closing.replace(true) {
+            return;
+        }
         cancel_for_exit.store(true, Ordering::Relaxed);
         if let Some(window) = weak_for_exit.upgrade() {
             window.set_visible(false);
@@ -1411,7 +1683,10 @@ fn start_screensaver(parent: &adw::ApplicationWindow, slides: Vec<Slide>, prefs:
     let close_for_keys = request_exit.clone();
     let play_for_keys = Rc::clone(&player);
     keys.connect_key_pressed(move |_, key, _, _| {
-        if matches!(key, gtk::gdk::Key::space | gtk::gdk::Key::p | gtk::gdk::Key::P) {
+        if matches!(
+            key,
+            gtk::gdk::Key::space | gtk::gdk::Key::p | gtk::gdk::Key::P
+        ) {
             let paused = play_for_keys.borrow_mut().pause_or_resume();
             if std::env::var_os("PIC_SCREENSAVER_TRACE").is_some() {
                 eprintln!("PIC_SCREEN playback paused={paused}");
@@ -1458,7 +1733,11 @@ fn start_screensaver(parent: &adw::ApplicationWindow, slides: Vec<Slide>, prefs:
     let weak_screen = screen.downgrade();
     let caption_last = Cell::new(None::<usize>);
     let last_clock_minute = Cell::new(
-        SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs() / 60
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
+            / 60,
     );
     // The GTK frame clock drives composited fades at the display refresh
     // rate. A 50ms GLib timer was limited to ~20fps and caused visible steps.
@@ -1471,7 +1750,9 @@ fn start_screensaver(parent: &adw::ApplicationWindow, slides: Vec<Slide>, prefs:
         let Some(screen) = weak_screen.upgrade() else {
             return glib::ControlFlow::Break;
         };
-        if !screen.is_visible() { return glib::ControlFlow::Break; }
+        if !screen.is_visible() {
+            return glib::ControlFlow::Break;
+        }
         {
             let mut player = player.borrow_mut();
             for _ in 0..2 {
@@ -1483,8 +1764,11 @@ fn start_screensaver(parent: &adw::ApplicationWindow, slides: Vec<Slide>, prefs:
             player.update(&request_tx);
             stage.borrow_mut().sync(&player, frame_clock.frame_time());
             if prefs.clock && style.uses_photos() {
-                let minute = SystemTime::now().duration_since(UNIX_EPOCH)
-                    .unwrap_or_default().as_secs() / 60;
+                let minute = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs()
+                    / 60;
                 if minute != last_clock_minute.get() {
                     last_clock_minute.set(minute);
                     clock.set_label(&local_clock_text());
@@ -1493,8 +1777,11 @@ fn start_screensaver(parent: &adw::ApplicationWindow, slides: Vec<Slide>, prefs:
             if prefs.captions {
                 // For a wall, show the newest tile's label; for fullscreen,
                 // show the current single photograph.
-                let active_id = if style.single_photo() { Some(player.current) }
-                    else { player.fading_slot.map(|(slot, _)| player.slots[slot]) };
+                let active_id = if style.single_photo() {
+                    Some(player.current)
+                } else {
+                    player.fading_slot.map(|(slot, _)| player.slots[slot])
+                };
                 if active_id != caption_last.get() {
                     caption_last.set(active_id);
                     if let Some(text) = active_id.and_then(|id| captions.get(id)) {
@@ -1511,7 +1798,8 @@ fn start_screensaver(parent: &adw::ApplicationWindow, slides: Vec<Slide>, prefs:
     // Fullscreen the same monitor that contains PIC's main window. Without
     // an explicit output, compositors may place the independent window on a
     // different monitor when multiple displays are connected.
-    if let Some(monitor) = parent.native()
+    if let Some(monitor) = parent
+        .native()
         .and_then(|native| native.surface())
         .and_then(|surface| gtk::prelude::WidgetExt::display(parent).monitor_at_surface(&surface))
     {
@@ -1545,10 +1833,20 @@ mod tests {
         end.current = 19;
         let (tx, rx) = mpsc::channel();
         end.prefetch(&tx);
-        assert_eq!(rx.try_iter().collect::<Vec<_>>(), vec![15, 16, 17, 18, 19, 0, 1, 2]);
+        assert_eq!(
+            rx.try_iter().collect::<Vec<_>>(),
+            vec![15, 16, 17, 18, 19, 0, 1, 2]
+        );
         for index in 0..20 {
-            player.receive(ImageResult { index, high_quality: true,
-                pixels: Some(Pixels { width: 2, height: 2, data: vec![255; 16] }) });
+            player.receive(ImageResult {
+                index,
+                high_quality: true,
+                pixels: Some(Pixels {
+                    width: 2,
+                    height: 2,
+                    data: vec![255; 16],
+                }),
+            });
         }
         assert!(player.frames.len() <= 11);
     }
@@ -1556,7 +1854,8 @@ mod tests {
     #[test]
     fn coverflow_screensaver_preference_survives_reopening_settings() {
         let connection = Connection::open_in_memory().unwrap();
-        connection.execute_batch("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+        connection
+            .execute_batch("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
             .unwrap();
         let mut preferences = Preferences::load(&connection);
         preferences.style = Style::CoverFlow;
@@ -1570,10 +1869,26 @@ mod tests {
     #[test]
     fn coverflow_advances_past_a_failed_photo_and_wraps() {
         let mut player = Player::new(Style::CoverFlow, 3, 1, false, 6);
-        let pixels = || Pixels { width: 2, height: 2, data: vec![255; 16] };
-        player.receive(ImageResult { index: 0, high_quality: true, pixels: Some(pixels()) });
-        player.receive(ImageResult { index: 1, high_quality: true, pixels: None });
-        player.receive(ImageResult { index: 2, high_quality: true, pixels: Some(pixels()) });
+        let pixels = || Pixels {
+            width: 2,
+            height: 2,
+            data: vec![255; 16],
+        };
+        player.receive(ImageResult {
+            index: 0,
+            high_quality: true,
+            pixels: Some(pixels()),
+        });
+        player.receive(ImageResult {
+            index: 1,
+            high_quality: true,
+            pixels: None,
+        });
+        player.receive(ImageResult {
+            index: 2,
+            high_quality: true,
+            pixels: Some(pixels()),
+        });
         let (tx, _) = mpsc::channel();
         player.update(&tx);
         assert_eq!(player.current, 0);
@@ -1589,9 +1904,9 @@ mod tests {
     #[test]
     fn last_screensaver_settings_round_trip_in_library_db() {
         let connection = Connection::open_in_memory().unwrap();
-        connection.execute_batch(
-            "CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);"
-        ).unwrap();
+        connection
+            .execute_batch("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);")
+            .unwrap();
         let prefs = Preferences {
             style: Style::Floating,
             source: Source::Album(42).key(),
@@ -1618,7 +1933,11 @@ mod tests {
         assert!(restored.captions);
         assert!(restored.clock);
         assert!(restored.exclude_portraits);
-        let another = Preferences { clock: false, style: Style::Fade, ..prefs };
+        let another = Preferences {
+            clock: false,
+            style: Style::Fade,
+            ..prefs
+        };
         another.save(&connection);
         let restored = Preferences::load(&connection);
         assert_eq!(restored.style, Style::Fade);
@@ -1628,19 +1947,38 @@ mod tests {
 
     #[test]
     fn portrait_filter_uses_visible_rotation_and_crop() {
-        assert_eq!(displayed_is_portrait(Some(4000), Some(6000), 0, ""), Some(true));
-        assert_eq!(displayed_is_portrait(Some(4000), Some(6000), 90, ""), Some(false));
-        assert_eq!(displayed_is_portrait(Some(4000), Some(4000), 0, ""), Some(false));
+        assert_eq!(
+            displayed_is_portrait(Some(4000), Some(6000), 0, ""),
+            Some(true)
+        );
+        assert_eq!(
+            displayed_is_portrait(Some(4000), Some(6000), 90, ""),
+            Some(false)
+        );
+        assert_eq!(
+            displayed_is_portrait(Some(4000), Some(4000), 0, ""),
+            Some(false)
+        );
         assert_eq!(displayed_is_portrait(None, Some(6000), 0, ""), None);
         let mut recipe = edit::EditRecipe::default();
-        recipe.crop = edit::model::CropRect { left: 0.3, top: 0.0, right: 0.7, bottom: 1.0 };
-        assert_eq!(displayed_is_portrait(Some(4000), Some(3000), 0, &recipe.encode()), Some(true));
+        recipe.crop = edit::model::CropRect {
+            left: 0.3,
+            top: 0.0,
+            right: 0.7,
+            bottom: 1.0,
+        };
+        assert_eq!(
+            displayed_is_portrait(Some(4000), Some(3000), 0, &recipe.encode()),
+            Some(true)
+        );
     }
 
     #[test]
     fn portrait_filter_checks_decoded_photos_when_metadata_is_unknown() {
         let pixels = |width, height| Pixels {
-            width, height, data: vec![255; (width * height * 4) as usize],
+            width,
+            height,
+            data: vec![255; (width * height * 4) as usize],
         };
         assert!(accept_orientation(pixels(2, 3), true).is_none());
         assert!(accept_orientation(pixels(3, 2), true).is_some());
@@ -1705,11 +2043,20 @@ mod tests {
     #[test]
     fn picasa_transition_persists_and_flip_has_edge_on_midpoint() {
         assert_eq!(PicasaTransition::from_saved("flip"), PicasaTransition::Flip);
-        assert_eq!(PicasaTransition::from_saved("crossfade"), PicasaTransition::Crossfade);
+        assert_eq!(
+            PicasaTransition::from_saved("crossfade"),
+            PicasaTransition::Crossfade
+        );
         assert_eq!(PicasaTransition::from_saved("cut"), PicasaTransition::Cut);
-        assert_eq!(PicasaTransition::from_saved("unknown"), PicasaTransition::Crossfade);
-        for (index, mode) in [(0, PicasaTransition::Flip), (1, PicasaTransition::Crossfade),
-                              (2, PicasaTransition::Cut)] {
+        assert_eq!(
+            PicasaTransition::from_saved("unknown"),
+            PicasaTransition::Crossfade
+        );
+        for (index, mode) in [
+            (0, PicasaTransition::Flip),
+            (1, PicasaTransition::Crossfade),
+            (2, PicasaTransition::Cut),
+        ] {
             assert_eq!(PicasaTransition::from_dropdown(index), mode);
             assert_eq!(PicasaTransition::from_saved(mode.key()), mode);
             assert_eq!(mode.dropdown_index(), index);
@@ -1724,9 +2071,17 @@ mod tests {
     #[test]
     fn missing_cached_preview_does_not_mark_original_failed() {
         let mut player = Player::new(Style::Mosaic, 12, 6, false, 6);
-        player.receive(ImageResult { index: 0, high_quality: false, pixels: None });
+        player.receive(ImageResult {
+            index: 0,
+            high_quality: false,
+            pixels: None,
+        });
         assert!(!player.failed.contains(&0));
-        player.receive(ImageResult { index: 0, high_quality: true, pixels: None });
+        player.receive(ImageResult {
+            index: 0,
+            high_quality: true,
+            pixels: None,
+        });
         assert!(player.failed.contains(&0));
     }
 
@@ -1734,7 +2089,9 @@ mod tests {
     fn mosaic_loading_does_not_scan_ahead_while_previews_are_pending() {
         let mut player = Player::new(Style::Mosaic, 5400, 6, false, 10);
         let (tx, rx) = mpsc::channel();
-        for _ in 0..200 { player.prefetch(&tx); }
+        for _ in 0..200 {
+            player.prefetch(&tx);
+        }
         let queued: Vec<usize> = rx.try_iter().collect();
         assert_eq!(player.preload_cursor, 10);
         assert_eq!(player.backfill_cursor, 10);
@@ -1750,14 +2107,24 @@ mod tests {
         player.prefetch(&tx);
         assert_eq!(rx.try_iter().count(), 13);
         // This tile is definitively unavailable (cache AND original failed).
-        player.receive(ImageResult { index: 3, high_quality: true, pixels: None });
-        for _ in 0..120 { player.prefetch(&tx); }
+        player.receive(ImageResult {
+            index: 3,
+            high_quality: true,
+            pixels: None,
+        });
+        for _ in 0..120 {
+            player.prefetch(&tx);
+        }
         assert_eq!(rx.try_iter().collect::<Vec<_>>(), vec![13]);
         assert_eq!(player.backfill_pending.len(), 1);
         assert_eq!(player.backfill_cursor, 14);
         // Once candidate 13 finishes without a preview, allow precisely one
         // subsequent replacement request rather than a library-wide scan.
-        player.receive(ImageResult { index: 13, high_quality: true, pixels: None });
+        player.receive(ImageResult {
+            index: 13,
+            high_quality: true,
+            pixels: None,
+        });
         player.prefetch(&tx);
         assert_eq!(rx.try_iter().collect::<Vec<_>>(), vec![14]);
     }
@@ -1791,11 +2158,21 @@ mod tests {
         let mut player = Player::new(Style::Mosaic, 200, 6, false, 10);
         let (tx, rx) = mpsc::channel();
         player.request(107, &tx);
-        player.receive(ImageResult { index: 107, high_quality: false, pixels: None });
-        for _ in 0..100 { player.request(107, &tx); }
+        player.receive(ImageResult {
+            index: 107,
+            high_quality: false,
+            pixels: None,
+        });
+        for _ in 0..100 {
+            player.request(107, &tx);
+        }
         assert_eq!(rx.try_iter().collect::<Vec<_>>(), vec![107]);
         assert!(player.requested.contains(&107));
-        player.receive(ImageResult { index: 107, high_quality: true, pixels: None });
+        player.receive(ImageResult {
+            index: 107,
+            high_quality: true,
+            pixels: None,
+        });
         assert!(!player.requested.contains(&107));
         assert!(player.failed.contains(&107));
         player.request(107, &tx);
@@ -1807,18 +2184,48 @@ mod tests {
         let mut pile = Player::new(Style::PicturePile, 20, 3, false, 6);
         let (tx, _rx) = mpsc::channel();
         pile.request(7, &tx);
-        pile.receive(ImageResult { index: 7, high_quality: false, pixels: Some(Pixels { width: 1, height: 1, data: vec![0; 4] }) });
-        assert!(pile.available(7) && !pile.ready(7), "preview only: still waiting for the original");
+        pile.receive(ImageResult {
+            index: 7,
+            high_quality: false,
+            pixels: Some(Pixels {
+                width: 1,
+                height: 1,
+                data: vec![0; 4],
+            }),
+        });
+        assert!(
+            pile.available(7) && !pile.ready(7),
+            "preview only: still waiting for the original"
+        );
         pile.switched_at -= Duration::from_secs(7);
         assert!(pile.ready(7), "slow original: fall back to the preview");
         pile.switched_at = Instant::now();
-        pile.receive(ImageResult { index: 7, high_quality: false, pixels: None });
-        pile.receive(ImageResult { index: 7, high_quality: true, pixels: None });
-        assert!(pile.ready(7), "original failed for good: the preview is final");
+        pile.receive(ImageResult {
+            index: 7,
+            high_quality: false,
+            pixels: None,
+        });
+        pile.receive(ImageResult {
+            index: 7,
+            high_quality: true,
+            pixels: None,
+        });
+        assert!(
+            pile.ready(7),
+            "original failed for good: the preview is final"
+        );
         let mosaic = {
             let mut m = Player::new(Style::Mosaic, 20, 3, false, 6);
             m.request(7, &tx);
-            m.receive(ImageResult { index: 7, high_quality: false, pixels: Some(Pixels { width: 1, height: 1, data: vec![0; 4] }) });
+            m.receive(ImageResult {
+                index: 7,
+                high_quality: false,
+                pixels: Some(Pixels {
+                    width: 1,
+                    height: 1,
+                    data: vec![0; 4],
+                }),
+            });
             m
         };
         assert!(!mosaic.ready(7), "walls wait for the original too");
@@ -1894,8 +2301,15 @@ mod tests {
     }
 
     fn load_cinema_test_frame(player: &mut Player, index: usize) {
-        player.receive(ImageResult { index, high_quality: false,
-            pixels: Some(Pixels { width: 1, height: 1, data: vec![255; 4] }) });
+        player.receive(ImageResult {
+            index,
+            high_quality: false,
+            pixels: Some(Pixels {
+                width: 1,
+                height: 1,
+                data: vec![255; 4],
+            }),
+        });
     }
 
     #[test]
@@ -1926,7 +2340,9 @@ mod tests {
             player.update(&tx);
             player.switched_at -= Duration::from_secs(7);
             let before = player.switched_at;
-            for _ in 0..5 { player.update(&tx); }
+            for _ in 0..5 {
+                player.update(&tx);
+            }
             assert_eq!(player.switched_at, before);
             assert_eq!(player.changes, 0);
             assert_eq!(player.previous, None);
@@ -1952,7 +2368,12 @@ mod tests {
         assert_eq!(player.current, 0);
         assert_eq!(player.next, 1);
         assert_eq!(player.interval, Duration::from_secs(6));
-        assert_eq!(Player::new(Style::Mosaic, 20, 3, true, DEFAULT_MOSAIC_TILES).slots.len(), 6);
+        assert_eq!(
+            Player::new(Style::Mosaic, 20, 3, true, DEFAULT_MOSAIC_TILES)
+                .slots
+                .len(),
+            6
+        );
         let ordered = Player::new(Style::Mosaic, 20, 3, false, DEFAULT_MOSAIC_TILES);
         assert_eq!(ordered.tile_order, (0..6).collect::<Vec<_>>());
         let shuffled = Player::new(Style::PicturePile, 20, 3, true, DEFAULT_MOSAIC_TILES);
@@ -1993,12 +2414,36 @@ mod tests {
         assert_eq!(few.next, 3);
         assert_eq!(Player::new(Style::Mosaic, 100, 5, false, 1).slots.len(), 1);
         assert_eq!(Player::new(Style::Grid, 200, 5, false, 12).slots.len(), 12);
-        assert_eq!(Player::new(Style::Floating, 200, 5, false, 12).slots.len(), 12);
-        assert_eq!(Player::new(Style::Floating, 200, 5, false, 5000).slots.len(), PRINT_MAX_SLOTS);
+        assert_eq!(
+            Player::new(Style::Floating, 200, 5, false, 12).slots.len(),
+            12
+        );
+        assert_eq!(
+            Player::new(Style::Floating, 200, 5, false, 5000)
+                .slots
+                .len(),
+            PRINT_MAX_SLOTS
+        );
         assert!(Player::new(Style::Fade, 200, 5, false, 12).slots.is_empty());
-        assert_eq!(Player::new(Style::PicturePile, 200, 5, false, 12).slots.len(), 12);
-        assert_eq!(Player::new(Style::PicturePile, 3, 5, false, 12).slots.len(), 3);
-        assert_eq!(Player::new(Style::Mosaic, 2000, 5, false, 1500).slots.len(), 1500);
-        assert_eq!(Player::new(Style::Mosaic, 100, 5, false, usize::MAX).slots.len(), 100);
+        assert_eq!(
+            Player::new(Style::PicturePile, 200, 5, false, 12)
+                .slots
+                .len(),
+            12
+        );
+        assert_eq!(
+            Player::new(Style::PicturePile, 3, 5, false, 12).slots.len(),
+            3
+        );
+        assert_eq!(
+            Player::new(Style::Mosaic, 2000, 5, false, 1500).slots.len(),
+            1500
+        );
+        assert_eq!(
+            Player::new(Style::Mosaic, 100, 5, false, usize::MAX)
+                .slots
+                .len(),
+            100
+        );
     }
 }

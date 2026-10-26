@@ -158,7 +158,8 @@ pub fn render_for_export(
     // usable while offline. Export must not silently drop a visible logo or
     // watermark from a supposedly finished image.
     for overlay in &recipe.overlays {
-        if overlay.visible && overlay.opacity > 0.001
+        if overlay.visible
+            && overlay.opacity > 0.001
             && super::overlays::load_asset(&overlay.asset).is_none()
         {
             anyhow::bail!(
@@ -171,10 +172,7 @@ pub fn render_for_export(
     // independently so slow decode, pixel processing, and overlay work are
     // distinguishable in one PICASA_TRACE run.
     let stage = std::time::Instant::now();
-    let decoded = if crate::image_format::uses(
-        reference,
-        crate::image_format::DecoderKind::Raw,
-    ) {
+    let decoded = if crate::image_format::uses(reference, crate::image_format::DecoderKind::Raw) {
         apply_library_rotation(
             crate::thumbnail::decode_raw_source_for_export(reference)?,
             rotation,
@@ -194,7 +192,8 @@ pub fn render_for_export(
         eprintln!(
             "PIC_EXPORT stage=decode_rotate elapsed_ms={:.3} size={}x{} renderer=cpu",
             stage.elapsed().as_secs_f64() * 1000.0,
-            decoded.width(), decoded.height(),
+            decoded.width(),
+            decoded.height(),
         );
     }
     let stage = std::time::Instant::now();
@@ -203,7 +202,8 @@ pub fn render_for_export(
         eprintln!(
             "PIC_EXPORT stage=geometry elapsed_ms={:.3} size={}x{}",
             stage.elapsed().as_secs_f64() * 1000.0,
-            geometrical.width(), geometrical.height(),
+            geometrical.width(),
+            geometrical.height(),
         );
     }
     let stage = std::time::Instant::now();
@@ -212,7 +212,8 @@ pub fn render_for_export(
         eprintln!(
             "PIC_EXPORT stage=tone elapsed_ms={:.3} size={}x{}",
             stage.elapsed().as_secs_f64() * 1000.0,
-            toned.width(), toned.height(),
+            toned.width(),
+            toned.height(),
         );
     }
     let stage = std::time::Instant::now();
@@ -229,7 +230,8 @@ pub fn render_for_export(
         eprintln!(
             "PIC_EXPORT stage=render_complete elapsed_ms={:.3} size={}x{} renderer=cpu",
             render_started.elapsed().as_secs_f64() * 1000.0,
-            output.width(), output.height(),
+            output.width(),
+            output.height(),
         );
     }
     Ok(output)
@@ -253,12 +255,14 @@ fn crop_normalized(image: &RgbaImage, crop: CropRect) -> RgbaImage {
 /// Composite a filter at a configurable intensity before manual tone tools.
 fn blend_filter_amount(image: &mut RgbaImage, original: &RgbaImage, amount: f32) {
     let t = amount.clamp(0.0, 1.0);
-    image.as_mut().par_chunks_mut(4)
+    image
+        .as_mut()
+        .par_chunks_mut(4)
         .zip(original.as_raw().par_chunks(4))
         .for_each(|(processed, base)| {
             for channel in 0..3 {
-                let value = base[channel] as f32
-                    + (processed[channel] as f32 - base[channel] as f32) * t;
+                let value =
+                    base[channel] as f32 + (processed[channel] as f32 - base[channel] as f32) * t;
                 processed[channel] = value.round().clamp(0.0, 255.0) as u8;
             }
             processed[3] = base[3];
@@ -338,10 +342,8 @@ where
     }
 
     let auto_started = std::time::Instant::now();
-    let has_auto = recipe.auto_color
-        || recipe.auto_contrast
-        || recipe.auto_brightness
-        || recipe.auto_enhance;
+    let has_auto =
+        recipe.auto_color || recipe.auto_contrast || recipe.auto_brightness || recipe.auto_enhance;
     if has_auto && filter_amount > 0.0 {
         // Preserve the identical existing 100% automatic correction path.
         // At partial strength, apply *all* enabled Quick Fixes together, then
@@ -420,8 +422,9 @@ where
             let y = rgb_luma(r, g, b).clamp(0.0, 1.0);
             let black_mask = 1.0 - smoothstep(0.04, 0.42, y);
             let white_mask = smoothstep(0.58, 0.96, y);
-            let offset = 0.22 * (recipe.blacks * black_mask * black_mask
-                + recipe.whites * white_mask * white_mask);
+            let offset = 0.22
+                * (recipe.blacks * black_mask * black_mask
+                    + recipe.whites * white_mask * white_mask);
             r += offset;
             g += offset;
             b += offset;
@@ -518,7 +521,9 @@ where
         if std::env::var_os("PICASA_TRACE").is_some() {
             eprintln!(
                 "PIC_EDIT_EFFECT op=smooth dimensions={}x{} elapsed_ms={:.3} amount={:.3}",
-                image.width(), image.height(), smooth_started.elapsed().as_secs_f64() * 1000.0,
+                image.width(),
+                image.height(),
+                smooth_started.elapsed().as_secs_f64() * 1000.0,
                 recipe.smooth,
             );
         }
@@ -591,7 +596,8 @@ fn map_tone_regions(y: f32, recipe: &EditRecipe) -> f32 {
     let highlight_mask = smoothstep(0.48, 0.87, y);
     (y + (fill - y) * fill_mask * 0.95
         + (shadows - y) * shadow_mask * 0.95
-        + (highlights - y) * highlight_mask * 0.92).clamp(0.0, 1.0)
+        + (highlights - y) * highlight_mask * 0.92)
+        .clamp(0.0, 1.0)
 }
 
 /// Normalised 1-D Gaussian taps (radius = ceil(3 sigma)).
@@ -710,18 +716,15 @@ fn blur_plane(plane: &mut Vec<f32>, w: usize, h: usize, sigma: f32) {
                 dst[x] = sum;
             }
         });
-    plane
-        .par_chunks_mut(w)
-        .enumerate()
-        .for_each(|(y, out)| {
-            out.fill(0.0);
-            for (j, &t) in taps.iter().enumerate() {
-                let sy = (y + j).saturating_sub(r).min(h - 1);
-                for (o, &v) in out.iter_mut().zip(&tmp[sy * w..(sy + 1) * w]) {
-                    *o += t * v;
-                }
+    plane.par_chunks_mut(w).enumerate().for_each(|(y, out)| {
+        out.fill(0.0);
+        for (j, &t) in taps.iter().enumerate() {
+            let sy = (y + j).saturating_sub(r).min(h - 1);
+            for (o, &v) in out.iter_mut().zip(&tmp[sy * w..(sy + 1) * w]) {
+                *o += t * v;
             }
-        });
+        }
+    });
 }
 
 /// Clarity is a broad local-contrast boost in luminance only, strongest in
@@ -785,7 +788,10 @@ fn apply_clarity(image: &mut RgbaImage, amount: f32) {
         .enumerate()
         .for_each(|(y, row)| {
             let (y0, y1, fy) = ys[y];
-            let (r0, r1) = (&small[y0 * sw..(y0 + 1) * sw], &small[y1 * sw..(y1 + 1) * sw]);
+            let (r0, r1) = (
+                &small[y0 * sw..(y0 + 1) * sw],
+                &small[y1 * sw..(y1 + 1) * sw],
+            );
             for (p, &(x0, x1, fx)) in row.chunks_exact_mut(4).zip(xs.iter()) {
                 if p[3] == 0 {
                     continue;
@@ -813,39 +819,52 @@ fn smooth_detail(image: &mut RgbaImage, amount: f32) {
     let row_bytes = width * 4;
     // Make the middle of the control useful without making the final step jump.
     let strength = 1.0 - (1.0 - amount).powi(2);
-    image.as_mut().par_chunks_mut(row_bytes).enumerate().for_each(|(y, row)| {
-        for (x, pixel) in row.chunks_exact_mut(4).enumerate() {
-            if pixel[3] < 16 { continue; }
-            let center = rgb_luma(pixel[0] as f32, pixel[1] as f32, pixel[2] as f32);
-            let mut sum = [pixel[0] as f32, pixel[1] as f32, pixel[2] as f32];
-            let mut total = 1.0_f32;
-            for ny in y.saturating_sub(2)..=(y + 2).min(height - 1) {
-                for nx in x.saturating_sub(2)..=(x + 2).min(width - 1) {
-                    if nx == x && ny == y { continue; }
-                    let offset = ny * row_bytes + nx * 4;
-                    let other = &source[offset..offset + 4];
-                    if other[3] < 16 { continue; }
-                    let difference = (center - rgb_luma(
-                        other[0] as f32, other[1] as f32, other[2] as f32,
-                    )).abs();
-                    let range = difference / 32.0;
-                    let edge = 1.0 / (1.0 + range * range * range * range);
-                    let dx = nx.abs_diff(x) as f32;
-                    let dy = ny.abs_diff(y) as f32;
-                    let spatial = 1.0 / (1.0 + dx * dx + dy * dy);
-                    let weight = spatial * edge;
-                    for channel in 0..3 { sum[channel] += other[channel] as f32 * weight; }
-                    total += weight;
+    image
+        .as_mut()
+        .par_chunks_mut(row_bytes)
+        .enumerate()
+        .for_each(|(y, row)| {
+            for (x, pixel) in row.chunks_exact_mut(4).enumerate() {
+                if pixel[3] < 16 {
+                    continue;
+                }
+                let center = rgb_luma(pixel[0] as f32, pixel[1] as f32, pixel[2] as f32);
+                let mut sum = [pixel[0] as f32, pixel[1] as f32, pixel[2] as f32];
+                let mut total = 1.0_f32;
+                for ny in y.saturating_sub(2)..=(y + 2).min(height - 1) {
+                    for nx in x.saturating_sub(2)..=(x + 2).min(width - 1) {
+                        if nx == x && ny == y {
+                            continue;
+                        }
+                        let offset = ny * row_bytes + nx * 4;
+                        let other = &source[offset..offset + 4];
+                        if other[3] < 16 {
+                            continue;
+                        }
+                        let difference = (center
+                            - rgb_luma(other[0] as f32, other[1] as f32, other[2] as f32))
+                        .abs();
+                        let range = difference / 32.0;
+                        let edge = 1.0 / (1.0 + range * range * range * range);
+                        let dx = nx.abs_diff(x) as f32;
+                        let dy = ny.abs_diff(y) as f32;
+                        let spatial = 1.0 / (1.0 + dx * dx + dy * dy);
+                        let weight = spatial * edge;
+                        for channel in 0..3 {
+                            sum[channel] += other[channel] as f32 * weight;
+                        }
+                        total += weight;
+                    }
+                }
+                for channel in 0..3 {
+                    let averaged = sum[channel] / total;
+                    pixel[channel] = (pixel[channel] as f32
+                        + (averaged - pixel[channel] as f32) * strength)
+                        .round()
+                        .clamp(0.0, 255.0) as u8;
                 }
             }
-            for channel in 0..3 {
-                let averaged = sum[channel] / total;
-                pixel[channel] = (pixel[channel] as f32
-                    + (averaged - pixel[channel] as f32) * strength)
-                    .round().clamp(0.0, 255.0) as u8;
-            }
-        }
-    });
+        });
 }
 
 /// Radial edge shading in cropped output coordinates, after all tone/detail
@@ -853,23 +872,29 @@ fn smooth_detail(image: &mut RgbaImage, amount: f32) {
 fn apply_vignette(image: &mut RgbaImage, amount: f32) {
     let (width, height) = (image.width() as usize, image.height() as usize);
     let row_bytes = width * 4;
-    image.as_mut().par_chunks_mut(row_bytes).enumerate().for_each(|(y, row)| {
-        let dy = (y as f32 + 0.5) * 2.0 / height as f32 - 1.0;
-        for (x, pixel) in row.chunks_exact_mut(4).enumerate() {
-            if pixel[3] < 16 { continue; }
-            let dx = (x as f32 + 0.5) * 2.0 / width as f32 - 1.0;
-            let mask = smoothstep(0.15, 1.65, dx * dx + dy * dy);
-            for channel in &mut pixel[..3] {
-                let value = *channel as f32;
-                let adjusted = if amount >= 0.0 {
-                    value * (1.0 - amount * 0.7 * mask)
-                } else {
-                    value + (255.0 - value) * (-amount * 0.5 * mask)
-                };
-                *channel = adjusted.round().clamp(0.0, 255.0) as u8;
+    image
+        .as_mut()
+        .par_chunks_mut(row_bytes)
+        .enumerate()
+        .for_each(|(y, row)| {
+            let dy = (y as f32 + 0.5) * 2.0 / height as f32 - 1.0;
+            for (x, pixel) in row.chunks_exact_mut(4).enumerate() {
+                if pixel[3] < 16 {
+                    continue;
+                }
+                let dx = (x as f32 + 0.5) * 2.0 / width as f32 - 1.0;
+                let mask = smoothstep(0.15, 1.65, dx * dx + dy * dy);
+                for channel in &mut pixel[..3] {
+                    let value = *channel as f32;
+                    let adjusted = if amount >= 0.0 {
+                        value * (1.0 - amount * 0.7 * mask)
+                    } else {
+                        value + (255.0 - value) * (-amount * 0.5 * mask)
+                    };
+                    *channel = adjusted.round().clamp(0.0, 255.0) as u8;
+                }
             }
-        }
-    });
+        });
 }
 
 fn rgb_luma(r: f32, g: f32, b: f32) -> f32 {
@@ -895,12 +920,18 @@ fn apply_auto_color(image: &mut RgbaImage) {
     let mut count = 0.0_f64;
     let step = ((image.width() as u64 * image.height() as u64) / 200_000).max(1) as usize;
     for pixel in image.pixels().step_by(step) {
-        if pixel[3] < 16 { continue; }
+        if pixel[3] < 16 {
+            continue;
+        }
         let [r, g, b] = [pixel[0] as f64, pixel[1] as f64, pixel[2] as f64];
         let luma = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255.0;
-        if !(0.07..=0.93).contains(&luma) { continue; }
+        if !(0.07..=0.93).contains(&luma) {
+            continue;
+        }
         let chroma = (r.max(g).max(b) - r.min(g).min(b)) / r.max(g).max(b).max(1.0);
-        if chroma > 0.32 { continue; }
+        if chroma > 0.32 {
+            continue;
+        }
         let weight = (1.0 - chroma / 0.32).powi(2);
         sums[0] += r * weight;
         sums[1] += g * weight;
@@ -928,10 +959,11 @@ fn apply_auto_color(image: &mut RgbaImage) {
         );
     }
     image.as_mut().par_chunks_mut(4).for_each(|pixel| {
-        if pixel[3] < 16 { return; }
+        if pixel[3] < 16 {
+            return;
+        }
         for c in 0..3 {
-            pixel[c] = (pixel[c] as f64 * gains[c])
-                .clamp(0.0, 255.0).round() as u8;
+            pixel[c] = (pixel[c] as f64 * gains[c]).clamp(0.0, 255.0).round() as u8;
         }
     });
 }
@@ -941,9 +973,12 @@ fn apply_auto_contrast(image: &mut RgbaImage) {
     let step = ((image.width() as u64 * image.height() as u64) / 250_000).max(1) as usize;
     let mut samples = 0u64;
     for pixel in image.pixels().step_by(step) {
-        if pixel[3] < 16 { continue; }
+        if pixel[3] < 16 {
+            continue;
+        }
         let bucket = rgb_luma(pixel[0] as f32, pixel[1] as f32, pixel[2] as f32)
-            .round().clamp(0.0, 255.0) as usize;
+            .round()
+            .clamp(0.0, 255.0) as usize;
         histogram[bucket] += 1;
         samples += 1;
     }
@@ -958,18 +993,26 @@ fn apply_auto_contrast(image: &mut RgbaImage) {
     // dark pixels must not decide the whole photo's black/white points.
     let clip = if samples >= 100 {
         ((samples as f64 * 0.01).round() as u64).max(1)
-    } else { 0 };
+    } else {
+        0
+    };
     let mut total = 0u64;
     let mut low = 0usize;
     for (i, count) in histogram.iter().enumerate() {
         total += *count;
-        if total > clip { low = i; break; }
+        if total > clip {
+            low = i;
+            break;
+        }
     }
     total = 0;
     let mut high = 255usize;
     for (i, count) in histogram.iter().enumerate().rev() {
         total += *count;
-        if total > clip { high = i; break; }
+        if total > clip {
+            high = i;
+            break;
+        }
     }
     if high <= low + 6 {
         if std::env::var_os("PICASA_TRACE").is_some() {
@@ -992,11 +1035,13 @@ fn apply_auto_contrast(image: &mut RgbaImage) {
     }
 
     image.as_mut().par_chunks_mut(4).for_each(|pixel| {
-        if pixel[3] < 16 { return; }
-        let y = rgb_luma(
-            pixel[0] as f32, pixel[1] as f32, pixel[2] as f32,
-        ) / 255.0;
-        if y <= 0.0001 { return; }
+        if pixel[3] < 16 {
+            return;
+        }
+        let y = rgb_luma(pixel[0] as f32, pixel[1] as f32, pixel[2] as f32) / 255.0;
+        if y <= 0.0001 {
+            return;
+        }
         let stretched = ((y - pivot) * contrast + pivot).clamp(0.012, 0.988);
         let corrected = y + (stretched - y) * 0.75;
         // Scale luminance uniformly to retain hue/chroma as far as possible,
@@ -1016,13 +1061,18 @@ fn apply_auto_brightness(image: &mut RgbaImage) {
     let step = ((image.width() as u64 * image.height() as u64) / 250_000).max(1) as usize;
     let mut samples = 0u64;
     for pixel in image.pixels().step_by(step) {
-        if pixel[3] < 16 { continue; }
+        if pixel[3] < 16 {
+            continue;
+        }
         let bucket = rgb_luma(pixel[0] as f32, pixel[1] as f32, pixel[2] as f32)
-            .round().clamp(0.0, 255.0) as usize;
+            .round()
+            .clamp(0.0, 255.0) as usize;
         histogram[bucket] += 1;
         samples += 1;
     }
-    if samples < 4 { return; }
+    if samples < 4 {
+        return;
+    }
     let mut cumulative = 0u64;
     let mut shadow = 0usize;
     let mut median = 0usize;
@@ -1054,7 +1104,10 @@ fn apply_auto_brightness(image: &mut RgbaImage) {
     } else if median >= 0.82 && (0.02..0.72).contains(&shadow) {
         // Even a bright wall can make the whole image look fine by its
         // median while the subject sits in dull midtones.
-        ((0.68_f32.ln() / shadow.ln()).clamp(0.55, 1.0), Some((0.42, 0.86)))
+        (
+            (0.68_f32.ln() / shadow.ln()).clamp(0.55, 1.0),
+            Some((0.42, 0.86)),
+        )
     } else if shadow > 0.68 && median > 0.72 && median < 0.98 {
         ((0.60_f32.ln() / median.ln()).clamp(1.0, 2.4), None)
     } else {
@@ -1070,9 +1123,13 @@ fn apply_auto_brightness(image: &mut RgbaImage) {
         );
     }
     image.as_mut().par_chunks_mut(4).for_each(|pixel| {
-        if pixel[3] < 16 { return; }
+        if pixel[3] < 16 {
+            return;
+        }
         let y = rgb_luma(pixel[0] as f32, pixel[1] as f32, pixel[2] as f32) / 255.0;
-        if y <= 0.0001 { return; }
+        if y <= 0.0001 {
+            return;
+        }
         let mapped = y.clamp(0.0, 1.0).powf(gamma);
         let weight = shadow_range
             .map(|(start, end)| 1.0 - smoothstep(start, end, y))
@@ -1085,8 +1142,7 @@ fn apply_auto_brightness(image: &mut RgbaImage) {
         // negative bright-scene correction is preserved unchanged.
         let gentle_gain = if requested_gain > 1.0 {
             const MAX_SHADOW_LIFT: f32 = 0.60; // asymptotic maximum 1.6x
-            1.0 + MAX_SHADOW_LIFT
-                * (1.0 - (-(requested_gain - 1.0) / MAX_SHADOW_LIFT).exp())
+            1.0 + MAX_SHADOW_LIFT * (1.0 - (-(requested_gain - 1.0) / MAX_SHADOW_LIFT).exp())
         } else {
             requested_gain
         };
@@ -1240,11 +1296,13 @@ fn save_jpeg_with_metadata(
     let rgb = flatten_jpeg_alpha(image);
     let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(writer, quality);
     if let Some(metadata) = exif {
-        encoder.set_exif_metadata(metadata.to_vec())
+        encoder
+            .set_exif_metadata(metadata.to_vec())
             .map_err(|error| anyhow::anyhow!("JPEG EXIF metadata rejected: {error}"))?;
     }
     if let Some(profile) = icc {
-        encoder.set_icc_profile(profile.to_vec())
+        encoder
+            .set_icc_profile(profile.to_vec())
             .map_err(|error| anyhow::anyhow!("JPEG ICC profile rejected: {error}"))?;
     }
     encoder.write_image(
@@ -1277,32 +1335,39 @@ pub fn save_export_with_metadata(
     quality: u8,
     exif: Option<&[u8]>,
 ) -> Result<()> {
-    use image::ImageEncoder;
     use crate::edit::export_batch::ExportFormat;
+    use image::ImageEncoder;
     let icc = if exif.is_some() {
-        Some(lcms2::Profile::new_srgb().icc()
-            .map_err(|error| anyhow::anyhow!("could not generate sRGB profile: {error}"))?)
+        Some(
+            lcms2::Profile::new_srgb()
+                .icc()
+                .map_err(|error| anyhow::anyhow!("could not generate sRGB profile: {error}"))?,
+        )
     } else {
         None
     };
     match format {
-        ExportFormat::Jpeg => save_jpeg_with_metadata(
-            image, destination, quality, exif, icc.as_deref()
-        ),
+        ExportFormat::Jpeg => {
+            save_jpeg_with_metadata(image, destination, quality, exif, icc.as_deref())
+        }
         ExportFormat::Png => {
             let file = std::fs::File::create(destination)
                 .with_context(|| format!("could not create {}", destination.display()))?;
             let mut encoder = image::codecs::png::PngEncoder::new(std::io::BufWriter::new(file));
             if let Some(exif) = exif {
-                encoder.set_exif_metadata(exif.to_vec())
+                encoder
+                    .set_exif_metadata(exif.to_vec())
                     .map_err(|error| anyhow::anyhow!("PNG EXIF rejected: {error}"))?;
             }
             if let Some(icc) = icc {
-                encoder.set_icc_profile(icc)
+                encoder
+                    .set_icc_profile(icc)
                     .map_err(|error| anyhow::anyhow!("PNG ICC rejected: {error}"))?;
             }
             encoder.write_image(
-                image.as_raw(), image.width(), image.height(),
+                image.as_raw(),
+                image.width(),
+                image.height(),
                 image::ExtendedColorType::Rgba8,
             )?;
             Ok(())
@@ -1310,19 +1375,22 @@ pub fn save_export_with_metadata(
         ExportFormat::Webp => {
             let file = std::fs::File::create(destination)
                 .with_context(|| format!("could not create {}", destination.display()))?;
-            let mut encoder = image::codecs::webp::WebPEncoder::new_lossless(
-                std::io::BufWriter::new(file)
-            );
+            let mut encoder =
+                image::codecs::webp::WebPEncoder::new_lossless(std::io::BufWriter::new(file));
             if let Some(exif) = exif {
-                encoder.set_exif_metadata(exif.to_vec())
+                encoder
+                    .set_exif_metadata(exif.to_vec())
                     .map_err(|error| anyhow::anyhow!("WebP EXIF rejected: {error}"))?;
             }
             if let Some(icc) = icc {
-                encoder.set_icc_profile(icc)
+                encoder
+                    .set_icc_profile(icc)
                     .map_err(|error| anyhow::anyhow!("WebP ICC rejected: {error}"))?;
             }
             encoder.write_image(
-                image.as_raw(), image.width(), image.height(),
+                image.as_raw(),
+                image.width(),
+                image.height(),
                 image::ExtendedColorType::Rgba8,
             )?;
             Ok(())
@@ -1333,8 +1401,8 @@ pub fn save_export_with_metadata(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use image::DynamicImage;
     use crate::edit::filters::FilterPreset;
+    use image::DynamicImage;
 
     #[test]
     fn straighten_reprojects_drawings_between_image_frames() {
@@ -1348,24 +1416,18 @@ mod tests {
             arrow_end: false,
         }];
         let original = drawings.clone();
-        remap_drawings_for_straighten(
-            &mut drawings,
-            (1200, 800),
-            CropRect::default(),
-            0.0,
-            4.0,
-        );
+        remap_drawings_for_straighten(&mut drawings, (1200, 800), CropRect::default(), 0.0, 4.0);
         assert_ne!(drawings[0].points, original[0].points);
-        remap_drawings_for_straighten(
-            &mut drawings,
-            (1200, 800),
-            CropRect::default(),
-            4.0,
-            0.0,
-        );
+        remap_drawings_for_straighten(&mut drawings, (1200, 800), CropRect::default(), 4.0, 0.0);
         for (actual, expected) in drawings[0].points.iter().zip(&original[0].points) {
-            assert!((actual.0 - expected.0).abs() < 0.002, "x: {actual:?} vs {expected:?}");
-            assert!((actual.1 - expected.1).abs() < 0.002, "y: {actual:?} vs {expected:?}");
+            assert!(
+                (actual.0 - expected.0).abs() < 0.002,
+                "x: {actual:?} vs {expected:?}"
+            );
+            assert!(
+                (actual.1 - expected.1).abs() < 0.002,
+                "y: {actual:?} vs {expected:?}"
+            );
         }
         assert!((drawings[0].width - original[0].width).abs() < 0.0001);
     }
@@ -1376,7 +1438,10 @@ mod tests {
         let mut recipe = EditRecipe::default();
         recipe.auto_enhance = true;
         let enhanced = apply_tone(source.clone(), &recipe);
-        assert_eq!((enhanced.width(), enhanced.height()), (source.width(), source.height()));
+        assert_eq!(
+            (enhanced.width(), enhanced.height()),
+            (source.width(), source.height())
+        );
         assert!(enhanced.get_pixel(48, 36)[1] >= source.get_pixel(48, 36)[1] + 20);
         assert!(!recipe.auto_color && !recipe.auto_contrast && !recipe.auto_brightness);
     }
@@ -1397,51 +1462,69 @@ mod tests {
         recipe.auto_enhance = true;
         let enhanced = apply_tone(source, &recipe);
         let after = enhanced.get_pixel(64, 60);
-        let luma = |rgb: &[u8]| 0.2126 * rgb[0] as f32 + 0.7152 * rgb[1] as f32 + 0.0722 * rgb[2] as f32;
-        assert!(luma(&after.0) > luma(&before.0) * 1.05,
-            "Auto Enhance should still recover portrait shadows");
-        assert!(luma(&after.0) <= luma(&before.0) * 1.25,
-            "portrait skin luminance rose from {:.1} to {:.1}", luma(&before.0), luma(&after.0));
+        let luma =
+            |rgb: &[u8]| 0.2126 * rgb[0] as f32 + 0.7152 * rgb[1] as f32 + 0.0722 * rgb[2] as f32;
+        assert!(
+            luma(&after.0) > luma(&before.0) * 1.05,
+            "Auto Enhance should still recover portrait shadows"
+        );
+        assert!(
+            luma(&after.0) <= luma(&before.0) * 1.25,
+            "portrait skin luminance rose from {:.1} to {:.1}",
+            luma(&before.0),
+            luma(&after.0)
+        );
     }
 
     #[test]
     fn export_refuses_to_silently_omit_a_missing_visible_logo() {
         let mut recipe = EditRecipe::default();
-        recipe.overlays.push(super::super::model::OverlaySpec::new_centered(
-            "nonexistent-pic-overlay-unique-test-asset",
-        ));
+        recipe
+            .overlays
+            .push(super::super::model::OverlaySpec::new_centered(
+                "nonexistent-pic-overlay-unique-test-asset",
+            ));
         let error = render_for_export("/unused-original.jpg", 0, &recipe.encode(), 120, 80)
-            .unwrap_err().to_string();
+            .unwrap_err()
+            .to_string();
         assert!(error.contains("required image overlay asset"), "{error}");
 
         // A deliberately hidden overlay is not part of the exported recipe.
         recipe.overlays[0].visible = false;
-        let hidden_error = render_for_export(
-            "/unused-original.jpg", 0, &recipe.encode(), 120, 80,
-        ).unwrap_err().to_string();
+        let hidden_error = render_for_export("/unused-original.jpg", 0, &recipe.encode(), 120, 80)
+            .unwrap_err()
+            .to_string();
         assert!(!hidden_error.contains("required image overlay asset"));
     }
 
     #[test]
     fn library_quarter_turn_export_keeps_full_native_resolution() {
         let path = std::env::temp_dir().join(format!(
-            "pic-export-rotation-{}-{}.png", std::process::id(),
+            "pic-export-rotation-{}-{}.png",
+            std::process::id(),
             std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
         ));
         let source = RgbaImage::from_fn(120, 80, |x, y| {
             Rgba([(x * 2) as u8, (y * 3) as u8, (x ^ y) as u8, 255])
         });
-        DynamicImage::ImageRgba8(source.clone()).save(&path).unwrap();
+        DynamicImage::ImageRgba8(source.clone())
+            .save(&path)
+            .unwrap();
         for rotation in [90, 180, 270] {
-            let output = render_for_export(
-                path.to_str().unwrap(), rotation, "", 120, 80,
-            ).unwrap();
+            let output = render_for_export(path.to_str().unwrap(), rotation, "", 120, 80).unwrap();
             let expected = apply_library_rotation(source.clone(), rotation);
-            assert_eq!(output.dimensions(), expected.dimensions(),
-                "library rotation {rotation} downsampled the original");
-            assert_eq!(output, expected,
-                "library rotation {rotation} changed decoded source pixels");
+            assert_eq!(
+                output.dimensions(),
+                expected.dimensions(),
+                "library rotation {rotation} downsampled the original"
+            );
+            assert_eq!(
+                output, expected,
+                "library rotation {rotation} changed decoded source pixels"
+            );
         }
         std::fs::remove_file(path).ok();
     }
@@ -1457,7 +1540,9 @@ mod tests {
                 .as_nanos(),
         ));
         let source = RgbaImage::from_pixel(160, 100, Rgba([20, 30, 40, 255]));
-        DynamicImage::ImageRgba8(source.clone()).save(&path).unwrap();
+        DynamicImage::ImageRgba8(source.clone())
+            .save(&path)
+            .unwrap();
         let mut recipe = EditRecipe::default();
         recipe.drawings.push(super::super::model::DrawAnnotation {
             kind: super::super::model::DrawKind::Arrow,
@@ -1468,8 +1553,8 @@ mod tests {
             arrow_start: false,
             arrow_end: true,
         });
-        let output = render_for_export(path.to_str().unwrap(), 0, &recipe.encode(), 160, 100)
-            .unwrap();
+        let output =
+            render_for_export(path.to_str().unwrap(), 0, &recipe.encode(), 160, 100).unwrap();
         assert_eq!(output.dimensions(), (160, 100));
         assert!(
             output
@@ -1501,39 +1586,63 @@ mod tests {
     #[test]
     fn jpeg_file_export_uses_white_background_for_transparent_pixels() {
         let source = RgbaImage::from_fn(64, 32, |x, _| {
-            if x < 32 { Rgba([0, 0, 0, 0]) }
-            else { Rgba([35, 140, 230, 255]) }
+            if x < 32 {
+                Rgba([0, 0, 0, 0])
+            } else {
+                Rgba([35, 140, 230, 255])
+            }
         });
         let path = std::env::temp_dir().join(format!(
-            "pic-export-jpeg-alpha-{}-{}.jpg", std::process::id(),
+            "pic-export-jpeg-alpha-{}-{}.jpg",
+            std::process::id(),
             std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
         ));
-        save_export(&source, &path, crate::edit::export_batch::ExportFormat::Jpeg, 100)
-            .unwrap();
+        save_export(
+            &source,
+            &path,
+            crate::edit::export_batch::ExportFormat::Jpeg,
+            100,
+        )
+        .unwrap();
         let decoded = image::open(&path).unwrap().to_rgb8();
         let transparent = decoded.get_pixel(4, 16).0;
         let opaque = decoded.get_pixel(58, 16).0;
-        assert!(transparent.iter().all(|&channel| channel > 248),
-            "JPEG transparency lost matte: {transparent:?}");
+        assert!(
+            transparent.iter().all(|&channel| channel > 248),
+            "JPEG transparency lost matte: {transparent:?}"
+        );
         for (actual, expected) in opaque.iter().zip([35u8, 140, 230]) {
-            assert!(actual.abs_diff(expected) <= 5,
-                "JPEG altered fully opaque image: actual={actual} expected={expected}");
+            assert!(
+                actual.abs_diff(expected) <= 5,
+                "JPEG altered fully opaque image: actual={actual} expected={expected}"
+            );
         }
         std::fs::remove_file(path).ok();
     }
 
     #[test]
     fn png_export_retains_transparent_overlay_pixels_exactly() {
-        let image = RgbaImage::from_fn(4, 4, |x, y|
+        let image = RgbaImage::from_fn(4, 4, |x, y| {
             Rgba([x as u8 * 35, y as u8 * 41, 120, (x * 51 + y * 13) as u8])
-        );
+        });
         let path = std::env::temp_dir().join(format!(
-            "pic-export-alpha-{}-{}.png", std::process::id(),
+            "pic-export-alpha-{}-{}.png",
+            std::process::id(),
             std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
         ));
-        save_export(&image, &path, crate::edit::export_batch::ExportFormat::Png, 90).unwrap();
+        save_export(
+            &image,
+            &path,
+            crate::edit::export_batch::ExportFormat::Png,
+            90,
+        )
+        .unwrap();
         let reread = image::open(&path).unwrap().to_rgba8();
         assert_eq!(reread, image);
         std::fs::remove_file(path).ok();
@@ -1544,7 +1653,11 @@ mod tests {
         let source = RgbaImage::from_fn(24, 24, |x, y| {
             Rgba([(x * 9) as u8, (y * 8) as u8, 118, 196])
         });
-        for preset in [FilterPreset::Newspaper, FilterPreset::OldPhoto, FilterPreset::Cinematic] {
+        for preset in [
+            FilterPreset::Newspaper,
+            FilterPreset::OldPhoto,
+            FilterPreset::Cinematic,
+        ] {
             let mut recipe = EditRecipe::default();
             recipe.filter = preset;
             recipe.exposure = 0.25;
@@ -1559,8 +1672,10 @@ mod tests {
                 for c in 0..3 {
                     let lo = base[c].min(full[c]) as i16;
                     let hi = base[c].max(full[c]) as i16;
-                    assert!((lo - 1..=hi + 1).contains(&(mid[c] as i16)),
-                        "{preset:?} midpoint should be between base and full look");
+                    assert!(
+                        (lo - 1..=hi + 1).contains(&(mid[c] as i16)),
+                        "{preset:?} midpoint should be between base and full look"
+                    );
                 }
                 assert_eq!(mid[3], 196);
             }
@@ -1570,7 +1685,13 @@ mod tests {
     #[test]
     fn shared_amount_scales_each_quick_fix_without_changing_full_strength() {
         let source = RgbaImage::from_fn(96, 64, |x, _| {
-            let level = if x < 20 { 37 } else if x < 76 { 82 } else { 181 };
+            let level = if x < 20 {
+                37
+            } else if x < 76 {
+                82
+            } else {
+                181
+            };
             Rgba([level + 16, level + 4, level.saturating_sub(7), 213])
         });
         for fix in 0..5 {
@@ -1600,8 +1721,11 @@ mod tests {
             {
                 for c in 0..3 {
                     let expected = (unadjusted[c] as f32 + adjusted[c] as f32) * 0.5;
-                    assert!((actual[c] as f32 - expected).abs() <= 0.51,
-                        "quick fix {fix} half amount channel {c}: {} vs {expected}", actual[c]);
+                    assert!(
+                        (actual[c] as f32 - expected).abs() <= 0.51,
+                        "quick fix {fix} half amount channel {c}: {} vs {expected}",
+                        actual[c]
+                    );
                 }
                 assert_eq!(actual[3], 213);
             }
@@ -1618,11 +1742,17 @@ mod tests {
         manual.auto_brightness = true;
         manual.auto_color = true;
         manual.filter_amount = 0.0;
-        assert_eq!(apply_tone(source.clone(), &manual), manual_only,
-            "the effect slider must not scale manual exposure");
+        assert_eq!(
+            apply_tone(source.clone(), &manual),
+            manual_only,
+            "the effect slider must not scale manual exposure"
+        );
         manual.filter_amount = 1.0;
-        assert_ne!(apply_tone(source, &manual), manual_only,
-            "100% Quick Fixes must still apply with manual exposure");
+        assert_ne!(
+            apply_tone(source, &manual),
+            manual_only,
+            "100% Quick Fixes must still apply with manual exposure"
+        );
     }
 
     #[test]
@@ -1782,14 +1912,15 @@ mod tests {
         let dark = output.get_pixel(2, 0)[0] as i16;
         let light = output.get_pixel(1, 0)[0] as i16;
         assert!(light - dark > 45, "contrast should improve useful range");
-        assert!(light - dark < 85, "auto contrast should not crush a narrow histogram");
+        assert!(
+            light - dark < 85,
+            "auto contrast should not crush a narrow histogram"
+        );
     }
 
     #[test]
     fn auto_contrast_changes_an_already_wide_histogram() {
-        let source = RgbaImage::from_fn(256, 1, |x, _| {
-            Rgba([x as u8, x as u8, x as u8, 255])
-        });
+        let source = RgbaImage::from_fn(256, 1, |x, _| Rgba([x as u8, x as u8, x as u8, 255]));
         let mut recipe = EditRecipe::default();
         recipe.auto_contrast = true;
         let output = apply_recipe(source, &recipe);
@@ -1837,14 +1968,22 @@ mod tests {
         for x in [5, 25, 65, 95] {
             let original = source.get_pixel(x, 50);
             let corrected = output.get_pixel(x, 50);
-            assert!(corrected[1] >= original[1], "Auto Brightness darkened a shadow");
+            assert!(
+                corrected[1] >= original[1],
+                "Auto Brightness darkened a shadow"
+            );
             assert!(corrected[1] as f32 <= original[1] as f32 * 1.61 + 1.0,
                 "Auto Brightness over-amplified a noisy RAW shadow at {x}: {original:?} -> {corrected:?}");
         }
-        assert!(output.get_pixel(5, 50)[1] > 40,
-            "Auto Brightness must still improve shadow detail");
-        assert_eq!(output.get_pixel(95, 50), source.get_pixel(95, 50),
-            "well-exposed background should not be brightened");
+        assert!(
+            output.get_pixel(5, 50)[1] > 40,
+            "Auto Brightness must still improve shadow detail"
+        );
+        assert_eq!(
+            output.get_pixel(95, 50),
+            source.get_pixel(95, 50),
+            "well-exposed background should not be brightened"
+        );
     }
 
     #[test]
@@ -1869,28 +2008,48 @@ mod tests {
         let skin = result.get_pixel(54, 45).0;
         let shadow = result.get_pixel(5, 45).0;
         let wall = result.get_pixel(85, 45).0;
-        assert!(red[0] >= 235 && red[0] <= 253,
-            "Auto Brightness clipped vivid clothing: {red:?}");
-        assert!(red[1] <= 22 && red[2] <= 35,
-            "Auto Brightness exaggerated vivid colour: {red:?}");
-        assert_eq!(skin, source.get_pixel(54, 45).0,
-            "correctly lit skin should not change");
-        assert_eq!(wall, source.get_pixel(85, 45).0,
-            "well-exposed neutral background should remain unchanged");
-        assert!(shadow[1] > 46,
-            "neutral shadow recovery was disabled: {shadow:?}");
+        assert!(
+            red[0] >= 235 && red[0] <= 253,
+            "Auto Brightness clipped vivid clothing: {red:?}"
+        );
+        assert!(
+            red[1] <= 22 && red[2] <= 35,
+            "Auto Brightness exaggerated vivid colour: {red:?}"
+        );
+        assert_eq!(
+            skin,
+            source.get_pixel(54, 45).0,
+            "correctly lit skin should not change"
+        );
+        assert_eq!(
+            wall,
+            source.get_pixel(85, 45).0,
+            "well-exposed neutral background should remain unchanged"
+        );
+        assert!(
+            shadow[1] > 46,
+            "neutral shadow recovery was disabled: {shadow:?}"
+        );
         assert_eq!(red[3], 255);
     }
 
     #[test]
     fn auto_brightness_gain_preserves_neutrals_and_avoids_new_clips() {
         assert!((auto_brightness_colour_safe_gain(&[40, 40, 40, 255], 1.6) - 1.6).abs() < 1e-6);
-        assert_eq!(auto_brightness_colour_safe_gain(&[255, 2, 7, 255], 2.5), 1.0);
+        assert_eq!(
+            auto_brightness_colour_safe_gain(&[255, 2, 7, 255], 2.5),
+            1.0
+        );
         assert!(auto_brightness_colour_safe_gain(&[245, 7, 9, 255], 2.0) <= 253.0 / 245.0);
-        assert_eq!(auto_brightness_colour_safe_gain(&[245, 7, 9, 255], 0.75), 0.75);
+        assert_eq!(
+            auto_brightness_colour_safe_gain(&[245, 7, 9, 255], 0.75),
+            0.75
+        );
         let warm_skin = auto_brightness_colour_safe_gain(&[200, 120, 90, 255], 1.5);
-        assert!(warm_skin > 1.0 && warm_skin < 1.5,
-            "warm skin should get a restrained lift");
+        assert!(
+            warm_skin > 1.0 && warm_skin < 1.5,
+            "warm skin should get a restrained lift"
+        );
     }
 
     #[test]
@@ -1925,9 +2084,18 @@ mod tests {
         let deep_shadow = output.get_pixel(5, 50)[0];
         let midtone = output.get_pixel(30, 50)[0];
         let upper_midtone = output.get_pixel(70, 50)[0];
-        assert!(deep_shadow >= 60, "deep shadows should recover: {deep_shadow}");
-        assert!(midtone <= 120, "well-exposed midtones rose too far: {midtone}");
-        assert_eq!(upper_midtone, 160, "already-bright midtones should stay stable");
+        assert!(
+            deep_shadow >= 60,
+            "deep shadows should recover: {deep_shadow}"
+        );
+        assert!(
+            midtone <= 120,
+            "well-exposed midtones rose too far: {midtone}"
+        );
+        assert_eq!(
+            upper_midtone, 160,
+            "already-bright midtones should stay stable"
+        );
     }
 
     #[test]
@@ -1955,8 +2123,15 @@ mod tests {
         let output = apply_recipe(source, &recipe);
         let dark_detail = output.get_pixel(5, 50)[0];
         assert!(dark_detail > 53, "dark detail should lift: {dark_detail}");
-        assert!(dark_detail <= 90, "dark detail was over-lifted: {dark_detail}");
-        assert_eq!(output.get_pixel(70, 50)[0], 206, "bright surroundings should stay stable");
+        assert!(
+            dark_detail <= 90,
+            "dark detail was over-lifted: {dark_detail}"
+        );
+        assert_eq!(
+            output.get_pixel(70, 50)[0],
+            206,
+            "bright surroundings should stay stable"
+        );
     }
 
     #[test]
@@ -1964,14 +2139,23 @@ mod tests {
         // A portrait against a white wall: the wall owns the median, but the
         // subject needs light. This caught the old global-median gamma curve.
         let source = RgbaImage::from_fn(100, 100, |x, _| {
-            if x < 15 { Rgba([72, 77, 82, 255]) }
-            else { Rgba([225, 225, 225, 255]) }
+            if x < 15 {
+                Rgba([72, 77, 82, 255])
+            } else {
+                Rgba([225, 225, 225, 255])
+            }
         });
         let mut recipe = EditRecipe::default();
         recipe.auto_brightness = true;
         let output = apply_recipe(source, &recipe);
-        assert!(output.get_pixel(5, 50)[1] >= 105, "dark subject should be lifted");
-        assert!(output.get_pixel(80, 50)[1] >= 220, "white background should stay bright");
+        assert!(
+            output.get_pixel(5, 50)[1] >= 105,
+            "dark subject should be lifted"
+        );
+        assert!(
+            output.get_pixel(80, 50)[1] >= 220,
+            "white background should stay bright"
+        );
     }
 
     #[test]
@@ -1979,16 +2163,25 @@ mod tests {
         // The wall owns the median, but it is already well lit. Recover the
         // subject's shadows without applying the same lift to the background.
         let source = RgbaImage::from_fn(100, 100, |x, _| {
-            if x < 15 { Rgba([60, 65, 70, 255]) }
-            else { Rgba([189, 189, 189, 255]) }
+            if x < 15 {
+                Rgba([60, 65, 70, 255])
+            } else {
+                Rgba([189, 189, 189, 255])
+            }
         });
         let mut recipe = EditRecipe::default();
         recipe.auto_brightness = true;
         let output = apply_recipe(source, &recipe);
         let subject = output.get_pixel(5, 50)[1];
-        assert!((85..=110).contains(&subject),
-            "dim subject should brighten without a high-ISO noise explosion: {subject}");
-        assert_eq!(output.get_pixel(80, 50)[1], 189, "well-lit wall should stay stable");
+        assert!(
+            (85..=110).contains(&subject),
+            "dim subject should brighten without a high-ISO noise explosion: {subject}"
+        );
+        assert_eq!(
+            output.get_pixel(80, 50)[1],
+            189,
+            "well-lit wall should stay stable"
+        );
     }
 
     #[test]
@@ -1996,14 +2189,23 @@ mod tests {
         // The supplied bright-wall portrait has a lower decile near 144 and
         // a median near 225. The old cutoff skipped the entire adjustment.
         let source = RgbaImage::from_fn(100, 100, |x, _| {
-            if x < 15 { Rgba([139, 144, 149, 255]) }
-            else { Rgba([225, 225, 225, 255]) }
+            if x < 15 {
+                Rgba([139, 144, 149, 255])
+            } else {
+                Rgba([225, 225, 225, 255])
+            }
         });
         let mut recipe = EditRecipe::default();
         recipe.auto_brightness = true;
         let output = apply_recipe(source, &recipe);
-        assert!(output.get_pixel(5, 50)[1] >= 160, "midtone subject should be visibly brighter");
-        assert!(output.get_pixel(80, 50)[1] >= 220, "white wall should stay bright");
+        assert!(
+            output.get_pixel(5, 50)[1] >= 160,
+            "midtone subject should be visibly brighter"
+        );
+        assert!(
+            output.get_pixel(80, 50)[1] >= 220,
+            "white wall should stay bright"
+        );
     }
 
     #[test]
@@ -2024,7 +2226,11 @@ mod tests {
         let c = apply_recipe(source.clone(), &highlights);
         assert!(a.get_pixel(1, 0)[0] > source.get_pixel(1, 0)[0]);
         assert!(b.get_pixel(0, 0)[0] > source.get_pixel(0, 0)[0]);
-        assert_ne!(a.as_raw(), b.as_raw(), "Fill and Shadows must be independent");
+        assert_ne!(
+            a.as_raw(),
+            b.as_raw(),
+            "Fill and Shadows must be independent"
+        );
         assert!(c.get_pixel(3, 0)[0] < source.get_pixel(3, 0)[0]);
         assert!((c.get_pixel(0, 0)[0] as i16 - 30).abs() <= 2);
     }
@@ -2069,8 +2275,11 @@ mod tests {
     #[test]
     fn vibrance_favours_muted_colours_and_tint_shifts_green_magenta() {
         let source = RgbaImage::from_fn(2, 1, |x, _| {
-            if x == 0 { Rgba([132, 112, 112, 255]) }
-            else { Rgba([255, 0, 0, 255]) }
+            if x == 0 {
+                Rgba([132, 112, 112, 255])
+            } else {
+                Rgba([255, 0, 0, 255])
+            }
         });
         let mut recipe = EditRecipe::default();
         recipe.vibrance = 1.0;

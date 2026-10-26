@@ -16,11 +16,21 @@ struct Entry {
 
 impl Entry {
     fn short(tag: u16, value: u16) -> Self {
-        Self { tag, kind: 3, count: 1, bytes: value.to_le_bytes().to_vec() }
+        Self {
+            tag,
+            kind: 3,
+            count: 1,
+            bytes: value.to_le_bytes().to_vec(),
+        }
     }
 
     fn long(tag: u16, value: u32) -> Self {
-        Self { tag, kind: 4, count: 1, bytes: value.to_le_bytes().to_vec() }
+        Self {
+            tag,
+            kind: 4,
+            count: 1,
+            bytes: value.to_le_bytes().to_vec(),
+        }
     }
 
     fn ascii(tag: u16, value: &[u8]) -> Option<Self> {
@@ -32,7 +42,12 @@ impl Entry {
         }
         let mut bytes = value.to_vec();
         bytes.push(0);
-        Some(Self { tag, kind: 2, count: bytes.len() as u32, bytes })
+        Some(Self {
+            tag,
+            kind: 2,
+            count: bytes.len() as u32,
+            bytes,
+        })
     }
 
     fn rational(tag: u16, numerator: u32, denominator: u32) -> Option<Self> {
@@ -41,7 +56,12 @@ impl Entry {
         }
         let mut bytes = numerator.to_le_bytes().to_vec();
         bytes.extend_from_slice(&denominator.to_le_bytes());
-        Some(Self { tag, kind: 5, count: 1, bytes })
+        Some(Self {
+            tag,
+            kind: 5,
+            count: 1,
+            bytes,
+        })
     }
 }
 
@@ -99,13 +119,14 @@ fn write_ifd(buf: &mut Vec<u8>, entries: &[Entry]) {
 fn build(metadata: Option<&exif::Exif>, width: u32, height: u32) -> Vec<u8> {
     let mut ifd0 = vec![Entry::short(0x0112, 1)]; // Orientation: baked into pixels
     let mut exif_ifd = vec![
-        Entry::short(0xA001, 1),  // ColorSpace: sRGB output
+        Entry::short(0xA001, 1), // ColorSpace: sRGB output
         Entry::long(0xA002, width),
         Entry::long(0xA003, height),
     ];
     if let Some(meta) = metadata {
         for (tag, id) in [
-            (Tag::Make, 0x010F), (Tag::Model, 0x0110),
+            (Tag::Make, 0x010F),
+            (Tag::Model, 0x0110),
             (Tag::DateTime, 0x0132),
         ] {
             if let Some(entry) = copied_ascii(meta, tag, id) {
@@ -156,12 +177,14 @@ pub fn for_export(reference: &str, width: u32, height: u32) -> Vec<u8> {
     let metadata = if let Some(path) = source.path() {
         std::fs::File::open(path).ok().and_then(|file| {
             exif::Reader::new()
-                .read_from_container(&mut std::io::BufReader::new(file)).ok()
+                .read_from_container(&mut std::io::BufReader::new(file))
+                .ok()
         })
     } else {
         crate::source::read(reference).ok().and_then(|bytes| {
             exif::Reader::new()
-                .read_from_container(&mut std::io::Cursor::new(bytes)).ok()
+                .read_from_container(&mut std::io::Cursor::new(bytes))
+                .ok()
         })
     };
     build(metadata.as_ref(), width, height)
@@ -175,9 +198,27 @@ mod tests {
     fn output_exif_has_baked_orientation_and_current_dimensions_without_gps() {
         let bytes = build(None, 1200, 800);
         let exif = exif::Reader::new().read_raw(bytes).unwrap();
-        assert_eq!(exif.get_field(Tag::Orientation, In::PRIMARY).unwrap().value.get_uint(0), Some(1));
-        assert_eq!(exif.get_field(Tag::PixelXDimension, In::PRIMARY).unwrap().value.get_uint(0), Some(1200));
-        assert_eq!(exif.get_field(Tag::PixelYDimension, In::PRIMARY).unwrap().value.get_uint(0), Some(800));
+        assert_eq!(
+            exif.get_field(Tag::Orientation, In::PRIMARY)
+                .unwrap()
+                .value
+                .get_uint(0),
+            Some(1)
+        );
+        assert_eq!(
+            exif.get_field(Tag::PixelXDimension, In::PRIMARY)
+                .unwrap()
+                .value
+                .get_uint(0),
+            Some(1200)
+        );
+        assert_eq!(
+            exif.get_field(Tag::PixelYDimension, In::PRIMARY)
+                .unwrap()
+                .value
+                .get_uint(0),
+            Some(800)
+        );
         assert!(exif.get_field(Tag::GPSLatitude, In::PRIMARY).is_none());
         assert!(exif.get_field(Tag::GPSLongitude, In::PRIMARY).is_none());
     }
@@ -194,10 +235,23 @@ mod tests {
         let mut source = b"II\x2a\x00\x08\x00\x00\x00".to_vec();
         write_ifd(&mut source, &source_ifd);
         let parsed = exif::Reader::new().read_raw(source).unwrap();
-        let exported = exif::Reader::new().read_raw(build(Some(&parsed), 800, 1200)).unwrap();
+        let exported = exif::Reader::new()
+            .read_raw(build(Some(&parsed), 800, 1200))
+            .unwrap();
         let make = exported.get_field(Tag::Make, In::PRIMARY).unwrap();
-        assert!(make.display_value().with_unit(&exported).to_string().contains("NIKON"));
-        assert_eq!(exported.get_field(Tag::Orientation, In::PRIMARY).unwrap().value.get_uint(0), Some(1));
+        assert!(make
+            .display_value()
+            .with_unit(&exported)
+            .to_string()
+            .contains("NIKON"));
+        assert_eq!(
+            exported
+                .get_field(Tag::Orientation, In::PRIMARY)
+                .unwrap()
+                .value
+                .get_uint(0),
+            Some(1)
+        );
         assert!(exported.get_field(Tag::GPSLatitude, In::PRIMARY).is_none());
     }
 }

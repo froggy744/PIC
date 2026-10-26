@@ -168,7 +168,8 @@ impl PhotoObject {
         *imp.camera.borrow_mut() = photo.camera.clone();
         imp.aperture.set(photo.aperture.unwrap_or_default());
         imp.iso.set(photo.iso.unwrap_or_default());
-        imp.shutter_speed.set(photo.shutter_speed.unwrap_or_default());
+        imp.shutter_speed
+            .set(photo.shutter_speed.unwrap_or_default());
         imp.focal_length.set(photo.focal_length.unwrap_or_default());
         imp.width.set(photo.width.unwrap_or_default());
         imp.height.set(photo.height.unwrap_or_default());
@@ -185,7 +186,11 @@ impl PhotoObject {
         // a large library model never stats photo originals.
         imp.original_available
             .set(crate::source::folder_available(photo.folder_id));
-        imp.corrupt.set(confirmed_corrupt_local_jpeg(&photo.path, photo.width, photo.height));
+        imp.corrupt.set(confirmed_corrupt_local_jpeg(
+            &photo.path,
+            photo.width,
+            photo.height,
+        ));
         *imp.cached_thumbnail_path.borrow_mut() =
             thumbnail::cache_path(&photo.path, photo.mtime, photo.size_bytes)
                 .ok()
@@ -196,19 +201,29 @@ impl PhotoObject {
     }
 }
 
-pub(crate) fn confirmed_corrupt_local_jpeg(path: &str, width: Option<i64>, height: Option<i64>) -> bool {
+pub(crate) fn confirmed_corrupt_local_jpeg(
+    path: &str,
+    width: Option<i64>,
+    height: Option<i64>,
+) -> bool {
     if width.is_some() || height.is_some() || !path.starts_with('/') {
         return false;
     }
     let extension = std::path::Path::new(path)
         .extension()
         .and_then(|extension| extension.to_str());
-    if !extension.is_some_and(|extension| matches!(extension.to_ascii_lowercase().as_str(), "jpg" | "jpeg")) {
+    if !extension
+        .is_some_and(|extension| matches!(extension.to_ascii_lowercase().as_str(), "jpg" | "jpeg"))
+    {
         return false;
     }
-    let Ok(mut file) = std::fs::File::open(path) else { return false };
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return false;
+    };
     let mut header = [0u8; 16];
-    let Ok(length) = file.read(&mut header) else { return false };
+    let Ok(length) = file.read(&mut header) else {
+        return false;
+    };
     if header[..length].starts_with(&[0xff, 0xd8, 0xff]) {
         return false;
     }
@@ -221,7 +236,8 @@ mod corrupt_file_tests {
 
     #[test]
     fn corrupt_badge_requires_an_existing_unrecognized_local_jpeg() {
-        let path = std::env::temp_dir().join(format!("pic-corrupt-probe-{}.jpg", std::process::id()));
+        let path =
+            std::env::temp_dir().join(format!("pic-corrupt-probe-{}.jpg", std::process::id()));
         std::fs::write(&path, b"not image data").unwrap();
         let path = path.to_str().unwrap();
         assert!(confirmed_corrupt_local_jpeg(path, None, None));
@@ -230,7 +246,11 @@ mod corrupt_file_tests {
         assert!(!confirmed_corrupt_local_jpeg(path, None, None));
         std::fs::remove_file(path).unwrap();
         assert!(!confirmed_corrupt_local_jpeg(path, None, None));
-        assert!(!confirmed_corrupt_local_jpeg("nfs://DietPi.local/photo.jpg", None, None));
+        assert!(!confirmed_corrupt_local_jpeg(
+            "nfs://DietPi.local/photo.jpg",
+            None,
+            None
+        ));
     }
 }
 

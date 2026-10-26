@@ -1,13 +1,15 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
-use std::time::Duration;
 use std::sync::OnceLock;
+use std::time::Duration;
 
 use adw::prelude::*;
 use gtk4 as gtk;
 use libadwaita as adw;
 
-use super::model::{AspectRatio, Background, CollageOrientation, CollageProject, LayoutKind, PhotoBorder};
+use super::model::{
+    AspectRatio, Background, CollageOrientation, CollageProject, LayoutKind, PhotoBorder,
+};
 
 const PREVIEW_CORNER_STEPS: i32 = 100;
 
@@ -481,7 +483,8 @@ pub fn build(
         Background::White => 0,
         Background::Black => 1,
         Background::LightGray => 2,
-    }].set_active(true);
+    }]
+    .set_active(true);
     // Equal halves via a homogeneous grid, matching the edit panel's
     // aspect-preset grid geometry; each dropdown keeps a small title.
     let aspect_background_grid = gtk::Grid::new();
@@ -591,7 +594,9 @@ pub fn build(
     });
     corner_radius.set_digits(3);
     corner_radius.set_draw_value(false);
-    corner_radius.set_tooltip_text(Some("0% is square; 50% produces a true circular crop for every photo"));
+    corner_radius.set_tooltip_text(Some(
+        "0% is square; 50% produces a true circular crop for every photo",
+    ));
     corner_radius.set_hexpand(true);
     controls.append(&corner_radius);
     {
@@ -645,7 +650,8 @@ pub fn build(
         PhotoBorder::White => 1,
         PhotoBorder::Black => 2,
         PhotoBorder::Grey => 3,
-    }].set_active(true);
+    }]
+    .set_active(true);
     controls.append(&labelled_control_row("Photo border", &photo_border));
 
     let border_thickness = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.005, 0.04, 0.001);
@@ -870,8 +876,12 @@ fn draw_collage_border(
     stroke: i32,
     radius: f32,
 ) {
-    let Some(rgb) = color.rgb() else { return; };
-    if width < 2 || height < 2 { return; }
+    let Some(rgb) = color.rgb() else {
+        return;
+    };
+    if width < 2 || height < 2 {
+        return;
+    }
     let w = width as f64;
     let h = height as f64;
     let line = f64::from(stroke.max(1)).min((w.min(h) - 1.0).max(1.0));
@@ -886,15 +896,47 @@ fn draw_collage_border(
     context.new_path();
     context.move_to(left + rx, top);
     context.line_to(right - rx, top);
-    context.curve_to(right - rx + rx * k, top, right, top + ry - ry * k, right, top + ry);
+    context.curve_to(
+        right - rx + rx * k,
+        top,
+        right,
+        top + ry - ry * k,
+        right,
+        top + ry,
+    );
     context.line_to(right, bottom - ry);
-    context.curve_to(right, bottom - ry + ry * k, right - rx + rx * k, bottom, right - rx, bottom);
+    context.curve_to(
+        right,
+        bottom - ry + ry * k,
+        right - rx + rx * k,
+        bottom,
+        right - rx,
+        bottom,
+    );
     context.line_to(left + rx, bottom);
-    context.curve_to(left + rx - rx * k, bottom, left, bottom - ry + ry * k, left, bottom - ry);
+    context.curve_to(
+        left + rx - rx * k,
+        bottom,
+        left,
+        bottom - ry + ry * k,
+        left,
+        bottom - ry,
+    );
     context.line_to(left, top + ry);
-    context.curve_to(left, top + ry - ry * k, left + rx - rx * k, top, left + rx, top);
+    context.curve_to(
+        left,
+        top + ry - ry * k,
+        left + rx - rx * k,
+        top,
+        left + rx,
+        top,
+    );
     context.close_path();
-    context.set_source_rgb(rgb[0] as f64 / 255.0, rgb[1] as f64 / 255.0, rgb[2] as f64 / 255.0);
+    context.set_source_rgb(
+        rgb[0] as f64 / 255.0,
+        rgb[1] as f64 / 255.0,
+        rgb[2] as f64 / 255.0,
+    );
     context.set_line_width(line);
     let _ = context.stroke();
 }
@@ -902,15 +944,13 @@ fn draw_collage_border(
 fn collage_trace_enabled() -> bool {
     static ENABLED: OnceLock<bool> = OnceLock::new();
     *ENABLED.get_or_init(|| {
-        std::env::var("PIC_COLLAGE_TRACE").ok().is_some_and(|value| value != "0")
+        std::env::var("PIC_COLLAGE_TRACE")
+            .ok()
+            .is_some_and(|value| value != "0")
     })
 }
 
-fn set_preview_corner_class(
-    widget: &impl IsA<gtk::Widget>,
-    previous: &Cell<i32>,
-    step: i32,
-) {
+fn set_preview_corner_class(widget: &impl IsA<gtk::Widget>, previous: &Cell<i32>, step: i32) {
     let old = previous.replace(step);
     if old == step {
         return;
@@ -954,7 +994,13 @@ fn collage_layout_preview(kind: LayoutKind) -> gtk::DrawingArea {
             ][tint % 4];
             rect(x, y, w, h, sky);
             rect(x, y + h * 0.65, w, h * 0.35, ground);
-            rect(x + w * 0.70, y + h * 0.13, w * 0.12, h * 0.15, (0.98, 0.86, 0.61));
+            rect(
+                x + w * 0.70,
+                y + h * 0.13,
+                w * 0.12,
+                h * 0.15,
+                (0.98, 0.86, 0.61),
+            );
         };
         rect(0.0, 0.0, 82.0, 49.0, (0.16, 0.19, 0.24));
         match kind {
@@ -1165,7 +1211,11 @@ fn refresh_preview(
             let data = border_project.borrow();
             let canvas_side = border_canvas.width().min(border_canvas.height()).max(1) as u32;
             let stroke = super::model::border_pixels(canvas_side, data.border_width);
-            let radius = if data.round_corners { data.corner_radius } else { 0.0 };
+            let radius = if data.round_corners {
+                data.corner_radius
+            } else {
+                0.0
+            };
             draw_collage_border(cr, width, height, data.border, stroke as i32, radius);
         });
         tile.add_overlay(&border);
@@ -1441,28 +1491,47 @@ fn update_geometry(
     if width < 1.0 || height < 1.0 {
         return; // Wait for the first real allocation; never invent a minimum.
     }
-    let border_px = super::model::border_pixels(
-        width.min(height).round() as u32, project.border_width
-    ) as i32;
+    let border_px =
+        super::model::border_pixels(width.min(height).round() as u32, project.border_width) as i32;
     // Log only when geometry inputs change, rather than every frame clock tick.
     let trace_key = if collage_trace_enabled() {
         Some(format!(
             "{}x{} layout={:?} keep={} radius={} border={:?}/{} spacing={} items={:?}",
-            width as i32, height as i32, project.layout, project.keep_photo_aspect,
-            project.corner_radius, project.border, project.border_width, project.spacing,
-            project.items.iter().map(|item| (
-                item.photo.id, item.x.to_bits(), item.y.to_bits(),
-                item.width.to_bits(), item.height.to_bits(), item.rotation.to_bits()
-            )).collect::<Vec<_>>()
+            width as i32,
+            height as i32,
+            project.layout,
+            project.keep_photo_aspect,
+            project.corner_radius,
+            project.border,
+            project.border_width,
+            project.spacing,
+            project
+                .items
+                .iter()
+                .map(|item| (
+                    item.photo.id,
+                    item.x.to_bits(),
+                    item.y.to_bits(),
+                    item.width.to_bits(),
+                    item.height.to_bits(),
+                    item.rotation.to_bits()
+                ))
+                .collect::<Vec<_>>()
         ))
-    } else { None };
-    let should_log = trace_key.as_ref().is_some_and(|key| LAST_GEOMETRY_TRACE.with(|last| {
-        let mut last = last.borrow_mut();
-        if last.as_ref() == Some(key) { false } else {
-            *last = Some(key.clone());
-            true
-        }
-    }));
+    } else {
+        None
+    };
+    let should_log = trace_key.as_ref().is_some_and(|key| {
+        LAST_GEOMETRY_TRACE.with(|last| {
+            let mut last = last.borrow_mut();
+            if last.as_ref() == Some(key) {
+                false
+            } else {
+                *last = Some(key.clone());
+                true
+            }
+        })
+    });
     if should_log {
         eprintln!(
             "PIC_COLLAGE_TRACE preview_canvas={}x{} layout={:?} keep={} border={:?} stroke={} radius={:.3} spacing={:.4} count={}",
@@ -1473,14 +1542,15 @@ fn update_geometry(
     for (item, preview) in project.items.iter().zip(frames.borrow().iter()) {
         let fraction = if project.round_corners {
             project.corner_radius.clamp(0.0, 0.5)
-        } else { 0.0 };
+        } else {
+            0.0
+        };
         let g = super::model::tile_geometry(item, width as u32, height as u32, fraction);
         let x = g.x as f64;
         let y = g.y as f64;
         let w = g.w as i32;
         let h = g.h as i32;
-        let radius_step = ((fraction * 200.0).round() as i32)
-            .clamp(0, PREVIEW_CORNER_STEPS);
+        let radius_step = ((fraction * 200.0).round() as i32).clamp(0, PREVIEW_CORNER_STEPS);
         preview.outer.set_overflow(if radius_step > 0 {
             gtk::Overflow::Hidden
         } else {
@@ -1488,7 +1558,13 @@ fn update_geometry(
         });
         set_preview_corner_class(&preview.outer, &preview.outer_radius, radius_step);
         preview.outer.set_size_request(w, h);
-        preview.border_px.set(if project.border == PhotoBorder::None { 0 } else { border_px });
+        preview
+            .border_px
+            .set(if project.border == PhotoBorder::None {
+                0
+            } else {
+                border_px
+            });
         preview.border.queue_draw();
         if should_log {
             eprintln!(
@@ -1715,10 +1791,18 @@ mod sizing_tests {
             // Test the regression reported on Fedora: toggling a border may
             // repaint over the photo but must never move, resize or rebuild a
             // tile (CSS borders used to consume GtkFrame content space).
-            let baseline_tiles = editor.frames.borrow().iter().map(|frame| {
-                (frame.outer.width_request(), frame.outer.height_request())
-            }).collect::<Vec<_>>();
-            for color in [PhotoBorder::None, PhotoBorder::White, PhotoBorder::Black, PhotoBorder::Grey] {
+            let baseline_tiles = editor
+                .frames
+                .borrow()
+                .iter()
+                .map(|frame| (frame.outer.width_request(), frame.outer.height_request()))
+                .collect::<Vec<_>>();
+            for color in [
+                PhotoBorder::None,
+                PhotoBorder::White,
+                PhotoBorder::Black,
+                PhotoBorder::Grey,
+            ] {
                 {
                     let mut data = editor.project.borrow_mut();
                     data.border = color;
@@ -1728,9 +1812,15 @@ mod sizing_tests {
                 for (frame, original) in editor.frames.borrow().iter().zip(&baseline_tiles) {
                     assert_eq!(
                         (frame.outer.width_request(), frame.outer.height_request()),
-                        *original, "border {:?} changed the frame size", color
+                        *original,
+                        "border {:?} changed the frame size",
+                        color
                     );
-                    assert_eq!(frame.border.width_request(), -1, "border overlay must not request a tile size");
+                    assert_eq!(
+                        frame.border.width_request(),
+                        -1,
+                        "border overlay must not request a tile size"
+                    );
                 }
             }
             {
@@ -1745,7 +1835,9 @@ mod sizing_tests {
             let expected = frame_borders[0].border_px.get();
             assert!(expected > 0, "black outline must be applied");
             assert!(
-                frame_borders.iter().all(|frame| frame.border_px.get() == expected),
+                frame_borders
+                    .iter()
+                    .all(|frame| frame.border_px.get() == expected),
                 "different-sized collage photos must have identical border widths"
             );
             drop(frame_borders);
@@ -1915,7 +2007,11 @@ fn choose_export_destination(
     } else {
         "Export Collage"
     };
-    let action_label = if saved_path.is_some() { "Save" } else { "Export" };
+    let action_label = if saved_path.is_some() {
+        "Save"
+    } else {
+        "Export"
+    };
     let initial_folder = saved_path
         .as_ref()
         .and_then(|path| path.parent())
@@ -1947,7 +2043,9 @@ fn choose_export_destination(
                     confirmed_replace,
                 )?;
                 if let Some(photo) = crate::db::photo(&connection, id)? {
-                    if let Err(error) = crate::thumbnail::create(&photo.path,photo.mtime,photo.size_bytes) {
+                    if let Err(error) =
+                        crate::thumbnail::create(&photo.path, photo.mtime, photo.size_bytes)
+                    {
                         eprintln!("Could not cache collage thumbnail: {error}");
                     }
                 }

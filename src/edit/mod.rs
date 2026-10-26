@@ -1,5 +1,5 @@
-mod editor;
 pub mod auto_develop;
+mod editor;
 pub mod export_batch;
 #[cfg(debug_assertions)]
 pub mod export_benchmark;

@@ -16,9 +16,9 @@ use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use gtk4 as gtk;
 use gtk::gdk;
 use gtk::prelude::*;
+use gtk4 as gtk;
 use libadwaita as adw;
 use rusqlite::Connection;
 
@@ -172,7 +172,10 @@ impl ThemeEngine {
         if active.as_ref().is_some_and(|theme| theme.id != saved) {
             eprintln!(
                 "Saved appearance theme '{saved}' was not found; falling back to '{}'",
-                active.as_ref().map(|theme| theme.id.as_str()).unwrap_or("none")
+                active
+                    .as_ref()
+                    .map(|theme| theme.id.as_str())
+                    .unwrap_or("none")
             );
         }
         if let Some(theme) = active {
@@ -228,17 +231,22 @@ impl ThemeEngine {
             // toolbar defaults without changing precedence for other themes.
             let priority = if matches!(
                 theme.id.as_str(),
-                "PIC" | "PIC2" | "PIC-Default" | "PIC-Dark" | "Terminal" | "Monochrome-Studio" | "windows old" | "Cyberpunk" | "OLED" | "iDark"
+                "PIC"
+                    | "PIC2"
+                    | "PIC-Default"
+                    | "PIC-Dark"
+                    | "Terminal"
+                    | "Monochrome-Studio"
+                    | "windows old"
+                    | "Cyberpunk"
+                    | "OLED"
+                    | "iDark"
             ) {
                 gtk::STYLE_PROVIDER_PRIORITY_APPLICATION + 3
             } else {
                 gtk::STYLE_PROVIDER_PRIORITY_APPLICATION + 1
             };
-            gtk::style_context_add_provider_for_display(
-                &self.display,
-                &provider,
-                priority,
-            );
+            gtk::style_context_add_provider_for_display(&self.display, &provider, priority);
             self.overlay_provider.borrow_mut().replace(provider);
         }
         *self.active_id.borrow_mut() = theme.id.clone();
@@ -255,14 +263,18 @@ impl ThemeEngine {
         // palettes need light chrome even when GNOME is dark. Adaptive themes
         // leave the scheme at the desktop default.
         if theme.dark {
-            self.style_manager.set_color_scheme(adw::ColorScheme::ForceDark);
+            self.style_manager
+                .set_color_scheme(adw::ColorScheme::ForceDark);
             self.lightbox.use_iphone_backdrop();
         } else if theme.pins_color_scheme {
-            self.style_manager.set_color_scheme(adw::ColorScheme::ForceLight);
+            self.style_manager
+                .set_color_scheme(adw::ColorScheme::ForceLight);
             self.lightbox.use_standard_backdrop(false);
         } else {
-            self.style_manager.set_color_scheme(adw::ColorScheme::Default);
-            self.lightbox.use_standard_backdrop(self.style_manager.is_dark());
+            self.style_manager
+                .set_color_scheme(adw::ColorScheme::Default);
+            self.lightbox
+                .use_standard_backdrop(self.style_manager.is_dark());
         }
         self.update_appearance_icon(theme.dark);
     }
@@ -313,9 +325,7 @@ mod tests {
         let connection = Rc::new(RefCell::new(Connection::open_in_memory().unwrap()));
         connection
             .borrow()
-            .execute_batch(
-                "CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
-            )
+            .execute_batch("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
             .unwrap();
         connection
     }
@@ -371,10 +381,19 @@ mod tests {
 
         assert!(toolbar.color().red() > 0.9, "navy toolbar needs white text");
         assert!(tab.color().red() < 0.1, "silver tab needs black text");
-        assert!(tab.style_context().border().top() >= 2, "tab needs a raised edge");
+        assert!(
+            tab.style_context().border().top() >= 2,
+            "tab needs a raised edge"
+        );
         assert!(icon.color().red() < 0.1, "silver icon needs black text");
-        assert!(icon.style_context().border().top() >= 2, "icon needs a raised edge");
-        assert!(done.color().red() > 0.9, "navy Done button needs white text");
+        assert!(
+            icon.style_context().border().top() >= 2,
+            "icon needs a raised edge"
+        );
+        assert!(
+            done.color().red() > 0.9,
+            "navy Done button needs white text"
+        );
         window.close();
     }
 
@@ -384,7 +403,11 @@ mod tests {
         gtk::init().unwrap();
         let display = gdk::Display::default().unwrap();
         crate::css::install_foundation(&display);
-        let engine = ThemeEngine::new(display, memory_db(), Rc::new(crate::lightbox::Lightbox::new()));
+        let engine = ThemeEngine::new(
+            display,
+            memory_db(),
+            Rc::new(crate::lightbox::Lightbox::new()),
+        );
         engine.startup();
         let themes = engine.themes();
         let window = gtk::Window::new();
@@ -423,7 +446,11 @@ mod tests {
             engine.activate(themes.iter().find(|theme| theme.id == id).unwrap());
             settle_glow_preview();
             let expected = gdk::RGBA::parse(expected).unwrap();
-            assert_eq!(toolbar.color(), expected, "{id} toolbar should use its own palette");
+            assert_eq!(
+                toolbar.color(),
+                expected,
+                "{id} toolbar should use its own palette"
+            );
         }
         window.close();
     }
@@ -479,7 +506,11 @@ mod tests {
         let sidebar = gtk::ListBox::new();
         sidebar.add_css_class("navigation-sidebar");
         sidebar.set_width_request(210);
-        for (label, selected) in [("Library", false), ("All Photos", true), ("Favorites", false)] {
+        for (label, selected) in [
+            ("Library", false),
+            ("All Photos", true),
+            ("Favorites", false),
+        ] {
             let row = gtk::ListBoxRow::new();
             row.set_child(Some(&gtk::Label::new(Some(label))));
             if selected {
@@ -517,13 +548,20 @@ mod tests {
                     [(0.74, 0.22, 0.12), (0.94, 0.64, 0.18)],
                     [(0.14, 0.48, 0.30), (0.36, 0.72, 0.46)],
                 ][index];
-                let gradient = gtk::cairo::LinearGradient::new(0.0, 0.0, width as f64, height as f64);
+                let gradient =
+                    gtk::cairo::LinearGradient::new(0.0, 0.0, width as f64, height as f64);
                 gradient.add_color_stop_rgb(0.0, palette[0].0, palette[0].1, palette[0].2);
                 gradient.add_color_stop_rgb(1.0, palette[1].0, palette[1].1, palette[1].2);
                 context.set_source(&gradient).unwrap();
                 context.paint().unwrap();
                 context.set_source_rgba(0.02, 0.04, 0.08, 0.58);
-                context.arc(width as f64 * 0.72, height as f64 * 0.42, 30.0, 0.0, std::f64::consts::TAU);
+                context.arc(
+                    width as f64 * 0.72,
+                    height as f64 * 0.42,
+                    30.0,
+                    0.0,
+                    std::f64::consts::TAU,
+                );
                 context.fill().unwrap();
                 context.set_source_rgba(1.0, 1.0, 1.0, 0.34);
                 context.move_to(12.0, height as f64 * 0.78);
@@ -564,7 +602,13 @@ mod tests {
             context.rectangle(0.0, 0.0, width as f64, height as f64);
             context.fill().unwrap();
             context.set_source_rgb(0.03, 0.04, 0.07);
-            context.arc(width as f64 * 0.68, height as f64 * 0.38, 19.0, 0.0, std::f64::consts::TAU);
+            context.arc(
+                width as f64 * 0.68,
+                height as f64 * 0.38,
+                19.0,
+                0.0,
+                std::f64::consts::TAU,
+            );
             context.fill().unwrap();
         });
         photo.set_margin_start(59);
@@ -572,7 +616,8 @@ mod tests {
         photo.set_margin_end(56);
         photo.set_margin_bottom(40);
         cover.set_child(Some(&photo));
-        let frame = gtk::Picture::for_filename("images/theme/album-covers/standard/standard-frame.png");
+        let frame =
+            gtk::Picture::for_filename("images/theme/album-covers/standard/standard-frame.png");
         frame.set_content_fit(gtk::ContentFit::Fill);
         frame.set_can_target(false);
         cover.add_overlay(&frame);
@@ -626,7 +671,11 @@ mod tests {
         let root = unique_temp_dir("runtime");
         write_theme(&root, "alpha", "/* picasa-theme\n   name: Alpha\n*/");
         write_theme(&root, "beta", "/* picasa-theme\n   name: Beta\n*/");
-        write_theme(&root, "zeta", "/* picasa-theme\n   name: Zeta\n   dark: true\n   mode: base\n*/");
+        write_theme(
+            &root,
+            "zeta",
+            "/* picasa-theme\n   name: Zeta\n   dark: true\n   mode: base\n*/",
+        );
 
         let connection = memory_db();
         let lightbox = Rc::new(crate::lightbox::Lightbox::new());

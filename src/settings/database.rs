@@ -362,19 +362,17 @@ pub(super) fn page(
         let status = status.clone();
         let management = management.clone();
         let refresh = refresh.clone();
-        show_db_files.connect_clicked(move |_| {
-            match crate::db::default_library_database_files() {
-                Ok(files) => show_default_database_files(
-                    &parent,
-                    files,
-                    management.clone(),
-                    status.clone(),
-                    refresh.clone(),
-                ),
-                Err(error) => status.set_text(&format!(
-                    "Could not list database files in PIC’s default data folder: {error:#}"
-                )),
-            }
+        show_db_files.connect_clicked(move |_| match crate::db::default_library_database_files() {
+            Ok(files) => show_default_database_files(
+                &parent,
+                files,
+                management.clone(),
+                status.clone(),
+                refresh.clone(),
+            ),
+            Err(error) => status.set_text(&format!(
+                "Could not list database files in PIC’s default data folder: {error:#}"
+            )),
         });
     }
 
@@ -507,11 +505,9 @@ pub(super) fn page(
                                 })
                         });
                         match library.and_then(|library| {
-                            (management.switch_library)(&library.id)
-                                .map_err(anyhow::Error::msg)?;
+                            (management.switch_library)(&library.id).map_err(anyhow::Error::msg)?;
                             Ok(library)
-                        })
-                        {
+                        }) {
                             Ok(library) => {
                                 status.set_text(&format!("Opened {}.", library.name));
                                 refresh();
@@ -568,25 +564,25 @@ pub(super) fn page(
                         });
                         let button = button.clone();
                         let status = status.clone();
-                        glib::timeout_add_local(Duration::from_millis(50), move || {
-                            match receiver.try_recv() {
-                                Ok(Ok(path)) => {
-                                    status.set_text(&format!("Backup saved to {}", path.display()));
-                                    button.set_sensitive(true);
-                                    glib::ControlFlow::Break
-                                }
-                                Ok(Err(error)) => {
-                                    status.set_text(&format!("Backup failed: {error}"));
-                                    button.set_sensitive(true);
-                                    glib::ControlFlow::Break
-                                }
-                                Err(std::sync::mpsc::TryRecvError::Empty) => {
-                                    glib::ControlFlow::Continue
-                                }
-                                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                                    button.set_sensitive(true);
-                                    glib::ControlFlow::Break
-                                }
+                        glib::timeout_add_local(Duration::from_millis(50), move || match receiver
+                            .try_recv()
+                        {
+                            Ok(Ok(path)) => {
+                                status.set_text(&format!("Backup saved to {}", path.display()));
+                                button.set_sensitive(true);
+                                glib::ControlFlow::Break
+                            }
+                            Ok(Err(error)) => {
+                                status.set_text(&format!("Backup failed: {error}"));
+                                button.set_sensitive(true);
+                                glib::ControlFlow::Break
+                            }
+                            Err(std::sync::mpsc::TryRecvError::Empty) => {
+                                glib::ControlFlow::Continue
+                            }
+                            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                                button.set_sensitive(true);
+                                glib::ControlFlow::Break
                             }
                         });
                     }
@@ -814,11 +810,7 @@ fn show_default_database_files(
                             .find(|library| library.path == path_for_open)
                             .map(Ok)
                             .unwrap_or_else(|| {
-                                crate::db::add_existing_library(
-                                    &path_for_open,
-                                    &display_name,
-                                    "",
-                                )
+                                crate::db::add_existing_library(&path_for_open, &display_name, "")
                             })
                     })
                     .and_then(|library| {
@@ -982,7 +974,11 @@ fn library_folder(library: &crate::db::LibraryEntry) -> Option<PathBuf> {
         .parent()
         .map(Path::to_path_buf)
         .filter(|path| path.is_dir())
-        .or_else(|| crate::db::library_directory().ok().filter(|path| path.is_dir()))
+        .or_else(|| {
+            crate::db::library_directory()
+                .ok()
+                .filter(|path| path.is_dir())
+        })
 }
 
 fn file_stem(path: &Path) -> String {

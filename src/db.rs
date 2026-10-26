@@ -240,7 +240,11 @@ pub struct SidebarCounts {
 /// Linux paths are case-sensitive, and URI encoding must be preserved.
 pub fn exclusion_path(path: &str) -> String {
     let path = path.trim();
-    if path == "/" { "/".into() } else { path.trim_end_matches('/').to_string() }
+    if path == "/" {
+        "/".into()
+    } else {
+        path.trim_end_matches('/').to_string()
+    }
 }
 
 /// True for the excluded directory itself or one of its descendants, never
@@ -250,7 +254,9 @@ pub fn path_is_excluded(path: &str, excluded: &[String]) -> bool {
     excluded.iter().any(|entry| {
         normalized == *entry
             || (entry == "/" && normalized.starts_with('/'))
-            || normalized.strip_prefix(entry.as_str()).is_some_and(|tail| tail.starts_with('/'))
+            || normalized
+                .strip_prefix(entry.as_str())
+                .is_some_and(|tail| tail.starts_with('/'))
     })
 }
 
@@ -269,7 +275,10 @@ pub fn exclude_folder(connection: &Connection, path: &str) -> Result<()> {
 }
 
 pub fn restore_excluded_folder(connection: &Connection, path: &str) -> Result<()> {
-    connection.execute("DELETE FROM excluded_folders WHERE path=?1", [exclusion_path(path)])?;
+    connection.execute(
+        "DELETE FROM excluded_folders WHERE path=?1",
+        [exclusion_path(path)],
+    )?;
     Ok(())
 }
 
@@ -289,7 +298,10 @@ mod exclusion_tests {
         let connection = Connection::open_in_memory().unwrap();
         connection.execute_batch(SCHEMA).unwrap();
         exclude_folder(&connection, "/Pictures/Private/").unwrap();
-        assert_eq!(excluded_folders(&connection).unwrap(), vec!["/Pictures/Private"]);
+        assert_eq!(
+            excluded_folders(&connection).unwrap(),
+            vec!["/Pictures/Private"]
+        );
         restore_excluded_folder(&connection, "/Pictures/Private").unwrap();
         assert!(excluded_folders(&connection).unwrap().is_empty());
     }
@@ -308,5 +320,5 @@ include!("db/tests.rs");
 include!("db/path_migration.rs");
 include!("db/network_import.rs");
 
-pub mod metadata;
 pub mod filters;
+pub mod metadata;

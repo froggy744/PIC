@@ -91,9 +91,15 @@ pub enum OverlayAnchor {
 impl OverlayAnchor {
     #[cfg(test)]
     pub const ALL: [OverlayAnchor; 9] = [
-        Self::TopLeft, Self::TopCenter, Self::TopRight,
-        Self::CenterLeft, Self::Center, Self::CenterRight,
-        Self::BottomLeft, Self::BottomCenter, Self::BottomRight,
+        Self::TopLeft,
+        Self::TopCenter,
+        Self::TopRight,
+        Self::CenterLeft,
+        Self::Center,
+        Self::CenterRight,
+        Self::BottomLeft,
+        Self::BottomCenter,
+        Self::BottomRight,
     ];
 
     pub fn from_grid(col: u8, row: u8) -> Self {
@@ -592,7 +598,12 @@ fn decode_draw(value: &str) -> Vec<DrawAnnotation> {
                 "highlight" => DrawKind::Highlighter,
                 _ => return None,
             };
-            if wire.p.len() < 2 || wire.p.iter().any(|p| !p[0].is_finite() || !p[1].is_finite()) {
+            if wire.p.len() < 2
+                || wire
+                    .p
+                    .iter()
+                    .any(|p| !p[0].is_finite() || !p[1].is_finite())
+            {
                 return None;
             }
             Some(DrawAnnotation {
@@ -1308,8 +1319,10 @@ mod tests {
         recipe.filter = super::super::filters::FilterPreset::None;
         assert!(!recipe.has_adjustable_effect());
         recipe.exposure = 0.25;
-        assert!(!recipe.has_adjustable_effect(),
-            "manual adjustments must not enable the shared effect slider");
+        assert!(
+            !recipe.has_adjustable_effect(),
+            "manual adjustments must not enable the shared effect slider"
+        );
     }
 
     #[test]
@@ -1351,9 +1364,13 @@ mod tests {
         let full = EditRecipe::decode("v=1|filter=old_photo|filteramount=9");
         assert_eq!(full.filter_amount, 1.0);
         let amount_without_filter = EditRecipe {
-            filter_amount: 0.4, ..EditRecipe::default()
+            filter_amount: 0.4,
+            ..EditRecipe::default()
         };
-        assert!(amount_without_filter.is_default(), "An unused filter amount is not a photo edit");
+        assert!(
+            amount_without_filter.is_default(),
+            "An unused filter amount is not a photo edit"
+        );
     }
 
     #[test]
@@ -1441,7 +1458,10 @@ mod tests {
         session.begin_action();
         session.mutate_active(|recipe| recipe.exposure = 0.8);
 
-        assert!(session.can_undo(), "a changed edit must enable Undo while active");
+        assert!(
+            session.can_undo(),
+            "a changed edit must enable Undo while active"
+        );
         assert!(session.undo());
         assert_eq!(session.recipe.exposure, 0.0);
         assert!(session.can_redo());
@@ -1747,7 +1767,8 @@ mod tests {
     }
 
     #[test]
-    fn pasted_text_and_overlays_land_in_the_same_relative_place_on_a_differently_shaped_destination() {
+    fn pasted_text_and_overlays_land_in_the_same_relative_place_on_a_differently_shaped_destination(
+    ) {
         // Brand a landscape photo at the bottom-right with the 3% margin,
         // paste onto a portrait destination, and require the same relative
         // placement with the pixel aspect of both layer kinds preserved.
@@ -1796,12 +1817,8 @@ mod tests {
         let portrait_text = text.rect_with_size(0.2, text.size);
         assert!((landscape_text.right() - portrait_text.right()).abs() < 1e-6);
         assert!((landscape_text.bottom() - portrait_text.bottom()).abs() < 1e-6);
-        assert!(
-            (landscape_text.right() - (1.0 - TextLayerSpec::POSITION_MARGIN)).abs() < 1e-6
-        );
-        assert!(
-            (landscape_text.bottom() - (1.0 - TextLayerSpec::POSITION_MARGIN)).abs() < 1e-6
-        );
+        assert!((landscape_text.right() - (1.0 - TextLayerSpec::POSITION_MARGIN)).abs() < 1e-6);
+        assert!((landscape_text.bottom() - (1.0 - TextLayerSpec::POSITION_MARGIN)).abs() < 1e-6);
     }
 
     #[test]
@@ -2113,7 +2130,7 @@ mod tests {
         });
         let encoded = recipe.encode();
         assert!(encoded.contains("|dr="));
-        assert_eq!(EditRecipe::decode(&encoded).drawings,recipe.drawings);
+        assert_eq!(EditRecipe::decode(&encoded).drawings, recipe.drawings);
     }
 
     #[test]
@@ -2127,7 +2144,12 @@ mod tests {
             arrow_start: false,
             arrow_end: false,
         }];
-        let crop = CropRect { left: 0.25, top: 0.25, right: 0.75, bottom: 0.75 };
+        let crop = CropRect {
+            left: 0.25,
+            top: 0.25,
+            right: 0.75,
+            bottom: 0.75,
+        };
         remap_drawings_for_crop(&mut drawings, crop, (1000, 800));
         assert_eq!(drawings[0].points, vec![(0.0, 0.5), (1.0, 0.5)]);
         assert!((drawings[0].width - 0.02).abs() < 1e-6);

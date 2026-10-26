@@ -276,12 +276,7 @@ fn enrich(
         // Observe completion before querying SQLite: observing it afterwards
         // could race the writer's final commit and strand the final work item.
         let completed = discovery_done.load(Ordering::Acquire);
-        let works = db::network_work_batch(
-            &connection,
-            root,
-            generation,
-            NETWORK_THUMBNAIL_BATCH,
-        )?;
+        let works = db::network_work_batch(&connection, root, generation, NETWORK_THUMBNAIL_BATCH)?;
         if works.is_empty() {
             if completed {
                 send_bounded(sender, Enrichment::Done, control);
@@ -296,13 +291,16 @@ fn enrich(
         if control.is_cancelled() {
             break;
         }
-        let mut results = works.into_iter().map(|work| Enriched {
-            metadata_state: work.metadata_state.clone(),
-            thumbnail_state: work.thumbnail_state.clone(),
-            work,
-            metadata: None,
-            errors: Vec::new(),
-        }).collect::<Vec<_>>();
+        let mut results = works
+            .into_iter()
+            .map(|work| Enriched {
+                metadata_state: work.metadata_state.clone(),
+                thumbnail_state: work.thumbnail_state.clone(),
+                work,
+                metadata: None,
+                errors: Vec::new(),
+            })
+            .collect::<Vec<_>>();
         for result in &mut results {
             if result.work.metadata_pending {
                 match source.metadata(&result.work) {
@@ -360,7 +358,12 @@ fn enrich(
                 }
             });
         });
-        if results.iter().any(|result| result.errors.iter().any(|error| error == "network share disconnected")) {
+        if results.iter().any(|result| {
+            result
+                .errors
+                .iter()
+                .any(|error| error == "network share disconnected")
+        }) {
             send_bounded(sender, Enrichment::Offline, control);
             return Ok(());
         }
@@ -538,19 +541,32 @@ fn run_with_source(
                                     previews_ready += 1;
                                 }
                                 if result.metadata.is_some() {
-                                    send(events, ScanEvent::PhotosUpdated { photos: vec![photo] });
+                                    send(
+                                        events,
+                                        ScanEvent::PhotosUpdated {
+                                            photos: vec![photo],
+                                        },
+                                    );
                                 }
-                                if result.work.thumbnail_pending && result.thumbnail_state == "ready" {
-                                    send(events, ScanEvent::ThumbnailCreated {
-                                        path: PathBuf::from(&result.work.path),
-                                    });
+                                if result.work.thumbnail_pending
+                                    && result.thumbnail_state == "ready"
+                                {
+                                    send(
+                                        events,
+                                        ScanEvent::ThumbnailCreated {
+                                            path: PathBuf::from(&result.work.path),
+                                        },
+                                    );
                                 }
                                 for error in result.errors {
                                     failed += 1;
-                                    send(events, ScanEvent::Failed {
-                                        path: PathBuf::from(&result.work.path),
-                                        error,
-                                    });
+                                    send(
+                                        events,
+                                        ScanEvent::Failed {
+                                            path: PathBuf::from(&result.work.path),
+                                            error,
+                                        },
+                                    );
                                 }
                             }
                         }
@@ -585,7 +601,12 @@ fn run_with_source(
                     // while discovery is in progress.
                     if !db::path_is_excluded(&path, &db::excluded_folders(&connection)?) {
                         let transaction = connection.unchecked_transaction()?;
-                        db::catalog_network_directory(&transaction, root, &path, parent.as_deref())?;
+                        db::catalog_network_directory(
+                            &transaction,
+                            root,
+                            &path,
+                            parent.as_deref(),
+                        )?;
                         transaction.commit()?;
                     }
                 }
@@ -794,8 +815,7 @@ fn flush(
     let mut photos = Vec::new();
     let mut folder_ids = Vec::new();
     for (folder, record) in batch.drain(..) {
-        if db::path_is_excluded(&record.path, &excluded)
-            || db::path_is_excluded(&folder, &excluded)
+        if db::path_is_excluded(&record.path, &excluded) || db::path_is_excluded(&folder, &excluded)
         {
             continue;
         }

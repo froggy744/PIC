@@ -237,10 +237,7 @@ pub fn set_raw_jpeg_pair_mode(connection: &Connection, mode: RawJpegPairMode) ->
 
 /// Collapse only true RAW+JPEG capture pairs. JPEG-only and RAW-only photos
 /// remain visible in every mode.
-pub fn retain_raw_jpeg_pair_mode(
-    photos: &mut Vec<crate::db::Photo>,
-    mode: RawJpegPairMode,
-) {
+pub fn retain_raw_jpeg_pair_mode(photos: &mut Vec<crate::db::Photo>, mode: RawJpegPairMode) {
     if mode == RawJpegPairMode::Both {
         return;
     }

@@ -55,10 +55,16 @@ impl Aspect for gdk::Texture {
     }
 }
 
-fn lerp(a: f64, b: f64, t: f64) -> f64 { a + (b - a) * t }
+fn lerp(a: f64, b: f64, t: f64) -> f64 {
+    a + (b - a) * t
+}
 
 fn land_direction(id: usize) -> f64 {
-    if ((id.wrapping_mul(2_654_435_761) >> 5) & 1) == 0 { 1.0 } else { -1.0 }
+    if ((id.wrapping_mul(2_654_435_761) >> 5) & 1) == 0 {
+        1.0
+    } else {
+        -1.0
+    }
 }
 
 /// Pose of a print while it is being laid down (progress 0..=1).
@@ -97,14 +103,30 @@ struct Look {
 }
 fn look(style: Style) -> Look {
     if style == Style::Floating {
-        Look { paper: (0.09, 0.105, 0.13), radius: 3.0, shadow: 0.28, shadow_dy: 8.0, shadow_blur: 20.0 }
+        Look {
+            paper: (0.09, 0.105, 0.13),
+            radius: 3.0,
+            shadow: 0.28,
+            shadow_dy: 8.0,
+            shadow_blur: 20.0,
+        }
     } else {
-        Look { paper: (0.955, 0.945, 0.915), radius: 2.0, shadow: 0.36, shadow_dy: 8.0, shadow_blur: 22.0 }
+        Look {
+            paper: (0.955, 0.945, 0.915),
+            radius: 2.0,
+            shadow: 0.36,
+            shadow_dy: 8.0,
+            shadow_blur: 22.0,
+        }
     }
 }
 /// Landing amplitude (scale, degrees): Picture Pile stays level; Floating Prints settle gently.
 fn landing_amplitude(style: Style) -> (f64, f64) {
-    if style == Style::Floating { (1.02, 0.5) } else { (PILE_LAND_SCALE, 0.0) }
+    if style == Style::Floating {
+        (1.02, 0.5)
+    } else {
+        (PILE_LAND_SCALE, 0.0)
+    }
 }
 /// The outgoing print stays fully opaque until the new one is (almost)
 /// opaque on top of it, then fades only where it sticks out.
@@ -123,13 +145,22 @@ pub(super) struct Geometry {
 /// Outer print rectangle (photo + paper border). The photo area keeps the
 /// photograph's own aspect ratio exactly, so nothing is cropped or stretched.
 #[cfg(test)]
-pub(super) fn pile_geometry(slot: usize, count: usize, aspect: f64, width: f64, height: f64)
-    -> Geometry
-{
+pub(super) fn pile_geometry(
+    slot: usize,
+    count: usize,
+    aspect: f64,
+    width: f64,
+    height: f64,
+) -> Geometry {
     print_geometry(Style::PicturePile, slot, count, aspect, width, height)
 }
 pub(super) fn print_geometry(
-    style: Style, slot: usize, count: usize, aspect: f64, width: f64, height: f64,
+    style: Style,
+    slot: usize,
+    count: usize,
+    aspect: f64,
+    width: f64,
+    height: f64,
 ) -> Geometry {
     let ratio = aspect.clamp(0.60, 2.0);
     let (x, y, tw, th) = print_rect(style, slot, count, ratio, width, height);
@@ -137,7 +168,9 @@ pub(super) fn print_geometry(
         2.0
     } else if PILE_BORDER > 0.0 {
         (width.min(height) * PILE_BORDER).clamp(4.0, 14.0).round()
-    } else { 0.0 };
+    } else {
+        0.0
+    };
     let border = border.min(tw * 0.05);
     let inner_w = (tw - 2.0 * border).max(1.0);
     let inner_h = inner_w / ratio;
@@ -181,7 +214,14 @@ struct Slot<T> {
     z: u64,
 }
 impl<T> Default for Slot<T> {
-    fn default() -> Self { Self { card: None, leaving: None, since: 0.0, z: 0 } }
+    fn default() -> Self {
+        Self {
+            card: None,
+            leaving: None,
+            since: 0.0,
+            z: 0,
+        }
+    }
 }
 
 /// What the model needs to know about the player at one frame.
@@ -230,11 +270,14 @@ impl<T: Clone + Aspect> Model<T> {
 
     /// Advance the animation clock by the frame clock's delta (microseconds).
     pub fn advance(&mut self, frame_time_us: i64, paused: bool) {
-        let dt = self.last_frame
+        let dt = self
+            .last_frame
             .map(|previous| ((frame_time_us - previous) as f64 / 1e6).clamp(0.0, PILE_MAX_DT))
             .unwrap_or(0.0);
         self.last_frame = Some(frame_time_us);
-        if !paused { self.clock += dt; }
+        if !paused {
+            self.clock += dt;
+        }
     }
 
     fn place(&mut self, slot: usize, id: usize, texture: T, quality: bool, delay: f64) {
@@ -246,7 +289,13 @@ impl<T: Clone + Aspect> Model<T> {
             (_, Some(card)) => Some((card, old_z)),
         };
         let aspect = texture.aspect();
-        state.card = Some(Card { id, texture, quality, upgrade: None, aspect });
+        state.card = Some(Card {
+            id,
+            texture,
+            quality,
+            upgrade: None,
+            aspect,
+        });
         state.since = self.clock + delay;
         self.z_counter += 1;
         // A flipping card keeps its place in the stack; a laid-down print
@@ -262,7 +311,10 @@ impl<T: Clone + Aspect> Model<T> {
     /// Reconcile with the player. Returns the cards to paint when anything
     /// is moving or has changed, `None` while the pile is at rest.
     pub fn update(&mut self, feed: &Feed<T>, size: (f64, f64)) -> Option<Vec<DrawCard<T>>> {
-        if size != self.size { self.size = size; self.dirty = true; }
+        if size != self.size {
+            self.size = size;
+            self.dirty = true;
+        }
         let duration = feed.transition.max(0.2);
         self.drift_period = feed.drift_period.max(2.0);
 
@@ -286,7 +338,9 @@ impl<T: Clone + Aspect> Model<T> {
         let mut stagger = 0.0;
         for slot in 0..self.slots.len().min(feed.slots.len()) {
             let id = feed.slots[slot];
-            let Some((texture, quality)) = (feed.frame)(id) else { continue };
+            let Some((texture, quality)) = (feed.frame)(id) else {
+                continue;
+            };
             let clock = self.clock;
             match self.slots[slot].card.as_mut() {
                 Some(card) if card.id == id => {
@@ -310,7 +364,11 @@ impl<T: Clone + Aspect> Model<T> {
                 self.dirty = true;
             }
             if let Some(card) = state.card.as_mut() {
-                if card.upgrade.as_ref().is_some_and(|(_, t0)| self.clock - t0 >= PILE_UPGRADE_SECS) {
+                if card
+                    .upgrade
+                    .as_ref()
+                    .is_some_and(|(_, t0)| self.clock - t0 >= PILE_UPGRADE_SECS)
+                {
                     if let Some((texture, _)) = card.upgrade.take() {
                         card.texture = texture;
                         card.quality = true;
@@ -322,19 +380,27 @@ impl<T: Clone + Aspect> Model<T> {
 
         let animating = self.slots.iter().any(|state| {
             state.leaving.is_some()
-                || state.card.as_ref().is_some_and(|card| card.upgrade.is_some())
+                || state
+                    .card
+                    .as_ref()
+                    .is_some_and(|card| card.upgrade.is_some())
                 || (state.card.is_some() && self.clock - state.since < duration)
         });
         // Floating Prints never rest: they drift continuously.
         let drifting = self.style == Style::Floating && self.slots.iter().any(|s| s.card.is_some());
-        if !animating && !drifting && !self.dirty { return None; }
+        if !animating && !drifting && !self.dirty {
+            return None;
+        }
         self.dirty = false;
         Some(self.compose(duration))
     }
 
     fn draw(&self, card: &Card<T>, geometry: Geometry, slot: usize) -> DrawCard<T> {
         let upgrade = card.upgrade.as_ref().map(|(texture, t0)| {
-            (texture.clone(), smootherstep((self.clock - t0) / PILE_UPGRADE_SECS))
+            (
+                texture.clone(),
+                smootherstep((self.clock - t0) / PILE_UPGRADE_SECS),
+            )
         });
         DrawCard {
             #[cfg(test)]
@@ -357,7 +423,9 @@ impl<T: Clone + Aspect> Model<T> {
         let count = self.slots.len();
         let mut stack: Vec<(u64, DrawCard<T>)> = Vec::with_capacity(count * 2);
         for (slot, state) in self.slots.iter().enumerate() {
-            let Some(card) = state.card.as_ref() else { continue };
+            let Some(card) = state.card.as_ref() else {
+                continue;
+            };
             let progress = ((self.clock - state.since) / duration).clamp(0.0, 1.0);
             let resting = print_geometry(self.style, slot, count, card.aspect, width, height);
             match (self.mode, state.leaving.as_ref()) {
@@ -377,9 +445,7 @@ impl<T: Clone + Aspect> Model<T> {
                     let shown = if progress < 0.5 { old } else { card };
                     let mut draw = self.draw(shown, geometry, slot);
                     let width_factor = PicasaTransition::Flip.flip_width(progress);
-                    draw.angle = lerp(
-                        base_tilt(self.style, slot),
-                        base_tilt(self.style, slot), m);
+                    draw.angle = lerp(base_tilt(self.style, slot), base_tilt(self.style, slot), m);
                     draw.scale_x = width_factor;
                     draw.shade = 0.35 * (1.0 - width_factor);
                     stack.push((state.z, draw));
@@ -389,13 +455,15 @@ impl<T: Clone + Aspect> Model<T> {
                 }
                 (_, leaving) => {
                     if let Some((old, old_z)) = leaving {
-                        let before = print_geometry(self.style, slot, count, old.aspect, width, height);
+                        let before =
+                            print_geometry(self.style, slot, count, old.aspect, width, height);
                         let mut draw = self.draw(old, before, slot);
                         draw.opacity = leaving_opacity(progress);
                         stack.push((*old_z, draw));
                     }
                     let (amp_scale, amp_turn) = landing_amplitude(self.style);
-                    let pose = landing_pose_with(progress, land_direction(card.id), amp_scale, amp_turn);
+                    let pose =
+                        landing_pose_with(progress, land_direction(card.id), amp_scale, amp_turn);
                     let mut draw = self.draw(card, resting, slot);
                     draw.opacity = pose.opacity;
                     draw.scale_x = pose.scale;
@@ -450,10 +518,16 @@ mod canvas_imp {
                 let obj = self.obj();
                 let (w, h) = (obj.width() as f32, obj.height() as f32);
                 snapshot.push_opacity(0.01);
-                snapshot.push_clip(&graphene::Rect::new((w - 1.0).max(0.0), (h - 1.0).max(0.0), 1.0, 1.0));
+                snapshot.push_clip(&graphene::Rect::new(
+                    (w - 1.0).max(0.0),
+                    (h - 1.0).max(0.0),
+                    1.0,
+                    1.0,
+                ));
                 for texture in &warm {
                     snapshot.append_scaled_texture(
-                        texture, gsk::ScalingFilter::Trilinear,
+                        texture,
+                        gsk::ScalingFilter::Trilinear,
                         &graphene::Rect::new((w - 16.0).max(0.0), (h - 9.0).max(0.0), 16.0, 9.0),
                     );
                 }
@@ -512,15 +586,22 @@ fn paint_photo(snapshot: &gtk::Snapshot, texture: &gdk::Texture, dest: &graphene
     };
     snapshot.push_clip(dest);
     snapshot.append_scaled_texture(
-        texture, filter,
+        texture,
+        filter,
         &graphene::Rect::new(
-            dest.x() + (dest.width() - w) * 0.5, dest.y() + (dest.height() - h) * 0.5, w, h),
+            dest.x() + (dest.width() - w) * 0.5,
+            dest.y() + (dest.height() - h) * 0.5,
+            w,
+            h,
+        ),
     );
     snapshot.pop();
 }
 
 fn paint_card(snapshot: &gtk::Snapshot, card: &DrawCard<gdk::Texture>, look: Look) {
-    if card.opacity <= 0.002 { return; }
+    if card.opacity <= 0.002 {
+        return;
+    }
     let g = card.geometry;
     let (w, h, b) = (g.w as f32, g.h as f32, g.border as f32);
     snapshot.save();
@@ -535,7 +616,10 @@ fn paint_card(snapshot: &gtk::Snapshot, card: &DrawCard<gdk::Texture>, look: Loo
     snapshot.append_outset_shadow(
         &outline,
         &gdk::RGBA::new(0.0, 0.0, 0.0, look.shadow - 0.10 * lift),
-        0.0, look.shadow_dy + 14.0 * lift, 0.0, look.shadow_blur + 12.0 * lift,
+        0.0,
+        look.shadow_dy + 14.0 * lift,
+        0.0,
+        look.shadow_blur + 12.0 * lift,
     );
     snapshot.append_color(
         &gdk::RGBA::new(look.paper.0, look.paper.1, look.paper.2, 1.0),
@@ -580,8 +664,12 @@ impl Pile {
             self.size = size;
             self.canvas.set_size_request(size.0, size.1);
         }
-        let lookup = |id: usize| player.frames.get(&id)
-            .map(|surface| (surface.texture.clone(), surface.high_quality));
+        let lookup = |id: usize| {
+            player
+                .frames
+                .get(&id)
+                .map(|surface| (surface.texture.clone(), surface.high_quality))
+        };
         let feed = Feed {
             slots: &player.slots,
             changes: player.changes,
@@ -596,17 +684,25 @@ impl Pile {
         // Textures that will be promoted next are uploaded ahead of time.
         let mut warm = Vec::new();
         for offset in 0..PREFETCH {
-            if player.count == 0 { break; }
+            if player.count == 0 {
+                break;
+            }
             let index = (player.next + offset) % player.count;
-            if player.slots.contains(&index) { continue; }
+            if player.slots.contains(&index) {
+                continue;
+            }
             if let Some(surface) = player.frames.get(&index) {
                 if surface.high_quality && self.warmed.insert((index, surface.revision)) {
                     warm.push(surface.texture.clone());
                 }
             }
         }
-        if self.warmed.len() > 512 { self.warmed.clear(); }
-        if !warm.is_empty() { self.canvas.set_warm(warm); }
+        if self.warmed.len() > 512 {
+            self.warmed.clear();
+        }
+        if !warm.is_empty() {
+            self.canvas.set_warm(warm);
+        }
     }
 }
 
@@ -616,10 +712,16 @@ mod tests {
 
     #[derive(Clone, Debug, PartialEq)]
     struct Fake(usize, f64);
-    impl Aspect for Fake { fn aspect(&self) -> f64 { self.1 } }
+    impl Aspect for Fake {
+        fn aspect(&self) -> f64 {
+            self.1
+        }
+    }
 
     const ASPECTS: [f64; 6] = [1.5, 0.667, 1.0, 1.78, 0.75, 1.33];
-    fn aspect_of(id: usize) -> f64 { ASPECTS[id % ASPECTS.len()] }
+    fn aspect_of(id: usize) -> f64 {
+        ASPECTS[id % ASPECTS.len()]
+    }
 
     /// Drives a Model at a fixed frame rate against a scripted feed.
     struct Rig {
@@ -666,19 +768,30 @@ mod tests {
             self.model.advance(self.time_us, self.paused);
             let loaded = self.loaded.clone();
             let quality = self.quality.clone();
-            let lookup = move |id: usize| loaded.contains(&id)
-                .then(|| (Fake(id, aspect_of(id)), quality[&id]));
+            let lookup = move |id: usize| {
+                loaded
+                    .contains(&id)
+                    .then(|| (Fake(id, aspect_of(id)), quality[&id]))
+            };
             let slots = self.slots.clone();
             let feed = Feed {
-                slots: &slots, changes: self.changes, replacing: self.replacing,
-                transition: self.transition, drift_period: 6.0, frame: &lookup,
+                slots: &slots,
+                changes: self.changes,
+                replacing: self.replacing,
+                transition: self.transition,
+                drift_period: 6.0,
+                frame: &lookup,
             };
             let out = self.model.update(&feed, (1920.0, 1080.0));
-            if let Some(cards) = &out { self.history.push(cards.clone()); }
+            if let Some(cards) = &out {
+                self.history.push(cards.clone());
+            }
             out.unwrap_or_default()
         }
         fn run(&mut self, seconds: f64) {
-            for _ in 0..(seconds * 60.0) as usize { self.frame(); }
+            for _ in 0..(seconds * 60.0) as usize {
+                self.frame();
+            }
         }
     }
 
@@ -688,7 +801,15 @@ mod tests {
         assert_eq!(start.opacity, 0.0);
         assert!((start.scale - PILE_LAND_SCALE).abs() < 1e-9);
         let end = landing_pose(1.0, -1.0);
-        assert_eq!(end, Pose { opacity: 1.0, scale: 1.0, turn: 0.0, lift: 0.0 });
+        assert_eq!(
+            end,
+            Pose {
+                opacity: 1.0,
+                scale: 1.0,
+                turn: 0.0,
+                lift: 0.0
+            }
+        );
         let mut previous = landing_pose(0.0, 1.0);
         for step in 1..=200 {
             let pose = landing_pose(step as f64 / 200.0, 1.0);
@@ -708,7 +829,9 @@ mod tests {
             let p = step as f64 / 1000.0;
             let incoming = landing_pose(p, 1.0).opacity;
             let outgoing = leaving_opacity(p);
-            if incoming < 1.0 { assert_eq!(outgoing, 1.0, "p={p}"); }
+            if incoming < 1.0 {
+                assert_eq!(outgoing, 1.0, "p={p}");
+            }
             assert!(1.0 - (1.0 - incoming) * (1.0 - outgoing) > 0.999, "p={p}");
         }
         assert_eq!(leaving_opacity(1.0), 0.0);
@@ -716,7 +839,12 @@ mod tests {
 
     #[test]
     fn geometry_stays_on_screen_for_every_aspect_screen_and_landing_scale() {
-        for (w, h) in [(1920.0, 1080.0), (1080.0, 1920.0), (1024.0, 768.0), (3840.0, 2160.0)] {
+        for (w, h) in [
+            (1920.0, 1080.0),
+            (1080.0, 1920.0),
+            (1024.0, 768.0),
+            (3840.0, 2160.0),
+        ] {
             for count in 1..=PICTURE_PILE_SLOTS {
                 for slot in 0..count {
                     for aspect in [0.5, 0.67, 1.0, 1.5, 1.85, 3.0] {
@@ -726,12 +854,20 @@ mod tests {
                         // Rotated, landing-scaled bounding box.
                         let half_w = scale * (g.w * 0.5 * tilt.cos() + g.h * 0.5 * tilt.sin());
                         let half_h = scale * (g.w * 0.5 * tilt.sin() + g.h * 0.5 * tilt.cos());
-                        assert!(g.cx - half_w >= 0.0 && g.cx + half_w <= w, "{w}x{h} {slot}/{count} {aspect}");
-                        assert!(g.cy - half_h >= 0.0 && g.cy + half_h <= h, "{w}x{h} {slot}/{count} {aspect}");
+                        assert!(
+                            g.cx - half_w >= 0.0 && g.cx + half_w <= w,
+                            "{w}x{h} {slot}/{count} {aspect}"
+                        );
+                        assert!(
+                            g.cy - half_h >= 0.0 && g.cy + half_h <= h,
+                            "{w}x{h} {slot}/{count} {aspect}"
+                        );
                         let inner = (g.w - 2.0 * g.border) / (g.h - 2.0 * g.border);
                         let expected = aspect.clamp(0.6, 2.0);
-                        assert!((inner / expected - 1.0).abs() < 1e-9,
-                            "photo area must keep the photograph's aspect: {inner} vs {expected}");
+                        assert!(
+                            (inner / expected - 1.0).abs() < 1e-9,
+                            "photo area must keep the photograph's aspect: {inner} vs {expected}"
+                        );
                     }
                 }
             }
@@ -744,7 +880,9 @@ mod tests {
     fn print_geometry_never_changes_during_its_life() {
         for mode in [PicasaTransition::Crossfade, PicasaTransition::Cut] {
             let mut rig = Rig::new(mode, 5, 0.9);
-            for id in 0..5 { rig.load(id, false); }
+            for id in 0..5 {
+                rig.load(id, false);
+            }
             rig.run(1.0);
             let mut next = 5;
             for round in 0..12 {
@@ -761,7 +899,11 @@ mod tests {
             for frame in &rig.history {
                 for card in frame {
                     let first = seen.entry(card.id).or_insert(card.geometry);
-                    assert_eq!(*first, card.geometry, "{mode:?}: print {} moved or resized", card.id);
+                    assert_eq!(
+                        *first, card.geometry,
+                        "{mode:?}: print {} moved or resized",
+                        card.id
+                    );
                 }
             }
             assert!(seen.len() >= 17);
@@ -771,7 +913,9 @@ mod tests {
     #[test]
     fn a_slot_is_never_empty_after_its_first_print_and_motion_is_smooth() {
         let mut rig = Rig::new(PicasaTransition::Crossfade, 5, 0.9);
-        for id in 0..12 { rig.load(id, true); }
+        for id in 0..12 {
+            rig.load(id, true);
+        }
         rig.run(1.5);
         let first_visible = rig.history.len();
         for round in 0..6 {
@@ -785,11 +929,17 @@ mod tests {
                 let entry = opaque_in_slot.entry(card.slot).or_insert(false);
                 *entry |= card.opacity > 0.999;
             }
-            assert!(opaque_in_slot.values().all(|covered| *covered), "a hole appeared in the pile");
+            assert!(
+                opaque_in_slot.values().all(|covered| *covered),
+                "a hole appeared in the pile"
+            );
             let mut current: HashMap<usize, (f64, f64, f64)> = HashMap::new();
             for card in frame {
                 if let Some(&(opacity, scale, angle)) = last.get(&card.id) {
-                    assert!((card.opacity - opacity).abs() < 0.08, "opacity step too large");
+                    assert!(
+                        (card.opacity - opacity).abs() < 0.08,
+                        "opacity step too large"
+                    );
                     assert!((card.scale_x - scale).abs() < 0.004, "scale step too large");
                     assert!((card.angle - angle).abs() < 0.06, "angle step too large");
                 }
@@ -802,33 +952,71 @@ mod tests {
     #[test]
     fn finished_pile_goes_idle_and_leaving_prints_are_released() {
         let mut rig = Rig::new(PicasaTransition::Crossfade, 5, 0.9);
-        for id in 0..6 { rig.load(id, true); }
+        for id in 0..6 {
+            rig.load(id, true);
+        }
         rig.run(3.0);
         rig.replace(2, 5);
         rig.run(0.5);
-        assert!(rig.history.last().unwrap().len() >= 6, "old print should still be under the new one");
+        assert!(
+            rig.history.last().unwrap().len() >= 6,
+            "old print should still be under the new one"
+        );
         rig.run(1.0);
         let before = rig.history.len();
-        for _ in 0..30 { assert!(rig.frame().is_empty(), "idle pile must not request repaints"); }
+        for _ in 0..30 {
+            assert!(
+                rig.frame().is_empty(),
+                "idle pile must not request repaints"
+            );
+        }
         assert_eq!(rig.history.len(), before);
         assert_eq!(rig.history.last().unwrap().len(), 5);
-        assert!(rig.history.last().unwrap().iter().all(|c| c.opacity == 1.0 && c.scale_x == 1.0 && c.lift == 0.0));
+        assert!(rig
+            .history
+            .last()
+            .unwrap()
+            .iter()
+            .all(|c| c.opacity == 1.0 && c.scale_x == 1.0 && c.lift == 0.0));
     }
 
     #[test]
     fn original_quality_cross_fades_in_place_without_moving_the_print() {
         let mut rig = Rig::new(PicasaTransition::Crossfade, 5, 0.9);
-        for id in 0..5 { rig.load(id, false); }
+        for id in 0..5 {
+            rig.load(id, false);
+        }
         rig.run(2.0);
-        let geometry_before = rig.history.last().unwrap().iter().find(|c| c.id == 1).unwrap().geometry;
+        let geometry_before = rig
+            .history
+            .last()
+            .unwrap()
+            .iter()
+            .find(|c| c.id == 1)
+            .unwrap()
+            .geometry;
         rig.load(1, true);
         rig.run(0.2);
-        let mid = rig.history.last().unwrap().iter().find(|c| c.id == 1).unwrap().clone();
+        let mid = rig
+            .history
+            .last()
+            .unwrap()
+            .iter()
+            .find(|c| c.id == 1)
+            .unwrap()
+            .clone();
         let (_, alpha) = mid.upgrade.clone().expect("upgrade should be fading in");
         assert!(alpha > 0.0 && alpha < 1.0);
         assert_eq!(mid.geometry, geometry_before);
         rig.run(0.4);
-        let end = rig.history.last().unwrap().iter().find(|c| c.id == 1).unwrap().clone();
+        let end = rig
+            .history
+            .last()
+            .unwrap()
+            .iter()
+            .find(|c| c.id == 1)
+            .unwrap()
+            .clone();
         assert!(end.upgrade.is_none());
         assert_eq!(end.geometry, geometry_before);
     }
@@ -836,7 +1024,9 @@ mod tests {
     #[test]
     fn replacement_prints_keep_their_own_aspect_not_the_old_ones() {
         let mut rig = Rig::new(PicasaTransition::Crossfade, 5, 0.9);
-        for id in 0..6 { rig.load(id, true); }
+        for id in 0..6 {
+            rig.load(id, true);
+        }
         rig.run(2.0);
         rig.replace(0, 1); // 1.5 (landscape) -> 0.667 (portrait)... id 1 has aspect 0.667
         rig.run(0.2);
@@ -852,11 +1042,16 @@ mod tests {
     #[test]
     fn initial_prints_drop_in_one_after_another() {
         let mut rig = Rig::new(PicasaTransition::Crossfade, 5, 0.9);
-        for id in 0..5 { rig.load(id, true); }
+        for id in 0..5 {
+            rig.load(id, true);
+        }
         rig.frame();
         let first = rig.history[0].clone();
         let visible = first.iter().filter(|card| card.opacity > 0.0).count();
-        assert!(visible <= 1, "{visible} prints popped in on the first frame");
+        assert!(
+            visible <= 1,
+            "{visible} prints popped in on the first frame"
+        );
         rig.run(2.0);
         assert!(rig.history.last().unwrap().iter().all(|c| c.opacity == 1.0));
     }
@@ -864,7 +1059,9 @@ mod tests {
     #[test]
     fn flip_changes_the_photo_only_while_edge_on() {
         let mut rig = Rig::new(PicasaTransition::Flip, 5, 0.9);
-        for id in 0..6 { rig.load(id, true); }
+        for id in 0..6 {
+            rig.load(id, true);
+        }
         rig.run(3.0);
         let begin = rig.history.len();
         rig.replace(1, 5);
@@ -874,10 +1071,16 @@ mod tests {
         for frame in &rig.history[begin..] {
             assert_eq!(frame.len(), 5, "exactly one card per slot");
             let slot_one = frame.iter().find(|c| c.id == 1 || c.id == 5).unwrap();
-            if let Some(id) = previous { if id != slot_one.id {
-                swaps += 1;
-                assert!(slot_one.scale_x < 0.12, "swapped while visibly open: {}", slot_one.scale_x);
-            }}
+            if let Some(id) = previous {
+                if id != slot_one.id {
+                    swaps += 1;
+                    assert!(
+                        slot_one.scale_x < 0.12,
+                        "swapped while visibly open: {}",
+                        slot_one.scale_x
+                    );
+                }
+            }
             previous = Some(slot_one.id);
         }
         assert_eq!(swaps, 1);
@@ -886,13 +1089,17 @@ mod tests {
     #[test]
     fn cut_replaces_immediately_without_an_outgoing_print() {
         let mut rig = Rig::new(PicasaTransition::Cut, 5, 0.9);
-        for id in 0..6 { rig.load(id, true); }
+        for id in 0..6 {
+            rig.load(id, true);
+        }
         rig.run(3.0);
         rig.replace(3, 5);
         rig.frame();
         let frame = rig.history.last().unwrap();
         assert_eq!(frame.len(), 5);
-        assert!(frame.iter().any(|c| c.id == 5 && c.opacity == 1.0 && c.scale_x == 1.0));
+        assert!(frame
+            .iter()
+            .any(|c| c.id == 5 && c.opacity == 1.0 && c.scale_x == 1.0));
         assert!(frame.iter().all(|c| c.id != 3));
     }
 
@@ -903,7 +1110,10 @@ mod tests {
         model.advance(1_500_000, false); // 500 ms stall
         assert!((model.clock - PILE_MAX_DT).abs() < 1e-9);
         model.advance(1_516_667, true);
-        assert!((model.clock - PILE_MAX_DT).abs() < 1e-9, "paused clock must not advance");
+        assert!(
+            (model.clock - PILE_MAX_DT).abs() < 1e-9,
+            "paused clock must not advance"
+        );
         model.advance(1_500_000, false); // time going backwards is ignored
         assert!((model.clock - PILE_MAX_DT).abs() < 1e-9);
     }
@@ -911,7 +1121,12 @@ mod tests {
     #[test]
     fn any_tile_count_lays_out_on_screen_with_each_photos_own_aspect() {
         for style in [Style::PicturePile, Style::Floating] {
-            for (w, h) in [(1920.0, 1080.0), (1080.0, 1920.0), (1024.0, 768.0), (3840.0, 2160.0)] {
+            for (w, h) in [
+                (1920.0, 1080.0),
+                (1080.0, 1920.0),
+                (1024.0, 768.0),
+                (3840.0, 2160.0),
+            ] {
                 for count in [1, 2, 5, 6, 7, 9, 12, 20, 36, 64] {
                     let mut prints = Vec::new();
                     for slot in 0..count {
@@ -920,8 +1135,14 @@ mod tests {
                             let tilt = (3.0f64).to_radians();
                             let hw = 1.04 * (g.w * 0.5 * tilt.cos() + g.h * 0.5 * tilt.sin()) + 3.0;
                             let hh = 1.04 * (g.w * 0.5 * tilt.sin() + g.h * 0.5 * tilt.cos()) + 3.0;
-                            assert!(g.cx - hw >= -0.5 && g.cx + hw <= w + 0.5, "{style:?} {w}x{h} n={count} slot {slot}");
-                            assert!(g.cy - hh >= -0.5 && g.cy + hh <= h + 0.5, "{style:?} {w}x{h} n={count} slot {slot}");
+                            assert!(
+                                g.cx - hw >= -0.5 && g.cx + hw <= w + 0.5,
+                                "{style:?} {w}x{h} n={count} slot {slot}"
+                            );
+                            assert!(
+                                g.cy - hh >= -0.5 && g.cy + hh <= h + 0.5,
+                                "{style:?} {w}x{h} n={count} slot {slot}"
+                            );
                             let inner = (g.w - 2.0 * g.border) / (g.h - 2.0 * g.border);
                             assert!((inner / aspect - 1.0).abs() < 1e-9);
                         }
@@ -945,7 +1166,9 @@ mod tests {
     fn floating_prints_drift_continuously_without_a_reset_at_photo_changes() {
         let mut rig = Rig::new(PicasaTransition::Crossfade, 6, 0.9);
         rig.model = Model::with_style(6, PicasaTransition::Crossfade, Style::Floating);
-        for id in 0..12 { rig.load(id, true); }
+        for id in 0..12 {
+            rig.load(id, true);
+        }
         rig.run(2.5);
         let begin = rig.history.len();
         rig.run(1.0);
@@ -953,7 +1176,11 @@ mod tests {
         rig.run(1.5);
         // Never idle, and the resting position of every slot moves by tiny,
         // smooth steps, including across the moment a photo is replaced.
-        assert_eq!(rig.history.len() - begin, 150, "drift must repaint every frame");
+        assert_eq!(
+            rig.history.len() - begin,
+            150,
+            "drift must repaint every frame"
+        );
         let mut last: HashMap<usize, (f64, f64, f64)> = HashMap::new();
         for frame in rig.history.iter().skip(begin) {
             let mut current = HashMap::new();
@@ -976,9 +1203,13 @@ mod tests {
                 for aspect in [0.6, 1.0, 1.5, 2.0] {
                     let g = print_geometry(Style::Floating, slot, FLOATING_SLOTS, aspect, w, h);
                     let tilt = (FLOATING_TILT.iter().fold(0.0f64, |m, t| m.max(t.abs()))
-                        + FLOATING_TILT_SWAY + 0.5).to_radians();
-                    let half_w = 1.02 * (g.w * 0.5 * tilt.cos() + g.h * 0.5 * tilt.sin()) + FLOATING_DRIFT_X;
-                    let half_h = 1.02 * (g.w * 0.5 * tilt.sin() + g.h * 0.5 * tilt.cos()) + FLOATING_DRIFT_Y;
+                        + FLOATING_TILT_SWAY
+                        + 0.5)
+                        .to_radians();
+                    let half_w =
+                        1.02 * (g.w * 0.5 * tilt.cos() + g.h * 0.5 * tilt.sin()) + FLOATING_DRIFT_X;
+                    let half_h =
+                        1.02 * (g.w * 0.5 * tilt.sin() + g.h * 0.5 * tilt.cos()) + FLOATING_DRIFT_Y;
                     assert!(g.cx - half_w >= 0.0 && g.cx + half_w <= w);
                     assert!(g.cy - half_h >= 0.0 && g.cy + half_h <= h);
                 }
@@ -989,11 +1220,18 @@ mod tests {
     #[test]
     fn a_missing_frame_leaves_the_slot_alone_until_it_arrives() {
         let mut rig = Rig::new(PicasaTransition::Crossfade, 5, 0.9);
-        for id in 0..5 { rig.load(id, true); }
+        for id in 0..5 {
+            rig.load(id, true);
+        }
         rig.run(2.0);
         rig.replace(2, 9); // photo 9 has not decoded yet
         rig.run(0.5);
-        assert!(rig.history.last().unwrap().iter().any(|c| c.id == 2 && c.opacity == 1.0));
+        assert!(rig
+            .history
+            .last()
+            .unwrap()
+            .iter()
+            .any(|c| c.id == 2 && c.opacity == 1.0));
         rig.load(9, true);
         rig.run(1.5);
         let last = rig.history.last().unwrap();
@@ -1007,22 +1245,52 @@ mod display_tests {
 
     fn synth(w: u32, h: u32, seed: u32) -> Pixels {
         let mut img = image::RgbaImage::new(w, h);
-        let hues = [(220u32, 90u32, 70u32), (60, 140, 200), (90, 180, 110), (200, 160, 60), (150, 90, 190), (70, 70, 90)];
+        let hues = [
+            (220u32, 90u32, 70u32),
+            (60, 140, 200),
+            (90, 180, 110),
+            (200, 160, 60),
+            (150, 90, 190),
+            (70, 70, 90),
+        ];
         let (r, g, b) = hues[seed as usize % hues.len()];
         for (x, y, p) in img.enumerate_pixels_mut() {
             let t = y as f32 / h as f32;
-            let stripe = if ((x / (w / 12).max(1)) + (y / (h / 12).max(1))) % 2 == 0 { 18 } else { 0 };
+            let stripe = if ((x / (w / 12).max(1)) + (y / (h / 12).max(1))) % 2 == 0 {
+                18
+            } else {
+                0
+            };
             *p = image::Rgba([
                 ((r as f32 * (1.0 - 0.5 * t)) as u32 + stripe).min(255) as u8,
                 ((g as f32 * (1.0 - 0.5 * t)) as u32 + stripe).min(255) as u8,
-                ((b as f32 * (1.0 - 0.5 * t)) as u32 + stripe).min(255) as u8, 255]);
+                ((b as f32 * (1.0 - 0.5 * t)) as u32 + stripe).min(255) as u8,
+                255,
+            ]);
         }
         // a "horizon" and a number-ish mark so cards are distinguishable
-        for x in 0..w { for y in (h * 3 / 5)..(h * 3 / 5 + 4) { img.put_pixel(x, y, image::Rgba([255, 255, 255, 255])); } }
-        for k in 0..=(seed % 5) { for x in (20 + k * 40)..(40 + k * 40) { for y in 20..60 { if x < w && y < h { img.put_pixel(x, y, image::Rgba([255, 255, 255, 255])); } } } }
+        for x in 0..w {
+            for y in (h * 3 / 5)..(h * 3 / 5 + 4) {
+                img.put_pixel(x, y, image::Rgba([255, 255, 255, 255]));
+            }
+        }
+        for k in 0..=(seed % 5) {
+            for x in (20 + k * 40)..(40 + k * 40) {
+                for y in 20..60 {
+                    if x < w && y < h {
+                        img.put_pixel(x, y, image::Rgba([255, 255, 255, 255]));
+                    }
+                }
+            }
+        }
         texture_pixels(img)
     }
-    fn pump() { let c = glib::MainContext::default(); while c.pending() { c.iteration(false); } }
+    fn pump() {
+        let c = glib::MainContext::default();
+        while c.pending() {
+            c.iteration(false);
+        }
+    }
 
     /// Smoke test + optional PNG dump: PIC_PILE_PNG_DIR=/tmp/out
     #[test]
@@ -1030,21 +1298,42 @@ mod display_tests {
     fn real_canvas_paints_a_full_pile_cycle() {
         libadwaita::init().unwrap();
         install_css();
-        let dims = [(1500u32, 1000u32), (1000, 1500), (1200, 1200), (1600, 900), (900, 1400), (1500, 1000),
-                    (1000, 1500), (1600, 900), (1200, 1200), (1500, 1000), (1000, 1500), (1600, 900)];
+        let dims = [
+            (1500u32, 1000u32),
+            (1000, 1500),
+            (1200, 1200),
+            (1600, 900),
+            (900, 1400),
+            (1500, 1000),
+            (1000, 1500),
+            (1600, 900),
+            (1200, 1200),
+            (1500, 1000),
+            (1000, 1500),
+            (1600, 900),
+        ];
         for (style, mode) in [
-            (Style::PicturePile, PicasaTransition::Crossfade), (Style::PicturePile, PicasaTransition::Flip),
-            (Style::PicturePile, PicasaTransition::Cut), (Style::Floating, PicasaTransition::Crossfade),
+            (Style::PicturePile, PicasaTransition::Crossfade),
+            (Style::PicturePile, PicasaTransition::Flip),
+            (Style::PicturePile, PicasaTransition::Cut),
+            (Style::Floating, PicasaTransition::Crossfade),
             (Style::Floating, PicasaTransition::Flip),
         ] {
-            let wanted: usize = std::env::var("PIC_PILE_TILES").ok().and_then(|v| v.parse().ok())
+            let wanted: usize = std::env::var("PIC_PILE_TILES")
+                .ok()
+                .and_then(|v| v.parse().ok())
                 .unwrap_or(if style == Style::Floating { 6 } else { 5 });
             let mut player = Player::new(style, 80, 4, false, wanted);
             let slots = player.slots.len();
             player.transition = Duration::from_millis(900);
             let mut stage = Stage::new(style, slots, mode);
-            let window = gtk::Window::builder().default_width(1280).default_height(720).child(&stage.root).build();
-            window.present(); pump();
+            let window = gtk::Window::builder()
+                .default_width(1280)
+                .default_height(720)
+                .child(&stage.root)
+                .build();
+            window.present();
+            pump();
             let (tx, rx) = mpsc::channel();
             let mut frame_time = 1_000_000i64;
             let out = std::env::var("PIC_PILE_PNG_DIR").ok();
@@ -1052,29 +1341,49 @@ mod display_tests {
             for frame in 0..420 {
                 while let Ok(i) = rx.try_recv() {
                     let (w, h) = dims[i % 12];
-                    player.receive(ImageResult { index: i, high_quality: false, pixels: Some(synth(w / 8, h / 8, i as u32)) });
-                    player.receive(ImageResult { index: i, high_quality: true, pixels: Some(synth(w / 2, h / 2, i as u32)) });
+                    player.receive(ImageResult {
+                        index: i,
+                        high_quality: false,
+                        pixels: Some(synth(w / 8, h / 8, i as u32)),
+                    });
+                    player.receive(ImageResult {
+                        index: i,
+                        high_quality: true,
+                        pixels: Some(synth(w / 2, h / 2, i as u32)),
+                    });
                 }
-                if frame == 150 || frame == 330 { player.switched_at -= Duration::from_secs(10); }
+                if frame == 150 || frame == 330 {
+                    player.switched_at -= Duration::from_secs(10);
+                }
                 player.update(&tx);
                 frame_time += 16_667;
                 stage.sync(&player, frame_time);
                 pump();
-                if let (Some(dir), true) = (&out, [60, 160, 175, 190, 345, 360, 400].contains(&frame)) {
+                if let (Some(dir), true) =
+                    (&out, [60, 160, 175, 190, 345, 360, 400].contains(&frame))
+                {
                     let paintable = gtk::WidgetPaintable::new(Some(&stage.root));
                     let snap = gtk::Snapshot::new();
                     paintable.snapshot(&snap, 1280.0, 720.0);
-                    if let (Some(node), Some(renderer)) = (snap.to_node(), window.native().and_then(|n| n.renderer())) {
+                    if let (Some(node), Some(renderer)) =
+                        (snap.to_node(), window.native().and_then(|n| n.renderer()))
+                    {
                         let texture = renderer.render_texture(&node, None);
-                        let _ = texture.save_to_png(format!("{dir}/{style:?}_{mode:?}_{frame}.png"));
+                        let _ =
+                            texture.save_to_png(format!("{dir}/{style:?}_{mode:?}_{frame}.png"));
                         shots += 1;
                     }
                 }
                 std::thread::sleep(Duration::from_millis(2));
             }
             // A change may still be landing (one extra outgoing print) on a slow display.
-            assert!(stage.pile.as_ref().unwrap().canvas.painted().len() >= slots, "{style:?} {mode:?}");
-            if out.is_some() { assert!(shots > 0); }
+            assert!(
+                stage.pile.as_ref().unwrap().canvas.painted().len() >= slots,
+                "{style:?} {mode:?}"
+            );
+            if out.is_some() {
+                assert!(shots > 0);
+            }
         }
     }
 }

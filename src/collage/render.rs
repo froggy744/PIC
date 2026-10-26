@@ -64,8 +64,7 @@ pub fn export(project: &CollageProject, destination: &Path, options: &ExportOpti
     let mut canvas = RgbaImage::from_pixel(width, height, background);
     // Resolution-scaled but uniform across every photo in the collage.
     // Matching the GTK preview, do not derive stroke width from each tile.
-    let border_thickness =
-        super::model::border_pixels(width.min(height), project.border_width);
+    let border_thickness = super::model::border_pixels(width.min(height), project.border_width);
     let mut items = project.items.iter().collect::<Vec<_>>();
     items.sort_by_key(|item| item.z);
     for item in items {
@@ -231,7 +230,9 @@ pub fn export(project: &CollageProject, destination: &Path, options: &ExportOpti
 fn collage_trace_enabled() -> bool {
     static ENABLED: OnceLock<bool> = OnceLock::new();
     *ENABLED.get_or_init(|| {
-        std::env::var("PIC_COLLAGE_TRACE").ok().is_some_and(|value| value != "0")
+        std::env::var("PIC_COLLAGE_TRACE")
+            .ok()
+            .is_some_and(|value| value != "0")
     })
 }
 
@@ -283,12 +284,7 @@ fn round_corners(image: &mut RgbaImage, radius_ratio: f32) {
 /// Draw an inset photo outline that follows straight, rounded and circular
 /// edges. Use the same normalized radius as the GTK preview. The existing
 /// alpha mask (if rounded) is preserved, including anti-aliased corner pixels.
-fn draw_photo_border(
-    image: &mut RgbaImage,
-    radius_ratio: f32,
-    color: [u8; 3],
-    thickness: u32,
-) {
+fn draw_photo_border(image: &mut RgbaImage, radius_ratio: f32, color: [u8; 3], thickness: u32) {
     let width = image.width();
     let height = image.height();
     if width == 0 || height == 0 {
@@ -339,7 +335,9 @@ fn draw_photo_border(
             let pixel = image.get_pixel_mut(x, y);
             for (channel, outline_color) in color.into_iter().enumerate() {
                 pixel.0[channel] = ((pixel.0[channel] as u16 * interior_samples
-                    + outline_color as u16 * outline_samples + 2) / 4) as u8;
+                    + outline_color as u16 * outline_samples
+                    + 2)
+                    / 4) as u8;
             }
         }
     }
@@ -415,7 +413,9 @@ fn fit_inside_tile(
     let (x, y, fitted_width, fitted_height) =
         super::model::fit_content_rect(source.width(), source.height(), width, height);
     let image = source.resize_exact(
-        fitted_width, fitted_height, image::imageops::FilterType::Lanczos3,
+        fitted_width,
+        fitted_height,
+        image::imageops::FilterType::Lanczos3,
     );
     let mut image = image.to_rgba8();
     // Mask the visible fitted photo before it is placed in the full tile.
@@ -479,8 +479,7 @@ mod tests {
         let (offset_x, offset_y, width, height) =
             super::super::model::rounded_tile_bounds(80, 40, 0.5);
         assert_eq!((offset_x, offset_y, width, height), (20, 0, 40, 40));
-        let mut tile =
-            RgbaImage::from_pixel(width, height, image::Rgba([200, 100, 50, 255]));
+        let mut tile = RgbaImage::from_pixel(width, height, image::Rgba([200, 100, 50, 255]));
         round_corners(&mut tile, 0.5);
         assert_eq!(tile.get_pixel(0, 0).0[3], 0);
         assert_eq!(tile.get_pixel(39, 39).0[3], 0);

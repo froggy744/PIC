@@ -34,7 +34,9 @@ pub enum ScanEvent {
         photos: Vec<IndexedPhoto>,
         counts: db::SidebarCounts,
     },
-    PhotosUpdated { photos: Vec<db::Photo> },
+    PhotosUpdated {
+        photos: Vec<db::Photo>,
+    },
     NetworkProgress {
         found: usize,
         added: usize,
@@ -42,7 +44,9 @@ pub enum ScanEvent {
         previews_ready: usize,
         catalog_complete: bool,
     },
-    PhotosRemoved { ids: Vec<i64> },
+    PhotosRemoved {
+        ids: Vec<i64>,
+    },
     FoldersRemoved,
     LibraryCountsChanged {
         counts: db::SidebarCounts,
@@ -86,7 +90,10 @@ impl ScanControl {
     /// Worker cleanup owns its own flag, while user cancellation propagates
     /// immediately without waiting for the catalog writer to leave its scope.
     pub fn child(&self) -> Self {
-        Self(Arc::new(AtomicU8::new(0)), Some(self.1.as_ref().unwrap_or(&self.0).clone()))
+        Self(
+            Arc::new(AtomicU8::new(0)),
+            Some(self.1.as_ref().unwrap_or(&self.0).clone()),
+        )
     }
 
     pub fn cancel(&self) {
@@ -96,16 +103,21 @@ impl ScanControl {
     /// Closing a window or switching libraries suspends authorized work
     /// without turning it into an explicit, persistent user Stop.
     pub fn interrupt(&self) {
-        let _=self.0.compare_exchange(0,2,Ordering::AcqRel,Ordering::Acquire);
+        let _ = self
+            .0
+            .compare_exchange(0, 2, Ordering::AcqRel, Ordering::Acquire);
     }
 
     pub fn should_resume(&self) -> bool {
-        self.0.load(Ordering::Acquire)==2
+        self.0.load(Ordering::Acquire) == 2
     }
 
     pub fn is_cancelled(&self) -> bool {
-        self.0.load(Ordering::Acquire)!=0
-            || self.1.as_ref().is_some_and(|parent| parent.load(Ordering::Acquire)!=0)
+        self.0.load(Ordering::Acquire) != 0
+            || self
+                .1
+                .as_ref()
+                .is_some_and(|parent| parent.load(Ordering::Acquire) != 0)
     }
 }
 
@@ -137,7 +149,13 @@ fn scan_with_control(
     let connection = db::open_existing(database)?;
     let excluded = db::excluded_folders(&connection)?;
     if db::path_is_excluded(root, &excluded) {
-        send(events, ScanEvent::Finished { imported: 0, failed: 0 });
+        send(
+            events,
+            ScanEvent::Finished {
+                imported: 0,
+                failed: 0,
+            },
+        );
         return Ok(0);
     }
     let folder_id = db::insert_folder(&connection, root)?;
@@ -150,7 +168,8 @@ fn scan_with_control(
     verify_scan_devices(&connection, folder_id)?;
     let indexed = db::photo_fingerprints(&connection)?;
     let root_file = crate::source::file(root);
-    let (mut files, mut discovered_folders) = collect_files_filtered(&root_file, events, control, &excluded)?;
+    let (mut files, mut discovered_folders) =
+        collect_files_filtered(&root_file, events, control, &excluded)?;
     // Reload rules after enumeration: exclusions may have changed mid-scan.
     let excluded = db::excluded_folders(&connection)?;
     // Excluded paths must never re-enter the catalog on a parent refresh.
@@ -178,13 +197,21 @@ fn scan_with_control(
         .map(|(file, _, _)| crate::source::reference(file))
         .collect::<HashSet<_>>();
     let removed = db::remove_missing_photos(&connection, folder_id, &present_paths)?;
-    let present_folders = discovered_folders.iter().map(|(path, _)| path.clone()).collect::<HashSet<_>>();
+    let present_folders = discovered_folders
+        .iter()
+        .map(|(path, _)| path.clone())
+        .collect::<HashSet<_>>();
     let removed_folders = db::remove_missing_folders(&connection, folder_id, &present_folders)?;
     if removed_folders > 0 {
         send(events, ScanEvent::FoldersRemoved);
     }
     if !removed.is_empty() {
-        send(events, ScanEvent::PhotosRemoved { ids: removed.clone() });
+        send(
+            events,
+            ScanEvent::PhotosRemoved {
+                ids: removed.clone(),
+            },
+        );
     }
     if !removed.is_empty() || removed_folders > 0 {
         send_library_counts(events, &connection);
@@ -467,14 +494,23 @@ fn commit_prepared(
 
 /// A missing local root can be a deletion only when its recorded filesystem
 /// still backs the nearest existing ancestor. Unknown/offline roots survive.
-fn reconcile_deleted_root(root: &str, database: &Path, events: Option<&Sender<ScanEvent>>) -> Result<bool> {
+fn reconcile_deleted_root(
+    root: &str,
+    database: &Path,
+    events: Option<&Sender<ScanEvent>>,
+) -> Result<bool> {
     #[cfg(unix)]
     {
-        if root.contains("://") || !matches!(fs::metadata(root), Err(error) if error.kind() == std::io::ErrorKind::NotFound) {
+        if root.contains("://")
+            || !matches!(fs::metadata(root), Err(error) if error.kind() == std::io::ErrorKind::NotFound)
+        {
             return Ok(false);
         }
         let connection = db::open_existing(database)?;
-        let Some(folder) = db::folders(&connection)?.into_iter().find(|folder| folder.path == root) else {
+        let Some(folder) = db::folders(&connection)?
+            .into_iter()
+            .find(|folder| folder.path == root)
+        else {
             return Ok(false);
         };
         let Some(saved) = db::setting(&connection, &format!("scan-devices:{}", folder.id))? else {
@@ -497,7 +533,13 @@ fn reconcile_deleted_root(root: &str, database: &Path, events: Option<&Sender<Sc
         send(events, ScanEvent::PhotosRemoved { ids });
         send(events, ScanEvent::FoldersRemoved);
         send_library_counts(events, &connection);
-        send(events, ScanEvent::Finished { imported: 0, failed: 0 });
+        send(
+            events,
+            ScanEvent::Finished {
+                imported: 0,
+                failed: 0,
+            },
+        );
         return Ok(true);
     }
     #[cfg(not(unix))]
@@ -537,7 +579,8 @@ fn verify_scan_devices(connection: &Connection, folder_id: i64) -> Result<()> {
                 };
                 #[cfg(not(target_os = "linux"))]
                 let matches = match identity {
-                    ScanStorageIdentity::Mount { device, .. } | ScanStorageIdentity::Device(device) => metadata.dev() == device,
+                    ScanStorageIdentity::Mount { device, .. }
+                    | ScanStorageIdentity::Device(device) => metadata.dev() == device,
                 };
                 if !matches {
                     anyhow::bail!("scan storage changed or was unmounted: {path}");
@@ -574,7 +617,11 @@ fn remember_scan_devices(
                 devices.insert(path.clone(), identity);
             }
         }
-        db::set_setting(connection, &format!("scan-devices:{folder_id}"), &serde_json::to_string(&devices)?)?;
+        db::set_setting(
+            connection,
+            &format!("scan-devices:{folder_id}"),
+            &serde_json::to_string(&devices)?,
+        )?;
     }
     let _ = (connection, folder_id, folders);
     Ok(())
@@ -597,17 +644,25 @@ fn read_mounts() -> Result<Vec<(PathBuf, String)>> {
         .flatten()
         .filter_map(|entry| {
             let entry = entry.ok()?;
-            Some((fs::canonicalize(entry.path()).ok()?, entry.file_name().to_string_lossy().into_owned()))
+            Some((
+                fs::canonicalize(entry.path()).ok()?,
+                entry.file_name().to_string_lossy().into_owned(),
+            ))
         })
         .collect::<HashMap<_, _>>();
     let mut mounts = Vec::new();
     for line in data.lines() {
-        let Some((fields, filesystem)) = line.split_once(" - ") else { continue };
+        let Some((fields, filesystem)) = line.split_once(" - ") else {
+            continue;
+        };
         let fields: Vec<_> = fields.split_whitespace().collect();
         let filesystem: Vec<_> = filesystem.split_whitespace().collect();
-        if fields.len() < 5 || filesystem.len() < 2 { continue; }
+        if fields.len() < 5 || filesystem.len() < 2 {
+            continue;
+        }
         let mount_path = PathBuf::from(unescape_mount_field(fields[4]));
-        let source = fs::canonicalize(filesystem[1]).ok()
+        let source = fs::canonicalize(filesystem[1])
+            .ok()
             .and_then(|path| disk_ids.get(&path).map(|uuid| format!("uuid:{uuid}")))
             .unwrap_or_else(|| filesystem[1].to_string());
         let identity = format!("{}|{}|{}|{}", filesystem[0], source, fields[3], fields[4]);
@@ -622,7 +677,8 @@ fn unescape_mount_field(field: &str) -> String {
     let bytes = field.as_bytes();
     let mut index = 0;
     while index < bytes.len() {
-        if bytes[index] == b'\\' && index + 3 < bytes.len()
+        if bytes[index] == b'\\'
+            && index + 3 < bytes.len()
             && bytes[index + 1..index + 4].iter().all(u8::is_ascii_digit)
         {
             if let Ok(value) = u8::from_str_radix(&field[index + 1..index + 4], 8) {
@@ -639,7 +695,8 @@ fn unescape_mount_field(field: &str) -> String {
 
 #[cfg(target_os = "linux")]
 fn mount_identity(path: &Path, mounts: &[(PathBuf, String)]) -> Option<String> {
-    mounts.iter()
+    mounts
+        .iter()
         .filter(|(mount_path, _)| path.starts_with(mount_path))
         .max_by_key(|(mount_path, _)| mount_path.as_os_str().len())
         .map(|(_, identity)| identity.clone())
@@ -659,14 +716,19 @@ fn root_is_available(root: &str) -> bool {
     }
 }
 
-pub fn spawn_scan_mode(root: String, database: PathBuf, events: Sender<ScanEvent>, resume: bool) -> ScanControl {
+pub fn spawn_scan_mode(
+    root: String,
+    database: PathBuf,
+    events: Sender<ScanEvent>,
+    resume: bool,
+) -> ScanControl {
     let control = ScanControl::default();
     let worker_control = control.clone();
     std::thread::spawn(move || {
         let lock = SCAN_LOCK.get_or_init(|| Mutex::new(()));
         let _guard = acquire_scan_lock(lock);
         if worker_control.is_cancelled() {
-            send(Some(&events),ScanEvent::Cancelled {imported:0});
+            send(Some(&events), ScanEvent::Cancelled { imported: 0 });
             return;
         }
         send(
@@ -741,7 +803,9 @@ fn collect_files_filtered(
     let mut last_reported = 0usize;
     let mut last_report = std::time::Instant::now();
     while let Some((directory, folder_path, parent_path)) = pending.pop() {
-        if db::path_is_excluded(&folder_path, excluded) { continue; }
+        if db::path_is_excluded(&folder_path, excluded) {
+            continue;
+        }
         if control.is_cancelled() {
             break;
         }
@@ -752,7 +816,9 @@ fn collect_files_filtered(
             for item in crate::network_shares::list(&folder_path)
                 .with_context(|| format!("could not list {folder_path}"))?
             {
-                if db::path_is_excluded(&item.uri, excluded) { continue; }
+                if db::path_is_excluded(&item.uri, excluded) {
+                    continue;
+                }
                 if control.is_cancelled() {
                     break;
                 }
@@ -791,7 +857,9 @@ fn collect_files_filtered(
                 break;
             }
             let child = enumerator.child(&info);
-            if db::path_is_excluded(&crate::source::reference(&child), excluded) { continue; }
+            if db::path_is_excluded(&crate::source::reference(&child), excluded) {
+                continue;
+            }
             match info.file_type() {
                 gio::FileType::Directory => {
                     // Lightroom stores thousands of Smart Preview DNGs in
@@ -1259,8 +1327,12 @@ mod tests {
 
     #[test]
     fn excluded_subfolder_does_not_reappear_on_parent_refresh() {
-        let unique = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        let workspace = std::env::temp_dir().join(format!("pic-exclude-{}-{unique}", std::process::id()));
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let workspace =
+            std::env::temp_dir().join(format!("pic-exclude-{}-{unique}", std::process::id()));
         let root = workspace.join("photos");
         let ignored = root.join("ignored");
         let kept = root.join("kept");
@@ -1273,28 +1345,42 @@ mod tests {
 
         scan_with_control(root_path, &database, None, &ScanControl::default()).unwrap();
         let ignored_path = ignored.to_str().unwrap();
-        let ignored_id = db::folders(&connection).unwrap().into_iter()
-            .find(|folder| folder.path == ignored_path).unwrap().id;
+        let ignored_id = db::folders(&connection)
+            .unwrap()
+            .into_iter()
+            .find(|folder| folder.path == ignored_path)
+            .unwrap()
+            .id;
         db::exclude_folder(&connection, ignored_path).unwrap();
         db::remove_folder(&connection, ignored_id).unwrap();
 
         scan_with_control(root_path, &database, None, &ScanControl::default()).unwrap();
-        let paths = db::folders(&connection).unwrap().into_iter()
-            .map(|folder| folder.path).collect::<HashSet<_>>();
+        let paths = db::folders(&connection)
+            .unwrap()
+            .into_iter()
+            .map(|folder| folder.path)
+            .collect::<HashSet<_>>();
         assert!(!paths.contains(ignored_path));
         assert!(paths.contains(kept.to_str().unwrap()));
 
         db::restore_excluded_folder(&connection, ignored_path).unwrap();
         scan_with_control(root_path, &database, None, &ScanControl::default()).unwrap();
-        assert!(db::folders(&connection).unwrap().iter().any(|folder| folder.path == ignored_path));
+        assert!(db::folders(&connection)
+            .unwrap()
+            .iter()
+            .any(|folder| folder.path == ignored_path));
         drop(connection);
         fs::remove_dir_all(workspace).unwrap();
     }
 
     #[test]
     fn refresh_removes_deleted_subfolders_but_keeps_existing_empty_folders() {
-        let unique = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        let workspace = std::env::temp_dir().join(format!("pic-refresh-{}-{unique}", std::process::id()));
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let workspace =
+            std::env::temp_dir().join(format!("pic-refresh-{}-{unique}", std::process::id()));
         let root = workspace.join("photos");
         let deleted = root.join("deleted/nested");
         let empty = root.join("empty");
@@ -1305,22 +1391,44 @@ mod tests {
         connection.execute_batch(db::SCHEMA).unwrap();
         let root_path = root.to_str().unwrap();
         scan_with_control(root_path, &database, None, &ScanControl::default()).unwrap();
-        let deleted_id = db::folders(&connection).unwrap().into_iter()
-            .find(|folder| folder.path == deleted.to_str().unwrap()).unwrap().id;
+        let deleted_id = db::folders(&connection)
+            .unwrap()
+            .into_iter()
+            .find(|folder| folder.path == deleted.to_str().unwrap())
+            .unwrap()
+            .id;
         let photo_path = deleted.join("old.jpg");
-        db::upsert_photo(&connection, &photo_path, Some(deleted_id), &PhotoMetadata::default()).unwrap();
+        db::upsert_photo(
+            &connection,
+            &photo_path,
+            Some(deleted_id),
+            &PhotoMetadata::default(),
+        )
+        .unwrap();
         fs::remove_dir_all(root.join("deleted")).unwrap();
 
         scan_with_control(root_path, &database, None, &ScanControl::default()).unwrap();
-        let paths = db::folders(&connection).unwrap().into_iter().map(|folder| folder.path).collect::<HashSet<_>>();
+        let paths = db::folders(&connection)
+            .unwrap()
+            .into_iter()
+            .map(|folder| folder.path)
+            .collect::<HashSet<_>>();
         assert!(!paths.contains(deleted.to_str().unwrap()));
         assert!(!paths.contains(root.join("deleted").to_str().unwrap()));
         assert!(paths.contains(empty.to_str().unwrap()));
         assert!(paths.contains(root_path));
-        assert_eq!(connection.query_row("SELECT COUNT(*) FROM photos", [], |row| row.get::<_, i64>(0)).unwrap(), 0);
+        assert_eq!(
+            connection
+                .query_row("SELECT COUNT(*) FROM photos", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
 
         // Without a saved storage identity, an unavailable root is ambiguous.
-        connection.execute("DELETE FROM settings WHERE key LIKE 'scan-devices:%'", []).unwrap();
+        connection
+            .execute("DELETE FROM settings WHERE key LIKE 'scan-devices:%'", [])
+            .unwrap();
         fs::remove_dir_all(&root).unwrap();
         assert!(scan_with_control(root_path, &database, None, &ScanControl::default()).is_err());
         assert_eq!(db::folders(&connection).unwrap().len(), paths.len());
@@ -1331,43 +1439,94 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn refresh_removes_deleted_root_when_saved_storage_is_still_connected() {
-        let unique = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        let workspace = std::env::temp_dir().join(format!("pic-root-deletion-{}-{unique}", std::process::id()));
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let workspace =
+            std::env::temp_dir().join(format!("pic-root-deletion-{}-{unique}", std::process::id()));
         let root = workspace.join("photos");
         fs::create_dir_all(&root).unwrap();
         let database = workspace.join("catalog.db");
         let connection = Connection::open(&database).unwrap();
         connection.execute_batch(db::SCHEMA).unwrap();
-        scan_with_control(root.to_str().unwrap(), &database, None, &ScanControl::default()).unwrap();
-        let folder_id = db::folders(&connection).unwrap().into_iter().find(|folder| folder.path == root.to_str().unwrap()).unwrap().id;
-        let photo_id = db::upsert_photo(&connection, &root.join("deleted.png"), Some(folder_id), &PhotoMetadata::default()).unwrap();
+        scan_with_control(
+            root.to_str().unwrap(),
+            &database,
+            None,
+            &ScanControl::default(),
+        )
+        .unwrap();
+        let folder_id = db::folders(&connection)
+            .unwrap()
+            .into_iter()
+            .find(|folder| folder.path == root.to_str().unwrap())
+            .unwrap()
+            .id;
+        let photo_id = db::upsert_photo(
+            &connection,
+            &root.join("deleted.png"),
+            Some(folder_id),
+            &PhotoMetadata::default(),
+        )
+        .unwrap();
         fs::remove_dir_all(&root).unwrap();
         let (sender, receiver) = std::sync::mpsc::channel();
-        assert!(scan_with_control(root.to_str().unwrap(), &database, Some(&sender), &ScanControl::default()).is_ok());
+        assert!(scan_with_control(
+            root.to_str().unwrap(),
+            &database,
+            Some(&sender),
+            &ScanControl::default()
+        )
+        .is_ok());
         assert!(!db::folder_exists(&connection, folder_id).unwrap());
         assert!(db::photo(&connection, photo_id).unwrap().is_none());
-        assert!(receiver.try_iter().any(|event| matches!(event, ScanEvent::PhotosRemoved { ids } if ids == vec![photo_id])));
+        assert!(receiver.try_iter().any(
+            |event| matches!(event, ScanEvent::PhotosRemoved { ids } if ids == vec![photo_id])
+        ));
         drop(connection);
         fs::remove_dir_all(workspace).unwrap();
     }
 
     #[test]
     fn refresh_reports_deleted_photo_ids_when_its_folder_still_exists() {
-        let unique = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        let workspace = std::env::temp_dir().join(format!("pic-photo-deletion-{}-{unique}", std::process::id()));
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let workspace = std::env::temp_dir().join(format!(
+            "pic-photo-deletion-{}-{unique}",
+            std::process::id()
+        ));
         let root = workspace.join("photos");
         fs::create_dir_all(&root).unwrap();
         let database = workspace.join("catalog.db");
         let connection = Connection::open(&database).unwrap();
         connection.execute_batch(db::SCHEMA).unwrap();
         let folder_id = db::insert_folder(&connection, root.to_str().unwrap()).unwrap();
-        let photo_id = db::upsert_photo(&connection, &root.join("deleted.png"), Some(folder_id), &PhotoMetadata::default()).unwrap();
+        let photo_id = db::upsert_photo(
+            &connection,
+            &root.join("deleted.png"),
+            Some(folder_id),
+            &PhotoMetadata::default(),
+        )
+        .unwrap();
         let (sender, receiver) = std::sync::mpsc::channel();
-        scan_with_control(root.to_str().unwrap(), &database, Some(&sender), &ScanControl::default()).unwrap();
-        let removed = receiver.try_iter().filter_map(|event| match event {
-            ScanEvent::PhotosRemoved { ids } => Some(ids),
-            _ => None,
-        }).flatten().collect::<Vec<_>>();
+        scan_with_control(
+            root.to_str().unwrap(),
+            &database,
+            Some(&sender),
+            &ScanControl::default(),
+        )
+        .unwrap();
+        let removed = receiver
+            .try_iter()
+            .filter_map(|event| match event {
+                ScanEvent::PhotosRemoved { ids } => Some(ids),
+                _ => None,
+            })
+            .flatten()
+            .collect::<Vec<_>>();
         assert_eq!(removed, vec![photo_id]);
         assert!(db::photo(&connection, photo_id).unwrap().is_none());
         assert!(db::folder_exists(&connection, folder_id).unwrap());
@@ -1379,8 +1538,12 @@ mod tests {
     #[test]
     fn refresh_preserves_catalogue_when_mount_point_changes_device() {
         use std::os::unix::fs::MetadataExt;
-        let unique = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        let workspace = std::env::temp_dir().join(format!("pic-unmount-{}-{unique}", std::process::id()));
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let workspace =
+            std::env::temp_dir().join(format!("pic-unmount-{}-{unique}", std::process::id()));
         let root = workspace.join("mount");
         fs::create_dir_all(&root).unwrap();
         let database = workspace.join("catalog.db");
@@ -1388,20 +1551,47 @@ mod tests {
         connection.execute_batch(db::SCHEMA).unwrap();
         let root_path = root.to_str().unwrap();
         let root_id = db::insert_folder(&connection, root_path).unwrap();
-        let child_id = db::insert_folder(&connection, root.join("missing").to_str().unwrap()).unwrap();
-        db::upsert_photo(&connection, &root.join("missing/photo.jpg"), Some(child_id), &PhotoMetadata::default()).unwrap();
+        let child_id =
+            db::insert_folder(&connection, root.join("missing").to_str().unwrap()).unwrap();
+        db::upsert_photo(
+            &connection,
+            &root.join("missing/photo.jpg"),
+            Some(child_id),
+            &PhotoMetadata::default(),
+        )
+        .unwrap();
         // Model the device difference caused by unmounting: the mount point
         // exists, but belongs to the host filesystem instead of the saved drive.
-        let devices = HashMap::from([(root_path.to_string(), fs::metadata(&root).unwrap().dev().wrapping_add(1))]);
-        db::set_setting(&connection, &format!("scan-devices:{root_id}"), &serde_json::to_string(&devices).unwrap()).unwrap();
+        let devices = HashMap::from([(
+            root_path.to_string(),
+            fs::metadata(&root).unwrap().dev().wrapping_add(1),
+        )]);
+        db::set_setting(
+            &connection,
+            &format!("scan-devices:{root_id}"),
+            &serde_json::to_string(&devices).unwrap(),
+        )
+        .unwrap();
         assert!(scan_with_control(root_path, &database, None, &ScanControl::default()).is_err());
         assert!(db::folder_exists(&connection, child_id).unwrap());
-        assert_eq!(connection.query_row("SELECT COUNT(*) FROM photos", [], |row| row.get::<_, i64>(0)).unwrap(), 1);
+        assert_eq!(
+            connection
+                .query_row("SELECT COUNT(*) FROM photos", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
         // Some unmounts remove the mount directory altogether.
         fs::remove_dir_all(&root).unwrap();
         assert!(scan_with_control(root_path, &database, None, &ScanControl::default()).is_err());
         assert!(db::folder_exists(&connection, child_id).unwrap());
-        assert_eq!(connection.query_row("SELECT COUNT(*) FROM photos", [], |row| row.get::<_, i64>(0)).unwrap(), 1);
+        assert_eq!(
+            connection
+                .query_row("SELECT COUNT(*) FROM photos", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
         drop(connection);
         fs::remove_dir_all(workspace).unwrap();
     }
@@ -1410,8 +1600,14 @@ mod tests {
     #[test]
     fn mount_identity_survives_device_number_change_and_rejects_other_storage() {
         use std::os::unix::fs::MetadataExt;
-        let unique = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        let workspace = std::env::temp_dir().join(format!("pic-mount-identity-{}-{unique}", std::process::id()));
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let workspace = std::env::temp_dir().join(format!(
+            "pic-mount-identity-{}-{unique}",
+            std::process::id()
+        ));
         fs::create_dir_all(&workspace).unwrap();
         let database = workspace.join("catalog.db");
         let connection = Connection::open(&database).unwrap();
@@ -1420,11 +1616,33 @@ mod tests {
         let folder_id = db::insert_folder(&connection, &path).unwrap();
         let mount = mount_identity(&workspace, &read_mounts().unwrap()).unwrap();
         let wrong_device = fs::metadata(&workspace).unwrap().dev().wrapping_add(1);
-        let identity = HashMap::from([(path.clone(), ScanStorageIdentity::Mount { device: wrong_device, mount: mount.clone() })]);
-        db::set_setting(&connection, &format!("scan-devices:{folder_id}"), &serde_json::to_string(&identity).unwrap()).unwrap();
+        let identity = HashMap::from([(
+            path.clone(),
+            ScanStorageIdentity::Mount {
+                device: wrong_device,
+                mount: mount.clone(),
+            },
+        )]);
+        db::set_setting(
+            &connection,
+            &format!("scan-devices:{folder_id}"),
+            &serde_json::to_string(&identity).unwrap(),
+        )
+        .unwrap();
         verify_scan_devices(&connection, folder_id).unwrap();
-        let wrong_mount = HashMap::from([(path, ScanStorageIdentity::Mount { device: wrong_device, mount: format!("{mount}-other") })]);
-        db::set_setting(&connection, &format!("scan-devices:{folder_id}"), &serde_json::to_string(&wrong_mount).unwrap()).unwrap();
+        let wrong_mount = HashMap::from([(
+            path,
+            ScanStorageIdentity::Mount {
+                device: wrong_device,
+                mount: format!("{mount}-other"),
+            },
+        )]);
+        db::set_setting(
+            &connection,
+            &format!("scan-devices:{folder_id}"),
+            &serde_json::to_string(&wrong_mount).unwrap(),
+        )
+        .unwrap();
         assert!(verify_scan_devices(&connection, folder_id).is_err());
         drop(connection);
         fs::remove_dir_all(workspace).unwrap();
@@ -1668,7 +1886,7 @@ mod scan_lock_tests {
 
     #[test]
     fn closing_can_resume_but_an_explicit_stop_takes_precedence() {
-        let control=ScanControl::default();
+        let control = ScanControl::default();
         control.interrupt();
         assert!(control.is_cancelled() && control.should_resume());
         control.cancel();
@@ -1816,4 +2034,3 @@ mod metadata_filter_extraction_tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 }
-

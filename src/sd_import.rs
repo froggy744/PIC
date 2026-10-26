@@ -15,9 +15,16 @@ use walkdir::WalkDir;
 #[derive(Debug)]
 enum PreviewMessage {
     Discovered(Vec<PathBuf>),
-    Ready { index: usize, cached: PathBuf },
+    Ready {
+        index: usize,
+        cached: PathBuf,
+    },
     Failed,
-    Done { total: usize, ready: usize, failed: usize },
+    Done {
+        total: usize,
+        ready: usize,
+        failed: usize,
+    },
 }
 
 #[derive(Debug)]
@@ -181,11 +188,7 @@ fn preview_tile(source: &Path) -> (gtk::FlowBoxChild, gtk::Picture, gtk::Button)
     (child, picture, selected_badge)
 }
 
-fn scan_source(
-    generation: u64,
-    root: PathBuf,
-    sender: mpsc::Sender<(u64, PreviewMessage)>,
-) {
+fn scan_source(generation: u64, root: PathBuf, sender: mpsc::Sender<(u64, PreviewMessage)>) {
     let scan_root = dcim_directory(&root).unwrap_or_else(|| root.clone());
     trace(format!(
         "scan_start generation={generation} root={} scan_root={}",
@@ -233,10 +236,7 @@ fn scan_source(
             }
             Ok(_) | Err(_) => {
                 failed += 1;
-                if sender
-                    .send((generation, PreviewMessage::Failed))
-                    .is_err()
-                {
+                if sender.send((generation, PreviewMessage::Failed)).is_err() {
                     return;
                 }
             }
@@ -765,9 +765,7 @@ pub fn present(
                                 preview_stack.set_visible_child_name("empty");
                             } else {
                                 preview_stack.set_visible_child_name("photos");
-                                status.set_text(&format!(
-                                    "Loading thumbnails… 0 of {discovered}"
-                                ));
+                                status.set_text(&format!("Loading thumbnails… 0 of {discovered}"));
                             }
                             update_selection(
                                 &photos,
@@ -1018,10 +1016,8 @@ pub fn present(
                         }
                         Ok(ImportMessage::Error(error)) => {
                             trace(format!("copy_failed error={error}"));
-                            progress.finish(
-                                "Importing photos",
-                                &format!("Import failed — {error}"),
-                            );
+                            progress
+                                .finish("Importing photos", &format!("Import failed — {error}"));
                             return glib::ControlFlow::Break;
                         }
                         Err(mpsc::TryRecvError::Empty) => break,

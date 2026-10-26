@@ -56,11 +56,7 @@ mod imp {
     impl ObjectImpl for OpeningTransitionImage {}
 
     impl WidgetImpl for OpeningTransitionImage {
-        fn measure(
-            &self,
-            orientation: gtk::Orientation,
-            _for_size: i32,
-        ) -> (i32, i32, i32, i32) {
+        fn measure(&self, orientation: gtk::Orientation, _for_size: i32) -> (i32, i32, i32, i32) {
             let extent = match orientation {
                 gtk::Orientation::Horizontal => self.frame_width.get(),
                 gtk::Orientation::Vertical => self.frame_height.get(),
@@ -131,22 +127,8 @@ mod imp {
                 self.handoff_to.borrow().as_ref().cloned(),
             ) {
                 if let (Some(start), Some(end)) = (
-                    transition_paintable_node(
-                        &from,
-                        x,
-                        y,
-                        width,
-                        height,
-                        self.content_fit.get(),
-                    ),
-                    transition_paintable_node(
-                        &to,
-                        x,
-                        y,
-                        width,
-                        height,
-                        self.content_fit.get(),
-                    ),
+                    transition_paintable_node(&from, x, y, width, height, self.content_fit.get()),
+                    transition_paintable_node(&to, x, y, width, height, self.content_fit.get()),
                 ) {
                     let cross_fade = gtk::gsk::CrossFadeNode::new(
                         start,

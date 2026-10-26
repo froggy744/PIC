@@ -11,7 +11,6 @@ thread_local! {
     static FOLDER_MENU_CSS_INSTALLED: Cell<bool> = const { Cell::new(false) };
 }
 
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SidebarFilter {
     Library,
@@ -300,11 +299,14 @@ pub fn build(
             let expanded = !state.borrow().library_expanded;
             state.borrow_mut().library_expanded = expanded;
             revealer.set_reveal_child(expanded);
-            set_sidebar_action_icon(&indicator, if expanded {
-                "pan-down-symbolic"
-            } else {
-                "pan-end-symbolic"
-            });
+            set_sidebar_action_icon(
+                &indicator,
+                if expanded {
+                    "pan-down-symbolic"
+                } else {
+                    "pan-end-symbolic"
+                },
+            );
         });
     }
 
@@ -321,11 +323,14 @@ pub fn build(
                 let expanded = !state.borrow().library_expanded;
                 state.borrow_mut().library_expanded = expanded;
                 revealer.set_reveal_child(expanded);
-                set_sidebar_action_icon(&indicator, if expanded {
-                    "pan-down-symbolic"
-                } else {
-                    "pan-end-symbolic"
-                });
+                set_sidebar_action_icon(
+                    &indicator,
+                    if expanded {
+                        "pan-down-symbolic"
+                    } else {
+                        "pan-end-symbolic"
+                    },
+                );
                 gesture.set_state(gtk::EventSequenceState::Claimed);
             }
         });
@@ -382,10 +387,13 @@ pub fn build(
     folder_heading.add_css_class("sidebar-sticky-heading");
     folder_heading.add_css_class("sidebar-primary-section-heading");
 
-    let folder_mode_toggle = sidebar_action_button(match folder_display_mode {
-        FolderDisplayMode::Tree => "folder-symbolic",
-        FolderDisplayMode::ImportedOnly => "view-list-symbolic",
-    }, None);
+    let folder_mode_toggle = sidebar_action_button(
+        match folder_display_mode {
+            FolderDisplayMode::Tree => "folder-symbolic",
+            FolderDisplayMode::ImportedOnly => "view-list-symbolic",
+        },
+        None,
+    );
     set_folder_mode_toggle_presentation(&folder_mode_toggle, folder_display_mode);
     // Keep heading controls in the same left-to-right order everywhere:
     // section-specific action, add, collapse. For Folders that means
@@ -455,11 +463,14 @@ pub fn build(
         Rc::new(move |now| {
             expanded.set(now);
             revealer.set_reveal_child(now);
-            set_sidebar_action_icon(&indicator, if now {
-                "pan-down-symbolic"
-            } else {
-                "pan-end-symbolic"
-            });
+            set_sidebar_action_icon(
+                &indicator,
+                if now {
+                    "pan-down-symbolic"
+                } else {
+                    "pan-end-symbolic"
+                },
+            );
             indicator.set_tooltip_text(Some(if now { "Collapse" } else { "Expand" }));
         })
     };
@@ -635,11 +646,14 @@ pub fn build(
             }
 
             state.borrow_mut().albums_expanded = expanded;
-            set_sidebar_action_icon(&indicator, if expanded {
-                "pan-down-symbolic"
-            } else {
-                "pan-end-symbolic"
-            });
+            set_sidebar_action_icon(
+                &indicator,
+                if expanded {
+                    "pan-down-symbolic"
+                } else {
+                    "pan-end-symbolic"
+                },
+            );
             indicator.set_tooltip_text(Some(if expanded { "Collapse" } else { "Expand" }));
 
             let generation = animation_generation.get().wrapping_add(1);
@@ -770,11 +784,14 @@ pub fn build(
             }
 
             state.borrow_mut().folders_expanded = expanded;
-            set_sidebar_action_icon(&indicator, if expanded {
-                "pan-down-symbolic"
-            } else {
-                "pan-end-symbolic"
-            });
+            set_sidebar_action_icon(
+                &indicator,
+                if expanded {
+                    "pan-down-symbolic"
+                } else {
+                    "pan-end-symbolic"
+                },
+            );
             indicator.set_tooltip_text(Some(if expanded { "Collapse" } else { "Expand" }));
 
             let generation = animation_generation.get().wrapping_add(1);
@@ -1117,8 +1134,7 @@ fn handle_keyboard_navigation(
     });
 
     let shift_tab = key == gtk::gdk::Key::ISO_Left_Tab
-        || (key == gtk::gdk::Key::Tab
-            && modifiers.contains(gtk::gdk::ModifierType::SHIFT_MASK));
+        || (key == gtk::gdk::Key::Tab && modifiers.contains(gtk::gdk::ModifierType::SHIFT_MASK));
     if key == gtk::gdk::Key::Tab || shift_tab {
         if sections.is_empty() {
             return glib::Propagation::Proceed;
@@ -1341,7 +1357,6 @@ fn select_navigation_row(sections: &[(gtk::ListBox, Vec<gtk::ListBoxRow>)], row:
     }
 }
 
-
 pub fn refresh(
     scrolled: &gtk::ScrolledWindow,
     folders: &[Folder],
@@ -1392,21 +1407,27 @@ pub fn refresh(
         revealer.set_reveal_child(state.borrow().library_expanded);
     }
     if let Some(indicator) = stored_widget::<gtk::Button>(scrolled, LIBRARY_INDICATOR_KEY) {
-        set_sidebar_action_icon(&indicator, if state.borrow().library_expanded {
-            "pan-down-symbolic"
-        } else {
-            "pan-end-symbolic"
-        });
+        set_sidebar_action_icon(
+            &indicator,
+            if state.borrow().library_expanded {
+                "pan-down-symbolic"
+            } else {
+                "pan-end-symbolic"
+            },
+        );
     }
     if let Some(revealer) = stored_widget::<gtk::Revealer>(scrolled, ALBUM_REVEALER_KEY) {
         revealer.set_reveal_child(state.borrow().albums_expanded);
     }
     if let Some(indicator) = stored_widget::<gtk::Button>(scrolled, ALBUM_INDICATOR_KEY) {
-        set_sidebar_action_icon(&indicator, if state.borrow().albums_expanded {
-            "pan-down-symbolic"
-        } else {
-            "pan-end-symbolic"
-        });
+        set_sidebar_action_icon(
+            &indicator,
+            if state.borrow().albums_expanded {
+                "pan-down-symbolic"
+            } else {
+                "pan-end-symbolic"
+            },
+        );
     }
     if let Some(revealer) = stored_widget::<gtk::Revealer>(scrolled, FOLDER_REVEALER_KEY) {
         // Mirror the Albums refresh: assert reveal state only. The pane
@@ -1417,11 +1438,14 @@ pub fn refresh(
         revealer.set_reveal_child(expanded);
     }
     if let Some(indicator) = stored_widget::<gtk::Button>(scrolled, FOLDER_INDICATOR_KEY) {
-        set_sidebar_action_icon(&indicator, if state.borrow().folders_expanded {
-            "pan-down-symbolic"
-        } else {
-            "pan-end-symbolic"
-        });
+        set_sidebar_action_icon(
+            &indicator,
+            if state.borrow().folders_expanded {
+                "pan-down-symbolic"
+            } else {
+                "pan-end-symbolic"
+            },
+        );
     }
 
     if let Some(filter) = current_filter(scrolled) {
@@ -1539,7 +1563,9 @@ pub fn append_folder(
         return;
     };
     if crate::db::is_remote_path(&folder.path) {
-        let Some(list) = stored_widget::<gtk::ListBox>(scrolled, SHARE_LIST_KEY) else { return; };
+        let Some(list) = stored_widget::<gtk::ListBox>(scrolled, SHARE_LIST_KEY) else {
+            return;
+        };
         // Persist additions in the tree cache immediately; coalesce visible
         // rebuilding so a large directory batch produces one sidebar refresh.
         unsafe {
@@ -1548,7 +1574,10 @@ pub fn append_folder(
                 if let Some(existing) = folders.iter_mut().find(|item| item.id == folder.id) {
                     *existing = folder.clone();
                 } else {
-                    if let Some(parent) = folders.iter_mut().find(|item| Some(item.id) == folder.parent_id) {
+                    if let Some(parent) = folders
+                        .iter_mut()
+                        .find(|item| Some(item.id) == folder.parent_id)
+                    {
                         parent.subfolder_count += 1;
                     }
                     folders.push(folder.clone());
@@ -1556,14 +1585,21 @@ pub fn append_folder(
             } else {
                 list.set_data("picasa-folder-cache", vec![folder.clone()]);
             }
-            if list.data::<bool>("picasa-network-append-scheduled").is_some_and(|flag| *flag.as_ref()) { return; }
+            if list
+                .data::<bool>("picasa-network-append-scheduled")
+                .is_some_and(|flag| *flag.as_ref())
+            {
+                return;
+            }
             list.set_data("picasa-network-append-scheduled", true);
         }
         let sidebar = scrolled.clone();
         glib::timeout_add_local_once(std::time::Duration::from_millis(200), move || {
             let folders = unsafe {
                 list.set_data("picasa-network-append-scheduled", false);
-                list.data::<Vec<Folder>>("picasa-folder-cache").map(|cache| cache.as_ref().clone()).unwrap_or_default()
+                list.data::<Vec<Folder>>("picasa-folder-cache")
+                    .map(|cache| cache.as_ref().clone())
+                    .unwrap_or_default()
             };
             refresh_network_shares(&sidebar, &folders, &state, &on_unavailable);
         });
@@ -2142,11 +2178,14 @@ fn stored_rating_expanded(scrolled: &gtk::ScrolledWindow) -> Rc<Cell<bool>> {
 fn set_rating_expanded(scrolled: &gtk::ScrolledWindow, show: bool) {
     stored_rating_expanded(scrolled).set(show);
     if let Some(indicator) = stored_widget::<gtk::Button>(scrolled, RATING_INDICATOR_KEY) {
-        set_sidebar_action_icon(&indicator, if show {
-            "pan-down-symbolic"
-        } else {
-            "pan-end-symbolic"
-        });
+        set_sidebar_action_icon(
+            &indicator,
+            if show {
+                "pan-down-symbolic"
+            } else {
+                "pan-end-symbolic"
+            },
+        );
         indicator.set_tooltip_text(Some(if show { "Collapse" } else { "Expand" }));
     }
     let ratings_visible = sidebar_visibility(scrolled).ratings;
@@ -2264,7 +2303,9 @@ fn apply_library_visibility(scrolled: &gtk::ScrolledWindow, visibility: SidebarV
             SidebarFilter::All => visibility.all_photos,
             SidebarFilter::Favorites => visibility.favourites,
             SidebarFilter::Ratings => visibility.ratings,
-            SidebarFilter::Rating(_) => visibility.ratings && stored_rating_expanded(scrolled).get(),
+            SidebarFilter::Rating(_) => {
+                visibility.ratings && stored_rating_expanded(scrolled).get()
+            }
             SidebarFilter::RecentlyAdded => visibility.recently_added,
             SidebarFilter::History => visibility.history,
             _ => true,
@@ -2324,11 +2365,7 @@ fn populate_library(
     attach_history_context_menu(&history, on_clear_history.clone());
 }
 
-fn append_rating_section(
-    parent: &gtk::ListBox,
-    counts: [i64; 5],
-    scrolled: &gtk::ScrolledWindow,
-) {
+fn append_rating_section(parent: &gtk::ListBox, counts: [i64; 5], scrolled: &gtk::ScrolledWindow) {
     let expanded = stored_rating_expanded(scrolled).get();
     let header = gtk::ListBoxRow::new();
     header.add_css_class("sidebar-navigation-row");
@@ -2354,7 +2391,11 @@ fn append_rating_section(
     title_area.set_tooltip_text(Some("Show all rated photos"));
     header_content.append(&title_area);
     let indicator = sidebar_action_button(
-        if expanded { "pan-down-symbolic" } else { "pan-end-symbolic" },
+        if expanded {
+            "pan-down-symbolic"
+        } else {
+            "pan-end-symbolic"
+        },
         Some(if expanded { "Collapse" } else { "Expand" }),
     );
     header_content.append(&indicator);
@@ -2380,7 +2421,10 @@ fn append_rating_section(
         content.set_margin_top(SIDEBAR_ROW_PADDING_Y);
         content.set_margin_bottom(SIDEBAR_ROW_PADDING_Y);
         content.set_margin_start(
-            SIDEBAR_CONTENT_INSET + SIDEBAR_DISCLOSURE_SLOT + SIDEBAR_ICON_SIZE + SIDEBAR_ITEM_SPACING,
+            SIDEBAR_CONTENT_INSET
+                + SIDEBAR_DISCLOSURE_SLOT
+                + SIDEBAR_ICON_SIZE
+                + SIDEBAR_ITEM_SPACING,
         );
         content.set_margin_end(SIDEBAR_CONTENT_INSET);
         let label = gtk::Label::new(Some(&format!("{} {}", "★".repeat(rating as usize), rating)));
@@ -3299,10 +3343,7 @@ fn sidebar_count_column(
     count: Option<i64>,
     warning: Option<gtk::Button>,
 ) -> (gtk::Box, Option<gtk::Label>) {
-    let trailing = gtk::Box::new(
-        gtk::Orientation::Horizontal,
-        SIDEBAR_COUNT_WARNING_SPACING,
-    );
+    let trailing = gtk::Box::new(gtk::Orientation::Horizontal, SIDEBAR_COUNT_WARNING_SPACING);
     trailing.add_css_class("sidebar-row-trailing");
     trailing.set_size_request(
         SIDEBAR_COUNT_WIDTH + SIDEBAR_WARNING_WIDTH + SIDEBAR_COUNT_WARNING_SPACING,
@@ -3561,11 +3602,14 @@ fn collapsible_heading(
         content.append(&add);
     }
 
-    let indicator = sidebar_action_button(if expanded {
-        "pan-down-symbolic"
-    } else {
-        "pan-end-symbolic"
-    }, Some(if expanded { "Collapse" } else { "Expand" }));
+    let indicator = sidebar_action_button(
+        if expanded {
+            "pan-down-symbolic"
+        } else {
+            "pan-end-symbolic"
+        },
+        Some(if expanded { "Collapse" } else { "Expand" }),
+    );
     content.append(&indicator);
 
     (content, indicator)
@@ -3585,7 +3629,10 @@ fn sidebar_action_button(icon_name: &str, tooltip: Option<&str>) -> gtk::Button 
 }
 
 fn set_sidebar_action_icon(button: &gtk::Button, icon_name: &str) {
-    if let Some(image) = button.child().and_then(|child| child.downcast::<gtk::Image>().ok()) {
+    if let Some(image) = button
+        .child()
+        .and_then(|child| child.downcast::<gtk::Image>().ok())
+    {
         image.set_icon_name(Some(icon_name));
         image.set_pixel_size(SIDEBAR_ACTION_ICON_SIZE);
     }
@@ -4107,7 +4154,11 @@ mod tests {
             bounds.height(),
             scroll.height()
         );
-        assert_eq!(gtk::prelude::RootExt::focus(&window), Some(row.clone().upcast::<gtk::Widget>()), "search target must receive sidebar focus");
+        assert_eq!(
+            gtk::prelude::RootExt::focus(&window),
+            Some(row.clone().upcast::<gtk::Widget>()),
+            "search target must receive sidebar focus"
+        );
         // Imported-only mode and a superseded search must still focus the latest destination.
         set_folder_display_mode(&sidebar, FolderDisplayMode::ImportedOnly);
         settle_sidebar_layout(&sidebar);
@@ -4118,7 +4169,10 @@ mod tests {
         settle_sidebar_layout(&sidebar);
         let latest = row_for_filter(&list, SidebarFilter::Folder(125)).unwrap();
         assert_eq!(list.selected_row(), Some(latest.clone()));
-        assert_eq!(gtk::prelude::RootExt::focus(&window), Some(latest.clone().upcast::<gtk::Widget>()));
+        assert_eq!(
+            gtk::prelude::RootExt::focus(&window),
+            Some(latest.clone().upcast::<gtk::Widget>())
+        );
         assert_eq!(
             sidebar_state(&sidebar)
                 .unwrap()
@@ -4136,7 +4190,10 @@ mod tests {
         let focus = gtk::prelude::RootExt::focus(&window).unwrap();
         assert!(focus == search.clone().upcast::<gtk::Widget>() || focus.is_ancestor(&search));
         assert_eq!(search.text(), "new query");
-        assert_eq!(list.selected_row(), row_for_filter(&list, SidebarFilter::Folder(2)));
+        assert_eq!(
+            list.selected_row(),
+            row_for_filter(&list, SidebarFilter::Folder(2))
+        );
         window.close();
         settle_sidebar_layout(&sidebar);
     }
@@ -4219,10 +4276,21 @@ mod tests {
         connect_filter_list(&main_list, on_filter, syncing);
 
         let header = row_for_filter(&main_list, SidebarFilter::Ratings).unwrap();
-        assert_eq!(header, stored_widget::<gtk::ListBoxRow>(&sidebar, RATING_HEADER_KEY).unwrap());
+        assert_eq!(
+            header,
+            stored_widget::<gtk::ListBoxRow>(&sidebar, RATING_HEADER_KEY).unwrap()
+        );
         let header_content = header.child().unwrap().downcast::<gtk::Box>().unwrap();
-        let title_area = header_content.first_child().unwrap().downcast::<gtk::Box>().unwrap();
-        let header_icon = title_area.first_child().unwrap().downcast::<gtk::Image>().unwrap();
+        let title_area = header_content
+            .first_child()
+            .unwrap()
+            .downcast::<gtk::Box>()
+            .unwrap();
+        let header_icon = title_area
+            .first_child()
+            .unwrap()
+            .downcast::<gtk::Image>()
+            .unwrap();
         assert_eq!(header_icon.icon_name().as_deref(), Some("starred-symbolic"));
         for rating in 1..=5_u8 {
             let row = row_for_filter(&main_list, SidebarFilter::Rating(rating)).unwrap();
@@ -4248,7 +4316,10 @@ mod tests {
         main_list.select_row(Some(&row_five));
         assert_eq!(selected.get(), Some(SidebarFilter::Rating(5)));
         set_active_filter(&sidebar, SidebarFilter::Rating(3));
-        assert_eq!(main_list.selected_row(), row_for_filter(&main_list, SidebarFilter::Rating(3)));
+        assert_eq!(
+            main_list.selected_row(),
+            row_for_filter(&main_list, SidebarFilter::Rating(3))
+        );
         assert_eq!(current_filter(&sidebar), Some(SidebarFilter::Rating(3)));
 
         update_library_counts(
@@ -4262,7 +4333,11 @@ mod tests {
         );
         let count = unsafe { row_five.data::<gtk::Label>(FILTER_COUNT_LABEL_KEY).unwrap() };
         assert_eq!(unsafe { count.as_ref() }.text(), "50");
-        let arrow = header_content.last_child().unwrap().downcast::<gtk::Button>().unwrap();
+        let arrow = header_content
+            .last_child()
+            .unwrap()
+            .downcast::<gtk::Button>()
+            .unwrap();
         arrow.emit_by_name::<()>("clicked", &[]);
         assert!(!stored_rating_expanded(&sidebar).get());
         assert_eq!(selected.get(), Some(SidebarFilter::Rating(5)));

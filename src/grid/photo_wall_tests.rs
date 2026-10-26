@@ -40,8 +40,11 @@ fn keyboard_open_uses_the_visible_thumbnail_in_all_gallery_layouts() {
     photo.set_cached_thumbnail_path("/virtual/keyboard-open-thumb.jpg");
     let pixels = vec![128_u8; 40 * 30 * 4];
     let texture = gtk::gdk::MemoryTexture::new(
-        40, 30, gtk::gdk::MemoryFormat::R8g8b8a8,
-        &glib::Bytes::from_owned(pixels), 40 * 4,
+        40,
+        30,
+        gtk::gdk::MemoryFormat::R8g8b8a8,
+        &glib::Bytes::from_owned(pixels),
+        40 * 4,
     );
     folder_thumbnail_cache_insert(photo_presentation_key(&photo).unwrap(), texture.upcast());
 
@@ -57,7 +60,9 @@ fn keyboard_open_uses_the_visible_thumbnail_in_all_gallery_layouts() {
     gallery.store.append(&photo);
     gallery.current_photos.replace(vec![photo]);
     let grid_scroll = gtk::ScrolledWindow::builder().child(&gallery.root).build();
-    let wall_scroll = gtk::ScrolledWindow::builder().child(&gallery.folder_sectioned_root).build();
+    let wall_scroll = gtk::ScrolledWindow::builder()
+        .child(&gallery.folder_sectioned_root)
+        .build();
     gallery.attach_sectioned_folder_scroll(&wall_scroll);
     let pages = gtk::Stack::new();
     pages.add_named(&grid_scroll, Some("grid"));
@@ -603,7 +608,11 @@ fn photo_wall_view_toggle_keeps_selection_and_grid_scroll_context() {
         let top = wall_scroll.vadjustment().value();
         let row_index = state.layout.visible_rows(top, top + 1.0).start;
         let row = &state.layout.rows[row_index];
-        (row_index, (top - row.y) / row.block_height, row.item_range.clone())
+        (
+            row_index,
+            (top - row.y) / row.block_height,
+            row.item_range.clone(),
+        )
     };
     window.set_default_size(700, 700);
     settle();
@@ -612,8 +621,10 @@ fn photo_wall_view_toggle_keeps_selection_and_grid_scroll_context() {
         let row = &state.layout.rows[resize_row];
         assert_eq!(row.item_range, resize_membership);
         let expected = row.y + row.block_height * resize_fraction;
-        assert!((wall_scroll.vadjustment().value() - expected).abs() < 3.0,
-            "resize lost logical viewport position");
+        assert!(
+            (wall_scroll.vadjustment().value() - expected).abs() < 3.0,
+            "resize lost logical viewport position"
+        );
     }
 
     view_toggle.emit_clicked();
@@ -1064,9 +1075,8 @@ fn photo_wall_quality_hides_startup_placeholder() {
     placeholder.set_visible(true);
     picture.add_css_class("missing-thumbnail");
 
-    let request = crate::thumbnail_display::wall_request(
-        photo_presentation_request(&photo, false).unwrap(),
-    );
+    let request =
+        crate::thumbnail_display::wall_request(photo_presentation_request(&photo, false).unwrap());
     *tile.imp().wall_quality_key.borrow_mut() = Some(request.key.clone());
     let texture = gtk::gdk::MemoryTexture::new(
         2,
@@ -1079,7 +1089,10 @@ fn photo_wall_quality_hides_startup_placeholder() {
 
     assert!(tile.apply_wall_quality(&request.key, &paintable));
     assert!(picture.paintable().is_some());
-    assert!(!placeholder.is_visible(), "placeholder must not cover the loaded photo");
+    assert!(
+        !placeholder.is_visible(),
+        "placeholder must not cover the loaded photo"
+    );
     assert!(!picture.has_css_class("missing-thumbnail"));
     assert!(photo.thumbnail_available());
 }
@@ -1125,14 +1138,15 @@ fn photo_wall_uses_canonical_cache_without_separate_wall_quality_requests() {
     let surface = &gallery.sectioned_folder;
     surface.poll_wall_quality();
     assert!(surface.wall_state.borrow().quality_attempted.is_empty());
-    assert!(surface.live_tiles.borrow().values().all(|live| {
-        live.tile.imp().wall_quality_key.borrow().is_none()
-    }));
+    assert!(surface
+        .live_tiles
+        .borrow()
+        .values()
+        .all(|live| { live.tile.imp().wall_quality_key.borrow().is_none() }));
 
     window.close();
     settle();
 }
-
 
 #[test]
 #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
@@ -1266,7 +1280,10 @@ fn photo_wall_width_change_scales_without_refit_or_scroll_jump() {
         .iter()
         .map(|row| row.item_range.clone())
         .collect::<Vec<_>>();
-    assert_eq!(old_rows, new_rows, "row membership changed on a width-only resize");
+    assert_eq!(
+        old_rows, new_rows,
+        "row membership changed on a width-only resize"
+    );
     assert_eq!(surface.geometry_width.get(), new_width);
     assert!((surface.total_height.get() - old_total * factor).abs() < 1.0);
     assert!(
@@ -1284,26 +1301,52 @@ fn photo_wall_width_change_scales_without_refit_or_scroll_jump() {
 #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
 fn pure_scaling_keeps_deep_section_row_visible_in_resize_frames() {
     gtk::init().unwrap();
-    let gallery = Rc::new(Gallery::new(&[], 180, |_| {}, |_, _, _| {}, |_, _, _, _| {}, |_, _| {}, |_| {}));
+    let gallery = Rc::new(Gallery::new(
+        &[],
+        180,
+        |_| {},
+        |_, _, _| {},
+        |_, _, _, _| {},
+        |_, _| {},
+        |_| {},
+    ));
     gallery.group_mode.set(GroupMode::Folder);
-    let photos = (0..1000).map(|i| glib::Object::builder::<PhotoObject>()
-        .property("id", i as i64 + 1).property("folder-id", (i / 50) as i64 + 1)
-        .property("width", 4000_i64).property("height", 4000_i64).build()).collect::<Vec<_>>();
+    let photos = (0..1000)
+        .map(|i| {
+            glib::Object::builder::<PhotoObject>()
+                .property("id", i as i64 + 1)
+                .property("folder-id", (i / 50) as i64 + 1)
+                .property("width", 4000_i64)
+                .property("height", 4000_i64)
+                .build()
+        })
+        .collect::<Vec<_>>();
     gallery.current_photos.replace(photos.clone());
     gallery.store.splice(0, 0, &photos);
     gallery.rebuild_group_ranges();
     gallery.set_layout(PhotoLayout::PhotoWall);
-    let scroll = gtk::ScrolledWindow::builder().child(&gallery.folder_sectioned_root).build();
+    let scroll = gtk::ScrolledWindow::builder()
+        .child(&gallery.folder_sectioned_root)
+        .build();
     gallery.attach_sectioned_folder_scroll(&scroll);
-    let window = gtk::Window::builder().default_width(1400).default_height(600).child(&scroll).build();
+    let window = gtk::Window::builder()
+        .default_width(1400)
+        .default_height(600)
+        .child(&scroll)
+        .build();
     window.present();
     settle();
     let surface = &gallery.sectioned_folder;
     let adjustment = scroll.vadjustment();
     let (index, y) = {
         let state = surface.wall_state.borrow();
-        let index = state.layout.rows.iter().position(|row|
-            state.layout.items[row.item_range.start].section == 12).unwrap() + 2;
+        let index = state
+            .layout
+            .rows
+            .iter()
+            .position(|row| state.layout.items[row.item_range.start].section == 12)
+            .unwrap()
+            + 2;
         let row = &state.layout.rows[index];
         (index, row.y + row.block_height * 0.5)
     };
@@ -1312,8 +1355,15 @@ fn pure_scaling_keeps_deep_section_row_visible_in_resize_frames() {
     let (fraction, memberships) = {
         let state = surface.wall_state.borrow();
         let row = &state.layout.rows[index];
-        ((adjustment.value() - row.y) / row.block_height,
-            state.layout.rows.iter().map(|row| row.item_range.clone()).collect::<Vec<_>>())
+        (
+            (adjustment.value() - row.y) / row.block_height,
+            state
+                .layout
+                .rows
+                .iter()
+                .map(|row| row.item_range.clone())
+                .collect::<Vec<_>>(),
+        )
     };
     let reads = crate::source::original_read_count();
     let samples = Rc::new(RefCell::new(Vec::<(i32, i32, f64, bool, f64)>::new()));
@@ -1357,15 +1407,22 @@ fn pure_scaling_keeps_deep_section_row_visible_in_resize_frames() {
     let context = glib::MainContext::default();
     // Native dragging also delivers long runs of tiny allocation changes.
     // Exercise those, including a return to the starting width.
-    let widths = [1300, 1000, 1200, 1400].into_iter()
+    let widths = [1300, 1000, 1200, 1400]
+        .into_iter()
         .chain((1300..1400).rev())
         .chain(1301..=1400);
     for width in widths {
         let first_sample = samples.borrow().len();
         window.set_default_size(width, (f64::from(width) * 0.55).round() as i32);
         let until = std::time::Instant::now() + std::time::Duration::from_secs(2);
-        while std::time::Instant::now() < until && !samples.borrow()[first_sample..].iter().any(|sample| sample.0 == width) {
-            while context.pending() { context.iteration(false); }
+        while std::time::Instant::now() < until
+            && !samples.borrow()[first_sample..]
+                .iter()
+                .any(|sample| sample.0 == width)
+        {
+            while context.pending() {
+                context.iteration(false);
+            }
             std::thread::sleep(std::time::Duration::from_millis(2));
         }
         assert_eq!(scroll.width(), width);
@@ -1376,9 +1433,18 @@ fn pure_scaling_keeps_deep_section_row_visible_in_resize_frames() {
     assert!(painted.windows(2).any(|pair| pair[1].0 > pair[0].0));
     for &(allocated, geometry, error, unchanged, tile_error) in painted.iter() {
         assert!(unchanged, "scaling changed row membership");
-        assert_eq!(allocated, geometry, "painted the new width before scaling old geometry");
-        assert!(error < 2.0, "deep section viewport moved before paint: {error}");
-        assert!(tile_error < 2.0, "painted tiles lagged geometry at width {allocated}: {tile_error}");
+        assert_eq!(
+            allocated, geometry,
+            "painted the new width before scaling old geometry"
+        );
+        assert!(
+            error < 2.0,
+            "deep section viewport moved before paint: {error}"
+        );
+        assert!(
+            tile_error < 2.0,
+            "painted tiles lagged geometry at width {allocated}: {tile_error}"
+        );
     }
     assert_eq!(crate::source::original_read_count(), reads);
     window.close();
@@ -1545,16 +1611,24 @@ fn wall_and_masonry_zoom_scale_without_gaps_or_flying_tiles() {
         let surface = &gallery.sectioned_folder;
 
         gallery.wheel_zoom_in();
-        assert!(surface.wall_zoom_active.get(),
-            "{layout:?} should animate after committing layout");
-        assert!((surface.wall_zoom_scale.get() - 1.03).abs() < 0.001,
-            "zoom-in must settle from 103% without exposing tile background");
+        assert!(
+            surface.wall_zoom_active.get(),
+            "{layout:?} should animate after committing layout"
+        );
+        assert!(
+            (surface.wall_zoom_scale.get() - 1.03).abs() < 0.001,
+            "zoom-in must settle from 103% without exposing tile background"
+        );
         for live in surface.live_tiles.borrow().values() {
-            assert!((live.tile.opacity() - 1.0).abs() < 0.001,
-                "zoom must remain fully opaque");
+            assert!(
+                (live.tile.opacity() - 1.0).abs() < 0.001,
+                "zoom must remain fully opaque"
+            );
         }
-        assert!(!surface.reflow_active.get(),
-            "wall zoom must not animate photo coordinates");
+        assert!(
+            !surface.reflow_active.get(),
+            "wall zoom must not animate photo coordinates"
+        );
         for (&index, live) in surface.live_tiles.borrow().iter() {
             let wall = surface.wall_state.borrow();
             let item = wall.layout.item(index as usize).unwrap();
@@ -1571,11 +1645,15 @@ fn wall_and_masonry_zoom_scale_without_gaps_or_flying_tiles() {
 
         gallery.wheel_zoom_out();
         assert!(surface.wall_zoom_active.get());
-        assert!((surface.wall_zoom_scale.get() - 1.03).abs() < 0.001,
-            "zoom-out must also settle from 103% to keep cells covered");
+        assert!(
+            (surface.wall_zoom_scale.get() - 1.03).abs() < 0.001,
+            "zoom-out must also settle from 103% to keep cells covered"
+        );
         for live in surface.live_tiles.borrow().values() {
-            assert!((live.tile.opacity() - 1.0).abs() < 0.001,
-                "zoom-out must remain fully opaque");
+            assert!(
+                (live.tile.opacity() - 1.0).abs() < 0.001,
+                "zoom-out must remain fully opaque"
+            );
         }
         // Cancel mid-animation by switching off animations, then restore setting.
         gallery.set_zoom_animations_enabled(false);
@@ -2375,33 +2453,77 @@ fn photo_wall_hidden_model_refresh_rebinds_tiles_on_remap() {
     gtk::init().unwrap();
     let connection = rusqlite::Connection::open_in_memory().unwrap();
     connection.execute_batch(crate::db::SCHEMA).unwrap();
-    connection.execute_batch("INSERT INTO photos(id,path,width,height) VALUES
-        (1,'/hidden-wall/old.jpg',6000,4000),(2,'/hidden-wall/new.jpg',4000,6000)").unwrap();
+    connection
+        .execute_batch(
+            "INSERT INTO photos(id,path,width,height) VALUES
+        (1,'/hidden-wall/old.jpg',6000,4000),(2,'/hidden-wall/new.jpg',4000,6000)",
+        )
+        .unwrap();
     let mut photos = crate::db::photos(&connection, None, false, None).unwrap();
     photos.sort_by_key(|photo| photo.id);
-    let gallery = Rc::new(Gallery::new(&[], 180, |_| {}, |_, _, _| {},
-        |_, _, _, _| {}, |_, _| {}, |_| {}));
+    let gallery = Rc::new(Gallery::new(
+        &[],
+        180,
+        |_| {},
+        |_, _, _| {},
+        |_, _, _, _| {},
+        |_, _| {},
+        |_| {},
+    ));
     let scroll = gtk::ScrolledWindow::new();
     scroll.set_child(Some(&gallery.folder_sectioned_root));
     gallery.attach_sectioned_folder_scroll(&scroll);
-    let window = gtk::Window::builder().default_width(800).default_height(600).build();
+    let window = gtk::Window::builder()
+        .default_width(800)
+        .default_height(600)
+        .build();
     window.set_child(Some(&scroll));
     gallery.replace(&photos[..1]);
     gallery.set_layout(PhotoLayout::PhotoWall);
     window.present();
     settle();
-    assert!(gallery.sectioned_folder.live_tiles.borrow().values()
-        .any(|tile| tile.tile.imp().photo.borrow().as_ref().is_some_and(|p| p.id() == 1)));
+    assert!(gallery
+        .sectioned_folder
+        .live_tiles
+        .borrow()
+        .values()
+        .any(|tile| tile
+            .tile
+            .imp()
+            .photo
+            .borrow()
+            .as_ref()
+            .is_some_and(|p| p.id() == 1)));
     window.set_visible(false);
     settle();
     gallery.replace(&photos[1..]);
     settle();
     window.present();
     settle();
-    assert!(gallery.sectioned_folder.live_tiles.borrow().values()
-        .any(|tile| tile.tile.imp().photo.borrow().as_ref().is_some_and(|p| p.id() == 2)));
-    assert!(gallery.sectioned_folder.live_tiles.borrow().values()
-        .all(|tile| tile.tile.imp().photo.borrow().as_ref().is_none_or(|p| p.id() != 1)));
+    assert!(gallery
+        .sectioned_folder
+        .live_tiles
+        .borrow()
+        .values()
+        .any(|tile| tile
+            .tile
+            .imp()
+            .photo
+            .borrow()
+            .as_ref()
+            .is_some_and(|p| p.id() == 2)));
+    assert!(gallery
+        .sectioned_folder
+        .live_tiles
+        .borrow()
+        .values()
+        .all(|tile| tile
+            .tile
+            .imp()
+            .photo
+            .borrow()
+            .as_ref()
+            .is_none_or(|p| p.id() != 1)));
     window.close();
 }
 
@@ -2412,18 +2534,31 @@ fn photo_wall_hidden_model_refresh_rebinds_tiles_on_remap() {
 fn live_network_wall_browsing_keeps_prefetch_bounded() {
     gtk::init().unwrap();
     let catalog = std::env::var("PIC_TEST_CATALOG").expect("set PIC_TEST_CATALOG");
-    let connection = rusqlite::Connection::open_with_flags(catalog,
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+    let connection =
+        rusqlite::Connection::open_with_flags(catalog, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .unwrap();
     let _ = crate::db::folders(&connection).unwrap();
     let photos = crate::db::photos(&connection, None, false, None).unwrap();
     let count = photos.len();
-    let gallery = Rc::new(Gallery::new(&[], 180, |_| {}, |_, _, _| {},
-        |_, _, _, _| {}, |_, _| {}, |_| {}));
-    let scroll = gtk::ScrolledWindow::builder().child(&gallery.folder_sectioned_root).build();
+    let gallery = Rc::new(Gallery::new(
+        &[],
+        180,
+        |_| {},
+        |_, _, _| {},
+        |_, _, _, _| {},
+        |_, _| {},
+        |_| {},
+    ));
+    let scroll = gtk::ScrolledWindow::builder()
+        .child(&gallery.folder_sectioned_root)
+        .build();
     gallery.attach_sectioned_folder_scroll(&scroll);
     gallery.set_layout(PhotoLayout::PhotoWall);
-    let window = gtk::Window::builder().default_width(1000).default_height(700)
-        .child(&scroll).build();
+    let window = gtk::Window::builder()
+        .default_width(1000)
+        .default_height(700)
+        .child(&scroll)
+        .build();
     gallery.replace_owned_while_current(photos, Rc::new(|| true));
     let context = glib::MainContext::default();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
@@ -2451,14 +2586,25 @@ fn live_network_wall_browsing_keeps_prefetch_bounded() {
         gallery.queue_visible_folder_cached_tiles_async(96);
         gallery.prefetch_folder_cached_tiles(24, if fraction == 0.0 { -1.0 } else { 1.0 });
         let jobs = crate::thumbnail::network_prefetch_queued_count();
-        assert!(jobs <= 8, "remote speculative queue exceeded its limit: {jobs}");
+        assert!(
+            jobs <= 8,
+            "remote speculative queue exceeded its limit: {jobs}"
+        );
         assert!(gallery.sectioned_folder.live_tiles.borrow().len() < 512);
         for (&index, tile) in gallery.sectioned_folder.live_tiles.borrow().iter() {
             let expected = gallery.current_photos.borrow()[index as usize].id();
-            assert_eq!(tile.tile.imp().photo.borrow().as_ref().unwrap().id(), expected);
+            assert_eq!(
+                tile.tile.imp().photo.borrow().as_ref().unwrap().id(),
+                expected
+            );
         }
-        eprintln!("LIVE_GALLERY_CHECK photos={} fraction={} realized={} remote_prefetch={}",
-            count, fraction, gallery.sectioned_folder.live_tiles.borrow().len(), jobs);
+        eprintln!(
+            "LIVE_GALLERY_CHECK photos={} fraction={} realized={} remote_prefetch={}",
+            count,
+            fraction,
+            gallery.sectioned_folder.live_tiles.borrow().len(),
+            jobs
+        );
     }
     window.close();
 }

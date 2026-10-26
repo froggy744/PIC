@@ -113,10 +113,7 @@ mod explorer_field_tests {
     #[test]
     fn dropdown_choices_hide_categories_used_by_other_columns() {
         assert_eq!(
-            explorer_field_choices(
-                &[Field::Camera, Field::FileType, Field::Lens],
-                1
-            ),
+            explorer_field_choices(&[Field::Camera, Field::FileType, Field::Lens], 1),
             Field::ALL
                 .into_iter()
                 .filter(|field| ![Field::Camera, Field::Lens].contains(field))
@@ -291,10 +288,12 @@ impl MetadataPanel {
         clear.update_property(&[gtk::accessible::Property::Label("Clear all filters")]);
         summary.append(&clear);
         let refresh_button = {
-        let button = gtk::Button::new();
-        button.set_child(Some(&gtk::Image::from_icon_name("library-refresh-symbolic")));
-        button
-    };
+            let button = gtk::Button::new();
+            button.set_child(Some(&gtk::Image::from_icon_name(
+                "library-refresh-symbolic",
+            )));
+            button
+        };
         refresh_button.add_css_class("metadata-filter-utility");
         refresh_button.set_tooltip_text(Some("Refresh library"));
         refresh_button.update_property(&[gtk::accessible::Property::Label("Refresh library")]);
@@ -636,12 +635,18 @@ impl MetadataPanel {
         self.sync_view();
     }
     pub fn set_navigation_view(&self, page: &str, filter: sidebar::SidebarFilter) {
-        if self.navigation_view.borrow().as_ref().is_some_and(
-            |(previous_page, previous_filter)| previous_page == page && *previous_filter == filter,
-        ) {
+        if self
+            .navigation_view
+            .borrow()
+            .as_ref()
+            .is_some_and(|(previous_page, previous_filter)| {
+                previous_page == page && *previous_filter == filter
+            })
+        {
             return;
         }
-        self.navigation_view.replace(Some((page.to_owned(), filter)));
+        self.navigation_view
+            .replace(Some((page.to_owned(), filter)));
         // Close on entry, rather than forbidding the panel in these views:
         // the user can still explicitly open it after navigating.
         if page != "photos"
@@ -930,7 +935,10 @@ impl MetadataPanel {
             .collect::<Vec<_>>();
         for (index, column) in self.explorer.borrow().iter().enumerate() {
             let choices = explorer_field_choices(&selected, index);
-            let names = choices.iter().map(|field| field.label()).collect::<Vec<_>>();
+            let names = choices
+                .iter()
+                .map(|field| field.label())
+                .collect::<Vec<_>>();
             let model = gtk::StringList::new(&names);
             column.updating_choices.set(true);
             column.choose.set_model(Some(&model));
@@ -1606,11 +1614,17 @@ mod tests {
         ] {
             panel.button.set_active(true);
             panel.set_navigation_view(page, filter);
-            assert!(!panel.button.is_active(), "must close on entering {filter:?}");
+            assert!(
+                !panel.button.is_active(),
+                "must close on entering {filter:?}"
+            );
             assert!(!panel.root.is_visible());
             panel.button.set_active(true);
             panel.set_navigation_view(page, filter);
-            assert!(panel.root.is_visible(), "manual opening must persist in {filter:?}");
+            assert!(
+                panel.root.is_visible(),
+                "manual opening must persist in {filter:?}"
+            );
             panel.set_lightbox_open(true);
             assert!(!panel.root.is_visible());
             panel.set_lightbox_open(false);
@@ -1622,7 +1636,10 @@ mod tests {
             sidebar::SidebarFilter::Folder(2),
         ] {
             panel.set_navigation_view("photos", filter);
-            assert!(panel.root.is_visible(), "keep open for photos and local/network folders");
+            assert!(
+                panel.root.is_visible(),
+                "keep open for photos and local/network folders"
+            );
         }
         panel.button.set_active(false);
     }
@@ -1834,7 +1851,11 @@ mod app_tests {
         let (choose, list, choices) = {
             let explorer = panel.explorer.borrow();
             let column = &explorer[0];
-            (column.choose.clone(), column.list.clone(), column.choices.clone())
+            (
+                column.choose.clone(),
+                column.list.clone(),
+                column.choices.clone(),
+            )
         };
         let flash_index = choices
             .borrow()
@@ -1867,7 +1888,11 @@ mod app_tests {
         let unrated = walk(list.upcast_ref())
             .into_iter()
             .filter_map(|widget| widget.downcast::<gtk::CheckButton>().ok())
-            .find(|button| button.label().is_some_and(|label| label.starts_with("Unrated (")))
+            .find(|button| {
+                button
+                    .label()
+                    .is_some_and(|label| label.starts_with("Unrated ("))
+            })
             .unwrap();
         unrated.set_active(true);
         wait_until(|| selected_rating.borrow().as_str() == "unrated");

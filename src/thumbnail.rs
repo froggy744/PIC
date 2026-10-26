@@ -83,21 +83,34 @@ static NETWORK_PREFETCH_WANTED: OnceLock<Mutex<HashSet<String>>> = OnceLock::new
 
 pub(crate) fn private_network_preview(path: &str) -> bool {
     #[cfg(target_os = "linux")]
-    { crate::network_shares::private(path) }
+    {
+        crate::network_shares::private(path)
+    }
     #[cfg(not(target_os = "linux"))]
-    { let _ = path; false }
+    {
+        let _ = path;
+        false
+    }
 }
 
 #[cfg(test)]
 pub(crate) fn network_prefetch_queued_count() -> usize {
-    PRIORITY_QUEUE.get().and_then(|queue| queue.0.lock().ok()).map(|jobs| {
-        jobs.iter().filter(|job| private_network_preview(&job.0) && !job.6 && job.5.is_none()).count()
-    }).unwrap_or(0)
+    PRIORITY_QUEUE
+        .get()
+        .and_then(|queue| queue.0.lock().ok())
+        .map(|jobs| {
+            jobs.iter()
+                .filter(|job| private_network_preview(&job.0) && !job.6 && job.5.is_none())
+                .count()
+        })
+        .unwrap_or(0)
 }
 
 fn network_prefetch_has_capacity(jobs: &VecDeque<PriorityRequest>) -> bool {
-    jobs.iter().filter(|job| private_network_preview(&job.0) && !job.6 && job.5.is_none())
-        .count() < NETWORK_PREFETCH_CAPACITY
+    jobs.iter()
+        .filter(|job| private_network_preview(&job.0) && !job.6 && job.5.is_none())
+        .count()
+        < NETWORK_PREFETCH_CAPACITY
 }
 
 fn release_discarded_generation(jobs: Vec<PriorityRequest>) {
@@ -109,25 +122,38 @@ fn release_discarded_generation(jobs: Vec<PriorityRequest>) {
 }
 
 fn release_discarded_generation_from(
-    pending: &mut HashMap<PathBuf, ThumbnailWorkState>, jobs: Vec<PriorityRequest>,
+    pending: &mut HashMap<PathBuf, ThumbnailWorkState>,
+    jobs: Vec<PriorityRequest>,
 ) {
     for job in jobs {
         crate::thumbnail_trace::event(&job.0, "generation_request", "discarded_by_viewport");
-        if pending.get(&job.3) == Some(&ThumbnailWorkState::Queued) { pending.remove(&job.3); }
+        if pending.get(&job.3) == Some(&ThumbnailWorkState::Queued) {
+            pending.remove(&job.3);
+        }
     }
 }
 
 pub(crate) fn retain_network_prefetch_paths(wanted: &HashSet<String>) {
     let queue = priority_queue();
     let mut jobs = queue.0.lock().expect("priority queue lock");
-    let mut allowed = NETWORK_PREFETCH_WANTED.get_or_init(|| Mutex::new(HashSet::new()))
-        .lock().expect("network prefetch lock");
-    *allowed = wanted.iter().take(NETWORK_PREFETCH_CAPACITY).cloned().collect();
+    let mut allowed = NETWORK_PREFETCH_WANTED
+        .get_or_init(|| Mutex::new(HashSet::new()))
+        .lock()
+        .expect("network prefetch lock");
+    *allowed = wanted
+        .iter()
+        .take(NETWORK_PREFETCH_CAPACITY)
+        .cloned()
+        .collect();
     let mut discarded = Vec::new();
     jobs.retain(|job| {
-        let keep = !private_network_preview(&job.0) || job.6 || job.5.is_some()
+        let keep = !private_network_preview(&job.0)
+            || job.6
+            || job.5.is_some()
             || allowed.contains(&job.0);
-        if !keep { discarded.push(job.clone()); }
+        if !keep {
+            discarded.push(job.clone());
+        }
         keep
     });
     release_discarded_generation(discarded);
@@ -162,10 +188,14 @@ struct RawWorkerGuard(bool, bool, Arc<PriorityQueue>);
 impl Drop for RawWorkerGuard {
     fn drop(&mut self) {
         if self.0 || self.1 {
-            let _jobs = self.2.0.lock().expect("priority queue lock");
-            if self.0 { RAW_ACTIVE.fetch_sub(1, Ordering::Relaxed); }
-            if self.1 { NEF_ACTIVE.fetch_sub(1, Ordering::Relaxed); }
-            self.2.1.notify_all();
+            let _jobs = self.2 .0.lock().expect("priority queue lock");
+            if self.0 {
+                RAW_ACTIVE.fetch_sub(1, Ordering::Relaxed);
+            }
+            if self.1 {
+                NEF_ACTIVE.fetch_sub(1, Ordering::Relaxed);
+            }
+            self.2 .1.notify_all();
         }
     }
 }
@@ -217,10 +247,16 @@ pub fn request_priority(path: String, mtime: Option<i64>, size_bytes: Option<i64
     let requested_visible = visible;
     let visible = current_generation_priority(&path, visible);
     if private_network_preview(&path) && !visible {
-        let wanted = NETWORK_PREFETCH_WANTED.get_or_init(|| Mutex::new(HashSet::new()))
-            .lock().expect("network prefetch lock");
+        let wanted = NETWORK_PREFETCH_WANTED
+            .get_or_init(|| Mutex::new(HashSet::new()))
+            .lock()
+            .expect("network prefetch lock");
         if requested_visible || !wanted.contains(&path) || !network_prefetch_has_capacity(&jobs) {
-            crate::thumbnail_trace::event(&path, "generation_request", "network_prefetch_suppressed");
+            crate::thumbnail_trace::event(
+                &path,
+                "generation_request",
+                "network_prefetch_suppressed",
+            );
             return;
         }
     }
@@ -251,7 +287,9 @@ pub fn request_priority(path: String, mtime: Option<i64>, size_bytes: Option<i64
 
     if jobs.len() >= PRIORITY_QUEUE_CAPACITY {
         // Prefetch may replace older prefetch, but cannot evict onscreen work.
-        let eviction = jobs.iter().rposition(|job| !job.6)
+        let eviction = jobs
+            .iter()
+            .rposition(|job| !job.6)
             .or_else(|| visible.then(|| jobs.len() - 1));
         let Some(eviction) = eviction else {
             drop(PendingGuard(destination));
@@ -287,7 +325,11 @@ pub fn request_priority(path: String, mtime: Option<i64>, size_bytes: Option<i64
     crate::thumbnail_trace::event(
         &path,
         "generation_request",
-        if visible { "queued_visible" } else { "queued_prefetch" },
+        if visible {
+            "queued_visible"
+        } else {
+            "queued_prefetch"
+        },
     );
     wake.notify_all();
 }
@@ -405,8 +447,10 @@ mod wall_queue_tests {
         local.0 = "/photos/local.jpg".into();
         jobs.extend(vec![local; 100]);
         assert!(network_prefetch_has_capacity(&jobs));
-        let mut pending = HashMap::from([(PathBuf::from("generating"), ThumbnailWorkState::Generating),
-            (PathBuf::from("queued"), ThumbnailWorkState::Queued)]);
+        let mut pending = HashMap::from([
+            (PathBuf::from("generating"), ThumbnailWorkState::Generating),
+            (PathBuf::from("queued"), ThumbnailWorkState::Queued),
+        ]);
         // Removal must only release queued ownership, never an in-flight read.
         let mut dropped = job(false);
         dropped.3 = PathBuf::from("queued");
@@ -414,7 +458,10 @@ mod wall_queue_tests {
         active.3 = PathBuf::from("generating");
         release_discarded_generation_from(&mut pending, vec![dropped, active]);
         assert_eq!(pending.len(), 1);
-        assert_eq!(pending[&PathBuf::from("generating")], ThumbnailWorkState::Generating);
+        assert_eq!(
+            pending[&PathBuf::from("generating")],
+            ThumbnailWorkState::Generating
+        );
     }
 
     #[test]
@@ -427,8 +474,10 @@ mod wall_queue_tests {
         current_remote.6 = false;
         let local = job(false);
         let mut jobs = VecDeque::from([old_remote, local, current_remote]);
-        update_generation_visibility(&mut jobs, &HashMap::from([
-            ("smb://nas/photos/current.jpg".into(), 0)]));
+        update_generation_visibility(
+            &mut jobs,
+            &HashMap::from([("smb://nas/photos/current.jpg".into(), 0)]),
+        );
         assert_eq!(jobs.len(), 2);
         assert_eq!(jobs[0].0, "smb://nas/photos/current.jpg");
         assert!(jobs[0].6);
@@ -454,8 +503,16 @@ mod wall_queue_tests {
     #[test]
     fn late_prefetch_becoming_visible_uses_current_viewport_priority() {
         let wanted = HashMap::from([("/photo/current.nef".into(), 0)]);
-        assert!(generation_priority_for("/photo/current.nef", false, Some(&wanted)));
-        assert!(!generation_priority_for("/photo/old.dng", true, Some(&wanted)));
+        assert!(generation_priority_for(
+            "/photo/current.nef",
+            false,
+            Some(&wanted)
+        ));
+        assert!(!generation_priority_for(
+            "/photo/old.dng",
+            true,
+            Some(&wanted)
+        ));
         assert!(generation_priority_for("/photo/initial.jpg", true, None));
     }
 
@@ -495,16 +552,18 @@ fn update_generation_visibility(
 ) -> Vec<PriorityRequest> {
     let mut discarded = Vec::new();
     jobs.retain(|job| {
-        let keep = !private_network_preview(&job.0) || job.5.is_some() || wanted.contains_key(&job.0);
-        if !keep { discarded.push(job.clone()); }
+        let keep =
+            !private_network_preview(&job.0) || job.5.is_some() || wanted.contains_key(&job.0);
+        if !keep {
+            discarded.push(job.clone());
+        }
         keep
     });
     for job in jobs.iter_mut() {
         job.6 = wanted.contains_key(&job.0);
     }
-    jobs.make_contiguous().sort_by_key(|job| {
-        wanted.get(&job.0).copied().unwrap_or(usize::MAX)
-    });
+    jobs.make_contiguous()
+        .sort_by_key(|job| wanted.get(&job.0).copied().unwrap_or(usize::MAX));
     discarded
 }
 
@@ -518,24 +577,34 @@ fn generation_priority_for(
 
 // Call under the generation queue lock, as viewport updates do.
 fn current_generation_priority(path: &str, requested: bool) -> bool {
-    let wanted = VISIBLE_GENERATION_WANTED.get_or_init(|| Mutex::new(None))
-        .lock().expect("generation viewport lock");
+    let wanted = VISIBLE_GENERATION_WANTED
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .expect("generation viewport lock");
     generation_priority_for(path, requested, wanted.as_ref())
 }
 
 /// Generation and cache presentation must agree about the current viewport.
 /// Drop queued remote reads from old viewports; local cache work can be demoted.
 pub fn retain_visible_generation_requests(requests: &[crate::thumbnail_display::DisplayRequest]) {
-    let wanted: HashMap<String, usize> = requests.iter().enumerate()
-        .map(|(index, request)| (request.source_path.clone(), index)).collect();
+    let wanted: HashMap<String, usize> = requests
+        .iter()
+        .enumerate()
+        .map(|(index, request)| (request.source_path.clone(), index))
+        .collect();
     let queue = priority_queue();
     let mut jobs = queue.0.lock().expect("priority queue lock");
-    let mut current = VISIBLE_GENERATION_WANTED.get_or_init(|| Mutex::new(None))
-        .lock().expect("generation viewport lock");
+    let mut current = VISIBLE_GENERATION_WANTED
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .expect("generation viewport lock");
     if current.as_ref() != Some(&wanted) {
         release_discarded_generation(update_generation_visibility(&mut jobs, &wanted));
-        NETWORK_PREFETCH_WANTED.get_or_init(|| Mutex::new(HashSet::new()))
-            .lock().expect("network prefetch lock").clear();
+        NETWORK_PREFETCH_WANTED
+            .get_or_init(|| Mutex::new(HashSet::new()))
+            .lock()
+            .expect("network prefetch lock")
+            .clear();
         *current = Some(wanted);
     }
     queue.1.notify_all();
@@ -584,7 +653,9 @@ fn priority_queue() -> &'static Arc<PriorityQueue> {
                     job
                 };
                 let _raw_guard = RawWorkerGuard(
-                    is_raw(&path) && !is_nikon_raw(&path), is_nikon_raw(&path), queue.clone()
+                    is_raw(&path) && !is_nikon_raw(&path),
+                    is_nikon_raw(&path),
+                    queue.clone(),
                 );
                 if std::env::var_os("PICASA_TRACE").is_some() {
                     eprintln!(
@@ -655,7 +726,11 @@ fn priority_queue() -> &'static Arc<PriorityQueue> {
                     crate::thumbnail_trace::event(
                         &path,
                         "generation_complete",
-                        if known_decode_failure(&path, &destination) { "decode_failure" } else { "no_cache_before_timeout_or_error" },
+                        if known_decode_failure(&path, &destination) {
+                            "decode_failure"
+                        } else {
+                            "no_cache_before_timeout_or_error"
+                        },
                     );
                 }
             });
@@ -675,8 +750,11 @@ fn priority_dispatch_index(
     // At most two NEFs and one other RAW occupy the four-worker pool,
     // reserving at least one worker for visible JPEGs and other formats.
     let eligible = |job: &PriorityRequest| {
-        if is_nikon_raw(&job.0) { active_nef < 2 }
-        else { !is_raw(&job.0) || active_raw == 0 }
+        if is_nikon_raw(&job.0) {
+            active_nef < 2
+        } else {
+            !is_raw(&job.0) || active_raw == 0
+        }
     };
     let select = |predicate: &dyn Fn(&PriorityRequest) -> bool| {
         if dispatch % (PRIORITY_NEWEST_DISPATCHES + 1) == PRIORITY_NEWEST_DISPATCHES {
@@ -687,12 +765,22 @@ fn priority_dispatch_index(
     };
     let ordinary = |visible: bool| {
         select(&|job| job.6 == visible && job.5.is_none() && is_jpeg(&job.0))
-            .or_else(|| select(&|job| job.6 == visible && job.5.is_none() && (!is_raw(&job.0) || is_nikon_raw(&job.0)) && eligible(job)))
+            .or_else(|| {
+                select(&|job| {
+                    job.6 == visible
+                        && job.5.is_none()
+                        && (!is_raw(&job.0) || is_nikon_raw(&job.0))
+                        && eligible(job)
+                })
+            })
             .or_else(|| select(&|job| job.6 == visible && job.5.is_none() && eligible(job)))
     };
     let quality = |visible: bool| {
         (active_quality < 2)
-            .then(|| jobs.iter().position(|job| job.6 == visible && job.5.is_some() && eligible(job)))
+            .then(|| {
+                jobs.iter()
+                    .position(|job| job.6 == visible && job.5.is_some() && eligible(job))
+            })
             .flatten()
     };
     ordinary(true)
@@ -729,7 +817,11 @@ pub fn request_wall_quality(request: crate::thumbnail_display::DisplayRequest) -
         request.clone(),
     );
     if pending.contains_key(&destination) {
-        crate::thumbnail_trace::event(&request.source_path, "generation_request", "already_pending");
+        crate::thumbnail_trace::event(
+            &request.source_path,
+            "generation_request",
+            "already_pending",
+        );
         if visible {
             if let Some(job) = jobs.iter_mut().find(|job| job.3 == destination) {
                 job.6 = true;

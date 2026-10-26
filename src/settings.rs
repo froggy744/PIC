@@ -2,8 +2,8 @@ use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
-use gtk4 as gtk;
 use gtk::glib::prelude::IsA;
+use gtk4 as gtk;
 use libadwaita as adw;
 use libadwaita::prelude::*;
 use rusqlite::Connection;
@@ -110,14 +110,26 @@ struct CornerStylePickers {
 impl CornerStylePickers {
     fn refresh(&self, connection: &Connection, engine: &crate::window::theme::ThemeEngine) {
         self.syncing.set(true);
-        if let Some(dropdown) = self.interface.borrow().as_ref().and_then(|item| item.upgrade()) {
+        if let Some(dropdown) = self
+            .interface
+            .borrow()
+            .as_ref()
+            .and_then(|item| item.upgrade())
+        {
             dropdown.set_selected(CornerStyle::saved(connection).index());
         }
-        if let Some(dropdown) = self.themes.borrow().as_ref().and_then(|item| item.upgrade()) {
+        if let Some(dropdown) = self
+            .themes
+            .borrow()
+            .as_ref()
+            .and_then(|item| item.upgrade())
+        {
             dropdown.set_selected(engine.effective_corner_style().index());
             let theme_controls_corners = engine.active_corner_style().is_some();
             dropdown.set_sensitive(!theme_controls_corners);
-            dropdown.set_tooltip_text(theme_controls_corners.then_some("The selected theme sets the corner style"));
+            dropdown.set_tooltip_text(
+                theme_controls_corners.then_some("The selected theme sets the corner style"),
+            );
         }
         self.syncing.set(false);
     }
@@ -207,12 +219,12 @@ impl SettingsWindow {
             glib::Propagation::Stop
         });
 
-    let layout = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    layout.set_hexpand(true);
-    layout.set_vexpand(true);
-    let header = adw::HeaderBar::new();
-    header.set_title_widget(Some(&gtk::Label::new(Some("Settings"))));
-    layout.append(&header);
+        let layout = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        layout.set_hexpand(true);
+        layout.set_vexpand(true);
+        let header = adw::HeaderBar::new();
+        header.set_title_widget(Some(&gtk::Label::new(Some("Settings"))));
+        layout.append(&header);
 
         let stack = gtk::Stack::new();
         stack.set_hexpand(true);
@@ -239,7 +251,11 @@ impl SettingsWindow {
             "Interface",
         );
 
-        stack.add_titled(&self.menu_controls.page(connection.clone()), Some("menus"), "Menus");
+        stack.add_titled(
+            &self.menu_controls.page(connection.clone()),
+            Some("menus"),
+            "Menus",
+        );
 
         let (themes_page, refresh_appearance) = themes_page(
             theme_engine,
@@ -1047,10 +1063,7 @@ fn library_page(
     connection: Rc<RefCell<Connection>>,
     recently_added_changed: Rc<dyn Fn()>,
 ) -> gtk::ScrolledWindow {
-    let content = page_content(
-        "Stats",
-        "A compact overview of the current library.",
-    );
+    let content = page_content("Stats", "A compact overview of the current library.");
 
     let options = settings_list();
     let recent_limit = gtk::SpinButton::with_range(1.0, 1_000_000.0, 1.0);
@@ -1470,18 +1483,34 @@ pub(crate) enum AlbumLayout {
 
 impl AlbumLayout {
     pub(crate) fn index(self) -> u32 {
-        match self { Self::Grid => 0, Self::Bookshelf => 1, Self::CoverFlow => 2 }
+        match self {
+            Self::Grid => 0,
+            Self::Bookshelf => 1,
+            Self::CoverFlow => 2,
+        }
     }
     pub(crate) fn from_index(index: u32) -> Self {
-        match index { 1 => Self::Bookshelf, 2 => Self::CoverFlow, _ => Self::Grid }
+        match index {
+            1 => Self::Bookshelf,
+            2 => Self::CoverFlow,
+            _ => Self::Grid,
+        }
     }
     fn key(self) -> &'static str {
-        match self { Self::Grid => "grid", Self::Bookshelf => "bookshelf", Self::CoverFlow => "coverflow" }
+        match self {
+            Self::Grid => "grid",
+            Self::Bookshelf => "bookshelf",
+            Self::CoverFlow => "coverflow",
+        }
     }
 }
 
 pub(crate) fn album_layout(connection: &Connection) -> AlbumLayout {
-    match crate::db::setting(connection, ALBUM_LAYOUT_SETTING_KEY).ok().flatten().as_deref() {
+    match crate::db::setting(connection, ALBUM_LAYOUT_SETTING_KEY)
+        .ok()
+        .flatten()
+        .as_deref()
+    {
         Some("grid") => AlbumLayout::Grid,
         Some("bookshelf") => AlbumLayout::Bookshelf,
         Some("coverflow") => AlbumLayout::CoverFlow,
@@ -1492,7 +1521,9 @@ pub(crate) fn album_layout(connection: &Connection) -> AlbumLayout {
 
 pub(crate) fn set_album_layout(connection: &Connection, layout: AlbumLayout) -> anyhow::Result<()> {
     crate::db::set_setting(connection, ALBUM_LAYOUT_SETTING_KEY, layout.key())?;
-    if layout == AlbumLayout::Bookshelf { set_bookshelf_enabled(connection, true)?; }
+    if layout == AlbumLayout::Bookshelf {
+        set_bookshelf_enabled(connection, true)?;
+    }
     Ok(())
 }
 
@@ -1877,10 +1908,7 @@ fn themes_page(
                 }
             }
             list.connect_row_selected(move |_, selected| {
-                if let Some((_, check)) = theme_rows
-                    .iter()
-                    .find(|(row, _)| Some(row) == selected)
-                {
+                if let Some((_, check)) = theme_rows.iter().find(|(row, _)| Some(row) == selected) {
                     check.set_active(true);
                 }
             });
@@ -1970,7 +1998,9 @@ fn interface_page_with_corner_style(
                     eprintln!("Could not save corner style: {error}");
                     return;
                 }
-                theme_engine.effective_corner_style().apply(&settings_window);
+                theme_engine
+                    .effective_corner_style()
+                    .apply(&settings_window);
                 pickers.refresh(&connection.borrow(), &theme_engine);
                 thumbnail_changed();
             });
@@ -1997,8 +2027,11 @@ fn interface_page_with_corner_style(
     let fit_whole_photo = gtk::Switch::new();
     fit_whole_photo.set_valign(gtk::Align::Center);
     fit_whole_photo.set_active(
-        saved_bool(&connection.borrow(), crate::db::THUMBNAIL_FIT_WHOLE_PHOTO_SETTING_KEY)
-            .unwrap_or(false),
+        saved_bool(
+            &connection.borrow(),
+            crate::db::THUMBNAIL_FIT_WHOLE_PHOTO_SETTING_KEY,
+        )
+        .unwrap_or(false),
     );
     {
         let connection = connection.clone();
@@ -2061,15 +2094,15 @@ fn interface_page_with_corner_style(
 
     let high_quality = gtk::Switch::new();
     high_quality.set_valign(gtk::Align::Center);
-    high_quality.set_active(crate::db::high_quality_thumbnails_enabled(&connection.borrow()));
+    high_quality.set_active(crate::db::high_quality_thumbnails_enabled(
+        &connection.borrow(),
+    ));
     {
         let connection = connection.clone();
         let thumbnail_changed = thumbnail_changed.clone();
         high_quality.connect_active_notify(move |toggle| {
             let state = toggle.is_active();
-            crate::window::debug_log(&format!(
-                "SETTINGS: high quality thumbnails -> {state}"
-            ));
+            crate::window::debug_log(&format!("SETTINGS: high quality thumbnails -> {state}"));
             if let Err(error) = crate::db::set_setting(
                 &connection.borrow(),
                 crate::db::THUMBNAIL_HIGH_QUALITY_SETTING_KEY,
@@ -2177,25 +2210,10 @@ fn about_page() -> gtk::ScrolledWindow {
 
     let list = settings_list();
     append_row(&list, "Version", Some(env!("CARGO_PKG_VERSION")), None);
-    append_row(
-        &list,
-        "Build",
-        Some(env!("PIC_BUILD_REVISION")),
-        None,
-    );
-    append_row(
-        &list,
-        "Build date",
-        Some(env!("PIC_BUILD_DATE")),
-        None,
-    );
+    append_row(&list, "Build", Some(env!("PIC_BUILD_REVISION")), None);
+    append_row(&list, "Build date", Some(env!("PIC_BUILD_DATE")), None);
     append_row(&list, "Package", Some(package_type()), None);
-    append_row(
-        &list,
-        "Architecture",
-        Some(std::env::consts::ARCH),
-        None,
-    );
+    append_row(&list, "Architecture", Some(std::env::consts::ARCH), None);
     content.append(&list);
     scroll_page(content)
 }
@@ -2474,12 +2492,7 @@ mod tests {
             .execute_batch("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
             .unwrap();
 
-        crate::db::set_setting(
-            &connection,
-            ALBUM_BOOKSHELF_BACKGROUND_SETTING_KEY,
-            "0",
-        )
-        .unwrap();
+        crate::db::set_setting(&connection, ALBUM_BOOKSHELF_BACKGROUND_SETTING_KEY, "0").unwrap();
         set_bookshelf_enabled(&connection, false).unwrap();
         set_covers_enabled(&connection, true).unwrap();
 
@@ -2711,8 +2724,7 @@ mod tests {
             Rc::new(move || notified_for_callback.set(notified_for_callback.get() + 1)),
             Rc::new(|| {}),
             Rc::new(move || {
-                animation_notified_for_callback
-                    .set(animation_notified_for_callback.get() + 1)
+                animation_notified_for_callback.set(animation_notified_for_callback.get() + 1)
             }),
             Rc::new(|| {}),
         );
@@ -2841,7 +2853,9 @@ mod tests {
         use super::*;
         use rusqlite::Connection;
         let connection = Connection::open_in_memory().unwrap();
-        connection.execute_batch("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)").unwrap();
+        connection
+            .execute_batch("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+            .unwrap();
         assert_eq!(album_layout(&connection), AlbumLayout::Grid);
         set_bookshelf_enabled(&connection, true).unwrap();
         assert_eq!(album_layout(&connection), AlbumLayout::Bookshelf);
@@ -2849,5 +2863,4 @@ mod tests {
         assert_eq!(album_layout(&connection), AlbumLayout::CoverFlow);
         assert!(album_appearance(&connection).bookshelf_enabled);
     }
-
 }

@@ -88,9 +88,9 @@ impl ImportTracker {
         }
         match event {
             ScanEvent::DiscoveryProgress { found } => self.progress.discovered = Some(*found),
-            ScanEvent::NetworkProgress {found,added,..} => {
-                self.progress.discovered=Some(*found);
-                self.progress.indexed=*added;
+            ScanEvent::NetworkProgress { found, added, .. } => {
+                self.progress.discovered = Some(*found);
+                self.progress.indexed = *added;
             }
             ScanEvent::PhotosIndexed { photos, .. } => {
                 self.progress.indexed += photos

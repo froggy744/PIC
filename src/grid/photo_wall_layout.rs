@@ -583,8 +583,14 @@ impl PhotoWallLayout {
         if std::env::var_os("PICASA_TRACE").is_none() {
             return;
         }
-        eprintln!("PIC_WALL_LAYOUT viewport_width={} photos={} rows={} sections={} height={}",
-            self.viewport_width, self.items.len(), self.rows.len(), self.sections.len(), self.total_height);
+        eprintln!(
+            "PIC_WALL_LAYOUT viewport_width={} photos={} rows={} sections={} height={}",
+            self.viewport_width,
+            self.items.len(),
+            self.rows.len(),
+            self.sections.len(),
+            self.total_height
+        );
         if std::env::var_os("PICASA_TRACE_WALL_ROWS").is_none() {
             return;
         }
@@ -599,7 +605,8 @@ impl PhotoWallLayout {
 
     pub fn visible_rows(&self, top: f64, bottom: f64) -> Range<usize> {
         let start = if self.masonry_columns.is_empty() {
-            self.rows.partition_point(|row| row.y + row.block_height <= top)
+            self.rows
+                .partition_point(|row| row.y + row.block_height <= top)
         } else {
             self.masonry_row_bottoms.partition_point(|&end| end <= top)
         };
@@ -766,24 +773,44 @@ mod tests {
     }
     #[test]
     fn scaling_deep_section_anchor_keeps_fixed_headers_and_row_fraction() {
-        let sections = (0..20).map(|section| PhotoWallSection {
-            photo_range: section * 5..(section + 1) * 5,
-            header_height: 70.0,
-        }).collect::<Vec<_>>();
+        let sections = (0..20)
+            .map(|section| PhotoWallSection {
+                photo_range: section * 5..(section + 1) * 5,
+                header_height: 70.0,
+            })
+            .collect::<Vec<_>>();
         let mut wall = PhotoWallLayout::calculate(&[1.0; 100], &sections, 500.0, 100.0, 0.0);
         assert_eq!(wall.rows.len(), 20);
         assert_eq!(wall.items[wall.rows[6].item_range.start].section, 6);
-        let members = wall.rows.iter().map(|row| row.item_range.clone()).collect::<Vec<_>>();
+        let members = wall
+            .rows
+            .iter()
+            .map(|row| row.item_range.clone())
+            .collect::<Vec<_>>();
         // Seven fixed headers (490px) + six rows (600px) + half a row (50px).
         let mut anchor = 1140.0;
         let mut width = 500.0;
-        for (next_width, expected_y) in [(200.0, 750.0), (750.0, 1465.0),
-            (1000.0, 1790.0), (400.0, 1010.0), (500.0, 1140.0)] {
+        for (next_width, expected_y) in [
+            (200.0, 750.0),
+            (750.0, 1465.0),
+            (1000.0, 1790.0),
+            (400.0, 1010.0),
+            (500.0, 1140.0),
+        ] {
             anchor = wall.scale_photo_area(next_width / width, anchor);
-            assert!((anchor - expected_y).abs() < 1e-9, "fixed headers corrupted the anchor: {anchor} vs {expected_y}");
+            assert!(
+                (anchor - expected_y).abs() < 1e-9,
+                "fixed headers corrupted the anchor: {anchor} vs {expected_y}"
+            );
             let row = &wall.rows[6];
             assert!(((anchor - row.y) / row.block_height - 0.5).abs() < 1e-9);
-            assert_eq!(wall.rows.iter().map(|row| row.item_range.clone()).collect::<Vec<_>>(), members);
+            assert_eq!(
+                wall.rows
+                    .iter()
+                    .map(|row| row.item_range.clone())
+                    .collect::<Vec<_>>(),
+                members
+            );
             for section in &wall.sections {
                 assert!((section.first_photo_y - section.header_y - 70.0).abs() < 1e-9);
             }
@@ -795,8 +822,14 @@ mod tests {
     fn scaling_keeps_rows_and_maps_anchor() {
         let ratios = [1.5, 0.7, 1.0, 1.8, 0.6, 1.2, 1.3, 0.8, 1.6, 1.1];
         let sections = [
-            PhotoWallSection { photo_range: 0..5, header_height: 70.0 },
-            PhotoWallSection { photo_range: 5..10, header_height: 70.0 },
+            PhotoWallSection {
+                photo_range: 0..5,
+                header_height: 70.0,
+            },
+            PhotoWallSection {
+                photo_range: 5..10,
+                header_height: 70.0,
+            },
         ];
         let before = PhotoWallLayout::calculate(&ratios, &sections, 1400.0, 180.0, 0.0);
         let mut after = before.clone();
@@ -805,7 +838,10 @@ mod tests {
         let mapped = after.scale_photo_area(factor, anchor);
         assert_eq!(before.rows.len(), after.rows.len());
         for (a, b) in before.items.iter().zip(&after.items) {
-            assert_eq!((a.row, a.section, a.photo_index), (b.row, b.section, b.photo_index));
+            assert_eq!(
+                (a.row, a.section, a.photo_index),
+                (b.row, b.section, b.photo_index)
+            );
             // Whole-pixel widths and shared rounded row edges introduce at
             // most one width pixel plus one height pixel of aspect error.
             let ratio = ratios[b.photo_index];
@@ -816,7 +852,10 @@ mod tests {
         assert!((last.x + last.width - 1395.0).abs() < 1.0 || last.x + last.width <= 1395.0 + 1e-6);
         let old_row = &before.rows[before.items[5].row];
         let new_row = &after.rows[after.items[5].row];
-        assert!((mapped - (new_row.y + 40.0 / old_row.block_height * new_row.block_height)).abs() < 1e-9);
+        assert!(
+            (mapped - (new_row.y + 40.0 / old_row.block_height * new_row.block_height)).abs()
+                < 1e-9
+        );
         assert!((after.sections[1].first_photo_y - after.sections[1].header_y - 70.0).abs() < 1e-9);
         assert!((after.total_height - after.sections[1].end_y).abs() < 1e-9);
     }
@@ -910,7 +949,6 @@ mod tests {
         }
     }
 }
-
 
 #[cfg(test)]
 mod masonry_resize_tests {

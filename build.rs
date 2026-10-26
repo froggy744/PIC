@@ -96,7 +96,9 @@ fn main() {
     }
     let screenshots = profile_dir.join("screenshots");
     fs::create_dir_all(&screenshots).expect("create runtime screenshot directory");
-    for entry in fs::read_dir(manifest_dir.join("images/onboarding")).expect("read tour screenshots") {
+    for entry in
+        fs::read_dir(manifest_dir.join("images/onboarding")).expect("read tour screenshots")
+    {
         let entry = entry.expect("read screenshot entry");
         let name = entry.file_name();
         let name_text = name.to_string_lossy();
@@ -109,8 +111,7 @@ fn main() {
 fn compile_bundled_icons(manifest_dir: &Path) {
     let source_dir = manifest_dir.join("resources");
     let manifest = source_dir.join("icons.gresource.xml");
-    let output = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR"))
-        .join("icons.gresource");
+    let output = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR")).join("icons.gresource");
 
     println!("cargo:rerun-if-changed={}", manifest.display());
     for folder in ["icons", "custom-icons"] {

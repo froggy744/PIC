@@ -491,7 +491,10 @@ fn lightbox_one_to_one_recipe_refresh_preserves_panned_viewport() {
     while Instant::now() < deadline && lightbox.native_texture.borrow().is_none() {
         settle();
     }
-    assert!(lightbox.native_texture.borrow().is_some(), "native texture should load");
+    assert!(
+        lightbox.native_texture.borrow().is_some(),
+        "native texture should load"
+    );
     settle();
     let hadj = lightbox.picture_viewport.hadjustment();
     let vadj = lightbox.picture_viewport.vadjustment();
@@ -510,19 +513,29 @@ fn lightbox_one_to_one_recipe_refresh_preserves_panned_viewport() {
     let generation = lightbox.load_generation.get();
     let deadline = Instant::now() + Duration::from_secs(5);
     while Instant::now() < deadline
-        && lightbox.native_texture.borrow().as_ref()
+        && lightbox
+            .native_texture
+            .borrow()
+            .as_ref()
             .is_none_or(|cache| cache.edit_recipe != recipe.encode())
     {
         settle();
     }
     assert_eq!(lightbox.load_generation.get(), generation);
-    assert!(lightbox.native_texture.borrow().as_ref()
+    assert!(lightbox
+        .native_texture
+        .borrow()
+        .as_ref()
         .is_some_and(|cache| cache.edit_recipe == recipe.encode()));
     settle();
-    assert!((hadj.value() - before.0).abs() <= 1.0,
-        "1:1 filter edit should not move horizontal pan");
-    assert!((vadj.value() - before.1).abs() <= 1.0,
-        "1:1 filter edit should not move vertical pan");
+    assert!(
+        (hadj.value() - before.0).abs() <= 1.0,
+        "1:1 filter edit should not move horizontal pan"
+    );
+    assert!(
+        (vadj.value() - before.1).abs() <= 1.0,
+        "1:1 filter edit should not move vertical pan"
+    );
 
     lightbox.close();
     window.close();

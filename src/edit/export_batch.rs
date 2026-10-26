@@ -47,7 +47,10 @@ impl ExportFormat {
     }
 
     pub fn dialog_labels() -> Vec<&'static str> {
-        Self::ALL.iter().map(|format| format.dialog_label()).collect()
+        Self::ALL
+            .iter()
+            .map(|format| format.dialog_label())
+            .collect()
     }
 }
 
@@ -95,11 +98,7 @@ pub fn export_file_name(original_name: &str, edited: bool) -> String {
 /// Pick a collision-free file name inside one batch (and against the disk).
 ///
 /// `DSC_1001_edit.jpg` → `DSC_1001_edit_2.jpg` → `DSC_1001_edit_3.jpg`.
-pub fn unique_file_name<F>(
-    file_name: &str,
-    reserved: &mut HashSet<String>,
-    mut exists: F,
-) -> String
+pub fn unique_file_name<F>(file_name: &str, reserved: &mut HashSet<String>, mut exists: F) -> String
 where
     F: FnMut(&str) -> bool,
 {
@@ -130,12 +129,17 @@ where
             reserved.insert(candidate.clone());
             return candidate;
         }
-        counter = counter.checked_add(1)
+        counter = counter
+            .checked_add(1)
             .expect("all export filename suffixes exhausted");
     }
 }
 
-pub fn unique_export_path(folder: &Path, file_name: &str, reserved: &mut HashSet<String>) -> PathBuf {
+pub fn unique_export_path(
+    folder: &Path,
+    file_name: &str,
+    reserved: &mut HashSet<String>,
+) -> PathBuf {
     let candidate = unique_file_name(file_name, reserved, |name| folder.join(name).exists());
     folder.join(candidate)
 }
@@ -227,14 +231,20 @@ pub fn render_job(job: &ExportJob) -> Result<RgbaImage> {
 fn staging_export_path(destination: &Path) -> Result<PathBuf> {
     use std::fs::OpenOptions;
     let parent = destination.parent().unwrap_or_else(|| Path::new("."));
-    let name = destination.file_name()
+    let name = destination
+        .file_name()
         .map(|value| value.to_string_lossy())
         .unwrap_or_else(|| std::borrow::Cow::Borrowed("photo"));
     for counter in 0u32..1024 {
         let candidate = parent.join(format!(
-            ".{name}.pic-export-{}-{counter}.tmp", std::process::id()
+            ".{name}.pic-export-{}-{counter}.tmp",
+            std::process::id()
         ));
-        match OpenOptions::new().write(true).create_new(true).open(&candidate) {
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&candidate)
+        {
             Ok(file) => {
                 drop(file);
                 return Ok(candidate);
@@ -243,7 +253,10 @@ fn staging_export_path(destination: &Path) -> Result<PathBuf> {
             Err(error) => return Err(error.into()),
         }
     }
-    anyhow::bail!("could not create temporary export file for {}", destination.display())
+    anyhow::bail!(
+        "could not create temporary export file for {}",
+        destination.display()
+    )
 }
 
 /// Publish a fully encoded sibling temporary file without ever replacing an
@@ -256,11 +269,17 @@ fn publish_export(staging: &Path, destination: &Path, replace_existing: bool) ->
         use std::os::unix::ffi::OsStrExt;
         let source = CString::new(staging.as_os_str().as_bytes())?;
         let target = CString::new(destination.as_os_str().as_bytes())?;
-        let flags = if replace_existing { 0 } else { libc::RENAME_NOREPLACE };
+        let flags = if replace_existing {
+            0
+        } else {
+            libc::RENAME_NOREPLACE
+        };
         let result = unsafe {
             libc::renameat2(
-                libc::AT_FDCWD, source.as_ptr(),
-                libc::AT_FDCWD, target.as_ptr(),
+                libc::AT_FDCWD,
+                source.as_ptr(),
+                libc::AT_FDCWD,
+                target.as_ptr(),
                 flags,
             )
         };
@@ -270,7 +289,10 @@ fn publish_export(staging: &Path, destination: &Path, replace_existing: bool) ->
         let error = std::io::Error::last_os_error();
         // A mounted filesystem might not support this rename extension.
         // Preserve the strict no-replace guarantee in the default path.
-        if matches!(error.raw_os_error(), Some(libc::EINVAL) | Some(libc::ENOSYS) | Some(libc::EOPNOTSUPP)) {
+        if matches!(
+            error.raw_os_error(),
+            Some(libc::EINVAL) | Some(libc::ENOSYS) | Some(libc::EOPNOTSUPP)
+        ) {
             if replace_existing {
                 // Same-directory rename remains atomic and replaces the target
                 // on Linux when renameat2 is unavailable on the filesystem.
@@ -287,7 +309,10 @@ fn publish_export(staging: &Path, destination: &Path, replace_existing: bool) ->
     {
         // Cross-process no-replace publication needs a platform-specific API.
         if !replace_existing && destination.exists() {
-            anyhow::bail!("refusing to overwrite existing export: {}", destination.display());
+            anyhow::bail!(
+                "refusing to overwrite existing export: {}",
+                destination.display()
+            );
         }
         std::fs::rename(staging, destination)?;
         Ok(())
@@ -342,7 +367,10 @@ where
     let trace = std::env::var_os("PICASA_TRACE").is_some();
     let export_started = std::time::Instant::now();
     if !replace_existing && destination.exists() {
-        anyhow::bail!("refusing to overwrite existing export: {}", destination.display());
+        anyhow::bail!(
+            "refusing to overwrite existing export: {}",
+            destination.display()
+        );
     }
     let stage_started = std::time::Instant::now();
     let rendered = render(job)?;
@@ -350,7 +378,8 @@ where
         eprintln!(
             "PIC_EXPORT stage=render_callback elapsed_ms={:.3} size={}x{}",
             stage_started.elapsed().as_secs_f64() * 1000.0,
-            rendered.width(), rendered.height(),
+            rendered.width(),
+            rendered.height(),
         );
     }
     let stage_started = std::time::Instant::now();
@@ -359,7 +388,9 @@ where
         eprintln!(
             "PIC_EXPORT stage=fit_max_edge elapsed_ms={:.3} size={}x{} max_edge={}",
             stage_started.elapsed().as_secs_f64() * 1000.0,
-            image.width(), image.height(), max_edge,
+            image.width(),
+            image.height(),
+            max_edge,
         );
     }
     let stage_started = std::time::Instant::now();
@@ -373,7 +404,8 @@ where
     }
     let result: Result<()> = (|| {
         let stage_started = std::time::Instant::now();
-        let exif = super::export_metadata::for_export(&job.source_path, image.width(), image.height());
+        let exif =
+            super::export_metadata::for_export(&job.source_path, image.width(), image.height());
         if trace {
             eprintln!(
                 "PIC_EXPORT stage=metadata elapsed_ms={:.3} bytes={}",
@@ -382,21 +414,21 @@ where
             );
         }
         let stage_started = std::time::Instant::now();
-        super::render::save_export_with_metadata(
-            &image, &staging, format, quality, Some(&exif)
-        )?;
+        super::render::save_export_with_metadata(&image, &staging, format, quality, Some(&exif))?;
         if trace {
             eprintln!(
                 "PIC_EXPORT stage=encode elapsed_ms={:.3} size={}x{} format={:?} quality={}",
                 stage_started.elapsed().as_secs_f64() * 1000.0,
-                image.width(), image.height(), format, quality,
+                image.width(),
+                image.height(),
+                format,
+                quality,
             );
         }
         // The result is only made visible at its final filename once complete.
         let stage_started = std::time::Instant::now();
-        publish_export(&staging, destination, replace_existing).with_context(|| format!(
-            "could not finish export {}", destination.display()
-        ))?;
+        publish_export(&staging, destination, replace_existing)
+            .with_context(|| format!("could not finish export {}", destination.display()))?;
         if trace {
             eprintln!(
                 "PIC_EXPORT stage=publish elapsed_ms={:.3} total_ms={:.3}",
@@ -433,7 +465,15 @@ where
     P: FnMut(usize, usize, &str, usize),
 {
     run_batch_export_with_overwrite(
-        jobs, folder, max_edge, quality, format, false, render, on_progress, cancel,
+        jobs,
+        folder,
+        max_edge,
+        quality,
+        format,
+        false,
+        render,
+        on_progress,
+        cancel,
     )
 }
 
@@ -476,7 +516,8 @@ where
             on_progress(done, total, &job.file_name, outcome.failed);
             continue;
         }
-        let destination = batch_export_path(folder, &job.file_name, &mut reserved, replace_existing);
+        let destination =
+            batch_export_path(folder, &job.file_name, &mut reserved, replace_existing);
         let result = if replace_existing {
             export_job_to_confirmed_replace(job, &destination, max_edge, quality, format, &render)
         } else {
@@ -515,7 +556,16 @@ where
     P: FnMut(usize, usize, &str, usize),
 {
     run_batch_export_with_workers_and_overwrite(
-        jobs, folder, max_edge, quality, format, workers, false, render, on_progress, cancel,
+        jobs,
+        folder,
+        max_edge,
+        quality,
+        format,
+        workers,
+        false,
+        render,
+        on_progress,
+        cancel,
     )
 }
 
@@ -539,11 +589,26 @@ where
     if workers <= 1 || jobs.len() <= 1 {
         if !replace_existing {
             return run_batch_export(
-                jobs, folder, max_edge, quality, format, render, on_progress, cancel,
+                jobs,
+                folder,
+                max_edge,
+                quality,
+                format,
+                render,
+                on_progress,
+                cancel,
             );
         }
         return run_batch_export_with_overwrite(
-            jobs, folder, max_edge, quality, format, replace_existing, render, on_progress, cancel,
+            jobs,
+            folder,
+            max_edge,
+            quality,
+            format,
+            replace_existing,
+            render,
+            on_progress,
+            cancel,
         );
     }
 
@@ -589,7 +654,12 @@ where
                 }
                 let result = if replace_existing {
                     export_job_to_confirmed_replace(
-                        job, destination, max_edge, quality, format, render,
+                        job,
+                        destination,
+                        max_edge,
+                        quality,
+                        format,
+                        render,
                     )
                 } else {
                     export_job_to(job, destination, max_edge, quality, format, render)
@@ -607,28 +677,24 @@ where
                 Ok(()) => outcome.exported += 1,
                 Err(None) => {
                     outcome.skipped += 1;
-                    outcome.errors.push(format!(
-                        "skipped (missing): {}",
-                        jobs[index].source_path
-                    ));
+                    outcome
+                        .errors
+                        .push(format!("skipped (missing): {}", jobs[index].source_path));
                 }
                 Err(Some(error)) => {
                     outcome.failed += 1;
                     outcome.errors.push(error);
                 }
             }
-            on_progress(
-                completed,
-                total,
-                &jobs[index].file_name,
-                outcome.failed,
-            );
+            on_progress(completed, total, &jobs[index].file_name, outcome.failed);
         }
     });
 
     let completed = outcome.exported + outcome.skipped + outcome.failed;
     if cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) && completed < total {
-        outcome.errors.push(format!("cancelled after {completed} / {total}"));
+        outcome
+            .errors
+            .push(format!("cancelled after {completed} / {total}"));
         on_progress(completed, total, "", outcome.failed);
     }
     outcome
@@ -679,10 +745,7 @@ mod tests {
             export_file_name("IMG_4221_edit.JPG", true),
             "IMG_4221_edit.JPG"
         );
-        assert_eq!(
-            export_file_name("photo_Edit.jpeg", true),
-            "photo_Edit.jpeg"
-        );
+        assert_eq!(export_file_name("photo_Edit.jpeg", true), "photo_Edit.jpeg");
     }
 
     #[test]
@@ -705,7 +768,10 @@ mod tests {
             file_name_for_format("photo.PNG", ExportFormat::Jpeg),
             "photo.jpg"
         );
-        assert_eq!(file_name_for_format("noextension", ExportFormat::Jpeg), "noextension.jpg");
+        assert_eq!(
+            file_name_for_format("noextension", ExportFormat::Jpeg),
+            "noextension.jpg"
+        );
     }
 
     #[test]
@@ -830,17 +896,15 @@ mod tests {
 
     #[test]
     fn export_never_overwrites_an_existing_file() {
-        let folder = std::env::temp_dir().join(format!(
-            "pic-export-nooverwrite-{}", std::process::id(),
-        ));
+        let folder =
+            std::env::temp_dir().join(format!("pic-export-nooverwrite-{}", std::process::id(),));
         std::fs::create_dir_all(&folder).unwrap();
         let destination = folder.join("export.png");
         std::fs::write(&destination, b"keep this original").unwrap();
-        let job = ExportJob::from_record(
-            "unused".into(), 0, "".into(), 1, 1, "export.png",
-        );
-        let result = export_job_to(&job, &destination, 0, 92,
-            ExportFormat::Png, &|_| Ok(RgbaImage::new(1, 1)));
+        let job = ExportJob::from_record("unused".into(), 0, "".into(), 1, 1, "export.png");
+        let result = export_job_to(&job, &destination, 0, 92, ExportFormat::Png, &|_| {
+            Ok(RgbaImage::new(1, 1))
+        });
         assert!(result.is_err());
         assert_eq!(std::fs::read(&destination).unwrap(), b"keep this original");
         std::fs::remove_dir_all(folder).ok();
@@ -851,8 +915,10 @@ mod tests {
         let folder = std::env::temp_dir().join(format!(
             "pic-export-confirmed-replace-{}-{}",
             std::process::id(),
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
-                .unwrap().as_nanos(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
         ));
         std::fs::create_dir_all(&folder).unwrap();
         let destination = folder.join("export.png");
@@ -860,9 +926,10 @@ mod tests {
         let job = ExportJob::from_record("unused".into(), 0, "".into(), 2, 1, "export.png");
         let expected = RgbaImage::from_pixel(2, 1, image::Rgba([40, 80, 120, 255]));
 
-        export_job_to_confirmed_replace(
-            &job, &destination, 0, 92, ExportFormat::Png, &|_| Ok(expected.clone()),
-        ).unwrap();
+        export_job_to_confirmed_replace(&job, &destination, 0, 92, ExportFormat::Png, &|_| {
+            Ok(expected.clone())
+        })
+        .unwrap();
 
         assert_eq!(image::open(&destination).unwrap().to_rgba8(), expected);
         let files = std::fs::read_dir(&folder).unwrap().count();
@@ -875,8 +942,10 @@ mod tests {
         let folder = std::env::temp_dir().join(format!(
             "pic-export-failed-replace-{}-{}",
             std::process::id(),
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
-                .unwrap().as_nanos(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
         ));
         std::fs::create_dir_all(&folder).unwrap();
         let destination = folder.join("export.png");
@@ -884,10 +953,10 @@ mod tests {
         std::fs::write(&destination, original).unwrap();
         let job = ExportJob::from_record("unused".into(), 0, "".into(), 2, 1, "export.png");
 
-        let result = export_job_to_confirmed_replace(
-            &job, &destination, 0, 92, ExportFormat::Png,
-            &|_| anyhow::bail!("synthetic render failure"),
-        );
+        let result =
+            export_job_to_confirmed_replace(&job, &destination, 0, 92, ExportFormat::Png, &|_| {
+                anyhow::bail!("synthetic render failure")
+            });
 
         assert!(result.is_err());
         assert_eq!(std::fs::read(&destination).unwrap(), original);
@@ -901,20 +970,23 @@ mod tests {
             "pic-export-atomic-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
         ));
         std::fs::create_dir_all(&folder).unwrap();
         let destination = folder.join("export.png");
-        let job = ExportJob::from_record(
-            "unused".into(), 0, "".into(), 6, 4, "export.png",
-        );
-        let original = RgbaImage::from_fn(6, 4, |x, y| image::Rgba([
-            (x * 37) as u8, (y * 43) as u8, 120, (x * 31 + y * 17) as u8,
-        ]));
-        export_job_to(&job, &destination, 0, 92, ExportFormat::Png,
-            &|_| Ok(original.clone())).unwrap();
+        let job = ExportJob::from_record("unused".into(), 0, "".into(), 6, 4, "export.png");
+        let original = RgbaImage::from_fn(6, 4, |x, y| {
+            image::Rgba([(x * 37) as u8, (y * 43) as u8, 120, (x * 31 + y * 17) as u8])
+        });
+        export_job_to(&job, &destination, 0, 92, ExportFormat::Png, &|_| {
+            Ok(original.clone())
+        })
+        .unwrap();
         assert_eq!(image::open(&destination).unwrap().to_rgba8(), original);
-        let paths = std::fs::read_dir(&folder).unwrap()
+        let paths = std::fs::read_dir(&folder)
+            .unwrap()
             .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
             .collect::<Vec<_>>();
         assert_eq!(paths, vec!["export.png"]);
@@ -925,37 +997,74 @@ mod tests {
     fn exported_jpeg_has_correct_exif_dimensions_orientation_and_icc() {
         use image::ImageDecoder;
         let dir = std::env::temp_dir().join(format!(
-            "pic-export-exif-{}-{}", std::process::id(),
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
-                .unwrap().as_nanos(),
+            "pic-export-exif-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
         ));
         std::fs::create_dir_all(&dir).unwrap();
         let source = dir.join("source.png");
-        image::DynamicImage::ImageRgba8(
-            RgbaImage::from_pixel(50, 30, image::Rgba([120, 80, 50, 255]))
-        ).save(&source).unwrap();
+        image::DynamicImage::ImageRgba8(RgbaImage::from_pixel(
+            50,
+            30,
+            image::Rgba([120, 80, 50, 255]),
+        ))
+        .save(&source)
+        .unwrap();
         let job = ExportJob::from_record(
-            source.display().to_string(), 90, String::new(), 50, 30, "source.png"
+            source.display().to_string(),
+            90,
+            String::new(),
+            50,
+            30,
+            "source.png",
         );
         let destination = dir.join("out.jpg");
         export_job_to(&job, &destination, 0, 95, ExportFormat::Jpeg, &render_job).unwrap();
         let output = image::open(&destination).unwrap();
         assert_eq!((output.width(), output.height()), (30, 50));
-        let metadata = exif::Reader::new().read_from_container(
-            &mut std::io::BufReader::new(std::fs::File::open(&destination).unwrap())
-        ).unwrap();
-        assert_eq!(metadata.get_field(exif::Tag::Orientation, exif::In::PRIMARY)
-            .unwrap().value.get_uint(0), Some(1));
-        assert_eq!(metadata.get_field(exif::Tag::PixelXDimension, exif::In::PRIMARY)
-            .unwrap().value.get_uint(0), Some(30));
-        assert_eq!(metadata.get_field(exif::Tag::PixelYDimension, exif::In::PRIMARY)
-            .unwrap().value.get_uint(0), Some(50));
-        assert!(metadata.get_field(exif::Tag::GPSLatitude, exif::In::PRIMARY).is_none());
-        let mut decoder = image::codecs::jpeg::JpegDecoder::new(
-            std::io::BufReader::new(std::fs::File::open(&destination).unwrap())
-        ).unwrap();
-        assert!(decoder.icc_profile().unwrap().is_some(),
-            "exported JPEG must identify its output sRGB color space");
+        let metadata = exif::Reader::new()
+            .read_from_container(&mut std::io::BufReader::new(
+                std::fs::File::open(&destination).unwrap(),
+            ))
+            .unwrap();
+        assert_eq!(
+            metadata
+                .get_field(exif::Tag::Orientation, exif::In::PRIMARY)
+                .unwrap()
+                .value
+                .get_uint(0),
+            Some(1)
+        );
+        assert_eq!(
+            metadata
+                .get_field(exif::Tag::PixelXDimension, exif::In::PRIMARY)
+                .unwrap()
+                .value
+                .get_uint(0),
+            Some(30)
+        );
+        assert_eq!(
+            metadata
+                .get_field(exif::Tag::PixelYDimension, exif::In::PRIMARY)
+                .unwrap()
+                .value
+                .get_uint(0),
+            Some(50)
+        );
+        assert!(metadata
+            .get_field(exif::Tag::GPSLatitude, exif::In::PRIMARY)
+            .is_none());
+        let mut decoder = image::codecs::jpeg::JpegDecoder::new(std::io::BufReader::new(
+            std::fs::File::open(&destination).unwrap(),
+        ))
+        .unwrap();
+        assert!(
+            decoder.icc_profile().unwrap().is_some(),
+            "exported JPEG must identify its output sRGB color space"
+        );
         std::fs::remove_dir_all(dir).ok();
     }
 
@@ -967,8 +1076,10 @@ mod tests {
         let dir = std::env::temp_dir().join(format!(
             "pic-export-nef-metadata-{}-{}",
             std::process::id(),
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
-                .unwrap().as_nanos(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
         ));
         std::fs::create_dir_all(&dir).unwrap();
         let source = dir.join("sample.NEF");
@@ -994,7 +1105,12 @@ mod tests {
         std::fs::write(&source, &tiff).unwrap();
 
         let job = ExportJob::from_record(
-            source.display().to_string(), 90, String::new(), 20, 12, "sample.NEF",
+            source.display().to_string(),
+            90,
+            String::new(),
+            20,
+            12,
+            "sample.NEF",
         );
         let pixels = RgbaImage::from_pixel(12, 20, image::Rgba([75, 120, 180, 255]));
         for (format, suffix) in [
@@ -1003,18 +1119,25 @@ mod tests {
             (ExportFormat::Webp, "webp"),
         ] {
             let destination = dir.join(format!("output.{suffix}"));
-            export_job_to(&job, &destination, 0, 94, format, &|_| Ok(pixels.clone()))
-                .unwrap();
+            export_job_to(&job, &destination, 0, 94, format, &|_| Ok(pixels.clone())).unwrap();
             let saved = image::open(&destination).unwrap();
             assert_eq!((saved.width(), saved.height()), (12, 20), "{suffix}");
             let bytes = std::fs::read(&destination).unwrap();
-            assert!(bytes.windows(b"NIKON Z 5".len()).any(|w| w == b"NIKON Z 5"),
-                "{suffix} lost the camera model metadata");
-            assert!(bytes.windows(b"2026:10:18 12:34:56".len())
-                .any(|w| w == b"2026:10:18 12:34:56"),
-                "{suffix} lost the photo date metadata");
-            assert_eq!(std::fs::read(&source).unwrap(), tiff,
-                "{suffix} export modified the original");
+            assert!(
+                bytes.windows(b"NIKON Z 5".len()).any(|w| w == b"NIKON Z 5"),
+                "{suffix} lost the camera model metadata"
+            );
+            assert!(
+                bytes
+                    .windows(b"2026:10:18 12:34:56".len())
+                    .any(|w| w == b"2026:10:18 12:34:56"),
+                "{suffix} lost the photo date metadata"
+            );
+            assert_eq!(
+                std::fs::read(&source).unwrap(),
+                tiff,
+                "{suffix} export modified the original"
+            );
         }
         std::fs::remove_dir_all(dir).ok();
     }
@@ -1023,33 +1146,49 @@ mod tests {
     #[test]
     fn concurrent_exports_never_replace_the_first_completed_destination() {
         let dir = std::env::temp_dir().join(format!(
-            "pic-export-race-{}-{}", std::process::id(),
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
-                .unwrap().as_nanos(),
+            "pic-export-race-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
         ));
         std::fs::create_dir_all(&dir).unwrap();
         let dest = dir.join("same.png");
         let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
-        let handles = (0..2).map(|index| {
-            let destination = dest.clone();
-            let barrier = barrier.clone();
-            std::thread::spawn(move || {
-                let job = ExportJob::from_record(
-                    "unused".into(), 0, String::new(), 12, 10, "same.png"
-                );
-                export_job_to(&job, &destination, 0, 92, ExportFormat::Png, &|_| {
-                    barrier.wait(); // both pass the initial exists check
-                    Ok(RgbaImage::from_pixel(12, 10, image::Rgba([
-                        50 + (index * 80) as u8, 100, 150, 255
-                    ])))
+        let handles = (0..2)
+            .map(|index| {
+                let destination = dest.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    let job = ExportJob::from_record(
+                        "unused".into(),
+                        0,
+                        String::new(),
+                        12,
+                        10,
+                        "same.png",
+                    );
+                    export_job_to(&job, &destination, 0, 92, ExportFormat::Png, &|_| {
+                        barrier.wait(); // both pass the initial exists check
+                        Ok(RgbaImage::from_pixel(
+                            12,
+                            10,
+                            image::Rgba([50 + (index * 80) as u8, 100, 150, 255]),
+                        ))
+                    })
                 })
             })
-        }).collect::<Vec<_>>();
+            .collect::<Vec<_>>();
         let results: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
-        assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1,
-            "one concurrent export must fail instead of replacing the first");
+        assert_eq!(
+            results.iter().filter(|result| result.is_ok()).count(),
+            1,
+            "one concurrent export must fail instead of replacing the first"
+        );
         assert!(dest.exists());
-        let survivors = std::fs::read_dir(&dir).unwrap()
+        let survivors = std::fs::read_dir(&dir)
+            .unwrap()
             .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
             .collect::<Vec<_>>();
         assert_eq!(survivors, vec!["same.png"]);
@@ -1182,8 +1321,14 @@ mod tests {
         assert!(dir.join("same.png").is_file());
         assert!(dir.join("same_2.png").is_file());
         assert!(dir.join("other.png").is_file());
-        assert_eq!(image::open(dir.join("same.png")).unwrap().to_rgba8(), expected);
-        assert_eq!(image::open(dir.join("same_2.png")).unwrap().to_rgba8(), expected);
+        assert_eq!(
+            image::open(dir.join("same.png")).unwrap().to_rgba8(),
+            expected
+        );
+        assert_eq!(
+            image::open(dir.join("same_2.png")).unwrap().to_rgba8(),
+            expected
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -1322,26 +1467,30 @@ mod tests {
         use crate::edit::filters::FilterPreset;
         use crate::edit::model::{CropRect, OverlaySpec, TextLayerSpec};
         let dir = std::env::temp_dir().join(format!(
-            "pic-export-parity-{}-{}", std::process::id(),
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
-                .unwrap().as_nanos(),
+            "pic-export-parity-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
         ));
         std::fs::create_dir_all(&dir).unwrap();
         let source_path = dir.join("DSC_5791.png");
         let photo = RgbaImage::from_fn(128, 128, |x, y| {
-            image::Rgba([
-                (x * 2) as u8, (y * 2) as u8,
-                ((x + y) % 230) as u8, 255,
-            ])
+            image::Rgba([(x * 2) as u8, (y * 2) as u8, ((x + y) % 230) as u8, 255])
         });
-        image::DynamicImage::ImageRgba8(photo.clone()).save(&source_path).unwrap();
+        image::DynamicImage::ImageRgba8(photo.clone())
+            .save(&source_path)
+            .unwrap();
         let original_file = std::fs::read(&source_path).unwrap();
 
         // Use PIC's same managed overlay format, not an external path whose
         // disappearance would make Export silently omit an image layer.
         let logo = RgbaImage::from_pixel(16, 16, image::Rgba([225, 35, 60, 128]));
         let logo_file = dir.join("logo.png");
-        image::DynamicImage::ImageRgba8(logo).save(&logo_file).unwrap();
+        image::DynamicImage::ImageRgba8(logo)
+            .save(&logo_file)
+            .unwrap();
         let prepared = super::super::overlays::prepare_overlay_asset(&logo_file).unwrap();
         let overlay_dir = super::super::overlays::overlays_dir();
         std::fs::create_dir_all(&overlay_dir).unwrap();
@@ -1359,7 +1508,10 @@ mod tests {
         recipe.sharpen = 0.25;
         recipe.straighten = 3.0;
         recipe.crop = CropRect {
-            left: 0.13, top: 0.09, right: 0.9, bottom: 0.86,
+            left: 0.13,
+            top: 0.09,
+            right: 0.9,
+            bottom: 0.86,
         };
         let mut overlay = OverlaySpec::new_centered(prepared.hash);
         overlay.opacity = 0.6;
@@ -1368,21 +1520,28 @@ mod tests {
         recipe.text_layers.push(TextLayerSpec::new_default());
 
         let job = ExportJob::from_record(
-            source_path.display().to_string(), 90, recipe.encode(),
-            128, 128, "DSC_5791.png",
+            source_path.display().to_string(),
+            90,
+            recipe.encode(),
+            128,
+            128,
+            "DSC_5791.png",
         );
         let destination = dir.join("DSC_5791_edit.png");
-        export_job_to(&job, &destination, 0, 92, ExportFormat::Png, &render_job)
-            .unwrap();
+        export_job_to(&job, &destination, 0, 92, ExportFormat::Png, &render_job).unwrap();
 
         let expected = super::super::render::apply_recipe(
-            super::super::render::apply_library_rotation(photo, 90), &recipe,
+            super::super::render::apply_library_rotation(photo, 90),
+            &recipe,
         );
         let actual = image::open(&destination).unwrap().to_rgba8();
         assert_eq!(actual.dimensions(), expected.dimensions());
         assert_eq!(actual, expected, "lossless Export differs from Edit recipe");
-        assert_eq!(std::fs::read(&source_path).unwrap(), original_file,
-            "Export changed the original source file");
+        assert_eq!(
+            std::fs::read(&source_path).unwrap(),
+            original_file,
+            "Export changed the original source file"
+        );
 
         if created_logo {
             std::fs::remove_file(managed_logo).ok();
@@ -1406,15 +1565,17 @@ mod tests {
         let reference = std::env::var("PIC_TEST_EDIT_REFERENCE")
             .expect("set PIC_TEST_EDIT_REFERENCE to a local NEF/DNG original");
         let source = Path::new(&reference);
-        assert!(source.is_file(), "RAW original is not a readable local file");
+        assert!(
+            source.is_file(),
+            "RAW original is not a readable local file"
+        );
         let original = std::fs::read(source).unwrap();
         let original_hash = blake3::hash(&original);
         // Match the dimensions stored by library indexing and passed by the
         // gallery/Edit export callers. Zero-sized test bounds would miss a
         // possible downscale caused by stale or incorrect catalog geometry.
-        let (source_width, source_height) =
-            crate::thumbnail::dimensions(&reference, &original)
-                .expect("read native RAW dimensions");
+        let (source_width, source_height) = crate::thumbnail::dimensions(&reference, &original)
+            .expect("read native RAW dimensions");
         // Exercise Export as the first full-resolution consumer so the trace
         // proves a cold Export decodes the original, then warms the shared
         // source-frame cache for later full-size reads.
@@ -1442,14 +1603,9 @@ mod tests {
             full_export, full_reference,
             "full-size Export must match the native viewer source, not a cached thumbnail"
         );
-        let stale_catalog_export = super::super::render::render_for_export(
-            &reference,
-            0,
-            "",
-            640,
-            427,
-        )
-        .expect("stale thumbnail-sized catalog bounds must not limit RAW Export");
+        let stale_catalog_export =
+            super::super::render::render_for_export(&reference, 0, "", 640, 427)
+                .expect("stale thumbnail-sized catalog bounds must not limit RAW Export");
         assert_eq!(
             stale_catalog_export, full_reference,
             "RAW Export must retain full-size source pixels despite stale thumbnail-sized catalog dimensions"
@@ -1486,11 +1642,14 @@ mod tests {
             i64::from(source_height),
             "raw.NEF",
         );
-        let expected = render_job(&job)
-            .expect("RAW viewer decode and CPU Edit rendering must succeed");
-        assert!(expected.width().min(expected.height()) >= 1500,
+        let expected =
+            render_job(&job).expect("RAW viewer decode and CPU Edit rendering must succeed");
+        assert!(
+            expected.width().min(expected.height()) >= 1500,
             "RAW Export appears to have used a small thumbnail: {}x{}",
-            expected.width(), expected.height());
+            expected.width(),
+            expected.height()
+        );
 
         let edit_preview = super::super::render::render_for_viewer(
             &reference,
@@ -1513,8 +1672,10 @@ mod tests {
         let dir = std::env::temp_dir().join(format!(
             "pic-private-raw-export-{}-{}",
             std::process::id(),
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
-                .unwrap().as_nanos(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
         ));
         std::fs::create_dir_all(&dir).unwrap();
 
@@ -1526,46 +1687,89 @@ mod tests {
             let output = dir.join(format!("rendered.{extension}"));
             export_job_to(&job, &output, 0, 95, format, &render_job).unwrap();
             let actual = image::open(&output).unwrap().to_rgba8();
-            assert_eq!(actual.dimensions(), expected.dimensions(),
-                "{extension}: native Export dimensions differ from Edit");
+            assert_eq!(
+                actual.dimensions(),
+                expected.dimensions(),
+                "{extension}: native Export dimensions differ from Edit"
+            );
             if format != ExportFormat::Jpeg {
-                assert_eq!(actual, expected,
-                    "{extension}: lossless Export pixels differ from Edit");
+                assert_eq!(
+                    actual, expected,
+                    "{extension}: lossless Export pixels differ from Edit"
+                );
             } else {
                 // JPEG is lossy; bound average channel error to catch a
                 // mistakenly low-quality encode or colour-profile mismatch.
-                let sum: u64 = actual.pixels().zip(expected.pixels()).map(|(a, b)| {
-                    (0..3).map(|channel| u64::from(a[channel].abs_diff(b[channel])))
-                        .sum::<u64>()
-                }).sum();
+                let sum: u64 = actual
+                    .pixels()
+                    .zip(expected.pixels())
+                    .map(|(a, b)| {
+                        (0..3)
+                            .map(|channel| u64::from(a[channel].abs_diff(b[channel])))
+                            .sum::<u64>()
+                    })
+                    .sum();
                 let samples = u64::from(actual.width()) * u64::from(actual.height()) * 3;
                 let mean = sum as f64 / samples.max(1) as f64;
-                assert!(mean <= 8.0, "JPEG at quality 95 has mean RGB error {mean:.2}");
+                assert!(
+                    mean <= 8.0,
+                    "JPEG at quality 95 has mean RGB error {mean:.2}"
+                );
             }
 
             let mut file = std::io::BufReader::new(std::fs::File::open(&output).unwrap());
-            let exif = exif::Reader::new().read_from_container(&mut file)
+            let exif = exif::Reader::new()
+                .read_from_container(&mut file)
                 .expect("export must have parseable EXIF");
-            assert_eq!(exif.get_field(exif::Tag::Orientation, exif::In::PRIMARY)
-                .unwrap().value.get_uint(0), Some(1));
-            assert_eq!(exif.get_field(exif::Tag::PixelXDimension, exif::In::PRIMARY)
-                .unwrap().value.get_uint(0), Some(actual.width()));
-            assert_eq!(exif.get_field(exif::Tag::PixelYDimension, exif::In::PRIMARY)
-                .unwrap().value.get_uint(0), Some(actual.height()));
-            assert!(exif.get_field(exif::Tag::GPSLatitude, exif::In::PRIMARY).is_none());
-            assert!(exif.get_field(exif::Tag::GPSLongitude, exif::In::PRIMARY).is_none());
-            assert!(exif.get_field(exif::Tag::Artist, exif::In::PRIMARY).is_none());
-            assert!(exif.get_field(exif::Tag::Copyright, exif::In::PRIMARY).is_none());
+            assert_eq!(
+                exif.get_field(exif::Tag::Orientation, exif::In::PRIMARY)
+                    .unwrap()
+                    .value
+                    .get_uint(0),
+                Some(1)
+            );
+            assert_eq!(
+                exif.get_field(exif::Tag::PixelXDimension, exif::In::PRIMARY)
+                    .unwrap()
+                    .value
+                    .get_uint(0),
+                Some(actual.width())
+            );
+            assert_eq!(
+                exif.get_field(exif::Tag::PixelYDimension, exif::In::PRIMARY)
+                    .unwrap()
+                    .value
+                    .get_uint(0),
+                Some(actual.height())
+            );
+            assert!(exif
+                .get_field(exif::Tag::GPSLatitude, exif::In::PRIMARY)
+                .is_none());
+            assert!(exif
+                .get_field(exif::Tag::GPSLongitude, exif::In::PRIMARY)
+                .is_none());
+            assert!(exif
+                .get_field(exif::Tag::Artist, exif::In::PRIMARY)
+                .is_none());
+            assert!(exif
+                .get_field(exif::Tag::Copyright, exif::In::PRIMARY)
+                .is_none());
             if format == ExportFormat::Jpeg {
-                let mut decoder = image::codecs::jpeg::JpegDecoder::new(
-                    std::io::BufReader::new(std::fs::File::open(&output).unwrap())
-                ).unwrap();
-                assert!(decoder.icc_profile().unwrap().is_some(),
-                    "JPEG must include its output sRGB ICC profile");
+                let mut decoder = image::codecs::jpeg::JpegDecoder::new(std::io::BufReader::new(
+                    std::fs::File::open(&output).unwrap(),
+                ))
+                .unwrap();
+                assert!(
+                    decoder.icc_profile().unwrap().is_some(),
+                    "JPEG must include its output sRGB ICC profile"
+                );
             }
         }
-        assert_eq!(blake3::hash(&std::fs::read(source).unwrap()), original_hash,
-            "Export must never change the original RAW bytes");
+        assert_eq!(
+            blake3::hash(&std::fs::read(source).unwrap()),
+            original_hash,
+            "Export must never change the original RAW bytes"
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 

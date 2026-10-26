@@ -95,10 +95,15 @@ pub(super) fn apply_spacing(project: &mut CollageProject) {
         .map(|cached| geometry(project, &cached.nodes));
     if let Some(rectangles) = rectangles {
         write_rectangles(project, rectangles);
-        if std::env::var("PIC_COLLAGE_TRACE").ok().is_some_and(|v| v != "0") {
+        if std::env::var("PIC_COLLAGE_TRACE")
+            .ok()
+            .is_some_and(|v| v != "0")
+        {
             eprintln!(
                 "PIC_COLLAGE_TRACE spacing_topology=reused layout={:?} spacing={:.4} photos={}",
-                project.layout, project.spacing, project.items.len()
+                project.layout,
+                project.spacing,
+                project.items.len()
             );
         }
     } else {

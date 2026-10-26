@@ -13,10 +13,10 @@ use gtk4 as gtk;
 use crate::db::{Folder, Photo};
 use crate::photo_object::PhotoObject;
 
-mod photo_wall_layout;
-mod metadata_index;
 #[path = "grid/masonry_layout.rs"]
 mod masonry_layout;
+mod metadata_index;
+mod photo_wall_layout;
 #[cfg(test)]
 #[path = "grid/photo_wall_tests.rs"]
 mod photo_wall_tests;
@@ -226,10 +226,10 @@ mod zoom_ladder_tests {
 #[cfg(test)]
 mod folder_stream_tests {
     use super::{
-        folder_chunk_size, folder_dragged_positions, folder_line_height, folder_navigation_scope,
-        folder_section_plan, folder_selection_after_click, folder_virtual_row_matches,
-        collect_tiles, folder_virtual_rows, FolderCatalogEntry, FolderRowData, FolderRowKind, FolderTileBounds,
-        FolderVirtualRow, GroupRange,
+        collect_tiles, folder_chunk_size, folder_dragged_positions, folder_line_height,
+        folder_navigation_scope, folder_section_plan, folder_selection_after_click,
+        folder_virtual_row_matches, folder_virtual_rows, FolderCatalogEntry, FolderRowData,
+        FolderRowKind, FolderTileBounds, FolderVirtualRow, GroupRange,
     };
 
     #[test]
@@ -329,9 +329,8 @@ mod folder_stream_tests {
         }
 
         gtk::init().unwrap();
-        let _legacy_folder_list = LegacyFolderListGuard(
-            std::env::var_os("PICASA_LEGACY_FOLDER_LIST"),
-        );
+        let _legacy_folder_list =
+            LegacyFolderListGuard(std::env::var_os("PICASA_LEGACY_FOLDER_LIST"));
         std::env::set_var("PICASA_LEGACY_FOLDER_LIST", "1");
         let gallery = Gallery::new(
             &[],

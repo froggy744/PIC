@@ -1,8 +1,8 @@
 //! Application storage locations and migration from the former folder name.
 use std::{
+    collections::HashSet,
     fs, io,
     path::{Path, PathBuf},
-    collections::HashSet,
 };
 
 pub const APP_DIRECTORY: &str = "pic-rs";
@@ -175,7 +175,11 @@ fn check_conflicts_with_snapshot(
     if source.is_dir() && destination.is_dir() {
         for entry in fs::read_dir(source)? {
             let entry = entry?;
-            check_conflicts_with_snapshot(&entry.path(), &destination.join(entry.file_name()), discardable)?;
+            check_conflicts_with_snapshot(
+                &entry.path(),
+                &destination.join(entry.file_name()),
+                discardable,
+            )?;
         }
         return Ok(());
     }
@@ -430,7 +434,10 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(fs::read(new.join("library.db-wal")).unwrap(), b"important-wal");
+        assert_eq!(
+            fs::read(new.join("library.db-wal")).unwrap(),
+            b"important-wal"
+        );
         assert!(!old.join("library.db-wal").exists());
     }
 
@@ -499,7 +506,10 @@ mod tests {
 
         assert!(move_directory(&old, &new).is_err());
         assert_eq!(fs::read(old.join("library.db-wal")).unwrap(), b"old-wal");
-        assert_eq!(fs::read(new.join("library.db-wal")).unwrap(), b"current-wal");
+        assert_eq!(
+            fs::read(new.join("library.db-wal")).unwrap(),
+            b"current-wal"
+        );
     }
 
     #[test]

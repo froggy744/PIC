@@ -10,8 +10,8 @@ use rusqlite::Connection;
 
 use super::filters::FilterPreset;
 use super::live_gpu::{
-    EditRendererMode, LiveGpuCanvas, gpu_base_recipe, gpu_tone_supported,
-    gpu_tone_supported_for_view,
+    gpu_base_recipe, gpu_tone_supported, gpu_tone_supported_for_view, EditRendererMode,
+    LiveGpuCanvas,
 };
 use super::model::{
     CropRect, EditRecipe, EditSession, OverlayAnchor, OverlaySpec, TextAlign, TextLayerSpec,
@@ -282,7 +282,10 @@ pub fn build(
     toolbar_actions.append(&history_group);
     append_action_separator();
 
-    let reset = toolbar_icon_button("document-revert-symbolic", "Reset all edits to the original");
+    let reset = toolbar_icon_button(
+        "document-revert-symbolic",
+        "Reset all edits to the original",
+    );
     toolbar_actions.append(&reset);
 
     let export = toolbar_icon_button(
@@ -662,8 +665,7 @@ pub fn build(
             } else {
                 // Match GtkPicture's ContentFit::Contain in Fit mode. The
                 // manual zoom baseline includes a margin; Fit itself does not.
-                (width / dimensions.0.max(1) as f64)
-                    .min(height / dimensions.1.max(1) as f64)
+                (width / dimensions.0.max(1) as f64).min(height / dimensions.1.max(1) as f64)
             };
             let device_scale = widget_device_scale(gpu_canvas.widget().upcast_ref());
             let physical_scale = if native_one_to_one.get() {
@@ -689,9 +691,7 @@ pub fn build(
     } else {
         Rc::new(|| {})
     };
-    let last_canvas_scale = Rc::new(Cell::new(widget_device_scale(
-        picture_scroll.upcast_ref(),
-    )));
+    let last_canvas_scale = Rc::new(Cell::new(widget_device_scale(picture_scroll.upcast_ref())));
     {
         let sync_gpu_view = sync_gpu_view.clone();
         let picture = picture.clone();
@@ -854,7 +854,9 @@ pub fn build(
     let auto_color = gtk::ToggleButton::with_label("Auto Colour");
     let auto_brightness = gtk::ToggleButton::with_label("Auto Brightness");
     let auto_enhance = gtk::ToggleButton::with_label("Auto Enhance");
-    auto_enhance.set_tooltip_text(Some("Recover low-light detail while protecting portraits and highlights"));
+    auto_enhance.set_tooltip_text(Some(
+        "Recover low-light detail while protecting portraits and highlights",
+    ));
     auto_enhance.set_hexpand(true);
     auto_contrast.set_hexpand(true);
     auto_color.set_hexpand(true);
@@ -867,7 +869,14 @@ pub fn build(
 
     // Consistent with preset intensity controls: 100% is the existing full
     // look, 0% leaves the creative filter unapplied. Manual tools stay intact.
-    let filter_amount = add_slider(&filters_box, "Filter / Quick Fix Amount (%)", 0.0, 100.0, 1.0, 0);
+    let filter_amount = add_slider(
+        &filters_box,
+        "Filter / Quick Fix Amount (%)",
+        0.0,
+        100.0,
+        1.0,
+        0,
+    );
     filter_amount.set_tooltip_text(Some("Shared intensity for enabled Quick Fixes and creative filters (0–100%). Manual adjustments stay unchanged."));
 
     add_section_label(&filters_box, "FILTERS");
@@ -887,9 +896,9 @@ pub fn build(
     let filter_effects = FilterTileEffect::all();
     let gpu_tile_enabled = renderer_mode == EditRendererMode::Gpu
         && gpu_canvas.is_some()
-        && filter_effects.iter().all(|effect| {
-            gpu_tone_supported(&effect.recipe(&session.borrow().recipe))
-        });
+        && filter_effects
+            .iter()
+            .all(|effect| gpu_tone_supported(&effect.recipe(&session.borrow().recipe)));
     let mut black_white = None;
     let mut sepia = None;
     for effect in filter_effects {
@@ -1020,7 +1029,9 @@ pub fn build(
     smooth.set_tooltip_text(Some("Soften fine texture while preserving strong edges"));
     let grain = add_slider(&detail_box, "Grain", 0.0, 1.0, 0.02, 2);
     let vignette = add_slider(&detail_box, "Vignette", -1.0, 1.0, 0.02, 2);
-    vignette.set_tooltip_text(Some("Drag left to lighten photo edges, right to darken them; the centre is neutral"));
+    vignette.set_tooltip_text(Some(
+        "Drag left to lighten photo edges, right to darken them; the centre is neutral",
+    ));
     // Make the existing left=light/right=dark behaviour discoverable.
     // The CPU renderer already implements this sign convention.
     let vignette_direction = gtk::Box::new(gtk::Orientation::Horizontal, 8);
@@ -1078,9 +1089,14 @@ pub fn build(
             let pictures = filter_pictures.clone();
             let started = Rc::new(Cell::new(false));
             Rc::new(move || {
-                if started.replace(true) { return; }
+                if started.replace(true) {
+                    return;
+                }
                 queue_cpu_filter_thumbnails(
-                    path.clone(), rotation, recipe.clone(), pictures.clone(),
+                    path.clone(),
+                    rotation,
+                    recipe.clone(),
+                    pictures.clone(),
                 );
             })
         };
@@ -1089,7 +1105,8 @@ pub fn build(
         } else {
             // One broken GL tile switches the *entire* filter picker back to
             // its CPU Picture widgets, rather than leaving a mixed grid.
-            let tile_areas = filter_gpu_tiles.iter()
+            let tile_areas = filter_gpu_tiles
+                .iter()
                 .map(|(_, canvas)| canvas.widget().downgrade())
                 .collect::<Vec<_>>();
             for (_, canvas) in &filter_gpu_tiles {
@@ -1098,7 +1115,9 @@ pub fn build(
                 // Weak GLArea refs avoid creating a canvas/state callback cycle.
                 canvas.set_failure_handler(move || {
                     for area in &areas {
-                        if let Some(area) = area.upgrade() { area.set_visible(false); }
+                        if let Some(area) = area.upgrade() {
+                            area.set_visible(false);
+                        }
                     }
                     fallback();
                 });
@@ -1107,10 +1126,12 @@ pub fn build(
             let decode_path = path.clone();
             std::thread::spawn(move || {
                 let image = super::render::decode_base_for_viewer(
-                    &decode_path, 0,
+                    &decode_path,
+                    0,
                     FILTER_TILE_PREVIEW_WIDTH as u32 * FILTER_TILE_SUPERSAMPLE,
                     FILTER_TILE_PREVIEW_HEIGHT as u32 * FILTER_TILE_SUPERSAMPLE,
-                ).map(|image| (image.width(), image.height(), image.into_raw()));
+                )
+                .map(|image| (image.width(), image.height(), image.into_raw()));
                 let _ = sender.send(image);
             });
             glib::timeout_add_local(Duration::from_millis(25), move || {
@@ -1120,18 +1141,18 @@ pub fn build(
                         for (effect, canvas) in &filter_gpu_tiles {
                             let tile_recipe = effect.recipe(&recipe);
                             canvas.set_source(
-                                &path, 0, &tile_recipe,
-                                width as i32, height as i32, bytes.clone(),
+                                &path,
+                                0,
+                                &tile_recipe,
+                                width as i32,
+                                height as i32,
+                                bytes.clone(),
                             );
                             let (out_w, out_h) = canvas
-                                .set_untransformed_geometry_for_rotation(
-                                    rotation, &tile_recipe,
-                                )
+                                .set_untransformed_geometry_for_rotation(rotation, &tile_recipe)
                                 .unwrap_or((width as i32, height as i32));
                             canvas.set_recipe(&tile_recipe);
-                            canvas.set_thumbnail_cover(
-                                out_w, out_h, FILTER_TILE_PREVIEW_WIDTH,
-                            );
+                            canvas.set_thumbnail_cover(out_w, out_h, FILTER_TILE_PREVIEW_WIDTH);
                         }
                         if std::env::var_os("PICASA_TRACE").is_some() {
                             eprintln!(
@@ -1376,10 +1397,11 @@ pub fn build(
                                                     height as i32,
                                                     bytes.clone(),
                                                 );
-                                                gpu_dimensions = gpu_canvas.set_untransformed_geometry_for_rotation(
-                                                    rotation,
-                                                    &gpu_recipe,
-                                                );
+                                                gpu_dimensions = gpu_canvas
+                                                    .set_untransformed_geometry_for_rotation(
+                                                        rotation,
+                                                        &gpu_recipe,
+                                                    );
                                                 gpu_canvas.set_recipe(&gpu_recipe);
                                                 if std::env::var_os("PICASA_TRACE").is_some() {
                                                     eprintln!(
@@ -1400,8 +1422,8 @@ pub fn build(
                                         // The GL framebuffer still uses the full decoded source;
                                         // GtkPicture and the scroller use the GPU crop/rotation
                                         // output dimensions, not the raw texture dimensions.
-                                        let display_dimensions = gpu_dimensions
-                                            .unwrap_or((width as i32, height as i32));
+                                        let display_dimensions =
+                                            gpu_dimensions.unwrap_or((width as i32, height as i32));
                                         preview_dimensions.set(display_dimensions);
                                         sync_gpu_view();
                                         if std::env::var_os("PICASA_TRACE").is_some() {
@@ -1506,14 +1528,12 @@ pub fn build(
             if let Some(gpu_canvas) = &gpu_canvas {
                 if !gpu_failed.get()
                     && gpu_tone_supported_for_view(
-                        &recipe, native_one_to_one.get(), active_rotation.get(),
+                        &recipe,
+                        native_one_to_one.get(),
+                        active_rotation.get(),
                     )
                 {
-                    if gpu_canvas.has_source_for(
-                        &photo.path(),
-                        active_rotation.get(),
-                        &recipe,
-                    ) {
+                    if gpu_canvas.has_source_for(&photo.path(), active_rotation.get(), &recipe) {
                         if let Some(source) = preview_debounce.borrow_mut().take() {
                             source.remove();
                         }
@@ -1522,24 +1542,30 @@ pub fn build(
                         busy.set_visible(false);
                         let old_dimensions = preview_dimensions.get();
                         let display_dimensions = gpu_canvas
-                            .set_untransformed_geometry_for_rotation(
-                                active_rotation.get(), &recipe,
-                            )
+                            .set_untransformed_geometry_for_rotation(active_rotation.get(), &recipe)
                             .unwrap_or(old_dimensions);
                         preview_dimensions.set(display_dimensions);
                         if native_one_to_one.get() {
                             let anchor = pending_one_to_one_anchor.borrow_mut().take();
                             if native_preview_needs_reanchor(
-                                old_dimensions, display_dimensions, anchor.is_some(),
+                                old_dimensions,
+                                display_dimensions,
+                                anchor.is_some(),
                             ) {
                                 apply_native_preview_layout(
-                                    &picture, &picture_scroll, display_dimensions,
-                                    anchor, native_one_to_one.clone(),
+                                    &picture,
+                                    &picture_scroll,
+                                    display_dimensions,
+                                    anchor,
+                                    native_one_to_one.clone(),
                                 );
                             }
                         } else if old_dimensions != display_dimensions {
                             apply_canvas_zoom(
-                                &picture, &picture_scroll, display_dimensions, canvas_zoom.get(),
+                                &picture,
+                                &picture_scroll,
+                                display_dimensions,
+                                canvas_zoom.get(),
                             );
                         }
                         picture.set_opacity(0.0);
@@ -1643,13 +1669,21 @@ pub fn build(
     );
     connect_scale(
         &controls.whites,
-        session.clone(), syncing.clone(), queue_preview.clone(), update_history_buttons.clone(),
-        0.0, |r, v| r.whites = v,
+        session.clone(),
+        syncing.clone(),
+        queue_preview.clone(),
+        update_history_buttons.clone(),
+        0.0,
+        |r, v| r.whites = v,
     );
     connect_scale(
         &controls.blacks,
-        session.clone(), syncing.clone(), queue_preview.clone(), update_history_buttons.clone(),
-        0.0, |r, v| r.blacks = v,
+        session.clone(),
+        syncing.clone(),
+        queue_preview.clone(),
+        update_history_buttons.clone(),
+        0.0,
+        |r, v| r.blacks = v,
     );
     connect_scale(
         &controls.temperature,
@@ -1662,8 +1696,12 @@ pub fn build(
     );
     connect_scale(
         &controls.tint,
-        session.clone(), syncing.clone(), queue_preview.clone(), update_history_buttons.clone(),
-        0.0, |r, v| r.tint = v,
+        session.clone(),
+        syncing.clone(),
+        queue_preview.clone(),
+        update_history_buttons.clone(),
+        0.0,
+        |r, v| r.tint = v,
     );
     connect_scale(
         &controls.saturation,
@@ -1676,8 +1714,12 @@ pub fn build(
     );
     connect_scale(
         &controls.vibrance,
-        session.clone(), syncing.clone(), queue_preview.clone(), update_history_buttons.clone(),
-        0.0, |r, v| r.vibrance = v,
+        session.clone(),
+        syncing.clone(),
+        queue_preview.clone(),
+        update_history_buttons.clone(),
+        0.0,
+        |r, v| r.vibrance = v,
     );
     connect_scale(
         &controls.sharpen,
@@ -1699,8 +1741,12 @@ pub fn build(
     );
     connect_scale(
         &controls.smooth,
-        session.clone(), syncing.clone(), queue_preview.clone(), update_history_buttons.clone(),
-        0.0, |r, v| r.smooth = v,
+        session.clone(),
+        syncing.clone(),
+        queue_preview.clone(),
+        update_history_buttons.clone(),
+        0.0,
+        |r, v| r.smooth = v,
     );
     connect_scale(
         &controls.grain,
@@ -1713,8 +1759,12 @@ pub fn build(
     );
     connect_scale(
         &controls.vignette,
-        session.clone(), syncing.clone(), queue_preview.clone(), update_history_buttons.clone(),
-        0.0, |r, v| r.vignette = v,
+        session.clone(),
+        syncing.clone(),
+        queue_preview.clone(),
+        update_history_buttons.clone(),
+        0.0,
+        |r, v| r.vignette = v,
     );
 
     connect_scale(
@@ -1748,7 +1798,10 @@ pub fn build(
     connect_toggle(
         &controls.auto_brightness,
         &controls.filter_amount,
-        session.clone(), syncing.clone(), queue_preview.clone(), update_history_buttons.clone(),
+        session.clone(),
+        syncing.clone(),
+        queue_preview.clone(),
+        update_history_buttons.clone(),
         |r, v| r.auto_brightness = v,
     );
     connect_toggle(
@@ -1812,9 +1865,7 @@ pub fn build(
                 filter_amount_scale.set_value(100.0);
                 syncing.set(false);
             }
-            filter_amount_scale.set_sensitive(
-                session.borrow().recipe.has_adjustable_effect()
-            );
+            filter_amount_scale.set_sensitive(session.borrow().recipe.has_adjustable_effect());
             update_history_buttons();
             queue_preview();
         });
@@ -1868,9 +1919,7 @@ pub fn build(
                 filter_amount_scale.set_value(100.0);
                 syncing.set(false);
             }
-            filter_amount_scale.set_sensitive(
-                session.borrow().recipe.has_adjustable_effect()
-            );
+            filter_amount_scale.set_sensitive(session.borrow().recipe.has_adjustable_effect());
             update_history_buttons();
             queue_preview();
         });
@@ -1925,9 +1974,7 @@ pub fn build(
             syncing.set(true);
             filter_amount_scale.set_value(100.0);
             syncing.set(false);
-            filter_amount_scale.set_sensitive(
-                session.borrow().recipe.has_adjustable_effect()
-            );
+            filter_amount_scale.set_sensitive(session.borrow().recipe.has_adjustable_effect());
             update_history_buttons();
             queue_preview();
         });
@@ -2425,8 +2472,7 @@ pub fn build(
                 if std::env::var_os("PICASA_TRACE").is_some() {
                     eprintln!(
                         "PIC_EDIT_1TO1 state enabled=true anchor_cursor={} dims={:?}",
-                        cursor_anchor,
-                        dimensions,
+                        cursor_anchor, dimensions,
                     );
                 }
                 queue_preview();
@@ -2449,7 +2495,7 @@ pub fn build(
     let set_library_rotation_action: Rc<dyn Fn(i32)> = {
         let active_rotation = active_rotation.clone();
         let session = session.clone();
-        let update_history_buttons=update_history_buttons.clone();
+        let update_history_buttons = update_history_buttons.clone();
         let native_one_to_one = native_one_to_one.clone();
         let pending_one_to_one_anchor = pending_one_to_one_anchor.clone();
         let canvas_zoom = canvas_zoom.clone();
@@ -2459,10 +2505,12 @@ pub fn build(
         let preview_dimensions = preview_dimensions.clone();
         let queue_preview = queue_preview.clone();
         Rc::new(move |rotation| {
-            let rotation=rotation.rem_euclid(360);
-            let delta=(rotation-active_rotation.get()).rem_euclid(360);
-            if delta!=0 {
-                session.borrow_mut().mutate(|recipe| super::model::remap_drawings_for_rotation(&mut recipe.drawings,delta));
+            let rotation = rotation.rem_euclid(360);
+            let delta = (rotation - active_rotation.get()).rem_euclid(360);
+            if delta != 0 {
+                session.borrow_mut().mutate(|recipe| {
+                    super::model::remap_drawings_for_rotation(&mut recipe.drawings, delta)
+                });
                 update_history_buttons();
             }
             active_rotation.set(rotation);
@@ -2520,9 +2568,13 @@ pub fn build(
             let child = *pending_crop.borrow();
             let changed = !child.is_full();
             if changed {
-                let (width,height)=preview_dimensions.get();
+                let (width, height) = preview_dimensions.get();
                 session.borrow_mut().mutate(|recipe| {
-                    super::model::remap_drawings_for_crop(&mut recipe.drawings, child, (width.max(1) as u32,height.max(1) as u32));
+                    super::model::remap_drawings_for_crop(
+                        &mut recipe.drawings,
+                        child,
+                        (width.max(1) as u32, height.max(1) as u32),
+                    );
                     recipe.crop = recipe.crop.compose(child);
                 });
             }
@@ -2574,7 +2626,8 @@ pub fn build(
                 crop_overlay.set_visible(true);
                 crop_overlay.queue_draw();
                 apply_crop_button.set_label("Apply Crop");
-                apply_crop_button.set_tooltip_text(Some("Commit the crop and leave selection mode"));
+                apply_crop_button
+                    .set_tooltip_text(Some("Commit the crop and leave selection mode"));
             } else {
                 apply_crop();
                 overlay_layer.set_visible(true);
@@ -2660,14 +2713,18 @@ pub fn build(
         let landscape = landscape.clone();
         let queue_preview = queue_preview.clone();
         let update_history_buttons = update_history_buttons.clone();
-        let preview_dimensions=preview_dimensions.clone();
+        let preview_dimensions = preview_dimensions.clone();
         reset_crop.connect_clicked(move |_| {
-            let prior_crop=session.borrow().recipe.crop;
+            let prior_crop = session.borrow().recipe.crop;
             let had_crop = !prior_crop.is_full();
             if had_crop {
-                let (width,height)=preview_dimensions.get();
+                let (width, height) = preview_dimensions.get();
                 session.borrow_mut().mutate(|recipe| {
-                    super::model::remap_drawings_for_uncrop(&mut recipe.drawings,prior_crop,(width.max(1) as u32,height.max(1) as u32));
+                    super::model::remap_drawings_for_uncrop(
+                        &mut recipe.drawings,
+                        prior_crop,
+                        (width.max(1) as u32, height.max(1) as u32),
+                    );
                     recipe.crop = CropRect::default();
                 });
             }
@@ -2711,23 +2768,19 @@ pub fn build(
         let draw_toggle = draw_toggle.clone();
         let key = gtk::EventControllerKey::new();
         key.set_propagation_phase(gtk::PropagationPhase::Capture);
-        key.connect_key_pressed(move |_, key, _, _| {
-            match key {
-                gtk::gdk::Key::Return | gtk::gdk::Key::KP_Enter
-                    if crop_overlay.is_visible() =>
-                {
-                    apply_crop();
-                    glib::Propagation::Stop
-                }
-                gtk::gdk::Key::Escape => {
-                    if draw_toggle.is_active() {
-                        return glib::Propagation::Proceed;
-                    }
-                    escape_action();
-                    glib::Propagation::Stop
-                }
-                _ => glib::Propagation::Proceed,
+        key.connect_key_pressed(move |_, key, _, _| match key {
+            gtk::gdk::Key::Return | gtk::gdk::Key::KP_Enter if crop_overlay.is_visible() => {
+                apply_crop();
+                glib::Propagation::Stop
             }
+            gtk::gdk::Key::Escape => {
+                if draw_toggle.is_active() {
+                    return glib::Propagation::Proceed;
+                }
+                escape_action();
+                glib::Propagation::Stop
+            }
+            _ => glib::Propagation::Proceed,
         });
         root.add_controller(key);
     }
@@ -2766,8 +2819,9 @@ pub fn build(
             let in_crop = crop_overlay.is_visible();
             overlay_layer.set_visible(!in_crop);
             let recipe = session.borrow();
-            let enable = !draw_toggle_for_input.is_active() && (overlays_toggle.is_active() && !recipe.recipe.overlays.is_empty()
-                || text_toggle.is_active() && !recipe.recipe.text_layers.is_empty())
+            let enable = !draw_toggle_for_input.is_active()
+                && (overlays_toggle.is_active() && !recipe.recipe.overlays.is_empty()
+                    || text_toggle.is_active() && !recipe.recipe.text_layers.is_empty())
                 && !in_crop;
             drop(recipe);
             overlay_layer.set_can_target(enable);
@@ -2856,7 +2910,10 @@ pub fn build(
     {
         let update_draw_canvas = update_draw_canvas.clone();
         let update_canvas_input = update_canvas_input.clone();
-        draw_toggle.connect_toggled(move |_| { update_draw_canvas(); update_canvas_input(); });
+        draw_toggle.connect_toggled(move |_| {
+            update_draw_canvas();
+            update_canvas_input();
+        });
     }
     update_draw_canvas();
 
@@ -3019,8 +3076,10 @@ mod panel_tests {
         assert!((session.recipe.exposure - 0.40).abs() < 0.0001);
         assert!(session.undo(), "filter selection must be undoable");
         assert_eq!(session.recipe.filter, FilterPreset::None);
-        assert_eq!(session.recipe.filter_amount, 0.25,
-            "Undo restores the old slider amount with the prior filter");
+        assert_eq!(
+            session.recipe.filter_amount, 0.25,
+            "Undo restores the old slider amount with the prior filter"
+        );
         assert!(session.redo());
         assert_eq!(session.recipe.filter_amount, 1.0);
         // B&W, Sepia and Original use the same reset helper as named filters.
@@ -3044,7 +3103,10 @@ mod panel_tests {
         assert_eq!(none.filter, FilterPreset::None);
         assert!(!none.black_white);
         assert!(!none.sepia);
-        assert_eq!(none.filter_amount, 1.0, "Picker previews must show full style");
+        assert_eq!(
+            none.filter_amount, 1.0,
+            "Picker previews must show full style"
+        );
         assert_eq!(sepia.filter_amount, 1.0);
         assert!((none.exposure - 0.4).abs() < 0.001);
         assert!((none.saturation - 0.2).abs() < 0.001);
@@ -3066,14 +3128,14 @@ mod panel_tests {
     fn gpu_filter_tiles_share_the_live_shaders_for_supported_presets() {
         let recipe = EditRecipe::default();
         assert_eq!(FilterTileEffect::all().len(), FilterPreset::ALL.len() + 3);
-        assert!(FilterTileEffect::all().iter().all(|effect| {
-            gpu_tone_supported(&effect.recipe(&recipe))
-        }));
+        assert!(FilterTileEffect::all()
+            .iter()
+            .all(|effect| { gpu_tone_supported(&effect.recipe(&recipe)) }));
         let mut with_auto = recipe.clone();
         with_auto.auto_color = true;
-        assert!(FilterTileEffect::all().iter().any(|effect| {
-            !gpu_tone_supported(&effect.recipe(&with_auto))
-        }));
+        assert!(FilterTileEffect::all()
+            .iter()
+            .any(|effect| { !gpu_tone_supported(&effect.recipe(&with_auto)) }));
     }
 
     #[test]
@@ -3084,7 +3146,10 @@ mod panel_tests {
 
     #[test]
     fn filter_thumbnail_renderer_builds_every_quick_look() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/screenshots/rc/photo wall sidebar hidden.jpg");
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/screenshots/rc/photo wall sidebar hidden.jpg"
+        );
         let thumbnails = render_filter_thumbnails(path, 0, &EditRecipe::default()).unwrap();
 
         assert_eq!(thumbnails.len(), FilterPreset::ALL.len() + 3);
@@ -3158,7 +3223,13 @@ mod panel_tests {
         );
         let parent = gtk::Window::new();
         let photo: crate::photo_object::PhotoObject = glib::Object::new();
-        photo.set_path(concat!(env!("CARGO_MANIFEST_DIR"), "/screenshots/rc/photo wall sidebar hidden.jpg").to_string());
+        photo.set_path(
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/screenshots/rc/photo wall sidebar hidden.jpg"
+            )
+            .to_string(),
+        );
         let editor = build(
             &parent,
             Rc::new(RefCell::new(Connection::open_in_memory().unwrap())),

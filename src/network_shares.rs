@@ -35,31 +35,58 @@ pub(crate) struct ScanVisitor<'a> {
 /// A callback must never unwind across the native ABI. False asks the native
 /// iterator to stop; callers also use it for cancellation/backpressure.
 pub(crate) extern "C" fn receive_scan_entry(
-    context: *mut std::ffi::c_void, name: *const std::ffi::c_char,
-    kind: u32, size: u64, mtime: i64, attributes: i32,
+    context: *mut std::ffi::c_void,
+    name: *const std::ffi::c_char,
+    kind: u32,
+    size: u64,
+    mtime: i64,
+    attributes: i32,
 ) -> i32 {
-    if context.is_null() || name.is_null() { return -1; }
+    if context.is_null() || name.is_null() {
+        return -1;
+    }
     let context = unsafe { &mut *(context as *mut ScanVisitor<'_>) };
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let name = unsafe { std::ffi::CStr::from_ptr(name) }.to_string_lossy().into_owned();
-        if name == "." || name == ".." { return true; }
+        let name = unsafe { std::ffi::CStr::from_ptr(name) }
+            .to_string_lossy()
+            .into_owned();
+        if name == "." || name == ".." {
+            return true;
+        }
         let is_dir = kind == 7;
-        if !is_dir && !(kind == 8 && crate::image_format::supported(std::path::Path::new(&name))) { return true; }
+        if !is_dir && !(kind == 8 && crate::image_format::supported(std::path::Path::new(&name))) {
+            return true;
+        }
         let mut encoded = String::new();
         for byte in name.bytes() {
-            if byte.is_ascii_alphanumeric() || b"-._~()".contains(&byte) { encoded.push(byte as char); }
-            else { encoded.push_str(&format!("%{byte:02X}")); }
+            if byte.is_ascii_alphanumeric() || b"-._~()".contains(&byte) {
+                encoded.push(byte as char);
+            } else {
+                encoded.push_str(&format!("%{byte:02X}"));
+            }
         }
         let uri = format!("{}/{}", context.parent.trim_end_matches('/'), encoded);
         (context.visitor)(ScanEntry {
-            entry: Entry { name, uri, is_dir, server: String::new() },
-            metadata: (attributes != 0).then_some(Metadata {size,mtime:Some(mtime),is_dir}),
+            entry: Entry {
+                name,
+                uri,
+                is_dir,
+                server: String::new(),
+            },
+            metadata: (attributes != 0).then_some(Metadata {
+                size,
+                mtime: Some(mtime),
+                is_dir,
+            }),
         })
     }));
     match result {
         Ok(true) => 0,
         Ok(false) => 1,
-        Err(_) => { context.panicked = true; -1 }
+        Err(_) => {
+            context.panicked = true;
+            -1
+        }
     }
 }
 
@@ -68,15 +95,21 @@ pub fn visit_scan(uri: &str, visitor: &mut dyn FnMut(ScanEntry) -> bool) -> Resu
     let routed = resolved_uri(uri);
     let mut preserve_host = |mut record: ScanEntry| {
         if routed != uri {
-            if let (Some((host, _)), Some((_, range))) = (uri_host(uri), uri_host(&record.entry.uri)) {
+            if let (Some((host, _)), Some((_, range))) =
+                (uri_host(uri), uri_host(&record.entry.uri))
+            {
                 record.entry.uri = replace_host(&record.entry.uri, range, host.to_owned());
             }
         }
         visitor(record)
     };
-    if uri.starts_with("nfs://") { crate::private_nfs::visit_scan(&routed, &mut preserve_host) }
-    else if uri.starts_with("smb://") { crate::private_smb::visit_scan(&routed, &mut preserve_host) }
-    else { anyhow::bail!("Not a direct SMB/NFS URI: {uri}") }
+    if uri.starts_with("nfs://") {
+        crate::private_nfs::visit_scan(&routed, &mut preserve_host)
+    } else if uri.starts_with("smb://") {
+        crate::private_smb::visit_scan(&routed, &mut preserve_host)
+    } else {
+        anyhow::bail!("Not a direct SMB/NFS URI: {uri}")
+    }
 }
 
 #[cfg(test)]
@@ -85,20 +118,47 @@ mod scan_callback_tests {
     #[test]
     fn streaming_callback_preserves_attributes_and_honors_stop() {
         let mut records = Vec::new();
-        let mut visitor = |record| { records.push(record); false };
-        let mut context = ScanVisitor {parent:"nfs://nas/photos",visitor:&mut visitor,panicked:false};
+        let mut visitor = |record| {
+            records.push(record);
+            false
+        };
+        let mut context = ScanVisitor {
+            parent: "nfs://nas/photos",
+            visitor: &mut visitor,
+            panicked: false,
+        };
         let name = std::ffi::CString::new("A #1.jpg").unwrap();
-        assert_eq!(receive_scan_entry(&mut context as *mut _ as *mut _,name.as_ptr(),8,1234,1700000000,1),1);
-        assert_eq!(records[0].entry.uri,"nfs://nas/photos/A%20%231.jpg");
-        assert_eq!(records[0].metadata.as_ref().unwrap().size,1234);
-        assert_eq!(records[0].metadata.as_ref().unwrap().mtime,Some(1700000000));
+        assert_eq!(
+            receive_scan_entry(
+                &mut context as *mut _ as *mut _,
+                name.as_ptr(),
+                8,
+                1234,
+                1700000000,
+                1
+            ),
+            1
+        );
+        assert_eq!(records[0].entry.uri, "nfs://nas/photos/A%20%231.jpg");
+        assert_eq!(records[0].metadata.as_ref().unwrap().size, 1234);
+        assert_eq!(
+            records[0].metadata.as_ref().unwrap().mtime,
+            Some(1700000000)
+        );
     }
     #[test]
     fn callback_panic_does_not_cross_native_boundary() {
         let mut visitor = |_| -> bool { panic!("callback failure") };
-        let mut context = ScanVisitor {parent:"nfs://nas/photos",visitor:&mut visitor,panicked:false};
+        let mut context = ScanVisitor {
+            parent: "nfs://nas/photos",
+            visitor: &mut visitor,
+            panicked: false,
+        };
         let name = std::ffi::CString::new("a.jpg").unwrap();
-        assert_eq!(receive_scan_entry(&mut context as *mut _ as *mut _,name.as_ptr(),8,0,0,0),-1);
+        assert_eq!(
+            receive_scan_entry(&mut context as *mut _ as *mut _, name.as_ptr(), 8, 0, 0, 0),
+            -1
+        );
         assert!(context.panicked);
     }
 }
@@ -296,7 +356,7 @@ pub fn discover() -> Result<Vec<Entry>> {
             .map(|v| v.to_string())
             .unwrap_or_else(|| iterator.child(&info).uri().to_string());
         if private(&uri) {
-entries.push(Entry {
+            entries.push(Entry {
                 name: info.display_name().to_string(),
                 uri,
                 is_dir: true,
@@ -329,8 +389,16 @@ pub fn scan_subnet() -> Result<Vec<Entry>> {
         match listed {
             Ok(children) => {
                 for mut entry in children {
-                    if entry.server.is_empty() { entry.server = server.clone(); }
-                    trace("SCAN", format!("host={host} server={server} share={} uri={}", entry.name, entry.uri));
+                    if entry.server.is_empty() {
+                        entry.server = server.clone();
+                    }
+                    trace(
+                        "SCAN",
+                        format!(
+                            "host={host} server={server} share={} uri={}",
+                            entry.name, entry.uri
+                        ),
+                    );
                     if seen.insert(entry.uri.clone()) {
                         entries.push(entry);
                     }
@@ -370,8 +438,13 @@ mod tests {
     #[ignore = "live network scan"]
     fn live_scan_subnet_finds_shares() {
         let entries = scan_subnet().expect("subnet scan should run");
-        assert!(!entries.is_empty(), "expected at least one share on the local subnet");
-        assert!(entries.iter().any(|entry| entry.uri.starts_with("smb://") || entry.uri.starts_with("nfs://")));
+        assert!(
+            !entries.is_empty(),
+            "expected at least one share on the local subnet"
+        );
+        assert!(entries
+            .iter()
+            .any(|entry| entry.uri.starts_with("smb://") || entry.uri.starts_with("nfs://")));
     }
 
     #[test]
@@ -405,13 +478,18 @@ mod tests {
     #[test]
     fn nfs_uris_use_the_private_direct_transport() {
         assert!(private("nfs://10.0.0.1/mnt/4TBP"));
-        assert_eq!(normalize_input("nfs://10.0.0.1/mnt/4TBP"),
-                   Some("nfs://10.0.0.1/mnt/4TBP".into()));
+        assert_eq!(
+            normalize_input("nfs://10.0.0.1/mnt/4TBP"),
+            Some("nfs://10.0.0.1/mnt/4TBP".into())
+        );
     }
 
     #[test]
     fn normalizes_typed_addresses_to_canonical_smb_uris() {
-        assert_eq!(normalize_input("Ella.local"), Some("smb://Ella.local/".into()));
+        assert_eq!(
+            normalize_input("Ella.local"),
+            Some("smb://Ella.local/".into())
+        );
         assert_eq!(
             normalize_input("Ella.local/Documents/2025"),
             Some("smb://Ella.local/Documents/2025".into())
@@ -420,12 +498,18 @@ mod tests {
             normalize_input(r"\\Ella.local\Documents\2025"),
             Some("smb://Ella.local/Documents/2025".into())
         );
-        assert_eq!(normalize_input("10.0.0.119"), Some("smb://10.0.0.119/".into()));
+        assert_eq!(
+            normalize_input("10.0.0.119"),
+            Some("smb://10.0.0.119/".into())
+        );
         assert_eq!(
             normalize_input("smb://DietPi.local:445/Photos"),
             Some("smb://DietPi.local:445/Photos".into())
         );
-        assert_eq!(normalize_input("nfs://10.0.0.2/export"), Some("nfs://10.0.0.2/export".into()));
+        assert_eq!(
+            normalize_input("nfs://10.0.0.2/export"),
+            Some("nfs://10.0.0.2/export".into())
+        );
         assert_eq!(normalize_input(""), None);
         assert_eq!(normalize_input("/home/peet/photos"), None);
         assert_eq!(normalize_input("https://example.com/share"), None);

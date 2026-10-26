@@ -332,9 +332,7 @@ fn validate_render_target() -> Result<(), String> {
         gl::Uniform1i(gl::GetUniformLocation(program, c"s".as_ptr()), 0);
         gl::DrawArrays(gl::TRIANGLES, 0, 3);
         let mut pixels = [0.0f32; 16];
-        gl::ReadPixels(
-            0, 0, 2, 2, gl::RGBA, gl::FLOAT, pixels.as_mut_ptr().cast(),
-        );
+        gl::ReadPixels(0, 0, 2, 2, gl::RGBA, gl::FLOAT, pixels.as_mut_ptr().cast());
         let gl_error = gl::GetError();
         gl::BindFramebuffer(gl::FRAMEBUFFER, previous_framebuffer as u32);
         gl::Viewport(
@@ -1671,9 +1669,7 @@ fn fail(area: &gtk::GLArea, state: &Rc<RefCell<GpuState>>, message: String) {
             state.renderer_mode,
         )
     };
-    if renderer_mode == EditRendererMode::Auto
-        && !message.starts_with("source dimensions ")
-    {
+    if renderer_mode == EditRendererMode::Auto && !message.starts_with("source dimensions ") {
         cache_auto_gpu_failure(message.clone());
     }
     if hide_canvas {
@@ -3671,11 +3667,15 @@ mod tests {
         auto_contrast.auto_color = true;
         assert!(gpu_tone_supported(&auto_contrast));
         auto_contrast.filter_amount = 0.5;
-        assert!(!gpu_tone_supported(&auto_contrast),
-            "partial-strength Auto Colour/Contrast must use CPU for export parity");
+        assert!(
+            !gpu_tone_supported(&auto_contrast),
+            "partial-strength Auto Colour/Contrast must use CPU for export parity"
+        );
         auto_contrast.filter_amount = 1.0;
-        assert!(gpu_tone_supported(&auto_contrast),
-            "full-strength Quick Fixes retain the established GPU path");
+        assert!(
+            gpu_tone_supported(&auto_contrast),
+            "full-strength Quick Fixes retain the established GPU path"
+        );
         auto_contrast.auto_brightness = true;
         assert!(!gpu_tone_supported(&auto_contrast));
         auto_contrast.auto_brightness = false;
@@ -5045,7 +5045,10 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
         let padded_view = padded_view.expect("padded GPU viewport should render");
-        assert_eq!(padded_view[3], 0, "uncovered GLArea background is transparent");
+        assert_eq!(
+            padded_view[3], 0,
+            "uncovered GLArea background is transparent"
+        );
         let center = ((16 * 48 + 24) * 4) + 3;
         assert_eq!(padded_view[center], 255, "photo pixels remain opaque");
 

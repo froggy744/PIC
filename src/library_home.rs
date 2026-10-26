@@ -139,7 +139,10 @@ impl LibraryHome {
             ("image-x-generic-symbolic", "All Photos"),
             ("emblem-favorite-symbolic", "Favourites"),
             ("folder-symbolic", "Folders"),
-        ].into_iter().enumerate() {
+        ]
+        .into_iter()
+        .enumerate()
+        {
             if index > 0 {
                 summary.append(&gtk::Separator::new(gtk::Orientation::Vertical));
             }
@@ -221,10 +224,7 @@ impl LibraryHome {
             section.append(&heading);
             section.append(&scroller);
             content.append(&section);
-            sections.push(HomeSection {
-                scroller,
-                track,
-            });
+            sections.push(HomeSection { scroller, track });
         }
         let status = gtk::Label::new(Some("Loading library…"));
         status.add_css_class("dim-label");
@@ -309,7 +309,10 @@ impl LibraryHome {
 
     pub fn reload(&self, database: std::path::PathBuf) {
         self.database.replace(database.clone());
-        let request = HomeRequest { database, force: true };
+        let request = HomeRequest {
+            database,
+            force: true,
+        };
         self.pending.set(true);
         if self.requests.try_send(request).is_err() {
             self.pending.set(false);
@@ -332,7 +335,9 @@ fn wire_scroll_buttons(scroller: &gtk::ScrolledWindow, prev: &gtk::Button, next:
             let start = hadj.value();
             let step = (hadj.page_size() * 0.75).max(160.0);
             let end = (start + direction * step).clamp(lower, upper);
-            if (end - start).abs() < 0.5 { return; }
+            if (end - start).abs() < 0.5 {
+                return;
+            }
             let sequence = generation.get().wrapping_add(1);
             generation.set(sequence);
             let begun = std::time::Instant::now();

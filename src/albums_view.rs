@@ -235,14 +235,28 @@ mod tests {
 
     fn save_album_snapshot(window: &gtk::Window, path: &Path) {
         let id = std::process::Command::new("xdotool")
-            .args(["search", "--onlyvisible", "--name", "^PIC Cover Flow Wheel Validation$"])
-            .output().expect("find the actual GTK test window");
+            .args([
+                "search",
+                "--onlyvisible",
+                "--name",
+                "^PIC Cover Flow Wheel Validation$",
+            ])
+            .output()
+            .expect("find the actual GTK test window");
         assert!(id.status.success(), "could not find the live GTK window");
-        let id = String::from_utf8_lossy(&id.stdout).lines().last().unwrap().to_owned();
+        let id = String::from_utf8_lossy(&id.stdout)
+            .lines()
+            .last()
+            .unwrap()
+            .to_owned();
         let capture = std::process::Command::new("import")
-            .args(["-window", &id, path.to_str().unwrap()]).status()
+            .args(["-window", &id, path.to_str().unwrap()])
+            .status()
             .expect("capture the actual GTK window, including its GLArea");
-        assert!(capture.success(), "ImageMagick could not capture the GTK window");
+        assert!(
+            capture.success(),
+            "ImageMagick could not capture the GTK window"
+        );
         assert!(window.width() > 0);
     }
 
@@ -266,7 +280,10 @@ mod tests {
         settings::set_bookshelf_enabled(&connection.borrow(), false).unwrap();
         let frame_root = crate::css::resolve_runtime_dir(Path::new(ALBUM_COVER_THEME_DIRECTORY));
         let frames = album_frame_paths_in(&frame_root);
-        assert!(!frames.is_empty(), "shipped album cover frames are required");
+        assert!(
+            !frames.is_empty(),
+            "shipped album cover frames are required"
+        );
 
         let mut albums = Vec::new();
         for (index, frame_path) in frames.iter().enumerate() {
@@ -276,8 +293,8 @@ mod tests {
                 "cover frame must retain transparent artwork: {}",
                 frame_path.display()
             );
-            let album = db::create_album(&connection.borrow(), &format!("Cover {:02}", index + 1))
-                .unwrap();
+            let album =
+                db::create_album(&connection.borrow(), &format!("Cover {:02}", index + 1)).unwrap();
             let relative_frame = frame_path.strip_prefix(&frame_root).unwrap();
             db::set_album_cover_frame(
                 &connection.borrow(),
@@ -386,7 +403,10 @@ mod tests {
             if let Some(root) = screenshot_root.as_ref() {
                 save_album_snapshot(
                     &window,
-                    &root.join(format!("{}-background-off.png", sanitize_component(&theme.id))),
+                    &root.join(format!(
+                        "{}-background-off.png",
+                        sanitize_component(&theme.id)
+                    )),
                 );
             }
 
@@ -405,12 +425,14 @@ mod tests {
             if let Some(root) = screenshot_root.as_ref() {
                 save_album_snapshot(
                     &window,
-                    &root.join(format!("{}-background-on.png", sanitize_component(&theme.id))),
+                    &root.join(format!(
+                        "{}-background-on.png",
+                        sanitize_component(&theme.id)
+                    )),
                 );
             }
             assert_eq!(
-                with_background,
-                without_background,
+                with_background, without_background,
                 "bookshelf toggle changed cover dimensions/opening geometry for theme {}",
                 theme.id
             );
@@ -801,7 +823,10 @@ mod tests {
             "row_height=300\nsurface_y=246\n",
         )
         .unwrap();
-        assert_eq!(bookshelf_theme_geometry(&directory, &directory.join("row.png")), (300, 246));
+        assert_eq!(
+            bookshelf_theme_geometry(&directory, &directory.join("row.png")),
+            (300, 246)
+        );
         std::fs::remove_dir_all(directory).unwrap();
     }
 
@@ -813,16 +838,19 @@ mod tests {
         // states where its drawn shelf edge is; a packaging slip that loses the
         // file has to be visible as missing geometry, not as a silent page-wide
         // default that puts every cover a few pixels off the drawn board.
-        assert!(themes.iter().all(|theme|
-            theme.kind == BookshelfThemeKind::Row
-                && theme.image_path
+        assert!(themes
+            .iter()
+            .all(|theme| theme.kind == BookshelfThemeKind::Row
+                && theme
+                    .image_path
                     .parent()
                     .map(|directory| directory.join("theme.conf"))
-                    .is_some_and(|conf| conf.is_file())
-        ));
+                    .is_some_and(|conf| conf.is_file())));
         // Covers stand on the board, so the pinned line always sits inside the
         // row, above the underside of the board the artwork draws.
-        assert!(themes.iter().all(|theme| theme.surface_y > 0 && theme.surface_y < theme.row_height));
+        assert!(themes
+            .iter()
+            .all(|theme| theme.surface_y > 0 && theme.surface_y < theme.row_height));
         // The pinned numbers are measured at each artwork's own front edge, so
         // a shipped board that is re-cropped or re-exported shows up here.
         for (id, surface_y) in [
@@ -834,7 +862,9 @@ mod tests {
             ("shelf", 227),
             ("single", 247),
         ] {
-            assert!(themes.iter().any(|theme| theme.id == id && theme.surface_y == surface_y));
+            assert!(themes
+                .iter()
+                .any(|theme| theme.id == id && theme.surface_y == surface_y));
         }
     }
 
@@ -853,27 +883,34 @@ mod tests {
         // Book spines are one colour per column, so no row above the shelf is
         // flat across the width and no row changes brightness. The board below
         // is flat across the whole width, and its top edge spans the width.
-        let pixels: Vec<u8> = (0_usize..height).flat_map(|row| {
-            (0_usize..width).map(|column| {
-                let spine = if row < surface {
-                    40_usize + (column * 7_usize) % 180_usize
-                } else {
-                    200_usize
-                };
-                [spine as u8, spine as u8, spine as u8, 255_usize as u8]
-            }).flatten().collect::<Vec<u8>>()
-        }).collect();
+        let pixels: Vec<u8> = (0_usize..height)
+            .flat_map(|row| {
+                (0_usize..width)
+                    .map(|column| {
+                        let spine = if row < surface {
+                            40_usize + (column * 7_usize) % 180_usize
+                        } else {
+                            200_usize
+                        };
+                        [spine as u8, spine as u8, spine as u8, 255_usize as u8]
+                    })
+                    .flatten()
+                    .collect::<Vec<u8>>()
+            })
+            .collect();
         let artwork = directory.join("row.png");
         let Ok(mut file) = std::fs::File::create(&artwork) else {
             panic!("could not write the test artwork");
         };
         use image::ImageEncoder;
-        image::codecs::png::PngEncoder::new(&mut file).write_image(
-            &pixels,
-            width as u32,
-            height as u32,
-            image::ExtendedColorType::Rgba8,
-        ).unwrap();
+        image::codecs::png::PngEncoder::new(&mut file)
+            .write_image(
+                &pixels,
+                width as u32,
+                height as u32,
+                image::ExtendedColorType::Rgba8,
+            )
+            .unwrap();
 
         let (row_height, surface_y) = bookshelf_theme_geometry(&directory, &artwork);
         assert_eq!((row_height, surface_y), (BOOKSHELF_ROW_HEIGHT, 230));
@@ -923,7 +960,10 @@ mod tests {
             album_cover_photo(&connection, &album, &photos).map(|photo| photo.id),
             Some(2)
         );
-        assert_eq!(automatic_album_cover_photo(&photos).map(|photo| photo.id), None);
+        assert_eq!(
+            automatic_album_cover_photo(&photos).map(|photo| photo.id),
+            None
+        );
 
         // A chosen photo still resolves when it is not an album member.
         db::set_album_cover_photo(&connection, album.id, 3).unwrap();
@@ -982,8 +1022,14 @@ mod tests {
         let mut customized = album;
         customized.cover_frame = frame_identifier(root, &frames[custom]);
 
-        assert_eq!(selected_frame_index(&customized, root, &frames, 0), Some(custom));
-        assert_eq!(automatic_frame_index(&customized, root, &frames, 0), Some(automatic));
+        assert_eq!(
+            selected_frame_index(&customized, root, &frames, 0),
+            Some(custom)
+        );
+        assert_eq!(
+            automatic_frame_index(&customized, root, &frames, 0),
+            Some(automatic)
+        );
     }
 
     #[test]
@@ -1281,12 +1327,23 @@ mod tests {
     #[test]
     fn responsive_bookshelf_geometry_keeps_cover_bottoms_on_the_surface() {
         let theme = BookshelfTheme {
-            id: "test".into(), image_path: PathBuf::new(), kind: BookshelfThemeKind::Row,
-            row_height: 288, surface_y: 235, reflection_strength: 0,
+            id: "test".into(),
+            image_path: PathBuf::new(),
+            kind: BookshelfThemeKind::Row,
+            row_height: 288,
+            surface_y: 235,
+            reflection_strength: 0,
         };
         for (cover_height, expected_top) in [(91, 144), (137, 98), (186, 49)] {
             let (_, top) = bookshelf_card_position(
-                850, 240, 240, 3, 0, cover_height, &theme, BookshelfCoverPreset::Standard,
+                850,
+                240,
+                240,
+                3,
+                0,
+                cover_height,
+                &theme,
+                BookshelfCoverPreset::Standard,
             );
             assert_eq!(top, expected_top as f64);
             assert_eq!(top + cover_height as f64, 235.0);
@@ -1311,8 +1368,26 @@ mod tests {
         let themes = bookshelf_themes_in(Path::new(BOOKSHELF_THEME_DIRECTORY));
         assert!(!themes.is_empty());
         for theme in &themes {
-            let narrow = bookshelf_card_position(850, 240, 240, 3, 0, 149, theme, BookshelfCoverPreset::Standard);
-            let wide = bookshelf_card_position(1920, 240, 240, 6, 0, 149, theme, BookshelfCoverPreset::Standard);
+            let narrow = bookshelf_card_position(
+                850,
+                240,
+                240,
+                3,
+                0,
+                149,
+                theme,
+                BookshelfCoverPreset::Standard,
+            );
+            let wide = bookshelf_card_position(
+                1920,
+                240,
+                240,
+                6,
+                0,
+                149,
+                theme,
+                BookshelfCoverPreset::Standard,
+            );
             assert_eq!(narrow.1 + 149.0, theme.surface_y as f64);
             assert_eq!(wide.1 + 149.0, theme.surface_y as f64);
             assert_ne!(narrow.0, wide.0);
@@ -1332,9 +1407,29 @@ mod tests {
     #[test]
     fn bookshelf_card_position_centers_a_fixed_cover_in_its_slot() {
         let theme = bookshelf_themes_in(Path::new(BOOKSHELF_THEME_DIRECTORY))
-            .into_iter().find(|theme| theme.id == "darkwood").unwrap();
-        let first = bookshelf_card_position(1120, 240, 200, 4, 0, 149, &theme, BookshelfCoverPreset::Standard);
-        let next = bookshelf_card_position(1120, 240, 200, 4, 1, 149, &theme, BookshelfCoverPreset::Standard);
+            .into_iter()
+            .find(|theme| theme.id == "darkwood")
+            .unwrap();
+        let first = bookshelf_card_position(
+            1120,
+            240,
+            200,
+            4,
+            0,
+            149,
+            &theme,
+            BookshelfCoverPreset::Standard,
+        );
+        let next = bookshelf_card_position(
+            1120,
+            240,
+            200,
+            4,
+            1,
+            149,
+            &theme,
+            BookshelfCoverPreset::Standard,
+        );
         assert_eq!(next.0 - first.0, 264.0);
         assert_eq!(first.1 + 149.0, 225.0);
     }
@@ -1632,10 +1727,16 @@ mod tests {
         image::RgbImage::from_pixel(32, 32, image::Rgb([230, 12, 18]))
             .save(&chosen_path)
             .unwrap();
-        connection.borrow().execute(
-            "INSERT INTO photos (id, path) VALUES (1, ?1), (2, ?2)",
-            rusqlite::params![automatic_path.to_string_lossy(), chosen_path.to_string_lossy()],
-        ).unwrap();
+        connection
+            .borrow()
+            .execute(
+                "INSERT INTO photos (id, path) VALUES (1, ?1), (2, ?2)",
+                rusqlite::params![
+                    automatic_path.to_string_lossy(),
+                    chosen_path.to_string_lossy()
+                ],
+            )
+            .unwrap();
         // Photo 2 is only the chosen cover; it never joined the album.
         db::set_album_cover_photo(&connection.borrow(), album.id, 2).unwrap();
 
@@ -1654,7 +1755,10 @@ mod tests {
             .child(&view)
             .build();
         window.present();
-        for layout in [settings::AlbumLayout::Grid, settings::AlbumLayout::Bookshelf] {
+        for layout in [
+            settings::AlbumLayout::Grid,
+            settings::AlbumLayout::Bookshelf,
+        ] {
             settings::set_album_layout(&connection.borrow(), layout).unwrap();
             let albums = db::albums(&connection.borrow()).unwrap();
             refresh(
@@ -1694,7 +1798,8 @@ mod tests {
         let flow_photos = db::browse_photos_in_album(&connection.borrow(), flow_album.id, None)
             .unwrap_or_default();
         assert_eq!(
-            album_cover_photo(&connection.borrow(), &flow_album, &flow_photos).map(|photo| photo.id),
+            album_cover_photo(&connection.borrow(), &flow_album, &flow_photos)
+                .map(|photo| photo.id),
             Some(2)
         );
         let node = album_flow_node(&flow_state, &flow_album);
@@ -2012,8 +2117,7 @@ mod tests {
                 assert!((count_color.red() - 58.0 / 255.0).abs() < 0.01);
                 assert!((count_color.green() - 33.0 / 255.0).abs() < 0.01);
                 assert!((count_color.blue() - 15.0 / 255.0).abs() < 0.01);
-                let theme = bookshelf_theme(&connection.borrow())
-                .unwrap();
+                let theme = bookshelf_theme(&connection.borrow()).unwrap();
                 let row = button
                     .ancestor(gtk::Overlay::static_type())
                     .unwrap()
@@ -2106,7 +2210,14 @@ mod tests {
                 &index.to_string(),
             )
             .unwrap();
-            refresh(&view, &albums, connection.clone(), 136, Rc::new(|_| {}), Rc::new(|| {}));
+            refresh(
+                &view,
+                &albums,
+                connection.clone(),
+                136,
+                Rc::new(|_| {}),
+                Rc::new(|| {}),
+            );
             settle_gtk_layout();
             let rows = find_descendant_with_css_class(view.upcast_ref(), "albums-bookshelf-scene")
                 .unwrap();
@@ -2125,14 +2236,25 @@ mod tests {
                 theme.surface_y
             );
         }
-        let rows = find_descendant_with_css_class(view.upcast_ref(), "albums-bookshelf-scene")
-            .unwrap();
-        let before = rows.compute_point(&view, &gtk::graphene::Point::new(0.0, 0.0)).unwrap().y();
+        let rows =
+            find_descendant_with_css_class(view.upcast_ref(), "albums-bookshelf-scene").unwrap();
+        let before = rows
+            .compute_point(&view, &gtk::graphene::Point::new(0.0, 0.0))
+            .unwrap()
+            .y();
         let adjustment = view.vadjustment();
-        adjustment.set_value((adjustment.value() + 50.0).min(adjustment.upper() - adjustment.page_size()));
+        adjustment.set_value(
+            (adjustment.value() + 50.0).min(adjustment.upper() - adjustment.page_size()),
+        );
         settle_gtk_layout();
-        let after = rows.compute_point(&view, &gtk::graphene::Point::new(0.0, 0.0)).unwrap().y();
-        assert!((after - before).abs() >= 49.0, "shelf rows must scroll with their artwork");
+        let after = rows
+            .compute_point(&view, &gtk::graphene::Point::new(0.0, 0.0))
+            .unwrap()
+            .y();
+        assert!(
+            (after - before).abs() >= 49.0,
+            "shelf rows must scroll with their artwork"
+        );
 
         refresh(
             &view,
@@ -2505,7 +2627,9 @@ mod tests {
         );
         let screenshot_dir = std::env::temp_dir().join("pic-coverflow-gui-validation");
         std::fs::create_dir_all(&screenshot_dir).unwrap();
-        let app = adw::Application::builder().application_id("io.pic.CoverflowRegression").build();
+        let app = adw::Application::builder()
+            .application_id("io.pic.CoverflowRegression")
+            .build();
         app.register(None::<&gio::Cancellable>).unwrap();
         let full_app = std::env::var_os("PIC_COVERFLOW_FULL_APP").is_some();
         let window = if full_app {
@@ -2514,20 +2638,28 @@ mod tests {
             let window = crate::window::build(&app, db::open(&path).unwrap());
             window.set_title(Some("PIC Cover Flow Wheel Validation"));
             window.upcast::<gtk::Window>()
-        } else { gtk::Window::builder()
-            .title("PIC Cover Flow Wheel Validation")
-            .decorated(false)
-            .default_width(1200)
-            .default_height(850)
-            .child(&view)
-            .build() };
+        } else {
+            gtk::Window::builder()
+                .title("PIC Cover Flow Wheel Validation")
+                .decorated(false)
+                .default_width(1200)
+                .default_height(850)
+                .child(&view)
+                .build()
+        };
         window.present();
         settle_gtk_layout();
         settle_gtk_layout();
         let view = if full_app {
-            let grid = find_descendant_with_css_class(window.upcast_ref(), "albums-home-grid").unwrap();
-            grid.ancestor(gtk::ScrolledWindow::static_type()).unwrap().downcast::<gtk::ScrolledWindow>().unwrap()
-        } else { view };
+            let grid =
+                find_descendant_with_css_class(window.upcast_ref(), "albums-home-grid").unwrap();
+            grid.ancestor(gtk::ScrolledWindow::static_type())
+                .unwrap()
+                .downcast::<gtk::ScrolledWindow>()
+                .unwrap()
+        } else {
+            view
+        };
         let layout = find_descendant_with_css_class(view.upcast_ref(), "albums-layout")
             .unwrap()
             .downcast::<gtk::DropDown>()
@@ -2584,7 +2716,10 @@ mod tests {
                 .args(["getwindowgeometry", "--shell", &window_id])
                 .output()
                 .expect("get GTK window screen origin");
-            assert!(geometry.status.success(), "could not get GTK window geometry");
+            assert!(
+                geometry.status.success(),
+                "could not get GTK window geometry"
+            );
             let geometry = String::from_utf8_lossy(&geometry.stdout);
             let origin = |key: &str| -> i32 {
                 geometry
@@ -2596,19 +2731,34 @@ mod tests {
             let screen_x = origin("X=") + x.get();
             let screen_y = origin("Y=") + y.get();
             let output = std::process::Command::new("xdotool")
-                .args(["mousemove", "--sync", &screen_x.to_string(), &screen_y.to_string()])
+                .args([
+                    "mousemove",
+                    "--sync",
+                    &screen_x.to_string(),
+                    &screen_y.to_string(),
+                ])
                 .output()
                 .expect("position pointer over Cover Flow");
-            assert!(output.status.success(), "xdotool pointer positioning failed");
+            assert!(
+                output.status.success(),
+                "xdotool pointer positioning failed"
+            );
             let location = std::process::Command::new("xdotool")
                 .args(["getmouselocation", "--shell"])
                 .output()
                 .expect("verify pointer location");
-            assert!(location.status.success(), "xdotool could not report pointer location");
+            assert!(
+                location.status.success(),
+                "xdotool could not report pointer location"
+            );
             let location = String::from_utf8_lossy(&location.stdout);
             eprintln!(
                 "Cover Flow pointer widget=({}, {}) screen=({}, {}) actual=[{}]",
-                x.get(), y.get(), screen_x, screen_y, location.trim().replace('\n', " ")
+                x.get(),
+                y.get(),
+                screen_x,
+                screen_y,
+                location.trim().replace('\n', " ")
             );
             assert!(location.lines().any(|line| line == format!("X={screen_x}")));
             assert!(location.lines().any(|line| line == format!("Y={screen_y}")));
@@ -2662,7 +2812,11 @@ mod tests {
                 &screenshot_dir.join(format!("focus-{}.png", char::from(b'A' + index))),
             );
         }
-        assert_eq!(name.text().as_str(), "Album H", "wheel stops at the final album");
+        assert_eq!(
+            name.text().as_str(),
+            "Album H",
+            "wheel stops at the final album"
+        );
         for index in (0..7).rev() {
             wheel("4");
             let expected = format!("Album {}", char::from(b'A' + index));
@@ -2701,7 +2855,10 @@ mod tests {
         save_album_snapshot(&window, &screenshot_dir.join("04-focus-a-narrow.png"));
         // Exercise the same event path when the parent scroller has overflow.
         assert!(std::process::Command::new("xdotool")
-            .args(["windowsize", &window_id, "760", "480"]).status().unwrap().success());
+            .args(["windowsize", &window_id, "760", "480"])
+            .status()
+            .unwrap()
+            .success());
         settle_gtk_layout();
         settle_gtk_layout();
         view.vadjustment().set_value(0.0);
@@ -2711,11 +2868,22 @@ mod tests {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
         loop {
             let bounds = flow.compute_bounds(&window).unwrap();
-            let picked = window.pick((bounds.x() + bounds.width() / 2.0) as f64,
-                (bounds.y() + 160.0) as f64, gtk::PickFlags::DEFAULT);
-            if picked.as_ref().is_some_and(|w| *w == flow || w.is_ancestor(&flow)) { break; }
+            let picked = window.pick(
+                (bounds.x() + bounds.width() / 2.0) as f64,
+                (bounds.y() + 160.0) as f64,
+                gtk::PickFlags::DEFAULT,
+            );
+            if picked
+                .as_ref()
+                .is_some_and(|w| *w == flow || w.is_ancestor(&flow))
+            {
+                break;
+            }
             if std::time::Instant::now() >= deadline {
-                panic!("responsive sidebar still intercepts gallery pointer: {:?}", picked.map(|w| w.type_().name()));
+                panic!(
+                    "responsive sidebar still intercepts gallery pointer: {:?}",
+                    picked.map(|w| w.type_().name())
+                );
             }
             settle_gtk_layout();
         }
@@ -2724,7 +2892,11 @@ mod tests {
         y.set((bounds.y() + 160.0) as i32);
         save_album_snapshot(&window, &screenshot_dir.join("short-before-wheel.png"));
         wheel("5");
-        assert_eq!(name.text().as_str(), "Album B", "wheel must navigate in a short, overflowing page");
+        assert_eq!(
+            name.text().as_str(),
+            "Album B",
+            "wheel must navigate in a short, overflowing page"
+        );
         wheel("4");
         assert_eq!(name.text().as_str(), "Album A");
         x.set((bounds.x() + bounds.width() * 0.8) as i32);
@@ -2733,7 +2905,11 @@ mod tests {
         x.set((bounds.x() + 12.0) as i32);
         y.set((bounds.y() + 12.0) as i32);
         wheel("4");
-        assert_eq!(name.text().as_str(), "Album A", "wheel over empty background");
+        assert_eq!(
+            name.text().as_str(),
+            "Album A",
+            "wheel over empty background"
+        );
         wheel("4");
         assert_eq!(name.text().as_str(), "Album A", "first boundary");
         window.close();

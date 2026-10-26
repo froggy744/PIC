@@ -28,7 +28,9 @@ impl CoverFlow {
     pub fn new(root: &gtk::Fixed) -> Self {
         let canvas = crate::coverflow::CoverflowGlArea::new("screensaver-coverflow-canvas", 1);
         canvas.widget().add_css_class("coverflow-album-style");
-        canvas.widget().add_css_class("screensaver-coverflow-canvas");
+        canvas
+            .widget()
+            .add_css_class("screensaver-coverflow-canvas");
         root.put(canvas.widget(), 0.0, 0.0);
         Self {
             canvas,

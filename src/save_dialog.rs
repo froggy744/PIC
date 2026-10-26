@@ -47,9 +47,10 @@ pub fn choose_export_save_path(
 fn name_with_extension(name: &str, extension: Option<&str>) -> String {
     let path = Path::new(name);
     match extension {
-        Some(extension) if path.extension().is_none() => {
-            path.with_extension(extension).to_string_lossy().into_owned()
-        }
+        Some(extension) if path.extension().is_none() => path
+            .with_extension(extension)
+            .to_string_lossy()
+            .into_owned(),
         _ => name.to_string(),
     }
 }
@@ -70,7 +71,10 @@ mod tests {
     #[test]
     fn picker_filename_adds_only_a_missing_extension() {
         assert_eq!(name_with_extension("collage", Some("jpg")), "collage.jpg");
-        assert_eq!(name_with_extension("collage.png", Some("jpg")), "collage.png");
+        assert_eq!(
+            name_with_extension("collage.png", Some("jpg")),
+            "collage.png"
+        );
         assert_eq!(name_with_extension("collage", None), "collage");
     }
 

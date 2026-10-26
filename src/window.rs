@@ -13,9 +13,9 @@ use rusqlite::Connection;
 use crate::albums_view;
 use crate::{db, grid, infobar::InfoBar, lightbox::Lightbox, scanner, sidebar};
 
+mod metadata_panel;
 mod onboarding;
 mod photo_layout;
-mod metadata_panel;
 use photo_layout::{clear_saved_layouts, restore_section_layout, save_section_layout};
 
 mod layout_settle;
@@ -356,7 +356,10 @@ mod session_restore_tests {
     #[test]
     fn every_sidebar_destination_has_a_stable_setting() {
         assert_eq!(sidebar_filter_setting(SidebarFilter::All), "all");
-        assert_eq!(sidebar_filter_setting(SidebarFilter::Favorites), "favorites");
+        assert_eq!(
+            sidebar_filter_setting(SidebarFilter::Favorites),
+            "favorites"
+        );
         assert_eq!(sidebar_filter_setting(SidebarFilter::Ratings), "ratings");
         assert_eq!(sidebar_filter_setting(SidebarFilter::Rating(3)), "rating:3");
         assert_eq!(
@@ -373,7 +376,10 @@ mod session_restore_tests {
             sidebar_filter_from_setting(Some("rating:3"), &[], &[]),
             SidebarFilter::Rating(3)
         );
-        assert_eq!(sidebar_filter_setting(SidebarFilter::Folder(42)), "folder:42");
+        assert_eq!(
+            sidebar_filter_setting(SidebarFilter::Folder(42)),
+            "folder:42"
+        );
         assert_eq!(sidebar_filter_setting(SidebarFilter::Album(17)), "album:17");
     }
 
@@ -520,12 +526,16 @@ struct ScanJobState {
 
 impl ScanJobState {
     fn enqueue_network_import(&mut self, root: String, resume: bool) -> bool {
-        if self.active_root.as_ref()==Some(&root) || self.pending.contains(&root) { return false; }
+        if self.active_root.as_ref() == Some(&root) || self.pending.contains(&root) {
+            return false;
+        }
         self.preempt_maintenance();
         if self.kind.is_none() {
             self.authorize_photo_scan(PhotoScanRequestReason::ImportFolder);
         }
-        if resume { self.resume_roots.insert(root.clone()); }
+        if resume {
+            self.resume_roots.insert(root.clone());
+        }
         self.pending.push_back(root);
         true
     }
@@ -839,16 +849,24 @@ mod photo_scan_authorization_tests {
 
     #[test]
     fn adding_another_network_folder_preserves_the_active_import() {
-        let control=crate::scanner::ScanControl::default();
-        let mut job=ScanJobState {generation:9,kind:Some(ScanJobKind::Import),active:Some(control.clone()),
-            active_root:Some("nfs://nas/first".into()),..Default::default()};
-        assert!(job.enqueue_network_import("nfs://nas/second".into(),true));
+        let control = crate::scanner::ScanControl::default();
+        let mut job = ScanJobState {
+            generation: 9,
+            kind: Some(ScanJobKind::Import),
+            active: Some(control.clone()),
+            active_root: Some("nfs://nas/first".into()),
+            ..Default::default()
+        };
+        assert!(job.enqueue_network_import("nfs://nas/second".into(), true));
         assert!(!control.is_cancelled());
-        assert_eq!(job.generation,9);
-        assert_eq!(job.pending,std::collections::VecDeque::from(["nfs://nas/second".to_string()]));
+        assert_eq!(job.generation, 9);
+        assert_eq!(
+            job.pending,
+            std::collections::VecDeque::from(["nfs://nas/second".to_string()])
+        );
         assert!(job.resume_roots.contains("nfs://nas/second"));
-        assert!(!job.enqueue_network_import("nfs://nas/second".into(),true));
-        assert!(!job.enqueue_network_import("nfs://nas/first".into(),true));
+        assert!(!job.enqueue_network_import("nfs://nas/second".into(), true));
+        assert!(!job.enqueue_network_import("nfs://nas/first".into(), true));
     }
 }
 include!("window/search.rs");

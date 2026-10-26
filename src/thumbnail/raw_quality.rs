@@ -54,9 +54,11 @@ mod tests {
             let csum: f64 = c.iter().sum();
             // Near-black or clipped material cannot determine relative
             // colour accurately. Do not let those pixels dominate hue stats.
-            if ssum < 0.025 || csum < 0.025
+            if ssum < 0.025
+                || csum < 0.025
                 || sensor.iter().any(|&v| v >= 252)
-                || camera.iter().any(|&v| v >= 252) {
+                || camera.iter().any(|&v| v >= 252)
+            {
                 return;
             }
             self.count += 1;
@@ -121,8 +123,7 @@ mod tests {
                 self.neutral_color.record(actual, reference);
                 self.neutral_samples += 1;
                 for i in 0..3 {
-                    self.neutral_signed[i] +=
-                        i64::from(actual[i]) - i64::from(reference[i]);
+                    self.neutral_signed[i] += i64::from(actual[i]) - i64::from(reference[i]);
                 }
             }
             // Warm diffuse colour candidates, NOT a face/skin detector.
@@ -135,8 +136,7 @@ mod tests {
                 self.warm_color.record(actual, reference);
                 self.skin_candidate_samples += 1;
                 for i in 0..3 {
-                    self.skin_signed[i] +=
-                        i64::from(actual[i]) - i64::from(reference[i]);
+                    self.skin_signed[i] += i64::from(actual[i]) - i64::from(reference[i]);
                 }
             }
         }
@@ -154,8 +154,16 @@ mod tests {
                 self.signed[2] as f64 / denom,
             );
             for (label, count, signed) in [
-                ("camera_neutral_candidates", self.neutral_samples, self.neutral_signed),
-                ("camera_warm_candidates", self.skin_candidate_samples, self.skin_signed),
+                (
+                    "camera_neutral_candidates",
+                    self.neutral_samples,
+                    self.neutral_signed,
+                ),
+                (
+                    "camera_warm_candidates",
+                    self.skin_candidate_samples,
+                    self.skin_signed,
+                ),
             ] {
                 if count == 0 {
                     eprintln!("PIC_RAW_QA group={label} count=0 (not sampled)");
@@ -164,7 +172,8 @@ mod tests {
                 let d = count as f64;
                 eprintln!(
                     "PIC_RAW_QA group={} count={} mean_signed_RGB={:+.2},{:+.2},{:+.2}",
-                    label, count,
+                    label,
+                    count,
                     signed[0] as f64 / d,
                     signed[1] as f64 / d,
                     signed[2] as f64 / d,
@@ -216,7 +225,10 @@ mod tests {
         let mut colour = GroupColor::default();
         colour.record(green, reference);
         assert_eq!(colour.count, 1);
-        assert!(colour.chroma_delta[1] > 0.20, "strong green cast must be measurable");
+        assert!(
+            colour.chroma_delta[1] > 0.20,
+            "strong green cast must be measurable"
+        );
         assert!(colour.chroma_delta[0] < 0.0);
     }
 
@@ -224,8 +236,8 @@ mod tests {
     fn brightness_only_neutral_gain_cannot_recolour_warm_samples() {
         let camera = RgbImage::from_pixel(128, 128, image::Rgb([140, 140, 140]));
         let sensor = RgbImage::from_pixel(128, 128, image::Rgb([90, 90, 90]));
-        let gain = relative_exposure_from_neutrals(&sensor, &camera)
-            .expect("enough neutral samples");
+        let gain =
+            relative_exposure_from_neutrals(&sensor, &camera).expect("enough neutral samples");
         assert!(gain > 2.0 && gain < 3.5);
         let adjusted = exposed_for_diagnostic([90, 90, 90], gain);
         assert!(adjusted.iter().all(|&value| value.abs_diff(140) <= 1));
@@ -268,8 +280,11 @@ mod tests {
             "PIC_RAW_QA_META make={:?} model={:?} bits_per_sample={} \
              white_balance_RGBE={:?} white_balance_available={} \
              matrix_illuminants={:?}",
-            raw.clean_make, raw.clean_model, raw.bps,
-            raw.wb_coeffs, raw.wb_coeffs[0].is_finite(),
+            raw.clean_make,
+            raw.clean_model,
+            raw.bps,
+            raw.wb_coeffs,
+            raw.wb_coeffs[0].is_finite(),
             raw.color_matrix.keys().collect::<Vec<_>>(),
         );
         if let Some((illuminant, matrix)) = selected {
@@ -373,7 +388,8 @@ mod tests {
                 }
                 if target[0] > target[1].saturating_add(12)
                     && target[1] > target[2].saturating_add(8)
-                    && target[0] > 75 && target[0] < 240
+                    && target[0] > 75
+                    && target[0] < 240
                 {
                     warm.record(corrected, target);
                 }
@@ -397,13 +413,14 @@ mod tests {
         let long = rgb.width().max(rgb.height()).max(1);
         let width = ((u64::from(rgb.width()) * 1400) / u64::from(long)).max(1) as u32;
         let height = ((u64::from(rgb.height()) * 1400) / u64::from(long)).max(1) as u32;
-        let mut reduced = image::imageops::resize(
-            rgb, width, height, image::imageops::FilterType::Lanczos3
-        );
+        let mut reduced =
+            image::imageops::resize(rgb, width, height, image::imageops::FilterType::Lanczos3);
         for pixel in reduced.pixels_mut() {
             pixel.0 = exposed_for_diagnostic(pixel.0, gain);
         }
-        reduced.save(path).expect("write exposure-only diagnostic PNG");
+        reduced
+            .save(path)
+            .expect("write exposure-only diagnostic PNG");
     }
 
     fn write_comparison_preview(rgb: &RgbImage, path: &Path) {
@@ -412,16 +429,16 @@ mod tests {
         let long = rgb.width().max(rgb.height()).max(1);
         let width = ((u64::from(rgb.width()) * 1400) / u64::from(long)).max(1) as u32;
         let height = ((u64::from(rgb.height()) * 1400) / u64::from(long)).max(1) as u32;
-        let reduced = image::imageops::resize(
-            rgb, width, height, image::imageops::FilterType::Lanczos3
-        );
+        let reduced =
+            image::imageops::resize(rgb, width, height, image::imageops::FilterType::Lanczos3);
         reduced.save(path).expect("write colour comparison PNG");
     }
 
     #[test]
     #[ignore = "requires PIC_TEST_RAW pointing to a local Nikon NEF; NEVER commit the test image"]
     fn real_nef_reference_report() {
-        let filename = std::env::var("PIC_TEST_RAW").expect("set PIC_TEST_RAW to an existing Nikon NEF");
+        let filename =
+            std::env::var("PIC_TEST_RAW").expect("set PIC_TEST_RAW to an existing Nikon NEF");
         assert!(is_nikon_raw(&filename), "the fixture must be Nikon NEF/NRW");
         let path = Path::new(&filename);
         let original_sha = blake3::hash(&std::fs::read(path).expect("read source NEF"));
@@ -435,7 +452,9 @@ mod tests {
         // then apply the same unchanged RawDevelop::default() path used by PIC.
         // The diagnostic does not regress JPEG pixels or change photo data.
         let compare_a = std::env::var("PIC_NEF_EVALUATION_COMPARE_MATRIX_A")
-            .ok().as_deref() == Some("1");
+            .ok()
+            .as_deref()
+            == Some("1");
         let (sensor, sensor_a) = rawler_decode(&filename, "nef_qa_sensor_demosaic", || {
             let decoder = rawler::get_decoder(&raw_source)?;
             let params = rawler::decoders::RawDecodeParams::default();
@@ -459,7 +478,9 @@ mod tests {
                         rawler::imgop::develop::RawDevelop::default()
                             .develop_intermediate(&raw)?
                             .to_dynamic_image()
-                            .ok_or_else(|| anyhow::anyhow!("Alternative A developer returned no RGB image"))?
+                            .ok_or_else(|| {
+                                anyhow::anyhow!("Alternative A developer returned no RGB image")
+                            })?,
                     )
                 } else {
                     eprintln!("PIC_RAW_QA_MATRIX candidate=A result=unavailable");
@@ -469,19 +490,27 @@ mod tests {
                 None
             };
             Ok((sensor, alternative))
-        }).expect("develop sensor only");
+        })
+        .expect("develop sensor only");
         let sensor_ms = started.elapsed().as_secs_f64() * 1000.0;
         let sensor_kind = format!("{:?}", sensor.color());
         let (camera_w, camera_h) = jpeg_dimensions(&camera_jpeg).expect("read JPEG dimensions");
 
         eprintln!(
             "PIC_RAW_QA source={} sensor={}x{} kind={} sensor_develop_ms={:.2} camera={}x{}",
-            path.file_name().and_then(|name| name.to_str()).unwrap_or("unknown"),
-            sensor.width(), sensor.height(), sensor_kind,
-            sensor_ms, camera_w, camera_h
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("unknown"),
+            sensor.width(),
+            sensor.height(),
+            sensor_kind,
+            sensor_ms,
+            camera_w,
+            camera_h
         );
         let reference = decode_viewer_jpeg(&camera_jpeg, camera_w, camera_h, &filename)
-            .expect("colour-manage Nikon JPEG").to_rgb8();
+            .expect("colour-manage Nikon JPEG")
+            .to_rgb8();
         let actual = sensor.to_rgb8();
         let alternate_rgb = sensor_a.map(|alt| alt.to_rgb8());
         if let Some(ref alternate) = alternate_rgb {
@@ -516,7 +545,10 @@ mod tests {
             None => eprintln!(
                 "PIC_RAW_QA result=dimensions_mismatch sensor={}x{} camera={}x{} \
                  statistical comparison skipped: raster alignment must be established first",
-                actual.width(), actual.height(), camera_w, camera_h
+                actual.width(),
+                actual.height(),
+                camera_w,
+                camera_h
             ),
         }
         if let Some(dir) = std::env::var_os("PIC_TEST_OUTPUT_DIR") {
@@ -524,7 +556,8 @@ mod tests {
             let folder = Path::new(&dir);
             std::fs::write(folder.join("camera-embedded.jpg"), &camera_jpeg)
                 .expect("write camera JPEG unchanged");
-            sensor.save(folder.join("rawler-sensor16.tiff"))
+            sensor
+                .save(folder.join("rawler-sensor16.tiff"))
                 .expect("write 16-bit sensor-developed TIFF");
             write_comparison_preview(&reference, &folder.join("nikon-preview.png"));
             write_comparison_preview(&actual, &folder.join("sensor-preview.png"));
@@ -532,7 +565,9 @@ mod tests {
                 write_comparison_preview(alternate, &folder.join("sensor-matrix-A.png"));
                 if let Some(gain) = relative_exposure_from_neutrals(alternate, &reference) {
                     write_gain_preview(
-                        alternate, gain, &folder.join("sensor-matrix-A-exposure-only.png")
+                        alternate,
+                        gain,
+                        &folder.join("sensor-matrix-A-exposure-only.png"),
                     );
                 }
             }
@@ -545,7 +580,8 @@ mod tests {
             );
         }
         assert_eq!(
-            original_sha, blake3::hash(&std::fs::read(path).expect("re-read original NEF")),
+            original_sha,
+            blake3::hash(&std::fs::read(path).expect("re-read original NEF")),
             "diagnostic must not modify the source image"
         );
     }

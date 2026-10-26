@@ -222,10 +222,8 @@ pub(super) fn rounded_tile_bounds(
     let height = height.max(1);
     let side = width.min(height);
     let progress = (corner_radius.clamp(0.0, 0.5) * 2.0) as f64;
-    let visible_width =
-        (width as f64 - (width - side) as f64 * progress).round() as u32;
-    let visible_height =
-        (height as f64 - (height - side) as f64 * progress).round() as u32;
+    let visible_width = (width as f64 - (width - side) as f64 * progress).round() as u32;
+    let visible_height = (height as f64 - (height - side) as f64 * progress).round() as u32;
     let visible_width = visible_width.clamp(1, width);
     let visible_height = visible_height.clamp(1, height);
     (
@@ -244,19 +242,34 @@ mod tile_geometry_tests {
     fn rectangle_and_circle_have_same_centre_for_any_canvas() {
         let item = CollageItem {
             photo: CollagePhoto {
-                id: 123, folder_id: None, path: String::new(),
-                filename: String::new(), thumbnail_path: None,
-                library_rotation: 0, edit_recipe: String::new(),
-                aspect_ratio: 1.5, visual_weight: 0.5,
+                id: 123,
+                folder_id: None,
+                path: String::new(),
+                filename: String::new(),
+                thumbnail_path: None,
+                library_rotation: 0,
+                edit_recipe: String::new(),
+                aspect_ratio: 1.5,
+                visual_weight: 0.5,
             },
-            x: 0.125, y: 0.25, width: 0.50, height: 0.20,
-            rotation: 0.0, z: 0,
+            x: 0.125,
+            y: 0.25,
+            width: 0.50,
+            height: 0.20,
+            rotation: 0.0,
+            z: 0,
         };
         for (cw, ch) in [(1000, 750), (1920, 1440)] {
             let square = tile_geometry(&item, cw, ch, 0.0);
             let circle = tile_geometry(&item, cw, ch, 0.5);
-            assert_eq!(square.x * 2 + square.w as i64, circle.x * 2 + circle.w as i64);
-            assert_eq!(square.y * 2 + square.h as i64, circle.y * 2 + circle.h as i64);
+            assert_eq!(
+                square.x * 2 + square.w as i64,
+                circle.x * 2 + circle.w as i64
+            );
+            assert_eq!(
+                square.y * 2 + square.h as i64,
+                circle.y * 2 + circle.h as i64
+            );
             assert_eq!(circle.w, circle.h);
             assert_eq!(square.x, square.slot_x);
         }
@@ -266,16 +279,30 @@ mod tile_geometry_tests {
     fn border_choice_does_not_affect_shared_geometry() {
         let item = CollageItem {
             photo: CollagePhoto {
-                id: 5, folder_id: None, path: String::new(),
-                filename: String::new(), thumbnail_path: None,
-                library_rotation: 0, edit_recipe: String::new(),
-                aspect_ratio: 1.5, visual_weight: 0.5,
+                id: 5,
+                folder_id: None,
+                path: String::new(),
+                filename: String::new(),
+                thumbnail_path: None,
+                library_rotation: 0,
+                edit_recipe: String::new(),
+                aspect_ratio: 1.5,
+                visual_weight: 0.5,
             },
-            x: 0.2, y: 0.1, width: 0.35, height: 0.3,
-            rotation: 0.0, z: 0,
+            x: 0.2,
+            y: 0.1,
+            width: 0.35,
+            height: 0.3,
+            rotation: 0.0,
+            z: 0,
         };
         let geometry = tile_geometry(&item, 1920, 1440, 0.15);
-        for _border in [PhotoBorder::None, PhotoBorder::White, PhotoBorder::Black, PhotoBorder::Grey] {
+        for _border in [
+            PhotoBorder::None,
+            PhotoBorder::White,
+            PhotoBorder::Black,
+            PhotoBorder::Grey,
+        ] {
             assert_eq!(tile_geometry(&item, 1920, 1440, 0.15), geometry);
         }
     }
@@ -340,8 +367,12 @@ pub(super) fn tile_geometry(
     let canvas_h = canvas_h.max(1);
     let slot_x = (item.x * canvas_w as f32).round() as i64;
     let slot_y = (item.y * canvas_h as f32).round() as i64;
-    let slot_w = (item.width * canvas_w as f32).round().clamp(1.0, canvas_w as f32) as u32;
-    let slot_h = (item.height * canvas_h as f32).round().clamp(1.0, canvas_h as f32) as u32;
+    let slot_w = (item.width * canvas_w as f32)
+        .round()
+        .clamp(1.0, canvas_w as f32) as u32;
+    let slot_h = (item.height * canvas_h as f32)
+        .round()
+        .clamp(1.0, canvas_h as f32) as u32;
     let (inset_x, inset_y, w, h) = rounded_tile_bounds(slot_w, slot_h, radius);
     TileGeometry {
         slot_x,
@@ -370,8 +401,15 @@ pub(super) fn fit_content_rect(
     let tile_height = tile_height.max(1);
     let scale = (tile_width as f64 / source_width).min(tile_height as f64 / source_height);
     let width = (source_width * scale).round().clamp(1.0, tile_width as f64) as u32;
-    let height = (source_height * scale).round().clamp(1.0, tile_height as f64) as u32;
-    ((tile_width - width) / 2, (tile_height - height) / 2, width, height)
+    let height = (source_height * scale)
+        .round()
+        .clamp(1.0, tile_height as f64) as u32;
+    (
+        (tile_width - width) / 2,
+        (tile_height - height) / 2,
+        width,
+        height,
+    )
 }
 
 #[cfg(test)]

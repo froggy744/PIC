@@ -96,7 +96,11 @@ fn check_live_sidebar_drag(layout: &str, destination: &str, compact: bool) {
     let collapsed_overlay = split.is_collapsed();
     eprintln!(
         "sidebar drag mode={}: window={} split={} collapsed={} compact_setup={compact}",
-        if collapsed_overlay { "overlay" } else { "split" },
+        if collapsed_overlay {
+            "overlay"
+        } else {
+            "split"
+        },
         window.width(),
         split.width(),
         collapsed_overlay,

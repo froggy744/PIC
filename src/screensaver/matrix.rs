@@ -5,60 +5,73 @@ use super::{Pixels, Style};
 // The film's code is built from Japanese katakana. Pango selects a CJK font
 // when the default UI font lacks the characters.
 pub(super) const KATAKANA: [char; 32] = [
-    'ア', 'イ', 'ウ', 'エ', 'オ', 'カ', 'キ', 'ク',
-    'ケ', 'コ', 'サ', 'シ', 'ス', 'セ', 'ソ', 'タ',
-    'チ', 'ツ', 'テ', 'ト', 'ナ', 'ニ', 'ヌ', 'ネ',
-    'ノ', 'ハ', 'ヒ', 'フ', 'ヘ', 'ホ', 'マ', 'ム',
+    'ア', 'イ', 'ウ', 'エ', 'オ', 'カ', 'キ', 'ク', 'ケ', 'コ', 'サ', 'シ', 'ス', 'セ', 'ソ', 'タ',
+    'チ', 'ツ', 'テ', 'ト', 'ナ', 'ニ', 'ヌ', 'ネ', 'ノ', 'ハ', 'ヒ', 'フ', 'ヘ', 'ホ', 'マ', 'ム',
 ];
 const CELL_W: usize = 12;
 const CELL_H: usize = 17;
 
-struct GlyphAtlas { masks: Vec<Vec<u8>> }
+struct GlyphAtlas {
+    masks: Vec<Vec<u8>>,
+}
 impl GlyphAtlas {
     fn new() -> Self {
-        let masks = KATAKANA.iter().map(|glyph| {
-            let mut surface = gtk4::cairo::ImageSurface::create(
-                gtk4::cairo::Format::ARgb32, CELL_W as i32, CELL_H as i32,
-            ).expect("katakana mask surface");
-            {
-                let cr = gtk4::cairo::Context::new(&surface).expect("katakana mask context");
-                cr.set_source_rgb(1.0, 1.0, 1.0);
-                let layout = pangocairo::functions::create_layout(&cr);
-                let font = gtk4::pango::FontDescription::from_string("Sans 10");
-                layout.set_font_description(Some(&font));
-                layout.set_text(&glyph.to_string());
-                let (tw, th) = layout.pixel_size();
-                cr.move_to((CELL_W as i32 - tw).max(0) as f64 / 2.0,
-                    (CELL_H as i32 - th).max(0) as f64 / 2.0);
-                pangocairo::functions::show_layout(&cr, &layout);
-            }
-            surface.flush();
-            let stride = surface.stride() as usize;
-            let data = surface.data().expect("katakana mask pixels");
-            let mut mask = Vec::with_capacity(CELL_W * CELL_H);
-            for y in 0..CELL_H {
-                for x in 0..CELL_W {
-                    mask.push(data[y * stride + x * 4 + 3]);
+        let masks = KATAKANA
+            .iter()
+            .map(|glyph| {
+                let mut surface = gtk4::cairo::ImageSurface::create(
+                    gtk4::cairo::Format::ARgb32,
+                    CELL_W as i32,
+                    CELL_H as i32,
+                )
+                .expect("katakana mask surface");
+                {
+                    let cr = gtk4::cairo::Context::new(&surface).expect("katakana mask context");
+                    cr.set_source_rgb(1.0, 1.0, 1.0);
+                    let layout = pangocairo::functions::create_layout(&cr);
+                    let font = gtk4::pango::FontDescription::from_string("Sans 10");
+                    layout.set_font_description(Some(&font));
+                    layout.set_text(&glyph.to_string());
+                    let (tw, th) = layout.pixel_size();
+                    cr.move_to(
+                        (CELL_W as i32 - tw).max(0) as f64 / 2.0,
+                        (CELL_H as i32 - th).max(0) as f64 / 2.0,
+                    );
+                    pangocairo::functions::show_layout(&cr, &layout);
                 }
-            }
-            mask
-        }).collect();
+                surface.flush();
+                let stride = surface.stride() as usize;
+                let data = surface.data().expect("katakana mask pixels");
+                let mut mask = Vec::with_capacity(CELL_W * CELL_H);
+                for y in 0..CELL_H {
+                    for x in 0..CELL_W {
+                        mask.push(data[y * stride + x * 4 + 3]);
+                    }
+                }
+                mask
+            })
+            .collect();
         Self { masks }
     }
 }
 thread_local! { static GLYPH_ATLAS: GlyphAtlas = GlyphAtlas::new(); }
 
 fn hash(x: usize, y: usize) -> usize {
-    let n = (x as u32).wrapping_mul(374761393)
+    let n = (x as u32)
+        .wrapping_mul(374761393)
         .wrapping_add((y as u32).wrapping_mul(668265263));
     ((n ^ (n >> 13)).wrapping_mul(1274126177) >> 16) as usize
 }
 
 pub(super) fn prepare(mut pixels: Pixels, style: Style) -> Pixels {
-    if style != Style::MatrixKenBurns { return pixels; }
+    if style != Style::MatrixKenBurns {
+        return pixels;
+    }
     let w = pixels.width as usize;
     let h = pixels.height as usize;
-    if w == 0 || h == 0 { return pixels; }
+    if w == 0 || h == 0 {
+        return pixels;
+    }
     let tones: [f64; 256] = std::array::from_fn(|i| 245.0 * (i as f64 / 255.0).powf(0.70));
     GLYPH_ATLAS.with(|atlas| {
         for y in 0..h {
@@ -79,7 +92,9 @@ pub(super) fn prepare(mut pixels: Pixels, style: Style) -> Pixels {
                     // Sparse, fixed code streams sit on top and pan with it.
                     let base = tone * 0.94;
                     let phase = (cy + hash(cx, 37) % 22) % 22;
-                    let stream = if hash(cx, 17) % 3 != 0 { 0.0 } else {
+                    let stream = if hash(cx, 17) % 3 != 0 {
+                        0.0
+                    } else {
                         match phase {
                             0..=2 => 0.96,
                             3..=8 => 0.58,
@@ -93,7 +108,10 @@ pub(super) fn prepare(mut pixels: Pixels, style: Style) -> Pixels {
                     let background = tone * 0.36;
                     let column = 0.82 + (hash(cx, 11) % 37) as f64 / 100.0;
                     let trail = match (cy + hash(cx, 29) % 23) % 23 {
-                        0 => 1.18, 1..=5 => 1.02, 6..=15 => 0.87, _ => 0.68,
+                        0 => 1.18,
+                        1..=5 => 1.02,
+                        6..=15 => 0.87,
+                        _ => 0.68,
                     };
                     let emission = (tone * 1.38 * column * trail).min(255.0);
                     let stream_mask = if seed % 31 == 0 { 0.0 } else { mask };
@@ -115,7 +133,10 @@ pub(super) fn draw_rain(cr: &gtk4::cairo::Context, w: f64, h: f64, seconds: f64)
     let cell = (w / 100.0).max(13.0);
     let line = cell * 1.42;
     let layout = pangocairo::functions::create_layout(cr);
-    let font = gtk4::pango::FontDescription::from_string(&format!("Sans {}", (cell * 0.80).round() as i32));
+    let font = gtk4::pango::FontDescription::from_string(&format!(
+        "Sans {}",
+        (cell * 0.80).round() as i32
+    ));
     layout.set_font_description(Some(&font));
     let tick = (seconds * 12.0) as usize;
     for col in 0..(w / cell).ceil() as usize {
@@ -125,7 +146,9 @@ pub(super) fn draw_rain(cr: &gtk4::cairo::Context, w: f64, h: f64, seconds: f64)
         let head = (seconds * speed + (seed % 2000) as f64).rem_euclid(cycle);
         let mut text = String::new();
         for tail in (0..18).rev() {
-            if !text.is_empty() { text.push('\n'); }
+            if !text.is_empty() {
+                text.push('\n');
+            }
             text.push(KATAKANA[hash(col, tail + tick) % KATAKANA.len()]);
         }
         layout.set_text(&text);
@@ -151,7 +174,11 @@ mod tests {
                 data.extend_from_slice(&[x as u8, y as u8, 220, 127]);
             }
         }
-        Pixels { width: 192, height: 96, data }
+        Pixels {
+            width: 192,
+            height: 96,
+            data,
+        }
     }
 
     #[test]
@@ -160,22 +187,40 @@ mod tests {
         let b = prepare(photo(), Style::MatrixKenBurns);
         assert_eq!((a.width, a.height), (192, 96));
         assert_eq!(a.data, b.data);
-        assert!(a.data.chunks_exact(4).all(|p| p[1] > p[0] && p[1] > p[2] && p[3] == 127));
+        assert!(a
+            .data
+            .chunks_exact(4)
+            .all(|p| p[1] > p[0] && p[1] > p[2] && p[3] == 127));
         assert!(a.data.chunks_exact(4).map(|p| p[1]).max().unwrap() > 70);
     }
 
     #[test]
     fn ken_burns_keeps_photographic_tones_beneath_katakana() {
-        assert!(KATAKANA.iter().all(|ch| ('\u{30a0}'..='\u{30ff}').contains(ch)));
+        assert!(KATAKANA
+            .iter()
+            .all(|ch| ('\u{30a0}'..='\u{30ff}').contains(ch)));
         let atlas = GlyphAtlas::new();
         assert!(atlas.masks.iter().all(|mask| mask.iter().any(|a| *a > 0)));
-        assert!(atlas.masks.iter().collect::<std::collections::HashSet<_>>().len() >= 20,
-            "Katakana font fallback rendered missing-glyph boxes");
+        assert!(
+            atlas
+                .masks
+                .iter()
+                .collect::<std::collections::HashSet<_>>()
+                .len()
+                >= 20,
+            "Katakana font fallback rendered missing-glyph boxes"
+        );
         let rendered = |level: u8| {
-            let image = Pixels { width: 192, height: 102,
-                data: [level, level, level, 255].repeat(192 * 102) };
-            prepare(image, Style::MatrixKenBurns).data.chunks_exact(4)
-                .map(|px| px[1]).collect::<Vec<_>>()
+            let image = Pixels {
+                width: 192,
+                height: 102,
+                data: [level, level, level, 255].repeat(192 * 102),
+            };
+            prepare(image, Style::MatrixKenBurns)
+                .data
+                .chunks_exact(4)
+                .map(|px| px[1])
+                .collect::<Vec<_>>()
         };
         let dark = rendered(70);
         let light = rendered(180);
@@ -184,15 +229,23 @@ mod tests {
             values.sort_unstable();
             values[values.len() / 2]
         };
-        assert!(median(&light) > median(&dark) + 65, "photo contrast was lost");
+        assert!(
+            median(&light) > median(&dark) + 65,
+            "photo contrast was lost"
+        );
         assert!(median(&light) > 150, "photo is too dark to read");
-        assert!(light.iter().max().unwrap() - light.iter().min().unwrap() > 25,
-            "Katakana streams are not visible");
+        assert!(
+            light.iter().max().unwrap() - light.iter().min().unwrap() > 25,
+            "Katakana streams are not visible"
+        );
     }
 
     #[test]
     fn ordinary_styles_keep_original_colors() {
-        for style in Style::CHOICES.into_iter().filter(|s| *s != Style::MatrixKenBurns) {
+        for style in Style::CHOICES
+            .into_iter()
+            .filter(|s| *s != Style::MatrixKenBurns)
+        {
             assert_eq!(prepare(photo(), style).data, photo().data);
         }
     }

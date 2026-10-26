@@ -282,8 +282,11 @@ pub(crate) fn params(preset: FilterPreset) -> FilterParams {
             vignette: 0.10,
             ..params(FilterPreset::None)
         },
-        FilterPreset::None | FilterPreset::PencilSketch | FilterPreset::Newspaper
-        | FilterPreset::Duotone | FilterPreset::InfraredBw => FilterParams {
+        FilterPreset::None
+        | FilterPreset::PencilSketch
+        | FilterPreset::Newspaper
+        | FilterPreset::Duotone
+        | FilterPreset::InfraredBw => FilterParams {
             exposure: 1.0,
             shadow_lift: 0.0,
             tint: (1.0, 1.0, 1.0),
@@ -416,18 +419,13 @@ fn apply_pencil_sketch(image: &mut RgbaImage) {
 /// 4x4 halftone screen. The Bayer pattern is deterministic for previews,
 /// exports and repeated edits (no random noise or shifting frame-to-frame).
 fn apply_newspaper(image: &mut RgbaImage) {
-    const BAYER: [[u8; 4]; 4] = [
-        [0, 8, 2, 10],
-        [12, 4, 14, 6],
-        [3, 11, 1, 9],
-        [15, 7, 13, 5],
-    ];
+    const BAYER: [[u8; 4]; 4] = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]];
     for (x, y, pixel) in image.enumerate_pixels_mut() {
         if pixel[3] == 0 {
             continue;
         }
-        let gray = (0.2126 * pixel[0] as f32
-            + 0.7152 * pixel[1] as f32 + 0.0722 * pixel[2] as f32) / 255.0;
+        let gray = (0.2126 * pixel[0] as f32 + 0.7152 * pixel[1] as f32 + 0.0722 * pixel[2] as f32)
+            / 255.0;
         let ink_coverage = (1.0 - gray).clamp(0.0, 1.0).powf(0.83);
         let threshold = (BAYER[(y % 4) as usize][(x % 4) as usize] as f32 + 0.5) / 16.0;
         let ink = ink_coverage >= threshold;

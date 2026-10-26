@@ -428,7 +428,7 @@ fn sidebar_page(
             crate::sidebar::FOLDERS_VISIBLE_SETTING_KEY,
         ),
         (
-            "Network Shares",
+            "Shared",
             "Show registered network shares.",
             crate::sidebar::NETWORK_SHARES_VISIBLE_SETTING_KEY,
         ),
@@ -436,6 +436,11 @@ fn sidebar_page(
             "All Photos",
             "Show All Photos in the Library section.",
             crate::sidebar::ALL_PHOTOS_VISIBLE_SETTING_KEY,
+        ),
+        (
+            "Recent",
+            "Show Recent in the Library section.",
+            crate::sidebar::RECENTLY_ADDED_VISIBLE_SETTING_KEY,
         ),
         (
             "Favourites",
@@ -446,11 +451,6 @@ fn sidebar_page(
             "Ratings",
             "Show Ratings in the Library section.",
             crate::sidebar::RATINGS_VISIBLE_SETTING_KEY,
-        ),
-        (
-            "Recently Added",
-            "Show Recently Added in the Library section.",
-            crate::sidebar::RECENTLY_ADDED_VISIBLE_SETTING_KEY,
         ),
         (
             "History",

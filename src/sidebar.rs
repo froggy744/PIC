@@ -168,6 +168,23 @@ const FOLDER_REFRESH_KEY: &str = "picasa-sidebar-folder-refresh";
 const REFRESH_GATE_KEY: &str = "picasa-sidebar-refresh-gate";
 const ALBUM_PANE_ANIMATION_MS: u32 = 250;
 const STARTUP_VISIBLE_ALBUM_ROWS: usize = 5;
+const SIDEBAR_ROOT_INSET: i32 = 10;
+const SIDEBAR_CONTENT_INSET: i32 = 8;
+const SIDEBAR_ITEM_SPACING: i32 = 8;
+const SIDEBAR_HEADING_SPACING: i32 = 4;
+const SIDEBAR_COUNT_WARNING_SPACING: i32 = 6;
+const SIDEBAR_HEADER_MARGIN_TOP: i32 = 8;
+const SIDEBAR_HEADER_MARGIN_BOTTOM: i32 = 4;
+const SIDEBAR_ROOT_MARGIN_TOP: i32 = 4;
+const SIDEBAR_ICON_SIZE: i32 = 18;
+const SIDEBAR_RECENT_ICON_SIZE: i32 = 16;
+const SIDEBAR_DISCLOSURE_SLOT: i32 = 12;
+const SIDEBAR_CONTROL_SIZE: i32 = 28;
+const SIDEBAR_ACTION_ICON_SIZE: i32 = 14;
+const SIDEBAR_COUNT_WIDTH: i32 = 38;
+const SIDEBAR_WARNING_WIDTH: i32 = 16;
+const SIDEBAR_ROW_MARGIN_Y: i32 = 2;
+const SIDEBAR_ROW_PADDING_Y: i32 = 6;
 
 /// Share the window's refresh sensitivity with existing and future menus.
 pub fn bind_refresh_gate(scrolled: &gtk::ScrolledWindow, gate: &gtk::Button) {
@@ -241,9 +258,9 @@ pub fn build(
     let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
     root.set_hexpand(true);
     root.set_vexpand(true);
-    root.set_margin_start(10);
-    root.set_margin_end(10);
-    root.set_margin_top(4);
+    root.set_margin_start(SIDEBAR_ROOT_INSET);
+    root.set_margin_end(SIDEBAR_ROOT_INSET);
+    root.set_margin_top(SIDEBAR_ROOT_MARGIN_TOP);
     root.set_margin_bottom(12);
 
     // LIBRARY: collapsible.
@@ -257,6 +274,7 @@ pub fn build(
             Rc::new(move || on_filter(SidebarFilter::Library))
         }),
     );
+    library_heading.add_css_class("sidebar-primary-section-heading");
     root.append(&library_heading);
 
     let library_list = section_list();
@@ -282,7 +300,7 @@ pub fn build(
             let expanded = !state.borrow().library_expanded;
             state.borrow_mut().library_expanded = expanded;
             revealer.set_reveal_child(expanded);
-            indicator.set_icon_name(if expanded {
+            set_sidebar_action_icon(&indicator, if expanded {
                 "pan-down-symbolic"
             } else {
                 "pan-end-symbolic"
@@ -290,14 +308,37 @@ pub fn build(
         });
     }
 
-    // ALBUMS + FOLDERS: use GTK's native vertical split control. GtkPaned
+    // Double-click anywhere on the Library heading to collapse/expand.
+    {
+        let state = state.clone();
+        let revealer = library_revealer.clone();
+        let indicator = library_indicator.clone();
+        let double_click = gtk::GestureClick::new();
+        double_click.set_button(1);
+        double_click.set_propagation_phase(gtk::PropagationPhase::Capture);
+        double_click.connect_pressed(move |gesture, n_press, _, _| {
+            if n_press == 2 {
+                let expanded = !state.borrow().library_expanded;
+                state.borrow_mut().library_expanded = expanded;
+                revealer.set_reveal_child(expanded);
+                set_sidebar_action_icon(&indicator, if expanded {
+                    "pan-down-symbolic"
+                } else {
+                    "pan-end-symbolic"
+                });
+                gesture.set_state(gtk::EventSequenceState::Claimed);
+            }
+        });
+        library_heading.add_controller(double_click);
+    }
+
+    // FOLDERS + ALBUMS: use GTK's native vertical split control. GtkPaned
     // owns pointer tracking and allocation while the divider is dragged, which
     // avoids the feedback loop caused by resizing a widget underneath a
     // GestureDrag attached to that same moving divider.
     //
-    // The Albums heading stays outside the paned. The Folders heading lives at
-    // the top of the end pane, so it always follows Albums directly instead of
-    // becoming bottom-anchored when the folder rows are collapsed.
+    // Each heading stays with its section so swapping the panes also swaps the
+    // complete section, including its collapse controls.
     let (album_heading, album_indicator) = collapsible_heading(
         "Albums",
         Some(on_create_album.clone()),
@@ -308,9 +349,8 @@ pub fn build(
             Rc::new(move || on_filter(SidebarFilter::Albums))
         }),
     );
+    album_heading.add_css_class("sidebar-primary-section-heading");
     album_heading.add_css_class("sidebar-sticky-heading");
-    root.append(&album_heading);
-
     let album_list = section_list();
     connect_filter_list(&album_list, on_filter.clone(), filter_syncing.clone());
 
@@ -332,6 +372,12 @@ pub fn build(
     album_revealer.set_vexpand(true);
     album_revealer.set_child(Some(&album_scroll));
 
+    let album_section = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    album_section.set_hexpand(true);
+    album_section.set_vexpand(true);
+    album_section.append(&album_heading);
+    album_section.append(&album_revealer);
+
     let (folder_heading, folder_indicator) = collapsible_heading(
         "Folders",
         Some(on_import_folder.clone()),
@@ -340,14 +386,12 @@ pub fn build(
         None,
     );
     folder_heading.add_css_class("sidebar-sticky-heading");
+    folder_heading.add_css_class("sidebar-primary-section-heading");
 
-    let folder_mode_toggle = gtk::Button::from_icon_name(match folder_display_mode {
+    let folder_mode_toggle = sidebar_action_button(match folder_display_mode {
         FolderDisplayMode::Tree => "folder-symbolic",
         FolderDisplayMode::ImportedOnly => "view-list-symbolic",
-    });
-    folder_mode_toggle.add_css_class("flat");
-    folder_mode_toggle.set_focusable(false);
-    folder_mode_toggle.set_size_request(24, 24);
+    }, None);
     set_folder_mode_toggle_presentation(&folder_mode_toggle, folder_display_mode);
     // Keep heading controls in the same left-to-right order everywhere:
     // section-specific action, add, collapse. For Folders that means
@@ -374,35 +418,24 @@ pub fn build(
     folder_revealer.set_vexpand(true);
     folder_revealer.set_child(Some(&folder_scroll));
 
-    // Keep the Folders heading in the paned end child. Even with the rows
-    // collapsed, the heading remains the end child's minimum visible content,
-    // so the native handle cannot drag over or hide it.
+    // Keep the Folders heading above the panes so it remains available when
+    // the Folders rows are collapsed.
     let folder_section = gtk::Box::new(gtk::Orientation::Vertical, 0);
     folder_section.set_hexpand(true);
-    folder_section.set_vexpand(true);
+    folder_section.set_vexpand(false);
     folder_section.append(&folder_heading);
-    // folder_revealer is NOT appended here: it becomes the start child of
-    // folder_share_paned below. Appending it to this box as well would leave
-    // the widget parented here, the paned's set_start_child would be rejected
-    // (Gtk-CRITICAL assertion), and the Folders/Network Shares divider would
-    // silently disappear.
 
-    // NETWORK SHARES: registered smb:// and nfs:// roots, listed in their own
-    // section below Folders so they can never be mistaken for local folders.
-    // The section lives inside the existing Folders pane (no new GtkPaned), so
-    // the current Albums/Folders resize behaviour is untouched.
+    // SHARED: registered smb:// and nfs:// roots, listed after Albums.
     let (share_heading, share_indicator) = collapsible_heading(
-        "Network Shares",
+        "Shared",
         Some(on_add_share.clone()),
         "Add Network Share",
         true,
         None,
     );
     share_heading.add_css_class("sidebar-sticky-heading");
-    let share_mode_toggle = gtk::Button::from_icon_name("folder-symbolic");
-    share_mode_toggle.add_css_class("flat");
-    share_mode_toggle.set_focusable(false);
-    share_mode_toggle.set_size_request(24, 24);
+    share_heading.add_css_class("sidebar-primary-section-heading");
+    let share_mode_toggle = sidebar_action_button("folder-symbolic", None);
     set_share_mode_toggle_presentation(&share_mode_toggle, true);
     if let Some(label) = share_heading.first_child() {
         share_heading.insert_child_after(&share_mode_toggle, Some(&label));
@@ -428,11 +461,12 @@ pub fn build(
         Rc::new(move |now| {
             expanded.set(now);
             revealer.set_reveal_child(now);
-            indicator.set_icon_name(if now {
+            set_sidebar_action_icon(&indicator, if now {
                 "pan-down-symbolic"
             } else {
                 "pan-end-symbolic"
             });
+            indicator.set_tooltip_text(Some(if now { "Collapse" } else { "Expand" }));
         })
     };
     {
@@ -442,7 +476,22 @@ pub fn build(
             set_expanded(!expanded.get());
         });
     }
-    // Right-click the Network Shares heading: Reveal All.
+    // Double-click anywhere on the Shared heading to collapse/expand its rows.
+    {
+        let set_expanded = set_shares_expanded.clone();
+        let expanded = shares_expanded.clone();
+        let double_click = gtk::GestureClick::new();
+        double_click.set_button(1);
+        double_click.set_propagation_phase(gtk::PropagationPhase::Capture);
+        double_click.connect_pressed(move |gesture, n_press, _, _| {
+            if n_press == 2 {
+                set_expanded(!expanded.get());
+                gesture.set_state(gtk::EventSequenceState::Claimed);
+            }
+        });
+        share_heading.add_controller(double_click);
+    }
+    // Right-click the Shared heading: Reveal All.
     {
         let set_expanded = set_shares_expanded.clone();
         attach_section_context_menu(&share_heading, Rc::new(move || set_expanded(true)));
@@ -471,10 +520,8 @@ pub fn build(
             refresh_network_shares(&sidebar, &folders, &state, &on_unavailable);
         });
     }
-    // Native drag handle between Folders and Network Shares, matching the
-    // Albums split: the user can resize both sections with GtkPaned's native
-    // divider. The share heading stays in the end pane, so even with the
-    // share rows collapsed the handle cannot drag over or hide it.
+    // Shared follows Albums in a second native split, preserving both
+    // draggable height dividers.
     let share_section = gtk::Box::new(gtk::Orientation::Vertical, 0);
     share_section.set_hexpand(true);
     share_section.set_vexpand(true);
@@ -484,19 +531,31 @@ pub fn build(
     folder_share_paned.add_css_class("sidebar-section-paned");
     folder_share_paned.set_hexpand(true);
     folder_share_paned.set_vexpand(true);
-    // Match the Albums split behaviour: the upper pane keeps its size when the
-    // window changes and the lower pane absorbs the difference.
+    // Albums keeps its height when the window changes and Shared absorbs the
+    // difference.
     folder_share_paned.set_resize_start_child(false);
     folder_share_paned.set_resize_end_child(true);
     folder_share_paned.set_shrink_start_child(true);
     folder_share_paned.set_shrink_end_child(false);
-    folder_share_paned.set_start_child(Some(&folder_revealer));
+    folder_share_paned.set_start_child(Some(&album_section));
     folder_share_paned.set_end_child(Some(&share_section));
-    folder_section.append(&folder_share_paned);
-    // Match Albums: remember the user's last native divider position so
-    // collapsing Folders does not throw away their preferred split. 260 is
-    // only a pre-layout fallback; once GTK allocates the paned (including the
-    // startup placement below) the real position is remembered here.
+
+    // Folders remains above the Albums/Shared pair in the outer split.
+    let section_paned = gtk::Paned::new(gtk::Orientation::Vertical);
+    section_paned.add_css_class("sidebar-section-paned");
+    section_paned.set_hexpand(true);
+    section_paned.set_vexpand(true);
+    section_paned.set_resize_start_child(false);
+    section_paned.set_resize_end_child(true);
+    section_paned.set_shrink_start_child(true);
+    section_paned.set_shrink_end_child(false);
+    section_paned.set_start_child(Some(&folder_revealer));
+    section_paned.set_end_child(Some(&folder_share_paned));
+    root.append(&folder_section);
+    root.append(&section_paned);
+
+    // Match the existing Folders pane behavior: remember its divider position
+    // so collapsing the rows does not throw away their height.
     let saved_folder_pane_position = Rc::new(Cell::new(260));
     let folder_pane_animating = Rc::new(Cell::new(false));
     let folder_pane_animation_generation = Rc::new(Cell::new(0_u64));
@@ -504,7 +563,7 @@ pub fn build(
         let state = state.clone();
         let saved_position = saved_folder_pane_position.clone();
         let animating = folder_pane_animating.clone();
-        folder_share_paned.connect_position_notify(move |paned| {
+        section_paned.connect_position_notify(move |paned| {
             let position = paned.position();
             // Only treat native user dragging as a new saved position. During
             // our collapse/expand animation the pane position changes every
@@ -520,23 +579,8 @@ pub fn build(
     }
     folder_revealer.set_transition_duration(ALBUM_PANE_ANIMATION_MS);
 
-    let section_paned = gtk::Paned::new(gtk::Orientation::Vertical);
-    section_paned.add_css_class("sidebar-section-paned");
-    section_paned.set_hexpand(true);
-    section_paned.set_vexpand(true);
-    // Preserve the user's Album height when the window itself grows/shrinks;
-    // the Folders pane absorbs ordinary window-size changes. The user can still
-    // resize both sections directly with GtkPaned's native handle.
-    section_paned.set_resize_start_child(false);
-    section_paned.set_resize_end_child(true);
-    section_paned.set_shrink_start_child(true);
-    section_paned.set_shrink_end_child(false);
-    section_paned.set_start_child(Some(&album_revealer));
-    section_paned.set_end_child(Some(&folder_section));
-    root.append(&section_paned);
-
     // Remember the user's last native divider position so collapsing Albums
-    // does not throw away their preferred split. 260 is only a pre-layout
+    // does not throw away its preferred height. 260 is only a pre-layout
     // fallback; once GTK allocates the paned we remember its real position.
     let saved_album_pane_position = Rc::new(Cell::new(260));
     let album_pane_animating = Rc::new(Cell::new(false));
@@ -545,7 +589,7 @@ pub fn build(
         let state = state.clone();
         let saved_position = saved_album_pane_position.clone();
         let animating = album_pane_animating.clone();
-        section_paned.connect_position_notify(move |paned| {
+        folder_share_paned.connect_position_notify(move |paned| {
             let position = paned.position();
             // Only treat native user dragging as a new saved position. During
             // our collapse/expand animation the pane position changes every
@@ -553,24 +597,26 @@ pub fn build(
             if state.borrow().albums_expanded
                 && !animating.get()
                 && paned.start_child().is_some()
-                && position > 0
+                && position > paned.min_position()
             {
-                saved_position.set(position);
+                let album_height = position.saturating_sub(paned.min_position());
+                if album_height > 0 {
+                    saved_position.set(album_height);
+                }
             }
         });
     }
 
     // Keep GtkPaned as the only resize mechanism. For section collapse/expand,
     // animate the native pane position over the same duration as GtkRevealer,
-    // then detach the Albums pane only after collapse completes. This keeps the
-    // native divider future-proof while giving Albums the same smooth motion as
-    // the other sidebar sections.
+    // keeping the Albums heading visible while its rows collapse.
     album_revealer.set_transition_duration(ALBUM_PANE_ANIMATION_MS);
 
     let set_albums_expanded: Rc<dyn Fn(bool)> = {
         let state = state.clone();
-        let paned = section_paned.clone();
+        let paned = folder_share_paned.clone();
         let revealer = album_revealer.clone();
+        let heading = album_heading.clone();
         let indicator = album_indicator.clone();
         let saved_position = saved_album_pane_position.clone();
         let animating = album_pane_animating.clone();
@@ -581,14 +627,14 @@ pub fn build(
             }
 
             if !expanded && !animating.get() {
-                let position = paned.position();
-                if position > 0 {
-                    saved_position.set(position);
+                let album_height = paned.position().saturating_sub(paned.min_position());
+                if album_height > 0 {
+                    saved_position.set(album_height);
                 }
             }
 
             state.borrow_mut().albums_expanded = expanded;
-            indicator.set_icon_name(if expanded {
+            set_sidebar_action_icon(&indicator, if expanded {
                 "pan-down-symbolic"
             } else {
                 "pan-end-symbolic"
@@ -600,19 +646,11 @@ pub fn build(
             animating.set(true);
 
             if expanded {
-                // Reattach hidden at zero height, then reveal and grow the
-                // native pane. If a collapse was interrupted, continue from
-                // the current position instead of jumping back to zero.
-                let was_detached = paned.start_child().is_none();
-                if was_detached {
-                    revealer.set_reveal_child(false);
-                    paned.set_start_child(Some(&revealer));
-                    paned.set_position(0);
-                }
-
                 let from = paned.position().max(0);
                 revealer.set_reveal_child(true);
-                let target = saved_position.get().max(0);
+                let target = paned
+                    .min_position()
+                    .saturating_add(saved_position.get().max(0));
                 animate_sidebar_pane_position(
                     &paned,
                     from,
@@ -625,25 +663,19 @@ pub fn build(
             } else {
                 let from = paned.position().max(0);
                 revealer.set_reveal_child(false);
-
-                let paned_for_finish = paned.clone();
-                let revealer_for_finish = revealer.clone();
-                let state_for_finish = state.clone();
-                let finish: Rc<dyn Fn()> = Rc::new(move || {
-                    if !state_for_finish.borrow().albums_expanded {
-                        paned_for_finish.set_start_child(None::<&gtk::Widget>);
-                        revealer_for_finish.set_reveal_child(false);
-                    }
-                });
-
+                // GtkPaned can report zero as its minimum when the start child
+                // is shrinkable. Keep enough room for the Albums heading while
+                // collapsing only its rows.
+                let heading_height = heading.measure(gtk::Orientation::Vertical, paned.width()).0;
+                let target = paned.min_position().max(heading_height);
                 animate_sidebar_pane_position(
                     &paned,
                     from,
-                    0,
+                    target,
                     animation_generation.clone(),
                     generation,
                     animating.clone(),
-                    Some(finish),
+                    None,
                 );
             }
         })
@@ -702,7 +734,7 @@ pub fn build(
 
     let set_folders_expanded: Rc<dyn Fn(bool)> = {
         let state = state.clone();
-        let paned = folder_share_paned.clone();
+        let paned = section_paned.clone();
         let revealer = folder_revealer.clone();
         let indicator = folder_indicator.clone();
         let saved_position = saved_folder_pane_position.clone();
@@ -721,7 +753,7 @@ pub fn build(
             }
 
             state.borrow_mut().folders_expanded = expanded;
-            indicator.set_icon_name(if expanded {
+            set_sidebar_action_icon(&indicator, if expanded {
                 "pan-down-symbolic"
             } else {
                 "pan-end-symbolic"
@@ -903,12 +935,12 @@ pub fn build(
     // fixed pixel height, so font/theme/DPI changes keep the startup split
     // correct. A short album list still uses only its natural height.
     {
-        let paned = section_paned.clone();
+        let paned = folder_share_paned.clone();
         let album_list = album_list.clone();
         let saved_position = saved_album_pane_position.clone();
         let applied = Rc::new(Cell::new(false));
         let applied_for_map = applied.clone();
-        section_paned.connect_map(move |_| {
+        folder_share_paned.connect_map(move |_| {
             if applied_for_map.replace(true) {
                 return;
             }
@@ -922,14 +954,16 @@ pub fn build(
                     return;
                 }
 
-                let max_position = paned.max_position();
-                let target = if max_position > 0 {
-                    desired.min(max_position)
+                let min_position = paned.min_position();
+                let max_album_height = paned.max_position().saturating_sub(min_position);
+                let album_height = if max_album_height > 0 {
+                    desired.min(max_album_height)
                 } else {
                     desired
                 };
-                if target > 0 {
-                    saved_position.set(target);
+                if album_height > 0 {
+                    saved_position.set(album_height);
+                    let target = min_position.saturating_add(album_height);
                     paned.set_position(target);
                 }
             });
@@ -940,7 +974,7 @@ pub fn build(
     {
         let sidebar = outer.downgrade();
         let applied = Cell::new(false);
-        folder_share_paned.connect_map(move |_| {
+        section_paned.connect_map(move |_| {
             if applied.replace(true) {
                 return;
             }
@@ -986,7 +1020,7 @@ pub fn build(
         outer.set_data(FOLDER_INDICATOR_KEY, folder_indicator);
         outer.set_data(FOLDER_MODE_TOGGLE_KEY, folder_mode_toggle);
         outer.set_data(FOLDER_MODE_CHANGED_KEY, on_folder_display_mode_changed);
-        outer.set_data(FOLDER_SHARE_PANED_KEY, folder_share_paned);
+        outer.set_data(FOLDER_SHARE_PANED_KEY, section_paned.clone());
         outer.set_data(FOLDER_PANE_SAVED_KEY, saved_folder_pane_position);
         outer.set_data(FOLDER_PANE_ANIMATING_KEY, folder_pane_animating);
         outer.set_data(FOLDER_LAYOUT_GENERATION_KEY, Rc::new(Cell::new(0_u64)));
@@ -1341,7 +1375,7 @@ pub fn refresh(
         revealer.set_reveal_child(state.borrow().library_expanded);
     }
     if let Some(indicator) = stored_widget::<gtk::Button>(scrolled, LIBRARY_INDICATOR_KEY) {
-        indicator.set_icon_name(if state.borrow().library_expanded {
+        set_sidebar_action_icon(&indicator, if state.borrow().library_expanded {
             "pan-down-symbolic"
         } else {
             "pan-end-symbolic"
@@ -1351,7 +1385,7 @@ pub fn refresh(
         revealer.set_reveal_child(state.borrow().albums_expanded);
     }
     if let Some(indicator) = stored_widget::<gtk::Button>(scrolled, ALBUM_INDICATOR_KEY) {
-        indicator.set_icon_name(if state.borrow().albums_expanded {
+        set_sidebar_action_icon(&indicator, if state.borrow().albums_expanded {
             "pan-down-symbolic"
         } else {
             "pan-end-symbolic"
@@ -1366,7 +1400,7 @@ pub fn refresh(
         revealer.set_reveal_child(expanded);
     }
     if let Some(indicator) = stored_widget::<gtk::Button>(scrolled, FOLDER_INDICATOR_KEY) {
-        indicator.set_icon_name(if state.borrow().folders_expanded {
+        set_sidebar_action_icon(&indicator, if state.borrow().folders_expanded {
             "pan-down-symbolic"
         } else {
             "pan-end-symbolic"
@@ -1907,7 +1941,7 @@ pub fn scroll_to_folder(scrolled: &gtk::ScrolledWindow, folder_id: i64) {
         revealer.set_reveal_child(true);
     }
     if let Some(indicator) = stored_widget::<gtk::Button>(scrolled, FOLDER_INDICATOR_KEY) {
-        indicator.set_icon_name("pan-down-symbolic");
+        set_sidebar_action_icon(&indicator, "pan-down-symbolic");
         indicator.set_tooltip_text(Some("Collapse"));
     }
 
@@ -2091,7 +2125,7 @@ fn stored_rating_expanded(scrolled: &gtk::ScrolledWindow) -> Rc<Cell<bool>> {
 fn set_rating_expanded(scrolled: &gtk::ScrolledWindow, show: bool) {
     stored_rating_expanded(scrolled).set(show);
     if let Some(indicator) = stored_widget::<gtk::Button>(scrolled, RATING_INDICATOR_KEY) {
-        indicator.set_icon_name(if show {
+        set_sidebar_action_icon(&indicator, if show {
             "pan-down-symbolic"
         } else {
             "pan-end-symbolic"
@@ -2187,7 +2221,7 @@ pub fn apply_visibility(scrolled: &gtk::ScrolledWindow, visibility: SidebarVisib
         section.set_visible(visibility.network_shares);
     }
     if let Some(section) = stored_widget::<gtk::Box>(scrolled, FOLDER_SECTION_KEY) {
-        section.set_visible(visibility.folders || visibility.network_shares);
+        section.set_visible(visibility.folders);
     }
     if let Some(paned) = stored_widget::<gtk::Paned>(scrolled, SECTION_PANED_KEY) {
         paned.set_visible(visibility.albums || visibility.folders || visibility.network_shares);
@@ -2241,6 +2275,16 @@ fn populate_library(
     );
     append_filter(
         list,
+        "x-office-calendar-symbolic",
+        "Recent",
+        None,
+        Some(counts.recently_added),
+        SidebarFilter::RecentlyAdded,
+        false,
+        on_unavailable,
+    );
+    append_filter(
+        list,
         "emote-love-symbolic",
         "Favourites",
         None,
@@ -2250,16 +2294,6 @@ fn populate_library(
         on_unavailable,
     );
     append_rating_section(list, counts.ratings, scrolled);
-    append_filter(
-        list,
-        "appointment-soon-symbolic",
-        "Recently Added",
-        None,
-        Some(counts.recently_added),
-        SidebarFilter::RecentlyAdded,
-        false,
-        on_unavailable,
-    );
     let history = append_filter(
         list,
         "document-open-recent-symbolic",
@@ -2280,34 +2314,32 @@ fn append_rating_section(
 ) {
     let expanded = stored_rating_expanded(scrolled).get();
     let header = gtk::ListBoxRow::new();
-    header.set_margin_top(2);
-    header.set_margin_bottom(2);
+    header.add_css_class("sidebar-navigation-row");
+    header.set_margin_top(SIDEBAR_ROW_MARGIN_Y);
+    header.set_margin_bottom(SIDEBAR_ROW_MARGIN_Y);
     unsafe { header.set_data("picasa-filter", SidebarFilter::Ratings) };
-    let header_content = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    header_content.set_margin_top(6);
-    header_content.set_margin_bottom(6);
-    header_content.set_margin_start(8);
-    header_content.set_margin_end(8);
-    let title_area = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let header_content = gtk::Box::new(gtk::Orientation::Horizontal, SIDEBAR_ITEM_SPACING);
+    header_content.add_css_class("sidebar-row-content");
+    header_content.set_margin_top(SIDEBAR_ROW_PADDING_Y);
+    header_content.set_margin_bottom(SIDEBAR_ROW_PADDING_Y);
+    header_content.set_margin_start(SIDEBAR_CONTENT_INSET);
+    header_content.set_margin_end(SIDEBAR_CONTENT_INSET);
+    header_content.append(&sidebar_leading_slot());
+    let title_area = gtk::Box::new(gtk::Orientation::Horizontal, SIDEBAR_ITEM_SPACING);
+    title_area.add_css_class("sidebar-icon-title");
     title_area.set_hexpand(true);
-    let icon = gtk::Image::from_icon_name("starred-symbolic");
-    icon.set_pixel_size(18);
-    title_area.append(&icon);
+    title_area.append(&sidebar_icon_slot("starred-symbolic"));
     let heading = gtk::Label::new(Some("Ratings"));
     heading.set_xalign(0.0);
     heading.set_hexpand(true);
+    heading.set_ellipsize(gtk::pango::EllipsizeMode::End);
     title_area.append(&heading);
     title_area.set_tooltip_text(Some("Show all rated photos"));
     header_content.append(&title_area);
-    let indicator = gtk::Button::from_icon_name(if expanded {
-        "pan-down-symbolic"
-    } else {
-        "pan-end-symbolic"
-    });
-    indicator.add_css_class("flat");
-    indicator.set_focusable(false);
-    indicator.set_size_request(24, 24);
-    indicator.set_tooltip_text(Some(if expanded { "Collapse" } else { "Expand" }));
+    let indicator = sidebar_action_button(
+        if expanded { "pan-down-symbolic" } else { "pan-end-symbolic" },
+        Some(if expanded { "Collapse" } else { "Expand" }),
+    );
     header_content.append(&indicator);
     header.set_child(Some(&header_content));
     unsafe {
@@ -2318,28 +2350,30 @@ fn append_rating_section(
 
     for rating in 1..=5_u8 {
         let row = gtk::ListBoxRow::new();
-        row.set_margin_top(1);
-        row.set_margin_bottom(1);
+        row.add_css_class("sidebar-navigation-row");
+        row.set_margin_top(SIDEBAR_ROW_MARGIN_Y);
+        row.set_margin_bottom(SIDEBAR_ROW_MARGIN_Y);
         row.set_visible(expanded);
         unsafe {
             row.set_data("picasa-filter", SidebarFilter::Rating(rating));
             row.set_data("picasa-rating", rating);
         }
-        let content = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        content.set_margin_top(5);
-        content.set_margin_bottom(5);
-        content.set_margin_start(34);
-        content.set_margin_end(8);
+        let content = gtk::Box::new(gtk::Orientation::Horizontal, SIDEBAR_ITEM_SPACING);
+        content.add_css_class("sidebar-row-content");
+        content.set_margin_top(SIDEBAR_ROW_PADDING_Y);
+        content.set_margin_bottom(SIDEBAR_ROW_PADDING_Y);
+        content.set_margin_start(
+            SIDEBAR_CONTENT_INSET + SIDEBAR_DISCLOSURE_SLOT + SIDEBAR_ICON_SIZE + SIDEBAR_ITEM_SPACING,
+        );
+        content.set_margin_end(SIDEBAR_CONTENT_INSET);
         let label = gtk::Label::new(Some(&format!("{} {}", "★".repeat(rating as usize), rating)));
         label.set_xalign(0.0);
         label.set_hexpand(true);
+        label.set_ellipsize(gtk::pango::EllipsizeMode::End);
         content.append(&label);
-        let count = gtk::Label::new(Some(&format_count(counts[(rating - 1) as usize])));
-        count.set_xalign(1.0);
-        count.set_valign(gtk::Align::Center);
-        count.add_css_class("dim-label");
-        count.add_css_class("sidebar-count");
-        content.append(&count);
+        let (trailing, count) = sidebar_count_column(Some(counts[(rating - 1) as usize]), None);
+        content.append(&trailing);
+        let count = count.expect("rating count column always has a count label");
         unsafe { row.set_data(FILTER_COUNT_LABEL_KEY, count) };
         row.set_child(Some(&content));
         parent.append(&row);
@@ -2691,62 +2725,58 @@ fn append_folder_row(
     on_unavailable: &Rc<dyn Fn()>,
 ) -> gtk::ListBoxRow {
     let row = gtk::ListBoxRow::new();
-    row.set_margin_top(2);
-    row.set_margin_bottom(2);
+    row.add_css_class("sidebar-navigation-row");
+    row.set_margin_top(SIDEBAR_ROW_MARGIN_Y);
+    row.set_margin_bottom(SIDEBAR_ROW_MARGIN_Y);
 
-    let content = gtk::Box::new(gtk::Orientation::Horizontal, 4);
-    content.set_margin_top(4);
-    content.set_margin_bottom(4);
-    content.set_margin_start(4);
-    content.set_margin_end(8);
+    let content = gtk::Box::new(gtk::Orientation::Horizontal, SIDEBAR_ITEM_SPACING);
+    content.add_css_class("sidebar-row-content");
+    content.set_margin_top(SIDEBAR_ROW_PADDING_Y);
+    content.set_margin_bottom(SIDEBAR_ROW_PADDING_Y);
+    content.set_margin_start(SIDEBAR_CONTENT_INSET);
+    content.set_margin_end(SIDEBAR_CONTENT_INSET);
 
-    // Tree mode reserves a fixed chevron slot so folder icons and names align
-    // at every depth. Imported-only mode is flat (no subfolders), so skip it
-    // and left-align the folder icons with the Library rows.
-    let reserve_disclosure =
-        has_children || state.borrow().folder_display_mode == FolderDisplayMode::Tree;
-    if reserve_disclosure {
-        let disclosure_slot = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-        disclosure_slot.set_size_request(12, 18);
-        disclosure_slot.set_width_request(12);
-        if has_children {
-            let expanded = state.borrow().expanded_folders.contains(&folder.id);
-            let disclosure = gtk::Image::from_icon_name(if expanded {
-                "pan-down-symbolic"
-            } else {
-                "pan-end-symbolic"
-            });
-            disclosure.add_css_class("folder-disclosure");
-            disclosure.set_pixel_size(10);
-            disclosure.set_halign(gtk::Align::Center);
-            disclosure.set_valign(gtk::Align::Center);
-            disclosure_slot.set_tooltip_text(Some(if expanded {
-                "Collapse folder"
-            } else {
-                "Show subfolders"
-            }));
+    // Every navigation row reserves the same leading slot; folders use it for
+    // their disclosure control without shifting the shared icon column.
+    let disclosure_slot = sidebar_leading_slot();
+    if has_children {
+        let expanded = state.borrow().expanded_folders.contains(&folder.id);
+        let disclosure = gtk::Image::from_icon_name(if expanded {
+            "pan-down-symbolic"
+        } else {
+            "pan-end-symbolic"
+        });
+        disclosure.add_css_class("folder-disclosure");
+        disclosure.set_pixel_size(SIDEBAR_DISCLOSURE_SLOT - 2);
+        disclosure.set_halign(gtk::Align::Center);
+        disclosure.set_valign(gtk::Align::Center);
+        disclosure_slot.set_tooltip_text(Some(if expanded {
+            "Collapse folder"
+        } else {
+            "Show subfolders"
+        }));
 
-            let folder_id = folder.id;
-            let list_for_toggle = list.clone();
-            let state_for_toggle = state.clone();
-            let toggle = gtk::GestureClick::new();
-            toggle.connect_pressed(move |gesture, _, _, _| {
-                toggle_folder_branch(&list_for_toggle, &state_for_toggle, folder_id);
-                gesture.set_state(gtk::EventSequenceState::Claimed);
-            });
-            disclosure_slot.add_controller(toggle);
-            disclosure_slot.append(&disclosure);
-        }
-        content.append(&disclosure_slot);
+        let folder_id = folder.id;
+        let list_for_toggle = list.clone();
+        let state_for_toggle = state.clone();
+        let toggle = gtk::GestureClick::new();
+        toggle.connect_pressed(move |gesture, _, _, _| {
+            toggle_folder_branch(&list_for_toggle, &state_for_toggle, folder_id);
+            gesture.set_state(gtk::EventSequenceState::Claimed);
+        });
+        disclosure_slot.add_controller(toggle);
+        disclosure_slot.append(&disclosure);
     }
+    content.append(&disclosure_slot);
 
     let icon_overlay = gtk::Overlay::new();
-    icon_overlay.set_size_request(18, 18);
+    icon_overlay.add_css_class("sidebar-icon-slot");
+    icon_overlay.set_size_request(SIDEBAR_ICON_SIZE, SIDEBAR_ICON_SIZE);
     icon_overlay.set_halign(gtk::Align::Center);
     icon_overlay.set_valign(gtk::Align::Center);
     icon_overlay.set_hexpand(false);
     let icon = gtk::Image::from_icon_name("folder-symbolic");
-    icon.set_pixel_size(18);
+    icon.set_pixel_size(SIDEBAR_ICON_SIZE);
     icon_overlay.set_child(Some(&icon));
 
     if folder.watched {
@@ -2771,28 +2801,22 @@ fn append_folder_row(
     labels.append(&title_label);
     content.append(&labels);
 
-    let trailing = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    let count_label = gtk::Label::new(Some(&format_count(folder.photo_count)));
-    count_label.set_width_request(36);
-    count_label.set_xalign(1.0);
-    count_label.set_valign(gtk::Align::Center);
-    count_label.add_css_class("dim-label");
-    count_label.add_css_class("sidebar-count");
-    count_label.add_css_class("folder-count");
-    trailing.append(&count_label);
-
-    if !folder.available {
+    let warning = if !folder.available {
         let warning = gtk::Button::with_label("!");
         warning.add_css_class("sidebar-offline-badge");
         warning.set_halign(gtk::Align::Center);
         warning.set_valign(gtk::Align::Center);
-        warning.set_width_request(16);
-        warning.set_height_request(16);
+        warning.set_size_request(SIDEBAR_WARNING_WIDTH, SIDEBAR_WARNING_WIDTH);
         warning.set_tooltip_text(Some("Source folder unavailable"));
         let on_unavailable = on_unavailable.clone();
         warning.connect_clicked(move |_| (on_unavailable)());
-        trailing.append(&warning);
-    }
+        Some(warning)
+    } else {
+        None
+    };
+    let (trailing, count_label) = sidebar_count_column(Some(folder.photo_count), warning);
+    let count_label = count_label.expect("folder count column always has a count label");
+    count_label.add_css_class("folder-count");
     content.append(&trailing);
 
     row.set_child(Some(&content));
@@ -2815,6 +2839,7 @@ fn append_folder_row(
     }
     unsafe {
         row.set_data("picasa-filter", SidebarFilter::Folder(folder.id));
+        row.set_data(FILTER_COUNT_LABEL_KEY, count_label);
         row.set_data("picasa-folder-record", folder.clone());
         row.set_data("picasa-folder-depth", depth);
         row.set_data("picasa-folder-has-children", has_children);
@@ -3014,43 +3039,16 @@ fn add_folder_context_menu(list: &gtk::ListBox, row: &gtk::ListBoxRow, folder: &
     row.add_controller(right_click);
 }
 
-/// Bound Folders by the allocated split, keeping populated shares usable.
-/// The Folders heading is outside this paned and must not be counted here.
+/// Bound Folders rows by the outer split. GTK's max position already reserves
+/// the nested Albums/Shared pane's minimum size and the native resize handle.
 fn folder_expansion_target(sidebar: &gtk::ScrolledWindow, current: i32) -> Option<i32> {
     let paned = stored_widget::<gtk::Paned>(sidebar, FOLDER_SHARE_PANED_KEY)?;
     let list = stored_widget::<gtk::ListBox>(sidebar, FOLDER_LIST_KEY)?;
     if paned.height() <= 0 {
         return None;
     }
-    let shares = stored_widget::<gtk::Box>(sidebar, SHARE_SECTION_KEY)?;
-    let mut reserved = 0;
-    if shares.is_visible() {
-        let heading = shares.first_child()?;
-        reserved = heading.measure(gtk::Orientation::Vertical, paned.width()).1;
-        let share_list = stored_widget::<gtk::ListBox>(sidebar, SHARE_LIST_KEY)?;
-        let revealer = share_list
-            .ancestor(gtk::Revealer::static_type())?
-            .downcast::<gtk::Revealer>()
-            .ok()?;
-        if revealer.reveals_child() && !folder_rows(&share_list).is_empty() {
-            let natural = share_list
-                .measure(gtk::Orientation::Vertical, paned.width())
-                .1;
-            let row_sum = list_natural_height_for_rows(&share_list, usize::MAX);
-            // Include list/theme spacing as well as the first few row requests.
-            reserved += (list_natural_height_for_rows(&share_list, 3) + (natural - row_sum).max(0))
-                .min(natural);
-        }
-    }
-    // max-position already reserves the end child's GTK minimum and the handle.
-    let minimum = if shares.is_visible() {
-        shares.measure(gtk::Orientation::Vertical, paned.width()).0
-    } else {
-        0
-    };
-    let limit = (paned.max_position() - (reserved - minimum).max(0)).max(0);
     let desired = list.measure(gtk::Orientation::Vertical, paned.width()).1;
-    Some(current.max(desired).min(limit))
+    Some(current.max(desired).min(paned.max_position().max(0)))
 }
 
 fn cancel_folder_expansion(sidebar: &gtk::ScrolledWindow) -> Option<(Rc<Cell<u64>>, u64)> {
@@ -3256,6 +3254,70 @@ fn rebuild_folder_list_from_rows(list: &gtk::ListBox, state: &Rc<RefCell<Sidebar
     }
 }
 
+fn sidebar_icon_slot(icon_name: &str) -> gtk::Box {
+    sidebar_icon_slot_with_size(icon_name, SIDEBAR_ICON_SIZE)
+}
+
+fn sidebar_icon_slot_with_size(icon_name: &str, icon_size: i32) -> gtk::Box {
+    let slot = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    slot.add_css_class("sidebar-icon-slot");
+    slot.set_size_request(SIDEBAR_ICON_SIZE, SIDEBAR_ICON_SIZE);
+    slot.set_halign(gtk::Align::Center);
+    slot.set_valign(gtk::Align::Center);
+
+    let icon = gtk::Image::from_icon_name(icon_name);
+    icon.set_pixel_size(icon_size);
+    slot.append(&icon);
+    slot
+}
+
+fn sidebar_leading_slot() -> gtk::Box {
+    let slot = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    slot.add_css_class("sidebar-leading-slot");
+    slot.set_size_request(SIDEBAR_DISCLOSURE_SLOT, SIDEBAR_ICON_SIZE);
+    slot
+}
+
+fn sidebar_count_column(
+    count: Option<i64>,
+    warning: Option<gtk::Button>,
+) -> (gtk::Box, Option<gtk::Label>) {
+    let trailing = gtk::Box::new(
+        gtk::Orientation::Horizontal,
+        SIDEBAR_COUNT_WARNING_SPACING,
+    );
+    trailing.add_css_class("sidebar-row-trailing");
+    trailing.set_size_request(
+        SIDEBAR_COUNT_WIDTH + SIDEBAR_WARNING_WIDTH + SIDEBAR_COUNT_WARNING_SPACING,
+        -1,
+    );
+
+    let count_label = if let Some(count) = count {
+        let count_label = gtk::Label::new(Some(&format_count(count)));
+        count_label.set_width_request(SIDEBAR_COUNT_WIDTH);
+        count_label.set_xalign(1.0);
+        count_label.set_valign(gtk::Align::Center);
+        count_label.add_css_class("dim-label");
+        count_label.add_css_class("sidebar-count");
+        trailing.append(&count_label);
+        Some(count_label)
+    } else {
+        let count_spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        count_spacer.set_size_request(SIDEBAR_COUNT_WIDTH, -1);
+        trailing.append(&count_spacer);
+        None
+    };
+
+    if let Some(warning) = warning {
+        trailing.append(&warning);
+    } else {
+        let warning_slot = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        warning_slot.set_size_request(SIDEBAR_WARNING_WIDTH, SIDEBAR_WARNING_WIDTH);
+        trailing.append(&warning_slot);
+    }
+    (trailing, count_label)
+}
+
 fn append_filter(
     list: &gtk::ListBox,
     icon_name: &str,
@@ -3267,16 +3329,22 @@ fn append_filter(
     on_unavailable: &Rc<dyn Fn()>,
 ) -> gtk::ListBoxRow {
     let row = gtk::ListBoxRow::new();
-    row.set_margin_top(2);
-    row.set_margin_bottom(2);
-    let content = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    content.set_margin_top(6);
-    content.set_margin_bottom(6);
-    content.set_margin_start(8);
-    content.set_margin_end(8);
-    let icon = gtk::Image::from_icon_name(icon_name);
-    icon.set_pixel_size(18);
-    content.append(&icon);
+    row.add_css_class("sidebar-navigation-row");
+    row.set_margin_top(SIDEBAR_ROW_MARGIN_Y);
+    row.set_margin_bottom(SIDEBAR_ROW_MARGIN_Y);
+    let content = gtk::Box::new(gtk::Orientation::Horizontal, SIDEBAR_ITEM_SPACING);
+    content.add_css_class("sidebar-row-content");
+    content.set_margin_top(SIDEBAR_ROW_PADDING_Y);
+    content.set_margin_bottom(SIDEBAR_ROW_PADDING_Y);
+    content.set_margin_start(SIDEBAR_CONTENT_INSET);
+    content.set_margin_end(SIDEBAR_CONTENT_INSET);
+    content.append(&sidebar_leading_slot());
+    let icon_size = if icon_name == "x-office-calendar-symbolic" {
+        SIDEBAR_RECENT_ICON_SIZE
+    } else {
+        SIDEBAR_ICON_SIZE
+    };
+    content.append(&sidebar_icon_slot_with_size(icon_name, icon_size));
     let labels = gtk::Box::new(gtk::Orientation::Vertical, 1);
     let title_label = gtk::Label::new(Some(title));
     title_label.set_xalign(0.0);
@@ -3292,29 +3360,27 @@ fn append_filter(
     labels.set_hexpand(true);
     content.append(&labels);
 
-    if let Some(count) = count {
-        let count_label = gtk::Label::new(Some(&format_count(count)));
-        count_label.set_xalign(1.0);
-        count_label.set_valign(gtk::Align::Center);
-        count_label.add_css_class("dim-label");
-        count_label.add_css_class("sidebar-count");
-        content.append(&count_label);
-        unsafe {
-            row.set_data(FILTER_COUNT_LABEL_KEY, count_label);
-        }
-    }
-
-    if offline {
+    let warning = if offline {
         let warning = gtk::Button::with_label("!");
         warning.add_css_class("sidebar-offline-badge");
         warning.set_halign(gtk::Align::Center);
         warning.set_valign(gtk::Align::Center);
-        warning.set_width_request(16);
-        warning.set_height_request(16);
+        warning.set_size_request(SIDEBAR_WARNING_WIDTH, SIDEBAR_WARNING_WIDTH);
         warning.set_tooltip_text(Some("Source folder unavailable"));
         let on_unavailable = on_unavailable.clone();
         warning.connect_clicked(move |_| (on_unavailable)());
-        content.append(&warning);
+        Some(warning)
+    } else {
+        None
+    };
+    if count.is_some() || warning.is_some() {
+        let (trailing, count_label) = sidebar_count_column(count, warning);
+        content.append(&trailing);
+        if let Some(count_label) = count_label {
+            unsafe {
+                row.set_data(FILTER_COUNT_LABEL_KEY, count_label);
+            }
+        }
     }
     row.set_child(Some(&content));
     unsafe {
@@ -3364,11 +3430,11 @@ fn append_album_filter(list: &gtk::ListBox, album: &Album, on_delete: &Rc<dyn Fn
 fn set_folder_mode_toggle_presentation(button: &gtk::Button, mode: FolderDisplayMode) {
     match mode {
         FolderDisplayMode::Tree => {
-            button.set_icon_name("folder-symbolic");
+            set_sidebar_action_icon(button, "folder-symbolic");
             button.set_tooltip_text(Some("Show imported folders only"));
         }
         FolderDisplayMode::ImportedOnly => {
-            button.set_icon_name("view-list-symbolic");
+            set_sidebar_action_icon(button, "view-list-symbolic");
             button.set_tooltip_text(Some("Show folder tree"));
         }
     }
@@ -3376,10 +3442,10 @@ fn set_folder_mode_toggle_presentation(button: &gtk::Button, mode: FolderDisplay
 
 fn set_share_mode_toggle_presentation(button: &gtk::Button, tree_mode: bool) {
     if tree_mode {
-        button.set_icon_name("folder-symbolic");
+        set_sidebar_action_icon(button, "folder-symbolic");
         button.set_tooltip_text(Some("Show imported shares only"));
     } else {
-        button.set_icon_name("view-list-symbolic");
+        set_sidebar_action_icon(button, "view-list-symbolic");
         button.set_tooltip_text(Some("Show network folder tree"));
     }
 }
@@ -3443,17 +3509,18 @@ fn collapsible_heading(
     expanded: bool,
     title_action: Option<Rc<dyn Fn()>>,
 ) -> (gtk::Box, gtk::Button) {
-    let content = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+    let content = gtk::Box::new(gtk::Orientation::Horizontal, SIDEBAR_HEADING_SPACING);
     content.add_css_class("sidebar-section-heading");
     content.set_hexpand(true);
-    content.set_margin_start(8);
-    content.set_margin_end(8);
-    content.set_margin_top(8);
-    content.set_margin_bottom(4);
+    content.set_margin_start(SIDEBAR_CONTENT_INSET);
+    content.set_margin_end(SIDEBAR_CONTENT_INSET);
+    content.set_margin_top(SIDEBAR_HEADER_MARGIN_TOP);
+    content.set_margin_bottom(SIDEBAR_HEADER_MARGIN_BOTTOM);
 
     let label = gtk::Label::new(Some(text));
     label.set_xalign(0.0);
     label.set_hexpand(true);
+    label.set_ellipsize(gtk::pango::EllipsizeMode::End);
     label.add_css_class("sidebar-section-heading-title");
     if let Some(title_action) = title_action {
         let click = gtk::GestureClick::new();
@@ -3471,26 +3538,40 @@ fn collapsible_heading(
     // Keep the disclosure control rightmost. Any section-specific action sits
     // before it, so headings read consistently as: action / + / collapse.
     if let Some(action) = action {
-        let add = gtk::Button::from_icon_name("list-add-symbolic");
-        add.add_css_class("flat");
-        add.set_size_request(24, 24);
-        add.set_tooltip_text(Some(action_tooltip));
+        let add = sidebar_action_button("list-add-symbolic", Some(action_tooltip));
+        add.set_focusable(true);
         add.connect_clicked(move |_| action());
         content.append(&add);
     }
 
-    let indicator = gtk::Button::from_icon_name(if expanded {
+    let indicator = sidebar_action_button(if expanded {
         "pan-down-symbolic"
     } else {
         "pan-end-symbolic"
-    });
-    indicator.add_css_class("flat");
-    indicator.set_focusable(false);
-    indicator.set_size_request(24, 24);
-    indicator.set_tooltip_text(Some(if expanded { "Collapse" } else { "Expand" }));
+    }, Some(if expanded { "Collapse" } else { "Expand" }));
     content.append(&indicator);
 
     (content, indicator)
+}
+
+fn sidebar_action_button(icon_name: &str, tooltip: Option<&str>) -> gtk::Button {
+    let button = gtk::Button::new();
+    let image = gtk::Image::from_icon_name(icon_name);
+    image.set_pixel_size(SIDEBAR_ACTION_ICON_SIZE);
+    button.set_child(Some(&image));
+    button.add_css_class("flat");
+    button.add_css_class("sidebar-section-action");
+    button.set_focusable(false);
+    button.set_size_request(SIDEBAR_CONTROL_SIZE, SIDEBAR_CONTROL_SIZE);
+    button.set_tooltip_text(tooltip);
+    button
+}
+
+fn set_sidebar_action_icon(button: &gtk::Button, icon_name: &str) {
+    if let Some(image) = button.child().and_then(|child| child.downcast::<gtk::Image>().ok()) {
+        image.set_icon_name(Some(icon_name));
+        image.set_pixel_size(SIDEBAR_ACTION_ICON_SIZE);
+    }
 }
 
 /// Right-click context menu on a section heading: always offer Reveal All.

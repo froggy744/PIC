@@ -156,6 +156,16 @@ pub(crate) fn install_foundation(display: &gtk::gdk::Display) {
         gtk::STYLE_PROVIDER_PRIORITY_APPLICATION + 13,
     );
 
+    // Sidebar header actions share a fixed 28px target and 14px glyph, with
+    // the same theme-aware hover surface in every section.
+    let sidebar_actions = gtk::CssProvider::new();
+    sidebar_actions.load_from_string(include_str!("components/sidebar_action_consistency.css"));
+    gtk::style_context_add_provider_for_display(
+        display,
+        &sidebar_actions,
+        gtk::STYLE_PROVIDER_PRIORITY_APPLICATION + 14,
+    );
+
     // Legacy square-tile rules remain active when Corner style is Square,
     // preserving the Photo Wall/Masonry behaviour and older UI tests.
     let square_corners = gtk::CssProvider::new();

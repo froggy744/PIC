@@ -1,0 +1,41 @@
+/* Header actions in Library, Ratings, Folders, Shared and Albums. */
+.navigation-sidebar button.sidebar-section-action {
+    min-width: 28px;
+    min-height: 28px;
+    margin: 0;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    color: inherit;
+    background: transparent;
+    background-image: none;
+    box-shadow: none;
+    transition: background-color 140ms ease, border-color 140ms ease;
+}
+
+.navigation-sidebar button.sidebar-section-action image {
+    -gtk-icon-size: 14px;
+}
+
+.navigation-sidebar button.sidebar-section-action:hover {
+    border-color: transparent;
+    border-radius: 6px;
+    background: alpha(@theme_fg_color, 0.09);
+    background-image: none;
+    box-shadow: none;
+}
+
+.navigation-sidebar button.sidebar-section-action:active {
+    background: alpha(@theme_fg_color, 0.15);
+    background-image: none;
+    box-shadow: none;
+}
+
+.navigation-sidebar button.sidebar-section-action:focus-visible {
+    outline: 2px solid @accent_bg_color;
+    outline-offset: -2px;
+}
+
+.navigation-sidebar button.sidebar-section-action:disabled {
+    opacity: 0.45;
+}

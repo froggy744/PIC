@@ -61,6 +61,11 @@ paned.sidebar-section-paned > separator {
   border-top: 1px solid alpha(@theme_fg_color, 0.35);
 }
 
+.navigation-sidebar .sidebar-primary-section-heading:hover {
+  background-color: alpha(@theme_fg_color, 0.06);
+  border-radius: 6px;
+}
+
 /* Remove GTK's extra headerbar shadow; each theme supplies its own bottom line. */
 .layout-left-header,
 .layout-right-header {

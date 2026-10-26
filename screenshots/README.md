@@ -1,6 +1,8 @@
-# PIC V1 media
+# PIC screenshot gallery
 
-Current documentation uses the JPG captures in `screenshots-V1/` and the [OS testing gallery](testingOS/README.md). Original screenshot dimensions are preserved; PNG captures were converted to JPEG at quality 92. Earlier screenshots and the older editor video are archived in `rc/` for historical release notes.
+The [PIC V1.01 visual showcase](../docs/SHOWCASE.md) features the new colourful photo collection and the latest application screens. Its 12 full-size 1920 × 1080 screenshots are in [`v1.01/`](v1.01/), converted to JPG at quality 90.
+
+This page preserves the earlier V1 captures in `screenshots-V1/` and the [OS testing gallery](testingOS/README.md). Older screenshots and the editor video are archived in `rc/` for historical release notes.
 
 ## Walkthrough
 

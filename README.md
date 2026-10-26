@@ -3,8 +3,10 @@
 </p>
 
 <div align="center">
-  <img src="docs/assets/github/pic-icon.png" alt="PIC application icon" width="76">
-  <h1>PIC</h1>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="logo/logo-long-SVG.svg">
+    <img src="docs/assets/github/pic-logo-light.svg" alt="PIC — Personal Image Catalogue" width="380">
+  </picture>
   <h3>Your photos. Your folders. Your way.</h3>
   <p><strong>The classic photo-library experience, reimagined for Linux.</strong></p>
   <p>PIC (Personal Image Catalogue) is a free, open-source photo manager and editor for Linux. Browse and organise photos where they already live, make non-destructive edits, and create collages — all in a native Rust and GTK4/libadwaita app.</p>

@@ -13,6 +13,11 @@ on:
 permissions:
   contents: write
 
+# Only the newest build for a branch or release tag should remain active.
+concurrency:
+  group: appimage-release-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   preflight:
     name: Fast AppImage preflight

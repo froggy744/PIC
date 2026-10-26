@@ -218,7 +218,7 @@ jobs:
           if gh release view v1.0.1 >/dev/null 2>&1; then
             gh release upload v1.0.1 dist/*.AppImage --clobber
           else
-            gh release create v1.0.1 dist/*.AppImage \\
+            gh release create v1.0.1 dist/*.AppImage \
               --target "$GITHUB_SHA" \\
               --title "PIC v1.0.1" \\
               --notes "PIC v1.0.1 Linux AppImage release. Includes the latest PIC improvements and packaging fixes."

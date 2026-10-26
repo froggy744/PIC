@@ -647,6 +647,15 @@ pub fn build(
             animating.set(true);
 
             if expanded {
+                // Restore the hidden rows as the start pane before growing.
+                // GtkPaned hides its divider whenever a pane is absent.
+                let was_detached = paned.start_child().is_none();
+                if was_detached {
+                    revealer.set_reveal_child(false);
+                    paned.set_start_child(Some(&revealer));
+                    paned.set_position(paned.min_position());
+                }
+
                 let from = paned.position().max(0);
                 revealer.set_reveal_child(true);
                 let target = paned
@@ -665,6 +674,17 @@ pub fn build(
                 let from = paned.position().max(0);
                 revealer.set_reveal_child(false);
                 let target = paned.min_position();
+                let paned_for_finish = paned.clone();
+                let revealer_for_finish = revealer.clone();
+                let state_for_finish = state.clone();
+                let finish: Rc<dyn Fn()> = Rc::new(move || {
+                    if !state_for_finish.borrow().albums_expanded {
+                        // Match Folders: remove the collapsed pane so its
+                        // native draggable divider disappears too.
+                        paned_for_finish.set_start_child(None::<&gtk::Widget>);
+                        revealer_for_finish.set_reveal_child(false);
+                    }
+                });
                 animate_sidebar_pane_position(
                     &paned,
                     from,
@@ -672,7 +692,7 @@ pub fn build(
                     animation_generation.clone(),
                     generation,
                     animating.clone(),
-                    None,
+                    Some(finish),
                 );
             }
         })

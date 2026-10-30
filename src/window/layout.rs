@@ -795,6 +795,17 @@
     left_column.add_css_class("layout-left-column");
     sidebar.set_vexpand(true);
     left_column.append(&left_header);
+    let compact_header = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    compact_header.set_height_request(46);
+    compact_header.set_halign(gtk::Align::Fill);
+    compact_header.add_css_class("layout-left-header");
+    let compact_heading = gtk::Label::new(Some("PIC"));
+    compact_heading.add_css_class("heading");
+    compact_heading.set_hexpand(true);
+    compact_heading.set_halign(gtk::Align::Center);
+    compact_header.append(&compact_heading);
+    compact_header.set_visible(false);
+    left_column.append(&compact_header);
     left_column.append(&sidebar);
     sidebar.set_visible(false);
 
@@ -954,12 +965,16 @@
         let compact_width_for_mode = compact_width.clone();
         let connection_for_mode = connection.clone();
         let header_for_mode = left_header.clone();
+        let compact_header_for_mode = compact_header.clone();
+        let shell_for_mode = sidebar_shell.clone();
         let right_toggle = compact_right_toggle_slot.clone();
         let controls_sync = compact_controls_sync_slot.clone();
         Rc::new(move |show| {
             // The full header contains native window controls and action buttons
             // whose natural width prevents a genuinely narrow compact rail.
             header_for_mode.set_visible(show);
+            compact_header_for_mode.set_visible(!show);
+            shell_for_mode.set_width_request(if show { -1 } else { compact_width_for_mode.get().round() as i32 });
             if let Some(button) = right_toggle.borrow().as_ref() {
                 button.set_visible(!show);
             }
@@ -1277,6 +1292,7 @@
         let expanded = sidebar_expanded.clone();
         let split = main_split.clone();
         let labels = compact_labels.clone();
+        let shell = sidebar_shell.clone();
         compact_drag.connect_drag_update(move |gesture, dx, dy| {
             if expanded.get() { return; }
             let (initial_width, x, y, initial_x) = start.get();
@@ -1284,6 +1300,7 @@
                 &split, &gtk::graphene::Point::new((x + dx) as f32, (y + dy) as f32))) else { return; };
             let width = (initial_width + f64::from(point.x()) - initial_x).clamp(48.0, 300.0);
             compact_width.set(width);
+            shell.set_width_request(width.round() as i32);
             for label in labels.borrow().iter() { label.set_visible(width >= 90.0); }
             // Keep the minimum fixed: updating it to the pointer position
             // prevents shrinking and causes GTK allocation jitter.

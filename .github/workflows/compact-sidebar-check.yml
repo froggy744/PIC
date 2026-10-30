@@ -104,6 +104,11 @@ jobs:
           hidden_full.set_size_request(200, -1)
           hidden_full.set_visible(False)
           sidebar.prepend(hidden_full)
+          # A vertical Revealer can keep its children's horizontal minimum
+          # even when collapsed. This models the previous inline folder list.
+          wide_inline = Gtk.Label(label="A long imported folder hierarchy")
+          wide_inline.set_size_request(205, -1)
+          sidebar.append(wide_inline)
           width_boundary = Gtk.ScrolledWindow()
           width_boundary.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.NEVER)
           width_boundary.set_propagate_natural_width(False)

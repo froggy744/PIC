@@ -50,6 +50,7 @@ jobs:
           assert 'COMPACT_ICON_RAIL_WIDTH: f64 = 44.0' in src
           assert 'compact-sidebar-width-v2' in src, "old 120px width must not be restored"
           assert 'sidebar_width_boundary.set_propagate_natural_width(false)' in src
+          assert 'sidebar_width_boundary.set_policy(gtk::PolicyType::External, gtk::PolicyType::Never)' in src
           assert 'sidebar_width_boundary.set_child(Some(&left_column))' in src
           assert 'Some("folders-overview")' in src, "Folders requires an overview route"
           assert 'show_folder_overview.clone()' in src
@@ -110,7 +111,7 @@ jobs:
           wide_inline.set_size_request(205, -1)
           sidebar.append(wide_inline)
           width_boundary = Gtk.ScrolledWindow()
-          width_boundary.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.NEVER)
+          width_boundary.set_policy(Gtk.PolicyType.EXTERNAL, Gtk.PolicyType.NEVER)
           width_boundary.set_propagate_natural_width(False)
           width_boundary.set_min_content_width(1)
           width_boundary.set_child(sidebar)

@@ -832,6 +832,7 @@
     compact_sidebar.set_vexpand(true);
     let mut albums_button = None;
     let mut ratings_button = None;
+    let mut compact_buttons: Vec<(gtk::Button, &'static str)> = Vec::new();
     for (label, icon, destination) in [
         ("Library", "go-home-symbolic", sidebar::SidebarFilter::Library),
         ("Photos", "image-x-generic-symbolic", sidebar::SidebarFilter::All),
@@ -858,6 +859,7 @@
             let navigate = destination_click.clone();
             button.connect_clicked(move |_| navigate(destination));
         }
+        compact_buttons.push((button.clone(), label));
         compact_sidebar.append(&button);
     }
     let folders = gtk::Button::new();
@@ -869,7 +871,19 @@
     folder_contents.append(&gtk::Image::from_icon_name("folder-symbolic"));
     folder_contents.append(&gtk::Label::new(Some("Folders")));
     folders.set_child(Some(&folder_contents));
+    compact_buttons.push((folders.clone(), "Folders"));
     compact_sidebar.append(&folders);
+    let shared = gtk::Button::new();
+    shared.add_css_class("flat");
+    shared.add_css_class("compact-sidebar-button");
+    shared.set_tooltip_text(Some("Browse network shares"));
+    let shared_contents = gtk::Box::new(gtk::Orientation::Vertical, 3);
+    shared_contents.set_halign(gtk::Align::Center);
+    shared_contents.append(&gtk::Image::from_icon_name("network-server-symbolic"));
+    shared_contents.append(&gtk::Label::new(Some("Shared")));
+    shared.set_child(Some(&shared_contents));
+    compact_buttons.push((shared.clone(), "Shared"));
+    compact_sidebar.append(&shared);
     let compact_rail_shell = gtk::Overlay::new();
     compact_rail_shell.set_child(Some(&compact_sidebar));
     left_column.append(&compact_rail_shell);
@@ -989,6 +1003,73 @@
             });
         });
     }
+    {
+        let popover = gtk::Popover::new();
+        popover.set_position(gtk::PositionType::Right);
+        popover.set_parent(&shared);
+        let list = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        let scroll = gtk::ScrolledWindow::new();
+        scroll.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Automatic);
+        scroll.set_min_content_width(240);
+        scroll.set_max_content_height(360);
+        scroll.set_propagate_natural_height(true);
+        scroll.set_child(Some(&list));
+        popover.set_child(Some(&scroll));
+        let weak = popover.downgrade();
+        let connection = connection.clone();
+        let navigate = destination_click.clone();
+        shared.connect_clicked(move |_| {
+            while let Some(child) = list.first_child() { list.remove(&child); }
+            if let Ok(folders) = db::folders(&connection.borrow()) {
+                let mut folders: Vec<_> = folders.into_iter()
+                    .filter(|folder| db::is_remote_path(&folder.path)).collect();
+                folders.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+                for folder in folders {
+                    let item = gtk::Button::with_label(&folder.name);
+                    item.add_css_class("flat");
+                    item.set_tooltip_text(Some(&folder.path));
+                    let navigate = navigate.clone();
+                    let weak = weak.clone();
+                    item.connect_clicked(move |_| {
+                        if let Some(popover) = weak.upgrade() { popover.popdown(); }
+                        navigate(sidebar::SidebarFilter::Folder(folder.id));
+                    });
+                    list.append(&item);
+                }
+            }
+            if list.first_child().is_none() {
+                list.append(&gtk::Label::new(Some("No network shares")));
+            }
+            let weak = weak.clone();
+            glib::timeout_add_local_once(Duration::from_millis(120), move || {
+                if let Some(popover) = weak.upgrade() { popover.popup(); }
+            });
+        });
+    }
+    // Reuse sidebar visibility preferences for both layouts.
+    let refresh_compact_visibility: Rc<dyn Fn()> = {
+        let connection = connection.clone();
+        Rc::new(move || {
+            let visibility = sidebar::SidebarVisibility::from_connection(&connection.borrow());
+            for (button, label) in &compact_buttons {
+                let visible = match *label {
+                    "Library" => visibility.library,
+                    "Photos" => visibility.library && visibility.all_photos,
+                    "Recent" => visibility.library && visibility.recently_added,
+                    "Favorites" => visibility.library && visibility.favourites,
+                    "Ratings" => visibility.library && visibility.ratings,
+                    "History" => visibility.library && visibility.history,
+                    "Albums" => visibility.albums,
+                    "Folders" => visibility.folders,
+                    "Shared" => visibility.network_shares,
+                    _ => true,
+                };
+                button.set_visible(visible);
+            }
+        })
+    };
+    refresh_compact_visibility();
+    compact_visibility_changed_slot.replace(Some(refresh_compact_visibility));
     if let Some(button) = ratings_button {
         let popover = gtk::Popover::new();
         popover.set_position(gtk::PositionType::Right);

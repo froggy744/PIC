@@ -1366,17 +1366,56 @@
     // Auto-close only a sidebar that was opened by hover (including a
     // collapsed-mode peek of a pinned sidebar). A pinned sidebar in the
     // expanded layout never hover-opens, so it never auto-hides here.
+    // A context menu is parented to its sidebar row in GTK4. When GTK
+    // grabs the pointer for that popover, the sidebar receives a synthetic
+    // mouse-leave; do not auto-hide while the menu is displayed.
+    fn sidebar_has_visible_popover(widget: &gtk::Widget) -> bool {
+        if let Some(popover) = widget.downcast_ref::<gtk::Popover>() {
+            if popover.is_visible() { return true; }
+        }
+        let mut child = widget.first_child();
+        while let Some(current) = child {
+            child = current.next_sibling();
+            if sidebar_has_visible_popover(&current) { return true; }
+        }
+        false
+    }
     let sidebar_leave_motion = gtk::EventControllerMotion::new();
+    let sidebar_leave_generation = Rc::new(Cell::new(0_u64));
+    {
+        let generation = sidebar_leave_generation.clone();
+        sidebar_leave_motion.connect_enter(move |_, _, _| {
+            // Returning to the sidebar cancels a pending mouse-leave hide.
+            generation.set(generation.get().wrapping_add(1));
+        });
+    }
     let main_split_for_hover_hide = main_split.clone();
     let sidebar_for_hover_hide = sidebar.clone();
+    let left_column_for_hover_hide = left_column.clone();
+    let leave_generation = sidebar_leave_generation.clone();
+    let resize_active_for_leave = sidebar_resize_active.clone();
     sidebar_leave_motion.connect_leave(move |_| {
-        if sidebar::is_hover_open(&sidebar_for_hover_hide) {
-            // The show-sidebar notify handler below owns release of the layout
-            // freeze after the hide animation. This also covers other UI paths
-            // that can close a temporarily revealed sidebar.
-            main_split_for_hover_hide.set_show_sidebar(false);
-            sidebar::clear_hover_open(&sidebar_for_hover_hide);
-        }
+        let next = leave_generation.get().wrapping_add(1);
+        leave_generation.set(next);
+        let generation = leave_generation.clone();
+        let split = main_split_for_hover_hide.clone();
+        let sidebar = sidebar_for_hover_hide.clone();
+        let column = left_column_for_hover_hide.clone();
+        let resizing = resize_active_for_leave.clone();
+        // Let the right-click handler create its popover before checking.
+        // Continue checking while the context menu is open; when it closes,
+        // auto-hide normally unless the pointer returned to the sidebar.
+        glib::timeout_add_local(Duration::from_millis(140), move || {
+            if generation.get() != next || !sidebar::is_hover_open(&sidebar) {
+                return glib::ControlFlow::Break;
+            }
+            if resizing.get() || sidebar_has_visible_popover(&column.clone().upcast()) {
+                return glib::ControlFlow::Continue;
+            }
+            split.set_show_sidebar(false);
+            sidebar::clear_hover_open(&sidebar);
+            glib::ControlFlow::Break
+        });
     });
     left_column.add_controller(sidebar_leave_motion);
 

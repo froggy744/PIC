@@ -118,9 +118,39 @@ GLib.timeout_add_seconds(
 )
 loop.run()
 print("X11 pointer drag:", seen, "allocated:", shell.get_width(), flush=True)
-window.destroy()
-
 assert not failures, failures
 assert seen["begin"], "outside divider or GTK did not receive press"
 assert seen["updates"] >= 2, "divider received no drag updates"
 assert seen["smallest"] <= 80, "real X11 pointer movement failed to narrow sidebar"
+
+# A context popover is a widget child of the triggering sidebar button.
+# A GTK leave event caused by popup grabs must not hide the sidebar.
+button = rail.get_first_child()
+popover = Gtk.Popover()
+popover.set_parent(button)
+popover.set_child(Gtk.Button(label="Open folder"))
+popover.popup()
+
+def mapped_popover(widget):
+    if isinstance(widget, Gtk.Popover) and widget.get_mapped():
+        return True
+    child = widget.get_first_child()
+    while child is not None:
+        next_sibling = child.get_next_sibling()
+        if mapped_popover(child):
+            return True
+        child = next_sibling
+    return False
+
+def settle(milliseconds=300):
+    step = GLib.MainLoop()
+    GLib.timeout_add(milliseconds, lambda: (step.quit(), False)[1])
+    step.run()
+
+settle()
+assert popover.get_mapped(), "test popup failed to map under X11"
+assert mapped_popover(column), "open popup not discoverable from sidebar tree"
+popover.popdown()
+settle()
+assert not mapped_popover(column), "closed popup would block sidebar auto-hide"
+window.destroy()

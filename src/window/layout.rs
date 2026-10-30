@@ -1371,7 +1371,9 @@
     // mouse-leave; do not auto-hide while the menu is displayed.
     fn sidebar_has_visible_popover(widget: &gtk::Widget) -> bool {
         if let Some(popover) = widget.downcast_ref::<gtk::Popover>() {
-            if popover.is_visible() { return true; }
+            // An attached-but-closed popover can still be visible as a
+            // GTK widget; only a mapped popup should suppress auto-hide.
+            if popover.is_mapped() { return true; }
         }
         let mut child = widget.first_child();
         while let Some(current) = child {

@@ -113,6 +113,8 @@ jobs:
           split.set_content(Gtk.Box())
           split.set_show_sidebar(False)
           dock = Gtk.Overlay()
+          dock.set_hexpand(False)
+          dock.set_vexpand(True)
           dock.set_size_request(44, -1)
           dock.set_child(sidebar)
           layout = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)

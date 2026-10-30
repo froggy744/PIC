@@ -57,7 +57,7 @@ jobs:
           PY
       - name: X11 GTK width allocation smoke test
         run: |
-          xvfb-run -a /usr/bin/python3 - <<'PY'
+          xvfb-run -a -s "-screen 0 2560x1440x24" /usr/bin/python3 - <<'PY'
           import gi
           gi.require_version("Gtk", "4.0")
           gi.require_version("Adw", "1")
@@ -65,7 +65,7 @@ jobs:
           Adw.init()
           Gtk.Settings.get_default().set_property("gtk-enable-animations", False)
           window = Gtk.Window()
-          window.set_default_size(900, 600)
+          window.set_default_size(2560, 1440)
           split = Adw.OverlaySplitView()
           split.set_min_sidebar_width(44.0)
           split.set_max_sidebar_width(44.0)

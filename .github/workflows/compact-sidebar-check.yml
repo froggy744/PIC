@@ -83,9 +83,11 @@ jobs:
           window.set_child(split)
           window.present()
           def flush():
-              for _ in range(20):
-                  while GLib.MainContext.default().pending():
-                      GLib.MainContext.default().iteration(False)
+              # Allow GTK's frame clock and libadwaita's allocation animation
+              # to settle; draining only pending events does not advance frames.
+              loop = GLib.MainLoop()
+              GLib.timeout_add(350, loop.quit)
+              loop.run()
           flush()
           for width in (120, 72, 48, 160, 48):
               for label in labels:
@@ -94,7 +96,8 @@ jobs:
               split.set_max_sidebar_width(float(width))
               split.set_sidebar_width_fraction(float(width) / max(1.0, split.get_width()))
               flush()
-              actual = sidebar.get_allocated_width()
+              actual = sidebar.get_width()
+              print(f"width={width} actual={actual} fraction={split.get_sidebar_width_fraction():.4f} max={split.get_max_sidebar_width()}", flush=True)
               assert actual <= width + 2, (width, actual)
               assert actual >= 40, (width, actual)
               print(f"X11 GTK rail width request={width} actual={actual}")

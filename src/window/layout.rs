@@ -794,7 +794,20 @@
     left_column.set_vexpand(true);
     left_column.add_css_class("layout-left-column");
     sidebar.set_vexpand(true);
-    left_column.append(&left_header);
+    // Independent pages ensure a long folder name or normal header never
+    // contributes to the compact rail's 44px minimum size.
+    let sidebar_pages = gtk::Stack::new();
+    sidebar_pages.set_hhomogeneous(false);
+    sidebar_pages.set_vhomogeneous(false);
+    sidebar_pages.set_hexpand(true);
+    sidebar_pages.set_vexpand(true);
+    let full_sidebar_page = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    full_sidebar_page.set_vexpand(true);
+    full_sidebar_page.append(&left_header);
+    full_sidebar_page.append(&sidebar);
+    sidebar_pages.add_named(&full_sidebar_page, Some("full"));
+    let compact_sidebar_page = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    compact_sidebar_page.set_vexpand(true);
     let compact_header = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     compact_header.set_height_request(46);
     compact_header.set_halign(gtk::Align::Fill);
@@ -804,10 +817,10 @@
     compact_heading.set_hexpand(true);
     compact_heading.set_halign(gtk::Align::Center);
     compact_header.append(&compact_heading);
-    compact_header.set_visible(false);
-    left_column.append(&compact_header);
-    left_column.append(&sidebar);
-    sidebar.set_visible(false);
+    compact_sidebar_page.append(&compact_header);
+    sidebar_pages.add_named(&compact_sidebar_page, Some("compact"));
+    sidebar_pages.set_visible_child_name("full");
+    left_column.append(&sidebar_pages);
 
     // Overlay a narrow drag handle on the sidebar's right edge.
     // AdwOverlaySplitView does not expose a built-in draggable divider, so we
@@ -1023,7 +1036,7 @@
     compact_scroll.set_min_content_width(1);
     compact_scroll.set_child(Some(&compact_sidebar));
     compact_rail_shell.set_child(Some(&compact_scroll));
-    left_column.append(&compact_rail_shell);
+    compact_sidebar_page.append(&compact_rail_shell);
     // v2 resets the former 120px-wide default once; thereafter the chosen
     // compact width persists independently from the normal sidebar.
     const COMPACT_SIDEBAR_WIDTH_KEY: &str = "compact-sidebar-width-v2";
@@ -1075,6 +1088,7 @@
         let header_for_mode = left_header.clone();
         let compact_header_for_mode = compact_header.clone();
         let shell_for_mode = sidebar_shell.clone();
+        let pages_for_mode = sidebar_pages.clone();
         let right_toggle = compact_right_toggle_slot.clone();
         let controls_sync = compact_controls_sync_slot.clone();
         Rc::new(move |show| {
@@ -1082,6 +1096,7 @@
             // grow with desktop text scaling and can make it much wider.
             // Normal mode retains libadwaita's original scaling unit.
             split.set_sidebar_width_unit(if show { normal_width_unit } else { adw::LengthUnit::Px });
+            pages_for_mode.set_visible_child_name(if show { "full" } else { "compact" });
             header_for_mode.set_visible(show);
             compact_header_for_mode.set_visible(!show);
             shell_for_mode.set_width_request(if show { -1 } else { compact_width_for_mode.get().round() as i32 });

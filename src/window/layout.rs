@@ -380,7 +380,23 @@
     let main_surface = gtk::Overlay::new();
     main_surface.set_hexpand(true);
     main_surface.set_vexpand(true);
-    main_surface.set_child(Some(&main_split));
+    // Compact navigation is OUTSIDE AdwOverlaySplitView. Libadwaita can
+    // impose a roughly 130px minimum sidebar regardless of our 44px caps.
+    // GtkBox allocates the compact dock its literal pixel width; the main
+    // split receives the rest and remains the normal sidebar only.
+    let layout_row = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    layout_row.set_hexpand(true);
+    layout_row.set_vexpand(true);
+    let compact_dock = gtk::Overlay::new();
+    compact_dock.set_width_request(44);
+    compact_dock.set_hexpand(false);
+    compact_dock.set_vexpand(true);
+    compact_dock.set_visible(false);
+    compact_dock.add_css_class("compact-sidebar-dock");
+    layout_row.append(&compact_dock);
+    main_split.set_hexpand(true);
+    layout_row.append(&main_split);
+    main_surface.set_child(Some(&layout_row));
 
     let folder_display_mode = sidebar::FolderDisplayMode::from_setting(
         db::setting(
@@ -794,23 +810,14 @@
     left_column.set_vexpand(true);
     left_column.add_css_class("layout-left-column");
     sidebar.set_vexpand(true);
-    // Independent pages ensure a long folder name or normal header never
-    // contributes to the compact rail's 44px minimum size.
-    let sidebar_pages = gtk::Stack::new();
-    sidebar_pages.set_hhomogeneous(false);
-    sidebar_pages.set_vhomogeneous(false);
-    sidebar_pages.set_hexpand(true);
-    sidebar_pages.set_vexpand(true);
-    let full_sidebar_page = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    full_sidebar_page.set_vexpand(true);
-    full_sidebar_page.append(&left_header);
-    full_sidebar_page.append(&sidebar);
-    sidebar_pages.add_named(&full_sidebar_page, Some("full"));
+    // Normal sidebar is owned only by OverlaySplitView. Compact sidebar
+    // lives in the independent fixed-width dock beside the split.
+    left_column.append(&left_header);
+    left_column.append(&sidebar);
     let compact_sidebar_page = gtk::Box::new(gtk::Orientation::Vertical, 0);
     compact_sidebar_page.set_vexpand(true);
     let compact_header = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     compact_header.set_height_request(46);
-    compact_header.set_halign(gtk::Align::Fill);
     compact_header.add_css_class("layout-left-header");
     let compact_heading = gtk::Label::new(Some("PIC"));
     compact_heading.add_css_class("heading");
@@ -818,9 +825,7 @@
     compact_heading.set_halign(gtk::Align::Center);
     compact_header.append(&compact_heading);
     compact_sidebar_page.append(&compact_header);
-    sidebar_pages.add_named(&compact_sidebar_page, Some("compact"));
-    sidebar_pages.set_visible_child_name("full");
-    left_column.append(&sidebar_pages);
+    compact_dock.set_child(Some(&compact_sidebar_page));
 
     // Overlay a narrow drag handle on the sidebar's right edge.
     // AdwOverlaySplitView does not expose a built-in draggable divider, so we
@@ -1071,53 +1076,35 @@
         Rc::new(RefCell::new(None));
     let set_sidebar_expanded: Rc<dyn Fn(bool)> = {
         let split = main_split.clone();
-        let normal_width_unit = main_split.sidebar_width_unit();
+        let dock = compact_dock.clone();
         let sidebar = sidebar.clone();
-        let rail = compact_rail_shell.clone();
         let handle = sidebar_resize_handle.clone();
         let expanded = sidebar_expanded.clone();
-        let overlay_width = collapsed_sidebar_width.clone();
-        let compact_width_for_mode = compact_width.clone();
         let connection_for_mode = connection.clone();
-        let header_for_mode = left_header.clone();
-        let compact_header_for_mode = compact_header.clone();
-        let shell_for_mode = sidebar_shell.clone();
-        let pages_for_mode = sidebar_pages.clone();
         let right_toggle = compact_right_toggle_slot.clone();
         let controls_sync = compact_controls_sync_slot.clone();
-        Rc::new(move |show| {
-            // Use literal GTK pixels for the compact 44px rail; SP units
-            // grow with desktop text scaling and can make it much wider.
-            // Normal mode retains libadwaita's original scaling unit.
-            split.set_sidebar_width_unit(if show { normal_width_unit } else { adw::LengthUnit::Px });
-            pages_for_mode.set_visible_child_name(if show { "full" } else { "compact" });
-            header_for_mode.set_visible(show);
-            compact_header_for_mode.set_visible(!show);
-            shell_for_mode.set_width_request(if show { -1 } else { compact_width_for_mode.get().round() as i32 });
-            if let Some(button) = right_toggle.borrow().as_ref() {
-                button.set_visible(!show);
-            }
-            expanded.set(show);
-            sidebar.set_visible(show);
-            rail.set_visible(!show);
-            // Keep the one full-height, outer divider handle active in both modes.
-            handle.set_visible(true);
-            if let Some(sync) = controls_sync.borrow().as_ref() { sync(); }
-            if show {
-                split.set_max_sidebar_width(if split.is_collapsed() { overlay_width.get() } else { SIDEBAR_MAX_WIDTH });
+        Rc::new(move |show_normal| {
+            expanded.set(show_normal);
+            dock.set_visible(!show_normal);
+            handle.set_visible(show_normal);
+            sidebar.set_visible(show_normal);
+            // The Adw sidebar is completely absent in compact mode. Neither
+            // its natural minimum nor its animation can enlarge the icon rail.
+            split.set_show_sidebar(show_normal && !split.is_collapsed());
+            split.set_enable_show_gesture(show_normal);
+            split.set_enable_hide_gesture(show_normal);
+            if show_normal {
                 split.set_min_sidebar_width(SIDEBAR_MIN_WIDTH);
+                split.set_max_sidebar_width(SIDEBAR_MAX_WIDTH);
                 let normal_fraction = numeric_setting::<f64>(
-                    &connection_for_mode.borrow(), SIDEBAR_WIDTH_FRACTION_SETTING_KEY
+                    &connection_for_mode.borrow(), SIDEBAR_WIDTH_FRACTION_SETTING_KEY,
                 ).unwrap_or(0.22).clamp(0.10, 0.70);
                 split.set_sidebar_width_fraction(normal_fraction);
-            } else {
-                // Lower the minimum before lowering the maximum: libadwaita
-                // rejects a maximum below the current minimum.
-                split.set_min_sidebar_width(COMPACT_ICON_RAIL_WIDTH);
-                split.set_max_sidebar_width(compact_width_for_mode.get());
-                let available = f64::from(split.width().max(1));
-                split.set_sidebar_width_fraction((compact_width_for_mode.get() / available).clamp(0.01, 0.99));
             }
+            if let Some(button) = right_toggle.borrow().as_ref() {
+                button.set_visible(!show_normal);
+            }
+            if let Some(sync) = controls_sync.borrow().as_ref() { sync(); }
         })
     };
     set_sidebar_expanded(!compact_enabled);

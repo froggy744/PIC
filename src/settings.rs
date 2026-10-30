@@ -172,7 +172,9 @@ impl SettingsWindow {
         self.window.borrow_mut().set(None::<&adw::Window>);
         self.stack.borrow_mut().set(None::<&gtk::Stack>);
         self.refresh_appearance.borrow_mut().take();
-        self.sidebar_mode_control.borrow_mut().set(None::<&gtk::Switch>);
+        self.sidebar_mode_control
+            .borrow_mut()
+            .set(None::<&gtk::Switch>);
     }
 
     pub fn present(
@@ -203,7 +205,7 @@ impl SettingsWindow {
             }
             if let Some(toggle) = self.sidebar_mode_control.borrow().upgrade() {
                 toggle.set_active(
-                    saved_bool(&connection.borrow(), "compact-sidebar-enabled").unwrap_or(false)
+                    saved_bool(&connection.borrow(), "compact-sidebar-enabled").unwrap_or(false),
                 );
             }
             window.present();
@@ -442,15 +444,16 @@ fn sidebar_page(
     let compact_toggle = gtk::Switch::new();
     compact_toggle.set_valign(gtk::Align::Center);
     sidebar_mode_control.borrow_mut().set(Some(&compact_toggle));
-    compact_toggle.set_active(
-        saved_bool(&connection.borrow(), "compact-sidebar-enabled").unwrap_or(false)
-    );
+    compact_toggle
+        .set_active(saved_bool(&connection.borrow(), "compact-sidebar-enabled").unwrap_or(false));
     {
         let connection = connection.clone();
         let sidebar_changed = sidebar_changed.clone();
         compact_toggle.connect_active_notify(move |toggle| {
             if let Err(error) = crate::db::set_setting(
-                &connection.borrow(), "compact-sidebar-enabled", &toggle.is_active().to_string()
+                &connection.borrow(),
+                "compact-sidebar-enabled",
+                &toggle.is_active().to_string(),
             ) {
                 eprintln!("Could not save compact sidebar preference: {error}");
                 return;
@@ -459,7 +462,8 @@ fn sidebar_page(
         });
     }
     append_row(
-        &list, "Compact sidebar",
+        &list,
+        "Compact sidebar",
         Some("Use the compact navigation rail; each mode remembers its own width."),
         Some(compact_toggle.upcast_ref()),
     );

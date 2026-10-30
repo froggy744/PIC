@@ -23,6 +23,8 @@ split.set_show_sidebar(False)
 
 # PIC's compact rail is a fixed-width dock OUTSIDE the Adw split.
 dock = Gtk.Overlay()
+dock.set_hexpand(False)
+dock.set_vexpand(True)
 dock.set_size_request(120, -1)
 column = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
 column.append(Gtk.Label(label="PIC"))

@@ -981,7 +981,8 @@
             expanded.set(show);
             sidebar.set_visible(show);
             rail.set_visible(!show);
-            handle.set_visible(show);
+            // Keep the one full-height, outer divider handle active in both modes.
+            handle.set_visible(true);
             if let Some(sync) = controls_sync.borrow().as_ref() { sync(); }
             if show {
                 split.set_max_sidebar_width(if split.is_collapsed() { overlay_width.get() } else { SIDEBAR_MAX_WIDTH });
@@ -1267,66 +1268,9 @@
             }
         });
     }
-    // Independent compact rail resizing: saved separately from normal width and
-    // from the overlay width used on small windows.
-    let compact_drag = gtk::GestureDrag::new();
-    compact_drag.set_button(1);
-    compact_drag.set_exclusive(true);
-    let compact_start = Rc::new(Cell::new((0.0_f64, 0.0_f64, 0.0_f64, 0.0_f64)));
-    {
-        let start = compact_start.clone();
-        let split = main_split.clone();
-        let width = compact_width.clone();
-        compact_drag.connect_drag_begin(move |gesture, x, y| {
-            if let Some(point) = gesture.widget().and_then(|handle| handle.compute_point(
-                &split, &gtk::graphene::Point::new(x as f32, y as f32))) {
-                start.set((width.get(), x, y, f64::from(point.x())));
-            } else {
-                gesture.set_state(gtk::EventSequenceState::Denied);
-            }
-        });
-    }
-    {
-        let start = compact_start.clone();
-        let compact_width = compact_width.clone();
-        let expanded = sidebar_expanded.clone();
-        let split = main_split.clone();
-        let labels = compact_labels.clone();
-        let shell = sidebar_shell.clone();
-        compact_drag.connect_drag_update(move |gesture, dx, dy| {
-            if expanded.get() { return; }
-            let (initial_width, x, y, initial_x) = start.get();
-            let Some(point) = gesture.widget().and_then(|handle| handle.compute_point(
-                &split, &gtk::graphene::Point::new((x + dx) as f32, (y + dy) as f32))) else { return; };
-            let width = (initial_width + f64::from(point.x()) - initial_x).clamp(48.0, 300.0);
-            compact_width.set(width);
-            shell.set_width_request(width.round() as i32);
-            for label in labels.borrow().iter() { label.set_visible(width >= 90.0); }
-            // Keep the minimum fixed: updating it to the pointer position
-            // prevents shrinking and causes GTK allocation jitter.
-            split.set_max_sidebar_width(width);
-            let available = f64::from(split.width().max(1));
-            split.set_sidebar_width_fraction((width / available).clamp(0.01, 0.99));
-        });
-    }
-    {
-        let compact_width = compact_width.clone();
-        let connection = connection.clone();
-        compact_drag.connect_drag_end(move |_, _, _| {
-            if let Err(error) = db::set_setting(
-                &connection.borrow(), COMPACT_SIDEBAR_WIDTH_KEY, &compact_width.get().to_string()
-            ) { eprintln!("Could not save compact sidebar width: {error}"); }
-        });
-    }
-    let compact_grip = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    compact_grip.set_width_request(12);
-    compact_grip.set_vexpand(true);
-    compact_grip.set_valign(gtk::Align::Fill);
-    compact_grip.set_halign(gtk::Align::End);
-    compact_grip.set_cursor_from_name(Some("col-resize"));
-    compact_grip.add_controller(compact_drag);
-    compact_rail_shell.add_overlay(&compact_grip);
-
+    // The outer sidebar divider owns resizing in both modes. Do not add a
+    // second GestureDrag to the compact rail: it moves inside the widget being
+    // resized and can lose its pointer sequence or fight the outer handle.
     let compact_button = gtk::Button::from_icon_name("pan-start-symbolic");
     compact_button.add_css_class("flat");
     compact_button.set_tooltip_text(Some("Toggle compact sidebar"));
@@ -1482,10 +1426,9 @@
         }
     });
 
-    // GestureDrag offsets are local to the handle, which moves as the sidebar
-    // resizes. Convert each pointer position into the split's coordinates
-    // before comparing it with the press. Adding the raw offset to the initial
-    // width makes a stationary pointer alternate between two sidebar widths.
+    // One stable outer handle serves normal and compact sidebars. The start
+    // width is captured once and the pointer is measured in split coordinates.
+    // Compact mode uses the same event sequence as the working normal divider.
     let sidebar_drag_start_width = Rc::new(Cell::new(0.0f64));
     let sidebar_drag_start_local = Rc::new(Cell::new((0.0f64, 0.0f64)));
     let sidebar_drag_start_x = Rc::new(Cell::new(0.0f64));
@@ -1495,6 +1438,8 @@
     sidebar_drag.set_exclusive(true);
 
     let sidebar_shell_for_drag_begin = sidebar_shell.clone();
+    let compact_width_for_drag_begin = compact_width.clone();
+    let expanded_for_drag_begin = sidebar_expanded.clone();
     let main_split_for_drag_begin = main_split.clone();
     let sidebar_drag_start_width_begin = sidebar_drag_start_width.clone();
     let sidebar_drag_start_local_begin = sidebar_drag_start_local.clone();
@@ -1506,6 +1451,13 @@
     let sidebar_for_drag = sidebar.clone();
     let gallery_for_drag_begin = gallery.clone();
     sidebar_drag.connect_drag_begin(move |gesture, x, y| {
+        if !expanded_for_drag_begin.get() {
+            // This controller is on the stationary outer edge, not inside
+            // the compact rail. Never freeze gallery or change pin state here.
+            sidebar_drag_start_width_begin.set(compact_width_for_drag_begin.get());
+            sidebar_resize_active_for_begin.set(true);
+            return;
+        }
         let Some(point) = gesture.widget().and_then(|handle| {
             handle.compute_point(
                 &main_split_for_drag_begin,
@@ -1544,9 +1496,29 @@
     let sidebar_drag_start_local_update = sidebar_drag_start_local.clone();
     let sidebar_drag_start_x_update = sidebar_drag_start_x.clone();
     let collapsed_sidebar_width_update = collapsed_sidebar_width.clone();
+    let compact_width_for_drag_update = compact_width.clone();
+    let expanded_for_drag_update = sidebar_expanded.clone();
+    let shell_for_compact_drag = sidebar_shell.clone();
+    let compact_labels_for_drag = compact_labels.clone();
     let sidebar_resize_active_for_update = sidebar_resize_active.clone();
     sidebar_drag.connect_drag_update(move |gesture, offset_x, offset_y| {
         if !sidebar_resize_active_for_update.get() {
+            return;
+        }
+        if !expanded_for_drag_update.get() {
+            // GestureDrag offsets are measured from the initial press; the
+            // outer edge stays at the same left origin as the sidebar.
+            let width = (sidebar_drag_start_width_update.get() + offset_x)
+                .clamp(48.0, 300.0);
+            compact_width_for_drag_update.set(width);
+            shell_for_compact_drag.set_width_request(width.round() as i32);
+            for label in compact_labels_for_drag.borrow().iter() {
+                label.set_visible(width >= 90.0);
+            }
+            main_split_for_drag_update.set_max_sidebar_width(width);
+            let split_width = f64::from(main_split_for_drag_update.width().max(1));
+            main_split_for_drag_update
+                .set_sidebar_width_fraction((width / split_width).clamp(0.01, 0.99));
             return;
         }
         let (x, y) = sidebar_drag_start_local_update.get();
@@ -1577,9 +1549,22 @@
     let collapsed_sidebar_width_for_end = collapsed_sidebar_width.clone();
     let connection_for_drag_end = connection.clone();
     let sidebar_resize_active_for_end = sidebar_resize_active.clone();
+    let expanded_for_drag_end = sidebar_expanded.clone();
+    let compact_width_for_drag_end = compact_width.clone();
     let gallery_for_sidebar_drag_end = gallery.clone();
     let gallery_surface_for_sidebar_drag_end = gallery_scroll_stack.clone();
     sidebar_drag.connect_drag_end(move |_, _, _| {
+        if !expanded_for_drag_end.get() {
+            if let Err(error) = db::set_setting(
+                &connection_for_drag_end.borrow(),
+                COMPACT_SIDEBAR_WIDTH_KEY,
+                &compact_width_for_drag_end.get().to_string(),
+            ) {
+                eprintln!("Could not save compact sidebar width: {error}");
+            }
+            sidebar_resize_active_for_end.set(false);
+            return;
+        }
         if main_split_for_drag_end.is_collapsed() {
             let width = collapsed_sidebar_width_for_end.get();
             if let Err(error) = db::set_setting(

@@ -899,7 +899,10 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     // Installed by layout.rs after the widgets have been constructed.
     let sidebar_mode_changed_slot: Rc<RefCell<Option<Rc<dyn Fn()>>>> =
         Rc::new(RefCell::new(None));
+    let compact_visibility_changed_slot: Rc<RefCell<Option<Rc<dyn Fn()>>>> =
+        Rc::new(RefCell::new(None));
     let settings_sidebar_mode_changed = sidebar_mode_changed_slot.clone();
+    let settings_compact_visibility_changed = compact_visibility_changed_slot.clone();
     let settings_window = crate::settings::SettingsWindow::default();
     let menu_controls = settings_window.menu_controls.clone();
     let settings_window_for_switch = settings_window.clone();
@@ -1030,6 +1033,9 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                     sidebar::apply_visibility(&sidebar, visibility);
                 }
                 if let Some(refresh) = settings_sidebar_mode_changed.borrow().as_ref() {
+                    refresh();
+                }
+                if let Some(refresh) = settings_compact_visibility_changed.borrow().as_ref() {
                     refresh();
                 }
             }),

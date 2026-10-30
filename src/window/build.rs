@@ -944,6 +944,8 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         let visibility_connection = settings_connection.clone();
         let visibility_sidebar = settings_sidebar.clone();
         let switch_library_slot = settings_switch_library_slot.clone();
+        let settings_sidebar_mode_changed = settings_sidebar_mode_changed.clone();
+        let settings_compact_visibility_changed = settings_compact_visibility_changed.clone();
         settings_window.present(
             &settings_parent,
             settings_connection.clone(),

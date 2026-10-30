@@ -1062,7 +1062,6 @@
                 list.append(&gtk::Label::new(Some("No network shares")));
             }
             let weak = weak.clone();
-            let weak = weak.clone();
             glib::timeout_add_local_once(Duration::from_millis(120), move || {
                 if let Some(popover) = weak.upgrade() { popover.popup(); }
             });

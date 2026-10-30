@@ -823,7 +823,7 @@
     // Keep a forgiving hit area around the visible divider. The handle is
     // intentionally transparent, so this does not change the sidebar's
     // appearance.
-    sidebar_resize_handle.set_width_request(12);
+    sidebar_resize_handle.set_width_request(16);
     sidebar_resize_handle.set_hexpand(false);
     sidebar_resize_handle.set_vexpand(true);
     sidebar_resize_handle.set_halign(gtk::Align::End);

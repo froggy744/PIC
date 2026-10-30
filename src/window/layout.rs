@@ -823,7 +823,7 @@
     // min/max-sidebar-width. A non-propagating ScrolledWindow is the size
     // boundary: in compact mode it can really allocate 44px.
     let sidebar_width_boundary = gtk::ScrolledWindow::new();
-    sidebar_width_boundary.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Never);
+    sidebar_width_boundary.set_policy(gtk::PolicyType::External, gtk::PolicyType::Never);
     sidebar_width_boundary.set_propagate_natural_width(false);
     sidebar_width_boundary.set_min_content_width(1);
     sidebar_width_boundary.add_css_class("sidebar-width-boundary");

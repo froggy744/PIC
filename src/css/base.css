@@ -307,12 +307,12 @@ button.infobar-selected-thumb:hover {
     min-width: 0;
 }
 .compact-sidebar-button {
-    min-height: 30px;
+    min-height: 36px;
     padding: 3px 1px;
     border-radius: 6px;
 }
 /* The 44px icon rail should never reserve space for label text. */
 .compact-sidebar-button image {
-    min-width: 16px;
-    min-height: 16px;
+    min-width: 18px;
+    min-height: 18px;
 }

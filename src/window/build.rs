@@ -5263,7 +5263,7 @@ fn start_photo_export_single(
                 let sidebar = sidebar_for_breakpoint.clone();
                 let transition = transition.clone();
                 glib::idle_add_local_once(move || {
-                    if sidebar::is_pinned(&sidebar) {
+                    if sidebar.is_visible() && sidebar::is_pinned(&sidebar) {
                         split.set_show_sidebar(true);
                     }
                     transition.set(false);

@@ -9,6 +9,8 @@ on:
       - 'src/window/build.rs'
       - 'src/settings.rs'
       - 'src/css/base.css'
+      - 'src/css/components/sidebar_resize.css'
+      - 'tests/compact_sidebar_x11_drag.py'
       - '.github/workflows/compact-sidebar-check.yml'
   workflow_dispatch:
 
@@ -153,7 +155,7 @@ jobs:
           window.destroy()
           PY
       - name: Real X11 mouse drag smoke test
-        run: xvfb-run -a /usr/bin/python3 tests/compact_sidebar_x11_drag.py
+        run: xvfb-run -a env GDK_BACKEND=x11 GSK_RENDERER=cairo /usr/bin/python3 tests/compact_sidebar_x11_drag.py
       - name: Compile check
         run: cargo check --locked
       - name: Save formatting fixes

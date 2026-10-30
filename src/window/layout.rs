@@ -816,6 +816,7 @@
     left_column.append(&sidebar);
     let compact_sidebar_page = gtk::Box::new(gtk::Orientation::Vertical, 0);
     compact_sidebar_page.set_vexpand(true);
+    compact_sidebar_page.add_css_class("layout-left-column");
     let compact_header = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     compact_header.set_height_request(46);
     compact_header.add_css_class("layout-left-header");
@@ -861,7 +862,8 @@
 
     main_split.set_sidebar(Some(&sidebar_shell));
     // Optional compact navigation rail, independent from the original sidebar.
-    let compact_sidebar = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    let compact_sidebar = gtk::Box::new(gtk::Orientation::Vertical, 10);
+    compact_sidebar.set_margin_top(16);
     compact_sidebar.add_css_class("compact-sidebar");
     compact_sidebar.set_vexpand(true);
     let compact_navigate: Rc<dyn Fn(sidebar::SidebarFilter)> = {
@@ -893,7 +895,9 @@
         button.set_tooltip_text(Some(label));
         let contents = gtk::Box::new(gtk::Orientation::Vertical, 3);
         contents.set_halign(gtk::Align::Center);
-        contents.append(&gtk::Image::from_icon_name(icon));
+        let image = gtk::Image::from_icon_name(icon);
+        image.set_pixel_size(18);
+        contents.append(&image);
         let title = gtk::Label::new(Some(label));
         title.set_ellipsize(gtk::pango::EllipsizeMode::End);
         compact_labels.borrow_mut().push(title.clone());
@@ -916,7 +920,9 @@
     folders.set_tooltip_text(Some("Folders"));
     let folder_contents = gtk::Box::new(gtk::Orientation::Vertical, 3);
     folder_contents.set_halign(gtk::Align::Center);
-    folder_contents.append(&gtk::Image::from_icon_name("folder-symbolic"));
+    let folder_icon = gtk::Image::from_icon_name("folder-symbolic");
+    folder_icon.set_pixel_size(18);
+    folder_contents.append(&folder_icon);
     let folder_label = gtk::Label::new(Some("Folders"));
     compact_labels.borrow_mut().push(folder_label.clone());
     folder_contents.append(&folder_label);
@@ -929,7 +935,9 @@
     shared.set_tooltip_text(Some("Shared"));
     let shared_contents = gtk::Box::new(gtk::Orientation::Vertical, 3);
     shared_contents.set_halign(gtk::Align::Center);
-    shared_contents.append(&gtk::Image::from_icon_name("network-server-symbolic"));
+    let shared_icon = gtk::Image::from_icon_name("network-server-symbolic");
+    shared_icon.set_pixel_size(18);
+    shared_contents.append(&shared_icon);
     let shared_label = gtk::Label::new(Some("Shared"));
     compact_labels.borrow_mut().push(shared_label.clone());
     shared_contents.append(&shared_label);
@@ -1104,7 +1112,7 @@
     dock_resize_handle.set_halign(gtk::Align::End);
     dock_resize_handle.set_valign(gtk::Align::Fill);
     dock_resize_handle.set_cursor_from_name(Some("col-resize"));
-    dock_resize_handle.add_css_class("sidebar-resize-handle");
+    dock_resize_handle.add_css_class("compact-resize-handle");
     dock_resize_handle.add_controller(dock_drag);
     compact_dock.add_overlay(&dock_resize_handle);
     let compact_enabled = db::setting(&connection.borrow(), COMPACT_SIDEBAR_MODE_KEY)
@@ -1283,19 +1291,72 @@
     ] {
         let overview = show_folder_overview.clone();
         let for_primary = reveal.clone();
+        let folder_connection = connection.clone();
+        let folder_navigate = compact_navigate.clone();
         button.connect_clicked(move |_| {
-            if !for_primary.get() { overview(network); }
+            if for_primary.get() { return; }
+            if network {
+                overview(true);
+            } else {
+                let mut roots: Vec<_> = db::folders(&folder_connection.borrow())
+                    .unwrap_or_default().into_iter()
+                    .filter(|folder| folder.imported_root && !db::is_remote_path(&folder.path))
+                    .collect();
+                roots.sort_by(|a, b| a.path.to_lowercase().cmp(&b.path.to_lowercase()));
+                if let Some(folder) = roots.first() {
+                    folder_navigate(sidebar::SidebarFilter::Folder(folder.id));
+                } else {
+                    overview(false);
+                }
+            }
         });
         let right_click = gtk::GestureClick::new();
         right_click.set_button(3);
         let target = button.clone();
+        let right_reveal = reveal.clone();
         right_click.connect_pressed(move |gesture, _, _, _| {
-            reveal.set(true);
+            right_reveal.set(true);
             target.emit_clicked();
-            reveal.set(false);
+            right_reveal.set(false);
             gesture.set_state(gtk::EventSequenceState::Claimed);
         });
         button.add_controller(right_click);
+        let inline = gtk::Revealer::new();
+        inline.set_transition_type(gtk::RevealerTransitionType::SlideDown);
+        let list = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        inline.set_child(Some(&list));
+        compact_sidebar.insert_child_after(&inline, Some(&button));
+        let primary = gtk::GestureClick::new();
+        primary.set_button(1);
+        primary.set_propagation_phase(gtk::PropagationPhase::Capture);
+        let target = button.clone();
+        let width = compact_width.clone();
+        let conn = connection.clone();
+        let navigate = compact_navigate.clone();
+        primary.connect_pressed(move |gesture, count, _, _| {
+            if count != 2 { return; }
+            if width.get() < 90.0 {
+                reveal.set(true);
+                target.emit_clicked();
+                reveal.set(false);
+            } else {
+                let opening = !inline.reveals_child();
+                if opening {
+                    while let Some(child) = list.first_child() { list.remove(&child); }
+                    for folder in db::folders(&conn.borrow()).unwrap_or_default().into_iter()
+                        .filter(|f| if network { db::is_remote_path(&f.path) } else { f.imported_root && !db::is_remote_path(&f.path) }) {
+                        let item = gtk::Button::with_label(&folder.name);
+                        item.add_css_class("flat");
+                        let navigate = navigate.clone();
+                        item.connect_clicked(move |_| navigate(sidebar::SidebarFilter::Folder(folder.id)));
+                        list.append(&item);
+                    }
+                }
+                inline.set_reveal_child(opening);
+            }
+            gesture.set_state(gtk::EventSequenceState::Claimed);
+        });
+        button.add_controller(primary);
     }
     // Ratings and Albums retain their own navigation and right-click menus.
     for (button, destination, reveal) in [
@@ -1326,9 +1387,18 @@
         primary.set_button(1);
         primary.set_propagation_phase(gtk::PropagationPhase::Capture);
         let navigation_reveal = reveal.clone();
+        let double_target = button.clone();
+        let width = compact_width.clone();
         let is_shared = button == shared;
         primary.connect_pressed(move |gesture, count, _, _| {
             if count == 2 {
+                if width.get() < 90.0 {
+                    reveal.set(true);
+                    double_target.emit_clicked();
+                    reveal.set(false);
+                    gesture.set_state(gtk::EventSequenceState::Claimed);
+                    return;
+                }
                 let opening = !inline.reveals_child();
                 if opening {
                     while let Some(child) = inline_list.first_child() { inline_list.remove(&child); }
@@ -1476,7 +1546,6 @@
     }
     {
         let expanded = sidebar_expanded.clone();
-        let compact_width_for_notify = compact_width.clone();
         let collapsed_sidebar_width_for_notify = collapsed_sidebar_width.clone();
         let sidebar_for_collapse_notify = sidebar.clone();
         main_split.connect_collapsed_notify(move |split| {
@@ -1909,6 +1978,7 @@
     // their bottom borders stay aligned, including after a theme switch.
     let header_height_group = gtk::SizeGroup::new(gtk::SizeGroupMode::Vertical);
     header_height_group.add_widget(&left_header);
+    header_height_group.add_widget(&compact_header);
     header_height_group.add_widget(&right_header);
 
     right_header.set_hexpand(true);

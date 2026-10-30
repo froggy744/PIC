@@ -835,9 +835,9 @@
     for (label, icon, destination) in [
         ("Library", "go-home-symbolic", sidebar::SidebarFilter::Library),
         ("Photos", "image-x-generic-symbolic", sidebar::SidebarFilter::All),
+        ("Recent", "document-open-recent-symbolic", sidebar::SidebarFilter::RecentlyAdded),
         ("Favorites", "starred-symbolic", sidebar::SidebarFilter::Favorites),
         ("Ratings", "starred-symbolic", sidebar::SidebarFilter::Ratings),
-        ("Recent", "document-open-recent-symbolic", sidebar::SidebarFilter::RecentlyAdded),
         ("History", "view-list-symbolic", sidebar::SidebarFilter::History),
         ("Albums", "folder-pictures-symbolic", sidebar::SidebarFilter::Albums),
     ] {
@@ -870,7 +870,9 @@
     folder_contents.append(&gtk::Label::new(Some("Folders")));
     folders.set_child(Some(&folder_contents));
     compact_sidebar.append(&folders);
-    left_column.append(&compact_sidebar);
+    let compact_rail_shell = gtk::Overlay::new();
+    compact_rail_shell.set_child(Some(&compact_sidebar));
+    left_column.append(&compact_rail_shell);
     const COMPACT_SIDEBAR_WIDTH_KEY: &str = "compact-sidebar-width";
     const COMPACT_SIDEBAR_MODE_KEY: &str = "compact-sidebar-enabled";
     let compact_width = Rc::new(Cell::new(
@@ -1091,10 +1093,11 @@
     let compact_grip = gtk::Box::new(gtk::Orientation::Vertical, 0);
     compact_grip.set_width_request(8);
     compact_grip.set_vexpand(true);
+    compact_grip.set_valign(gtk::Align::Fill);
     compact_grip.set_halign(gtk::Align::End);
     compact_grip.set_cursor_from_name(Some("col-resize"));
     compact_grip.add_controller(compact_drag);
-    compact_sidebar.append(&compact_grip);
+    compact_rail_shell.add_overlay(&compact_grip);
 
     let compact_button = gtk::Button::from_icon_name("pan-start-symbolic");
     compact_button.add_css_class("flat");

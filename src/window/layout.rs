@@ -941,6 +941,9 @@
         .clamp(SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH),
     ));
     let sidebar_expanded = Rc::new(Cell::new(!compact_enabled));
+    let compact_right_toggle_slot: Rc<RefCell<Option<gtk::Button>>> = Rc::new(RefCell::new(None));
+    let compact_controls_sync_slot: Rc<RefCell<Option<Rc<dyn Fn()>>>> =
+        Rc::new(RefCell::new(None));
     let set_sidebar_expanded: Rc<dyn Fn(bool)> = {
         let split = main_split.clone();
         let sidebar = sidebar.clone();
@@ -951,14 +954,20 @@
         let compact_width_for_mode = compact_width.clone();
         let connection_for_mode = connection.clone();
         let header_for_mode = left_header.clone();
-        let compact_header_title = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        let right_toggle = compact_right_toggle_slot.clone();
+        let controls_sync = compact_controls_sync_slot.clone();
         Rc::new(move |show| {
-            if show { header_for_mode.set_title_widget(gtk::Widget::NONE); }
-            else { header_for_mode.set_title_widget(Some(&compact_header_title)); }
+            // The full header contains native window controls and action buttons
+            // whose natural width prevents a genuinely narrow compact rail.
+            header_for_mode.set_visible(show);
+            if let Some(button) = right_toggle.borrow().as_ref() {
+                button.set_visible(!show);
+            }
             expanded.set(show);
             sidebar.set_visible(show);
             rail.set_visible(!show);
             handle.set_visible(show);
+            if let Some(sync) = controls_sync.borrow().as_ref() { sync(); }
             if show {
                 split.set_max_sidebar_width(if split.is_collapsed() { overlay_width.get() } else { SIDEBAR_MAX_WIDTH });
                 split.set_min_sidebar_width(SIDEBAR_MIN_WIDTH);
@@ -1653,9 +1662,28 @@
     header_height_group.add_widget(&right_header);
 
     right_header.set_hexpand(true);
-    right_header.set_show_start_title_buttons(!main_split.shows_sidebar());
+    right_header.set_show_start_title_buttons(!main_split.shows_sidebar() || !sidebar_expanded.get());
     right_header.set_show_end_title_buttons(true);
     right_header.add_css_class("layout-right-header");
+
+    // Compact mode hides the wide left header; keep mode switching available
+    // in the main header at any compact width.
+    let compact_right_toggle = gtk::Button::from_icon_name("pan-end-symbolic");
+    compact_right_toggle.add_css_class("flat");
+    compact_right_toggle.set_tooltip_text(Some("Switch to normal sidebar"));
+    compact_right_toggle.set_visible(!sidebar_expanded.get());
+    {
+        let expand = set_sidebar_expanded.clone();
+        let connection = connection.clone();
+        compact_right_toggle.connect_clicked(move |_| {
+            expand(true);
+            if let Err(error) = db::set_setting(
+                &connection.borrow(), COMPACT_SIDEBAR_MODE_KEY, "false"
+            ) { eprintln!("Could not save normal sidebar mode: {error}"); }
+        });
+    }
+    right_header.pack_start(&compact_right_toggle);
+    compact_right_toggle_slot.replace(Some(compact_right_toggle));
 
     let show_sidebar = gtk::Button::from_icon_name("sidebar-show-symbolic");
     show_sidebar.set_tooltip_text(Some("Show sidebar"));
@@ -1695,6 +1723,7 @@
         let right_header = right_header.clone();
         let main_split = main_split.clone();
         let mode = window_controls_mode.clone();
+        let expanded = sidebar_expanded.clone();
         // Which header currently hosts the lights. get_parent() of a
         // headerbar-packed child is the headerbar's internal start box, not
         // the headerbar itself, so host tracking goes through this cell
@@ -1703,7 +1732,7 @@
         Rc::new(move || {
             let traffic = mode.get()
                 == crate::css::theme_discovery::WindowControls::TrafficLight;
-            let sidebar_visible = main_split.shows_sidebar();
+            let sidebar_visible = main_split.shows_sidebar() && expanded.get();
             // Native start title buttons only exist while traffic lights are
             // off; the traffic-light box replaces them wherever they live.
             left_header.set_show_start_title_buttons(!traffic && sidebar_visible);
@@ -1733,6 +1762,7 @@
             }
         })
     };
+    compact_controls_sync_slot.replace(Some(place_window_controls.clone()));
     let place_for_notify = place_window_controls.clone();
     main_split.connect_show_sidebar_notify(move |split| {
         let sidebar_visible = split.shows_sidebar();

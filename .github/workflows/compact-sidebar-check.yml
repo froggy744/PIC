@@ -49,6 +49,11 @@ jobs:
           assert "split.set_min_sidebar_width(COMPACT_ICON_RAIL_WIDTH)" in src
           assert 'COMPACT_ICON_RAIL_WIDTH: f64 = 44.0' in src
           assert 'compact-sidebar-width-v2' in src, "old 120px width must not be restored"
+          assert 'sidebar_width_boundary.set_propagate_natural_width(false)' in src
+          assert 'sidebar_width_boundary.set_child(Some(&left_column))' in src
+          assert 'Some("folders-overview")' in src, "Folders requires an overview route"
+          assert 'show_folder_overview.clone()' in src
+          assert 'SidebarFilter::Library, folders_reveal' not in src
           assert "sidebar_has_visible_popover" in src, "right click must not close hover reveal"
           assert "sidebar_leave_generation" in src, "enter must cancel pending leave"
           assert ".compact-sidebar-button" in css and "min-width: 0;" in css
@@ -92,7 +97,22 @@ jobs:
               labels.append(label)
           scroll.set_child(entries)
           sidebar.append(scroll)
-          split.set_sidebar(sidebar)
+          # A hidden full sidebar and a folder hierarchy may still request
+          # 200px. Verify the real constraint boundary hides that minimum.
+          original_sidebar = sidebar
+          hidden_full = Gtk.Box()
+          hidden_full.set_size_request(200, -1)
+          hidden_full.set_visible(False)
+          sidebar.prepend(hidden_full)
+          width_boundary = Gtk.ScrolledWindow()
+          width_boundary.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.NEVER)
+          width_boundary.set_propagate_natural_width(False)
+          width_boundary.set_min_content_width(1)
+          width_boundary.set_child(sidebar)
+          shell = Gtk.Overlay()
+          shell.set_child(width_boundary)
+          shell.set_size_request(44, -1)
+          split.set_sidebar(shell)
           split.set_content(Gtk.Box())
           window.set_child(split)
           window.present()
@@ -110,7 +130,8 @@ jobs:
               split.set_max_sidebar_width(float(width))
               split.set_sidebar_width_fraction(float(width) / max(1.0, split.get_width()))
               flush()
-              actual = sidebar.get_width()
+              shell.set_size_request(int(width), -1)
+              actual = shell.get_width()
               print(f"width={width} actual={actual} fraction={split.get_sidebar_width_fraction():.4f} max={split.get_max_sidebar_width()}", flush=True)
               assert actual <= width + 2, (width, actual)
               assert actual >= 40, (width, actual)

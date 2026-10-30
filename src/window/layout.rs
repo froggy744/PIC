@@ -830,6 +830,16 @@
     let compact_sidebar = gtk::Box::new(gtk::Orientation::Vertical, 0);
     compact_sidebar.add_css_class("compact-sidebar");
     compact_sidebar.set_vexpand(true);
+    let compact_navigate: Rc<dyn Fn(sidebar::SidebarFilter)> = {
+        let navigate = destination_click.clone();
+        let split = main_split.clone();
+        Rc::new(move |destination| {
+            navigate(destination);
+            if split.is_collapsed() {
+                split.set_show_sidebar(false);
+            }
+        })
+    };
     let mut albums_button = None;
     let mut ratings_button = None;
     let mut compact_buttons: Vec<(gtk::Button, &'static str)> = Vec::new();
@@ -856,7 +866,7 @@
         } else if destination == sidebar::SidebarFilter::Ratings {
             ratings_button = Some(button.clone());
         } else {
-            let navigate = destination_click.clone();
+            let navigate = compact_navigate.clone();
             button.connect_clicked(move |_| navigate(destination));
         }
         compact_buttons.push((button.clone(), label));
@@ -964,7 +974,7 @@
         popover.set_child(Some(&scroll));
         let popover = popover.downgrade();
         let connection = connection.clone();
-        let navigate = destination_click.clone();
+        let navigate = compact_navigate.clone();
         folders.connect_clicked(move |_| {
             while let Some(child) = list.first_child() {
                 list.remove(&child);
@@ -1017,7 +1027,7 @@
         popover.set_child(Some(&scroll));
         let weak = popover.downgrade();
         let connection = connection.clone();
-        let navigate = destination_click.clone();
+        let navigate = compact_navigate.clone();
         shared.connect_clicked(move |_| {
             while let Some(child) = list.first_child() { list.remove(&child); }
             if let Ok(folders) = db::folders(&connection.borrow()) {
@@ -1082,7 +1092,7 @@
         for (name, destination) in entries {
             let item = gtk::Button::with_label(&name);
             item.add_css_class("flat");
-            let navigate = destination_click.clone();
+            let navigate = compact_navigate.clone();
             let popover = popover.downgrade();
             item.connect_clicked(move |_| {
                 if let Some(popover) = popover.upgrade() {
@@ -1116,7 +1126,7 @@
         popover.set_child(Some(&scroll));
         let popover_weak = popover.downgrade();
         let connection = connection.clone();
-        let navigate = destination_click.clone();
+        let navigate = compact_navigate.clone();
         button.connect_clicked(move |_| {
             while let Some(child) = list.first_child() {
                 list.remove(&child);

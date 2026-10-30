@@ -902,8 +902,10 @@
     let compact_rail_shell = gtk::Overlay::new();
     compact_rail_shell.set_hexpand(true);
     compact_rail_shell.set_vexpand(true);
+    compact_rail_shell.set_size_request(48, -1);
     let compact_scroll = gtk::ScrolledWindow::new();
     compact_scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+    compact_scroll.set_min_content_width(1);
     compact_scroll.set_child(Some(&compact_sidebar));
     compact_rail_shell.set_child(Some(&compact_scroll));
     left_column.append(&compact_rail_shell);
@@ -969,7 +971,6 @@
                 // rejects a maximum below the current minimum.
                 split.set_min_sidebar_width(48.0);
                 split.set_max_sidebar_width(compact_width_for_mode.get());
-                split.set_min_sidebar_width(compact_width_for_mode.get());
             }
         })
     };
@@ -1249,11 +1250,11 @@
     {
         let start = compact_start.clone();
         let split = main_split.clone();
-        let shell = sidebar_shell.clone();
+        let width = compact_width.clone();
         compact_drag.connect_drag_begin(move |gesture, x, y| {
             if let Some(point) = gesture.widget().and_then(|handle| handle.compute_point(
                 &split, &gtk::graphene::Point::new(x as f32, y as f32))) {
-                start.set((f64::from(shell.width()), x, y, f64::from(point.x())));
+                start.set((width.get(), x, y, f64::from(point.x())));
             } else {
                 gesture.set_state(gtk::EventSequenceState::Denied);
             }
@@ -1273,9 +1274,9 @@
             let width = (initial_width + f64::from(point.x()) - initial_x).clamp(48.0, 300.0);
             compact_width.set(width);
             for label in labels.borrow().iter() { label.set_visible(width >= 90.0); }
-            split.set_min_sidebar_width(48.0);
+            // Keep the minimum fixed: updating it to the pointer position
+            // prevents shrinking and causes GTK allocation jitter.
             split.set_max_sidebar_width(width);
-            split.set_min_sidebar_width(width);
         });
     }
     {
@@ -1288,7 +1289,7 @@
         });
     }
     let compact_grip = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    compact_grip.set_width_request(8);
+    compact_grip.set_width_request(12);
     compact_grip.set_vexpand(true);
     compact_grip.set_valign(gtk::Align::Fill);
     compact_grip.set_halign(gtk::Align::End);

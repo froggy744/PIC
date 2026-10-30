@@ -25,7 +25,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential clang mold cmake nasm pkg-config \
             libgtk-4-dev libadwaita-1-dev libsmbclient-dev libnfs-dev \
-            librsvg2-common libgdk-pixbuf2.0-bin xvfb xauth
+            librsvg2-common libgdk-pixbuf2.0-bin xvfb xauth python3-gi gir1.2-adw-1
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
@@ -46,6 +46,57 @@ jobs:
           assert ".compact-sidebar-button" in css and "min-width: 0;" in css
           assert 'COMPACT_SIDEBAR_WIDTH_KEY' in src
           print("Compact resize static regression guards passed")
+          PY
+      - name: X11 GTK width allocation smoke test
+        run: |
+          xvfb-run -a /usr/bin/python3 - <<'PY'
+          import gi
+          gi.require_version("Gtk", "4.0")
+          gi.require_version("Adw", "1")
+          from gi.repository import Gtk, Adw, GLib
+          Adw.init()
+          window = Gtk.Window()
+          window.set_default_size(900, 600)
+          split = Adw.OverlaySplitView()
+          split.set_min_sidebar_width(48.0)
+          split.set_max_sidebar_width(120.0)
+          sidebar = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+          scroll = Gtk.ScrolledWindow()
+          scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+          entries = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+          labels = []
+          for name in ("Library", "Photos", "Recent", "Albums", "Folders", "Shared"):
+              button = Gtk.Button()
+              content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+              content.append(Gtk.Image.new_from_icon_name("folder-symbolic"))
+              label = Gtk.Label(label=name)
+              label.set_ellipsize(3)
+              content.append(label)
+              button.set_child(content)
+              entries.append(button)
+              labels.append(label)
+          scroll.set_child(entries)
+          sidebar.append(scroll)
+          split.set_sidebar(sidebar)
+          split.set_content(Gtk.Box())
+          window.set_child(split)
+          window.present()
+          def flush():
+              for _ in range(20):
+                  while GLib.MainContext.default().pending():
+                      GLib.MainContext.default().iteration(False)
+          flush()
+          for width in (120, 72, 48, 160, 48):
+              for label in labels:
+                  label.set_visible(width >= 90)
+              split.set_min_sidebar_width(48.0)
+              split.set_max_sidebar_width(float(width))
+              flush()
+              actual = sidebar.get_allocated_width()
+              assert actual <= width + 2, (width, actual)
+              assert actual >= 40, (width, actual)
+              print(f"X11 GTK rail width request={width} actual={actual}")
+          window.destroy()
           PY
       - name: Compile check
         run: cargo check --locked

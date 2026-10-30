@@ -838,7 +838,7 @@
 
     main_split.set_sidebar(Some(&sidebar_shell));
     // Optional compact navigation rail, independent from the original sidebar.
-    let compact_sidebar = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    let compact_sidebar = gtk::Box::new(gtk::Orientation::Vertical, 2);
     compact_sidebar.add_css_class("compact-sidebar");
     compact_sidebar.set_vexpand(true);
     let compact_navigate: Rc<dyn Fn(sidebar::SidebarFilter)> = {
@@ -867,6 +867,7 @@
         let button = gtk::Button::new();
         button.add_css_class("flat");
         button.add_css_class("compact-sidebar-button");
+        button.set_tooltip_text(Some(label));
         let contents = gtk::Box::new(gtk::Orientation::Vertical, 3);
         contents.set_halign(gtk::Align::Center);
         contents.append(&gtk::Image::from_icon_name(icon));
@@ -889,6 +890,7 @@
     let folders = gtk::Button::new();
     folders.add_css_class("flat");
     folders.add_css_class("compact-sidebar-button");
+    folders.set_tooltip_text(Some("Folders"));
     let folder_contents = gtk::Box::new(gtk::Orientation::Vertical, 3);
     folder_contents.set_halign(gtk::Align::Center);
     folder_contents.append(&gtk::Image::from_icon_name("folder-symbolic"));
@@ -901,6 +903,7 @@
     let shared = gtk::Button::new();
     shared.add_css_class("flat");
     shared.add_css_class("compact-sidebar-button");
+    shared.set_tooltip_text(Some("Shared"));
     let shared_contents = gtk::Box::new(gtk::Orientation::Vertical, 3);
     shared_contents.set_halign(gtk::Align::Center);
     shared_contents.append(&gtk::Image::from_icon_name("network-server-symbolic"));
@@ -913,18 +916,21 @@
     let compact_rail_shell = gtk::Overlay::new();
     compact_rail_shell.set_hexpand(true);
     compact_rail_shell.set_vexpand(true);
-    compact_rail_shell.set_size_request(48, -1);
+    compact_rail_shell.set_size_request(44, -1);
     let compact_scroll = gtk::ScrolledWindow::new();
     compact_scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
     compact_scroll.set_min_content_width(1);
     compact_scroll.set_child(Some(&compact_sidebar));
     compact_rail_shell.set_child(Some(&compact_scroll));
     left_column.append(&compact_rail_shell);
-    const COMPACT_SIDEBAR_WIDTH_KEY: &str = "compact-sidebar-width";
+    // v2 resets the former 120px-wide default once; thereafter the chosen
+    // compact width persists independently from the normal sidebar.
+    const COMPACT_SIDEBAR_WIDTH_KEY: &str = "compact-sidebar-width-v2";
+    const COMPACT_ICON_RAIL_WIDTH: f64 = 44.0;
     const COMPACT_SIDEBAR_MODE_KEY: &str = "compact-sidebar-enabled";
     let compact_width = Rc::new(Cell::new(
         numeric_setting::<f64>(&connection.borrow(), COMPACT_SIDEBAR_WIDTH_KEY)
-            .unwrap_or(120.0).clamp(48.0, 300.0),
+            .unwrap_or(COMPACT_ICON_RAIL_WIDTH).clamp(COMPACT_ICON_RAIL_WIDTH, 300.0),
     ));
     for label in compact_labels.borrow().iter() { label.set_visible(compact_width.get() >= 90.0); }
     let compact_enabled = db::setting(&connection.borrow(), COMPACT_SIDEBAR_MODE_KEY)
@@ -994,7 +1000,7 @@
             } else {
                 // Lower the minimum before lowering the maximum: libadwaita
                 // rejects a maximum below the current minimum.
-                split.set_min_sidebar_width(48.0);
+                split.set_min_sidebar_width(COMPACT_ICON_RAIL_WIDTH);
                 split.set_max_sidebar_width(compact_width_for_mode.get());
                 let available = f64::from(split.width().max(1));
                 split.set_sidebar_width_fraction((compact_width_for_mode.get() / available).clamp(0.01, 0.99));
@@ -1567,7 +1573,7 @@
             }) else { return; };
             let delta = f64::from(point.x()) - sidebar_drag_start_x_update.get();
             let width = (sidebar_drag_start_width_update.get() + delta)
-                .clamp(48.0, 300.0);
+                .clamp(COMPACT_ICON_RAIL_WIDTH, 300.0);
             compact_width_for_drag_update.set(width);
             shell_for_compact_drag.set_width_request(width.round() as i32);
             for label in compact_labels_for_drag.borrow().iter() {

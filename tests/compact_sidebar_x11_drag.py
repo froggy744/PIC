@@ -45,14 +45,27 @@ drag.set_button(1)
 drag.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
 drag.set_exclusive(True)
 seen = {"begin": False, "updates": 0, "smallest": 999.0, "initial": 120.0}
+start_local = [0.0, 0.0]
+start_x = [0.0]
 
-def on_begin(_gesture, _x, _y):
+def on_begin(_gesture, x, y):
     seen["begin"] = True
     seen["initial"] = float(shell.get_width())
+    start_local[:] = [x, y]
+    point = handle.translate_coordinates(split, x, y)
+    assert point is not None, "could not translate drag origin into split coordinates"
+    start_x[0] = float(point[0])
 
-def on_update(_gesture, dx, _dy):
-    # Exercise the same minimum, maximum and split-width properties as PIC.
-    width = max(48.0, min(300.0, seen["initial"] + dx))
+def on_update(_gesture, dx, dy):
+    # When the handle moves, raw dx is no longer a stable displacement.
+    # Translate the current pointer into the stationary split-view space,
+    # exactly like layout.rs does with widget.compute_point().
+    x, y = start_local
+    point = handle.translate_coordinates(split, x + dx, y + dy)
+    if point is None:
+        return
+    stable_delta = float(point[0]) - start_x[0]
+    width = max(48.0, min(300.0, seen["initial"] + stable_delta))
     shell.set_size_request(round(width), -1)
     split.set_max_sidebar_width(width)
     split.set_sidebar_width_fraction(width / max(1.0, split.get_width()))

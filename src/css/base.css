@@ -288,3 +288,15 @@ button.infobar-selected-thumb:hover {
 /* Native title buttons are intentionally controlled by GTK/libadwaita,
  * separate from PIC's compact action strip. */
 .layout-right-header windowcontrols { margin-left: 8px; }
+
+/* Compact navigation must shrink below label and default GTK button widths. */
+.compact-sidebar,
+.compact-sidebar scrolledwindow,
+.compact-sidebar-button,
+.compact-sidebar-button box,
+.compact-sidebar-button label {
+    min-width: 0;
+}
+.compact-sidebar-button {
+    padding: 5px 1px;
+}

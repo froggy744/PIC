@@ -941,6 +941,7 @@
         let expanded = sidebar_expanded.clone();
         let overlay_width = collapsed_sidebar_width.clone();
         let compact_width_for_mode = compact_width.clone();
+        let connection_for_mode = connection.clone();
         Rc::new(move |show| {
             expanded.set(show);
             sidebar.set_visible(show);
@@ -949,6 +950,10 @@
             if show {
                 split.set_max_sidebar_width(if split.is_collapsed() { overlay_width.get() } else { SIDEBAR_MAX_WIDTH });
                 split.set_min_sidebar_width(SIDEBAR_MIN_WIDTH);
+                let normal_fraction = numeric_setting::<f64>(
+                    &connection_for_mode.borrow(), SIDEBAR_WIDTH_FRACTION_SETTING_KEY
+                ).unwrap_or(0.22).clamp(0.10, 0.70);
+                split.set_sidebar_width_fraction(normal_fraction);
             } else {
                 split.set_min_sidebar_width(72.0);
                 split.set_max_sidebar_width(compact_width_for_mode.get());
@@ -1462,6 +1467,16 @@
                 &width.to_string(),
             ) {
                 eprintln!("Could not save sidebar overlay width: {error}");
+            }
+        } else {
+            // Normal mode has its own remembered fraction; never overwrite it
+            // while resizing the compact rail.
+            if let Err(error) = db::set_setting(
+                &connection_for_drag_end.borrow(),
+                SIDEBAR_WIDTH_FRACTION_SETTING_KEY,
+                &main_split_for_drag_end.sidebar_width_fraction().to_string(),
+            ) {
+                eprintln!("Could not save normal sidebar width: {error}");
             }
         }
         sidebar_resize_active_for_end.set(false);

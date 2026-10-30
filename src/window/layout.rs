@@ -924,6 +924,96 @@
     shared.set_child(Some(&shared_contents));
     compact_buttons.push((shared.clone(), "Shared"));
     compact_sidebar.append(&shared);
+
+    // An explicit overview route rather than silently navigating Folders (or
+    // Shared) to Library. Every row uses the existing Folder(id) navigation.
+    let folder_overview_page = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    folder_overview_page.set_margin_start(24);
+    folder_overview_page.set_margin_end(24);
+    folder_overview_page.set_margin_top(18);
+    folder_overview_page.set_margin_bottom(18);
+    let folder_overview_title = gtk::Label::new(Some("Folders"));
+    folder_overview_title.add_css_class("title-2");
+    folder_overview_title.set_halign(gtk::Align::Start);
+    folder_overview_page.append(&folder_overview_title);
+    let folder_overview_subtitle = gtk::Label::new(Some("Choose a folder to browse its photos"));
+    folder_overview_subtitle.set_halign(gtk::Align::Start);
+    folder_overview_subtitle.add_css_class("dim-label");
+    folder_overview_page.append(&folder_overview_subtitle);
+    let folder_overview_scroll = gtk::ScrolledWindow::new();
+    folder_overview_scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+    folder_overview_scroll.set_vexpand(true);
+    let folder_overview_rows = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    folder_overview_rows.set_halign(gtk::Align::Fill);
+    folder_overview_scroll.set_child(Some(&folder_overview_rows));
+    folder_overview_page.append(&folder_overview_scroll);
+    main_stack.add_named(&folder_overview_page, Some("folders-overview"));
+    let show_folder_overview: Rc<dyn Fn(bool)> = {
+        let connection = connection.clone();
+        let rows = folder_overview_rows.clone();
+        let title = folder_overview_title.clone();
+        let subtitle = folder_overview_subtitle.clone();
+        let stack = main_stack.clone();
+        let split = main_split.clone();
+        let navigate = compact_navigate.clone();
+        Rc::new(move |network| {
+            title.set_label(if network { "Shared Folders" } else { "Folders" });
+            subtitle.set_label(if network {
+                "Choose a network folder to browse its photos"
+            } else {
+                "Choose a folder to browse its photos"
+            });
+            while let Some(child) = rows.first_child() {
+                rows.remove(&child);
+            }
+            let mut folders: Vec<_> = db::folders(&connection.borrow())
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|folder| db::is_remote_path(&folder.path) == network)
+                .collect();
+            folders.sort_by(|a, b| a.path.to_lowercase().cmp(&b.path.to_lowercase()));
+            if folders.is_empty() {
+                let empty = gtk::Label::new(Some(if network {
+                    "No network folders in this library"
+                } else {
+                    "No folders in this library"
+                }));
+                empty.add_css_class("dim-label");
+                empty.set_halign(gtk::Align::Start);
+                rows.append(&empty);
+            }
+            for folder in folders {
+                let entry = gtk::Button::new();
+                entry.add_css_class("flat");
+                entry.set_tooltip_text(Some(&folder.path));
+                let line = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+                line.set_margin_top(7);
+                line.set_margin_bottom(7);
+                line.set_margin_start(4);
+                line.append(&gtk::Image::from_icon_name("folder-symbolic"));
+                let details = gtk::Box::new(gtk::Orientation::Vertical, 2);
+                let name = gtk::Label::new(Some(&folder.name));
+                name.set_halign(gtk::Align::Start);
+                name.set_xalign(0.0);
+                details.append(&name);
+                let path = gtk::Label::new(Some(&folder.path));
+                path.add_css_class("dim-label");
+                path.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+                path.set_xalign(0.0);
+                details.append(&path);
+                details.set_hexpand(true);
+                line.append(&details);
+                entry.set_child(Some(&line));
+                let navigate = navigate.clone();
+                entry.connect_clicked(move |_| navigate(sidebar::SidebarFilter::Folder(folder.id)));
+                rows.append(&entry);
+            }
+            stack.set_visible_child_name("folders-overview");
+            if split.is_collapsed() {
+                split.set_show_sidebar(false);
+            }
+        })
+    };
     let compact_rail_shell = gtk::Overlay::new();
     compact_rail_shell.set_hexpand(true);
     compact_rail_shell.set_vexpand(true);

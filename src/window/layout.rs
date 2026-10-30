@@ -971,6 +971,8 @@
                 // rejects a maximum below the current minimum.
                 split.set_min_sidebar_width(48.0);
                 split.set_max_sidebar_width(compact_width_for_mode.get());
+                let available = f64::from(split.width().max(1));
+                split.set_sidebar_width_fraction((compact_width_for_mode.get() / available).clamp(0.01, 0.99));
             }
         })
     };
@@ -1277,6 +1279,8 @@
             // Keep the minimum fixed: updating it to the pointer position
             // prevents shrinking and causes GTK allocation jitter.
             split.set_max_sidebar_width(width);
+            let available = f64::from(split.width().max(1));
+            split.set_sidebar_width_fraction((width / available).clamp(0.01, 0.99));
         });
     }
     {

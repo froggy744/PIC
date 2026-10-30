@@ -46,7 +46,9 @@ jobs:
           assert "set_min_sidebar_width(width)" not in drag, "drag must not lock minimum width"
           assert "handle.set_visible(true);" in src, "outer divider must stay enabled in compact mode"
           assert "compact_grip" not in src, "duplicate inner divider must not consume gestures"
-          assert "split.set_min_sidebar_width(48.0)" in src
+          assert "split.set_min_sidebar_width(COMPACT_ICON_RAIL_WIDTH)" in src
+          assert 'COMPACT_ICON_RAIL_WIDTH: f64 = 44.0' in src
+          assert 'compact-sidebar-width-v2' in src, "old 120px width must not be restored"
           assert "sidebar_has_visible_popover" in src, "right click must not close hover reveal"
           assert "sidebar_leave_generation" in src, "enter must cancel pending leave"
           assert ".compact-sidebar-button" in css and "min-width: 0;" in css
@@ -65,14 +67,20 @@ jobs:
           window = Gtk.Window()
           window.set_default_size(900, 600)
           split = Adw.OverlaySplitView()
-          split.set_min_sidebar_width(48.0)
-          split.set_max_sidebar_width(120.0)
+          split.set_min_sidebar_width(44.0)
+          split.set_max_sidebar_width(44.0)
           sidebar = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+          header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+          header.set_size_request(44, 46)
+          heading = Gtk.Label(label="PIC")
+          heading.set_hexpand(True)
+          header.append(heading)
+          sidebar.append(header)
           scroll = Gtk.ScrolledWindow()
           scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
           entries = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
           labels = []
-          for name in ("Library", "Photos", "Recent", "Albums", "Folders", "Shared"):
+          for name in ("Library", "Photos", "Recent", "Favorites", "Ratings", "History", "Albums", "Folders", "Shared"):
               button = Gtk.Button()
               content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
               content.append(Gtk.Image.new_from_icon_name("folder-symbolic"))
@@ -95,10 +103,10 @@ jobs:
               GLib.timeout_add(350, loop.quit)
               loop.run()
           flush()
-          for width in (120, 72, 48, 160, 48):
+          for width in (44, 120, 72, 48, 160, 44):
               for label in labels:
                   label.set_visible(width >= 90)
-              split.set_min_sidebar_width(48.0)
+              split.set_min_sidebar_width(44.0)
               split.set_max_sidebar_width(float(width))
               split.set_sidebar_width_fraction(float(width) / max(1.0, split.get_width()))
               flush()

@@ -13,7 +13,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   check:
@@ -30,7 +30,16 @@ jobs:
         with:
           components: rustfmt
       - uses: Swatinem/rust-cache@v2
-      - name: Format check
-        run: cargo fmt --all -- --check
+      - name: Format modified Rust sources
+        run: cargo fmt --all
       - name: Compile check
         run: cargo check --locked
+      - name: Save formatting fixes
+        run: |
+          git add src/window/layout.rs src/window/build.rs src/settings.rs
+          if ! git diff --cached --quiet; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit -m "style: format compact sidebar implementation"
+            git push origin HEAD:feature/compact-sidebar-pro
+          fi

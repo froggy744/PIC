@@ -1,0 +1,36 @@
+name: Compact sidebar validation
+on:
+  push:
+    branches:
+      - feature/compact-sidebar-pro
+  pull_request:
+    paths:
+      - 'src/window/layout.rs'
+      - 'src/window/build.rs'
+      - 'src/settings.rs'
+      - 'src/css/base.css'
+      - '.github/workflows/compact-sidebar-check.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang mold cmake nasm pkg-config \
+            libgtk-4-dev libadwaita-1-dev libsmbclient-dev libnfs-dev \
+            librsvg2-common libgdk-pixbuf2.0-bin xvfb xauth
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: Format check
+        run: cargo fmt --all -- --check
+      - name: Compile check
+        run: cargo check --locked

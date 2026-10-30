@@ -921,7 +921,7 @@
     let set_sidebar_expanded: Rc<dyn Fn(bool)> = {
         let split = main_split.clone();
         let sidebar = sidebar.clone();
-        let rail = compact_sidebar.clone();
+        let rail = compact_rail_shell.clone();
         let handle = sidebar_resize_handle.clone();
         let expanded = sidebar_expanded.clone();
         let overlay_width = collapsed_sidebar_width.clone();

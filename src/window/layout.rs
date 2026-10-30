@@ -827,7 +827,7 @@
 
     main_split.set_sidebar(Some(&sidebar_shell));
     // Optional compact navigation rail, independent from the original sidebar.
-    let compact_sidebar = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    let compact_sidebar = gtk::Box::new(gtk::Orientation::Vertical, 8);
     compact_sidebar.add_css_class("compact-sidebar");
     compact_sidebar.set_vexpand(true);
     let compact_navigate: Rc<dyn Fn(sidebar::SidebarFilter)> = {
@@ -843,6 +843,7 @@
     let mut albums_button = None;
     let mut ratings_button = None;
     let mut compact_buttons: Vec<(gtk::Button, &'static str)> = Vec::new();
+    let compact_labels = Rc::new(RefCell::new(Vec::<gtk::Label>::new()));
     for (label, icon, destination) in [
         ("Library", "go-home-symbolic", sidebar::SidebarFilter::Library),
         ("Photos", "image-x-generic-symbolic", sidebar::SidebarFilter::All),
@@ -855,11 +856,13 @@
         let button = gtk::Button::new();
         button.add_css_class("flat");
         button.add_css_class("compact-sidebar-button");
-        button.set_tooltip_text(Some(label));
         let contents = gtk::Box::new(gtk::Orientation::Vertical, 3);
         contents.set_halign(gtk::Align::Center);
         contents.append(&gtk::Image::from_icon_name(icon));
-        contents.append(&gtk::Label::new(Some(label)));
+        let title = gtk::Label::new(Some(label));
+        title.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        compact_labels.borrow_mut().push(title.clone());
+        contents.append(&title);
         button.set_child(Some(&contents));
         if destination == sidebar::SidebarFilter::Albums {
             albums_button = Some(button.clone());
@@ -875,22 +878,24 @@
     let folders = gtk::Button::new();
     folders.add_css_class("flat");
     folders.add_css_class("compact-sidebar-button");
-    folders.set_tooltip_text(Some("Browse folders"));
     let folder_contents = gtk::Box::new(gtk::Orientation::Vertical, 3);
     folder_contents.set_halign(gtk::Align::Center);
     folder_contents.append(&gtk::Image::from_icon_name("folder-symbolic"));
-    folder_contents.append(&gtk::Label::new(Some("Folders")));
+    let folder_label = gtk::Label::new(Some("Folders"));
+    compact_labels.borrow_mut().push(folder_label.clone());
+    folder_contents.append(&folder_label);
     folders.set_child(Some(&folder_contents));
     compact_buttons.push((folders.clone(), "Folders"));
     compact_sidebar.append(&folders);
     let shared = gtk::Button::new();
     shared.add_css_class("flat");
     shared.add_css_class("compact-sidebar-button");
-    shared.set_tooltip_text(Some("Browse network shares"));
     let shared_contents = gtk::Box::new(gtk::Orientation::Vertical, 3);
     shared_contents.set_halign(gtk::Align::Center);
     shared_contents.append(&gtk::Image::from_icon_name("network-server-symbolic"));
-    shared_contents.append(&gtk::Label::new(Some("Shared")));
+    let shared_label = gtk::Label::new(Some("Shared"));
+    compact_labels.borrow_mut().push(shared_label.clone());
+    shared_contents.append(&shared_label);
     shared.set_child(Some(&shared_contents));
     compact_buttons.push((shared.clone(), "Shared"));
     compact_sidebar.append(&shared);
@@ -906,8 +911,9 @@
     const COMPACT_SIDEBAR_MODE_KEY: &str = "compact-sidebar-enabled";
     let compact_width = Rc::new(Cell::new(
         numeric_setting::<f64>(&connection.borrow(), COMPACT_SIDEBAR_WIDTH_KEY)
-            .unwrap_or(84.0).clamp(72.0, 160.0),
+            .unwrap_or(120.0).clamp(48.0, 300.0),
     ));
+    for label in compact_labels.borrow().iter() { label.set_visible(compact_width.get() >= 90.0); }
     let compact_enabled = db::setting(&connection.borrow(), COMPACT_SIDEBAR_MODE_KEY)
         .ok().flatten().is_some_and(|setting| setting == "true");
     main_split.set_content(Some(&right_column));
@@ -942,7 +948,11 @@
         let overlay_width = collapsed_sidebar_width.clone();
         let compact_width_for_mode = compact_width.clone();
         let connection_for_mode = connection.clone();
+        let header_for_mode = left_header.clone();
+        let compact_header_title = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         Rc::new(move |show| {
+            if show { header_for_mode.set_title_widget(gtk::Widget::NONE); }
+            else { header_for_mode.set_title_widget(Some(&compact_header_title)); }
             expanded.set(show);
             sidebar.set_visible(show);
             rail.set_visible(!show);
@@ -955,8 +965,11 @@
                 ).unwrap_or(0.22).clamp(0.10, 0.70);
                 split.set_sidebar_width_fraction(normal_fraction);
             } else {
-                split.set_min_sidebar_width(72.0);
+                // Lower the minimum before lowering the maximum: libadwaita
+                // rejects a maximum below the current minimum.
+                split.set_min_sidebar_width(48.0);
                 split.set_max_sidebar_width(compact_width_for_mode.get());
+                split.set_min_sidebar_width(compact_width_for_mode.get());
             }
         })
     };
@@ -970,6 +983,10 @@
             set_mode(!compact);
         })
     }));
+    let folders_reveal = Rc::new(Cell::new(false));
+    let shared_reveal = Rc::new(Cell::new(false));
+    let ratings_reveal = Rc::new(Cell::new(false));
+    let albums_reveal = Rc::new(Cell::new(false));
     {
         let popover = gtk::Popover::new();
         popover.set_position(gtk::PositionType::Right);
@@ -977,7 +994,6 @@
         let list = gtk::Box::new(gtk::Orientation::Vertical, 0);
         let scroll = gtk::ScrolledWindow::new();
         scroll.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Automatic);
-        scroll.set_min_content_width(240);
         scroll.set_max_content_height(360);
         scroll.set_propagate_natural_height(true);
         scroll.set_child(Some(&list));
@@ -985,7 +1001,9 @@
         let popover = popover.downgrade();
         let connection = connection.clone();
         let navigate = compact_navigate.clone();
+        let reveal = folders_reveal.clone();
         folders.connect_clicked(move |_| {
+            if !reveal.get() { return; }
             while let Some(child) = list.first_child() {
                 list.remove(&child);
             }
@@ -1016,12 +1034,9 @@
             if list.first_child().is_none() {
                 list.append(&gtk::Label::new(Some("No folders")));
             }
-            let popover = popover.clone();
-            glib::timeout_add_local_once(Duration::from_millis(120), move || {
-                if let Some(popover) = popover.upgrade() {
-                    popover.popup();
-                }
-            });
+            if let Some(popover) = popover.upgrade() {
+                popover.popup();
+            }
         });
     }
     {
@@ -1031,7 +1046,6 @@
         let list = gtk::Box::new(gtk::Orientation::Vertical, 0);
         let scroll = gtk::ScrolledWindow::new();
         scroll.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Automatic);
-        scroll.set_min_content_width(240);
         scroll.set_max_content_height(360);
         scroll.set_propagate_natural_height(true);
         scroll.set_child(Some(&list));
@@ -1039,7 +1053,9 @@
         let weak = popover.downgrade();
         let connection = connection.clone();
         let navigate = compact_navigate.clone();
+        let reveal = shared_reveal.clone();
         shared.connect_clicked(move |_| {
+            if !reveal.get() { return; }
             while let Some(child) = list.first_child() { list.remove(&child); }
             if let Ok(folders) = db::folders(&connection.borrow()) {
                 let mut folders: Vec<_> = folders.into_iter()
@@ -1061,10 +1077,67 @@
             if list.first_child().is_none() {
                 list.append(&gtk::Label::new(Some("No network shares")));
             }
-            let weak = weak.clone();
-            glib::timeout_add_local_once(Duration::from_millis(120), move || {
-                if let Some(popover) = weak.upgrade() { popover.popup(); }
-            });
+            if let Some(popover) = weak.upgrade() { popover.popup(); }
+        });
+    }
+    // Secondary click opens the same destination menu as the primary button.
+    for (button, destination, reveal) in [
+        (Some(folders.clone()), sidebar::SidebarFilter::Library, folders_reveal.clone()),
+        (Some(shared.clone()), sidebar::SidebarFilter::Library, shared_reveal.clone()),
+        (ratings_button.clone(), sidebar::SidebarFilter::Ratings, ratings_reveal.clone()),
+        (albums_button.clone(), sidebar::SidebarFilter::Albums, albums_reveal.clone()),
+    ] {
+        let Some(button) = button else { continue; };
+        let inline = gtk::Revealer::new();
+        let inline_list = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        inline.set_child(Some(&inline_list));
+        compact_sidebar.insert_child_after(&inline, Some(&button));
+        let inline_connection = connection.clone();
+        let inline_navigate = compact_navigate.clone();
+        let click = gtk::GestureClick::new();
+        click.set_button(3);
+        let target = button.clone();
+        let right_reveal = reveal.clone();
+        click.connect_pressed(move |gesture, _, _, _| {
+            right_reveal.set(true);
+            target.emit_clicked();
+            right_reveal.set(false);
+            gesture.set_state(gtk::EventSequenceState::Claimed);
+        });
+        button.add_controller(click);
+
+        // A single press navigates; the second press opens the detail menu.
+        let primary = gtk::GestureClick::new();
+        primary.set_button(1);
+        primary.set_propagation_phase(gtk::PropagationPhase::Capture);
+        let navigation_reveal = reveal.clone();
+        let is_shared = button == shared;
+        primary.connect_pressed(move |gesture, count, _, _| {
+            if count == 2 {
+                let opening = !inline.reveals_child();
+                if opening {
+                    while let Some(child) = inline_list.first_child() { inline_list.remove(&child); }
+                    let entries: Vec<(String, sidebar::SidebarFilter)> = match destination {
+                        sidebar::SidebarFilter::Ratings => (1..=5).map(|n| (format!("{}", n), sidebar::SidebarFilter::Rating(n))).collect(),
+                        sidebar::SidebarFilter::Albums => db::albums(&inline_connection.borrow()).unwrap_or_default().into_iter().map(|a| (a.name, sidebar::SidebarFilter::Album(a.id))).collect(),
+                        _ => db::folders(&inline_connection.borrow()).unwrap_or_default().into_iter().filter(|f| if is_shared { db::is_remote_path(&f.path) } else { f.imported_root && !db::is_remote_path(&f.path) }).map(|f| (f.name, sidebar::SidebarFilter::Folder(f.id))).collect(),
+                    };
+                    for (name, filter) in entries {
+                        let item = gtk::Button::with_label(&name);
+                        item.add_css_class("flat");
+                        let navigate = inline_navigate.clone();
+                        item.connect_clicked(move |_| navigate(filter));
+                        inline_list.append(&item);
+                    }
+                }
+                inline.set_reveal_child(opening);
+                gesture.set_state(gtk::EventSequenceState::Claimed);
+            }
+        });
+        button.add_controller(primary);
+        let navigate = compact_navigate.clone();
+        button.connect_clicked(move |_| {
+            if !navigation_reveal.get() { navigate(destination); }
         });
     }
     // Reuse sidebar visibility preferences for both layouts.
@@ -1115,13 +1188,12 @@
         }
         popover.set_child(Some(&list));
         let popover = popover.downgrade();
+        let reveal = ratings_reveal.clone();
         button.connect_clicked(move |_| {
-            let popover = popover.clone();
-            glib::timeout_add_local_once(Duration::from_millis(120), move || {
-                if let Some(popover) = popover.upgrade() {
-                    popover.popup();
-                }
-            });
+            if !reveal.get() { return; }
+            if let Some(popover) = popover.upgrade() {
+                popover.popup();
+            }
         });
     }
     if let Some(button) = albums_button {
@@ -1131,7 +1203,6 @@
         let list = gtk::Box::new(gtk::Orientation::Vertical, 0);
         let scroll = gtk::ScrolledWindow::new();
         scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
-        scroll.set_min_content_width(180);
         scroll.set_max_content_height(360);
         scroll.set_propagate_natural_height(true);
         scroll.set_child(Some(&list));
@@ -1139,7 +1210,9 @@
         let popover_weak = popover.downgrade();
         let connection = connection.clone();
         let navigate = compact_navigate.clone();
+        let reveal = albums_reveal.clone();
         button.connect_clicked(move |_| {
+            if !reveal.get() { return; }
             while let Some(child) = list.first_child() {
                 list.remove(&child);
             }
@@ -1162,33 +1235,47 @@
                 });
                 list.append(&item);
             }
-            let popover_weak = popover_weak.clone();
-            glib::timeout_add_local_once(Duration::from_millis(120), move || {
-                if let Some(popover) = popover_weak.upgrade() {
-                    popover.popup();
-                }
-            });
+            if let Some(popover) = popover_weak.upgrade() {
+                popover.popup();
+            }
         });
     }
     // Independent compact rail resizing: saved separately from normal width and
     // from the overlay width used on small windows.
     let compact_drag = gtk::GestureDrag::new();
-    let compact_start = Rc::new(Cell::new(compact_width.get()));
+    compact_drag.set_button(1);
+    compact_drag.set_exclusive(true);
+    let compact_start = Rc::new(Cell::new((0.0_f64, 0.0_f64, 0.0_f64, 0.0_f64)));
     {
-        let compact_start = compact_start.clone();
-        let compact_width = compact_width.clone();
-        compact_drag.connect_drag_begin(move |_, _, _| compact_start.set(compact_width.get()));
+        let start = compact_start.clone();
+        let split = main_split.clone();
+        let shell = sidebar_shell.clone();
+        compact_drag.connect_drag_begin(move |gesture, x, y| {
+            if let Some(point) = gesture.widget().and_then(|handle| handle.compute_point(
+                &split, &gtk::graphene::Point::new(x as f32, y as f32))) {
+                start.set((f64::from(shell.width()), x, y, f64::from(point.x())));
+            } else {
+                gesture.set_state(gtk::EventSequenceState::Denied);
+            }
+        });
     }
     {
-        let compact_start = compact_start.clone();
+        let start = compact_start.clone();
         let compact_width = compact_width.clone();
         let expanded = sidebar_expanded.clone();
         let split = main_split.clone();
-        compact_drag.connect_drag_update(move |_, delta_x, _| {
+        let labels = compact_labels.clone();
+        compact_drag.connect_drag_update(move |gesture, dx, dy| {
             if expanded.get() { return; }
-            let width = (compact_start.get() + delta_x).clamp(72.0, 160.0);
+            let (initial_width, x, y, initial_x) = start.get();
+            let Some(point) = gesture.widget().and_then(|handle| handle.compute_point(
+                &split, &gtk::graphene::Point::new((x + dx) as f32, (y + dy) as f32))) else { return; };
+            let width = (initial_width + f64::from(point.x()) - initial_x).clamp(48.0, 300.0);
             compact_width.set(width);
+            for label in labels.borrow().iter() { label.set_visible(width >= 90.0); }
+            split.set_min_sidebar_width(48.0);
             split.set_max_sidebar_width(width);
+            split.set_min_sidebar_width(width);
         });
     }
     {
@@ -1316,7 +1403,7 @@
             sidebar::clear_hover_open(&sidebar_for_hover_hide);
         }
     });
-    sidebar_shell.add_controller(sidebar_leave_motion);
+    left_column.add_controller(sidebar_leave_motion);
 
     let sidebar_hover_reveal_for_state = sidebar_hover_reveal.clone();
     let sidebar_for_show_state = sidebar.clone();

@@ -17,6 +17,7 @@
 
 window, .layout-left-column, .navigation-sidebar { background: #000000; color: #FF9C00; }
     .layout-left-column { border-right: 3px solid #FF9C00; }
+    .compact-sidebar-dock { box-shadow: inset -3px 0 #FF9C00; }
     .layout-left-header, .layout-right-header { background: #000000; border-bottom: 3px solid #FF9C00; box-shadow: none; color: #FF9C00; }
     .app-title { color: #FF9C00; text-shadow: none; font-weight: 800; letter-spacing: 0.5px; }
     .layout-left-header button, .layout-right-header button { color: #99CCFF; border-radius: 9999px; }

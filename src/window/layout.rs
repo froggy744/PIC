@@ -816,7 +816,6 @@
     left_column.append(&sidebar);
     let compact_sidebar_page = gtk::Box::new(gtk::Orientation::Vertical, 0);
     compact_sidebar_page.set_vexpand(true);
-    compact_sidebar_page.add_css_class("layout-left-column");
     let compact_header = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     compact_header.set_height_request(46);
     compact_header.add_css_class("layout-left-header");
@@ -880,13 +879,15 @@
     let mut ratings_button = None;
     let mut compact_buttons: Vec<(gtk::Button, &'static str)> = Vec::new();
     let compact_labels = Rc::new(RefCell::new(Vec::<gtk::Label>::new()));
+    let compact_details = Rc::new(RefCell::new(Vec::<gtk::Revealer>::new()));
+    let compact_option_labels = Rc::new(RefCell::new(Vec::<glib::WeakRef<gtk::Label>>::new()));
     for (label, icon, destination) in [
         ("Library", "go-home-symbolic", sidebar::SidebarFilter::Library),
         ("Photos", "image-x-generic-symbolic", sidebar::SidebarFilter::All),
-        ("Recent", "document-open-recent-symbolic", sidebar::SidebarFilter::RecentlyAdded),
-        ("Favorites", "starred-symbolic", sidebar::SidebarFilter::Favorites),
+        ("Recent", "x-office-calendar-symbolic", sidebar::SidebarFilter::RecentlyAdded),
+        ("Favorites", "emote-love-symbolic", sidebar::SidebarFilter::Favorites),
         ("Ratings", "starred-symbolic", sidebar::SidebarFilter::Ratings),
-        ("History", "view-list-symbolic", sidebar::SidebarFilter::History),
+        ("History", "document-open-recent-symbolic", sidebar::SidebarFilter::History),
         ("Albums", "folder-pictures-symbolic", sidebar::SidebarFilter::Albums),
     ] {
         let button = gtk::Button::new();
@@ -1054,6 +1055,20 @@
             .unwrap_or(COMPACT_ICON_RAIL_WIDTH).clamp(COMPACT_ICON_RAIL_WIDTH, 300.0),
     ));
     for label in compact_labels.borrow().iter() { label.set_visible(compact_width.get() >= 90.0); }
+    // Align option text with the start of the centered Favorites title.
+    let option_inset: Rc<dyn Fn(f64)> = {
+        let labels = compact_labels.clone();
+        let options = compact_option_labels.clone();
+        Rc::new(move |width| {
+            let title_width = labels.borrow().get(3)
+                .map(|label| label.measure(gtk::Orientation::Horizontal, -1).1)
+                .unwrap_or(60);
+            let inset = ((width - f64::from(title_width)) / 2.0 - 12.0).max(0.0) as i32;
+            options.borrow_mut().retain(|weak| {
+                if let Some(label) = weak.upgrade() { label.set_margin_start(inset); true } else { false }
+            });
+        })
+    };
     compact_dock.set_width_request(compact_width.get().round() as i32);
     // A separate fixed dock requires its own divider: the normal divider is
     // inside the hidden Adw sidebar and cannot receive compact-mode drags.
@@ -1082,6 +1097,8 @@
         let dock = compact_dock.clone();
         let row = layout_row.clone();
         let labels = compact_labels.clone();
+        let details = compact_details.clone();
+        let update_inset = option_inset.clone();
         dock_drag.connect_drag_update(move |gesture, dx, dy| {
             let (initial_width, start_x, start_y, initial_global_x) = origin.get();
             let Some(point) = gesture.widget().and_then(|handle| {
@@ -1094,7 +1111,9 @@
                 .clamp(COMPACT_ICON_RAIL_WIDTH, 300.0);
             width.set(width_px);
             dock.set_width_request(width_px.round() as i32);
+            update_inset(width_px);
             for label in labels.borrow().iter() { label.set_visible(width_px >= 90.0); }
+            if width_px < 90.0 { for detail in details.borrow().iter() { detail.set_reveal_child(false); } }
         });
     }
     {
@@ -1196,7 +1215,8 @@
         popover.set_parent(&folders);
         let list = gtk::Box::new(gtk::Orientation::Vertical, 0);
         let scroll = gtk::ScrolledWindow::new();
-        scroll.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Automatic);
+        scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+        scroll.set_min_content_width(200);
         scroll.set_max_content_height(360);
         scroll.set_propagate_natural_height(true);
         scroll.set_child(Some(&list));
@@ -1322,6 +1342,7 @@
         });
         button.add_controller(right_click);
         let inline = gtk::Revealer::new();
+        compact_details.borrow_mut().push(inline.clone());
         inline.set_transition_type(gtk::RevealerTransitionType::SlideDown);
         let list = gtk::Box::new(gtk::Orientation::Vertical, 0);
         inline.set_child(Some(&list));
@@ -1333,6 +1354,8 @@
         let width = compact_width.clone();
         let conn = connection.clone();
         let navigate = compact_navigate.clone();
+        let option_labels = compact_option_labels.clone();
+        let update_inset = option_inset.clone();
         primary.connect_pressed(move |gesture, count, _, _| {
             if count != 2 { return; }
             if width.get() < 90.0 {
@@ -1345,13 +1368,21 @@
                     while let Some(child) = list.first_child() { list.remove(&child); }
                     for folder in db::folders(&conn.borrow()).unwrap_or_default().into_iter()
                         .filter(|f| if network { db::is_remote_path(&f.path) } else { f.imported_root && !db::is_remote_path(&f.path) }) {
-                        let item = gtk::Button::with_label(&folder.name);
+                        let item = gtk::Button::with_label(&format!("•  {}", folder.name));
                         item.add_css_class("flat");
+                        item.add_css_class("compact-sidebar-option");
+                        if let Some(label) = item.child().and_downcast::<gtk::Label>() {
+                            label.set_xalign(0.0);
+                            option_labels.borrow_mut().push(label.downgrade());
+                            label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+                            label.set_width_chars(1);
+                        }
                         let navigate = navigate.clone();
                         item.connect_clicked(move |_| navigate(sidebar::SidebarFilter::Folder(folder.id)));
                         list.append(&item);
                     }
                 }
+                update_inset(width.get());
                 inline.set_reveal_child(opening);
             }
             gesture.set_state(gtk::EventSequenceState::Claimed);
@@ -1365,6 +1396,7 @@
     ] {
         let Some(button) = button else { continue; };
         let inline = gtk::Revealer::new();
+        compact_details.borrow_mut().push(inline.clone());
         let inline_list = gtk::Box::new(gtk::Orientation::Vertical, 0);
         inline.set_child(Some(&inline_list));
         compact_sidebar.insert_child_after(&inline, Some(&button));
@@ -1390,6 +1422,8 @@
         let double_target = button.clone();
         let width = compact_width.clone();
         let is_shared = button == shared;
+        let option_labels = compact_option_labels.clone();
+        let update_inset = option_inset.clone();
         primary.connect_pressed(move |gesture, count, _, _| {
             if count == 2 {
                 if width.get() < 90.0 {
@@ -1403,18 +1437,31 @@
                 if opening {
                     while let Some(child) = inline_list.first_child() { inline_list.remove(&child); }
                     let entries: Vec<(String, sidebar::SidebarFilter)> = match destination {
-                        sidebar::SidebarFilter::Ratings => (1..=5).map(|n| (format!("{}", n), sidebar::SidebarFilter::Rating(n))).collect(),
+                        sidebar::SidebarFilter::Ratings => (1..=5).map(|n| (format!("{} {}", "★".repeat(n as usize), n), sidebar::SidebarFilter::Rating(n))).collect(),
                         sidebar::SidebarFilter::Albums => db::albums(&inline_connection.borrow()).unwrap_or_default().into_iter().map(|a| (a.name, sidebar::SidebarFilter::Album(a.id))).collect(),
                         _ => db::folders(&inline_connection.borrow()).unwrap_or_default().into_iter().filter(|f| if is_shared { db::is_remote_path(&f.path) } else { f.imported_root && !db::is_remote_path(&f.path) }).map(|f| (f.name, sidebar::SidebarFilter::Folder(f.id))).collect(),
                     };
                     for (name, filter) in entries {
-                        let item = gtk::Button::with_label(&name);
+                        let label = if destination == sidebar::SidebarFilter::Albums {
+                            format!("•  {name}")
+                        } else {
+                            name
+                        };
+                        let item = gtk::Button::with_label(&label);
                         item.add_css_class("flat");
+                        item.add_css_class("compact-sidebar-option");
+                        if let Some(label) = item.child().and_downcast::<gtk::Label>() {
+                            label.set_xalign(0.0);
+                            option_labels.borrow_mut().push(label.downgrade());
+                            label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+                            label.set_width_chars(1);
+                        }
                         let navigate = inline_navigate.clone();
                         item.connect_clicked(move |_| navigate(filter));
                         inline_list.append(&item);
                     }
                 }
+                update_inset(width.get());
                 inline.set_reveal_child(opening);
                 gesture.set_state(gtk::EventSequenceState::Claimed);
             }
@@ -1488,6 +1535,7 @@
         let list = gtk::Box::new(gtk::Orientation::Vertical, 0);
         let scroll = gtk::ScrolledWindow::new();
         scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+        scroll.set_min_content_width(200);
         scroll.set_max_content_height(360);
         scroll.set_propagate_natural_height(true);
         scroll.set_child(Some(&list));
@@ -1808,6 +1856,8 @@
     let sidebar_drag_start_x_update = sidebar_drag_start_x.clone();
     let collapsed_sidebar_width_update = collapsed_sidebar_width.clone();
     let compact_width_for_drag_update = compact_width.clone();
+    let compact_details_for_drag_update = compact_details.clone();
+    let option_inset_for_drag_update = option_inset.clone();
     let expanded_for_drag_update = sidebar_expanded.clone();
     let shell_for_compact_drag = sidebar_shell.clone();
     let compact_labels_for_drag = compact_labels.clone();
@@ -1828,6 +1878,8 @@
             let width = (sidebar_drag_start_width_update.get() + delta)
                 .clamp(COMPACT_ICON_RAIL_WIDTH, 300.0);
             compact_width_for_drag_update.set(width);
+            option_inset_for_drag_update(width);
+            if width < 90.0 { for detail in compact_details_for_drag_update.borrow().iter() { detail.set_reveal_child(false); } }
             shell_for_compact_drag.set_width_request(width.round() as i32);
             for label in compact_labels_for_drag.borrow().iter() {
                 label.set_visible(width >= 90.0);

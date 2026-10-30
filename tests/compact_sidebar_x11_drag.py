@@ -23,16 +23,22 @@ split.set_show_sidebar(False)
 
 # PIC's compact rail is a fixed-width dock OUTSIDE the Adw split.
 dock = Gtk.Overlay()
+dock.add_css_class("compact-sidebar-dock")
 dock.set_hexpand(False)
 dock.set_vexpand(True)
 dock.set_size_request(120, -1)
 column = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
 column.append(Gtk.Label(label="PIC"))
 scroll = Gtk.ScrolledWindow()
+scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+scroll.set_min_content_width(1)
 rail = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+rail.add_css_class("compact-sidebar")
 labels = []
 for name in ("Library", "Photos", "Recent", "Albums", "Folders"):
     button = Gtk.Button()
+    button.add_css_class("flat")
+    button.add_css_class("compact-sidebar-button")
     content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
     content.set_halign(Gtk.Align.CENTER)
     content.append(Gtk.Image.new_from_icon_name("folder-symbolic"))
@@ -41,6 +47,16 @@ for name in ("Library", "Photos", "Recent", "Albums", "Folders"):
     labels.append(label)
     button.set_child(content)
     rail.append(button)
+details = Gtk.Revealer()
+details.set_reveal_child(True)
+item = Gtk.Button(label="A very long folder or album name that must not widen the rail")
+item.add_css_class("flat")
+item.add_css_class("compact-sidebar-option")
+item.get_child().set_xalign(0.0)
+item.get_child().set_ellipsize(3)
+item.get_child().set_width_chars(1)
+details.set_child(item)
+rail.append(details)
 scroll.set_child(rail)
 column.append(scroll)
 dock.set_child(column)
@@ -92,6 +108,12 @@ layout.append(dock)
 split.set_hexpand(True)
 layout.append(split)
 window.set_child(layout)
+base = Gtk.CssProvider()
+base.load_from_path("src/css/base.css")
+Gtk.StyleContext.add_provider_for_display(window.get_display(), base, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+provider = Gtk.CssProvider()
+provider.load_from_path("themes/lars/theme.css")
+Gtk.StyleContext.add_provider_for_display(window.get_display(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
 window.present()
 
 loop = GLib.MainLoop()
@@ -138,6 +160,11 @@ assert seen["updates"] >= 2, "divider received no drag updates"
 assert seen["smallest"] <= 80, "real X11 pointer movement failed to narrow sidebar"
 assert dock.get_width() <= 85, "compact dock did not resize when dragged"
 assert labels[0].get_visible() is False, "icon-only mode must hide only text"
+dock.set_size_request(44, -1)
+settle = GLib.MainLoop()
+GLib.timeout_add(400, lambda: (settle.quit(), False)[1])
+settle.run()
+assert dock.get_width() <= 44, f"themed rail cannot reach minimum: {dock.get_width()}"
 
 # A context popover is a widget child of the triggering sidebar button.
 # A GTK leave event caused by popup grabs must not hide the sidebar.

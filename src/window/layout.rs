@@ -895,7 +895,12 @@
     compact_buttons.push((shared.clone(), "Shared"));
     compact_sidebar.append(&shared);
     let compact_rail_shell = gtk::Overlay::new();
-    compact_rail_shell.set_child(Some(&compact_sidebar));
+    compact_rail_shell.set_hexpand(true);
+    compact_rail_shell.set_vexpand(true);
+    let compact_scroll = gtk::ScrolledWindow::new();
+    compact_scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+    compact_scroll.set_child(Some(&compact_sidebar));
+    compact_rail_shell.set_child(Some(&compact_scroll));
     left_column.append(&compact_rail_shell);
     const COMPACT_SIDEBAR_WIDTH_KEY: &str = "compact-sidebar-width";
     const COMPACT_SIDEBAR_MODE_KEY: &str = "compact-sidebar-enabled";

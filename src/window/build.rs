@@ -6864,11 +6864,17 @@ fn start_photo_export_single(
                     &window.height().to_string(),
                 );
             }
-            let _ = db::set_setting(
-                &guard,
-                SIDEBAR_WIDTH_FRACTION_SETTING_KEY,
-                &main_split.sidebar_width_fraction().to_string(),
-            );
+            // A compact rail uses a different width. Closing in compact mode
+            // must not overwrite the normal sidebar's saved fraction.
+            let compact = db::setting(&guard, "compact-sidebar-enabled")
+                .ok().flatten().is_some_and(|value| value == "true");
+            if !compact {
+                let _ = db::set_setting(
+                    &guard,
+                    SIDEBAR_WIDTH_FRACTION_SETTING_KEY,
+                    &main_split.sidebar_width_fraction().to_string(),
+                );
+            }
         })
     });
 

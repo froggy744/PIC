@@ -1046,6 +1046,67 @@
             .unwrap_or(COMPACT_ICON_RAIL_WIDTH).clamp(COMPACT_ICON_RAIL_WIDTH, 300.0),
     ));
     for label in compact_labels.borrow().iter() { label.set_visible(compact_width.get() >= 90.0); }
+    compact_dock.set_width_request(compact_width.get().round() as i32);
+    // A separate fixed dock requires its own divider: the normal divider is
+    // inside the hidden Adw sidebar and cannot receive compact-mode drags.
+    let dock_drag = gtk::GestureDrag::new();
+    dock_drag.set_button(1);
+    dock_drag.set_propagation_phase(gtk::PropagationPhase::Capture);
+    dock_drag.set_exclusive(true);
+    let dock_drag_origin = Rc::new(Cell::new((0.0_f64, 0.0_f64, 0.0_f64, 0.0_f64)));
+    {
+        let origin = dock_drag_origin.clone();
+        let width = compact_width.clone();
+        let row = layout_row.clone();
+        dock_drag.connect_drag_begin(move |gesture, x, y| {
+            if let Some(point) = gesture.widget().and_then(|handle| {
+                handle.compute_point(&row, &gtk::graphene::Point::new(x as f32, y as f32))
+            }) {
+                origin.set((width.get(), x, y, f64::from(point.x())));
+            } else {
+                gesture.set_state(gtk::EventSequenceState::Denied);
+            }
+        });
+    }
+    {
+        let origin = dock_drag_origin.clone();
+        let width = compact_width.clone();
+        let dock = compact_dock.clone();
+        let row = layout_row.clone();
+        let labels = compact_labels.clone();
+        dock_drag.connect_drag_update(move |gesture, dx, dy| {
+            let (initial_width, start_x, start_y, initial_global_x) = origin.get();
+            let Some(point) = gesture.widget().and_then(|handle| {
+                handle.compute_point(
+                    &row,
+                    &gtk::graphene::Point::new((start_x + dx) as f32, (start_y + dy) as f32),
+                )
+            }) else { return; };
+            let width_px = (initial_width + f64::from(point.x()) - initial_global_x)
+                .clamp(COMPACT_ICON_RAIL_WIDTH, 300.0);
+            width.set(width_px);
+            dock.set_width_request(width_px.round() as i32);
+            for label in labels.borrow().iter() { label.set_visible(width_px >= 90.0); }
+        });
+    }
+    {
+        let width = compact_width.clone();
+        let connection = connection.clone();
+        dock_drag.connect_drag_end(move |_, _, _| {
+            if let Err(error) = db::set_setting(
+                &connection.borrow(), COMPACT_SIDEBAR_WIDTH_KEY, &width.get().to_string(),
+            ) { eprintln!("Could not save compact width: {error}"); }
+        });
+    }
+    let dock_resize_handle = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    dock_resize_handle.set_width_request(12);
+    dock_resize_handle.set_vexpand(true);
+    dock_resize_handle.set_halign(gtk::Align::End);
+    dock_resize_handle.set_valign(gtk::Align::Fill);
+    dock_resize_handle.set_cursor_from_name(Some("col-resize"));
+    dock_resize_handle.add_css_class("sidebar-resize-handle");
+    dock_resize_handle.add_controller(dock_drag);
+    compact_dock.add_overlay(&dock_resize_handle);
     let compact_enabled = db::setting(&connection.borrow(), COMPACT_SIDEBAR_MODE_KEY)
         .ok().flatten().is_some_and(|setting| setting == "true");
     main_split.set_content(Some(&right_column));
@@ -1420,7 +1481,7 @@
         let sidebar_for_collapse_notify = sidebar.clone();
         main_split.connect_collapsed_notify(move |split| {
             if !expanded.get() {
-                split.set_max_sidebar_width(compact_width_for_notify.get());
+                split.set_show_sidebar(false);
                 return;
             }
             if split.is_collapsed() {
@@ -1438,8 +1499,8 @@
     // so the responsive breakpoint can use the same animated drawer path as
     // the manual sidebar toggle.
     main_split.set_pin_sidebar(true);
-    main_split.set_enable_show_gesture(true);
-    main_split.set_enable_hide_gesture(true);
+    main_split.set_enable_show_gesture(sidebar_expanded.get());
+    main_split.set_enable_hide_gesture(sidebar_expanded.get());
 
     // Sidebar pin/hover state lives in sidebar.rs. Keep one authoritative
     // state store so manual pinning and temporary hover-open behavior cannot
@@ -1455,12 +1516,13 @@
     sidebar_hover_reveal.set_vexpand(true);
     sidebar_hover_reveal.set_halign(gtk::Align::Start);
     sidebar_hover_reveal.set_valign(gtk::Align::Fill);
-    sidebar_hover_reveal.set_visible(!main_split.shows_sidebar());
+    sidebar_hover_reveal.set_visible(sidebar_expanded.get() && !main_split.shows_sidebar());
     sidebar_hover_reveal.set_cursor_from_name(Some("default"));
     main_surface.add_overlay(&sidebar_hover_reveal);
 
     let sidebar_hover_motion = gtk::EventControllerMotion::new();
     let main_split_for_hover_reveal = main_split.clone();
+    let expanded_for_hover_reveal = sidebar_expanded.clone();
     let sidebar_for_hover_reveal = sidebar.clone();
     let gallery_for_hover_reveal = gallery.clone();
     let sidebar_hover_layout_freeze_for_reveal = sidebar_hover_layout_freeze.clone();
@@ -1470,7 +1532,8 @@
         // so edge-hover must still peek it open while collapsed. In the
         // expanded layout the pin gate still applies: a pinned sidebar the
         // user explicitly hid stays hidden until they show it again.
-        if !main_split_for_hover_reveal.shows_sidebar()
+        if expanded_for_hover_reveal.get()
+            && !main_split_for_hover_reveal.shows_sidebar()
             && (!sidebar::is_pinned(&sidebar_for_hover_reveal)
                 || main_split_for_hover_reveal.is_collapsed())
         {
@@ -1548,6 +1611,7 @@
     left_column.add_controller(sidebar_leave_motion);
 
     let sidebar_hover_reveal_for_state = sidebar_hover_reveal.clone();
+    let expanded_for_hover_state = sidebar_expanded.clone();
     let sidebar_for_show_state = sidebar.clone();
     let sidebar_hover_layout_freeze_for_state = sidebar_hover_layout_freeze.clone();
     let sidebar_hover_freeze_generation_for_state = sidebar_hover_freeze_generation.clone();
@@ -1560,7 +1624,7 @@
         gallery_for_sidebar_visibility.cancel_resize_flip();
 
         let sidebar_visible = split.shows_sidebar();
-        sidebar_hover_reveal_for_state.set_visible(!sidebar_visible);
+        sidebar_hover_reveal_for_state.set_visible(expanded_for_hover_state.get() && !sidebar_visible);
         // Every reveal path (hover, pin button, breakpoint restore) funnels
         // through this notify, so this is the one place that keeps the pin
         // button's tooltip/icon in sync with how the sidebar was opened.
@@ -1896,6 +1960,7 @@
     right_header.pack_start(&show_sidebar);
 
     let show_sidebar_for_state = show_sidebar.clone();
+    let expanded_for_show_sidebar_button = sidebar_expanded.clone();
     // Theme-overridable window controls: the mode cell is written by the
     // ThemeEngine hook (build.rs) whenever a theme activates; placement runs
     // on every sidebar transition and mirrors the native title buttons'
@@ -1952,7 +2017,7 @@
     let place_for_notify = place_window_controls.clone();
     main_split.connect_show_sidebar_notify(move |split| {
         let sidebar_visible = split.shows_sidebar();
-        show_sidebar_for_state.set_visible(!sidebar_visible);
+        show_sidebar_for_state.set_visible(expanded_for_show_sidebar_button.get() && !sidebar_visible);
         // Keep window controls (native title buttons or theme traffic lights)
         // at the window's top-left corner in every sidebar state, and never
         // render them in both headers at once (which would also duplicate

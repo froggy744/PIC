@@ -55,6 +55,7 @@ jobs:
           gi.require_version("Adw", "1")
           from gi.repository import Gtk, Adw, GLib
           Adw.init()
+          Gtk.Settings.get_default().set_property("gtk-enable-animations", False)
           window = Gtk.Window()
           window.set_default_size(900, 600)
           split = Adw.OverlaySplitView()
@@ -91,6 +92,7 @@ jobs:
                   label.set_visible(width >= 90)
               split.set_min_sidebar_width(48.0)
               split.set_max_sidebar_width(float(width))
+              split.set_sidebar_width_fraction(float(width) / max(1.0, split.get_width()))
               flush()
               actual = sidebar.get_allocated_width()
               assert actual <= width + 2, (width, actual)

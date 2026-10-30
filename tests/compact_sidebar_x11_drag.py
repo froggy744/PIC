@@ -17,28 +17,38 @@ Gtk.Settings.get_default().set_property("gtk-enable-animations", False)
 window = Gtk.Window(title="PIC X11 pointer divider test")
 window.set_default_size(900, 600)
 split = Adw.OverlaySplitView()
-split.set_min_sidebar_width(48.0)
-split.set_max_sidebar_width(120.0)
-split.set_sidebar_width_fraction(120.0 / 900.0)
+split.set_sidebar(Gtk.Box())
+split.set_content(Gtk.Box())
+split.set_show_sidebar(False)
 
-shell = Gtk.Overlay()
-shell.set_size_request(120, -1)
+# PIC's compact rail is a fixed-width dock OUTSIDE the Adw split.
+dock = Gtk.Overlay()
+dock.set_size_request(120, -1)
 column = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
 column.append(Gtk.Label(label="PIC"))
 scroll = Gtk.ScrolledWindow()
 rail = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+labels = []
 for name in ("Library", "Photos", "Recent", "Albums", "Folders"):
-    rail.append(Gtk.Button(label=name))
+    button = Gtk.Button()
+    content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+    content.set_halign(Gtk.Align.CENTER)
+    content.append(Gtk.Image.new_from_icon_name("folder-symbolic"))
+    label = Gtk.Label(label=name)
+    content.append(label)
+    labels.append(label)
+    button.set_child(content)
+    rail.append(button)
 scroll.set_child(rail)
 column.append(scroll)
-shell.set_child(column)
+dock.set_child(column)
 
 handle = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
 handle.set_size_request(12, -1)
 handle.set_halign(Gtk.Align.END)
 handle.set_vexpand(True)
 handle.set_cursor_from_name("col-resize")
-shell.add_overlay(handle)
+dock.add_overlay(handle)
 
 drag = Gtk.GestureDrag()
 drag.set_button(1)
@@ -50,9 +60,9 @@ start_x = [0.0]
 
 def on_begin(_gesture, x, y):
     seen["begin"] = True
-    seen["initial"] = float(shell.get_width())
+    seen["initial"] = float(dock.get_width())
     start_local[:] = [x, y]
-    point = handle.translate_coordinates(split, x, y)
+    point = handle.translate_coordinates(layout, x, y)
     assert point is not None, "could not translate drag origin into split coordinates"
     start_x[0] = float(point[0])
 
@@ -61,23 +71,25 @@ def on_update(_gesture, dx, dy):
     # Translate the current pointer into the stationary split-view space,
     # exactly like layout.rs does with widget.compute_point().
     x, y = start_local
-    point = handle.translate_coordinates(split, x + dx, y + dy)
+    point = handle.translate_coordinates(layout, x + dx, y + dy)
     if point is None:
         return
     stable_delta = float(point[0]) - start_x[0]
-    width = max(48.0, min(300.0, seen["initial"] + stable_delta))
-    shell.set_size_request(round(width), -1)
-    split.set_max_sidebar_width(width)
-    split.set_sidebar_width_fraction(width / max(1.0, split.get_width()))
+    width = max(44.0, min(300.0, seen["initial"] + stable_delta))
+    dock.set_size_request(round(width), -1)
+    for label in labels:
+        label.set_visible(width >= 90.0)
     seen["updates"] += 1
     seen["smallest"] = min(seen["smallest"], width)
 
 drag.connect("drag-begin", on_begin)
 drag.connect("drag-update", on_update)
 handle.add_controller(drag)
-split.set_sidebar(shell)
-split.set_content(Gtk.Box())
-window.set_child(split)
+layout = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+layout.append(dock)
+split.set_hexpand(True)
+layout.append(split)
+window.set_child(layout)
 window.present()
 
 loop = GLib.MainLoop()
@@ -117,11 +129,13 @@ GLib.timeout_add_seconds(
     8, lambda: (failures.append("timed out"), loop.quit(), False)[2]
 )
 loop.run()
-print("X11 pointer drag:", seen, "allocated:", shell.get_width(), flush=True)
+print("X11 pointer drag:", seen, "allocated:", dock.get_width(), flush=True)
 assert not failures, failures
 assert seen["begin"], "outside divider or GTK did not receive press"
 assert seen["updates"] >= 2, "divider received no drag updates"
 assert seen["smallest"] <= 80, "real X11 pointer movement failed to narrow sidebar"
+assert dock.get_width() <= 85, "compact dock did not resize when dragged"
+assert labels[0].get_visible() is False, "icon-only mode must hide only text"
 
 # A context popover is a widget child of the triggering sidebar button.
 # A GTK leave event caused by popup grabs must not hide the sidebar.

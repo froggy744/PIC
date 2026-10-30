@@ -38,11 +38,16 @@ jobs:
           from pathlib import Path
           src = Path("src/window/layout.rs").read_text()
           css = Path("src/css/base.css").read_text()
-          drag = src.split("compact_drag.connect_drag_update(", 1)[1].split("compact_drag.connect_drag_end(", 1)[0]
-          assert "split.set_max_sidebar_width(width)" in drag
-          assert "split.set_min_sidebar_width(width)" not in drag, "drag must not lock the new width as a minimum"
-          assert "start.set((width.get(), x, y," in src, "drag should use saved start width"
+          drag = src.split("sidebar_drag.connect_drag_update(", 1)[1].split("sidebar_drag.connect_drag_end(", 1)[0]
+          assert "if !expanded_for_drag_update.get()" in drag
+          assert "sidebar_drag_start_width_update.get() + offset_x" in drag
+          assert "main_split_for_drag_update.set_max_sidebar_width(width)" in drag
+          assert "set_min_sidebar_width(width)" not in drag, "drag must not lock minimum width"
+          assert "handle.set_visible(true);" in src, "outer divider must stay enabled in compact mode"
+          assert "compact_grip" not in src, "duplicate inner divider must not consume gestures"
           assert "split.set_min_sidebar_width(48.0)" in src
+          assert "sidebar_has_visible_popover" in src, "right click must not close hover reveal"
+          assert "sidebar_leave_generation" in src, "enter must cancel pending leave"
           assert ".compact-sidebar-button" in css and "min-width: 0;" in css
           assert 'COMPACT_SIDEBAR_WIDTH_KEY' in src
           print("Compact resize static regression guards passed")

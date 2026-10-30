@@ -982,9 +982,11 @@
             if list.first_child().is_none() {
                 list.append(&gtk::Label::new(Some("No folders")));
             }
-            if let Some(popover) = popover.upgrade() {
-                popover.popup();
-            }
+            glib::timeout_add_local_once(Duration::from_millis(120), move || {
+                if let Some(popover) = popover.upgrade() {
+                    popover.popup();
+                }
+            });
         });
     }
     if let Some(button) = ratings_button {
@@ -1012,9 +1014,11 @@
         popover.set_child(Some(&list));
         let popover = popover.downgrade();
         button.connect_clicked(move |_| {
-            if let Some(popover) = popover.upgrade() {
-                popover.popup();
-            }
+            glib::timeout_add_local_once(Duration::from_millis(120), move || {
+                if let Some(popover) = popover.upgrade() {
+                    popover.popup();
+                }
+            });
         });
     }
     if let Some(button) = albums_button {
@@ -1055,9 +1059,11 @@
                 });
                 list.append(&item);
             }
-            if let Some(popover) = popover_weak.upgrade() {
-                popover.popup();
-            }
+            glib::timeout_add_local_once(Duration::from_millis(120), move || {
+                if let Some(popover) = popover_weak.upgrade() {
+                    popover.popup();
+                }
+            });
         });
     }
     // Independent compact rail resizing: saved separately from normal width and

@@ -1215,10 +1215,30 @@
             if let Some(popover) = weak.upgrade() { popover.popup(); }
         });
     }
-    // Secondary click opens the same destination menu as the primary button.
+    // Primary click opens a full folder overview; secondary click shows quick
+    // root selection without changing the current page.
+    for (button, network, reveal) in [
+        (folders.clone(), false, folders_reveal.clone()),
+        (shared.clone(), true, shared_reveal.clone()),
+    ] {
+        let overview = show_folder_overview.clone();
+        let for_primary = reveal.clone();
+        button.connect_clicked(move |_| {
+            if !for_primary.get() { overview(network); }
+        });
+        let right_click = gtk::GestureClick::new();
+        right_click.set_button(3);
+        let target = button.clone();
+        right_click.connect_pressed(move |gesture, _, _, _| {
+            reveal.set(true);
+            target.emit_clicked();
+            reveal.set(false);
+            gesture.set_state(gtk::EventSequenceState::Claimed);
+        });
+        button.add_controller(right_click);
+    }
+    // Ratings and Albums retain their own navigation and right-click menus.
     for (button, destination, reveal) in [
-        (Some(folders.clone()), sidebar::SidebarFilter::Library, folders_reveal.clone()),
-        (Some(shared.clone()), sidebar::SidebarFilter::Library, shared_reveal.clone()),
         (ratings_button.clone(), sidebar::SidebarFilter::Ratings, ratings_reveal.clone()),
         (albums_button.clone(), sidebar::SidebarFilter::Albums, albums_reveal.clone()),
     ] {

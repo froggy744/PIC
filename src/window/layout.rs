@@ -817,7 +817,18 @@
     let sidebar_shell = gtk::Overlay::new();
     sidebar_shell.set_hexpand(true);
     sidebar_shell.set_vexpand(true);
-    sidebar_shell.set_child(Some(&left_column));
+    // The original (hidden) full sidebar and inline folder controls can
+    // advertise a 180-200px GTK minimum even while compact mode is active.
+    // OverlaySplitView explicitly honours its child's minimum width over
+    // min/max-sidebar-width. A non-propagating ScrolledWindow is the size
+    // boundary: in compact mode it can really allocate 44px.
+    let sidebar_width_boundary = gtk::ScrolledWindow::new();
+    sidebar_width_boundary.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Never);
+    sidebar_width_boundary.set_propagate_natural_width(false);
+    sidebar_width_boundary.set_min_content_width(1);
+    sidebar_width_boundary.add_css_class("sidebar-width-boundary");
+    sidebar_width_boundary.set_child(Some(&left_column));
+    sidebar_shell.set_child(Some(&sidebar_width_boundary));
 
     let sidebar_resize_handle = gtk::Box::new(gtk::Orientation::Vertical, 0);
     // Keep a forgiving hit area around the visible divider. The handle is

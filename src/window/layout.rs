@@ -796,6 +796,7 @@
     sidebar.set_vexpand(true);
     left_column.append(&left_header);
     left_column.append(&sidebar);
+    sidebar.set_visible(false);
 
     // Overlay a narrow drag handle on the sidebar's right edge.
     // AdwOverlaySplitView does not expose a built-in draggable divider, so we
@@ -825,6 +826,59 @@
     right_column.set_vexpand(true);
 
     main_split.set_sidebar(Some(&sidebar_shell));
+    // Optional compact navigation rail, independent from the original sidebar.
+    let compact_sidebar = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    compact_sidebar.add_css_class("compact-sidebar");
+    compact_sidebar.set_vexpand(true);
+    let mut albums_button = None;
+    let mut ratings_button = None;
+    for (label, icon, destination) in [
+        ("Library", "go-home-symbolic", sidebar::SidebarFilter::Library),
+        ("Photos", "image-x-generic-symbolic", sidebar::SidebarFilter::All),
+        ("Favorites", "starred-symbolic", sidebar::SidebarFilter::Favorites),
+        ("Ratings", "starred-symbolic", sidebar::SidebarFilter::Ratings),
+        ("Recent", "document-open-recent-symbolic", sidebar::SidebarFilter::RecentlyAdded),
+        ("History", "view-list-symbolic", sidebar::SidebarFilter::History),
+        ("Albums", "folder-pictures-symbolic", sidebar::SidebarFilter::Albums),
+    ] {
+        let button = gtk::Button::new();
+        button.add_css_class("flat");
+        button.add_css_class("compact-sidebar-button");
+        button.set_tooltip_text(Some(label));
+        let contents = gtk::Box::new(gtk::Orientation::Vertical, 3);
+        contents.set_halign(gtk::Align::Center);
+        contents.append(&gtk::Image::from_icon_name(icon));
+        contents.append(&gtk::Label::new(Some(label)));
+        button.set_child(Some(&contents));
+        if destination == sidebar::SidebarFilter::Albums {
+            albums_button = Some(button.clone());
+        } else if destination == sidebar::SidebarFilter::Ratings {
+            ratings_button = Some(button.clone());
+        } else {
+            let navigate = destination_click.clone();
+            button.connect_clicked(move |_| navigate(destination));
+        }
+        compact_sidebar.append(&button);
+    }
+    let folders = gtk::Button::new();
+    folders.add_css_class("flat");
+    folders.add_css_class("compact-sidebar-button");
+    folders.set_tooltip_text(Some("Browse folders"));
+    let folder_contents = gtk::Box::new(gtk::Orientation::Vertical, 3);
+    folder_contents.set_halign(gtk::Align::Center);
+    folder_contents.append(&gtk::Image::from_icon_name("folder-symbolic"));
+    folder_contents.append(&gtk::Label::new(Some("Folders")));
+    folders.set_child(Some(&folder_contents));
+    compact_sidebar.append(&folders);
+    left_column.append(&compact_sidebar);
+    const COMPACT_SIDEBAR_WIDTH_KEY: &str = "compact-sidebar-width";
+    const COMPACT_SIDEBAR_MODE_KEY: &str = "compact-sidebar-enabled";
+    let compact_width = Rc::new(Cell::new(
+        numeric_setting::<f64>(&connection.borrow(), COMPACT_SIDEBAR_WIDTH_KEY)
+            .unwrap_or(84.0).clamp(72.0, 160.0),
+    ));
+    let compact_enabled = db::setting(&connection.borrow(), COMPACT_SIDEBAR_MODE_KEY)
+        .ok().flatten().is_some_and(|setting| setting == "true");
     main_split.set_content(Some(&right_column));
     main_split.set_min_sidebar_width(SIDEBAR_MIN_WIDTH);
     main_split.set_max_sidebar_width(SIDEBAR_MAX_WIDTH);
@@ -847,10 +901,218 @@
         .unwrap_or(SIDEBAR_COLLAPSED_DEFAULT_WIDTH)
         .clamp(SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH),
     ));
+    let sidebar_expanded = Rc::new(Cell::new(!compact_enabled));
+    let set_sidebar_expanded: Rc<dyn Fn(bool)> = {
+        let split = main_split.clone();
+        let sidebar = sidebar.clone();
+        let rail = compact_sidebar.clone();
+        let handle = sidebar_resize_handle.clone();
+        let expanded = sidebar_expanded.clone();
+        let overlay_width = collapsed_sidebar_width.clone();
+        let compact_width_for_mode = compact_width.clone();
+        Rc::new(move |show| {
+            expanded.set(show);
+            sidebar.set_visible(show);
+            rail.set_visible(!show);
+            handle.set_visible(show);
+            if show {
+                split.set_max_sidebar_width(if split.is_collapsed() { overlay_width.get() } else { SIDEBAR_MAX_WIDTH });
+                split.set_min_sidebar_width(SIDEBAR_MIN_WIDTH);
+            } else {
+                split.set_min_sidebar_width(72.0);
+                split.set_max_sidebar_width(compact_width_for_mode.get());
+            }
+        })
+    };
+    set_sidebar_expanded(!compact_enabled);
     {
+        let popover = gtk::Popover::new();
+        popover.set_position(gtk::PositionType::Right);
+        popover.set_parent(&folders);
+        let list = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        let scroll = gtk::ScrolledWindow::new();
+        scroll.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Automatic);
+        scroll.set_min_content_width(240);
+        scroll.set_max_content_height(360);
+        scroll.set_propagate_natural_height(true);
+        scroll.set_child(Some(&list));
+        popover.set_child(Some(&scroll));
+        let popover = popover.downgrade();
+        let connection = connection.clone();
+        let navigate = destination_click.clone();
+        folders.connect_clicked(move |_| {
+            while let Some(child) = list.first_child() {
+                list.remove(&child);
+            }
+            if let Ok(folders) = db::folders(&connection.borrow()) {
+                let mut folders: Vec<_> = folders
+                    .into_iter()
+                    .filter(|folder| folder.imported_root && !db::is_remote_path(&folder.path))
+                    .collect();
+                folders.sort_by(|left, right| {
+                    left.name.to_lowercase().cmp(&right.name.to_lowercase())
+                        .then_with(|| left.path.to_lowercase().cmp(&right.path.to_lowercase()))
+                });
+                for folder in folders {
+                    let item = gtk::Button::with_label(&folder.name);
+                    item.add_css_class("flat");
+                    item.set_tooltip_text(Some(&folder.path));
+                    let navigate = navigate.clone();
+                    let popover = popover.clone();
+                    item.connect_clicked(move |_| {
+                        if let Some(popover) = popover.upgrade() {
+                            popover.popdown();
+                        }
+                        navigate(sidebar::SidebarFilter::Folder(folder.id));
+                    });
+                    list.append(&item);
+                }
+            }
+            if list.first_child().is_none() {
+                list.append(&gtk::Label::new(Some("No folders")));
+            }
+            if let Some(popover) = popover.upgrade() {
+                popover.popup();
+            }
+        });
+    }
+    if let Some(button) = ratings_button {
+        let popover = gtk::Popover::new();
+        popover.set_position(gtk::PositionType::Right);
+        popover.set_parent(&button);
+        let list = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        let mut entries = vec![("All rated photos".to_string(), sidebar::SidebarFilter::Ratings)];
+        entries.extend((1..=5_u8).map(|rating| {
+            (format!("{} {}", "★".repeat(rating as usize), rating), sidebar::SidebarFilter::Rating(rating))
+        }));
+        for (name, destination) in entries {
+            let item = gtk::Button::with_label(&name);
+            item.add_css_class("flat");
+            let navigate = destination_click.clone();
+            let popover = popover.downgrade();
+            item.connect_clicked(move |_| {
+                if let Some(popover) = popover.upgrade() {
+                    popover.popdown();
+                }
+                navigate(destination);
+            });
+            list.append(&item);
+        }
+        popover.set_child(Some(&list));
+        let popover = popover.downgrade();
+        button.connect_clicked(move |_| {
+            if let Some(popover) = popover.upgrade() {
+                popover.popup();
+            }
+        });
+    }
+    if let Some(button) = albums_button {
+        let popover = gtk::Popover::new();
+        popover.set_position(gtk::PositionType::Right);
+        popover.set_parent(&button);
+        let list = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        let scroll = gtk::ScrolledWindow::new();
+        scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+        scroll.set_min_content_width(180);
+        scroll.set_max_content_height(360);
+        scroll.set_propagate_natural_height(true);
+        scroll.set_child(Some(&list));
+        popover.set_child(Some(&scroll));
+        let popover_weak = popover.downgrade();
+        let connection = connection.clone();
+        let navigate = destination_click.clone();
+        button.connect_clicked(move |_| {
+            while let Some(child) = list.first_child() {
+                list.remove(&child);
+            }
+            let mut entries = vec![("All albums".to_string(), sidebar::SidebarFilter::Albums)];
+            if let Ok(albums) = db::albums(&connection.borrow()) {
+                entries.extend(albums.into_iter().map(|album| {
+                    (album.name, sidebar::SidebarFilter::Album(album.id))
+                }));
+            }
+            for (name, destination) in entries {
+                let item = gtk::Button::with_label(&name);
+                item.add_css_class("flat");
+                let navigate = navigate.clone();
+                let popover = popover_weak.clone();
+                item.connect_clicked(move |_| {
+                    if let Some(popover) = popover.upgrade() {
+                        popover.popdown();
+                    }
+                    navigate(destination);
+                });
+                list.append(&item);
+            }
+            if let Some(popover) = popover_weak.upgrade() {
+                popover.popup();
+            }
+        });
+    }
+    // Independent compact rail resizing: saved separately from normal width and
+    // from the overlay width used on small windows.
+    let compact_drag = gtk::GestureDrag::new();
+    let compact_start = Rc::new(Cell::new(compact_width.get()));
+    {
+        let compact_start = compact_start.clone();
+        let compact_width = compact_width.clone();
+        compact_drag.connect_drag_begin(move |_, _, _| compact_start.set(compact_width.get()));
+    }
+    {
+        let compact_start = compact_start.clone();
+        let compact_width = compact_width.clone();
+        let expanded = sidebar_expanded.clone();
+        let split = main_split.clone();
+        compact_drag.connect_drag_update(move |_, delta_x, _| {
+            if expanded.get() { return; }
+            let width = (compact_start.get() + delta_x).clamp(72.0, 160.0);
+            compact_width.set(width);
+            split.set_max_sidebar_width(width);
+        });
+    }
+    {
+        let compact_width = compact_width.clone();
+        let connection = connection.clone();
+        compact_drag.connect_drag_end(move |_, _, _| {
+            if let Err(error) = db::set_setting(
+                &connection.borrow(), COMPACT_SIDEBAR_WIDTH_KEY, &compact_width.get().to_string()
+            ) { eprintln!("Could not save compact sidebar width: {error}"); }
+        });
+    }
+    let compact_grip = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    compact_grip.set_width_request(8);
+    compact_grip.set_vexpand(true);
+    compact_grip.set_halign(gtk::Align::End);
+    compact_grip.set_cursor_from_name(Some("col-resize"));
+    compact_grip.add_controller(compact_drag);
+    compact_sidebar.append(&compact_grip);
+
+    let compact_button = gtk::Button::from_icon_name("pan-start-symbolic");
+    compact_button.add_css_class("flat");
+    compact_button.set_tooltip_text(Some("Toggle compact sidebar"));
+    left_header.pack_start(&compact_button);
+    {
+        let expand = set_sidebar_expanded.clone();
+        let expanded = sidebar_expanded.clone();
+        let connection = connection.clone();
+        compact_button.connect_clicked(move |_| {
+            let show_normal = !expanded.get();
+            expand(show_normal);
+            if let Err(error) = db::set_setting(
+                &connection.borrow(), COMPACT_SIDEBAR_MODE_KEY, &(!show_normal).to_string()
+            ) { eprintln!("Could not save sidebar mode: {error}"); }
+        });
+    }
+    {
+        let expanded = sidebar_expanded.clone();
+        let compact_width_for_notify = compact_width.clone();
         let collapsed_sidebar_width_for_notify = collapsed_sidebar_width.clone();
         let sidebar_for_collapse_notify = sidebar.clone();
         main_split.connect_collapsed_notify(move |split| {
+            if !expanded.get() {
+                split.set_max_sidebar_width(compact_width_for_notify.get());
+                return;
+            }
             if split.is_collapsed() {
                 split.set_max_sidebar_width(collapsed_sidebar_width_for_notify.get());
             } else {
@@ -860,9 +1122,6 @@
                 sidebar::clear_hover_open(&sidebar_for_collapse_notify);
             }
         });
-        if main_split.is_collapsed() {
-            main_split.set_max_sidebar_width(collapsed_sidebar_width.get());
-        }
     }
     // Prevent AdwOverlaySplitView from automatically changing
     // show-sidebar as collapsed toggles. PIC owns that visibility transition

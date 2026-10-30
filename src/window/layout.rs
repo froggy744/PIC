@@ -1016,6 +1016,7 @@
             if list.first_child().is_none() {
                 list.append(&gtk::Label::new(Some("No folders")));
             }
+            let popover = popover.clone();
             glib::timeout_add_local_once(Duration::from_millis(120), move || {
                 if let Some(popover) = popover.upgrade() {
                     popover.popup();
@@ -1060,6 +1061,7 @@
             if list.first_child().is_none() {
                 list.append(&gtk::Label::new(Some("No network shares")));
             }
+            let weak = weak.clone();
             let weak = weak.clone();
             glib::timeout_add_local_once(Duration::from_millis(120), move || {
                 if let Some(popover) = weak.upgrade() { popover.popup(); }
@@ -1115,6 +1117,7 @@
         popover.set_child(Some(&list));
         let popover = popover.downgrade();
         button.connect_clicked(move |_| {
+            let popover = popover.clone();
             glib::timeout_add_local_once(Duration::from_millis(120), move || {
                 if let Some(popover) = popover.upgrade() {
                     popover.popup();
@@ -1160,6 +1163,7 @@
                 });
                 list.append(&item);
             }
+            let popover_weak = popover_weak.clone();
             glib::timeout_add_local_once(Duration::from_millis(120), move || {
                 if let Some(popover) = popover_weak.upgrade() {
                     popover.popup();

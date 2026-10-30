@@ -1064,6 +1064,7 @@
         Rc::new(RefCell::new(None));
     let set_sidebar_expanded: Rc<dyn Fn(bool)> = {
         let split = main_split.clone();
+        let normal_width_unit = main_split.sidebar_width_unit();
         let sidebar = sidebar.clone();
         let rail = compact_rail_shell.clone();
         let handle = sidebar_resize_handle.clone();
@@ -1077,8 +1078,10 @@
         let right_toggle = compact_right_toggle_slot.clone();
         let controls_sync = compact_controls_sync_slot.clone();
         Rc::new(move |show| {
-            // The full header contains native window controls and action buttons
-            // whose natural width prevents a genuinely narrow compact rail.
+            // Use literal GTK pixels for the compact 44px rail; SP units
+            // grow with desktop text scaling and can make it much wider.
+            // Normal mode retains libadwaita's original scaling unit.
+            split.set_sidebar_width_unit(if show { normal_width_unit } else { adw::LengthUnit::Px });
             header_for_mode.set_visible(show);
             compact_header_for_mode.set_visible(!show);
             shell_for_mode.set_width_request(if show { -1 } else { compact_width_for_mode.get().round() as i32 });

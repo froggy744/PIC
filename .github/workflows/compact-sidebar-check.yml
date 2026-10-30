@@ -52,6 +52,8 @@ jobs:
           assert 'sidebar_width_boundary.set_propagate_natural_width(false)' in src
           assert 'sidebar_width_boundary.set_policy(gtk::PolicyType::External, gtk::PolicyType::Never)' in src
           assert 'sidebar_width_boundary.set_child(Some(&left_column))' in src
+          assert 'sidebar_pages.set_hhomogeneous(false)' in src
+          assert 'pages_for_mode.set_visible_child_name' in src
           assert 'Some("folders-overview")' in src, "Folders requires an overview route"
           assert 'show_folder_overview.clone()' in src
           assert 'SidebarFilter::Library, folders_reveal' not in src
@@ -98,23 +100,20 @@ jobs:
               labels.append(label)
           scroll.set_child(entries)
           sidebar.append(scroll)
-          # A hidden full sidebar and a folder hierarchy may still request
-          # 200px. Verify the real constraint boundary hides that minimum.
-          original_sidebar = sidebar
-          hidden_full = Gtk.Box()
-          hidden_full.set_size_request(200, -1)
-          hidden_full.set_visible(False)
-          sidebar.prepend(hidden_full)
-          # A vertical Revealer can keep its children's horizontal minimum
-          # even when collapsed. This models the previous inline folder list.
-          wide_inline = Gtk.Label(label="A long imported folder hierarchy")
-          wide_inline.set_size_request(205, -1)
-          sidebar.append(wide_inline)
+          # Real sidebar design: full navigation (wide minimum) and the
+          # compact icon rail are distinct non-homogeneous stack pages.
+          full_page = Gtk.Box()
+          full_page.set_size_request(205, -1)
+          pages = Gtk.Stack()
+          pages.set_hhomogeneous(False)
+          pages.add_named(full_page, "full")
+          pages.add_named(sidebar, "compact")
+          pages.set_visible_child_name("compact")
           width_boundary = Gtk.ScrolledWindow()
           width_boundary.set_policy(Gtk.PolicyType.EXTERNAL, Gtk.PolicyType.NEVER)
           width_boundary.set_propagate_natural_width(False)
           width_boundary.set_min_content_width(1)
-          width_boundary.set_child(sidebar)
+          width_boundary.set_child(pages)
           shell = Gtk.Overlay()
           shell.set_child(width_boundary)
           shell.set_size_request(44, -1)

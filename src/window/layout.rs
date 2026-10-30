@@ -925,6 +925,15 @@
         })
     };
     set_sidebar_expanded(!compact_enabled);
+    sidebar_mode_changed_slot.replace(Some({
+        let connection = connection.clone();
+        let set_mode = set_sidebar_expanded.clone();
+        Rc::new(move || {
+            let compact = db::setting(&connection.borrow(), COMPACT_SIDEBAR_MODE_KEY)
+                .ok().flatten().is_some_and(|value| value == "true");
+            set_mode(!compact);
+        })
+    }));
     {
         let popover = gtk::Popover::new();
         popover.set_position(gtk::PositionType::Right);

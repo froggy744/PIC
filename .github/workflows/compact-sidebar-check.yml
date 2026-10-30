@@ -25,7 +25,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential clang mold cmake nasm pkg-config \
             libgtk-4-dev libadwaita-1-dev libsmbclient-dev libnfs-dev \
-            librsvg2-common libgdk-pixbuf2.0-bin xvfb xauth python3-gi gir1.2-adw-1
+            librsvg2-common libgdk-pixbuf2.0-bin xvfb xauth xdotool python3-gi gir1.2-adw-1
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
@@ -109,6 +109,8 @@ jobs:
               print(f"X11 GTK rail width request={width} actual={actual}")
           window.destroy()
           PY
+      - name: Real X11 mouse drag smoke test
+        run: xvfb-run -a /usr/bin/python3 tests/compact_sidebar_x11_drag.py
       - name: Compile check
         run: cargo check --locked
       - name: Save formatting fixes

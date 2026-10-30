@@ -32,6 +32,21 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Format modified Rust sources
         run: cargo fmt --all
+      - name: Compact resize regression guards
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          src = Path("src/window/layout.rs").read_text()
+          css = Path("src/css/base.css").read_text()
+          drag = src.split("compact_drag.connect_drag_update(", 1)[1].split("compact_drag.connect_drag_end(", 1)[0]
+          assert "split.set_max_sidebar_width(width)" in drag
+          assert "split.set_min_sidebar_width(width)" not in drag, "drag must not lock the new width as a minimum"
+          assert "start.set((width.get(), x, y," in src, "drag should use saved start width"
+          assert "split.set_min_sidebar_width(48.0)" in src
+          assert ".compact-sidebar-button" in css and "min-width: 0;" in css
+          assert 'COMPACT_SIDEBAR_WIDTH_KEY' in src
+          print("Compact resize static regression guards passed")
+          PY
       - name: Compile check
         run: cargo check --locked
       - name: Save formatting fixes

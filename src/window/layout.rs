@@ -1491,9 +1491,20 @@
     let gallery_for_drag_begin = gallery.clone();
     sidebar_drag.connect_drag_begin(move |gesture, x, y| {
         if !expanded_for_drag_begin.get() {
-            // This controller is on the stationary outer edge, not inside
-            // the compact rail. Never freeze gallery or change pin state here.
+            // Use the split's stable coordinates: the divider itself moves
+            // during the drag, so handle-local offsets produce jitter.
+            let Some(point) = gesture.widget().and_then(|handle| {
+                handle.compute_point(
+                    &main_split_for_drag_begin,
+                    &gtk::graphene::Point::new(x as f32, y as f32),
+                )
+            }) else {
+                gesture.set_state(gtk::EventSequenceState::Denied);
+                return;
+            };
             sidebar_drag_start_width_begin.set(compact_width_for_drag_begin.get());
+            sidebar_drag_start_local_begin.set((x, y));
+            sidebar_drag_start_x_begin.set(f64::from(point.x()));
             sidebar_resize_active_for_begin.set(true);
             return;
         }
@@ -1545,9 +1556,15 @@
             return;
         }
         if !expanded_for_drag_update.get() {
-            // GestureDrag offsets are measured from the initial press; the
-            // outer edge stays at the same left origin as the sidebar.
-            let width = (sidebar_drag_start_width_update.get() + offset_x)
+            let (x, y) = sidebar_drag_start_local_update.get();
+            let Some(point) = gesture.widget().and_then(|handle| {
+                handle.compute_point(
+                    &main_split_for_drag_update,
+                    &gtk::graphene::Point::new((x + offset_x) as f32, (y + offset_y) as f32),
+                )
+            }) else { return; };
+            let delta = f64::from(point.x()) - sidebar_drag_start_x_update.get();
+            let width = (sidebar_drag_start_width_update.get() + delta)
                 .clamp(48.0, 300.0);
             compact_width_for_drag_update.set(width);
             shell_for_compact_drag.set_width_request(width.round() as i32);

@@ -427,6 +427,29 @@ fn sidebar_page(
         "Choose which sections and destinations are shown in the sidebar.",
     );
     let list = settings_list();
+    let compact_toggle = gtk::Switch::new();
+    compact_toggle.set_valign(gtk::Align::Center);
+    compact_toggle.set_active(
+        saved_bool(&connection.borrow(), "compact-sidebar-enabled").unwrap_or(false)
+    );
+    {
+        let connection = connection.clone();
+        let sidebar_changed = sidebar_changed.clone();
+        compact_toggle.connect_active_notify(move |toggle| {
+            if let Err(error) = crate::db::set_setting(
+                &connection.borrow(), "compact-sidebar-enabled", &toggle.is_active().to_string()
+            ) {
+                eprintln!("Could not save compact sidebar preference: {error}");
+                return;
+            }
+            sidebar_changed();
+        });
+    }
+    append_row(
+        &list, "Compact sidebar",
+        Some("Use the compact navigation rail; each mode remembers its own width."),
+        Some(compact_toggle.upcast_ref()),
+    );
     for (title, subtitle, key) in [
         (
             "Library",

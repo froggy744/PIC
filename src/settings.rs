@@ -158,6 +158,7 @@ pub struct SettingsWindow {
     /// of the themes folder, so themes dropped into the folder appear the next time
     /// the window is presented. Set when the page is first built.
     refresh_appearance: Rc<RefCell<Option<Rc<dyn Fn()>>>>,
+    sidebar_mode_control: Rc<RefCell<glib::WeakRef<gtk::Switch>>>,
 }
 
 impl SettingsWindow {
@@ -171,6 +172,7 @@ impl SettingsWindow {
         self.window.borrow_mut().set(None::<&adw::Window>);
         self.stack.borrow_mut().set(None::<&gtk::Stack>);
         self.refresh_appearance.borrow_mut().take();
+        self.sidebar_mode_control.borrow_mut().set(None::<&gtk::Switch>);
     }
 
     pub fn present(
@@ -198,6 +200,11 @@ impl SettingsWindow {
             // so newly dropped themes show up on the next open.
             if let Some(refresh) = self.refresh_appearance.borrow().as_ref() {
                 refresh();
+            }
+            if let Some(toggle) = self.sidebar_mode_control.borrow().upgrade() {
+                toggle.set_active(
+                    saved_bool(&connection.borrow(), "compact-sidebar-enabled").unwrap_or(false)
+                );
             }
             window.present();
             return;
@@ -270,7 +277,11 @@ impl SettingsWindow {
         stack.add_titled(&themes_page, Some("themes"), "Themes");
 
         stack.add_titled(
-            &sidebar_page(connection.clone(), sidebar_changed),
+            &sidebar_page(
+                connection.clone(),
+                sidebar_changed,
+                self.sidebar_mode_control.clone(),
+            ),
             Some("sidebar"),
             "Sidebar",
         );
@@ -421,6 +432,7 @@ fn formats_page(
 fn sidebar_page(
     connection: Rc<RefCell<Connection>>,
     sidebar_changed: Rc<dyn Fn()>,
+    sidebar_mode_control: Rc<RefCell<glib::WeakRef<gtk::Switch>>>,
 ) -> gtk::ScrolledWindow {
     let content = page_content(
         "Sidebar",
@@ -429,6 +441,7 @@ fn sidebar_page(
     let list = settings_list();
     let compact_toggle = gtk::Switch::new();
     compact_toggle.set_valign(gtk::Align::Center);
+    sidebar_mode_control.borrow_mut().set(Some(&compact_toggle));
     compact_toggle.set_active(
         saved_bool(&connection.borrow(), "compact-sidebar-enabled").unwrap_or(false)
     );

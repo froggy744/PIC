@@ -6,10 +6,58 @@ enum FilterTileEffect {
 }
 
 impl FilterTileEffect {
+    fn sections() -> Vec<(&'static str, Vec<Self>)> {
+        vec![
+            ("ORIGINAL", vec![Self::Preset(FilterPreset::None)]),
+            (
+                "COLOUR",
+                vec![
+                    Self::Preset(FilterPreset::Clarendon),
+                    Self::Preset(FilterPreset::Juno),
+                    Self::Preset(FilterPreset::Cinematic),
+                    Self::Preset(FilterPreset::CoolNordic),
+                    Self::Preset(FilterPreset::LowKey),
+                    Self::Preset(FilterPreset::Twilight),
+                ],
+            ),
+            (
+                "FILM & VINTAGE",
+                vec![
+                    Self::Preset(FilterPreset::Gingham),
+                    Self::Preset(FilterPreset::Kodachrome),
+                    Self::Preset(FilterPreset::DisposableFilm),
+                    Self::Preset(FilterPreset::DigicamFlash),
+                    Self::Preset(FilterPreset::OldPhoto),
+                    Self::Preset(FilterPreset::CrossProcess),
+                    Self::Preset(FilterPreset::BleachBypass),
+                    Self::Preset(FilterPreset::RoseFade),
+                    Self::Sepia,
+                ],
+            ),
+            (
+                "BLACK & WHITE",
+                vec![Self::BlackWhite, Self::Preset(FilterPreset::Noir)],
+            ),
+            (
+                "CREATIVE",
+                vec![
+                    Self::Preset(FilterPreset::PencilSketch),
+                    Self::Preset(FilterPreset::DreamGlow),
+                    Self::Preset(FilterPreset::Newspaper),
+                    Self::Preset(FilterPreset::Duotone),
+                    Self::Preset(FilterPreset::PopColour),
+                    Self::Preset(FilterPreset::NeonGradient),
+                    Self::Preset(FilterPreset::Posterize),
+                    Self::Preset(FilterPreset::Solarize),
+                ],
+            ),
+        ]
+    }
+
     fn all() -> Vec<Self> {
-        std::iter::once(Self::Preset(FilterPreset::None))
-            .chain(FilterPreset::ALL.map(Self::Preset))
-            .chain([Self::BlackWhite, Self::Sepia])
+        Self::sections()
+            .into_iter()
+            .flat_map(|(_, effects)| effects)
             .collect()
     }
 
@@ -147,8 +195,10 @@ impl Controls {
         self.auto_color.set_active(recipe.auto_color);
         self.auto_brightness.set_active(recipe.auto_brightness);
         self.auto_enhance.set_active(recipe.auto_enhance);
-        self.filter_amount.set_value((recipe.filter_amount * 100.0) as f64);
-        self.filter_amount.set_sensitive(recipe.has_adjustable_effect());
+        self.filter_amount
+            .set_value((recipe.filter_amount * 100.0) as f64);
+        self.filter_amount
+            .set_sensitive(recipe.has_adjustable_effect());
         self.black_white.set_active(recipe.black_white);
         self.sepia.set_active(recipe.sepia);
         for (preset, button) in &self.filters {
@@ -194,9 +244,11 @@ fn queue_cpu_filter_thumbnails(
                 for (picture, (width, height, pixels)) in pictures.iter().zip(thumbnails) {
                     let bytes = glib::Bytes::from_owned(pixels);
                     let texture = gtk::gdk::MemoryTexture::new(
-                        width as i32, height as i32,
+                        width as i32,
+                        height as i32,
                         gtk::gdk::MemoryFormat::R8g8b8a8,
-                        &bytes, width as usize * 4,
+                        &bytes,
+                        width as usize * 4,
                     );
                     picture.set_paintable(Some(&texture));
                 }
@@ -265,7 +317,7 @@ fn filter_tile(
     let label = gtk::Label::new(Some(effect.label()));
     label.set_ellipsize(gtk::pango::EllipsizeMode::End);
     label.set_justify(gtk::Justification::Center);
-    label.set_max_width_chars(18);
+    label.set_max_width_chars(9);
     label.add_css_class("filter-tile-label");
     content.append(&label);
     button.set_child(Some(&content));
@@ -317,7 +369,8 @@ fn add_slider(
 
 fn add_scale_default_affordance(scale: &gtk::Scale, default_value: f64) {
     let adjustment = scale.adjustment();
-    let is_center_default = default_value > adjustment.lower() && default_value < adjustment.upper();
+    let is_center_default =
+        default_value > adjustment.lower() && default_value < adjustment.upper();
     if is_center_default {
         // A small visible detent marks the neutral/default position.
         scale.add_mark(default_value, gtk::PositionType::Bottom, None);
@@ -348,8 +401,7 @@ fn slider_detent_value(
 ) -> Option<f64> {
     let is_center_default = default_value > lower && default_value < upper;
     let detent_radius = step.abs() * 0.51;
-    (is_center_default && (value - default_value).abs() <= detent_radius)
-        .then_some(default_value)
+    (is_center_default && (value - default_value).abs() <= detent_radius).then_some(default_value)
 }
 
 fn connect_scale(

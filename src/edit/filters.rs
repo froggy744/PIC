@@ -29,10 +29,26 @@ pub enum FilterPreset {
     Duotone,
     BleachBypass,
     InfraredBw,
+    Kodachrome,
+    FadedMatte,
+    CoolNordic,
+    CrossProcess,
+    HighKey,
+    LowKey,
+    ClassicSilver,
+    SplitTone,
+    CopperGlow,
+    RoseFade,
+    PopColour,
+    Twilight,
+    Posterize,
+    Solarize,
+    NeonGradient,
 }
 
 impl FilterPreset {
-    pub const ALL: [FilterPreset; 18] = [
+    #[cfg(test)]
+    pub const ALL: [FilterPreset; 33] = [
         FilterPreset::Clarendon,
         FilterPreset::Gingham,
         FilterPreset::Juno,
@@ -51,6 +67,21 @@ impl FilterPreset {
         Self::Duotone,
         Self::BleachBypass,
         Self::InfraredBw,
+        Self::Kodachrome,
+        Self::FadedMatte,
+        Self::CoolNordic,
+        Self::CrossProcess,
+        Self::HighKey,
+        Self::LowKey,
+        Self::ClassicSilver,
+        Self::SplitTone,
+        Self::CopperGlow,
+        Self::RoseFade,
+        Self::PopColour,
+        Self::Twilight,
+        Self::Posterize,
+        Self::Solarize,
+        Self::NeonGradient,
     ];
 
     pub fn label(self) -> &'static str {
@@ -63,8 +94,8 @@ impl FilterPreset {
             FilterPreset::Valencia => "Valencia",
             FilterPreset::Walden => "Walden",
             Self::PencilSketch => "Pencil Sketch",
-            Self::DisposableFilm => "Disposable Film",
-            Self::DigicamFlash => "Digicam Flash",
+            Self::DisposableFilm => "Disposable",
+            Self::DigicamFlash => "Digicam",
             Self::DreamGlow => "Dream Glow",
             Self::Cinematic => "Cinematic",
             Self::GoldenHour => "Golden Hour",
@@ -72,8 +103,23 @@ impl FilterPreset {
             Self::Newspaper => "Newspaper",
             Self::Noir => "Noir",
             Self::Duotone => "Duotone",
-            Self::BleachBypass => "Bleach Bypass",
+            Self::BleachBypass => "Bleach",
             Self::InfraredBw => "Infrared B&W",
+            Self::Kodachrome => "Kodachrome",
+            Self::FadedMatte => "Faded Matte",
+            Self::CoolNordic => "Cool Nordic",
+            Self::CrossProcess => "Cross",
+            Self::HighKey => "High-key",
+            Self::LowKey => "Low-key",
+            Self::ClassicSilver => "Classic Silver",
+            Self::SplitTone => "Split Tone",
+            Self::CopperGlow => "Copper Glow",
+            Self::RoseFade => "Rose Fade",
+            Self::PopColour => "Pop Colour",
+            Self::Twilight => "Twilight",
+            Self::Posterize => "Posterize",
+            Self::Solarize => "Solarize",
+            Self::NeonGradient => "Neon Gradient",
         }
     }
 
@@ -98,6 +144,21 @@ impl FilterPreset {
             Self::Duotone => "duotone",
             Self::BleachBypass => "bleach_bypass",
             Self::InfraredBw => "infrared_bw",
+            Self::Kodachrome => "kodachrome",
+            Self::FadedMatte => "faded_matte",
+            Self::CoolNordic => "cool_nordic",
+            Self::CrossProcess => "cross_process",
+            Self::HighKey => "high_key",
+            Self::LowKey => "low_key",
+            Self::ClassicSilver => "classic_silver",
+            Self::SplitTone => "split_tone",
+            Self::CopperGlow => "copper_glow",
+            Self::RoseFade => "rose_fade",
+            Self::PopColour => "pop_colour",
+            Self::Twilight => "twilight",
+            Self::Posterize => "posterize",
+            Self::Solarize => "solarize",
+            Self::NeonGradient => "neon_gradient",
         }
     }
 
@@ -121,6 +182,21 @@ impl FilterPreset {
             "duotone" => Self::Duotone,
             "bleach_bypass" => Self::BleachBypass,
             "infrared_bw" => Self::InfraredBw,
+            "kodachrome" => Self::Kodachrome,
+            "faded_matte" => Self::FadedMatte,
+            "cool_nordic" => Self::CoolNordic,
+            "cross_process" => Self::CrossProcess,
+            "high_key" => Self::HighKey,
+            "low_key" => Self::LowKey,
+            "classic_silver" => Self::ClassicSilver,
+            "split_tone" => Self::SplitTone,
+            "copper_glow" => Self::CopperGlow,
+            "rose_fade" => Self::RoseFade,
+            "pop_colour" => Self::PopColour,
+            "twilight" => Self::Twilight,
+            "posterize" => Self::Posterize,
+            "solarize" => Self::Solarize,
+            "neon_gradient" => Self::NeonGradient,
             _ => Self::None,
         }
     }
@@ -282,11 +358,103 @@ pub(crate) fn params(preset: FilterPreset) -> FilterParams {
             vignette: 0.10,
             ..params(FilterPreset::None)
         },
+        FilterPreset::Kodachrome => FilterParams {
+            exposure: 1.02,
+            tint: (1.07, 0.99, 1.04),
+            saturation: 1.18,
+            contrast: 0.18,
+            ..params(FilterPreset::None)
+        },
+        FilterPreset::FadedMatte => FilterParams {
+            shadow_lift: 0.14,
+            saturation: 0.78,
+            contrast: -0.12,
+            ..params(FilterPreset::None)
+        },
+        FilterPreset::CoolNordic => FilterParams {
+            tint: (0.94, 1.0, 1.08),
+            shadow_tone: (0.86, 0.96, 1.12),
+            split_strength: 0.35,
+            saturation: 0.78,
+            ..params(FilterPreset::None)
+        },
+        FilterPreset::CrossProcess => FilterParams {
+            tint: (1.08, 1.04, 0.88),
+            shadow_tone: (0.80, 1.08, 1.18),
+            highlight_tone: (1.15, 1.03, 0.82),
+            split_strength: 0.75,
+            saturation: 1.15,
+            contrast: 0.25,
+            ..params(FilterPreset::None)
+        },
+        FilterPreset::HighKey => FilterParams {
+            exposure: 1.20,
+            shadow_lift: 0.08,
+            saturation: 0.88,
+            contrast: -0.12,
+            ..params(FilterPreset::None)
+        },
+        FilterPreset::LowKey => FilterParams {
+            exposure: 0.76,
+            saturation: 0.90,
+            contrast: 0.24,
+            vignette: 0.12,
+            ..params(FilterPreset::None)
+        },
+        FilterPreset::ClassicSilver => FilterParams {
+            saturation: 0.0,
+            contrast: 0.16,
+            ..params(FilterPreset::None)
+        },
+        FilterPreset::SplitTone => FilterParams {
+            shadow_tone: (0.78, 0.96, 1.14),
+            highlight_tone: (1.12, 1.03, 0.88),
+            split_strength: 0.55,
+            saturation: 0.95,
+            ..params(FilterPreset::None)
+        },
+        FilterPreset::CopperGlow => FilterParams {
+            tint: (1.20, 0.98, 0.74),
+            shadow_tone: (1.12, 0.91, 0.80),
+            highlight_tone: (1.12, 1.04, 0.84),
+            split_strength: 0.6,
+            saturation: 0.72,
+            contrast: 0.12,
+            ..params(FilterPreset::None)
+        },
+        FilterPreset::RoseFade => FilterParams {
+            exposure: 1.04,
+            shadow_lift: 0.13,
+            tint: (1.12, 0.94, 1.02),
+            saturation: 0.72,
+            contrast: -0.15,
+            ..params(FilterPreset::None)
+        },
+        FilterPreset::PopColour => FilterParams {
+            exposure: 1.03,
+            tint: (1.06, 1.0, 1.06),
+            saturation: 1.65,
+            contrast: 0.38,
+            ..params(FilterPreset::None)
+        },
+        FilterPreset::Twilight => FilterParams {
+            exposure: 0.91,
+            tint: (0.95, 0.94, 1.15),
+            shadow_tone: (0.85, 0.84, 1.25),
+            highlight_tone: (1.14, 0.92, 1.10),
+            split_strength: 0.7,
+            saturation: 1.12,
+            contrast: 0.16,
+            ..params(FilterPreset::None)
+        },
         FilterPreset::None
         | FilterPreset::PencilSketch
         | FilterPreset::Newspaper
         | FilterPreset::Duotone
-        | FilterPreset::InfraredBw => FilterParams {
+        | FilterPreset::InfraredBw
+        | FilterPreset::Posterize
+        | FilterPreset::Solarize
+        | FilterPreset::NeonGradient => FilterParams {
             exposure: 1.0,
             shadow_lift: 0.0,
             tint: (1.0, 1.0, 1.0),
@@ -305,6 +473,37 @@ pub fn apply_filter(image: &mut RgbaImage, preset: FilterPreset) {
         return;
     }
     if image.width() == 0 || image.height() == 0 {
+        return;
+    }
+    if preset == FilterPreset::NeonGradient {
+        for pixel in image.pixels_mut() {
+            let y =
+                (0.2126 * pixel[0] as f32 + 0.7152 * pixel[1] as f32 + 0.0722 * pixel[2] as f32)
+                    / 255.0;
+            let (start, end, amount) = if y < 0.5 {
+                ([10.0, 8.0, 55.0], [235.0, 20.0, 160.0], y * 2.0)
+            } else {
+                ([235.0, 20.0, 160.0], [255.0, 225.0, 100.0], (y - 0.5) * 2.0)
+            };
+            for channel in 0..3 {
+                pixel[channel] =
+                    (start[channel] + (end[channel] - start[channel]) * amount).round() as u8;
+            }
+        }
+        return;
+    }
+    if matches!(preset, FilterPreset::Posterize | FilterPreset::Solarize) {
+        for pixel in image.pixels_mut() {
+            for channel in &mut pixel.0[..3] {
+                *channel = if preset == FilterPreset::Posterize {
+                    (((*channel as u16 * 3 + 127) / 255) * 85) as u8
+                } else if *channel >= 128 {
+                    255 - *channel
+                } else {
+                    *channel
+                };
+            }
+        }
         return;
     }
     if preset == FilterPreset::PencilSketch {
@@ -486,6 +685,72 @@ fn contrast_curve(value: f32, contrast: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn neon_gradient_maps_shadows_and_highlights_and_preserves_alpha() {
+        let preset = FilterPreset::decode("neon_gradient");
+        assert_ne!(preset, FilterPreset::None);
+        let mut image = RgbaImage::from_fn(2, 1, |x, _| {
+            if x == 0 {
+                Rgba([0, 0, 0, 127])
+            } else {
+                Rgba([255, 255, 255, 200])
+            }
+        });
+        apply_filter(&mut image, preset);
+        assert_eq!(image.get_pixel(0, 0).0, [10, 8, 55, 127]);
+        assert_eq!(image.get_pixel(1, 0).0, [255, 225, 100, 200]);
+    }
+
+    #[test]
+    fn creative_effects_transform_channels_and_preserve_alpha() {
+        let source = RgbaImage::from_pixel(1, 1, Rgba([50, 130, 230, 123]));
+        let mut poster = source.clone();
+        let preset = FilterPreset::decode("posterize");
+        assert!(FilterPreset::ALL.contains(&preset));
+        apply_filter(&mut poster, preset);
+        assert_eq!(poster.get_pixel(0, 0).0, [85, 170, 255, 123]);
+        let mut solar = source.clone();
+        let preset = FilterPreset::decode("solarize");
+        assert!(FilterPreset::ALL.contains(&preset));
+        apply_filter(&mut solar, preset);
+        assert_eq!(solar.get_pixel(0, 0).0, [50, 125, 25, 123]);
+    }
+
+    #[test]
+    fn artistic_presets_are_available() {
+        assert_eq!(FilterPreset::Kodachrome.label(), "Kodachrome");
+        for key in ["copper_glow", "rose_fade", "pop_colour", "twilight"] {
+            let preset = FilterPreset::decode(key);
+            assert_ne!(preset, FilterPreset::None, "missing {key}");
+            assert!(FilterPreset::ALL.contains(&preset));
+            assert_eq!(preset.key(), key);
+        }
+    }
+
+    #[test]
+    fn photographic_presets_are_available_and_silver_is_neutral() {
+        for key in [
+            "kodachrome",
+            "faded_matte",
+            "cool_nordic",
+            "cross_process",
+            "high_key",
+            "low_key",
+            "classic_silver",
+            "split_tone",
+        ] {
+            let preset = FilterPreset::decode(key);
+            assert_ne!(preset, FilterPreset::None, "missing {key}");
+            assert!(FilterPreset::ALL.contains(&preset));
+            assert_eq!(preset.key(), key);
+        }
+        let mut image = RgbaImage::from_pixel(1, 1, Rgba([170, 100, 50, 123]));
+        apply_filter(&mut image, FilterPreset::decode("classic_silver"));
+        let p = image.get_pixel(0, 0);
+        assert!(p[0] == p[1] && p[1] == p[2]);
+        assert_eq!(p[3], 123);
+    }
 
     #[test]
     fn newspaper_and_old_photo_are_distinct_and_deterministic() {

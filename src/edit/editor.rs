@@ -871,50 +871,49 @@ pub fn build(
     // look, 0% leaves the creative filter unapplied. Manual tools stay intact.
     let filter_amount = add_slider(
         &filters_box,
-        "Filter / Quick Fix Amount (%)",
+        "Opacity",
         0.0,
         100.0,
         1.0,
         0,
     );
-    filter_amount.set_tooltip_text(Some("Shared intensity for enabled Quick Fixes and creative filters (0–100%). Manual adjustments stay unchanged."));
+    filter_amount.set_tooltip_text(Some("Opacity of enabled filters and Quick Fixes (0–100%). Manual adjustments stay unchanged."));
 
-    add_section_label(&filters_box, "FILTERS");
-    let filter_grid = gtk::FlowBox::new();
-    filter_grid.set_row_spacing(10);
-    filter_grid.set_column_spacing(6);
-    // Compact square tiles reflow cleanly as the inspector is resized, from
-    // several columns on wide panes down to one when the divider moves left.
-    filter_grid.set_homogeneous(true);
-    filter_grid.set_min_children_per_line(1);
-    filter_grid.set_max_children_per_line(5);
-    filter_grid.set_selection_mode(gtk::SelectionMode::None);
-    filter_grid.add_css_class("filter-grid");
     let mut filter_buttons = Vec::new();
     let mut filter_pictures = Vec::new();
     let mut filter_gpu_tiles = Vec::new();
-    let filter_effects = FilterTileEffect::all();
     let gpu_tile_enabled = renderer_mode == EditRendererMode::Gpu
         && gpu_canvas.is_some()
-        && filter_effects
+        && FilterTileEffect::all()
             .iter()
             .all(|effect| gpu_tone_supported(&effect.recipe(&session.borrow().recipe)));
     let mut black_white = None;
     let mut sepia = None;
-    for effect in filter_effects {
-        let (button, picture, gpu_tile) = filter_tile(effect, gpu_tile_enabled);
-        filter_grid.insert(&button, -1);
-        filter_pictures.push(picture);
-        if let Some(canvas) = gpu_tile {
-            filter_gpu_tiles.push((effect, canvas));
+    for (section, effects) in FilterTileEffect::sections() {
+        add_section_label(&filters_box, section);
+        let filter_grid = gtk::FlowBox::new();
+        filter_grid.set_row_spacing(10);
+        filter_grid.set_column_spacing(6);
+        filter_grid.set_homogeneous(true);
+        filter_grid.set_min_children_per_line(1);
+        filter_grid.set_max_children_per_line(5);
+        filter_grid.set_selection_mode(gtk::SelectionMode::None);
+        filter_grid.add_css_class("filter-grid");
+        for effect in effects {
+            let (button, picture, gpu_tile) = filter_tile(effect, gpu_tile_enabled);
+            filter_grid.insert(&button, -1);
+            filter_pictures.push(picture);
+            if let Some(canvas) = gpu_tile {
+                filter_gpu_tiles.push((effect, canvas));
+            }
+            match effect {
+                FilterTileEffect::Preset(preset) => filter_buttons.push((preset, button)),
+                FilterTileEffect::BlackWhite => black_white = Some(button),
+                FilterTileEffect::Sepia => sepia = Some(button),
+            }
         }
-        match effect {
-            FilterTileEffect::Preset(preset) => filter_buttons.push((preset, button)),
-            FilterTileEffect::BlackWhite => black_white = Some(button),
-            FilterTileEffect::Sepia => sepia = Some(button),
-        }
+        filters_box.append(&filter_grid);
     }
-    filters_box.append(&filter_grid);
 
     let black_white = black_white.expect("B&W filter tile");
     let sepia = sepia.expect("Sepia filter tile");
@@ -3117,6 +3116,35 @@ mod panel_tests {
     }
 
     #[test]
+    fn filter_sections_show_distinct_looks_without_duplicates() {
+        let sections = FilterTileEffect::sections();
+        let effects = FilterTileEffect::all();
+        for (index, effect) in effects.iter().enumerate() {
+            assert!(!effects[..index].contains(effect), "duplicate {effect:?}");
+        }
+        assert_eq!(effects[0], FilterTileEffect::Preset(FilterPreset::None));
+        let monochrome = &sections
+            .iter()
+            .find(|(name, _)| *name == "BLACK & WHITE")
+            .unwrap()
+            .1;
+        assert_eq!(monochrome.len(), 2);
+        for preset in [
+            FilterPreset::Valencia,
+            FilterPreset::HighKey,
+            FilterPreset::Lark,
+            FilterPreset::Walden,
+            FilterPreset::SplitTone,
+            FilterPreset::ClassicSilver,
+            FilterPreset::InfraredBw,
+        ] {
+            assert!(!effects.contains(&FilterTileEffect::Preset(preset)));
+            assert_eq!(FilterPreset::decode(preset.key()), preset);
+        }
+        assert!(effects.contains(&FilterTileEffect::Preset(FilterPreset::Posterize)));
+    }
+
+    #[test]
     fn original_filter_tile_uses_photo_editor_language() {
         assert_eq!(
             FilterTileEffect::Preset(FilterPreset::None).label(),
@@ -3127,7 +3155,7 @@ mod panel_tests {
     #[test]
     fn gpu_filter_tiles_share_the_live_shaders_for_supported_presets() {
         let recipe = EditRecipe::default();
-        assert_eq!(FilterTileEffect::all().len(), FilterPreset::ALL.len() + 3);
+        assert!(!FilterTileEffect::all().is_empty());
         assert!(FilterTileEffect::all()
             .iter()
             .all(|effect| { gpu_tone_supported(&effect.recipe(&recipe)) }));
@@ -3136,6 +3164,32 @@ mod panel_tests {
         assert!(FilterTileEffect::all()
             .iter()
             .any(|effect| { !gpu_tone_supported(&effect.recipe(&with_auto)) }));
+    }
+
+    #[test]
+    #[ignore = "requires a GTK display; run under xvfb-run"]
+    fn film_filter_labels_fit_compact_tiles() {
+        gtk::init().unwrap();
+        for effect in FilterTileEffect::sections()
+            .into_iter()
+            .find(|(name, _)| *name == "FILM & VINTAGE")
+            .unwrap()
+            .1
+        {
+            let (button, _, _) = filter_tile(effect, false);
+            let content = button.child().unwrap().downcast::<gtk::Box>().unwrap();
+            let label = content
+                .last_child()
+                .unwrap()
+                .downcast::<gtk::Label>()
+                .unwrap();
+            let (_, natural, _, _) = label.measure(gtk::Orientation::Horizontal, -1);
+            assert!(
+                natural <= FILTER_TILE_PREVIEW_WIDTH,
+                "{} needs {natural}px",
+                effect.label()
+            );
+        }
     }
 
     #[test]
@@ -3152,7 +3206,7 @@ mod panel_tests {
         );
         let thumbnails = render_filter_thumbnails(path, 0, &EditRecipe::default()).unwrap();
 
-        assert_eq!(thumbnails.len(), FilterPreset::ALL.len() + 3);
+        assert_eq!(thumbnails.len(), FilterTileEffect::all().len());
         assert!(thumbnails.iter().all(|(width, height, pixels)| *width > 0
             && *height > 0
             && pixels.len() == *width as usize * *height as usize * 4));
@@ -3269,7 +3323,8 @@ mod panel_tests {
         // panes, with preview thumbnails that have a real visible height.
         let flow = sidebar_widgets
             .iter()
-            .find_map(|widget| widget.clone().downcast::<gtk::FlowBox>().ok())
+            .filter_map(|widget| widget.clone().downcast::<gtk::FlowBox>().ok())
+            .find(|flow| flow.has_css_class("filter-grid") && flow.child_at_index(1).is_some())
             .unwrap();
         assert_eq!(flow.min_children_per_line(), 1);
         assert_eq!(flow.max_children_per_line(), 5);

@@ -2081,8 +2081,6 @@
     });
     right_header.pack_start(&show_sidebar);
 
-    let show_sidebar_for_state = show_sidebar.clone();
-    let expanded_for_show_sidebar_button = sidebar_expanded.clone();
     // Theme-overridable window controls: the mode cell is written by the
     // ThemeEngine hook (build.rs) whenever a theme activates; placement runs
     // on every sidebar transition and mirrors the native title buttons'
@@ -2097,6 +2095,7 @@
         let main_split = main_split.clone();
         let mode = window_controls_mode.clone();
         let expanded = sidebar_expanded.clone();
+        let show_sidebar = show_sidebar.clone();
         // Which header currently hosts the lights. get_parent() of a
         // headerbar-packed child is the headerbar's internal start box, not
         // the headerbar itself, so host tracking goes through this cell
@@ -2106,6 +2105,7 @@
             let traffic = mode.get()
                 == crate::css::theme_discovery::WindowControls::TrafficLight;
             let sidebar_visible = main_split.shows_sidebar() && expanded.get();
+            show_sidebar.set_visible(expanded.get() && !main_split.shows_sidebar());
             // Native start title buttons only exist while traffic lights are
             // off; the traffic-light box replaces them wherever they live.
             left_header.set_show_start_title_buttons(!traffic && sidebar_visible);
@@ -2137,9 +2137,7 @@
     };
     compact_controls_sync_slot.replace(Some(place_window_controls.clone()));
     let place_for_notify = place_window_controls.clone();
-    main_split.connect_show_sidebar_notify(move |split| {
-        let sidebar_visible = split.shows_sidebar();
-        show_sidebar_for_state.set_visible(expanded_for_show_sidebar_button.get() && !sidebar_visible);
+    main_split.connect_show_sidebar_notify(move |_| {
         // Keep window controls (native title buttons or theme traffic lights)
         // at the window's top-left corner in every sidebar state, and never
         // render them in both headers at once (which would also duplicate

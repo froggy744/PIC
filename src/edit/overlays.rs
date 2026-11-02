@@ -354,10 +354,6 @@ pub fn composite_overlays(mut image: RgbaImage, recipe: &EditRecipe) -> RgbaImag
             continue;
         }
         let Some(asset) = load_asset(&overlay.asset) else {
-            eprintln!(
-                "overlay asset {} is missing or unreadable; skipping it",
-                overlay.asset
-            );
             continue;
         };
         let aspect = asset.width() as f32 / asset.height().max(1) as f32;

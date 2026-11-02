@@ -2162,7 +2162,7 @@
     search.set_width_chars(18);
     search.set_max_width_chars(18);
     // Keep Search usable while the status yields space in narrow windows.
-    search.set_size_request(220, -1);
+    search.set_size_request(180, -1);
     search.set_hexpand(true);
     search.add_css_class("unified-search-entry");
     search_entry_slot.replace(Some(search.clone()));
@@ -2171,12 +2171,12 @@
     // Theme the shared surface, rather than the editable half alone.
     search_area.add_css_class("search-field");
     search_area.set_valign(gtk::Align::Center);
-    search_area.set_size_request(220, -1);
+    search_area.set_size_request(180, -1);
     search_area.set_hexpand(true);
     search_area.append(&search);
     // Refresh/export/batch status lives in the header title area beside the
     // search entry (hidden when idle), so it never resizes the photo grid.
-    // The search entry keeps hexpand and its 220px floor; the status row
+    // The search entry keeps hexpand and its 180px floor; the status row
     // degrades (bar → label → all) before that floor is threatened.
     search_area.append(operation_progress.slot());
     operation_progress.watch_space(&search_area);

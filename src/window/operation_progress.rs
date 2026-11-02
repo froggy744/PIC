@@ -1,7 +1,7 @@
 const PROGRESS_THROTTLE: Duration = Duration::from_millis(100);
 const FINISH_HIDE_AFTER: Duration = Duration::from_secs(4);
 /// Search entry floor in the header; the status row yields before this shrinks.
-const SEARCH_MIN_WIDTH: i32 = 220;
+const SEARCH_MIN_WIDTH: i32 = 180;
 /// `search_area` spacing between the entry and the status row.
 const SEARCH_GAP: i32 = 0;
 const STATUS_WIDTH: i32 = 350;
@@ -20,7 +20,7 @@ const STATUS_WIDTH: i32 = 350;
 /// guard can hide the whole row without fighting those call sites.
 ///
 /// Narrow windows degrade the status row before the search entry drops below
-/// its 220px floor: full row → no progress bar → spinner + Stop + Close only → hide
+/// its 180px floor: full row → no progress bar → spinner + Stop + Close only → hide
 /// the slot (the operation keeps running). See `watch_space`.
 ///
 /// Visual refreshes are throttled so a 4000-item batch does not redraw the
@@ -150,7 +150,7 @@ impl OperationProgressUi {
     }
 
     /// Watch header space next to the search entry and degrade the status row
-    /// before the entry would drop below its 220px floor. The operation itself
+    /// before the entry would drop below its 180px floor. The operation itself
     /// is unaffected: hiding `slot` only changes what is drawn.
     pub fn watch_space(self: &Rc<Self>, search_area: &gtk::Box) {
         let weak = Rc::downgrade(self);

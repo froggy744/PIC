@@ -176,6 +176,8 @@ const SIDEBAR_HEADER_MARGIN_TOP: i32 = 8;
 const SIDEBAR_HEADER_MARGIN_BOTTOM: i32 = 4;
 const SIDEBAR_ROOT_MARGIN_TOP: i32 = 4;
 const SIDEBAR_ICON_SIZE: i32 = 18;
+pub(crate) const SHARED_ICON_NAME: &str = "folder-publicshare-symbolic";
+pub(crate) const SHARED_ICON_SIZE: i32 = 16;
 const SIDEBAR_RECENT_ICON_SIZE: i32 = 16;
 const SIDEBAR_DISCLOSURE_SLOT: i32 = 12;
 const SIDEBAR_CONTROL_SIZE: i32 = 28;
@@ -2537,14 +2539,8 @@ fn populate_albums(list: &gtk::ListBox, albums: &[Album], on_delete_album: &Rc<d
     }
 }
 
-fn album_icon_name() -> &'static str {
-    if let Some(display) = gtk::gdk::Display::default() {
-        let icon_theme = gtk::IconTheme::for_display(&display);
-        if icon_theme.has_icon("folder-pictures-symbolic") {
-            return "folder-pictures-symbolic";
-        }
-    }
-    "image-x-generic-symbolic"
+pub(crate) fn album_icon_name() -> &'static str {
+    "pic-emblem-photos-symbolic"
 }
 
 fn populate_folders(
@@ -2836,8 +2832,21 @@ fn append_folder_row(
     icon_overlay.set_halign(gtk::Align::Center);
     icon_overlay.set_valign(gtk::Align::Center);
     icon_overlay.set_hexpand(false);
-    let icon = gtk::Image::from_icon_name("folder-symbolic");
-    icon.set_pixel_size(SIDEBAR_ICON_SIZE);
+    let is_shared_root = folder.imported_root && crate::db::is_remote_path(&folder.path);
+    let icon = gtk::Image::from_icon_name(if is_shared_root {
+        SHARED_ICON_NAME
+    } else {
+        "folder-symbolic"
+    });
+    icon.set_pixel_size(if is_shared_root {
+        SHARED_ICON_SIZE
+    } else {
+        SIDEBAR_ICON_SIZE
+    });
+    if is_shared_root {
+        icon.set_halign(gtk::Align::Center);
+        icon.set_valign(gtk::Align::Center);
+    }
     icon_overlay.set_child(Some(&icon));
 
     if folder.watched {
@@ -3705,6 +3714,37 @@ fn format_count(value: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[ignore = "requires a GTK display; run under xvfb-run"]
+    fn bundled_album_icon_is_available_as_symbolic() {
+        gtk::init().unwrap();
+        crate::register_bundled_icons();
+        let display = gtk::gdk::Display::default().unwrap();
+        let theme = gtk::IconTheme::for_display(&display);
+        theme.add_resource_path("/picrs/icons");
+        assert!(gio::resources_lookup_data(
+            "/picrs/icons/pic-emblem-photos-symbolic.svg",
+            gio::ResourceLookupFlags::NONE
+        )
+        .is_ok());
+        assert_eq!(album_icon_name(), "pic-emblem-photos-symbolic");
+        let icon = theme.lookup_icon(
+            album_icon_name(),
+            &[],
+            18,
+            1,
+            gtk::TextDirection::None,
+            gtk::IconLookupFlags::empty(),
+        );
+        assert!(icon.is_symbolic());
+        let file = icon.file().expect("album icon file");
+        assert!(
+            file.uri().starts_with("resource:///picrs/icons/"),
+            "resolved icon: {}",
+            file.uri()
+        );
+    }
 
     // Wall-clock sleeps do not guarantee that the compositor delivered a frame.
     // Wait for completed paints after the section animations, so assertions

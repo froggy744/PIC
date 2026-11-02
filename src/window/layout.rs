@@ -888,7 +888,7 @@
         ("Favorites", "emote-love-symbolic", sidebar::SidebarFilter::Favorites),
         ("Ratings", "starred-symbolic", sidebar::SidebarFilter::Ratings),
         ("History", "document-open-recent-symbolic", sidebar::SidebarFilter::History),
-        ("Albums", "folder-pictures-symbolic", sidebar::SidebarFilter::Albums),
+        ("Albums", sidebar::album_icon_name(), sidebar::SidebarFilter::Albums),
     ] {
         let button = gtk::Button::new();
         button.add_css_class("flat");
@@ -936,8 +936,8 @@
     shared.set_tooltip_text(Some("Shared"));
     let shared_contents = gtk::Box::new(gtk::Orientation::Vertical, 3);
     shared_contents.set_halign(gtk::Align::Center);
-    let shared_icon = gtk::Image::from_icon_name("network-server-symbolic");
-    shared_icon.set_pixel_size(18);
+    let shared_icon = gtk::Image::from_icon_name(sidebar::SHARED_ICON_NAME);
+    shared_icon.set_pixel_size(sidebar::SHARED_ICON_SIZE);
     shared_contents.append(&shared_icon);
     let shared_label = gtk::Label::new(Some("Shared"));
     compact_labels.borrow_mut().push(shared_label.clone());

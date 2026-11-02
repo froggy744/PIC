@@ -348,6 +348,15 @@ fn full_window_can_resize_narrow_and_restore_sidebar() {
         );
         assert_eq!(split.is_collapsed(), width <= 1050);
         assert_eq!(split.shows_sidebar(), width > 1080);
+        if split.is_collapsed() {
+            split.set_show_sidebar(true);
+            settle();
+            assert!(split.sidebar().unwrap().width() < split.width(),
+                "sidebar covers the entire window: sidebar={} split={}",
+                split.sidebar().unwrap().width(), split.width());
+            split.set_show_sidebar(false);
+            settle();
+        }
     }
     window.close();
     let _ = std::fs::remove_file(path);

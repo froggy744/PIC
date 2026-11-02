@@ -1171,6 +1171,7 @@
         let connection_for_mode = connection.clone();
         let right_toggle = compact_right_toggle_slot.clone();
         let controls_sync = compact_controls_sync_slot.clone();
+        let collapsed_width = collapsed_sidebar_width.clone();
         Rc::new(move |show_normal| {
             expanded.set(show_normal);
             dock.set_visible(!show_normal);
@@ -1183,7 +1184,9 @@
             split.set_enable_hide_gesture(show_normal);
             if show_normal {
                 split.set_min_sidebar_width(SIDEBAR_MIN_WIDTH);
-                split.set_max_sidebar_width(SIDEBAR_MAX_WIDTH);
+                split.set_max_sidebar_width(if split.is_collapsed() {
+                    collapsed_width.get().min((f64::from(split.width()) * 0.70).max(SIDEBAR_MIN_WIDTH))
+                } else { SIDEBAR_MAX_WIDTH });
                 let normal_fraction = numeric_setting::<f64>(
                     &connection_for_mode.borrow(), SIDEBAR_WIDTH_FRACTION_SETTING_KEY,
                 ).unwrap_or(0.22).clamp(0.10, 0.70);
@@ -1602,13 +1605,30 @@
                 return;
             }
             if split.is_collapsed() {
-                split.set_max_sidebar_width(collapsed_sidebar_width_for_notify.get());
+                split.set_max_sidebar_width(collapsed_sidebar_width_for_notify.get().min(
+                    (f64::from(split.width()) * 0.70).max(SIDEBAR_MIN_WIDTH),
+                ));
             } else {
                 split.set_max_sidebar_width(SIDEBAR_MAX_WIDTH);
                 // A collapsed hover peek that was still open when the window
                 // widened must not leave stale auto-hide state behind.
                 sidebar::clear_hover_open(&sidebar_for_collapse_notify);
             }
+        });
+    }
+    {
+        let collapsed_width = collapsed_sidebar_width.clone();
+        let expanded = sidebar_expanded.clone();
+        main_split.add_tick_callback(move |split, _| {
+            if split.is_collapsed() && expanded.get() {
+                let cap = collapsed_width.get().min(
+                    (f64::from(split.width()) * 0.70).max(SIDEBAR_MIN_WIDTH),
+                );
+                if (split.max_sidebar_width() - cap).abs() > 0.1 {
+                    split.set_max_sidebar_width(cap);
+                }
+            }
+            glib::ControlFlow::Continue
         });
     }
     // Prevent AdwOverlaySplitView from automatically changing
@@ -1725,7 +1745,7 @@
             glib::ControlFlow::Break
         });
     });
-    left_column.add_controller(sidebar_leave_motion);
+    sidebar_shell.add_controller(sidebar_leave_motion);
 
     let sidebar_hover_reveal_for_state = sidebar_hover_reveal.clone();
     let expanded_for_hover_state = sidebar_expanded.clone();
@@ -1796,7 +1816,6 @@
     let sidebar_layout_settle_for_drag_begin = sidebar_layout_settle.clone();
     let sidebar_hover_freeze_generation_for_drag = sidebar_hover_freeze_generation.clone();
     let sidebar_hover_layout_freeze_for_drag = sidebar_hover_layout_freeze.clone();
-    let sidebar_for_drag = sidebar.clone();
     let gallery_for_drag_begin = gallery.clone();
     sidebar_drag.connect_drag_begin(move |gesture, x, y| {
         if !expanded_for_drag_begin.get() {
@@ -1827,14 +1846,12 @@
             return;
         };
         sidebar_layout_settle_for_drag_begin.borrow_mut().cancel();
-        // An explicit divider drag takes ownership of a temporary hover reveal.
-        // Otherwise mouse-leave can close the pane mid-drag and Photo Wall
-        // keeps using its pre-reveal width until the old timeout expires.
+        // Release the frozen gallery width while the resize guard keeps the
+        // temporary sidebar open until the drag ends.
         sidebar_hover_freeze_generation_for_drag.set(
             sidebar_hover_freeze_generation_for_drag.get().wrapping_add(1),
         );
         sidebar_hover_layout_freeze_for_drag.set(false);
-        sidebar::clear_hover_open(&sidebar_for_drag);
         gallery_for_drag_begin.set_photo_wall_width_frozen(false);
         sidebar_resize_active_for_begin.set(true);
         if gallery_for_drag_begin.using_sectioned_folder_view()

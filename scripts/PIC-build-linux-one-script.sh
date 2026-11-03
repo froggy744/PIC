@@ -116,6 +116,9 @@ Options:
   --check-dependencies  check/setup dependencies with approval, then exit
   -h, --help          show this help
 
+Interactive builds ask whether to keep the current package version or update it.
+Non-interactive builds use the version already in Cargo.toml.
+
 Useful environment overrides:
   PIC_SKIP_TESTS=1             skip cargo test
   PIC_GNOME_RUNTIME=50         Flatpak GNOME runtime branch
@@ -788,6 +791,43 @@ project_binary_name() {
 
 project_version() {
     awk -F'"' '/^[[:space:]]*version[[:space:]]*=/ {print $2; exit}' "$SOURCE_DIR/Cargo.toml"
+}
+
+prompt_project_version() {
+    local current answer
+    current="$(awk -F'"' '/^[[:space:]]*version[[:space:]]*=/ {print $2; exit}' "$SOURCE_DIR/Cargo.toml")"
+    [[ -n "$current" ]] || die "Could not determine the current package version."
+    read -r -p "Package version [$current] (Enter to keep): " answer || die "Could not read package version."
+    [[ -n "$answer" && "$answer" != "$current" ]] || return 0
+    [[ "$answer" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || \
+        die "Version must be three numbers, for example 1.0.2."
+    python3 - "$SOURCE_DIR" "$current" "$answer" <<'EOF_VERSION'
+from pathlib import Path
+import re
+import sys
+
+root, current, new = Path(sys.argv[1]), sys.argv[2], sys.argv[3]
+manifest, lock = root / 'Cargo.toml', root / 'Cargo.lock'
+manifest_text, lock_text = manifest.read_text(), lock.read_text()
+version = r'(?m)^(version\s*=\s*")' + re.escape(current) + r'("\s*)$'
+manifest_parts = re.split(r'(?m)(?=^\[)', manifest_text)
+lock_parts = re.split(r'(?m)(?=^\[\[package\]\])', lock_text)
+def update(parts, header):
+    matches = [i for i, part in enumerate(parts) if part.startswith(header) and
+               re.search(r'(?m)^name\s*=\s*"pic-rs"\s*$', part)]
+    if len(matches) != 1:
+        raise SystemExit('Could not uniquely locate pic-rs package metadata.')
+    i = matches[0]
+    parts[i], count = re.subn(version, lambda m: m.group(1) + new + m.group(2), parts[i])
+    if count != 1:
+        raise SystemExit('Cargo manifest and lockfile versions do not match.')
+    return ''.join(parts)
+manifest_new = update(manifest_parts, '[package]')
+lock_new = update(lock_parts, '[[package]]')
+manifest.write_text(manifest_new)
+lock.write_text(lock_new)
+EOF_VERSION
+    printf 'Package version updated to %s in Cargo.toml and Cargo.lock.\n' "$answer"
 }
 
 project_revision() {
@@ -1561,12 +1601,14 @@ EOF_MANIFEST
 # -------------------- main --------------------
 if [[ "$MODE" == local ]]; then
     prepare_local_source
+    if [[ -t 0 ]] && (( ! CHECK_DEPENDENCIES_ONLY )); then prompt_project_version; fi
     dependency_preflight
 else
     # Install host tools before using Git; check Rust crates again once the
     # selected checkout and its lockfile are available.
     dependency_preflight
     prepare_github_source
+    if [[ -t 0 ]] && (( ! CHECK_DEPENDENCIES_ONLY )); then prompt_project_version; fi
     dependency_preflight
 fi
 # A disappearing cache entry must fail packaging rather than trigger any

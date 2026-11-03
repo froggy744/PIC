@@ -15,6 +15,11 @@ fn changed_folder_availability(
         .collect()
 }
 
+fn publish_before_network_probe(publish: impl FnOnce(), probe: impl FnOnce()) {
+    publish();
+    probe();
+}
+
 fn invalidate_availability_refreshes() {
     AVAILABILITY_GENERATION.fetch_add(1, AtomicOrdering::Relaxed);
 }
@@ -22,6 +27,31 @@ fn invalidate_availability_refreshes() {
 #[cfg(test)]
 mod availability_tests {
     use super::*;
+
+    #[test]
+    fn local_availability_is_published_before_network_probe() {
+        let (updates, received) = std::sync::mpsc::channel();
+        let (release, blocked) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            publish_before_network_probe(
+                || updates.send("local").unwrap(),
+                || {
+                    blocked.recv().unwrap();
+                    updates.send("network").unwrap();
+                },
+            );
+        });
+        assert_eq!(
+            received.recv_timeout(Duration::from_secs(1)).unwrap(),
+            "local"
+        );
+        release.send(()).unwrap();
+        assert_eq!(
+            received.recv_timeout(Duration::from_secs(1)).unwrap(),
+            "network"
+        );
+        worker.join().unwrap();
+    }
 
     #[test]
     fn availability_refresh_only_updates_folders_whose_state_changed() {
@@ -185,37 +215,52 @@ fn refresh_availability_ui(
     let database = db::connection_path(&connection.borrow()).ok();
     std::thread::spawn(move || {
         crate::source::refresh_availability();
-        let sidebar_data = database
-            .ok_or_else(|| anyhow::anyhow!("active library has no database path"))
-            .and_then(|database| db::open_existing(&database))
-            .and_then(|connection| {
-            #[cfg(target_os="linux")]
-            crate::source::probe_network_roots(&db::imported_root_paths(&connection)?);
-            let folders = db::folders(&connection)?;
-            let gallery_updates = changed_folder_availability(&previous_folder_availability, &folders);
-            let display_mode = sidebar::FolderDisplayMode::from_setting(
-                db::setting(&connection, sidebar::FOLDER_DISPLAY_MODE_SETTING_KEY)
-                    .ok()
-                    .flatten()
-                    .as_deref(),
+        let sidebar_data = (|| {
+            let database = database
+                .ok_or_else(|| anyhow::anyhow!("active library has no database path"))?;
+            let connection = db::open_existing(&database)?;
+            let collect = |previous: &std::collections::HashMap<i64, bool>| {
+                let folders = db::folders(&connection)?;
+                let updates = changed_folder_availability(previous, &folders);
+                let display_mode = sidebar::FolderDisplayMode::from_setting(
+                    db::setting(&connection, sidebar::FOLDER_DISPLAY_MODE_SETTING_KEY)
+                        .ok()
+                        .flatten()
+                        .as_deref(),
+                );
+                let order = folder_stream_order(&folders, display_mode);
+                Ok::<_, anyhow::Error>((
+                    updates, order, folders, db::albums(&connection)?,
+                    db::sidebar_counts(&connection)?,
+                ))
+            };
+            let initial = collect(&previous_folder_availability)?;
+            let initial_availability = initial.2.iter()
+                .map(|folder| (folder.id, folder.available))
+                .collect();
+            publish_before_network_probe(
+                || { let _ = sender.send((generation, Ok(initial), false)); },
+                || {
+                    let result = (|| {
+                        #[cfg(target_os="linux")]
+                        crate::source::probe_network_roots(&db::imported_root_paths(&connection)?);
+                        collect(&initial_availability)
+                    })();
+                    let _ = sender.send((generation, result, true));
+                },
             );
-            let folder_order = folder_stream_order(&folders, display_mode);
-            Ok((
-                gallery_updates,
-                folder_order,
-                folders,
-                db::albums(&connection)?,
-                db::sidebar_counts(&connection)?,
-            ))
-        });
-        let _ = sender.send((generation, sidebar_data));
+            Ok::<(), anyhow::Error>(())
+        })();
+        if let Err(error) = sidebar_data {
+            let _ = sender.send((generation, Err(error), true));
+        }
     });
 
     let sidebar = sidebar.clone();
     let folder_cache = folder_cache.clone();
     let availability_refresh_slot = availability_refresh_slot.clone();
     glib::timeout_add_local(Duration::from_millis(50), move || match receiver.try_recv() {
-        Ok((result_generation, sidebar_data)) => {
+        Ok((result_generation, sidebar_data, done)) => {
             if result_generation == AVAILABILITY_GENERATION.load(AtomicOrdering::Relaxed) {
                 match sidebar_data {
                     Ok((gallery_updates, folder_order, folders, albums, counts)) => {
@@ -250,7 +295,11 @@ fn refresh_availability_ui(
                     Err(error) => eprintln!("Could not refresh availability UI: {error}"),
                 }
             }
-            glib::ControlFlow::Break
+            if done || result_generation != AVAILABILITY_GENERATION.load(AtomicOrdering::Relaxed) {
+                glib::ControlFlow::Break
+            } else {
+                glib::ControlFlow::Continue
+            }
         }
         Err(std::sync::mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
         Err(std::sync::mpsc::TryRecvError::Disconnected) => glib::ControlFlow::Break,

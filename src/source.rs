@@ -335,7 +335,16 @@ pub fn cached_file_available(reference: &str) -> bool {
 }
 
 pub fn refresh_availability() {
-    availability_cache().lock().unwrap().clear();
+    let mut cache = availability_cache().lock().unwrap();
+    // Keep the last network result until the background probe replaces it.
+    // Local mounts must not wait for an unreachable remote server.
+    cache.retain(|key, _| {
+        #[cfg(target_os = "linux")]
+        if let Some(reference) = key.strip_prefix("source:") {
+            return crate::network_shares::private(reference);
+        }
+        false
+    });
 }
 
 /// Probe only imported network roots off the GTK thread, then populate the

@@ -1168,6 +1168,7 @@
         let split = main_split.clone();
         let dock = compact_dock.clone();
         let sidebar = sidebar.clone();
+        let left_column = left_column.clone();
         let handle = sidebar_resize_handle.clone();
         let expanded = sidebar_expanded.clone();
         let connection_for_mode = connection.clone();
@@ -1178,6 +1179,7 @@
             expanded.set(show_normal);
             dock.set_visible(!show_normal);
             handle.set_visible(show_normal);
+            left_column.set_visible(show_normal);
             sidebar.set_visible(show_normal);
             // The Adw sidebar is completely absent in compact mode. Neither
             // its natural minimum nor its animation can enlarge the icon rail.

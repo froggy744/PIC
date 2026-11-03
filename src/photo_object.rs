@@ -145,6 +145,15 @@ impl PhotoObject {
         self.imp().original_checked_at.set(value);
     }
 
+    /// Reconcile a reused gallery object with the current imported-folder state.
+    pub fn refresh_folder_availability(&self) {
+        let folder_id = self.folder_id();
+        let available = crate::source::folder_available((folder_id != 0).then_some(folder_id));
+        if self.original_available() != available {
+            self.set_original_available(available);
+        }
+    }
+
     pub fn from_photo(photo: &Photo) -> Self {
         let object: Self = glib::Object::new();
         object.set_from_photo(photo);
@@ -283,6 +292,16 @@ mod photo_wall_tests {
 #[cfg(test)]
 mod exposure_metadata_tests {
     use super::*;
+
+    #[test]
+    fn reused_photo_refreshes_availability_after_drive_reconnects() {
+        crate::source::replace_folder_availability(std::collections::HashMap::from([(42, true)]));
+        let object: PhotoObject = glib::Object::builder().property("folder-id", 42_i64).build();
+        object.set_original_available(false);
+        object.refresh_folder_availability();
+        assert!(object.original_available());
+        crate::source::replace_folder_availability(std::collections::HashMap::new());
+    }
 
     #[test]
     fn exposure_values_follow_catalog_updates() {

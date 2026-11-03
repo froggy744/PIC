@@ -2555,6 +2555,7 @@ impl Gallery {
                 let start = prepare_offset.get();
                 let end = (start + BATCH_SIZE).min(current.len());
                 for (index, object) in current.iter().enumerate().take(end).skip(start) {
+                    object.refresh_folder_availability();
                     if !photos.get(index).is_some_and(|photo| object.matches_catalog(photo)) {
                         unchanged.set(false);
                     }

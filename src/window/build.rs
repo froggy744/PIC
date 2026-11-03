@@ -407,8 +407,24 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         let create_album = create_album.clone();
         let import_folder = import_folder.clone();
         let delete_album = delete_album.clone();
+        let filter = filter.clone();
+        let search = search_text.clone();
+        let sort = sort.clone();
+        let rating_filter = rating_filter.clone();
         Rc::new(move || {
-            
+            let connection_for_filter = connection.clone();
+            let gallery_for_filter = gallery.clone();
+            let filter = filter.clone();
+            let search = search.clone();
+            let sort = sort.clone();
+            let rating_filter = rating_filter.clone();
+            let refresh_filtered_gallery: Rc<dyn Fn()> = Rc::new(move || {
+                if matches!(rating_filter.get(), RatingFilter::Offline | RatingFilter::Online) {
+                    if let Some(gallery) = gallery_for_filter.borrow().upgrade() {
+                        refresh_grid(&connection_for_filter, filter.get(), &search.borrow(), sort.get(), &gallery);
+                    }
+                }
+            });
             debug_assert!(PhotoScanRequestReason::AvailabilityUpdate
                 .scan_kind()
                 .is_none());
@@ -421,6 +437,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 create_album.clone(),
                 import_folder.clone(),
                 delete_album.clone(),
+                refresh_filtered_gallery,
             );
         })
     };

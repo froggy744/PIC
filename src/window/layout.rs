@@ -816,14 +816,16 @@
     left_column.append(&sidebar);
     let compact_sidebar_page = gtk::Box::new(gtk::Orientation::Vertical, 0);
     compact_sidebar_page.set_vexpand(true);
-    let compact_header = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    let compact_header = adw::HeaderBar::new();
+    compact_header.set_show_start_title_buttons(false);
+    compact_header.set_show_end_title_buttons(false);
     compact_header.set_height_request(46);
     compact_header.add_css_class("layout-left-header");
     let compact_heading = gtk::Label::new(Some("PIC"));
     compact_heading.add_css_class("heading");
     compact_heading.set_hexpand(true);
     compact_heading.set_halign(gtk::Align::Center);
-    compact_header.append(&compact_heading);
+    compact_header.set_title_widget(Some(&compact_heading));
     compact_sidebar_page.append(&compact_header);
     compact_dock.set_child(Some(&compact_sidebar_page));
 

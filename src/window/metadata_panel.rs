@@ -478,6 +478,28 @@ impl MetadataPanel {
         rating_popover.set_child(Some(&ratings));
         rating_button.set_popover(Some(&rating_popover));
         controls.append(&rating_button);
+        let availability_button = gtk::MenuButton::new();
+        availability_button.add_css_class("metadata-filter-choice");
+        availability_button.set_label("Availability");
+        let availability_popover = gtk::Popover::new();
+        let choices = gtk::Box::new(gtk::Orientation::Vertical, 2);
+        for (label, key) in [("All photos", "all"), ("Online", "online"), ("Offline", "offline")] {
+            let button = gtk::Button::with_label(label);
+            button.add_css_class("flat");
+            let weak = Rc::downgrade(&panel);
+            let popup = availability_popover.downgrade();
+            button.connect_clicked(move |_| {
+                if let Some(panel) = weak.upgrade() {
+                    (panel.rating)(key);
+                    panel.sync();
+                }
+                if let Some(popup) = popup.upgrade() { popup.popdown(); }
+            });
+            choices.append(&button);
+        }
+        availability_popover.set_child(Some(&choices));
+        availability_button.set_popover(Some(&availability_popover));
+        controls.append(&availability_button);
         controls.append(&filters_button);
         // Indexing belongs with the toolbar utilities, not the filter chips.
         let rating_option = gtk::CheckButton::with_label("Rating");
@@ -502,6 +524,7 @@ impl MetadataPanel {
             .borrow_mut()
             .push((None, rating_option));
         let weak = Rc::downgrade(&panel);
+        let filters_list_for_sort = filters_list.clone();
         filters_popover.connect_show(move |_| {
             if let Some(panel) = weak.upgrade() {
                 for (field, option) in panel.filter_options.borrow().iter() {
@@ -512,6 +535,18 @@ impl MetadataPanel {
                     if option.is_active() != active {
                         option.set_active(active);
                     }
+                }
+                let mut options: Vec<_> = panel.filter_options.borrow().iter()
+                    .map(|(_, option)| option.clone())
+                    .collect();
+                options.sort_by_key(|option| (
+                    !option.is_active(),
+                    option.label().unwrap_or_default().to_lowercase(),
+                ));
+                let mut previous: Option<gtk::CheckButton> = None;
+                for option in options {
+                    filters_list_for_sort.reorder_child_after(&option, previous.as_ref());
+                    previous = Some(option);
                 }
             }
         });

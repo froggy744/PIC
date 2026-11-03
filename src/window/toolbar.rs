@@ -281,6 +281,8 @@
     let rating_four = gtk::CheckButton::with_label("★★★★ 4");
     let rating_five = gtk::CheckButton::with_label("★★★★★ 5");
     let corrupt_filter = gtk::CheckButton::with_label("Corrupt");
+    let offline_filter = gtk::CheckButton::with_label("Offline");
+    let online_filter = gtk::CheckButton::with_label("Online");
     for button in [
         &rating_all_stars,
         &rating_unrated,
@@ -290,6 +292,8 @@
         &rating_four,
         &rating_five,
         &corrupt_filter,
+        &offline_filter,
+        &online_filter,
     ] {
         button.set_group(Some(&rating_clear));
     }
@@ -303,6 +307,8 @@
         RatingFilter::Four => rating_four.set_active(true),
         RatingFilter::Five => rating_five.set_active(true),
         RatingFilter::Corrupt => corrupt_filter.set_active(true),
+        RatingFilter::Offline => offline_filter.set_active(true),
+        RatingFilter::Online => online_filter.set_active(true),
     }
     for button in [
         &rating_clear,
@@ -314,6 +320,8 @@
         &rating_four,
         &rating_five,
         &corrupt_filter,
+        &offline_filter,
+        &online_filter,
     ] {
         rating_filter_box.append(button);
     }
@@ -360,6 +368,8 @@
     connect_rating_filter(&rating_four, RatingFilter::Four);
     connect_rating_filter(&rating_five, RatingFilter::Five);
     connect_rating_filter(&corrupt_filter, RatingFilter::Corrupt);
+    connect_rating_filter(&offline_filter, RatingFilter::Offline);
+    connect_rating_filter(&online_filter, RatingFilter::Online);
 
     rating_filter_popover.set_child(Some(&rating_filter_box));
     rating_filter_button.set_popover(Some(&rating_filter_popover));
@@ -462,6 +472,8 @@
                 ("4", rating_four.clone()),
                 ("5", rating_five.clone()),
                 ("corrupt", corrupt_filter.clone()),
+                ("offline", offline_filter.clone()),
+                ("online", online_filter.clone()),
             ];
             Rc::new(move |key| {
                 if let Some((_, check)) = choices.iter().find(|(value, _)| *value == key) {

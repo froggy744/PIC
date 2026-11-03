@@ -202,6 +202,7 @@ fn refresh_availability_ui(
     create_album: Rc<dyn Fn()>,
     import_folder: Rc<dyn Fn()>,
     delete_album: Rc<dyn Fn(i64)>,
+    refresh_filtered_gallery: Rc<dyn Fn()>,
 ) {
     let _ = connection;
     let generation = AVAILABILITY_GENERATION.fetch_add(1, AtomicOrdering::Relaxed) + 1;
@@ -265,6 +266,9 @@ fn refresh_availability_ui(
                 match sidebar_data {
                     Ok((gallery_updates, folder_order, folders, albums, counts)) => {
                         folder_cache.replace(folders.clone());
+                        if !gallery_updates.is_empty() {
+                            refresh_filtered_gallery();
+                        }
                         if let Some(gallery) = gallery_for_result.as_ref() {
                             gallery.set_folder_catalog(&folders, &folder_order);
                             gallery.apply_folder_availability(

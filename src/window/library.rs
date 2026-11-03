@@ -627,6 +627,14 @@ fn retain_enabled_formats(connection: &Connection, photos: &mut Vec<db::Photo>) 
 }
 
 fn apply_rating_filter(photos: &mut Vec<db::Photo>, filter: RatingFilter) {
+    if filter == RatingFilter::Online {
+        photos.retain(|photo| crate::source::folder_available(photo.folder_id));
+        return;
+    }
+    if filter == RatingFilter::Offline {
+        photos.retain(|photo| !crate::source::folder_available(photo.folder_id));
+        return;
+    }
     if filter == RatingFilter::Corrupt {
         photos.retain(|photo| crate::photo_object::confirmed_corrupt_local_jpeg(
             &photo.path, photo.width, photo.height,

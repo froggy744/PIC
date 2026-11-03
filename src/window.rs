@@ -147,6 +147,8 @@ enum RatingFilter {
     Four,
     Five,
     Corrupt,
+    Offline,
+    Online,
 }
 
 impl RatingFilter {
@@ -161,6 +163,8 @@ impl RatingFilter {
             Self::Four => "4",
             Self::Five => "5",
             Self::Corrupt => "corrupt",
+            Self::Offline => "offline",
+            Self::Online => "online",
         }
     }
 
@@ -174,6 +178,8 @@ impl RatingFilter {
             "4" => Self::Four,
             "5" => Self::Five,
             "corrupt" => Self::Corrupt,
+            "offline" => Self::Offline,
+            "online" => Self::Online,
             _ => Self::All,
         }
     }
@@ -189,6 +195,8 @@ impl RatingFilter {
             Self::Four => Some(4),
             Self::Five => Some(5),
             Self::Corrupt => None,
+            Self::Offline => None,
+            Self::Online => None,
         }
     }
 
@@ -203,6 +211,8 @@ impl RatingFilter {
             Self::Four => "Rating filter: 4 stars",
             Self::Five => "Rating filter: 5 stars",
             Self::Corrupt => "Filter: Corrupt photos",
+            Self::Offline => "Filter: Offline photos",
+            Self::Online => "Filter: Online photos",
         }
     }
 }

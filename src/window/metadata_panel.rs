@@ -82,7 +82,7 @@ fn unique_explorer_fields(fields: Vec<Field>) -> Vec<Field> {
 }
 
 fn explorer_field_choices(selected: &[Field], current_index: usize) -> Vec<Field> {
-    Field::ALL
+    let mut choices: Vec<_> = Field::ALL
         .into_iter()
         .filter(|candidate| {
             !selected
@@ -90,7 +90,9 @@ fn explorer_field_choices(selected: &[Field], current_index: usize) -> Vec<Field
                 .enumerate()
                 .any(|(index, field)| index != current_index && field == candidate)
         })
-        .collect()
+        .collect();
+    choices.sort_by_key(|field| field.label().to_lowercase());
+    choices
 }
 
 #[cfg(test)]
@@ -112,13 +114,19 @@ mod explorer_field_tests {
 
     #[test]
     fn dropdown_choices_hide_categories_used_by_other_columns() {
-        assert_eq!(
-            explorer_field_choices(&[Field::Camera, Field::FileType, Field::Lens], 1),
-            Field::ALL
-                .into_iter()
-                .filter(|field| ![Field::Camera, Field::Lens].contains(field))
-                .collect::<Vec<_>>()
-        );
+        let choices = explorer_field_choices(&[Field::Camera, Field::FileType, Field::Lens], 1);
+        assert!(!choices.contains(&Field::Camera));
+        assert!(!choices.contains(&Field::Lens));
+        assert!(choices.contains(&Field::FileType));
+        assert_eq!(choices.len(), Field::ALL.len() - 2);
+    }
+
+    #[test]
+    fn dropdown_choices_are_sorted_by_label_ascending() {
+        let choices = explorer_field_choices(&[Field::Camera], 0);
+        assert!(choices
+            .windows(2)
+            .all(|pair| pair[0].label().to_lowercase() <= pair[1].label().to_lowercase()));
     }
 
     #[test]

@@ -142,7 +142,9 @@ int pic_nfs_exports(const char *host, pic_entry_cb cb, void *ctx,
                     char *error, size_t cap) {
     trace_hostname_resolution(host);
     uint64_t discovery_started = monotonic_ms();
-    struct exportnode *list = mount_getexports(host);
+    /* Match the session timeout so an unavailable NAS cannot stall imports
+     * indefinitely while libnfs discovers its exports. */
+    struct exportnode *list = mount_getexports_timeout(host, 5000);
     if (!list) {
         trace_stage("export_discovery", discovery_started, host, NULL, NULL, "outcome=error");
         snprintf(error, cap, "NFS export discovery failed for %s (check rpcbind/mountd and NFSv3)", host); return -1;

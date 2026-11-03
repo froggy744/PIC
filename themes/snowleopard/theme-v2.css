@@ -483,7 +483,11 @@ button.album-card.framed-album-card:hover { opacity: 0.90; }
         border-radius: 3px;
         margin: 0 4px;
     }
-    .navigation-sidebar row:hover {
+.navigation-sidebar .compact-sidebar-button,
+.navigation-sidebar .compact-sidebar-option { color: @theme_fg_color; }
+    .navigation-sidebar row:hover,
+.navigation-sidebar .compact-sidebar-button:hover,
+.navigation-sidebar .compact-sidebar-option:hover {
         background: transparent;
     }
     .navigation-sidebar row:selected {

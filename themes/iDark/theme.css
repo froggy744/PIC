@@ -76,7 +76,11 @@ button.clear-action-button:active { background: #d2d2d2; }
 .section-count { font-size: 13px; color: #bcbcbc; }
 .group-heading-bar { background: transparent; padding: 0; }
 .navigation-sidebar row { border-radius: 6px; color: #e8e8e8; }
-.navigation-sidebar row:hover { background: rgba(255,255,255,0.07); }
+.navigation-sidebar .compact-sidebar-button,
+.navigation-sidebar .compact-sidebar-option { color: #e8e8e8; }
+.navigation-sidebar row:hover,
+.navigation-sidebar .compact-sidebar-button:hover,
+.navigation-sidebar .compact-sidebar-option:hover { background: rgba(255,255,255,0.07); }
 .navigation-sidebar row.sidebar-scroll-location { box-shadow: inset 3px 0 #4d9fdb; background: rgba(77,159,219,0.10); }
 .navigation-sidebar .sidebar-section-heading { margin-top: 8px; padding-top: 0; }
 .navigation-sidebar .sidebar-section-heading-title { color: #f0f0f0; font-size: inherit; font-weight: 700; }

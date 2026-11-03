@@ -129,7 +129,11 @@ window, .layout-left-column, .navigation-sidebar { background: #1E1E1E; color: #
         box-shadow: 0 1px 4px rgba(0,0,0,0.4);
     }
     .navigation-sidebar row { color: #D8D8D8; }
-    .navigation-sidebar row:hover { background: alpha(#FFFFFF, 0.05); }
+.navigation-sidebar .compact-sidebar-button,
+.navigation-sidebar .compact-sidebar-option { color: #D8D8D8; }
+    .navigation-sidebar row:hover,
+.navigation-sidebar .compact-sidebar-button:hover,
+.navigation-sidebar .compact-sidebar-option:hover { background: alpha(#FFFFFF, 0.05); }
     .navigation-sidebar .sidebar-section-heading { margin-top: 8px; padding-top: 0; }
     .navigation-sidebar .sidebar-section-heading-title { color: #9A9A9A; font-size: inherit; font-weight: 700; }
     .navigation-sidebar row:selected { background: alpha(#5B9BD5, 0.18); color: #D8D8D8; }

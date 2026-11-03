@@ -257,7 +257,11 @@ button.album-card.framed-album-card:hover { opacity: 0.90; }
    -------------------------------------------------------------------------- */
 
     .navigation-sidebar row { color: @theme_fg_color; border-radius: 10px; margin: 1px 6px; }
-    .navigation-sidebar row:hover { background: alpha(@accent_bg_color, 0.08); }
+.navigation-sidebar .compact-sidebar-button,
+.navigation-sidebar .compact-sidebar-option { color: @theme_fg_color; }
+    .navigation-sidebar row:hover,
+.navigation-sidebar .compact-sidebar-button:hover,
+.navigation-sidebar .compact-sidebar-option:hover { background: alpha(@accent_bg_color, 0.08); }
     .navigation-sidebar row:selected {
         background: alpha(@accent_bg_color, 0.16);
         color: @theme_fg_color;

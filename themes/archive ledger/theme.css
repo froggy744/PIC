@@ -129,7 +129,11 @@ window, .layout-left-column, .navigation-sidebar { background: @window_bg_color;
         box-shadow: 0 1px 4px alpha(black, 0.22);
     }
     .navigation-sidebar row { color: @theme_fg_color; }
-    .navigation-sidebar row:hover { background: alpha(@theme_fg_color, 0.06); }
+.navigation-sidebar .compact-sidebar-button,
+.navigation-sidebar .compact-sidebar-option { color: @theme_fg_color; }
+    .navigation-sidebar row:hover,
+.navigation-sidebar .compact-sidebar-button:hover,
+.navigation-sidebar .compact-sidebar-option:hover { background: alpha(@theme_fg_color, 0.06); }
     .navigation-sidebar .sidebar-section-heading { margin-top: 8px; padding-top: 0; }
     .navigation-sidebar .sidebar-section-heading-title { color: alpha(@theme_fg_color, 0.88); font-size: inherit; font-weight: 700; }
     .navigation-sidebar row:selected { background: alpha(@accent_bg_color, 0.15); color: @theme_fg_color; }

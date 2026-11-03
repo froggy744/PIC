@@ -301,7 +301,11 @@ window {
         color: @theme_fg_color;
         transition: background-color 160ms ease-out, box-shadow 160ms ease-out;
     }
-    .navigation-sidebar row:hover {
+.navigation-sidebar .compact-sidebar-button,
+.navigation-sidebar .compact-sidebar-option { color: @theme_fg_color; }
+    .navigation-sidebar row:hover,
+.navigation-sidebar .compact-sidebar-button:hover,
+.navigation-sidebar .compact-sidebar-option:hover {
         background: alpha(@accent_bg_color, 0.10);
         box-shadow: inset 3px 0 0 0 alpha(@accent_bg_color, 0.65),
                     inset 0 0 12px alpha(@accent_bg_color, 0.10);

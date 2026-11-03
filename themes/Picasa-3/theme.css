@@ -73,7 +73,11 @@ window, .layout-left-column, .navigation-sidebar,
     border-radius: 2px;
     color: #424242;
 }
-.navigation-sidebar row:hover { background-color: #DCEAF7; }
+.navigation-sidebar .compact-sidebar-button,
+.navigation-sidebar .compact-sidebar-option { color: #424242; }
+.navigation-sidebar row:hover,
+.navigation-sidebar .compact-sidebar-button:hover,
+.navigation-sidebar .compact-sidebar-option:hover { background-color: #DCEAF7; }
 .navigation-sidebar row:selected,
 .navigation-sidebar row.sidebar-scroll-location {
     background-color: @picasa_blue;

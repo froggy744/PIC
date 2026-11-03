@@ -383,18 +383,43 @@ fn theme_header_edges_align() {
     ] {
         db::set_setting(&connection, key, value).unwrap();
     }
+    let compact = std::env::var_os("PIC_TEST_COMPACT").is_some();
+    db::set_setting(
+        &connection,
+        "compact-sidebar-enabled",
+        if compact { "true" } else { "false" },
+    )
+    .unwrap();
     let window = build(&app, connection);
     window.present();
     settle();
+    if !compact {
+        split(window.upcast_ref()).unwrap().set_show_sidebar(true);
+        settle();
+    }
     let widgets = descendants(window.upcast_ref());
     let left = widgets
         .iter()
-        .find(|w| w.has_css_class("layout-left-header"))
+        .find(|w| w.has_css_class("layout-left-header") && w.is_mapped())
         .unwrap();
     let right = widgets
         .iter()
         .find(|w| w.has_css_class("layout-right-header"))
         .unwrap();
+    if compact {
+        let dock = widgets
+            .iter()
+            .find(|w| w.has_css_class("compact-sidebar-dock"))
+            .unwrap();
+        let page = dock.first_child().unwrap();
+        let d = dock.compute_bounds(&window).unwrap();
+        let p = page.compute_bounds(&window).unwrap();
+        assert!((d.y() - p.y()).abs() < 0.1, "compact dock has top padding");
+        assert!(
+            (d.y() + d.height() - p.y() - p.height()).abs() < 0.1,
+            "compact dock has bottom padding"
+        );
+    }
     for width in [1440, 1100, 1600] {
         window.set_default_size(width, 900);
         settle();
@@ -402,6 +427,12 @@ fn theme_header_edges_align() {
         let r = right.compute_bounds(&window).unwrap();
         let left_bottom = l.y() + l.height();
         let right_bottom = r.y() + r.height();
+        assert!(
+            (l.y() - r.y()).abs() < 0.1,
+            "{theme}: header top edges differ: left={}, right={}",
+            l.y(),
+            r.y()
+        );
         eprintln!("{theme} width={width}: left bottom={left_bottom}, right bottom={right_bottom}");
         assert!(
             (left_bottom - right_bottom).abs() < 0.1,

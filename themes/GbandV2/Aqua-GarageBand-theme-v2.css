@@ -302,8 +302,12 @@ button.album-card:active {
     border: 1px solid transparent;
     text-shadow: 0 -1px rgba(0,0,0,0.66);
 }
+.navigation-sidebar .compact-sidebar-button,
+.navigation-sidebar .compact-sidebar-option { color: #F0F1F2; }
 
-.navigation-sidebar row:hover {
+.navigation-sidebar row:hover,
+.navigation-sidebar .compact-sidebar-button:hover,
+.navigation-sidebar .compact-sidebar-option:hover {
     background: rgba(255,255,255,0.08);
     border-color: rgba(255,255,255,0.10);
 }

@@ -146,7 +146,11 @@ window, .layout-left-column, .navigation-sidebar { background: @nord0; color: @n
         box-shadow: 0 1px 4px alpha(black, 0.22);
     }
     .navigation-sidebar row { color: @nord4; }
-    .navigation-sidebar row:hover { background: alpha(@nord4, 0.06); }
+.navigation-sidebar .compact-sidebar-button,
+.navigation-sidebar .compact-sidebar-option { color: @nord4; }
+    .navigation-sidebar row:hover,
+.navigation-sidebar .compact-sidebar-button:hover,
+.navigation-sidebar .compact-sidebar-option:hover { background: alpha(@nord4, 0.06); }
     .navigation-sidebar .sidebar-section-heading { margin-top: 8px; padding-top: 0; }
     .navigation-sidebar .sidebar-section-heading-title { color: alpha(@nord6, 0.88); font-size: inherit; font-weight: 700; }
     .navigation-sidebar row:selected { background: alpha(@nord8, 0.15); color: @nord6; }

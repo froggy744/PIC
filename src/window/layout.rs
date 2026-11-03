@@ -393,6 +393,7 @@
     compact_dock.set_vexpand(true);
     compact_dock.set_visible(false);
     compact_dock.add_css_class("compact-sidebar-dock");
+    compact_dock.add_css_class("navigation-sidebar");
     layout_row.append(&compact_dock);
     main_split.set_hexpand(true);
     layout_row.append(&main_split);

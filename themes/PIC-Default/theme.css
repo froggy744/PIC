@@ -121,7 +121,11 @@ scrollbar slider:active { background: alpha(@pic_text_color, 0.68); background-c
     color: @pic_bar_text;
     border-radius: 6px;
 }
-.navigation-sidebar row:hover {
+.navigation-sidebar .compact-sidebar-button,
+.navigation-sidebar .compact-sidebar-option { color: @pic_bar_text; }
+.navigation-sidebar row:hover,
+.navigation-sidebar .compact-sidebar-button:hover,
+.navigation-sidebar .compact-sidebar-option:hover {
     background: alpha(white, 0.07);
     color: @pic_button_text;
 }

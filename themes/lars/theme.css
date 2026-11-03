@@ -130,7 +130,11 @@ window, .layout-left-column, .navigation-sidebar { background: #000000; color: #
         box-shadow: 0 1px 4px alpha(black, 0.4);
     }
     .navigation-sidebar row { color: #FF9C00; }
-    .navigation-sidebar row:hover { background: alpha(#FF9C00, 0.10); }
+.navigation-sidebar .compact-sidebar-button,
+.navigation-sidebar .compact-sidebar-option { color: #FF9C00; }
+    .navigation-sidebar row:hover,
+.navigation-sidebar .compact-sidebar-button:hover,
+.navigation-sidebar .compact-sidebar-option:hover { background: alpha(#FF9C00, 0.10); }
     .navigation-sidebar .sidebar-section-heading { margin-top: 8px; padding-top: 0; }
     .navigation-sidebar .sidebar-section-heading-title { color: #CC99CC; font-size: inherit; font-weight: 800; letter-spacing: 0.5px; }
     .navigation-sidebar row:selected { background: #FF9C00; color: #000000; border-radius: 9999px 0 0 9999px; }

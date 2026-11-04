@@ -40,6 +40,7 @@ const PRINT_MAX_SLOTS: usize = 64;
 /// still wall.
 const FLY_MAX_SLOTS: usize = 32;
 const TRANSITION_KEY: &str = "screensaver-transition-ms";
+const MOVEMENT_SPEED_KEY: &str = "screensaver-movement-speed";
 const CAPTION_KEY: &str = "screensaver-captions";
 const CLOCK_KEY: &str = "screensaver-clock";
 const PREFETCH: usize = 3;
@@ -55,12 +56,13 @@ enum Style {
     Fade,
     CoverFlow,
     Flying,
+    PhotoDrift,
     Surprise,
     MatrixRain,
     MatrixKenBurns,
 }
 impl Style {
-    const CHOICES: [Self; 11] = [
+    const CHOICES: [Self; 12] = [
         Self::Mosaic,
         Self::Grid,
         Self::PicturePile,
@@ -69,6 +71,7 @@ impl Style {
         Self::Fade,
         Self::CoverFlow,
         Self::Flying,
+        Self::PhotoDrift,
         Self::Surprise,
         Self::MatrixRain,
         Self::MatrixKenBurns,
@@ -82,6 +85,7 @@ impl Style {
             "fade" => Self::Fade,
             "coverflow" => Self::CoverFlow,
             "flying" => Self::Flying,
+            "photo-drift" => Self::PhotoDrift,
             "surprise" => Self::Surprise,
             "matrix-rain" => Self::MatrixRain,
             "matrix-ken-burns" => Self::MatrixKenBurns,
@@ -98,6 +102,7 @@ impl Style {
             Self::Fade => "fade",
             Self::CoverFlow => "coverflow",
             Self::Flying => "flying",
+            Self::PhotoDrift => "photo-drift",
             Self::Surprise => "surprise",
             Self::MatrixRain => "matrix-rain",
             Self::MatrixKenBurns => "matrix-ken-burns",
@@ -152,6 +157,7 @@ impl Style {
             Self::Fade => "Fullscreen Fade",
             Self::CoverFlow => "Cover Flow",
             Self::Flying => "Flying Photos",
+            Self::PhotoDrift => "Photo Drift",
             Self::Surprise => "Surprise Me",
             Self::MatrixRain => "Matrix Rain",
             Self::MatrixKenBurns => "Matrix Ken Burns",
@@ -167,6 +173,7 @@ impl Style {
             Self::Fade => "Gentle full-screen slideshow",
             Self::CoverFlow => "Browse photos as a reflective Cover Flow",
             Self::Flying => "Photographs fly in from the distance and past you",
+            Self::PhotoDrift => "Photos gently drift across a scattered, layered field",
             Self::Surprise => "Random style on launch",
             Self::MatrixRain => "Animated Katakana rain on black, no photos",
             Self::MatrixKenBurns => "Green photo with fixed Katakana streams and slow pan and zoom",
@@ -269,6 +276,7 @@ struct Preferences {
     mosaic_tiles: usize,
     picasa_transition: PicasaTransition,
     transition_ms: u32,
+    movement_speed: f64,
     captions: bool,
     clock: bool,
 }
@@ -300,6 +308,12 @@ impl Preferences {
                 .parse::<u32>()
                 .unwrap_or(900)
                 .clamp(200, 2500),
+            movement_speed: setting(MOVEMENT_SPEED_KEY)
+                .parse::<f64>()
+                .ok()
+                .filter(|speed| speed.is_finite())
+                .unwrap_or(1.0)
+                .clamp(0.25, 3.0),
             captions: setting(CAPTION_KEY) == "true",
             clock: setting(CLOCK_KEY) == "true",
         }
@@ -318,6 +332,10 @@ impl Preferences {
                 self.picasa_transition.key().to_string(),
             ),
             (TRANSITION_KEY, self.transition_ms.to_string()),
+            (
+                MOVEMENT_SPEED_KEY,
+                format!("{:.2}", self.movement_speed.clamp(0.25, 3.0)),
+            ),
             (CAPTION_KEY, self.captions.to_string()),
             (CLOCK_KEY, self.clock.to_string()),
         ] {
@@ -572,6 +590,12 @@ fn style_preview(style: Style) -> gtk::DrawingArea {
                 photo(14.0, 7.0, 13.0, 9.0, 0);
                 photo(40.0, 24.0, 22.0, 15.0, 1);
             }
+            Style::PhotoDrift => {
+                photo(5.0, 6.0, 9.0, 7.0, 1);
+                photo(20.0, 14.0, 14.0, 11.0, 0);
+                photo(43.0, 5.0, 8.0, 6.0, 2);
+                photo(39.0, 25.0, 18.0, 13.0, 1);
+            }
             Style::Surprise => {
                 photo(4.0, 5.0, 24.0, 15.0, 1);
                 photo(4.0, 22.0, 24.0, 15.0, 2);
@@ -722,7 +746,7 @@ pub fn open(
     mosaic_tiles.set_width_chars(8);
     mosaic_tiles.set_input_purpose(gtk::InputPurpose::Digits);
     mosaic_tiles.set_tooltip_text(Some(
-        "Positive whole number of photos on screen (Picture Pile and Floating Prints: up to 64, Flying Photos: up to 32)",
+        "Positive whole number of photos on screen (Picture Pile, Floating Prints, and Photo Drift: up to 64; Flying Photos: up to 32)",
     ));
 
     let shuffle_tiles_button = gtk::CheckButton::with_label("Shuffle tiles");
@@ -800,6 +824,12 @@ pub fn open(
     transition_time.set_digits(1);
     transition_time.set_value(current.transition_ms as f64 / 1000.0);
     transition_time.set_tooltip_text(Some("Seconds to blend/flip between photos"));
+    let movement_speed = gtk::SpinButton::with_range(0.25, 3.0, 0.25);
+    movement_speed.set_digits(2);
+    movement_speed.set_value(current.movement_speed);
+    movement_speed.set_tooltip_text(Some(
+        "Adjust Photo Drift movement without changing how long photos stay on screen",
+    ));
     let timing_options = gtk::Box::new(gtk::Orientation::Horizontal, 12);
     let transition_mode = field("Transition", &picasa_transition);
     transition_mode.set_hexpand(true);
@@ -810,6 +840,12 @@ pub fn open(
     animation_time.append(&transition_time);
     timing_options.append(&animation_time);
     advanced.append(&timing_options);
+
+    let movement_row = gtk::Box::new(gtk::Orientation::Horizontal, 7);
+    movement_row.append(&gtk::Label::new(Some("Movement speed")));
+    movement_row.append(&movement_speed);
+    movement_row.append(&gtk::Label::new(Some("×")));
+    advanced.append(&movement_row);
 
     let shuffle_row = gtk::Box::new(gtk::Orientation::Horizontal, 16);
     let shuffle_button = gtk::CheckButton::with_label("Shuffle photos");
@@ -839,7 +875,7 @@ pub fn open(
     let advanced_toggle = gtk::ToggleButton::with_label("Advanced settings  ▾");
     advanced_toggle.add_css_class("flat");
     advanced_toggle.set_halign(gtk::Align::Fill);
-    advanced_toggle.set_tooltip_text(Some("Transitions, shuffle and overlays"));
+    advanced_toggle.set_tooltip_text(Some("Transitions, movement speed, shuffle and overlays"));
     let reveal_for_toggle = revealer.clone();
     advanced_toggle.connect_toggled(move |button| {
         let expanded = button.is_active();
@@ -865,6 +901,7 @@ pub fn open(
     }
     rain_note.set_visible(!current.style.uses_photos());
     let transition_for_style = picasa_transition.clone();
+    let speed_for_style = movement_speed.clone();
     let mosaic_for_style = mosaic_tiles.clone();
     let shuffle_for_style = shuffle_tiles_button.clone();
     let note_for_style = rain_note.clone();
@@ -872,6 +909,7 @@ pub fn open(
         // A continuous flight has no per-photo flip, crossfade or cut; its
         // "Fade (s)" value drives the entry fade instead.
         transition_for_style.set_sensitive(!style.single_photo() && style != Style::Flying);
+        speed_for_style.set_sensitive(style == Style::PhotoDrift);
         mosaic_for_style.set_sensitive(!style.single_photo());
         shuffle_for_style.set_sensitive(!style.single_photo());
         for widget in &photo_controls {
@@ -881,6 +919,7 @@ pub fn open(
     });
     picasa_transition
         .set_sensitive(!current.style.single_photo() && current.style != Style::Flying);
+    movement_speed.set_sensitive(current.style == Style::PhotoDrift);
     mosaic_tiles.set_sensitive(!current.style.single_photo());
     shuffle_tiles_button.set_sensitive(!current.style.single_photo());
     picker_slot.append(&style_picker);
@@ -936,6 +975,7 @@ pub fn open(
             mosaic_tiles: requested_tiles,
             picasa_transition: PicasaTransition::from_dropdown(picasa_transition.selected()),
             transition_ms: (transition_time.value() * 1000.0).round() as u32,
+            movement_speed: movement_speed.value().clamp(0.25, 3.0),
             captions: captions_button.is_active(),
             clock: clock_button.is_active(),
         };
@@ -1093,7 +1133,7 @@ fn start_decode_worker(
                         };
                         (edge, edge)
                     }
-                    Style::PicturePile | Style::Floating => {
+                    Style::PicturePile | Style::Floating | Style::PhotoDrift => {
                         // Prints are small when there are many of them.
                         if mosaic_tiles <= 6 {
                             (1920, 1280)
@@ -1219,6 +1259,7 @@ struct Player {
     style: Style,
     count: usize,
     interval: Duration,
+    movement_speed: f64,
     transition: Duration,
     switched_at: Instant,
     started: bool,
@@ -1250,7 +1291,9 @@ impl Player {
     ) -> Self {
         let desired_slots = match style {
             Style::Mosaic | Style::Grid => mosaic_tiles.max(1),
-            Style::PicturePile | Style::Floating => mosaic_tiles.clamp(1, PRINT_MAX_SLOTS),
+            Style::PicturePile | Style::Floating | Style::PhotoDrift => {
+                mosaic_tiles.clamp(1, PRINT_MAX_SLOTS)
+            }
             Style::Flying => mosaic_tiles.clamp(1, FLY_MAX_SLOTS),
             _ => 0,
         };
@@ -1263,6 +1306,7 @@ impl Player {
             style,
             count,
             interval: Duration::from_secs(seconds as u64),
+            movement_speed: 1.0,
             transition: Duration::from_millis(900),
             switched_at: Instant::now(),
             started: false,
@@ -1624,6 +1668,7 @@ fn start_screensaver(parent: &adw::ApplicationWindow, slides: Vec<Slide>, prefs:
     )));
     player.borrow_mut().transition =
         Duration::from_millis(prefs.transition_ms.clamp(200, 2500) as u64);
+    player.borrow_mut().movement_speed = prefs.movement_speed.clamp(0.25, 3.0);
     // Captions use catalog metadata and path basenames, never original EXIF.
     let captions: Vec<String> = slides.iter().map(|slide| slide.caption.clone()).collect();
     let (request_tx, request_rx) = mpsc::channel::<usize>();
@@ -1957,6 +2002,7 @@ mod tests {
             mosaic_tiles: 24,
             picasa_transition: PicasaTransition::Crossfade,
             transition_ms: 1700,
+            movement_speed: 1.75,
             captions: true,
             clock: true,
             exclude_portraits: true,
@@ -1971,6 +2017,7 @@ mod tests {
         assert_eq!(restored.mosaic_tiles, 24);
         assert_eq!(restored.picasa_transition, PicasaTransition::Crossfade);
         assert_eq!(restored.transition_ms, 1700);
+        assert!((restored.movement_speed - 1.75).abs() < f64::EPSILON);
         assert!(restored.captions);
         assert!(restored.clock);
         assert!(restored.exclude_portraits);
@@ -2461,6 +2508,12 @@ mod tests {
         );
         assert_eq!(
             Player::new(Style::Floating, 200, 5, false, 5000)
+                .slots
+                .len(),
+            PRINT_MAX_SLOTS
+        );
+        assert_eq!(
+            Player::new(Style::PhotoDrift, 200, 5, false, 5000)
                 .slots
                 .len(),
             PRINT_MAX_SLOTS

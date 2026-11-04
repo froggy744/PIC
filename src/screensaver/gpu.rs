@@ -285,6 +285,29 @@ fn scatter_rect(
     height: f64,
 ) -> (f64, f64, f64, f64) {
     let ratio = image_aspect.clamp(0.60, 2.0);
+    if style == Style::PhotoDrift {
+        // Golden-angle anchors cover the whole viewport without the visual
+        // rows of a grid. A stable per-slot depth gives mostly small prints,
+        // with a few closer, larger photos in the same field.
+        let angle = slot as f64 * 2.399_963_229_728_653;
+        let radius = ((slot as f64 + 0.5) / count.max(1) as f64).sqrt() * 0.43;
+        let cx = (0.5 + radius * angle.cos()).clamp(0.08, 0.92) * width;
+        let cy = (0.5 + radius * angle.sin()).clamp(0.08, 0.92) * height;
+        let depth = (slot.wrapping_mul(7).wrapping_add(3)) % 11;
+        let scale = match depth {
+            0 => 1.62,
+            4 | 8 => 1.18,
+            _ => 0.72 + (depth as f64 % 3.0) * 0.12,
+        };
+        let base_w = width * 0.13 * scale;
+        let max_h = height * 0.21 * scale;
+        let tile_w = base_w.min(max_h * ratio).min(width * 0.34);
+        let tile_h = tile_w / ratio;
+        let margin = (width.min(height) * 0.05).max(16.0);
+        let x = (cx - tile_w * 0.5).clamp(margin, (width - tile_w - margin).max(margin));
+        let y = (cy - tile_h * 0.5).clamp(margin, (height - tile_h - margin).max(margin));
+        return (x, y, tile_w, tile_h);
+    }
     let margin = (width.min(height) * 0.035).max(16.0);
     let (area_w, area_h) = (
         (width - 2.0 * margin).max(1.0),
@@ -333,6 +356,9 @@ fn print_rect(
     width: f64,
     height: f64,
 ) -> (f64, f64, f64, f64) {
+    if style == Style::PhotoDrift {
+        return scatter_rect(style, slot, count, image_aspect, width, height);
+    }
     if count
         > match style {
             Style::PicturePile => PICTURE_PILE_SLOTS,
@@ -495,7 +521,11 @@ impl Stage {
         // materialised in small frame-clock batches.
         // Picture Pile and Floating Prints paint themselves in one custom
         // widget (see pile.rs).
-        let pile = matches!(style, Style::PicturePile | Style::Floating).then(|| {
+        let pile = matches!(
+            style,
+            Style::PicturePile | Style::Floating | Style::PhotoDrift
+        )
+        .then(|| {
             let pile = Pile::new(count, transition, style);
             root.put(&pile.canvas, 0.0, 0.0);
             pile

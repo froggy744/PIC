@@ -45,6 +45,7 @@ const PILE_STAGGER: f64 = 0.16;
 pub(super) const PILE_UPGRADE_SECS: f64 = 0.35;
 /// Longest animation step accepted for one frame; hides one-off stalls.
 pub(super) const PILE_MAX_DT: f64 = 0.05;
+const PHOTO_DRIFT_PERIOD: f64 = 6.0;
 
 pub(super) trait Aspect {
     fn aspect(&self) -> f64;
@@ -57,6 +58,10 @@ impl Aspect for gdk::Texture {
 
 fn lerp(a: f64, b: f64, t: f64) -> f64 {
     a + (b - a) * t
+}
+
+fn drift_phase(clock: f64, period: f64, speed: f64) -> f64 {
+    (clock / period.max(2.0) * speed.clamp(0.25, 3.0)).fract()
 }
 
 fn land_direction(id: usize) -> f64 {
@@ -109,6 +114,14 @@ fn look(style: Style) -> Look {
             shadow: 0.28,
             shadow_dy: 8.0,
             shadow_blur: 20.0,
+        }
+    } else if style == Style::PhotoDrift {
+        Look {
+            paper: (0.985, 0.98, 0.96),
+            radius: 1.5,
+            shadow: 0.20,
+            shadow_dy: 5.0,
+            shadow_blur: 13.0,
         }
     } else {
         Look {
@@ -164,7 +177,9 @@ pub(super) fn print_geometry(
 ) -> Geometry {
     let ratio = aspect.clamp(0.60, 2.0);
     let (x, y, tw, th) = print_rect(style, slot, count, ratio, width, height);
-    let border = if style == Style::Floating {
+    let border = if style == Style::PhotoDrift {
+        0.0
+    } else if style == Style::Floating {
         2.0
     } else if PILE_BORDER > 0.0 {
         (width.min(height) * PILE_BORDER).clamp(4.0, 14.0).round()
@@ -230,8 +245,10 @@ pub(super) struct Feed<'a, T> {
     pub changes: usize,
     pub replacing: Option<(usize, usize)>,
     pub transition: f64,
-    /// Seconds for one full drift cycle (Floating Prints only).
+    /// Seconds for one full drift cycle (Floating Prints; Photo Drift uses a fixed base cycle).
     pub drift_period: f64,
+    /// Independent movement multiplier (Photo Drift only).
+    pub motion_speed: f64,
     /// Texture and "is original quality" for a photo, when loaded.
     pub frame: &'a dyn Fn(usize) -> Option<(T, bool)>,
 }
@@ -239,6 +256,7 @@ pub(super) struct Feed<'a, T> {
 pub(super) struct Model<T> {
     style: Style,
     drift_period: f64,
+    motion_speed: f64,
     mode: PicasaTransition,
     slots: Vec<Slot<T>>,
     clock: f64,
@@ -257,6 +275,7 @@ impl<T: Clone + Aspect> Model<T> {
         Self {
             style,
             drift_period: 6.0,
+            motion_speed: 1.0,
             mode,
             slots: (0..count).map(|_| Slot::default()).collect(),
             clock: 0.0,
@@ -317,6 +336,7 @@ impl<T: Clone + Aspect> Model<T> {
         }
         let duration = feed.transition.max(0.2);
         self.drift_period = feed.drift_period.max(2.0);
+        self.motion_speed = feed.motion_speed.clamp(0.25, 3.0);
 
         // A change the player just made: the former print stays as it was,
         // the new photo is laid on top of it.
@@ -387,7 +407,8 @@ impl<T: Clone + Aspect> Model<T> {
                 || (state.card.is_some() && self.clock - state.since < duration)
         });
         // Floating Prints never rest: they drift continuously.
-        let drifting = self.style == Style::Floating && self.slots.iter().any(|s| s.card.is_some());
+        let drifting = matches!(self.style, Style::Floating | Style::PhotoDrift)
+            && self.slots.iter().any(|s| s.card.is_some());
         if !animating && !drifting && !self.dirty {
             return None;
         }
@@ -474,13 +495,20 @@ impl<T: Clone + Aspect> Model<T> {
                 }
             }
         }
-        if self.style == Style::Floating {
+        if matches!(self.style, Style::Floating | Style::PhotoDrift) {
             // One continuous phase per print slot: no reset when photos change.
             for (_, card) in stack.iter_mut() {
-                let phase = (self.clock / self.drift_period + card.slot as f64 * 0.618_034).fract();
+                let phase = (drift_phase(self.clock, self.drift_period, self.motion_speed)
+                    + card.slot as f64 * 0.618_034)
+                    .fract();
                 let t = std::f64::consts::TAU * phase;
-                card.geometry.cx += FLOATING_DRIFT_X * t.sin();
-                card.geometry.cy += FLOATING_DRIFT_Y * t.cos();
+                let (dx, dy) = if self.style == Style::PhotoDrift {
+                    (12.0, 9.0)
+                } else {
+                    (FLOATING_DRIFT_X, FLOATING_DRIFT_Y)
+                };
+                card.geometry.cx += dx * t.sin();
+                card.geometry.cy += dy * t.cos();
                 card.angle += FLOATING_TILT_SWAY * t.sin();
             }
         }
@@ -511,6 +539,14 @@ mod canvas_imp {
     impl ObjectImpl for PileCanvas {}
     impl WidgetImpl for PileCanvas {
         fn snapshot(&self, snapshot: &gtk::Snapshot) {
+            if self.style.get() == Some(Style::PhotoDrift) {
+                let obj = self.obj();
+                let color = gdk::RGBA::new(0.92, 0.91, 0.88, 1.0);
+                snapshot.append_color(
+                    &color,
+                    &graphene::Rect::new(0.0, 0.0, obj.width() as f32, obj.height() as f32),
+                );
+            }
             // Make the GPU upload upcoming textures now, in a 1px nearly
             // invisible draw, instead of during the first frames of a landing.
             let warm: Vec<gdk::Texture> = self.warm.take();
@@ -675,7 +711,16 @@ impl Pile {
             changes: player.changes,
             replacing: player.fading_slot,
             transition: player.transition.as_secs_f64(),
-            drift_period: player.interval.as_secs_f64(),
+            drift_period: if player.style == Style::PhotoDrift {
+                PHOTO_DRIFT_PERIOD
+            } else {
+                player.interval.as_secs_f64()
+            },
+            motion_speed: if player.style == Style::PhotoDrift {
+                player.movement_speed
+            } else {
+                1.0
+            },
             frame: &lookup,
         };
         if let Some(cards) = self.model.update(&feed, (w, h)) {
@@ -780,6 +825,7 @@ mod tests {
                 replacing: self.replacing,
                 transition: self.transition,
                 drift_period: 6.0,
+                motion_speed: 1.0,
                 frame: &lookup,
             };
             let out = self.model.update(&feed, (1920.0, 1080.0));
@@ -1120,7 +1166,7 @@ mod tests {
 
     #[test]
     fn any_tile_count_lays_out_on_screen_with_each_photos_own_aspect() {
-        for style in [Style::PicturePile, Style::Floating] {
+        for style in [Style::PicturePile, Style::Floating, Style::PhotoDrift] {
             for (w, h) in [
                 (1920.0, 1080.0),
                 (1080.0, 1920.0),
@@ -1163,9 +1209,9 @@ mod tests {
     }
 
     #[test]
-    fn floating_prints_drift_continuously_without_a_reset_at_photo_changes() {
+    fn photo_drift_is_continuous_without_a_reset_at_photo_changes() {
         let mut rig = Rig::new(PicasaTransition::Crossfade, 6, 0.9);
-        rig.model = Model::with_style(6, PicasaTransition::Crossfade, Style::Floating);
+        rig.model = Model::with_style(6, PicasaTransition::Crossfade, Style::PhotoDrift);
         for id in 0..12 {
             rig.load(id, true);
         }
@@ -1194,6 +1240,13 @@ mod tests {
             }
             last = current;
         }
+    }
+
+    #[test]
+    fn photo_drift_speed_scales_motion_without_using_photo_duration() {
+        assert!((drift_phase(3.0, 6.0, 1.0) - 0.5).abs() < 1e-9);
+        assert!((drift_phase(3.0, 6.0, 2.0) - 0.0).abs() < 1e-9);
+        assert!((drift_phase(3.0, 6.0, 0.5) - 0.25).abs() < 1e-9);
     }
 
     #[test]
@@ -1242,8 +1295,39 @@ mod tests {
 #[cfg(test)]
 mod display_tests {
     use super::*;
+    use std::sync::OnceLock;
 
     fn synth(w: u32, h: u32, seed: u32) -> Pixels {
+        static REAL_PHOTOS: OnceLock<Vec<image::DynamicImage>> = OnceLock::new();
+        if let Ok(directory) = std::env::var("PIC_PILE_REAL_PHOTO_DIR") {
+            let photos = REAL_PHOTOS.get_or_init(|| {
+                let mut paths: Vec<_> = std::fs::read_dir(directory)
+                    .into_iter()
+                    .flatten()
+                    .flatten()
+                    .map(|entry| entry.path())
+                    .filter(|path| {
+                        path.extension()
+                            .and_then(|ext| ext.to_str())
+                            .is_some_and(|ext| {
+                                matches!(ext.to_ascii_lowercase().as_str(), "jpg" | "jpeg" | "png")
+                            })
+                    })
+                    .collect();
+                paths.sort();
+                paths
+                    .iter()
+                    .filter_map(|path| image::open(path).ok())
+                    .collect()
+            });
+            if !photos.is_empty() {
+                return texture_pixels(
+                    photos[seed as usize % photos.len()]
+                        .thumbnail(w, h)
+                        .to_rgba8(),
+                );
+            }
+        }
         let mut img = image::RgbaImage::new(w, h);
         let hues = [
             (220u32, 90u32, 70u32),
@@ -1312,17 +1396,30 @@ mod display_tests {
             (1000, 1500),
             (1600, 900),
         ];
+        let only_style = std::env::var("PIC_PILE_STYLE").ok();
         for (style, mode) in [
             (Style::PicturePile, PicasaTransition::Crossfade),
             (Style::PicturePile, PicasaTransition::Flip),
             (Style::PicturePile, PicasaTransition::Cut),
             (Style::Floating, PicasaTransition::Crossfade),
             (Style::Floating, PicasaTransition::Flip),
-        ] {
+            (Style::PhotoDrift, PicasaTransition::Crossfade),
+            (Style::PhotoDrift, PicasaTransition::Flip),
+        ]
+        .into_iter()
+        .filter(|(style, _)| {
+            only_style
+                .as_deref()
+                .is_none_or(|only| only == format!("{style:?}"))
+        }) {
             let wanted: usize = std::env::var("PIC_PILE_TILES")
                 .ok()
                 .and_then(|v| v.parse().ok())
-                .unwrap_or(if style == Style::Floating { 6 } else { 5 });
+                .unwrap_or(match style {
+                    Style::Floating => 6,
+                    Style::PhotoDrift => 20,
+                    _ => 5,
+                });
             let mut player = Player::new(style, 80, 4, false, wanted);
             let slots = player.slots.len();
             player.transition = Duration::from_millis(900);
@@ -1338,7 +1435,8 @@ mod display_tests {
             let mut frame_time = 1_000_000i64;
             let out = std::env::var("PIC_PILE_PNG_DIR").ok();
             let mut shots = 0;
-            for frame in 0..420 {
+            let final_frame = if style == Style::PhotoDrift { 660 } else { 420 };
+            for frame in 0..final_frame {
                 while let Ok(i) = rx.try_recv() {
                     let (w, h) = dims[i % 12];
                     player.receive(ImageResult {
@@ -1359,9 +1457,12 @@ mod display_tests {
                 frame_time += 16_667;
                 stage.sync(&player, frame_time);
                 pump();
-                if let (Some(dir), true) =
-                    (&out, [60, 160, 175, 190, 345, 360, 400].contains(&frame))
-                {
+                let capture = if style == Style::PhotoDrift {
+                    [120, 300, 600].contains(&frame)
+                } else {
+                    [60, 160, 175, 190, 345, 360, 400].contains(&frame)
+                };
+                if let (Some(dir), true) = (&out, capture) {
                     let paintable = gtk::WidgetPaintable::new(Some(&stage.root));
                     let snap = gtk::Snapshot::new();
                     paintable.snapshot(&snap, 1280.0, 720.0);
@@ -1374,7 +1475,11 @@ mod display_tests {
                         shots += 1;
                     }
                 }
-                std::thread::sleep(Duration::from_millis(2));
+                std::thread::sleep(Duration::from_millis(if style == Style::PhotoDrift {
+                    16
+                } else {
+                    2
+                }));
             }
             // A change may still be landing (one extra outgoing print) on a slow display.
             assert!(

@@ -1,3 +1,28 @@
 .screensaver-settings-window .screensaver-dialog-heading {
   color: @theme_fg_color;
 }
+
+.screensaver-settings-window .screensaver-style-tile {
+  background-color: alpha(@theme_fg_color, 0.06);
+  background-image: none;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  box-shadow: none;
+  padding: 4px;
+}
+
+.screensaver-settings-window .screensaver-style-tile:hover {
+  background-color: alpha(@theme_fg_color, 0.1);
+}
+
+.screensaver-settings-window .screensaver-style-tile:checked,
+.screensaver-settings-window .screensaver-style-tile:checked:hover {
+  background-color: alpha(@accent_color, 0.12);
+  border-color: @accent_color;
+  box-shadow: 0 0 0 1px alpha(@accent_color, 0.3);
+}
+
+.screensaver-settings-window .screensaver-inspector-separator {
+  background-color: alpha(@theme_fg_color, 0.1);
+  min-height: 1px;
+}

@@ -108,12 +108,6 @@ impl Style {
             Self::MatrixKenBurns => "matrix-ken-burns",
         }
     }
-    fn dropdown_index(self) -> u32 {
-        Self::CHOICES
-            .iter()
-            .position(|style| *style == self)
-            .unwrap_or(0) as u32
-    }
     fn resolved(self) -> Self {
         if self != Self::Surprise {
             return self;
@@ -203,6 +197,7 @@ impl PicasaTransition {
             Self::Cut => "cut",
         }
     }
+    #[cfg(test)]
     fn dropdown_index(self) -> u32 {
         match self {
             Self::Flip => 0,
@@ -210,6 +205,7 @@ impl PicasaTransition {
             Self::Cut => 2,
         }
     }
+    #[cfg(test)]
     fn from_dropdown(value: u32) -> Self {
         match value {
             0 => Self::Flip,
@@ -428,24 +424,107 @@ fn shuffle<T>(items: &mut [T]) {
     }
 }
 
-fn field(label: &str, control: &impl IsA<gtk::Widget>) -> gtk::Box {
-    let line = gtk::Box::new(gtk::Orientation::Horizontal, 9);
+fn option_cell(label: &str, control: &impl IsA<gtk::Widget>) -> gtk::Box {
+    let cell = gtk::Box::new(gtk::Orientation::Horizontal, 10);
     let title = gtk::Label::new(Some(label));
     title.set_xalign(0.0);
-    title.set_width_chars(11);
-    control.set_hexpand(true);
-    line.append(&title);
-    line.append(control);
-    line
+    title.set_hexpand(true);
+    control.set_halign(gtk::Align::End);
+    control.set_hexpand(false);
+    cell.append(&title);
+    cell.append(control);
+    cell
 }
 
-/// Small local, vector-only illustrations: no photo decoding or NFS I/O
-/// occurs while opening the style menu, even with an offline library.
-fn style_preview(style: Style) -> gtk::DrawingArea {
+fn inspector_group(title: &str) -> (gtk::Box, gtk::Box) {
+    let group = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    let heading = gtk::Label::new(Some(title));
+    heading.set_xalign(0.0);
+    heading.add_css_class("caption");
+    heading.add_css_class("dim-label");
+    let card = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    card.add_css_class("card");
+    group.append(&heading);
+    group.append(&card);
+    (group, card)
+}
+
+fn relayout_inspector_group(card: &gtk::Box, rows: &[gtk::Widget], visible: &[bool]) -> bool {
+    while let Some(child) = card.first_child() {
+        card.remove(&child);
+    }
+    let mut shown = 0;
+    for (row, show) in rows.iter().zip(visible.iter().copied()) {
+        row.set_visible(show);
+        if show {
+            if shown > 0 {
+                let separator = gtk::Separator::new(gtk::Orientation::Horizontal);
+                separator.add_css_class("screensaver-inspector-separator");
+                card.append(&separator);
+            }
+            row.set_margin_start(10);
+            row.set_margin_end(10);
+            row.set_margin_top(3);
+            row.set_margin_bottom(3);
+            card.append(row);
+            shown += 1;
+        }
+    }
+    shown > 0
+}
+
+fn option_flags(style: Style) -> [bool; 7] {
+    let multi = !style.single_photo() && style != Style::MatrixRain;
+    [
+        !style.single_photo() && style != Style::Flying,
+        style != Style::MatrixRain,
+        style == Style::PhotoDrift,
+        multi,
+        style.uses_photos(),
+        multi,
+        style.uses_photos(),
+    ]
+}
+
+fn transition_picker(initial: PicasaTransition) -> (gtk::Box, Rc<Cell<PicasaTransition>>) {
+    let selected = Rc::new(Cell::new(initial));
+    let group = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    group.add_css_class("linked");
+    let choices = [
+        (PicasaTransition::Flip, "Flip"),
+        (PicasaTransition::Crossfade, "Fade"),
+        (PicasaTransition::Cut, "Cut"),
+    ];
+    let buttons: Rc<RefCell<Vec<(PicasaTransition, gtk::ToggleButton)>>> =
+        Rc::new(RefCell::new(Vec::new()));
+    for (mode, label) in choices {
+        let button = gtk::ToggleButton::with_label(label);
+        button.set_active(mode == initial);
+        let selected = Rc::clone(&selected);
+        let buttons_for_click = Rc::clone(&buttons);
+        button.connect_clicked(move |_| {
+            selected.set(mode);
+            for (candidate, button) in buttons_for_click.borrow().iter() {
+                button.set_active(*candidate == mode);
+            }
+        });
+        buttons.borrow_mut().push((mode, button.clone()));
+        group.append(&button);
+    }
+    (group, selected)
+}
+
+/// Local vector illustrations scale into both the style list and the larger
+/// preview without decoding photos or touching remote storage.
+fn style_preview(style: Style, width: i32, height: i32) -> gtk::DrawingArea {
     let area = gtk::DrawingArea::new();
-    area.set_content_width(66);
-    area.set_content_height(42);
-    area.set_draw_func(move |_, cr, _, _| {
+    area.set_content_width(width);
+    area.set_content_height(height);
+    area.set_hexpand(true);
+    area.set_vexpand(true);
+    area.set_draw_func(move |_, cr, actual_width, actual_height| {
+        let _ = cr.save();
+        cr.scale(actual_width as f64 / 66.0, actual_height as f64 / 42.0);
         let rect = |x: f64, y: f64, w: f64, h: f64, rgb: (f64, f64, f64)| {
             cr.set_source_rgb(rgb.0, rgb.1, rgb.2);
             cr.rectangle(x, y, w, h);
@@ -607,69 +686,59 @@ fn style_preview(style: Style) -> gtk::DrawingArea {
                 let _ = cr.restore();
             }
         }
+        let _ = cr.restore();
     });
     area
 }
 
-/// Compact style selector with miniature previews in its popover. Selection
-/// is stored in a Cell and propagated to related controls by the callback.
-/// A directly visible horizontal gallery of vector
-/// previews. Scrolling does not decode photographs or touch remote storage.
+/// Five equal-width tiles keep the ten regular styles visible without scrolling.
 fn style_picker(
     initial: Style,
     terminal: bool,
     on_change: impl Fn(Style) + 'static,
-) -> (gtk::ScrolledWindow, Rc<Cell<Style>>) {
+) -> (gtk::Grid, Rc<Cell<Style>>) {
     let chosen = Rc::new(Cell::new(initial));
-    let scroller = gtk::ScrolledWindow::new();
-    scroller.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Never);
-    scroller.set_propagate_natural_width(false);
-    scroller.set_hexpand(true);
-    scroller.set_min_content_height(104);
-    scroller.set_max_content_height(104);
-    scroller.set_tooltip_text(Some("Scroll horizontally to choose a screensaver style"));
-
-    let cards = gtk::Box::new(gtk::Orientation::Horizontal, 7);
-    cards.set_margin_top(3);
-    cards.set_margin_bottom(6);
-    cards.set_margin_start(2);
-    cards.set_margin_end(2);
-    let buttons: Rc<RefCell<Vec<gtk::ToggleButton>>> = Rc::new(RefCell::new(Vec::new()));
+    let cards = gtk::Grid::new();
+    cards.set_column_homogeneous(true);
+    cards.set_row_spacing(6);
+    cards.set_column_spacing(6);
+    let buttons: Rc<RefCell<Vec<(Style, gtk::ToggleButton)>>> = Rc::new(RefCell::new(Vec::new()));
     let on_change: Rc<dyn Fn(Style)> = Rc::new(on_change);
-    for candidate in Style::CHOICES
+    for (index, candidate) in Style::CHOICES
         .into_iter()
         .filter(|style| style.available(terminal))
+        .enumerate()
     {
         let card = gtk::ToggleButton::new();
-        card.set_size_request(110, 85);
+        card.set_hexpand(true);
+        card.set_size_request(82, 70);
         card.set_active(candidate == initial);
         card.set_tooltip_text(Some(candidate.subtitle()));
-        let content = gtk::Box::new(gtk::Orientation::Vertical, 5);
+        card.add_css_class("screensaver-style-tile");
+        let content = gtk::Box::new(gtk::Orientation::Vertical, 2);
         content.set_halign(gtk::Align::Center);
-        content.set_margin_top(6);
-        content.set_margin_bottom(6);
-        content.append(&style_preview(candidate));
+        content.append(&style_preview(candidate, 46, 28));
         let title = gtk::Label::new(Some(candidate.label()));
-        title.set_ellipsize(gtk::pango::EllipsizeMode::End);
-        title.set_max_width_chars(14);
+        title.set_justify(gtk::Justification::Center);
+        title.set_wrap(true);
+        title.set_max_width_chars(12);
         title.add_css_class("caption");
         content.append(&title);
         card.set_child(Some(&content));
-        buttons.borrow_mut().push(card.clone());
-        let buttons = Rc::clone(&buttons);
+        buttons.borrow_mut().push((candidate, card.clone()));
+        let buttons_for_click = Rc::clone(&buttons);
         let chosen = Rc::clone(&chosen);
         let on_change = Rc::clone(&on_change);
         card.connect_clicked(move |_| {
             chosen.set(candidate);
-            for (index, button) in buttons.borrow().iter().enumerate() {
-                button.set_active(index == candidate.dropdown_index() as usize);
+            for (style, button) in buttons_for_click.borrow().iter() {
+                button.set_active(*style == candidate);
             }
             on_change(candidate);
         });
-        cards.append(&card);
+        cards.attach(&card, (index % 5) as i32, (index / 5) as i32, 1, 1);
     }
-    scroller.set_child(Some(&cards));
-    (scroller, chosen)
+    (cards, chosen)
 }
 
 /// Opens the settings/launch dialog without changing PIC's current viewer.
@@ -718,17 +787,18 @@ pub fn open(
 
     let dialog = gtk::Window::builder()
         .title("PIC Screensaver")
-        .default_width(444)
+        .default_width(920)
+        .default_height(600)
         .resizable(false)
         .modal(true)
         .transient_for(parent)
         .build();
     dialog.add_css_class("screensaver-settings-window");
     let body = gtk::Box::new(gtk::Orientation::Vertical, 10);
-    body.set_margin_top(18);
-    body.set_margin_bottom(18);
-    body.set_margin_start(18);
-    body.set_margin_end(18);
+    body.set_margin_top(16);
+    body.set_margin_bottom(16);
+    body.set_margin_start(16);
+    body.set_margin_end(16);
 
     let heading = gtk::Label::new(Some("Screensaver"));
     heading.add_css_class("title-2");
@@ -736,40 +806,10 @@ pub fn open(
     heading.set_xalign(0.0);
     body.append(&heading);
 
-    let picasa_transition = gtk::DropDown::from_strings(&["Flip", "Crossfade", "Cut"]);
-    picasa_transition.set_selected(current.picasa_transition.dropdown_index());
-    picasa_transition.set_tooltip_text(Some("Picasa Mosaic and Picture Pile only"));
-
-    // Keep large mosaic counts as integers; GTK spin adjustment uses f64.
-    let mosaic_tiles = gtk::Entry::new();
-    mosaic_tiles.set_text(&current.mosaic_tiles.to_string());
-    mosaic_tiles.set_width_chars(8);
-    mosaic_tiles.set_input_purpose(gtk::InputPurpose::Digits);
-    mosaic_tiles.set_tooltip_text(Some(
-        "Positive whole number of photos on screen (Picture Pile, Floating Prints, and Photo Drift: up to 64; Flying Photos: up to 32)",
-    ));
-
-    let shuffle_tiles_button = gtk::CheckButton::with_label("Shuffle tiles");
-    shuffle_tiles_button.set_active(current.shuffle_tiles);
-    shuffle_tiles_button.set_tooltip_text(Some("Change tile positions in a shuffled order"));
-
-    let style_heading = gtk::Label::new(Some("Choose a style"));
-    style_heading.set_xalign(0.0);
-    style_heading.add_css_class("heading");
-    style_heading.add_css_class("screensaver-dialog-heading");
-    body.append(&style_heading);
-    let picker_slot = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    body.append(&picker_slot);
-    let rain_note = gtk::Label::new(Some("Matrix Rain uses no photos."));
-    rain_note.set_xalign(0.0);
-    rain_note.add_css_class("dim-label");
-    body.append(&rain_note);
-
     let source_names: Vec<String> = sources.iter().map(|(name, _)| name.clone()).collect();
     let names: Vec<&str> = source_names.iter().map(String::as_str).collect();
     let source = gtk::DropDown::from_strings(&names);
-    // Playing an explicit selection should default to precisely those images,
-    // even if the saved source was an album or All Photos.
+    // Explicit selections default to precisely those images.
     let selected = if matches!(
         sources.first().map(|(_, kind)| kind),
         Some(Source::Selected(_))
@@ -782,147 +822,199 @@ pub fn open(
             .unwrap_or(0)
     };
     source.set_selected(selected as u32);
-    let source_field = field("Photos", &source);
-    body.append(&source_field);
-    let exclude_portraits = gtk::CheckButton::with_label("Exclude portrait photos");
-    exclude_portraits.set_active(current.exclude_portraits);
-    exclude_portraits.set_tooltip_text(Some(
+
+    let interval_scale = gtk::Scale::with_range(gtk::Orientation::Horizontal, 3.0, 30.0, 1.0);
+    interval_scale.set_value(current.seconds as f64);
+    interval_scale.set_digits(0);
+    interval_scale.set_draw_value(false);
+    interval_scale.set_hexpand(true);
+    interval_scale.set_width_request(110);
+    let interval_value = gtk::Label::new(None);
+    interval_value.set_width_chars(4);
+    interval_value.add_css_class("dim-label");
+    let interval_control = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    interval_control.append(&interval_scale);
+    interval_control.append(&interval_value);
+    let source_row = option_cell("Photos", &source);
+    let interval_row = option_cell("Change every", &interval_control);
+
+    let (transition_control, transition_selected) = transition_picker(current.picasa_transition);
+    transition_control.set_tooltip_text(Some("Tile transition style"));
+    let transition_row = option_cell("Transition", &transition_control);
+
+    let transition_time = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.2, 2.5, 0.1);
+    transition_time.set_value(current.transition_ms as f64 / 1000.0);
+    transition_time.set_digits(1);
+    transition_time.set_draw_value(false);
+    transition_time.set_width_request(110);
+    let transition_time_value = gtk::Label::new(None);
+    transition_time_value.set_width_chars(5);
+    transition_time_value.add_css_class("dim-label");
+    let transition_time_control = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    transition_time_control.append(&transition_time);
+    transition_time_control.append(&transition_time_value);
+    let animation_time = option_cell("Duration", &transition_time_control);
+
+    let movement_speed = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.25, 3.0, 0.25);
+    movement_speed.set_value(current.movement_speed);
+    movement_speed.set_digits(2);
+    movement_speed.set_draw_value(false);
+    movement_speed.set_width_request(110);
+    let movement_speed_value = gtk::Label::new(None);
+    movement_speed_value.set_width_chars(5);
+    movement_speed_value.add_css_class("dim-label");
+    let movement_control = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    movement_control.append(&movement_speed);
+    movement_control.append(&movement_speed_value);
+    let movement_row = option_cell("Speed", &movement_control);
+
+    let tile_max = current.mosaic_tiles.max(10_000) as f64;
+    let mosaic_tiles = gtk::Scale::with_range(gtk::Orientation::Horizontal, 1.0, tile_max, 1.0);
+    mosaic_tiles.set_value(current.mosaic_tiles as f64);
+    mosaic_tiles.set_digits(0);
+    mosaic_tiles.set_draw_value(false);
+    mosaic_tiles.set_width_request(110);
+    let mosaic_tiles_value = gtk::Label::new(None);
+    mosaic_tiles_value.set_width_chars(6);
+    mosaic_tiles_value.add_css_class("dim-label");
+    let tiles_control = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    tiles_control.append(&mosaic_tiles);
+    tiles_control.append(&mosaic_tiles_value);
+    let tiles_row = option_cell("Tiles", &tiles_control);
+    mosaic_tiles.set_tooltip_text(Some(
+        "Number of photos on screen; style-specific limits apply",
+    ));
+
+    let captions_switch = gtk::Switch::new();
+    captions_switch.set_active(current.captions);
+    captions_switch.set_tooltip_text(Some("Show photo filename and date from the library"));
+    let captions_row = option_cell("Captions", &captions_switch);
+    let clock_switch = gtk::Switch::new();
+    clock_switch.set_active(current.clock);
+    clock_switch.set_tooltip_text(Some("Show a discreet local-time clock"));
+    let clock_row = option_cell("Clock", &clock_switch);
+    let shuffle_photos_switch = gtk::Switch::new();
+    shuffle_photos_switch.set_active(current.shuffle);
+    let shuffle_photos_row = option_cell("Shuffle photos", &shuffle_photos_switch);
+    let shuffle_tiles_switch = gtk::Switch::new();
+    shuffle_tiles_switch.set_active(current.shuffle_tiles);
+    shuffle_tiles_switch.set_tooltip_text(Some("Change tile positions in a shuffled order"));
+    let shuffle_tiles_row = option_cell("Shuffle tiles", &shuffle_tiles_switch);
+    let exclude_portraits_switch = gtk::Switch::new();
+    exclude_portraits_switch.set_active(current.exclude_portraits);
+    exclude_portraits_switch.set_tooltip_text(Some(
         "Skip photos taller than they are wide after rotation and crop",
     ));
-    body.append(&exclude_portraits);
+    let exclude_portraits_row = option_cell("Skip portraits", &exclude_portraits_switch);
 
-    let duration = gtk::SpinButton::with_range(3.0, 30.0, 1.0);
-    duration.set_value(current.seconds as f64);
-    duration.set_tooltip_text(Some("Seconds per photo, photo-wall change or new flight"));
-
-    // Primary timing controls share one line; Tile count stays saved even
-    // for single-photo styles, but is insensitive when it has no effect.
-    let timing_row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-    let duration_group = gtk::Box::new(gtk::Orientation::Horizontal, 7);
-    duration_group.set_hexpand(true);
-    duration_group.append(&gtk::Label::new(Some("Duration")));
-    duration.set_hexpand(true);
-    duration_group.append(&duration);
-    let tiles_group = gtk::Box::new(gtk::Orientation::Horizontal, 7);
-    tiles_group.set_hexpand(true);
-    tiles_group.append(&gtk::Label::new(Some("Tiles")));
-    mosaic_tiles.set_hexpand(true);
-    tiles_group.append(&mosaic_tiles);
-    timing_row.append(&duration_group);
-    timing_row.append(&tiles_group);
-    body.append(&timing_row);
-
-    // Optional controls live in an inline, animated GTK Revealer. The child
-    // widgets stay alive when hidden, so choices and existing save semantics
-    // are identical to the old all-expanded settings form.
-    let advanced = gtk::Box::new(gtk::Orientation::Vertical, 10);
-    advanced.set_margin_top(8);
-
-    // A second, independent monotonic timer controls the amount of each
-    // change. Do not tie animation duration to the photo hold interval.
-    let transition_time = gtk::SpinButton::with_range(0.2, 2.5, 0.1);
-    transition_time.set_digits(1);
-    transition_time.set_value(current.transition_ms as f64 / 1000.0);
-    transition_time.set_tooltip_text(Some("Seconds to blend/flip between photos"));
-    let movement_speed = gtk::SpinButton::with_range(0.25, 3.0, 0.25);
-    movement_speed.set_digits(2);
-    movement_speed.set_value(current.movement_speed);
-    movement_speed.set_tooltip_text(Some(
-        "Adjust Photo Drift movement without changing how long photos stay on screen",
-    ));
-    let timing_options = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-    let transition_mode = field("Transition", &picasa_transition);
-    transition_mode.set_hexpand(true);
-    timing_options.append(&transition_mode);
-    let animation_time = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    let animation_label = gtk::Label::new(Some("Fade (s)"));
-    animation_time.append(&animation_label);
-    animation_time.append(&transition_time);
-    timing_options.append(&animation_time);
-    advanced.append(&timing_options);
-
-    let movement_row = gtk::Box::new(gtk::Orientation::Horizontal, 7);
-    movement_row.append(&gtk::Label::new(Some("Movement speed")));
-    movement_row.append(&movement_speed);
-    movement_row.append(&gtk::Label::new(Some("×")));
-    advanced.append(&movement_row);
-
-    let shuffle_row = gtk::Box::new(gtk::Orientation::Horizontal, 16);
-    let shuffle_button = gtk::CheckButton::with_label("Shuffle photos");
-    shuffle_button.set_active(current.shuffle);
-    shuffle_row.append(&shuffle_button);
-    shuffle_row.append(&shuffle_tiles_button);
-    advanced.append(&shuffle_row);
-
-    let overlays_row = gtk::Box::new(gtk::Orientation::Horizontal, 16);
-    let captions_button = gtk::CheckButton::with_label("Photo captions");
-    captions_button.set_active(current.captions);
-    captions_button.set_tooltip_text(Some("Show photo filename and date from the library"));
-    let clock_button = gtk::CheckButton::with_label("Clock");
-    clock_button.set_active(current.clock);
-    clock_button.set_tooltip_text(Some(
-        "Show a discreet local-time clock in the top-right corner",
-    ));
-    overlays_row.append(&captions_button);
-    overlays_row.append(&clock_button);
-    advanced.append(&field("Overlays", &overlays_row));
-
-    let revealer = gtk::Revealer::new();
-    revealer.set_transition_type(gtk::RevealerTransitionType::SlideDown);
-    revealer.set_transition_duration(210);
-    revealer.set_reveal_child(false);
-    revealer.set_child(Some(&advanced));
-    let advanced_toggle = gtk::ToggleButton::with_label("Advanced settings  ▾");
-    advanced_toggle.add_css_class("flat");
-    advanced_toggle.set_halign(gtk::Align::Fill);
-    advanced_toggle.set_tooltip_text(Some("Transitions, movement speed, shuffle and overlays"));
-    let reveal_for_toggle = revealer.clone();
-    advanced_toggle.connect_toggled(move |button| {
-        let expanded = button.is_active();
-        reveal_for_toggle.set_reveal_child(expanded);
-        button.set_label(if expanded {
-            "Advanced settings  ▴"
-        } else {
-            "Advanced settings  ▾"
-        });
-    });
-    body.append(&advanced_toggle);
-    body.append(&revealer);
-
-    let photo_controls: Vec<gtk::Widget> = vec![
-        source_field.clone().upcast(),
-        exclude_portraits.clone().upcast(),
-        timing_row.clone().upcast(),
-        advanced_toggle.clone().upcast(),
-        revealer.clone().upcast(),
+    let (source_group, source_card) = inspector_group("Source");
+    let (animation_group, animation_card) = inspector_group("Animation");
+    let (display_group, display_card) = inspector_group("Display");
+    let source_rows = vec![source_row.clone().upcast(), interval_row.clone().upcast()];
+    let animation_rows = vec![
+        transition_row.clone().upcast(),
+        animation_time.clone().upcast(),
+        movement_row.clone().upcast(),
+        tiles_row.clone().upcast(),
     ];
-    for widget in &photo_controls {
-        widget.set_visible(current.style.uses_photos());
-    }
-    rain_note.set_visible(!current.style.uses_photos());
-    let transition_for_style = picasa_transition.clone();
-    let speed_for_style = movement_speed.clone();
-    let mosaic_for_style = mosaic_tiles.clone();
-    let shuffle_for_style = shuffle_tiles_button.clone();
-    let note_for_style = rain_note.clone();
-    let (style_picker, style_selected) = style_picker(current.style, terminal, move |style| {
-        // A continuous flight has no per-photo flip, crossfade or cut; its
-        // "Fade (s)" value drives the entry fade instead.
-        transition_for_style.set_sensitive(!style.single_photo() && style != Style::Flying);
-        speed_for_style.set_sensitive(style == Style::PhotoDrift);
-        mosaic_for_style.set_sensitive(!style.single_photo());
-        shuffle_for_style.set_sensitive(!style.single_photo());
-        for widget in &photo_controls {
-            widget.set_visible(style.uses_photos());
-        }
-        note_for_style.set_visible(!style.uses_photos());
+    let display_rows = vec![
+        captions_row.clone().upcast(),
+        clock_row.clone().upcast(),
+        shuffle_photos_row.clone().upcast(),
+        shuffle_tiles_row.clone().upcast(),
+        exclude_portraits_row.clone().upcast(),
+    ];
+    let source_card_for_layout = source_card.clone();
+    let source_group_for_layout = source_group.clone();
+    let animation_card_for_layout = animation_card.clone();
+    let animation_group_for_layout = animation_group.clone();
+    let display_card_for_layout = display_card.clone();
+    let display_group_for_layout = display_group.clone();
+    let source_rows_for_layout = source_rows.clone();
+    let animation_rows_for_layout = animation_rows.clone();
+    let display_rows_for_layout = display_rows.clone();
+    let relayout: Rc<dyn Fn(Style)> = Rc::new(move |style| {
+        let flags = option_flags(style);
+        let has_photos = style.uses_photos();
+        let source_visible = relayout_inspector_group(
+            &source_card_for_layout,
+            &source_rows_for_layout,
+            &[has_photos, has_photos],
+        );
+        source_group_for_layout.set_visible(source_visible);
+        let animation_visible = relayout_inspector_group(
+            &animation_card_for_layout,
+            &animation_rows_for_layout,
+            &flags[..4],
+        );
+        animation_group_for_layout.set_visible(animation_visible);
+        let display_visible = relayout_inspector_group(
+            &display_card_for_layout,
+            &display_rows_for_layout,
+            &[has_photos, true, flags[4], flags[5], flags[6]],
+        );
+        display_group_for_layout.set_visible(display_visible);
     });
-    picasa_transition
-        .set_sensitive(!current.style.single_photo() && current.style != Style::Flying);
-    movement_speed.set_sensitive(current.style == Style::PhotoDrift);
-    mosaic_tiles.set_sensitive(!current.style.single_photo());
-    shuffle_tiles_button.set_sensitive(!current.style.single_photo());
-    picker_slot.append(&style_picker);
+
+    let preview_frame = gtk::Frame::new(None);
+    preview_frame.add_css_class("card");
+    preview_frame.set_hexpand(true);
+    let preview = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    preview.set_hexpand(true);
+    preview.set_vexpand(true);
+    preview.append(&style_preview(current.style, 520, 230));
+    preview_frame.set_child(Some(&preview));
+    let selected_title = gtk::Label::new(Some(current.style.label()));
+    selected_title.add_css_class("title-3");
+    selected_title.set_xalign(0.0);
+    let selected_subtitle = gtk::Label::new(Some(current.style.subtitle()));
+    selected_subtitle.add_css_class("dim-label");
+    selected_subtitle.set_xalign(0.0);
+
+    let style_heading = gtk::Label::new(Some("Styles"));
+    style_heading.set_xalign(0.0);
+    style_heading.add_css_class("caption");
+    style_heading.add_css_class("dim-label");
+    let gallery = gtk::Box::new(gtk::Orientation::Vertical, 5);
+    gallery.append(&style_heading);
+
+    let visual_column = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    visual_column.set_hexpand(true);
+    visual_column.append(&preview_frame);
+    visual_column.append(&selected_title);
+    visual_column.append(&selected_subtitle);
+    visual_column.append(&gallery);
+    let inspector = gtk::Box::new(gtk::Orientation::Vertical, 9);
+    inspector.set_width_request(300);
+    inspector.append(&source_group);
+    inspector.append(&animation_group);
+    inspector.append(&display_group);
+
+    let main_row = gtk::Box::new(gtk::Orientation::Horizontal, 18);
+    main_row.set_vexpand(true);
+    main_row.append(&visual_column);
+    main_row.append(&inspector);
+    body.append(&main_row);
+
+    let preview_for_style = preview.clone();
+    let title_for_style = selected_title.clone();
+    let subtitle_for_style = selected_subtitle.clone();
+    let relayout_for_style = Rc::clone(&relayout);
+    let update_style: Rc<dyn Fn(Style)> = Rc::new(move |style| {
+        if let Some(old) = preview_for_style.first_child() {
+            preview_for_style.remove(&old);
+        }
+        preview_for_style.append(&style_preview(style, 520, 230));
+        title_for_style.set_text(style.label());
+        subtitle_for_style.set_text(style.subtitle());
+        relayout_for_style(style);
+    });
+    let update_for_picker = Rc::clone(&update_style);
+    let (style_picker, style_selected) = style_picker(current.style, terminal, move |style| {
+        update_for_picker(style);
+    });
+    gallery.append(&style_picker);
+    update_style(current.style);
 
     let notice = gtk::Label::new(None);
     notice.set_visible(false);
@@ -933,14 +1025,58 @@ pub fn open(
 
     let footer = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     footer.set_margin_top(6);
-    footer.set_halign(gtk::Align::End);
+    let summary = gtk::Label::new(None);
+    summary.set_xalign(0.0);
+    summary.set_hexpand(true);
+    summary.add_css_class("dim-label");
     let cancel = gtk::Button::with_label("Cancel");
-    let start = gtk::Button::with_label("Start Screensaver");
+    let start = gtk::Button::with_label("Start");
     start.add_css_class("suggested-action");
+    footer.append(&summary);
     footer.append(&cancel);
     footer.append(&start);
     body.append(&footer);
     dialog.set_child(Some(&body));
+    let update_summary = {
+        let summary = summary.clone();
+        let source_names = source_names.clone();
+        let source = source.clone();
+        let interval_scale = interval_scale.clone();
+        Rc::new(move || {
+            let source_name = source_names
+                .get(source.selected() as usize)
+                .map(String::as_str)
+                .unwrap_or("Photos");
+            let interval = interval_scale.value().round() as u32;
+            summary.set_text(&format!("{source_name} · every {interval} s"));
+        }) as Rc<dyn Fn()>
+    };
+    update_summary();
+    let summary_for_source = Rc::clone(&update_summary);
+    source.connect_selected_notify(move |_| summary_for_source());
+    let interval_value_for_change = interval_value.clone();
+    let summary_for_interval = Rc::clone(&update_summary);
+    interval_scale.connect_value_changed(move |scale| {
+        interval_value_for_change.set_text(&format!("{} s", scale.value().round() as u32));
+        summary_for_interval();
+    });
+    interval_value.set_text(&format!("{} s", current.seconds));
+    let fade_value_for_change = transition_time_value.clone();
+    transition_time.connect_value_changed(move |scale| {
+        fade_value_for_change.set_text(&format!("{:.1} s", scale.value()));
+    });
+    let speed_value_for_change = movement_speed_value.clone();
+    movement_speed.connect_value_changed(move |scale| {
+        speed_value_for_change.set_text(&format!("{:.2}", scale.value()));
+    });
+    let tiles_value_for_change = mosaic_tiles_value.clone();
+    mosaic_tiles.connect_value_changed(move |scale| {
+        tiles_value_for_change.set_text(&format!("{}", scale.value().round() as usize));
+    });
+    transition_time_value.set_text(&format!("{:.1} s", current.transition_ms as f64 / 1000.0));
+    movement_speed_value.set_text(&format!("{:.2}", current.movement_speed));
+    mosaic_tiles_value.set_text(&current.mosaic_tiles.to_string());
+
     let dialog_for_cancel = dialog.downgrade();
     cancel.connect_clicked(move |_| {
         if let Some(dialog) = dialog_for_cancel.upgrade() {
@@ -956,28 +1092,23 @@ pub fn open(
             return;
         };
         let requested_tiles = if style_selected.get().uses_photos() {
-            match mosaic_tiles.text().trim().parse::<usize>() {
-            Ok(count) if count > 0 => count,
-            _ => {
-                notice.set_text("Tiles must be a positive whole number.");
-                notice.set_visible(true);
-                return;
-            }
-            }
-        } else { DEFAULT_MOSAIC_TILES };
+            mosaic_tiles.value().round().max(1.0) as usize
+        } else {
+            DEFAULT_MOSAIC_TILES
+        };
         let prefs = Preferences {
             style: style_selected.get(),
             source: photo_source.key(),
-            seconds: duration.value_as_int().clamp(3, 30) as u32,
-            shuffle: shuffle_button.is_active(),
-            exclude_portraits: exclude_portraits.is_active(),
-            shuffle_tiles: shuffle_tiles_button.is_active(),
+            seconds: (interval_scale.value().round() as u32).clamp(3, 30),
+            shuffle: shuffle_photos_switch.is_active(),
+            exclude_portraits: exclude_portraits_switch.is_active(),
+            shuffle_tiles: shuffle_tiles_switch.is_active(),
             mosaic_tiles: requested_tiles,
-            picasa_transition: PicasaTransition::from_dropdown(picasa_transition.selected()),
+            picasa_transition: transition_selected.get(),
             transition_ms: (transition_time.value() * 1000.0).round() as u32,
             movement_speed: movement_speed.value().clamp(0.25, 3.0),
-            captions: captions_button.is_active(),
-            clock: clock_button.is_active(),
+            captions: captions_switch.is_active(),
+            clock: clock_switch.is_active(),
         };
         if !prefs.style.uses_photos() {
             prefs.save(&connection.borrow());

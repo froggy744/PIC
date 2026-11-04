@@ -35,6 +35,10 @@ const FLOATING_SLOTS: usize = 6;
 /// Picture Pile / Floating Prints are painted with shadows every frame, so the
 /// user-chosen tile count is capped (walls have no such cap).
 const PRINT_MAX_SLOTS: usize = 64;
+/// Flying Photos keeps a bounded field of prints in the air. Every print in
+/// flight owns a live texture, so the count is capped more tightly than a
+/// still wall.
+const FLY_MAX_SLOTS: usize = 32;
 const TRANSITION_KEY: &str = "screensaver-transition-ms";
 const CAPTION_KEY: &str = "screensaver-captions";
 const CLOCK_KEY: &str = "screensaver-clock";
@@ -50,12 +54,13 @@ enum Style {
     IPhoto,
     Fade,
     CoverFlow,
+    Flying,
     Surprise,
     MatrixRain,
     MatrixKenBurns,
 }
 impl Style {
-    const CHOICES: [Self; 10] = [
+    const CHOICES: [Self; 11] = [
         Self::Mosaic,
         Self::Grid,
         Self::PicturePile,
@@ -63,6 +68,7 @@ impl Style {
         Self::IPhoto,
         Self::Fade,
         Self::CoverFlow,
+        Self::Flying,
         Self::Surprise,
         Self::MatrixRain,
         Self::MatrixKenBurns,
@@ -75,6 +81,7 @@ impl Style {
             "iphoto" => Self::IPhoto,
             "fade" => Self::Fade,
             "coverflow" => Self::CoverFlow,
+            "flying" => Self::Flying,
             "surprise" => Self::Surprise,
             "matrix-rain" => Self::MatrixRain,
             "matrix-ken-burns" => Self::MatrixKenBurns,
@@ -90,6 +97,7 @@ impl Style {
             Self::IPhoto => "iphoto",
             Self::Fade => "fade",
             Self::CoverFlow => "coverflow",
+            Self::Flying => "flying",
             Self::Surprise => "surprise",
             Self::MatrixRain => "matrix-rain",
             Self::MatrixKenBurns => "matrix-ken-burns",
@@ -105,8 +113,11 @@ impl Style {
         if self != Self::Surprise {
             return self;
         }
-        // Surprise stays within the ordinary styles in every theme.
-        Self::CHOICES[random_seed() as usize % 7]
+        // Surprise stays within the ordinary photo styles in every theme:
+        // every CHOICES entry except Surprise itself and the Terminal-only
+        // Matrix modes.
+        let ordinary = Self::CHOICES.len() - 3;
+        Self::CHOICES[random_seed() as usize % ordinary]
     }
     fn single_photo(self) -> bool {
         matches!(
@@ -140,6 +151,7 @@ impl Style {
             Self::IPhoto => "Ken Burns",
             Self::Fade => "Fullscreen Fade",
             Self::CoverFlow => "Cover Flow",
+            Self::Flying => "Flying Photos",
             Self::Surprise => "Surprise Me",
             Self::MatrixRain => "Matrix Rain",
             Self::MatrixKenBurns => "Matrix Ken Burns",
@@ -154,6 +166,7 @@ impl Style {
             Self::IPhoto => "Cinematic pan and zoom",
             Self::Fade => "Gentle full-screen slideshow",
             Self::CoverFlow => "Browse photos as a reflective Cover Flow",
+            Self::Flying => "Photographs fly in from the distance and past you",
             Self::Surprise => "Random style on launch",
             Self::MatrixRain => "Animated Katakana rain on black, no photos",
             Self::MatrixKenBurns => "Green photo with fixed Katakana streams and slow pan and zoom",
@@ -545,6 +558,20 @@ fn style_preview(style: Style) -> gtk::DrawingArea {
                     let _ = cr.stroke();
                 }
             }
+            Style::Flying => {
+                // Perspective, miniaturised: the vanishing point in the middle,
+                // prints growing as they approach and drifting out to the edges.
+                cr.set_source_rgba(1.0, 1.0, 1.0, 0.12);
+                cr.set_line_width(0.8);
+                for (dx, dy) in [(-26., -14.), (26., -12.), (-24., 15.), (24., 14.)] {
+                    cr.move_to(33.0, 21.0);
+                    cr.line_to(33.0 + dx, 21.0 + dy);
+                    let _ = cr.stroke();
+                }
+                photo(31.5, 19.5, 5.0, 3.4, 2);
+                photo(14.0, 7.0, 13.0, 9.0, 0);
+                photo(40.0, 24.0, 22.0, 15.0, 1);
+            }
             Style::Surprise => {
                 photo(4.0, 5.0, 24.0, 15.0, 1);
                 photo(4.0, 22.0, 24.0, 15.0, 2);
@@ -695,7 +722,7 @@ pub fn open(
     mosaic_tiles.set_width_chars(8);
     mosaic_tiles.set_input_purpose(gtk::InputPurpose::Digits);
     mosaic_tiles.set_tooltip_text(Some(
-        "Positive whole number of photos on screen (Picture Pile and Floating Prints: up to 64)",
+        "Positive whole number of photos on screen (Picture Pile and Floating Prints: up to 64, Flying Photos: up to 32)",
     ));
 
     let shuffle_tiles_button = gtk::CheckButton::with_label("Shuffle tiles");
@@ -742,7 +769,7 @@ pub fn open(
 
     let duration = gtk::SpinButton::with_range(3.0, 30.0, 1.0);
     duration.set_value(current.seconds as f64);
-    duration.set_tooltip_text(Some("Seconds per photo or photo-wall change"));
+    duration.set_tooltip_text(Some("Seconds per photo, photo-wall change or new flight"));
 
     // Primary timing controls share one line; Tile count stays saved even
     // for single-photo styles, but is insensitive when it has no effect.
@@ -842,7 +869,9 @@ pub fn open(
     let shuffle_for_style = shuffle_tiles_button.clone();
     let note_for_style = rain_note.clone();
     let (style_picker, style_selected) = style_picker(current.style, terminal, move |style| {
-        transition_for_style.set_sensitive(!style.single_photo());
+        // A continuous flight has no per-photo flip, crossfade or cut; its
+        // "Fade (s)" value drives the entry fade instead.
+        transition_for_style.set_sensitive(!style.single_photo() && style != Style::Flying);
         mosaic_for_style.set_sensitive(!style.single_photo());
         shuffle_for_style.set_sensitive(!style.single_photo());
         for widget in &photo_controls {
@@ -850,7 +879,8 @@ pub fn open(
         }
         note_for_style.set_visible(!style.uses_photos());
     });
-    picasa_transition.set_sensitive(!current.style.single_photo());
+    picasa_transition
+        .set_sensitive(!current.style.single_photo() && current.style != Style::Flying);
     mosaic_tiles.set_sensitive(!current.style.single_photo());
     shuffle_tiles_button.set_sensitive(!current.style.single_photo());
     picker_slot.append(&style_picker);
@@ -1079,6 +1109,16 @@ fn start_decode_worker(
                     // source photos at display resolution instead of using
                     // the low-resolution preview path.
                     Style::CoverFlow => (2560, 1600),
+                    // Flying prints grow until they pass the lens, so they are
+                    // decoded close to display size. The flight field is capped,
+                    // which keeps the number of live textures bounded.
+                    Style::Flying => {
+                        if mosaic_tiles <= 6 {
+                            (1920, 1280)
+                        } else {
+                            (1440, 960)
+                        }
+                    }
                     _ => (2560, 1600),
                 };
                 let started = Instant::now();
@@ -1211,6 +1251,7 @@ impl Player {
         let desired_slots = match style {
             Style::Mosaic | Style::Grid => mosaic_tiles.max(1),
             Style::PicturePile | Style::Floating => mosaic_tiles.clamp(1, PRINT_MAX_SLOTS),
+            Style::Flying => mosaic_tiles.clamp(1, FLY_MAX_SLOTS),
             _ => 0,
         };
         let slots = (0..desired_slots.min(count)).collect::<Vec<_>>();
@@ -2445,5 +2486,33 @@ mod tests {
                 .len(),
             100
         );
+    }
+
+    #[test]
+    fn flying_photos_is_a_library_style_with_a_bounded_flight_field() {
+        assert_eq!(Style::from_saved("flying"), Style::Flying);
+        assert_eq!(Style::Flying.key(), "flying");
+        assert_eq!(Style::Flying.label(), "Flying Photos");
+        assert!(Style::Flying.uses_photos());
+        assert!(!Style::Flying.single_photo());
+        assert!(Style::Flying.available(false));
+        assert_eq!(Style::Flying.for_theme(false), Style::Flying);
+        // Player slots are the prints in the air, capped so live textures stay
+        // bounded, and never more than the library can supply.
+        assert_eq!(
+            Player::new(Style::Flying, 500, 6, false, 999).slots.len(),
+            FLY_MAX_SLOTS
+        );
+        assert_eq!(Player::new(Style::Flying, 500, 6, false, 4).slots.len(), 4);
+        assert_eq!(Player::new(Style::Flying, 3, 6, false, 6).slots.len(), 3);
+        // Surprise Me must be able to pick the new style.
+        let mut picked = false;
+        for _ in 0..400 {
+            if Style::Surprise.resolved() == Style::Flying {
+                picked = true;
+                break;
+            }
+        }
+        assert!(picked, "Surprise Me ignores Flying Photos");
     }
 }

@@ -63,7 +63,7 @@ Move any slider and the preview updates instantly. The little numbers next to ea
 
 ### 🎨 Filters — one-tap looks with live previews
 
-The Filters tab shows your photo as a grid of **live preview tiles** — every filter rendered on *your actual photo*, so what you see is exactly what you get. Try **Clarendon, Gingham, Juno, Lark, Valencia, Walden**, plus fun ones like **Pencil Sketch, Disposable Film, Digicam Flash, Dream Glow, Cinematic** and **Golden Hour**, **Old Photo** (warm, faded film texture), and **Newspaper** (warm paper and ordered black-ink halftone). Click a tile to apply it, click **Original** to return to the unfiltered recipe.
+The Filters tab shows your photo as a grid of **live preview tiles** — every filter rendered on *your actual photo*, so what you see is exactly what you get. For instant impact try **Wow** (deep blacks, punchy contrast, vivid teal-and-orange colour) or **Clarendon**, **Gingham, Juno, Lark, Valencia, Walden**, plus fun ones like **Pencil Sketch, Disposable Film, Digicam Flash, Dream Glow, Cinematic** and **Golden Hour**, **Old Photo** (warm, faded film texture), and **Newspaper** (warm paper and ordered black-ink halftone). Click a tile to apply it, click **Original** to return to the unfiltered recipe.
 
 Filter looks, Clarity, Grain, Auto Contrast, Auto Colour, Auto Brightness and Auto Enhance all use the same non-destructive recipe for editing and export. Auto Contrast protects against extreme percentile stretches; Auto Colour uses near-neutral areas rather than neutralising intentional sunsets or colourful subjects. Auto Enhance uses the CPU reference path while active; other GPU-supported edits retain GPU acceleration.
 

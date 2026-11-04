@@ -3142,6 +3142,10 @@ mod panel_tests {
             assert_eq!(FilterPreset::decode(preset.key()), preset);
         }
         assert!(effects.contains(&FilterTileEffect::Preset(FilterPreset::Posterize)));
+        assert!(
+            effects.contains(&FilterTileEffect::Preset(FilterPreset::Wow)),
+            "the Wow preset must appear in the filter picker"
+        );
     }
 
     #[test]

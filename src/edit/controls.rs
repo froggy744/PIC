@@ -12,6 +12,7 @@ impl FilterTileEffect {
             (
                 "COLOUR",
                 vec![
+                    Self::Preset(FilterPreset::Wow),
                     Self::Preset(FilterPreset::Clarendon),
                     Self::Preset(FilterPreset::Juno),
                     Self::Preset(FilterPreset::Cinematic),

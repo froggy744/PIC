@@ -9,6 +9,8 @@ mod cinema;
 use cinema::Cinema;
 mod coverflow;
 use coverflow::CoverFlow;
+mod flying;
+use flying::Flying;
 
 // 60 steps with per-frame CSS transform interpolation gives a smooth
 // GSK-composited flip without creating new thumbnails or touching the layout.
@@ -456,6 +458,7 @@ pub(super) struct Stage {
     cinema: Option<Cinema>,
     coverflow: Option<CoverFlow>,
     pile: Option<Pile>,
+    flying: Option<Flying>,
     trace: bool,
     traced_change: Option<usize>,
     traced_settle: Option<usize>,
@@ -479,6 +482,14 @@ impl Stage {
             None
         };
         let coverflow = (style == Style::CoverFlow).then(|| CoverFlow::new(&root));
+        // Flying Photos is one custom widget that paints every print in a
+        // single GSK snapshot (see flying.rs); the Player's slots are the
+        // photographs that are in the air.
+        let flying = (style == Style::Flying).then(|| {
+            let flying = Flying::new();
+            root.put(&flying.canvas, 0.0, 0.0);
+            flying
+        });
         // Avoid blocking GTK with the creation of thousands of overlays
         // before the fullscreen surface appears. Additional square tiles are
         // materialised in small frame-clock batches.
@@ -489,7 +500,7 @@ impl Stage {
             root.put(&pile.canvas, 0.0, 0.0);
             pile
         });
-        let desired_tiles = if style.single_photo() || pile.is_some() {
+        let desired_tiles = if style.single_photo() || pile.is_some() || flying.is_some() {
             0
         } else {
             count
@@ -507,6 +518,7 @@ impl Stage {
             cinema,
             coverflow,
             pile,
+            flying,
             trace,
             traced_change: None,
             traced_settle: None,
@@ -580,6 +592,10 @@ impl Stage {
         }
         if let Some(pile) = self.pile.as_mut() {
             pile.sync(player, w, h, frame_time);
+            return;
+        }
+        if let Some(flying) = self.flying.as_mut() {
+            flying.sync(player, w, h, frame_time);
             return;
         }
         let pending = self.desired_tiles.saturating_sub(self.tiles.len());

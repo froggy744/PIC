@@ -44,11 +44,12 @@ pub enum FilterPreset {
     Posterize,
     Solarize,
     NeonGradient,
+    Wow,
 }
 
 impl FilterPreset {
     #[cfg(test)]
-    pub const ALL: [FilterPreset; 33] = [
+    pub const ALL: [FilterPreset; 34] = [
         FilterPreset::Clarendon,
         FilterPreset::Gingham,
         FilterPreset::Juno,
@@ -82,6 +83,7 @@ impl FilterPreset {
         Self::Posterize,
         Self::Solarize,
         Self::NeonGradient,
+        Self::Wow,
     ];
 
     pub fn label(self) -> &'static str {
@@ -120,6 +122,7 @@ impl FilterPreset {
             Self::Posterize => "Posterize",
             Self::Solarize => "Solarize",
             Self::NeonGradient => "Neon Gradient",
+            Self::Wow => "Wow",
         }
     }
 
@@ -159,6 +162,7 @@ impl FilterPreset {
             Self::Posterize => "posterize",
             Self::Solarize => "solarize",
             Self::NeonGradient => "neon_gradient",
+            Self::Wow => "wow",
         }
     }
 
@@ -197,6 +201,7 @@ impl FilterPreset {
             "posterize" => Self::Posterize,
             "solarize" => Self::Solarize,
             "neon_gradient" => Self::NeonGradient,
+            "wow" => Self::Wow,
             _ => Self::None,
         }
     }
@@ -446,6 +451,19 @@ pub(crate) fn params(preset: FilterPreset) -> FilterParams {
             saturation: 1.12,
             contrast: 0.16,
             ..params(FilterPreset::None)
+        },
+        // Signature "wow factor" look: deep blacks, punchy contrast, vivid
+        // colour and a teal-shadow/orange-highlight split tone.
+        FilterPreset::Wow => FilterParams {
+            exposure: 1.03,
+            shadow_lift: 0.012,
+            tint: (0.99, 1.0, 1.03),
+            shadow_tone: (0.80, 0.94, 1.18),
+            highlight_tone: (1.14, 1.03, 0.86),
+            split_strength: 0.5,
+            saturation: 1.50,
+            contrast: 0.48,
+            vignette: 0.14,
         },
         FilterPreset::None
         | FilterPreset::PencilSketch
@@ -771,6 +789,41 @@ mod tests {
         for preset in [FilterPreset::Newspaper, FilterPreset::OldPhoto] {
             assert_eq!(FilterPreset::decode(preset.key()), preset);
         }
+    }
+
+    #[test]
+    fn wow_preset_is_available_vivid_and_distinct() {
+        let preset = FilterPreset::decode("wow");
+        assert_eq!(preset, FilterPreset::Wow);
+        assert_eq!(preset.label(), "Wow");
+        assert_eq!(preset.key(), "wow");
+        assert!(FilterPreset::ALL.contains(&preset));
+
+        // A mid-tone colour photo must gain punch: wider channel spread and
+        // deeper darks than the original (the "wow factor" signature).
+        let source = RgbaImage::from_fn(16, 16, |x, y| {
+            Rgba([90 + (x * 3) as u8, 110 + (y * 2) as u8, 140, 255])
+        });
+        let mut wow = source.clone();
+        apply_filter(&mut wow, preset);
+        assert_ne!(wow.as_raw(), source.as_raw());
+        let chroma = |image: &RgbaImage| {
+            image
+                .pixels()
+                .map(|p| {
+                    let max = p[0].max(p[1]).max(p[2]) as i32;
+                    let min = p[0].min(p[1]).min(p[2]) as i32;
+                    max - min
+                })
+                .sum::<i32>()
+        };
+        assert!(chroma(&wow) > chroma(&source), "Wow must intensify colour");
+        let source_dark_luma = source.pixels().map(|p| p[0] as i32).sum::<i32>();
+        let wow_dark_luma = wow.pixels().map(|p| p[0] as i32).sum::<i32>();
+        assert!(
+            wow_dark_luma < source_dark_luma,
+            "Wow must deepen red-channel darks"
+        );
     }
 
     #[test]

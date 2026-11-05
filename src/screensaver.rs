@@ -28,6 +28,7 @@ const SHUFFLE_TILES_KEY: &str = "screensaver-shuffle-tiles";
 const MOSAIC_TILES_KEY: &str = "screensaver-mosaic-tiles";
 const PICASA_TRANSITION_KEY: &str = "screensaver-picasa-transition";
 const DEFAULT_MOSAIC_TILES: usize = 6;
+const MAX_WALL_TILES: usize = 10_000;
 /// Largest count with hand-placed layouts in print_rect(); beyond these the
 /// prints are scattered over a computed grid so any tile count works.
 const PICTURE_PILE_SLOTS: usize = 5;
@@ -63,6 +64,13 @@ enum Style {
     MatrixKenBurns,
 }
 impl Style {
+    fn default_tiles(self) -> usize {
+        match self {
+            Self::Flying | Self::PhotoDrift => 30,
+            Self::Floating => 12,
+            _ => DEFAULT_MOSAIC_TILES,
+        }
+    }
     const CHOICES: [Self; 12] = [
         Self::Mosaic,
         Self::Grid,
@@ -286,8 +294,9 @@ impl Preferences {
                 .flatten()
                 .unwrap_or_default()
         };
+        let style = Style::from_saved(&setting(STYLE_KEY));
         Self {
-            style: Style::from_saved(&setting(STYLE_KEY)),
+            style,
             source: setting(SOURCE_KEY),
             seconds: setting(DURATION_KEY)
                 .parse::<u32>()
@@ -300,7 +309,7 @@ impl Preferences {
                 .parse::<usize>()
                 .ok()
                 .filter(|count| *count > 0)
-                .unwrap_or(DEFAULT_MOSAIC_TILES),
+                .unwrap_or(style.default_tiles()),
             picasa_transition: PicasaTransition::from_saved(&setting(PICASA_TRANSITION_KEY)),
             transition_ms: setting(TRANSITION_KEY)
                 .parse::<u32>()
@@ -874,6 +883,7 @@ pub fn open(
     interval_scale.set_value(current.seconds as f64);
     interval_scale.set_digits(0);
     interval_scale.set_draw_value(false);
+    interval_scale.add_mark(6.0, gtk::PositionType::Bottom, None);
     interval_scale.set_hexpand(true);
     interval_scale.set_width_request(110);
     let interval_value = gtk::Label::new(None);
@@ -893,6 +903,7 @@ pub fn open(
     transition_time.set_value(current.transition_ms as f64 / 1000.0);
     transition_time.set_digits(1);
     transition_time.set_draw_value(false);
+    transition_time.add_mark(0.9, gtk::PositionType::Bottom, None);
     transition_time.set_width_request(110);
     let transition_time_value = gtk::Label::new(None);
     transition_time_value.set_width_chars(5);
@@ -906,6 +917,7 @@ pub fn open(
     movement_speed.set_value(current.movement_speed);
     movement_speed.set_digits(2);
     movement_speed.set_draw_value(false);
+    movement_speed.add_mark(1.0, gtk::PositionType::Bottom, None);
     movement_speed.set_width_request(110);
     let movement_speed_value = gtk::Label::new(None);
     movement_speed_value.set_width_chars(5);
@@ -915,21 +927,25 @@ pub fn open(
     movement_control.append(&movement_speed_value);
     let movement_row = option_cell("Speed", &movement_control);
 
-    let tile_max = current.mosaic_tiles.max(10_000) as f64;
-    let mosaic_tiles = gtk::Scale::with_range(gtk::Orientation::Horizontal, 1.0, tile_max, 1.0);
+    let mosaic_tiles = gtk::Scale::with_range(
+        gtk::Orientation::Horizontal,
+        1.0,
+        MAX_WALL_TILES as f64,
+        1.0,
+    );
     mosaic_tiles.set_value(current.mosaic_tiles as f64);
     mosaic_tiles.set_digits(0);
     mosaic_tiles.set_draw_value(false);
-    mosaic_tiles.set_width_request(110);
-    let mosaic_tiles_value = gtk::Label::new(None);
-    mosaic_tiles_value.set_width_chars(6);
-    mosaic_tiles_value.add_css_class("dim-label");
+    mosaic_tiles.set_width_request(94);
+    let mosaic_tiles_value = gtk::SpinButton::new(Some(&mosaic_tiles.adjustment()), 1.0, 0);
+    mosaic_tiles_value.set_width_chars(5);
+    mosaic_tiles_value.set_tooltip_text(Some("Enter an exact tile count"));
     let tiles_control = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     tiles_control.append(&mosaic_tiles);
     tiles_control.append(&mosaic_tiles_value);
     let tiles_row = option_cell("Tiles", &tiles_control);
     mosaic_tiles.set_tooltip_text(Some(
-        "Number of photos on screen; style-specific limits apply",
+        "Photos repeat when needed. Mosaic and Changing Grid support up to 10,000 tiles; animated print styles have smaller limits.",
     ));
 
     let captions_switch = gtk::Switch::new();
@@ -1114,7 +1130,24 @@ pub fn open(
     let title_for_style = selected_title.clone();
     let subtitle_for_style = selected_subtitle.clone();
     let relayout_for_style = Rc::clone(&relayout);
+    let tiles_for_style = mosaic_tiles.clone();
     let update_style: Rc<dyn Fn(Style)> = Rc::new(move |style| {
+        let style_changed = colour_style.get() != style;
+        let limit = match style {
+            Style::PicturePile | Style::Floating | Style::PhotoDrift => PRINT_MAX_SLOTS,
+            Style::Flying => FLY_MAX_SLOTS,
+            _ => MAX_WALL_TILES,
+        };
+        tiles_for_style.set_range(1.0, limit as f64);
+        tiles_for_style.clear_marks();
+        tiles_for_style.add_mark(
+            style.default_tiles() as f64,
+            gtk::PositionType::Bottom,
+            None,
+        );
+        if style_changed {
+            tiles_for_style.set_value(style.default_tiles() as f64);
+        }
         colour_style.set(style);
         update_colour_swatch();
         if let Some(old) = preview_for_style.first_child() {
@@ -1146,10 +1179,12 @@ pub fn open(
     summary.set_hexpand(true);
     summary.add_css_class("dim-label");
     let cancel = gtk::Button::with_label("Cancel");
+    let reset = gtk::Button::with_label("Reset");
     let start = gtk::Button::with_label("Start");
     start.add_css_class("suggested-action");
     footer.append(&summary);
     footer.append(&cancel);
+    footer.append(&reset);
     footer.append(&start);
     body.append(&footer);
     dialog.set_child(Some(&body));
@@ -1185,13 +1220,51 @@ pub fn open(
     movement_speed.connect_value_changed(move |scale| {
         speed_value_for_change.set_text(&format!("{:.2}", scale.value()));
     });
-    let tiles_value_for_change = mosaic_tiles_value.clone();
-    mosaic_tiles.connect_value_changed(move |scale| {
-        tiles_value_for_change.set_text(&format!("{}", scale.value().round() as usize));
-    });
     transition_time_value.set_text(&format!("{:.1} s", current.transition_ms as f64 / 1000.0));
     movement_speed_value.set_text(&format!("{:.2}", current.movement_speed));
-    mosaic_tiles_value.set_text(&current.mosaic_tiles.to_string());
+
+    {
+        let source = source.clone();
+        let interval_scale = interval_scale.clone();
+        let transition_time = transition_time.clone();
+        let movement_speed = movement_speed.clone();
+        let mosaic_tiles = mosaic_tiles.clone();
+        let captions_switch = captions_switch.clone();
+        let clock_switch = clock_switch.clone();
+        let shuffle_photos_switch = shuffle_photos_switch.clone();
+        let shuffle_tiles_switch = shuffle_tiles_switch.clone();
+        let exclude_portraits_switch = exclude_portraits_switch.clone();
+        let background_colour = Rc::clone(&background_colour);
+        let default_style = style_picker
+            .child_at(0, 0)
+            .unwrap()
+            .downcast::<gtk::ToggleButton>()
+            .unwrap();
+        let default_transition = transition_control
+            .first_child()
+            .unwrap()
+            .next_sibling()
+            .unwrap()
+            .downcast::<gtk::ToggleButton>()
+            .unwrap();
+        let notice = notice.clone();
+        reset.connect_clicked(move |_| {
+            background_colour.set(None);
+            default_style.emit_clicked();
+            default_transition.emit_clicked();
+            source.set_selected(0);
+            interval_scale.set_value(6.0);
+            transition_time.set_value(0.9);
+            movement_speed.set_value(1.0);
+            mosaic_tiles.set_value(DEFAULT_MOSAIC_TILES as f64);
+            captions_switch.set_active(false);
+            clock_switch.set_active(false);
+            shuffle_photos_switch.set_active(true);
+            shuffle_tiles_switch.set_active(true);
+            exclude_portraits_switch.set_active(false);
+            notice.set_visible(false);
+        });
+    }
 
     let dialog_for_cancel = dialog.downgrade();
     cancel.connect_clicked(move |_| {
@@ -1538,14 +1611,20 @@ impl Player {
         mosaic_tiles: usize,
     ) -> Self {
         let desired_slots = match style {
-            Style::Mosaic | Style::Grid => mosaic_tiles.max(1),
+            Style::Mosaic | Style::Grid => mosaic_tiles.clamp(1, MAX_WALL_TILES),
             Style::PicturePile | Style::Floating | Style::PhotoDrift => {
                 mosaic_tiles.clamp(1, PRINT_MAX_SLOTS)
             }
             Style::Flying => mosaic_tiles.clamp(1, FLY_MAX_SLOTS),
             _ => 0,
         };
-        let slots = (0..desired_slots.min(count)).collect::<Vec<_>>();
+        let slots = if count == 0 {
+            Vec::new()
+        } else {
+            (0..desired_slots)
+                .map(|slot| slot % count)
+                .collect::<Vec<_>>()
+        };
         let mut tile_order = (0..slots.len()).collect::<Vec<_>>();
         if shuffle_tiles {
             shuffle(&mut tile_order);
@@ -1559,7 +1638,11 @@ impl Player {
             switched_at: Instant::now(),
             started: false,
             paused_at: None,
-            next: if style.single_photo() { 1 } else { slots.len() },
+            next: if style.single_photo() {
+                1
+            } else {
+                slots.len().min(count)
+            },
             current: 0,
             previous: None,
             slots,
@@ -1644,6 +1727,28 @@ impl Player {
                 self.backfill_pending.insert(index);
                 self.request(index, tx);
                 available -= 1;
+            }
+            // If every unused photo has been tried, reuse decoded photos for
+            // failed slots, including repeated occurrences of the same photo.
+            if self.backfill_cursor >= self.count && self.backfill_pending.is_empty() {
+                let replacements: Vec<_> = self
+                    .frames
+                    .keys()
+                    .copied()
+                    .filter(|id| !self.failed.contains(id))
+                    .collect();
+                if !replacements.is_empty() {
+                    let mut replaced = false;
+                    for (slot, id) in self.slots.iter_mut().enumerate() {
+                        if self.failed.contains(id) && !self.frames.contains_key(id) {
+                            *id = replacements[slot % replacements.len()];
+                            replaced = true;
+                        }
+                    }
+                    if replaced {
+                        self.next_revision = self.next_revision.wrapping_add(1);
+                    }
+                }
             }
             for i in 0..PREFETCH {
                 self.request((self.next + i) % self.count, tx);
@@ -2286,6 +2391,31 @@ mod tests {
     }
 
     #[test]
+    fn tile_defaults_follow_the_saved_style_and_preserve_custom_counts() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+            .unwrap();
+        for (style, expected) in [
+            ("flying", 30),
+            ("photo-drift", 30),
+            ("floating", 12),
+            ("pile", 6),
+            ("mosaic", 6),
+            ("grid", 6),
+        ] {
+            db::set_setting(&connection, STYLE_KEY, style).unwrap();
+            assert_eq!(
+                Preferences::load(&connection).mosaic_tiles,
+                expected,
+                "{style}"
+            );
+        }
+        db::set_setting(&connection, MOSAIC_TILES_KEY, "17").unwrap();
+        assert_eq!(Preferences::load(&connection).mosaic_tiles, 17);
+    }
+
+    #[test]
     fn screensaver_background_colour_is_saved_and_defaults_to_style_background() {
         let connection = Connection::open_in_memory().unwrap();
         connection
@@ -2427,6 +2557,140 @@ mod tests {
                 clock.measure(orientation, -1).1
             );
         }
+        dialog.close();
+    }
+
+    #[test]
+    #[ignore = "requires a GTK display"]
+    fn reset_restores_dialog_defaults_without_saving() {
+        fn find(
+            widget: &gtk::Widget,
+            matches: &dyn Fn(&gtk::Widget) -> bool,
+        ) -> Option<gtk::Widget> {
+            if matches(widget) {
+                return Some(widget.clone());
+            }
+            let mut child = widget.first_child();
+            while let Some(current) = child {
+                if let Some(found) = find(&current, matches) {
+                    return Some(found);
+                }
+                child = current.next_sibling();
+            }
+            None
+        }
+        libadwaita::init().unwrap();
+        let connection = Rc::new(RefCell::new(Connection::open_in_memory().unwrap()));
+        connection
+            .borrow()
+            .execute_batch("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+            .unwrap();
+        db::set_setting(&connection.borrow(), STYLE_KEY, "fade").unwrap();
+        db::set_setting(&connection.borrow(), CLOCK_KEY, "true").unwrap();
+        db::set_setting(&connection.borrow(), DURATION_KEY, "20").unwrap();
+        let parent = adw::ApplicationWindow::builder().build();
+        open(&parent, Rc::clone(&connection), vec![42], "PIC-Default");
+        let dialog = gtk::Window::list_toplevels()
+            .into_iter()
+            .filter_map(|widget| widget.downcast::<gtk::Window>().ok())
+            .find(|window| window.title().as_deref() == Some("PIC Screensaver"))
+            .unwrap();
+        let root = dialog.upcast_ref();
+        let reset = find(root, &|widget| {
+            widget
+                .downcast_ref::<gtk::Button>()
+                .is_some_and(|button| button.label().as_deref() == Some("Reset"))
+        })
+        .unwrap()
+        .downcast::<gtk::Button>()
+        .unwrap();
+        assert_eq!(
+            reset
+                .prev_sibling()
+                .unwrap()
+                .downcast::<gtk::Button>()
+                .unwrap()
+                .label()
+                .as_deref(),
+            Some("Cancel")
+        );
+        assert_eq!(
+            reset
+                .next_sibling()
+                .unwrap()
+                .downcast::<gtk::Button>()
+                .unwrap()
+                .label()
+                .as_deref(),
+            Some("Start")
+        );
+        reset.emit_clicked();
+        let label = |text: &str| {
+            find(root, &|widget| {
+                widget
+                    .downcast_ref::<gtk::Label>()
+                    .is_some_and(|label| label.text() == text)
+            })
+            .unwrap()
+        };
+        let clock = label("Clock")
+            .next_sibling()
+            .unwrap()
+            .downcast::<gtk::Switch>()
+            .unwrap();
+        assert!(!clock.is_active());
+        let interval = label("Change every")
+            .next_sibling()
+            .unwrap()
+            .first_child()
+            .unwrap()
+            .downcast::<gtk::Scale>()
+            .unwrap();
+        assert_eq!(interval.value(), 6.0);
+        assert!(find(root, &|widget| widget
+            .downcast_ref::<gtk::Label>()
+            .is_some_and(|label| label.text() == "Square Picasa photo wall"))
+        .is_some());
+        let source = label("Photos")
+            .next_sibling()
+            .unwrap()
+            .downcast::<gtk::DropDown>()
+            .unwrap();
+        assert_eq!(source.selected(), 0);
+        for (style, expected) in [
+            (Style::Flying, 30.0),
+            (Style::PhotoDrift, 30.0),
+            (Style::Floating, 12.0),
+            (Style::PicturePile, 6.0),
+            (Style::Grid, 6.0),
+            (Style::Mosaic, 6.0),
+        ] {
+            let button = find(root, &|widget| {
+                widget
+                    .downcast_ref::<gtk::ToggleButton>()
+                    .is_some_and(|button| {
+                        button.tooltip_text().as_deref() == Some(style.subtitle())
+                    })
+            })
+            .unwrap()
+            .downcast::<gtk::ToggleButton>()
+            .unwrap();
+            button.emit_clicked();
+            let tiles = label("Tiles")
+                .next_sibling()
+                .unwrap()
+                .last_child()
+                .unwrap()
+                .downcast::<gtk::SpinButton>()
+                .unwrap();
+            assert_eq!(tiles.value(), expected, "{style:?}");
+        }
+        assert_eq!(
+            db::setting(&connection.borrow(), STYLE_KEY)
+                .unwrap()
+                .as_deref(),
+            Some("fade")
+        );
         dialog.close();
     }
 
@@ -2700,7 +2964,7 @@ mod tests {
         pile.update(&tx);
         assert_eq!(pile.changes, 0);
         assert_eq!(pile.fading_slot, None);
-        assert_eq!(pile.slots, vec![0, 1, 2, 3]);
+        assert_eq!(pile.slots, vec![0, 1, 2, 3, 0, 1, 2, 3, 0, 1]);
     }
 
     #[test]
@@ -2843,7 +3107,7 @@ mod tests {
             assert_eq!(pile.slots.len(), n.clamp(1, PRINT_MAX_SLOTS));
         }
         let few = Player::new(Style::Mosaic, 3, 5, false, 30);
-        assert_eq!(few.slots.len(), 3);
+        assert_eq!(few.slots.len(), 30);
         assert_eq!(few.next, 3);
         assert_eq!(Player::new(Style::Mosaic, 100, 5, false, 1).slots.len(), 1);
         assert_eq!(Player::new(Style::Grid, 200, 5, false, 12).slots.len(), 12);
@@ -2872,7 +3136,7 @@ mod tests {
         );
         assert_eq!(
             Player::new(Style::PicturePile, 3, 5, false, 12).slots.len(),
-            3
+            12
         );
         assert_eq!(
             Player::new(Style::Mosaic, 2000, 5, false, 1500).slots.len(),
@@ -2882,8 +3146,55 @@ mod tests {
             Player::new(Style::Mosaic, 100, 5, false, usize::MAX)
                 .slots
                 .len(),
-            100
+            MAX_WALL_TILES
         );
+    }
+
+    #[test]
+    fn multi_photo_styles_repeat_small_collections_to_fill_slots() {
+        for style in [
+            Style::Mosaic,
+            Style::Grid,
+            Style::PicturePile,
+            Style::Floating,
+            Style::PhotoDrift,
+            Style::Flying,
+        ] {
+            let player = Player::new(style, 3, 5, false, 12);
+            assert_eq!(
+                player.slots,
+                vec![0, 1, 2, 0, 1, 2, 0, 1, 2, 0, 1, 2],
+                "{style:?}"
+            );
+        }
+        assert_eq!(
+            Player::new(Style::Mosaic, 1, 5, false, 10_000).slots.len(),
+            10_000
+        );
+        assert!(Player::new(Style::Mosaic, 0, 5, false, 10_000)
+            .slots
+            .is_empty());
+    }
+
+    #[test]
+    fn repeated_slots_replace_failed_photos_with_available_ones() {
+        let mut player = Player::new(Style::Mosaic, 2, 5, false, 6);
+        player.receive(ImageResult {
+            index: 0,
+            high_quality: true,
+            pixels: None,
+        });
+        player.receive(ImageResult {
+            index: 1,
+            high_quality: true,
+            pixels: Some(Pixels {
+                width: 1,
+                height: 1,
+                data: vec![0, 0, 0, 255],
+            }),
+        });
+        player.prefetch(&mpsc::channel().0);
+        assert_eq!(player.slots, vec![1; 6]);
     }
 
     #[test]
@@ -2896,13 +3207,13 @@ mod tests {
         assert!(Style::Flying.available(false));
         assert_eq!(Style::Flying.for_theme(false), Style::Flying);
         // Player slots are the prints in the air, capped so live textures stay
-        // bounded, and never more than the library can supply.
+        // bounded, with repeated photos when the library is smaller.
         assert_eq!(
             Player::new(Style::Flying, 500, 6, false, 999).slots.len(),
             FLY_MAX_SLOTS
         );
         assert_eq!(Player::new(Style::Flying, 500, 6, false, 4).slots.len(), 4);
-        assert_eq!(Player::new(Style::Flying, 3, 6, false, 6).slots.len(), 3);
+        assert_eq!(Player::new(Style::Flying, 3, 6, false, 6).slots.len(), 6);
         // Surprise Me must be able to pick the new style.
         let mut picked = false;
         for _ in 0..400 {

@@ -28,6 +28,8 @@ const SHUFFLE_TILES_KEY: &str = "screensaver-shuffle-tiles";
 const MOSAIC_TILES_KEY: &str = "screensaver-mosaic-tiles";
 const PICASA_TRANSITION_KEY: &str = "screensaver-picasa-transition";
 const DEFAULT_MOSAIC_TILES: usize = 6;
+const DEFAULT_DURATION_SECONDS: u32 = 3;
+const DEFAULT_TRANSITION_MS: u32 = 900;
 const MAX_WALL_TILES: usize = 10_000;
 /// Largest count with hand-placed layouts in print_rect(); beyond these the
 /// prints are scattered over a computed grid so any tile count works.
@@ -117,15 +119,18 @@ impl Style {
             Self::MatrixKenBurns => "matrix-ken-burns",
         }
     }
-    fn resolved(self) -> Self {
+    fn surprise_choices(terminal: bool) -> Vec<Self> {
+        Self::CHOICES
+            .into_iter()
+            .filter(|style| *style != Self::Surprise && style.available(terminal))
+            .collect()
+    }
+    fn resolved(self, terminal: bool) -> Self {
         if self != Self::Surprise {
             return self;
         }
-        // Surprise stays within the ordinary photo styles in every theme:
-        // every CHOICES entry except Surprise itself and the Terminal-only
-        // Matrix modes.
-        let ordinary = Self::CHOICES.len() - 3;
-        Self::CHOICES[random_seed() as usize % ordinary]
+        let choices = Self::surprise_choices(terminal);
+        choices[random_seed() as usize % choices.len()]
     }
     fn single_photo(self) -> bool {
         matches!(
@@ -300,7 +305,7 @@ impl Preferences {
             source: setting(SOURCE_KEY),
             seconds: setting(DURATION_KEY)
                 .parse::<u32>()
-                .unwrap_or(6)
+                .unwrap_or(DEFAULT_DURATION_SECONDS)
                 .clamp(3, 30),
             shuffle: setting(SHUFFLE_KEY) != "false",
             exclude_portraits: setting(EXCLUDE_PORTRAITS_KEY) == "true",
@@ -313,8 +318,8 @@ impl Preferences {
             picasa_transition: PicasaTransition::from_saved(&setting(PICASA_TRANSITION_KEY)),
             transition_ms: setting(TRANSITION_KEY)
                 .parse::<u32>()
-                .unwrap_or(900)
-                .clamp(200, 2500),
+                .unwrap_or(DEFAULT_TRANSITION_MS)
+                .clamp(200, 3000),
             movement_speed: setting(MOVEMENT_SPEED_KEY)
                 .parse::<f64>()
                 .ok()
@@ -883,7 +888,11 @@ pub fn open(
     interval_scale.set_value(current.seconds as f64);
     interval_scale.set_digits(0);
     interval_scale.set_draw_value(false);
-    interval_scale.add_mark(6.0, gtk::PositionType::Bottom, None);
+    interval_scale.add_mark(
+        DEFAULT_DURATION_SECONDS as f64,
+        gtk::PositionType::Bottom,
+        None,
+    );
     interval_scale.set_hexpand(true);
     interval_scale.set_width_request(110);
     let interval_value = gtk::Label::new(None);
@@ -899,11 +908,15 @@ pub fn open(
     transition_control.set_tooltip_text(Some("Tile transition style"));
     let transition_row = option_cell("Transition", &transition_control);
 
-    let transition_time = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.2, 2.5, 0.1);
+    let transition_time = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.2, 3.0, 0.1);
     transition_time.set_value(current.transition_ms as f64 / 1000.0);
     transition_time.set_digits(1);
     transition_time.set_draw_value(false);
-    transition_time.add_mark(0.9, gtk::PositionType::Bottom, None);
+    transition_time.add_mark(
+        DEFAULT_TRANSITION_MS as f64 / 1000.0,
+        gtk::PositionType::Bottom,
+        None,
+    );
     transition_time.set_width_request(110);
     let transition_time_value = gtk::Label::new(None);
     transition_time_value.set_width_chars(5);
@@ -1253,8 +1266,8 @@ pub fn open(
             default_style.emit_clicked();
             default_transition.emit_clicked();
             source.set_selected(0);
-            interval_scale.set_value(6.0);
-            transition_time.set_value(0.9);
+            interval_scale.set_value(DEFAULT_DURATION_SECONDS as f64);
+            transition_time.set_value(DEFAULT_TRANSITION_MS as f64 / 1000.0);
             movement_speed.set_value(1.0);
             mosaic_tiles.set_value(DEFAULT_MOSAIC_TILES as f64);
             captions_switch.set_active(false);
@@ -1300,7 +1313,8 @@ pub fn open(
             clock: clock_switch.is_active(),
             background_colour: background_colour.get(),
         };
-        if !prefs.style.uses_photos() {
+        let style = prefs.style.resolved(terminal);
+        if !style.uses_photos() {
             prefs.save(&connection.borrow());
             if terminal {
                 if let Err(error) = db::set_setting(&connection.borrow(), TERMINAL_STYLE_KEY, prefs.style.key()) {
@@ -1308,7 +1322,7 @@ pub fn open(
                 }
             }
             if let Some(dialog) = dialog_for_start.upgrade() { dialog.close(); }
-            start_screensaver(&parent, Vec::new(), prefs);
+            start_screensaver(&parent, Vec::new(), prefs, style);
             return;
         }
         let mut photos = match photo_source.photos(&connection.borrow()) {
@@ -1346,7 +1360,7 @@ pub fn open(
         if let Some(dialog) = dialog_for_start.upgrade() {
             dialog.close();
         }
-        start_screensaver(&parent, slides, prefs);
+        start_screensaver(&parent, slides, prefs, style);
     });
     dialog.present();
 }
@@ -1634,7 +1648,7 @@ impl Player {
             count,
             interval: Duration::from_secs(seconds as u64),
             movement_speed: 1.0,
-            transition: Duration::from_millis(900),
+            transition: Duration::from_millis(DEFAULT_TRANSITION_MS as u64),
             switched_at: Instant::now(),
             started: false,
             paused_at: None,
@@ -2007,8 +2021,12 @@ fn cinematic_motion(index: usize, progress: f64) -> (f64, f64, f64) {
     )
 }
 
-fn start_screensaver(parent: &adw::ApplicationWindow, slides: Vec<Slide>, prefs: Preferences) {
-    let style = prefs.style.resolved();
+fn start_screensaver(
+    parent: &adw::ApplicationWindow,
+    slides: Vec<Slide>,
+    prefs: Preferences,
+    style: Style,
+) {
     if slides.is_empty() && style.uses_photos() {
         return;
     }
@@ -2020,7 +2038,7 @@ fn start_screensaver(parent: &adw::ApplicationWindow, slides: Vec<Slide>, prefs:
         prefs.mosaic_tiles,
     )));
     player.borrow_mut().transition =
-        Duration::from_millis(prefs.transition_ms.clamp(200, 2500) as u64);
+        Duration::from_millis(prefs.transition_ms.clamp(200, 3000) as u64);
     player.borrow_mut().movement_speed = prefs.movement_speed.clamp(0.25, 3.0);
     // Captions use catalog metadata and path basenames, never original EXIF.
     let captions: Vec<String> = slides.iter().map(|slide| slide.caption.clone()).collect();
@@ -2416,6 +2434,19 @@ mod tests {
     }
 
     #[test]
+    fn default_screensaver_timings_leave_time_between_transitions() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+            .unwrap();
+        let prefs = Preferences::load(&connection);
+        assert_eq!(prefs.seconds, 3);
+        assert_eq!(prefs.transition_ms, 900);
+        prefs.save(&connection);
+        assert_eq!(Preferences::load(&connection).transition_ms, 900);
+    }
+
+    #[test]
     fn screensaver_background_colour_is_saved_and_defaults_to_style_background() {
         let connection = Connection::open_in_memory().unwrap();
         connection
@@ -2646,7 +2677,15 @@ mod tests {
             .unwrap()
             .downcast::<gtk::Scale>()
             .unwrap();
-        assert_eq!(interval.value(), 6.0);
+        assert_eq!(interval.value(), 3.0);
+        let duration = label("Duration")
+            .next_sibling()
+            .unwrap()
+            .first_child()
+            .unwrap()
+            .downcast::<gtk::Scale>()
+            .unwrap();
+        assert_eq!(duration.value(), 0.9);
         assert!(find(root, &|widget| widget
             .downcast_ref::<gtk::Label>()
             .is_some_and(|label| label.text() == "Square Picasa photo wall"))
@@ -2709,7 +2748,37 @@ mod tests {
             assert_eq!(style.for_theme(true), style);
         }
         for _ in 0..100 {
-            assert!(!Style::Surprise.resolved().matrix());
+            assert!(!Style::Surprise.resolved(false).matrix());
+        }
+    }
+
+    #[test]
+    fn surprise_includes_both_matrix_styles_only_in_terminal() {
+        let terminal = Style::surprise_choices(true);
+        assert!(terminal.contains(&Style::MatrixRain));
+        assert!(terminal.contains(&Style::MatrixKenBurns));
+        assert!(!terminal.contains(&Style::Surprise));
+        assert!(!Style::surprise_choices(false)
+            .iter()
+            .any(|style| style.matrix()));
+    }
+
+    #[test]
+    #[ignore = "requires a GTK display"]
+    fn terminal_style_picker_shows_both_matrix_icons_and_options() {
+        libadwaita::init().unwrap();
+        let (picker, selected) = style_picker(Style::Mosaic, true, |_| {});
+        for (column, style) in [(0, Style::MatrixRain), (1, Style::MatrixKenBurns)] {
+            let button = picker
+                .child_at(column, 2)
+                .unwrap()
+                .downcast::<gtk::ToggleButton>()
+                .unwrap();
+            assert_eq!(button.tooltip_text().as_deref(), Some(style.subtitle()));
+            let content = button.child().unwrap();
+            assert!(content.first_child().unwrap().is::<gtk::DrawingArea>());
+            button.emit_clicked();
+            assert_eq!(selected.get(), style);
         }
     }
 
@@ -2730,9 +2799,9 @@ mod tests {
         assert_eq!(Style::Surprise.key(), "surprise");
         for style in Style::CHOICES {
             assert_eq!(Style::from_saved(style.key()), style);
-            assert!(Style::CHOICES.contains(&style.resolved()));
+            assert!(Style::CHOICES.contains(&style.resolved(false)));
         }
-        assert!(!Style::Surprise.resolved().eq(&Style::Surprise));
+        assert!(!Style::Surprise.resolved(false).eq(&Style::Surprise));
         assert_eq!(Source::Selected(vec![1, 2]).key(), "selected");
         assert_eq!(Source::Album(42).key(), "album:42");
         assert_eq!(Source::Folder(3).key(), "folder:3");
@@ -3217,7 +3286,7 @@ mod tests {
         // Surprise Me must be able to pick the new style.
         let mut picked = false;
         for _ in 0..400 {
-            if Style::Surprise.resolved() == Style::Flying {
+            if Style::Surprise.resolved(false) == Style::Flying {
                 picked = true;
                 break;
             }

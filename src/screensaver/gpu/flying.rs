@@ -566,6 +566,7 @@ mod canvas_imp {
 
     #[derive(Default)]
     pub struct FlyingCanvas {
+        pub(super) background_colour: Cell<Option<gdk::RGBA>>,
         pub(super) cards: RefCell<Vec<DrawFlight<gdk::Texture>>>,
     }
     #[gtk::glib::object_subclass]
@@ -581,7 +582,13 @@ mod canvas_imp {
             let (w, h) = (obj.width() as f32, obj.height() as f32);
             let bounds = graphene::Rect::new(0.0, 0.0, w, h);
             // Full-screen black: the prints and their shadows are the picture.
-            snapshot.append_color(&gdk::RGBA::new(0.90, 0.90, 0.88, 1.0), &bounds);
+            snapshot.append_color(
+                &self
+                    .background_colour
+                    .get()
+                    .unwrap_or(gdk::RGBA::new(0.90, 0.90, 0.88, 1.0)),
+                &bounds,
+            );
             snapshot.push_clip(&bounds);
             for card in self.cards.borrow().iter() {
                 paint_flight(snapshot, card);
@@ -650,6 +657,10 @@ pub(super) struct Flying {
 }
 
 impl Flying {
+    pub(super) fn set_background_colour(&self, colour: gdk::RGBA) {
+        self.canvas.imp().background_colour.set(Some(colour));
+        self.canvas.queue_draw();
+    }
     pub fn new() -> Self {
         Self {
             capture: std::env::var_os("PIC_FLYING_CAPTURE_DIR")
@@ -688,7 +699,15 @@ impl Flying {
                 if let Some(renderer) = self.canvas.native().and_then(|n| n.renderer()) {
                     let snap = gtk::Snapshot::new();
                     let bounds = graphene::Rect::new(0.0, 0.0, w as f32, h as f32);
-                    snap.append_color(&gdk::RGBA::new(0.90, 0.90, 0.88, 1.0), &bounds);
+                    snap.append_color(
+                        &self
+                            .canvas
+                            .imp()
+                            .background_colour
+                            .get()
+                            .unwrap_or(gdk::RGBA::new(0.90, 0.90, 0.88, 1.0)),
+                        &bounds,
+                    );
                     for card in &cards {
                         paint_flight(&snap, card);
                     }

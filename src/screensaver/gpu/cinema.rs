@@ -16,6 +16,7 @@ struct Photo {
 
 #[derive(Default)]
 struct Scene {
+    background_colour: Option<gdk::RGBA>,
     current: Option<Photo>,
     outgoing: Option<Photo>,
     clock: f64,
@@ -51,7 +52,9 @@ mod imp {
             let scene = self.scene.borrow();
             if scene.rain {
                 snapshot.append_color(
-                    &gdk::RGBA::new(0.0, 0.012, 0.004, 1.0),
+                    &scene
+                        .background_colour
+                        .unwrap_or(gdk::RGBA::new(0.0, 0.012, 0.004, 1.0)),
                     &graphene::Rect::new(0.0, 0.0, w as f32, h as f32),
                 );
                 let cr = snapshot.append_cairo(&graphene::Rect::new(0., 0., w as f32, h as f32));
@@ -73,11 +76,11 @@ mod imp {
             snapshot.push_opacity(fade);
             // Fade the whole viewport, including letterboxing in Fullscreen Fade.
             snapshot.append_color(
-                &if scene.matrix {
+                &scene.background_colour.unwrap_or(if scene.matrix {
                     gdk::RGBA::new(0.0, 0.015, 0.005, 1.0)
                 } else {
                     gdk::RGBA::new(0.035, 0.043, 0.063, 1.0)
-                },
+                }),
                 &graphene::Rect::new(0.0, 0.0, w as f32, h as f32),
             );
             paint(snapshot, current, &scene, w, h);
@@ -141,6 +144,10 @@ pub(super) struct Cinema {
     size: (i32, i32),
 }
 impl Cinema {
+    pub(super) fn set_background_colour(&self, colour: gdk::RGBA) {
+        self.canvas.imp().scene.borrow_mut().background_colour = Some(colour);
+        self.canvas.queue_draw();
+    }
     pub fn new(root: &gtk::Fixed) -> Self {
         let canvas: CinemaCanvas = glib::Object::new();
         canvas.set_can_target(false);

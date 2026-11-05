@@ -26,3 +26,22 @@
   background-color: alpha(@theme_fg_color, 0.1);
   min-height: 1px;
 }
+
+.screensaver-settings-window button.screensaver-background-swatch {
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  background-image: none;
+  border: 1px solid alpha(@theme_fg_color, 0.35);
+  border-radius: 999px;
+  box-shadow: none;
+}
+
+.screensaver-settings-window button.screensaver-background-swatch image {
+  opacity: 0;
+}
+
+.screensaver-settings-window button.screensaver-background-swatch:hover image,
+.screensaver-settings-window button.screensaver-background-swatch:focus-visible image {
+  opacity: 1;
+}

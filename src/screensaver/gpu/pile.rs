@@ -526,6 +526,7 @@ mod canvas_imp {
 
     #[derive(Default)]
     pub struct PileCanvas {
+        pub(super) background_colour: Cell<Option<gdk::RGBA>>,
         pub(super) cards: RefCell<Vec<DrawCard<gdk::Texture>>>,
         pub(super) warm: RefCell<Vec<gdk::Texture>>,
         pub(super) style: Cell<Option<Style>>,
@@ -539,9 +540,13 @@ mod canvas_imp {
     impl ObjectImpl for PileCanvas {}
     impl WidgetImpl for PileCanvas {
         fn snapshot(&self, snapshot: &gtk::Snapshot) {
-            if self.style.get() == Some(Style::PhotoDrift) {
+            if self.background_colour.get().is_some() || self.style.get() == Some(Style::PhotoDrift)
+            {
                 let obj = self.obj();
-                let color = gdk::RGBA::new(0.92, 0.91, 0.88, 1.0);
+                let color = self
+                    .background_colour
+                    .get()
+                    .unwrap_or(gdk::RGBA::new(0.92, 0.91, 0.88, 1.0));
                 snapshot.append_color(
                     &color,
                     &graphene::Rect::new(0.0, 0.0, obj.width() as f32, obj.height() as f32),
@@ -685,6 +690,10 @@ pub(super) struct Pile {
     size: (i32, i32),
 }
 impl Pile {
+    pub(super) fn set_background_colour(&self, colour: gdk::RGBA) {
+        self.canvas.imp().background_colour.set(Some(colour));
+        self.canvas.queue_draw();
+    }
     pub fn new(count: usize, mode: PicasaTransition, style: Style) -> Self {
         Self {
             model: Model::with_style(count, mode, style),

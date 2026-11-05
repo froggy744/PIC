@@ -43,6 +43,7 @@ const TRANSITION_KEY: &str = "screensaver-transition-ms";
 const MOVEMENT_SPEED_KEY: &str = "screensaver-movement-speed";
 const CAPTION_KEY: &str = "screensaver-captions";
 const CLOCK_KEY: &str = "screensaver-clock";
+const BACKGROUND_COLOUR_KEY: &str = "screensaver-background-colour";
 const PREFETCH: usize = 3;
 const HQ_PATIENCE: Duration = Duration::from_secs(3);
 
@@ -275,6 +276,7 @@ struct Preferences {
     movement_speed: f64,
     captions: bool,
     clock: bool,
+    background_colour: Option<[u8; 3]>,
 }
 impl Preferences {
     fn load(connection: &Connection) -> Self {
@@ -312,6 +314,7 @@ impl Preferences {
                 .clamp(0.25, 3.0),
             captions: setting(CAPTION_KEY) == "true",
             clock: setting(CLOCK_KEY) == "true",
+            background_colour: parse_background_colour(&setting(BACKGROUND_COLOUR_KEY)),
         }
     }
     fn save(&self, connection: &Connection) {
@@ -334,11 +337,52 @@ impl Preferences {
             ),
             (CAPTION_KEY, self.captions.to_string()),
             (CLOCK_KEY, self.clock.to_string()),
+            (
+                BACKGROUND_COLOUR_KEY,
+                self.background_colour
+                    .map(|[r, g, b]| format!("#{r:02x}{g:02x}{b:02x}"))
+                    .unwrap_or_default(),
+            ),
         ] {
             if let Err(error) = db::set_setting(connection, key, &value) {
                 eprintln!("PIC screensaver: could not save {key}: {error}");
             }
         }
+    }
+}
+
+fn parse_background_colour(value: &str) -> Option<[u8; 3]> {
+    let hex = value.strip_prefix('#')?;
+    if hex.len() != 6 || !hex.is_ascii() {
+        return None;
+    }
+    Some([
+        u8::from_str_radix(&hex[0..2], 16).ok()?,
+        u8::from_str_radix(&hex[2..4], 16).ok()?,
+        u8::from_str_radix(&hex[4..6], 16).ok()?,
+    ])
+}
+
+fn default_background_colour(style: Style, widget: &gtk::Widget) -> [u8; 3] {
+    match style {
+        Style::Flying => [230, 230, 224],
+        Style::PhotoDrift => [235, 232, 224],
+        Style::MatrixRain | Style::MatrixKenBurns => [0, 4, 1],
+        Style::CoverFlow => crate::coverflow::lookup_theme_color(widget, "theme_bg_color")
+            .or_else(|| crate::coverflow::lookup_theme_color(widget, "window_bg_color"))
+            .map(|colour| {
+                [
+                    (colour.red() * 255.0).round() as u8,
+                    (colour.green() * 255.0).round() as u8,
+                    (colour.blue() * 255.0).round() as u8,
+                ]
+            })
+            .unwrap_or(if adw::StyleManager::default().is_dark() {
+                [31, 31, 31]
+            } else {
+                [247, 247, 247]
+            }),
+        _ => [9, 11, 16],
     }
 }
 
@@ -718,10 +762,13 @@ fn style_picker(
         let content = gtk::Box::new(gtk::Orientation::Vertical, 2);
         content.set_halign(gtk::Align::Center);
         content.append(&style_preview(candidate, 46, 28));
-        let title = gtk::Label::new(Some(candidate.label()));
+        let label = candidate.label();
+        let tile_label = match label.split_once(' ') {
+            Some((first, rest)) => format!("{first}\n{rest}"),
+            None => label.to_owned(),
+        };
+        let title = gtk::Label::new(Some(&tile_label));
         title.set_justify(gtk::Justification::Center);
-        title.set_wrap(true);
-        title.set_max_width_chars(12);
         title.add_css_class("caption");
         content.append(&title);
         card.set_child(Some(&content));
@@ -893,6 +940,72 @@ pub fn open(
     clock_switch.set_active(current.clock);
     clock_switch.set_tooltip_text(Some("Show a discreet local-time clock"));
     let clock_row = option_cell("Clock", &clock_switch);
+    let background_colour = Rc::new(Cell::new(current.background_colour));
+    let colour_style = Rc::new(Cell::new(current.style));
+    let colour_button = gtk::Button::from_icon_name("color-select-symbolic");
+    colour_button.add_css_class("screensaver-background-swatch");
+    let control_size = gtk::SizeGroup::new(gtk::SizeGroupMode::Both);
+    control_size.add_widget(&clock_switch);
+    control_size.add_widget(&colour_button);
+    colour_button.set_cursor_from_name(Some("pointer"));
+    colour_button.set_tooltip_text(Some("Choose background colour"));
+    let colour_css = gtk::CssProvider::new();
+    #[allow(deprecated)]
+    colour_button
+        .style_context()
+        .add_provider(&colour_css, gtk::STYLE_PROVIDER_PRIORITY_APPLICATION + 1);
+    let update_colour_swatch: Rc<dyn Fn()> = {
+        let selected = Rc::clone(&background_colour);
+        let style = Rc::clone(&colour_style);
+        let button = colour_button.clone();
+        Rc::new(move || {
+            let [r, g, b] = selected
+                .get()
+                .unwrap_or_else(|| default_background_colour(style.get(), button.upcast_ref()));
+            let ink = if 299 * r as u32 + 587 * g as u32 + 114 * b as u32 >= 128_000 {
+                "#111111"
+            } else {
+                "#ffffff"
+            };
+            colour_css.load_from_string(&format!("button.screensaver-background-swatch {{ background-color: #{r:02x}{g:02x}{b:02x}; color: {ink}; }}"));
+        })
+    };
+    let background_row = option_cell("Background colour", &colour_button);
+    {
+        let background_colour = Rc::clone(&background_colour);
+        let colour_style = Rc::clone(&colour_style);
+        let update_colour_swatch = Rc::clone(&update_colour_swatch);
+        let dialog = dialog.downgrade();
+        colour_button.connect_clicked(move |_| {
+            let Some(parent) = dialog.upgrade() else {
+                return;
+            };
+            let [r, g, b] = background_colour.get().unwrap_or_else(|| {
+                default_background_colour(colour_style.get(), parent.upcast_ref())
+            });
+            let initial =
+                gtk::gdk::RGBA::new(r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, 1.0);
+            let selected = Rc::clone(&background_colour);
+            let update_colour_swatch = Rc::clone(&update_colour_swatch);
+            let chooser = gtk::ColorDialog::new();
+            chooser.set_with_alpha(false);
+            chooser.choose_rgba(
+                Some(&parent),
+                Some(&initial),
+                None::<&gtk::gio::Cancellable>,
+                move |result| {
+                    if let Ok(color) = result {
+                        selected.set(Some([
+                            (color.red() * 255.0).round() as u8,
+                            (color.green() * 255.0).round() as u8,
+                            (color.blue() * 255.0).round() as u8,
+                        ]));
+                        update_colour_swatch();
+                    }
+                },
+            );
+        });
+    }
     let shuffle_photos_switch = gtk::Switch::new();
     shuffle_photos_switch.set_active(current.shuffle);
     let shuffle_photos_row = option_cell("Shuffle photos", &shuffle_photos_switch);
@@ -923,6 +1036,7 @@ pub fn open(
         shuffle_photos_row.clone().upcast(),
         shuffle_tiles_row.clone().upcast(),
         exclude_portraits_row.clone().upcast(),
+        background_row.clone().upcast(),
     ];
     let source_card_for_layout = source_card.clone();
     let source_group_for_layout = source_group.clone();
@@ -951,7 +1065,7 @@ pub fn open(
         let display_visible = relayout_inspector_group(
             &display_card_for_layout,
             &display_rows_for_layout,
-            &[has_photos, true, flags[4], flags[5], flags[6]],
+            &[has_photos, true, flags[4], flags[5], flags[6], true],
         );
         display_group_for_layout.set_visible(display_visible);
     });
@@ -1001,6 +1115,8 @@ pub fn open(
     let subtitle_for_style = selected_subtitle.clone();
     let relayout_for_style = Rc::clone(&relayout);
     let update_style: Rc<dyn Fn(Style)> = Rc::new(move |style| {
+        colour_style.set(style);
+        update_colour_swatch();
         if let Some(old) = preview_for_style.first_child() {
             preview_for_style.remove(&old);
         }
@@ -1109,6 +1225,7 @@ pub fn open(
             movement_speed: movement_speed.value().clamp(0.25, 3.0),
             captions: captions_switch.is_active(),
             clock: clock_switch.is_active(),
+            background_colour: background_colour.get(),
         };
         if !prefs.style.uses_photos() {
             prefs.save(&connection.borrow());
@@ -1836,6 +1953,9 @@ fn start_screensaver(parent: &adw::ApplicationWindow, slides: Vec<Slide>, prefs:
         player.borrow().slots.len(),
         prefs.picasa_transition,
     )));
+    if let Some(colour) = prefs.background_colour {
+        stage.borrow().set_background_colour(colour);
+    }
     stage.borrow().root.set_focusable(true);
     let stage_overlay = gtk::Overlay::new();
     stage_overlay.set_child(Some(&stage.borrow().root));
@@ -2136,6 +2256,7 @@ mod tests {
             movement_speed: 1.75,
             captions: true,
             clock: true,
+            background_colour: None,
             exclude_portraits: true,
         };
         prefs.save(&connection);
@@ -2162,6 +2283,22 @@ mod tests {
         assert_eq!(restored.style, Style::Fade);
         assert!(!restored.clock);
         assert!(restored.captions);
+    }
+
+    #[test]
+    fn screensaver_background_colour_is_saved_and_defaults_to_style_background() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+            .unwrap();
+        let mut prefs = Preferences::load(&connection);
+        assert_eq!(prefs.background_colour, None);
+        prefs.background_colour = Some([18, 52, 86]);
+        prefs.save(&connection);
+        assert_eq!(
+            Preferences::load(&connection).background_colour,
+            Some([18, 52, 86])
+        );
     }
 
     #[test]
@@ -2214,6 +2351,83 @@ mod tests {
             assert!(!style.subtitle().is_empty());
             assert!(labels.insert(style.label()));
         }
+    }
+
+    #[test]
+    #[ignore = "requires a GTK display"]
+    fn screensaver_settings_measure_without_gtk_warnings() {
+        libadwaita::init().unwrap();
+        let parent = adw::ApplicationWindow::builder().build();
+        let connection = Rc::new(RefCell::new(Connection::open_in_memory().unwrap()));
+        open(&parent, connection, Vec::new(), "PIC-Default");
+        let dialog = gtk::Window::list_toplevels()
+            .into_iter()
+            .filter_map(|widget| widget.downcast::<gtk::Window>().ok())
+            .find(|window| window.title().as_deref() == Some("PIC Screensaver"))
+            .unwrap();
+        let body = dialog.child().unwrap();
+        let main_row = body.first_child().unwrap().next_sibling().unwrap();
+        for width in [840, 888, 920] {
+            main_row.measure(gtk::Orientation::Vertical, width);
+        }
+        dialog.close();
+    }
+
+    #[test]
+    #[ignore = "requires a GTK display"]
+    fn background_colour_is_last_display_row_with_one_swatch() {
+        fn find_label(widget: &gtk::Widget, text: &str) -> Option<gtk::Widget> {
+            if widget
+                .downcast_ref::<gtk::Label>()
+                .is_some_and(|label| label.text() == text)
+            {
+                return Some(widget.clone());
+            }
+            let mut child = widget.first_child();
+            while let Some(current) = child {
+                if let Some(found) = find_label(&current, text) {
+                    return Some(found);
+                }
+                child = current.next_sibling();
+            }
+            None
+        }
+        libadwaita::init().unwrap();
+        let parent = adw::ApplicationWindow::builder().build();
+        open(
+            &parent,
+            Rc::new(RefCell::new(Connection::open_in_memory().unwrap())),
+            Vec::new(),
+            "PIC-Default",
+        );
+        let dialog = gtk::Window::list_toplevels()
+            .into_iter()
+            .filter_map(|widget| widget.downcast::<gtk::Window>().ok())
+            .find(|window| window.title().as_deref() == Some("PIC Screensaver"))
+            .unwrap();
+        let label = find_label(dialog.upcast_ref(), "Background colour").unwrap();
+        let row = label.parent().unwrap();
+        assert!(
+            row.next_sibling().is_none(),
+            "background must be the last display row"
+        );
+        let control = label.next_sibling().unwrap();
+        assert!(
+            control.is::<gtk::Button>(),
+            "the colour swatch must be the only control"
+        );
+        assert!(control.next_sibling().is_none());
+        let clock = find_label(dialog.upcast_ref(), "Clock")
+            .unwrap()
+            .next_sibling()
+            .unwrap();
+        for orientation in [gtk::Orientation::Horizontal, gtk::Orientation::Vertical] {
+            assert_eq!(
+                control.measure(orientation, -1).1,
+                clock.measure(orientation, -1).1
+            );
+        }
+        dialog.close();
     }
 
     #[test]

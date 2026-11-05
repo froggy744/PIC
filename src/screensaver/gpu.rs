@@ -495,6 +495,29 @@ pub(super) struct Stage {
     synced_change: Option<usize>,
 }
 impl Stage {
+    #[allow(deprecated)]
+    pub fn set_background_colour(&self, [r, g, b]: [u8; 3]) {
+        let colour = gtk::gdk::RGBA::new(r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, 1.0);
+        let provider = gtk::CssProvider::new();
+        provider.load_from_string(&format!(
+            ".screensaver-stage {{ background-color: #{r:02x}{g:02x}{b:02x}; }}"
+        ));
+        self.root
+            .style_context()
+            .add_provider(&provider, gtk::STYLE_PROVIDER_PRIORITY_APPLICATION + 1);
+        if let Some(cinema) = &self.cinema {
+            cinema.set_background_colour(colour);
+        }
+        if let Some(pile) = &self.pile {
+            pile.set_background_colour(colour);
+        }
+        if let Some(flying) = &self.flying {
+            flying.set_background_colour(colour);
+        }
+        if let Some(coverflow) = &self.coverflow {
+            coverflow.canvas.set_background_colour(colour);
+        }
+    }
     pub fn new(style: Style, count: usize, transition: PicasaTransition) -> Self {
         let root = gtk::Fixed::new();
         root.set_hexpand(true);

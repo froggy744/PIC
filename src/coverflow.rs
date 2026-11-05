@@ -257,6 +257,7 @@ pub(crate) struct CoverflowItem {
 
 #[derive(Default)]
 struct Scene {
+    background_colour: Option<gdk::RGBA>,
     count: usize,
     focus: f64,
     target: f64,
@@ -289,6 +290,10 @@ pub(crate) struct CoverflowGlArea {
 }
 
 impl CoverflowGlArea {
+    pub(crate) fn set_background_colour(&self, colour: gdk::RGBA) {
+        self.scene.borrow_mut().background_colour = Some(colour);
+        self.area.queue_render();
+    }
     pub(crate) fn new(css_class: &str, height_request: i32) -> Self {
         let area = gtk::GLArea::new();
         area.set_allowed_apis(gdk::GLAPI::GL);
@@ -588,7 +593,9 @@ fn draw_frame(area: &gtk::GLArea, scene: &mut Scene) -> Result<(), String> {
     unsafe {
         gl::Viewport(0, 0, viewport_width, viewport_height);
         let dark = adw::StyleManager::default().is_dark();
-        let background = lookup_theme_color(area.upcast_ref(), "theme_bg_color")
+        let background = scene
+            .background_colour
+            .or_else(|| lookup_theme_color(area.upcast_ref(), "theme_bg_color"))
             .or_else(|| lookup_theme_color(area.upcast_ref(), "window_bg_color"))
             .unwrap_or_else(|| {
                 if dark {

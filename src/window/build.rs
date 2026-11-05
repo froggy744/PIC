@@ -4239,7 +4239,8 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let zoom_scale_for_scroll = info.grid_zoom.clone();
     let lightbox_for_scale_scroll = lightbox.clone();
     let main_stack_for_scale_scroll = main_stack.clone();
-    zoom_scale_scroll.connect_scroll(move |controller, _, dy| {
+    zoom_scale_scroll.connect_scroll(move |controller, dx, dy| {
+        crate::scroll_trace::log_scroll_input("zoom_slider", controller, dx, dy);
         if controller
             .current_event_state()
             .contains(gtk::gdk::ModifierType::CONTROL_MASK)

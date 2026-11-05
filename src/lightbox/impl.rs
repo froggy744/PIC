@@ -829,7 +829,8 @@ impl Lightbox {
         };
         wheel_dispatch_slot.replace(Some(wheel_dispatch.clone()));
 
-        scroll.connect_scroll(move |controller, _, dy| {
+        scroll.connect_scroll(move |controller, dx, dy| {
+            crate::scroll_trace::log_scroll_input("lightbox", controller, dx, dy);
             // The fullscreen viewer listens in capture phase for image zoom
             // and photo navigation. When the shared context menu is open
             // above the image, leave wheel and Ctrl+wheel events to its own

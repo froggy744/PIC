@@ -304,7 +304,8 @@ fn install_smooth_gallery_scroll(
     let last_error_abs_for_scroll = last_error_abs.clone();
     let last_pointer_for_scroll = last_pointer.clone();
     let zoom_viewport_for_scroll = zoom_viewport.clone();
-    controller.connect_scroll(move |controller, _, dy| {
+    controller.connect_scroll(move |controller, dx, dy| {
+        crate::scroll_trace::log_scroll_input("gallery", controller, dx, dy);
         // Cover Flow owns wheel navigation. This ancestor runs before its
         // controller in capture phase, so consuming here silently steals
         // detents even when the page adjustment has no scrollable range.
@@ -509,7 +510,8 @@ fn install_folder_smooth_gallery_scroll(
     let adjustment_for_scroll = adjustment.clone();
     let remaining_for_scroll = remaining.clone();
     let active_for_scroll = active.clone();
-    controller.connect_scroll(move |controller, _, dy| {
+    controller.connect_scroll(move |controller, dx, dy| {
+        crate::scroll_trace::log_scroll_input("folder_gallery", controller, dx, dy);
         if controller
             .current_event_state()
             .contains(gtk::gdk::ModifierType::CONTROL_MASK)

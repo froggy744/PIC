@@ -189,7 +189,8 @@ pub fn attach(scroller: &gtk::ScrolledWindow) {
     // and before GTK's internal bubble scroll handler.
     let controller = gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::VERTICAL);
     let smooth_for_scroll = smooth;
-    controller.connect_scroll(move |controller, _dx, dy| {
+    controller.connect_scroll(move |controller, dx, dy| {
+        crate::scroll_trace::log_scroll_input("smooth_scroll", controller, dx, dy);
         let state = controller.current_event_state();
         // Ctrl+wheel is the zoom shortcut and Shift+wheel is GTK's horizontal
         // mapping; leave both to the existing controllers.

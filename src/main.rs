@@ -28,6 +28,7 @@ mod private_smb;
 mod save_dialog;
 mod scanner;
 mod screensaver;
+mod scroll_trace;
 mod sd_import;
 mod settings;
 mod sidebar;

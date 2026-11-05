@@ -50,7 +50,11 @@ const BACKGROUND_COLOUR_KEY: &str = "screensaver-background-colour";
 const PREFETCH: usize = 3;
 const HQ_PATIENCE: Duration = Duration::from_secs(3);
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+fn tile_count_setting_key(style: Style) -> String {
+    format!("{MOSAIC_TILES_KEY}-{}", style.key())
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum Style {
     Mosaic,
     Grid,
@@ -310,10 +314,16 @@ impl Preferences {
             shuffle: setting(SHUFFLE_KEY) != "false",
             exclude_portraits: setting(EXCLUDE_PORTRAITS_KEY) == "true",
             shuffle_tiles: setting(SHUFFLE_TILES_KEY) != "false",
-            mosaic_tiles: setting(MOSAIC_TILES_KEY)
+            mosaic_tiles: setting(&tile_count_setting_key(style))
                 .parse::<usize>()
                 .ok()
                 .filter(|count| *count > 0)
+                .or_else(|| {
+                    setting(MOSAIC_TILES_KEY)
+                        .parse::<usize>()
+                        .ok()
+                        .filter(|count| *count > 0)
+                })
                 .unwrap_or(style.default_tiles()),
             picasa_transition: PicasaTransition::from_saved(&setting(PICASA_TRANSITION_KEY)),
             transition_ms: setting(TRANSITION_KEY)
@@ -332,6 +342,13 @@ impl Preferences {
         }
     }
     fn save(&self, connection: &Connection) {
+        if let Err(error) = db::set_setting(
+            connection,
+            &tile_count_setting_key(self.style),
+            &self.mosaic_tiles.to_string(),
+        ) {
+            eprintln!("PIC screensaver: could not save per-style tile count: {error}");
+        }
         for (key, value) in [
             (STYLE_KEY, self.style.key().to_owned()),
             (SOURCE_KEY, self.source.clone()),
@@ -957,6 +974,18 @@ pub fn open(
     tiles_control.append(&mosaic_tiles);
     tiles_control.append(&mosaic_tiles_value);
     let tiles_row = option_cell("Tiles", &tiles_control);
+    let mut saved_tile_counts = HashMap::new();
+    for style in Style::CHOICES {
+        let saved = db::setting(&connection.borrow(), &tile_count_setting_key(style))
+            .ok()
+            .flatten()
+            .and_then(|value| value.parse::<usize>().ok())
+            .filter(|count| *count > 0)
+            .or_else(|| (style == current.style).then_some(current.mosaic_tiles))
+            .unwrap_or(style.default_tiles());
+        saved_tile_counts.insert(style, saved);
+    }
+    let tile_counts = Rc::new(RefCell::new(saved_tile_counts));
     mosaic_tiles.set_tooltip_text(Some(
         "Photos repeat when needed. Mosaic and Changing Grid support up to 10,000 tiles; animated print styles have smaller limits.",
     ));
@@ -1144,8 +1173,18 @@ pub fn open(
     let subtitle_for_style = selected_subtitle.clone();
     let relayout_for_style = Rc::clone(&relayout);
     let tiles_for_style = mosaic_tiles.clone();
+    let active_tile_style = Rc::new(Cell::new(current.style));
+    let active_tile_style_for_update = Rc::clone(&active_tile_style);
+    let tile_counts_for_update = Rc::clone(&tile_counts);
     let update_style: Rc<dyn Fn(Style)> = Rc::new(move |style| {
-        let style_changed = colour_style.get() != style;
+        let previous_style = active_tile_style_for_update.get();
+        let style_changed = previous_style != style;
+        if style_changed {
+            tile_counts_for_update.borrow_mut().insert(
+                previous_style,
+                tiles_for_style.value().round().max(1.0) as usize,
+            );
+        }
         let limit = match style {
             Style::PicturePile | Style::Floating | Style::PhotoDrift => PRINT_MAX_SLOTS,
             Style::Flying => FLY_MAX_SLOTS,
@@ -1159,7 +1198,14 @@ pub fn open(
             None,
         );
         if style_changed {
-            tiles_for_style.set_value(style.default_tiles() as f64);
+            let count = tile_counts_for_update
+                .borrow()
+                .get(&style)
+                .copied()
+                .unwrap_or(style.default_tiles())
+                .min(limit);
+            tiles_for_style.set_value(count as f64);
+            active_tile_style_for_update.set(style);
         }
         colour_style.set(style);
         update_colour_swatch();
@@ -1248,6 +1294,7 @@ pub fn open(
         let shuffle_tiles_switch = shuffle_tiles_switch.clone();
         let exclude_portraits_switch = exclude_portraits_switch.clone();
         let background_colour = Rc::clone(&background_colour);
+        let tile_counts = Rc::clone(&tile_counts);
         let default_style = style_picker
             .child_at(0, 0)
             .unwrap()
@@ -1270,6 +1317,9 @@ pub fn open(
             transition_time.set_value(DEFAULT_TRANSITION_MS as f64 / 1000.0);
             movement_speed.set_value(1.0);
             mosaic_tiles.set_value(DEFAULT_MOSAIC_TILES as f64);
+            tile_counts
+                .borrow_mut()
+                .insert(Style::Mosaic, DEFAULT_MOSAIC_TILES);
             captions_switch.set_active(false);
             clock_switch.set_active(false);
             shuffle_photos_switch.set_active(true);
@@ -2431,6 +2481,49 @@ mod tests {
         }
         db::set_setting(&connection, MOSAIC_TILES_KEY, "17").unwrap();
         assert_eq!(Preferences::load(&connection).mosaic_tiles, 17);
+    }
+
+    #[test]
+    fn tile_counts_persist_independently_by_style() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+            .unwrap();
+        let mut mosaic = Preferences::load(&connection);
+        mosaic.mosaic_tiles = 42;
+        mosaic.save(&connection);
+        let grid = Preferences {
+            style: Style::Grid,
+            mosaic_tiles: 9,
+            ..mosaic.clone()
+        };
+        grid.save(&connection);
+        db::set_setting(&connection, STYLE_KEY, Style::Mosaic.key()).unwrap();
+        assert_eq!(Preferences::load(&connection).mosaic_tiles, 42);
+        db::set_setting(&connection, STYLE_KEY, Style::Grid.key()).unwrap();
+        assert_eq!(Preferences::load(&connection).mosaic_tiles, 9);
+    }
+
+    #[test]
+    fn ten_thousand_repeated_tiles_replace_failed_photos_after_remaining_photos_load() {
+        let mut player = Player::new(Style::Mosaic, 2, 3, false, MAX_WALL_TILES);
+        assert_eq!(player.slots.len(), MAX_WALL_TILES);
+        player.receive(ImageResult {
+            index: 0,
+            high_quality: true,
+            pixels: None,
+        });
+        player.receive(ImageResult {
+            index: 1,
+            high_quality: true,
+            pixels: Some(Pixels {
+                width: 1,
+                height: 1,
+                data: vec![20, 30, 40, 255],
+            }),
+        });
+        player.prefetch(&mpsc::channel().0);
+        assert!(player.slots.iter().all(|id| *id == 1));
     }
 
     #[test]

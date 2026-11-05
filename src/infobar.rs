@@ -15,6 +15,12 @@ pub struct InfoBar {
     metadata_stack: gtk::Stack,
     selection_count: gtk::Label,
     selection_controls: gtk::Box,
+    selection_actions: gtk::Box,
+    selection_action_parents: RefCell<Vec<(gtk::Widget, gtk::Box, Option<gtk::Widget>)>>,
+    actions: gtk::Box,
+    trailing: gtk::Box,
+    overflow: gtk::MenuButton,
+    selection_mode: Rc<Cell<bool>>,
     selection_thumbnails: gtk::Box,
     selection_rendered_ids: RefCell<Vec<i64>>,
     selection_remove: Rc<RefCell<Option<Rc<dyn Fn(i64)>>>>,
@@ -107,6 +113,9 @@ impl InfoBar {
         root.set_margin_start(0);
         root.set_margin_end(0);
         root.add_css_class("photo-info-bar");
+        let layout = gtk::CenterBox::new();
+        layout.set_hexpand(true);
+        root.append(&layout);
 
         let preview = gtk::Image::new();
         preview.set_pixel_size(40);
@@ -159,7 +168,7 @@ impl InfoBar {
         metadata_stack.add_named(&selection_panel, Some("selection"));
         metadata_stack.set_visible_child_name("photo");
         metadata_viewport.set_child(Some(&metadata_stack));
-        root.append(&metadata_viewport);
+        layout.set_start_widget(Some(&metadata_viewport));
 
         // A non-scrolling, fixed-size trailing group remains visible even if
         // the thumbnail strip contains more items than fit the window.
@@ -178,7 +187,13 @@ impl InfoBar {
         selection_clear.set_tooltip_text(Some("Clear selected photos"));
         selection_clear.add_css_class("flat");
         selection_controls.append(&selection_clear);
-        root.append(&selection_controls);
+        let trailing = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        trailing.append(&selection_controls);
+        layout.set_end_widget(Some(&trailing));
+        let selection_actions = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        selection_actions.set_visible(false);
+        layout.set_center_widget(Some(&selection_actions));
+        let selection_mode = Rc::new(Cell::new(false));
         let selection_remove: Rc<RefCell<Option<Rc<dyn Fn(i64)>>>> = Rc::new(RefCell::new(None));
         metadata.append(&preview);
 
@@ -521,7 +536,7 @@ impl InfoBar {
         utility_row.set_visible(false);
         overflow_box.append(&utility_row);
         let utilities_for_resize = utilities.clone();
-        root.append(&actions);
+        trailing.append(&actions);
         let zoom_separator = toolbar_separator();
         actions.insert_child_after(&zoom_separator, Some(&grid_zoom));
         // The action buttons are the controls that must always remain usable.
@@ -543,7 +558,28 @@ impl InfoBar {
         let hide_buttons_option_for_resize = hide_buttons_option.clone();
         let grid_zoom_for_resize = grid_zoom.clone();
         let group_separators_for_resize = group_separators;
+        let selection_mode_for_resize = selection_mode.clone();
+        let actions_for_resize = actions.clone();
+        let overflow_for_resize = overflow.clone();
         root.add_tick_callback(move |bar, _| {
+            let overflow = &overflow_for_resize;
+            if selection_mode_for_resize.get() {
+                for (index, (control, row)) in overflow_entries.iter().enumerate() {
+                    if control.parent().as_ref() == Some(actions_for_resize.upcast_ref()) {
+                        actions_for_resize.remove(control);
+                        if index == 0 {
+                            grid_zoom_for_resize.set_width_request(50);
+                            row.insert_child_after(control, row.first_child().as_ref());
+                        } else {
+                            row.insert_child_after(control, None::<&gtk::Widget>);
+                        }
+                    }
+                    row.set_visible(control.get_visible() && control.parent().as_ref() == Some(row.upcast_ref()));
+                }
+                utility_row.set_visible(false);
+                visible_action_count.set((usize::MAX, !show_only_menu_for_resize.get()));
+                return glib::ControlFlow::Continue;
+            }
             // Keep the open drawer stable while interacting with its controls.
             // Reparenting during popup allocation can dismiss nested actions.
             let hide_all = show_only_menu_for_resize.get();
@@ -578,15 +614,17 @@ impl InfoBar {
                         overflow.popdown();
                     }
                     if hide_all {
-                        if utilities_for_resize.parent().as_ref() == Some(actions.upcast_ref()) {
-                            actions.remove(&utilities_for_resize);
+                        if utilities_for_resize.parent().as_ref()
+                            == Some(actions_for_resize.upcast_ref())
+                        {
+                            actions_for_resize.remove(&utilities_for_resize);
                             utility_row.prepend(&utilities_for_resize);
                         }
                     } else if utilities_for_resize.parent().as_ref()
                         == Some(utility_row.upcast_ref())
                     {
                         utility_row.remove(&utilities_for_resize);
-                        actions.insert_child_after(
+                        actions_for_resize.insert_child_after(
                             &utilities_for_resize,
                             overflow.prev_sibling().as_ref(),
                         );
@@ -610,14 +648,17 @@ impl InfoBar {
                                 if index == 0 {
                                     grid_zoom_for_resize.set_width_request(64);
                                 }
-                                actions.insert_child_after(control, previous.as_ref());
+                                actions_for_resize.insert_child_after(control, previous.as_ref());
                             } else if parent.is_none() {
-                                actions.insert_child_after(control, previous.as_ref());
+                                actions_for_resize.insert_child_after(control, previous.as_ref());
                             }
+                            actions_for_resize.reorder_child_after(control, previous.as_ref());
                             previous = Some(control.clone());
                         } else {
-                            if parent.as_ref() == Some(actions.upcast_ref::<gtk::Widget>()) {
-                                actions.remove(control);
+                            if parent.as_ref()
+                                == Some(actions_for_resize.upcast_ref::<gtk::Widget>())
+                            {
+                                actions_for_resize.remove(control);
                                 if index == 0 {
                                     grid_zoom_for_resize.set_width_request(50);
                                     row.insert_child_after(control, row.first_child().as_ref());
@@ -655,7 +696,8 @@ impl InfoBar {
                     }
                     zoom_separator.set_visible(!hide_all && grid_zoom_for_resize.get_visible());
                     if !hide_all {
-                        actions.reorder_child_after(&zoom_separator, Some(&grid_zoom_for_resize));
+                        actions_for_resize
+                            .reorder_child_after(&zoom_separator, Some(&grid_zoom_for_resize));
                     }
                     overflow.set_visible(true);
                     hide_buttons_option_for_resize.set_active(hide_all);
@@ -710,6 +752,12 @@ impl InfoBar {
             metadata_stack,
             selection_count,
             selection_controls,
+            selection_actions,
+            selection_action_parents: RefCell::new(Vec::new()),
+            actions,
+            trailing,
+            overflow,
+            selection_mode,
             selection_thumbnails,
             selection_rendered_ids: RefCell::new(Vec::new()),
             selection_remove,
@@ -752,6 +800,72 @@ impl InfoBar {
 
         self.selection_count
             .set_text(&crate::window::format_count(count));
+        if !self.selection_mode.replace(true) {
+            self.dismiss_action_menus();
+            let mut controls: Vec<gtk::Widget> = vec![
+                self.favorite.clone().upcast(),
+                self.rating.clone().upcast(),
+                self.collage.clone().upcast(),
+                self.add_to_album.clone().upcast(),
+            ];
+            if let Some(screensaver) = self.utilities.first_child() {
+                controls.push(screensaver);
+            }
+            let parents = controls
+                .iter()
+                .map(|control| {
+                    (
+                        control.clone(),
+                        control.parent().unwrap().downcast::<gtk::Box>().unwrap(),
+                        control.prev_sibling(),
+                    )
+                })
+                .collect::<Vec<_>>();
+            for (control, parent, _) in &parents {
+                parent.remove(control);
+                if parent != &self.actions && parent != &self.utilities {
+                    parent.set_visible(false);
+                }
+            }
+            for (index, title) in [
+                (0, "Favourite"),
+                (2, "Collage"),
+                (3, "Add to Album"),
+                (1, "Rating"),
+                (4, "Screensaver"),
+            ]
+            .into_iter()
+            .filter(|(index, _)| *index < controls.len())
+            {
+                self.selection_actions.append(&controls[index]);
+                let label = gtk::Label::new(Some(title));
+                controls[index]
+                    .bind_property("sensitive", &label, "sensitive")
+                    .sync_create()
+                    .build();
+                label.set_cursor_from_name(Some("pointer"));
+                let click = gtk::GestureClick::new();
+                let control = controls[index].downgrade();
+                click.connect_released(move |_, _, _, _| {
+                    if let Some(control) =
+                        control.upgrade().filter(|control| control.is_sensitive())
+                    {
+                        if let Some(button) = control.downcast_ref::<gtk::Button>() {
+                            button.emit_clicked();
+                        } else if let Some(menu) = control.downcast_ref::<gtk::MenuButton>() {
+                            menu.popup();
+                        }
+                    }
+                });
+                label.add_controller(click);
+                self.selection_actions.append(&label);
+            }
+            self.selection_action_parents.replace(parents);
+            self.actions.remove(&self.overflow);
+            self.trailing.append(&self.overflow);
+            self.actions.set_visible(false);
+            self.selection_actions.set_visible(true);
+        }
         self.selection_controls.set_visible(true);
 
         // A selection of thousands only samples a bounded set of thumbnails.
@@ -805,6 +919,25 @@ impl InfoBar {
     }
 
     pub fn show_photo_metadata(&self) {
+        if self.selection_mode.replace(false) {
+            self.dismiss_action_menus();
+            self.selection_actions.set_visible(false);
+            for (control, parent, previous) in self.selection_action_parents.borrow_mut().drain(..)
+            {
+                self.selection_actions.remove(&control);
+                let previous = previous.filter(|sibling| sibling.parent().as_ref() == Some(parent.upcast_ref()));
+                parent.insert_child_after(&control, previous.as_ref());
+                if parent != self.actions && parent != self.utilities {
+                    parent.set_visible(control.get_visible());
+                }
+            }
+            while let Some(label) = self.selection_actions.first_child() {
+                self.selection_actions.remove(&label);
+            }
+            self.trailing.remove(&self.overflow);
+            self.actions.append(&self.overflow);
+            self.actions.set_visible(true);
+        }
         self.metadata_stack.set_visible_child_name("photo");
         self.selection_controls.set_visible(false);
     }
@@ -1236,6 +1369,73 @@ mod layout_tests {
 
     #[test]
     #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+    fn multiselection_centers_existing_actions_and_restores_toolbar() {
+        gtk::init().unwrap();
+        let info = InfoBar::new();
+        let screensaver = gtk::Button::from_icon_name("media-playback-start-symbolic");
+        info.append_utility(&screensaver);
+        let overflow = info.actions.last_child().unwrap();
+        let window = gtk::Window::builder()
+            .default_width(800)
+            .default_height(100)
+            .child(&info.root)
+            .build();
+        window.present();
+        while glib::MainContext::default().iteration(false) {}
+        info.set_selected_photos(2, &[]);
+        assert!(overflow.is_visible());
+        assert!(overflow.parent().unwrap().is_visible());
+        let layout = info
+            .root
+            .first_child()
+            .unwrap()
+            .downcast::<gtk::CenterBox>()
+            .unwrap();
+        let group = layout
+            .center_widget()
+            .unwrap()
+            .downcast::<gtk::Box>()
+            .unwrap();
+        assert!(group.is_visible());
+        assert_eq!(screensaver.parent().as_ref(), Some(group.upcast_ref()));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while group.width() == 0 && std::time::Instant::now() < deadline {
+            glib::MainContext::default().iteration(false);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let bounds = group.compute_bounds(&info.root).unwrap();
+        assert!((bounds.x() + bounds.width() / 2.0 - info.root.width() as f32 / 2.0).abs() <= 2.0);
+        for widget in [
+            info.favorite.clone().upcast::<gtk::Widget>(),
+            info.collage.clone().upcast(),
+            info.add_to_album.clone().upcast(),
+            info.rating.clone().upcast(),
+        ] {
+            assert_eq!(widget.parent().as_ref(), Some(group.upcast_ref()));
+        }
+        for (widget, title) in [
+            (info.favorite.clone().upcast::<gtk::Widget>(), "Favourite"),
+            (info.collage.clone().upcast(), "Collage"),
+            (info.add_to_album.clone().upcast(), "Add to Album"),
+            (info.rating.clone().upcast(), "Rating"),
+        ] {
+            assert_eq!(
+                widget
+                    .next_sibling()
+                    .and_downcast::<gtk::Label>()
+                    .unwrap()
+                    .text(),
+                title
+            );
+        }
+        info.show_photo_metadata();
+        assert!(!group.is_visible());
+        assert_ne!(info.favorite.parent().as_ref(), Some(group.upcast_ref()));
+        window.close();
+    }
+
+    #[test]
+    #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
     fn selection_count_and_clear_stay_outside_the_thumbnail_scroller() {
         gtk::init().unwrap();
         let info = InfoBar::new();
@@ -1248,7 +1448,13 @@ mod layout_tests {
         assert!(info.selection_clear.is_visible());
         assert_eq!(
             info.selection_controls.parent().unwrap(),
-            info.root.clone().upcast::<gtk::Widget>()
+            info.root
+                .first_child()
+                .unwrap()
+                .downcast::<gtk::CenterBox>()
+                .unwrap()
+                .end_widget()
+                .unwrap()
         );
         assert_eq!(
             info.selection_count.parent().unwrap(),

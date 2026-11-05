@@ -3748,21 +3748,28 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         let Some(photo) = selected_for_favorite.borrow().clone() else {
             return;
         };
-        let favorite = !photo.favorite();
+        let ids = if lightbox_for_favorite.root.is_visible() {
+            vec![photo.id()]
+        } else {
+            gallery_for_favorite.selected_photo_ids(Some(photo.id()))
+        };
+        let favorite = ids.len() > 1 || !photo.favorite();
 
-        if let Err(error) = db::set_favorite(&db_for_favorite.borrow(), photo.id(), favorite) {
-            eprintln!("Could not update favourite: {error}");
-            return;
+        for id in &ids {
+            if let Err(error) = db::set_favorite(&db_for_favorite.borrow(), *id, favorite) {
+                eprintln!("Could not update favourite: {error}");
+                return;
+            }
         }
         photo.set_favorite(favorite);
         refresh_lightbox_properties(&photo);
         if filter_for_favorite.get() == sidebar::SidebarFilter::Favorites && !favorite {
-            gallery_for_favorite.remove_photos(&[photo.id()]);
+            gallery_for_favorite.remove_photos(&ids);
             if lightbox_for_favorite.root.is_visible() {
                 lightbox_for_favorite.remove_photo(photo.id());
             }
         } else {
-            gallery_for_favorite.update_favorites(&[photo.id()], favorite);
+            gallery_for_favorite.update_favorites(&ids, favorite);
             info_favorite.set_photo(Some(&photo));
         }
         if !db::filters::Filters::load(&db_for_favorite.borrow()).is_empty() {
@@ -3790,13 +3797,18 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         let filter_for_rating = filter.clone();
         let search_for_rating = search_text.clone();
         let sidebar_for_rating = sidebar_for_unavailable.clone();
+        let lightbox_for_rating = lightbox.clone();
         let rating = (index + 1) as i32;
         button.connect_clicked(move |_| {
             let Some(photo) = selected_for_rating.borrow().clone() else {
                 return;
             };
-            let ids = gallery_for_rating.selected_photo_ids(Some(photo.id()));
-            let target = if photo.rating() == rating { 0 } else { rating };
+            let ids = if lightbox_for_rating.root.is_visible() {
+                vec![photo.id()]
+            } else {
+                gallery_for_rating.selected_photo_ids(Some(photo.id()))
+            };
+            let target = if ids.len() == 1 && photo.rating() == rating { 0 } else { rating };
             if let Err(error) =
                 db::set_rating_for_photos(&db_for_rating.borrow(), &ids, target)
             {

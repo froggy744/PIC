@@ -1571,11 +1571,17 @@ mod tests {
         );
         let original = std::fs::read(source).unwrap();
         let original_hash = blake3::hash(&original);
-        // Match the dimensions stored by library indexing and passed by the
-        // gallery/Edit export callers. Zero-sized test bounds would miss a
-        // possible downscale caused by stale or incorrect catalog geometry.
-        let (source_width, source_height) = crate::thumbnail::dimensions(&reference, &original)
+        // Raw decoder dimensions are sensor-oriented; catalog/Edit bounds are
+        // display-oriented after EXIF. Zero-sized bounds would miss a possible
+        // downscale caused by stale or incorrect catalog geometry.
+        let (raw_width, raw_height) = crate::thumbnail::dimensions(&reference, &original)
             .expect("read native RAW dimensions");
+        let orientation = crate::thumbnail::exif_orientation(&reference);
+        let (display_width, display_height) = if (5..=8).contains(&orientation) {
+            (raw_height, raw_width)
+        } else {
+            (raw_width, raw_height)
+        };
         // Exercise Export as the first full-resolution consumer so the trace
         // proves a cold Export decodes the original, then warms the shared
         // source-frame cache for later full-size reads.
@@ -1583,20 +1589,20 @@ mod tests {
             &reference,
             0,
             "",
-            i64::from(source_width),
-            i64::from(source_height),
+            i64::from(display_width),
+            i64::from(display_height),
         )
         .expect("render the original RAW at full size without edits");
         assert!(
-            full_export.width() == source_width && full_export.height() == source_height,
+            full_export.width() == display_width && full_export.height() == display_height,
             "full-size Export appears to have used a cached thumbnail: {}x{}",
             full_export.width(),
             full_export.height()
         );
         let full_reference = crate::thumbnail::decode_for_viewer(
             &reference,
-            source_width.max(source_height),
-            source_width.max(source_height),
+            raw_width.max(raw_height),
+            raw_width.max(raw_height),
         )
         .expect("decode the original RAW's full-resolution viewer source");
         assert_eq!(
@@ -1638,8 +1644,8 @@ mod tests {
             reference.clone(),
             rotation,
             recipe.encode(),
-            i64::from(source_width),
-            i64::from(source_height),
+            i64::from(display_width),
+            i64::from(display_height),
             "raw.NEF",
         );
         let expected =
@@ -1655,8 +1661,8 @@ mod tests {
             &reference,
             rotation,
             &recipe,
-            source_width,
-            source_height,
+            display_width,
+            display_height,
         )
         .expect("render the same saved recipe through the Edit Mode decode path");
         assert_eq!(

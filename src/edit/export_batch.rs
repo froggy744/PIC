@@ -540,6 +540,7 @@ where
 /// Export a batch with a bounded number of concurrent jobs. Destinations are
 /// reserved before workers start, while each worker renders and publishes one
 /// independent photo at a time. Progress callbacks run on the caller thread.
+#[cfg(any(test, debug_assertions))]
 pub fn run_batch_export_with_workers<F, P>(
     jobs: &[ExportJob],
     folder: &Path,

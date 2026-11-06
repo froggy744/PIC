@@ -1744,6 +1744,15 @@ fn show_properties_dialog_on(
     sections.set_valign(gtk::Align::Start);
     scroll.set_child(Some(&sections));
 
+    // The paper label is only visible in the Scrapbook skin.
+    let scrapbook_selected = gtk::Label::new(Some("Selected Photo"));
+    scrapbook_selected.add_css_class("scrapbook-only");
+    scrapbook_selected.add_css_class("scrapbook-inspector-heading");
+    scrapbook_selected.set_visible(crate::window::theme::scrapbook_is_active());
+    scrapbook_selected.set_halign(gtk::Align::Start);
+    scrapbook_selected.set_can_target(false);
+    sections.append(&scrapbook_selected);
+
     // Inspector layout: photo preview above compact metadata, never side-by-side.
     // Use a fixed-height base child for the preview. GtkPicture's natural
     // aspect-ratio requisition must NOT determine the inspector row height:
@@ -1910,6 +1919,7 @@ fn show_properties_dialog_on(
     path_value.add_css_class("dim-label");
     location_footer.append(&path_value);
     sections.append(&location_footer);
+    sections.append(&scrapbook_inspector_extra(photo, context, surface));
 
     // Both panels use the same metadata widgets but have independent state.
     // Their overlay allocation never changes the thumbnail grid dimensions.
@@ -1951,6 +1961,162 @@ fn show_properties_dialog_on(
             );
         }
     }
+}
+
+/// The reference's tags, notes and icon actions are native, operable
+/// controls backed by the selected photo's SQLite catalog record. Nothing is
+/// prepopulated or invented. Hidden when another skin is active.
+fn scrapbook_inspector_extra(
+    photo: &crate::photo_object::PhotoObject,
+    context: &PhotoActionContext,
+    surface: PropertiesSurface,
+) -> gtk::Box {
+    let root = gtk::Box::new(gtk::Orientation::Vertical, 9);
+    root.add_css_class("scrapbook-only");
+    root.add_css_class("scrapbook-inspector-extra");
+    root.set_visible(crate::window::theme::scrapbook_is_active());
+    let photo_id = photo.id();
+    let (tags, note) = db::scrapbook_details(&context.connection.borrow(), photo_id)
+        .unwrap_or_default();
+
+    let tags_header = gtk::Label::new(Some("Tags"));
+    tags_header.add_css_class("scrapbook-inspector-paper-title");
+    tags_header.set_halign(gtk::Align::Start);
+    root.append(&tags_header);
+    let tag_rows = gtk::FlowBox::new();
+    tag_rows.add_css_class("scrapbook-tags");
+    tag_rows.set_selection_mode(gtk::SelectionMode::None);
+    tag_rows.set_min_children_per_line(1);
+    tag_rows.set_max_children_per_line(4);
+    tag_rows.set_column_spacing(5);
+    tag_rows.set_row_spacing(5);
+    if tags.is_empty() {
+        let hint = gtk::Label::new(Some("Add a tag to this photo"));
+        hint.add_css_class("scrapbook-tags-empty");
+        tag_rows.insert(&hint, -1);
+    }
+    for tag in &tags {
+        let chip = gtk::Button::with_label(&format!("{tag} ×"));
+        chip.add_css_class("scrapbook-tag-chip");
+        chip.set_tooltip_text(Some(&format!("Remove tag {tag}")));
+        let tag = tag.clone();
+        let photo_for_refresh = photo.clone();
+        let context_for_refresh = context.clone();
+        chip.connect_clicked(move |_| {
+            if let Err(error) = db::scrapbook_remove_tag(
+                &context_for_refresh.connection.borrow(), photo_id, &tag
+            ) {
+                eprintln!("PIC Scrapbook: could not remove tag: {error:#}");
+            } else {
+                show_properties_dialog_on(&photo_for_refresh, &context_for_refresh, surface);
+            }
+        });
+        tag_rows.insert(&chip, -1);
+    }
+    let add_tag = gtk::Button::with_label("+ Add tag");
+    add_tag.add_css_class("scrapbook-tag-add");
+    {
+        let context = context.clone();
+        let photo = photo.clone();
+        add_tag.connect_clicked(move |_| {
+            let dialog = adw::AlertDialog::new(Some("Add a photo tag"), Some("Keep your scrapbook organised with short tags."));
+            let entry = gtk::Entry::new();
+            entry.set_placeholder_text(Some("e.g. Family, Holiday, Project"));
+            entry.set_max_length(40);
+            dialog.set_extra_child(Some(&entry));
+            dialog.add_response("cancel", "Cancel");
+            dialog.add_response("add", "Add tag");
+            dialog.set_response_appearance("add", adw::ResponseAppearance::Suggested);
+            let connection = context.connection.clone();
+            let context_for_response = context.clone();
+            let photo_for_response = photo.clone();
+            dialog.connect_response(None, move |_, response| {
+                if response == "add" {
+                    if let Err(error) = db::scrapbook_add_tag(
+                        &connection.borrow(), photo_id, entry.text().as_str()
+                    ) {
+                        eprintln!("PIC Scrapbook: could not add tag: {error:#}");
+                    } else {
+                        show_properties_dialog_on(&photo_for_response, &context_for_response, surface);
+                    }
+                }
+            });
+            let window = context.window.upgrade();
+            dialog.present(window.as_ref());
+        });
+    }
+    tag_rows.insert(&add_tag, -1);
+    root.append(&tag_rows);
+
+    let notes_header = gtk::Label::new(Some("Notes"));
+    notes_header.add_css_class("scrapbook-inspector-paper-title");
+    notes_header.set_halign(gtk::Align::Start);
+    root.append(&notes_header);
+    let note_card = gtk::Box::new(gtk::Orientation::Vertical, 7);
+    note_card.add_css_class("scrapbook-note-card");
+    let text = gtk::TextView::new();
+    text.add_css_class("scrapbook-note-edit");
+    text.set_wrap_mode(gtk::WrapMode::WordChar);
+    text.set_size_request(-1, 76);
+    text.set_top_margin(7);
+    text.set_bottom_margin(7);
+    text.set_left_margin(8);
+    text.set_right_margin(8);
+    let buffer = text.buffer();
+    buffer.set_text(&note);
+    note_card.append(&text);
+    let note_save = gtk::Button::with_label("Save note");
+    note_save.add_css_class("scrapbook-note-save");
+    note_save.set_halign(gtk::Align::End);
+    let status = gtk::Label::new(None);
+    status.add_css_class("scrapbook-note-status");
+    note_card.append(&status);
+    note_card.append(&note_save);
+    {
+        let connection = context.connection.clone();
+        note_save.connect_clicked(move |_| {
+            let (start, end) = buffer.bounds();
+            let note = buffer.text(&start, &end, true);
+            match db::scrapbook_set_note(&connection.borrow(), photo_id, note.as_str()) {
+                Ok(()) => status.set_label("Saved ✓"),
+                Err(error) => status.set_label(&format!("Could not save: {error}")),
+            }
+        });
+    }
+    root.append(&note_card);
+
+    let actions_header = gtk::Label::new(Some("Actions"));
+    actions_header.add_css_class("scrapbook-inspector-paper-title");
+    actions_header.set_halign(gtk::Align::Start);
+    root.append(&actions_header);
+    let actions = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    actions.add_css_class("scrapbook-inspector-actions");
+    let make_action = |label: &str, icon_name: &str| {
+        let button = gtk::Button::new();
+        button.add_css_class("scrapbook-inspector-action");
+        let content = gtk::Box::new(gtk::Orientation::Vertical, 4);
+        content.set_halign(gtk::Align::Center);
+        let icon = gtk::Image::from_icon_name(icon_name);
+        icon.set_pixel_size(20);
+        content.append(&icon);
+        content.append(&gtk::Label::new(Some(label)));
+        button.set_child(Some(&content));
+        button
+    };
+    let edit = make_action("Edit", "document-edit-symbolic");
+    let edit_action = context.open_edit.clone();
+    edit.connect_clicked(move |_| edit_action(photo_id));
+    actions.append(&edit);
+    let new_album = make_action("Album", "folder-new-symbolic");
+    let album_action = context.create_album.clone();
+    new_album.connect_clicked(move |_| album_action());
+    actions.append(&new_album);
+    let export = make_action("Export", "document-save-symbolic");
+    let export_action = context.export.clone();
+    export.connect_clicked(move |_| export_action());
+    actions.append(&export);
+    root.append(&actions);
+    root
 }
 
 fn add_inspector_row(group: &adw::PreferencesGroup, name: &str, value: &str) {

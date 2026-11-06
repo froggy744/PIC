@@ -1,0 +1,398 @@
+/* picasa-theme
+   version: 1
+   name: PIC Scrapbook
+   dark: false
+   color-scheme: theme
+   mode: overlay
+   window-controls: native
+   corner-style: balanced
+*/
+/*
+ * PIC Scrapbook: a functional paper-and-polaroid skin for the existing
+ * navigation, photo browser, albums, editor, and Library dashboard.
+ * Render only decoration in CSS/SVG; keep navigation and photo operations
+ * in native GTK widgets. Files in assets/ are packaged beside theme.css.
+ */
+@define-color scrapbook_paper #faf4e9;
+@define-color scrapbook_cream #fffaf0;
+@define-color scrapbook_canvas #f8f0e4;
+@define-color scrapbook_ink #302722;
+@define-color scrapbook_muted #786e65;
+@define-color scrapbook_line #d8c8b4;
+@define-color scrapbook_cork #c6a47c;
+@define-color scrapbook_lavender #d9c4e9;
+@define-color scrapbook_peach #f5c7ae;
+@define-color scrapbook_sage #c5dcb7;
+@define-color scrapbook_pink #ed9bac;
+@define-color scrapbook_purple #76529a;
+@define-color scrapbook_gold #d6a947;
+@define-color accent_bg_color @scrapbook_purple;
+@define-color accent_fg_color #ffffff;
+@define-color accent_color @scrapbook_purple;
+@define-color window_bg_color @scrapbook_paper;
+@define-color view_bg_color @scrapbook_canvas;
+@define-color headerbar_bg_color @scrapbook_cream;
+@define-color theme_fg_color @scrapbook_ink;
+@define-color card_bg_color @scrapbook_cream;
+@define-color borders @scrapbook_line;
+@define-color theme_bg_color @scrapbook_canvas;
+
+window {
+  color: @scrapbook_ink;
+  background: @scrapbook_paper;
+  font-family: "Poppins", "Cantarell", sans-serif;
+  font-size: 13px;
+}
+.layout-left-column, .navigation-sidebar, .compact-sidebar-dock {
+  background-color: #fff7e9;
+  background-image: url("assets/paper.svg");
+  border-right: 1px solid #dfcfb8;
+  color: @scrapbook_ink;
+}
+.layout-left-header, .layout-right-header {
+  background: #fff9ef;
+  background-image: url("assets/paper.svg");
+  border-bottom: 1px solid #ddcdb5;
+  box-shadow: inset 0 -2px 0 rgba(255,255,255,.6);
+  color: @scrapbook_ink;
+}
+.layout-left-header button, .layout-right-header button, .app-title {
+  color: @scrapbook_ink;
+}
+.layout-left-header button:hover, .layout-right-header button:hover {
+  background: rgba(118,82,154,.11);
+  border-radius: 8px;
+}
+.app-title { font-weight: 900; font-family: "Kalam", "Comic Neue", "Poppins", sans-serif; font-size: 22px; }
+.search-field {
+  min-height: 36px;
+  background: #fffcf6;
+  border: 1px solid #d0bfa6;
+  border-radius: 18px;
+  color: @scrapbook_ink;
+  box-shadow: 0 2px 4px rgba(93,66,37,.07), inset 0 1px 2px rgba(142,104,70,.09);
+}
+.search-field entry, .unified-search-entry { color: @scrapbook_ink; background: transparent; }
+.search-field image { color: #876b90; }
+.navigation-sidebar row {
+  min-height: 30px;
+  padding: 3px 5px;
+  color: @scrapbook_ink;
+  background: transparent;
+}
+.navigation-sidebar row:hover { background: rgba(217,196,233,.40); border-radius: 5px; }
+.navigation-sidebar row:selected, .navigation-sidebar row.sidebar-scroll-location {
+  background: #ddc7ea;
+  color: #34243f;
+  border-radius: 4px;
+  border: 0;
+  box-shadow: 0 2px 4px rgba(72,45,79,.10);
+}
+.navigation-sidebar .sidebar-section-heading,
+.navigation-sidebar .sidebar-primary-section-heading {
+  background: transparent;
+  padding: 4px 6px;
+}
+.navigation-sidebar .sidebar-section-heading-title {
+  font-weight: 800;
+  color: #5b3d53;
+  font-family: "Kalam", "Comic Neue", "Poppins", sans-serif;
+  font-size: 15px;
+  text-shadow: none;
+}
+.navigation-sidebar .sidebar-primary-section-heading:hover {
+  background: #f2dfb4;
+}
+.navigation-sidebar .sidebar-count, .navigation-sidebar .folder-count,
+.navigation-sidebar .dim-label {
+  color: #857970;
+  font-variant-numeric: tabular-nums;
+}
+.navigation-sidebar .compact-sidebar-button,
+.navigation-sidebar .compact-sidebar-option { color: #4b3937; border-radius: 9px; }
+.navigation-sidebar .compact-sidebar-button:hover,
+.navigation-sidebar .compact-sidebar-option:hover { background: @scrapbook_lavender; }
+paned.sidebar-section-paned > separator {
+  background: transparent;
+  border-top: 1px dashed #cbb29b;
+  min-height: 6px;
+}
+.sidebar-resize-handle { background: transparent; }
+.photo-grid, .albums-index-content, .albums-layout, .home-content {
+  background-color: @scrapbook_canvas;
+  background-image: url("assets/paper.svg");
+}
+.photo-grid { color: @scrapbook_ink; }
+listview.folder-stream { background: transparent; padding: 0 20px 20px; }
+listview.folder-stream > row, listview.folder-stream > row:hover,
+listview.folder-stream > row:selected, listview.folder-stream > row:focus,
+listview.folder-stream > row:active {
+  padding: 0; margin: 0; background: transparent; background-image: none;
+  outline: none; box-shadow: none;
+}
+.folder-section-header { background: transparent; }
+.group-heading-bar {
+  background: rgba(255,251,243,.85);
+  border: 1px solid #e5d6c3;
+  border-radius: 8px;
+  padding: 5px 10px;
+  box-shadow: 0 2px 4px rgba(94,70,45,.04);
+}
+.folder-section-title, .section-heading {
+  color: #453026;
+  font-size: 15px;
+  font-weight: 800;
+  font-family: "Kalam", "Comic Neue", "Poppins", sans-serif;
+  text-shadow: none;
+}
+.folder-section-count, .section-count {
+  color: #7b6a60;
+  font-size: 12px;
+}
+.folder-section-separator { opacity: .25; }
+.section-heading-box { margin-top: 13px; margin-bottom: 9px; }
+gridview.section-grid > child, gridview.section-grid > item,
+.folder-photo-flow > flowboxchild {
+  padding: 5px; margin: 0; background: transparent; box-shadow: none;
+}
+gridview.section-grid > child:hover, gridview.section-grid > child:selected,
+gridview.section-grid > child:focus, gridview.section-grid > child:active,
+gridview.section-grid > item:hover, gridview.section-grid > item:selected,
+gridview.section-grid > item:focus, gridview.section-grid > item:active,
+.folder-photo-flow > flowboxchild:hover, .folder-photo-flow > flowboxchild:focus,
+.folder-photo-flow > flowboxchild:selected, .folder-photo-flow > flowboxchild:active {
+  background: transparent; background-image: none; outline: none; box-shadow: none;
+}
+.photo-tile {
+  background: #fffcf7;
+  border: 3px solid #fffdf7;
+  border-radius: 7px;
+  box-shadow: 0 2px 5px rgba(64,44,27,.16), 0 0 0 1px rgba(117,85,55,.16);
+}
+.photo-tile:hover {
+  border-color: #fff4c5;
+  box-shadow: 0 5px 12px rgba(64,44,27,.22), 0 0 0 2px #dfb77e;
+}
+gridview.section-grid > child:selected .photo-tile,
+gridview.section-grid > item:selected .photo-tile,
+.folder-photo-selected.photo-tile {
+  border-color: #815db0;
+  box-shadow: 0 0 0 2px #815db0, 0 4px 11px rgba(53,28,70,.20);
+}
+.photo-tile .thumbnail, .plain-album-cover .thumbnail { border-radius: 3px; }
+.selection-badge {
+  color: white;
+  background: @scrapbook_purple;
+  border: 2px solid #fff5eb;
+  border-radius: 999px;
+  box-shadow: 0 2px 4px rgba(58,37,60,.28);
+}
+.favorite-badge, .favorite-btn.active, .favorite-btn.active image { color: #d95575; }
+.offline-badge, .sidebar-offline-badge { color: #563f2d; background: #f4d2a6; }
+.thumbnail-filename { color: #675549; font-size: 11px; }
+.section-more-btn { color: #715d50; }
+.section-more-btn:hover { background: #f4e4d7; }
+
+/* Album index: pastel paper cards, stacked-photo shadows and taped labels. */
+.albums-index-title {
+  font-family: "Kalam", "Comic Neue", "Poppins", sans-serif;
+  font-size: 29px; font-weight: 800; color: #60417b;
+}
+.albums-home-count { color: #816d79; }
+.albums-standard > flowboxchild { padding: 8px; background: transparent; }
+.albums-standard button.album-card {
+  padding: 12px 12px 15px;
+  border: 1px solid #d4b8db;
+  border-radius: 10px;
+  background-color: #e7d2ed;
+  box-shadow: 0 6px 12px rgba(83,56,72,.17), inset 0 1px 0 rgba(255,255,255,.58);
+  color: #453247;
+}
+.albums-standard > flowboxchild:nth-child(3n+2) button.album-card {
+  background-color: #fae0b9; border-color: #e7c69d;
+}
+.albums-standard > flowboxchild:nth-child(3n+3) button.album-card {
+  background-color: #d5e8c5; border-color: #bed2af;
+}
+.albums-standard button.album-card:hover {
+  background-image: none;
+  box-shadow: 0 9px 17px rgba(83,56,72,.21), inset 0 1px 0 rgba(255,255,255,.72);
+}
+.albums-standard button.album-card:focus-visible {
+  outline: 3px solid #7453a0; outline-offset: 2px;
+}
+.albums-standard .album-cover {
+  border: 7px solid #fffaf0;
+  border-bottom-width: 12px;
+  border-radius: 3px;
+  background: #fffaf0;
+  box-shadow: 3px 4px 0 rgba(255,255,255,.65), 0 6px 10px rgba(60,37,26,.20);
+}
+.albums-standard .album-name {
+  background-color: #f7e8ad;
+  background-image: url("assets/washi.svg");
+  background-size: 100% 100%;
+  padding: 5px 9px;
+  color: #4d3b32;
+  font-size: 16px;
+  font-weight: 800;
+  font-family: "Kalam", "Comic Neue", "Poppins", sans-serif;
+}
+.albums-standard .album-photo-count {
+  color: #715c59;
+  font-weight: 700;
+  font-size: 12px;
+  padding: 0 6px;
+}
+.scrapbook-pin { opacity: 0; }
+.albums-standard .scrapbook-pin {
+  opacity: 1;
+  min-width: 16px; min-height: 16px;
+  color: #8e497a;
+  font-weight: 900;
+  font-size: 25px;
+  text-shadow: 0 2px 3px rgba(63,30,40,.3);
+}
+.albums-bookshelf .scrapbook-pin { opacity: 0; }
+.albums-coverflow .scrapbook-pin { opacity: 0; }
+.albums-create, .albums-sort, .albums-layout, .albums-size {
+  border-radius: 9px;
+  background: #fff9ef;
+  border: 1px solid @scrapbook_line;
+  color: #4e3b35;
+}
+.albums-create { background: #8055ad; color: #fff; border-color: #70419f; }
+
+/* Library home: a corkboard hero with functional scrollable photo sections. */
+.scrapbook-hero {
+  min-height: 126px;
+  background-color: @scrapbook_cork;
+  background-image: url("assets/cork.svg");
+  background-size: 480px 270px;
+  border: 8px solid #f7e5c8;
+  border-radius: 8px;
+  box-shadow: 0 4px 10px rgba(90,57,33,.18), inset 0 1px 1px rgba(255,255,255,.35);
+}
+.scrapbook-hero-title {
+  color: #fff9ed;
+  font-family: "Kalam", "Comic Neue", "Poppins", sans-serif;
+  font-weight: 900;
+  font-size: 35px;
+  text-shadow: 0 3px 4px rgba(76,47,32,.38);
+}
+.scrapbook-hero-subtitle {
+  background-color: #fff1cc;
+  color: #554337;
+  border: 1px solid #dfc795;
+  border-radius: 3px;
+  padding: 5px 12px;
+  font-family: "Kalam", "Comic Neue", sans-serif;
+}
+.scrapbook-hero-note {
+  background-color: #fff9ec;
+  color: #493d3a;
+  border-radius: 3px;
+  border: 1px solid #ddcab0;
+  padding: 12px;
+  box-shadow: 0 4px 10px rgba(72,46,30,.20);
+  font-family: "Kalam", "Comic Neue", "Poppins", sans-serif;
+}
+.scrapbook-hero-swatch {
+  color: #53384e;
+  background: #e2c9ef;
+  border: 5px solid #fffaf4;
+  border-bottom-width: 13px;
+  box-shadow: 0 4px 9px rgba(60,32,48,.23);
+  border-radius: 3px;
+  padding: 12px;
+}
+.scrapbook-hero-pushpin {
+  color: #b24e8a; font-size: 22px;
+  text-shadow: 0 2px 3px rgba(61,34,49,.35);
+}
+.scrapbook-hero-flourish { color: #ffe1a1; font-size: 21px; }
+.home-main-header .title-1, .home-section .title-2 {
+  color: #5e4573;
+  font-family: "Kalam", "Comic Neue", "Poppins", sans-serif;
+  font-weight: 800;
+}
+.home-main-header .title-1 { font-size: 27px; }
+.home-subtitle { color: @scrapbook_muted; }
+.home-summary {
+  background: #fff7e9;
+  border: 1px dashed #d2ba9c;
+  border-radius: 8px;
+  box-shadow: 0 3px 7px rgba(90,61,36,.08);
+}
+.home-summary-value { color: #6c4691; }
+.home-summary-label { color: #74665f; }
+.home-section {
+  border: 1px solid #dac3ad;
+  border-radius: 9px;
+  background-color: #fff7e9;
+  background-image: url("assets/paper.svg");
+  box-shadow: 0 4px 9px rgba(95,70,46,.07);
+}
+button.home-card {
+  background: #fffaf0;
+  border: 5px solid #fffaf0;
+  border-bottom-width: 9px;
+  border-radius: 3px;
+  box-shadow: 0 4px 10px rgba(77,53,39,.16);
+}
+button.home-card:hover { box-shadow: 0 7px 13px rgba(77,53,39,.23); }
+.home-card-caption { color: #57453e; font-weight: 700; }
+.home-card-caption-secondary { color: #88746a; }
+
+/* Paper inspector / metadata dock, controls and dialogs. */
+.photo-info-bar {
+  color: #40352f;
+  background-color: #fff6e8;
+  background-image: url("assets/paper.svg");
+  border-top: 1px solid #d9c6a9;
+  box-shadow: 0 -2px 6px rgba(104,74,44,.06);
+  padding: 8px 14px;
+}
+.info-preview {
+  border: 3px solid #fffaf0;
+  border-radius: 4px;
+  box-shadow: 0 2px 5px rgba(77,53,39,.18);
+}
+.info-title, .metric-val { color: #4b3837; font-weight: 650; }
+.metric-key, .photo-info-bar .dim-label { color: #8a7665; }
+.photo-action-button {
+  border-radius: 8px;
+  border: 1px solid #e5cdb0;
+  background-color: #fffaf0;
+  color: #59433c;
+  box-shadow: 0 2px 4px rgba(72,40,30,.09);
+}
+.photo-action-button:hover { background: #ecdaf1; border-color: #d1aedf; }
+.photo-action-button:checked, .one-to-one-btn:checked {
+  color: #fffaf0; background: #8056aa;
+}
+.photo-context-menu, .photo-context-menu viewport, popover > contents {
+  color: #46362f; background: #fff8ea; border: 1px solid #e3d2be;
+  border-radius: 8px;
+}
+button.suggested-action, button.suggested-action:hover {
+  background: #865aad; color: white; border-color: #75489d; border-radius: 9px;
+}
+button:hover { transition: background-color 140ms ease-out, box-shadow 140ms ease-out; }
+scrollbar slider { background: #d6b9d5; border-radius: 999px; min-width: 4px; min-height: 4px; }
+scrollbar slider:hover { background: #ad89b6; }
+tooltip { color: #4b3b2c; background: #fff1d5; border: 1px solid #dcc6a0; }
+tooltip label { color: #4b3b2c; }
+.scroll-scrub-date {
+  background: #fff7eb; color: #63477f;
+  border: 1px solid #dec6aa; border-radius: 6px;
+  box-shadow: 0 3px 8px rgba(74,47,32,.12);
+}
+.edit-panel-pages, .edit-preview, .edit-mode-toolbar {
+  background: #fff8ed; color: #44352f;
+}
+.edit-panel-tabs button:checked, .crop-aspect-button:checked,
+.crop-orientation-row button:checked, .collage-layout-tile:checked,
+.collage-tabs > button:checked {
+  background: @scrapbook_purple; color: white;
+}

@@ -826,7 +826,7 @@ impl LiveGpuCanvas {
                 return gtk::glib::Propagation::Stop;
             }
             let draw_started = Instant::now();
-            let (upload_trace, queue_ms, gl_error, sharpen) = {
+            let (upload_trace, queue_ms, queued_at, gl_error, sharpen) = {
                 let mut state = render_state.borrow_mut();
                 let source = state
                     .source
@@ -1159,7 +1159,7 @@ impl LiveGpuCanvas {
                     state.readback_pixels = Some(pixels);
                 }
                 let gl_error = unsafe { gl::GetError() };
-                (upload_trace, queue_ms, gl_error, tone.sharpen)
+                (upload_trace, queue_ms, queued_at, gl_error, tone.sharpen)
             };
             if gl_error != gl::NO_ERROR {
                 fail(
@@ -1170,7 +1170,7 @@ impl LiveGpuCanvas {
                 return gtk::glib::Propagation::Stop;
             }
 
-            render_state.borrow_mut().frame_after_paint = Some((Instant::now(), None));
+            render_state.borrow_mut().frame_after_paint = Some((Instant::now(), queued_at));
 
             if std::env::var_os("PICASA_TRACE").is_some() {
                 if let Some((width, height, elapsed)) = upload_trace {

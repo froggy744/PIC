@@ -475,3 +475,376 @@ tooltip label { color: #4b3b2c; }
   color: #5e4b42;
 }
 .scrapbook-inspector-location .dim-label { color: #715d51; }
+
+/* ================================================================
+   Scrapbook v2: illustrated visual system / reference recreation.
+   Native GTK navigation and keyboard/accessibility remain intact.
+   ================================================================ */
+window {
+    font-family: "Patrick Hand", "Comic Neue", "Poppins", sans-serif;
+    font-size: 15px;
+    color: #332820;
+}
+button, entry, label { letter-spacing: .15px; }
+.navigation-sidebar {
+    background-image: url("assets/paper.svg");
+    background-repeat: repeat;
+    color: #332820;
+}
+.navigation-sidebar .sidebar-section-heading-title,
+.navigation-sidebar .sidebar-primary-section-heading-title {
+    font-family: "Caveat", "Patrick Hand", cursive;
+    font-size: 23px;
+    font-weight: 700;
+    color: #4f3146;
+    background-image: url("assets/torn-gold.svg");
+    background-size: 100% 100%;
+    background-repeat: no-repeat;
+    padding: 6px 13px 7px;
+}
+.navigation-sidebar row:selected, .navigation-sidebar row.sidebar-scroll-location {
+    background-image: url("assets/torn-lilac.svg");
+    background-repeat: no-repeat;
+    background-size: 100% 100%;
+    border: 0;
+    box-shadow: 0 2px 3px rgba(74,43,86,.10);
+    background-color: transparent;
+    color: #422853;
+    border-radius: 0;
+}
+.navigation-sidebar row { font-size: 16px; }
+.navigation-sidebar .sidebar-count, .navigation-sidebar .folder-count {
+    min-width: 29px;
+    padding: 1px 4px;
+    border: 1px solid rgba(120,91,68,.20);
+    border-radius: 999px;
+    background: #f5eadd;
+    color: #65584e;
+    font-size: 12px;
+}
+.navigation-sidebar image { color: #463531; }
+.navigation-sidebar .sidebar-sticky-heading {
+    border-bottom: 1px dashed rgba(126,95,74,.18);
+}
+.scrapbook-logo { background: transparent; }
+.scrapbook-logo-mark { min-height: 41px; min-width: 59px; }
+.scrapbook-logo-word {
+    font-family: "Caveat", cursive;
+    font-size: 30px;
+    font-weight: 700;
+    color: #251c1b;
+}
+.scrapbook-logo-shell {
+    border-radius: 4px;
+    border: 1px solid rgba(202,169,137,.65);
+    background-image: url("assets/torn-cream.svg");
+    background-size: 100% 100%;
+    padding: 3px 16px 4px;
+}
+.scrapbook-sidebar-leaf { opacity: .82; }
+
+/* Actual paper-textured Library canvas and corkboard collage. */
+.scrapbook-dashboard {
+    background-color: #fbf5eb;
+    background-image: url("assets/paper.svg");
+    background-repeat: repeat;
+    color: #362a24;
+}
+.scrapbook-masthead {
+    padding: 21px 24px;
+    min-height: 152px;
+    background-color: #c19a73;
+    background-image: url("assets/leaf-corner.svg"), url("assets/cork.svg");
+    background-position: right top, left top;
+    background-size: 175px 150px, 480px 270px;
+    background-repeat: no-repeat, repeat;
+    border: 7px solid #f7e8d4;
+    border-radius: 9px;
+    box-shadow: 0 5px 13px rgba(80,48,33,.18), inset 0 0 0 1px rgba(118,73,41,.19);
+}
+.scrapbook-masthead-identity { padding: 6px 10px; }
+.scrapbook-masthead-title {
+    font-family: "Caveat", "Patrick Hand", cursive;
+    font-size: 64px;
+    font-weight: 700;
+    color: #6e438f;
+    text-shadow: 1px 2px 0 #fff6db, 0 2px 2px rgba(61,43,54,.19);
+    background-color: #fff4df;
+    background-image: url("assets/torn-cream.svg");
+    background-size: 100% 100%;
+    padding: 0 32px 0 19px;
+    margin: 0 0 3px;
+}
+.scrapbook-masthead-subtitle {
+    font-family: "Patrick Hand", sans-serif;
+    font-size: 19px;
+    color: #4b392e;
+    background-image: url("assets/torn-gold.svg");
+    background-size: 100% 100%;
+    padding: 3px 13px 4px;
+}
+.scrapbook-checklist {
+    background-color: #fff8e9;
+    background-image: url("assets/grid-paper.svg");
+    border: 1px solid #e3cbae;
+    border-radius: 2px;
+    padding: 7px 12px 13px;
+    box-shadow: 0 5px 9px rgba(70,43,32,.23);
+    min-width: 180px;
+}
+.scrapbook-checklist-pin {
+    margin-top: -18px;
+    font-size: 24px;
+    color: #b35278;
+    text-shadow: 0 2px 2px rgba(69,40,42,.26);
+}
+.scrapbook-checklist-line {
+    font-family: "Patrick Hand", sans-serif;
+    font-size: 16px;
+    color: #402e31;
+}
+.scrapbook-masthead-photo {
+    background: #fffdf5;
+    padding: 8px 8px 20px;
+    border: 1px solid #ddcfbb;
+    border-radius: 2px;
+    box-shadow: 4px 7px 11px rgba(70,44,33,.24);
+}
+.scrapbook-hero-sparkle {
+    color: #f6d46b;
+    text-shadow: 0 1px 3px rgba(83,48,29,.28);
+    font-size: 29px;
+}
+
+/* Album cards: paper stacks and labels, stickers and actual photo covers. */
+.scrapbook-sheet-heading {
+    background-image: url("assets/torn-gold.svg");
+    background-size: 100% 100%;
+    padding: 0 18px 3px;
+    color: #614b43;
+    font-family: "Caveat", cursive;
+    font-size: 31px;
+    font-weight: 700;
+}
+.scrapbook-section-action {
+    background: #fff7e9;
+    border: 1px solid #dcc5b0;
+    border-radius: 9px;
+    color: #705a70;
+    padding: 5px 11px;
+    font-family: "Patrick Hand", sans-serif;
+    font-size: 15px;
+    box-shadow: 0 2px 3px rgba(62,44,32,.06);
+}
+.scrapbook-section-action:hover { background: #ead6ed; }
+.scrapbook-albums-row, .scrapbook-photo-grid { background: transparent; }
+.scrapbook-albums-row > flowboxchild,
+.scrapbook-photo-grid > flowboxchild,
+.scrapbook-albums-row > flowboxchild:hover,
+.scrapbook-photo-grid > flowboxchild:hover {
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    padding: 4px 4px 7px;
+}
+.scrapbook-album-tile {
+    padding: 13px 12px 13px;
+    min-width: 206px;
+    min-height: 222px;
+    border: 1px solid #caafc7;
+    border-radius: 12px 13px 9px 14px;
+    box-shadow: 0 6px 12px rgba(85,58,56,.17), inset 0 1px 0 rgba(255,255,255,.65);
+    color: #3b2a31;
+}
+.scrapbook-lavender { background: #e8cdec; }
+.scrapbook-peach { background: #f7debb; border-color: #e8c49b; }
+.scrapbook-sage { background: #d2e6c1; border-color: #b9d2ab; }
+.scrapbook-album-tile:hover {
+    box-shadow: 0 9px 17px rgba(85,58,56,.24), 0 0 0 2px rgba(120,83,149,.35);
+}
+.scrapbook-album-body { padding-top: 9px; }
+.scrapbook-polaroid {
+    padding: 6px 6px 12px;
+    border-radius: 2px;
+    background: #fffdf7;
+    border: 1px solid #eadbd0;
+    box-shadow: 5px 4px 0 rgba(255,254,246,.77), 0 6px 8px rgba(68,44,32,.22);
+}
+.scrapbook-album-title {
+    font-family: "Patrick Hand", sans-serif;
+    font-size: 22px;
+    font-weight: 600;
+    background-image: url("assets/tape-strip.svg");
+    background-size: 100% 100%;
+    padding: 3px 11px 5px;
+    color: #332b27;
+}
+.scrapbook-album-subtitle {
+    font-family: "Patrick Hand", sans-serif;
+    font-size: 14px;
+    color: #6b5948;
+}
+.scrapbook-count-sticker {
+    border-radius: 9999px;
+    min-width: 27px;
+    min-height: 27px;
+    padding: 3px;
+    color: #fff;
+    background: #8c56a7;
+    border: 3px solid white;
+    box-shadow: 0 2px 5px rgba(48,34,40,.32);
+    font-family: "Patrick Hand", sans-serif;
+    font-size: 17px;
+    font-weight: 900;
+}
+.scrapbook-peach .scrapbook-count-sticker { background: #ec6f73; }
+.scrapbook-sage .scrapbook-count-sticker { background: #6da15e; }
+.scrapbook-album-pin {
+    font-size: 30px;
+    font-weight: 900;
+    color: #a64d8b;
+    text-shadow: 0 3px 4px rgba(64,36,54,.28);
+    margin-top: -16px;
+}
+.scrapbook-peach .scrapbook-album-pin { color: #c46e69; }
+.scrapbook-sage .scrapbook-album-pin { color: #c79062; }
+.scrapbook-create-album {
+    min-width: 185px;
+    min-height: 210px;
+    padding: 10px;
+    background: rgba(255,249,236,.45);
+    border: 2px dashed #c7a78e;
+    border-radius: 11px;
+    box-shadow: none;
+    color: #8e7864;
+}
+.scrapbook-create-album:hover { background: rgba(239,219,239,.65); }
+.scrapbook-create-plus {
+    font-family: "Patrick Hand", sans-serif;
+    font-size: 74px;
+    font-weight: 400;
+    color: #a88e7d;
+}
+.scrapbook-create-caption {
+    font-family: "Caveat", cursive;
+    font-size: 27px;
+    color: #584b48;
+}
+
+/* Paper sheet for actual album photos. */
+.scrapbook-gallery-sheet {
+    background-color: #fff8ed;
+    background-image: url("assets/paper.svg");
+    border: 1px solid #ddc7af;
+    border-radius: 13px;
+    padding: 14px 15px 18px;
+    box-shadow: 0 5px 12px rgba(80,57,41,.12);
+}
+.scrapbook-gallery-header {
+    padding: 3px 6px 9px;
+    border-bottom: 1px dashed #d8bda0;
+}
+.scrapbook-gallery-folder { color: #498dc2; }
+.scrapbook-gallery-title {
+    font-family: "Patrick Hand", sans-serif;
+    font-size: 23px;
+    font-weight: 600;
+    color: #3f302d;
+}
+.scrapbook-gallery-count {
+    color: #6b594a;
+    font-family: "Patrick Hand", sans-serif;
+    font-size: 17px;
+}
+.scrapbook-gallery-actions button { font-size: 13px; }
+.scrapbook-photo-tile {
+    padding: 0;
+    background: transparent;
+    border: 0;
+    box-shadow: none;
+    border-radius: 3px;
+}
+.scrapbook-photo-tile:hover,
+.scrapbook-photo-tile:focus-visible {
+    background: transparent;
+    box-shadow: none;
+}
+.scrapbook-photo-frame {
+    padding: 5px;
+    background: #fffdf7;
+    border: 1px solid #e5d6c5;
+    border-radius: 4px;
+    box-shadow: 0 3px 6px rgba(68,49,41,.18);
+}
+.scrapbook-photo-tile:hover .scrapbook-photo-frame {
+    box-shadow: 0 5px 9px rgba(68,49,41,.30), 0 0 0 2px #d7b2e9;
+}
+.scrapbook-photo-selected .scrapbook-photo-frame {
+    box-shadow: 0 0 0 3px #8a5bc0, 0 4px 8px rgba(60,35,56,.22);
+}
+.scrapbook-photo-caption {
+    font-size: 12px;
+    font-family: "Patrick Hand", sans-serif;
+    color: #716052;
+}
+.scrapbook-photo-heart {
+    font-size: 25px;
+    color: #e54c6b;
+    margin: 0 6px 3px 0;
+    text-shadow: 0 2px 2px rgba(50,30,33,.30);
+}
+.scrapbook-photo-rating {
+    background: #392c32;
+    color: #fff4da;
+    font-family: "Patrick Hand", sans-serif;
+    font-size: 13px;
+    padding: 1px 5px;
+    margin: 0 0 4px 5px;
+}
+.scrapbook-empty {
+    padding: 18px;
+    font-family: "Patrick Hand", sans-serif;
+    font-size: 18px;
+    color: #8c7969;
+}
+
+/* The Library home no longer uses flat default panels. */
+.scrapbook-library-root, .scrapbook-library-root > viewport {
+    background-image: url("assets/paper.svg");
+    background-color: #fbf5ea;
+}
+
+/* Extra decorative polish on the native (non-dashboard) photo views. */
+.photo-grid {
+    background-image: url("assets/paper.svg");
+    background-color: #fcf6ea;
+}
+.folder-section-title, .section-heading {
+    font-family: "Patrick Hand", sans-serif;
+    font-size: 20px;
+    color: #4d3448;
+}
+.folder-section-header, .group-heading-bar {
+    background-image: url("assets/paper.svg");
+    border-radius: 7px;
+}
+.photo-tile {
+    border-width: 4px;
+    border-bottom-width: 6px;
+    border-color: #fffdf5;
+    border-radius: 5px;
+    box-shadow: 1px 3px 5px rgba(75,55,41,.17);
+}
+.photo-info-bar {
+    background-image: url("assets/paper.svg");
+    background-color: #fff7e9;
+}
+.photo-info-bar .info-title { font-family: "Patrick Hand", sans-serif; font-size: 15px; }
+.scrapbook-inspector {
+    background-image: url("assets/paper.svg");
+    background-color: #fff7e9;
+}
+.scrapbook-inspector-preview {
+    border-bottom-width: 16px;
+    box-shadow: 0 5px 9px rgba(68,43,34,.23);
+}

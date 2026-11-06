@@ -1442,7 +1442,18 @@ impl Gallery {
             if bounds.y() + bounds.height() < 0.0 || bounds.y() > viewport {
                 continue;
             }
-            tile.unload_visual();
+            // Settling must not clear a correct image just because its shared
+            // RAM-cache entry was evicted during the scrollbar jump.
+            let correctly_loaded = tile.imp().visual_loaded.get()
+                && tile.imp().photo.borrow().as_ref().is_some_and(|photo| {
+                    photo.thumbnail_available()
+                        && photo_presentation_key(photo).is_some_and(|key| {
+                            tile.imp().applied_visual_key.borrow().as_deref() == Some(key.as_str())
+                        })
+                });
+            if !correctly_loaded {
+                tile.unload_visual();
+            }
             tile.load_visual();
             refreshed += 1;
         }

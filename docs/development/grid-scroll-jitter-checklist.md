@@ -266,3 +266,29 @@ The user was asked to compare Photo Grid wheel scrolling at 100, 160 and 300 px
 and chose to keep the change: it felt acceptable, but improvement was uncertain.
 This is acceptance of the tested correction, not confirmation that general
 visible jitter is eliminated. No spring constants or sensitivity were changed.
+
+## Fast scrollbar release: correct-thumbnail blanking
+
+The user reported some thumbnails flickering when a fast scrollbar-thumb drag
+stops. The Photo Grid settle callback ends scrub mode and calls
+`refresh_visible_grid_tiles`. That function unconditionally unloaded visible
+images before loading them again. If a correct visible paintable survived in its
+widget but its shared RAM-cache entry had been evicted during the jump, the
+settle pass cleared it and queued an asynchronous reload, producing a blank
+interval. This is a separately verified settle-path defect; it has not been
+attributed to the fractional spring correction.
+
+The refresh now retains fully loaded thumbnails whose applied presentation key
+matches the current photo and whose thumbnail remains available. Stale recycled
+images and missing/changed presentations still follow the existing unload/load
+path. No wheel behavior, cache sizing, image quality or decode logic changed.
+
+The focused test
+`grid_scrub_settle_preserves_loaded_thumbnail_after_ram_eviction` failed before
+the fix because the settle refresh cleared a correct paintable. It passed after
+the fix, checking both that the correct paintable never becomes empty and that
+a recycled image belonging to a different photo is still cleared at settle.
+The test ran alone under Xvfb/Cairo with `--ignored --test-threads=1`;
+`cargo check --locked` passed. After launching the modified app on native
+Wayland with Vulkan requested and tracing disabled, the user repeated the fast
+scrollbar-thumb drag and confirmed: "Flicker is gone."

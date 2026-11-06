@@ -29,6 +29,95 @@ fn wait_for_restore(predicate: impl Fn() -> bool) -> bool {
 
 #[test]
 #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+fn grid_scrub_settle_preserves_loaded_thumbnail_after_ram_eviction() {
+    gtk::init().unwrap();
+    set_grid_scrub_active(false);
+    let photo = glib::Object::builder::<PhotoObject>()
+        .property("id", 91_i64)
+        .property("path", "/virtual/scrub-settle.jpg")
+        .property("filename", "scrub-settle.jpg")
+        .property("original-available", false)
+        .build();
+    photo.set_cached_thumbnail_path("/virtual/scrub-settle-thumb.jpg");
+    let key = photo_presentation_key(&photo).unwrap();
+    let paintable: gtk::gdk::Paintable = gtk::gdk::MemoryTexture::new(
+        40,
+        30,
+        gtk::gdk::MemoryFormat::R8g8b8a8,
+        &glib::Bytes::from_owned(vec![128_u8; 40 * 30 * 4]),
+        40 * 4,
+    )
+    .upcast();
+    folder_thumbnail_cache_insert(key.clone(), paintable.clone());
+    let gallery = Gallery::new(
+        &[],
+        160,
+        |_| {},
+        |_, _, _| {},
+        |_, _, _, _| {},
+        |_, _| {},
+        |_| {},
+    );
+    gallery.current_photos.replace(vec![photo.clone()]);
+    gallery.store.splice(0, 0, &[photo]);
+    let scroll = gtk::ScrolledWindow::builder().child(&gallery.root).build();
+    let window = gtk::Window::builder()
+        .default_width(900)
+        .default_height(650)
+        .child(&scroll)
+        .build();
+    window.present();
+    settle();
+    let mut tiles = Vec::new();
+    collect_tiles(gallery.root.upcast_ref(), &mut tiles);
+    let tile = tiles
+        .into_iter()
+        .find(|tile| tile.imp().photo.borrow().is_some())
+        .unwrap();
+    let frame = tile.first_child().and_downcast::<gtk::Overlay>().unwrap();
+    let picture = frame.child().and_downcast::<gtk::Picture>().unwrap();
+    assert_eq!(picture.paintable().as_ref(), Some(&paintable));
+    assert!(tile.imp().visual_loaded.get());
+
+    // A scrollbar jump can evict the shared cache entry while the visible
+    // picture still owns its correct, fully loaded paintable.
+    folder_thumbnail_cache_remove(&key);
+    let blanked = Rc::new(Cell::new(false));
+    let blanked_for_signal = blanked.clone();
+    picture.connect_paintable_notify(move |picture| {
+        if picture.paintable().is_none() {
+            blanked_for_signal.set(true);
+        }
+    });
+    assert!(gallery.refresh_visible_grid_tiles() > 0);
+    assert!(
+        !blanked.get(),
+        "settle cleared an already correct thumbnail"
+    );
+    assert_eq!(picture.paintable().as_ref(), Some(&paintable));
+
+    // An old image retained by a recycled tile must still be removed when
+    // scrubbing ends if it belongs to a different photo.
+    let next = glib::Object::builder::<PhotoObject>()
+        .property("id", 92_i64)
+        .property("path", "/virtual/scrub-next.jpg")
+        .property("original-available", false)
+        .build();
+    next.set_cached_thumbnail_path("/virtual/scrub-next-thumb.jpg");
+    set_grid_scrub_active(true);
+    tile.set_photo_deferred(&next);
+    assert!(picture.paintable().is_some());
+    set_grid_scrub_active(false);
+    assert!(gallery.refresh_visible_grid_tiles() > 0);
+    assert!(
+        picture.paintable().is_none(),
+        "settle retained a different photo's thumbnail"
+    );
+    window.close();
+}
+
+#[test]
+#[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
 fn keyboard_open_uses_the_visible_thumbnail_in_all_gallery_layouts() {
     gtk::init().unwrap();
     let photo = glib::Object::builder::<PhotoObject>()

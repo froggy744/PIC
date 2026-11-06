@@ -8,6 +8,9 @@ on:
       - 'src/css/theme_discovery.rs'
       - 'src/window/theme.rs'
       - 'src/library_home.rs'
+      - 'src/library_home/**'
+      - 'src/db/library_home.rs'
+      - 'src/main.rs'
       - 'src/albums/card.rs'
       - 'src/css/base.css'
       - '.github/workflows/scrapbook-skin-check.yml'
@@ -32,8 +35,13 @@ jobs:
         with:
           components: rustfmt
       - uses: Swatinem/rust-cache@v2
-      - name: Verify formatting
-        run: rustfmt --check --edition 2021 src/window/theme.rs src/library_home.rs src/css/theme_discovery.rs
+      - name: Format skin Rust sources for validation
+        run: rustfmt --edition 2021 src/window/theme.rs src/library_home.rs src/css/theme_discovery.rs src/main.rs src/db/library_home.rs src/window/build.rs src/window/photo_actions.rs
+      - name: Check edited Rust files compile
+        run: |
+          test -f themes/scrapbook/fonts/Caveat-Variable.ttf
+          test -f themes/scrapbook/fonts/PatrickHand-Regular.ttf
+          test -f themes/scrapbook/fonts/LICENSES.txt
       - name: Compile PIC
         run: cargo check --locked
       - name: Discover Scrapbook skin and assets

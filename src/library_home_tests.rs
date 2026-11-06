@@ -428,3 +428,136 @@ fn home_page_sections_navigation_and_favorite_refresh() {
     drop(connection);
     std::fs::remove_file(path).unwrap();
 }
+
+
+/// Visual regression fixture for the actual GTK Scrapbook layout. The test
+/// generates synthetic coloured thumbnails in memory only; it never injects
+/// images into the user's photo library. Run under Xvfb with xdotool and
+/// ImageMagick to capture screenshots of the rendered widgets.
+#[test]
+#[ignore = "requires Xvfb, ImageMagick and xdotool"]
+fn scrapbook_reference_capture_layout() {
+    use std::path::Path;
+    gtk::init().expect("GTK test display");
+    #[cfg(target_os = "linux")]
+    crate::register_scrapbook_fonts();
+    let display = gtk::gdk::Display::default().expect("display");
+    crate::css::install_foundation(&display);
+    let css = gtk::CssProvider::new();
+    let theme_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("themes/scrapbook/theme.css");
+    css.load_from_path(&theme_path);
+    gtk::style_context_add_provider_for_display(
+        &display, &css, gtk::STYLE_PROVIDER_PRIORITY_APPLICATION + 7
+    );
+    let (path, conn) = fixture();
+    for id in 3_i64..=25 {
+        conn.execute(
+            "INSERT INTO photos(id,path,taken_at,width,height,size_bytes,iso,aperture,favorite,rating)
+             VALUES (?1,?2,'2026-05-25',600,400,1250000,64,2.2,?3,?4)",
+            rusqlite::params![id, format!("/fixture/Coastland_{id:03}.jpg"), id % 4 == 0, (id % 5) as i32],
+        ).unwrap();
+    }
+    let album_one = db::create_album(&conn, "FB-2026 Coastland Sales").unwrap();
+    let ids: Vec<i64> = (3..=25).collect();
+    db::add_photos_to_album(&conn, album_one.id, &ids).unwrap();
+    let album_two = db::create_album(&conn, "Concrete Palisade").unwrap();
+    db::add_photos_to_album(&conn, album_two.id, &[4, 5, 6, 7, 8, 9]).unwrap();
+    let album_three = db::create_album(&conn, "Creche").unwrap();
+    db::add_photos_to_album(&conn, album_three.id, &[10, 11, 12, 13, 14]).unwrap();
+    db::scrapbook_add_tag(&conn, 25, "Project").unwrap();
+    db::scrapbook_add_tag(&conn, 25, "Exterior").unwrap();
+    db::scrapbook_set_note(&conn, 25, "Facade detail for the project summary.").unwrap();
+    let data = db::library_home_data(&conn).unwrap();
+
+    let draw = |id: i64| {
+        let width = 240_i32;
+        let height = 154_i32;
+        let mut pixels = vec![0u8; (width * height * 4) as usize];
+        for y in 0..height {
+            for x in 0..width {
+                let sky = y < 78;
+                let building = y >= 59 && y < 128 && x >= 40 && x < 211;
+                let fence = y >= 77 && x % 17 < 3;
+                let (mut red, mut green, mut blue) = if sky {
+                    (80 + (x % 27) as u8, 143 + (y % 38) as u8, 218)
+                } else if building {
+                    (163, 169, 169)
+                } else {
+                    (77, 144, 85)
+                };
+                if building && x % 36 < 8 {
+                    red = 61; green = 72; blue = 85;
+                }
+                if fence {
+                    red = 75; green = 71; blue = 68;
+                }
+                if y > 134 {
+                    red = red.saturating_add(18);
+                }
+                let pixel = ((y * width + x) * 4) as usize;
+                pixels[pixel..pixel + 4].copy_from_slice(&[
+                    red.saturating_add((id % 8) as u8 * 3), green, blue, 255
+                ]);
+            }
+        }
+        Arc::new(PreviewImage { width, height, pixels })
+    };
+    let mut images = HashMap::new();
+    for (_, cover) in &data.albums {
+        if let Some(photo) = cover { images.insert(photo.id, draw(photo.id)); }
+    }
+    for photo in &data.scrapbook_photos {
+        images.insert(photo.id, draw(photo.id));
+    }
+    let snapshot = Snapshot { data, images };
+    let navigate: Navigate = Rc::new(|_| {});
+    let open: OpenPhoto = Rc::new(|_, _, _| {});
+    let dashboard = super::scrapbook::ScrapbookDashboard::new(
+        &navigate, &open, path.clone()
+    );
+    dashboard.root.set_visible(true);
+    dashboard.populate(&snapshot, &navigate, &open);
+    let scroller = gtk::ScrolledWindow::new();
+    scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+    scroller.set_child(Some(&dashboard.root));
+    let window = gtk::Window::new();
+    window.set_title(Some("PIC Scrapbook Visual Fixture"));
+    window.set_default_size(1550, 900);
+    window.set_child(Some(&scroller));
+    window.present();
+    let context = glib::MainContext::default();
+    for _ in 0..80 {
+        while context.pending() { context.iteration(false); }
+        std::thread::sleep(Duration::from_millis(12));
+    }
+    assert!(dashboard.root.width() > 1000, "scrapbook root needs a wide preview viewport");
+    if let Ok(dir) = std::env::var("PIC_SCRAPBOOK_SCREENSHOT_DIR") {
+        std::fs::create_dir_all(&dir).unwrap();
+        let window_id = std::process::Command::new("xdotool")
+            .args(["search", "--onlyvisible", "--name", "^PIC Scrapbook Visual Fixture$"])
+            .output().expect("xdotool available");
+        assert!(window_id.status.success(), "GUI window not found by xdotool");
+        let id = String::from_utf8_lossy(&window_id.stdout)
+            .lines().last().expect("window id").to_string();
+        for (width, height, name) in [
+            (1550, 900, "scrapbook-1550x900.png"),
+            (1366, 768, "scrapbook-1366x768.png"),
+        ] {
+            window.set_default_size(width, height);
+            for _ in 0..35 {
+                while context.pending() { context.iteration(false); }
+                std::thread::sleep(Duration::from_millis(12));
+            }
+            let target = Path::new(&dir).join(name);
+            let status = std::process::Command::new("import")
+                .args(["-window", &id, target.to_str().unwrap()])
+                .status().expect("ImageMagick available");
+            assert!(status.success(), "GTK screenshot capture failed");
+            assert!(target.is_file(), "missing screenshot");
+        }
+    }
+    window.destroy();
+    drop(conn);
+    let _ = std::fs::remove_file(path);
+}

@@ -23,6 +23,12 @@ on:
 permissions:
   contents: read
 
+# Keep only the newest visual validation; old branch pushes should not run
+# several duplicate Rust builds at once.
+concurrency:
+  group: scrapbook-skin-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   scrapbook:
     runs-on: ubuntu-24.04

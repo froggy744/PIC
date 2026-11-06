@@ -60,6 +60,11 @@ CREATE TABLE IF NOT EXISTS album_photos (
   photo_id INTEGER NOT NULL REFERENCES photos(id) ON DELETE CASCADE,
   PRIMARY KEY(album_id, photo_id)
 );
+CREATE TABLE IF NOT EXISTS scrapbook_details (
+  photo_id INTEGER PRIMARY KEY REFERENCES photos(id) ON DELETE CASCADE,
+  note TEXT NOT NULL DEFAULT '',
+  tags TEXT NOT NULL DEFAULT '[]'
+);
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
@@ -313,6 +318,7 @@ include!("db/albums.rs");
 include!("db/photos.rs");
 include!("db/history.rs");
 include!("db/library_home.rs");
+include!("db/scrapbook.rs");
 include!("db/settings.rs");
 include!("db/overlay_assets.rs");
 include!("db/tests.rs");

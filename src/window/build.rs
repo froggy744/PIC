@@ -48,6 +48,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     }
 
     let _ = db::delete_setting(&connection.borrow(), db::filters::SETTING);
+    let startup_catalog_started = Instant::now();
     let folders = db::folders(&connection.borrow()).unwrap_or_default();
     let folder_cache = Rc::new(RefCell::new(folders.clone()));
     let albums = db::browse_albums(&connection.borrow()).unwrap_or_default();
@@ -82,6 +83,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     .unwrap_or(0.0)
     .max(0.0);
     let sidebar_counts = db::sidebar_counts(&connection.borrow()).unwrap_or_default();
+    crate::startup_trace::mark("startup_catalog_metadata", Some(startup_catalog_started));
     let sort = Rc::new(Cell::new(PhotoSort {
         field: SortField::from_key(
             &db::setting(&connection.borrow(), SORT_FIELD_SETTING_KEY)
@@ -118,6 +120,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     } else {
         grid::GroupMode::None
     }));
+    let startup_photos_started = Instant::now();
     let mut photos = match initial_filter {
         sidebar::SidebarFilter::Library | sidebar::SidebarFilter::Albums => Vec::new(),
         sidebar::SidebarFilter::Album(album_id) => {
@@ -128,6 +131,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         }
         _ => db::browse_photos(&connection.borrow(), None, false, None).unwrap_or_default(),
     };
+    crate::startup_trace::mark("startup_photo_query", Some(startup_photos_started));
     retain_enabled_formats(&connection.borrow(), &mut photos);
     limit_recently_added(
         &connection.borrow(),
@@ -6643,6 +6647,7 @@ fn start_photo_export_single(
         let settings_window = settings_window_for_switch.clone();
         let start_next_scan = start_next_scan.clone();
         Rc::new(move |id: &str| -> Result<(), String> {
+            let switch_started = Instant::now();
             let target = db::known_libraries()
                 .map_err(|error| format!("{error:#}"))?
                 .into_iter()
@@ -6680,6 +6685,7 @@ fn start_photo_export_single(
 
             let (library, new_connection) = db::select_library(id)
                 .map_err(|error| format!("{error:#}"))?;
+            crate::startup_trace::mark("switch_database_open", Some(switch_started));
             db::delete_setting(&new_connection,db::filters::SETTING).map_err(|error|error.to_string())?;
             let folders = db::folders(&new_connection).map_err(|error| error.to_string())?;
             let albums = db::browse_albums(&new_connection).map_err(|error| error.to_string())?;
@@ -6715,6 +6721,7 @@ fn start_photo_export_single(
                     .flatten()
                     .unwrap_or_default(),
             );
+            let switch_photos_started = Instant::now();
             let mut photos = match new_filter {
                 sidebar::SidebarFilter::Library | sidebar::SidebarFilter::Albums => Vec::new(),
                 sidebar::SidebarFilter::Album(album_id) => {
@@ -6728,6 +6735,7 @@ fn start_photo_export_single(
                 }
                 _ => db::browse_photos(&new_connection, None, false, None).unwrap_or_default(),
             };
+            crate::startup_trace::mark("switch_photo_query", Some(switch_photos_started));
             retain_enabled_formats(&new_connection, &mut photos);
             limit_recently_added(&new_connection, new_filter, &mut photos);
             apply_collection_rating_filter(&mut photos, new_filter, RatingFilter::All);
@@ -6827,6 +6835,7 @@ fn start_photo_export_single(
                 for root in roots {scan_job.borrow_mut().enqueue_network_import(root,true);}
                 start_next_scan();
             }
+            crate::startup_trace::mark("switch_complete", Some(switch_started));
             Ok(())
         })
     }));

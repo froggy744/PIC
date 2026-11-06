@@ -311,6 +311,8 @@ struct NativeTextureCache {
 
 pub(super) struct DisplayTextureCacheEntry {
     path: String,
+    mtime: i64,
+    size_bytes: i64,
     rotation: i32,
     edit_recipe: String,
     target_width: u32,

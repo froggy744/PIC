@@ -3,6 +3,38 @@ mod viewer_presentation_tests {
     use super::*;
 
     #[test]
+    #[ignore = "requires a GTK display; run individually"]
+    fn changed_source_fingerprint_does_not_reuse_old_display_texture() {
+        gtk::init().unwrap();
+        let photo: PhotoObject = glib::Object::builder()
+            .property("path", "/test/changed.jpg")
+            .property("mtime", 1_i64)
+            .property("size-bytes", 2_i64)
+            .build();
+        let root = gtk::Overlay::new();
+        let picture = gtk::Picture::new();
+        let cache: DisplayTextureCache = Rc::new(RefCell::new(VecDeque::new()));
+        let (width, height, _, _, _, _) = viewer_decode_target(&root, 0, false);
+        let bytes = glib::Bytes::from_owned(vec![255u8; 4]);
+        let texture = gtk::gdk::MemoryTexture::new(
+            1,
+            1,
+            gtk::gdk::MemoryFormat::R8g8b8a8,
+            &bytes,
+            4,
+        );
+        display_texture_cache_insert(
+            &cache, photo.path(), 1, 2, 0, String::new(), width, height, texture,
+        );
+        assert!(prepare_navigation_photo(&picture, Some(&photo), &root, 0.0, &cache).0);
+        photo.set_mtime(2);
+        assert!(!prepare_navigation_photo(&picture, Some(&photo), &root, 0.0, &cache).0);
+        photo.set_mtime(1);
+        photo.set_size_bytes(3);
+        assert!(!prepare_navigation_photo(&picture, Some(&photo), &root, 0.0, &cache).0);
+    }
+
+    #[test]
     fn arrow_steps_remain_single_photo_and_clamp_at_collection_edges() {
         assert_eq!(navigation_step(4, 1, 10), 5);
         assert_eq!(navigation_step(4, -1, 10), 3);

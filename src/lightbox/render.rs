@@ -51,6 +51,8 @@ fn ensure_zoom_texture(
     let cached_texture = display_texture_cache_lookup(
         &display_texture_cache,
         &path,
+        photo.mtime(),
+        photo.size_bytes(),
         rotation,
         &edit_recipe,
         target_width,
@@ -172,6 +174,8 @@ fn start_zoom_texture(
     let cached_texture = display_texture_cache_lookup(
         &display_texture_cache,
         &path,
+        photo.mtime(),
+        photo.size_bytes(),
         rotation,
         &edit_recipe,
         target_width,
@@ -308,6 +312,8 @@ fn start_zoom_texture(
 
         let still_current = photos.borrow().get(index.get()).is_some_and(|current| {
             current.path() == expected_path
+                && current.mtime() == lease.key.mtime
+                && current.size_bytes() == lease.key.size_bytes
                 && current.rotation() == expected_rotation
                 && current.edit_recipe() == expected_recipe
         });
@@ -338,6 +344,8 @@ fn start_zoom_texture(
             display_texture_cache_insert(
                 &display_texture_cache,
                 expected_path.clone(),
+                lease.key.mtime,
+                lease.key.size_bytes,
                 expected_rotation,
                 expected_recipe.clone(),
                 target_width,
@@ -574,8 +582,10 @@ fn show_photo(
             viewer_trace_uri(&cache_path),
         ));
 
-        let stale =
-            !viewer_generation_current(generation.get(), expected_generation) || lease.cancelled();
+        let stale = !viewer_generation_current(generation.get(), expected_generation)
+            || lease.cancelled()
+            || photo.mtime() != lease.key.mtime
+            || photo.size_bytes() != lease.key.size_bytes;
         if stale {
             if viewer_generation_current(generation.get(), expected_generation) {
                 set_raw_loading_spinner(&root, false);
@@ -677,6 +687,8 @@ fn show_photo(
                     display_texture_cache_insert(
                         &display_texture_cache_for_result,
                         cache_path.clone(),
+                        lease.key.mtime,
+                        lease.key.size_bytes,
                         rotation,
                         edit_recipe_text.clone(),
                         target_width,
@@ -1129,6 +1141,8 @@ fn start_viewer_request(key: ViewerRequestKey, request: Arc<ViewerRequest>) {
 fn display_texture_cache_lookup(
     cache: &DisplayTextureCache,
     path: &str,
+    mtime: i64,
+    size_bytes: i64,
     rotation: i32,
     edit_recipe: &str,
     target_width: u32,
@@ -1137,6 +1151,8 @@ fn display_texture_cache_lookup(
     let mut cache = cache.borrow_mut();
     let position = cache.iter().position(|entry| {
         entry.path == path
+            && entry.mtime == mtime
+            && entry.size_bytes == size_bytes
             && entry.rotation == rotation
             && entry.edit_recipe == edit_recipe
             && entry.target_width == target_width
@@ -1151,6 +1167,8 @@ fn display_texture_cache_lookup(
 fn display_texture_cache_insert(
     cache: &DisplayTextureCache,
     path: String,
+    mtime: i64,
+    size_bytes: i64,
     rotation: i32,
     edit_recipe: String,
     target_width: u32,
@@ -1165,6 +1183,8 @@ fn display_texture_cache_insert(
     let mut cache = cache.borrow_mut();
     cache.retain(|entry| {
         !(entry.path == path
+            && entry.mtime == mtime
+            && entry.size_bytes == size_bytes
             && entry.rotation == rotation
             && entry.edit_recipe == edit_recipe
             && entry.target_width == target_width
@@ -1172,6 +1192,8 @@ fn display_texture_cache_insert(
     });
     cache.push_front(DisplayTextureCacheEntry {
         path,
+        mtime,
+        size_bytes,
         rotation,
         edit_recipe,
         target_width,
@@ -1214,6 +1236,8 @@ pub(super) fn restore_fit_texture(
     let Some(texture) = display_texture_cache_lookup(
         display_texture_cache,
         &photo.path(),
+        photo.mtime(),
+        photo.size_bytes(),
         photo.rotation(),
         &photo.edit_recipe(),
         target_width,
@@ -1363,6 +1387,8 @@ fn prefetch_display_texture(
     if display_texture_cache_lookup(
         &cache,
         &path,
+        photo.mtime(),
+        photo.size_bytes(),
         photo.rotation(),
         &photo.edit_recipe(),
         target_width,
@@ -1432,6 +1458,8 @@ fn prefetch_display_texture(
         display_texture_cache_insert(
             &cache_for_result,
             cache_path,
+            lease.key.mtime,
+            lease.key.size_bytes,
             rotation,
             edit_recipe_text,
             target_width,
@@ -1463,6 +1491,8 @@ fn prepare_navigation_photo(
     if let Some(texture) = display_texture_cache_lookup(
         display_cache,
         &path,
+        photo.mtime(),
+        photo.size_bytes(),
         photo.rotation(),
         &photo.edit_recipe(),
         target_width,

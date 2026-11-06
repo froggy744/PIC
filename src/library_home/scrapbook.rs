@@ -31,6 +31,22 @@ pub(super) struct ScrapbookDashboard {
     navigate: Navigate,
 }
 
+fn scrapbook_asset(name: &str) -> PathBuf {
+    crate::css::resolve_runtime_dir(std::path::Path::new("themes"))
+        .join("scrapbook/assets")
+        .join(name)
+}
+
+fn illustration(name: &str, class: &str, width: i32, height: i32) -> gtk::Picture {
+    let image = gtk::Picture::for_filename(scrapbook_asset(name));
+    image.add_css_class(class);
+    image.set_content_fit(gtk::ContentFit::Contain);
+    image.set_can_shrink(true);
+    image.set_size_request(width, height);
+    image.set_can_target(false);
+    image
+}
+
 fn deco(text: &str, class: &str) -> gtk::Label {
     let label = gtk::Label::new(Some(text));
     label.add_css_class(class);
@@ -109,14 +125,21 @@ impl ScrapbookDashboard {
         identity.set_valign(gtk::Align::Center);
         let heading = deco("Library", "scrapbook-masthead-title");
         heading.set_halign(gtk::Align::Start);
-        identity.append(&heading);
+        let heading_row = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        heading_row.append(&heading);
+        let rays = illustration("doodle-rays.svg", "scrapbook-hero-rays", 53, 51);
+        rays.set_valign(gtk::Align::Start);
+        heading_row.append(&rays);
+        identity.append(&heading_row);
         identity.append(&add_sheet("Your creative photo workspace", "scrapbook-masthead-subtitle"));
         hero.append(&identity);
 
         let note = gtk::Box::new(gtk::Orientation::Vertical, 3);
         note.add_css_class("scrapbook-checklist");
         note.set_valign(gtk::Align::Center);
-        note.append(&deco("●", "scrapbook-checklist-pin"));
+        let note_pin = illustration("pin.svg", "scrapbook-checklist-pin", 30, 29);
+        note_pin.set_halign(gtk::Align::Center);
+        note.append(&note_pin);
         for text in ["☑  Organise projects", "☑  Tag and annotate", "☐  Curate and share  ♡"] {
             note.append(&add_sheet(text, "scrapbook-checklist-line"));
         }
@@ -138,6 +161,11 @@ impl ScrapbookDashboard {
         paper_clip.set_halign(gtk::Align::End);
         paper_clip.set_valign(gtk::Align::Start);
         polaroid.add_overlay(&paper_clip);
+        let camera_sticker = illustration("camera-sticker.svg", "scrapbook-hero-camera", 80, 61);
+        camera_sticker.set_halign(gtk::Align::End);
+        camera_sticker.set_valign(gtk::Align::End);
+        camera_sticker.set_margin_end(0);
+        polaroid.add_overlay(&camera_sticker);
         hero.append(&polaroid);
         canvas.append(&hero);
 
@@ -539,7 +567,11 @@ fn album_tile(
     sticker.set_margin_end(0);
     sticker.set_margin_bottom(46);
     overlay.add_overlay(&sticker);
-    let pin = deco("●", "scrapbook-album-pin");
+    let tape = illustration("washi-pink.svg", "scrapbook-album-washi", 83, 25);
+    tape.set_halign(gtk::Align::Center);
+    tape.set_valign(gtk::Align::Start);
+    overlay.add_overlay(&tape);
+    let pin = illustration("pin.svg", "scrapbook-album-pin", 30, 36);
     pin.set_halign(gtk::Align::Center);
     pin.set_valign(gtk::Align::Start);
     overlay.add_overlay(&pin);

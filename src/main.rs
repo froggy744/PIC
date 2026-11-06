@@ -51,8 +51,49 @@ fn register_bundled_icons() {
     gio::resources_register(&resource);
 }
 
+/// Register the two OFL scrapbook display faces for this process only.
+/// Does not install fonts into the user's desktop or alter their fontconfig
+/// files. On non-Linux platforms the theme falls back to available fonts.
+#[cfg(target_os = "linux")]
+fn register_scrapbook_fonts() {
+    use libloading::{Library, Symbol};
+    use std::ffi::{c_void, CString};
+    use std::path::Path;
+
+    let root = crate::css::resolve_runtime_dir(Path::new("themes"))
+        .join("scrapbook")
+        .join("fonts");
+    let candidates = [root.join("Caveat-Variable.ttf"), root.join("PatrickHand-Regular.ttf")];
+    if !candidates.iter().any(|path| path.is_file()) {
+        return;
+    }
+    unsafe {
+        let Ok(library) = Library::new("libfontconfig.so.1") else {
+            eprintln!("PIC Scrapbook: Fontconfig unavailable, using fallback fonts");
+            return;
+        };
+        type ConfigGetCurrent = unsafe extern "C" fn() -> *mut c_void;
+        type AppFontAddFile = unsafe extern "C" fn(*mut c_void, *const u8) -> i32;
+        type ConfigBuildFonts = unsafe extern "C" fn(*mut c_void) -> i32;
+        let Ok(get_current): Result<Symbol<ConfigGetCurrent>, _> = library.get(b"FcConfigGetCurrent") else { return; };
+        let Ok(add_file): Result<Symbol<AppFontAddFile>, _> = library.get(b"FcConfigAppFontAddFile") else { return; };
+        let Ok(build_fonts): Result<Symbol<ConfigBuildFonts>, _> = library.get(b"FcConfigBuildFonts") else { return; };
+        let config = get_current();
+        if config.is_null() { return; }
+        let mut registered = false;
+        for path in candidates.iter().filter(|path| path.is_file()) {
+            if let Ok(cpath) = CString::new(path.to_string_lossy().as_bytes()) {
+                registered |= add_file(config, cpath.as_ptr().cast()) != 0;
+            }
+        }
+        if registered { let _ = build_fonts(config); }
+    }
+}
+
 fn main() {
     startup_trace::start();
+    #[cfg(target_os = "linux")]
+    register_scrapbook_fonts();
     #[cfg(debug_assertions)]
     if let Some(album) = std::env::var_os("PIC_EXPORT_BENCH_ALBUM") {
         if let Err(error) = edit::export_benchmark::run(album.to_string_lossy().as_ref()) {

@@ -226,10 +226,28 @@ impl ThemeEngine {
         let selects_base = self.base_id.borrow().as_deref() == Some(theme.id.as_str());
         if !selects_base || theme.id == "iDark" {
             let provider = gtk::CssProvider::new();
-            provider.load_from_string(theme.css.as_str());
+            // Scrapbook uses original external SVG paper assets. Loading from
+            // the CSS file gives relative url("assets/...") a stable base.
+            // All previous themes retain the string-based loader unchanged.
+            if theme.id == "scrapbook" {
+                let css_path = crate::css::resolve_runtime_dir(&self.themes_dir.borrow())
+                    .join(&theme.id)
+                    .join("theme.css");
+                if css_path.is_file() {
+                    provider.load_from_path(&css_path);
+                } else {
+                    provider.load_from_string(theme.css.as_str());
+                }
+            } else {
+                provider.load_from_string(theme.css.as_str());
+            }
             // Themes with scoped editor-toolbar styling sit above the shared
             // toolbar defaults without changing precedence for other themes.
-            let priority = if matches!(
+            let priority = if theme.id == "scrapbook" {
+                // The Library dashboard installs shared geometry at +5.
+                // Scrapbook's palette/texture rules must override that layer.
+                gtk::STYLE_PROVIDER_PRIORITY_APPLICATION + 7
+            } else if matches!(
                 theme.id.as_str(),
                 "PIC"
                     | "PIC2"
@@ -277,6 +295,25 @@ impl ThemeEngine {
                 .use_standard_backdrop(self.style_manager.is_dark());
         }
         self.update_appearance_icon(theme.dark);
+        // These extra labels are genuinely decorative, never active hit targets
+        // or replacement UI. Keep them hidden for every other PIC skin.
+        Self::sync_scrapbook_decorations(theme.id == "scrapbook");
+    }
+
+    fn sync_scrapbook_decorations(enabled: bool) {
+        fn update(widget: &gtk::Widget, enabled: bool) {
+            if widget.has_css_class("scrapbook-only") {
+                widget.set_visible(enabled);
+            }
+            let mut child = widget.first_child();
+            while let Some(current) = child {
+                child = current.next_sibling();
+                update(&current, enabled);
+            }
+        }
+        for window in gtk::Window::list_toplevels() {
+            update(window.upcast_ref(), enabled);
+        }
     }
 
     fn update_appearance_icon(&self, dark: bool) {

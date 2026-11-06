@@ -117,6 +117,10 @@ impl LibraryHome {
         content.set_margin_start(28);
         content.set_margin_end(28);
         let header = gtk::Box::new(gtk::Orientation::Horizontal, 16);
+        header.add_css_class("home-main-header");
+        // Only Scrapbook paints this header as a corkboard; its contents are
+        // the same live library summary and navigation as other appearances.
+        header.add_css_class("scrapbook-hero");
         header.set_valign(gtk::Align::Center);
         let identity = gtk::Box::new(gtk::Orientation::Vertical, 3);
         identity.set_hexpand(true);
@@ -130,6 +134,28 @@ impl LibraryHome {
         subtitle.add_css_class("home-subtitle");
         identity.append(&subtitle);
         header.append(&identity);
+
+        // Optional scrapbook sticky note: decorative and noninteractive.
+        // ThemeEngine toggles scrapbook-only widgets on theme switches,
+        // preserving the regular dashboard geometry on every other skin.
+        let reminder = gtk::Box::new(gtk::Orientation::Vertical, 4);
+        reminder.add_css_class("scrapbook-only");
+        reminder.add_css_class("scrapbook-hero-note");
+        reminder.set_visible(false);
+        reminder.set_can_target(false);
+        reminder.set_valign(gtk::Align::Center);
+        reminder.set_halign(gtk::Align::Center);
+        let pin = gtk::Label::new(Some("●"));
+        pin.add_css_class("scrapbook-hero-pushpin");
+        pin.set_halign(gtk::Align::Center);
+        reminder.append(&pin);
+        let line = gtk::Label::new(Some("Collect your moments"));
+        line.set_halign(gtk::Align::Center);
+        reminder.append(&line);
+        let line = gtk::Label::new(Some("Organise • Create • Share ♡"));
+        line.set_halign(gtk::Align::Center);
+        reminder.append(&line);
+        header.append(&reminder);
 
         let summary = gtk::Box::new(gtk::Orientation::Horizontal, 16);
         summary.add_css_class("home-summary");

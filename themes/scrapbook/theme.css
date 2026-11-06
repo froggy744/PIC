@@ -396,3 +396,30 @@ tooltip label { color: #4b3b2c; }
 .collage-tabs > button:checked {
   background: @scrapbook_purple; color: white;
 }
+
+/* Match the actual Library Home header without introducing an extra title. */
+.home-main-header.scrapbook-hero {
+  padding: 18px 23px;
+  margin-bottom: 2px;
+  background-image: url("assets/leaves.svg"), url("assets/cork.svg");
+  background-position: right top, center center;
+  background-size: 160px 105px, 480px 270px;
+  background-repeat: no-repeat, repeat;
+}
+.home-main-header.scrapbook-hero .title-1 {
+  color: #fff9ed;
+  font-size: 38px;
+  text-shadow: 0 2px 3px rgba(72,42,29,.29);
+}
+.home-main-header.scrapbook-hero .home-subtitle {
+  color: #4d3b32;
+  background: #fff3d4;
+  padding: 5px 11px;
+  border: 1px solid #e8d0a1;
+  border-radius: 3px;
+}
+.home-main-header.scrapbook-hero .home-summary {
+  background: #fff9ee;
+  border: 1px solid #d6bd9a;
+  box-shadow: 0 5px 11px rgba(69,42,27,.17);
+}

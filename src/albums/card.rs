@@ -624,6 +624,18 @@ fn album_card(
         cover.set_measure_overlay(&skin, false);
     }
 
+    // A small pushpin is a pure paint overlay for the Scrapbook appearance.
+    // Its baseline CSS opacity is zero and it never intercepts mouse input.
+    // This keeps every existing album layout visually unchanged by default.
+    let scrapbook_pin = gtk::Label::new(Some("●"));
+    scrapbook_pin.add_css_class("scrapbook-pin");
+    scrapbook_pin.set_halign(gtk::Align::Center);
+    scrapbook_pin.set_valign(gtk::Align::Start);
+    scrapbook_pin.set_margin_top(0);
+    scrapbook_pin.set_can_target(false);
+    cover.add_overlay(&scrapbook_pin);
+    cover.set_measure_overlay(&scrapbook_pin, false);
+
     // Album covers are rectangular and need to grow with the bookshelf.
     // Keep the cover itself in normal GTK layout instead of wrapping it in the
     // photo-grid tile widget, whose fixed allocation prevents responsive growth.

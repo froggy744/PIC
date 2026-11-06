@@ -322,3 +322,6 @@ button.infobar-selected-thumb:hover {
 
 .compact-sidebar-option { min-width: 0; padding-left: 12px; padding-right: 4px; }
 .compact-sidebar-option label { min-width: 0; font-weight: normal; }
+
+/* Decoration is opt-in: only the Scrapbook skin reveals this paint overlay. */
+.scrapbook-pin { opacity: 0; }

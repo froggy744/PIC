@@ -15,12 +15,15 @@ pub(crate) fn install_smooth_gallery_scroll(
 
     // GtkListView keeps its scroll anchor on device-pixel boundaries. Feeding
     // it fractional adjustment values makes GTK immediately write a rounded
-    // value back, fighting the animation. GridView/ordinary content accepts
-    // fractional values, so only quantize the Folder ListView path.
+    // value back, fighting the animation. Only quantize the Folder ListView
+    // path; GridView retains fractional spring progress separately below.
     let quantize_to_pixels = scrolled
         .child()
         .and_then(|child| child.downcast::<gtk::ListView>().ok())
         .is_some();
+    let preserve_fractional_progress = scrolled
+        .child()
+        .is_some_and(|child| child.is::<gtk::GridView>());
 
     let adjustment = scrolled.vadjustment();
     let target = Rc::new(Cell::new(adjustment.value()));
@@ -66,8 +69,8 @@ pub(crate) fn install_smooth_gallery_scroll(
     // Cancel a pending wheel spring when the adjustment moves by an amount we
     // did not animate to. The sensitivity differs by view:
     //
-    // - GridView has no scroll anchor corrections, so any movement we did not
-    //   make is external and cancels immediately (2 px tolerance).
+    // - GridView's subpixel corrections fit within the 2 px tolerance;
+    //   larger unsolicited movement cancels immediately.
     // - GtkListView performs sub-row anchor corrections while scrolling, which
     //   must NOT cancel the spring. Only a jump larger than roughly half a
     //   viewport (a programmatic folder navigation, selection scroll, or model
@@ -149,7 +152,19 @@ pub(crate) fn install_smooth_gallery_scroll(
             let destination = target.get().clamp(lower, upper);
             target.set(destination);
 
-            let current = adjustment.value().clamp(lower, upper);
+            let actual = adjustment.value().clamp(lower, upper);
+            let requested = last_animation_value.get();
+            // GridView floors fractional requests during allocation. Retain
+            // subpixel progress in the spring instead of losing it every frame.
+            // Larger GTK changes still establish the authoritative position.
+            let current = if preserve_fractional_progress
+                && requested.is_finite()
+                && (actual - requested).abs() <= 1.0
+            {
+                requested.clamp(lower, upper)
+            } else {
+                actual
+            };
             let error = destination - current;
             let mut speed = velocity.get();
 
@@ -301,6 +316,7 @@ pub(crate) fn install_smooth_gallery_scroll(
     let target_for_scroll = target.clone();
     let velocity_for_scroll = velocity.clone();
     let active_for_scroll = active.clone();
+    let last_animation_value_for_scroll = last_animation_value.clone();
     let last_error_abs_for_scroll = last_error_abs.clone();
     let last_pointer_for_scroll = last_pointer.clone();
     let zoom_viewport_for_scroll = zoom_viewport.clone();
@@ -370,6 +386,9 @@ pub(crate) fn install_smooth_gallery_scroll(
                     .max(lower);
 
                 let current = adjustment_for_scroll.value().clamp(lower, upper);
+                if preserve_fractional_progress && !active_for_scroll.get() {
+                    last_animation_value_for_scroll.set(current);
+                }
                 let delta = dy * WHEEL_STEP_PX;
                 let pending = target_for_scroll.get() - current;
                 let reversing = active_for_scroll.get()
@@ -572,6 +591,98 @@ pub(crate) fn install_folder_smooth_gallery_scroll(
     });
 
     scrolled.add_controller(controller);
+}
+
+#[cfg(test)]
+mod grid_wheel_fraction_tests {
+    use super::*;
+
+    #[test]
+    #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+    fn grid_spring_preserves_wheel_distance_across_pixel_corrections() {
+        fn settle(milliseconds: u64) {
+            let context = glib::MainContext::default();
+            let until = Instant::now() + Duration::from_millis(milliseconds);
+            while Instant::now() < until {
+                while context.pending() {
+                    context.iteration(false);
+                }
+                std::thread::sleep(Duration::from_millis(2));
+            }
+        }
+
+        gtk::init().unwrap();
+        let gallery = Rc::new(grid::Gallery::new(
+            &[],
+            160,
+            |_| {},
+            |_, _, _| {},
+            |_, _, _, _| {},
+            |_, _| {},
+            |_| {},
+        ));
+        let factory = gtk::SignalListItemFactory::new();
+        factory.connect_setup(|_, object| {
+            let item = object.downcast_ref::<gtk::ListItem>().unwrap();
+            let child = gtk::Box::new(gtk::Orientation::Vertical, 0);
+            child.set_size_request(100, 80);
+            item.set_child(Some(&child));
+        });
+        let grid = gtk::GridView::new(
+            Some(gtk::NoSelection::new(Some(gtk::StringList::new(
+                &vec!["photo"; 1000],
+            )))),
+            Some(factory),
+        );
+        grid.set_min_columns(5);
+        grid.set_max_columns(5);
+        let scroll = gtk::ScrolledWindow::builder().child(&grid).build();
+        install_smooth_gallery_scroll(&scroll, gallery, true);
+        let window = gtk::Window::builder()
+            .default_width(900)
+            .default_height(650)
+            .child(&scroll)
+            .build();
+        window.present();
+        settle(250);
+        let adjustment = scroll.vadjustment();
+        adjustment.set_value(1000.0);
+        settle(30);
+        let start = adjustment.value();
+        let corrections = Rc::new(Cell::new(0_u32));
+        let previous = Rc::new(Cell::new(start));
+        let observed = corrections.clone();
+        adjustment.connect_value_changed(move |adjustment| {
+            let value = adjustment.value();
+            let old = previous.replace(value);
+            if old.fract() != 0.0 && value == old.floor() {
+                observed.set(observed.get() + 1);
+            }
+        });
+        let controllers = scroll.observe_controllers();
+        let wheel = (0..controllers.n_items())
+            .find_map(|i| {
+                controllers
+                    .item(i)
+                    .and_downcast::<gtk::EventControllerScroll>()
+                    .filter(|controller| {
+                        controller.propagation_phase() == gtk::PropagationPhase::Capture
+                    })
+            })
+            .unwrap();
+        assert!(wheel.emit_by_name::<bool>("scroll", &[&0.0_f64, &1.0_f64]));
+        settle(800);
+        let distance = adjustment.value() - start;
+        window.close();
+        assert!(
+            corrections.get() > 1,
+            "GTK did not repeatedly correct fractional requests"
+        );
+        assert!(
+            (distance - 120.0).abs() <= 1.0,
+            "wheel travelled {distance} px instead of 120 px"
+        );
+    }
 }
 
 fn open_in_folder_should_stop(building: bool, revealed: bool, attempt: u32) -> bool {

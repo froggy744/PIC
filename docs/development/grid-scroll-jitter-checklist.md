@@ -234,3 +234,35 @@ Validation: `photo_grid_keyboard_wheel_handoff` and
 `keyboard_wheel_handoff_in_virtual_photo_and_folder_layouts` passed under
 Xvfb/Cairo with `--ignored --test-threads=1`; `cargo check --locked` passed.
 No further scrolling-behavior change was needed for this verification.
+
+## Photo Grid fractional spring feedback
+
+A focused test using a real GTK GridView with fixed-size synthetic cells
+confirmed repeated fractional-request → floored-adjustment pairs. With the
+original spring, one 120 px downward wheel impulse travelled only 108 px after
+settling. Each tick restarted integration from GTK's corrected position, losing
+the fractional progress; the existing near-pin guard then ended the animation
+short. This is a verified feedback defect, not proof of the general visual
+jitter's sole cause.
+
+The minimal correction retains the previous requested position for integration
+when GridView's actual value differs by at most 1 px. Larger changes still use
+GTK's actual position and retain the existing external-navigation cancellation.
+A fresh wheel animation starts from the current GTK value. Requests are not
+rounded, and spring constants, wheel sensitivity, touchpads, Folder scrolling
+and Albums home are unchanged. GTK can still correct the displayed adjustment;
+those small corrections no longer discard the spring's fractional progress.
+
+`window::grid_wheel_fraction_tests::grid_spring_preserves_wheel_distance_across_pixel_corrections`
+failed before the fix (108 px), then passed: repeated real GTK corrections still
+occurred, while the settled wheel distance was within 1 px of the intended
+120 px. The test ran alone under Xvfb/Cairo with `--ignored --test-threads=1`;
+`cargo check --locked` passed. No keyboard-conflict tests, benchmarks, screenshots,
+GUI suites or extensive application logging were used for this investigation.
+
+Manual acceptance: launched the modified app against the existing library with
+`GDK_BACKEND=wayland GSK_RENDERER=vulkan`, with scroll/stage tracing disabled.
+The user was asked to compare Photo Grid wheel scrolling at 100, 160 and 300 px
+and chose to keep the change: it felt acceptable, but improvement was uncertain.
+This is acceptance of the tested correction, not confirmation that general
+visible jitter is eliminated. No spring constants or sensitivity were changed.

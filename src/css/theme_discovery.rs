@@ -336,7 +336,12 @@ mod tests {
         assert!(skin.pins_color_scheme);
         assert!(!skin.is_base);
         assert!(skin.css.contains("assets/paper.svg"));
-        for asset in ["paper.svg", "cork.svg", "washi.svg", "leaves.svg"] {
+        for asset in [
+            "paper.svg", "cork.svg", "washi.svg", "leaves.svg",
+            "torn-gold.svg", "torn-lilac.svg", "torn-cream.svg",
+            "washi-pink.svg", "grid-paper.svg", "doodle-rays.svg",
+            "camera-sticker.svg", "leaf-corner.svg", "pin.svg", "tape-strip.svg",
+        ] {
             assert!(
                 root.join("scrapbook/assets").join(asset).is_file(),
                 "missing Scrapbook asset {asset}"

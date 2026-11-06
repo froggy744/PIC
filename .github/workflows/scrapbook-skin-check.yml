@@ -9,6 +9,9 @@ on:
       - 'src/window/theme.rs'
       - 'src/library_home.rs'
       - 'src/library_home/**'
+      - 'src/db.rs'
+      - 'src/db/scrapbook.rs'
+      - 'src/window/layout.rs'
       - 'src/db/library_home.rs'
       - 'src/main.rs'
       - 'src/albums/card.rs'
@@ -36,7 +39,7 @@ jobs:
           components: rustfmt
       - uses: Swatinem/rust-cache@v2
       - name: Format skin Rust sources for validation
-        run: rustfmt --edition 2021 src/window/theme.rs src/library_home.rs src/css/theme_discovery.rs src/main.rs src/db/library_home.rs src/window/build.rs src/window/photo_actions.rs
+        run: rustfmt --edition 2021 src/window/theme.rs src/library_home.rs src/css/theme_discovery.rs src/main.rs src/db/library_home.rs src/window/build.rs src/window/layout.rs src/window/photo_actions.rs src/db.rs src/db/scrapbook.rs
       - name: Check edited Rust files compile
         run: |
           test -f themes/scrapbook/fonts/Caveat-Variable.ttf
@@ -46,6 +49,8 @@ jobs:
         run: cargo check --locked
       - name: Discover Scrapbook skin and assets
         run: cargo test --locked scrapbook_skin_is_discovered_with_all_decorative_assets -- --test-threads=1
+      - name: Test scrapbook persistence and default theme discovery
+        run: cargo test --locked scrapbook_detail_tests -- --test-threads=1
       - name: Parse GTK CSS without warnings or missing assets
         run: |
           xvfb-run -a env GDK_BACKEND=x11 /usr/bin/python3 - <<'PY'
@@ -63,7 +68,10 @@ jobs:
           if errors:
               raise SystemExit('GTK CSS parsing errors: ' + '\\n'.join(errors))
           assert theme.exists()
-          for asset in ['paper.svg', 'cork.svg', 'washi.svg', 'leaves.svg']:
+          for asset in ['paper.svg','cork.svg','washi.svg','leaves.svg',
+                        'torn-gold.svg','torn-lilac.svg','torn-cream.svg',
+                        'washi-pink.svg','grid-paper.svg','doodle-rays.svg',
+                        'camera-sticker.svg','leaf-corner.svg','pin.svg','tape-strip.svg']:
               path = theme.parent / 'assets' / asset
               assert path.is_file(), path
           print('Scrapbook CSS and decorative SVGs load successfully')

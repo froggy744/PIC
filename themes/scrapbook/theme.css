@@ -1050,3 +1050,14 @@ button, entry, label { letter-spacing: .15px; }
 .scrapbook-home-actions {
     padding: 4px 0;
 }
+
+/* Handwriting is decorative, not a replacement for readable file metadata. */
+window { font-family: "Poppins", "Cantarell", sans-serif; }
+.navigation-sidebar row, .search-field, .photo-info-bar,
+.scrapbook-photo-caption, .scrapbook-home-inspector-metadata,
+.scrapbook-note-status {
+    font-family: "Poppins", "Cantarell", sans-serif;
+}
+.navigation-sidebar row { font-size: 13px; }
+.photo-info-bar { font-size: 12px; }
+.search-field { font-size: 14px; }

@@ -9,6 +9,7 @@ on:
       - 'src/window/theme.rs'
       - 'src/library_home.rs'
       - 'src/library_home/**'
+      - 'src/library_home_tests.rs'
       - 'src/db.rs'
       - 'src/db/scrapbook.rs'
       - 'src/window/layout.rs'
@@ -32,7 +33,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential clang mold cmake nasm pkg-config \
             libgtk-4-dev libadwaita-1-dev libsmbclient-dev libnfs-dev \
-            librsvg2-common libgdk-pixbuf2.0-bin xvfb xauth \
+            librsvg2-common libgdk-pixbuf2.0-bin xvfb xauth xdotool imagemagick \
             python3-gi gir1.2-gtk-4.0
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -51,6 +52,19 @@ jobs:
         run: cargo test --locked scrapbook_skin_is_discovered_with_all_decorative_assets -- --test-threads=1
       - name: Test scrapbook persistence and default theme discovery
         run: cargo test --locked scrapbook_detail_tests -- --test-threads=1
+      - name: Capture real GTK scrapbook visual fixtures
+        run: |
+          mkdir -p "$RUNNER_TEMP/scrapbook-visual"
+          xvfb-run -a env GDK_BACKEND=x11 GSK_RENDERER=cairo \
+            PIC_SCRAPBOOK_SCREENSHOT_DIR="$RUNNER_TEMP/scrapbook-visual" \
+            cargo test --locked scrapbook_reference_capture_layout -- --ignored --test-threads=1 --nocapture
+      - name: Upload UI verification screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scrapbook-gtk-screenshots
+          path: ${{ runner.temp }}/scrapbook-visual/*.png
+          if-no-files-found: ignore
       - name: Parse GTK CSS without warnings or missing assets
         run: |
           xvfb-run -a env GDK_BACKEND=x11 /usr/bin/python3 - <<'PY'

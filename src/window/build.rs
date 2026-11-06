@@ -3071,6 +3071,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     properties_panel.set_vexpand(true);
     properties_panel.set_overflow(gtk::Overflow::Hidden);
     properties_panel.add_css_class("background");
+    properties_panel.add_css_class("scrapbook-inspector");
     // Never toggle child visibility: the split owns the slide animation.
     let properties_shell = gtk::Overlay::new();
     properties_shell.set_hexpand(true);
@@ -3373,6 +3374,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     lightbox_properties_panel.set_vexpand(true);
     lightbox_properties_panel.set_overflow(gtk::Overflow::Hidden);
     lightbox_properties_panel.add_css_class("background");
+    lightbox_properties_panel.add_css_class("scrapbook-inspector");
     lightbox_properties_panel.set_visible(false);
     gallery_overlay.add_overlay(&lightbox_properties_panel);
     register_lightbox_properties_panel(&lightbox_properties_panel);

@@ -1730,11 +1730,13 @@ fn show_properties_dialog_on(
         .unwrap_or_else(|| photo.favorite());
 
     let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    content.add_css_class("scrapbook-inspector-page");
     let scroll = gtk::ScrolledWindow::new();
     scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
     scroll.set_vexpand(true);
     content.append(&scroll);
     let sections = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    sections.add_css_class("scrapbook-inspector-body");
     sections.set_margin_start(12);
     sections.set_margin_end(12);
     sections.set_margin_top(8);
@@ -1747,6 +1749,7 @@ fn show_properties_dialog_on(
     // aspect-ratio requisition must NOT determine the inspector row height:
     // portrait screenshots used to stretch it to hundreds of pixels.
     let preview_frame = gtk::Overlay::new();
+    preview_frame.add_css_class("scrapbook-inspector-preview");
     preview_frame.set_hexpand(true);
     preview_frame.set_overflow(gtk::Overflow::Hidden);
     let preview_base = gtk::Box::new(gtk::Orientation::Vertical, 0);
@@ -1804,6 +1807,7 @@ fn show_properties_dialog_on(
     sections.append(&preview_overlay);
 
     let image_group = adw::PreferencesGroup::new();
+    image_group.add_css_class("scrapbook-inspector-metadata");
     // No redundant heading above the file metadata rows.
     add_inspector_row(&image_group, "File name", &photo.filename());
     add_inspector_row(&image_group, "Date taken", &date);
@@ -1822,6 +1826,7 @@ fn show_properties_dialog_on(
     sections.append(&image_group);
 
     let camera_group = adw::PreferencesGroup::new();
+    camera_group.add_css_class("scrapbook-inspector-metadata");
     camera_group.set_title("Camera");
     let mut camera_rows = 0;
     let camera_name = record
@@ -1868,6 +1873,7 @@ fn show_properties_dialog_on(
     // Compact, unboxed location footer. Display readable spaces but copy
     // the original URI/path exactly (including percent escapes).
     let location_footer = gtk::Box::new(gtk::Orientation::Vertical, 3);
+    location_footer.add_css_class("scrapbook-inspector-location");
     location_footer.set_margin_top(4);
     let footer_header = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     let folder_icon = gtk::Image::from_icon_name("folder-symbolic");

@@ -423,3 +423,55 @@ tooltip label { color: #4b3b2c; }
   border: 1px solid #d6bd9a;
   box-shadow: 0 5px 11px rgba(69,42,27,.17);
 }
+
+/* The existing functional Properties inspector becomes a paper-backed
+   right-side photo information panel, with the real selected photo and EXIF. */
+.scrapbook-inspector {
+  background-color: #fff8ec;
+  background-image: url("assets/paper.svg");
+  color: #40332e;
+  border-left: 2px solid #dfc5a9;
+}
+.scrapbook-inspector-page {
+  background: transparent;
+}
+.scrapbook-inspector-body {
+  padding: 8px 4px 18px;
+}
+.scrapbook-inspector-preview {
+  background: #fffdf7;
+  border: 8px solid #fffdf7;
+  border-bottom-width: 14px;
+  border-radius: 4px;
+  box-shadow: 0 5px 11px rgba(71,48,33,.21), 0 0 0 1px #e4d3be;
+}
+.scrapbook-inspector-metadata {
+  background-color: #fff9ef;
+  border: 1px solid #dfc9af;
+  border-radius: 7px;
+  box-shadow: 0 2px 6px rgba(92,64,45,.08);
+  padding: 8px 5px;
+  margin-top: 8px;
+}
+.scrapbook-inspector-metadata .title,
+.scrapbook-inspector-metadata .heading {
+  font-family: "Kalam", "Comic Neue", "Poppins", sans-serif;
+  font-weight: 800;
+  color: #704b86;
+}
+.scrapbook-inspector-metadata row,
+.scrapbook-inspector-metadata preferencesrow {
+  background: transparent;
+  border-bottom: 1px dashed rgba(128,96,68,.11);
+  color: #503f36;
+}
+.scrapbook-inspector-metadata .dim-label { color: #8c796a; }
+.scrapbook-inspector-location {
+  background-color: #f8e8c4;
+  background-image: url("assets/washi.svg");
+  background-size: 100% 100%;
+  border-radius: 5px;
+  padding: 10px;
+  color: #5e4b42;
+}
+.scrapbook-inspector-location .dim-label { color: #715d51; }

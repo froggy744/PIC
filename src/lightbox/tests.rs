@@ -80,6 +80,29 @@ mod viewer_presentation_tests {
     }
 
     #[test]
+    #[ignore = "requires a GTK display; run individually"]
+    fn display_texture_cache_evicts_least_recently_used_entries() {
+        gtk::init().unwrap();
+        let cache: DisplayTextureCache = Rc::new(RefCell::new(VecDeque::new()));
+        let bytes = glib::Bytes::from_owned(vec![255u8; 4]);
+        let texture = gtk::gdk::MemoryTexture::new(
+            1, 1, gtk::gdk::MemoryFormat::R8g8b8a8, &bytes, 4,
+        );
+        for i in 0..DISPLAY_TEXTURE_CACHE_CAPACITY {
+            display_texture_cache_insert(
+                &cache, format!("/test/{i}.jpg"), 1, 1, 0, String::new(), 100, 100, texture.clone(),
+            );
+        }
+        assert!(display_texture_cache_lookup(&cache, "/test/0.jpg", 1, 1, 0, "", 100, 100).is_some());
+        display_texture_cache_insert(
+            &cache, "/test/new.jpg".into(), 1, 1, 0, String::new(), 100, 100, texture,
+        );
+        assert_eq!(cache.borrow().len(), DISPLAY_TEXTURE_CACHE_CAPACITY);
+        assert!(display_texture_cache_lookup(&cache, "/test/0.jpg", 1, 1, 0, "", 100, 100).is_some());
+        assert!(display_texture_cache_lookup(&cache, "/test/1.jpg", 1, 1, 0, "", 100, 100).is_none());
+    }
+
+    #[test]
     fn arrow_steps_remain_single_photo_and_clamp_at_collection_edges() {
         assert_eq!(navigation_step(4, 1, 10), 5);
         assert_eq!(navigation_step(4, -1, 10), 3);

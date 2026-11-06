@@ -2,7 +2,9 @@
 //! Kept separate from the normal Library layout so switching back to any
 //! existing theme restores the original home without changing preferences.
 use super::{Navigate, OpenPhoto, PreviewImage, Snapshot};
-use crate::{photo_object::PhotoObject, sidebar::SidebarFilter};
+use crate::{db, photo_object::PhotoObject, sidebar::SidebarFilter};
+use std::cell::Cell;
+use std::path::PathBuf;
 use gtk::prelude::*;
 use gtk4 as gtk;
 use std::rc::Rc;
@@ -17,6 +19,17 @@ pub(super) struct ScrapbookDashboard {
     count: gtk::Label,
     cover: gtk::Picture,
     actions: gtk::Box,
+    selected_cover: gtk::Picture,
+    selected_name: gtk::Label,
+    selected_metadata: gtk::Label,
+    selected_tags: gtk::FlowBox,
+    notes: gtk::TextBuffer,
+    selected_id: Rc<Cell<Option<i64>>>,
+    note_status: gtk::Label,
+    inspector_actions: gtk::Box,
+    database: PathBuf,
+    open: OpenPhoto,
+    navigate: Navigate,
 }
 
 fn deco(text: &str, class: &str) -> gtk::Label {
@@ -73,16 +86,19 @@ fn find_create_album(root: &gtk::Widget) -> Option<gtk::Button> {
 }
 
 impl ScrapbookDashboard {
-    pub(super) fn new(navigate: &Navigate) -> Self {
-        let root = gtk::Box::new(gtk::Orientation::Vertical, 18);
+    pub(super) fn new(navigate: &Navigate, open: &OpenPhoto, database: PathBuf) -> Self {
+        let root = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         root.add_css_class("scrapbook-only");
         root.add_css_class("scrapbook-dashboard");
         root.set_visible(false);
         root.set_hexpand(true);
-        root.set_margin_start(22);
-        root.set_margin_end(22);
-        root.set_margin_top(18);
-        root.set_margin_bottom(30);
+        let canvas = gtk::Box::new(gtk::Orientation::Vertical, 18);
+        canvas.add_css_class("scrapbook-dashboard-canvas");
+        canvas.set_hexpand(true);
+        canvas.set_margin_start(22);
+        canvas.set_margin_end(22);
+        canvas.set_margin_top(18);
+        canvas.set_margin_bottom(30);
 
         let hero = gtk::Box::new(gtk::Orientation::Horizontal, 20);
         hero.add_css_class("scrapbook-masthead");
@@ -124,13 +140,13 @@ impl ScrapbookDashboard {
         paper_clip.set_valign(gtk::Align::Start);
         polaroid.add_overlay(&paper_clip);
         hero.append(&polaroid);
-        root.append(&hero);
+        canvas.append(&hero);
 
         let title_row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
         title_row.set_valign(gtk::Align::Center);
         title_row.append(&add_sheet("Albums", "scrapbook-sheet-heading"));
         title_row.append(&section_button("View all albums", SidebarFilter::Albums, navigate));
-        root.append(&title_row);
+        canvas.append(&title_row);
 
         let albums = gtk::FlowBox::new();
         albums.add_css_class("scrapbook-albums-row");
@@ -141,7 +157,7 @@ impl ScrapbookDashboard {
         albums.set_row_spacing(18);
         albums.set_column_spacing(18);
         albums.set_valign(gtk::Align::Start);
-        root.append(&albums);
+        canvas.append(&albums);
 
         let gallery = gtk::Box::new(gtk::Orientation::Vertical, 14);
         gallery.add_css_class("scrapbook-gallery-sheet");
@@ -177,9 +193,89 @@ impl ScrapbookDashboard {
         photos.set_column_spacing(9);
         photos.set_valign(gtk::Align::Start);
         gallery.append(&photos);
-        root.append(&gallery);
+        canvas.append(&gallery);
+        root.append(&canvas);
 
-        Self { root, albums, photos, title, count, cover, actions }
+        // The right-hand inspector is part of the Library scrapbook, so the
+        // reference's paper/Polaroid/notes column exists even on Library Home.
+        let inspector = gtk::Box::new(gtk::Orientation::Vertical, 12);
+        inspector.add_css_class("scrapbook-home-inspector");
+        inspector.set_size_request(258, -1);
+        inspector.set_valign(gtk::Align::Fill);
+        let selected_header = add_sheet("Selected Photo", "scrapbook-home-inspector-title");
+        inspector.append(&selected_header);
+        let selected_cover = gtk::Picture::new();
+        selected_cover.add_css_class("scrapbook-home-inspector-cover");
+        selected_cover.set_content_fit(gtk::ContentFit::Cover);
+        selected_cover.set_can_shrink(true);
+        selected_cover.set_size_request(228, 154);
+        inspector.append(&selected_cover);
+        let selected_name = gtk::Label::new(Some("Select a photo"));
+        selected_name.add_css_class("scrapbook-home-inspector-name");
+        selected_name.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+        selected_name.set_max_width_chars(25);
+        selected_name.set_xalign(0.0);
+        inspector.append(&selected_name);
+        let selected_metadata = gtk::Label::new(Some("Your photo details appear here"));
+        selected_metadata.add_css_class("scrapbook-home-inspector-metadata");
+        selected_metadata.set_xalign(0.0);
+        selected_metadata.set_wrap(true);
+        inspector.append(&selected_metadata);
+
+        inspector.append(&add_sheet("Tags", "scrapbook-home-paper-label"));
+        let selected_tags = gtk::FlowBox::new();
+        selected_tags.add_css_class("scrapbook-home-tags");
+        selected_tags.set_selection_mode(gtk::SelectionMode::None);
+        selected_tags.set_min_children_per_line(1);
+        selected_tags.set_max_children_per_line(3);
+        selected_tags.set_column_spacing(4);
+        selected_tags.set_row_spacing(4);
+        inspector.append(&selected_tags);
+
+        inspector.append(&add_sheet("Notes", "scrapbook-home-paper-label"));
+        let note_frame = gtk::Box::new(gtk::Orientation::Vertical, 5);
+        note_frame.add_css_class("scrapbook-home-note");
+        let note_editor = gtk::TextView::new();
+        note_editor.set_wrap_mode(gtk::WrapMode::WordChar);
+        note_editor.set_size_request(224, 70);
+        note_editor.add_css_class("scrapbook-home-note-editor");
+        let notes = note_editor.buffer();
+        note_frame.append(&note_editor);
+        let note_status = gtk::Label::new(None);
+        note_status.add_css_class("scrapbook-note-status");
+        note_status.set_halign(gtk::Align::Start);
+        note_frame.append(&note_status);
+        let save = gtk::Button::with_label("Save note");
+        save.add_css_class("scrapbook-home-note-save");
+        save.set_halign(gtk::Align::End);
+        note_frame.append(&save);
+        inspector.append(&note_frame);
+
+        inspector.append(&add_sheet("Actions", "scrapbook-home-paper-label"));
+        let inspector_actions = gtk::Box::new(gtk::Orientation::Horizontal, 7);
+        inspector_actions.add_css_class("scrapbook-home-actions");
+        inspector.append(&inspector_actions);
+        root.append(&inspector);
+
+        let dashboard = Self {
+            root, albums, photos, title, count, cover, actions,
+            selected_cover, selected_name, selected_metadata, selected_tags,
+            notes, selected_id: Rc::new(Cell::new(None)), note_status,
+            inspector_actions, database, open: open.clone(), navigate: navigate.clone(),
+        };
+        let dashboard_for_save = dashboard.clone();
+        save.connect_clicked(move |_| {
+            let Some(id) = dashboard_for_save.selected_id.get() else { return; };
+            let (start, end) = dashboard_for_save.notes.bounds();
+            let value = dashboard_for_save.notes.text(&start, &end, true);
+            let result = db::open_existing(&dashboard_for_save.database)
+                .and_then(|connection| db::scrapbook_set_note(&connection, id, value.as_str()));
+            match result {
+                Ok(()) => dashboard_for_save.note_status.set_label("Saved ✓"),
+                Err(error) => dashboard_for_save.note_status.set_label(&format!("{error}")),
+            }
+        });
+        dashboard
     }
 
     pub(super) fn populate(&self, snapshot: &Snapshot, navigate: &Navigate, open: &OpenPhoto) {
@@ -263,7 +359,11 @@ impl ScrapbookDashboard {
             tile.set_tooltip_text(Some(&photo.path));
             let photo_grid = self.photos.clone();
             let selected = tile.clone();
+            let inspector = self.clone();
+            let actual_photo = photo.clone();
+            let actual_image = image.cloned();
             tile.connect_clicked(move |_| {
+                inspector.select_photo(&actual_photo, actual_image.as_ref());
                 let mut child = photo_grid.first_child();
                 while let Some(widget) = child {
                     widget.remove_css_class("scrapbook-photo-selected");
@@ -290,7 +390,114 @@ impl ScrapbookDashboard {
         }
         if snapshot.data.scrapbook_photos.is_empty() {
             self.photos.insert(&add_sheet("No photos yet. Import some to start your scrapbook!", "scrapbook-empty"), -1);
+        } else {
+            let selected = snapshot.data.scrapbook_photos.iter()
+                .find(|photo| Some(photo.id) == self.selected_id.get())
+                .unwrap_or(&snapshot.data.scrapbook_photos[0]);
+            self.select_photo(selected, snapshot.images.get(&selected.id));
         }
+    }
+
+    fn refresh_tags(&self) {
+        while let Some(child) = self.selected_tags.first_child() {
+            self.selected_tags.remove(&child);
+        }
+        let Some(photo_id) = self.selected_id.get() else { return; };
+        let details = db::open_existing(&self.database)
+            .and_then(|connection| db::scrapbook_details(&connection, photo_id));
+        let (tags, _) = details.unwrap_or_default();
+        for tag in tags {
+            let chip = gtk::Button::with_label(&format!("{tag} ×"));
+            chip.add_css_class("scrapbook-tag-chip");
+            chip.set_tooltip_text(Some("Remove this tag"));
+            let dashboard = self.clone();
+            chip.connect_clicked(move |_| {
+                let result = db::open_existing(&dashboard.database).and_then(|connection|
+                    db::scrapbook_remove_tag(&connection, photo_id, &tag)
+                );
+                if let Err(error) = result { eprintln!("PIC scrapbook tag: {error:#}"); }
+                dashboard.refresh_tags();
+            });
+            self.selected_tags.insert(&chip, -1);
+        }
+        let add = gtk::Button::with_label("+ Add tag");
+        add.add_css_class("scrapbook-tag-add");
+        let dashboard = self.clone();
+        add.connect_clicked(move |button| {
+            let dialog = libadwaita::AlertDialog::new(Some("New scrapbook tag"), Some("Choose a short label for this photo."));
+            let entry = gtk::Entry::new();
+            entry.set_placeholder_text(Some("Tag name"));
+            entry.set_max_length(40);
+            dialog.set_extra_child(Some(&entry));
+            dialog.add_response("cancel", "Cancel");
+            dialog.add_response("add", "Add tag");
+            let dashboard_for_response = dashboard.clone();
+            dialog.connect_response(None, move |_, response| {
+                if response == "add" {
+                    let result = db::open_existing(&dashboard_for_response.database).and_then(|connection|
+                        db::scrapbook_add_tag(&connection, photo_id, entry.text().as_str())
+                    );
+                    if let Err(error) = result { eprintln!("PIC scrapbook tag: {error:#}"); }
+                    dashboard_for_response.refresh_tags();
+                }
+            });
+            let parent = button.root().and_then(|root| root.downcast::<gtk::Window>().ok());
+            dialog.present(parent.as_ref());
+        });
+        self.selected_tags.insert(&add, -1);
+    }
+
+    fn select_photo(&self, photo: &db::Photo, image: Option<&Arc<PreviewImage>>) {
+        let previous_id = self.selected_id.replace(Some(photo.id));
+        set_photo(&self.selected_cover, image);
+        self.selected_name.set_label(&crate::source::filename(&photo.path));
+        let date = photo.taken_at.as_deref().unwrap_or("Date unknown");
+        let dims = match (photo.width, photo.height) {
+            (Some(w), Some(h)) if w > 0 && h > 0 => format!("{w} × {h}"),
+            _ => "Dimensions unknown".to_string(),
+        };
+        let aperture = photo.aperture.map(|value| format!("f/{value:.1}"))
+            .unwrap_or_else(|| "—".to_string());
+        self.selected_metadata.set_label(&format!(
+            "▣  {date}\n▧  {dims}\n◉  {aperture}   •   ISO {}\n⌖  {}",
+            photo.iso.map(|value| value.to_string()).unwrap_or_else(|| "—".to_string()),
+            photo.folder_path.as_deref().unwrap_or("Local library")
+        ));
+        if previous_id != Some(photo.id) {
+            self.note_status.set_label("");
+            let (_, note) = db::open_existing(&self.database)
+                .and_then(|connection| db::scrapbook_details(&connection, photo.id))
+                .unwrap_or_default();
+            self.notes.set_text(&note);
+        }
+        self.refresh_tags();
+        while let Some(child) = self.inspector_actions.first_child() {
+            self.inspector_actions.remove(&child);
+        }
+        let open = gtk::Button::with_label("Open");
+        open.add_css_class("scrapbook-home-action");
+        let open_action = self.open.clone();
+        let object = PhotoObject::from_photo(photo);
+        open.connect_clicked(move |_| open_action(vec![object.clone()], 0, false));
+        self.inspector_actions.append(&open);
+        let albums = gtk::Button::with_label("Albums");
+        albums.add_css_class("scrapbook-home-action");
+        let navigate = self.navigate.clone();
+        albums.connect_clicked(move |_| navigate(SidebarFilter::Albums));
+        self.inspector_actions.append(&albums);
+        let favorite = gtk::Button::with_label(if photo.favorite { "♥ Favourite" } else { "♡ Favourite" });
+        favorite.add_css_class("scrapbook-home-action");
+        let dashboard = self.clone();
+        let toggle = !photo.favorite;
+        let photo_for_update = photo.clone();
+        let image_for_update = image.cloned();
+        favorite.connect_clicked(move |_| {
+            let result = db::open_existing(&dashboard.database)
+                .and_then(|connection| db::set_favorite(&connection, photo_for_update.id, toggle));
+            if let Err(error) = result { eprintln!("PIC scrapbook favourite: {error:#}"); }
+            dashboard.select_photo(&db::Photo { favorite: toggle, ..photo_for_update.clone() }, image_for_update.as_ref());
+        });
+        self.inspector_actions.append(&favorite);
     }
 }
 

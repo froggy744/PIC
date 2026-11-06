@@ -670,7 +670,7 @@ def smoke_test() -> None:
 
         # Open the generated root folder so the gallery has real folder
         # sections. Its nested child holds two photos for scoped Home/End.
-        click_at(118, 486)
+        click_at(118, 524)
         time.sleep(0.5)
         command(["xdotool", "key", "ctrl+End"])
         folder_end = activate_selected_name()

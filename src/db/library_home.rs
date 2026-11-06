@@ -8,6 +8,11 @@ pub struct LibraryHomeData {
     pub edited: Vec<Photo>,
     pub favorites: Vec<Photo>,
     pub albums: Vec<(Album, Option<Photo>)>,
+    /// Bounded feature gallery for the paper/scrapbook Library dashboard.
+    /// Empty libraries fall back to the same recent-photo preview data.
+    pub scrapbook_photos: Vec<Photo>,
+    pub scrapbook_title: String,
+    pub scrapbook_total: i64,
 }
 
 /// Bounded, database-only queries. No source availability probes or scans.
@@ -66,6 +71,25 @@ pub fn library_home_data(connection: &Connection) -> Result<LibraryHomeData> {
                 Ok((album, cover))
             })
             .collect::<Result<Vec<_>>>()?;
+    let featured = albums.iter()
+        .filter(|(album, _)| album.photo_count > 0)
+        .max_by_key(|(album, _)| album.photo_count)
+        .map(|(album, _)| (album.id, album.name.clone(), album.photo_count));
+    let (scrapbook_photos, scrapbook_title, scrapbook_total) =
+        if let Some((album_id, title, count)) = featured {
+            let mut query = connection.prepare(
+                "SELECT p.id,p.path,p.folder_id,p.taken_at,p.camera,CAST(p.aperture AS REAL),p.width,p.height,p.size_bytes,p.mtime,p.added_at,p.rotation,p.edit_recipe,p.favorite,p.rating,p.trashed,f.path,p.lens,p.shutter_speed,p.iso,p.focal_length,p.exposure_bias
+                 FROM album_photos ap JOIN photos p ON p.id=ap.photo_id
+                 LEFT JOIN folders f ON f.id=p.folder_id
+                 WHERE ap.album_id=?1 AND p.trashed=0
+                 ORDER BY p.taken_at IS NULL,p.taken_at DESC,p.path COLLATE NOCASE
+                 LIMIT ?2",
+            )?;
+            let rows = query.query_map(params![album_id, HOME_PREVIEW_LIMIT + 4], photo_from_row)?;
+            (rows.collect::<rusqlite::Result<Vec<_>>>()?, title, count)
+        } else {
+            (added.clone(), "Recently Added".to_string(), added.len() as i64)
+        };
     Ok(LibraryHomeData {
         photo_count: connection.query_row("SELECT COUNT(*) FROM photos WHERE trashed=0", [], |r| r.get(0))?,
         favorite_count: connection.query_row("SELECT COUNT(*) FROM photos WHERE trashed=0 AND favorite=1", [], |r| r.get(0))?,
@@ -74,6 +98,9 @@ pub fn library_home_data(connection: &Connection) -> Result<LibraryHomeData> {
         edited: history_photos_limited(connection, HOME_PREVIEW_LIMIT)?,
         favorites: photos_limited(connection, None, true, None, HOME_PREVIEW_LIMIT)?,
         albums,
+        scrapbook_photos,
+        scrapbook_title,
+        scrapbook_total,
     })
 }
 

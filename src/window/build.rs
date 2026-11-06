@@ -2021,6 +2021,55 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let grid_scrub_latest_page = Rc::new(Cell::new(0.0_f64));
     let grid_scrub_latest_page_for_event = grid_scrub_latest_page.clone();
 
+    // Optional native frame-clock trace for real-gallery scroll profiling.
+    // The adjustment is driven by GTK; this records presentation intervals
+    // without involving screenshot or accessibility polling in the samples.
+    if std::env::var_os("PIC_SCROLL_FRAME_TRACE").is_some() {
+        let trace_installed = Rc::new(Cell::new(false));
+        let trace_installed_for_event = trace_installed.clone();
+        let trace_until = Rc::new(Cell::new(None::<Instant>));
+        let trace_until_for_event = trace_until.clone();
+        let last_frame = Rc::new(Cell::new(None::<Instant>));
+        let window_for_scroll_trace = window.clone();
+        grid_scroll
+            .vadjustment()
+            .connect_value_changed(move |_| {
+                trace_until_for_event.set(Some(Instant::now() + Duration::from_millis(250)));
+                if trace_installed_for_event.get() {
+                    return;
+                }
+                let Some(clock) = window_for_scroll_trace
+                    .surface()
+                    .map(|surface| surface.frame_clock())
+                else {
+                    return;
+                };
+                trace_installed_for_event.set(true);
+                let trace_until = trace_until_for_event.clone();
+                let last_frame = last_frame.clone();
+                clock.connect_after_paint(move |_| {
+                    let now = Instant::now();
+                    let Some(until) = trace_until.get() else {
+                        return;
+                    };
+                    if now > until {
+                        last_frame.set(None);
+                        return;
+                    }
+                    if let Some(previous) = last_frame.replace(Some(now)) {
+                        eprintln!(
+                            "PIC_SCROLL_FRAME elapsed_ms={:.3} interval_ms={:.3}",
+                            now.duration_since(until - Duration::from_millis(250)).as_secs_f64()
+                                * 1000.0,
+                            now.duration_since(previous).as_secs_f64() * 1000.0,
+                        );
+                    } else {
+                        last_frame.set(Some(now));
+                    }
+                });
+            });
+    }
+
     let gallery_for_group_scroll = gallery.clone();
     grid_scroll
         .vadjustment()

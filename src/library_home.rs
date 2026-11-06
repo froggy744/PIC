@@ -10,6 +10,9 @@ use gtk4 as gtk;
 
 use crate::{db, photo_object::PhotoObject, sidebar::SidebarFilter, thumbnail_display};
 
+mod scrapbook;
+use scrapbook::ScrapbookDashboard;
+
 type OpenPhoto = Rc<dyn Fn(Vec<PhotoObject>, usize, bool)>;
 type Navigate = Rc<dyn Fn(SidebarFilter)>;
 
@@ -255,7 +258,15 @@ impl LibraryHome {
         let status = gtk::Label::new(Some("Loading library…"));
         status.add_css_class("dim-label");
         content.append(&status);
-        root.set_child(Some(&content));
+        // Two real Library presentations, not a cream recolour of the same
+        // GTK layout. ThemeEngine switches visibility without reconstructing
+        // thumbnails or replacing the user's preferred photo views.
+        content.add_css_class("scrapbook-standard-only");
+        let scrapbook = ScrapbookDashboard::new(&navigate);
+        let pages = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        pages.append(&content);
+        pages.append(&scrapbook.root);
+        root.set_child(Some(&pages));
 
         let database = Rc::new(std::cell::RefCell::new(database));
         let (requests, receiver) = mpsc::sync_channel::<HomeRequest>(1);
@@ -281,6 +292,7 @@ impl LibraryHome {
         let requests_for_tick = requests.clone();
         let pending_for_tick = pending.clone();
         let mut ticks = 0;
+        let scrapbook_for_tick = scrapbook.clone();
         glib::timeout_add_local(Duration::from_millis(100), move || {
             let Some(root) = weak_root.upgrade() else {
                 return glib::ControlFlow::Break;
@@ -300,6 +312,7 @@ impl LibraryHome {
                             value.set_text(&count.to_string());
                         }
                         populate(&sections, &snapshot, &navigate, &open);
+                        scrapbook_for_tick.populate(&snapshot, &navigate, &open);
                         status.set_visible(false);
                     }
                     Ok(None) => {}
@@ -464,6 +477,7 @@ fn worker(
                 .chain(&data.edited)
                 .chain(&data.favorites)
                 .chain(data.albums.iter().filter_map(|(_, cover)| cover.as_ref()))
+                .chain(&data.scrapbook_photos)
             {
                 let path =
                     crate::thumbnail::cache_path(&photo.path, photo.mtime, photo.size_bytes)?;

@@ -305,6 +305,9 @@ impl ThemeEngine {
             if widget.has_css_class("scrapbook-only") {
                 widget.set_visible(enabled);
             }
+            if widget.has_css_class("scrapbook-standard-only") {
+                widget.set_visible(!enabled);
+            }
             let mut child = widget.first_child();
             while let Some(current) = child {
                 child = current.next_sibling();

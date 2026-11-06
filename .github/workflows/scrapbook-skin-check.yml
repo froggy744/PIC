@@ -39,7 +39,7 @@ jobs:
           components: rustfmt
       - uses: Swatinem/rust-cache@v2
       - name: Format skin Rust sources for validation
-        run: rustfmt --edition 2021 src/window/theme.rs src/library_home.rs src/css/theme_discovery.rs src/main.rs src/db/library_home.rs src/window/build.rs src/window/layout.rs src/window/photo_actions.rs src/db.rs src/db/scrapbook.rs
+        run: rustfmt --edition 2021 src/window/theme.rs src/library_home.rs src/css/theme_discovery.rs src/main.rs src/db/library_home.rs src/window/build.rs src/window/photo_actions.rs src/db.rs src/db/scrapbook.rs
       - name: Check edited Rust files compile
         run: |
           test -f themes/scrapbook/fonts/Caveat-Variable.ttf

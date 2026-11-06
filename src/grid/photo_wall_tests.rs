@@ -390,6 +390,143 @@ fn photo_wall_reuses_models_and_virtualizes_headerless_and_folder_collections() 
 }
 
 #[test]
+#[ignore = "measures sustained Photo Wall frame intervals; requires a GTK display"]
+fn photo_wall_sustained_scroll_frame_latency() {
+    gtk::init().unwrap();
+    let gallery = Rc::new(Gallery::new(
+        &[],
+        100,
+        |_| {},
+        |_, _, _| {},
+        |_, _, _, _| {},
+        |_, _| {},
+        |_| {},
+    ));
+    let objects = (0..14_361)
+        .map(|index| {
+            glib::Object::builder::<PhotoObject>()
+                .property("id", index as i64 + 1)
+                .property("path", format!("/virtual/smooth-scroll/{index}.jpg"))
+                .property("width", 4000_i64)
+                .property("height", 6000_i64)
+                .build()
+        })
+        .collect::<Vec<_>>();
+    let pixels = vec![128_u8; 40 * 60 * 4];
+    let texture = gtk::gdk::MemoryTexture::new(
+        40,
+        60,
+        gtk::gdk::MemoryFormat::R8g8b8a8,
+        &glib::Bytes::from_owned(pixels),
+        40 * 4,
+    );
+    for photo in objects.iter().take(256) {
+        photo.set_cached_thumbnail_path(format!("/virtual/smooth-scroll-cache/{}.png", photo.id()));
+        folder_thumbnail_cache_insert(
+            photo_presentation_key(photo).unwrap(),
+            texture.clone().upcast(),
+        );
+    }
+    gallery.store.splice(0, 0, &objects);
+    gallery.current_photos.replace(objects);
+    gallery.set_layout(PhotoLayout::PhotoWall);
+    let scroll = gtk::ScrolledWindow::builder()
+        .child(&gallery.folder_sectioned_root)
+        .build();
+    gallery.attach_sectioned_folder_scroll(&scroll);
+    let window = gtk::Window::builder()
+        .default_width(1000)
+        .default_height(600)
+        .child(&scroll)
+        .build();
+    window.present();
+    settle();
+    let renderer_name = window
+        .renderer()
+        .map(|renderer| renderer.type_().name().to_string())
+        .unwrap_or_else(|| "unavailable".to_string());
+
+    let surface = &gallery.sectioned_folder;
+    let generation = surface.wall_state.borrow().generation;
+    let frame_times = Rc::new(RefCell::new(Vec::new()));
+    let peak_tiles = Rc::new(Cell::new(surface.live_tiles.borrow().len()));
+    let frame_times_for_tick = frame_times.clone();
+    let peak_tiles_for_tick = peak_tiles.clone();
+    let weak_surface = Rc::downgrade(surface);
+    let tick = surface.root.add_tick_callback(move |_, clock| {
+        let Some(surface) = weak_surface.upgrade() else {
+            return glib::ControlFlow::Break;
+        };
+        frame_times_for_tick.borrow_mut().push(clock.frame_time());
+        peak_tiles_for_tick.set(
+            peak_tiles_for_tick
+                .get()
+                .max(surface.live_tiles.borrow().len()),
+        );
+        glib::ControlFlow::Continue
+    });
+
+    let adjustment = scroll.vadjustment();
+    let start_value = adjustment.value();
+    let max_value = (adjustment.upper() - adjustment.page_size()).max(adjustment.lower());
+    let distance = ((max_value - start_value) * 0.4).max(0.0);
+    eprintln!(
+        "Photo Wall scroll probe setup mapped={} tiles={} start={start_value:.1} max={max_value:.1} distance={distance:.1}",
+        surface.root.is_mapped(),
+        surface.live_tiles.borrow().len(),
+    );
+    let smooth_started = Instant::now();
+    let completed = Rc::new(Cell::new(false));
+    let completed_for_timeout = completed.clone();
+    let root_for_timeout = surface.root.clone();
+    let _timeout = glib::timeout_add_local(std::time::Duration::from_millis(8), move || {
+        let progress = (smooth_started.elapsed().as_secs_f64() / 1.5).min(1.0);
+        adjustment.set_value(start_value + distance * progress);
+        root_for_timeout.queue_draw();
+        if progress >= 1.0 {
+            completed_for_timeout.set(true);
+            glib::ControlFlow::Break
+        } else {
+            glib::ControlFlow::Continue
+        }
+    });
+    let context = glib::MainContext::default();
+    let deadline = Instant::now() + std::time::Duration::from_secs(3);
+    while !completed.get() && Instant::now() < deadline {
+        while context.pending() {
+            context.iteration(false);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    assert!(completed.get(), "smooth scroll did not complete");
+    tick.remove();
+    assert_eq!(surface.wall_state.borrow().generation, generation);
+    assert!(peak_tiles.get() < 300);
+
+    let mut intervals = frame_times
+        .borrow()
+        .windows(2)
+        .map(|pair| (pair[1] - pair[0]) as f64 / 1000.0)
+        .collect::<Vec<_>>();
+    intervals.sort_by(f64::total_cmp);
+    eprintln!(
+        "Photo Wall frame probe captured {} samples",
+        intervals.len() + 1
+    );
+    assert!(intervals.len() > 20, "insufficient frame intervals");
+    let stalls_over_50ms = intervals
+        .iter()
+        .filter(|interval| **interval > 50.0)
+        .count();
+    eprintln!(
+        "Synthetic Photo Wall sustained scroll: renderer={renderer_name} photos=14361 duration_ms=1500 frames={} peak_tiles={} geometry_rebuilds=0 median_ms={:.2} p95_ms={:.2} max_ms={:.2} stalls_over_50ms={}",
+        intervals.len(), peak_tiles.get(), intervals[intervals.len() / 2],
+        intervals[(intervals.len() - 1) * 95 / 100], intervals[intervals.len() - 1], stalls_over_50ms
+    );
+    window.close();
+}
+
+#[test]
 #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
 fn photo_wall_anchor_generation_and_ultrawide_viewport() {
     gtk::init().unwrap();

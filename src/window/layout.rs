@@ -718,6 +718,34 @@
     left_header.set_show_end_title_buttons(false);
     left_header.add_css_class("layout-left-header");
 
+    // The reference logo is a real paper-and-camera title widget, rather
+    // than the old 'PIC' label with a background colour applied to it.
+    // Normal themes retain the original understated PIC label.
+    let brand = gtk::Box::new(gtk::Orientation::Horizontal, 5);
+    brand.add_css_class("scrapbook-logo");
+    let regular_brand = gtk::Label::new(Some("PIC"));
+    regular_brand.add_css_class("scrapbook-standard-only");
+    regular_brand.add_css_class("heading");
+    brand.append(&regular_brand);
+    let illustrated_brand = gtk::Box::new(gtk::Orientation::Horizontal, 7);
+    illustrated_brand.add_css_class("scrapbook-only");
+    illustrated_brand.add_css_class("scrapbook-logo-shell");
+    illustrated_brand.set_visible(false);
+    illustrated_brand.set_valign(gtk::Align::Center);
+    let camera_asset = crate::css::resolve_runtime_dir(std::path::Path::new("themes"))
+        .join("scrapbook/assets/camera-sticker.svg");
+    let camera_mark = gtk::Picture::for_filename(camera_asset);
+    camera_mark.set_content_fit(gtk::ContentFit::Contain);
+    camera_mark.set_can_shrink(true);
+    camera_mark.set_size_request(47, 37);
+    camera_mark.add_css_class("scrapbook-logo-mark");
+    illustrated_brand.append(&camera_mark);
+    let brand_word = gtk::Label::new(Some("PIC"));
+    brand_word.add_css_class("scrapbook-logo-word");
+    illustrated_brand.append(&brand_word);
+    brand.append(&illustrated_brand);
+    left_header.set_title_widget(Some(&brand));
+
     // Theme-overridable window controls: a theme opts in with
     // `window-controls: traffic-light` in its picasa-theme header and the
     // ThemeEngine shows this box while hiding the native start title
@@ -815,7 +843,27 @@
     // Normal sidebar is owned only by OverlaySplitView. Compact sidebar
     // lives in the independent fixed-width dock beside the split.
     left_column.append(&left_header);
-    left_column.append(&sidebar);
+    // Only Scrapbook overlays a hand-drawn leaf sprig. It cannot intercept
+    // pointer gestures, drag separators or navigation clicks.
+    let scrapbook_sidebar_shell = gtk::Overlay::new();
+    scrapbook_sidebar_shell.set_hexpand(true);
+    scrapbook_sidebar_shell.set_vexpand(true);
+    scrapbook_sidebar_shell.set_child(Some(&sidebar));
+    let leaf_asset = crate::css::resolve_runtime_dir(std::path::Path::new("themes"))
+        .join("scrapbook/assets/leaf-corner.svg");
+    let leaves = gtk::Picture::for_filename(leaf_asset);
+    leaves.add_css_class("scrapbook-only");
+    leaves.add_css_class("scrapbook-sidebar-leaf");
+    leaves.set_visible(false);
+    leaves.set_content_fit(gtk::ContentFit::Contain);
+    leaves.set_can_shrink(true);
+    leaves.set_size_request(118, 105);
+    leaves.set_halign(gtk::Align::Start);
+    leaves.set_valign(gtk::Align::End);
+    leaves.set_can_target(false);
+    scrapbook_sidebar_shell.add_overlay(&leaves);
+    scrapbook_sidebar_shell.set_measure_overlay(&leaves, false);
+    left_column.append(&scrapbook_sidebar_shell);
     let compact_sidebar_page = gtk::Box::new(gtk::Orientation::Vertical, 0);
     compact_sidebar_page.set_vexpand(true);
     let compact_header = adw::HeaderBar::new();

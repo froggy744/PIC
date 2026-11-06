@@ -15,6 +15,15 @@
 use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+static SCRAPBOOK_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+/// New inspectors can be created after an appearance switch and must
+/// initialise their paper-only controls with the currently active skin.
+pub(crate) fn scrapbook_is_active() -> bool {
+    SCRAPBOOK_ACTIVE.load(Ordering::Relaxed)
+}
 
 use gtk::gdk;
 use gtk::prelude::*;
@@ -297,6 +306,7 @@ impl ThemeEngine {
         self.update_appearance_icon(theme.dark);
         // These extra labels are genuinely decorative, never active hit targets
         // or replacement UI. Keep them hidden for every other PIC skin.
+        SCRAPBOOK_ACTIVE.store(theme.id == "scrapbook", Ordering::Relaxed);
         Self::sync_scrapbook_decorations(theme.id == "scrapbook");
     }
 

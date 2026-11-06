@@ -2387,6 +2387,10 @@ impl Gallery {
         }
     }
 
+    pub(crate) fn cancel_folder_keyboard_scroll_animation(&self) {
+        self.sectioned_folder.cancel_scroll_animation();
+    }
+
     pub fn refresh_sectioned_folder(self: &Rc<Self>) {
         if self.layout() != PhotoLayout::Grid {
             self.sectioned_folder.refresh();
@@ -2436,6 +2440,100 @@ impl Gallery {
 #[cfg(test)]
 mod section_lookup_tests {
     use super::*;
+
+    #[test]
+    #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+    fn folder_wheel_interrupts_keyboard_centering_without_backward_motion() {
+        fn settle(milliseconds: u64) {
+            let context = glib::MainContext::default();
+            let until = Instant::now() + std::time::Duration::from_millis(milliseconds);
+            while Instant::now() < until {
+                while context.pending() {
+                    context.iteration(false);
+                }
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
+        }
+
+        gtk::init().unwrap();
+        let gallery = Rc::new(Gallery::new(
+            &[],
+            120,
+            |_| {},
+            |_, _, _| {},
+            |_, _, _, _| {},
+            |_, _| {},
+            |_| {},
+        ));
+        gallery.group_mode.set(GroupMode::Folder);
+        gallery.current_photos.replace(
+            (0..400_i64)
+                .map(|id| {
+                    glib::Object::builder::<PhotoObject>()
+                        .property("id", id + 1)
+                        .property("path", format!("/wheel-interrupt/photo-{id}.jpg"))
+                        .property("filename", format!("photo-{id}.jpg"))
+                        .property("folder-id", 7_i64)
+                        .property("folder-path", "/wheel-interrupt")
+                        .property("original-available", false)
+                        .build()
+                })
+                .collect(),
+        );
+        gallery.rebuild_group_ranges();
+        gallery.sectioned_folder.refresh_model();
+        let scroll = gtk::ScrolledWindow::builder()
+            .child(&gallery.folder_sectioned_root)
+            .build();
+        gallery.attach_sectioned_folder_scroll(&scroll);
+        crate::window::install_folder_smooth_gallery_scroll(&scroll, gallery.clone());
+        let window = gtk::Window::builder()
+            .default_width(900)
+            .default_height(650)
+            .child(&scroll)
+            .build();
+        window.present();
+        settle(250);
+        let adjustment = scroll.vadjustment();
+        adjustment.set_value(4000.0);
+        settle(30);
+        let start = adjustment.value();
+        assert!(start > 1000.0);
+        assert!(gallery.sectioned_folder.smooth_keep_index_in_center_zone(5));
+        // Interrupt before any centering frame: this also exercises immediate
+        // handoff rather than depending on delivery within a wall-clock window.
+        let interrupted_at = adjustment.value();
+        let backwards = Rc::new(Cell::new(false));
+        let previous = Rc::new(Cell::new(interrupted_at));
+        let backwards_for_signal = backwards.clone();
+        adjustment.connect_value_changed(move |adjustment| {
+            let value = adjustment.value();
+            if value < previous.replace(value) - 0.01 {
+                backwards_for_signal.set(true);
+            }
+        });
+        let controllers = scroll.observe_controllers();
+        let wheel = (0..controllers.n_items())
+            .find_map(|i| {
+                controllers
+                    .item(i)
+                    .and_downcast::<gtk::EventControllerScroll>()
+                    .filter(|controller| {
+                        controller.propagation_phase() == gtk::PropagationPhase::Capture
+                    })
+            })
+            .unwrap();
+        assert_eq!(wheel.unit(), gtk::gdk::ScrollUnit::Wheel);
+        assert!(wheel.emit_by_name::<bool>("scroll", &[&0.0_f64, &1.0_f64]));
+        settle(350);
+        let final_y = adjustment.value();
+        window.close();
+        assert!(
+            !backwards.get(),
+            "keyboard centering moved backwards after downward wheel input"
+        );
+        assert!(final_y > interrupted_at + 100.0, "wheel distance was lost");
+    }
 
     #[test]
     #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]

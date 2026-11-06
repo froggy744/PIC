@@ -417,7 +417,7 @@ fn install_smooth_gallery_scroll(
 
 
 
-fn install_folder_smooth_gallery_scroll(
+pub(crate) fn install_folder_smooth_gallery_scroll(
     scrolled: &gtk::ScrolledWindow,
     gallery: Rc<grid::Gallery>,
 ) {
@@ -536,6 +536,7 @@ fn install_folder_smooth_gallery_scroll(
 
         match controller.unit() {
             gtk::gdk::ScrollUnit::Wheel => {
+                gallery.cancel_folder_keyboard_scroll_animation();
                 let lower = adjustment_for_scroll.lower();
                 let upper = (adjustment_for_scroll.upper() - adjustment_for_scroll.page_size())
                     .max(lower);

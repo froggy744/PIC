@@ -103,7 +103,7 @@ mod viewer_presentation_tests {
     }
 
     #[test]
-    #[ignore = "measures a synthetic cached navigation; requires a GTK display"]
+    #[ignore = "measures cached navigation through the first matching GTK after-paint; requires a GTK display"]
     fn cached_navigation_reaches_after_paint() {
         gtk::init().unwrap();
         let lightbox = Lightbox::new();
@@ -120,7 +120,10 @@ mod viewer_presentation_tests {
             context.iteration(false);
         }
         let clock = window.frame_clock().expect("mapped window has frame clock");
-        assert!(lightbox.picture.is_mapped(), "viewer picture must be mapped");
+        assert!(
+            lightbox.picture.is_mapped(),
+            "viewer picture must be mapped"
+        );
         let photo = |id: i64| -> PhotoObject {
             glib::Object::builder()
                 .property("id", id)
@@ -134,35 +137,87 @@ mod viewer_presentation_tests {
         };
         let first = photo(1);
         let second = photo(2);
-        lightbox.photos.replace(vec![first, second.clone()]);
+        lightbox.photos.replace(vec![first.clone(), second.clone()]);
         let (width, height, _, _, _, _) = viewer_decode_target(&lightbox.root, 0, false);
-        let bytes = glib::Bytes::from_owned(vec![255u8; 4]);
-        let texture = gtk::gdk::MemoryTexture::new(
-            1, 1, gtk::gdk::MemoryFormat::R8g8b8a8, &bytes, 4,
-        );
-        display_texture_cache_insert(
-            &lightbox.display_texture_cache, second.path(), 1, 2, 0, String::new(), width, height,
-            texture.clone(),
-        );
-        let started = Rc::new(Cell::new(None::<Instant>));
-        let measured = Rc::new(Cell::new(None::<Duration>));
-        let started_for_frame = started.clone();
-        let measured_for_frame = measured.clone();
-        let picture = lightbox.picture.clone();
-        clock.connect_after_paint(move |_| {
-            if picture.paintable().as_ref() == Some(texture.upcast_ref()) {
-                if let Some(start) = started_for_frame.get() {
-                    measured_for_frame.set(Some(start.elapsed()));
-                }
+        let texture_for = |value: u8| {
+            let bytes = glib::Bytes::from_owned(vec![value; width as usize * height as usize * 4]);
+            gtk::gdk::MemoryTexture::new(
+                width as i32,
+                height as i32,
+                gtk::gdk::MemoryFormat::R8g8b8a8,
+                &bytes,
+                width as usize * 4,
+            )
+        };
+        let first_texture = texture_for(255);
+        let second_texture = texture_for(127);
+        // Start the clock immediately before the real viewer selection method,
+        // then stop only after GTK paints the matching cached texture. This
+        // excludes screenshot capture and automation polling.
+        let mut samples_ms = Vec::with_capacity(50);
+        for sample in 0..50 {
+            let target_index = if sample % 2 == 0 { 1 } else { 0 };
+            let target_texture = if target_index == 1 {
+                second_texture.clone()
+            } else {
+                first_texture.clone()
+            };
+            let (target_width, target_height, _, _, _, _) =
+                viewer_decode_target(&lightbox.root, 0, false);
+            for (photo, texture) in [(&first, &first_texture), (&second, &second_texture)] {
+                display_texture_cache_insert(
+                    &lightbox.display_texture_cache,
+                    photo.path(),
+                    1,
+                    2,
+                    0,
+                    String::new(),
+                    target_width,
+                    target_height,
+                    texture.clone(),
+                );
             }
-        });
-        started.set(Some(Instant::now()));
-        lightbox.navigate_photo(1);
-        while measured.get().is_none() && Instant::now() < deadline {
-            context.iteration(false);
+            let started = Instant::now();
+            let measured = Rc::new(Cell::new(None::<Duration>));
+            let measured_for_frame = measured.clone();
+            let picture = lightbox.picture.clone();
+            let handler = Rc::new(RefCell::new(None));
+            let handler_for_frame = handler.clone();
+            let clock_for_frame = clock.clone();
+            let id = clock.connect_after_paint(move |_| {
+                if picture.paintable().as_ref() == Some(target_texture.upcast_ref())
+                    && measured_for_frame.get().is_none()
+                {
+                    measured_for_frame.set(Some(started.elapsed()));
+                    if let Some(id) = handler_for_frame.borrow_mut().take() {
+                        clock_for_frame.disconnect(id);
+                    }
+                }
+            });
+            *handler.borrow_mut() = Some(id);
+            lightbox.navigate_photo(if target_index == 1 { 1 } else { -1 });
+            let sample_deadline = Instant::now() + Duration::from_secs(2);
+            while measured.get().is_none() && Instant::now() < sample_deadline {
+                context.iteration(false);
+            }
+            samples_ms.push(
+                measured
+                    .get()
+                    .expect("cached destination reached a matching after-paint")
+                    .as_secs_f64()
+                    * 1000.0,
+            );
         }
-        let elapsed = measured.get().expect("cached destination painted");
-        eprintln!("PIC_BENCH cached_navigation_to_after_paint_ms={:.3}", elapsed.as_secs_f64() * 1000.0);
+        samples_ms.sort_by(f64::total_cmp);
+        let median = samples_ms[samples_ms.len() / 2];
+        let p95 = samples_ms[((samples_ms.len() as f64 * 0.95).ceil() as usize) - 1];
+        let max = samples_ms[samples_ms.len() - 1];
+        eprintln!(
+            "PIC_BENCH cached_navigation_first_matching_after_paint_ms samples={} texture={}x{} median={median:.3} p95={p95:.3} max={max:.3}",
+            samples_ms.len(),
+            width,
+            height,
+        );
         window.close();
     }
 

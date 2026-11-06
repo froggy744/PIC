@@ -404,9 +404,27 @@ pub fn folders(connection: &Connection) -> Result<Vec<Folder>> {
             folder.name = folder_name(&folder.path);
         }
     }
+    let trace_startup = std::env::var_os("PIC_STARTUP_TRACE").is_some();
+    let availability_started = std::time::Instant::now();
+    let mut root_checks = 0usize;
+    let mut unavailable_roots = 0usize;
+    let mut slowest_root_check_us = 0u128;
     let availability = folder_availability_by_id(&folders, |path| {
-        crate::source::cached_source_available(path)
+        root_checks += 1;
+        let check_started = trace_startup.then(std::time::Instant::now);
+        let available = crate::source::cached_source_available(path);
+        if let Some(check_started) = check_started {
+            slowest_root_check_us = slowest_root_check_us.max(check_started.elapsed().as_micros());
+            unavailable_roots += usize::from(!available);
+        }
+        available
     });
+    if trace_startup {
+        eprintln!(
+            "PIC_STARTUP stage=folder_availability roots={root_checks} unavailable={unavailable_roots} elapsed_us={} max_root_check_us={slowest_root_check_us}",
+            availability_started.elapsed().as_micros(),
+        );
+    }
     for folder in &mut folders {
         folder.available = availability.get(&folder.id).copied().unwrap_or(true);
     }

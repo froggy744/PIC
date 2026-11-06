@@ -1,0 +1,62 @@
+name: PIC Scrapbook skin validation
+
+on:
+  push:
+    branches: [skins]
+    paths:
+      - 'themes/scrapbook/**'
+      - 'src/css/theme_discovery.rs'
+      - 'src/window/theme.rs'
+      - 'src/library_home.rs'
+      - 'src/albums/card.rs'
+      - 'src/css/base.css'
+      - '.github/workflows/scrapbook-skin-check.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  scrapbook:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install GTK and native build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang mold cmake nasm pkg-config \
+            libgtk-4-dev libadwaita-1-dev libsmbclient-dev libnfs-dev \
+            librsvg2-common libgdk-pixbuf2.0-bin xvfb xauth \
+            python3-gi gir1.2-gtk-4.0
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: Verify formatting
+        run: cargo fmt --all -- --check
+      - name: Compile PIC
+        run: cargo check --locked
+      - name: Discover Scrapbook skin and assets
+        run: cargo test --locked scrapbook_skin_is_discovered_with_all_decorative_assets -- --test-threads=1
+      - name: Parse GTK CSS without warnings or missing assets
+        run: |
+          xvfb-run -a env GDK_BACKEND=x11 /usr/bin/python3 - <<'PY'
+          import gi
+          gi.require_version('Gtk', '4.0')
+          from gi.repository import Gtk, Gio
+          from pathlib import Path
+          theme = Path('themes/scrapbook/theme.css')
+          provider = Gtk.CssProvider()
+          errors = []
+          def on_error(_provider, section, error):
+              errors.append(str(error))
+          provider.connect('parsing-error', on_error)
+          provider.load_from_path(str(theme.resolve()))
+          if errors:
+              raise SystemExit('GTK CSS parsing errors: ' + '\\n'.join(errors))
+          assert theme.exists()
+          for asset in ['paper.svg', 'cork.svg', 'washi.svg', 'leaves.svg']:
+              path = theme.parent / 'assets' / asset
+              assert path.is_file(), path
+          print('Scrapbook CSS and decorative SVGs load successfully')
+          PY

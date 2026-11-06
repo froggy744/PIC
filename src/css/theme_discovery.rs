@@ -325,6 +325,26 @@ mod tests {
     }
 
     #[test]
+    fn scrapbook_skin_is_discovered_with_all_decorative_assets() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("themes");
+        let skin = discover(&root)
+            .into_iter()
+            .find(|theme| theme.id == "scrapbook")
+            .expect("PIC Scrapbook should be offered in Settings > Themes");
+        assert_eq!(skin.name, "PIC Scrapbook");
+        assert!(!skin.dark);
+        assert!(skin.pins_color_scheme);
+        assert!(!skin.is_base);
+        assert!(skin.css.contains("assets/paper.svg"));
+        for asset in ["paper.svg", "cork.svg", "washi.svg", "leaves.svg"] {
+            assert!(
+                root.join("scrapbook/assets").join(asset).is_file(),
+                "missing Scrapbook asset {asset}"
+            );
+        }
+    }
+
+    #[test]
     fn corner_style_metadata_and_terminal_preference() {
         let metadata =
             metadata_from_css("/* picasa-theme\n   corner-style: square\n*/\n.window {}");

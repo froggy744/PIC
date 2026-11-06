@@ -596,6 +596,25 @@ def smoke_test() -> None:
             f"sample-{index:02d}.jpg" for index in range(12)
         ] + ["folder-first.jpg", "folder-last.jpg"]
 
+        # Measure an already displayed photo on the return trip. Screenshot
+        # capture and polling add overhead, so this is an observed upper bound.
+        click_at(518, 178)
+        command(["xdotool", "key", "space"])
+        wait_for(lambda: count_color_pixels(screenshot("cached-nav-first.png"), (45, 110, 190)) > 200_000,
+                 "first viewer image", timeout=10)
+        command(["xdotool", "key", "Right"])
+        wait_for(lambda: count_color_pixels(screenshot("cached-nav-next.png"), (180, 75, 95)) > 200_000,
+                 "next viewer image", timeout=10)
+        nav_started = time.monotonic()
+        command(["xdotool", "key", "Left"])
+        wait_for(lambda: count_color_pixels(screenshot("cached-nav-return.png"), (45, 110, 190)) > 200_000,
+                 "cached viewer image", timeout=10)
+        observed_ms = (time.monotonic() - nav_started) * 1000
+        record(add_case("Cached viewer return observation", "The previous photo is displayed after navigating back"),
+               True, f"observed in {observed_ms:.1f} ms including screenshot and polling overhead")
+        command(["xdotool", "key", "Escape"])
+        time.sleep(0.35)
+
         click_at(518, 178)
         first = activate_selected_name()
         browse_case("Browse initial selection", "The clicked first tile opens", first,

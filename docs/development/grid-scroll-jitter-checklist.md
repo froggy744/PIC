@@ -292,3 +292,75 @@ The test ran alone under Xvfb/Cairo with `--ignored --test-threads=1`;
 `cargo check --locked` passed. After launching the modified app on native
 Wayland with Vulkan requested and tracing disabled, the user repeated the fast
 scrollbar-thumb drag and confirmed: "Flicker is gone."
+
+## Buffered easing-motion capture
+
+At the user's request, temporarily captured wheel inputs, frame times, actual
+adjustment values, requested positions, spring velocity/target, and Folder-path
+remaining distance in memory. CSV batches were written only after the animation
+had been inactive for 250 ms. No screenshot polling or per-frame console logging
+was used. `cargo check --locked` passed for the diagnostic build. The user drove
+all three layouts on native Wayland with Vulkan requested, using the existing
+library. View-transition logs identify these samples as Photo mode (`group=None`);
+Photo Wall and Masonry use the Folder scroller/easing path internally.
+
+| Layout | Downward input bursts | Time from last wheel event to inactive |
+| --- | --- | --- |
+| Photo Grid | 2 | 734.9–735.2 ms |
+| Photo Wall | 3 | 402.5–458.9 ms |
+| Masonry | 3 | 446.4–462.3 ms |
+
+Across these bursts, median after-paint frame-clock intervals were approximately
+8.33 ms; the largest sampled interval was 17.857 ms. Consecutive after-paint
+adjustment positions did not step backwards by more than 1 px. The Grid spring
+decelerated from thousands of pixels/second to below 4 pixels/second before
+stopping. Several wheel events arrived in short clusters, leaving hundreds of
+pixels queued at release; the tail includes completion of that queued distance.
+
+This supports investigating the long easing/queued-motion tail as the source of
+the perceived lag. It does not establish compositor presentation smoothness or
+prove that easing causes every reported jitter episode. The user reported
+testing all views, but did not identify a particular bad instant in this sample.
+
+Raw CSVs, view-transition logs, numerical summaries and the temporary diagnostic
+patch are saved in the gitignored directory
+`reports/gui-tests/scroll-easing-motion/`. The traced app was stopped and all
+temporary tracing code was removed. No easing constants, sensitivity, thumbnail
+behavior or other production code was changed by this capture.
+
+## Shorter wheel response experiment and release timing
+
+One reversible experiment advanced both custom wheel animations at 1.25× their
+previous timescale. The Photo Grid spring uses two internal integration steps
+per frame to remain stable at the existing 33 ms elapsed-time cap; it still
+writes the GTK adjustment once per frame. Its 240/31 spring coefficients and
+the Folder path's base 85 ms time constant are retained. Albums home keeps its
+previous response. No new snapping or position rounding was added.
+
+Both wheel handlers retained their 120 px impulse and direction-reversal rules.
+Grid targets were already clamped to the reachable scroll range; Folder's
+remaining distance is clamped to that range too, avoiding accumulation of
+unreachable motion during bursts. This bounds pending distance by the available
+scroll range rather than dropping reachable wheel impulses at an arbitrary cap.
+Touchpad and keyboard paths, thumbnails, layouts and caching are unchanged.
+
+The deterministic response test failed against the previous response and
+passed for the experiment: a queued 960 px target approached within 1 px with
+spring speed below 4 by 650 ms at 120 Hz, 60 Hz and the 33 ms frame cap. It also
+checks monotonic approach, reversal, eventual target distance and Folder range
+bounds. The focused real-GridView fractional-distance test and Folder
+keyboard/wheel interruption test passed; `cargo check --locked` passed.
+These are correctness tests, not new native timing measurements. No benchmark,
+new instrumentation, broad suite or logging capture was run.
+
+The initial 1.8× manual comparison felt more responsive but too fast, with too
+little perceived ease-in. The uncommitted experiment was reduced to 1.25× for a
+second comparison, retaining the same wheel distance and range bounds. The user
+then preferred the v1.0.2 release speed. Inspection of tag `v1.0.2` confirmed
+the 120 px impulse, Photo Grid spring coefficients 240/31 with one integration
+step per frame, and Folder/Photo Wall/Masonry 85 ms easing time constant. The
+1.25× rate and its response test were removed. Current scrolling uses the exact
+release timing while retaining the later Grid fractional-progress correction,
+Folder keyboard/wheel cancellation and reachable-range queue bound. The release
+timing can still have a long tail after large wheel bursts; no claim of general
+jitter resolution follows from restoring it.

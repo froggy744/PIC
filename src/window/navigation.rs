@@ -1,3 +1,13 @@
+fn folder_wheel_remaining(current: f64, lower: f64, upper: f64, old: f64, impulse: f64) -> f64 {
+    let remaining = if old != 0.0 && old.signum() != impulse.signum() {
+        impulse
+    } else {
+        old + impulse
+    };
+    // Keep every reachable impulse, but never queue distance past either edge.
+    remaining.clamp(lower - current, upper - current)
+}
+
 pub(crate) fn install_smooth_gallery_scroll(
     scrolled: &gtk::ScrolledWindow,
     gallery: Rc<grid::Gallery>,
@@ -570,11 +580,7 @@ pub(crate) fn install_folder_smooth_gallery_scroll(
                 let old = remaining_for_scroll.get();
                 // Direction reversal should react immediately rather than first
                 // consuming momentum queued in the opposite direction.
-                let next_remaining = if old != 0.0 && old.signum() != impulse.signum() {
-                    impulse
-                } else {
-                    old + impulse
-                };
+                let next_remaining = folder_wheel_remaining(current, lower, upper, old, impulse);
                 remaining_for_scroll.set(next_remaining);
                 active_for_scroll.set(true);
                 glib::Propagation::Stop

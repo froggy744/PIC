@@ -848,3 +848,109 @@ button, entry, label { letter-spacing: .15px; }
     border-bottom-width: 16px;
     box-shadow: 0 5px 9px rgba(68,43,34,.23);
 }
+
+/* The illustrated right-hand note stack, matching the selected-photo
+   paper column in the reference rather than a flat metadata list. */
+.scrapbook-inspector-heading {
+    background-image: url("assets/washi-pink.svg");
+    background-size: 100% 100%;
+    background-repeat: no-repeat;
+    font-family: "Caveat", cursive;
+    font-size: 27px;
+    font-weight: 700;
+    color: #6a384a;
+    padding: 0 13px 3px;
+    margin: 3px 0 3px;
+}
+.scrapbook-inspector-extra {
+    border-top: 1px dashed #d5bda5;
+    padding: 9px 4px 23px;
+    background-image: url("assets/paper.svg");
+}
+.scrapbook-inspector-paper-title {
+    font-family: "Caveat", cursive;
+    font-weight: 700;
+    font-size: 25px;
+    color: #46332c;
+    background-image: url("assets/torn-gold.svg");
+    background-size: 100% 100%;
+    background-repeat: no-repeat;
+    padding: 0 12px 3px;
+    min-width: 66px;
+}
+.scrapbook-tags > flowboxchild,
+.scrapbook-tags > flowboxchild:hover {
+    background: transparent;
+    border: 0;
+    padding: 1px;
+    box-shadow: none;
+}
+.scrapbook-tag-chip {
+    background: #e2c6ef;
+    border: 1px solid #caacdc;
+    border-radius: 999px;
+    color: #492f58;
+    font-family: "Patrick Hand", sans-serif;
+    font-size: 15px;
+    padding: 1px 8px;
+    min-height: 24px;
+    box-shadow: 0 1px 2px rgba(52,36,52,.10);
+}
+.scrapbook-tag-chip:hover { background: #d9ade8; }
+.scrapbook-tag-add {
+    font-family: "Patrick Hand", sans-serif;
+    color: #6e526f;
+    background: #fff4e8;
+    border: 1px dashed #c9ae9c;
+    border-radius: 999px;
+    padding: 2px 10px;
+    min-height: 24px;
+}
+.scrapbook-tags-empty {
+    color: #9c8674;
+    font-family: "Patrick Hand", sans-serif;
+    font-size: 15px;
+    padding: 4px;
+}
+.scrapbook-note-card {
+    background-color: #fff6e9;
+    background-image: url("assets/grid-paper.svg");
+    border: 1px solid #ead6bf;
+    border-radius: 3px;
+    padding: 10px;
+    box-shadow: 0 4px 8px rgba(74,51,35,.13);
+}
+.scrapbook-note-edit,
+.scrapbook-note-edit text {
+    background: transparent;
+    color: #3e2e2b;
+    font-size: 16px;
+    font-family: "Patrick Hand", sans-serif;
+    border: 0;
+}
+.scrapbook-note-save {
+    background: #fff3d0;
+    color: #694b40;
+    border: 1px solid #d0b39a;
+    border-radius: 6px;
+    font-family: "Patrick Hand", sans-serif;
+    min-height: 26px;
+    font-size: 14px;
+    padding: 2px 10px;
+}
+.scrapbook-note-save:hover { background: #e9d9f0; }
+.scrapbook-note-status { color: #628552; font-size: 12px; }
+.scrapbook-inspector-actions { padding-top: 3px; }
+.scrapbook-inspector-action {
+    background: #fff7e9;
+    border: 1px solid #decab0;
+    border-radius: 8px;
+    color: #513d39;
+    padding: 6px 7px;
+    min-width: 60px;
+    min-height: 60px;
+    font-family: "Patrick Hand", sans-serif;
+    font-size: 14px;
+    box-shadow: 0 2px 4px rgba(66,47,32,.10);
+}
+.scrapbook-inspector-action:hover { background: #e6cfea; }

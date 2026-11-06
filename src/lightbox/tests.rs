@@ -103,6 +103,70 @@ mod viewer_presentation_tests {
     }
 
     #[test]
+    #[ignore = "measures a synthetic cached navigation; requires a GTK display"]
+    fn cached_navigation_reaches_after_paint() {
+        gtk::init().unwrap();
+        let lightbox = Lightbox::new();
+        lightbox.root.set_visible(true);
+        let window = gtk::Window::builder()
+            .default_width(800)
+            .default_height(600)
+            .child(&lightbox.root)
+            .build();
+        window.present();
+        let context = glib::MainContext::default();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while window.frame_clock().is_none() && Instant::now() < deadline {
+            context.iteration(false);
+        }
+        let clock = window.frame_clock().expect("mapped window has frame clock");
+        assert!(lightbox.picture.is_mapped(), "viewer picture must be mapped");
+        let photo = |id: i64| -> PhotoObject {
+            glib::Object::builder()
+                .property("id", id)
+                .property("path", format!("/test/cached-{id}.jpg"))
+                .property("width", 800_i64)
+                .property("height", 600_i64)
+                .property("mtime", 1_i64)
+                .property("size-bytes", 2_i64)
+                .property("original-available", true)
+                .build()
+        };
+        let first = photo(1);
+        let second = photo(2);
+        lightbox.photos.replace(vec![first, second.clone()]);
+        let (width, height, _, _, _, _) = viewer_decode_target(&lightbox.root, 0, false);
+        let bytes = glib::Bytes::from_owned(vec![255u8; 4]);
+        let texture = gtk::gdk::MemoryTexture::new(
+            1, 1, gtk::gdk::MemoryFormat::R8g8b8a8, &bytes, 4,
+        );
+        display_texture_cache_insert(
+            &lightbox.display_texture_cache, second.path(), 1, 2, 0, String::new(), width, height,
+            texture.clone(),
+        );
+        let started = Rc::new(Cell::new(None::<Instant>));
+        let measured = Rc::new(Cell::new(None::<Duration>));
+        let started_for_frame = started.clone();
+        let measured_for_frame = measured.clone();
+        let picture = lightbox.picture.clone();
+        clock.connect_after_paint(move |_| {
+            if picture.paintable().as_ref() == Some(texture.upcast_ref()) {
+                if let Some(start) = started_for_frame.get() {
+                    measured_for_frame.set(Some(start.elapsed()));
+                }
+            }
+        });
+        started.set(Some(Instant::now()));
+        lightbox.navigate_photo(1);
+        while measured.get().is_none() && Instant::now() < deadline {
+            context.iteration(false);
+        }
+        let elapsed = measured.get().expect("cached destination painted");
+        eprintln!("PIC_BENCH cached_navigation_to_after_paint_ms={:.3}", elapsed.as_secs_f64() * 1000.0);
+        window.close();
+    }
+
+    #[test]
     fn arrow_steps_remain_single_photo_and_clamp_at_collection_edges() {
         assert_eq!(navigation_step(4, 1, 10), 5);
         assert_eq!(navigation_step(4, -1, 10), 3);

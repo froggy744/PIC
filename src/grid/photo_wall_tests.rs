@@ -1114,6 +1114,9 @@ fn photo_wall_quality_preserves_fallback_and_rejects_stale_results() {
     frame.set_child(Some(&picture));
     let tile = SquareTile::new(600, 400, &frame);
     tile.add_css_class("photo-wall-tile");
+    let window = gtk::Window::builder().default_width(600).default_height(400).child(&tile).build();
+    window.present();
+    settle();
     tile.set_photo_deferred(&photo);
     let texture = |size| -> gtk::gdk::Paintable {
         gtk::gdk::MemoryTexture::new(
@@ -1208,6 +1211,9 @@ fn photo_wall_quality_hides_startup_placeholder() {
     frame.add_overlay(&placeholder);
     let tile = SquareTile::new(600, 400, &frame);
     tile.add_css_class("photo-wall-tile");
+    let window = gtk::Window::builder().default_width(600).default_height(400).child(&tile).build();
+    window.present();
+    settle();
     tile.set_photo_deferred(&photo);
     placeholder.set_visible(true);
     picture.add_css_class("missing-thumbnail");
@@ -1273,7 +1279,7 @@ fn photo_wall_uses_canonical_cache_without_separate_wall_quality_requests() {
     settle();
 
     let surface = &gallery.sectioned_folder;
-    surface.poll_wall_quality();
+    gallery.poll_adaptive_thumbnails();
     assert!(surface.wall_state.borrow().quality_attempted.is_empty());
     assert!(surface
         .live_tiles
@@ -2744,4 +2750,56 @@ fn live_network_wall_browsing_keeps_prefetch_bounded() {
         );
     }
     window.close();
+}
+
+#[test]
+fn adaptive_resolution_respects_aspect_fit_and_scale() {
+    assert_eq!(thumbnail_resolution(750, 400, 200, 100, 1, false), 320);
+    assert_eq!(thumbnail_resolution(750, 400, 436, 232, 1, false), 640);
+    assert_eq!(thumbnail_resolution(750, 400, 200, 200, 1, true), 640);
+    assert_eq!(thumbnail_resolution(400, 750, 200, 200, 1, true), 640);
+    assert_eq!(thumbnail_resolution(750, 400, 200, 100, 2, false), 640);
+    assert_eq!(thumbnail_resolution(750, 400, 200, 200, 1, false), 320);
+}
+
+#[test]
+#[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+fn adaptive_quality_upgrades_visible_tiles_in_all_layouts() {
+    gtk::init().unwrap();
+    let dir = std::env::temp_dir().join(format!("pic-adaptive-test-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let source = dir.join("source.jpg");
+    let cache = dir.join("cache.jpg");
+    image::RgbImage::from_pixel(1200, 400, image::Rgb([90, 160, 210])).save(&source).unwrap();
+    image::RgbImage::from_pixel(320, 107, image::Rgb([90, 160, 210])).save(&cache).unwrap();
+    for layout in [PhotoLayout::Grid, PhotoLayout::PhotoWall, PhotoLayout::Masonry] {
+        let photo = glib::Object::builder::<PhotoObject>()
+            .property("id", 730_i64)
+            .property("path", source.to_str().unwrap())
+            .property("width", 1200_i64)
+            .property("height", 400_i64)
+            .build();
+        photo.set_cached_thumbnail_path(cache.to_str().unwrap());
+        let gallery = Rc::new(Gallery::new(&[], 300, |_| {}, |_, _, _| {}, |_, _, _, _| {}, |_, _| {}, |_| {}));
+        gallery.store.append(&photo);
+        gallery.current_photos.replace(vec![photo]);
+        gallery.set_layout(layout);
+        let child: gtk::Widget = if layout == PhotoLayout::Grid { gallery.root.clone().upcast() } else { gallery.folder_sectioned_root.clone().upcast() };
+        let scroll = gtk::ScrolledWindow::builder().child(&child).build();
+        if layout != PhotoLayout::Grid { gallery.attach_sectioned_folder_scroll(&scroll); }
+        let width = if layout == PhotoLayout::Masonry { 450 } else { 900 };
+        let window = gtk::Window::builder().default_width(width).default_height(500).child(&scroll).build();
+        window.present();
+        let success = wait_for_restore(|| {
+            gallery.poll_adaptive_thumbnails();
+            gallery.drain_thumbnail_display_completions();
+            let mut tiles = Vec::new();
+            collect_tiles(&child, &mut tiles);
+            tiles.iter().any(|tile| tile.imp().applied_visual_key.borrow().as_deref().is_some_and(crate::thumbnail_display::is_wall_key))
+        });
+        assert!(success, "quality variant was not displayed in {layout:?}");
+        window.close();
+        settle();
+    }
+    std::fs::remove_dir_all(dir).unwrap();
 }

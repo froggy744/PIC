@@ -779,10 +779,4 @@ impl SectionedFolderView {
         state.quality_attempted.clear();
     }
 
-    fn poll_wall_quality(&self) {
-        // The canonical gallery cache is now the only thumbnail source.
-        // High-quality mode raises that cache itself from 320 to 640 px, so
-        // Photo Wall must never create a second -wall640 sibling.
-        self.clear_wall_quality_state();
-    }
 }

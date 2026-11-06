@@ -1689,8 +1689,7 @@ impl SquareTile {
     }
 
     fn apply_wall_quality(&self, key: &str, paintable: &gtk::gdk::Paintable) -> bool {
-        if !self.has_css_class("photo-wall-tile")
-            || self.imp().wall_quality_key.borrow().as_deref() != Some(key)
+        if self.imp().wall_quality_key.borrow().as_deref() != Some(key)
         {
             return false;
         }
@@ -1709,6 +1708,18 @@ impl SquareTile {
         let Some(picture) = frame.child().and_downcast::<gtk::Picture>() else {
             return false;
         };
+        let (mut width, mut height) = (photo.width() as i32, photo.height() as i32);
+        if matches!(photo.rotation().rem_euclid(360), 90 | 270) {
+            std::mem::swap(&mut width, &mut height);
+        }
+        if thumbnail_resolution(width, height, picture.width(), picture.height(), self.scale_factor(), picture.content_fit() == gtk::ContentFit::Cover) != 640 {
+            return false;
+        }
+        if let Some(normal) = photo_presentation_key(&photo).and_then(|key| folder_thumbnail_cache_get(&key)) {
+            if paintable.intrinsic_width().max(paintable.intrinsic_height()) <= normal.intrinsic_width().max(normal.intrinsic_height()) {
+                return false;
+            }
+        }
         if self.imp().wall_quality_fallback.borrow().is_none() {
             *self.imp().wall_quality_fallback.borrow_mut() =
                 photo_presentation_key(&photo).zip(picture.paintable());

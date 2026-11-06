@@ -603,7 +603,6 @@ impl SectionedFolderView {
             if this.is_wall() && this.geometry_width.get() == 0 {
                 this.refresh();
             }
-            this.poll_wall_quality();
             glib::ControlFlow::Continue
         });
 

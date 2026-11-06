@@ -858,3 +858,7 @@ pub fn retry_wall_request(key: String) {
         }
     }
 }
+
+pub fn take_wall_retry_keys() -> Vec<String> {
+    WALL_RETRIES.get().and_then(|retries| retries.lock().ok()).map(|mut retries| std::mem::take(&mut *retries)).unwrap_or_default()
+}

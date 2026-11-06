@@ -62,7 +62,10 @@
 @define-color headerbar_bg_color @pic_bar_color;
 @define-color theme_fg_color @pic_text_color;
 
-window { background: @pic_background_color; color: @pic_text_color; }
+/* Keep GTK's rounded outer window corners on the dark chrome surface. The
+   content panes paint their own light backgrounds; using the light canvas on
+   the toplevel shows through as a pale fringe beside the dark header corners. */
+window { background: @pic_bar_bottom; color: @pic_text_color; }
 
 /* ---- Tooltips & scrollbars ---- */
 tooltip.background, tooltip {

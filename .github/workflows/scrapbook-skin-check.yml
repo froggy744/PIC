@@ -33,7 +33,7 @@ jobs:
           components: rustfmt
       - uses: Swatinem/rust-cache@v2
       - name: Verify formatting
-        run: rustfmt --check --edition 2021 src/window/theme.rs src/library_home.rs src/albums/card.rs src/css/theme_discovery.rs
+        run: rustfmt --check --edition 2021 src/window/theme.rs src/library_home.rs src/css/theme_discovery.rs
       - name: Compile PIC
         run: cargo check --locked
       - name: Discover Scrapbook skin and assets

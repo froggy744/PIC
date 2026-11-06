@@ -10,7 +10,6 @@ pub enum PhotoLayout {
 struct PhotoWallState {
     generation: u64,
     layout: photo_wall_layout::PhotoWallLayout,
-    quality_attempted: HashSet<String>,
 }
 
 impl SectionedFolderView {
@@ -391,12 +390,6 @@ impl Gallery {
         self.cancel_resize_flip();
         self.sectioned_folder.cancel_zoom_settle();
         self.sectioned_folder.cancel_scroll_animation();
-        if layout == PhotoLayout::Grid {
-            crate::thumbnail_display::retain_wall_requests(&HashSet::new());
-            for tile in self.sectioned_folder.live_tiles.borrow().values() {
-                tile.tile.clear_wall_quality();
-            }
-        }
         self.sectioned_folder.layout_mode.set(layout);
         self.sectioned_folder.refresh_model();
         if layout == PhotoLayout::Grid {
@@ -736,47 +729,8 @@ impl Gallery {
         queue_prefetch_photos(band.flat_map(|row| {
             state.layout.items[state.layout.rows[row].item_range.clone()].iter()
                 .filter_map(|item| photos.get(item.photo_index))
-        }), budget)
+            }),
+            budget,
+        )
     }
-}
-
-#[cfg(test)]
-#[derive(Default)]
-struct WallQualityGate {
-    signature: Option<(u64, u64, u64, i32)>,
-    stationary_since: Option<Instant>,
-}
-
-#[cfg(test)]
-impl WallQualityGate {
-    fn ready(&mut self, signature: (u64, u64, u64, i32), now: Instant) -> bool {
-        if self.signature != Some(signature) {
-            self.signature = Some(signature);
-            self.stationary_since = Some(now);
-            return false;
-        }
-        self.stationary_since.is_some_and(|since| {
-            now.saturating_duration_since(since) >= std::time::Duration::from_millis(500)
-        })
-    }
-}
-
-#[cfg(test)]
-fn wall_quality_needed(width: i32, height: i32, scale: i32) -> bool {
-    width.max(height).max(0).saturating_mul(scale.max(1)) > 320
-}
-
-impl SectionedFolderView {
-    fn clear_wall_quality_state(&self) {
-        crate::thumbnail_display::retain_wall_requests(&HashSet::new());
-        for tile in self.live_tiles.borrow().values() {
-            tile.tile.clear_wall_quality();
-        }
-        for tile in self.tile_pool.borrow().iter() {
-            tile.tile.clear_wall_quality();
-        }
-        let mut state = self.wall_state.borrow_mut();
-        state.quality_attempted.clear();
-    }
-
 }

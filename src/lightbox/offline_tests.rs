@@ -137,13 +137,12 @@ fn offline_navigation_clears_previous_photo_when_cache_is_missing() {
 
 #[test]
 #[ignore = "requires a GTK display; run individually"]
-fn offline_preview_prefers_quality_cache_and_applies_rotation() {
+fn offline_preview_uses_selected_thumbnail_cache_and_applies_rotation() {
     gtk::init().unwrap();
     let source = format!("/unmounted/pic-quality-{}.jpg", std::process::id());
     let cache = write_cache(&source, 80, 60);
-    let quality = crate::thumbnail::wall_cache_path(&cache);
-    image::RgbImage::from_pixel(160, 120, image::Rgb([20, 90, 180]))
-        .save_with_format(&quality, image::ImageFormat::Jpeg)
+    image::RgbImage::from_pixel(80, 60, image::Rgb([20, 90, 180]))
+        .save_with_format(&cache, image::ImageFormat::Jpeg)
         .unwrap();
     let selected = photo(&source, 1, false);
     selected.set_rotation(90);
@@ -156,8 +155,8 @@ fn offline_preview_prefers_quality_cache_and_applies_rotation() {
         (120, 160)
     );
     assert_eq!((selected.width(), selected.height()), (4000, 3000));
-    // A corrupt high-quality cache must still allow the normal thumbnail.
-    std::fs::write(&quality, b"not an image").unwrap();
+    // A corrupt selected-quality cache cannot fall back to an unselected sibling.
+    std::fs::write(&cache, b"not an image").unwrap();
     lightbox.refresh_current();
     settle();
     assert_eq!(
@@ -177,7 +176,6 @@ fn offline_preview_prefers_quality_cache_and_applies_rotation() {
     lightbox.close();
     window.close();
     let _ = std::fs::remove_file(cache);
-    let _ = std::fs::remove_file(quality);
 }
 
 #[test]

@@ -58,13 +58,9 @@ fn valid_cache_paths_in(directory: &Path, connection: &Connection) -> Result<Has
     for row in rows {
         let (path, mtime, size_bytes) = row?;
         let name = cache_file_name(&path, mtime, size_bytes);
-        // Preserve normal and Photo Wall thumbnails in both the legacy flat
-        // layout and the current shard layout. Wall workers still generate
-        // separate 640-pixel siblings for each current photo.
+        // Preserve selected-quality thumbnails in both cache layouts.
         let flat = directory.join(&name);
         let sharded = shard_dir_in(&directory.join("files"), &name).join(name);
-        valid.insert(wall_cache_path(&flat));
-        valid.insert(wall_cache_path(&sharded));
         valid.insert(flat);
         valid.insert(sharded);
     }
@@ -153,11 +149,6 @@ fn cache_stats_in(directory: &Path, valid: &HashSet<PathBuf>) -> Result<CacheSta
     // required thumbnails.
     let required = valid
         .iter()
-        .filter(|path| {
-            !path
-                .file_stem()
-                .is_some_and(|stem| stem.to_string_lossy().ends_with("-wall640"))
-        })
         .filter_map(|path| path.file_name())
         .collect::<HashSet<_>>()
         .len() as u64;
@@ -381,27 +372,6 @@ mod cleanup_tests {
         fixture.clean();
         assert!(overlay.join("hash.jpg").is_file());
         assert!(overlay.join("hash.png").is_file());
-    }
-
-    #[test]
-    fn wall_quality_variants_survive_cleanup_without_inflating_required_count() {
-        let fixture = Fixture::new();
-        fixture.add_photo("/photos/quality.jpg", Some(1), Some(2));
-        let normal =
-            fixture
-                .directory
-                .join(fixture.thumbnail_name("/photos/quality.jpg", Some(1), Some(2)));
-        let quality = wall_cache_path(&normal);
-        fs::write(&quality, b"jpeg").unwrap();
-        assert!(fixture.valid_paths().contains(&quality));
-        fixture.clean();
-        assert!(quality.is_file());
-        assert_eq!(
-            cache_stats_in(&fixture.directory, &fixture.valid_paths())
-                .unwrap()
-                .required,
-            1
-        );
     }
 
     #[test]

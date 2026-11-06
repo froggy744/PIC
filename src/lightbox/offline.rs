@@ -145,20 +145,17 @@ impl Drop for OfflinePresentation {
 fn load_cached_lightbox_preview(
     request: &crate::thumbnail_display::DisplayRequest,
 ) -> Option<ViewerDecodeResult> {
-    let quality = crate::thumbnail_display::wall_request(request.clone());
-    for request in [&quality, request] {
-        if let crate::thumbnail_display::DisplayOutcome::Loaded {
-            width,
-            height,
+    if let crate::thumbnail_display::DisplayOutcome::Loaded {
+        width,
+        height,
+        pixels,
+    } = crate::thumbnail_display::load_cached_display_thumbnail(request)
+    {
+        return Some(ViewerDecodeResult {
+            width: width as u32,
+            height: height as u32,
             pixels,
-        } = crate::thumbnail_display::load_cached_display_thumbnail(request)
-        {
-            return Some(ViewerDecodeResult {
-                width: width as u32,
-                height: height as u32,
-                pixels,
-            });
-        }
+        });
     }
     None
 }

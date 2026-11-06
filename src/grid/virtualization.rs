@@ -46,11 +46,7 @@ const FOLDER_HEADER_HEIGHT: i32 = 70;
 ///
 /// Photo lines are sized from `tile_block_height`, so the filename caption row
 /// is part of the row instead of eating into the square thumbnail.
-fn folder_model_row_height(
-    kind: FolderRowKind,
-    tile_height: i32,
-    filename_visible: bool,
-) -> i32 {
+fn folder_model_row_height(kind: FolderRowKind, tile_height: i32, filename_visible: bool) -> i32 {
     match kind {
         FolderRowKind::Header => FOLDER_HEADER_HEIGHT,
         FolderRowKind::Photos => folder_line_height(tile_height, filename_visible),
@@ -739,12 +735,7 @@ impl Gallery {
         self.request_wheel_zoom(prev_zoom_level(base));
     }
 
-    pub fn wheel_zoom_in_at(
-        self: &Rc<Self>,
-        viewport: &gtk::Widget,
-        x: f64,
-        y: f64,
-    ) {
+    pub fn wheel_zoom_in_at(self: &Rc<Self>, viewport: &gtk::Widget, x: f64, y: f64) {
         if self.pending_zoom_width.get().is_none() {
             self.begin_pointer_zoom_anchor(viewport, x, y);
         }
@@ -755,12 +746,7 @@ impl Gallery {
         self.request_wheel_zoom(next_zoom_level(base));
     }
 
-    pub fn wheel_zoom_out_at(
-        self: &Rc<Self>,
-        viewport: &gtk::Widget,
-        x: f64,
-        y: f64,
-    ) {
+    pub fn wheel_zoom_out_at(self: &Rc<Self>, viewport: &gtk::Widget, x: f64, y: f64) {
         if self.pending_zoom_width.get().is_none() {
             self.begin_pointer_zoom_anchor(viewport, x, y);
         }
@@ -1506,7 +1492,9 @@ impl Gallery {
         }
 
         let queued = queue_prefetch_photos(
-            indexes.into_iter().filter_map(|index| photos.get(index)), budget);
+            indexes.into_iter().filter_map(|index| photos.get(index)),
+            budget,
+        );
         queued
     }
 
@@ -1848,7 +1836,9 @@ impl Gallery {
         }
 
         let queued = queue_prefetch_photos(
-            indexes.into_iter().filter_map(|index| photos.get(index)), budget);
+            indexes.into_iter().filter_map(|index| photos.get(index)),
+            budget,
+        );
 
         queued
     }
@@ -1910,11 +1900,6 @@ impl Gallery {
         collect_tiles(self.folder_root.upcast_ref(), &mut tiles);
         collect_tiles(self.folder_sectioned_root.upcast_ref(), &mut tiles);
         for tile in tiles {
-            if let Some(key) = tile.imp().wall_quality_key.borrow().as_ref() {
-                if let Some(paintable) = loaded.get(key) {
-                    tile.apply_wall_quality(key, paintable);
-                }
-            }
             let Some(photo) = tile.imp().photo.borrow().as_ref().cloned() else {
                 continue;
             };
@@ -2227,12 +2212,22 @@ impl Gallery {
 
     /// A database worker already owns its result; avoid cloning a whole
     /// library on GTK before scheduling the cooperative comparison/build.
-    pub fn replace_owned_while_current(&self, photos: Vec<Photo>, is_current: Rc<dyn Fn() -> bool>) {
+    pub fn replace_owned_while_current(
+        &self,
+        photos: Vec<Photo>,
+        is_current: Rc<dyn Fn() -> bool>,
+    ) {
         self.replace_catalog(std::borrow::Cow::Owned(photos), is_current);
     }
 
-    fn replace_catalog(&self, photos: std::borrow::Cow<'_, [Photo]>, is_current: Rc<dyn Fn() -> bool>) {
-        if !is_current() { return; }
+    fn replace_catalog(
+        &self,
+        photos: std::borrow::Cow<'_, [Photo]>,
+        is_current: Rc<dyn Fn() -> bool>,
+    ) {
+        if !is_current() {
+            return;
+        }
         self.pending_metadata.borrow_mut().clear();
         self.progressive_group_dirty.set(false);
         if std::env::var_os("PICASA_TRACE").is_some() { eprintln!("PIC_NAV gallery_replace photos={}", photos.len()); }
@@ -2567,14 +2562,32 @@ impl Gallery {
                 prepared.set(true);
                 if unchanged.get() && pending_metadata.borrow().is_empty() {
                     if group_mode.get() == GroupMode::Folder && folder_store.n_items() == 0 {
-                        rebuild_group_ranges_for(&current_photos, &group_mode, &group_date, &group_ranges);
+                        rebuild_group_ranges_for(
+                            &current_photos,
+                            &group_mode,
+                            &group_date,
+                            &group_ranges,
+                        );
                         if !crate::grid::folder_gridview_experiment_enabled() {
-                            rebuild_folder_rows_for(&current_photos, &group_ranges, &current_columns,
-                                &folder_order, &folder_catalog, &folder_store);
+                            rebuild_folder_rows_for(
+                                &current_photos,
+                                &group_ranges,
+                                &current_columns,
+                                &folder_order,
+                                &folder_catalog,
+                                &folder_store,
+                            );
                         }
-                        save_folder_cache_for(&folder_cache, &current_photos, &group_ranges,
-                            &current_columns, &folder_order);
-                        if crate::grid::sectioned_folder_view_enabled() { sectioned_folder.refresh_model(); }
+                        save_folder_cache_for(
+                            &folder_cache,
+                            &current_photos,
+                            &group_ranges,
+                            &current_columns,
+                            &folder_order,
+                        );
+                        if crate::grid::sectioned_folder_view_enabled() {
+                            sectioned_folder.refresh_model();
+                        }
                     }
                     if std::env::var_os("PICASA_TRACE").is_some() {
                         eprintln!("PIC_NAV gallery_replace_complete kind=unchanged generation={} photos={} elapsed_ms={}",
@@ -2631,7 +2644,13 @@ impl Gallery {
             if first_batch || grouping_changed || metadata_regroup {
                 rebuild_group_ranges_for(&current_photos, &group_mode, &group_date, &group_ranges);
             } else {
-                append_group_ranges_for(&current_photos, &group_mode, &group_date, &group_ranges, start);
+                append_group_ranges_for(
+                    &current_photos,
+                    &group_mode,
+                    &group_date,
+                    &group_ranges,
+                    start,
+                );
             }
             if first_batch {
                 store.splice(0, store.n_items(), &objects);
@@ -3024,9 +3043,7 @@ fn visible_thumbnail_candidate(
 
 #[cfg(test)]
 mod zoom_anchor_unit_tests {
-    use super::{
-        clamp_zoom_adjustment, visible_thumbnail_candidate, zoom_anchor_correction,
-    };
+    use super::{clamp_zoom_adjustment, visible_thumbnail_candidate, zoom_anchor_correction};
 
     #[test]
     fn correction_preserves_the_requested_viewport_y() {
@@ -3047,68 +3064,5 @@ mod zoom_anchor_unit_tests {
         assert!(visible_thumbnail_candidate(true, false, false));
         assert!(!visible_thumbnail_candidate(true, true, false));
         assert!(!visible_thumbnail_candidate(true, false, true));
-    }
-}
-
-#[derive(Default)]
-struct AdaptiveQualityState {
-    last_poll: Option<Instant>,
-    signature: Vec<String>,
-    stationary_since: Option<Instant>,
-    attempted: HashSet<String>,
-}
-
-impl Gallery {
-    /// Request quality variants only for visible, stationary tiles. Normal
-    /// cache paintables remain on screen until the worker finishes.
-    pub fn poll_adaptive_thumbnails(&self) {
-        let now = Instant::now();
-        let mut state = self.adaptive_quality.borrow_mut();
-        if state.last_poll.is_some_and(|last| now.duration_since(last).as_millis() < 100) {
-            return;
-        }
-        state.last_poll = Some(now);
-        let root = self.active_zoom_root();
-        let Some(scroll) = scrolled_ancestor(&root) else { return; };
-        let mut tiles = Vec::new();
-        collect_tiles(&root, &mut tiles);
-        let mut requests = Vec::new();
-        for tile in tiles {
-            if !tile.is_mapped() || !tile.is_visible() || !tile.imp().visual_loaded.get() { tile.clear_wall_quality(); continue; }
-            let Some(bounds) = tile.compute_bounds(&scroll) else { tile.clear_wall_quality(); continue; };
-            if bounds.y() + bounds.height() <= 0.0 || bounds.y() >= scroll.height() as f32 { tile.clear_wall_quality(); continue; }
-            let Some(photo) = tile.photo() else { continue; };
-            let Some(base) = photo_presentation_request(&photo, false) else { continue; };
-            let Some(normal) = folder_thumbnail_cache_get(&base.key) else { continue; };
-            let Some(frame) = tile.first_child().and_downcast::<gtk::Overlay>() else { continue; };
-            let Some(picture) = frame.child().and_downcast::<gtk::Picture>() else { continue; };
-            let (mut sw, mut sh) = (photo.width() as i32, photo.height() as i32);
-            if matches!(photo.rotation().rem_euclid(360), 90 | 270) { std::mem::swap(&mut sw, &mut sh); }
-            let needed = thumbnail_resolution(sw, sh, picture.width(), picture.height(), tile.scale_factor(), picture.content_fit() == gtk::ContentFit::Cover);
-            if needed == 640 && sw.max(sh) > normal.intrinsic_width().max(normal.intrinsic_height()) && normal.intrinsic_width().max(normal.intrinsic_height()) < 640 {
-                requests.push((tile, crate::thumbnail_display::wall_request(base)));
-            } else { tile.clear_wall_quality(); }
-            if requests.len() >= 32 { break; }
-        }
-        let mut signature: Vec<_> = requests.iter().map(|(tile, r)| format!("{}:{}:{}", r.key, tile.width(), tile.height())).collect();
-        signature.sort();
-        if signature != state.signature {
-            state.signature = signature;
-            state.stationary_since = Some(now);
-            state.attempted.clear();
-        }
-        for key in crate::thumbnail_display::take_wall_retry_keys() { state.attempted.remove(&key); }
-        let ready = state.stationary_since.is_some_and(|since| now.duration_since(since).as_millis() >= 500);
-        let wanted: HashSet<_> = requests.iter().map(|(_, r)| r.key.clone()).collect();
-        crate::thumbnail_display::retain_wall_requests(&wanted);
-        for (tile, request) in requests {
-            if tile.imp().wall_quality_key.borrow().as_deref() != Some(&request.key) { tile.clear_wall_quality(); }
-            *tile.imp().wall_quality_key.borrow_mut() = Some(request.key.clone());
-            if let Some(paintable) = folder_thumbnail_cache_get(&request.key) {
-                tile.apply_wall_quality(&request.key, &paintable);
-            } else if ready && !state.attempted.contains(&request.key) && crate::thumbnail_display::submit(request.clone()) {
-                state.attempted.insert(request.key);
-            }
-        }
     }
 }

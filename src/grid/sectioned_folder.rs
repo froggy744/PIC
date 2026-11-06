@@ -513,12 +513,6 @@ impl SectionedFolderView {
 
     fn attach_scroll(self: &Rc<Self>, scrolled: &gtk::ScrolledWindow) {
         self.scroll.replace(Some(scrolled.clone()));
-        let weak = Rc::downgrade(self);
-        self.root.connect_unmap(move |_| {
-            if let Some(surface) = weak.upgrade() {
-                surface.clear_wall_quality_state();
-            }
-        });
 
         let this = self.clone();
         scrolled
@@ -907,7 +901,6 @@ impl SectionedFolderView {
                 // Unparenting can emit GTK callbacks that refresh the viewport.
                 let tile = self.live_tiles.borrow_mut().remove(&index);
                 if let Some(tile) = tile {
-                    tile.tile.clear_wall_quality();
                     self.root.remove(&tile.tile);
                     tile.tile.set_opacity(1.0);
                     tile.tile.set_presentation_scale(1.0);
@@ -1210,7 +1203,6 @@ impl SectionedFolderView {
         // visible tile is rebound exactly once to the current model.
         let live = std::mem::take(&mut *self.live_tiles.borrow_mut());
         for (_, tile) in live {
-            tile.tile.clear_wall_quality();
             self.root.remove(&tile.tile);
             tile.tile.set_opacity(1.0);
             tile.tile.set_presentation_scale(1.0);

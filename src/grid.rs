@@ -14,30 +14,6 @@ use gtk4 as gtk;
 use crate::db::{Folder, Photo};
 use crate::photo_object::PhotoObject;
 
-/// Select the smallest available cache tier that can cover the painted image.
-fn thumbnail_resolution(
-    source_width: i32,
-    source_height: i32,
-    cell_width: i32,
-    cell_height: i32,
-    scale_factor: i32,
-    cover: bool,
-) -> u32 {
-    if source_width <= 0 || source_height <= 0 || cell_width <= 0 || cell_height <= 0 {
-        return 320;
-    }
-    let x = cell_width as f64 / source_width as f64;
-    let y = cell_height as f64 / source_height as f64;
-    let painted_scale = if cover { x.max(y) } else { x.min(y) };
-    let longest =
-        f64::from(source_width.max(source_height)) * painted_scale * f64::from(scale_factor.max(1));
-    if longest > 320.0 {
-        640
-    } else {
-        320
-    }
-}
-
 static FIRST_VISIBLE_THUMBNAIL_TRACE_STARTED: AtomicBool = AtomicBool::new(false);
 
 fn trace_first_visible_thumbnail_after_paint(widget: &gtk::Widget) {

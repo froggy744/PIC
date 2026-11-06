@@ -1081,217 +1081,6 @@ fn check_lightbox_return(layout: PhotoLayout) {
 }
 
 #[test]
-fn wall_quality_waits_for_stationary_viewport_and_checks_physical_pixels() {
-    let now = Instant::now();
-    let mut gate = WallQualityGate::default();
-    let signature = (1, 100u64, 700u64, 1);
-    assert!(!gate.ready(signature, now));
-    assert!(!gate.ready(signature, now + std::time::Duration::from_millis(499)));
-    assert!(gate.ready(signature, now + std::time::Duration::from_millis(500)));
-    assert!(!gate.ready(
-        (2, 100, 700, 1),
-        now + std::time::Duration::from_millis(501)
-    ));
-    assert!(!wall_quality_needed(320, 200, 1));
-    assert!(wall_quality_needed(321, 200, 1));
-    assert!(wall_quality_needed(200, 200, 2));
-    assert!(!wall_quality_needed(0, 0, 2));
-}
-
-#[test]
-#[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
-fn photo_wall_quality_preserves_fallback_and_rejects_stale_results() {
-    gtk::init().unwrap();
-    let photo = glib::Object::builder::<PhotoObject>()
-        .property("id", 701_i64)
-        .property("path", "/offline/photo.jpg")
-        .property("width", 1200_i64)
-        .property("height", 800_i64)
-        .build();
-    photo.set_cached_thumbnail_path("/offline/cache/quality-test.jpg");
-    let picture = gtk::Picture::new();
-    let frame = gtk::Overlay::new();
-    frame.set_child(Some(&picture));
-    let tile = SquareTile::new(600, 400, &frame);
-    tile.add_css_class("photo-wall-tile");
-    let window = gtk::Window::builder().default_width(600).default_height(400).child(&tile).build();
-    window.present();
-    settle();
-    tile.set_photo_deferred(&photo);
-    let texture = |size| -> gtk::gdk::Paintable {
-        gtk::gdk::MemoryTexture::new(
-            size,
-            size,
-            gtk::gdk::MemoryFormat::R8g8b8a8,
-            &glib::Bytes::from_owned(vec![200u8; size as usize * size as usize * 4]),
-            size as usize * 4,
-        )
-        .upcast()
-    };
-    let base = photo_presentation_key(&photo).unwrap();
-    let low = texture(320);
-    let high = texture(640);
-    tile.apply_presentation_paintable(&base, &low);
-    let quality =
-        crate::thumbnail_display::wall_request(photo_presentation_request(&photo, false).unwrap())
-            .key;
-    *tile.imp().wall_quality_key.borrow_mut() = Some(quality.clone());
-    assert!(tile.apply_wall_quality(&quality, &high));
-    assert!(tile.apply_presentation_paintable(&base, &low));
-    assert_eq!(picture.paintable().unwrap().intrinsic_width(), 640);
-    tile.bind_photo_folder_fast(&photo, 0);
-    assert_eq!(picture.paintable().unwrap().intrinsic_width(), 640);
-    assert!(!tile.mark_presentation_missing(&base));
-    // The normal LRU may have evicted the low preview while quality was shown.
-    folder_thumbnail_cache_remove(&base);
-    tile.clear_wall_quality();
-    assert_eq!(picture.paintable().unwrap().intrinsic_width(), 320);
-    assert!(!tile.apply_wall_quality(&quality, &high));
-    *tile.imp().wall_quality_key.borrow_mut() = Some(quality.clone());
-    assert!(tile.apply_wall_quality(&quality, &high));
-    photo.set_rotation(90);
-    assert!(!tile.apply_wall_quality(&quality, &high));
-    tile.refresh_thumbnail_with_probe(false);
-    let rotated_base = photo_presentation_key(&photo).unwrap();
-    let rotated_low = texture(213);
-    tile.apply_presentation_paintable(&rotated_base, &rotated_low);
-    let rotated_quality =
-        crate::thumbnail_display::wall_request(photo_presentation_request(&photo, false).unwrap())
-            .key;
-    tile.clear_wall_quality();
-    *tile.imp().wall_quality_key.borrow_mut() = Some(rotated_quality.clone());
-    tile.apply_wall_quality(&rotated_quality, &high);
-    tile.clear_wall_quality();
-    assert_eq!(picture.paintable().unwrap().intrinsic_width(), 213);
-    tile.remove_css_class("photo-wall-tile");
-    assert!(!tile.apply_wall_quality(&quality, &high));
-    FOLDER_THUMBNAIL_CACHE.with(|cache| cache.borrow_mut().clear());
-    for i in 0..512 {
-        folder_thumbnail_cache_insert(format!("/normal/{i}.jpg"), low.clone());
-    }
-    for i in 0..33 {
-        folder_thumbnail_cache_insert(format!("/quality/{i}-wall640.jpg"), high.clone());
-    }
-    FOLDER_THUMBNAIL_CACHE.with(|cache| {
-        let cache = cache.borrow();
-        assert_eq!(
-            cache
-                .iter()
-                .filter(|(key, _)| !crate::thumbnail_display::is_wall_key(key))
-                .count(),
-            512
-        );
-        assert_eq!(
-            cache
-                .iter()
-                .filter(|(key, _)| crate::thumbnail_display::is_wall_key(key))
-                .count(),
-            32
-        );
-        cache.len()
-    });
-}
-
-#[test]
-#[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
-fn photo_wall_quality_hides_startup_placeholder() {
-    gtk::init().unwrap();
-    let photo = glib::Object::builder::<PhotoObject>()
-        .property("id", 702_i64)
-        .property("path", "/offline/startup-photo.jpg")
-        .property("width", 1200_i64)
-        .property("height", 800_i64)
-        .build();
-    photo.set_cached_thumbnail_path("/offline/cache/startup-photo.jpg");
-    let picture = gtk::Picture::new();
-    picture.add_css_class("missing-thumbnail");
-    let frame = gtk::Overlay::new();
-    frame.set_child(Some(&picture));
-    let placeholder = gtk::Image::from_icon_name("image-x-generic-symbolic");
-    frame.add_overlay(&placeholder);
-    let tile = SquareTile::new(600, 400, &frame);
-    tile.add_css_class("photo-wall-tile");
-    let window = gtk::Window::builder().default_width(600).default_height(400).child(&tile).build();
-    window.present();
-    settle();
-    tile.set_photo_deferred(&photo);
-    placeholder.set_visible(true);
-    picture.add_css_class("missing-thumbnail");
-
-    let request =
-        crate::thumbnail_display::wall_request(photo_presentation_request(&photo, false).unwrap());
-    *tile.imp().wall_quality_key.borrow_mut() = Some(request.key.clone());
-    let texture = gtk::gdk::MemoryTexture::new(
-        2,
-        2,
-        gtk::gdk::MemoryFormat::R8g8b8a8,
-        &glib::Bytes::from_owned(vec![200u8; 16]),
-        8,
-    );
-    let paintable: gtk::gdk::Paintable = texture.upcast();
-
-    assert!(tile.apply_wall_quality(&request.key, &paintable));
-    assert!(picture.paintable().is_some());
-    assert!(
-        !placeholder.is_visible(),
-        "placeholder must not cover the loaded photo"
-    );
-    assert!(!picture.has_css_class("missing-thumbnail"));
-    assert!(photo.thumbnail_available());
-}
-
-#[test]
-#[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
-fn photo_wall_uses_canonical_cache_without_separate_wall_quality_requests() {
-    gtk::init().unwrap();
-    let gallery = Rc::new(Gallery::new(
-        &[],
-        300,
-        |_| {},
-        |_, _, _| {},
-        |_, _, _, _| {},
-        |_, _| {},
-        |_| {},
-    ));
-    let objects = (0..20)
-        .map(|i| {
-            glib::Object::builder::<PhotoObject>()
-                .property("id", 900_i64 + i)
-                .property("path", format!("/photos/{i}.jpg"))
-                .property("width", 1200_i64)
-                .property("height", 800_i64)
-                .build()
-        })
-        .collect::<Vec<_>>();
-    gallery.store.splice(0, 0, &objects);
-    gallery.current_photos.replace(objects);
-    gallery.set_layout(PhotoLayout::PhotoWall);
-    let scroll = gtk::ScrolledWindow::builder()
-        .child(&gallery.folder_sectioned_root)
-        .build();
-    gallery.attach_sectioned_folder_scroll(&scroll);
-    let window = gtk::Window::builder()
-        .default_width(900)
-        .default_height(450)
-        .child(&scroll)
-        .build();
-    window.present();
-    settle();
-
-    let surface = &gallery.sectioned_folder;
-    gallery.poll_adaptive_thumbnails();
-    assert!(surface.wall_state.borrow().quality_attempted.is_empty());
-    assert!(surface
-        .live_tiles
-        .borrow()
-        .values()
-        .all(|live| { live.tile.imp().wall_quality_key.borrow().is_none() }));
-
-    window.close();
-    settle();
-}
-
-#[test]
 #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
 fn photo_wall_width_freeze_ignores_intermediate_sidebar_allocations() {
     gtk::init().unwrap();
@@ -2753,26 +2542,33 @@ fn live_network_wall_browsing_keeps_prefetch_bounded() {
 }
 
 #[test]
-fn adaptive_resolution_respects_aspect_fit_and_scale() {
-    assert_eq!(thumbnail_resolution(750, 400, 200, 100, 1, false), 320);
-    assert_eq!(thumbnail_resolution(750, 400, 436, 232, 1, false), 640);
-    assert_eq!(thumbnail_resolution(750, 400, 200, 200, 1, true), 640);
-    assert_eq!(thumbnail_resolution(400, 750, 200, 200, 1, true), 640);
-    assert_eq!(thumbnail_resolution(750, 400, 200, 100, 2, false), 640);
-    assert_eq!(thumbnail_resolution(750, 400, 200, 200, 1, false), 320);
-}
-
-#[test]
 #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
-fn adaptive_quality_upgrades_visible_tiles_in_all_layouts() {
+fn layout_changes_do_not_generate_higher_quality_thumbnails() {
     gtk::init().unwrap();
-    let dir = std::env::temp_dir().join(format!("pic-adaptive-test-{}", std::process::id()));
+    struct RestoreThumbnailQuality(bool);
+    impl Drop for RestoreThumbnailQuality {
+        fn drop(&mut self) {
+            crate::thumbnail::set_high_quality_thumbnails_enabled(self.0);
+        }
+    }
+    let _restore_quality =
+        RestoreThumbnailQuality(crate::thumbnail::high_quality_thumbnails_enabled());
+    crate::thumbnail::set_high_quality_thumbnails_enabled(false);
+    let dir = std::env::temp_dir().join(format!("pic-quality-setting-test-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let source = dir.join("source.jpg");
     let cache = dir.join("cache.jpg");
-    image::RgbImage::from_pixel(1200, 400, image::Rgb([90, 160, 210])).save(&source).unwrap();
-    image::RgbImage::from_pixel(320, 107, image::Rgb([90, 160, 210])).save(&cache).unwrap();
-    for layout in [PhotoLayout::Grid, PhotoLayout::PhotoWall, PhotoLayout::Masonry] {
+    image::RgbImage::from_pixel(1200, 400, image::Rgb([90, 160, 210]))
+        .save(&source)
+        .unwrap();
+    image::RgbImage::from_pixel(320, 107, image::Rgb([90, 160, 210]))
+        .save(&cache)
+        .unwrap();
+    for layout in [
+        PhotoLayout::Grid,
+        PhotoLayout::PhotoWall,
+        PhotoLayout::Masonry,
+    ] {
         let photo = glib::Object::builder::<PhotoObject>()
             .property("id", 730_i64)
             .property("path", source.to_str().unwrap())
@@ -2780,7 +2576,15 @@ fn adaptive_quality_upgrades_visible_tiles_in_all_layouts() {
             .property("height", 400_i64)
             .build();
         photo.set_cached_thumbnail_path(cache.to_str().unwrap());
-        let gallery = Rc::new(Gallery::new(&[], 300, |_| {}, |_, _, _| {}, |_, _, _, _| {}, |_, _| {}, |_| {}));
+        let gallery = Rc::new(Gallery::new(
+            &[],
+            300,
+            |_| {},
+            |_, _, _| {},
+            |_, _, _, _| {},
+            |_, _| {},
+            |_| {},
+        ));
         gallery.store.append(&photo);
         gallery.current_photos.replace(vec![photo]);
         gallery.set_layout(layout);
@@ -2790,14 +2594,14 @@ fn adaptive_quality_upgrades_visible_tiles_in_all_layouts() {
         let width = if layout == PhotoLayout::Masonry { 450 } else { 900 };
         let window = gtk::Window::builder().default_width(width).default_height(500).child(&scroll).build();
         window.present();
-        let success = wait_for_restore(|| {
-            gallery.poll_adaptive_thumbnails();
-            gallery.drain_thumbnail_display_completions();
-            let mut tiles = Vec::new();
-            collect_tiles(&child, &mut tiles);
-            tiles.iter().any(|tile| tile.imp().applied_visual_key.borrow().as_deref().is_some_and(crate::thumbnail_display::is_wall_key))
-        });
-        assert!(success, "quality variant was not displayed in {layout:?}");
+        settle();
+        window.set_default_size(width + 160, 500);
+        settle();
+        let high_quality_sibling = cache.with_file_name("cache-wall640.jpg");
+        assert!(
+            !high_quality_sibling.exists(),
+            "changing to or resizing {layout:?} generated a higher-quality thumbnail while the setting was 320 px"
+        );
         window.close();
         settle();
     }

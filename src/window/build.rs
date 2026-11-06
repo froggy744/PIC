@@ -1053,6 +1053,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                     if let Err(error) = crate::thumbnail::clear_cache() {
                         eprintln!("Could not rebuild thumbnail cache for quality change: {error}");
                     }
+                    crate::grid::clear_folder_thumbnail_cache();
                     thumbs_gallery.refresh_thumbnails();
                 }
                 corner_style.apply(&thumbs_window);
@@ -2471,7 +2472,6 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let sidebar_layout_settle_for_tick = sidebar_layout_settle.clone();
     let inspector_trace_enabled = std::env::var_os("PIC_INSPECTOR_TRACE").is_some();
     gallery_scroll_stack.add_tick_callback(move |surface, _clock| {
-        gallery_for_resize.poll_adaptive_thumbnails();
         gallery_for_resize.drain_thumbnail_display_completions();
         let live_resize =
             (sidebar_resize_active_for_tick.get() || inspector_resize_active_for_tick.get())

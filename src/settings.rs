@@ -2157,9 +2157,7 @@ fn interface_page_with_corner_style(
     append_row(
         &thumbnail_list,
         "High quality thumbnails (640 px)",
-        Some(
-            "Use optional 640 px Photo Wall previews for high-DPI and 4K displays.              Normal thumbnails remain 320 px.",
-        ),
+        Some("Use 640 px thumbnails instead of 320 px in Grid, Photo Wall and Masonry."),
         Some(high_quality.upcast_ref()),
     );
     content.append(&thumbnail_list);

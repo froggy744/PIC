@@ -306,13 +306,6 @@ pub(crate) fn known_decode_failure(path: &str, destination: &Path) -> bool {
             .is_ok_and(|contents| contents == DECODE_FAILURE_MARKER)
 }
 
-pub fn wall_cache_path(base: &Path) -> PathBuf {
-    base.with_file_name(format!(
-        "{}-wall640.jpg",
-        base.file_stem().unwrap_or_default().to_string_lossy()
-    ))
-}
-
 fn create_uncached(path: &str, destination: &PathBuf) -> Result<PathBuf> {
     create_uncached_with_max(path, destination, thumbnail_size())
 }
@@ -475,6 +468,62 @@ mod cache_layout_tests {
     }
 
     #[test]
+    fn selected_quality_controls_new_jpeg_thumbnail_dimensions() {
+        struct Restore(bool);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                set_high_quality_thumbnails_enabled(self.0);
+            }
+        }
+        let _restore = Restore(high_quality_thumbnails_enabled());
+        let root = fixture();
+        let source = root.join("quality.jpg");
+        image::RgbImage::from_pixel(1200, 800, image::Rgb([90, 120, 150]))
+            .save(&source)
+            .unwrap();
+        for (enabled, expected) in [(false, 320), (true, 640)] {
+            set_high_quality_thumbnails_enabled(enabled);
+            let destination = root.join(format!("selected-{expected}.jpg"));
+            create_uncached(source.to_str().unwrap(), &destination).unwrap();
+            let image = image::open(destination).unwrap();
+            assert_eq!(image.width().max(image.height()), expected);
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    #[ignore = "requires PICASA_TEST_JPEG"]
+    fn selected_quality_controls_real_jpeg_thumbnail_dimensions() {
+        selected_real_source_dimensions("PICASA_TEST_JPEG");
+    }
+
+    #[test]
+    #[ignore = "requires PICASA_TEST_RAW_METADATA"]
+    fn selected_quality_controls_real_nef_thumbnail_dimensions() {
+        selected_real_source_dimensions("PICASA_TEST_RAW_METADATA");
+    }
+
+    fn selected_real_source_dimensions(variable: &str) {
+        struct Restore(bool);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                set_high_quality_thumbnails_enabled(self.0);
+            }
+        }
+        let _restore = Restore(high_quality_thumbnails_enabled());
+        let source = std::env::var(variable).unwrap();
+        let root = fixture();
+        for (enabled, expected) in [(false, 320), (true, 640)] {
+            set_high_quality_thumbnails_enabled(enabled);
+            let destination = root.join(format!("selected-{expected}.jpg"));
+            create_uncached(&source, &destination).unwrap();
+            let image = image::open(destination).unwrap();
+            assert_eq!(image.width().max(image.height()), expected);
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn exif_rotated_test_photo_is_cached_in_display_orientation() {
         let root = fixture();
         let source = root.join("source.jpg");
@@ -515,94 +564,4 @@ mod cache_layout_tests {
         );
         let _ = fs::remove_dir_all(root);
     }
-}
-
-#[cfg(test)]
-mod wall_quality_tests {
-    use super::*;
-    #[test]
-    fn wall_quality_has_distinct_sibling_identity() {
-        let base = Path::new("/cache/files/a/abc.jpg");
-        assert_eq!(
-            wall_cache_path(base),
-            PathBuf::from("/cache/files/a/abc-wall640.jpg")
-        );
-    }
-    #[test]
-    fn wall_quality_generates_640_and_does_not_upscale() {
-        let root = cache_layout_tests::fixture_for_wall();
-        for (w, h, expected) in [(1200, 800, (640, 427)), (80, 60, (80, 60))] {
-            let source = root.join(format!("{w}.jpg"));
-            image::RgbImage::from_pixel(w, h, image::Rgb([10, 50, 150]))
-                .save(&source)
-                .unwrap();
-            let dest = root.join(format!("{w}-wall640.jpg"));
-            create_uncached_with_max(source.to_str().unwrap(), &dest, 640).unwrap();
-            assert_eq!(image::open(dest).unwrap().to_rgb8().dimensions(), expected);
-            let normal = root.join(format!("{w}-normal.jpg"));
-            create_uncached(source.to_str().unwrap(), &normal).unwrap();
-            let normal = image::open(normal).unwrap();
-            assert_eq!(normal.width().max(normal.height()), 320);
-        }
-        fs::remove_dir_all(root).unwrap();
-    }
-    #[test]
-    #[ignore = "requires PICASA_TEST_RAW_METADATA"]
-    fn configured_wall_quality_raw_has_real_640_detail() {
-        let source = std::env::var("PICASA_TEST_RAW_METADATA").unwrap();
-        let root = cache_layout_tests::fixture_for_wall();
-        let dest = root.join("raw-wall640.jpg");
-        create_uncached_with_max(&source, &dest, 640).unwrap();
-        let img = image::open(dest).unwrap();
-        assert_eq!(img.width().max(img.height()), 640);
-        assert!(img.height() > img.width());
-        fs::remove_dir_all(root).unwrap();
-    }
-}
-
-#[cfg(test)]
-mod wall_legacy_tests {
-    use super::*;
-    #[test]
-    fn wall_quality_legacy_lookup_is_independent_of_normal_cache_location() {
-        let root = cache_layout_tests::fixture_for_wall();
-        let source = "/missing/legacy-quality.jpg";
-        let normal = cache_path_in(&root, source, Some(1), Some(2));
-        fs::create_dir_all(normal.parent().unwrap()).unwrap();
-        fs::write(&normal, b"jpeg").unwrap();
-        let quality = wall_cache_path(&root.join(cache_file_name(source, Some(1), Some(2))));
-        fs::write(&quality, b"jpeg").unwrap();
-        assert_eq!(
-            existing_wall_cache_path_in(&root, source, Some(1), Some(2)).unwrap(),
-            Some(quality.clone())
-        );
-        fs::remove_file(normal).unwrap();
-        assert_eq!(
-            existing_wall_cache_path_in(&root, source, Some(1), Some(2)).unwrap(),
-            Some(quality)
-        );
-        fs::remove_dir_all(root).unwrap();
-    }
-}
-
-pub fn existing_wall_cache_path(
-    path: &str,
-    mtime: Option<i64>,
-    size_bytes: Option<i64>,
-) -> Result<Option<PathBuf>> {
-    existing_wall_cache_path_in(&cache_dir()?, path, mtime, size_bytes)
-}
-
-fn existing_wall_cache_path_in(
-    thumbs: &Path,
-    path: &str,
-    mtime: Option<i64>,
-    size_bytes: Option<i64>,
-) -> Result<Option<PathBuf>> {
-    let canonical = wall_cache_path(&cache_path_in(thumbs, path, mtime, size_bytes));
-    if canonical.is_file() {
-        return Ok(Some(canonical));
-    }
-    let legacy = wall_cache_path(&thumbs.join(cache_file_name(path, mtime, size_bytes)));
-    Ok(legacy.is_file().then_some(legacy))
 }

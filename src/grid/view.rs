@@ -119,7 +119,6 @@ pub struct Gallery {
     zoom_animation_generation: Rc<Cell<u64>>,
     // Visible tiles participating in the temporary Main-branch zoom settle.
     zoom_scale_tiles: Rc<RefCell<Vec<(SquareTile, i64)>>>,
-    adaptive_quality: RefCell<AdaptiveQualityState>,
     // Stable content width captured at zoom-animation start. GTK can briefly
     // report two competing allocations while GridView reflows; using one
     // width for the whole animation prevents column-count ping-pong.
@@ -951,7 +950,6 @@ impl Gallery {
             zoom_reflow_source: Rc::new(RefCell::new(None)),
             zoom_animation_generation: Rc::new(Cell::new(0)),
             zoom_scale_tiles: Rc::new(RefCell::new(Vec::new())),
-            adaptive_quality: RefCell::new(AdaptiveQualityState::default()),
             zoom_animation_layout_width: Rc::new(Cell::new(None)),
             zoom_animations_enabled,
             resize_flip_generation: Rc::new(Cell::new(0)),

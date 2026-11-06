@@ -884,6 +884,7 @@ impl SquareTile {
         photo.set_thumbnail_available(true);
         self.imp().visual_loaded.set(true);
         *self.imp().applied_visual_key.borrow_mut() = Some(expected_key.to_owned());
+        trace_first_visible_thumbnail_after_paint(self.upcast_ref());
         crate::thumbnail_trace::event(&photo.path(), "tile_apply", "paintable_applied");
         if std::env::var_os("PICASA_TRACE").is_some() {
             eprintln!(

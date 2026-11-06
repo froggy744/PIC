@@ -1,6 +1,7 @@
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use chrono::{Local, TimeZone};
@@ -12,6 +13,33 @@ use gtk4 as gtk;
 
 use crate::db::{Folder, Photo};
 use crate::photo_object::PhotoObject;
+
+static FIRST_VISIBLE_THUMBNAIL_TRACE_STARTED: AtomicBool = AtomicBool::new(false);
+
+fn trace_first_visible_thumbnail_after_paint(widget: &gtk::Widget) {
+    if std::env::var_os("PIC_STARTUP_TRACE").is_none()
+        || !widget.is_mapped()
+        || FIRST_VISIBLE_THUMBNAIL_TRACE_STARTED.swap(true, Ordering::Relaxed)
+    {
+        return;
+    }
+
+    crate::startup_trace::mark("first_mapped_thumbnail_assigned", None);
+    let assigned_at = Instant::now();
+    let Some(native) = widget.native() else {
+        return;
+    };
+    let Some(surface) = native.surface() else {
+        return;
+    };
+    let painted = Rc::new(Cell::new(false));
+    let painted_once = painted.clone();
+    surface.frame_clock().connect_after_paint(move |_| {
+        if !painted_once.replace(true) {
+            crate::startup_trace::mark("first_mapped_thumbnail_after_paint", Some(assigned_at));
+        }
+    });
+}
 
 #[path = "grid/masonry_layout.rs"]
 mod masonry_layout;

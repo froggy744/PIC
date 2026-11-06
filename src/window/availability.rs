@@ -89,6 +89,7 @@ fn spawn_thumbnail_recovery(
     control: scanner::ScanControl,
 ) {
     std::thread::spawn(move || {
+        let recovery_started = std::time::Instant::now();
         let send = |event| {
             let _ = sender.send(ScanUiEvent {
                 generation,
@@ -96,17 +97,27 @@ fn spawn_thumbnail_recovery(
                 queued_at: std::time::Instant::now(),
             });
         };
-        let items = photos
+        let items: Vec<(String, Option<i64>, Option<i64>)> = photos
             .into_iter()
             .map(|photo| (photo.path, photo.mtime, photo.size_bytes))
             .collect();
+        let item_count = items.len();
         let (mut ready, mut offline) = crate::thumbnail::recovery_items_cancellable(items, || control.is_cancelled());
+        crate::startup_trace::mark("thumbnail_recovery_index_complete", Some(recovery_started));
+        if std::env::var_os("PIC_STARTUP_TRACE").is_some() {
+            eprintln!(
+                "PIC_STARTUP thumbnail_recovery_index total={item_count} ready={} offline={offline}",
+                ready.len(),
+            );
+        }
         ready.sort_by_key(|(path, _, _)| !startup_paths.contains(path));
         
         if !ready.is_empty() && !control.is_cancelled() {
             send(scanner::ScanEvent::ThumbnailsStarted { total: ready.len() });
         }
         let mut failed = 0;
+        let mut created = 0usize;
+        let create_started = std::time::Instant::now();
         for chunk in ready.chunks(64) {
             if control.is_cancelled() {
                 break;
@@ -118,6 +129,7 @@ fn spawn_thumbnail_recovery(
                     send(scanner::ScanEvent::ThumbnailCreated { path: path.into() });
                 },
             );
+            created += results.iter().filter(|result| result.is_some()).count();
             for ((path, _, _), result) in chunk.iter().zip(results) {
                 if let Some(Err(error)) = result {
                     // The drive can disappear during an active thumbnail pass.
@@ -132,6 +144,14 @@ fn spawn_thumbnail_recovery(
                     });
                 }
             }
+        }
+        crate::startup_trace::mark("thumbnail_recovery_create_complete", Some(create_started));
+        if std::env::var_os("PIC_STARTUP_TRACE").is_some() {
+            eprintln!(
+                "PIC_STARTUP thumbnail_recovery_create total={} created={created} failed={failed} offline={offline} cancelled={}",
+                ready.len(),
+                control.is_cancelled(),
+            );
         }
         send(scanner::ScanEvent::ThumbnailsDeferred { total: offline });
         send(if control.is_cancelled() {

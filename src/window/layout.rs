@@ -660,8 +660,9 @@
     install_thumbnail_sidebar_focus(gallery.folder_root.upcast_ref());
     install_thumbnail_sidebar_focus(gallery.folder_sectioned_root.upcast_ref());
 
-    // Reconnecting sources also resumes previews for already indexed photos.
-    let thumbnail_recovery_requested = Rc::new(Cell::new(true));
+    // Initial preview recovery starts after the saved gallery view is ready,
+    // so its full-catalog cache checks cannot delay the first visible photo.
+    let thumbnail_recovery_requested = Rc::new(Cell::new(false));
     let thumbnail_recovery_deferred = Rc::new(Cell::new(false));
     let volume_monitor = gio::VolumeMonitor::get();
     let mount_refresh_pending = Rc::new(Cell::new(false));

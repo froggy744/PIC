@@ -13,11 +13,46 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             crate::startup_trace::mark("window_map", crate::startup_trace::present_started());
             if let Some(surface) = window.surface() {
                 let clock = surface.frame_clock();
+                let updated = Rc::new(Cell::new(false));
+                let updated_once = updated.clone();
+                clock.connect_update(move |_| {
+                    if !updated_once.replace(true) {
+                        crate::startup_trace::mark("first_frame_update", Some(mapped_at));
+                    }
+                });
+                let laid_out = Rc::new(Cell::new(false));
+                let laid_out_once = laid_out.clone();
+                clock.connect_layout(move |_| {
+                    if !laid_out_once.replace(true) {
+                        crate::startup_trace::mark("first_frame_layout", Some(mapped_at));
+                    }
+                });
+                let painted_frame = Rc::new(Cell::new(false));
+                let painted_frame_once = painted_frame.clone();
+                clock.connect_paint(move |_| {
+                    if !painted_frame_once.replace(true) {
+                        crate::startup_trace::mark("first_frame_paint", Some(mapped_at));
+                    }
+                });
                 let painted = Rc::new(Cell::new(false));
                 let painted_once = painted.clone();
+                let weak_window = window.downgrade();
                 clock.connect_after_paint(move |_| {
                     if !painted_once.replace(true) {
                         crate::startup_trace::mark("first_after_paint", Some(mapped_at));
+                        if std::env::var_os("PIC_STARTUP_TRACE").is_some() {
+                            let renderer = weak_window
+                                .upgrade()
+                                .and_then(|window| window.renderer());
+                            match renderer {
+                                Some(renderer) => eprintln!(
+                                    "PIC_STARTUP renderer={} realized={}",
+                                    renderer.type_().name(),
+                                    renderer.is_realized(),
+                                ),
+                                None => eprintln!("PIC_STARTUP renderer=unavailable realized=false"),
+                            }
+                        }
                     }
                 });
             }
@@ -5195,6 +5230,7 @@ fn start_photo_export_single(
         let restored = startup_view_restored.clone();
         let gallery = gallery.clone();
         let albums_home = albums_home.clone();
+        let recovery_requested = thumbnail_recovery_requested.clone();
         Rc::new(move || {
             if restored.replace(true) {
                 return;
@@ -5215,6 +5251,7 @@ fn start_photo_export_single(
                     gallery.restore_view(photo_id, saved_view_scroll);
                 }
             }
+            recovery_requested.set(true);
         })
     };
     let startup_generation = REFRESH_GENERATION.load(std::sync::atomic::Ordering::Relaxed);
@@ -5559,9 +5596,15 @@ fn start_photo_export_single(
             if scan_job.borrow().kind.is_some() || !requested.get() {
                 return;
             }
+            crate::startup_trace::mark("thumbnail_recovery_start", None);
+            let recovery_query_started = Instant::now();
             let Ok(mut photos) = db::photos(&connection.borrow(), None, false, None) else {
                 return;
             };
+            crate::startup_trace::mark(
+                "thumbnail_recovery_photo_query",
+                Some(recovery_query_started),
+            );
             retain_enabled_formats(&connection.borrow(), &mut photos);
             requested.set(false);
             // No enabled photos need no cache checks, worker, or progress UI.
@@ -5590,7 +5633,14 @@ fn start_photo_export_single(
             );
         })
     };
-    start_thumbnail_recovery();
+    let restored_for_recovery_fallback = startup_view_restored.clone();
+    let recovery_requested_for_fallback = thumbnail_recovery_requested.clone();
+    glib::timeout_add_local_once(Duration::from_secs(5), move || {
+        if !restored_for_recovery_fallback.get() {
+            crate::startup_trace::mark("thumbnail_recovery_fallback_request", None);
+            recovery_requested_for_fallback.set(true);
+        }
+    });
 
     let parent = window.clone();
     let connection_for_import = connection.clone();

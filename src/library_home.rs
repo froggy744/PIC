@@ -262,7 +262,7 @@ impl LibraryHome {
         // GTK layout. ThemeEngine switches visibility without reconstructing
         // thumbnails or replacing the user's preferred photo views.
         content.add_css_class("scrapbook-standard-only");
-        let scrapbook = ScrapbookDashboard::new(&navigate);
+        let scrapbook = ScrapbookDashboard::new(&navigate, &open, database.clone());
         let pages = gtk::Box::new(gtk::Orientation::Vertical, 0);
         pages.append(&content);
         pages.append(&scrapbook.root);

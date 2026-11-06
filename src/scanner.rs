@@ -1374,6 +1374,71 @@ mod tests {
     }
 
     #[test]
+    fn authorized_refresh_detects_added_modified_moved_and_removed_photos() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let workspace = std::env::temp_dir().join(format!(
+            "pic-refresh-fingerprints-{}-{unique}",
+            std::process::id()
+        ));
+        let root = workspace.join("photos");
+        fs::create_dir_all(&root).unwrap();
+        let database = workspace.join("catalog.db");
+        let connection = Connection::open(&database).unwrap();
+        connection.execute_batch(db::SCHEMA).unwrap();
+
+        let write_jpeg = |path: &Path, width, height| {
+            image::RgbImage::new(width, height)
+                .save_with_format(path, image::ImageFormat::Jpeg)
+                .unwrap();
+        };
+        let original = root.join("original.jpg");
+        let moved = root.join("moved.jpg");
+        let removed = root.join("removed.jpg");
+        write_jpeg(&original, 32, 24);
+        write_jpeg(&moved, 24, 16);
+        write_jpeg(&removed, 16, 12);
+        scan_with_control(
+            root.to_str().unwrap(),
+            &database,
+            None,
+            &ScanControl::default(),
+        )
+        .unwrap();
+
+        let moved_path = root.join("renamed.jpg");
+        fs::rename(&moved, &moved_path).unwrap();
+        write_jpeg(&original, 64, 48);
+        let added = root.join("added.jpg");
+        write_jpeg(&added, 20, 30);
+        fs::remove_file(&removed).unwrap();
+        scan_with_control(
+            root.to_str().unwrap(),
+            &database,
+            None,
+            &ScanControl::default(),
+        )
+        .unwrap();
+
+        let photos = db::photos(&connection, None, false, None).unwrap();
+        let by_path = photos
+            .into_iter()
+            .map(|photo| (photo.path.clone(), photo))
+            .collect::<HashMap<_, _>>();
+        assert_eq!(by_path.len(), 3);
+        assert_eq!(by_path[original.to_str().unwrap()].width, Some(64));
+        assert!(by_path.contains_key(moved_path.to_str().unwrap()));
+        assert!(!by_path.contains_key(moved.to_str().unwrap()));
+        assert!(!by_path.contains_key(removed.to_str().unwrap()));
+        assert_eq!(by_path[added.to_str().unwrap()].height, Some(30));
+
+        drop(connection);
+        fs::remove_dir_all(workspace).unwrap();
+    }
+
+    #[test]
     fn refresh_removes_deleted_subfolders_but_keeps_existing_empty_folders() {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)

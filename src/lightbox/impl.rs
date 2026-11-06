@@ -1680,10 +1680,12 @@ impl Lightbox {
                 .photos
                 .borrow()
                 .get(self.index.get())
-                .map(|photo| (photo.path(), photo.rotation(), photo.edit_recipe()));
+                .map(|photo| (photo.path(), photo.mtime(), photo.size_bytes(), photo.rotation(), photo.edit_recipe()));
 
-            if let (Some(cache), Some((path, rotation, edit_recipe))) = (cached, current) {
+            if let (Some(cache), Some((path, mtime, size_bytes, rotation, edit_recipe))) = (cached, current) {
                 if cache.path == path
+                    && cache.mtime == mtime
+                    && cache.size_bytes == size_bytes
                     && cache.rotation == rotation
                     && cache.edit_recipe == edit_recipe
                 {
@@ -2600,7 +2602,8 @@ impl Lightbox {
                 // catalog dimensions: embedded RAW previews can be smaller
                 // than their sensor metadata even at "1:1".
                 self.native_texture.borrow().as_ref().is_some_and(|cached| {
-                    if cached.path != photo.path() || cached.rotation != photo.rotation() {
+                    if cached.path != photo.path() || cached.mtime != photo.mtime()
+                        || cached.size_bytes != photo.size_bytes() || cached.rotation != photo.rotation() {
                         return false;
                     }
                     let before = crate::edit::EditRecipe::decode(&cached.edit_recipe);

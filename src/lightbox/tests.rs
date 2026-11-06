@@ -35,6 +35,51 @@ mod viewer_presentation_tests {
     }
 
     #[test]
+    #[ignore = "requires a GTK display; run individually"]
+    fn changed_source_does_not_reuse_native_texture() {
+        gtk::init().unwrap();
+        let lightbox = Lightbox::new();
+        let window = gtk::Window::new();
+        window.set_default_size(400, 300);
+        window.set_child(Some(&lightbox.root));
+        window.present();
+        let context = glib::MainContext::default();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while lightbox.picture_viewport.width() == 0 && Instant::now() < deadline {
+            context.iteration(false);
+        }
+        let photo: PhotoObject = glib::Object::builder()
+            .property("path", "/test/native-changed.jpg")
+            .property("width", 4000_i64)
+            .property("height", 3000_i64)
+            .property("mtime", 2_i64)
+            .property("size-bytes", 2_i64)
+            .property("original-available", true)
+            .build();
+        lightbox.photos.replace(vec![photo]);
+        let bytes = glib::Bytes::from_owned(vec![255u8; 16]);
+        let old = gtk::gdk::MemoryTexture::new(
+            2, 2, gtk::gdk::MemoryFormat::R8g8b8a8, &bytes, 8,
+        );
+        let fit = gtk::gdk::MemoryTexture::new(
+            1, 1, gtk::gdk::MemoryFormat::R8g8b8a8, &bytes, 4,
+        );
+        lightbox.picture.set_paintable(Some(&fit));
+        *lightbox.native_texture.borrow_mut() = Some(NativeTextureCache {
+            path: "/test/native-changed.jpg".into(),
+            mtime: 1,
+            size_bytes: 2,
+            rotation: 0,
+            edit_recipe: String::new(),
+            texture: old,
+        });
+        lightbox.set_one_to_one(true);
+        assert!(lightbox.one_to_one_active.get());
+        assert_eq!(picture_intrinsic_dimensions(&lightbox.picture), (1, 1));
+        window.close();
+    }
+
+    #[test]
     fn arrow_steps_remain_single_photo_and_clamp_at_collection_edges() {
         assert_eq!(navigation_step(4, 1, 10), 5);
         assert_eq!(navigation_step(4, -1, 10), 3);

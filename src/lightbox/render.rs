@@ -647,6 +647,8 @@ fn show_photo(
                 if target_width == u32::MAX && target_height == u32::MAX {
                     *native_texture.borrow_mut() = Some(NativeTextureCache {
                         path: cache_path.clone(),
+                        mtime: lease.key.mtime,
+                        size_bytes: lease.key.size_bytes,
                         rotation,
                         edit_recipe: edit_recipe_text.clone(),
                         texture: texture.clone(),

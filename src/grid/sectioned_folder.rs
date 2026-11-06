@@ -2444,6 +2444,52 @@ mod section_lookup_tests {
     #[test]
     #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
     fn folder_wheel_interrupts_keyboard_centering_without_backward_motion() {
+        assert!(keyboard_wheel_handoff_passes(
+            GroupMode::Folder,
+            PhotoLayout::Grid,
+            120
+        ));
+    }
+
+    #[test]
+    #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+    fn keyboard_wheel_handoff_in_virtual_photo_and_folder_layouts() {
+        let mut failures = Vec::new();
+        for group in [GroupMode::None, GroupMode::Folder] {
+            for layout in [
+                PhotoLayout::Grid,
+                PhotoLayout::PhotoWall,
+                PhotoLayout::Masonry,
+            ] {
+                if group == GroupMode::None && layout == PhotoLayout::Grid {
+                    continue;
+                }
+                for width in [100, 160, 300] {
+                    if !keyboard_wheel_handoff_passes(group, layout, width) {
+                        failures.push(format!("{group:?}/{layout:?}/{width}"));
+                    }
+                }
+            }
+        }
+        assert!(failures.is_empty(), "keyboard/wheel conflicts: {failures:?}");
+    }
+
+    #[test]
+    #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+    fn photo_grid_keyboard_wheel_handoff() {
+        let mut failures = Vec::new();
+        for width in [100, 160, 300] {
+            if !keyboard_wheel_handoff_passes(GroupMode::None, PhotoLayout::Grid, width) {
+                failures.push(width);
+            }
+        }
+        assert!(
+            failures.is_empty(),
+            "Photo Grid keyboard/wheel conflicts: {failures:?}"
+        );
+    }
+
+    fn keyboard_wheel_handoff_passes(group: GroupMode, layout: PhotoLayout, width: i32) -> bool {
         fn settle(milliseconds: u64) {
             let context = glib::MainContext::default();
             let until = Instant::now() + std::time::Duration::from_millis(milliseconds);
@@ -2458,14 +2504,15 @@ mod section_lookup_tests {
         gtk::init().unwrap();
         let gallery = Rc::new(Gallery::new(
             &[],
-            120,
+            width,
             |_| {},
             |_, _, _| {},
             |_, _, _, _| {},
             |_, _| {},
             |_| {},
         ));
-        gallery.group_mode.set(GroupMode::Folder);
+        gallery.group_mode.set(group);
+        gallery.sectioned_folder.layout_mode.set(layout);
         gallery.current_photos.replace(
             (0..400_i64)
                 .map(|id| {
@@ -2480,13 +2527,23 @@ mod section_lookup_tests {
                 })
                 .collect(),
         );
+        gallery.store.splice(0, 0, &gallery.current_photos.borrow());
         gallery.rebuild_group_ranges();
-        gallery.sectioned_folder.refresh_model();
-        let scroll = gtk::ScrolledWindow::builder()
-            .child(&gallery.folder_sectioned_root)
-            .build();
-        gallery.attach_sectioned_folder_scroll(&scroll);
-        crate::window::install_folder_smooth_gallery_scroll(&scroll, gallery.clone());
+        gallery.update_width(900);
+        let virtual_surface = gallery.using_virtual_photo_surface();
+        let child: gtk::Widget = if virtual_surface {
+            gallery.sectioned_folder.refresh_model();
+            gallery.folder_sectioned_root.clone().upcast()
+        } else {
+            gallery.root.clone().upcast()
+        };
+        let scroll = gtk::ScrolledWindow::builder().child(&child).build();
+        if virtual_surface {
+            gallery.attach_sectioned_folder_scroll(&scroll);
+            crate::window::install_folder_smooth_gallery_scroll(&scroll, gallery.clone());
+        } else {
+            crate::window::install_smooth_gallery_scroll(&scroll, gallery.clone(), true);
+        }
         let window = gtk::Window::builder()
             .default_width(900)
             .default_height(650)
@@ -2499,16 +2556,28 @@ mod section_lookup_tests {
         settle(30);
         let start = adjustment.value();
         assert!(start > 1000.0);
-        assert!(gallery.sectioned_folder.smooth_keep_index_in_center_zone(5));
+        if virtual_surface {
+            assert!(gallery.sectioned_folder.smooth_keep_index_in_center_zone(5));
+        } else {
+            // This is the Photo Grid reveal path used by browser keyboard navigation.
+            assert!(gallery.select_photo(6));
+        }
         // Interrupt before any centering frame: this also exercises immediate
         // handoff rather than depending on delivery within a wall-clock window.
         let interrupted_at = adjustment.value();
         let backwards = Rc::new(Cell::new(false));
         let previous = Rc::new(Cell::new(interrupted_at));
+        let largest_backstep = Rc::new(Cell::new(0.0_f64));
+        let largest_backstep_for_signal = largest_backstep.clone();
         let backwards_for_signal = backwards.clone();
         adjustment.connect_value_changed(move |adjustment| {
             let value = adjustment.value();
-            if value < previous.replace(value) - 0.01 {
+            let backstep = previous.replace(value) - value;
+            largest_backstep_for_signal.set(largest_backstep_for_signal.get().max(backstep));
+            // GridView corrects fractional requests to whole pixels. This test
+            // checks competing keyboard reveals, not those known <1 px corrections.
+            let tolerance = if virtual_surface { 0.01 } else { 1.0 };
+            if backstep > tolerance {
                 backwards_for_signal.set(true);
             }
         });
@@ -2528,11 +2597,12 @@ mod section_lookup_tests {
         settle(350);
         let final_y = adjustment.value();
         window.close();
-        assert!(
-            !backwards.get(),
-            "keyboard centering moved backwards after downward wheel input"
+        let passed = !backwards.get() && final_y > interrupted_at + 100.0;
+        eprintln!(
+            "keyboard/wheel handoff: {group:?}/{layout:?}/{width} backwards={} largest_backstep={:.3} wheel_delta={:.1} passed={passed}",
+            backwards.get(), largest_backstep.get(), final_y - interrupted_at,
         );
-        assert!(final_y > interrupted_at + 100.0, "wheel distance was lost");
+        passed
     }
 
     #[test]

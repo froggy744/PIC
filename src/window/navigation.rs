@@ -1,4 +1,4 @@
-fn install_smooth_gallery_scroll(
+pub(crate) fn install_smooth_gallery_scroll(
     scrolled: &gtk::ScrolledWindow,
     gallery: Rc<grid::Gallery>,
     ctrl_zoom: bool,

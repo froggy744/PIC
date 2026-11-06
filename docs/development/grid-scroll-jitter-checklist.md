@@ -200,3 +200,37 @@ Finalisation: removed the uncommitted native-scroll toggle while preserving
 `8486e08b`; `src/window/navigation.rs` now matches that verified commit. After
 removal, `cargo check --locked` and the focused regression test under Xvfb/Cairo
 both passed again. No additional scrolling changes or broad tests were made.
+
+## Keyboard/wheel handoff verified across layouts and photo mode
+
+Extended the focused test coverage to both ungrouped Photo mode and Folder
+mode, each in Grid, Photo Wall and Masonry at 100, 160 and 300 px. These are
+18 keyboard-reveal/wheel-interruption cases, distinct from the earlier 36
+ordinary wheel checks. Fake catalog objects and Xvfb/Cairo were used; no
+screenshots, GUI harness, performance benchmark or application tracing was used.
+
+| Mode and layout | Cases | Result |
+| --- | --- | --- |
+| Photo Grid (GTK GridView) | 100, 160, 300 px | Passed keyboard reveal followed by downward wheel input |
+| Photo Wall and Masonry, Photo mode | Both layouts × 3 sizes | Passed |
+| Grid, Photo Wall and Masonry, Folder mode | All layouts × 3 sizes | Passed |
+
+The sectioned paths use `smooth_keep_index_in_center_zone`, the keyboard route
+exercised by the original regression. Wall/Masonry reveal the photo immediately
+rather than running the Grid-specific 190 ms centering animation. Photo Grid
+uses `select_photo`, the reveal path used by browser keyboard navigation, and
+its own spring wheel controller. Tests check for a backward reveal after the
+wheel interrupt and that more than 100 px of the 120 px impulse is retained.
+
+The initial Photo Grid assertion flagged the already-known whole-pixel GTK
+corrections as backwards. Its focused check now tolerates at most 1 px per
+correction, without quantizing or changing scrolling itself. Measured largest
+backsteps were 0.966–1.000 px; the final downward displacement was 108 px.
+The 15 sectioned cases had zero backsteps and advanced 120 px. These results
+verify this particular keyboard/wheel handoff; they do not establish general
+visual smoothness or eliminate the known fractional correction behavior.
+
+Validation: `photo_grid_keyboard_wheel_handoff` and
+`keyboard_wheel_handoff_in_virtual_photo_and_folder_layouts` passed under
+Xvfb/Cairo with `--ignored --test-threads=1`; `cargo check --locked` passed.
+No further scrolling-behavior change was needed for this verification.

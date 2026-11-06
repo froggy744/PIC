@@ -7,7 +7,6 @@ use std::cell::Cell;
 use std::path::PathBuf;
 use gtk::prelude::*;
 use gtk4 as gtk;
-use std::rc::Rc;
 use std::sync::Arc;
 
 #[derive(Clone)]

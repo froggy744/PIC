@@ -1,6 +1,6 @@
-//! Optional user-authored photo tags and notes for the Scrapbook inspector.
-//! Photo IDs reference the existing library catalog. No example labels or
-//! notes are preloaded; edits remain in the local SQLite library only.
+// Optional user-authored photo tags and notes for the Scrapbook inspector.
+// Photo IDs reference the existing library catalog. No example labels or
+// notes are preloaded; edits remain in the local SQLite library only.
 pub fn scrapbook_details(connection: &Connection, photo_id: i64) -> Result<(Vec<String>, String)> {
     let row: Option<(String, String)> = connection
         .query_row(

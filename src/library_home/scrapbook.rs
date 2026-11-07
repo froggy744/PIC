@@ -121,20 +121,6 @@ fn set_photo(picture: &gtk::Picture, image: Option<&Arc<PreviewImage>>) {
     }).as_ref());
 }
 
-fn find_create_album(root: &gtk::Widget) -> Option<gtk::Button> {
-    if root.has_css_class("albums-create") {
-        return root.clone().downcast::<gtk::Button>().ok();
-    }
-    let mut child = root.first_child();
-    while let Some(current) = child {
-        child = current.next_sibling();
-        if let Some(found) = find_create_album(&current) {
-            return Some(found);
-        }
-    }
-    None
-}
-
 impl ScrapbookDashboard {
     pub(super) fn new(
         navigate: &Navigate,
@@ -460,7 +446,7 @@ impl ScrapbookDashboard {
                 }
                 dashboard.active_album.set(Some(id));
                 dashboard.album_loading.set(true);
-                dashboard.selected_id.set(None);
+                dashboard.clear_selected_photo();
                 dashboard.title.set_text(&name);
                 dashboard.count.set_text(&format!("{count} photos"));
                 while let Some(child) = dashboard.photos.first_child() {
@@ -481,19 +467,53 @@ impl ScrapbookDashboard {
         add_body.append(&deco("+", "scrapbook-create-plus"));
         add_body.append(&deco("Create Album", "scrapbook-create-caption"));
         add_album.set_child(Some(&add_body));
-        let navigate_to_albums = navigate.clone();
+        let dashboard = self.clone();
         add_album.connect_clicked(move |button| {
-            navigate_to_albums(SidebarFilter::Albums);
-            // Reuse the existing album-creation dialog rather than writing
-            // to the catalog from a decorative Library widget.
-            let root = button.root();
-            glib::idle_add_local_once(move || {
-                if let Some(root) = root.as_ref() {
-                    if let Some(create) = find_create_album(root.upcast_ref()) {
-                        create.emit_clicked();
+            let Some(parent) = button.root()
+                .and_then(|root| root.downcast::<gtk::Window>().ok())
+            else { return; };
+            let dialog = libadwaita::AlertDialog::new(
+                Some("Create Album"),
+                Some("Your new scrapbook album will appear here, ready for photos."),
+            );
+            let entry = gtk::Entry::new();
+            entry.set_placeholder_text(Some("Album name"));
+            entry.set_max_length(120);
+            dialog.set_extra_child(Some(&entry));
+            dialog.add_response("cancel", "Cancel");
+            dialog.add_response("create", "Create Album");
+            dialog.set_response_appearance("create", libadwaita::ResponseAppearance::Suggested);
+            dialog.set_response_enabled("create", false);
+            {
+                let dialog = dialog.clone();
+                entry.connect_changed(move |entry| {
+                    dialog.set_response_enabled("create", !entry.text().trim().is_empty());
+                });
+            }
+            let dashboard_for_create = dashboard.clone();
+            let parent_for_create = parent.clone();
+            dialog.connect_response(Some("create"), move |_, _| {
+                let result = db::open_existing(&dashboard_for_create.database)
+                    .and_then(|connection| db::create_album(&connection, entry.text().as_str()));
+                match result {
+                    Ok(album) => {
+                        dashboard_for_create.active_album.set(Some(album.id));
+                        dashboard_for_create.album_loading.set(true);
+                        dashboard_for_create.clear_selected_photo();
+                        dashboard_for_create.title.set_text(&album.name);
+                        dashboard_for_create.count.set_text("0 photos");
+                        (dashboard_for_create.request_album)(album.id);
+                    }
+                    Err(error) => {
+                        let error_dialog = libadwaita::AlertDialog::new(
+                            Some("Could not create album"), Some(&error.to_string())
+                        );
+                        error_dialog.add_response("ok", "OK");
+                        error_dialog.present(Some(&parent_for_create));
                     }
                 }
             });
+            dialog.present(Some(&parent));
         });
         self.albums.append(&add_album);
 
@@ -571,12 +591,28 @@ impl ScrapbookDashboard {
             self.photos.append(&tile);
         }
         if snapshot.data.scrapbook_photos.is_empty() {
-            self.photos.append(&add_sheet("This album has no photos yet.", "scrapbook-empty"));
+            self.clear_selected_photo();
+            self.photos.append(&add_sheet("This album has no photos yet. Use Add photos to begin.", "scrapbook-empty"));
         } else {
             let selected = snapshot.data.scrapbook_photos.iter()
                 .find(|photo| Some(photo.id) == self.selected_id.get())
                 .unwrap_or(&snapshot.data.scrapbook_photos[0]);
             self.select_photo(selected, snapshot.images.get(&selected.id));
+        }
+    }
+
+    fn clear_selected_photo(&self) {
+        self.selected_id.set(None);
+        self.selected_cover.set_paintable(None::<&gtk::gdk::Paintable>);
+        self.selected_name.set_text("No photo selected");
+        self.selected_metadata.set_text("Choose a photo from this album");
+        self.notes.set_text("");
+        self.note_status.set_text("");
+        while let Some(child) = self.selected_tags.first_child() {
+            self.selected_tags.remove(&child);
+        }
+        while let Some(child) = self.inspector_actions.first_child() {
+            self.inspector_actions.remove(&child);
         }
     }
 

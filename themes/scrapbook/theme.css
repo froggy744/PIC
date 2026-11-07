@@ -1411,18 +1411,19 @@ button.scrapbook-photo-picker-tile:checked {
   color: #503a4a;
 }
 
-/* Artwork behind the sidebar's actual text, not a top-layer decoration. */
+/* Exactly ONE leaf sprig, anchored bottom-left on the whole sidebar.
+   Do not paint it on the scrollable navigation widget: that widget and its
+   section children move independently and created repeated leaf decals.
+   The leaf stays below the sidebar text as a non-interactive background. */
 .layout-left-column {
   background-image: url("assets/leaf-corner.svg"), url("assets/paper.svg");
   background-size: 145px 125px, 480px 480px;
   background-position: left bottom, left top;
   background-repeat: no-repeat, repeat;
 }
-.navigation-sidebar {
-  background-image: url("assets/leaf-corner.svg"), url("assets/paper.svg");
-  background-size: 145px 125px, 480px 480px;
-  background-position: left bottom, left top;
-  background-repeat: no-repeat, repeat;
+.layout-left-column .navigation-sidebar {
+  background-color: transparent;
+  background-image: none;
 }
 .scrapbook-masthead {
   min-height: 184px;

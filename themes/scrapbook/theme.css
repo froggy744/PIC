@@ -40,7 +40,7 @@
 window {
   color: @scrapbook_ink;
   background: @scrapbook_paper;
-  font-family: "Poppins", "Cantarell", sans-serif;
+  font-family: "Patrick Hand", "Cantarell", sans-serif;
   font-size: 13px;
 }
 .layout-left-column, .navigation-sidebar, .compact-sidebar-dock {
@@ -63,7 +63,7 @@ window {
   background: rgba(118,82,154,.11);
   border-radius: 8px;
 }
-.app-title { font-weight: 900; font-family: "Kalam", "Comic Neue", "Poppins", sans-serif; font-size: 22px; }
+.app-title { font-weight: 900; font-family: "Caveat", "Patrick Hand", cursive; font-size: 22px; }
 .search-field {
   min-height: 36px;
   background: #fffcf6;
@@ -96,7 +96,7 @@ window {
 .navigation-sidebar .sidebar-section-heading-title {
   font-weight: 800;
   color: #5b3d53;
-  font-family: "Kalam", "Comic Neue", "Poppins", sans-serif;
+  font-family: "Caveat", "Patrick Hand", cursive;
   font-size: 15px;
   text-shadow: none;
 }
@@ -142,7 +142,7 @@ listview.folder-stream > row:active {
   color: #453026;
   font-size: 15px;
   font-weight: 800;
-  font-family: "Kalam", "Comic Neue", "Poppins", sans-serif;
+  font-family: "Caveat", "Patrick Hand", cursive;
   text-shadow: none;
 }
 .folder-section-count, .section-count {
@@ -195,7 +195,7 @@ gridview.section-grid > item:selected .photo-tile,
 
 /* Album index: pastel paper cards, stacked-photo shadows and taped labels. */
 .albums-index-title {
-  font-family: "Kalam", "Comic Neue", "Poppins", sans-serif;
+  font-family: "Caveat", "Patrick Hand", cursive;
   font-size: 29px; font-weight: 800; color: #60417b;
 }
 .albums-home-count { color: #816d79; }
@@ -236,7 +236,7 @@ gridview.section-grid > item:selected .photo-tile,
   color: #4d3b32;
   font-size: 16px;
   font-weight: 800;
-  font-family: "Kalam", "Comic Neue", "Poppins", sans-serif;
+  font-family: "Caveat", "Patrick Hand", cursive;
 }
 .albums-standard .album-photo-count {
   color: #715c59;
@@ -275,7 +275,7 @@ gridview.section-grid > item:selected .photo-tile,
 }
 .scrapbook-hero-title {
   color: #fff9ed;
-  font-family: "Kalam", "Comic Neue", "Poppins", sans-serif;
+  font-family: "Caveat", "Patrick Hand", cursive;
   font-weight: 900;
   font-size: 35px;
   text-shadow: 0 3px 4px rgba(76,47,32,.38);
@@ -286,7 +286,7 @@ gridview.section-grid > item:selected .photo-tile,
   border: 1px solid #dfc795;
   border-radius: 3px;
   padding: 5px 12px;
-  font-family: "Kalam", "Comic Neue", sans-serif;
+  font-family: "Caveat", "Patrick Hand", cursive;
 }
 .scrapbook-hero-note {
   background-color: #fff9ec;
@@ -295,7 +295,7 @@ gridview.section-grid > item:selected .photo-tile,
   border: 1px solid #ddcab0;
   padding: 12px;
   box-shadow: 0 4px 10px rgba(72,46,30,.20);
-  font-family: "Kalam", "Comic Neue", "Poppins", sans-serif;
+  font-family: "Caveat", "Patrick Hand", cursive;
 }
 .scrapbook-hero-swatch {
   color: #53384e;
@@ -313,7 +313,7 @@ gridview.section-grid > item:selected .photo-tile,
 .scrapbook-hero-flourish { color: #ffe1a1; font-size: 21px; }
 .home-main-header .title-1, .home-section .title-2 {
   color: #5e4573;
-  font-family: "Kalam", "Comic Neue", "Poppins", sans-serif;
+  font-family: "Caveat", "Patrick Hand", cursive;
   font-weight: 800;
 }
 .home-main-header .title-1 { font-size: 27px; }
@@ -455,7 +455,7 @@ tooltip label { color: #4b3b2c; }
 }
 .scrapbook-inspector-metadata .title,
 .scrapbook-inspector-metadata .heading {
-  font-family: "Kalam", "Comic Neue", "Poppins", sans-serif;
+  font-family: "Caveat", "Patrick Hand", cursive;
   font-weight: 800;
   color: #704b86;
 }
@@ -481,7 +481,7 @@ tooltip label { color: #4b3b2c; }
    Native GTK navigation and keyboard/accessibility remain intact.
    ================================================================ */
 window {
-    font-family: "Patrick Hand", "Comic Neue", "Poppins", sans-serif;
+    font-family: "Patrick Hand", "Cantarell", sans-serif;
     font-size: 15px;
     color: #332820;
 }

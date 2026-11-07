@@ -123,7 +123,6 @@ fn set_photo(picture: &gtk::Picture, image: Option<&Arc<PreviewImage>>) {
 impl ScrapbookDashboard {
     pub(super) fn new(
         navigate: &Navigate,
-        open: &OpenPhoto,
         database: PathBuf,
         request_album: Rc<dyn Fn(i64)>,
         edit_photo: PhotoCommand,

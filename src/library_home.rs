@@ -282,7 +282,7 @@ impl LibraryHome {
             }
         });
         let scrapbook = ScrapbookDashboard::new(
-            &navigate, &open, database.clone(), on_album, edit_photo, export_photo,
+            &navigate, database.clone(), on_album, edit_photo, export_photo,
         );
         let pages = gtk::Box::new(gtk::Orientation::Vertical, 0);
         pages.append(&content);

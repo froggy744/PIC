@@ -514,9 +514,17 @@ fn scrapbook_reference_capture_layout() {
         images.insert(photo.id, draw(photo.id));
     }
     let snapshot = Snapshot { data, images };
-    let navigate: Navigate = Rc::new(|_| {});
+    let destinations = Rc::new(std::cell::RefCell::new(Vec::<SidebarFilter>::new()));
+    let album_requests = Rc::new(std::cell::RefCell::new(Vec::<i64>::new()));
+    let navigate: Navigate = Rc::new({
+        let destinations = destinations.clone();
+        move |destination| destinations.borrow_mut().push(destination)
+    });
     let open: OpenPhoto = Rc::new(|_, _, _| {});
-    let request_album: Rc<dyn Fn(i64)> = Rc::new(|_| {});
+    let request_album: Rc<dyn Fn(i64)> = Rc::new({
+        let album_requests = album_requests.clone();
+        move |id| album_requests.borrow_mut().push(id)
+    });
     let dashboard = super::scrapbook::ScrapbookDashboard::new(
         &navigate, &open, path.clone(), request_album
     );
@@ -561,6 +569,68 @@ fn scrapbook_reference_capture_layout() {
             assert!(target.is_file(), "missing screenshot");
         }
     }
+    // Clicking an album previews it inside the Library. The Full Albums
+    // page is only opened by the explicit View All Albums action.
+    fn find_class(widget: &gtk::Widget, class: &str) -> Option<gtk::Widget> {
+        if widget.has_css_class(class) {
+            return Some(widget.clone());
+        }
+        let mut child = widget.first_child();
+        while let Some(current) = child {
+            child = current.next_sibling();
+            if let Some(found) = find_class(&current, class) {
+                return Some(found);
+            }
+        }
+        None
+    }
+    fn find_label(widget: &gtk::Widget, label: &str) -> Option<gtk::Button> {
+        if let Ok(button) = widget.clone().downcast::<gtk::Button>() {
+            if button.label().as_deref() == Some(label) {
+                return Some(button);
+            }
+        }
+        let mut child = widget.first_child();
+        while let Some(current) = child {
+            child = current.next_sibling();
+            if let Some(found) = find_label(&current, label) {
+                return Some(found);
+            }
+        }
+        None
+    }
+    let root_widget = dashboard.root.upcast_ref::<gtk::Widget>();
+    let album_scroll = find_class(root_widget, "scrapbook-album-scroller")
+        .expect("album shelf must have its own scrollbar");
+    let photo_scroll = find_class(root_widget, "scrapbook-photo-scroller")
+        .expect("album photos must have their own scrollbar");
+    assert!(album_scroll.is::<gtk::ScrolledWindow>());
+    assert!(photo_scroll.is::<gtk::ScrolledWindow>());
+    let photo_track = find_class(root_widget, "scrapbook-photo-grid")
+        .unwrap().downcast::<gtk::Box>().unwrap();
+    assert_eq!(photo_track.orientation(), gtk::Orientation::Horizontal);
+    let album_track = find_class(root_widget, "scrapbook-albums-row")
+        .unwrap().downcast::<gtk::Box>().unwrap();
+    assert_eq!(album_track.orientation(), gtk::Orientation::Horizontal);
+    let first_card = album_track.first_child().unwrap().downcast::<gtk::Button>().unwrap();
+    // The album shelf is alphabetically sorted; Concrete Palisade comes first.
+    first_card.emit_clicked();
+    assert_eq!(album_requests.borrow().as_slice(), &[album_two.id]);
+    assert_eq!(dashboard.active_album(), Some(album_two.id));
+    assert!(!dashboard.accepts_snapshot(&snapshot));
+    assert!(destinations.borrow().is_empty(), "album preview must not navigate");
+    let data_two = db::library_home_data_for_album(&conn, Some(album_two.id)).unwrap();
+    let mut images_two = HashMap::new();
+    for photo in &data_two.scrapbook_photos {
+        images_two.insert(photo.id, draw(photo.id));
+    }
+    dashboard.populate(&Snapshot { data: data_two, images: images_two }, &navigate, &open);
+    assert_eq!(photo_track.first_child().is_some(), true);
+    assert!(!dashboard.album_is_loading());
+    find_label(root_widget, "View all albums")
+        .expect("Library must offer explicit navigation to the Albums page")
+        .emit_clicked();
+    assert_eq!(&*destinations.borrow(), &[SidebarFilter::Albums]);
     window.destroy();
     drop(conn);
     let _ = std::fs::remove_file(path);

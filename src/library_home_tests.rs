@@ -516,8 +516,9 @@ fn scrapbook_reference_capture_layout() {
     let snapshot = Snapshot { data, images };
     let navigate: Navigate = Rc::new(|_| {});
     let open: OpenPhoto = Rc::new(|_, _, _| {});
+    let request_album: Rc<dyn Fn(i64)> = Rc::new(|_| {});
     let dashboard = super::scrapbook::ScrapbookDashboard::new(
-        &navigate, &open, path.clone()
+        &navigate, &open, path.clone(), request_album
     );
     dashboard.root.set_visible(true);
     dashboard.populate(&snapshot, &navigate, &open);

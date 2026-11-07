@@ -11,6 +11,8 @@ use libadwaita::prelude::*;
 use std::rc::Rc;
 use std::sync::Arc;
 
+mod add_photos;
+
 #[derive(Clone)]
 pub(super) struct ScrapbookDashboard {
     pub root: gtk::Box,
@@ -465,6 +467,21 @@ impl ScrapbookDashboard {
             id.map(SidebarFilter::Album).unwrap_or(SidebarFilter::All),
             navigate,
         ));
+        if let Some(album_id) = id {
+            let add = gtk::Button::with_label("+ Add photos");
+            add.add_css_class("scrapbook-section-action");
+            add.set_tooltip_text(Some("Choose more photos from your PIC library for this album"));
+            let dashboard = self.clone();
+            add.connect_clicked(move |_| {
+                add_photos::open(
+                    dashboard.root.upcast_ref(),
+                    dashboard.database.clone(),
+                    album_id,
+                    dashboard.request_album.clone(),
+                );
+            });
+            self.actions.append(&add);
+        }
 
         let feature_photo = snapshot.data.scrapbook_albums.iter()
             .find(|(album, _)| Some(album.id) == id)

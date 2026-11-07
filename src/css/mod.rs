@@ -53,6 +53,15 @@ pub(crate) fn install_foundation(display: &gtk::gdk::Display) {
         gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
     );
 
+    // Notes are shared by every appearance, including theme-specific inspectors.
+    let photo_notes = gtk::CssProvider::new();
+    photo_notes.load_from_string(include_str!("components/photo_notes.css"));
+    gtk::style_context_add_provider_for_display(
+        display,
+        &photo_notes,
+        gtk::STYLE_PROVIDER_PRIORITY_APPLICATION + 8,
+    );
+
     // Metadata controls use consistent native desktop geometry in every theme.
     // Theme palette variables supply colours; corner-style overrides win at +13.
     let metadata = gtk::CssProvider::new();

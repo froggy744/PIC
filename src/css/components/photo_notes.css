@@ -1,0 +1,22 @@
+/* Keep the shared Notes editor legible over every inspector background. */
+@define-color pic_notes_bg #f8f8f8;
+@define-color pic_notes_fg #202124;
+
+.photo-tags-global .scrapbook-note-edit {
+  background-color: @pic_notes_bg;
+  background-image: none;
+  color: @pic_notes_fg;
+  border: 1px solid #767676;
+  border-radius: 6px;
+  box-shadow: none;
+}
+.photo-tags-global .scrapbook-note-edit:focus-within {
+  border-color: #555555;
+  outline: 2px solid alpha(@accent_bg_color, 0.6);
+  outline-offset: 1px;
+}
+.photo-tags-global .scrapbook-note-edit text {
+  background-color: transparent;
+  background-image: none;
+  color: @pic_notes_fg;
+}

@@ -416,6 +416,134 @@ mod tests {
         assert!(errors.borrow().is_empty(), "{:?}", errors.borrow());
     }
 
+    fn check_photo_notes_stylesheet_parses() {
+        let errors = Rc::new(RefCell::new(Vec::new()));
+        let errors_for_signal = errors.clone();
+        let provider = gtk4::CssProvider::new();
+        provider.connect_parsing_error(move |_, _, error| {
+            errors_for_signal.borrow_mut().push(error.to_string());
+        });
+        provider.load_from_string(include_str!("components/photo_notes.css"));
+        assert!(errors.borrow().is_empty(), "{:?}", errors.borrow());
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+    fn photo_notes_colors_contrast_in_all_themes() {
+        use gtk4::prelude::*;
+
+        libadwaita::init().unwrap();
+        check_photo_notes_stylesheet_parses();
+        let display = gtk4::gdk::Display::default().unwrap();
+        let base_provider = gtk4::CssProvider::new();
+        base_provider.load_from_string(crate::css::BASE);
+        gtk4::style_context_add_provider_for_display(
+            &display,
+            &base_provider,
+            gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
+        );
+        let notes_provider = gtk4::CssProvider::new();
+        notes_provider.load_from_string(include_str!("components/photo_notes.css"));
+        gtk4::style_context_add_provider_for_display(
+            &display,
+            &notes_provider,
+            gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION + 8,
+        );
+        let manager = libadwaita::StyleManager::default();
+        let input = gtk4::TextView::new();
+        input.add_css_class("scrapbook-note-edit");
+        let container = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
+        container.add_css_class("photo-tags-global");
+        let heading = gtk4::Label::new(Some("Tags"));
+        heading.add_css_class("scrapbook-inspector-paper-title");
+        container.append(&heading);
+        container.append(&input);
+        let panel = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
+        panel.add_css_class("background");
+        panel.add_css_class("scrapbook-inspector");
+        panel.append(&container);
+        let window = gtk4::Window::new();
+        window.set_child(Some(&panel));
+        window.present();
+        let context = gtk4::glib::MainContext::default();
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("themes");
+        for theme in discover(&root) {
+            let provider = gtk4::CssProvider::new();
+            provider.load_from_path(theme_css_in(&root.join(&theme.id)).unwrap());
+            gtk4::style_context_add_provider_for_display(
+                &display,
+                &provider,
+                gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION + 3,
+            );
+            let schemes: &[libadwaita::ColorScheme] = if theme.dark {
+                &[libadwaita::ColorScheme::ForceDark]
+            } else if theme.pins_color_scheme {
+                &[libadwaita::ColorScheme::ForceLight]
+            } else {
+                &[
+                    libadwaita::ColorScheme::ForceLight,
+                    libadwaita::ColorScheme::ForceDark,
+                ]
+            };
+            for &scheme in schemes {
+                manager.set_color_scheme(scheme);
+                while context.pending() {
+                    context.iteration(false);
+                }
+                let style = input.style_context();
+                let foreground = style.lookup_color("pic_notes_fg").unwrap();
+                let background = style.lookup_color("pic_notes_bg").unwrap();
+                let actual = style.color();
+                assert!(
+                    (actual.red() - foreground.red()).abs() < 0.01
+                        && (actual.green() - foreground.green()).abs() < 0.01
+                        && (actual.blue() - foreground.blue()).abs() < 0.01,
+                    "{} {:?}: Notes text color was overridden",
+                    theme.id,
+                    scheme
+                );
+                let luminance = |color: gtk4::gdk::RGBA| {
+                    let linear = |value: f32| {
+                        let value = f64::from(value);
+                        if value <= 0.04045 {
+                            value / 12.92
+                        } else {
+                            ((value + 0.055) / 1.055).powf(2.4)
+                        }
+                    };
+                    0.2126 * linear(color.red())
+                        + 0.7152 * linear(color.green())
+                        + 0.0722 * linear(color.blue())
+                };
+                let a = luminance(foreground);
+                let b = luminance(background);
+                let contrast = (a.max(b) + 0.05) / (a.min(b) + 0.05);
+                assert!(
+                    contrast >= 4.5,
+                    "{} {:?}: contrast {contrast:.2}",
+                    theme.id,
+                    scheme
+                );
+                let panel_bg = style.lookup_color("window_bg_color").unwrap();
+                let heading_fg = heading.style_context().color();
+                let a = luminance(heading_fg);
+                let b = luminance(panel_bg);
+                let contrast = (a.max(b) + 0.05) / (a.min(b) + 0.05);
+                assert!(
+                    contrast >= 4.5,
+                    "{} {:?}: panel heading contrast {contrast:.2}",
+                    theme.id,
+                    scheme
+                );
+            }
+            gtk4::style_context_remove_provider_for_display(&display, &provider);
+        }
+        window.close();
+        gtk4::style_context_remove_provider_for_display(&display, &notes_provider);
+        gtk4::style_context_remove_provider_for_display(&display, &base_provider);
+    }
+
     #[test]
     fn metadata_requires_the_marker_on_the_first_line() {
         // An ordinary licence header must not produce theme flags.

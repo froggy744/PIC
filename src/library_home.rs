@@ -94,6 +94,7 @@ pub struct LibraryHome {
     database: Rc<std::cell::RefCell<std::path::PathBuf>>,
     requests: mpsc::SyncSender<HomeRequest>,
     pending: Rc<Cell<bool>>,
+    scrapbook: ScrapbookDashboard,
 }
 
 struct HomeRequest {
@@ -400,10 +401,12 @@ impl LibraryHome {
             database,
             requests,
             pending,
+            scrapbook,
         }
     }
 
     pub fn reload(&self, database: std::path::PathBuf) {
+        self.scrapbook.reset_album();
         self.database.replace(database.clone());
         let request = HomeRequest {
             database,

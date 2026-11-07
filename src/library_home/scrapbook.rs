@@ -330,6 +330,12 @@ impl ScrapbookDashboard {
         self.active_album.get()
     }
 
+    pub(super) fn reset_album(&self) {
+        self.active_album.set(None);
+        self.album_loading.set(false);
+        self.selected_id.set(None);
+    }
+
     pub(super) fn album_is_loading(&self) -> bool {
         self.album_loading.get()
     }

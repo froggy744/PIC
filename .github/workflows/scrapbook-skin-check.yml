@@ -58,6 +58,8 @@ jobs:
         run: cargo test --locked scrapbook_skin_is_discovered_with_all_decorative_assets -- --test-threads=1
       - name: Test scrapbook persistence and default theme discovery
         run: cargo test --locked scrapbook_detail_tests -- --test-threads=1
+      - name: Validate independent Library album selection
+        run: cargo test --locked scrapbook_selected_album_changes_photo_strip -- --test-threads=1
       - name: Capture real GTK scrapbook visual fixtures
         run: |
           mkdir -p "$RUNNER_TEMP/scrapbook-visual"

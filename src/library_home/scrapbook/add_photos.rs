@@ -259,7 +259,7 @@ pub(super) fn open(
         match db::open_existing(&database)
             .and_then(|connection| db::add_photos_to_album(&connection, album_id, &ids))
         {
-            Ok(()) => after_add(album_id),
+            Ok(_) => after_add(album_id),
             Err(error) => eprintln!("PIC Scrapbook: could not add photos: {error:#}"),
         }
     });

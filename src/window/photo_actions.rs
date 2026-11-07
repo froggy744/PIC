@@ -1963,18 +1963,18 @@ fn show_properties_dialog_on(
     }
 }
 
-/// The reference's tags, notes and icon actions are native, operable
-/// controls backed by the selected photo's SQLite catalog record. Nothing is
-/// prepopulated or invented. Hidden when another skin is active.
+/// Global photo tags are always available from the Properties inspector,
+/// including outside Scrapbook. Only the extra paper Notes/Actions layout
+/// is skin-specific. The same SQLite tags power the global metadata filter.
 fn scrapbook_inspector_extra(
     photo: &crate::photo_object::PhotoObject,
     context: &PhotoActionContext,
     surface: PropertiesSurface,
 ) -> gtk::Box {
     let root = gtk::Box::new(gtk::Orientation::Vertical, 9);
-    root.add_css_class("scrapbook-only");
+    root.add_css_class("photo-tags-global");
     root.add_css_class("scrapbook-inspector-extra");
-    root.set_visible(crate::window::theme::scrapbook_is_active());
+    root.set_visible(true);
     let photo_id = photo.id();
     let (tags, note) = db::scrapbook_details(&context.connection.borrow(), photo_id)
         .unwrap_or_default();
@@ -2048,10 +2048,13 @@ fn scrapbook_inspector_extra(
     tag_rows.insert(&add_tag, -1);
     root.append(&tag_rows);
 
+    let paper_details = gtk::Box::new(gtk::Orientation::Vertical, 9);
+    paper_details.add_css_class("scrapbook-only");
+    paper_details.set_visible(crate::window::theme::scrapbook_is_active());
     let notes_header = gtk::Label::new(Some("Notes"));
     notes_header.add_css_class("scrapbook-inspector-paper-title");
     notes_header.set_halign(gtk::Align::Start);
-    root.append(&notes_header);
+    paper_details.append(&notes_header);
     let note_card = gtk::Box::new(gtk::Orientation::Vertical, 7);
     note_card.add_css_class("scrapbook-note-card");
     let text = gtk::TextView::new();
@@ -2083,12 +2086,12 @@ fn scrapbook_inspector_extra(
             }
         });
     }
-    root.append(&note_card);
+    paper_details.append(&note_card);
 
     let actions_header = gtk::Label::new(Some("Actions"));
     actions_header.add_css_class("scrapbook-inspector-paper-title");
     actions_header.set_halign(gtk::Align::Start);
-    root.append(&actions_header);
+    paper_details.append(&actions_header);
     let actions = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     actions.add_css_class("scrapbook-inspector-actions");
     let make_action = |label: &str, icon_name: &str| {
@@ -2115,7 +2118,8 @@ fn scrapbook_inspector_extra(
     let export_action = context.export.clone();
     export.connect_clicked(move |_| export_action());
     actions.append(&export);
-    root.append(&actions);
+    paper_details.append(&actions);
+    root.append(&paper_details);
     root
 }
 

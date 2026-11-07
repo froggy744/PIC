@@ -285,6 +285,16 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let import_folder_slot: Rc<RefCell<Option<Rc<dyn Fn()>>>> = Rc::new(RefCell::new(None));
     let sd_import_slot: Rc<RefCell<Option<Rc<dyn Fn()>>>> = Rc::new(RefCell::new(None));
     let edit_open_slot: Rc<RefCell<Option<Rc<dyn Fn(i64)>>>> = Rc::new(RefCell::new(None));
+    let scrapbook_export_slot: Rc<RefCell<Option<Rc<dyn Fn(i64)>>>> =
+        Rc::new(RefCell::new(None));
+    let scrapbook_export_photo: Rc<dyn Fn(i64)> = {
+        let slot = scrapbook_export_slot.clone();
+        Rc::new(move |id| {
+            if let Some(export) = slot.borrow().as_ref() {
+                export(id);
+            }
+        })
+    };
     let edit_clipboard: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
     let open_edit: Rc<dyn Fn(i64)> = {
         let slot = edit_open_slot.clone();
@@ -2769,6 +2779,8 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 }
             })
         },
+        open_edit.clone(),
+        scrapbook_export_photo,
     );
     crate::startup_trace::mark("library_home_widgets_done", Some(build_started));
     main_stack.add_named(&library_home.root, Some("library"));
@@ -4939,6 +4951,28 @@ fn start_photo_export_single(
         move |_| export_clicked()
     });
     export_slot.replace(Some(export_clicked.clone()));
+    // The Scrapbook Library selection is independent of the photo grid;
+    // export the exact clicked photo through PIC's normal export dialog.
+    scrapbook_export_slot.replace(Some(Rc::new({
+        let connection = connection.clone();
+        let parent = window.clone().upcast::<gtk::Window>();
+        let progress = operation_progress.clone();
+        move |id| {
+            let Some(record) = db::photo(&connection.borrow(), id).ok().flatten() else {
+                return;
+            };
+            let object = crate::photo_object::PhotoObject::from_photo(&record);
+            let job = crate::edit::export_batch::ExportJob::from_record(
+                object.path(),
+                object.rotation(),
+                object.edit_recipe(),
+                object.width(),
+                object.height(),
+                &object.filename(),
+            );
+            show_photo_export_dialog(&parent, vec![job], progress.clone());
+        }
+    })));
 
     let selected_for_print = selected_photo.clone();
     let window_for_print = window.clone();

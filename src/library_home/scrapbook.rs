@@ -1,7 +1,7 @@
 //! Native, data-backed scrapbook Library dashboard.
 //! Kept separate from the normal Library layout so switching back to any
 //! existing theme restores the original home without changing preferences.
-use super::{Navigate, OpenPhoto, PreviewImage, Snapshot};
+use super::{Navigate, OpenPhoto, PhotoCommand, PreviewImage, Snapshot};
 use crate::{db, photo_object::PhotoObject, sidebar::SidebarFilter};
 use std::cell::Cell;
 use std::path::PathBuf;
@@ -36,6 +36,8 @@ pub(super) struct ScrapbookDashboard {
     database: PathBuf,
     open: OpenPhoto,
     navigate: Navigate,
+    edit_photo: PhotoCommand,
+    export_photo: PhotoCommand,
 }
 
 fn scrapbook_asset(name: &str) -> PathBuf {
@@ -127,6 +129,8 @@ impl ScrapbookDashboard {
         open: &OpenPhoto,
         database: PathBuf,
         request_album: Rc<dyn Fn(i64)>,
+        edit_photo: PhotoCommand,
+        export_photo: PhotoCommand,
     ) -> Self {
         let root = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         root.add_css_class("scrapbook-only");
@@ -393,6 +397,7 @@ impl ScrapbookDashboard {
             selected_cover, selected_name, selected_metadata, selected_tags,
             notes, selected_id: Rc::new(Cell::new(None)), note_status,
             inspector_actions, database, open: open.clone(), navigate: navigate.clone(),
+            edit_photo, export_photo,
         };
         let dashboard_for_save = dashboard.clone();
         save.connect_clicked(move |_| {

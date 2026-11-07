@@ -526,7 +526,8 @@ fn scrapbook_reference_capture_layout() {
         move |id| album_requests.borrow_mut().push(id)
     });
     let dashboard = super::scrapbook::ScrapbookDashboard::new(
-        &navigate, &open, path.clone(), request_album
+        &navigate, &open, path.clone(), request_album,
+        Rc::new(|_| {}), Rc::new(|_| {}),
     );
     dashboard.root.set_visible(true);
     dashboard.populate(&snapshot, &navigate, &open);

@@ -14,6 +14,7 @@ mod scrapbook;
 use scrapbook::ScrapbookDashboard;
 
 type OpenPhoto = Rc<dyn Fn(Vec<PhotoObject>, usize, bool)>;
+type PhotoCommand = Rc<dyn Fn(i64)>;
 type Navigate = Rc<dyn Fn(SidebarFilter)>;
 
 /// Square thumbnail edge length for every Home preview card.
@@ -108,7 +109,13 @@ struct HomeRequest {
 mod tests;
 
 impl LibraryHome {
-    pub fn new(database: std::path::PathBuf, navigate: Navigate, open: OpenPhoto) -> Self {
+    pub fn new(
+        database: std::path::PathBuf,
+        navigate: Navigate,
+        open: OpenPhoto,
+        edit_photo: PhotoCommand,
+        export_photo: PhotoCommand,
+    ) -> Self {
         if let Some(display) = gtk::gdk::Display::default() {
             install_home_css(&display);
         }
@@ -274,7 +281,9 @@ impl LibraryHome {
                 request(album_id);
             }
         });
-        let scrapbook = ScrapbookDashboard::new(&navigate, &open, database.clone(), on_album);
+        let scrapbook = ScrapbookDashboard::new(
+            &navigate, &open, database.clone(), on_album, edit_photo, export_photo,
+        );
         let pages = gtk::Box::new(gtk::Orientation::Vertical, 0);
         pages.append(&content);
         pages.append(&scrapbook.root);

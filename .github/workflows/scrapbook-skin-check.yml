@@ -9,6 +9,8 @@ on:
       - 'src/window/theme.rs'
       - 'src/library_home.rs'
       - 'src/library_home/**'
+      - 'src/db/filters.rs'
+      - 'src/window/metadata_panel.rs'
       - 'src/library_home_tests.rs'
       - 'src/db.rs'
       - 'src/db/scrapbook.rs'
@@ -46,7 +48,7 @@ jobs:
           components: rustfmt
       - uses: Swatinem/rust-cache@v2
       - name: Format skin Rust sources for validation
-        run: rustfmt --edition 2021 src/window/theme.rs src/library_home.rs src/css/theme_discovery.rs src/main.rs src/db/library_home.rs src/window/build.rs src/window/photo_actions.rs src/db.rs src/db/scrapbook.rs
+        run: rustfmt --edition 2021 src/window/theme.rs src/library_home.rs src/css/theme_discovery.rs src/main.rs src/db/library_home.rs src/window/build.rs src/window/photo_actions.rs src/db.rs src/db/scrapbook.rs src/db/filters.rs
       - name: Check edited Rust files compile
         run: |
           test -f themes/scrapbook/fonts/Caveat-Variable.ttf
@@ -60,6 +62,8 @@ jobs:
         run: cargo test --locked scrapbook_detail_tests -- --test-threads=1
       - name: Validate independent Library album selection
         run: cargo test --locked scrapbook_selected_album_changes_photo_strip -- --test-threads=1
+      - name: Validate global photo tag filters
+        run: cargo test --locked tags_are_globally_filterable_and_faceted_per_photo -- --test-threads=1
       - name: Capture real GTK scrapbook visual fixtures
         run: |
           mkdir -p "$RUNNER_TEMP/scrapbook-visual"

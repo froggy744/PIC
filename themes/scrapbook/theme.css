@@ -1260,3 +1260,95 @@ entry.unified-search-entry text,
     font-size: 15px;
 }
 
+
+/* Scrapped camera picture in the app header: text-only PIC wordmark. */
+.scrapbook-logo-shell {
+  background-image: none;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  padding: 0 6px;
+}
+.scrapbook-logo-word {
+  font-family: "Caveat", "Patrick Hand", cursive;
+  font-size: 29px;
+  font-weight: 700;
+  color: #47322b;
+}
+
+/* Independent Library album shelf and a strictly single-row photo strip. */
+.scrapbook-album-scroller,
+.scrapbook-photo-scroller {
+  background: transparent;
+  min-height: 0;
+}
+.scrapbook-album-scroller scrollbar.horizontal,
+.scrapbook-photo-scroller scrollbar.horizontal {
+  min-height: 10px;
+  background: rgba(197,169,149,.10);
+}
+.scrapbook-album-scroller scrollbar.horizontal slider,
+.scrapbook-photo-scroller scrollbar.horizontal slider {
+  min-height: 7px;
+  border-radius: 99px;
+  background: #ae87ba;
+}
+.scrapbook-active-album {
+  border: 2px solid #8051a6;
+  box-shadow: 0 0 0 2px #fff5eb, 0 5px 12px rgba(65,38,68,.20);
+}
+.scrapbook-photo-grid {
+  background: transparent;
+}
+.scrapbook-photo-tile { min-width: 148px; }
+.scrapbook-gallery-sheet { min-width: 0; }
+
+/* All right-click menus: explicit foreground on menu surfaces and children.
+   GTK menu popovers are separate surfaces and do not inherit window ink. */
+popover.menu > contents,
+popover > contents,
+popover.pic-folder-context-menu > contents,
+popover.album-context-menu > contents,
+.photo-context-menu,
+.photo-context-menu popover > contents {
+  background-color: #fff9ed;
+  color: #352b29;
+  border: 1px solid #d5bba4;
+  box-shadow: 0 5px 16px rgba(55,37,29,.20);
+}
+popover.menu modelbutton,
+popover.menu modelbutton label,
+popover.menu > contents label,
+popover.pic-folder-context-menu button,
+popover.pic-folder-context-menu label,
+popover.album-context-menu button,
+popover.album-context-menu label,
+.photo-context-menu label,
+.photo-context-item,
+.photo-context-item label,
+.folder-context-action,
+.folder-context-action label {
+  color: #342a29;
+  font-family: "Patrick Hand", "Cantarell", sans-serif;
+  font-size: 16px;
+}
+popover.menu modelbutton:hover,
+popover.menu modelbutton:focus-visible,
+popover.pic-folder-context-menu button:hover,
+popover.album-context-menu button:hover,
+.photo-context-item:hover,
+.folder-context-action:hover {
+  background: #e7d2ee;
+  color: #3b2350;
+}
+popover.menu modelbutton:hover label,
+popover.menu modelbutton:focus-visible label,
+popover.pic-folder-context-menu button:hover label,
+popover.album-context-menu button:hover label,
+.photo-context-item:hover label,
+.folder-context-action:hover label { color: #3b2350; }
+popover.menu modelbutton:disabled,
+popover.menu modelbutton:disabled label,
+.photo-context-item:disabled,
+.photo-context-item:disabled label { color: #93877b; }
+popover separator { background: #dcc8b2; }

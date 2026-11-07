@@ -732,14 +732,6 @@
     illustrated_brand.add_css_class("scrapbook-logo-shell");
     illustrated_brand.set_visible(false);
     illustrated_brand.set_valign(gtk::Align::Center);
-    let camera_asset = crate::css::resolve_runtime_dir(std::path::Path::new("themes"))
-        .join("scrapbook/assets/camera-sticker.svg");
-    let camera_mark = gtk::Picture::for_filename(camera_asset);
-    camera_mark.set_content_fit(gtk::ContentFit::Contain);
-    camera_mark.set_can_shrink(true);
-    camera_mark.set_size_request(47, 37);
-    camera_mark.add_css_class("scrapbook-logo-mark");
-    illustrated_brand.append(&camera_mark);
     let brand_word = gtk::Label::new(Some("PIC"));
     brand_word.add_css_class("scrapbook-logo-word");
     illustrated_brand.append(&brand_word);

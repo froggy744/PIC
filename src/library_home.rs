@@ -99,6 +99,7 @@ pub struct LibraryHome {
 struct HomeRequest {
     database: std::path::PathBuf,
     force: bool,
+    scrapbook_album_id: Option<i64>,
 }
 
 #[cfg(test)]
@@ -262,7 +263,17 @@ impl LibraryHome {
         // GTK layout. ThemeEngine switches visibility without reconstructing
         // thumbnails or replacing the user's preferred photo views.
         content.add_css_class("scrapbook-standard-only");
-        let scrapbook = ScrapbookDashboard::new(&navigate, &open, database.clone());
+        // Album clicks update the inline photo strip through the existing
+        // background worker; they never navigate to the Albums page.
+        let album_request: Rc<std::cell::RefCell<Option<Rc<dyn Fn(i64)>>>> =
+            Rc::new(std::cell::RefCell::new(None));
+        let album_request_for_dashboard = album_request.clone();
+        let on_album: Rc<dyn Fn(i64)> = Rc::new(move |album_id| {
+            if let Some(request) = album_request_for_dashboard.borrow().as_ref() {
+                request(album_id);
+            }
+        });
+        let scrapbook = ScrapbookDashboard::new(&navigate, &open, database.clone(), on_album);
         let pages = gtk::Box::new(gtk::Orientation::Vertical, 0);
         pages.append(&content);
         pages.append(&scrapbook.root);
@@ -273,6 +284,23 @@ impl LibraryHome {
         let (sender, snapshots) = mpsc::channel();
         std::thread::spawn(move || worker(receiver, sender));
         let pending = Rc::new(Cell::new(false));
+        album_request.replace(Some(Rc::new({
+            let pending = pending.clone();
+            let requests = requests.clone();
+            let database = database.clone();
+            move |album_id| {
+                let request = HomeRequest {
+                    database: database.borrow().clone(),
+                    force: true,
+                    scrapbook_album_id: Some(album_id),
+                };
+                // A pending snapshot is allowed to complete, but the selected
+                // album stays in dashboard state until a matching one arrives.
+                if !pending.replace(true) && requests.try_send(request).is_err() {
+                    pending.set(false);
+                }
+            }
+        })));
         {
             let pending = pending.clone();
             let requests = requests.clone();
@@ -281,6 +309,7 @@ impl LibraryHome {
                 let request = HomeRequest {
                     database: database.borrow().clone(),
                     force: true,
+                    scrapbook_album_id: scrapbook.active_album(),
                 };
                 if !pending.replace(true) && requests.try_send(request).is_err() {
                     pending.set(false);
@@ -312,7 +341,20 @@ impl LibraryHome {
                             value.set_text(&count.to_string());
                         }
                         populate(&sections, &snapshot, &navigate, &open);
-                        scrapbook_for_tick.populate(&snapshot, &navigate, &open);
+                        if scrapbook_for_tick.accepts_snapshot(&snapshot) {
+                            scrapbook_for_tick.populate(&snapshot, &navigate, &open);
+                        } else {
+                            // A previous request finished during album switch:
+                            // request the desired album immediately.
+                            let selected = scrapbook_for_tick.active_album();
+                            if !pending_for_tick.replace(true) {
+                                let _ = requests_for_tick.try_send(HomeRequest {
+                                    database: database_for_tick.borrow().clone(),
+                                    force: true,
+                                    scrapbook_album_id: selected,
+                                });
+                            }
+                        }
                         status.set_visible(false);
                     }
                     Ok(None) => {}
@@ -328,6 +370,7 @@ impl LibraryHome {
                 let request = HomeRequest {
                     database: database_for_tick.borrow().clone(),
                     force: false,
+                    scrapbook_album_id: scrapbook_for_tick.active_album(),
                 };
                 if root.is_mapped()
                     && !pending_for_tick.replace(true)
@@ -351,6 +394,7 @@ impl LibraryHome {
         let request = HomeRequest {
             database,
             force: true,
+            scrapbook_album_id: None,
         };
         self.pending.set(true);
         if self.requests.try_send(request).is_err() {
@@ -466,7 +510,7 @@ fn worker(
             if !request.force && version == Some(current) && !missing {
                 return Ok(None);
             }
-            let data = db::library_home_data(connection)?;
+            let data = db::library_home_data_for_album(connection, request.scrapbook_album_id)?;
             let mut images = HashMap::new();
             let mut used = std::collections::HashSet::new();
             let mut loaded = false;
@@ -477,6 +521,7 @@ fn worker(
                 .chain(&data.edited)
                 .chain(&data.favorites)
                 .chain(data.albums.iter().filter_map(|(_, cover)| cover.as_ref()))
+                .chain(data.scrapbook_albums.iter().filter_map(|(_, cover)| cover.as_ref()))
                 .chain(&data.scrapbook_photos)
             {
                 let path =

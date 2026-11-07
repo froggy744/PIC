@@ -1,4 +1,6 @@
 pub const HOME_PREVIEW_LIMIT: i64 = 20;
+pub const SCRAPBOOK_ALBUM_LIMIT: i64 = 200;
+pub const SCRAPBOOK_STRIP_LIMIT: i64 = 100;
 
 pub struct LibraryHomeData {
     pub photo_count: i64,
@@ -8,6 +10,9 @@ pub struct LibraryHomeData {
     pub edited: Vec<Photo>,
     pub favorites: Vec<Photo>,
     pub albums: Vec<(Album, Option<Photo>)>,
+    /// Independent album shelf, not limited to classic dashboard preview.
+    pub scrapbook_albums: Vec<(Album, Option<Photo>)>,
+    pub scrapbook_album_id: Option<i64>,
     /// Bounded feature gallery for the paper/scrapbook Library dashboard.
     /// Empty libraries fall back to the same recent-photo preview data.
     pub scrapbook_photos: Vec<Photo>,
@@ -17,6 +22,14 @@ pub struct LibraryHomeData {
 
 /// Bounded, database-only queries. No source availability probes or scans.
 pub fn library_home_data(connection: &Connection) -> Result<LibraryHomeData> {
+    library_home_data_for_album(connection, None)
+}
+
+/// The scrapbook row reloads independently of other navigation destinations.
+pub fn library_home_data_for_album(
+    connection: &Connection,
+    selected_album_id: Option<i64>,
+) -> Result<LibraryHomeData> {
     let added = {
         let mut query = connection.prepare(
             "SELECT p.id,p.path,p.folder_id,p.taken_at,p.camera,CAST(p.aperture AS REAL),p.width,p.height,p.size_bytes,p.mtime,p.added_at,p.rotation,p.edit_recipe,p.favorite,p.rating,p.trashed,f.path,p.lens,p.shutter_speed,p.iso,p.focal_length,p.exposure_bias
@@ -71,9 +84,38 @@ pub fn library_home_data(connection: &Connection) -> Result<LibraryHomeData> {
                 Ok((album, cover))
             })
             .collect::<Result<Vec<_>>>()?;
-    let featured = albums.iter()
-        .filter(|(album, _)| album.photo_count > 0)
-        .max_by_key(|(album, _)| album.photo_count)
+    // Keep classic Library previews bounded while offering the Scrapbook
+    // shelf its own horizontally scrollable collection of album covers.
+    let mut scrapbook_albums = Vec::new();
+    for album in crate::db::albums(connection)?
+        .into_iter()
+        .take(SCRAPBOOK_ALBUM_LIMIT as usize)
+    {
+        let cover = album.cover_photo_id
+            .map(|id| photo(connection, id))
+            .transpose()?
+            .flatten()
+            .filter(|photo| !photo.trashed);
+        let cover = if cover.is_some() {
+            cover
+        } else {
+            let id = connection.query_row(
+                "SELECT p.id FROM album_photos ap JOIN photos p ON p.id=ap.photo_id
+                 WHERE ap.album_id=?1 AND p.trashed=0
+                 ORDER BY p.taken_at IS NULL,p.taken_at DESC,p.path COLLATE NOCASE
+                 LIMIT 1",
+                [album.id],
+                |row| row.get::<_, i64>(0),
+            ).optional()?;
+            id.map(|id| photo(connection, id)).transpose()?.flatten()
+        };
+        scrapbook_albums.push((album, cover));
+    }
+    let featured = selected_album_id
+        .and_then(|id| scrapbook_albums.iter().find(|(album, _)| album.id == id))
+        .or_else(|| scrapbook_albums.iter()
+            .filter(|(album, _)| album.photo_count > 0)
+            .max_by_key(|(album, _)| album.photo_count))
         .map(|(album, _)| (album.id, album.name.clone(), album.photo_count));
     let (scrapbook_photos, scrapbook_title, scrapbook_total) =
         if let Some((album_id, title, count)) = featured {
@@ -85,12 +127,15 @@ pub fn library_home_data(connection: &Connection) -> Result<LibraryHomeData> {
                  ORDER BY p.taken_at IS NULL,p.taken_at DESC,p.path COLLATE NOCASE
                  LIMIT ?2",
             )?;
-            let rows = query.query_map(params![album_id, HOME_PREVIEW_LIMIT + 4], photo_from_row)?;
+            let rows = query.query_map(params![album_id, SCRAPBOOK_STRIP_LIMIT], photo_from_row)?;
             (rows.collect::<rusqlite::Result<Vec<_>>>()?, title, count)
         } else {
             (added.clone(), "Recently Added".to_string(), added.len() as i64)
         };
+    let scrapbook_album_id = featured.map(|(id, _, _)| id);
     Ok(LibraryHomeData {
+        scrapbook_albums,
+        scrapbook_album_id,
         photo_count: connection.query_row("SELECT COUNT(*) FROM photos WHERE trashed=0", [], |r| r.get(0))?,
         favorite_count: connection.query_row("SELECT COUNT(*) FROM photos WHERE trashed=0 AND favorite=1", [], |r| r.get(0))?,
         folder_count: connection.query_row("SELECT COUNT(*) FROM folders WHERE imported_root=1", [], |r| r.get(0))?,

@@ -15,7 +15,9 @@ use std::sync::Arc;
 pub(super) struct ScrapbookDashboard {
     pub root: gtk::Box,
     albums: gtk::Box,
-    photos: gtk::FlowBox,
+    photos: gtk::Box,
+    active_album: Rc<Cell<Option<i64>>>,
+    request_album: Rc<dyn Fn(i64)>,
     title: gtk::Label,
     count: gtk::Label,
     cover: gtk::Picture,
@@ -103,7 +105,12 @@ fn find_create_album(root: &gtk::Widget) -> Option<gtk::Button> {
 }
 
 impl ScrapbookDashboard {
-    pub(super) fn new(navigate: &Navigate, open: &OpenPhoto, database: PathBuf) -> Self {
+    pub(super) fn new(
+        navigate: &Navigate,
+        open: &OpenPhoto,
+        database: PathBuf,
+        request_album: Rc<dyn Fn(i64)>,
+    ) -> Self {
         let root = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         root.add_css_class("scrapbook-only");
         root.add_css_class("scrapbook-dashboard");
@@ -218,16 +225,18 @@ impl ScrapbookDashboard {
         gallery_head.append(&actions);
         gallery.append(&gallery_head);
 
-        let photos = gtk::FlowBox::new();
+        let photos = gtk::Box::new(gtk::Orientation::Horizontal, 10);
         photos.add_css_class("scrapbook-photo-grid");
-        photos.set_selection_mode(gtk::SelectionMode::None);
-        photos.set_min_children_per_line(1);
-        photos.set_max_children_per_line(8);
-        photos.set_homogeneous(false);
-        photos.set_row_spacing(9);
-        photos.set_column_spacing(9);
+        photos.set_halign(gtk::Align::Start);
         photos.set_valign(gtk::Align::Start);
-        gallery.append(&photos);
+        let photos_scroller = gtk::ScrolledWindow::new();
+        photos_scroller.add_css_class("scrapbook-photo-scroller");
+        photos_scroller.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Never);
+        photos_scroller.set_propagate_natural_width(false);
+        photos_scroller.set_propagate_natural_height(true);
+        photos_scroller.set_hexpand(true);
+        photos_scroller.set_child(Some(&photos));
+        gallery.append(&photos_scroller);
         canvas.append(&gallery);
         root.append(&canvas);
 
@@ -294,6 +303,7 @@ impl ScrapbookDashboard {
 
         let dashboard = Self {
             root, albums, photos, title, count, cover, actions,
+            active_album: Rc::new(Cell::new(None)), request_album,
             selected_cover, selected_name, selected_metadata, selected_tags,
             notes, selected_id: Rc::new(Cell::new(None)), note_status,
             inspector_actions, database, open: open.clone(), navigate: navigate.clone(),
@@ -313,7 +323,17 @@ impl ScrapbookDashboard {
         dashboard
     }
 
+    pub(super) fn active_album(&self) -> Option<i64> {
+        self.active_album.get()
+    }
+
+    pub(super) fn accepts_snapshot(&self, snapshot: &Snapshot) -> bool {
+        self.active_album.get().is_none()
+            || self.active_album.get() == snapshot.data.scrapbook_album_id
+    }
+
     pub(super) fn populate(&self, snapshot: &Snapshot, navigate: &Navigate, open: &OpenPhoto) {
+        self.active_album.set(snapshot.data.scrapbook_album_id);
         while let Some(child) = self.albums.first_child() {
             self.albums.remove(&child);
         }
@@ -323,22 +343,36 @@ impl ScrapbookDashboard {
         while let Some(child) = self.actions.first_child() {
             self.actions.remove(&child);
         }
-        // Use the three populated featured albums, followed by the Create
-        // Album card, as in the approved scrapbook reference. Do not show an
-        // empty album in place of a real collection.
-        let mut featured: Vec<_> = snapshot.data.albums.iter()
-            .filter(|(album, _)| album.photo_count > 0).collect();
-        featured.sort_by(|a, b| b.0.photo_count.cmp(&a.0.photo_count));
-        for (index, (album, photo)) in featured.into_iter().take(3).enumerate() {
+        // The Library album shelf is independent: every available album
+        // scrolls horizontally here. Clicking a cover replaces the strip below.
+        for (index, (album, photo)) in snapshot.data.scrapbook_albums.iter().enumerate() {
             let item = album_tile(
                 &album.name,
                 album.photo_count,
                 photo.as_ref().and_then(|item| snapshot.images.get(&item.id)),
                 index,
             );
-            let navigate = navigate.clone();
             let id = album.id;
-            item.connect_clicked(move |_| navigate(SidebarFilter::Album(id)));
+            if Some(id) == self.active_album.get() {
+                item.add_css_class("scrapbook-active-album");
+            }
+            let dashboard = self.clone();
+            let name = album.name.clone();
+            let count = album.photo_count;
+            item.connect_clicked(move |_| {
+                if dashboard.active_album.get() == Some(id) {
+                    return;
+                }
+                dashboard.active_album.set(Some(id));
+                dashboard.selected_id.set(None);
+                dashboard.title.set_text(&name);
+                dashboard.count.set_text(&format!("{count} photos"));
+                while let Some(child) = dashboard.photos.first_child() {
+                    dashboard.photos.remove(&child);
+                }
+                dashboard.photos.append(&add_sheet("Loading album photos…", "scrapbook-empty"));
+                (dashboard.request_album)(id);
+            });
             self.albums.append(&item);
         }
 
@@ -369,16 +403,14 @@ impl ScrapbookDashboard {
 
         self.title.set_label(&snapshot.data.scrapbook_title);
         self.count.set_label(&format!("{} photos", snapshot.data.scrapbook_total));
-        let id = snapshot.data.albums.iter()
-            .find(|(album, _)| album.name == snapshot.data.scrapbook_title)
-            .map(|(album, _)| album.id);
+        let id = snapshot.data.scrapbook_album_id;
         self.actions.append(&section_button(
             "View photos",
             id.map(SidebarFilter::Album).unwrap_or(SidebarFilter::All),
             navigate,
         ));
 
-        let feature_photo = snapshot.data.albums.iter()
+        let feature_photo = snapshot.data.scrapbook_albums.iter()
             .find(|(album, _)| Some(album.id) == id)
             .and_then(|(_, photo)| photo.as_ref())
             .or_else(|| snapshot.data.scrapbook_photos.first());
@@ -425,10 +457,10 @@ impl ScrapbookDashboard {
                 }
             });
             tile.add_controller(gesture);
-            self.photos.insert(&tile, -1);
+            self.photos.append(&tile);
         }
         if snapshot.data.scrapbook_photos.is_empty() {
-            self.photos.insert(&add_sheet("No photos yet. Import some to start your scrapbook!", "scrapbook-empty"), -1);
+            self.photos.append(&add_sheet("This album has no photos yet.", "scrapbook-empty"));
         } else {
             let selected = snapshot.data.scrapbook_photos.iter()
                 .find(|photo| Some(photo.id) == self.selected_id.get())

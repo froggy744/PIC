@@ -15,6 +15,22 @@ pub fn scrapbook_details(connection: &Connection, photo_id: i64) -> Result<(Vec<
     Ok((serde_json::from_str::<Vec<String>>(&tags).unwrap_or_default(), note))
 }
 
+/// Existing tags from the entire library, deduplicated case-insensitively.
+/// Used as autocomplete suggestions in every photo inspector.
+pub fn scrapbook_existing_tags(connection: &Connection) -> Result<Vec<String>> {
+    let mut statement = connection.prepare(
+        "SELECT MIN(TRIM(CAST(jt.value AS TEXT))) AS tag
+         FROM scrapbook_details sd
+         JOIN json_each(CASE WHEN json_valid(sd.tags) THEN sd.tags ELSE '[]' END) jt
+         WHERE jt.type='text' AND LENGTH(TRIM(jt.value)) BETWEEN 1 AND 40
+         GROUP BY LOWER(TRIM(jt.value))
+         ORDER BY LOWER(tag)
+         LIMIT 200"
+    )?;
+    let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+}
+
 pub fn scrapbook_add_tag(connection: &Connection, photo_id: i64, new_tag: &str) -> Result<()> {
     let tag = new_tag.trim();
     if tag.is_empty() || tag.chars().count() > 40 {
@@ -68,11 +84,15 @@ mod scrapbook_detail_tests {
         assert_eq!(scrapbook_details(&connection, 1).unwrap(), (Vec::new(), String::new()));
         scrapbook_add_tag(&connection, 1, "Family").unwrap();
         scrapbook_add_tag(&connection, 1, "family").unwrap();
+        scrapbook_add_tag(&connection, 1, "Holiday").unwrap();
+        assert_eq!(scrapbook_existing_tags(&connection).unwrap(), vec![
+            "Family".to_string(), "Holiday".to_string()
+        ]);
         scrapbook_set_note(&connection, 1, "Beach day").unwrap();
         assert_eq!(scrapbook_details(&connection, 1).unwrap(),
-            (vec!["Family".to_string()], "Beach day".to_string()));
+            (vec!["Family".to_string(), "Holiday".to_string()], "Beach day".to_string()));
         scrapbook_remove_tag(&connection, 1, "Family").unwrap();
-        assert!(scrapbook_details(&connection, 1).unwrap().0.is_empty());
+        assert_eq!(scrapbook_details(&connection, 1).unwrap().0, vec!["Holiday".to_string()]);
         connection.execute("DELETE FROM photos WHERE id=1", []).unwrap();
         assert!(connection.query_row(
             "SELECT 1 FROM scrapbook_details WHERE photo_id=1", [], |_| Ok(())

@@ -204,6 +204,8 @@ fn home_page_sections_navigation_and_favorite_refresh() {
                 opened.borrow_mut().push((photos[index].id(), edited))
             })
         },
+        Rc::new(|_| {}),
+        Rc::new(|_| {}),
     );
     let window = gtk::Window::new();
     window.set_default_size(900, 700);

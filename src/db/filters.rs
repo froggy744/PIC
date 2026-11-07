@@ -32,9 +32,11 @@ pub enum Field {
     Metadata,
     /// The imported folder a photo belongs to, derived from `photos.folder_id`.
     SourceFolder,
+    /// User-authored tags are stored in scrapbook_details for every photo.
+    Tags,
 }
 impl Field {
-    pub const ALL: [Self; 22] = [
+    pub const ALL: [Self; 23] = [
         Self::Camera,
         Self::CameraMake,
         Self::Lens,
@@ -57,6 +59,7 @@ impl Field {
         Self::Edited,
         Self::Metadata,
         Self::SourceFolder,
+        Self::Tags,
     ];
     pub fn label(self) -> &'static str {
         match self {
@@ -82,6 +85,7 @@ impl Field {
             Self::Edited => "Edited",
             Self::Metadata => "EXIF metadata",
             Self::SourceFolder => "Source folder",
+            Self::Tags => "Tags",
         }
     }
     pub fn numeric(self) -> bool {
@@ -121,6 +125,9 @@ impl Field {
             Self::Metadata => "m.has_exif",
             // Both predicate and facet builders provide this join.
             Self::SourceFolder => "sf.path",
+            // Tags are a set, so clauses()/facets() must handle them using
+            // json_each rather than treating the whole array as one value.
+            Self::Tags => "NULL",
         }
     }
     pub fn display(self, value: &str) -> String {
@@ -262,7 +269,19 @@ impl Filters {
             let expr = field.expression();
             let mut or = Vec::new();
             for value in &selection.values {
-                if value == MISSING {
+                if *field == Field::Tags {
+                    if value == MISSING {
+                        or.push("NOT EXISTS (SELECT 1 FROM scrapbook_details sd
+                            JOIN json_each(sd.tags) jt ON 1=1
+                            WHERE sd.photo_id=mp.id)".to_string());
+                    } else {
+                        let n = first + args.len();
+                        args.push(Value::Text(value.clone()));
+                        or.push(format!("EXISTS (SELECT 1 FROM scrapbook_details sd
+                            JOIN json_each(sd.tags) jt ON 1=1
+                            WHERE sd.photo_id=mp.id AND jt.value=?{n})"));
+                    }
+                } else if value == MISSING {
                     or.push(format!("{expr} IS NULL"));
                 } else if *field == Field::SourceFolder {
                     let n = first + args.len();
@@ -363,8 +382,14 @@ pub fn facets(
     } else {
         rating_predicate(&scope.rating, "mp")
     };
-    let expr = field.expression();
-    let sql=format!("SELECT CAST({expr} AS TEXT),COUNT(*) FROM photos mp LEFT JOIN photo_metadata m ON m.photo_id=mp.id LEFT JOIN folders sf ON sf.id=mp.folder_id
+    let expr = if field == Field::Tags { "NULLIF(TRIM(jt.value),'')" } else { field.expression() };
+    let tags_join = if field == Field::Tags {
+        "LEFT JOIN scrapbook_details sd ON sd.photo_id=mp.id
+         LEFT JOIN json_each(CASE WHEN json_valid(sd.tags) THEN sd.tags ELSE '[]' END) jt ON 1=1"
+    } else {
+        ""
+    };
+    let sql=format!("SELECT CAST({expr} AS TEXT),COUNT(DISTINCT mp.id) FROM photos mp LEFT JOIN photo_metadata m ON m.photo_id=mp.id LEFT JOIN folders sf ON sf.id=mp.folder_id {tags_join}
         WHERE mp.trashed=0 AND (?1 IS NULL OR mp.folder_id IN (WITH RECURSIVE descendants(id) AS (
         SELECT id FROM folders WHERE id=?1 UNION ALL SELECT f.id FROM folders f JOIN descendants d ON f.parent_id=d.id) SELECT id FROM descendants))
         AND (?2 IS NULL OR mp.id IN (SELECT photo_id FROM album_photos WHERE album_id=?2))
@@ -490,6 +515,26 @@ mod tests {
         .unwrap();
         c.execute_batch("INSERT INTO album_photos VALUES (1,1),(1,3); UPDATE photos SET rating=3 WHERE id=1; UPDATE photos SET favorite=1 WHERE id=2;").unwrap();
         c
+    }
+
+    #[test]
+    fn tags_are_globally_filterable_and_faceted_per_photo_not_per_json_array() {
+        let c = catalog();
+        scrapbook_add_tag(&c, 1, "Family").unwrap();
+        scrapbook_add_tag(&c, 1, "Holiday").unwrap();
+        scrapbook_add_tag(&c, 2, "Family").unwrap();
+        let rows = facets(&c, &Scope::default(), &Filters::default(), Field::Tags)
+            .unwrap();
+        assert!(rows.iter().any(|row| row.value == "Family" && row.count == 2));
+        assert!(rows.iter().any(|row| row.value == "Holiday" && row.count == 1));
+        let mut f = Filters::default();
+        f.toggle(Field::Tags, "Family".into(), true);
+        assert_eq!(ids(&c, &f), vec![1, 2]);
+        f.toggle(Field::Tags, "Holiday".into(), true);
+        assert_eq!(ids(&c, &f), vec![1, 2]);
+        f.toggle(Field::Tags, "Family".into(), false);
+        assert_eq!(ids(&c, &f), vec![1]);
+        assert_eq!(count_matching(&c, &Scope::default(), &f).unwrap(), 1);
     }
 
     #[test]

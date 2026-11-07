@@ -117,6 +117,7 @@ pub fn library_home_data_for_album(
             .filter(|(album, _)| album.photo_count > 0)
             .max_by_key(|(album, _)| album.photo_count))
         .map(|(album, _)| (album.id, album.name.clone(), album.photo_count));
+    let scrapbook_album_id = featured.as_ref().map(|(id, _, _)| *id);
     let (scrapbook_photos, scrapbook_title, scrapbook_total) =
         if let Some((album_id, title, count)) = featured {
             let mut query = connection.prepare(
@@ -132,7 +133,6 @@ pub fn library_home_data_for_album(
         } else {
             (added.clone(), "Recently Added".to_string(), added.len() as i64)
         };
-    let scrapbook_album_id = featured.map(|(id, _, _)| id);
     Ok(LibraryHomeData {
         scrapbook_albums,
         scrapbook_album_id,

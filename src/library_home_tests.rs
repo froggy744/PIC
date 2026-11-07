@@ -23,6 +23,7 @@ fn home_worker_refreshes_favorites_from_another_connection() {
         .send(HomeRequest {
             database: path.clone(),
             force: true,
+            scrapbook_album_id: None,
         })
         .unwrap();
     let initial = snapshots
@@ -50,6 +51,7 @@ fn home_worker_refreshes_favorites_from_another_connection() {
         .send(HomeRequest {
             database: path.clone(),
             force: false,
+            scrapbook_album_id: None,
         })
         .unwrap();
     let refreshed = snapshots
@@ -72,6 +74,7 @@ fn home_worker_refreshes_favorites_from_another_connection() {
         .send(HomeRequest {
             database: path.clone(),
             force: false,
+            scrapbook_album_id: None,
         })
         .unwrap();
     assert!(snapshots

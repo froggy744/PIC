@@ -305,11 +305,12 @@ impl LibraryHome {
             let pending = pending.clone();
             let requests = requests.clone();
             let database = database.clone();
+            let scrapbook_for_map = scrapbook.clone();
             root.connect_map(move |_| {
                 let request = HomeRequest {
                     database: database.borrow().clone(),
                     force: true,
-                    scrapbook_album_id: scrapbook.active_album(),
+                    scrapbook_album_id: scrapbook_for_map.active_album(),
                 };
                 if !pending.replace(true) && requests.try_send(request).is_err() {
                     pending.set(false);

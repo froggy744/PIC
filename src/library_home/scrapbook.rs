@@ -184,9 +184,12 @@ impl ScrapbookDashboard {
         let cover = gtk::Picture::new();
         cover.set_content_fit(gtk::ContentFit::Cover);
         cover.set_can_shrink(true);
-        cover.set_size_request(1, 1);
-        cover.set_hexpand(true);
-        cover.set_vexpand(true);
+        // GtkFixed does not propagate expand to its children. The actual
+        // album thumbnail must request the same viewport size or the hero
+        // displays only the camera sticker on blank paper.
+        cover.set_size_request(166, 132);
+        cover.set_hexpand(false);
+        cover.set_vexpand(false);
         // Fixed-size clipping avoids portrait album covers increasing the
         // hero height when the user switches albums.
         let photo_stage = gtk::Fixed::new();

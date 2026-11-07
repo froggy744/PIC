@@ -67,7 +67,7 @@ jobs:
       - name: Capture real GTK scrapbook visual fixtures
         run: |
           mkdir -p "$RUNNER_TEMP/scrapbook-visual"
-          xvfb-run -a env GDK_BACKEND=x11 GSK_RENDERER=cairo \
+          xvfb-run -a -s "-screen 0 1920x1080x24" env GDK_BACKEND=x11 GSK_RENDERER=cairo \
             PIC_SCRAPBOOK_SCREENSHOT_DIR="$RUNNER_TEMP/scrapbook-visual" \
             cargo test --locked scrapbook_reference_capture_layout -- --ignored --test-threads=1 --nocapture
       - name: Upload UI verification screenshots

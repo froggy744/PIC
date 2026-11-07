@@ -560,6 +560,13 @@ fn scrapbook_reference_capture_layout() {
             (1366, 768, "scrapbook-1366x768.png"),
         ] {
             window.set_default_size(width, height);
+            // The default Xvfb screen is only 1280 wide. Resize the actual
+            // X11 test window, not merely its GTK default-size hint, so
+            // the two screenshots validate distinct real window sizes.
+            let resized = std::process::Command::new("xdotool")
+                .args(["windowsize", "--sync", &id, &width.to_string(), &height.to_string()])
+                .status().expect("resize test window");
+            assert!(resized.success(), "could not resize GTK screenshot window");
             for _ in 0..35 {
                 while context.pending() { context.iteration(false); }
                 std::thread::sleep(Duration::from_millis(12));
@@ -570,6 +577,13 @@ fn scrapbook_reference_capture_layout() {
                 .status().expect("ImageMagick available");
             assert!(status.success(), "GTK screenshot capture failed");
             assert!(target.is_file(), "missing screenshot");
+            let output = std::process::Command::new("identify")
+                .args(["-format", "%wx%h", target.to_str().unwrap()])
+                .output().expect("ImageMagick identify");
+            assert!(output.status.success());
+            let actual = String::from_utf8_lossy(&output.stdout);
+            assert_eq!(actual, format!("{width}x{height}"),
+                "GTK screenshot was cropped by the virtual desktop");
         }
     }
     // Clicking an album previews it inside the Library. The Full Albums

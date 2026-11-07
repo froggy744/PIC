@@ -94,6 +94,9 @@ fn install_horizontal_wheel(scroller: &gtk::ScrolledWindow) {
         gtk::EventControllerScrollFlags::BOTH_AXES
             | gtk::EventControllerScrollFlags::DISCRETE,
     );
+    // Capture before GtkScrolledWindow's own vertical wheel handler so
+    // a mouse wheel pans this shelf instead of scrolling the Library page.
+    scroll.set_propagation_phase(gtk::PropagationPhase::Capture);
     let adjustment = scroller.hadjustment();
     scroll.connect_scroll(move |_, dx, dy| {
         let delta = if dx.abs() > 0.01 { dx } else { dy };

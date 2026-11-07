@@ -2023,7 +2023,26 @@ fn scrapbook_inspector_extra(
             let entry = gtk::Entry::new();
             entry.set_placeholder_text(Some("e.g. Family, Holiday, Project"));
             entry.set_max_length(40);
-            dialog.set_extra_child(Some(&entry));
+            let selector = gtk::Box::new(gtk::Orientation::Vertical, 7);
+            let existing = db::scrapbook_existing_tags(&context.connection.borrow())
+                .unwrap_or_default();
+            if !existing.is_empty() {
+                let mut labels = vec!["Choose an existing tag…".to_string()];
+                labels.extend(existing);
+                let names: Vec<&str> = labels.iter().map(String::as_str).collect();
+                let dropdown = gtk::DropDown::from_strings(&names);
+                dropdown.set_tooltip_text(Some("Use a tag already assigned to other photos"));
+                let entry_for_dropdown = entry.clone();
+                dropdown.connect_selected_notify(move |dropdown| {
+                    let index = dropdown.selected() as usize;
+                    if let Some(name) = labels.get(index).filter(|_| index > 0) {
+                        entry_for_dropdown.set_text(name);
+                    }
+                });
+                selector.append(&dropdown);
+            }
+            selector.append(&entry);
+            dialog.set_extra_child(Some(&selector));
             dialog.add_response("cancel", "Cancel");
             dialog.add_response("add", "Add tag");
             dialog.set_response_appearance("add", adw::ResponseAppearance::Suggested);

@@ -662,7 +662,30 @@ impl ScrapbookDashboard {
             let entry = gtk::Entry::new();
             entry.set_placeholder_text(Some("Tag name"));
             entry.set_max_length(40);
-            dialog.set_extra_child(Some(&entry));
+            let selector = gtk::Box::new(gtk::Orientation::Vertical, 7);
+            // Both an existing-tag dropdown and free text: no duplicate
+            // spelling required, but new tags are always possible.
+            let existing = db::open_existing(&dashboard.database)
+                .and_then(|connection| db::scrapbook_existing_tags(&connection))
+                .unwrap_or_default();
+            if !existing.is_empty() {
+                let mut labels = vec!["Choose an existing tag…".to_string()];
+                labels.extend(existing);
+                let names: Vec<&str> = labels.iter().map(String::as_str).collect();
+                let dropdown = gtk::DropDown::from_strings(&names);
+                dropdown.add_css_class("scrapbook-existing-tags");
+                dropdown.set_tooltip_text(Some("Reuse a tag already used in PIC"));
+                let entry_for_dropdown = entry.clone();
+                dropdown.connect_selected_notify(move |dropdown| {
+                    let index = dropdown.selected() as usize;
+                    if let Some(name) = labels.get(index).filter(|_| index > 0) {
+                        entry_for_dropdown.set_text(name);
+                    }
+                });
+                selector.append(&dropdown);
+            }
+            selector.append(&entry);
+            dialog.set_extra_child(Some(&selector));
             dialog.add_response("cancel", "Cancel");
             dialog.add_response("add", "Add tag");
             let dashboard_for_response = dashboard.clone();

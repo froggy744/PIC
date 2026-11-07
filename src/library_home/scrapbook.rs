@@ -760,6 +760,7 @@ impl ScrapbookDashboard {
         let album = action_button("Album", "folder-new-symbolic");
         album.set_tooltip_text(Some("Add selected photo to an existing album"));
         let database = self.database.clone();
+        let dashboard_for_album = self.clone();
         album.connect_clicked(move |button| {
             let Ok(connection) = db::open_existing(&database) else { return; };
             let Ok(albums) = db::albums(&connection) else { return; };
@@ -780,14 +781,24 @@ impl ScrapbookDashboard {
                 dialog.add_response("add", "Add Photo");
                 dialog.set_response_appearance("add", libadwaita::ResponseAppearance::Suggested);
                 let database_for_action = database.clone();
+                let dashboard_after_add = dashboard_for_album.clone();
                 dialog.connect_response(Some("add"), move |_, _| {
                     let index = chooser.selected() as usize;
                     if let Some(destination) = albums.get(index) {
                         if let Ok(connection) = db::open_existing(&database_for_action) {
-                            if let Err(error) = db::add_photos_to_album(
+                            match db::add_photos_to_album(
                                 &connection, destination.id, &[photo_id],
                             ) {
-                                eprintln!("PIC Scrapbook: add-to-album failed: {error:#}");
+                                Ok(_) => {
+                                    // Refresh the independent Library shelf
+                                    // rather than navigating to Albums.
+                                    if let Some(active_id) = dashboard_after_add.active_album() {
+                                        (dashboard_after_add.request_album)(active_id);
+                                    }
+                                }
+                                Err(error) => {
+                                    eprintln!("PIC Scrapbook: add-to-album failed: {error:#}");
+                                }
                             }
                         }
                     }

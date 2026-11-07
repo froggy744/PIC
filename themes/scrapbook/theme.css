@@ -1426,7 +1426,6 @@ button.scrapbook-photo-picker-tile:checked {
 }
 .scrapbook-masthead {
   min-height: 184px;
-  max-height: 184px;
 }
 .scrapbook-masthead-photo fixed {
   min-width: 166px;

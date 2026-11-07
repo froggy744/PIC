@@ -325,3 +325,31 @@ button.infobar-selected-thumb:hover {
 
 /* Decoration is opt-in: only the Scrapbook skin reveals this paint overlay. */
 .scrapbook-pin { opacity: 0; }
+
+/* Editable photo tags are metadata shared by every PIC appearance. The
+   scrapbook theme may further decorate these native widgets as stickers. */
+.photo-tags-global {
+  padding: 9px 12px 13px;
+  border-top: 1px solid alpha(@theme_fg_color, .13);
+  color: @theme_fg_color;
+}
+.photo-tags-global .scrapbook-inspector-paper-title {
+  font-size: 14px;
+  font-weight: 650;
+  color: @theme_fg_color;
+}
+.photo-tags-global .scrapbook-tags > flowboxchild {
+  padding: 2px;
+  background: transparent;
+}
+.photo-tags-global .scrapbook-tag-chip,
+.photo-tags-global .scrapbook-tag-add {
+  border-radius: 99px;
+  padding: 4px 8px;
+  color: @theme_fg_color;
+  background: alpha(@theme_fg_color, .07);
+}
+.photo-tags-global .scrapbook-tag-chip:hover,
+.photo-tags-global .scrapbook-tag-add:hover {
+  background: alpha(@accent_bg_color, .16);
+}

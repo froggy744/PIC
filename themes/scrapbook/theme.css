@@ -594,6 +594,7 @@ button, entry, label { letter-spacing: .15px; }
 }
 .scrapbook-checklist-pin {
     margin-top: -18px;
+    min-height: 18px;
     font-size: 24px;
     color: #b35278;
     text-shadow: 0 2px 2px rgba(69,40,42,.26);
@@ -705,6 +706,7 @@ button, entry, label { letter-spacing: .15px; }
     color: #a64d8b;
     text-shadow: 0 3px 4px rgba(64,36,54,.28);
     margin-top: -16px;
+    min-height: 16px;
 }
 .scrapbook-peach .scrapbook-album-pin { color: #c46e69; }
 .scrapbook-sage .scrapbook-album-pin { color: #c79062; }

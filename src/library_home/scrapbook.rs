@@ -289,7 +289,7 @@ impl ScrapbookDashboard {
         // reference's paper/Polaroid/notes column exists even on Library Home.
         let inspector = gtk::Box::new(gtk::Orientation::Vertical, 12);
         inspector.add_css_class("scrapbook-home-inspector");
-        inspector.set_size_request(258, -1);
+        inspector.set_size_request(220, -1);
         inspector.set_valign(gtk::Align::Start);
         // The inspector has independent scrolling: changing photos updates
         // labels but does not jump back to the top, even when Notes is below
@@ -305,7 +305,7 @@ impl ScrapbookDashboard {
         selected_cover.add_css_class("scrapbook-home-inspector-cover");
         selected_cover.set_content_fit(gtk::ContentFit::Cover);
         selected_cover.set_can_shrink(true);
-        selected_cover.set_size_request(228, 154);
+        selected_cover.set_size_request(190, 132);
         inspector.append(&selected_cover);
         let selected_name = gtk::Label::new(Some("Select a photo"));
         selected_name.add_css_class("scrapbook-home-inspector-name");
@@ -334,7 +334,7 @@ impl ScrapbookDashboard {
         note_frame.add_css_class("scrapbook-home-note");
         let note_editor = gtk::TextView::new();
         note_editor.set_wrap_mode(gtk::WrapMode::WordChar);
-        note_editor.set_size_request(224, 70);
+        note_editor.set_size_request(184, 70);
         note_editor.add_css_class("scrapbook-home-note-editor");
         let notes = note_editor.buffer();
         note_frame.append(&note_editor);
@@ -354,18 +354,35 @@ impl ScrapbookDashboard {
         inspector.append(&inspector_actions);
         inspector_scroll.set_child(Some(&inspector));
         split.set_end_child(Some(&inspector_scroll));
-        const INSPECTOR_DIVIDER_KEY: &str = "scrapbook-library-divider-position";
-        let saved = db::open_existing(&database)
+        // Persist the inspector's width, not the paned position: the latter
+        // is the left photo canvas width, so restoring it made the inspector
+        // absorb all remaining space on typical window sizes.
+        const INSPECTOR_WIDTH_KEY: &str = "scrapbook-library-inspector-width";
+        let saved_width = db::open_existing(&database)
             .ok()
-            .and_then(|connection| db::setting(&connection, INSPECTOR_DIVIDER_KEY).ok().flatten())
+            .and_then(|connection| db::setting(&connection, INSPECTOR_WIDTH_KEY).ok().flatten())
             .and_then(|value| value.parse::<i32>().ok());
-        if let Some(position) = saved {
-            split.set_position(position.clamp(460, 2000));
+        if let Some(width) = saved_width {
+            let split_for_map = split.clone();
+            let restored = Rc::new(Cell::new(false));
+            let restored_for_map = restored.clone();
+            split.connect_map(move |_| {
+                if restored_for_map.replace(true) {
+                    return;
+                }
+                let split_for_idle = split_for_map.clone();
+                glib::idle_add_local_once(move || {
+                    let available = split_for_idle.width();
+                    if available > 0 {
+                        let inspector_width = width.clamp(180, 420);
+                        split_for_idle.set_position((available - inspector_width).max(0));
+                    }
+                });
+            });
         }
-        // With no saved position GTK allocates the natural ~258px inspector
-        // width and gives the remaining space to the photo canvas.
-        // Store only after dragging stops instead of writing to SQLite for
-        // every pixel moved. Reopening Library restores this width.
+        // With no saved width GTK allocates the natural ~220px inspector
+        // width. Store the inspector width after dragging stops, rather than
+        // the left canvas position or every intermediate divider position.
         let split_change_generation = Rc::new(Cell::new(0_u64));
         {
             let db_path = database.clone();
@@ -373,14 +390,15 @@ impl ScrapbookDashboard {
             split.connect_position_notify(move |split| {
                 let seq = generation.get().wrapping_add(1);
                 generation.set(seq);
-                let current = split.position();
+                let available = split.width();
+                let current = available - split.position();
                 let db_path = db_path.clone();
                 let generation = generation.clone();
                 glib::timeout_add_local_once(std::time::Duration::from_millis(400), move || {
-                    if generation.get() != seq || current < 460 { return; }
+                    if generation.get() != seq || !(180..=420).contains(&current) { return; }
                     if let Ok(connection) = db::open_existing(&db_path) {
                         let _ = db::set_setting(
-                            &connection, INSPECTOR_DIVIDER_KEY, &current.to_string()
+                            &connection, INSPECTOR_WIDTH_KEY, &current.to_string()
                         );
                     }
                 });

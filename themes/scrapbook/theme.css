@@ -1352,3 +1352,20 @@ popover.menu modelbutton:disabled label,
 .photo-context-item:disabled,
 .photo-context-item:disabled label { color: #93877b; }
 popover separator { background: #dcc8b2; }
+
+/* User-adjustable right photo pane, with a sidebar-style resize divider. */
+paned.scrapbook-library-paned > separator {
+  min-width: 9px;
+  border: 0;
+  border-left: 1px solid #d2b69c;
+  border-right: 1px solid #dfc9b7;
+  background-color: #eee0c9;
+}
+paned.scrapbook-library-paned > separator:hover {
+  background-color: #dab9dc;
+  border-left-color: #a877b1;
+}
+.scrapbook-photo-tile picture {
+  min-height: 124px;
+  max-height: 124px;
+}

@@ -85,6 +85,31 @@ fn photo_texture(image: &Arc<PreviewImage>) -> gtk::gdk::MemoryTexture {
     )
 }
 
+/// Map normal mouse-wheel motion to the horizontal scrollbar while the pointer
+/// is over an album/photo shelf. Trackpads keep horizontal gestures as-is.
+fn install_horizontal_wheel(scroller: &gtk::ScrolledWindow) {
+    let scroll = gtk::EventControllerScroll::new(
+        gtk::EventControllerScrollFlags::BOTH_AXES
+            | gtk::EventControllerScrollFlags::DISCRETE,
+    );
+    let adjustment = scroller.hadjustment();
+    scroll.connect_scroll(move |_, dx, dy| {
+        let delta = if dx.abs() > 0.01 { dx } else { dy };
+        if delta.abs() <= 0.01 { return glib::Propagation::Proceed; }
+        let min = adjustment.lower();
+        let max = (adjustment.upper() - adjustment.page_size()).max(min);
+        if max <= min { return glib::Propagation::Proceed; }
+        let next = (adjustment.value() + delta * 68.0).clamp(min, max);
+        if (next - adjustment.value()).abs() > 0.01 {
+            adjustment.set_value(next);
+            glib::Propagation::Stop
+        } else {
+            glib::Propagation::Proceed
+        }
+    });
+    scroller.add_controller(scroll);
+}
+
 fn set_photo(picture: &gtk::Picture, image: Option<&Arc<PreviewImage>>) {
     picture.set_paintable(image.map(|img| {
         photo_texture(img).upcast::<gtk::gdk::Paintable>()
@@ -201,6 +226,7 @@ impl ScrapbookDashboard {
         album_scroller.set_propagate_natural_width(false);
         album_scroller.set_hexpand(true);
         album_scroller.set_child(Some(&albums));
+        install_horizontal_wheel(&album_scroller);
         canvas.append(&album_scroller);
 
         let gallery = gtk::Box::new(gtk::Orientation::Vertical, 14);
@@ -239,9 +265,20 @@ impl ScrapbookDashboard {
         photos_scroller.set_propagate_natural_height(true);
         photos_scroller.set_hexpand(true);
         photos_scroller.set_child(Some(&photos));
+        install_horizontal_wheel(&photos_scroller);
         gallery.append(&photos_scroller);
         canvas.append(&gallery);
-        root.append(&canvas);
+        // A native GTK paned divider allows dragging and keyboard resizing.
+        // Its initial position is intentionally unconstrained by the minimum
+        // photo strip width, matching the adjustable left sidebar behaviour.
+        let split = gtk::Paned::new(gtk::Orientation::Horizontal);
+        split.add_css_class("scrapbook-library-paned");
+        split.set_hexpand(true);
+        split.set_vexpand(true);
+        split.set_wide_handle(true);
+        split.set_shrink_start_child(false);
+        split.set_shrink_end_child(false);
+        split.set_start_child(Some(&canvas));
 
         // The right-hand inspector is part of the Library scrapbook, so the
         // reference's paper/Polaroid/notes column exists even on Library Home.
@@ -302,7 +339,9 @@ impl ScrapbookDashboard {
         let inspector_actions = gtk::Box::new(gtk::Orientation::Horizontal, 7);
         inspector_actions.add_css_class("scrapbook-home-actions");
         inspector.append(&inspector_actions);
-        root.append(&inspector);
+        split.set_end_child(Some(&inspector));
+        split.set_position(940);
+        root.append(&split);
 
         let dashboard = Self {
             root, albums, photos, title, count, cover, actions,
@@ -640,7 +679,7 @@ fn album_tile(
     button
 }
 
-fn photo_tile(name: &str, image: Option<&Arc<PreviewImage>>, favorite: bool, rating: i32, tall: bool) -> gtk::Button {
+fn photo_tile(name: &str, image: Option<&Arc<PreviewImage>>, favorite: bool, rating: i32, _tall: bool) -> gtk::Button {
     let button = gtk::Button::new();
     button.add_css_class("scrapbook-photo-tile");
     button.set_halign(gtk::Align::Start);
@@ -649,7 +688,11 @@ fn photo_tile(name: &str, image: Option<&Arc<PreviewImage>>, favorite: bool, rat
     let frame = gtk::Overlay::new();
     frame.add_css_class("scrapbook-photo-frame");
     let photo = gtk::Picture::new();
-    photo.set_size_request(154, if tall { 175 } else { 116 });
+    // Fixed 124 px display height independent of portrait/landscape ratio.
+    // ContentFit::Cover crops the preview rather than stretching it.
+    photo.set_size_request(154, 124);
+    photo.set_height_request(124);
+    photo.set_vexpand(false);
     photo.set_content_fit(gtk::ContentFit::Cover);
     photo.set_can_shrink(true);
     set_photo(&photo, image);

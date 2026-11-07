@@ -835,27 +835,9 @@
     // Normal sidebar is owned only by OverlaySplitView. Compact sidebar
     // lives in the independent fixed-width dock beside the split.
     left_column.append(&left_header);
-    // Only Scrapbook overlays a hand-drawn leaf sprig. It cannot intercept
-    // pointer gestures, drag separators or navigation clicks.
-    let scrapbook_sidebar_shell = gtk::Overlay::new();
-    scrapbook_sidebar_shell.set_hexpand(true);
-    scrapbook_sidebar_shell.set_vexpand(true);
-    scrapbook_sidebar_shell.set_child(Some(&sidebar));
-    let leaf_asset = crate::css::resolve_runtime_dir(std::path::Path::new("themes"))
-        .join("scrapbook/assets/leaf-corner.svg");
-    let leaves = gtk::Picture::for_filename(leaf_asset);
-    leaves.add_css_class("scrapbook-only");
-    leaves.add_css_class("scrapbook-sidebar-leaf");
-    leaves.set_visible(false);
-    leaves.set_content_fit(gtk::ContentFit::Contain);
-    leaves.set_can_shrink(true);
-    leaves.set_size_request(118, 105);
-    leaves.set_halign(gtk::Align::Start);
-    leaves.set_valign(gtk::Align::End);
-    leaves.set_can_target(false);
-    scrapbook_sidebar_shell.add_overlay(&leaves);
-    scrapbook_sidebar_shell.set_measure_overlay(&leaves, false);
-    left_column.append(&scrapbook_sidebar_shell);
+    // The original leaf artwork is a CSS background *behind* sidebar
+    // labels, not an Overlay child painted over text or hit targets.
+    left_column.append(&sidebar);
     let compact_sidebar_page = gtk::Box::new(gtk::Orientation::Vertical, 0);
     compact_sidebar_page.set_vexpand(true);
     let compact_header = adw::HeaderBar::new();

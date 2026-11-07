@@ -143,6 +143,7 @@ impl ScrapbookDashboard {
 
         let hero = gtk::Box::new(gtk::Orientation::Horizontal, 20);
         hero.add_css_class("scrapbook-masthead");
+        hero.set_height_request(184);
         hero.set_hexpand(true);
         hero.set_valign(gtk::Align::Center);
         let identity = gtk::Box::new(gtk::Orientation::Vertical, 2);
@@ -182,7 +183,13 @@ impl ScrapbookDashboard {
         cover.set_size_request(1, 1);
         cover.set_hexpand(true);
         cover.set_vexpand(true);
-        polaroid.set_child(Some(&cover));
+        // Fixed-size clipping avoids portrait album covers increasing the
+        // hero height when the user switches albums.
+        let photo_stage = gtk::Fixed::new();
+        photo_stage.set_size_request(166, 132);
+        photo_stage.set_overflow(gtk::Overflow::Hidden);
+        photo_stage.put(&cover, 0.0, 0.0);
+        polaroid.set_child(Some(&photo_stage));
         let paper_clip = deco("✦", "scrapbook-hero-sparkle");
         paper_clip.set_halign(gtk::Align::End);
         paper_clip.set_valign(gtk::Align::Start);
@@ -280,7 +287,15 @@ impl ScrapbookDashboard {
         let inspector = gtk::Box::new(gtk::Orientation::Vertical, 12);
         inspector.add_css_class("scrapbook-home-inspector");
         inspector.set_size_request(258, -1);
-        inspector.set_valign(gtk::Align::Fill);
+        inspector.set_valign(gtk::Align::Start);
+        // The inspector has independent scrolling: changing photos updates
+        // labels but does not jump back to the top, even when Notes is below
+        // the visible fold.
+        let inspector_scroll = gtk::ScrolledWindow::new();
+        inspector_scroll.add_css_class("scrapbook-inspector-scroller");
+        inspector_scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+        inspector_scroll.set_propagate_natural_height(false);
+        inspector_scroll.set_vexpand(true);
         let selected_header = add_sheet("Selected Photo", "scrapbook-home-inspector-title");
         inspector.append(&selected_header);
         let selected_cover = gtk::Picture::new();
@@ -334,7 +349,8 @@ impl ScrapbookDashboard {
         let inspector_actions = gtk::Box::new(gtk::Orientation::Horizontal, 7);
         inspector_actions.add_css_class("scrapbook-home-actions");
         inspector.append(&inspector_actions);
-        split.set_end_child(Some(&inspector));
+        inspector_scroll.set_child(Some(&inspector));
+        split.set_end_child(Some(&inspector_scroll));
         const INSPECTOR_DIVIDER_KEY: &str = "scrapbook-library-divider-position";
         let saved = db::open_existing(&database)
             .ok()

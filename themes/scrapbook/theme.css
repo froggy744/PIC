@@ -1410,3 +1410,34 @@ button.scrapbook-photo-picker-tile:checked {
   font-size: 17px;
   color: #503a4a;
 }
+
+/* Artwork behind the sidebar's actual text, not a top-layer decoration. */
+.layout-left-column {
+  background-image: url("assets/leaf-corner.svg"), url("assets/paper.svg");
+  background-size: 145px 125px, 480px 480px;
+  background-position: left bottom, left top;
+  background-repeat: no-repeat, repeat;
+}
+.navigation-sidebar {
+  background-image: url("assets/leaf-corner.svg"), url("assets/paper.svg");
+  background-size: 145px 125px, 480px 480px;
+  background-position: left bottom, left top;
+  background-repeat: no-repeat, repeat;
+}
+.scrapbook-masthead {
+  min-height: 184px;
+  max-height: 184px;
+}
+.scrapbook-masthead-photo fixed {
+  min-width: 166px;
+  min-height: 132px;
+}
+.scrapbook-inspector-scroller {
+  background-color: #fff7ed;
+  background-image: url("assets/paper.svg");
+  border-left: 1px solid #d6bfa2;
+}
+.scrapbook-inspector-scroller > viewport {
+  background: transparent;
+}
+.scrapbook-home-inspector { border-left: none; }

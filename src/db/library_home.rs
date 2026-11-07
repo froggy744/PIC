@@ -20,7 +20,8 @@ pub struct LibraryHomeData {
     pub scrapbook_total: i64,
 }
 
-/// Bounded, database-only queries. No source availability probes or scans.
+/// Bounded, database-only queries. Retained as a test helper.
+#[cfg(test)]
 pub fn library_home_data(connection: &Connection) -> Result<LibraryHomeData> {
     library_home_data_for_album(connection, None)
 }

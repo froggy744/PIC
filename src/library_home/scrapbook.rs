@@ -5,7 +5,6 @@ use super::{Navigate, OpenPhoto, PhotoCommand, PreviewImage, Snapshot};
 use crate::{db, photo_object::PhotoObject, sidebar::SidebarFilter};
 use std::cell::Cell;
 use std::path::PathBuf;
-use gtk::prelude::*;
 use gtk4 as gtk;
 use libadwaita::prelude::*;
 use std::rc::Rc;
@@ -34,8 +33,6 @@ pub(super) struct ScrapbookDashboard {
     note_status: gtk::Label,
     inspector_actions: gtk::Box,
     database: PathBuf,
-    open: OpenPhoto,
-    navigate: Navigate,
     edit_photo: PhotoCommand,
     export_photo: PhotoCommand,
 }
@@ -399,7 +396,7 @@ impl ScrapbookDashboard {
             request_album,
             selected_cover, selected_name, selected_metadata, selected_tags,
             notes, selected_id: Rc::new(Cell::new(None)), note_status,
-            inspector_actions, database, open: open.clone(), navigate: navigate.clone(),
+            inspector_actions, database,
             edit_photo, export_photo,
         };
         let dashboard_for_save = dashboard.clone();

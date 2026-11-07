@@ -2,7 +2,6 @@
 //! Searches the entire indexed library, paginates thumbnails and preserves
 //! checked selections across search/pages. No importing, copying or moving.
 use crate::{db, thumbnail, thumbnail_display};
-use gtk::prelude::*;
 use gtk4 as gtk;
 use libadwaita as adw;
 use libadwaita::prelude::*;

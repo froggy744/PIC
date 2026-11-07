@@ -1369,3 +1369,41 @@ paned.scrapbook-library-paned > separator:hover {
   min-height: 124px;
   max-height: 124px;
 }
+
+/* Multi-photo chooser: visually matches the scrapbook photo tiles, while
+   running against the full library instead of a fixed first-500 subset. */
+.scrapbook-picker-grid > flowboxchild,
+.scrapbook-picker-grid > flowboxchild:hover {
+  background: transparent;
+  padding: 3px;
+  border: 0;
+  box-shadow: none;
+}
+button.scrapbook-photo-picker-tile {
+  min-width: 124px;
+  padding: 5px;
+  background: #fffcf5;
+  border: 2px solid #ead5c1;
+  border-radius: 5px;
+  box-shadow: 0 3px 5px rgba(80,55,38,.13);
+  color: #4c3d37;
+}
+button.scrapbook-photo-picker-tile:hover {
+  border-color: #b58cc7;
+  background: #fbf1fc;
+}
+button.scrapbook-photo-picker-tile:checked {
+  border-color: #8052ac;
+  box-shadow: 0 0 0 2px #8052ac;
+  background: #f0def7;
+}
+.scrapbook-picker-name {
+  font-family: "Patrick Hand", "Cantarell", sans-serif;
+  font-size: 14px;
+  color: #534239;
+}
+.scrapbook-picker-count {
+  font-family: "Patrick Hand", "Cantarell", sans-serif;
+  font-size: 17px;
+  color: #503a4a;
+}

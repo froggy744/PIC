@@ -206,6 +206,35 @@ mod home_tests {
         );
     }
 
+
+    #[test]
+    fn scrapbook_selected_album_changes_photo_strip_without_changing_album_list() {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(SCHEMA).unwrap();
+        for id in 1..=6_i64 {
+            c.execute("INSERT INTO photos(id,path,added_at) VALUES (?1,?2,?1)",
+                params![id, format!("/tmp/scrapbook-{id}.jpg")]).unwrap();
+        }
+        let first = create_album(&c, "First").unwrap();
+        let second = create_album(&c, "Second").unwrap();
+        add_photos_to_album(&c, first.id, &[1,2]).unwrap();
+        add_photos_to_album(&c, second.id, &[3,4,5]).unwrap();
+        let before = library_home_data_for_album(&c, Some(first.id)).unwrap();
+        let after = library_home_data_for_album(&c, Some(second.id)).unwrap();
+        assert_eq!(before.scrapbook_album_id, Some(first.id));
+        assert_eq!(before.scrapbook_title, "First");
+        assert_eq!(before.scrapbook_total, 2);
+        assert_eq!(before.scrapbook_photos.iter().map(|p| p.id).collect::<Vec<_>>(), vec![2,1]);
+        assert_eq!(after.scrapbook_album_id, Some(second.id));
+        assert_eq!(after.scrapbook_title, "Second");
+        assert_eq!(after.scrapbook_total, 3);
+        assert_eq!(after.scrapbook_photos.iter().map(|p| p.id).collect::<Vec<_>>(), vec![5,4,3]);
+        assert_eq!(before.scrapbook_albums.len(), 2);
+        assert_eq!(after.scrapbook_albums.len(), 2);
+        // The classic Library album preview remains unchanged by the request.
+        assert_eq!(before.albums.len(), after.albums.len());
+    }
+
     #[test]
     fn home_album_previews_keep_covers_counts_and_empty_albums() {
         let c = Connection::open_in_memory().unwrap();

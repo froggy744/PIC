@@ -296,8 +296,10 @@ impl LibraryHome {
                 };
                 // A pending snapshot is allowed to complete, but the selected
                 // album stays in dashboard state until a matching one arrives.
-                if !pending.replace(true) && requests.try_send(request).is_err() {
-                    pending.set(false);
+                // Allow one album request to queue while an older refresh is
+                // in flight. The dashboard rejects stale response snapshots.
+                if requests.try_send(request).is_ok() {
+                    pending.set(true);
                 }
             }
         })));
@@ -358,7 +360,18 @@ impl LibraryHome {
                         }
                         status.set_visible(false);
                     }
-                    Ok(None) => {}
+                    Ok(None) => {
+                        // A prior periodic no-op refresh may complete while
+                        // the user changes albums. Force the new album query.
+                        if scrapbook_for_tick.album_is_loading() {
+                            let _ = requests_for_tick.try_send(HomeRequest {
+                                database: database_for_tick.borrow().clone(),
+                                force: true,
+                                scrapbook_album_id: scrapbook_for_tick.active_album(),
+                            });
+                            pending_for_tick.set(true);
+                        }
+                    }
                     Err(error) => {
                         status.set_text(&format!("Could not load library: {error}"));
                         status.set_visible(true);

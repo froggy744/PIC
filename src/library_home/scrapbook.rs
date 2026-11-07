@@ -17,6 +17,7 @@ pub(super) struct ScrapbookDashboard {
     albums: gtk::Box,
     photos: gtk::Box,
     active_album: Rc<Cell<Option<i64>>>,
+    album_loading: Rc<Cell<bool>>,
     request_album: Rc<dyn Fn(i64)>,
     title: gtk::Label,
     count: gtk::Label,
@@ -303,7 +304,9 @@ impl ScrapbookDashboard {
 
         let dashboard = Self {
             root, albums, photos, title, count, cover, actions,
-            active_album: Rc::new(Cell::new(None)), request_album,
+            active_album: Rc::new(Cell::new(None)),
+            album_loading: Rc::new(Cell::new(false)),
+            request_album,
             selected_cover, selected_name, selected_metadata, selected_tags,
             notes, selected_id: Rc::new(Cell::new(None)), note_status,
             inspector_actions, database, open: open.clone(), navigate: navigate.clone(),
@@ -327,6 +330,10 @@ impl ScrapbookDashboard {
         self.active_album.get()
     }
 
+    pub(super) fn album_is_loading(&self) -> bool {
+        self.album_loading.get()
+    }
+
     pub(super) fn accepts_snapshot(&self, snapshot: &Snapshot) -> bool {
         self.active_album.get().is_none()
             || self.active_album.get() == snapshot.data.scrapbook_album_id
@@ -334,6 +341,7 @@ impl ScrapbookDashboard {
 
     pub(super) fn populate(&self, snapshot: &Snapshot, navigate: &Navigate, open: &OpenPhoto) {
         self.active_album.set(snapshot.data.scrapbook_album_id);
+        self.album_loading.set(false);
         while let Some(child) = self.albums.first_child() {
             self.albums.remove(&child);
         }
@@ -364,6 +372,7 @@ impl ScrapbookDashboard {
                     return;
                 }
                 dashboard.active_album.set(Some(id));
+                dashboard.album_loading.set(true);
                 dashboard.selected_id.set(None);
                 dashboard.title.set_text(&name);
                 dashboard.count.set_text(&format!("{count} photos"));

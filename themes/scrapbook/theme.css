@@ -1367,7 +1367,10 @@ paned.scrapbook-library-paned > separator:hover {
 }
 .scrapbook-photo-tile picture {
   min-height: 124px;
-  max-height: 124px;
+}
+.scrapbook-photo-frame fixed {
+  min-width: 154px;
+  min-height: 124px;
 }
 
 /* Multi-photo chooser: visually matches the scrapbook photo tiles, while

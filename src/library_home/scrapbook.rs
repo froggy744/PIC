@@ -787,7 +787,13 @@ fn photo_tile(name: &str, image: Option<&Arc<PreviewImage>>, favorite: bool, rat
     photo.set_content_fit(gtk::ContentFit::Cover);
     photo.set_can_shrink(true);
     set_photo(&photo, image);
-    frame.set_child(Some(&photo));
+    // Crop portrait and landscape previews into the same fixed 154 × 124
+    // viewport, without changing their underlying aspect ratio.
+    let crop = gtk::Fixed::new();
+    crop.set_size_request(154, 124);
+    crop.set_overflow(gtk::Overflow::Hidden);
+    crop.put(&photo, 0.0, 0.0);
+    frame.set_child(Some(&crop));
     if favorite {
         let heart = deco("♥", "scrapbook-photo-heart");
         heart.set_halign(gtk::Align::End);

@@ -3684,6 +3684,10 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             };
             edit_space_slot.borrow_mut().take();
             edit_escape_slot.borrow_mut().take();
+            // Only a photo opened from the Library index returns to that
+            // index. Photos, Folders and Albums keep their existing route.
+            let opened_from_library =
+                main_stack.visible_child_name().as_deref() == Some("library");
             lightbox.close();
             let library_scroll_y = gallery.scroll_position();
             while let Some(child) = edit_page.first_child() {
@@ -3728,6 +3732,8 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                             }
                         }
                         main_stack.set_visible_child_name("collage");
+                    } else if opened_from_library {
+                        main_stack.set_visible_child_name("library");
                     } else {
                         main_stack.set_visible_child_name("photos");
                         grid_zoom_syncing.set(true);
@@ -3811,6 +3817,8 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             // collage tile; Done saves and follows the same return path.
             if collage_editing.get() {
                 editor.set_back_label("Back to Collage", "Return to the collage");
+            } else if opened_from_library {
+                editor.set_back_label("Back to Library", "Return to the Library index");
             }
             edit_escape_slot.replace(Some(editor.escape_action_handle()));
             edit_page.append(&editor.root);

@@ -195,7 +195,8 @@ impl ScrapbookDashboard {
         albums.set_valign(gtk::Align::Start);
         let album_scroller = gtk::ScrolledWindow::new();
         album_scroller.add_css_class("scrapbook-album-scroller");
-        album_scroller.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Never);
+        album_scroller.set_policy(gtk::PolicyType::Always, gtk::PolicyType::Never);
+        album_scroller.set_overlay_scrolling(false);
         album_scroller.set_propagate_natural_height(true);
         album_scroller.set_propagate_natural_width(false);
         album_scroller.set_hexpand(true);
@@ -232,7 +233,8 @@ impl ScrapbookDashboard {
         photos.set_valign(gtk::Align::Start);
         let photos_scroller = gtk::ScrolledWindow::new();
         photos_scroller.add_css_class("scrapbook-photo-scroller");
-        photos_scroller.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Never);
+        photos_scroller.set_policy(gtk::PolicyType::Always, gtk::PolicyType::Never);
+        photos_scroller.set_overlay_scrolling(false);
         photos_scroller.set_propagate_natural_width(false);
         photos_scroller.set_propagate_natural_height(true);
         photos_scroller.set_hexpand(true);

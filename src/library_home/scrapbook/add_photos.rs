@@ -5,6 +5,7 @@ use crate::db;
 use gtk::prelude::*;
 use gtk4 as gtk;
 use libadwaita as adw;
+use libadwaita::prelude::*;
 use std::{cell::RefCell, collections::HashSet, path::PathBuf, rc::Rc};
 
 pub(super) fn open(
@@ -43,7 +44,6 @@ pub(super) fn open(
         Some("Add Photos to Album"),
         Some("Select photos from your existing PIC library. Originals are not copied or moved."),
     );
-    dialog.set_default_size(590, 570);
     dialog.add_response("cancel", "Cancel");
     dialog.add_response("add", "Add selected photos");
     dialog.set_response_appearance("add", adw::ResponseAppearance::Suggested);

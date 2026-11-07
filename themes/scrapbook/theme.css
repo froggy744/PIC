@@ -1051,13 +1051,212 @@ button, entry, label { letter-spacing: .15px; }
     padding: 4px 0;
 }
 
-/* Handwriting is decorative, not a replacement for readable file metadata. */
-window { font-family: "Poppins", "Cantarell", sans-serif; }
-.navigation-sidebar row, .search-field, .photo-info-bar,
-.scrapbook-photo-caption, .scrapbook-home-inspector-metadata,
-.scrapbook-note-status {
-    font-family: "Poppins", "Cantarell", sans-serif;
+/* ================================================================
+ * HANDWRITTEN TYPOGRAPHY - enforce on actual GTK label nodes.
+ *
+ * Before this change an end-of-file Poppins override left sidebar
+ * navigation, filenames, preview captions, and info-bar metadata
+ * looking like ordinary GTK widgets. Caveat is for large paper headings;
+ * Patrick Hand is for navigational and descriptive handwriting.
+ * Keep numerals comfortably readable at common 2K scale factors.
+ * ================================================================ */
+window {
+    font-family: "Patrick Hand", "Cantarell", sans-serif;
+    font-size: 16px;
+    color: #3d302e;
 }
-.navigation-sidebar row { font-size: 13px; }
-.photo-info-bar { font-size: 12px; }
-.search-field { font-size: 14px; }
+
+/* Torn-paper headers in the left panel and in every gallery section. */
+.navigation-sidebar .sidebar-section-heading-title,
+.navigation-sidebar .sidebar-primary-section-heading-title,
+.scrapbook-masthead-title,
+.scrapbook-home-inspector-title,
+.scrapbook-home-paper-label,
+.scrapbook-inspector-heading,
+.scrapbook-inspector-paper-title,
+.scrapbook-sheet-heading,
+.scrapbook-create-caption {
+    font-family: "Caveat", "Patrick Hand", cursive;
+    font-weight: 700;
+}
+.navigation-sidebar .sidebar-section-heading-title {
+    font-size: 27px;
+    color: #553451;
+}
+.folder-section-title,
+.section-heading,
+.albums-index-title,
+.home-main-header .title-1,
+.home-section .title-2,
+.scrapbook-gallery-title {
+    font-family: "Caveat", "Patrick Hand", cursive;
+    font-weight: 700;
+    color: #573953;
+    font-size: 25px;
+}
+.scrapbook-gallery-title { font-size: 29px; }
+.scrapbook-album-title {
+    font-family: "Caveat", "Patrick Hand", cursive;
+    font-weight: 700;
+    font-size: 24px;
+}
+
+/* The left navigation was the most obvious remaining default font.
+   Target the child labels, not just a ListBoxRow container. */
+.navigation-sidebar .sidebar-navigation-row label,
+.navigation-sidebar .sidebar-row-content label,
+.navigation-sidebar .sidebar-icon-title label,
+.navigation-sidebar .sidebar-navigation-row .title,
+.navigation-sidebar .sidebar-navigation-row .subtitle,
+.navigation-sidebar .sidebar-navigation-row .dim-label {
+    font-family: "Patrick Hand", "Cantarell", sans-serif;
+    font-size: 18px;
+    font-weight: 400;
+    color: #403331;
+}
+.navigation-sidebar .sidebar-navigation-row:selected label,
+.navigation-sidebar .sidebar-navigation-row.sidebar-scroll-location label {
+    color: #513160;
+}
+.navigation-sidebar .sidebar-navigation-row .sidebar-count,
+.navigation-sidebar label.sidebar-count,
+.navigation-sidebar label.folder-count,
+.navigation-sidebar .folder-count,
+.navigation-sidebar .sidebar-row-trailing label {
+    font-family: "Patrick Hand", "Cantarell", sans-serif;
+    font-size: 15px;
+    color: #89796b;
+    font-weight: 500;
+}
+.navigation-sidebar .sidebar-navigation-row .dim-label:not(.sidebar-count) {
+    font-family: "Patrick Hand", "Cantarell", sans-serif;
+    font-size: 15px;
+}
+.navigation-sidebar .sidebar-section-action,
+.navigation-sidebar .sidebar-section-action label,
+.navigation-sidebar .sidebar-section-tooltip-item,
+.navigation-sidebar .folder-context-action {
+    font-family: "Patrick Hand", "Cantarell", sans-serif;
+    font-size: 16px;
+}
+
+/* Real file names in Grid, Masonry, Photo Wall and folder streams. */
+.thumbnail-filename,
+.photo-grid .thumbnail-filename,
+.folder-photo-flow .thumbnail-filename,
+gridview.section-grid .thumbnail-filename,
+listview.folder-stream .thumbnail-filename,
+.scrapbook-photo-caption,
+.home-card-caption,
+.home-card-caption-secondary {
+    font-family: "Patrick Hand", "Cantarell", sans-serif;
+    font-size: 15px;
+    font-weight: 400;
+    color: #645347;
+}
+.scrapbook-photo-caption { font-size: 16px; }
+.home-card-caption { font-size: 17px; }
+.home-card-caption-secondary { font-size: 14px; color: #79685e; }
+.section-count, .folder-section-count, .albums-home-count {
+    font-family: "Patrick Hand", "Cantarell", sans-serif;
+    font-size: 16px;
+    color: #79675a;
+}
+
+/* Search bar: readable handwritten placeholder and typed text. */
+.search-field,
+.search-field entry,
+.search-field .unified-search-entry,
+entry.unified-search-entry,
+entry.unified-search-entry text,
+.search-field label {
+    font-family: "Patrick Hand", "Cantarell", sans-serif;
+    font-size: 18px;
+    font-weight: 400;
+    color: #443831;
+}
+.search-field { min-height: 37px; }
+
+/* Bottom metadata dock, including labels AND values (previously Poppins). */
+.photo-info-bar,
+.photo-info-bar label,
+.photo-info-bar .info-title,
+.photo-info-bar .metric-key,
+.photo-info-bar .metric-val,
+.photo-info-bar .infobar-selection-count {
+    font-family: "Patrick Hand", "Cantarell", sans-serif;
+    color: #4d3c35;
+}
+.photo-info-bar .info-title {
+    font-size: 16px;
+    font-weight: 650;
+}
+.photo-info-bar .metric-val {
+    font-size: 15px;
+    font-weight: 600;
+}
+.photo-info-bar .metric-key {
+    font-size: 13px;
+    font-weight: 400;
+    color: #928170;
+}
+.photo-info-bar .infobar-selection-count { font-size: 16px; }
+.photo-info-bar button label {
+    font-family: "Patrick Hand", "Cantarell", sans-serif;
+    font-size: 15px;
+}
+
+/* Paper inspector: both the permanent Library column and the photo pane. */
+.scrapbook-home-inspector-name,
+.scrapbook-home-inspector-metadata,
+.scrapbook-home-inspector-metadata label,
+.scrapbook-inspector-metadata,
+.scrapbook-inspector-metadata label,
+.scrapbook-inspector-metadata .caption,
+.scrapbook-inspector-metadata .dim-label,
+.scrapbook-inspector-location,
+.scrapbook-inspector-location label {
+    font-family: "Patrick Hand", "Cantarell", sans-serif;
+    font-size: 16px;
+    color: #54443a;
+}
+.scrapbook-home-inspector-name { font-size: 18px; font-weight: 600; color: #362b2a; }
+.scrapbook-inspector-metadata .dim-label { color: #9a8371; }
+.scrapbook-inspector-location label { font-size: 14px; }
+.scrapbook-note-status,
+.scrapbook-home-note-editor,
+.scrapbook-home-note-editor text,
+.scrapbook-note-edit,
+.scrapbook-note-edit text {
+    font-family: "Patrick Hand", "Cantarell", sans-serif;
+    font-size: 16px;
+}
+.scrapbook-note-status { font-size: 13px; }
+.scrapbook-home-action,
+.scrapbook-section-action,
+.scrapbook-tag-chip,
+.scrapbook-tag-add,
+.scrapbook-home-note-save,
+.scrapbook-note-save,
+.scrapbook-inspector-action {
+    font-family: "Patrick Hand", "Cantarell", sans-serif;
+    font-size: 17px;
+}
+
+/* The paper-sticker counts must be big enough to read at 1080p and 2K. */
+.scrapbook-count-sticker {
+    font-family: "Patrick Hand", "Cantarell", sans-serif;
+    font-size: 19px;
+    font-weight: 800;
+    min-width: 29px;
+    min-height: 29px;
+}
+.scrapbook-checklist-line {
+    font-family: "Patrick Hand", "Cantarell", sans-serif;
+    font-size: 17px;
+}
+.scrapbook-album-subtitle {
+    font-family: "Patrick Hand", "Cantarell", sans-serif;
+    font-size: 15px;
+}
+

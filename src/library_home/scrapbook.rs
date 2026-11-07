@@ -736,30 +736,72 @@ impl ScrapbookDashboard {
         while let Some(child) = self.inspector_actions.first_child() {
             self.inspector_actions.remove(&child);
         }
-        let open = gtk::Button::with_label("Open");
-        open.add_css_class("scrapbook-home-action");
-        let open_action = self.open.clone();
-        let object = PhotoObject::from_photo(photo);
-        open.connect_clicked(move |_| open_action(vec![object.clone()], 0, false));
-        self.inspector_actions.append(&open);
-        let albums = gtk::Button::with_label("Albums");
-        albums.add_css_class("scrapbook-home-action");
-        let navigate = self.navigate.clone();
-        albums.connect_clicked(move |_| navigate(SidebarFilter::Albums));
-        self.inspector_actions.append(&albums);
-        let favorite = gtk::Button::with_label(if photo.favorite { "♥ Favourite" } else { "♡ Favourite" });
-        favorite.add_css_class("scrapbook-home-action");
-        let dashboard = self.clone();
-        let toggle = !photo.favorite;
-        let photo_for_update = photo.clone();
-        let image_for_update = image.cloned();
-        favorite.connect_clicked(move |_| {
-            let result = db::open_existing(&dashboard.database)
-                .and_then(|connection| db::set_favorite(&connection, photo_for_update.id, toggle));
-            if let Err(error) = result { eprintln!("PIC scrapbook favourite: {error:#}"); }
-            dashboard.select_photo(&db::Photo { favorite: toggle, ..photo_for_update.clone() }, image_for_update.as_ref());
+        // The Library index owns real photo actions, not navigation
+        // shortcuts disguised as actions. These match the regular inspector:
+        // Edit, Add to Album, Export.
+        let action_button = |label: &str, icon_name: &str| {
+            let button = gtk::Button::new();
+            button.add_css_class("scrapbook-inspector-action");
+            let content = gtk::Box::new(gtk::Orientation::Vertical, 4);
+            content.set_halign(gtk::Align::Center);
+            let icon = gtk::Image::from_icon_name(icon_name);
+            icon.set_pixel_size(21);
+            content.append(&icon);
+            content.append(&gtk::Label::new(Some(label)));
+            button.set_child(Some(&content));
+            button
+        };
+        let edit = action_button("Edit", "document-edit-symbolic");
+        let edit_photo = self.edit_photo.clone();
+        let photo_id = photo.id;
+        edit.connect_clicked(move |_| edit_photo(photo_id));
+        self.inspector_actions.append(&edit);
+
+        let album = action_button("Album", "folder-new-symbolic");
+        album.set_tooltip_text(Some("Add selected photo to an existing album"));
+        let database = self.database.clone();
+        album.connect_clicked(move |button| {
+            let Ok(connection) = db::open_existing(&database) else { return; };
+            let Ok(albums) = db::albums(&connection) else { return; };
+            let albums: Vec<_> = albums.into_iter().collect();
+            let dialog = libadwaita::AlertDialog::new(
+                Some("Add Photo to Album"),
+                Some("Choose the album for this photo. The original file is unchanged."),
+            );
+            let labels: Vec<String> = albums.iter().map(|album| album.name.clone()).collect();
+            if labels.is_empty() {
+                dialog.set_body("No albums exist yet. Create an album in the Library first.");
+                dialog.add_response("ok", "OK");
+            } else {
+                let names: Vec<&str> = labels.iter().map(String::as_str).collect();
+                let chooser = gtk::DropDown::from_strings(&names);
+                dialog.set_extra_child(Some(&chooser));
+                dialog.add_response("cancel", "Cancel");
+                dialog.add_response("add", "Add Photo");
+                dialog.set_response_appearance("add", libadwaita::ResponseAppearance::Suggested);
+                let database_for_action = database.clone();
+                dialog.connect_response(Some("add"), move |_, _| {
+                    let index = chooser.selected() as usize;
+                    if let Some(destination) = albums.get(index) {
+                        if let Ok(connection) = db::open_existing(&database_for_action) {
+                            if let Err(error) = db::add_photos_to_album(
+                                &connection, destination.id, &[photo_id],
+                            ) {
+                                eprintln!("PIC Scrapbook: add-to-album failed: {error:#}");
+                            }
+                        }
+                    }
+                });
+            }
+            let parent = button.root().and_then(|root| root.downcast::<gtk::Window>().ok());
+            dialog.present(parent.as_ref());
         });
-        self.inspector_actions.append(&favorite);
+        self.inspector_actions.append(&album);
+
+        let export = action_button("Export", "document-save-symbolic");
+        let export_photo = self.export_photo.clone();
+        export.connect_clicked(move |_| export_photo(photo_id));
+        self.inspector_actions.append(&export);
     }
 }
 

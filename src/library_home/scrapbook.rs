@@ -342,7 +342,34 @@ impl ScrapbookDashboard {
         inspector_actions.add_css_class("scrapbook-home-actions");
         inspector.append(&inspector_actions);
         split.set_end_child(Some(&inspector));
-        split.set_position(940);
+        const INSPECTOR_DIVIDER_KEY: &str = "scrapbook-library-divider-position";
+        let saved = db::open_existing(&database)
+            .ok()
+            .and_then(|connection| db::setting(&connection, INSPECTOR_DIVIDER_KEY).ok().flatten())
+            .and_then(|value| value.parse::<i32>().ok());
+        split.set_position(saved.unwrap_or(940).clamp(460, 2000));
+        // Store only after dragging stops instead of writing to SQLite for
+        // every pixel moved. Reopening Library restores this width.
+        let split_change_generation = Rc::new(Cell::new(0_u64));
+        {
+            let db_path = database.clone();
+            let generation = split_change_generation.clone();
+            split.connect_position_notify(move |split| {
+                let seq = generation.get().wrapping_add(1);
+                generation.set(seq);
+                let current = split.position();
+                let db_path = db_path.clone();
+                let generation = generation.clone();
+                glib::timeout_add_local_once(std::time::Duration::from_millis(400), move || {
+                    if generation.get() != seq || current < 460 { return; }
+                    if let Ok(connection) = db::open_existing(&db_path) {
+                        let _ = db::set_setting(
+                            &connection, INSPECTOR_DIVIDER_KEY, &current.to_string()
+                        );
+                    }
+                });
+            });
+        }
         root.append(&split);
 
         let dashboard = Self {

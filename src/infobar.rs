@@ -45,6 +45,7 @@ pub struct InfoBar {
     pub more: gtk::Button,
     pub print: gtk::Button,
     overflow_popover: gtk::Popover,
+    properties_button: gtk::Button,
     pub grid_zoom: gtk::Scale,
     pub grid_zoom_reset: gtk::GestureClick,
     has_photo: Rc<Cell<bool>>,
@@ -56,6 +57,9 @@ impl InfoBar {
     /// Toggle the docked photo properties inspector by right-clicking the
     /// metadata region. Left clicks and action buttons remain unaffected.
     pub fn connect_metadata_right_click(&self, toggle: impl Fn() + 'static) {
+        let toggle: Rc<dyn Fn()> = Rc::new(toggle);
+        let toggle_for_button = toggle.clone();
+        self.properties_button.connect_clicked(move |_| toggle_for_button());
         let gesture = gtk::GestureClick::new();
         gesture.set_button(3);
         gesture.connect_pressed(move |gesture, _, _, _| {
@@ -189,6 +193,10 @@ impl InfoBar {
         selection_controls.append(&selection_clear);
         let trailing = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         trailing.append(&selection_controls);
+        let properties_button = gtk::Button::from_icon_name("document-properties-symbolic");
+        configure_action_button(&properties_button);
+        properties_button.set_tooltip_text(Some("Show or hide photo properties"));
+        trailing.append(&properties_button);
         layout.set_end_widget(Some(&trailing));
         let selection_actions = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         selection_actions.set_visible(false);
@@ -782,6 +790,7 @@ impl InfoBar {
             more,
             print,
             overflow_popover,
+            properties_button,
             grid_zoom,
             grid_zoom_reset,
             has_photo,

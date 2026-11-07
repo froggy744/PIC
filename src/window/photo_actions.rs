@@ -5,9 +5,15 @@ thread_local! {
     static DOCKED_PROPERTIES_PANEL: RefCell<Option<gtk::Box>> = RefCell::new(None);
     static DOCKED_PROPERTIES_SPLIT: RefCell<Option<adw::OverlaySplitView>> = RefCell::new(None);
     static DOCKED_PROPERTIES_CONTEXT: RefCell<Option<PhotoActionContext>> = RefCell::new(None);
+    static DOCKED_PROPERTIES_SCROLL_Y: Cell<f64> = const { Cell::new(0.0) };
+    static DOCKED_PROPERTIES_SCROLL_GENERATION: Cell<u64> = const { Cell::new(0) };
+    static DOCKED_PROPERTIES_SCROLL_PENDING: Cell<bool> = const { Cell::new(false) };
     static GALLERY_PROPERTIES_ALLOWED: Cell<bool> = const { Cell::new(false) };
     static LIGHTBOX_PROPERTIES_PANEL: RefCell<Option<gtk::Box>> = RefCell::new(None);
     static LIGHTBOX_PROPERTIES_CONTEXT: RefCell<Option<PhotoActionContext>> = RefCell::new(None);
+    static LIGHTBOX_PROPERTIES_SCROLL_Y: Cell<f64> = const { Cell::new(0.0) };
+    static LIGHTBOX_PROPERTIES_SCROLL_GENERATION: Cell<u64> = const { Cell::new(0) };
+    static LIGHTBOX_PROPERTIES_SCROLL_PENDING: Cell<bool> = const { Cell::new(false) };
     static LIGHTBOX_PROPERTIES_ACTIVE: Cell<bool> = const { Cell::new(false) };
     static INSPECTOR_CLOSE_CSS_INSTALLED: Cell<bool> = const { Cell::new(false) };
     static CONTEXT_MENU_CSS_INSTALLED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
@@ -1493,6 +1499,43 @@ enum PropertiesSurface {
     Lightbox,
 }
 
+fn properties_scroll_state(surface: PropertiesSurface, f: impl FnOnce(&Cell<u64>, &Cell<bool>)) {
+    match surface {
+        PropertiesSurface::Gallery => DOCKED_PROPERTIES_SCROLL_GENERATION.with(|generation| {
+            DOCKED_PROPERTIES_SCROLL_PENDING.with(|pending| f(generation, pending))
+        }),
+        PropertiesSurface::Lightbox => LIGHTBOX_PROPERTIES_SCROLL_GENERATION.with(|generation| {
+            LIGHTBOX_PROPERTIES_SCROLL_PENDING.with(|pending| f(generation, pending))
+        }),
+    }
+}
+
+fn remembered_properties_scroll_y(surface: PropertiesSurface) -> f64 {
+    match surface {
+        PropertiesSurface::Gallery => DOCKED_PROPERTIES_SCROLL_Y.with(Cell::get),
+        PropertiesSurface::Lightbox => LIGHTBOX_PROPERTIES_SCROLL_Y.with(Cell::get),
+    }
+}
+
+fn remember_properties_scroll_y(surface: PropertiesSurface, value: f64) {
+    match surface {
+        PropertiesSurface::Gallery => {
+            DOCKED_PROPERTIES_SCROLL_Y.with(|scroll_y| scroll_y.set(value));
+        }
+        PropertiesSurface::Lightbox => {
+            LIGHTBOX_PROPERTIES_SCROLL_Y.with(|scroll_y| scroll_y.set(value));
+        }
+    }
+}
+
+fn properties_panel_scroll_y(panel: &gtk::Box) -> Option<f64> {
+    panel
+        .first_child()
+        .and_then(|content| content.first_child())
+        .and_then(|scroll| scroll.downcast::<gtk::ScrolledWindow>().ok())
+        .map(|scroll| scroll.vadjustment().value())
+}
+
 fn active_properties_surface() -> PropertiesSurface {
     if LIGHTBOX_PROPERTIES_ACTIVE.with(Cell::get) {
         PropertiesSurface::Lightbox
@@ -1645,8 +1688,15 @@ pub(crate) fn refresh_docked_properties(photo: Option<&crate::photo_object::Phot
             // Keep the inspector open, but do not show stale photo metadata.
             DOCKED_PROPERTIES_PANEL.with(|slot| {
                 if let Some(panel) = slot.borrow().as_ref() {
-                    while let Some(child) = panel.first_child() {
-                        panel.remove(&child);
+                    let mut pending = false;
+                    properties_scroll_state(PropertiesSurface::Gallery, |generation, state| {
+                        pending = state.replace(false);
+                        generation.set(generation.get().wrapping_add(1));
+                    });
+                    if !pending && !panel.has_css_class("properties-empty") {
+                        if let Some(scroll_y) = properties_panel_scroll_y(panel) {
+                            remember_properties_scroll_y(PropertiesSurface::Gallery, scroll_y);
+                        }
                     }
                     let empty = gtk::Box::new(gtk::Orientation::Vertical, 12);
                     empty.set_valign(gtk::Align::Center);
@@ -1666,7 +1716,18 @@ pub(crate) fn refresh_docked_properties(photo: Option<&crate::photo_object::Phot
                     empty.append(&close);
                     empty.append(&title);
                     empty.append(&hint);
-                    panel.append(&empty);
+                    let scroll = panel.first_child()
+                        .and_then(|child| child.first_child())
+                        .and_then(|child| child.downcast::<gtk::ScrolledWindow>().ok());
+                    if let Some(scroll) = scroll {
+                        scroll.set_child(Some(&empty));
+                    } else {
+                        while let Some(child) = panel.first_child() {
+                            panel.remove(&child);
+                        }
+                        panel.append(&empty);
+                    }
+                    panel.add_css_class("properties-empty");
                 }
             });
         },
@@ -1934,10 +1995,65 @@ fn show_properties_dialog_on(
         }
     };
     if let Some(panel) = panel {
-        while let Some(child) = panel.first_child() {
-            panel.remove(&child);
+        let mut pending = false;
+        let mut serial = 0;
+        properties_scroll_state(surface, |generation, state| {
+            pending = state.replace(true);
+            serial = generation.get().wrapping_add(1);
+            generation.set(serial);
+        });
+        let scroll_y = if pending || panel.has_css_class("properties-empty") {
+            remembered_properties_scroll_y(surface)
+        } else {
+            properties_panel_scroll_y(&panel)
+                .unwrap_or_else(|| remembered_properties_scroll_y(surface))
+        };
+        panel.remove_css_class("properties-empty");
+        remember_properties_scroll_y(surface, scroll_y);
+        let existing_scroll = panel.first_child()
+            .and_then(|child| child.first_child())
+            .and_then(|child| child.downcast::<gtk::ScrolledWindow>().ok());
+        let active_scroll = if let Some(existing) = existing_scroll {
+            scroll.set_child(None::<&gtk::Widget>);
+            existing.set_child(Some(&sections));
+            existing
+        } else {
+            while let Some(child) = panel.first_child() {
+                panel.remove(&child);
+            }
+            panel.append(&content);
+            scroll
+        };
+        // The adjustment's range is updated during allocation, after the new
+        // contents are installed. Restore after layout instead of clamping to
+        // the initial empty range.
+        let adjustment = active_scroll.vadjustment();
+        let lower = adjustment.lower();
+        let upper = (adjustment.upper() - adjustment.page_size()).max(lower);
+        if upper > lower {
+            adjustment.set_value(scroll_y.clamp(lower, upper));
         }
-        panel.append(&content);
+        let frames = Cell::new(0_u8);
+        active_scroll.add_tick_callback(move |scroll, _| {
+            let mut current = false;
+            properties_scroll_state(surface, |generation, _| current = generation.get() == serial);
+            if !current {
+                return glib::ControlFlow::Break;
+            }
+            let count = frames.get() + 1;
+            frames.set(count);
+            if count < 2 {
+                return glib::ControlFlow::Continue;
+            }
+            let adjustment = scroll.vadjustment();
+            let lower = adjustment.lower();
+            let upper = (adjustment.upper() - adjustment.page_size()).max(lower);
+            let restored = scroll_y.clamp(lower, upper);
+            adjustment.set_value(restored);
+            remember_properties_scroll_y(surface, restored);
+            properties_scroll_state(surface, |_, pending| pending.set(false));
+            glib::ControlFlow::Break
+        });
         panel.set_visible(true);
         if std::env::var_os("PIC_INSPECTOR_TRACE").is_some() {
             eprintln!(
@@ -1966,30 +2082,12 @@ fn show_properties_dialog_on(
 /// Global photo tags are always available from the Properties inspector,
 /// including outside Scrapbook. Only the extra paper Notes/Actions layout
 /// is skin-specific. The same SQLite tags power the global metadata filter.
-fn scrapbook_inspector_extra(
-    photo: &crate::photo_object::PhotoObject,
-    context: &PhotoActionContext,
-    surface: PropertiesSurface,
-) -> gtk::Box {
-    let root = gtk::Box::new(gtk::Orientation::Vertical, 9);
-    root.add_css_class("photo-tags-global");
-    root.add_css_class("scrapbook-inspector-extra");
-    root.set_visible(true);
-    let photo_id = photo.id();
-    let (tags, note) = db::scrapbook_details(&context.connection.borrow(), photo_id)
+fn populate_properties_tags(tag_rows: &gtk::FlowBox, context: &PhotoActionContext, photo_id: i64) {
+    while let Some(child) = tag_rows.first_child() {
+        tag_rows.remove(&child);
+    }
+    let (tags, _) = db::scrapbook_details(&context.connection.borrow(), photo_id)
         .unwrap_or_default();
-
-    let tags_header = gtk::Label::new(Some("Tags"));
-    tags_header.add_css_class("scrapbook-inspector-paper-title");
-    tags_header.set_halign(gtk::Align::Start);
-    root.append(&tags_header);
-    let tag_rows = gtk::FlowBox::new();
-    tag_rows.add_css_class("scrapbook-tags");
-    tag_rows.set_selection_mode(gtk::SelectionMode::None);
-    tag_rows.set_min_children_per_line(1);
-    tag_rows.set_max_children_per_line(4);
-    tag_rows.set_column_spacing(5);
-    tag_rows.set_row_spacing(5);
     if tags.is_empty() {
         let hint = gtk::Label::new(Some("Add a tag to this photo"));
         hint.add_css_class("scrapbook-tags-empty");
@@ -2000,15 +2098,17 @@ fn scrapbook_inspector_extra(
         chip.add_css_class("scrapbook-tag-chip");
         chip.set_tooltip_text(Some(&format!("Remove tag {tag}")));
         let tag = tag.clone();
-        let photo_for_refresh = photo.clone();
         let context_for_refresh = context.clone();
+        let rows_for_refresh = tag_rows.downgrade();
         chip.connect_clicked(move |_| {
             if let Err(error) = db::scrapbook_remove_tag(
                 &context_for_refresh.connection.borrow(), photo_id, &tag
             ) {
                 eprintln!("PIC Scrapbook: could not remove tag: {error:#}");
             } else {
-                show_properties_dialog_on(&photo_for_refresh, &context_for_refresh, surface);
+                if let Some(rows) = rows_for_refresh.upgrade() {
+                    populate_properties_tags(&rows, &context_for_refresh, photo_id);
+                }
             }
         });
         tag_rows.insert(&chip, -1);
@@ -2017,7 +2117,7 @@ fn scrapbook_inspector_extra(
     add_tag.add_css_class("scrapbook-tag-add");
     {
         let context = context.clone();
-        let photo = photo.clone();
+        let rows_for_dialog = tag_rows.downgrade();
         add_tag.connect_clicked(move |_| {
             let dialog = adw::AlertDialog::new(Some("Add a photo tag"), Some("Keep your scrapbook organised with short tags."));
             let entry = gtk::Entry::new();
@@ -2048,7 +2148,7 @@ fn scrapbook_inspector_extra(
             dialog.set_response_appearance("add", adw::ResponseAppearance::Suggested);
             let connection = context.connection.clone();
             let context_for_response = context.clone();
-            let photo_for_response = photo.clone();
+            let rows_for_response = rows_for_dialog.clone();
             dialog.connect_response(None, move |_, response| {
                 if response == "add" {
                     if let Err(error) = db::scrapbook_add_tag(
@@ -2056,7 +2156,9 @@ fn scrapbook_inspector_extra(
                     ) {
                         eprintln!("PIC Scrapbook: could not add tag: {error:#}");
                     } else {
-                        show_properties_dialog_on(&photo_for_response, &context_for_response, surface);
+                        if let Some(rows) = rows_for_response.upgrade() {
+                            populate_properties_tags(&rows, &context_for_response, photo_id);
+                        }
                     }
                 }
             });
@@ -2065,6 +2167,33 @@ fn scrapbook_inspector_extra(
         });
     }
     tag_rows.insert(&add_tag, -1);
+}
+
+fn scrapbook_inspector_extra(
+    photo: &crate::photo_object::PhotoObject,
+    context: &PhotoActionContext,
+    _surface: PropertiesSurface,
+) -> gtk::Box {
+    let root = gtk::Box::new(gtk::Orientation::Vertical, 9);
+    root.add_css_class("photo-tags-global");
+    root.add_css_class("scrapbook-inspector-extra");
+    root.set_visible(true);
+    let photo_id = photo.id();
+    let (_, note) = db::scrapbook_details(&context.connection.borrow(), photo_id)
+        .unwrap_or_default();
+
+    let tags_header = gtk::Label::new(Some("Tags"));
+    tags_header.add_css_class("scrapbook-inspector-paper-title");
+    tags_header.set_halign(gtk::Align::Start);
+    root.append(&tags_header);
+    let tag_rows = gtk::FlowBox::new();
+    tag_rows.add_css_class("scrapbook-tags");
+    tag_rows.set_selection_mode(gtk::SelectionMode::None);
+    tag_rows.set_min_children_per_line(1);
+    tag_rows.set_max_children_per_line(4);
+    tag_rows.set_column_spacing(5);
+    tag_rows.set_row_spacing(5);
+    populate_properties_tags(&tag_rows, context, photo_id);
     root.append(&tag_rows);
 
     let paper_details = gtk::Box::new(gtk::Orientation::Vertical, 9);
@@ -2130,8 +2259,11 @@ fn scrapbook_inspector_extra(
     edit.connect_clicked(move |_| edit_action(photo_id));
     actions.append(&edit);
     let new_album = make_action("Album", "folder-new-symbolic");
-    let album_action = context.create_album.clone();
-    new_album.connect_clicked(move |_| album_action());
+    let album_context = context.clone();
+    new_album.connect_clicked(move |button| {
+        let ids: Rc<dyn Fn() -> Vec<i64>> = Rc::new(move || vec![photo_id]);
+        show_album_chooser(button.upcast_ref(), album_context.clone(), ids, Rc::new(|| {}));
+    });
     actions.append(&new_album);
     let export = make_action("Export", "document-save-symbolic");
     let export_action = context.export.clone();

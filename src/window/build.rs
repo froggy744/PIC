@@ -3388,7 +3388,6 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     lightbox_properties_panel.add_css_class("background");
     lightbox_properties_panel.add_css_class("scrapbook-inspector");
     lightbox_properties_panel.set_visible(false);
-    gallery_overlay.add_overlay(&lightbox_properties_panel);
     register_lightbox_properties_panel(&lightbox_properties_panel);
     // Index pages and full-surface workspaces are not photo grids: close
     // the inspector on Library Home, Albums Home, Edit and Collage.
@@ -5301,6 +5300,9 @@ fn start_photo_export_single(
     gallery_stack.append(&content);
     gallery_surface.set_child(Some(&gallery_stack));
     gallery_surface.add_overlay(&lightbox.root);
+    // Keep the viewer's Properties panel above the lightbox itself. The
+    // shared InfoBar routes toggles here while the lightbox is active.
+    gallery_surface.add_overlay(&lightbox_properties_panel);
     right_column.append(&right_header);
     right_column.append(&gallery_surface);
     // Allocate the toolbar outside the viewer. An overlay here made Fit

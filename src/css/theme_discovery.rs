@@ -336,6 +336,29 @@ mod tests {
         assert!(skin.pins_color_scheme);
         assert!(!skin.is_base);
         assert!(skin.css.contains("assets/paper.svg"));
+        // The entire Scrapbook UI uses the bundled handwriting faces.
+        // Previously a late Poppins override silently restored system fonts
+        // to the sidebar, filenames, search and metadata.
+        for region in [
+            ".sidebar-navigation-row label",
+            ".sidebar-section-heading-title",
+            ".thumbnail-filename",
+            ".scrapbook-photo-caption",
+            ".search-field",
+            ".photo-info-bar",
+            ".scrapbook-inspector-metadata",
+            ".scrapbook-home-inspector-name",
+        ] {
+            assert!(skin.css.contains(region), "missing scrapbook typography region: {region}");
+        }
+        assert!(skin.css.contains("font-family: \"Caveat\""));
+        assert!(skin.css.contains("font-family: \"Patrick Hand\""));
+        assert!(!skin.css.contains("font-family: \"Poppins\""),
+            "scrapbook may not revert to the old font");
+        for font in ["Caveat-Variable.ttf", "PatrickHand-Regular.ttf"] {
+            assert!(root.join("scrapbook/fonts").join(font).is_file(),
+                "missing bundled scrapbook font {font}");
+        }
         for asset in [
             "paper.svg", "cork.svg", "washi.svg", "leaves.svg",
             "torn-gold.svg", "torn-lilac.svg", "torn-cream.svg",

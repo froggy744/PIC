@@ -1835,7 +1835,7 @@ fn themes_page(
             let mut dark_themes = Vec::new();
             for theme in engine.themes() {
                 match theme.id.as_str() {
-                    "standard" | "PIC-Default" | "PIC-Dark" => main_themes.push(theme),
+                    "standard" | "PIC-Default" | "PIC-Dark" | "scrapbook" => main_themes.push(theme),
                     _ if theme.dark => dark_themes.push(theme),
                     _ => light_themes.push(theme),
                 }
@@ -1844,7 +1844,8 @@ fn themes_page(
                 "standard" => 0,
                 "PIC-Default" => 1,
                 "PIC-Dark" => 2,
-                _ => 3,
+                "scrapbook" => 3,
+                _ => 4,
             });
             light_themes.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
             dark_themes.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));

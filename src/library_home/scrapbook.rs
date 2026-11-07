@@ -14,7 +14,7 @@ use std::sync::Arc;
 #[derive(Clone)]
 pub(super) struct ScrapbookDashboard {
     pub root: gtk::Box,
-    albums: gtk::FlowBox,
+    albums: gtk::Box,
     photos: gtk::FlowBox,
     title: gtk::Label,
     count: gtk::Label,
@@ -177,16 +177,22 @@ impl ScrapbookDashboard {
         title_row.append(&section_button("View all albums", SidebarFilter::Albums, navigate));
         canvas.append(&title_row);
 
-        let albums = gtk::FlowBox::new();
+        // Physical album cards always form one horizontal scrapbook shelf.
+        // FlowBox wrapped the 4th card to a second line on 1366-1550 px,
+        // pushing the photo gallery off-screen. A horizontal scrolling shelf
+        // preserves the reference composition while still working at 1366 px.
+        let albums = gtk::Box::new(gtk::Orientation::Horizontal, 15);
         albums.add_css_class("scrapbook-albums-row");
-        albums.set_selection_mode(gtk::SelectionMode::None);
-        albums.set_min_children_per_line(1);
-        albums.set_max_children_per_line(5);
-        albums.set_homogeneous(false);
-        albums.set_row_spacing(18);
-        albums.set_column_spacing(18);
+        albums.set_halign(gtk::Align::Start);
         albums.set_valign(gtk::Align::Start);
-        canvas.append(&albums);
+        let album_scroller = gtk::ScrolledWindow::new();
+        album_scroller.add_css_class("scrapbook-album-scroller");
+        album_scroller.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Never);
+        album_scroller.set_propagate_natural_height(true);
+        album_scroller.set_propagate_natural_width(false);
+        album_scroller.set_hexpand(true);
+        album_scroller.set_child(Some(&albums));
+        canvas.append(&album_scroller);
 
         let gallery = gtk::Box::new(gtk::Orientation::Vertical, 14);
         gallery.add_css_class("scrapbook-gallery-sheet");
@@ -317,9 +323,13 @@ impl ScrapbookDashboard {
         while let Some(child) = self.actions.first_child() {
             self.actions.remove(&child);
         }
-        // The physical album covers use the library's real cover image and
-        // count; presentation-only pins and badges never change album data.
-        for (index, (album, photo)) in snapshot.data.albums.iter().take(4).enumerate() {
+        // Use the three populated featured albums, followed by the Create
+        // Album card, as in the approved scrapbook reference. Do not show an
+        // empty album in place of a real collection.
+        let mut featured: Vec<_> = snapshot.data.albums.iter()
+            .filter(|(album, _)| album.photo_count > 0).collect();
+        featured.sort_by(|a, b| b.0.photo_count.cmp(&a.0.photo_count));
+        for (index, (album, photo)) in featured.into_iter().take(3).enumerate() {
             let item = album_tile(
                 &album.name,
                 album.photo_count,
@@ -329,7 +339,7 @@ impl ScrapbookDashboard {
             let navigate = navigate.clone();
             let id = album.id;
             item.connect_clicked(move |_| navigate(SidebarFilter::Album(id)));
-            self.albums.insert(&item, -1);
+            self.albums.append(&item);
         }
 
         let add_album = gtk::Button::new();
@@ -355,7 +365,7 @@ impl ScrapbookDashboard {
                 }
             });
         });
-        self.albums.insert(&add_album, -1);
+        self.albums.append(&add_album);
 
         self.title.set_label(&snapshot.data.scrapbook_title);
         self.count.set_label(&format!("{} photos", snapshot.data.scrapbook_total));

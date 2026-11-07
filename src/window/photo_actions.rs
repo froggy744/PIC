@@ -2197,8 +2197,6 @@ fn scrapbook_inspector_extra(
     root.append(&tag_rows);
 
     let paper_details = gtk::Box::new(gtk::Orientation::Vertical, 9);
-    paper_details.add_css_class("scrapbook-only");
-    paper_details.set_visible(crate::window::theme::scrapbook_is_active());
     let notes_header = gtk::Label::new(Some("Notes"));
     notes_header.add_css_class("scrapbook-inspector-paper-title");
     notes_header.set_halign(gtk::Align::Start);
@@ -2235,11 +2233,15 @@ fn scrapbook_inspector_extra(
         });
     }
     paper_details.append(&note_card);
+    root.append(&paper_details);
 
+    let action_section = gtk::Box::new(gtk::Orientation::Vertical, 9);
+    action_section.add_css_class("scrapbook-only");
+    action_section.set_visible(crate::window::theme::scrapbook_is_active());
     let actions_header = gtk::Label::new(Some("Actions"));
     actions_header.add_css_class("scrapbook-inspector-paper-title");
     actions_header.set_halign(gtk::Align::Start);
-    paper_details.append(&actions_header);
+    action_section.append(&actions_header);
     let actions = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     actions.add_css_class("scrapbook-inspector-actions");
     let make_action = |label: &str, icon_name: &str| {
@@ -2269,8 +2271,8 @@ fn scrapbook_inspector_extra(
     let export_action = context.export.clone();
     export.connect_clicked(move |_| export_action());
     actions.append(&export);
-    paper_details.append(&actions);
-    root.append(&paper_details);
+    action_section.append(&actions);
+    root.append(&action_section);
     root
 }
 

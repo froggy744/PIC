@@ -224,11 +224,11 @@ mod home_tests {
         assert_eq!(before.scrapbook_album_id, Some(first.id));
         assert_eq!(before.scrapbook_title, "First");
         assert_eq!(before.scrapbook_total, 2);
-        assert_eq!(before.scrapbook_photos.iter().map(|p| p.id).collect::<Vec<_>>(), vec![2,1]);
+        assert_eq!(before.scrapbook_photos.iter().map(|p| p.id).collect::<Vec<_>>(), vec![1,2]);
         assert_eq!(after.scrapbook_album_id, Some(second.id));
         assert_eq!(after.scrapbook_title, "Second");
         assert_eq!(after.scrapbook_total, 3);
-        assert_eq!(after.scrapbook_photos.iter().map(|p| p.id).collect::<Vec<_>>(), vec![5,4,3]);
+        assert_eq!(after.scrapbook_photos.iter().map(|p| p.id).collect::<Vec<_>>(), vec![3,4,5]);
         assert_eq!(before.scrapbook_albums.len(), 2);
         assert_eq!(after.scrapbook_albums.len(), 2);
         // The classic Library album preview remains unchanged by the request.

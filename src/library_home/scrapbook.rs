@@ -280,6 +280,10 @@ impl ScrapbookDashboard {
         split.set_wide_handle(true);
         split.set_shrink_start_child(false);
         split.set_shrink_end_child(false);
+        // Absorb desktop-width changes in the photo canvas while keeping
+        // the inspector's chosen width stable after the user drags.
+        split.set_resize_start_child(true);
+        split.set_resize_end_child(false);
         split.set_start_child(Some(&canvas));
 
         // The right-hand inspector is part of the Library scrapbook, so the
@@ -347,7 +351,11 @@ impl ScrapbookDashboard {
             .ok()
             .and_then(|connection| db::setting(&connection, INSPECTOR_DIVIDER_KEY).ok().flatten())
             .and_then(|value| value.parse::<i32>().ok());
-        split.set_position(saved.unwrap_or(940).clamp(460, 2000));
+        if let Some(position) = saved {
+            split.set_position(position.clamp(460, 2000));
+        }
+        // With no saved position GTK allocates the natural ~258px inspector
+        // width and gives the remaining space to the photo canvas.
         // Store only after dragging stops instead of writing to SQLite for
         // every pixel moved. Reopening Library restores this width.
         let split_change_generation = Rc::new(Cell::new(0_u64));

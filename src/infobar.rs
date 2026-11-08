@@ -921,7 +921,7 @@ impl InfoBar {
     /// six-thumbnail width. GtkScrolledWindow clips to the width left over
     /// after the toolbar, count and Clear button.
     pub fn set_selected_photos(&self, count: usize, photos: &[PhotoObject]) {
-        if count <= 1 {
+        if count <= 1 || self.collage_active.get() {
             self.show_photo_metadata();
             return;
         }
@@ -1098,6 +1098,9 @@ impl InfoBar {
 
     pub fn set_collage_active(&self, active: bool) {
         self.collage_active.set(active);
+        if active {
+            self.show_photo_metadata();
+        }
         self.view_toggle.set_sensitive(!active);
         self.edit
             .set_sensitive(edit_button_sensitive(self.has_photo.get(), active));

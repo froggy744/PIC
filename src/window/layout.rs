@@ -2360,6 +2360,10 @@
             let visible = stack.visible_child_name();
             let collage_active = visible.as_deref() == Some("collage");
             info.set_collage_active(collage_active);
+            if visible.as_deref() == Some("photos") {
+                let (count, photos) = gallery.selected_photo_preview(SELECTION_INFOBAR_PREVIEW_LIMIT);
+                info.set_selected_photos(count, &photos);
+            }
 
             // A collage -> photos transition may follow an Edit detour, where
             // the shared slider was in the 0..100 photo-zoom range. Restore

@@ -173,6 +173,7 @@ pub(super) struct MetadataPanel {
     indexing: gtk::Box,
     operation_progress: RefCell<Option<Rc<super::OperationProgressUi>>>,
     index_button: gtk::Button,
+    pin_button: gtk::ToggleButton,
     cancel_button: gtk::Button,
     cancel: RefCell<Option<Arc<AtomicBool>>>,
     database: RefCell<Option<std::path::PathBuf>>,
@@ -302,6 +303,15 @@ impl MetadataPanel {
         index_button.set_tooltip_text(Some("Index missing metadata"));
         index_button.update_property(&[gtk::accessible::Property::Label("Index missing metadata")]);
         summary.append(&index_button);
+        let pin_button = gtk::ToggleButton::new();
+        pin_button.set_child(Some(&gtk::Image::from_icon_name("view-pin-symbolic")));
+        pin_button.add_css_class("metadata-filter-utility");
+        pin_button.add_css_class("metadata-filter-pin");
+        pin_button.set_tooltip_text(Some("Keep filters open when navigating"));
+        pin_button.update_property(&[gtk::accessible::Property::Label("Keep filters open when navigating")]);
+        pin_button.set_active(db::setting(&connection.borrow(), "metadata_filter_pinned").ok().flatten().as_deref() == Some("1"));
+        summary.append(&pin_button);
+
         toolbar.append(&summary);
         body.append(&toolbar);
         let explorer_scroll = gtk::ScrolledWindow::new();
@@ -371,6 +381,7 @@ impl MetadataPanel {
             indexing,
             operation_progress: RefCell::new(None),
             index_button,
+            pin_button,
             cancel_button,
             cancel: RefCell::new(None),
             database: RefCell::new(database),
@@ -584,6 +595,12 @@ impl MetadataPanel {
             }
         });
         let weak = Rc::downgrade(&panel);
+        panel.pin_button.connect_toggled(move |button| {
+            if let Some(panel) = weak.upgrade() {
+                let _ = db::set_setting(&panel.connection.borrow(), "metadata_filter_pinned", if button.is_active() { "1" } else { "0" });
+            }
+        });
+        let weak = Rc::downgrade(&panel);
         panel.index_button.connect_clicked(move |_| {
             if let Some(panel) = weak.upgrade() {
                 panel.start_index();
@@ -678,11 +695,12 @@ impl MetadataPanel {
             .replace(Some((page.to_owned(), filter)));
         // Close on entry, rather than forbidding the panel in these views:
         // the user can still explicitly open it after navigating.
-        if page != "photos"
-            || !matches!(
-                filter,
-                sidebar::SidebarFilter::All | sidebar::SidebarFilter::Folder(_)
-            )
+        if !self.pin_button.is_active()
+            && (page != "photos"
+                || !matches!(
+                    filter,
+                    sidebar::SidebarFilter::All | sidebar::SidebarFilter::Folder(_)
+                ))
         {
             self.button.set_active(false);
         }
@@ -690,8 +708,14 @@ impl MetadataPanel {
     }
     fn sync_view(&self) {
         self.button.set_visible(self.workspace_visible.get());
-        let show_panel =
-            self.workspace_visible.get() && self.button.is_active() && !self.lightbox_open.get();
+        let pinned_index = self.pin_button.is_active()
+            && self.navigation_view.borrow().as_ref().is_some_and(|(page, _)| {
+                matches!(page.as_str(), "library" | "albums")
+            });
+        let show_panel = self.workspace_visible.get()
+            && self.button.is_active()
+            && !self.lightbox_open.get()
+            && !pinned_index;
         self.root.set_visible(show_panel);
         let show_all = self.all_button.is_active();
         self.camera_control.set_visible(!show_all);

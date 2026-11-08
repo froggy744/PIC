@@ -44,3 +44,42 @@
 .navigation-sidebar row.sidebar-scroll-location {
     box-shadow: none;
 }
+
+/* Navigation rows form one list; only the selected row receives a fill. */
+.navigation-sidebar row.sidebar-navigation-row:not(:selected) {
+    background: transparent;
+    background-image: none;
+    border: 0;
+    border-radius: 5px;
+    box-shadow: none;
+}
+.navigation-sidebar row.sidebar-navigation-row:not(:selected):hover {
+    background: alpha(@accent_bg_color, 0.12);
+}
+.navigation-sidebar row.sidebar-navigation-row:selected {
+    border-radius: 5px;
+}
+.navigation-sidebar row.sidebar-navigation-row .sidebar-count,
+.navigation-sidebar row.sidebar-navigation-row .folder-count {
+    opacity: 0.85;
+    font-variant-numeric: tabular-nums;
+}
+.navigation-sidebar button.compact-sidebar-button,
+.navigation-sidebar button.compact-sidebar-option {
+    background: transparent;
+    background-image: none;
+    border: 0;
+    border-radius: 5px;
+    box-shadow: none;
+}
+.navigation-sidebar button.compact-sidebar-button:hover,
+.navigation-sidebar button.compact-sidebar-option:hover {
+    background: alpha(@accent_bg_color, 0.12);
+}
+.navigation-sidebar button.compact-sidebar-button:active,
+.navigation-sidebar button.compact-sidebar-option:active {
+    background: alpha(@accent_bg_color, 0.20);
+}
+
+
+.navigation-sidebar button.compact-rating-option { padding-left: 4px; padding-right: 4px; }

@@ -117,6 +117,7 @@ pub fn sidebar_counts(connection: &Connection) -> Result<SidebarCounts> {
         photos,
         favorites,
         recently_added: photos.min(recently_added_limit(connection) as i64),
+        history: connection.query_row("SELECT COUNT(*) FROM recently_edited h JOIN photos p ON p.id = h.photo_id WHERE p.trashed = 0", [], |row| row.get(0))?,
         ratings,
     })
 }

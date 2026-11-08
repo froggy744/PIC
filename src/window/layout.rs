@@ -922,6 +922,7 @@
         button.set_tooltip_text(Some(label));
         let contents = gtk::Box::new(gtk::Orientation::Vertical, 3);
         contents.set_halign(gtk::Align::Center);
+        contents.set_valign(gtk::Align::Center);
         let image = gtk::Image::from_icon_name(icon);
         image.set_pixel_size(18);
         contents.append(&image);
@@ -947,6 +948,7 @@
     folders.set_tooltip_text(Some("Folders"));
     let folder_contents = gtk::Box::new(gtk::Orientation::Vertical, 3);
     folder_contents.set_halign(gtk::Align::Center);
+    folder_contents.set_valign(gtk::Align::Center);
     let folder_icon = gtk::Image::from_icon_name("folder-symbolic");
     folder_icon.set_pixel_size(18);
     folder_contents.append(&folder_icon);
@@ -962,6 +964,7 @@
     shared.set_tooltip_text(Some("Shared"));
     let shared_contents = gtk::Box::new(gtk::Orientation::Vertical, 3);
     shared_contents.set_halign(gtk::Align::Center);
+    shared_contents.set_valign(gtk::Align::Center);
     let shared_icon = gtk::Image::from_icon_name(sidebar::SHARED_ICON_NAME);
     shared_icon.set_pixel_size(sidebar::SHARED_ICON_SIZE);
     shared_contents.append(&shared_icon);
@@ -1468,7 +1471,7 @@
                 if opening {
                     while let Some(child) = inline_list.first_child() { inline_list.remove(&child); }
                     let entries: Vec<(String, sidebar::SidebarFilter)> = match destination {
-                        sidebar::SidebarFilter::Ratings => (1..=5).map(|n| (format!("{} {}", "★".repeat(n as usize), n), sidebar::SidebarFilter::Rating(n))).collect(),
+                        sidebar::SidebarFilter::Ratings => (1..=5).map(|n| (format!("★ {n}"), sidebar::SidebarFilter::Rating(n))).collect(),
                         sidebar::SidebarFilter::Albums => db::albums(&inline_connection.borrow()).unwrap_or_default().into_iter().map(|a| (a.name, sidebar::SidebarFilter::Album(a.id))).collect(),
                         _ => db::folders(&inline_connection.borrow()).unwrap_or_default().into_iter().filter(|f| if is_shared { db::is_remote_path(&f.path) } else { f.imported_root && !db::is_remote_path(&f.path) }).map(|f| (f.name, sidebar::SidebarFilter::Folder(f.id))).collect(),
                     };
@@ -1481,9 +1484,16 @@
                         let item = gtk::Button::with_label(&label);
                         item.add_css_class("flat");
                         item.add_css_class("compact-sidebar-option");
+                        if destination == sidebar::SidebarFilter::Ratings {
+                            item.add_css_class("compact-rating-option");
+                        }
                         if let Some(label) = item.child().and_downcast::<gtk::Label>() {
-                            label.set_xalign(0.0);
-                            option_labels.borrow_mut().push(label.downgrade());
+                            if destination == sidebar::SidebarFilter::Ratings {
+                                label.set_xalign(0.5);
+                            } else {
+                                label.set_xalign(0.0);
+                                option_labels.borrow_mut().push(label.downgrade());
+                            }
                             label.set_ellipsize(gtk::pango::EllipsizeMode::End);
                             label.set_width_chars(1);
                         }
@@ -1532,9 +1542,9 @@
         popover.set_position(gtk::PositionType::Right);
         popover.set_parent(&button);
         let list = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        let mut entries = vec![("All rated photos".to_string(), sidebar::SidebarFilter::Ratings)];
+        let mut entries = vec![("All".to_string(), sidebar::SidebarFilter::Ratings)];
         entries.extend((1..=5_u8).map(|rating| {
-            (format!("{} {}", "★".repeat(rating as usize), rating), sidebar::SidebarFilter::Rating(rating))
+            (format!("★ {rating}"), sidebar::SidebarFilter::Rating(rating))
         }));
         for (name, destination) in entries {
             let item = gtk::Button::with_label(&name);

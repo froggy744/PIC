@@ -238,6 +238,7 @@ pub struct SidebarCounts {
     pub photos: i64,
     pub favorites: i64,
     pub recently_added: i64,
+    pub history: i64,
     pub ratings: [i64; 5],
 }
 

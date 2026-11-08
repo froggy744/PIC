@@ -1493,6 +1493,8 @@ pub fn update_library_counts(scrolled: &gtk::ScrolledWindow, counts: SidebarCoun
         (SidebarFilter::All, counts.photos),
         (SidebarFilter::Favorites, counts.favorites),
         (SidebarFilter::RecentlyAdded, counts.recently_added),
+        (SidebarFilter::Ratings, counts.ratings.iter().sum()),
+        (SidebarFilter::History, counts.history),
     ] {
         let Some(row) = row_for_filter(&list, filter) else {
             continue;
@@ -2359,7 +2361,7 @@ fn populate_library(
         "document-open-recent-symbolic",
         "History",
         None,
-        None,
+        Some(counts.history),
         SidebarFilter::History,
         false,
         on_unavailable,
@@ -2380,7 +2382,17 @@ fn append_rating_section(parent: &gtk::ListBox, counts: [i64; 5], scrolled: &gtk
     header_content.set_margin_bottom(SIDEBAR_ROW_PADDING_Y);
     header_content.set_margin_start(SIDEBAR_CONTENT_INSET);
     header_content.set_margin_end(SIDEBAR_CONTENT_INSET);
-    header_content.append(&sidebar_leading_slot());
+    let indicator = sidebar_action_button(
+        if expanded { "pan-down-symbolic" } else { "pan-end-symbolic" },
+        Some(if expanded { "Collapse" } else { "Expand" }),
+    );
+    let indicator_slot = gtk::Overlay::new();
+    indicator_slot.set_child(Some(&sidebar_leading_slot()));
+    indicator.set_halign(gtk::Align::Center);
+    indicator.set_valign(gtk::Align::Center);
+    indicator.set_visible(false);
+    indicator_slot.add_overlay(&indicator);
+    header_content.append(&indicator_slot);
     let title_area = gtk::Box::new(gtk::Orientation::Horizontal, SIDEBAR_ITEM_SPACING);
     title_area.add_css_class("sidebar-icon-title");
     title_area.set_hexpand(true);
@@ -2390,17 +2402,11 @@ fn append_rating_section(parent: &gtk::ListBox, counts: [i64; 5], scrolled: &gtk
     heading.set_hexpand(true);
     heading.set_ellipsize(gtk::pango::EllipsizeMode::End);
     title_area.append(&heading);
-    title_area.set_tooltip_text(Some("Show all rated photos"));
+    title_area.set_tooltip_text(Some("Show all rated photos; double-click to expand or collapse ratings"));
     header_content.append(&title_area);
-    let indicator = sidebar_action_button(
-        if expanded {
-            "pan-down-symbolic"
-        } else {
-            "pan-end-symbolic"
-        },
-        Some(if expanded { "Collapse" } else { "Expand" }),
-    );
-    header_content.append(&indicator);
+    let (trailing, count) = sidebar_count_column(Some(counts.iter().sum()), None);
+    header_content.append(&trailing);
+    if let Some(count) = count { unsafe { header.set_data(FILTER_COUNT_LABEL_KEY, count) }; }
     header.set_child(Some(&header_content));
     unsafe {
         scrolled.set_data(RATING_HEADER_KEY, header.clone());
@@ -2423,10 +2429,7 @@ fn append_rating_section(parent: &gtk::ListBox, counts: [i64; 5], scrolled: &gtk
         content.set_margin_top(SIDEBAR_ROW_PADDING_Y);
         content.set_margin_bottom(SIDEBAR_ROW_PADDING_Y);
         content.set_margin_start(
-            SIDEBAR_CONTENT_INSET
-                + SIDEBAR_DISCLOSURE_SLOT
-                + SIDEBAR_ICON_SIZE
-                + SIDEBAR_ITEM_SPACING,
+            SIDEBAR_CONTENT_INSET + SIDEBAR_DISCLOSURE_SLOT + SIDEBAR_ITEM_SPACING,
         );
         content.set_margin_end(SIDEBAR_CONTENT_INSET);
         let label = gtk::Label::new(Some(&format!("{} {}", "★".repeat(rating as usize), rating)));
@@ -3870,6 +3873,7 @@ mod tests {
                 favorites: 0,
                 recently_added: 0,
                 ratings: [0; 5],
+                history: 0,
             },
             |_| {},
             noop.clone(),
@@ -4255,6 +4259,7 @@ mod tests {
                 favorites: 2,
                 recently_added: 10,
                 ratings: [1, 2, 3, 4, 5],
+                history: 0,
             },
             &no_args,
             &no_args,
@@ -4269,6 +4274,7 @@ mod tests {
                 favorites: 7,
                 recently_added: 100,
                 ratings: [10, 20, 30, 40, 50],
+                history: 0,
             },
         );
 
@@ -4308,6 +4314,7 @@ mod tests {
                 favorites: 3,
                 recently_added: 15,
                 ratings: [1, 2, 3, 4, 5],
+                history: 0,
             },
             &noop,
             &noop,
@@ -4369,6 +4376,7 @@ mod tests {
                 favorites: 3,
                 recently_added: 15,
                 ratings: [10, 20, 30, 40, 50],
+                history: 0,
             },
         );
         let count = unsafe { row_five.data::<gtk::Label>(FILTER_COUNT_LABEL_KEY).unwrap() };
@@ -4460,6 +4468,7 @@ mod tests {
                 favorites: 0,
                 recently_added: 0,
                 ratings: [0; 5],
+                history: 0,
             },
             |_| {},
             no_args.clone(),

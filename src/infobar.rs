@@ -26,6 +26,8 @@ pub struct InfoBar {
     selection_remove: Rc<RefCell<Option<Rc<dyn Fn(i64)>>>>,
     pub selection_clear: gtk::Button,
     filename: gtk::Label,
+    preview_photo_id: Rc<Cell<i64>>,
+    preview_thumbnail_notify: RefCell<Option<(PhotoObject, glib::SignalHandlerId)>>,
     details: gtk::Box,
     pub favorite: gtk::Button,
     pub rating: gtk::MenuButton,
@@ -275,7 +277,7 @@ impl InfoBar {
         heading.add_css_class("metric-key");
         text.append(&heading);
 
-        let filename = gtk::Label::new(Some("No photo selected"));
+        let filename = gtk::Label::new(None);
         filename.set_xalign(0.0);
         filename.set_ellipsize(gtk::pango::EllipsizeMode::End);
         filename.set_max_width_chars(32);
@@ -895,6 +897,8 @@ impl InfoBar {
             selection_remove,
             selection_clear,
             filename,
+            preview_photo_id: Rc::new(Cell::new(0)),
+            preview_thumbnail_notify: RefCell::new(None),
             details,
             favorite,
             rating,
@@ -929,7 +933,12 @@ impl InfoBar {
     /// six-thumbnail width. GtkScrolledWindow clips to the width left over
     /// after the toolbar, count and Clear button.
     pub fn set_selected_photos(&self, count: usize, photos: &[PhotoObject]) {
-        if count <= 1 || self.collage_active.get() {
+        if count == 0 {
+            self.show_photo_metadata();
+            self.set_photo(None);
+            return;
+        }
+        if count == 1 || self.collage_active.get() {
             self.show_photo_metadata();
             return;
         }
@@ -1142,11 +1151,20 @@ impl InfoBar {
         }
     }
 
+    fn disconnect_preview_thumbnail_notify(&self) {
+        if let Some((photo, handler)) = self.preview_thumbnail_notify.borrow_mut().take() {
+            photo.disconnect(handler);
+        }
+    }
+
     pub fn set_photo(&self, photo: Option<&PhotoObject>) {
         let Some(photo) = photo else {
+            self.disconnect_preview_thumbnail_notify();
+            self.preview_photo_id.set(0);
             self.has_photo.set(false);
-            self.filename.set_text("No photo selected");
-            self.preview.set_icon_name(Some("image-x-generic-symbolic"));
+            self.filename.set_text("");
+            self.preview.set_paintable(gtk::gdk::Paintable::NONE);
+            self.preview.set_icon_name(None);
             self.details.set_visible(false);
             set_metric_values(&self.details, [""; 8]);
             self.favorite.set_sensitive(false);
@@ -1164,23 +1182,32 @@ impl InfoBar {
             return;
         };
 
+        self.disconnect_preview_thumbnail_notify();
+        self.preview_photo_id.set(photo.id());
         self.has_photo.set(true);
         self.filename.set_text(&photo.filename());
 
         let cached = photo.cached_thumbnail_path();
         let existing = cached.as_deref().filter(|path| Path::new(path).is_file());
         if let Some(thumb_path) = existing {
-            if let Some(rotated) = crate::photo_texture::edited_thumbnail(
-                thumb_path,
-                photo.rotation(),
-                &photo.edit_recipe(),
-            ) {
-                self.preview.set_paintable(Some(&rotated));
-            } else {
-                self.preview.set_from_file(Some(thumb_path));
-            }
+            set_info_preview(&self.preview, thumb_path, photo);
         } else {
             self.preview.set_icon_name(Some("image-x-generic-symbolic"));
+            let preview = self.preview.downgrade();
+            let active_id = self.preview_photo_id.clone();
+            let expected_id = photo.id();
+            let handler = photo.connect_notify_local(Some("thumbnail-available"), move |photo, _| {
+                if photo.thumbnail_available() && active_id.get() == expected_id {
+                    if let (Some(preview), Some(path)) = (
+                        preview.upgrade(),
+                        photo.cached_thumbnail_path().filter(|path| Path::new(path).is_file()),
+                    ) {
+                        set_info_preview(&preview, &path, photo);
+                    }
+                }
+            });
+            self.preview_thumbnail_notify
+                .replace(Some((photo.clone(), handler)));
         }
 
         let dimensions = if photo.width() > 0 && photo.height() > 0 {
@@ -1390,6 +1417,18 @@ fn set_metric_values<const N: usize>(details: &gtk::Box, values: [impl AsRef<str
     }
 }
 
+fn set_info_preview(preview: &gtk::Image, path: &str, photo: &PhotoObject) {
+    if let Some(rotated) = crate::photo_texture::edited_thumbnail(
+        path,
+        photo.rotation(),
+        &photo.edit_recipe(),
+    ) {
+        preview.set_paintable(Some(&rotated));
+    } else {
+        preview.set_from_file(Some(path));
+    }
+}
+
 pub(crate) fn format_size(size: i64) -> String {
     if size >= 1_000_000 {
         format!("{:.1} MB", size as f64 / 1_000_000.0)
@@ -1508,6 +1547,37 @@ mod layout_tests {
 
     #[test]
     #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+    fn selected_preview_appears_when_grid_thumbnail_finishes() {
+        gtk::init().unwrap();
+        let info = InfoBar::new();
+        let path = std::env::temp_dir().join(format!(
+            "pic-infobar-preview-{}.png",
+            std::process::id()
+        ));
+        let photo: PhotoObject = glib::Object::builder()
+            .property("id", 777_i64)
+            .property("filename", "preview.png")
+            .property(
+                "cached-thumbnail-path",
+                Some(path.to_string_lossy().to_string()),
+            )
+            .build();
+
+        info.set_photo(Some(&photo));
+        assert_eq!(
+            info.preview.icon_name().as_deref(),
+            Some("image-x-generic-symbolic")
+        );
+
+        image::RgbImage::new(8, 8).save(&path).unwrap();
+        photo.set_thumbnail_available(true);
+        assert!(info.preview.paintable().is_some());
+        assert!(info.preview.icon_name().is_none());
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
     fn multiselection_centers_existing_actions_and_restores_toolbar() {
         gtk::init().unwrap();
         let info = InfoBar::new();
@@ -1616,6 +1686,19 @@ mod layout_tests {
         assert!(info.selection_controls.is_visible());
         info.set_selected_photos(1, &[]);
         assert!(!info.selection_controls.is_visible());
+        assert_eq!(
+            info.metadata_stack.visible_child_name().as_deref(),
+            Some("photo")
+        );
+
+        // Returning from the viewer with an empty gallery selection must
+        // clear its prior photo metadata as well as the selection strip.
+        let last_photo: PhotoObject = glib::Object::new();
+        info.set_photo(Some(&last_photo));
+        info.set_selected_photos(0, &[]);
+        assert!(!info.has_photo.get());
+        assert!(info.filename.text().is_empty());
+        assert!(info.preview.icon_name().is_none());
         assert_eq!(
             info.metadata_stack.visible_child_name().as_deref(),
             Some("photo")

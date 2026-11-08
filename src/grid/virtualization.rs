@@ -327,6 +327,14 @@ impl Gallery {
             return false;
         }
         self.date_browser_save_selection(snapshot);
+        let selection_is_in_subset = indices
+            .iter()
+            .any(|&index| snapshot.selected_ids.contains(&snapshot.photos[index].id()));
+        if !selection_is_in_subset {
+            if let Some(&first) = indices.first() {
+                snapshot.selected_ids.insert(snapshot.photos[first].id());
+            }
+        }
         let photos = indices.iter().map(|&index| snapshot.photos[index].clone()).collect::<Vec<_>>();
         snapshot.shown_ids = photos.iter().map(PhotoObject::id).collect();
         self.date_browser_publish(photos, &snapshot.selected_ids);

@@ -206,6 +206,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     info.set_photo(None);
 
     let selected_photo = Rc::new(RefCell::new(None));
+    let date_browser_overview_visible = Rc::new(Cell::new(false));
 
     let lightbox = Rc::new(Lightbox::new());
     lightbox.root.connect_visible_notify(|root| {
@@ -263,6 +264,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let selected_photo_for_grid = selected_photo.clone();
     let lightbox_for_grid = lightbox.clone();
     let lightbox_for_grid_selection = lightbox.clone();
+    let date_browser_overview_for_grid_selection = date_browser_overview_visible.clone();
     let filter = Rc::new(Cell::new(initial_filter));
     let search_text = Rc::new(RefCell::new(String::new()));
     let search_entry_slot: Rc<RefCell<Option<gtk::SearchEntry>>> = Rc::new(RefCell::new(None));
@@ -594,7 +596,9 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         move |photo| {
             // A hidden gallery refresh must not replace the photo currently
             // displayed by the lightbox or its info bar.
-            if lightbox_for_grid_selection.root.is_visible() {
+            if lightbox_for_grid_selection.root.is_visible()
+                || date_browser_overview_for_grid_selection.get()
+            {
                 return;
             }
             if photo.is_none() {
@@ -694,9 +698,10 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     gallery.connect_selection_preview_changed(SELECTION_INFOBAR_PREVIEW_LIMIT, {
         let info = Rc::downgrade(&info);
         let lightbox = Rc::downgrade(&lightbox);
+        let overview_visible = date_browser_overview_visible.clone();
         move |count, photos| {
             if let (Some(info), Some(lightbox)) = (info.upgrade(), lightbox.upgrade()) {
-                if !lightbox.root.is_visible() {
+                if !lightbox.root.is_visible() && !overview_visible.get() {
                     info.set_selected_photos(count, &photos);
                 }
             }
@@ -2592,6 +2597,29 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let date_browser_slot: Rc<RefCell<Option<date_browser::DateBrowser>>> = Rc::new(RefCell::new(None));
     let date_browser_active = Rc::new(Cell::new(false));
     let date_browser_resume = Rc::new(RefCell::new(None::<(Option<(i32, u32)>, Option<i64>)>));
+    let sync_date_browser_photo_info: Rc<dyn Fn()> = {
+        let gallery = Rc::downgrade(&gallery);
+        let info = Rc::downgrade(&info);
+        let selected_photo = selected_photo.clone();
+        Rc::new(move || {
+            let (Some(gallery), Some(info)) = (gallery.upgrade(), info.upgrade()) else {
+                return;
+            };
+            let (count, photos) = gallery.selected_photo_preview(SELECTION_INFOBAR_PREVIEW_LIMIT);
+            selected_photo.replace(photos.first().cloned());
+            match count {
+                0 => {
+                    info.show_photo_metadata();
+                    info.set_photo(None);
+                }
+                1 => {
+                    info.set_selected_photos(1, &photos);
+                    info.set_photo(photos.first());
+                }
+                _ => info.set_selected_photos(count, &photos),
+            }
+        })
+    };
     let exit_date_browser: Rc<dyn Fn()> = {
         let snapshot = date_browser_snapshot.clone();
         let gallery = gallery.clone();
@@ -2603,10 +2631,23 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         let sort = sort.clone();
         let group_mode = group_mode.clone();
         let search = search_text.clone();
+        let overview_visible = date_browser_overview_visible.clone();
+        let sync_info = sync_date_browser_photo_info.clone();
         Rc::new(move || {
             if !active.replace(false) { return; }
+            overview_visible.set(false);
+            let active_photo_id = gallery.selected_photo_ids(None).first().copied();
             if let Some(snapshot) = snapshot.borrow_mut().take() {
-                gallery.restore_date_browser_snapshot(snapshot);
+                if gallery.restore_date_browser_snapshot(snapshot) {
+                    let selected = active_photo_id
+                        .filter(|photo_id| gallery.photo_objects().iter().any(|photo| photo.id() == *photo_id))
+                        .into_iter()
+                        .collect::<Vec<_>>();
+                    // The calendar's temporary subset may have carried a
+                    // multi-selection. Returning to All Photos keeps only its
+                    // active photo, matching normal gallery focus behavior.
+                    gallery.set_selected_photo_ids(&selected);
+                }
             }
             if let Some(slot) = browser_slot.upgrade() {
                 if let Some(browser) = slot.borrow().as_ref() { browser.root().set_visible(false); }
@@ -2614,6 +2655,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             if let Some(button) = button.upgrade() { button.set_active(false); }
             scroll.set_visible(true);
             apply_gallery_grouping(&gallery, filter.get(), sort.get(), group_mode.get(), search.borrow().is_empty());
+            sync_info();
         })
     };
     date_browser_exit_slot.replace(Some(exit_date_browser.clone()));
@@ -2621,10 +2663,12 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         let snapshot = date_browser_snapshot.clone();
         let browser_slot = Rc::downgrade(&date_browser_slot);
         let active = date_browser_active.clone();
+        let overview_visible = date_browser_overview_visible.clone();
         let button = date_browser_button.downgrade();
         let scroll = gallery_scroll_stack.clone();
         Rc::new(move || {
             if !active.replace(false) { return; }
+            overview_visible.set(false);
             snapshot.borrow_mut().take();
             if let Some(slot) = browser_slot.upgrade() {
                 if let Some(browser) = slot.borrow().as_ref() { browser.root().set_visible(false); }
@@ -2646,13 +2690,17 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             let snapshot = date_browser_snapshot.clone();
             let gallery = gallery.clone();
             let scroll = gallery_scroll_stack.clone();
+            let overview_visible = date_browser_overview_visible.clone();
+            let sync_info = sync_date_browser_photo_info.clone();
             let exit = exit_date_browser.clone();
             Rc::new(move |month| {
+                overview_visible.set(false);
                 let indices = slot.upgrade().and_then(|slot| slot.borrow().as_ref().map(|browser| browser.indices(month)));
                 let mut snapshot = snapshot.borrow_mut();
                 if let (Some(indices), Some(snapshot)) = (indices, snapshot.as_mut()) {
                     if gallery.show_date_browser_subset(snapshot, &indices) {
                         scroll.set_visible(true);
+                        sync_info();
                         return;
                     }
                 }
@@ -2663,7 +2711,17 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         {
             let scroll = gallery_scroll_stack.clone();
             let heading = gallery.group_header.clone();
-            Rc::new(move || { scroll.set_visible(false); heading.set_visible(false); })
+            let overview_visible = date_browser_overview_visible.clone();
+            let info = info.clone();
+            let selected_photo = selected_photo.clone();
+            Rc::new(move || {
+                overview_visible.set(true);
+                selected_photo.replace(None);
+                info.show_photo_metadata();
+                info.set_photo(None);
+                scroll.set_visible(false);
+                heading.set_visible(false);
+            })
         },
         exit_date_browser.clone(),
     );

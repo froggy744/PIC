@@ -21,6 +21,13 @@ fn date_browser_subset_reuses_objects_and_preserves_selection() {
     assert!(gallery.restore_date_browser_snapshot(snapshot));
     assert_eq!(gallery.photo_objects(), photos);
     assert_eq!(gallery.selected_photo_ids(None), vec![1, 2]);
+
+    gallery.selection.unselect_all();
+    let mut empty_snapshot = gallery.date_browser_snapshot().unwrap();
+    assert!(gallery.show_date_browser_subset(&mut empty_snapshot, &[1, 2]));
+    assert_eq!(gallery.selected_photo_ids(None), vec![2]);
+    assert!(gallery.restore_date_browser_snapshot(empty_snapshot));
+
     for layout in [PhotoLayout::PhotoWall, PhotoLayout::Masonry, PhotoLayout::Grid] {
         gallery.set_layout(layout);
         let mut snapshot = gallery.date_browser_snapshot().unwrap();

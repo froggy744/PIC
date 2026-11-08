@@ -1,5 +1,5 @@
 use std::cell::{Cell, RefCell};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use gtk::prelude::*;
@@ -839,6 +839,14 @@ impl InfoBar {
                 // GTK caches label measurements. Only eight small metrics are
                 // considered; no photo I/O or catalog queries run during resize.
                 let mut available = metadata_viewport.width();
+                // The selected photo preview has priority over optional
+                // metadata. Reserve its fixed footprint first so photos with
+                // many populated fields do not lose their thumbnail while
+                // photos with sparse metadata keep showing one.
+                let show_preview = has_photo_for_resize.get() && available >= 56;
+                if show_preview {
+                    available -= 56;
+                }
                 let filename_minimum = 100;
                 let show_text = available >= filename_minimum;
                 text_for_resize.set_visible(show_text);
@@ -872,8 +880,6 @@ impl InfoBar {
                     }
                 }
                 details_for_resize.set_visible(visible_metrics > 0);
-                // Use surplus space for the thumbnail after useful metadata.
-                let show_preview = available >= 56;
                 preview_for_resize.set_visible(show_preview);
             }
             glib::ControlFlow::Continue
@@ -1165,6 +1171,7 @@ impl InfoBar {
             self.filename.set_text("");
             self.preview.set_paintable(gtk::gdk::Paintable::NONE);
             self.preview.set_icon_name(None);
+            self.preview.set_visible(false);
             self.details.set_visible(false);
             set_metric_values(&self.details, [""; 8]);
             self.favorite.set_sensitive(false);
@@ -1187,10 +1194,8 @@ impl InfoBar {
         self.has_photo.set(true);
         self.filename.set_text(&photo.filename());
 
-        let cached = photo.cached_thumbnail_path();
-        let existing = cached.as_deref().filter(|path| Path::new(path).is_file());
-        if let Some(thumb_path) = existing {
-            set_info_preview(&self.preview, thumb_path, photo);
+        if let Some(thumb_path) = existing_info_thumbnail(photo) {
+            set_info_preview(&self.preview, &thumb_path.to_string_lossy(), photo);
         } else {
             self.preview.set_icon_name(Some("image-x-generic-symbolic"));
             let preview = self.preview.downgrade();
@@ -1198,11 +1203,10 @@ impl InfoBar {
             let expected_id = photo.id();
             let handler = photo.connect_notify_local(Some("thumbnail-available"), move |photo, _| {
                 if photo.thumbnail_available() && active_id.get() == expected_id {
-                    if let (Some(preview), Some(path)) = (
-                        preview.upgrade(),
-                        photo.cached_thumbnail_path().filter(|path| Path::new(path).is_file()),
-                    ) {
-                        set_info_preview(&preview, &path, photo);
+                    if let (Some(preview), Some(path)) =
+                        (preview.upgrade(), existing_info_thumbnail(photo))
+                    {
+                        set_info_preview(&preview, &path.to_string_lossy(), photo);
                     }
                 }
             });
@@ -1427,6 +1431,22 @@ fn set_info_preview(preview: &gtk::Image, path: &str, photo: &PhotoObject) {
     } else {
         preview.set_from_file(Some(path));
     }
+}
+
+fn existing_info_thumbnail(photo: &PhotoObject) -> Option<PathBuf> {
+    photo
+        .cached_thumbnail_path()
+        .map(PathBuf::from)
+        .filter(|path| path.is_file())
+        .or_else(|| {
+            crate::thumbnail::existing_cache_path(
+                &photo.path(),
+                Some(photo.mtime()),
+                Some(photo.size_bytes()),
+            )
+            .ok()
+            .flatten()
+        })
 }
 
 pub(crate) fn format_size(size: i64) -> String {

@@ -469,6 +469,9 @@ fn adaptive_metadata_fills_space_without_constraining_resize() {
             if width >= 1600 {
                 assert_eq!(exposure_count, 4);
             }
+            if width >= 800 {
+                assert!(bar.preview.is_visible(), "photo preview hidden at {width}px");
+            }
             if width == 600 {
                 assert!(exposure_count < 4);
             }

@@ -848,7 +848,7 @@ impl InfoBar {
                     available -= 56;
                 }
                 let filename_minimum = 100;
-                let show_text = available >= filename_minimum;
+                let show_text = has_photo_for_resize.get() && available >= filename_minimum;
                 text_for_resize.set_visible(show_text);
                 if show_text {
                     available -= filename_minimum;
@@ -1169,6 +1169,7 @@ impl InfoBar {
             self.preview_photo_id.set(0);
             self.has_photo.set(false);
             self.filename.set_text("");
+            self.filename.set_visible(false);
             self.preview.set_paintable(gtk::gdk::Paintable::NONE);
             self.preview.set_icon_name(None);
             self.preview.set_visible(false);
@@ -1193,6 +1194,7 @@ impl InfoBar {
         self.preview_photo_id.set(photo.id());
         self.has_photo.set(true);
         self.filename.set_text(&photo.filename());
+        self.filename.set_visible(true);
 
         if let Some(thumb_path) = existing_info_thumbnail(photo) {
             set_info_preview(&self.preview, &thumb_path.to_string_lossy(), photo);
@@ -1718,6 +1720,7 @@ mod layout_tests {
         info.set_selected_photos(0, &[]);
         assert!(!info.has_photo.get());
         assert!(info.filename.text().is_empty());
+        assert!(!info.filename.is_visible());
         assert!(info.preview.icon_name().is_none());
         assert_eq!(
             info.metadata_stack.visible_child_name().as_deref(),

@@ -312,33 +312,28 @@ fn show_in_infobar_menu_can_open_and_dismiss_without_changing_options() {
         settle();
         assert!(overflow.is_visible());
         let button_bounds = show_in_infobar.compute_bounds(&window).unwrap();
-        let click = Command::new("xdotool")
-            .args([
-                "mousemove",
-                &format!(
-                    "{}",
-                    (button_bounds.x() + button_bounds.width() / 2.0).round()
-                ),
-                &format!(
-                    "{}",
-                    (button_bounds.y() + button_bounds.height() / 2.0).round()
-                ),
-                "click",
-                "1",
-            ])
-            .status()
-            .unwrap();
-        assert!(click.success());
+        let button_x = format!(
+            "{}",
+            (button_bounds.x() + button_bounds.width() / 2.0).round()
+        );
+        let button_y = format!(
+            "{}",
+            (button_bounds.y() + button_bounds.height() / 2.0).round()
+        );
+        let click_show_in_infobar = || {
+            Command::new("xdotool")
+                .args(["mousemove", &button_x, &button_y, "click", "1"])
+                .status()
+                .unwrap()
+        };
+        assert!(click_show_in_infobar().success());
         settle();
         assert!(choices.is_visible());
+        assert!(overflow.is_visible());
 
-        // Dismiss without activating a visibility option using the same
-        // outside-click path as the application's capture-phase handler.
-        let click = Command::new("xdotool")
-            .args(["mousemove", "20", "20", "click", "1"])
-            .status()
-            .unwrap();
-        assert!(click.success());
+        // Clicking the submenu opener a second time dismisses it without
+        // toggling any visibility choice, matching the reported sequence.
+        assert!(click_show_in_infobar().success());
         settle();
         assert!(!choices.is_visible());
         assert!(!overflow.is_visible());

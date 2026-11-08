@@ -572,6 +572,14 @@ impl InfoBar {
         choices_scroll.set_child(Some(&choices_box));
         choices_popover.set_child(Some(&choices_scroll));
         choices.set_popover(Some(&choices_popover));
+        let overflow_for_choices_close = overflow_popover.downgrade();
+        choices_popover.connect_closed(move |_| {
+            if let Some(overflow) = overflow_for_choices_close.upgrade() {
+                if overflow.is_visible() {
+                    overflow.popdown();
+                }
+            }
+        });
         overflow_box.append(&choices);
 
         let overflow_entries: Vec<(gtk::Widget, gtk::Box)> = [

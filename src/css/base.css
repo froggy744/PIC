@@ -353,3 +353,21 @@ button.infobar-selected-thumb:hover {
 .photo-tags-global .scrapbook-tag-add:hover {
   background: alpha(@accent_bg_color, .16);
 }
+
+/* Photo Properties uses the same surface and restrained section hierarchy as
+   the navigation sidebar. */
+.scrapbook-inspector-page {
+    background: @window_bg_color;
+    color: @window_fg_color;
+}
+.scrapbook-inspector-metadata + .scrapbook-inspector-metadata,
+.scrapbook-inspector-location,
+.properties-section {
+    border-top: 1px solid alpha(@window_fg_color, 0.15);
+    padding-top: 10px;
+    margin-top: 6px;
+}
+.properties-section-heading,
+.photo-tags-global .scrapbook-inspector-paper-title {
+    font-weight: 700;
+}

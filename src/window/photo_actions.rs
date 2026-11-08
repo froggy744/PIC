@@ -1876,7 +1876,7 @@ fn show_properties_dialog_on(
     preview_overlay.add_overlay(&close);
     sections.append(&preview_overlay);
 
-    let image_group = adw::PreferencesGroup::new();
+    let image_group = gtk::Box::new(gtk::Orientation::Vertical, 0);
     image_group.add_css_class("scrapbook-inspector-metadata");
     // No redundant heading above the file metadata rows.
     add_inspector_row(&image_group, "File name", &photo.filename());
@@ -1895,9 +1895,12 @@ fn show_properties_dialog_on(
     add_inspector_row(&image_group, "Rating", &rating_text);
     sections.append(&image_group);
 
-    let camera_group = adw::PreferencesGroup::new();
+    let camera_group = gtk::Box::new(gtk::Orientation::Vertical, 0);
     camera_group.add_css_class("scrapbook-inspector-metadata");
-    camera_group.set_title("Camera");
+    let camera_heading = gtk::Label::new(Some("Camera"));
+    camera_heading.set_xalign(0.0);
+    camera_heading.add_css_class("properties-section-heading");
+    camera_group.append(&camera_heading);
     let mut camera_rows = 0;
     let camera_name = record
         .as_ref()
@@ -1949,8 +1952,8 @@ fn show_properties_dialog_on(
     let folder_icon = gtk::Image::from_icon_name("folder-symbolic");
     folder_icon.add_css_class("dim-label");
     footer_header.append(&folder_icon);
-    let location_title = gtk::Label::new(Some("FILE LOCATION"));
-    location_title.add_css_class("dim-label");
+    let location_title = gtk::Label::new(Some("File Location"));
+    location_title.add_css_class("properties-section-heading");
     location_title.add_css_class("caption");
     location_title.set_xalign(0.0);
     location_title.set_hexpand(true);
@@ -2176,6 +2179,7 @@ fn scrapbook_inspector_extra(
 ) -> gtk::Box {
     let root = gtk::Box::new(gtk::Orientation::Vertical, 9);
     root.add_css_class("photo-tags-global");
+    root.add_css_class("properties-section");
     root.add_css_class("scrapbook-inspector-extra");
     root.set_visible(true);
     let photo_id = photo.id();
@@ -2200,6 +2204,7 @@ fn scrapbook_inspector_extra(
     let notes_header = gtk::Label::new(Some("Notes"));
     notes_header.add_css_class("scrapbook-inspector-paper-title");
     notes_header.set_halign(gtk::Align::Start);
+    paper_details.add_css_class("properties-section");
     paper_details.append(&notes_header);
     let note_card = gtk::Box::new(gtk::Orientation::Vertical, 7);
     note_card.add_css_class("scrapbook-note-card");
@@ -2276,13 +2281,10 @@ fn scrapbook_inspector_extra(
     root
 }
 
-fn add_inspector_row(group: &adw::PreferencesGroup, name: &str, value: &str) {
-    let row = adw::PreferencesRow::new();
-    row.set_activatable(false);
-    row.set_selectable(false);
+fn add_inspector_row(group: &gtk::Box, name: &str, value: &str) {
     let line = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    line.set_margin_start(10);
-    line.set_margin_end(10);
+    line.set_margin_start(0);
+    line.set_margin_end(0);
     line.set_margin_top(4);
     line.set_margin_bottom(4);
 
@@ -2309,13 +2311,13 @@ fn add_inspector_row(group: &adw::PreferencesGroup, name: &str, value: &str) {
     detail.set_valign(gtk::Align::Center);
     detail.set_wrap(true);
     detail.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+    detail.set_width_chars(1);
     detail.set_max_width_chars(28);
     detail.set_selectable(false);
     detail.add_css_class("caption");
     line.append(&detail);
 
-    row.set_child(Some(&line));
-    group.add(&row);
+    group.append(&line);
 }
 
 fn format_aperture(value: f64) -> Option<String> {

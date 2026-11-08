@@ -69,13 +69,35 @@ The header only counts as metadata when its first line contains the marker
 
 ## Layering
 
-Lowest to highest priority on the GDK display:
+Display providers use the following priorities relative to GTK's
+`STYLE_PROVIDER_PRIORITY_APPLICATION` (higher priority wins):
 
-1. `css::install_foundation` — embedded base + platform CSS.
-2. The `mode: base` theme (shipped: `iDark`).
-3. The selected overlay theme.
+| Offset | Providers |
+| --- | --- |
+| 0 | Embedded base; the discovered base theme, installed afterwards |
+| +1 | Most selected theme overlays |
+| +2 | Metadata layout, edit mode and bookshelf background |
+| +3 | PIC family, Terminal, iDark and selected other overlays; album components |
+| +4 | Legacy square-corner rules |
+| +5 | Photo Wall, sidebar resize and Library dashboard |
+| +6 | Search status and theme picker |
+| +7 | Scrapbook overlay |
+| +8 | Photo notes |
+| +10 | Platform typography |
+| +11 | Screensaver controls |
+| +12 | Header and InfoBar action controls |
+| +13 | User-selected corner style |
+| +14 | Sidebar actions |
+| +15 | Quick filters |
 
-When the base theme itself is selected, no overlay provider is added.
+Rules are scoped to their components; a higher-priority provider only affects
+matching properties. At equal priority GTK's selector specificity and provider
+installation order matter. Album component CSS is installed when the Albums
+view is built, and a later theme switch can install a new overlay at the same
+priority. Some widgets also install local or feature-specific providers. The
+selected iDark base receives an additional foreground copy at +3; other base
+themes do not. See `src/css/mod.rs`, `src/window/theme.rs` and the relevant
+component for the authoritative installation details.
 
 ## Shipped themes
 
@@ -131,7 +153,7 @@ decorative framed album art are left to the system/theme. PIC reads the
 legacy `thumbnail-square-corners` preference only when no new choice exists,
 so users who enabled Square explicitly retain that choice.
 
-Shared album component styles load above the appearance theme and use
+Shared album component styles use
 `@theme_fg_color` and `@accent_bg_color` for plain covers. Framed album covers
 and bookshelf artwork are discovered independently under `images/theme/`.
 See the [template README](theme-template/README.md#album-cover-and-bookshelf-assets)

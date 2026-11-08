@@ -69,7 +69,7 @@
 
 .metadata-filter-toolbar .metadata-filter-controls > menubutton.quick-filter-add { border-right: 0; }
 
-.metadata-filter-toolbar menubutton.quick-filter-add > button image { -gtk-icon-size: 12px; }
+.metadata-filter-toolbar menubutton.quick-filter-add > button image { -gtk-icon-size: 16px; }
 
 .metadata-filter-toolbar .metadata-filter-summary > button.metadata-filter-pin:checked {
     background: transparent;

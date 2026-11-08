@@ -71,9 +71,9 @@ EOF
     cp "$report" "$repo_root/reports/gui-tests/latest-report.md"
 }
 
-required_tools=(xdotool identify python3)
+required_tools=(xdotool identify python3 gdbus)
 if [[ "$desktop_display" == 1 ]]; then
-    required_tools+=(gdbus wmctrl /usr/bin/python3)
+    required_tools+=(wmctrl /usr/bin/python3)
 else
     required_tools+=(import dbus-run-session)
 fi
@@ -201,7 +201,7 @@ export DISPLAY="$display"
 export GDK_BACKEND=x11
 export GSK_RENDERER=cairo
 export LIBGL_ALWAYS_SOFTWARE=1
-export GTK_A11Y=none
+export GTK_A11Y=atspi
 export PIC_GUI_RUN_DIR="$run_dir"
 export PIC_GUI_APP="$app_bin"
 export PIC_GUI_SUITE="$gui_suite"
@@ -280,7 +280,55 @@ if [[ "$desktop_display" == 1 ]]; then
 else
     HOME="$portal_home" XDG_CONFIG_HOME="$portal_config" XDG_DATA_HOME="$portal_home/data" \
         XDG_CACHE_HOME="$portal_home/cache" XDG_CURRENT_DESKTOP=PIC_GUI XDG_SESSION_TYPE=x11 \
-        dbus-run-session -- python3 "$repo_root/scripts/gui_test.py" >"$run_dir/harness.log" 2>&1
+        dbus-run-session -- bash -c '
+            launcher="${PIC_GUI_ATSPI_LAUNCHER:-/usr/libexec/at-spi-bus-launcher}"
+            if [[ ! -x "$launcher" && -z "${PIC_GUI_ATSPI_LAUNCHER:-}" ]]; then
+                launcher=/usr/lib/at-spi2-core/at-spi-bus-launcher
+            fi
+            if [[ ! -x "$launcher" ]]; then
+                printf "Accessibility bus launcher unavailable: %s\n" "$launcher" >&2
+                exit 2
+            fi
+            ATSPI_DBUS_IMPLEMENTATION=dbus-daemon "$launcher" --launch-immediately &
+            launcher_pid=$!
+            bus_address=""
+            for attempt in {1..50}; do
+                bus_result=$(gdbus call --session --dest org.a11y.Bus --object-path /org/a11y/bus --method org.a11y.Bus.GetAddress 2>/dev/null) || bus_result=""
+                bus_address=$(printf "%s" "$bus_result" | sed -n "s/^('\''\([^'\'']*\)'\'',)$/\1/p")
+                [[ -n "$bus_address" ]] && break
+                kill -0 "$launcher_pid" 2>/dev/null || break
+                sleep 0.1
+            done
+            if [[ -z "$bus_address" ]]; then
+                printf "Accessibility bus did not become ready\n" >&2
+                kill "$launcher_pid" 2>/dev/null || true
+                exit 2
+            fi
+            registry="${PIC_GUI_ATSPI_REGISTRY:-/usr/libexec/at-spi2-registryd}"
+            if [[ ! -x "$registry" && -z "${PIC_GUI_ATSPI_REGISTRY:-}" ]]; then
+                registry=/usr/lib/at-spi2-core/at-spi2-registryd
+            fi
+            if [[ ! -x "$registry" ]]; then
+                printf "Accessibility registry unavailable: %s\n" "$registry" >&2
+                kill "$launcher_pid" 2>/dev/null || true
+                exit 2
+            fi
+            "$registry" &
+            registry_pid=$!
+            trap '\''kill "$registry_pid" "$launcher_pid" 2>/dev/null || true; wait "$registry_pid" "$launcher_pid" 2>/dev/null || true'\'' EXIT
+            registry_ready=""
+            for attempt in {1..50}; do
+                registry_ready=$(gdbus call --address "$bus_address" --dest org.freedesktop.DBus --object-path /org/freedesktop/DBus --method org.freedesktop.DBus.NameHasOwner org.a11y.atspi.Registry 2>/dev/null) || registry_ready=""
+                [[ "$registry_ready" == "(true,)" ]] && break
+                kill -0 "$registry_pid" 2>/dev/null || break
+                sleep 0.1
+            done
+            if [[ "$registry_ready" != "(true,)" ]]; then
+                printf "Accessibility registry did not become ready\n" >&2
+                exit 2
+            fi
+            python3 "$1"
+        ' _ "$repo_root/scripts/gui_test.py" >"$run_dir/harness.log" 2>&1
 fi
 status=$?
 cat "$run_dir/harness.log"

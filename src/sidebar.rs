@@ -177,8 +177,7 @@ const SIDEBAR_HEADER_MARGIN_BOTTOM: i32 = 4;
 const SIDEBAR_ROOT_MARGIN_TOP: i32 = 4;
 const SIDEBAR_ICON_SIZE: i32 = 18;
 pub(crate) const SHARED_ICON_NAME: &str = "folder-publicshare-symbolic";
-pub(crate) const SHARED_ICON_SIZE: i32 = 16;
-const SIDEBAR_RECENT_ICON_SIZE: i32 = 16;
+pub(crate) const SHARED_ICON_SIZE: i32 = SIDEBAR_ICON_SIZE;
 const SIDEBAR_DISCLOSURE_SLOT: i32 = 12;
 const SIDEBAR_CONTROL_SIZE: i32 = 28;
 const SIDEBAR_ACTION_ICON_SIZE: i32 = 14;
@@ -2807,7 +2806,7 @@ fn append_folder_row(
             "pan-end-symbolic"
         });
         disclosure.add_css_class("folder-disclosure");
-        disclosure.set_pixel_size(SIDEBAR_DISCLOSURE_SLOT - 2);
+        disclosure.set_pixel_size(SIDEBAR_DISCLOSURE_SLOT);
         disclosure.set_halign(gtk::Align::Center);
         disclosure.set_valign(gtk::Align::Center);
         disclosure_slot.set_tooltip_text(Some(if expanded {
@@ -3409,12 +3408,7 @@ fn append_filter(
     content.set_margin_start(SIDEBAR_CONTENT_INSET);
     content.set_margin_end(SIDEBAR_CONTENT_INSET);
     content.append(&sidebar_leading_slot());
-    let icon_size = if icon_name == "x-office-calendar-symbolic" {
-        SIDEBAR_RECENT_ICON_SIZE
-    } else {
-        SIDEBAR_ICON_SIZE
-    };
-    content.append(&sidebar_icon_slot_with_size(icon_name, icon_size));
+    content.append(&sidebar_icon_slot(icon_name));
     let labels = gtk::Box::new(gtk::Orientation::Vertical, 1);
     let title_label = gtk::Label::new(Some(title));
     title_label.set_xalign(0.0);
@@ -3609,9 +3603,6 @@ fn collapsible_heading(
     // before it, so headings read consistently as: action / + / collapse.
     if let Some(action) = action {
         let add = sidebar_action_button("list-add-symbolic", Some(action_tooltip));
-        if let Some(image) = add.child().and_then(|child| child.downcast::<gtk::Image>().ok()) {
-            image.set_pixel_size(12);
-        }
         add.set_focusable(true);
         add.connect_clicked(move |_| action());
         content.append(&add);

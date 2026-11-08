@@ -521,7 +521,7 @@ def smoke_test() -> None:
         "GSETTINGS_BACKEND": "memory", "GDK_BACKEND": "x11",
         "GSK_RENDERER": "cairo", "LIBGL_ALWAYS_SOFTWARE": "1",
         "GTK_USE_PORTAL": "0", "GIO_USE_VFS": "local",
-        "GTK_A11Y": "atspi" if os.environ.get("PIC_GUI_DESKTOP_DISPLAY") == "1" else "none",
+        "GTK_A11Y": "atspi",
         "PICASA_TRACE": "1", "PIC_SCREENSAVER_TRACE": "1",
     })
     log = APP_LOG.open("w")
@@ -853,7 +853,12 @@ def smoke_test() -> None:
 
     # Open the actual imported folder and filter it to the rated image.
     click_at(118, 486)
-    folder_shot = screenshot("02b-folder-view.png")
+    wait_for(lambda: APP_LOG.exists() and "PIC_SCAN_UI gallery_replace filter=Folder(" in APP_LOG.read_text(errors="replace"),
+             "folder gallery replacement", timeout=15)
+    folder_shot = wait_for(
+        lambda: (shot if len(matching_generated_tiles(shot := screenshot("02b-folder-view.png"))) >= 12 else None),
+        "folder thumbnails to finish rendering", timeout=15,
+    )
     with sqlite3.connect(XDG_DATA / "pic-rs" / "library.db") as connection:
         folder_photo_count = connection.execute("SELECT COUNT(*) FROM photos WHERE folder_id=(SELECT id FROM folders WHERE path=?)",
                                                 (str(SAMPLE_DIR.resolve()),)).fetchone()[0]

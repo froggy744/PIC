@@ -249,7 +249,7 @@ gridview.section-grid > item:focus-visible .photo-tile {
     background-color: @pic_background_color;
     color: @pic_text_color;
 }
-.edit-preview, .overlay-list {
+.overlay-list {
     border: 1px solid @pic_background_border;
     border-radius: 6px;
     box-shadow: inset 0 1px 3px alpha(black, 0.25);

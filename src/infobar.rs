@@ -45,6 +45,9 @@ pub struct InfoBar {
     pub more: gtk::Button,
     pub print: gtk::Button,
     overflow_popover: gtk::Popover,
+    visibility_choices: gtk::Box,
+    menu_only_option: gtk::CheckButton,
+    visibility_connection: Option<Rc<RefCell<rusqlite::Connection>>>,
     properties_button: gtk::Button,
     pub grid_zoom: gtk::Scale,
     pub grid_zoom_reset: gtk::GestureClick,
@@ -71,6 +74,14 @@ impl InfoBar {
         self.metadata.add_controller(gesture);
     }
 
+    pub fn set_properties_active(&self, active: bool) {
+        if active {
+            self.properties_button.add_css_class("properties-active");
+        } else {
+            self.properties_button.remove_css_class("properties-active");
+        }
+    }
+
     pub fn append_utility(&self, button: &gtk::Button) {
         configure_action_button(button);
         self.utilities.append(button);
@@ -93,10 +104,46 @@ impl InfoBar {
             .and_downcast::<gtk::Box>()
             .unwrap();
         menu.append(&row);
+        let key = format!("infobar_show_{}", title.to_ascii_lowercase().replace(' ', "_"));
+        let selected = self.visibility_connection.as_ref().and_then(|db| crate::db::setting(&db.borrow(), &key).ok().flatten()).as_deref() == Some("1");
+        let check = gtk::CheckButton::with_label(title);
+        check.set_active(selected);
+        self.visibility_choices.append(&check);
+        let actions = self.actions.clone();
+        let overflow = self.overflow.clone();
+        let action = button.clone();
+        let action_row = row.clone();
+        let connection = self.visibility_connection.clone();
+        let apply: Rc<dyn Fn(bool)> = Rc::new(move |show: bool| {
+            if show && action.parent().as_ref() == Some(action_row.upcast_ref()) {
+                action_row.remove(&action);
+                actions.insert_child_after(&action, overflow.prev_sibling().as_ref());
+            } else if !show && action.parent().as_ref() == Some(actions.upcast_ref()) {
+                actions.remove(&action);
+                action_row.prepend(&action);
+            }
+            action_row.set_visible(!show && action.is_visible());
+        });
+        apply(selected && !self.menu_only_option.is_active());
+        {
+            let apply = apply.clone();
+            let choice = check.downgrade();
+            self.menu_only_option.connect_toggled(move |menu_only| {
+                if let Some(choice) = choice.upgrade() {
+                    apply(choice.is_active() && !menu_only.is_active());
+                }
+            });
+        }
+        let menu_only = self.menu_only_option.downgrade();
+        check.connect_toggled(move |check| {
+            let show = check.is_active();
+            if let Some(db) = &connection { let _ = crate::db::set_setting(&db.borrow(), &key, if show { "1" } else { "0" }); }
+            apply(show && menu_only.upgrade().is_some_and(|option| !option.is_active()));
+        });
         let row_for_visibility = row.downgrade();
         button.connect_visible_notify(move |button| {
             if let Some(row) = row_for_visibility.upgrade() {
-                row.set_visible(button.get_visible());
+                row.set_visible(button.get_visible() && button.parent().as_ref() == Some(row.upcast_ref()));
             }
         });
         let popover = self.overflow_popover.downgrade();
@@ -107,7 +154,12 @@ impl InfoBar {
         });
     }
 
+    #[cfg(test)]
     pub fn new() -> Self {
+        Self::new_with_settings(None)
+    }
+
+    pub fn new_with_settings(connection: Option<Rc<RefCell<rusqlite::Connection>>>) -> Self {
         let root = gtk::Box::new(gtk::Orientation::Horizontal, 16);
         root.set_height_request(58);
         root.set_valign(gtk::Align::End);
@@ -193,10 +245,10 @@ impl InfoBar {
         selection_controls.append(&selection_clear);
         let trailing = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         trailing.append(&selection_controls);
-        let properties_button = gtk::Button::from_icon_name("document-properties-symbolic");
+        let properties_button = gtk::Button::from_icon_name("sidebar-show-right-symbolic");
         configure_action_button(&properties_button);
         properties_button.set_tooltip_text(Some("Show or hide photo properties"));
-        trailing.append(&properties_button);
+        properties_button.add_css_class("properties-toggle");
         layout.set_end_widget(Some(&trailing));
         let selection_actions = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         selection_actions.set_visible(false);
@@ -284,6 +336,7 @@ impl InfoBar {
         // requiring a hover tooltip or opening the star picker.
         let rating_content = gtk::Box::new(gtk::Orientation::Horizontal, 4);
         rating_content.set_valign(gtk::Align::Center);
+        rating_content.set_halign(gtk::Align::Center);
         rating_content.set_margin_start(4);
         rating_content.set_margin_end(4);
         let rating_icon = gtk::Image::from_icon_name("non-starred-symbolic");
@@ -421,6 +474,7 @@ impl InfoBar {
         actions.append(&favorite);
         actions.append(&rating);
         actions.append(&edit);
+        actions.append(&properties_button);
         actions.append(&collage);
         actions.append(&add_to_album);
         actions.append(&one_to_one);
@@ -458,6 +512,68 @@ impl InfoBar {
             show_only_menu_for_toggle.set(check.is_active());
         });
         overflow_box.append(&hide_buttons_option);
+        let preferences: Rc<RefCell<Option<Vec<bool>>>> = Rc::new(RefCell::new(
+            connection.as_ref().and_then(|db| crate::db::setting(&db.borrow(), "infobar_visible_actions").ok().flatten())
+                .and_then(|value| serde_json::from_str::<Vec<bool>>(&value).ok())
+                .filter(|values| values.len() == 12),
+        ));
+        let preferences_changed = Rc::new(Cell::new(false));
+        let choices = gtk::MenuButton::new();
+        choices.set_label("Show in InfoBar");
+        let choices_popover = gtk::Popover::new();
+        let choices_box = gtk::Box::new(gtk::Orientation::Vertical, 2);
+        choices_box.set_margin_top(8);
+        choices_box.set_margin_bottom(8);
+        choices_box.set_margin_start(8);
+        choices_box.set_margin_end(8);
+        let choice_controls: Rc<RefCell<Vec<gtk::CheckButton>>> = Rc::new(RefCell::new(Vec::new()));
+        let syncing = Rc::new(Cell::new(false));
+        for (index, label) in ["Size", "Favourites", "Rate", "Edit", "Collage", "Add to Album", "100%", "Rotate", "Export", "Import", "Settings", "Print"].iter().enumerate() {
+            let check = gtk::CheckButton::with_label(label);
+            check.set_active(preferences.borrow().as_ref().map_or(index != 9, |values| values[index]));
+            let prefs = preferences.clone();
+            let controls = choice_controls.clone();
+            let db = connection.clone();
+            let syncing = syncing.clone();
+            let changed = preferences_changed.clone();
+            check.connect_toggled(move |_| {
+                if syncing.get() { return; }
+                let values: Vec<bool> = controls.borrow().iter().map(|item| item.is_active()).collect();
+                if values.len() == 12 {
+                    if let Some(db) = &db { let _ = crate::db::set_setting(&db.borrow(), "infobar_visible_actions", &serde_json::to_string(&values).unwrap_or_default()); }
+                    *prefs.borrow_mut() = Some(values);
+                    changed.set(true);
+                }
+            });
+            choice_controls.borrow_mut().push(check.clone());
+            choices_box.append(&check);
+        }
+        let automatic = gtk::Button::with_label("Use automatic layout");
+        {
+            let prefs = preferences.clone();
+            let db = connection.clone();
+            let controls = choice_controls.clone();
+            let syncing = syncing.clone();
+            let changed = preferences_changed.clone();
+            automatic.connect_clicked(move |_| {
+                *prefs.borrow_mut() = None;
+                changed.set(true);
+                if let Some(db) = &db { let _ = crate::db::set_setting(&db.borrow(), "infobar_visible_actions", ""); }
+                syncing.set(true);
+                for (index, check) in controls.borrow().iter().enumerate() { check.set_active(index != 9); }
+                syncing.set(false);
+            });
+        }
+        choices_box.append(&automatic);
+        let choices_scroll = gtk::ScrolledWindow::new();
+        choices_scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+        choices_scroll.set_max_content_height(400);
+        choices_scroll.set_propagate_natural_height(true);
+        choices_scroll.set_child(Some(&choices_box));
+        choices_popover.set_child(Some(&choices_scroll));
+        choices.set_popover(Some(&choices_popover));
+        overflow_box.append(&choices);
+
         let overflow_entries: Vec<(gtk::Widget, gtk::Box)> = [
             (grid_zoom.clone().upcast(), "Size"),
             (favorite.clone().upcast(), "Favourites"),
@@ -616,11 +732,11 @@ impl InfoBar {
                     900..=1199 => 6,
                     _ => overflow_entries.len(),
                 };
-                let state = (visible_count, hide_all);
-                if !keep_menu_stable && visible_action_count.replace(state) != state {
-                    if !mode_changed {
-                        overflow.popdown();
-                    }
+                let manual = preferences.borrow().clone();
+                let mask = manual.as_ref().map(|values| values.iter().enumerate().fold(0usize, |mask, (i, &visible)| mask | ((visible as usize) << i))).unwrap_or(usize::MAX);
+                let state = (visible_count ^ mask ^ if width >= 2560 { 1 << 16 } else { 0 }, hide_all);
+                let preference_changed = preferences_changed.replace(false);
+                if (!keep_menu_stable || preference_changed) && visible_action_count.replace(state) != state {
                     if hide_all {
                         if utilities_for_resize.parent().as_ref()
                             == Some(actions_for_resize.upcast_ref())
@@ -647,7 +763,7 @@ impl InfoBar {
                             }
                         }
                         // Import stays in the menu even when all photo controls fit.
-                        let in_toolbar = !hide_all && index != 9 && index < 4 + visible_count;
+                        let in_toolbar = !hide_all && manual.as_ref().map_or_else(|| (index != 9 || width >= 2560) && index < 4 + visible_count, |values| values[index]);
                         row.set_visible(!in_toolbar && control.get_visible());
                         let parent = control.parent();
                         if in_toolbar {
@@ -790,6 +906,9 @@ impl InfoBar {
             more,
             print,
             overflow_popover,
+            visibility_choices: choices_box,
+            menu_only_option: hide_buttons_option,
+            visibility_connection: connection,
             properties_button,
             grid_zoom,
             grid_zoom_reset,

@@ -202,7 +202,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         );
     }
 
-    let info = Rc::new(InfoBar::new());
+    let info = Rc::new(InfoBar::new_with_settings(Some(connection.clone())));
     info.set_photo(None);
 
     let selected_photo = Rc::new(RefCell::new(None));
@@ -3389,6 +3389,26 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     lightbox_properties_panel.add_css_class("scrapbook-inspector");
     lightbox_properties_panel.set_visible(false);
     register_lightbox_properties_panel(&lightbox_properties_panel);
+    let update_properties_indicator = {
+        let info = info.clone();
+        let split = properties_split.downgrade();
+        let panel = lightbox_properties_panel.downgrade();
+        let viewer = lightbox.root.downgrade();
+        Rc::new(move || {
+            if let (Some(split), Some(panel), Some(viewer)) = (split.upgrade(), panel.upgrade(), viewer.upgrade()) {
+                info.set_properties_active(if viewer.is_visible() { panel.is_visible() } else { split.shows_sidebar() });
+            }
+        })
+    };
+    {
+        let update = update_properties_indicator.clone();
+        properties_split.connect_show_sidebar_notify(move |_| update());
+        let update = update_properties_indicator.clone();
+        lightbox_properties_panel.connect_visible_notify(move |_| update());
+        let update = update_properties_indicator.clone();
+        lightbox.root.connect_visible_notify(move |_| update());
+    }
+
     // Index pages and full-surface workspaces are not photo grids: close
     // the inspector on Library Home, Albums Home, Edit and Collage.
     // Folder-to-folder navigation intentionally keeps it open.
@@ -5239,10 +5259,7 @@ fn start_photo_export_single(
         });
     }
     let (refresh, metadata_panel) = include!("toolbar.rs");
-    {
-        let refresh = refresh.clone();
-        metadata_panel.set_refresh_action(Rc::new(move || refresh.emit_clicked()));
-    }
+    metadata_panel.set_operation_progress(operation_progress.clone());
     // Suppress the metadata bar while viewing a photo and restore its prior
     // mode (individual filters or ALL columns) when returning to the grid.
     {

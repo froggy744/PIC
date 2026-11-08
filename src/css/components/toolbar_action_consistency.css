@@ -96,3 +96,23 @@ menubutton.pic-toolbar-action > button:disabled {
 .photo-actions-menu .photo-actions-menu-row:focus-within {
     background-color: alpha(@theme_fg_color, 0.09);
 }
+
+.photo-info-bar button.pic-toolbar-action.properties-active {
+    background: alpha(@accent_bg_color, 0.25);
+    border-color: alpha(@accent_bg_color, 0.4);
+}
+.photo-info-bar button.pic-toolbar-action:hover,
+.photo-info-bar menubutton.pic-toolbar-action > button:hover {
+    background: alpha(@headerbar_fg_color, 0.14);
+}
+
+/* The menu button contains a GTK button which needs its own surface style. */
+.metadata-filter-panel menubutton.metadata-column-menu > button {
+    background: transparent;
+    background-image: none;
+    border: 0;
+    box-shadow: none;
+}
+.metadata-filter-panel menubutton.metadata-column-menu > button:hover {
+    background-color: alpha(@accent_bg_color, 0.12);
+}

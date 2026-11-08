@@ -1,5 +1,5 @@
 /* picasa-theme
-   version: 1.2
+   version: 1.3
    name: PIC Default
    dark: false
    color-scheme: theme
@@ -21,11 +21,11 @@
 @define-color pic_bar_text #f5f6f7;
 @define-color pic_bar_muted #aebac4;
 
-@define-color pic_background_color #e9eaeb;
-@define-color pic_background_surface #f3f4f5;
-@define-color pic_background_control #e3e7eb;
-@define-color pic_background_hover #d7dfe5;
-@define-color pic_background_border #c6cbd0;
+@define-color pic_background_color #e9ecef;
+@define-color pic_background_surface #f5f6f7;
+@define-color pic_background_control #e5e9ed;
+@define-color pic_background_hover #dce2e8;
+@define-color pic_background_border #cbd2d8;
 
 /* Controls on light surfaces */
 @define-color pic_ctl_top #f8f9fa;
@@ -51,14 +51,19 @@
 @define-color pic_button_text #ffffff;
 @define-color pic_focus #6aa3e8;
 @define-color pic_text_color #22272b;
-@define-color pic_text_muted #626f7a;
+@define-color pic_text_muted #586570;
 
 /* GTK/libadwaita semantic colours */
 @define-color accent_bg_color @pic_button_color;
 @define-color accent_fg_color @pic_button_text;
 @define-color accent_color @pic_button_color;
 @define-color window_bg_color @pic_background_color;
+@define-color window_fg_color @pic_text_color;
 @define-color view_bg_color @pic_background_surface;
+@define-color view_fg_color @pic_text_color;
+@define-color card_bg_color @pic_background_surface;
+@define-color card_fg_color @pic_text_color;
+@define-color headerbar_fg_color @pic_bar_text;
 @define-color headerbar_bg_color @pic_bar_color;
 @define-color theme_fg_color @pic_text_color;
 
@@ -252,7 +257,7 @@ gridview.section-grid > item:focus-visible .photo-tile {
     background-color: @pic_background_color;
     color: @pic_text_color;
 }
-.edit-preview, .overlay-list {
+.overlay-list {
     border: 1px solid @pic_background_border;
     border-radius: 6px;
     box-shadow: inset 0 1px 2px alpha(black, 0.06);
@@ -753,3 +758,62 @@ button.album-card:hover, button.album-card:active {
     box-shadow: none;
 }
 button.album-card:focus-visible { outline: 2px solid alpha(@pic_focus, 0.9); outline-offset: 2px; }
+
+/* Properties inspector: light surface alongside the light photo workspace. */
+.scrapbook-inspector-page {
+    background: @pic_background_color;
+    color: @pic_text_color;
+}
+.scrapbook-inspector-body { padding-bottom: 16px; }
+.scrapbook-inspector-page .scrapbook-inspector-preview {
+    background: @pic_background_control;
+}
+.scrapbook-inspector-page .dim-label {
+    color: @pic_text_muted;
+    opacity: 1;
+}
+.scrapbook-inspector-page .properties-section-heading,
+.scrapbook-inspector-page .scrapbook-inspector-paper-title {
+    color: @pic_text_color;
+    font-weight: 700;
+}
+.scrapbook-inspector-page .scrapbook-inspector-location,
+.scrapbook-inspector-page .properties-section,
+.scrapbook-inspector-page .scrapbook-inspector-metadata + .scrapbook-inspector-metadata {
+    border-color: @pic_background_border;
+}
+.scrapbook-inspector-page .scrapbook-note-edit {
+    background-color: @pic_background_surface;
+    color: @pic_text_color;
+    border: 1px solid @pic_background_border;
+    box-shadow: none;
+}
+.scrapbook-inspector-page .scrapbook-note-edit text {
+    background-color: transparent;
+    color: @pic_text_color;
+}
+.scrapbook-inspector-page .scrapbook-note-edit:focus-within {
+    border-color: @pic_button_color;
+    outline: 2px solid alpha(@pic_focus, 0.5);
+    outline-offset: 1px;
+}
+
+/* Paint the filter surface explicitly so text never inherits dark chrome. */
+.metadata-filter-panel { background-color: @pic_background_color; }
+.metadata-filter-panel,
+.metadata-filter-panel label,
+.metadata-filter-value-choices checkbutton,
+.metadata-filter-value-choices checkbutton label {
+    color: @pic_text_color;
+}
+.metadata-filter-panel .dim-label { color: @pic_text_muted; opacity: 1; }
+
+.metadata-filter-panel button,
+.metadata-filter-panel button label,
+.metadata-filter-panel checkbutton,
+.metadata-filter-panel checkbutton label,
+.metadata-filter-panel entry,
+.metadata-filter-panel entry text {
+    color: @pic_text_color;
+}
+

@@ -171,9 +171,8 @@ pub(super) struct MetadataPanel {
     active_count: gtk::Label,
     status: gtk::Label,
     indexing: gtk::Box,
+    operation_progress: RefCell<Option<Rc<super::OperationProgressUi>>>,
     index_button: gtk::Button,
-    refresh_button: gtk::Button,
-    refresh_action: RefCell<Option<Rc<dyn Fn()>>>,
     cancel_button: gtk::Button,
     cancel: RefCell<Option<Arc<AtomicBool>>>,
     database: RefCell<Option<std::path::PathBuf>>,
@@ -205,6 +204,7 @@ impl MetadataPanel {
         title.append(&gtk::Image::from_icon_name("metadata-filter-symbolic"));
         let indicator = gtk::Label::new(None);
         indicator.add_css_class("caption");
+        indicator.set_visible(false);
         title.append(&indicator);
         button.set_child(Some(&title));
         let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
@@ -291,27 +291,16 @@ impl MetadataPanel {
         let active_count = gtk::Label::new(None);
         active_count.add_css_class("metadata-filter-active-count");
         summary.append(&active_count);
-        let clear = gtk::Button::with_label("Clear all");
+        let clear = gtk::Button::with_label("Clear");
         clear.add_css_class("metadata-filter-clear");
         clear.set_tooltip_text(Some("Clear all filters"));
         clear.update_property(&[gtk::accessible::Property::Label("Clear all filters")]);
         summary.append(&clear);
-        let refresh_button = {
-            let button = gtk::Button::new();
-            button.set_child(Some(&gtk::Image::from_icon_name(
-                "library-refresh-symbolic",
-            )));
-            button
-        };
-        refresh_button.add_css_class("metadata-filter-utility");
-        refresh_button.set_tooltip_text(Some("Refresh library"));
-        refresh_button.update_property(&[gtk::accessible::Property::Label("Refresh library")]);
         let index_button = gtk::Button::from_icon_name("network-transmit-receive-symbolic");
         index_button.add_css_class("metadata-filter-utility");
         index_button.set_tooltip_text(Some("Index missing metadata"));
         index_button.update_property(&[gtk::accessible::Property::Label("Index missing metadata")]);
         summary.append(&index_button);
-        summary.append(&refresh_button);
         toolbar.append(&summary);
         body.append(&toolbar);
         let explorer_scroll = gtk::ScrolledWindow::new();
@@ -349,7 +338,7 @@ impl MetadataPanel {
         status.add_css_class("dim-label");
         status.add_css_class("caption");
         indexing.append(&status);
-        body.append(&indexing);
+        // Progress is shown in the shared search-area notification.
         let database = db::connection_path(&connection.borrow()).ok();
         let state = Filters::load(&connection.borrow());
         let visible_filters = load_visible_filters(&connection.borrow());
@@ -379,9 +368,8 @@ impl MetadataPanel {
             active_count,
             status,
             indexing,
+            operation_progress: RefCell::new(None),
             index_button,
-            refresh_button,
-            refresh_action: RefCell::new(None),
             cancel_button,
             cancel: RefCell::new(None),
             database: RefCell::new(database),
@@ -601,14 +589,6 @@ impl MetadataPanel {
             }
         });
         let weak = Rc::downgrade(&panel);
-        panel.refresh_button.connect_clicked(move |_| {
-            if let Some(panel) = weak.upgrade() {
-                if let Some(refresh) = panel.refresh_action.borrow().as_ref() {
-                    refresh();
-                }
-            }
-        });
-        let weak = Rc::downgrade(&panel);
         panel.cancel_button.connect_clicked(move |_| {
             if let Some(panel) = weak.upgrade() {
                 panel.cancel_index();
@@ -660,13 +640,17 @@ impl MetadataPanel {
         panel.sync();
         panel
     }
+    pub fn set_operation_progress(self: &Rc<Self>, progress: Rc<super::OperationProgressUi>) {
+        let weak = Rc::downgrade(self);
+        progress.stop().connect_clicked(move |_| {
+            if let Some(panel) = weak.upgrade() { panel.cancel_index(); }
+        });
+        self.operation_progress.replace(Some(progress));
+    }
     pub fn cancel_index(&self) {
         if let Some(cancel) = self.cancel.borrow().as_ref() {
             cancel.store(true, AtomicOrdering::Relaxed);
         }
-    }
-    pub fn set_refresh_action(&self, action: Rc<dyn Fn()>) {
-        self.refresh_action.replace(Some(action));
     }
     /// Temporarily hide the filter interface behind the fullscreen viewer.
     /// The header toggle and ALL choice stay unchanged and restore on return.
@@ -1042,6 +1026,7 @@ impl MetadataPanel {
         let rating = (self.scope)().rating;
         let active = state.categories.len() + usize::from(!matches!(rating.as_str(), "" | "all"));
         self.indicator.set_text(if active == 0 { "" } else { "●" });
+        self.indicator.set_visible(active != 0);
         if active == 0 {
             self.button.remove_css_class("metadata-filter-active");
         } else {
@@ -1545,7 +1530,9 @@ impl MetadataPanel {
         let Some(path) = self.database.borrow().clone() else {
             return;
         };
+        if self.operation_progress.borrow().as_ref().is_some_and(|progress| progress.is_running()) { return; }
         let (cancel, receiver) = crate::metadata_index::start(path.clone());
+        if let Some(progress) = self.operation_progress.borrow().as_ref() { progress.begin("Indexing metadata", 0); }
         self.cancel.replace(Some(cancel));
         self.index_button.set_sensitive(false);
         self.cancel_button.set_visible(true);
@@ -1582,16 +1569,39 @@ impl MetadataPanel {
                     p.updated,
                     p.skipped
                 ));
+                if let Some(progress) = panel.operation_progress.borrow().as_ref() {
+                    if p.finished {
+                        let summary = if let Some(error) = &p.error { error.clone() } else {
+                            format!("{} {} / {} · {} indexed · {} unavailable or changed", if p.cancelled { "Stopped" } else { "Finished" }, p.examined, p.total, p.updated, p.skipped)
+                        };
+                        progress.finish("Indexing metadata", &summary);
+                        if p.error.is_none() { progress.hide_after(Duration::from_secs(3)); }
+                    } else {
+                        progress.update("Indexing metadata", p.examined, p.total, "", p.skipped);
+                    }
+                }
                 if p.finished {
                     panel.cancel.take();
                     panel.index_button.set_sensitive(true);
                     panel.cancel_button.set_visible(false);
-                    if let Some(error) = p.error {
-                        panel.status.set_text(&error);
+                    if let Some(ref error) = p.error {
+                        panel.status.set_text(error);
                     }
                     panel.revision.set(panel.revision.get() + 1);
                     panel.sync();
                     (panel.changed)();
+                    if p.error.is_none() {
+                        let status_text = panel.status.text();
+                        let weak_panel = Rc::downgrade(&panel);
+                        glib::timeout_add_local_once(Duration::from_secs(3), move || {
+                            if let Some(panel) = weak_panel.upgrade() {
+                                if panel.cancel.borrow().is_none() && panel.status.text() == status_text {
+                                    panel.indexing.set_visible(false);
+                                    panel.status.set_visible(false);
+                                }
+                            }
+                        });
+                    }
                     return glib::ControlFlow::Break;
                 }
             }

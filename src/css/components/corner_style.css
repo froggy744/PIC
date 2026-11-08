@@ -15,8 +15,7 @@
 .corner-style-balanced .thumbnail,
 .corner-style-balanced .filter-tile-preview,
 .corner-style-balanced .plain-album-cover,
-.corner-style-balanced .info-preview,
-.corner-style-balanced .edit-preview {
+.corner-style-balanced .info-preview {
     border-radius: 6px;
 }
 .corner-style-balanced .metadata-explorer,

@@ -5311,6 +5311,7 @@ fn start_photo_export_single(
     gallery_surface.set_hexpand(true);
     gallery_surface.set_vexpand(true);
     let gallery_stack = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    gallery_stack.add_css_class("gallery-content-surface");
     gallery_stack.set_hexpand(true);
     gallery_stack.set_vexpand(true);
     gallery_stack.append(&metadata_panel.root);

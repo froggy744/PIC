@@ -2091,11 +2091,6 @@ fn populate_properties_tags(tag_rows: &gtk::FlowBox, context: &PhotoActionContex
     }
     let (tags, _) = db::scrapbook_details(&context.connection.borrow(), photo_id)
         .unwrap_or_default();
-    if tags.is_empty() {
-        let hint = gtk::Label::new(Some("Add a tag to this photo"));
-        hint.add_css_class("scrapbook-tags-empty");
-        tag_rows.insert(&hint, -1);
-    }
     for tag in &tags {
         let chip = gtk::Button::with_label(&format!("{tag} ×"));
         chip.add_css_class("scrapbook-tag-chip");
@@ -2116,6 +2111,13 @@ fn populate_properties_tags(tag_rows: &gtk::FlowBox, context: &PhotoActionContex
         });
         tag_rows.insert(&chip, -1);
     }
+}
+
+fn properties_add_tag_button(
+    tag_rows: &gtk::FlowBox,
+    context: &PhotoActionContext,
+    photo_id: i64,
+) -> gtk::Button {
     let add_tag = gtk::Button::with_label("+ Add tag");
     add_tag.add_css_class("scrapbook-tag-add");
     {
@@ -2169,7 +2171,7 @@ fn populate_properties_tags(tag_rows: &gtk::FlowBox, context: &PhotoActionContex
             dialog.present(window.as_ref());
         });
     }
-    tag_rows.insert(&add_tag, -1);
+    add_tag
 }
 
 fn scrapbook_inspector_extra(
@@ -2189,7 +2191,6 @@ fn scrapbook_inspector_extra(
     let tags_header = gtk::Label::new(Some("Tags"));
     tags_header.add_css_class("scrapbook-inspector-paper-title");
     tags_header.set_halign(gtk::Align::Start);
-    root.append(&tags_header);
     let tag_rows = gtk::FlowBox::new();
     tag_rows.add_css_class("scrapbook-tags");
     tag_rows.set_selection_mode(gtk::SelectionMode::None);
@@ -2198,6 +2199,11 @@ fn scrapbook_inspector_extra(
     tag_rows.set_column_spacing(5);
     tag_rows.set_row_spacing(5);
     populate_properties_tags(&tag_rows, context, photo_id);
+    let header_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    tags_header.set_hexpand(true);
+    header_row.append(&tags_header);
+    header_row.append(&properties_add_tag_button(&tag_rows, context, photo_id));
+    root.append(&header_row);
     root.append(&tag_rows);
 
     let paper_details = gtk::Box::new(gtk::Orientation::Vertical, 9);

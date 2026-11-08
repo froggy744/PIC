@@ -1,4 +1,12 @@
-/* Only the single-row quick filters: popovers and the explorer are separate. */
+/* The compact row and its scrolling viewports must not paint a surface. */
+.metadata-filter-panel,
+.metadata-filter-panel .metadata-filter-toolbar,
+.metadata-filter-toolbar scrolledwindow,
+.metadata-filter-toolbar viewport {
+    background: transparent;
+    background-image: none;
+    box-shadow: none;
+}
 .metadata-filter-panel .metadata-filter-toolbar { min-height: 32px; padding-top: 3px; padding-bottom: 3px; }
 .metadata-filter-toolbar > button.metadata-filter-all,
 .metadata-filter-toolbar .metadata-filter-controls > menubutton > button,
@@ -12,7 +20,7 @@
     background: transparent;
     background-image: none;
     box-shadow: none;
-    color: @theme_fg_color;
+    color: inherit;
 }
 .metadata-filter-toolbar .metadata-filter-controls > menubutton {
     border-right: 1px solid alpha(@theme_fg_color, 0.18);
@@ -24,10 +32,10 @@
 .metadata-filter-toolbar .metadata-filter-controls > menubutton > button:hover,
 .metadata-filter-toolbar .metadata-filter-summary > button:hover,
 .metadata-filter-toolbar .metadata-selected-chips > button:hover {
-    background: transparent;
+    background: alpha(@theme_fg_color, 0.09);
     background-image: none;
     box-shadow: none;
-    color: @accent_color;
+    color: inherit;
 }
 .metadata-filter-toolbar > button.metadata-filter-all:checked,
 .metadata-filter-toolbar .metadata-filter-controls > menubutton > button:checked,
@@ -76,4 +84,15 @@
     background-image: none;
     box-shadow: none;
     color: @accent_color;
+}
+
+/* Metadata choices and column actions keep the same visible hover cue. */
+.metadata-filter-panel .metadata-explorer-column checkbutton:hover,
+.metadata-filter-panel .metadata-filter-options checkbutton:hover,
+.metadata-filter-value-choices checkbutton:hover,
+.metadata-filter-panel dropdown.metadata-column-choice > button:hover,
+.metadata-filter-panel menubutton.metadata-column-menu > button:hover,
+.metadata-column-actions-popover button.metadata-column-action:hover {
+    background: alpha(@theme_fg_color, 0.09);
+    background-image: none;
 }

@@ -1116,7 +1116,11 @@ fn icon_label_button(icon: &str, label: &str, tooltip: &str) -> gtk::Button {
     let button = gtk::Button::new();
     let content = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     content.set_halign(gtk::Align::Center);
-    content.append(&gtk::Image::from_icon_name(icon));
+    let image = gtk::Image::from_icon_name(icon);
+    if icon == "list-add-symbolic" {
+        image.set_pixel_size(12);
+    }
+    content.append(&image);
     content.append(&gtk::Label::new(Some(label)));
     button.set_child(Some(&content));
     button.set_tooltip_text(Some(tooltip));

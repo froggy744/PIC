@@ -175,6 +175,15 @@ pub(crate) fn install_foundation(display: &gtk::gdk::Display) {
         gtk::STYLE_PROVIDER_PRIORITY_APPLICATION + 14,
     );
 
+    // The compact filter strip must override theme button and corner styles.
+    let quick_filters = gtk::CssProvider::new();
+    quick_filters.load_from_string(include_str!("components/quick_filters.css"));
+    gtk::style_context_add_provider_for_display(
+        display,
+        &quick_filters,
+        gtk::STYLE_PROVIDER_PRIORITY_APPLICATION + 15,
+    );
+
     // Legacy square-tile rules remain active when Corner style is Square,
     // preserving the Photo Wall/Masonry behaviour and older UI tests.
     let square_corners = gtk::CssProvider::new();

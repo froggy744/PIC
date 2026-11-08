@@ -1,0 +1,72 @@
+/* Only the single-row quick filters: popovers and the explorer are separate. */
+.metadata-filter-panel .metadata-filter-toolbar { min-height: 32px; padding-top: 3px; padding-bottom: 3px; }
+.metadata-filter-toolbar > button.metadata-filter-all,
+.metadata-filter-toolbar .metadata-filter-controls > menubutton > button,
+.metadata-filter-toolbar .metadata-filter-summary > button,
+.metadata-filter-toolbar .metadata-selected-chips > button {
+    min-height: 30px;
+    padding: 0 8px;
+    margin: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    background-image: none;
+    box-shadow: none;
+    color: @theme_fg_color;
+}
+.metadata-filter-toolbar .metadata-filter-controls > menubutton {
+    border-right: 1px solid alpha(@theme_fg_color, 0.18);
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+}
+.metadata-filter-toolbar > button.metadata-filter-all:hover,
+.metadata-filter-toolbar .metadata-filter-controls > menubutton > button:hover,
+.metadata-filter-toolbar .metadata-filter-summary > button:hover,
+.metadata-filter-toolbar .metadata-selected-chips > button:hover {
+    background: transparent;
+    background-image: none;
+    box-shadow: none;
+    color: @accent_color;
+}
+.metadata-filter-toolbar > button.metadata-filter-all:checked,
+.metadata-filter-toolbar .metadata-filter-controls > menubutton > button:checked,
+.metadata-filter-toolbar .metadata-filter-controls > menubutton.quick-filter-active > button,
+.metadata-filter-toolbar .metadata-selected-chips > button {
+    background: transparent;
+    background-image: none;
+    box-shadow: none;
+    color: @accent_color;
+}
+.metadata-filter-toolbar > button.metadata-filter-all:active,
+.metadata-filter-toolbar .metadata-filter-controls > menubutton > button:active,
+.metadata-filter-toolbar .metadata-filter-summary > button:active,
+.metadata-filter-toolbar .metadata-selected-chips > button:active {
+    background: transparent;
+    background-image: none;
+    box-shadow: none;
+}
+.metadata-filter-toolbar > button.metadata-filter-all:focus-visible,
+.metadata-filter-toolbar .metadata-filter-controls > menubutton > button:focus-visible,
+.metadata-filter-toolbar .metadata-filter-summary > button:focus-visible,
+.metadata-filter-toolbar .metadata-selected-chips > button:focus-visible {
+    outline: 1px solid @accent_color;
+    outline-offset: -2px;
+}
+.metadata-filter-toolbar .metadata-filter-summary .dim-label { color: alpha(@theme_fg_color, 0.7); opacity: 1; }
+.metadata-filter-toolbar > button.metadata-filter-all label,
+.metadata-filter-toolbar .metadata-filter-controls > menubutton > button label,
+.metadata-filter-toolbar .metadata-filter-summary > button label,
+.metadata-filter-toolbar .metadata-selected-chips > button label {
+    color: inherit;
+}
+.metadata-filter-toolbar > button.metadata-filter-all:disabled,
+.metadata-filter-toolbar .metadata-filter-controls > menubutton > button:disabled,
+.metadata-filter-toolbar .metadata-filter-summary > button:disabled,
+.metadata-filter-toolbar .metadata-selected-chips > button:disabled {
+    opacity: 0.5;
+}
+
+.metadata-filter-toolbar .metadata-filter-controls > menubutton.quick-filter-add { border-right: 0; }
+
+.metadata-filter-toolbar menubutton.quick-filter-add > button image { -gtk-icon-size: 12px; }

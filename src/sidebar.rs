@@ -3609,6 +3609,9 @@ fn collapsible_heading(
     // before it, so headings read consistently as: action / + / collapse.
     if let Some(action) = action {
         let add = sidebar_action_button("list-add-symbolic", Some(action_tooltip));
+        if let Some(image) = add.child().and_then(|child| child.downcast::<gtk::Image>().ok()) {
+            image.set_pixel_size(12);
+        }
         add.set_focusable(true);
         add.connect_clicked(move |_| action());
         content.append(&add);

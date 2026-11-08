@@ -246,6 +246,7 @@ impl MetadataPanel {
         controls.add_css_class("metadata-filter-controls");
         let filters_button = gtk::MenuButton::new();
         filters_button.add_css_class("metadata-filter-choice");
+        filters_button.add_css_class("quick-filter-add");
         filters_button.set_icon_name("list-add-symbolic");
         filters_button
             .update_property(&[gtk::accessible::Property::Label("Choose filter categories")]);
@@ -1025,6 +1026,16 @@ impl MetadataPanel {
         let state = self.state.borrow().clone();
         let rating = (self.scope)().rating;
         let active = state.categories.len() + usize::from(!matches!(rating.as_str(), "" | "all"));
+        for (field, button) in self.filter_buttons.borrow().iter() {
+            let selected = if *field == Field::Rating {
+                !matches!(rating.as_str(), "" | "all")
+            } else {
+                state.categories.contains_key(field)
+            };
+            if selected { button.add_css_class("quick-filter-active"); }
+            else { button.remove_css_class("quick-filter-active"); }
+        }
+
         self.indicator.set_text(if active == 0 { "" } else { "●" });
         self.indicator.set_visible(active != 0);
         if active == 0 {

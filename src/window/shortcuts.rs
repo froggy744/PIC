@@ -8,6 +8,7 @@
     let space_open_slot_for_key = space_open_slot.clone();
     let edit_space_slot_for_key = edit_space_slot.clone();
     let edit_escape_slot_for_key = edit_escape_slot.clone();
+    let date_browser_back_for_key = date_browser_back_slot.clone();
     let one_to_one_for_key = info.one_to_one.clone();
     let space_toggle_in_progress_for_key = space_toggle_in_progress.clone();
     let search_popup_for_key = search_popup_slot.clone();
@@ -68,6 +69,9 @@
         {
             
             lightbox_for_window_escape.request_close();
+            glib::Propagation::Stop
+        } else if (key == gtk::gdk::Key::Escape || key == gtk::gdk::Key::BackSpace)
+            && date_browser_back_for_key.borrow().as_ref().is_some_and(|back| back()) {
             glib::Propagation::Stop
         } else if key == gtk::gdk::Key::F11 {
             if window_for_fullscreen_key.is_fullscreen() {

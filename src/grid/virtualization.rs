@@ -242,7 +242,107 @@ fn scrolled_ancestor(widget: &gtk::Widget) -> Option<gtk::ScrolledWindow> {
     None
 }
 
+/// Original All Photos objects and selection while browsing a date subset.
+pub struct DateBrowserSnapshot {
+    photos: Vec<PhotoObject>,
+    selected_ids: HashSet<i64>,
+    shown_ids: Vec<i64>,
+    generation: u64,
+}
+
+impl DateBrowserSnapshot {
+    pub fn photos(&self) -> &[PhotoObject] {
+        &self.photos
+    }
+}
+
 impl Gallery {
+    pub fn set_date_browser_invalidate_handler(&self, handler: impl Fn() + 'static) {
+        self.date_browser_invalidate.replace(Some(Rc::new(handler)));
+    }
+
+    fn invalidate_date_browser(&self) {
+        let handler = self.date_browser_invalidate.borrow().clone();
+        if let Some(handler) = handler { handler(); }
+    }
+
+    /// Capture only a settled model. The caller must also cancel any pending
+    /// asynchronous database refresh before entering the browser.
+    pub fn date_browser_snapshot(&self) -> Option<DateBrowserSnapshot> {
+        if self.stream_building.get() || self.group_mode.get() == GroupMode::Folder {
+            return None;
+        }
+        let photos = self.current_photos.borrow().clone();
+        Some(DateBrowserSnapshot {
+            shown_ids: photos.iter().map(PhotoObject::id).collect(),
+            selected_ids: self.selected_photo_ids(None).into_iter().collect(),
+            photos,
+            generation: self.replace_generation.get(),
+        })
+    }
+
+    fn date_browser_snapshot_is_current(&self, snapshot: &DateBrowserSnapshot) -> bool {
+        !self.stream_building.get()
+            && self.group_mode.get() != GroupMode::Folder
+            && self.replace_generation.get() == snapshot.generation
+            && self.current_photos.borrow().iter().map(PhotoObject::id)
+                .eq(snapshot.shown_ids.iter().copied())
+    }
+
+    fn date_browser_save_selection(&self, snapshot: &mut DateBrowserSnapshot) {
+        for id in &snapshot.shown_ids {
+            snapshot.selected_ids.remove(id);
+        }
+        snapshot.selected_ids.extend(self.selected_photo_ids(None));
+    }
+
+    fn date_browser_publish(&self, photos: Vec<PhotoObject>, selected: &HashSet<i64>) {
+        self.current_photos.replace(photos.clone());
+        self.metadata_index.borrow_mut().clear();
+        self.stable_zoom_anchor.set(None);
+        self.zoom_anchor_restore_generation.set(self.zoom_anchor_restore_generation.get().wrapping_add(1));
+        self.store.splice(0, self.store.n_items(), &photos);
+        if self.group_mode.get() != GroupMode::None {
+            self.rebuild_group_ranges();
+            self.update_group_header_for_scroll(self.last_scroll_y.get());
+        }
+        if self.layout() != PhotoLayout::Grid {
+            self.sectioned_folder.refresh_model();
+        }
+        let selected_positions = gtk::Bitset::new_empty();
+        for (position, photo) in photos.iter().enumerate() {
+            if selected.contains(&photo.id()) {
+                selected_positions.add(position as u32);
+            }
+        }
+        let mask = gtk::Bitset::new_range(0, photos.len() as u32);
+        self.selection.set_selection(&selected_positions, &mask);
+    }
+
+    /// Show snapshot indices without rebuilding PhotoObjects or querying SQLite.
+    /// Returns false if a refresh or other model mutation superseded the view.
+    pub fn show_date_browser_subset(&self, snapshot: &mut DateBrowserSnapshot, indices: &[usize]) -> bool {
+        if !self.date_browser_snapshot_is_current(snapshot)
+            || indices.iter().any(|&index| index >= snapshot.photos.len()) {
+            return false;
+        }
+        self.date_browser_save_selection(snapshot);
+        let photos = indices.iter().map(|&index| snapshot.photos[index].clone()).collect::<Vec<_>>();
+        snapshot.shown_ids = photos.iter().map(PhotoObject::id).collect();
+        self.date_browser_publish(photos, &snapshot.selected_ids);
+        true
+    }
+
+    /// Restore the full library only if it has not since been replaced.
+    pub fn restore_date_browser_snapshot(&self, mut snapshot: DateBrowserSnapshot) -> bool {
+        if !self.date_browser_snapshot_is_current(&snapshot) {
+            return false;
+        }
+        self.date_browser_save_selection(&mut snapshot);
+        self.date_browser_publish(snapshot.photos, &snapshot.selected_ids);
+        true
+    }
+
     fn active_zoom_root(&self) -> gtk::Widget {
         let folder_mode = self.group_mode.get() == GroupMode::Folder;
         if self.using_virtual_photo_surface() {
@@ -2013,6 +2113,7 @@ impl Gallery {
         if ids.is_empty() {
             return;
         }
+        self.invalidate_date_browser();
 
         let scroll_y = self.scroll_position();
         let ids = ids.iter().copied().collect::<HashSet<_>>();
@@ -2239,6 +2340,7 @@ impl Gallery {
         if !is_current() {
             return;
         }
+        self.invalidate_date_browser();
         self.pending_metadata.borrow_mut().clear();
         self.progressive_group_dirty.set(false);
         if std::env::var_os("PICASA_TRACE").is_some() { eprintln!("PIC_NAV gallery_replace photos={}", photos.len()); }
@@ -2782,6 +2884,7 @@ impl Gallery {
     }
 
     pub fn append_photos(&self, photos: &[Photo]) {
+        self.invalidate_date_browser();
         if photos.is_empty() {
             return;
         }

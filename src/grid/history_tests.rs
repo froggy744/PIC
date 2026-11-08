@@ -2,6 +2,41 @@ use super::*;
 use chrono::{Datelike, Local, TimeZone};
 
 #[test]
+#[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+fn date_browser_subset_reuses_objects_and_preserves_selection() {
+    gtk::init().unwrap();
+    let gallery = Rc::new(Gallery::new(&[], 120, |_| {}, |_, _, _| {}, |_, _, _, _| {}, |_, _| {}, |_| {}));
+    let photos = (1..=4).map(|id| glib::Object::builder::<PhotoObject>()
+        .property("id", id as i64).property("path", format!("/virtual/date-{id}.jpg")).build()).collect::<Vec<_>>();
+    gallery.current_photos.replace(photos.clone());
+    gallery.store.splice(0, 0, &photos);
+    gallery.selection.select_item(0, false);
+    gallery.selection.select_item(2, false);
+    let mut snapshot = gallery.date_browser_snapshot().unwrap();
+    assert!(gallery.show_date_browser_subset(&mut snapshot, &[1, 2]));
+    assert_eq!(gallery.photo_objects(), vec![photos[1].clone(), photos[2].clone()]);
+    assert_eq!(gallery.selected_photo_ids(None), vec![3]);
+    gallery.selection.unselect_all();
+    gallery.selection.select_item(0, false);
+    assert!(gallery.restore_date_browser_snapshot(snapshot));
+    assert_eq!(gallery.photo_objects(), photos);
+    assert_eq!(gallery.selected_photo_ids(None), vec![1, 2]);
+    for layout in [PhotoLayout::PhotoWall, PhotoLayout::Masonry, PhotoLayout::Grid] {
+        gallery.set_layout(layout);
+        let mut snapshot = gallery.date_browser_snapshot().unwrap();
+        assert!(gallery.show_date_browser_subset(&mut snapshot, &[2, 3]));
+        assert_eq!(gallery.photo_objects(), vec![photos[2].clone(), photos[3].clone()]);
+        assert!(gallery.restore_date_browser_snapshot(snapshot));
+        assert_eq!(gallery.photo_objects(), photos);
+    }
+    let snapshot = gallery.date_browser_snapshot().unwrap();
+    gallery.current_photos.borrow_mut().pop();
+    gallery.store.remove(3);
+    assert!(!gallery.restore_date_browser_snapshot(snapshot));
+    assert_eq!(gallery.photo_objects().len(), 3);
+}
+
+#[test]
 fn history_group_labels_bucket_by_edit_age_not_import_date() {
     let today = Local::now().date_naive();
     let noon = |days_before: i64| -> i64 {

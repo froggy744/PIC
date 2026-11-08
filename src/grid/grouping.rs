@@ -515,7 +515,7 @@ fn history_group_label(edited_at: i64) -> String {
     value.format("%b %Y").to_string()
 }
 
-fn parse_photo_date(value: &str) -> Option<chrono::DateTime<Local>> {
+pub(crate) fn parse_photo_date(value: &str) -> Option<chrono::DateTime<Local>> {
     if let Ok(parsed) = chrono::DateTime::parse_from_rfc3339(value) {
         return Some(parsed.with_timezone(&Local));
     }

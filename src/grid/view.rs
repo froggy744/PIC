@@ -61,6 +61,7 @@ pub struct Gallery {
     // descendant.
     folder_catalog: Rc<RefCell<Vec<FolderCatalogEntry>>>,
     folder_view_changed: Rc<RefCell<Option<Rc<dyn Fn(bool, bool)>>>>,
+    date_browser_invalidate: RefCell<Option<Rc<dyn Fn()>>>,
     selected: Rc<dyn Fn(Option<PhotoObject>)>,
     store: gio::ListStore,
     selection: gtk::MultiSelection,
@@ -916,6 +917,7 @@ impl Gallery {
             folder_order: Rc::new(RefCell::new(Vec::new())),
             folder_catalog: Rc::new(RefCell::new(Vec::new())),
             folder_view_changed: Rc::new(RefCell::new(None)),
+            date_browser_invalidate: RefCell::new(None),
             selected,
             store,
             selection,

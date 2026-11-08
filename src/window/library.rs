@@ -4,6 +4,8 @@ static REFRESH_GENERATION: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(0);
 static APPLIED_REFRESH_GENERATION: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(0);
+static PENDING_REFRESH_GENERATION: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
 
 #[derive(Clone)]
 struct FolderViewportAnchor {
@@ -28,6 +30,7 @@ fn surviving_viewport_anchor(
 /// Albums/Photos -> Folder timer from pulling the view back later.
 fn invalidate_pending_grid_navigation() {
     REFRESH_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    PENDING_REFRESH_GENERATION.store(0, std::sync::atomic::Ordering::Relaxed);
 }
 
 fn folder_navigation_target(
@@ -222,6 +225,7 @@ fn refresh_grid_inner(
     gallery.set_raw_jpeg_pair_folders(pair_folders);
 
     let generation = REFRESH_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    PENDING_REFRESH_GENERATION.store(generation, std::sync::atomic::Ordering::Relaxed);
     let search = search.to_owned();
     let (sender, receiver) = std::sync::mpsc::channel();
     let database = db::connection_path(&connection.borrow()).ok();
@@ -298,6 +302,7 @@ fn refresh_grid_inner(
     glib::timeout_add_local(std::time::Duration::from_millis(25), move || {
         match receiver.try_recv() {
             Ok(Some(photos)) => {
+                let _ = PENDING_REFRESH_GENERATION.compare_exchange(generation, 0, std::sync::atomic::Ordering::Relaxed, std::sync::atomic::Ordering::Relaxed);
                 if REFRESH_GENERATION.load(std::sync::atomic::Ordering::Relaxed) == generation {
                     let replace_started = std::time::Instant::now();
                     let count = photos.len();
@@ -396,6 +401,7 @@ fn refresh_grid_inner(
                 glib::ControlFlow::Break
             }
             Ok(None) | Err(TryRecvError::Disconnected) => {
+                let _ = PENDING_REFRESH_GENERATION.compare_exchange(generation, 0, std::sync::atomic::Ordering::Relaxed, std::sync::atomic::Ordering::Relaxed);
                 if let Some(presentation_generation) = presentation_generation {
                     gallery.reveal_folder_destination(presentation_generation);
                 }

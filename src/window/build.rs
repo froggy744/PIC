@@ -250,6 +250,10 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let edit_escape_slot: Rc<RefCell<Option<Rc<dyn Fn()>>>> = Rc::new(RefCell::new(None));
     let collection_navigation_slot: Rc<RefCell<Option<Rc<dyn Fn(i32)>>>> =
         Rc::new(RefCell::new(None));
+    let date_browser_exit_slot: Rc<RefCell<Option<Rc<dyn Fn()>>>> = Rc::new(RefCell::new(None));
+    let date_browser_discard_slot: Rc<RefCell<Option<Rc<dyn Fn()>>>> = Rc::new(RefCell::new(None));
+    let date_browser_back_slot: Rc<RefCell<Option<Rc<dyn Fn() -> bool>>>> = Rc::new(RefCell::new(None));
+    let date_browser_resume_slot: Rc<RefCell<Option<Rc<dyn Fn(Option<(i32, u32)>, Option<i64>)>>>> = Rc::new(RefCell::new(None));
     let search_popup_slot: Rc<RefCell<Option<gtk::Popover>>> = Rc::new(RefCell::new(None));
     let space_toggle_in_progress = Rc::new(Cell::new(false));
 
@@ -592,6 +596,13 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             // displayed by the lightbox or its info bar.
             if lightbox_for_grid_selection.root.is_visible() {
                 return;
+            }
+            if photo.is_none() {
+                // Model replacement clears focus before selecting the new
+                // destination's first photo. Selection-model notifications
+                // can be elided when the selected index stays the same, so
+                // explicitly leave multiselect presentation on that clear.
+                info_for_grid.show_photo_metadata();
             }
             info_for_grid.set_photo(photo.as_ref());
             refresh_docked_properties(photo.as_ref());
@@ -2572,6 +2583,141 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     grid_surface.append(&gallery.group_header);
     grid_surface.append(&gallery_scroll_stack);
 
+    let date_browser_button = gtk::ToggleButton::new();
+    date_browser_button.set_icon_name("x-office-calendar-symbolic");
+    date_browser_button.set_tooltip_text(Some("Browse photos by year and month"));
+    date_browser_button.add_css_class("pic-header-action");
+    date_browser_button.set_visible(filter.get() == sidebar::SidebarFilter::All);
+    let date_browser_snapshot: Rc<RefCell<Option<grid::DateBrowserSnapshot>>> = Rc::new(RefCell::new(None));
+    let date_browser_slot: Rc<RefCell<Option<date_browser::DateBrowser>>> = Rc::new(RefCell::new(None));
+    let date_browser_active = Rc::new(Cell::new(false));
+    let date_browser_resume = Rc::new(RefCell::new(None::<(Option<(i32, u32)>, Option<i64>)>));
+    let exit_date_browser: Rc<dyn Fn()> = {
+        let snapshot = date_browser_snapshot.clone();
+        let gallery = gallery.clone();
+        let browser_slot = Rc::downgrade(&date_browser_slot);
+        let active = date_browser_active.clone();
+        let button = date_browser_button.downgrade();
+        let scroll = gallery_scroll_stack.clone();
+        let filter = filter.clone();
+        let sort = sort.clone();
+        let group_mode = group_mode.clone();
+        let search = search_text.clone();
+        Rc::new(move || {
+            if !active.replace(false) { return; }
+            if let Some(snapshot) = snapshot.borrow_mut().take() {
+                gallery.restore_date_browser_snapshot(snapshot);
+            }
+            if let Some(slot) = browser_slot.upgrade() {
+                if let Some(browser) = slot.borrow().as_ref() { browser.root().set_visible(false); }
+            }
+            if let Some(button) = button.upgrade() { button.set_active(false); }
+            scroll.set_visible(true);
+            apply_gallery_grouping(&gallery, filter.get(), sort.get(), group_mode.get(), search.borrow().is_empty());
+        })
+    };
+    date_browser_exit_slot.replace(Some(exit_date_browser.clone()));
+    let discard_date_browser: Rc<dyn Fn()> = {
+        let snapshot = date_browser_snapshot.clone();
+        let browser_slot = Rc::downgrade(&date_browser_slot);
+        let active = date_browser_active.clone();
+        let button = date_browser_button.downgrade();
+        let scroll = gallery_scroll_stack.clone();
+        Rc::new(move || {
+            if !active.replace(false) { return; }
+            snapshot.borrow_mut().take();
+            if let Some(slot) = browser_slot.upgrade() {
+                if let Some(browser) = slot.borrow().as_ref() { browser.root().set_visible(false); }
+            }
+            if let Some(button) = button.upgrade() { button.set_active(false); }
+            scroll.set_visible(true);
+        })
+    };
+    date_browser_discard_slot.replace(Some(discard_date_browser.clone()));
+    {
+        let exit = Rc::downgrade(&exit_date_browser);
+        gallery.set_date_browser_invalidate_handler(move || {
+            if let Some(exit) = exit.upgrade() { exit(); }
+        });
+    }
+    let browser = date_browser::DateBrowser::new(
+        {
+            let slot = Rc::downgrade(&date_browser_slot);
+            let snapshot = date_browser_snapshot.clone();
+            let gallery = gallery.clone();
+            let scroll = gallery_scroll_stack.clone();
+            let exit = exit_date_browser.clone();
+            Rc::new(move |month| {
+                let indices = slot.upgrade().and_then(|slot| slot.borrow().as_ref().map(|browser| browser.indices(month)));
+                let mut snapshot = snapshot.borrow_mut();
+                if let (Some(indices), Some(snapshot)) = (indices, snapshot.as_mut()) {
+                    if gallery.show_date_browser_subset(snapshot, &indices) {
+                        scroll.set_visible(true);
+                        return;
+                    }
+                }
+                drop(snapshot);
+                exit();
+            })
+        },
+        {
+            let scroll = gallery_scroll_stack.clone();
+            let heading = gallery.group_header.clone();
+            Rc::new(move || { scroll.set_visible(false); heading.set_visible(false); })
+        },
+        exit_date_browser.clone(),
+    );
+    browser.root().set_visible(false);
+    grid_surface.prepend(browser.root());
+    date_browser_slot.replace(Some(browser.clone()));
+    {
+        let browser = browser.clone();
+        let snapshot = date_browser_snapshot.clone();
+        let active = date_browser_active.clone();
+        let gallery_for_resume = gallery.clone();
+        let button = date_browser_button.downgrade();
+        date_browser_resume_slot.replace(Some(Rc::new(move |bucket, photo_id| {
+            let photos = gallery_for_resume.photo_objects();
+            browser.set_photos(&photos);
+            let Some(saved) = gallery_for_resume.date_browser_snapshot() else { return; };
+            browser.set_tile_width(gallery_for_resume.current_zoom_width());
+            snapshot.replace(Some(saved));
+            active.set(true);
+            if let Some(button) = button.upgrade() { button.set_active(true); }
+            browser.root().set_visible(true);
+            browser.resume_month(bucket);
+            if let Some(photo_id) = photo_id { gallery_for_resume.select_photo(photo_id); }
+        })));
+    }
+    {
+        let active = date_browser_active.clone();
+        let snapshot = date_browser_snapshot.clone();
+        let gallery = gallery.clone();
+        let browser_slot = date_browser_slot.clone();
+        let filter = filter.clone();
+        let search = search_text.clone();
+        let exit = exit_date_browser.clone();
+        date_browser_button.connect_clicked(move |button| {
+            if active.get() { exit(); return; }
+            if filter.get() != sidebar::SidebarFilter::All || !search.borrow().is_empty() {
+                button.set_active(false);
+                return;
+            }
+            if PENDING_REFRESH_GENERATION.load(std::sync::atomic::Ordering::Relaxed) != 0 {
+                button.set_active(false);
+                return;
+            }
+            let Some(saved) = gallery.date_browser_snapshot() else { button.set_active(false); return; };
+            let Some(browser) = browser_slot.borrow().clone() else { button.set_active(false); return; };
+            browser.set_photos(saved.photos());
+            browser.set_tile_width(gallery.current_zoom_width());
+            snapshot.replace(Some(saved));
+            active.set(true);
+            browser.root().set_visible(true);
+            browser.show_years();
+        });
+    }
+
     let grid_overlay = gtk::Overlay::new();
     grid_overlay.set_hexpand(true);
     grid_overlay.set_vexpand(true);
@@ -2736,6 +2882,17 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     main_stack.set_hexpand(true);
     main_stack.set_vexpand(true);
     main_stack.add_named(&photo_page, Some("photos"));
+    {
+        let browser = browser.clone();
+        let active = date_browser_active.clone();
+        let stack = main_stack.downgrade();
+        date_browser_back_slot.replace(Some(Rc::new(move || {
+            if !active.get() || !stack.upgrade().is_some_and(|stack| stack.visible_child_name().as_deref() == Some("photos")) {
+                return false;
+            }
+            browser.back()
+        })));
+    }
     main_stack.add_named(&albums_home, Some("albums"));
     let collage_page = gtk::Box::new(gtk::Orientation::Vertical, 0);
     collage_page.set_hexpand(true);
@@ -4214,6 +4371,8 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     }
 
     let gallery_for_zoom_slider = gallery.clone();
+    let date_browser_for_zoom_slider = date_browser_slot.clone();
+    let date_browser_active_for_zoom_slider = date_browser_active.clone();
     let lightbox_for_zoom_slider = lightbox.clone();
     let edit_editor_for_zoom_slider = edit_editor.clone();
     let main_stack_for_zoom_slider = main_stack.clone();
@@ -4311,6 +4470,16 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                     scale.value(),
                     fit_scale,
                 ));
+            }
+        } else if date_browser_active_for_zoom_slider.get() {
+            if let Some(browser) = date_browser_for_zoom_slider.borrow().as_ref() {
+                if browser.is_overview_visible() {
+                    let width = grid_zoom_width_from_slider(scale.value());
+                    browser.set_tile_width(width);
+                    gallery_for_zoom_slider.request_slider_zoom(width);
+                } else {
+                    gallery_for_zoom_slider.request_slider_zoom(grid_zoom_width_from_slider(scale.value()));
+                }
             }
         } else {
             gallery_for_zoom_slider
@@ -4426,6 +4595,8 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     });
 
     let gallery_for_zoom_reset = gallery.clone();
+    let date_browser_for_zoom_reset = date_browser_slot.clone();
+    let date_browser_active_for_zoom_reset = date_browser_active.clone();
     let lightbox_for_zoom_reset = lightbox.clone();
     let edit_editor_for_zoom_reset = edit_editor.clone();
     let main_stack_for_zoom_reset = main_stack.clone();
@@ -4449,6 +4620,14 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             } else if main_stack_for_zoom_reset.visible_child_name().as_deref() == Some("edit") {
                 if let Some(editor) = edit_editor_for_zoom_reset.borrow().as_ref() {
                     editor.fit();
+                }
+            } else if date_browser_active_for_zoom_reset.get() {
+                if let Some(browser) = date_browser_for_zoom_reset.borrow().as_ref() {
+                    if browser.is_overview_visible() {
+                        gallery_for_zoom_reset.reset_zoom();
+                        browser.set_tile_width(gallery_for_zoom_reset.current_zoom_width());
+                    }
+                    else { gallery_for_zoom_reset.reset_zoom(); }
                 }
             } else {
                 gallery_for_zoom_reset.reset_zoom();
@@ -5312,6 +5491,8 @@ fn start_photo_export_single(
     gallery_surface.set_vexpand(true);
     let gallery_stack = gtk::Box::new(gtk::Orientation::Vertical, 0);
     gallery_stack.add_css_class("gallery-content-surface");
+    // The transparent filter panel should reveal the same surface as the grid.
+    gallery_stack.add_css_class("photo-grid");
     gallery_stack.set_hexpand(true);
     gallery_stack.set_vexpand(true);
     gallery_stack.append(&metadata_panel.root);
@@ -6780,6 +6961,8 @@ fn start_photo_export_single(
     });
 
     switch_library_slot.replace(Some({
+        let exit_date_browser = discard_date_browser.clone();
+        let date_browser_button = date_browser_button.clone();
         let nav_fade_cancel = nav_fade_cancel.clone();
         let connection = connection.clone();
         let scan_job = scan_job.clone();
@@ -6915,12 +7098,15 @@ fn start_photo_export_single(
                 sort_photos(&mut photos, new_sort);
             }
 
+            exit_date_browser();
             connection.replace(new_connection);
             settings_window.menu_controls.reload(&connection.borrow());
             folder_cache.replace(folders.clone());
             selected_photo.replace(None);
             info.set_photo(None);
             filter.set(new_filter);
+            date_browser_button.set_visible(new_filter == sidebar::SidebarFilter::All);
+            date_browser_button.set_sensitive(true);
             restore_section_layout(&connection.borrow(), &gallery, &info, new_filter);
             sort.set(new_sort);
             group_mode.set(new_group);

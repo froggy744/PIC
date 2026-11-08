@@ -6,11 +6,12 @@
     };
     refresh.set_tooltip_text(Some("Refresh library"));
 
-    let sort_button = gtk::MenuButton::new();
-    sort_button.set_icon_name(match sort.get().direction {
+    let sort_button = gtk::Button::new();
+    let sort_icon = gtk::Image::from_icon_name(match sort.get().direction {
         SortDirection::Ascending => "view-sort-ascending-symbolic",
         SortDirection::Descending => "view-sort-descending-symbolic",
     });
+    sort_button.set_child(Some(&sort_icon));
     sort_button.set_tooltip_text(Some("Sort photos"));
 
     let sort_popover = gtk::Popover::new();
@@ -105,6 +106,7 @@
     sort_box.append(&group_month);
 
     let connect_sort_field = |button: &gtk::CheckButton, field: SortField| {
+        let exit_browser = discard_date_browser.clone();
         let sort = sort.clone();
         let group_mode = group_mode.clone();
         let group_none = group_none.clone();
@@ -114,10 +116,25 @@
         let filter = filter.clone();
         let search = search_text.clone();
         let gallery = gallery.clone();
+        let browser_active = date_browser_active.clone();
+        let browser = date_browser_slot.clone();
+        let sort_direction = sort.clone();
         button.connect_toggled(move |button| {
             if !button.is_active() {
                 return;
             }
+            if browser_active.get() && filter.get() == sidebar::SidebarFilter::All {
+                if let Some(browser) = browser.borrow().as_ref().filter(|browser| browser.is_photo_view()) {
+                    let value = PhotoSort { field, ..sort_direction.get() };
+                    sort_direction.set(value);
+                    if let Err(error) = db::set_setting(&connection.borrow(), SORT_FIELD_SETTING_KEY, field.key()) {
+                        eprintln!("Could not save photo sort field: {error}");
+                    }
+                    browser.set_photo_sort(field, value.direction == SortDirection::Descending);
+                }
+                return;
+            }
+            exit_browser();
             let value = PhotoSort {
                 field,
                 ..sort.get()
@@ -154,12 +171,15 @@
     connect_sort_field(&dimensions_sort, SortField::Dimensions);
 
     let connect_sort_direction = |button: &gtk::CheckButton, direction: SortDirection| {
+        let exit_browser = discard_date_browser.clone();
         let sort = sort.clone();
-        let sort_button = sort_button.clone();
+        let sort_icon = sort_icon.clone();
         let connection = connection.clone();
         let filter = filter.clone();
         let search = search_text.clone();
         let gallery = gallery.clone();
+        let browser_active = date_browser_active.clone();
+        let browser = date_browser_slot.clone();
         button.connect_toggled(move |button| {
             if !button.is_active() {
                 return;
@@ -169,9 +189,9 @@
                 ..sort.get()
             };
             sort.set(value);
-            sort_button.set_icon_name(match direction {
-                SortDirection::Ascending => "view-sort-ascending-symbolic",
-                SortDirection::Descending => "view-sort-descending-symbolic",
+            sort_icon.set_icon_name(match direction {
+                SortDirection::Ascending => Some("view-sort-ascending-symbolic"),
+                SortDirection::Descending => Some("view-sort-descending-symbolic"),
             });
             if let Err(error) = db::set_setting(
                 &connection.borrow(),
@@ -180,6 +200,17 @@
             ) {
                 eprintln!("Could not save photo sort direction: {error}");
             }
+            if browser_active.get() && filter.get() == sidebar::SidebarFilter::All {
+                if let Some(browser) = browser.borrow().as_ref() {
+                    if browser.is_overview_visible() {
+                        browser.set_descending(direction == SortDirection::Descending);
+                    } else {
+                        browser.set_photo_sort(value.field, direction == SortDirection::Descending);
+                    }
+                }
+                return;
+            }
+            exit_browser();
             refresh_grid(&connection, filter.get(), &search.borrow(), value, &gallery);
         });
     };
@@ -187,6 +218,7 @@
     connect_sort_direction(&descending_sort, SortDirection::Descending);
 
     let connect_group_mode = |button: &gtk::CheckButton, mode: grid::GroupMode| {
+        let exit_browser = discard_date_browser.clone();
         let group_mode = group_mode.clone();
         let sort = sort.clone();
         let date_taken_sort = date_taken_sort.clone();
@@ -198,6 +230,7 @@
             if !button.is_active() {
                 return;
             }
+            exit_browser();
             if !is_library_filter(filter.get()) {
                 return;
             }
@@ -234,6 +267,16 @@
     // Re-evaluate Group by every time it is opened so all Library destinations
     // stay enabled and Albums/Folders are visibly disabled.
     let filter_for_group_controls = filter.clone();
+    let browser_active_for_visibility = date_browser_active.clone();
+    let browser_for_visibility = date_browser_slot.clone();
+    let sort_heading_for_visibility = sort_heading.clone();
+    let date_taken_for_visibility = date_taken_sort.clone();
+    let date_added_for_visibility = date_added_sort.clone();
+    let rating_for_visibility = rating_sort.clone();
+    let name_for_visibility = name_sort.clone();
+    let size_for_visibility = file_size_sort.clone();
+    let dimensions_for_visibility = dimensions_sort.clone();
+    let group_heading_for_visibility = group_heading.clone();
     let group_none_for_visibility = group_none.clone();
     let group_day_for_visibility = group_day.clone();
     let group_month_for_visibility = group_month.clone();
@@ -245,9 +288,42 @@
         group_none_for_visibility.set_sensitive(available);
         group_day_for_visibility.set_sensitive(available);
         group_month_for_visibility.set_sensitive(available);
+        let browsing = browser_active_for_visibility.get();
+        let overview = browsing && browser_for_visibility.borrow().as_ref().is_some_and(|browser| browser.is_overview_visible());
+        for widget in [
+            sort_heading_for_visibility.upcast_ref::<gtk::Widget>(),
+            date_taken_for_visibility.upcast_ref(), date_added_for_visibility.upcast_ref(),
+            rating_for_visibility.upcast_ref(), name_for_visibility.upcast_ref(),
+            size_for_visibility.upcast_ref(), dimensions_for_visibility.upcast_ref(),
+            group_heading_for_visibility.upcast_ref(), group_none_for_visibility.upcast_ref(),
+            group_day_for_visibility.upcast_ref(), group_month_for_visibility.upcast_ref(),
+        ] { widget.set_visible(!overview); }
+        group_heading_for_visibility.set_visible(!browsing);
+        group_none_for_visibility.set_visible(!browsing);
+        group_day_for_visibility.set_visible(!browsing);
+        group_month_for_visibility.set_visible(!browsing);
     });
 
-    sort_button.set_popover(Some(&sort_popover));
+    sort_popover.set_parent(&sort_button);
+    {
+        let browser_active = date_browser_active.clone();
+        let filter = filter.clone();
+        let descending = descending_sort.clone();
+        let ascending = ascending_sort.clone();
+        let browser = date_browser_slot.clone();
+        let popover = sort_popover.clone();
+        sort_button.connect_clicked(move |_| {
+            if browser_active.get() && filter.get() == sidebar::SidebarFilter::All
+                && browser.borrow().as_ref().is_some_and(|browser| browser.is_overview_visible()) {
+                if descending.is_active() { ascending.set_active(true); }
+                else { descending.set_active(true); }
+            } else if popover.is_visible() {
+                popover.popdown();
+            } else {
+                popover.popup();
+            }
+        });
+    }
 
     // Keep rating filtering independent from sorting. The filtered subset can
     // still be sorted by Date, Rating, Name, Size, or Dimensions.
@@ -327,6 +403,7 @@
     }
 
     let connect_rating_filter = |button: &gtk::CheckButton, value: RatingFilter| {
+        let exit_browser = discard_date_browser.clone();
         let rating_filter = rating_filter.clone();
         let rating_filter_button = rating_filter_button.clone();
         let connection = connection.clone();
@@ -338,6 +415,7 @@
             if !button.is_active() {
                 return;
             }
+            exit_browser();
             rating_filter.set(value);
             rating_filter_button.set_icon_name(match value {
                 RatingFilter::All => "starred-symbolic",
@@ -491,6 +569,7 @@
     metadata_panel.button.add_css_class("pic-header-action");
     rating_filter_button.add_css_class("pic-header-action");
     info.view_toggle.add_css_class("pic-header-action");
+    header_tools.append(&date_browser_button);
     header_tools.append(&sort_button);
     header_tools.append(&metadata_panel.button);
     header_tools.append(&rating_filter_button);

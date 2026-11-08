@@ -17,6 +17,11 @@
         let lightbox = lightbox.clone();
         let sort = sort.clone();
         let group_mode = group_mode.clone();
+        let date_browser_exit = date_browser_discard_slot.clone();
+        let browser_slot = date_browser_slot.clone();
+        let browser_active = date_browser_active.clone();
+        let browser_resume = date_browser_resume.clone();
+        let date_browser_button = date_browser_button.clone();
         let sidebar_selection = sidebar_selection_slot.clone();
         let main_stack = main_stack.clone();
         let albums_home = albums_home.clone();
@@ -117,7 +122,24 @@
                     cleared_query_for_timeout.replace(None);
                 }
             });
+            if filter.get() == sidebar::SidebarFilter::All
+                && new_filter != sidebar::SidebarFilter::All
+                && browser_active.get()
+            {
+                if let Some(browser) = browser_slot.borrow().as_ref() {
+                    if let Some(bucket) = browser.current_bucket() {
+                        let photo_id = gallery.selected_photo_ids(None).first().copied()
+                            .or_else(|| gallery.viewport_center_photo().map(|photo| photo.id()));
+                        browser_resume.replace(Some((bucket, photo_id)));
+                    }
+                }
+            }
+            if let Some(exit) = date_browser_exit.borrow().as_ref() {
+                exit();
+            }
             filter.set(new_filter);
+            date_browser_button.set_visible(new_filter == sidebar::SidebarFilter::All);
+            date_browser_button.set_sensitive(true);
             restore_section_layout(&connection.borrow(), &gallery, &info, new_filter);
             if let Err(error) = db::set_setting(
                 &connection.borrow(),
@@ -157,7 +179,7 @@
             // destination_click clears the search entry above, so History
             // grouping can safely re-enable here.
             apply_gallery_grouping(&gallery, new_filter, sort.get(), group_mode.get(), true);
-            match folder_destination_plan(exact_photo_target, reuse_folder_stream) {
+            let navigation_result = match folder_destination_plan(exact_photo_target, reuse_folder_stream) {
                 FolderDestinationPlan::ReuseWithoutFolderScroll => {
                     // Open in Folder will select/scroll the exact photo below.
                     // Do not also queue the generic folder-header destination.
@@ -241,7 +263,31 @@
                         Some(REFRESH_GENERATION.load(std::sync::atomic::Ordering::Relaxed))
                     }
                 }
+            };
+            if new_filter == sidebar::SidebarFilter::All {
+                if let Some((bucket, photo_id)) = browser_resume.borrow_mut().take() {
+                    let expected = REFRESH_GENERATION.load(std::sync::atomic::Ordering::Relaxed);
+                    let gallery = Rc::downgrade(&gallery);
+                    let resume = date_browser_resume_slot.clone();
+                    let attempts = Rc::new(Cell::new(0_u8));
+                    glib::timeout_add_local(Duration::from_millis(80), move || {
+                        let Some(gallery) = gallery.upgrade() else { return glib::ControlFlow::Break; };
+                        let applied = APPLIED_REFRESH_GENERATION.load(std::sync::atomic::Ordering::Relaxed);
+                        let pending = PENDING_REFRESH_GENERATION.load(std::sync::atomic::Ordering::Relaxed);
+                        if applied == expected && pending == 0 && !gallery.stream_building() {
+                            if let Some(resume) = resume.borrow().as_ref() { resume(bucket, photo_id); }
+                            return glib::ControlFlow::Break;
+                        }
+                        let count = attempts.get() + 1;
+                        attempts.set(count);
+                        if count >= 80 || (pending == 0 && applied != expected) {
+                            return glib::ControlFlow::Break;
+                        }
+                        glib::ControlFlow::Continue
+                    });
+                }
             }
+            navigation_result
         })
     };
 
@@ -2584,6 +2630,8 @@
     let stack_for_home_search = main_stack.clone();
     let lightbox_for_search = lightbox.clone();
     let clear_search_after_photo = clear_search_after_result.clone();
+    let exit_browser_for_search = date_browser_discard_slot.clone();
+    let date_browser_button_for_search = date_browser_button.clone();
 
     search.connect_search_changed(move |entry| {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -2604,6 +2652,8 @@
                 cleared_search_query_for_search.replace(None);
                 return;
             }
+            if let Some(exit) = exit_browser_for_search.borrow().as_ref() { exit(); }
+            date_browser_button_for_search.set_sensitive(query.is_empty());
             gallery_for_search.set_search_result_activation(!query.is_empty());
             // Folder suggestions come directly from the library database.
             // This is intentionally a lightweight lookup: do not call db::folders()

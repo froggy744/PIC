@@ -1,4 +1,5 @@
 use super::*;
+use std::process::Command;
 use std::time::{Duration, Instant};
 
 fn settle() {
@@ -263,6 +264,91 @@ fn compact_toolbar_keeps_actions_usable_and_restores_wide_layout() {
     settle();
     assert!(bar.favorite.is_mapped());
     assert!(utilities[0].is_mapped());
+    window.close();
+}
+
+#[test]
+#[ignore = "requires a GTK display and xdotool; run individually"]
+fn show_in_infobar_menu_can_open_and_dismiss_without_changing_options() {
+    libadwaita::init().unwrap();
+    crate::css::install_foundation(&gtk::gdk::Display::default().unwrap());
+    let bar = InfoBar::new();
+    bar.set_photo(None);
+    let window = gtk::Window::builder()
+        .title("PIC InfoBar menu regression")
+        .default_width(900)
+        .default_height(100)
+        .child(&bar.root)
+        .build();
+    let dismiss_overflow = bar.overflow_popover.clone();
+    let dismiss_rating = bar.rating.clone();
+    let dismiss = gtk::GestureClick::new();
+    dismiss.set_button(1);
+    dismiss.set_propagation_phase(gtk::PropagationPhase::Capture);
+    dismiss.connect_pressed(move |_, _, _, _| {
+        dismiss_overflow.popdown();
+        if let Some(popover) = dismiss_rating.popover() {
+            popover.popdown();
+        }
+    });
+    bar.root.add_controller(dismiss);
+    window.present();
+    settle();
+
+    let overflow = bar.overflow_popover.clone();
+    let menu_box = overflow.child().unwrap().downcast::<gtk::Box>().unwrap();
+    let show_in_infobar = menu_box
+        .first_child()
+        .unwrap()
+        .next_sibling()
+        .unwrap()
+        .downcast::<gtk::MenuButton>()
+        .unwrap();
+    let choices = show_in_infobar.popover().unwrap();
+
+    for _ in 0..3 {
+        bar.overflow.popup();
+        wait_for_mapped(&[bar.overflow.clone().upcast()]);
+        settle();
+        assert!(overflow.is_visible());
+        let button_bounds = show_in_infobar.compute_bounds(&window).unwrap();
+        let click = Command::new("xdotool")
+            .args([
+                "mousemove",
+                &format!(
+                    "{}",
+                    (button_bounds.x() + button_bounds.width() / 2.0).round()
+                ),
+                &format!(
+                    "{}",
+                    (button_bounds.y() + button_bounds.height() / 2.0).round()
+                ),
+                "click",
+                "1",
+            ])
+            .status()
+            .unwrap();
+        assert!(click.success());
+        settle();
+        assert!(choices.is_visible());
+
+        // Dismiss without activating a visibility option using the same
+        // outside-click path as the application's capture-phase handler.
+        let click = Command::new("xdotool")
+            .args(["mousemove", "20", "20", "click", "1"])
+            .status()
+            .unwrap();
+        assert!(click.success());
+        settle();
+        assert!(!choices.is_visible());
+        assert!(!overflow.is_visible());
+    }
+
+    bar.overflow.popup();
+    settle();
+    assert!(overflow.is_visible(), "overflow menu should remain usable");
+    overflow.popdown();
+    settle();
     window.close();
 }
 

@@ -14,6 +14,7 @@ const DEFAULT_VISIBLE_FILTERS: &[Field] = &[
     Field::CameraMake,
     Field::CaptureDate,
     Field::FileType,
+    Field::Files,
     Field::Orientation,
     Field::Tags,
 ];
@@ -41,10 +42,13 @@ fn load_visible_filters(connection: &Connection) -> VisibleFilterSelection {
             {
                 selection.fields = DEFAULT_VISIBLE_FILTERS.to_vec();
             }
+            if selection.rating && !selection.fields.contains(&Field::Rating) {
+                selection.fields.push(Field::Rating);
+            }
             selection
         })
         .unwrap_or_else(|| VisibleFilterSelection {
-            fields: DEFAULT_VISIBLE_FILTERS.to_vec(),
+            fields: DEFAULT_VISIBLE_FILTERS.iter().copied().chain([Field::Rating]).collect(),
             rating: true,
         })
 }
@@ -134,6 +138,11 @@ mod explorer_field_tests {
     fn rating_is_available_as_an_all_view_column() {
         assert!(explorer_field_choices(&[Field::Camera], 0).contains(&Field::Rating));
     }
+
+    #[test]
+    fn files_is_available_as_an_all_view_column() {
+        assert!(explorer_field_choices(&[Field::Camera], 0).contains(&Field::Files));
+    }
 }
 
 struct ExplorerColumn {
@@ -154,7 +163,7 @@ pub(super) struct MetadataPanel {
     pub root: gtk::Box,
     explorer_revealer: gtk::Revealer,
     all_button: gtk::ToggleButton,
-    camera_control: gtk::Box,
+    filter_controls: gtk::Box,
     individual_controls: gtk::ScrolledWindow,
     lightbox_open: Cell<bool>,
     workspace_visible: Cell<bool>,
@@ -221,10 +230,7 @@ impl MetadataPanel {
 
         let toolbar = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         toolbar.add_css_class("metadata-filter-toolbar");
-        // ALL is always the first button, followed by Camera when individual
-        // filters are visible. The summary remains anchored at the right.
-        let camera_control = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-        camera_control.add_css_class("metadata-filter-controls");
+        // ALL stays first; individual filters follow in their chosen order.
         let all_button = gtk::ToggleButton::with_label("ALL");
         all_button.add_css_class("metadata-filter-all");
         all_button.set_tooltip_text(Some("Show all metadata columns"));
@@ -232,7 +238,6 @@ impl MetadataPanel {
             "Switch between individual filters and all metadata columns",
         )]);
         toolbar.append(&all_button);
-        toolbar.append(&camera_control);
         // Reserve the flexible space between ALL and the right-aligned summary.
         let middle = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         middle.add_css_class("metadata-filter-middle");
@@ -359,7 +364,7 @@ impl MetadataPanel {
             root,
             explorer_revealer,
             all_button: all_button.clone(),
-            camera_control,
+            filter_controls: controls.clone(),
             // Hide only the buttons when ALL is active, not their expanding
             // scroll host. That host reserves flexible width so counts and
             // Clear all never jump left next to ALL.
@@ -421,11 +426,7 @@ impl MetadataPanel {
                     panel.populate_editor(field, &content);
                 }
             });
-            if field == Field::Camera {
-                panel.camera_control.append(&menu);
-            } else {
-                controls.append(&menu);
-            }
+            controls.append(&menu);
             panel.filter_buttons.borrow_mut().push((field, menu));
 
             let option = gtk::CheckButton::with_label(field.label());
@@ -467,7 +468,6 @@ impl MetadataPanel {
             ("3 stars", "3"),
             ("4 stars", "4"),
             ("5 stars", "5"),
-            ("Corrupt photos", "corrupt"),
         ] {
             let b = gtk::Button::with_label(label);
             b.add_css_class("flat");
@@ -487,28 +487,6 @@ impl MetadataPanel {
         rating_popover.set_child(Some(&ratings));
         rating_button.set_popover(Some(&rating_popover));
         controls.append(&rating_button);
-        let availability_button = gtk::MenuButton::new();
-        availability_button.add_css_class("metadata-filter-choice");
-        availability_button.set_label("Availability");
-        let availability_popover = gtk::Popover::new();
-        let choices = gtk::Box::new(gtk::Orientation::Vertical, 2);
-        for (label, key) in [("All photos", "all"), ("Online", "online"), ("Offline", "offline")] {
-            let button = gtk::Button::with_label(label);
-            button.add_css_class("flat");
-            let weak = Rc::downgrade(&panel);
-            let popup = availability_popover.downgrade();
-            button.connect_clicked(move |_| {
-                if let Some(panel) = weak.upgrade() {
-                    (panel.rating)(key);
-                    panel.sync();
-                }
-                if let Some(popup) = popup.upgrade() { popup.popdown(); }
-            });
-            choices.append(&button);
-        }
-        availability_popover.set_child(Some(&choices));
-        availability_button.set_popover(Some(&availability_popover));
-        controls.append(&availability_button);
         controls.append(&filters_button);
         // Indexing belongs with the toolbar utilities, not the filter chips.
         let rating_option = gtk::CheckButton::with_label("Rating");
@@ -523,7 +501,13 @@ impl MetadataPanel {
         let weak = Rc::downgrade(&panel);
         rating_option.connect_toggled(move |check| {
             if let Some(panel) = weak.upgrade() {
-                panel.filter_selection.borrow_mut().rating = check.is_active();
+                let mut selection = panel.filter_selection.borrow_mut();
+                selection.rating = check.is_active();
+                selection.fields.retain(|field| *field != Field::Rating);
+                if check.is_active() {
+                    selection.fields.push(Field::Rating);
+                }
+                drop(selection);
                 panel.sync_filter_visibility();
                 panel.save_visible_filters();
             }
@@ -532,6 +516,7 @@ impl MetadataPanel {
             .filter_options
             .borrow_mut()
             .push((None, rating_option));
+        panel.sync_filter_visibility();
         let weak = Rc::downgrade(&panel);
         let filters_list_for_sort = filters_list.clone();
         filters_popover.connect_show(move |_| {
@@ -718,7 +703,6 @@ impl MetadataPanel {
             && !pinned_index;
         self.root.set_visible(show_panel);
         let show_all = self.all_button.is_active();
-        self.camera_control.set_visible(!show_all);
         self.individual_controls.set_visible(!show_all);
         self.chips_scroll
             .set_visible(show_all && self.chips.first_child().is_some());
@@ -732,7 +716,15 @@ impl MetadataPanel {
     }
     fn sync_filter_visibility(&self) {
         let selection = self.filter_selection.borrow().clone();
-        for (field, button) in self.filter_buttons.borrow().iter() {
+        let buttons = self.filter_buttons.borrow();
+        let mut previous: Option<&gtk::MenuButton> = None;
+        for field in &selection.fields {
+            if let Some((_, button)) = buttons.iter().find(|(candidate, _)| candidate == field) {
+                self.filter_controls.reorder_child_after(button, previous);
+                previous = Some(button);
+            }
+        }
+        for (field, button) in buttons.iter() {
             button.set_visible(if *field == Field::Rating {
                 selection.rating
             } else {
@@ -1052,7 +1044,9 @@ impl MetadataPanel {
         let active = state.categories.len() + usize::from(!matches!(rating.as_str(), "" | "all"));
         for (field, button) in self.filter_buttons.borrow().iter() {
             let selected = if *field == Field::Rating {
-                !matches!(rating.as_str(), "" | "all")
+                matches!(rating.as_str(), "stars" | "unrated" | "1" | "2" | "3" | "4" | "5")
+            } else if *field == Field::Files {
+                matches!(rating.as_str(), "online" | "offline" | "corrupt")
             } else {
                 state.categories.contains_key(field)
             };
@@ -1120,7 +1114,12 @@ impl MetadataPanel {
             }
         }
         if !matches!(rating.as_str(), "" | "all") {
-            let chip = gtk::Button::with_label(&format!("Rating: {rating} ×"));
+            let category = if matches!(rating.as_str(), "online" | "offline" | "corrupt") {
+                "Files"
+            } else {
+                "Rating"
+            };
+            let chip = gtk::Button::with_label(&format!("{category}: {rating} ×"));
             chip.add_css_class("metadata-active-chip");
             let weak = Rc::downgrade(self);
             chip.connect_clicked(move |_| {
@@ -1282,6 +1281,34 @@ impl MetadataPanel {
         search: Option<gtk::SearchEntry>,
         preserve_existing: bool,
     ) {
+        if field == Field::Files {
+            while let Some(child) = list.first_child() {
+                list.remove(&child);
+            }
+            let current = (self.scope)().rating;
+            for (label, key) in [("Online", "online"), ("Offline", "offline"), ("Corrupt photos", "corrupt")] {
+                let check = gtk::CheckButton::with_label(label);
+                check.set_active(current == key);
+                let weak = Rc::downgrade(self);
+                check.connect_toggled(move |check| {
+                    if let Some(panel) = weak.upgrade() {
+                        let value = if check.is_active() { key } else { "all" };
+                        let weak = Rc::downgrade(&panel);
+                        glib::idle_add_local_once(move || {
+                            if let Some(panel) = weak.upgrade() {
+                                (panel.rating)(value);
+                                panel.sync();
+                            }
+                        });
+                    }
+                });
+                list.append(&check);
+            }
+            if let Some(search) = search.as_ref() {
+                Self::filter_column_values(list, &search.text());
+            }
+            return;
+        }
         let preserve_existing = preserve_existing && list.first_child().is_some();
         if !preserve_existing {
             while let Some(child) = list.first_child() {

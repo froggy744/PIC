@@ -20,6 +20,7 @@ pub enum Field {
     CaptureDate,
     FileType,
     Rating,
+    Files,
     Flash,
     Exposure,
     WhiteBalance,
@@ -36,7 +37,7 @@ pub enum Field {
     Tags,
 }
 impl Field {
-    pub const ALL: [Self; 23] = [
+    pub const ALL: [Self; 24] = [
         Self::Camera,
         Self::CameraMake,
         Self::Lens,
@@ -48,6 +49,7 @@ impl Field {
         Self::CaptureDate,
         Self::FileType,
         Self::Rating,
+        Self::Files,
         Self::Flash,
         Self::Exposure,
         Self::WhiteBalance,
@@ -74,6 +76,7 @@ impl Field {
             Self::CaptureDate => "Capture date",
             Self::FileType => "File type",
             Self::Rating => "Rating",
+            Self::Files => "Files",
             Self::Flash => "Flash used",
             Self::Exposure => "Exposure compensation",
             Self::WhiteBalance => "White balance",
@@ -113,6 +116,7 @@ impl Field {
             Self::CaptureDate => "substr(m.captured_at,1,10)",
             Self::FileType => "m.file_type",
             Self::Rating => "mp.rating",
+            Self::Files => "NULL",
             Self::Flash => "m.flash",
             Self::Exposure => "mp.exposure_bias",
             Self::WhiteBalance => "m.white_balance",

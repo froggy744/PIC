@@ -589,176 +589,186 @@ fn transition_picker(initial: PicasaTransition) -> (gtk::Box, Rc<Cell<PicasaTran
     (group, selected)
 }
 
-/// Local vector illustrations scale into both the style list and the larger
-/// preview without decoding photos or touching remote storage.
+/// Draw compact picker icons and wider detail previews with the same palette.
 fn style_preview(style: Style, width: i32, height: i32) -> gtk::DrawingArea {
     let area = gtk::DrawingArea::new();
     area.set_content_width(width);
     area.set_content_height(height);
     area.set_hexpand(true);
     area.set_vexpand(true);
-    area.set_draw_func(move |_, cr, actual_width, actual_height| {
+    area.set_draw_func(move |_, cr, aw, ah| {
+        let wide = width > 100;
+        let w = if wide { 100.0 } else { 66.0 };
+        let h = 42.0;
+        let scale = (aw as f64 / w).min(ah as f64 / h);
         let _ = cr.save();
-        cr.scale(actual_width as f64 / 66.0, actual_height as f64 / 42.0);
-        let rect = |x: f64, y: f64, w: f64, h: f64, rgb: (f64, f64, f64)| {
-            cr.set_source_rgb(rgb.0, rgb.1, rgb.2);
-            cr.rectangle(x, y, w, h);
+        cr.set_source_rgb(0.10, 0.14, 0.18);
+        let _ = cr.paint();
+        cr.translate((aw as f64 - w * scale) / 2.0, (ah as f64 - h * scale) / 2.0);
+        cr.scale(scale, scale);
+        let photo = |x: f64, y: f64, pw: f64, ph: f64, angle: f64, tint: usize, alpha: f64| {
+            let skies = [
+                (0.48, 0.65, 0.68),
+                (0.68, 0.58, 0.51),
+                (0.55, 0.62, 0.55),
+                (0.55, 0.57, 0.68),
+            ];
+            let hills = [
+                (0.24, 0.39, 0.39),
+                (0.43, 0.36, 0.33),
+                (0.31, 0.42, 0.35),
+                (0.34, 0.36, 0.46),
+            ];
+            let (sr, sg, sb) = skies[tint % 4];
+            let (hr, hg, hb) = hills[tint % 4];
+            let _ = cr.save();
+            cr.translate(x + pw / 2.0, y + ph / 2.0);
+            cr.rotate(angle);
+            cr.set_source_rgba(0.0, 0.0, 0.0, 0.25 * alpha);
+            cr.rectangle(-pw / 2.0 + 0.8, -ph / 2.0 + 1.2, pw, ph);
             let _ = cr.fill();
-        };
-        let photo = |x: f64, y: f64, w: f64, h: f64, tint: usize| {
-            let sky = [
-                (0.42, 0.68, 0.80),
-                (0.78, 0.61, 0.47),
-                (0.49, 0.66, 0.63),
-                (0.57, 0.57, 0.79),
-            ][tint % 4];
-            let ground = [
-                (0.25, 0.42, 0.38),
-                (0.55, 0.42, 0.28),
-                (0.29, 0.45, 0.37),
-                (0.40, 0.38, 0.58),
-            ][tint % 4];
-            rect(x, y, w, h, sky);
-            rect(x, y + h * 0.64, w, h * 0.36, ground);
-            rect(
-                x + w * 0.68,
-                y + h * 0.16,
-                w * 0.12,
-                h * 0.13,
-                (0.98, 0.86, 0.61),
+            cr.set_source_rgba(0.75, 0.76, 0.72, alpha);
+            cr.rectangle(-pw / 2.0, -ph / 2.0, pw, ph);
+            let _ = cr.fill();
+            cr.rectangle(-pw / 2.0 + 0.6, -ph / 2.0 + 0.6, pw - 1.2, ph - 1.2);
+            cr.clip();
+            cr.set_source_rgba(sr, sg, sb, alpha);
+            let _ = cr.paint();
+            cr.set_source_rgba(hr, hg, hb, alpha);
+            cr.move_to(-pw / 2.0, ph * 0.25);
+            cr.line_to(-pw * 0.12, -ph * 0.06);
+            cr.line_to(pw * 0.12, ph * 0.13);
+            cr.line_to(pw * 0.32, -ph * 0.1);
+            cr.line_to(pw / 2.0, ph * 0.1);
+            cr.line_to(pw / 2.0, ph / 2.0);
+            cr.line_to(-pw / 2.0, ph / 2.0);
+            cr.close_path();
+            let _ = cr.fill();
+            cr.set_source_rgba(0.89, 0.80, 0.64, 0.8 * alpha);
+            cr.arc(
+                pw * 0.23,
+                -ph * 0.22,
+                ph * 0.065,
+                0.0,
+                std::f64::consts::TAU,
             );
+            let _ = cr.fill();
+            let _ = cr.restore();
         };
-        rect(0.0, 0.0, 66.0, 42.0, (0.12, 0.16, 0.21));
+        let cx = w / 2.0;
         match style {
             Style::Mosaic => {
-                for row in 0..2 {
-                    for col in 0..3 {
+                let size = if wide { 11.0 } else { 10.0 };
+                for row in 0..3 {
+                    for col in 0..5 {
                         photo(
-                            3.0 + col as f64 * 21.0,
-                            3.0 + row as f64 * 19.0,
-                            18.0,
-                            16.0,
-                            row * 3 + col,
+                            cx - 2.5 * size + col as f64 * size,
+                            5.0 + row as f64 * size,
+                            size - 1.0,
+                            size - 1.0,
+                            0.0,
+                            row * 5 + col,
+                            1.0,
                         );
                     }
                 }
             }
             Style::Grid => {
+                let pw = if wide { 22.0 } else { 18.0 };
                 for row in 0..2 {
                     for col in 0..3 {
                         photo(
-                            col as f64 * 22.0,
-                            row as f64 * 21.0,
-                            21.0,
-                            20.0,
+                            cx - 1.5 * pw + col as f64 * pw,
+                            4.0 + row as f64 * 17.0,
+                            pw - 0.8,
+                            16.2,
+                            0.0,
                             row * 3 + col,
+                            1.0,
                         );
                     }
-                }
-            }
-            Style::Floating => {
-                for (x, y, tilt, tint) in [
-                    (6., 4., -0.09, 0),
-                    (36., 3., 0.08, 1),
-                    (3., 22., 0.10, 2),
-                    (32., 21., -0.1, 3),
-                ] {
-                    let _ = cr.save();
-                    cr.translate(x + 13., y + 9.);
-                    cr.rotate(tilt);
-                    rect(-13., -9., 26., 18., (0.95, 0.95, 0.92));
-                    photo(-11., -7., 22., 14., tint);
-                    let _ = cr.restore();
                 }
             }
             Style::PicturePile => {
-                for (i, angle, x) in [(0, -0.15, 11.0), (1, 0.13, 23.0), (2, -0.08, 35.0)] {
-                    let _ = cr.save();
-                    cr.translate(x + 9.0, 20.0);
-                    cr.rotate(angle);
-                    rect(-10.0, -15.0, 22.0, 31.0, (0.95, 0.94, 0.89));
-                    photo(-8.0, -13.0, 18.0, 22.0, i);
-                    let _ = cr.restore();
+                for (x, y, a, i) in [
+                    (-25.0, 8.0, -0.16, 0),
+                    (-12.0, 6.0, 0.12, 1),
+                    (1.0, 9.0, -0.08, 2),
+                ] {
+                    photo(cx + x, y, 25.0, 23.0, a, i, 1.0);
                 }
             }
-            Style::Fade => {
-                photo(2., 0., 62., 42., 2);
-                rect(9., 6., 48., 30., (0.22, 0.27, 0.33));
-                photo(11., 8., 44., 26., 0);
+            Style::Floating => {
+                for (x, y, a, i) in [
+                    (-28.0, 4.0, -0.09, 0),
+                    (4.0, 4.0, 0.08, 1),
+                    (-27.0, 23.0, 0.08, 2),
+                    (5.0, 23.0, -0.08, 3),
+                ] {
+                    photo(cx + x, y, 23.0, 15.0, a, i, 1.0);
+                }
             }
             Style::IPhoto => {
-                rect(5.0, 4.0, 56.0, 34.0, (0.84, 0.85, 0.83));
-                photo(7.0, 6.0, 52.0, 30.0, 0);
-                cr.set_source_rgba(1.0, 1.0, 1.0, 0.84);
-                cr.set_line_width(1.0);
-                cr.rectangle(13.5, 9.5, 39.0, 23.0);
+                photo(cx - 29.0, 3.0, 58.0, 36.0, 0.0, 0, 1.0);
+                cr.set_source_rgba(1.0, 1.0, 1.0, 0.8);
+                cr.set_line_width(0.6);
+                cr.rectangle(cx - 19.0, 9.0, 38.0, 23.0);
                 let _ = cr.stroke();
             }
+            Style::Fade => {
+                photo(cx - 30.0, 4.0, 48.0, 30.0, 0.0, 1, 0.75);
+                photo(cx - 18.0, 8.0, 48.0, 30.0, 0.0, 0, 0.82);
+            }
             Style::CoverFlow => {
-                for (x, y, width, tint) in [
-                    (5.0, 8.0, 17.0, 2),
-                    (22.0, 4.0, 25.0, 0),
-                    (47.0, 8.0, 14.0, 1),
+                photo(cx - 29.0, 10.0, 18.0, 22.0, -0.10, 2, 0.8);
+                photo(cx + 11.0, 10.0, 18.0, 22.0, 0.10, 1, 0.8);
+                photo(cx - 14.0, 5.0, 28.0, 30.0, 0.0, 0, 1.0);
+            }
+            Style::Flying => {
+                cr.set_source_rgba(0.8, 0.85, 0.85, 0.18);
+                cr.set_line_width(0.4);
+                for (x, y) in [(-28.0, -16.0), (28.0, -16.0), (-28.0, 16.0), (28.0, 16.0)] {
+                    cr.move_to(cx, 21.0);
+                    cr.line_to(cx + x, 21.0 + y);
+                    let _ = cr.stroke();
+                }
+                photo(cx - 2.0, 19.0, 4.0, 3.0, 0.0, 2, 1.0);
+                photo(cx - 25.0, 7.0, 12.0, 9.0, -0.08, 0, 1.0);
+                photo(cx + 5.0, 22.0, 23.0, 15.0, 0.08, 1, 1.0);
+            }
+            Style::PhotoDrift => {
+                for (x, y, pw, ph, a, i) in [
+                    (-29.0, 5.0, 14.0, 10.0, -0.08, 0),
+                    (-12.0, 16.0, 20.0, 14.0, 0.06, 1),
+                    (14.0, 5.0, 12.0, 9.0, 0.08, 2),
+                    (10.0, 25.0, 18.0, 12.0, -0.05, 3),
                 ] {
-                    photo(x, y, width, 24.0, tint);
-                    cr.set_source_rgba(0.7, 0.8, 0.9, 0.18);
-                    cr.rectangle(x, y + 25.0, width, 7.0);
-                    let _ = cr.fill();
+                    photo(cx + x, y, pw, ph, a, i, 1.0);
                 }
             }
+            Style::Surprise => {
+                photo(cx - 28.0, 5.0, 23.0, 15.0, 0.0, 0, 1.0);
+                photo(cx - 28.0, 23.0, 23.0, 14.0, 0.0, 1, 1.0);
+                photo(cx + 1.0, 8.0, 26.0, 26.0, 0.12, 2, 1.0);
+            }
             Style::MatrixRain | Style::MatrixKenBurns => {
-                rect(0., 0., 66., 42., (0.0, 0.025, 0.008));
-                let layout = pangocairo::functions::create_layout(cr);
-                layout.set_font_description(Some(&gtk::pango::FontDescription::from_string(
-                    "Sans 7",
-                )));
-                for col in 0..11 {
-                    for row in 0..5 {
-                        let bright = ((col * 3 + row * 7) % 9) as f64 / 10.0;
-                        cr.set_source_rgb(0.02, 0.22 + bright * 0.7, 0.08);
-                        cr.move_to(col as f64 * 6., row as f64 * 8. + 7.);
-                        layout.set_text(
-                            &matrix::KATAKANA[(col * 7 + row * 13) % matrix::KATAKANA.len()]
-                                .to_string(),
-                        );
-                        pangocairo::functions::show_layout(cr, &layout);
+                cr.set_source_rgb(0.0, 0.025, 0.008);
+                cr.rectangle(0.0, 0.0, w, h);
+                let _ = cr.fill();
+                for col in 0..(w as usize / 4) {
+                    for row in 0..7 {
+                        let v = ((col * 7 + row * 11) % 9) as f64 / 9.0;
+                        cr.set_source_rgba(0.08, 0.8, 0.28, 0.15 + v * 0.6);
+                        cr.rectangle(col as f64 * 4.0 + 1.0, row as f64 * 6.0 + 1.0, 1.0, 2.5);
+                        let _ = cr.fill();
                     }
                 }
                 if style == Style::MatrixKenBurns {
-                    cr.set_source_rgb(0.4, 1., 0.6);
-                    cr.rectangle(12., 8., 42., 26.);
+                    cr.set_source_rgba(0.4, 1.0, 0.6, 0.8);
+                    cr.set_line_width(0.6);
+                    cr.rectangle(cx - 22.0, 8.0, 44.0, 26.0);
                     let _ = cr.stroke();
                 }
-            }
-            Style::Flying => {
-                // Perspective, miniaturised: the vanishing point in the middle,
-                // prints growing as they approach and drifting out to the edges.
-                cr.set_source_rgba(1.0, 1.0, 1.0, 0.12);
-                cr.set_line_width(0.8);
-                for (dx, dy) in [(-26., -14.), (26., -12.), (-24., 15.), (24., 14.)] {
-                    cr.move_to(33.0, 21.0);
-                    cr.line_to(33.0 + dx, 21.0 + dy);
-                    let _ = cr.stroke();
-                }
-                photo(31.5, 19.5, 5.0, 3.4, 2);
-                photo(14.0, 7.0, 13.0, 9.0, 0);
-                photo(40.0, 24.0, 22.0, 15.0, 1);
-            }
-            Style::PhotoDrift => {
-                photo(5.0, 6.0, 9.0, 7.0, 1);
-                photo(20.0, 14.0, 14.0, 11.0, 0);
-                photo(43.0, 5.0, 8.0, 6.0, 2);
-                photo(39.0, 25.0, 18.0, 13.0, 1);
-            }
-            Style::Surprise => {
-                photo(4.0, 5.0, 24.0, 15.0, 1);
-                photo(4.0, 22.0, 24.0, 15.0, 2);
-                let _ = cr.save();
-                cr.translate(45.0, 21.0);
-                cr.rotate(0.15);
-                rect(-13.0, -17.0, 27.0, 34.0, (0.95, 0.94, 0.89));
-                photo(-11.0, -15.0, 23.0, 27.0, 3);
-                let _ = cr.restore();
             }
         }
         let _ = cr.restore();
@@ -1219,7 +1229,7 @@ pub fn open(
     });
     let update_for_picker = Rc::clone(&update_style);
     let (style_picker, style_selected) = style_picker(current.style, terminal, move |style| {
-        update_for_picker(style);
+        update_for_picker(style)
     });
     gallery.append(&style_picker);
     update_style(current.style);

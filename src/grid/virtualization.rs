@@ -263,7 +263,9 @@ impl Gallery {
 
     fn invalidate_date_browser(&self) {
         let handler = self.date_browser_invalidate.borrow().clone();
-        if let Some(handler) = handler { handler(); }
+        if let Some(handler) = handler {
+            handler();
+        }
     }
 
     /// Capture only a settled model. The caller must also cancel any pending
@@ -285,7 +287,11 @@ impl Gallery {
         !self.stream_building.get()
             && self.group_mode.get() != GroupMode::Folder
             && self.replace_generation.get() == snapshot.generation
-            && self.current_photos.borrow().iter().map(PhotoObject::id)
+            && self
+                .current_photos
+                .borrow()
+                .iter()
+                .map(PhotoObject::id)
                 .eq(snapshot.shown_ids.iter().copied())
     }
 
@@ -300,7 +306,8 @@ impl Gallery {
         self.current_photos.replace(photos.clone());
         self.metadata_index.borrow_mut().clear();
         self.stable_zoom_anchor.set(None);
-        self.zoom_anchor_restore_generation.set(self.zoom_anchor_restore_generation.get().wrapping_add(1));
+        self.zoom_anchor_restore_generation
+            .set(self.zoom_anchor_restore_generation.get().wrapping_add(1));
         self.store.splice(0, self.store.n_items(), &photos);
         if self.group_mode.get() != GroupMode::None {
             self.rebuild_group_ranges();
@@ -321,9 +328,14 @@ impl Gallery {
 
     /// Show snapshot indices without rebuilding PhotoObjects or querying SQLite.
     /// Returns false if a refresh or other model mutation superseded the view.
-    pub fn show_date_browser_subset(&self, snapshot: &mut DateBrowserSnapshot, indices: &[usize]) -> bool {
+    pub fn show_date_browser_subset(
+        &self,
+        snapshot: &mut DateBrowserSnapshot,
+        indices: &[usize],
+    ) -> bool {
         if !self.date_browser_snapshot_is_current(snapshot)
-            || indices.iter().any(|&index| index >= snapshot.photos.len()) {
+            || indices.iter().any(|&index| index >= snapshot.photos.len())
+        {
             return false;
         }
         self.date_browser_save_selection(snapshot);
@@ -335,7 +347,10 @@ impl Gallery {
                 snapshot.selected_ids.insert(snapshot.photos[first].id());
             }
         }
-        let photos = indices.iter().map(|&index| snapshot.photos[index].clone()).collect::<Vec<_>>();
+        let photos = indices
+            .iter()
+            .map(|&index| snapshot.photos[index].clone())
+            .collect::<Vec<_>>();
         snapshot.shown_ids = photos.iter().map(PhotoObject::id).collect();
         self.date_browser_publish(photos, &snapshot.selected_ids);
         true
@@ -393,7 +408,7 @@ impl Gallery {
         }
 
         let mut best: Option<(bool, f64, ZoomAnchor)> = None;
-        for tile in tiles {
+        for tile in &tiles {
             if !tile.is_mapped() || !tile.is_visible() {
                 continue;
             }
@@ -909,7 +924,9 @@ impl Gallery {
         if std::env::var_os("PICASA_TRACE").is_some() {
             eprintln!(
                 "PIC_ZOOM_TRACE wheel_commit target={} current={} columns={} anchor={:?}",
-                width, self.tile_width.get(), self.current_columns.get(),
+                width,
+                self.tile_width.get(),
+                self.current_columns.get(),
                 self.stable_zoom_anchor.get(),
             );
         }
@@ -1011,9 +1028,7 @@ impl Gallery {
         let folder_mode = self.group_mode.get() == GroupMode::Folder;
         if self.using_virtual_photo_surface() {
             let start_height = self.tile_height.get().max(1);
-            let target_height = ((start_height as f64)
-                * target_width as f64
-                / start_width as f64)
+            let target_height = ((start_height as f64) * target_width as f64 / start_width as f64)
                 .round()
                 .max(1.0) as i32;
             let snapshot = self.sectioned_folder.capture_reflow_snapshot();
@@ -1059,9 +1074,7 @@ impl Gallery {
         }
 
         let start_height = self.tile_height.get().max(1);
-        let target_height = ((start_height as f64)
-            * target_width as f64
-            / start_width as f64)
+        let target_height = ((start_height as f64) * target_width as f64 / start_width as f64)
             .round()
             .max(1.0) as i32;
 
@@ -1083,8 +1096,11 @@ impl Gallery {
         if std::env::var_os("PICASA_TRACE").is_some() {
             eprintln!(
                 "PIC_ZOOM_TRACE geometry_before target={}x{} columns={} grid={}x{}",
-                target_width, target_height, self.current_columns.get(),
-                self.root.width(), self.root.height(),
+                target_width,
+                target_height,
+                self.current_columns.get(),
+                self.root.width(),
+                self.root.height(),
             );
         }
         let columns_before = self.current_columns.get();
@@ -1104,8 +1120,12 @@ impl Gallery {
                 .unwrap_or(-1.0);
             eprintln!(
                 "PIC_ZOOM_TRACE geometry_after tile={}x{} columns={} grid={}x{} scroll_y={:.1}",
-                self.tile_width.get(), self.tile_height.get(),
-                self.current_columns.get(), self.root.width(), self.root.height(), scroll,
+                self.tile_width.get(),
+                self.tile_height.get(),
+                self.current_columns.get(),
+                self.root.width(),
+                self.root.height(),
+                scroll,
             );
         }
         self.schedule_grid_zoom_anchor_restore(generation, true);
@@ -1151,10 +1171,10 @@ impl Gallery {
         }
         // Capture the visible photo before the tile resize disturbs the layout.
         let folder_mode = self.group_mode.get() == GroupMode::Folder;
-        let sectioned_folder_mode =
-            folder_mode && crate::grid::sectioned_folder_view_enabled();
-        let folder_list_mode =
-            folder_mode && !sectioned_folder_mode && !crate::grid::folder_gridview_experiment_enabled();
+        let sectioned_folder_mode = folder_mode && crate::grid::sectioned_folder_view_enabled();
+        let folder_list_mode = folder_mode
+            && !sectioned_folder_mode
+            && !crate::grid::folder_gridview_experiment_enabled();
         let sectioned_anchor = if sectioned_folder_mode {
             self.stable_zoom_anchor
                 .get()
@@ -1180,7 +1200,6 @@ impl Gallery {
             (self.on_zoom_changed)(width);
         }
 
-
         let mut tiles = Vec::new();
         if sectioned_folder_mode {
             collect_tiles(self.folder_sectioned_root.upcast_ref(), &mut tiles);
@@ -1196,7 +1215,6 @@ impl Gallery {
             tile.set_tile_size(width, height);
         }
         let resize_us = resize_started.map_or(0, |started| started.elapsed().as_micros());
-
 
         let root_width = if sectioned_folder_mode {
             self.folder_sectioned_root.width()
@@ -1247,7 +1265,6 @@ impl Gallery {
                 started.elapsed().as_micros()
             );
         }
-
     }
 
     /// After Folder scrolling settles, load only cached thumbnails for tiles
@@ -1290,7 +1307,6 @@ impl Gallery {
                 tile.unload_visual();
             }
         }
-
 
         loaded
     }
@@ -1438,7 +1454,8 @@ impl Gallery {
 
         const ITEM_PADDING: f64 = 6.0;
         let columns = self.current_columns.get().max(1) as usize;
-        let row_pitch = tile_block_height(self.tile_height.get(), self.show_file_names.get()) as f64
+        let row_pitch = tile_block_height(self.tile_height.get(), self.show_file_names.get())
+            as f64
             + ITEM_PADDING * 2.0;
         let first = self.index_for_scroll_position(scroll_y);
         let visible_rows =
@@ -1977,12 +1994,28 @@ impl Gallery {
     pub fn drain_thumbnail_display_completions(&self) -> usize {
         let completions = crate::thumbnail_display::take_completions();
         let due_retries = crate::thumbnail_display::take_due_retry_keys();
-        if completions.is_empty() && due_retries.is_empty() {
+        let mask_enabled = honeycomb_raster::cached_render_enabled();
+        let mask_results = if mask_enabled {
+            honeycomb_raster::take_ready(honeycomb_raster::current_generation())
+        } else {
+            Vec::new()
+        };
+        if completions.is_empty() && due_retries.is_empty() && mask_results.is_empty() {
+            if mask_enabled {
+                honeycomb_raster::log_metrics_if_due();
+            }
             return 0;
         }
 
         let mut loaded = HashMap::<String, gtk::gdk::Paintable>::new();
         let mut missing = HashSet::<String>::new();
+        let cached_mode = honeycomb_raster::cached_render_enabled()
+            && self.layout() == PhotoLayout::Honeycomb
+            && !grid_zoom_animation_active();
+        let mut tiles = Vec::new();
+        collect_tiles(self.root.upcast_ref(), &mut tiles);
+        collect_tiles(self.folder_root.upcast_ref(), &mut tiles);
+        collect_tiles(self.folder_sectioned_root.upcast_ref(), &mut tiles);
         for completion in completions {
             let completion_outcome = match &completion.outcome {
                 crate::thumbnail_display::DisplayOutcome::Loaded { .. } => "loaded",
@@ -2009,6 +2042,20 @@ impl Gallery {
                         width as usize * 4,
                     );
                     let paintable: gtk::gdk::Paintable = texture.upcast();
+                    if cached_mode && width > 0 && height > 0 {
+                        for tile in &tiles {
+                            let Some(photo) = tile.imp().photo.borrow().as_ref().cloned() else {
+                                continue;
+                            };
+                            if tile.is_mapped()
+                                && photo_presentation_key(&photo).as_deref()
+                                    == Some(completion.key.as_str())
+                            {
+                                tile.apply_presentation_paintable(&completion.key, &paintable);
+                                tile.prepare_honeycomb_mask(bytes.clone());
+                            }
+                        }
+                    }
                     folder_thumbnail_cache_insert(completion.key.clone(), paintable.clone());
                     loaded.insert(completion.key, paintable);
                 }
@@ -2019,11 +2066,7 @@ impl Gallery {
             }
         }
 
-        let mut tiles = Vec::new();
-        collect_tiles(self.root.upcast_ref(), &mut tiles);
-        collect_tiles(self.folder_root.upcast_ref(), &mut tiles);
-        collect_tiles(self.folder_sectioned_root.upcast_ref(), &mut tiles);
-        for tile in tiles {
+        for tile in &tiles {
             let Some(photo) = tile.imp().photo.borrow().as_ref().cloned() else {
                 continue;
             };
@@ -2049,7 +2092,44 @@ impl Gallery {
                 tile.mark_presentation_missing(&key);
             }
         }
-        loaded.len() + missing.len()
+
+        let mut mask_count = 0;
+        for result in mask_results {
+            let (key, pixels, width, height) = honeycomb_raster::result_parts(result);
+            let expected_len = (width as usize)
+                .checked_mul(height as usize)
+                .and_then(|size| size.checked_mul(4));
+            if key.output_size() != Some((width, height))
+                || expected_len != Some(pixels.len())
+            {
+                continue;
+            }
+            honeycomb_raster::cache_insert(key.clone(), pixels.clone());
+            let started = Instant::now();
+            let mut applied = false;
+            for tile in &tiles {
+                if tile.current_honeycomb_mask_key().as_ref() == Some(&key) {
+                    applied |=
+                        tile.apply_honeycomb_mask_cached(&key, pixels.clone(), width, height);
+                }
+            }
+            let elapsed = started.elapsed().as_micros() as u64;
+            if applied {
+                honeycomb_raster::record_main_texture_creation(
+                    elapsed,
+                    width as usize * height as usize * 4,
+                );
+            }
+            if !applied {
+                // The cache remains reusable when a tile was recycled while
+                // rasterization ran; no stale widget receives the texture.
+            }
+            mask_count += 1;
+        }
+        if mask_enabled {
+            honeycomb_raster::log_metrics_if_due();
+        }
+        loaded.len() + missing.len() + mask_count
     }
 
     pub fn refresh_thumbnails(&self) {
@@ -2063,7 +2143,6 @@ impl Gallery {
         for tile in tiles {
             tile.refresh_thumbnail();
         }
-
     }
 
     pub fn set_favorite_indicators_visible(&self, visible: bool) {
@@ -2210,7 +2289,9 @@ impl Gallery {
             .iter()
             .map(|path| path.to_string_lossy().into_owned())
             .collect::<HashSet<_>>();
-        if std::env::var_os("PICASA_TRACE").is_some() { eprintln!("PIC_NAV thumbnail_refresh_paths count={}", paths.len()); }
+        if std::env::var_os("PICASA_TRACE").is_some() {
+            eprintln!("PIC_NAV thumbnail_refresh_paths count={}", paths.len());
+        }
         let mut refreshed = HashSet::new();
         let mut tiles = Vec::new();
         collect_tiles(self.root.upcast_ref(), &mut tiles);
@@ -2356,7 +2437,9 @@ impl Gallery {
         self.invalidate_date_browser();
         self.pending_metadata.borrow_mut().clear();
         self.progressive_group_dirty.set(false);
-        if std::env::var_os("PICASA_TRACE").is_some() { eprintln!("PIC_NAV gallery_replace photos={}", photos.len()); }
+        if std::env::var_os("PICASA_TRACE").is_some() {
+            eprintln!("PIC_NAV gallery_replace photos={}", photos.len());
+        }
         self.stable_zoom_anchor.set(None);
         self.zoom_anchor_restore_generation
             .set(self.zoom_anchor_restore_generation.get().wrapping_add(1));
@@ -2386,7 +2469,10 @@ impl Gallery {
         let unchanged = {
             let current = self.current_photos.borrow();
             current.len() == photos.len()
-                && current.iter().zip(photos.iter()).all(|(object, photo)| object.matches_catalog(photo))
+                && current
+                    .iter()
+                    .zip(photos.iter())
+                    .all(|(object, photo)| object.matches_catalog(photo))
         };
         if unchanged {
             // Entering Folder mode can intentionally clear the transient
@@ -2677,13 +2763,18 @@ impl Gallery {
                 let end = (start + BATCH_SIZE).min(current.len());
                 for (index, object) in current.iter().enumerate().take(end).skip(start) {
                     object.refresh_folder_availability();
-                    if !photos.get(index).is_some_and(|photo| object.matches_catalog(photo)) {
+                    if !photos
+                        .get(index)
+                        .is_some_and(|photo| object.matches_catalog(photo))
+                    {
                         unchanged.set(false);
                     }
                     existing.borrow_mut().insert(object.id(), object.clone());
                 }
                 prepare_offset.set(end);
-                if end < current.len() { return glib::ControlFlow::Continue; }
+                if end < current.len() {
+                    return glib::ControlFlow::Continue;
+                }
                 drop(current);
                 prepared.set(true);
                 if unchanged.get() && pending_metadata.borrow().is_empty() {
@@ -2744,7 +2835,9 @@ impl Gallery {
                     let updated = pending_metadata.borrow_mut().remove(&photo.id);
                     let photo = updated.as_ref().unwrap_or(photo);
                     if let Some(object) = existing.borrow_mut().remove(&photo.id) {
-                        if !object.matches_catalog(photo) { object.set_from_photo(photo); }
+                        if !object.matches_catalog(photo) {
+                            object.set_from_photo(photo);
+                        }
                         object
                     } else {
                         PhotoObject::from_photo(photo)
@@ -2783,7 +2876,6 @@ impl Gallery {
             } else {
                 store.splice(store.n_items(), 0, &objects);
             }
-
 
             if end >= photos.len() {
                 if group_mode.get() == GroupMode::Folder {
@@ -2824,7 +2916,7 @@ impl Gallery {
                                     tile_block_height(tile_height.get(), show_file_names.get())
                                         + TILE_ROW_SPACING,
                                 ))
-                                .floor() as usize)
+                            .floor() as usize)
                                 * current_columns.get().max(1) as usize,
                         );
                     } else {
@@ -2844,7 +2936,7 @@ impl Gallery {
                                 tile_block_height(tile_height.get(), show_file_names.get())
                                     + TILE_ROW_SPACING,
                             ))
-                            .floor() as usize)
+                        .floor() as usize)
                             * current_columns.get().max(1) as usize,
                     );
                 }
@@ -2866,8 +2958,13 @@ impl Gallery {
                 selected(current_photos.borrow().first().cloned());
             }
             if std::env::var_os("PICASA_TRACE").is_some() {
-                eprintln!("PIC_NAV gallery_replace_batch generation={} applied={} total={} elapsed_ms={}",
-                    generation, end, photos.len(), batch_started.elapsed().as_millis());
+                eprintln!(
+                    "PIC_NAV gallery_replace_batch generation={} applied={} total={} elapsed_ms={}",
+                    generation,
+                    end,
+                    photos.len(),
+                    batch_started.elapsed().as_millis()
+                );
             }
             if end < photos.len() {
                 glib::ControlFlow::Continue
@@ -2917,7 +3014,6 @@ impl Gallery {
                 self.update_group_header_for_scroll(self.last_scroll_y.get());
             }
         }
-
     }
 
     /// Stop a progressive replacement that is no longer the active view.
@@ -2933,7 +3029,6 @@ impl Gallery {
             .set(self.zoom_anchor_restore_generation.get().wrapping_add(1));
         self.stream_building.set(false);
     }
-
 }
 fn folder_section_plan(
     ranges: &[GroupRange],
@@ -3090,7 +3185,6 @@ fn rebuild_folder_rows_for(
     let order = folder_order.borrow();
     let new_rows = build_folder_virtual_objects(&ranges, &photos, line_size, &catalog, &order);
 
-
     let old_len = old_rows as usize;
     let new_len = new_rows.len();
     let mut prefix = 0usize;
@@ -3136,9 +3230,7 @@ fn rebuild_folder_rows_for(
         suffix += 1;
     }
 
-
     if prefix == old_len && prefix == new_len {
-
         return;
     }
 
@@ -3157,7 +3249,6 @@ fn rebuild_folder_rows_for(
     // therefore requires reusing an already-populated folder model instead of
     // rebuilding it.
     folder_store.splice(prefix as u32, removed, inserted);
-
 }
 
 fn visible_thumbnail_candidate(

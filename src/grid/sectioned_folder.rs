@@ -914,6 +914,15 @@ impl SectionedFolderView {
         }
         self.sync_honeycomb_viewport(&scrolled);
         let width = self.viewport_width(&scrolled);
+        if honeycomb_raster::cached_render_enabled() {
+            honeycomb_raster::update_view_geometry(
+                self.layout_mode.get() == PhotoLayout::Honeycomb,
+                self.tile_width.get(),
+                self.tile_height.get(),
+                self.root.scale_factor(),
+                width,
+            );
+        }
         self.geometry_for_current_layout(width);
         self.spacer
             .set_size_request(width, self.total_height.get().ceil() as i32);
@@ -1118,6 +1127,9 @@ impl SectionedFolderView {
                             tile.tile.set_presentation_scale(1.0);
                         }
                         tile.tile.set_presentation_offset(0.0, 0.0);
+                        if honeycomb_raster::cached_render_enabled() {
+                            tile.tile.try_apply_cached_honeycomb_mask();
+                        }
                         tile.move_to(&self.root, item.x, item.y);
                     }
                     continue;
@@ -1295,6 +1307,39 @@ impl SectionedFolderView {
                     geometry[section_index].header_y + 20.0,
                 );
             }
+        }
+        if honeycomb_raster::cached_render_enabled() {
+            let (visible_mask_keys, active_mask_keys) =
+                if self.layout_mode.get() == PhotoLayout::Honeycomb {
+                let viewport_top = scrolled.vadjustment().value();
+                let viewport_bottom = viewport_top + scrolled.vadjustment().page_size();
+                let wall = self.wall_state.borrow();
+                let mut visible = HashSet::new();
+                let mut active = HashSet::new();
+                for tile in self.live_tiles.borrow().values() {
+                    if !tile.tile.is_mapped() {
+                        continue;
+                    }
+                    let Some(key) = tile.tile.current_honeycomb_mask_key() else {
+                        continue;
+                    };
+                    active.insert(key.clone());
+                    let in_view = tile
+                        .index
+                        .get()
+                        .and_then(|index| wall.layout.item(index as usize))
+                        .is_some_and(|item| {
+                            item.y < viewport_bottom && item.y + item.height > viewport_top
+                        });
+                    if in_view {
+                        visible.insert(key);
+                    }
+                }
+                (visible, active)
+            } else {
+                (HashSet::new(), HashSet::new())
+            };
+            honeycomb_raster::update_visible_keys(visible_mask_keys, active_mask_keys);
         }
         drop(geometry);
         drop(ranges);

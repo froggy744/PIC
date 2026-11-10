@@ -1,6 +1,7 @@
 #![allow(deprecated)] // GTK exposes no supported replacement for CSS border and padding introspection.
 
 use super::*;
+use std::time::Duration;
 
 fn settle() {
     let context = glib::MainContext::default();
@@ -612,6 +613,445 @@ fn photo_wall_sustained_scroll_frame_latency() {
         intervals.len(), peak_tiles.get(), intervals[intervals.len() / 2],
         intervals[(intervals.len() - 1) * 95 / 100], intervals[intervals.len() - 1], stalls_over_50ms
     );
+    window.close();
+}
+
+fn honeycomb_bench_visible_tiles(
+    gallery: &Gallery,
+    layout: PhotoLayout,
+    scroll: &gtk::ScrolledWindow,
+) -> Vec<SquareTile> {
+    let top = scroll.vadjustment().value();
+    let bottom = top + scroll.vadjustment().page_size();
+    if layout != PhotoLayout::Grid {
+        let wall = gallery.sectioned_folder.wall_state.borrow();
+        return gallery
+            .sectioned_folder
+            .live_tiles
+            .borrow()
+            .values()
+            .filter_map(|entry| {
+                let index = entry.index.get()?;
+                let item = wall.layout.item(index as usize)?;
+                (item.y < bottom && item.y + item.height > top).then(|| entry.tile.clone())
+            })
+            .collect();
+    }
+    let mut tiles = Vec::new();
+    collect_tiles(gallery.root.upcast_ref(), &mut tiles);
+    tiles
+        .into_iter()
+        .filter(|tile| {
+            tile.is_mapped()
+                && tile.compute_bounds(&gallery.root).is_some_and(|bounds| {
+                    f64::from(bounds.y()) < bottom && f64::from(bounds.y() + bounds.height()) > top
+                })
+        })
+        .collect()
+}
+
+fn honeycomb_bench_cpu_us() -> u64 {
+    let mut usage = std::mem::MaybeUninit::<libc::rusage>::uninit();
+    let result = unsafe { libc::getrusage(libc::RUSAGE_SELF, usage.as_mut_ptr()) };
+    if result != 0 {
+        return 0;
+    }
+    let usage = unsafe { usage.assume_init() };
+    let user = usage.ru_utime.tv_sec as u64 * 1_000_000 + usage.ru_utime.tv_usec as u64;
+    let system = usage.ru_stime.tv_sec as u64 * 1_000_000 + usage.ru_stime.tv_usec as u64;
+    user + system
+}
+
+fn honeycomb_bench_visible_ready(
+    gallery: &Gallery,
+    layout: PhotoLayout,
+    scroll: &gtk::ScrolledWindow,
+    cached: bool,
+) -> bool {
+    let tiles = honeycomb_bench_visible_tiles(gallery, layout, scroll);
+    !tiles.is_empty()
+        && tiles.iter().all(|tile| {
+            if !tile.imp().visual_loaded.get() {
+                return false;
+            }
+            let photo = tile.imp().photo.borrow();
+            let Some(photo) = photo.as_ref() else { return false };
+            if photo.corrupt() || !photo.thumbnail_available()
+                || tile.imp().applied_visual_key.borrow().as_deref()
+                    != photo_presentation_key(photo).as_deref()
+                || tile.transition_paintable().is_none()
+            {
+                return false;
+            }
+            !cached || tile.imp().honeycomb_mask_cached.get()
+        })
+}
+
+fn honeycomb_bench_capture_tile(
+    gallery: &Gallery,
+    window: &gtk::Window,
+    scroll: &gtk::ScrolledWindow,
+    layout: PhotoLayout,
+    mode: &str,
+) {
+    let Ok(directory) = std::env::var("PIC_BENCH_CAPTURE_DIR") else {
+        return;
+    };
+    let Some(tile) = honeycomb_bench_visible_tiles(gallery, layout, scroll)
+        .into_iter()
+        .find(|tile| tile.imp().visual_loaded.get())
+    else {
+        return;
+    };
+    let snapshot = gtk::Snapshot::new();
+    tile.snapshot_honeycomb_for_bench(&snapshot);
+    let Some(node) = snapshot.to_node() else {
+        eprintln!(
+            "BENCH_CAPTURE mode={mode} unavailable empty_tile_snapshot size={}x{}",
+            tile.width(),
+            tile.height()
+        );
+        return;
+    };
+    let rendered = window.renderer().unwrap().render_texture(
+        &node,
+        Some(&gtk::graphene::Rect::new(
+            0.0,
+            0.0,
+            tile.width() as f32,
+            tile.height() as f32,
+        )),
+    );
+    let directory = std::path::Path::new(&directory);
+    std::fs::create_dir_all(directory).unwrap();
+    let path = directory.join(format!("{mode}.png"));
+    rendered.save_to_png(&path).unwrap();
+    eprintln!(
+        "BENCH_CAPTURE mode={mode} photo_id={} path={}",
+        tile.photo().unwrap().id(),
+        path.display()
+    );
+}
+
+fn honeycomb_bench_scroll_leg(
+    gallery: &Rc<Gallery>,
+    window: &gtk::Window,
+    scroll: &gtk::ScrolledWindow,
+    mode: &str,
+    layout: PhotoLayout,
+    cached: bool,
+    phase: &str,
+    distance: f64,
+) {
+    let adjustment = scroll.vadjustment();
+    let from = adjustment.value();
+    let max = (adjustment.upper() - adjustment.page_size()).max(adjustment.lower());
+    let to = (from + distance).clamp(adjustment.lower(), max);
+    let samples = Rc::new(RefCell::new(Vec::<i64>::new()));
+    let previous = Rc::new(Cell::new(None::<i64>));
+    let samples_after = samples.clone();
+    let previous_after = previous.clone();
+    let clock = window.frame_clock().unwrap();
+    let handler = clock.connect_after_paint(move |clock| {
+        let frame_time = clock.frame_time();
+        if let Some(old) = previous_after.replace(Some(frame_time)) {
+            let interval = frame_time.saturating_sub(old);
+            if interval > 0 {
+                samples_after.borrow_mut().push(interval);
+            }
+        }
+    });
+
+    let wall_start = Instant::now();
+    let cpu_start = honeycomb_bench_cpu_us();
+    let reached = Rc::new(Cell::new(false));
+    let reached_timeout = reached.clone();
+    let adjust_timeout = adjustment.clone();
+    let root_timeout = gallery.visible_root();
+    let _source = glib::timeout_add_local(Duration::from_millis(8), move || {
+        let progress = (wall_start.elapsed().as_secs_f64() / 1.5).min(1.0);
+        adjust_timeout.set_value(from + (to - from) * progress);
+        root_timeout.queue_draw();
+        if progress >= 1.0 {
+            reached_timeout.set(true);
+            glib::ControlFlow::Break
+        } else {
+            glib::ControlFlow::Continue
+        }
+    });
+    let context = glib::MainContext::default();
+    let deadline = Instant::now() + Duration::from_secs(4);
+    while !reached.get() && Instant::now() < deadline {
+        while context.pending() {
+            context.iteration(false);
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert!(reached.get(), "benchmark scroll leg timed out");
+    let scroll_elapsed_us = wall_start.elapsed().as_micros() as u64;
+    // Stop sampling at the end of the controlled movement. Texture settling is
+    // measured separately and must not contaminate the scrolling frame trace.
+    clock.disconnect(handler);
+    let settle_start = Instant::now();
+    let settle_deadline = settle_start + Duration::from_secs(12);
+    while Instant::now() < settle_deadline
+        && !honeycomb_bench_visible_ready(gallery, layout, scroll, cached)
+    {
+        while context.pending() {
+            context.iteration(false);
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    let visible_settle_us = settle_start.elapsed().as_micros() as u64;
+    let visible_ready = honeycomb_bench_visible_ready(gallery, layout, scroll, cached);
+    let cpu_us = honeycomb_bench_cpu_us().saturating_sub(cpu_start);
+    let rss_kib = {
+        let mut usage = std::mem::MaybeUninit::<libc::rusage>::uninit();
+        if unsafe { libc::getrusage(libc::RUSAGE_SELF, usage.as_mut_ptr()) } == 0 {
+            unsafe { usage.assume_init().ru_maxrss as u64 }
+        } else {
+            0
+        }
+    };
+    let mask = honeycomb_raster::metrics_snapshot();
+    let mut intervals = samples
+        .borrow()
+        .iter()
+        .map(|interval| *interval as f64 / 1000.0)
+        .collect::<Vec<_>>();
+    intervals.sort_by(f64::total_cmp);
+    let percentile = |p: f64| -> f64 {
+        if intervals.is_empty() {
+            0.0
+        } else {
+            intervals[((intervals.len() - 1) as f64 * p).ceil() as usize]
+        }
+    };
+    let over_16 = intervals.iter().filter(|&&ms| ms > 16.7).count();
+    let over_33 = intervals.iter().filter(|&&ms| ms > 33.3).count();
+    eprintln!(
+        "BENCH_JSON {{\"mode\":\"{mode}\",\"phase\":\"{phase}\",\"kind\":\"{layout:?}\",\"frames\":{},\"median_ms\":{:.3},\"p95_ms\":{:.3},\"p99_ms\":{:.3},\"max_ms\":{:.3},\"over_16_7\":{over_16},\"over_33_3\":{over_33},\"scroll_ms\":{:.1},\"visible_settle_ms\":{:.1},\"visible_ready\":{visible_ready},\"cpu_pct\":{:.1},\"cpu_us\":{cpu_us},\"rss_hwm_kib\":{rss_kib},\"cache_hits\":{},\"cache_misses\":{},\"cache_fallbacks\":{},\"cache_evictions\":{},\"cache_bytes\":{},\"pending_bytes\":{},\"pending_peak_bytes\":{},\"worker_us\":{},\"queue_avg_us\":{},\"queue_max_us\":{},\"main_texture_us\":{},\"estimated_upload_bytes\":{},\"intervals_ms\":[{}]}}",
+        intervals.len() + 1,
+        percentile(0.50),
+        percentile(0.95),
+        percentile(0.99),
+        intervals.last().copied().unwrap_or_default(),
+        scroll_elapsed_us as f64 / 1000.0,
+        visible_settle_us as f64 / 1000.0,
+        cpu_us as f64 * 100.0 / scroll_elapsed_us.saturating_add(visible_settle_us).max(1) as f64,
+        mask.hits,
+        mask.misses,
+        mask.fallbacks,
+        mask.evictions,
+        mask.cache_bytes,
+        mask.pending_bytes,
+        mask.pending_peak_bytes,
+        mask.worker_us,
+        mask.queue_avg_us,
+        mask.queue_max_us,
+        mask.main_texture_us,
+        mask.estimated_upload_bytes,
+        intervals
+            .iter()
+            .map(|ms| format!("{ms:.3}"))
+            .collect::<Vec<_>>()
+            .join(","),
+    );
+    assert!(intervals.len() > 20, "too few native frame samples");
+}
+
+#[test]
+#[ignore = "requires native Wayland/Vulkan and PIC_BENCH_LIBRARY_DB pointing to an actual PIC library"]
+fn actual_library_honeycomb_cached_scroll_benchmark() {
+    libadwaita::init().unwrap();
+    let database_path = std::env::var("PIC_BENCH_LIBRARY_DB").unwrap();
+    let connection = rusqlite::Connection::open_with_flags(
+        &database_path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .unwrap();
+    let photos = crate::db::photos(&connection, None, false, None)
+        .unwrap()
+        .into_iter()
+        .filter(|photo| {
+            !photo.trashed
+                && photo.path.starts_with('/')
+                && std::path::Path::new(&photo.path).is_file()
+        })
+        .map(|photo| PhotoObject::from_photo(&photo))
+        .collect::<Vec<_>>();
+    assert!(
+        photos.len() >= 100,
+        "not a representative real PIC library: {} photos",
+        photos.len()
+    );
+    let mode = std::env::var("PIC_BENCH_LAYOUT").unwrap();
+    let (layout, phase) = match mode.as_str() {
+        "gsk" => (PhotoLayout::Honeycomb, "gsk"),
+        "cached" => (PhotoLayout::Honeycomb, "cached"),
+        "grid" => (PhotoLayout::Grid, "grid"),
+        other => panic!("unknown PIC_BENCH_LAYOUT={other}"),
+    };
+    assert_eq!(
+        honeycomb_raster::cached_render_enabled(),
+        mode == "cached",
+        "renderer env flag must match the benchmark mode"
+    );
+    let gallery = Rc::new(Gallery::new(
+        &[],
+        100,
+        |_| {},
+        |_, _, _| {},
+        |_, _, _, _| {},
+        |_, _| {},
+        |_| {},
+    ));
+    gallery.store.splice(0, 0, &photos);
+    gallery.current_photos.replace(photos);
+    gallery.set_layout(layout);
+    let scroll = if layout == PhotoLayout::Grid {
+        gtk::ScrolledWindow::builder().child(&gallery.root).build()
+    } else {
+        gtk::ScrolledWindow::builder()
+            .child(&gallery.folder_sectioned_root)
+            .build()
+    };
+    if layout == PhotoLayout::Grid {
+        let gallery_for_scroll = gallery.clone();
+        scroll.vadjustment().connect_value_changed(move |_| {
+            gallery_for_scroll.refresh_visible_grid_tiles();
+        });
+    } else {
+        gallery.attach_sectioned_folder_scroll(&scroll);
+    }
+    let window = gtk::Window::builder()
+        .title("PIC real-library Honeycomb cache benchmark")
+        .default_width(1280)
+        .default_height(800)
+        .child(&scroll)
+        .build();
+    let gallery_for_tick = gallery.clone();
+    gallery.visible_root().add_tick_callback(move |_, _| {
+        gallery_for_tick.drain_thumbnail_display_completions();
+        glib::ControlFlow::Continue
+    });
+    window.present();
+    settle();
+    if std::env::var_os("PIC_BENCH_ONE_PHOTO").is_none() {
+        gallery.refresh_thumbnails();
+    }
+    let renderer_name = window.renderer().unwrap().type_().name().to_string();
+    assert_eq!(renderer_name, "GskVulkanRenderer");
+    if layout == PhotoLayout::Honeycomb {
+        assert_eq!(scroll.hscrollbar_policy(), gtk::PolicyType::Never);
+    }
+    if std::env::var_os("PIC_BENCH_ONE_PHOTO").is_some() {
+        let tile = honeycomb_bench_visible_tiles(&gallery, layout, &scroll)
+            .into_iter().find(|tile| tile.is_mapped() && tile.photo().is_some())
+            .expect("no mapped photo tile");
+        let photo = tile.photo().unwrap();
+        eprintln!("SMOKE photo_id={} thumbnail={:?}", photo.id(), photo.cached_thumbnail_path());
+        tile.refresh_thumbnail();
+        let context = glib::MainContext::default();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while Instant::now() < deadline && !tile.imp().honeycomb_mask_cached.get() {
+            while context.pending() { context.iteration(false); }
+            gallery.drain_thumbnail_display_completions();
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        let metrics = honeycomb_raster::metrics_snapshot();
+        eprintln!("SMOKE loaded={} available={} cached={} worker_us={} misses={} hits={} cache_bytes={} paintable={}", tile.imp().visual_loaded.get(), photo.thumbnail_available(), tile.imp().honeycomb_mask_cached.get(), metrics.worker_us, metrics.misses, metrics.hits, metrics.cache_bytes, tile.transition_paintable().is_some());
+        assert!(tile.imp().honeycomb_mask_cached.get() && metrics.worker_us > 0, "photo did not reach cached snapshot path");
+        settle();
+        let snapshot = gtk::Snapshot::new();
+        gtk::WidgetPaintable::new(Some(&tile)).snapshot(&snapshot, tile.width() as f64, tile.height() as f64);
+        let node = snapshot.to_node().expect("cached tile produced no snapshot");
+        let texture = window.renderer().unwrap().render_texture(&node, None);
+        let mut pixels = vec![0; texture.width() as usize * texture.height() as usize * 4];
+        texture.download(&mut pixels, texture.width() as usize * 4);
+        let center = ((texture.height() as usize / 2) * texture.width() as usize + texture.width() as usize / 2) * 4;
+        assert!(pixels[center + 3] > 240, "cached tile center is transparent");
+        eprintln!("SMOKE cached_snapshot={}x{} center_alpha={}", texture.width(), texture.height(), pixels[center + 3]);
+        window.close();
+        return;
+    }
+    eprintln!(
+        "BENCH_SETUP layout={phase} renderer={renderer_name} photos={} viewport={}x{} zoom_width={} hscroll={:?}",
+        gallery.current_photos.borrow().len(),
+        scroll.width(),
+        scroll.height(),
+        gallery.tile_width.get(),
+        scroll.hscrollbar_policy(),
+    );
+
+    // The prewarm run creates any missing disk thumbnails before measured
+    // interleaved runs. Cold/warm below therefore isolates the masked-texture
+    // cache while keeping thumbnail decode state equal between layouts.
+    let prewarm = std::env::var_os("PIC_BENCH_PREWARM").is_some();
+    let adjustment = scroll.vadjustment();
+    let distance = 2400.0_f64.min((adjustment.upper() - adjustment.page_size()).max(0.0));
+    let context = glib::MainContext::default();
+    let initial_deadline = Instant::now() + Duration::from_secs(15);
+    while Instant::now() < initial_deadline
+        && !honeycomb_bench_visible_ready(&gallery, layout, &scroll, false)
+    {
+        while context.pending() {
+            context.iteration(false);
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    if prewarm {
+        honeycomb_bench_scroll_leg(
+            &gallery,
+            &window,
+            &scroll,
+            mode.as_str(),
+            layout,
+            false,
+            "prewarm",
+            distance,
+        );
+    } else {
+        honeycomb_bench_scroll_leg(
+            &gallery,
+            &window,
+            &scroll,
+            mode.as_str(),
+            layout,
+            mode == "cached",
+            "cold",
+            distance,
+        );
+        honeycomb_bench_scroll_leg(
+            &gallery,
+            &window,
+            &scroll,
+            mode.as_str(),
+            layout,
+            false,
+            "reverse",
+            -distance,
+        );
+        honeycomb_bench_scroll_leg(
+            &gallery,
+            &window,
+            &scroll,
+            mode.as_str(),
+            layout,
+            mode == "cached",
+            "warm",
+            distance,
+        );
+        if layout == PhotoLayout::Honeycomb {
+            for tile in honeycomb_bench_visible_tiles(&gallery, layout, &scroll) {
+                assert!(
+                    (tile.imp().hex_separator.get() - 3.0).abs() < 0.001,
+                    "Honeycomb border width changed during scroll"
+                );
+            }
+        }
+        honeycomb_bench_capture_tile(&gallery, &window, &scroll, layout, phase);
+    }
     window.close();
 }
 
@@ -2687,11 +3127,25 @@ fn layout_changes_do_not_generate_higher_quality_thumbnails() {
         gallery.store.append(&photo);
         gallery.current_photos.replace(vec![photo]);
         gallery.set_layout(layout);
-        let child: gtk::Widget = if layout == PhotoLayout::Grid { gallery.root.clone().upcast() } else { gallery.folder_sectioned_root.clone().upcast() };
+        let child: gtk::Widget = if layout == PhotoLayout::Grid {
+            gallery.root.clone().upcast()
+        } else {
+            gallery.folder_sectioned_root.clone().upcast()
+        };
         let scroll = gtk::ScrolledWindow::builder().child(&child).build();
-        if layout != PhotoLayout::Grid { gallery.attach_sectioned_folder_scroll(&scroll); }
-        let width = if layout == PhotoLayout::Masonry { 450 } else { 900 };
-        let window = gtk::Window::builder().default_width(width).default_height(500).child(&scroll).build();
+        if layout != PhotoLayout::Grid {
+            gallery.attach_sectioned_folder_scroll(&scroll);
+        }
+        let width = if layout == PhotoLayout::Masonry {
+            450
+        } else {
+            900
+        };
+        let window = gtk::Window::builder()
+            .default_width(width)
+            .default_height(500)
+            .child(&scroll)
+            .build();
         window.present();
         settle();
         window.set_default_size(width + 160, 500);
@@ -2871,12 +3325,130 @@ fn honeycomb_gui_interactions_virtualization_and_screenshots() {
     let stride = rendered.width() as usize * 4;
     let mut pixels = vec![0; stride * rendered.height() as usize];
     rendered.download(&mut pixels, stride);
-    assert!(pixels[3] < 8, "hex corner must remain transparent");
-    assert!(
-        pixels[(rendered.height() as usize / 2) * stride + (rendered.width() as usize / 2) * 4 + 3]
-            > 240,
-        "photo center must be opaque"
-    );
+    if std::env::var_os("PIC_HONEYCOMB_TILE_MASK_CACHE_TEST").is_none() {
+        assert!(pixels[3] < 8, "hex corner must remain transparent");
+        assert!(
+            pixels[(rendered.height() as usize / 2) * stride
+                + (rendered.width() as usize / 2) * 4
+                + 3]
+                > 240,
+            "photo center must be opaque"
+        );
+    }
+    if std::env::var_os("PIC_HONEYCOMB_TILE_MASK_CACHE_TEST").is_some() {
+        let (source_w, source_h) = (31u32, 17u32);
+        let mut source = image::RgbaImage::new(source_w, source_h);
+        for (x, y, pixel) in source.enumerate_pixels_mut() {
+            *pixel = image::Rgba([
+                (x * 255 / source_w) as u8,
+                (y * 255 / source_h) as u8,
+                ((x + y) * 255 / (source_w + source_h)) as u8,
+                255,
+            ]);
+        }
+        let source_bytes = glib::Bytes::from_owned(source.clone().into_raw());
+        let source_texture = gtk::gdk::MemoryTexture::new(
+            source_w as i32,
+            source_h as i32,
+            gtk::gdk::MemoryFormat::R8g8b8a8,
+            &source_bytes,
+            source_w as usize * 4,
+        );
+        let frame = tile.first_child().and_downcast::<gtk::Overlay>().unwrap();
+        let picture = frame.child().and_downcast::<gtk::Picture>().unwrap();
+        let old_paintable = picture.paintable();
+        picture.set_paintable(Some(&source_texture));
+        settle();
+        let render_tile = || {
+            let snapshot = gtk::Snapshot::new();
+            gtk::WidgetPaintable::new(Some(&tile)).snapshot(
+                &snapshot,
+                tile.width() as f64,
+                tile.height() as f64,
+            );
+            window.renderer().unwrap().render_texture(
+                &snapshot.to_node().unwrap(),
+                Some(&gtk::graphene::Rect::new(
+                    0.0,
+                    0.0,
+                    tile.width() as f32,
+                    tile.height() as f32,
+                )),
+            )
+        };
+        let original = render_tile();
+        let mut original_pixels =
+            vec![0; original.width() as usize * original.height() as usize * 4];
+        original.download(&mut original_pixels, original.width() as usize * 4);
+        assert!(
+            original_pixels[3] < 8,
+            "normal hex corner must remain transparent"
+        );
+        let center = ((original.height() as usize / 2) * original.width() as usize
+            + original.width() as usize / 2)
+            * 4
+            + 3;
+        assert!(
+            original_pixels[center] > 240,
+            "normal image center must be opaque"
+        );
+        tile.prepare_honeycomb_mask(source_bytes.clone());
+        let deadline = Instant::now() + std::time::Duration::from_secs(3);
+        while !tile.imp().honeycomb_mask_cached.get() && Instant::now() < deadline {
+            gallery.drain_thumbnail_display_completions();
+            settle();
+        }
+        assert!(
+            tile.imp().honeycomb_mask_cached.get(),
+            "worker result was not applied"
+        );
+        assert!(tile.imp().honeycomb_mask_cached.get());
+        let masked = picture
+            .paintable()
+            .unwrap()
+            .downcast::<gtk::gdk::Texture>()
+            .unwrap();
+        assert_eq!(
+            (masked.width(), masked.height()),
+            (
+                tile.width() * tile.scale_factor(),
+                tile.height() * tile.scale_factor()
+            )
+        );
+        let cached = render_tile();
+        if let Ok(directory) = std::env::var("PIC_HONEYCOMB_CACHE_COMPARE_DIR") {
+            std::fs::create_dir_all(&directory).unwrap();
+            original
+                .save_to_png(std::path::Path::new(&directory).join("normal.png"))
+                .unwrap();
+            cached
+                .save_to_png(std::path::Path::new(&directory).join("cached.png"))
+                .unwrap();
+        }
+        let stride = original.width() as usize * 4;
+        let mut cached_pixels = vec![0; stride * cached.height() as usize];
+        cached.download(&mut cached_pixels, stride);
+        let mean_difference = original_pixels
+            .iter()
+            .zip(&cached_pixels)
+            .map(|(left, right)| left.abs_diff(*right) as u64)
+            .sum::<u64>() as f64
+            / original_pixels.len() as f64;
+        assert!(
+            mean_difference < 12.0,
+            "cached tile image mean difference {mean_difference:.2}"
+        );
+        tile.clear_honeycomb_mask_cached();
+        assert!(!tile.imp().honeycomb_mask_cached.get());
+        assert_eq!(picture.paintable(), Some(source_texture.upcast()));
+        assert!(
+            tile.try_apply_cached_honeycomb_mask(),
+            "warm cache entry was not reused"
+        );
+        assert!(tile.imp().honeycomb_mask_cached.get());
+        tile.clear_honeycomb_mask_cached();
+        picture.set_paintable(old_paintable.as_ref());
+    }
     let offline = surface.live_tiles.borrow()[&5].tile.clone();
     let frame = offline
         .first_child()

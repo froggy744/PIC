@@ -42,6 +42,7 @@ fn trace_first_visible_thumbnail_after_paint(widget: &gtk::Widget) {
 }
 
 mod honeycomb;
+mod honeycomb_raster;
 mod honeycomb_surface;
 #[path = "grid/masonry_layout.rs"]
 mod masonry_layout;

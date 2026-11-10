@@ -1807,6 +1807,15 @@ impl Lightbox {
         selected: usize,
         source: Option<(gtk::Widget, gtk::gdk::Paintable)>,
     ) {
+        let honeycomb_source = source
+            .as_ref()
+            .is_some_and(|(widget, _)| widget.has_css_class("honeycomb-tile"));
+        let honeycomb_open = honeycomb_source && self.root.settings().is_gtk_enable_animations();
+        let source = if honeycomb_source {
+            None
+        } else {
+            source
+        };
         clear_opening_transition_overlays(&self.root);
         // A rapid reopen invalidates an unfinished close-fade callback.
         self.close_generation
@@ -1853,7 +1862,7 @@ impl Lightbox {
 
         // Shared-element opens fade the backdrop in under the moving thumbnail.
         // Instant opens keep the established presentation unchanged.
-        if source.is_some() {
+        if source.is_some() || honeycomb_open {
             self.backdrop.set_opacity(0.0);
             self.picture.set_opacity(0.0);
         } else {
@@ -2339,6 +2348,27 @@ impl Lightbox {
                     picture.set_opacity(1.0);
                     backdrop_for_transition.set_opacity(1.0);
                 }
+            } else if honeycomb_open {
+                let ready_root = root.clone();
+                let ready_picture = picture.clone();
+                let ready_viewport = picture_viewport.clone();
+                let ready_backdrop = backdrop_for_transition.clone();
+                let ready_generation = current_generation.clone();
+                let callback: Rc<dyn Fn()> = Rc::new(move || {
+                    let root = ready_root.clone();
+                    let picture = ready_picture.clone();
+                    let viewport = ready_viewport.clone();
+                    let backdrop = ready_backdrop.clone();
+                    let generation_cell = ready_generation.clone();
+                    // Decode completion can precede the final fit in show_photo.
+                    glib::idle_add_local_once(move || {
+                        start_honeycomb_open_transition(root, picture, viewport, backdrop, generation_cell, generation);
+                    });
+                });
+                opening_decode_ready.replace(Some(callback.clone()));
+                if opening_decode_result.get().is_some() {
+                    callback();
+                }
             } else {
                 picture.set_opacity(1.0);
                 backdrop_for_transition.set_opacity(1.0);
@@ -2664,6 +2694,82 @@ fn open_geometry_changed(previous: [f64; 8], latest: [f64; 8]) -> bool {
 
 fn interpolate_open_geometry(from: [f64; 8], to: [f64; 8], progress: f64) -> [f64; 8] {
     std::array::from_fn(|index| from[index] + (to[index] - from[index]) * progress)
+}
+
+fn start_honeycomb_open_transition(
+    root: gtk::Overlay,
+    picture: gtk::Picture,
+    viewport: gtk::ScrolledWindow,
+    backdrop: gtk::Box,
+    generation: Rc<Cell<u64>>,
+    expected_generation: u64,
+) {
+    if !root.is_visible() || generation.get() != expected_generation {
+        return;
+    }
+    let Some(paintable) = picture.paintable() else {
+        picture.set_opacity(1.0);
+        backdrop.set_opacity(1.0);
+        return;
+    };
+    let bounds = viewport.compute_bounds(&root).unwrap_or_else(|| {
+        gtk::graphene::Rect::new(0.0, 0.0, root.width() as f32, root.height() as f32)
+    });
+    let width = picture.width_request().max(1) as f64;
+    let height = picture.height_request().max(1) as f64;
+    let center_x = bounds.x() as f64 + bounds.width() as f64 * 0.5;
+    let center_y = bounds.y() as f64 + bounds.height() as f64 * 0.5;
+    let transition = OpeningTransitionImage::new(
+        paintable,
+        gtk::ContentFit::Contain,
+        width as i32,
+        height as i32,
+    );
+    transition.set_widget_name("honeycomb-open-transition");
+    transition.set_halign(gtk::Align::Fill);
+    transition.set_valign(gtk::Align::Fill);
+    transition.set_hexpand(true);
+    transition.set_vexpand(true);
+    transition.set_can_target(false);
+    transition.set_opacity(0.0);
+    root.add_overlay(&transition);
+    root.set_measure_overlay(&transition, false);
+    let started = Cell::new(None::<Instant>);
+    transition.add_tick_callback(move |transition, _| {
+        if !root.is_visible() || generation.get() != expected_generation {
+            root.remove_overlay(transition);
+            return glib::ControlFlow::Break;
+        }
+        let start = started.get().unwrap_or_else(|| {
+            let now = Instant::now();
+            started.set(Some(now));
+            now
+        });
+        let progress = (start.elapsed().as_secs_f64() / 0.2).clamp(0.0, 1.0);
+        let eased = progress * progress * (3.0 - 2.0 * progress);
+        let scale = 0.97 + 0.03 * eased;
+        let w = width * scale;
+        let h = height * scale;
+        transition.set_geometry(
+            center_x - w * 0.5,
+            center_y - h * 0.5,
+            w.round() as i32,
+            h.round() as i32,
+            bounds.x() as f64,
+            bounds.y() as f64,
+            bounds.width() as f64,
+            bounds.height() as f64,
+        );
+        transition.set_opacity(eased);
+        backdrop.set_opacity(eased);
+        if progress < 1.0 {
+            return glib::ControlFlow::Continue;
+        }
+        picture.set_opacity(1.0);
+        backdrop.set_opacity(1.0);
+        root.remove_overlay(transition);
+        glib::ControlFlow::Break
+    });
 }
 
 fn lightbox_transition_source_geometry(

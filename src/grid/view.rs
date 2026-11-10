@@ -152,10 +152,9 @@ fn transition_source_in(
         if !tile.is_mapped() || photo.id() != photo_id {
             return None;
         }
-        let paintable = tile.transition_paintable().or_else(|| {
+        tile.lightbox_transition_source(|| {
             photo_presentation_key(&photo).and_then(|key| folder_thumbnail_cache_get(&key))
-        })?;
-        Some((tile.upcast(), paintable))
+        })
     })
 }
 
@@ -569,8 +568,7 @@ impl Gallery {
                             .is_some_and(|photo| photo.id() == activated.id())
                     })
                     .and_then(|tile| {
-                        tile.transition_paintable()
-                            .map(|paintable| (tile.upcast::<gtk::Widget>(), paintable))
+                        tile.lightbox_transition_source(|| None)
                     })
             };
             (activate_for_grid)(photos, index, source);

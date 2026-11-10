@@ -189,6 +189,7 @@ struct SectionedFolderView {
     // its last stable justified-row width instead of chasing every animated
     // OverlaySplitView allocation.
     wall_width_frozen: Cell<bool>,
+    honeycomb_width_anchor: Cell<Option<(i64, f64)>>,
     geometry_width: Cell<i32>,
     geometry_columns: Cell<u32>,
     geometry_row_height: Cell<i32>,
@@ -295,6 +296,7 @@ impl SectionedFolderView {
             scroll: RefCell::new(None),
             geometry: RefCell::new(Vec::new()),
             wall_width_frozen: Cell::new(false),
+            honeycomb_width_anchor: Cell::new(None),
             geometry_width: Cell::new(0),
             geometry_columns: Cell::new(0),
             geometry_row_height: Cell::new(0),
@@ -676,12 +678,9 @@ impl SectionedFolderView {
 
     fn geometry_for_current_layout(&self, width: i32) {
         if self.is_wall() {
-            // Hover-autohide is a presentation-only sidebar animation. While
-            // it is active, retain the Photo Wall's last stable geometry width
-            // even though GtkScrolledWindow is allocated intermediate widths
-            // on every animation frame. This prevents justified rows from
-            // continuously reshuffling while the drawer moves.
-            let width = if self.layout_mode.get() == PhotoLayout::PhotoWall
+            // Keep logical geometry stable while a sidebar slides, even as
+            // the viewport and its clipping receive intermediate widths.
+            let width = if matches!(self.layout_mode.get(), PhotoLayout::PhotoWall | PhotoLayout::Honeycomb)
                 && self.wall_width_frozen.get() && self.geometry_width.get() > 0 {
                 self.geometry_width.get()
             } else {
@@ -831,14 +830,12 @@ impl SectionedFolderView {
                 || (presses == 1 && view_search_single_click.get() && !shift && !control)
             {
                 let index = position as usize;
-                let source_paintable = tile_for_click.transition_paintable().or_else(|| {
+                let source = tile_for_click.lightbox_transition_source(|| {
                     let photos_ref = photos.borrow();
                     let photo = photos_ref.get(index)?;
                     let key = photo_presentation_key(photo)?;
                     folder_thumbnail_cache_get(&key)
                 });
-                let source = source_paintable
-                    .map(|paintable| (tile_for_click.clone().upcast::<gtk::Widget>(), paintable));
                 let photos = photos.borrow().clone();
                 activate(photos, index, source);
             }

@@ -799,6 +799,22 @@ impl SquareTile {
         picture.paintable()
     }
 
+    pub(crate) fn lightbox_transition_source(
+        &self,
+        fallback: impl FnOnce() -> Option<gtk::gdk::Paintable>,
+    ) -> Option<(gtk::Widget, gtk::gdk::Paintable)> {
+        if self.imp().honeycomb.get() {
+            // The widget identifies the layout; Lightbox never paints this source.
+            return Some((
+                self.clone().upcast(),
+                gtk::WidgetPaintable::new(Some(self)).upcast(),
+            ));
+        }
+        self.transition_paintable()
+            .or_else(fallback)
+            .map(|paintable| (self.clone().upcast(), paintable))
+    }
+
     pub(crate) fn presentation_offset(&self) -> (f32, f32) {
         (
             self.imp().presentation_offset_x.get(),

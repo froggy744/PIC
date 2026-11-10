@@ -44,7 +44,10 @@ impl SectionedFolderView {
             && old_width > 1
             && old_width != width
         {
-            self.scroll.borrow().as_ref().and_then(|scroll| {
+            self.honeycomb_width_anchor.get().and_then(|(id, offset)| {
+                self.current_photos.borrow().iter().position(|photo| photo.id() == id)
+                    .map(|index| (index, offset))
+            }).or_else(|| self.scroll.borrow().as_ref().and_then(|scroll| {
                 let value = scroll.vadjustment().value();
                 let state = self.wall_state.borrow();
                 let row = state.layout.rows.partition_point(|row| row.y < value);
@@ -54,7 +57,7 @@ impl SectionedFolderView {
                     .get(row)
                     .and_then(|row| state.layout.items.get(row.item_range.start))
                     .map(|item| (item.photo_index, item.y - value))
-            })
+            }))
         } else {
             None
         };
@@ -256,13 +259,17 @@ impl SectionedFolderView {
         on_complete: Option<Rc<dyn Fn()>>,
     ) {
         let generation = self.wall_state.borrow().generation;
+        let restore_generation = self.photo_restore_generation.get();
         let weak = Rc::downgrade(self);
         let attempts = Cell::new(0);
         self.root.add_tick_callback(move |_, _| {
             let Some(surface) = weak.upgrade() else {
                 return glib::ControlFlow::Break;
             };
-            if surface.wall_state.borrow().generation != generation {
+            if surface.wall_state.borrow().generation != generation
+                || (surface.layout_mode.get() == PhotoLayout::Honeycomb
+                    && surface.photo_restore_generation.get() != restore_generation)
+            {
                 return glib::ControlFlow::Break;
             }
             attempts.set(attempts.get() + 1);
@@ -287,6 +294,23 @@ impl SectionedFolderView {
     fn wall_center_anchor(&self) -> Option<(i64, f64)> {
         let scroll = self.scroll.borrow().as_ref()?.clone();
         let adjustment = scroll.vadjustment();
+        // PIC_HONEYCOMB_INSPECTOR_EASE_V1: the viewport centre may fall in a
+        // gap between staggered Honeycomb rows. wall_photo_for_y() then returns
+        // None and inspector resizing has no stable photo to preserve.
+        if self.layout_mode.get() == PhotoLayout::Honeycomb {
+            let centre = adjustment.value() + adjustment.page_size() * 0.5;
+            let wall = self.wall_state.borrow();
+            let rows = &wall.layout.rows;
+            if rows.is_empty() {
+                return None;
+            }
+            let row = rows.partition_point(|row| row.y + row.block_height < centre)
+                .min(rows.len() - 1);
+            let chosen = rows.get(row)?;
+            let item = wall.layout.items.get(chosen.item_range.start)?;
+            let id = self.current_photos.borrow().get(item.photo_index)?.id();
+            return Some((id, item.y - adjustment.value()));
+        }
         let photo = self.wall_photo_for_y(adjustment.value() + adjustment.page_size() * 0.5)?;
         let index = self
             .current_photos
@@ -390,16 +414,19 @@ impl Gallery {
             || (self.group_mode.get() == GroupMode::Folder && sectioned_folder_view_enabled())
     }
 
-    /// Freeze only Photo Wall's justified-row width while a temporary sidebar
-    /// hover/autohide transition is active. Grid remains untouched.
-    ///
-    /// Unfreezing invalidates the old geometry and lets the normal Photo Wall
-    /// path consume the final GtkScrolledWindow width exactly once. Preserve
-    /// the current viewport anchor so that one final reflow does not jump the
-    /// user to a different photo.
+    /// Freeze Photo Wall and Honeycomb geometry during sidebar transitions.
+    /// Unfreezing consumes the final viewport width and preserves the anchor.
     pub fn set_photo_wall_width_frozen(self: &Rc<Self>, frozen: bool) {
         if frozen {
-            if self.layout() == PhotoLayout::PhotoWall
+            if self.layout() == PhotoLayout::Honeycomb
+                && !self.sectioned_folder.wall_width_frozen.get()
+            {
+                self.sectioned_folder.cancel_scroll_animation();
+                self.sectioned_folder.cancel_photo_restore();
+                self.sectioned_folder.honeycomb_width_anchor
+                    .set(self.sectioned_folder.capture_center_anchor());
+            }
+            if matches!(self.layout(), PhotoLayout::PhotoWall | PhotoLayout::Honeycomb)
                 && self.sectioned_folder.geometry_width.get() == 0
             {
                 self.sectioned_folder.refresh();
@@ -411,16 +438,155 @@ impl Gallery {
         if !self.sectioned_folder.wall_width_frozen.get() {
             return;
         }
-        if self.layout() != PhotoLayout::PhotoWall {
+        if !matches!(self.layout(), PhotoLayout::PhotoWall | PhotoLayout::Honeycomb) {
             self.sectioned_folder.wall_width_frozen.set(false);
+            self.sectioned_folder.honeycomb_width_anchor.set(None);
             return;
         }
 
-        // Releasing the freeze only lets the wall observe the final width.
-        // refresh() scales the existing rows to it (no refit), carrying the
-        // scroll position with the scale.
+        let honeycomb_before = if self.layout() == PhotoLayout::Honeycomb {
+            let view = &self.sectioned_folder;
+            let previous = view.live_tiles.borrow().iter()
+                .filter_map(|(&index, tile)| tile.position.get().map(|xy| (index, xy)))
+                .collect::<std::collections::HashMap<_, _>>();
+            let scroll_y = view.scroll.borrow().as_ref()
+                .map(|s| s.vadjustment().value()).unwrap_or(0.0);
+            Some((previous, scroll_y))
+        } else { None };
         self.sectioned_folder.wall_width_frozen.set(false);
         self.sectioned_folder.refresh();
+        if self.layout() == PhotoLayout::Honeycomb {
+            if let Some((id, offset)) = self.sectioned_folder.honeycomb_width_anchor.take() {
+                self.sectioned_folder.cancel_scroll_animation();
+                // The new GtkViewport allocation can still be pending at the
+                // end of the sidebar slide. restore_anchor() explicitly returns
+                // false until GtkAdjustment knows the new content height.
+                // Do not silently drop that failure, or the viewport can land
+                // several Honeycomb rows away from the photo we started on.
+                let _ = self.sectioned_folder.restore_anchor(id, offset);
+                let restore_generation = self.sectioned_folder.photo_restore_generation.get();
+                let weak = Rc::downgrade(self);
+                let frames = Cell::new(0_u8);
+                let successful_frames = Cell::new(0_u8);
+                self.sectioned_folder.root.add_tick_callback(move |_, _| {
+                    let Some(gallery) = weak.upgrade() else {
+                        return glib::ControlFlow::Break;
+                    };
+                    let view = &gallery.sectioned_folder;
+                    // Rapid Properties toggles, layout changes and new restore
+                    // requests cancel this callback instead of replaying an
+                    // obsolete photo/scroll position.
+                    if gallery.layout() != PhotoLayout::Honeycomb
+                        || view.wall_width_frozen.get()
+                        || view.photo_restore_generation.get() != restore_generation
+                    {
+                        return glib::ControlFlow::Break;
+                    }
+                    let frame = frames.get().saturating_add(1);
+                    frames.set(frame);
+                    if view.restore_anchor(id, offset) {
+                        successful_frames.set(successful_frames.get().saturating_add(1));
+                        if successful_frames.get() >= 3 {
+                            return glib::ControlFlow::Break;
+                        }
+                    } else {
+                        successful_frames.set(0);
+                    }
+                    if frame >= 60 {
+                        eprintln!(
+                            "PIC Honeycomb inspector: anchor restore did not settle after 60 frames (photo={id})"
+                        );
+                        glib::ControlFlow::Break
+                    } else {
+                        glib::ControlFlow::Continue
+                    }
+                });
+            }
+        }
+        if let Some((before, before_scroll)) = honeycomb_before {
+            // The instant logical resize still determines final geometry.
+            // Easing is purely a view transform for shared visible tiles.
+            self.ease_honeycomb_inspector_tiles(before, before_scroll);
+        }
+    }
+
+    // Gently reposition surviving tiles following the *single* final inspector
+    // reflow. New/recycled photos remain in their correct final locations.
+    // Cancel on scroll, rapid toggle, layout change or subsequent geometry work.
+    fn ease_honeycomb_inspector_tiles(
+        self: &Rc<Self>,
+        before: std::collections::HashMap<u32, (f64, f64)>,
+        before_scroll: f64,
+    ) {
+        let surface = &self.sectioned_folder;
+        if self.layout() != PhotoLayout::Honeycomb || before.is_empty()
+            || !surface.root.settings().is_gtk_enable_animations()
+        {
+            return;
+        }
+        let Some(scroll) = surface.scroll.borrow().as_ref().cloned() else { return; };
+        let new_scroll = scroll.vadjustment().value();
+        let mut moves = Vec::new();
+        {
+            let tiles = surface.live_tiles.borrow();
+            for (&index, tile) in tiles.iter() {
+                let (Some(&(old_x, old_y)), Some((end_x, end_y))) =
+                    (before.get(&index), tile.position.get())
+                else { continue; };
+                let start_y = old_y - before_scroll + new_scroll;
+                // Avoid animating tiles from distant sections after a large
+                // reflow. Such photos are already correctly placed by refresh.
+                if (start_y - end_y).abs() > 450.0 || (old_x - end_x).abs() > 450.0 {
+                    continue;
+                }
+                if (start_y - end_y).abs() < 0.5 && (old_x - end_x).abs() < 0.5 {
+                    continue;
+                }
+                moves.push((index, old_x, start_y, end_x, end_y));
+            }
+        }
+        if moves.is_empty() { return; }
+        let generation = surface.reflow_animation_generation.get().wrapping_add(1);
+        surface.reflow_animation_generation.set(generation);
+        let geometry_generation = surface.wall_state.borrow().generation;
+        let weak = Rc::downgrade(surface);
+        let started = Cell::new(None::<i64>);
+        // Start at final logical geometry and animate only the visible widget
+        // positions. This never changes the scroll extent or mask crop data.
+        surface.root.add_tick_callback(move |_, clock| {
+            let Some(surface) = weak.upgrade() else { return glib::ControlFlow::Break; };
+            let invalidated = surface.layout_mode.get() != PhotoLayout::Honeycomb
+                || surface.wall_width_frozen.get()
+                || surface.reflow_animation_generation.get() != generation
+                || surface.wall_state.borrow().generation != geometry_generation
+                || (scroll.vadjustment().value() - new_scroll).abs() > 2.0;
+            let start = started.get().unwrap_or_else(|| {
+                let now = clock.frame_time(); started.set(Some(now)); now
+            });
+            let t = if invalidated { 1.0 } else {
+                (clock.frame_time().saturating_sub(start) as f64 / 250_000.0)
+                    .clamp(0.0, 1.0)
+            };
+            let ease = if t < 0.5 { 4.0*t*t*t } else { 1.0 - (-2.0*t + 2.0).powi(3) / 2.0 };
+            let tiles = surface.live_tiles.borrow();
+            for &(index, start_x, start_y, end_x, end_y) in &moves {
+                if let Some(tile) = tiles.get(&index) {
+                    tile.move_to(&surface.root,
+                        start_x + (end_x - start_x) * ease,
+                        start_y + (end_y - start_y) * ease);
+                }
+            }
+            if t >= 1.0 { glib::ControlFlow::Break }
+            else { glib::ControlFlow::Continue }
+        });
+    }
+
+    pub(crate) fn honeycomb_viewport_width(&self) -> Option<i32> {
+        if self.layout() != PhotoLayout::Honeycomb {
+            return None;
+        }
+        let scroll = self.sectioned_folder.scroll.borrow();
+        scroll.as_ref().map(|scroll| self.sectioned_folder.viewport_width(scroll))
     }
 
     pub fn set_layout(self: &Rc<Self>, layout: PhotoLayout) {

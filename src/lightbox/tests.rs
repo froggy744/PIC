@@ -1104,6 +1104,71 @@ mod opening_transition_regression {
 
     #[test]
     #[ignore = "requires a GTK display; run individually"]
+    fn honeycomb_open_uses_fitted_image_transition() {
+        gtk::init().unwrap();
+        for (width, height) in [(800_u32, 600_u32), (600, 800)] {
+            let path = std::env::temp_dir().join(format!(
+                "pic-honeycomb-open-{}-{width}.jpg",
+                std::process::id()
+            ));
+            image::RgbImage::from_pixel(width, height, image::Rgb([80, 130, 210]))
+                .save(&path)
+                .unwrap();
+            let texture = gtk::gdk::Texture::from_filename(&path).unwrap();
+            let source = gtk::Picture::for_paintable(&texture);
+            source.add_css_class("honeycomb-tile");
+            let photo: PhotoObject = glib::Object::builder::<PhotoObject>()
+                .property("id", 88_i64)
+                .property("path", path.to_string_lossy().as_ref())
+                .property("width", i64::from(width))
+                .property("height", i64::from(height))
+                .property("mtime", 1_i64)
+                .property("size-bytes", std::fs::metadata(&path).unwrap().len() as i64)
+                .property("original-available", true)
+                .build();
+            let lightbox = Lightbox::new();
+            let gallery = gtk::Overlay::new();
+            gallery.set_child(Some(&source));
+            gallery.add_overlay(&lightbox.root);
+            let window = gtk::Window::builder()
+                .default_width(640)
+                .default_height(480)
+                .child(&gallery)
+                .build();
+            window.present();
+            spin_until("mapped source", || source.is_mapped());
+            lightbox.open_from_source(
+                vec![photo.clone()],
+                0,
+                Some((source.clone().upcast(), texture.clone().upcast())),
+            );
+            spin_until("fitted opening animation", || {
+                transition(&lightbox.root)
+                    .is_some_and(|image| image.widget_name() == "honeycomb-open-transition")
+            });
+            let (frame_width, frame_height) =
+                transition(&lightbox.root).unwrap().requested_frame_size();
+            assert!(frame_width <= lightbox.picture.width_request());
+            assert!(frame_height <= lightbox.picture.height_request());
+            spin_until("animation finished", || {
+                !has_transition(&lightbox.root) && lightbox.picture.opacity() >= 0.999
+            });
+            assert!(lightbox.picture.paintable().is_some());
+            let settings = window.settings();
+            let animations = settings.is_gtk_enable_animations();
+            settings.set_gtk_enable_animations(false);
+            lightbox.open_from_source(vec![photo], 0, Some((source.upcast(), texture.upcast())));
+            spin_until("instant opening", || lightbox.picture.paintable().is_some());
+            assert!(!has_transition(&lightbox.root));
+            assert_eq!(lightbox.picture.opacity(), 1.0);
+            settings.set_gtk_enable_animations(animations);
+            window.close();
+            std::fs::remove_file(path).unwrap();
+        }
+    }
+
+    #[test]
+    #[ignore = "requires a GTK display; run individually"]
     fn source_thumbnail_remains_until_jpeg_and_png_decode_handoffs_finish() {
         gtk::init().unwrap();
         let context = glib::MainContext::default();

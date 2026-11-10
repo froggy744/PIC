@@ -3440,6 +3440,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     {
         let gallery = gallery.clone();
         let active = inspector_transition_active.clone();
+        let resize_active_for_transition = inspector_resize_active.clone();
         let gallery_scroll_for_settle = gallery_scroll_stack.clone();
         let last_width = inspector_trace_last_width.clone();
         let frames = inspector_trace_frames.clone();
@@ -3480,6 +3481,37 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                     gallery.using_sectioned_folder_view(),
                     split.is_collapsed()
                 );
+            }
+            if gallery.layout() == grid::PhotoLayout::Honeycomb {
+                let gallery = gallery.clone();
+                let generation = generation.clone();
+                let active = active.clone();
+                let resize_active = resize_active_for_transition.clone();
+                let last_size = Cell::new((0, 0));
+                let stable_frames = Cell::new(0_u8);
+                gallery_scroll_for_settle.add_tick_callback(move |surface, _| {
+                    if generation.get() != serial {
+                        return glib::ControlFlow::Break;
+                    }
+                    if resize_active.get() || gallery.layout() != grid::PhotoLayout::Honeycomb {
+                        gallery.set_photo_wall_width_frozen(false);
+                        active.set(false);
+                        return glib::ControlFlow::Break;
+                    }
+                    let size = (surface.width(), gallery.honeycomb_viewport_width().unwrap_or(0));
+                    if size.0 <= 100 || size.1 <= 100 || last_size.replace(size) != size {
+                        stable_frames.set(0);
+                    } else {
+                        stable_frames.set(stable_frames.get().saturating_add(1));
+                    }
+                    if started.elapsed() < Duration::from_millis(400) || stable_frames.get() < 3 {
+                        return glib::ControlFlow::Continue;
+                    }
+                    gallery.set_photo_wall_width_frozen(false);
+                    active.set(false);
+                    glib::ControlFlow::Break
+                });
+                return;
             }
             let gallery = gallery.clone();
             let split = split.clone();

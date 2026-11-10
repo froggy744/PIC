@@ -506,3 +506,181 @@ fn theme_header_edges_align() {
     window.close();
     let _ = std::fs::remove_dir_all(directory);
 }
+
+#[test]
+#[ignore = "requires a GTK display; run individually"]
+fn honeycomb_properties_preserves_visible_photo_through_repeated_toggles() {
+    adw::init().unwrap();
+    let app = adw::Application::builder()
+        .application_id("io.pic.HoneycombInspectorTest")
+        .build();
+    app.register(None::<&gio::Cancellable>).unwrap();
+    let directory = std::env::temp_dir().join(format!("pic-inspector-anchor-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).unwrap();
+    let mut connection = db::open(&directory.join("library.db")).unwrap();
+    for (key, value) in [
+        (LAST_VIEW_SETTING_KEY, "all"),
+        ("photo_layout", "honeycomb"),
+        (GRID_THUMBNAIL_SIZE_SETTING_KEY, "180"),
+        (WINDOW_WIDTH_SETTING_KEY, "1440"),
+        (WINDOW_HEIGHT_SETTING_KEY, "900"),
+        ("onboarding-never-show", "true"),
+    ] {
+        db::set_setting(&connection, key, value).unwrap();
+    }
+    connection.execute(
+        "INSERT INTO folders(id,path,name) VALUES (1,?1,'Inspector test')",
+        [directory.to_str().unwrap()],
+    ).unwrap();
+    let real_library = std::env::var_os("PIC_TEST_INSPECTOR_LIBRARY");
+    let photos = if let Some(path) = real_library {
+        let source = rusqlite::Connection::open_with_flags(
+            path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        ).unwrap();
+        let mut query = source.prepare("SELECT path,width,height FROM photos WHERE trashed=0").unwrap();
+        let rows = query.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?))
+        }).unwrap();
+        let photos = rows.filter_map(Result::ok)
+            .filter(|(path, _, _)| std::path::Path::new(path).is_file())
+            .take(4708).collect::<Vec<_>>();
+        assert_eq!(photos.len(), 4708, "real library needs 4,708 available photos");
+        photos
+    } else {
+        let image_path = directory.join("sample.jpg");
+        image::RgbImage::from_pixel(32, 24, image::Rgb([80, 140, 210]))
+            .save(&image_path).unwrap();
+        (1..=4708).map(|id| {
+            let photo_path = directory.join(format!("photo-{id}.jpg"));
+            std::fs::hard_link(&image_path, &photo_path).unwrap();
+            (photo_path.to_string_lossy().into_owned(), 32, 24)
+        }).collect()
+    };
+    {
+        let transaction = connection.transaction().unwrap();
+        for (index, (path, width, height)) in photos.iter().enumerate() {
+            let id = index as i64 + 1;
+            transaction.execute(
+                "INSERT INTO photos(id,path,folder_id,width,height,added_at) VALUES (?1,?2,1,?3,?4,?1)",
+                rusqlite::params![id, path, width, height],
+            ).unwrap();
+        }
+        transaction.commit().unwrap();
+    }
+    let window = build(&app, connection);
+    window.present();
+    settle();
+    let visible_tiles = || {
+        descendants(window.upcast_ref()).into_iter()
+            .filter_map(|widget| widget.downcast::<grid::SquareTile>().ok())
+            .filter(|tile| tile.is_mapped() && tile.photo().is_some())
+            .collect::<Vec<_>>()
+    };
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while visible_tiles().is_empty() && Instant::now() < deadline { settle(); }
+    let tile = visible_tiles().into_iter().next().expect("Honeycomb did not load");
+    assert!(tile.has_css_class("honeycomb-tile"));
+    let mut ancestor = tile.parent();
+    let scroll = loop {
+        let widget = ancestor.expect("tile has no scroller");
+        if let Ok(scroll) = widget.clone().downcast::<gtk::ScrolledWindow>() { break scroll; }
+        ancestor = widget.parent();
+    };
+    let inspector = descendants(window.upcast_ref()).into_iter()
+        .filter_map(|widget| widget.downcast::<adw::OverlaySplitView>().ok())
+        .find(|split| split.sidebar_position() == gtk::PackType::End)
+        .expect("Properties split missing");
+    let capture = |name: &str| {
+        let Some(directory) = std::env::var_os("PIC_TEST_INSPECTOR_CAPTURE_DIR") else { return; };
+        let snapshot = gtk::Snapshot::new();
+        gtk::WidgetPaintable::new(Some(&window)).snapshot(
+            &snapshot, window.width() as f64, window.height() as f64,
+        );
+        let node = snapshot.to_node().expect("window screenshot is empty");
+        std::fs::create_dir_all(&directory).unwrap();
+        window.renderer().unwrap().render_texture(&node, None)
+            .save_to_png(std::path::Path::new(&directory).join(format!("{name}.png"))).unwrap();
+    };
+    let adjustment = scroll.vadjustment();
+    adjustment.set_value((adjustment.upper() - adjustment.page_size()) * 0.5);
+    settle();
+    let zoom = descendants(window.upcast_ref()).into_iter()
+        .find_map(|widget| {
+            if widget.has_css_class("infobar-zoom") {
+                widget.downcast::<gtk::Scale>().ok()
+            } else {
+                None
+            }
+        }).expect("gallery zoom slider missing");
+    for cycle in 0..10 {
+        if cycle == 0 || cycle == 5 {
+            let before_width = visible_tiles()[0].width();
+            zoom.set_value(if cycle == 0 { 2.0 } else { 5.0 });
+            settle();
+            settle();
+            assert_ne!(visible_tiles()[0].width(), before_width, "zoom did not change tile size");
+        }
+        if cycle == 3 || cycle == 7 {
+            let before_width = window.width();
+            window.set_default_size(if cycle == 3 { 1250 } else { 1440 }, 900);
+            settle();
+            assert_ne!(window.width(), before_width, "window did not resize");
+        }
+        for open in [true, false] {
+            let center = adjustment.page_size() as f32 * 0.5;
+            let tiles = visible_tiles();
+            let (_, anchor_y) = tiles.iter().filter_map(|tile| {
+                let bounds = tile.compute_bounds(&scroll)?;
+                (bounds.y() <= center && bounds.y() + bounds.height() > center)
+                    .then_some((tile.photo()?.id(), bounds.y()))
+            }).min_by(|a, b| a.1.total_cmp(&b.1)).unwrap();
+            // The geometry anchor is the first photo in the row nearest the center.
+            let (anchor_id, anchor_y, _) = tiles.iter().filter_map(|tile| {
+                let bounds = tile.compute_bounds(&scroll)?;
+                ((bounds.y() - anchor_y).abs() < 1.0)
+                    .then_some((tile.photo()?.id(), bounds.y(), bounds.x()))
+            }).min_by(|left, right| left.2.total_cmp(&right.2)).unwrap();
+            if cycle == 0 && open { capture("before"); }
+            inspector.set_show_sidebar(open);
+            if cycle % 2 == 0 {
+                let context = glib::MainContext::default();
+                let until = Instant::now() + Duration::from_millis(75);
+                while Instant::now() < until {
+                    while context.pending() { context.iteration(false); }
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                inspector.set_show_sidebar(!open);
+                inspector.set_show_sidebar(open);
+            }
+            settle();
+            settle();
+            let actual = visible_tiles().into_iter()
+                .find(|tile| tile.photo().is_some_and(|photo| photo.id() == anchor_id))
+                .and_then(|tile| tile.compute_bounds(&scroll))
+                .unwrap_or_else(|| panic!("anchor photo {anchor_id} disappeared in cycle {cycle}"));
+            assert!((actual.y() - anchor_y).abs() <= 3.0,
+                "anchor photo {anchor_id} shifted in cycle {cycle}: {} -> {}", anchor_y, actual.y());
+            if cycle == 0 { capture(if open { "open" } else { "closed" }); }
+            assert_eq!(scroll.hadjustment().value(), scroll.hadjustment().lower());
+            assert_eq!(scroll.hscrollbar_policy(), gtk::PolicyType::Never);
+            if cycle == 2 && open {
+                let handle = descendants(inspector.upcast_ref()).into_iter()
+                    .find(|widget| widget.has_css_class("pic-properties-resize-handle"))
+                    .expect("Properties divider missing");
+                let controllers = handle.observe_controllers();
+                let drag = (0..controllers.n_items())
+                    .find_map(|index| controllers.item(index).and_downcast::<gtk::GestureDrag>())
+                    .expect("Properties divider gesture missing");
+                let width = inspector.sidebar().unwrap().width();
+                drag.emit_by_name::<()>("drag-begin", &[&6.0_f64, &150.0_f64]);
+                drag.emit_by_name::<()>("drag-update", &[&-60.0_f64, &0.0_f64]);
+                drag.emit_by_name::<()>("drag-end", &[&-60.0_f64, &0.0_f64]);
+                settle();
+                assert_ne!(inspector.sidebar().unwrap().width(), width, "divider did not resize");
+            }
+        }
+    }
+    window.close();
+    settle();
+    std::fs::remove_dir_all(directory).unwrap();
+}

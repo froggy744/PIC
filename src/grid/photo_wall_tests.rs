@@ -235,6 +235,12 @@ fn keyboard_open_uses_the_visible_thumbnail_in_all_gallery_layouts() {
         gallery.transition_source_for_photo(17).is_some(),
         "Masonry Space should have a thumbnail source"
     );
+    gallery.set_layout(PhotoLayout::Honeycomb);
+    settle();
+    assert!(
+        gallery.transition_source_for_photo(17).is_some(),
+        "Honeycomb Space should supply a source for its fitted-image transition"
+    );
     window.close();
 }
 
@@ -1797,6 +1803,86 @@ fn photo_wall_width_freeze_ignores_intermediate_sidebar_allocations() {
         stable_width + 173,
         "Photo Wall did not resume normal width observation after unfreeze"
     );
+
+    window.close();
+    settle();
+}
+
+#[test]
+#[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+fn honeycomb_width_freeze_ignores_intermediate_sidebar_allocations() {
+    gtk::init().unwrap();
+    let gallery = Rc::new(Gallery::new(
+        &[],
+        180,
+        |_| {},
+        |_, _, _| {},
+        |_, _, _, _| {},
+        |_, _| {},
+        |_| {},
+    ));
+    let objects = (0..4708)
+        .map(|i| {
+            glib::Object::builder::<PhotoObject>()
+                .property("id", i as i64 + 1)
+                .property("width", if i % 2 == 0 { 4000_i64 } else { 6000_i64 })
+                .property("height", if i % 2 == 0 { 6000_i64 } else { 4000_i64 })
+                .build()
+        })
+        .collect::<Vec<_>>();
+    gallery.store.splice(0, 0, &objects);
+    gallery.current_photos.replace(objects);
+    gallery.set_layout(PhotoLayout::Honeycomb);
+
+    let scroll = gtk::ScrolledWindow::builder()
+        .child(&gallery.folder_sectioned_root)
+        .build();
+    gallery.attach_sectioned_folder_scroll(&scroll);
+    let window = gtk::Window::builder()
+        .default_width(1000)
+        .default_height(600)
+        .child(&scroll)
+        .build();
+    window.present();
+    settle();
+
+    let surface = &gallery.sectioned_folder;
+    let stable_width = surface.geometry_width.get();
+    assert!(stable_width > 100);
+
+    let adjustment = scroll.vadjustment();
+    adjustment.set_value((adjustment.upper() - adjustment.page_size()) * 0.5);
+    settle();
+    let (anchor_id, anchor_offset) = surface.capture_center_anchor().unwrap();
+    let anchor_index = gallery.current_photos.borrow().iter()
+        .position(|photo| photo.id() == anchor_id).unwrap();
+    gallery.selection.select_item(anchor_index as u32, true);
+    let generation = surface.wall_state.borrow().generation;
+    gallery.set_photo_wall_width_frozen(true);
+    // Simulate a stale queued scroll update after the transition begins.
+    adjustment.set_value(adjustment.value() + 3000.0);
+    scroll.set_size_request(stable_width + 173, -1);
+    settle();
+    assert!(surface.viewport_width(&scroll) > stable_width);
+    assert_eq!(surface.wall_state.borrow().generation, generation);
+    assert_eq!(
+        surface.geometry_width.get(),
+        stable_width,
+        "Honeycomb followed an intermediate sidebar animation width"
+    );
+
+    gallery.set_photo_wall_width_frozen(false);
+    assert_eq!(
+        surface.geometry_width.get(),
+        surface.viewport_width(&scroll),
+        "Honeycomb did not resume normal width observation after unfreeze"
+    );
+    settle();
+    let state = surface.wall_state.borrow();
+    let anchor = state.layout.item(anchor_index).unwrap();
+    assert!((anchor.y - adjustment.value() - anchor_offset).abs() < 1.0);
+    assert!(gallery.selection.is_selected(anchor_index as u32));
+    drop(state);
 
     window.close();
     settle();

@@ -137,6 +137,11 @@ fn viewport_intersects_row(
 
 struct SectionedFolderView {
     layout_mode: Cell<PhotoLayout>,
+    honeycomb_borderless: Cell<bool>,
+    honeycomb_border_width: Cell<f64>,
+    honeycomb_clip: RefCell<Option<honeycomb_surface::Clip>>,
+    honeycomb_reparenting: Cell<bool>,
+    honeycomb_old_hpolicy: Cell<Option<gtk::PolicyType>>,
     group_mode: Rc<Cell<GroupMode>>,
     wall_state: RefCell<PhotoWallState>,
     model_generation: Cell<u64>,
@@ -244,6 +249,11 @@ impl SectionedFolderView {
 
         let view = Rc::new(Self {
             layout_mode: Cell::new(PhotoLayout::Grid),
+            honeycomb_borderless: Cell::new(false),
+            honeycomb_border_width: Cell::new(5.0),
+            honeycomb_clip: RefCell::new(None),
+            honeycomb_reparenting: Cell::new(false),
+            honeycomb_old_hpolicy: Cell::new(None),
             group_mode,
             wall_state: RefCell::new(PhotoWallState::default()),
             model_generation: Cell::new(0),
@@ -458,6 +468,15 @@ impl SectionedFolderView {
                         && tile_left <= right
                         && tile_bottom >= top
                         && tile_top <= bottom
+                        && (view.layout_mode.get() != PhotoLayout::Honeycomb
+                            || honeycomb::intersects_rect(
+                                f64::from(bounds.width()),
+                                f64::from(bounds.height()),
+                                left - tile_left,
+                                top - tile_top,
+                                right - left,
+                                bottom - top,
+                            ))
                     {
                         selected.insert(*index);
                     }
@@ -533,6 +552,19 @@ impl SectionedFolderView {
                 this.refresh();
             });
 
+        let weak = Rc::downgrade(self);
+        scrolled
+            .hadjustment()
+            .connect_value_changed(move |adjustment| {
+                if let Some(view) = weak.upgrade() {
+                    if view.layout_mode.get() == PhotoLayout::Honeycomb
+                        && adjustment.value() != adjustment.lower()
+                    {
+                        adjustment.set_value(adjustment.lower());
+                    }
+                }
+            });
+
         // The frame tick runs before GTK allocates the resized viewport.
         // Its adjustment notification arrives after the viewport allocated
         // its child. Update geometry and the mapped scroll, then apply that
@@ -546,14 +578,14 @@ impl SectionedFolderView {
             if surface.is_wall()
                 && !surface.wall_width_frozen.get()
                 && surface.geometry_width.get() > 1
-                && scroll.width() > 1
-                && surface.geometry_width.get() != scroll.width()
+                && surface.viewport_width(&scroll) > 1
+                && surface.geometry_width.get() != surface.viewport_width(&scroll)
                 && surface.geometry_row_height.get() == surface.tile_width.get()
             {
                 let old_width = surface.geometry_width.get();
                 let old_scroll = scroll.vadjustment().value();
                 surface.refresh();
-                if let Some(viewport) = surface.root.parent().and_downcast::<gtk::Viewport>() {
+                if let Some(viewport) = surface.root.ancestor(gtk::Viewport::static_type()).and_downcast::<gtk::Viewport>() {
                     // GtkViewport freezes adjustment notifications while
                     // allocating, and thaws them after positioning its child.
                     // Setting the mapped value here only queues allocation;
@@ -587,7 +619,7 @@ impl SectionedFolderView {
             if this.model_refresh_pending.get() && this.is_wall() {
                 this.refresh_model();
             }
-            let width = scrolled_for_tick.width();
+            let width = this.viewport_width(&scrolled_for_tick);
             if width > 0 && width != last_width_for_tick.get() {
                 last_width_for_tick.set(width);
                 // Aspect-based views resize existing geometry inside refresh();
@@ -700,7 +732,10 @@ impl SectionedFolderView {
         let self_for_click_columns = self.current_columns.clone();
         let self_for_click_ranges = self.group_ranges.clone();
         let self_for_click_preferred = self.keyboard_preferred_column.clone();
-        click.connect_pressed(move |gesture, presses, _, _| {
+        click.connect_pressed(move |gesture, presses, x, y| {
+            if !tile_for_click.accepts_point(x, y) {
+                return;
+            }
             let Some(position) = index_for_click.get() else {
                 return;
             };
@@ -788,6 +823,9 @@ impl SectionedFolderView {
         let context_menu = self.context_menu.clone();
         let tile_for_context = tile.clone();
         right_click.connect_pressed(move |gesture, _, x, y| {
+            if !tile_for_context.accepts_point(x, y) {
+                return;
+            }
             let Some(position) = index_for_context.get() else {
                 return;
             };
@@ -810,11 +848,58 @@ impl SectionedFolderView {
         SectionedFolderTile { tile, index }
     }
 
+    fn viewport_width(&self, scroll: &gtk::ScrolledWindow) -> i32 {
+        if self.layout_mode.get() == PhotoLayout::Honeycomb {
+            if let Some(viewport) = scroll.child().and_downcast::<gtk::Viewport>() {
+                if viewport.width() > 1 {
+                    return viewport.width();
+                }
+            }
+        }
+        scroll.width().max(1)
+    }
+
+    fn sync_honeycomb_viewport(&self, scroll: &gtk::ScrolledWindow) {
+        let honeycomb = self.layout_mode.get() == PhotoLayout::Honeycomb;
+        if honeycomb == self.honeycomb_clip.borrow().is_some() {
+            return;
+        }
+        self.honeycomb_reparenting.set(true);
+        let old_y = scroll.vadjustment().value();
+        if honeycomb {
+            self.honeycomb_old_hpolicy
+                .set(Some(scroll.hscrollbar_policy()));
+            scroll.set_hscrollbar_policy(gtk::PolicyType::Never);
+            if let Some(viewport) = scroll.child().and_downcast::<gtk::Viewport>() {
+                viewport.set_child(None::<&gtk::Widget>);
+            }
+            scroll.set_child(None::<&gtk::Widget>);
+            let clip = honeycomb_surface::Clip::new(&self.root);
+            self.honeycomb_clip.replace(Some(clip.clone()));
+            scroll.set_child(Some(&clip));
+        } else {
+            if let Some(clip) = self.honeycomb_clip.take() {
+                clip.release();
+            }
+            scroll.set_child(None::<&gtk::Widget>);
+            scroll.set_child(Some(&self.root));
+            if let Some(policy) = self.honeycomb_old_hpolicy.take() {
+                scroll.set_hscrollbar_policy(policy);
+            }
+        }
+        scroll.vadjustment().set_value(old_y);
+        self.honeycomb_reparenting.set(false);
+    }
+
     fn refresh(self: &Rc<Self>) {
         let Some(scrolled) = self.scroll.borrow().as_ref().cloned() else {
             return;
         };
-        let width = scrolled.width().max(1);
+        if self.honeycomb_reparenting.get() {
+            return;
+        }
+        self.sync_honeycomb_viewport(&scrolled);
+        let width = self.viewport_width(&scrolled);
         self.geometry_for_current_layout(width);
         self.spacer
             .set_size_request(width, self.total_height.get().ceil() as i32);
@@ -845,7 +930,10 @@ impl SectionedFolderView {
                     wanted_tiles.push((item.photo_index as u32, item.section, row as u32, 0));
                 }
             }
-            if self.group_mode.get() == GroupMode::Folder {
+            if self.group_mode.get() == GroupMode::Folder
+                || (self.layout_mode.get() == PhotoLayout::Honeycomb
+                    && self.group_mode.get() != GroupMode::None)
+            {
                 wanted_headers.extend(visible_section_span(&geometry, top, bottom));
             }
         }
@@ -950,6 +1038,8 @@ impl SectionedFolderView {
                 tile
             };
 
+            tile.tile
+                .set_honeycomb(self.layout_mode.get() == PhotoLayout::Honeycomb);
             if self.layout_mode.get() == PhotoLayout::Masonry {
                 tile.tile.add_css_class("masonry-tile");
             } else {
@@ -987,10 +1077,22 @@ impl SectionedFolderView {
                                 _ => tile.tile.set_margin_bottom(0),
                             }
                         }
-                        tile.tile.set_tile_size(
-                            item.width as i32,
-                            item.height as i32,
-                        );
+                        if self.layout_mode.get() == PhotoLayout::Honeycomb {
+                            tile.tile.set_hex_dimensions(
+                                item.width,
+                                item.height,
+                                if self.honeycomb_borderless.get() {
+                                    0.0
+                                } else {
+                                    self.honeycomb_border_width.get()
+                                },
+                            );
+                            tile.tile
+                                .set_tile_size(item.width.ceil() as i32, item.height.ceil() as i32);
+                        } else {
+                            tile.tile
+                                .set_tile_size(item.width as i32, item.height as i32);
+                        }
                         tile.tile.set_content_fit(gtk::ContentFit::Cover);
                         // Refresh can run again during a scroll or allocation.
                         // Do not erase an ongoing wall zoom's presentation;

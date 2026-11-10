@@ -3,6 +3,7 @@ pub enum GroupMode {
     None,
     Day,
     Month,
+    Year,
     /// Internal grouping used by Folder mode. This is not a user-selectable
     /// Library grouping preference; it divides the continuous Picasa-style
     /// Folder stream into real, non-sticky scrolling sections.
@@ -81,6 +82,10 @@ impl Gallery {
             }
         }
 
+        if self.layout() == PhotoLayout::Honeycomb {
+            self.group_header.set_visible(false);
+            self.sectioned_folder.refresh_model();
+        }
         if mode == GroupMode::Folder
             && crate::grid::folder_gridview_experiment_enabled()
             && !crate::grid::sectioned_folder_view_enabled()
@@ -103,6 +108,10 @@ impl Gallery {
     }
 
     pub fn update_group_header_for_scroll(&self, scroll_y: f64) {
+        if self.layout() == PhotoLayout::Honeycomb {
+            self.group_header.set_visible(false);
+            return;
+        }
         self.last_scroll_y.set(scroll_y.max(0.0));
         let mode = self.group_mode.get();
         if mode == GroupMode::Folder
@@ -469,6 +478,7 @@ fn group_label(photo: &PhotoObject, mode: GroupMode, date: GroupDate) -> String 
         GroupMode::None => String::new(),
         GroupMode::Folder => unreachable!("folder grouping returns before date grouping"),
         GroupMode::History => unreachable!("history grouping returns before date grouping"),
+        GroupMode::Year => value.format("%Y").to_string(),
         GroupMode::Month => value.format("%b %Y").to_string(),
         GroupMode::Day => {
             let date = value.date_naive();

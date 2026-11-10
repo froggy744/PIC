@@ -9,6 +9,8 @@ use libadwaita::prelude::*;
 use rusqlite::Connection;
 
 mod database;
+mod honeycomb;
+pub(crate) use honeycomb::saved_width as honeycomb_border_width;
 pub(crate) mod menus;
 
 /* A single corner style across photo surfaces and UI chrome. The legacy
@@ -2160,6 +2162,38 @@ fn interface_page_with_corner_style(
         "High quality thumbnails (640 px)",
         Some("Use 640 px thumbnails instead of 320 px in Grid, Photo Wall and Masonry."),
         Some(high_quality.upcast_ref()),
+    );
+    let honeycomb_border = gtk::DropDown::from_strings(&[
+        "None", "2 px", "3 px", "4 px", "5 px", "6 px", "7 px", "8 px", "9 px", "10 px", "12 px",
+        "16 px",
+    ]);
+    honeycomb_border.set_valign(gtk::Align::Center);
+    let saved = honeycomb::saved_width(&connection.borrow());
+    honeycomb_border.set_selected(
+        honeycomb::WIDTHS
+            .iter()
+            .position(|width| *width == saved)
+            .unwrap_or(4) as u32,
+    );
+    {
+        let connection = connection.clone();
+        let changed = thumbnail_changed.clone();
+        honeycomb_border.connect_selected_notify(move |dropdown| {
+            let Some(&width) = honeycomb::WIDTHS.get(dropdown.selected() as usize) else {
+                return;
+            };
+            if let Err(error) = honeycomb::save_width(&connection.borrow(), width) {
+                eprintln!("Could not save Honeycomb border: {error}");
+                return;
+            }
+            changed();
+        });
+    }
+    append_row(
+        &thumbnail_list,
+        "Honeycomb border",
+        Some("Theme-colored separation between hexagonal photos. None makes photos touch."),
+        Some(honeycomb_border.upcast_ref()),
     );
     content.append(&thumbnail_list);
 

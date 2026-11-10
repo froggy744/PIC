@@ -1057,6 +1057,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             }),
             Rc::new(move || {
                 crate::window::debug_log("THUMB SETTINGS: apply callback entered");
+                thumbs_gallery.set_honeycomb_border_width(crate::settings::honeycomb_border_width(&thumbs_connection.borrow()));
                 let corner_style = thumbs_theme_engine.effective_corner_style();
                 let fit = crate::settings::saved_bool(
                     &thumbs_connection.borrow(),
@@ -1936,6 +1937,8 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             if folder_sectioned {
                 if folder_scroll_for_layout.child().as_ref()
                     != Some(gallery_for_folder_view.folder_sectioned_root.upcast_ref())
+                    && (gallery_for_folder_view.layout()!=grid::PhotoLayout::Honeycomb
+                        || !gallery_for_folder_view.folder_sectioned_root.is_ancestor(&folder_scroll_for_layout))
                 {
                     folder_scroll_for_layout
                         .set_child(Some(&gallery_for_folder_view.folder_sectioned_root));
@@ -2576,6 +2579,9 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     // Restore the startup layout without a transition. The interactive
     // Grid/Wall/Masonry selector is connected after page_overlay exists so
     // layout changes can reuse the same retained-frame crossfade.
+    gallery.set_honeycomb_border_width(crate::settings::honeycomb_border_width(
+        &connection.borrow(),
+    ));
     restore_section_layout(&connection.borrow(), &gallery, &info, initial_filter);
     crate::startup_trace::mark("initial_layout_restored", Some(build_started));
 
@@ -7199,6 +7205,9 @@ fn start_photo_export_single(
                 .unwrap_or(false),
             );
             gallery.set_zoom_animations_enabled(db::zoom_animations_enabled(&connection.borrow()));
+            gallery.set_honeycomb_border_width(crate::settings::honeycomb_border_width(
+                &connection.borrow(),
+            ));
             if let Some(width) = grid_thumbnail_size_from_setting(&connection.borrow()) {
                 gallery.request_slider_zoom(width);
                 info.grid_zoom.set_value(grid_zoom_slider_value(width));

@@ -4,6 +4,7 @@ pub enum PhotoLayout {
     Grid,
     PhotoWall,
     Masonry,
+    Honeycomb,
 }
 
 #[derive(Default)]
@@ -29,7 +30,7 @@ impl SectionedFolderView {
         // refit. The wall behaves like a resized picture; rows, membership and
         // viewport stay exactly as they were and only the scale changes.
         let old_width = self.geometry_width.get();
-        if self.is_wall()
+        if self.layout_mode.get() != PhotoLayout::Honeycomb
             && old_width > 1
             && old_width != width
             && self.geometry_row_height.get() == target + caption
@@ -39,12 +40,33 @@ impl SectionedFolderView {
                 return;
             }
         }
+        let resize_anchor = if self.layout_mode.get() == PhotoLayout::Honeycomb
+            && old_width > 1
+            && old_width != width
+        {
+            self.scroll.borrow().as_ref().and_then(|scroll| {
+                let value = scroll.vadjustment().value();
+                let state = self.wall_state.borrow();
+                let row = state.layout.rows.partition_point(|row| row.y < value);
+                state
+                    .layout
+                    .rows
+                    .get(row)
+                    .and_then(|row| state.layout.items.get(row.item_range.start))
+                    .map(|item| (item.photo_index, item.y - value))
+            })
+        } else {
+            None
+        };
         let photos = self.current_photos.borrow();
         let ratios = photos
             .iter()
             .map(PhotoObject::photo_wall_aspect_ratio)
             .collect::<Vec<_>>();
-        let sections = if self.group_mode.get() == GroupMode::Folder {
+        let sections = if self.group_mode.get() == GroupMode::Folder
+            || (self.layout_mode.get() == PhotoLayout::Honeycomb
+                && self.group_mode.get() != GroupMode::None)
+        {
             self.group_ranges
                 .borrow()
                 .iter()
@@ -59,7 +81,19 @@ impl SectionedFolderView {
                 header_height: 0.0,
             }]
         };
-        let layout = if self.layout_mode.get() == PhotoLayout::Masonry {
+        let layout = if self.layout_mode.get() == PhotoLayout::Honeycomb {
+            photo_wall_layout::PhotoWallLayout::calculate_honeycomb(
+                photos.len(),
+                &sections,
+                width,
+                target,
+                if self.honeycomb_borderless.get() {
+                    0.0
+                } else {
+                    honeycomb::GAP
+                },
+            )
+        } else if self.layout_mode.get() == PhotoLayout::Masonry {
             photo_wall_layout::PhotoWallLayout::calculate_masonry(&ratios, &sections, width, target)
         } else {
             photo_wall_layout::PhotoWallLayout::calculate(
@@ -87,6 +121,23 @@ impl SectionedFolderView {
         state.layout = layout;
         self.geometry_width.set(width);
         self.geometry_row_height.set(target + caption);
+        let mapped = resize_anchor
+            .and_then(|(index, offset)| state.layout.item(index).map(|item| item.y - offset));
+        drop(state);
+        drop(photos);
+        if let (Some(value), Some(scroll)) = (mapped, self.scroll.borrow().as_ref()) {
+            let adj = scroll.vadjustment();
+            let page = adj.page_size();
+            let upper = self.total_height.get().ceil().max(page);
+            adj.configure(
+                value.clamp(adj.lower(), (upper - page).max(adj.lower())),
+                adj.lower(),
+                upper,
+                adj.step_increment(),
+                adj.page_increment(),
+                page,
+            );
+        }
     }
 
     /// Scale the existing wall geometry to `width` and carry the scroll
@@ -299,6 +350,38 @@ impl SectionedFolderView {
 }
 
 impl Gallery {
+    pub fn set_honeycomb_border_width(self: &Rc<Self>, width: u32) {
+        if width > 0 {
+            self.sectioned_folder
+                .honeycomb_border_width
+                .set(width.clamp(2, 16) as f64);
+        }
+        self.set_honeycomb_borderless(width == 0);
+        if self.layout() == PhotoLayout::Honeycomb {
+            self.sectioned_folder.refresh();
+        }
+    }
+
+    pub fn set_honeycomb_borderless(self: &Rc<Self>, borderless: bool) {
+        if self
+            .sectioned_folder
+            .honeycomb_borderless
+            .replace(borderless)
+            == borderless
+        {
+            return;
+        }
+        if self.layout() != PhotoLayout::Honeycomb {
+            return;
+        }
+        let anchor = self.capture_view_anchor();
+        self.sectioned_folder.invalidate_geometry();
+        self.sectioned_folder.refresh();
+        if let Some(anchor) = anchor {
+            self.restore_view_anchor(anchor);
+        }
+    }
+
     pub fn layout(&self) -> PhotoLayout {
         self.sectioned_folder.layout_mode.get()
     }
@@ -391,6 +474,12 @@ impl Gallery {
         self.sectioned_folder.cancel_zoom_settle();
         self.sectioned_folder.cancel_scroll_animation();
         self.sectioned_folder.layout_mode.set(layout);
+        self.group_header.set_visible(
+            layout != PhotoLayout::Honeycomb
+                && self.group_mode.get() != GroupMode::None
+                && self.group_mode.get() != GroupMode::Folder
+                && !self.group_ranges.borrow().is_empty(),
+        );
         self.sectioned_folder.refresh_model();
         if layout == PhotoLayout::Grid {
             let mut tiles = Vec::new();
@@ -581,6 +670,11 @@ impl Gallery {
     }
 
     fn apply_wall_zoom(self: &Rc<Self>, width: i32) {
+        let pointer_anchor = if self.layout() == PhotoLayout::Honeycomb {
+            self.stable_zoom_anchor.take()
+        } else {
+            None
+        };
         let width = nearest_zoom_level(width);
         if width == self.tile_width.get() {
             return;
@@ -589,7 +683,17 @@ impl Gallery {
         // fully opaque image from 103% to 100% within each destination cell;
         // never interpolate X/Y or row/column membership.
         let settle = self.sectioned_folder.prepare_wall_zoom_settle();
-        let anchor = self.capture_view_anchor();
+        let anchor = if self.layout() == PhotoLayout::Honeycomb {
+            pointer_anchor
+                .filter(|anchor| anchor.kind == ZoomAnchorKind::Pointer)
+                .map(|anchor| ViewAnchor {
+                    photo_id: anchor.photo_id,
+                    viewport_y_offset: anchor.desired_y,
+                })
+                .or_else(|| self.capture_view_anchor())
+        } else {
+            self.capture_view_anchor()
+        };
         self.sectioned_folder.cancel_scroll_animation();
         self.auto_default_zoom.set(false);
         if let Some(source) = self.zoom_reflow_source.borrow_mut().take() {
@@ -635,7 +739,7 @@ impl Gallery {
                 if let Some(viewport) = self
                     .sectioned_folder
                     .root
-                    .parent()
+                    .ancestor(gtk::Viewport::static_type())
                     .and_downcast::<gtk::Viewport>()
                 {
                     let (x, y) = viewport

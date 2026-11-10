@@ -84,6 +84,8 @@
 
     let group_none = gtk::CheckButton::with_label("None");
     let group_day = gtk::CheckButton::with_label("Day");
+    let group_year = gtk::CheckButton::with_label("Year");
+    group_year.set_group(Some(&group_none));
     let group_month = gtk::CheckButton::with_label("Month");
     group_day.set_group(Some(&group_none));
     group_month.set_group(Some(&group_none));
@@ -93,6 +95,7 @@
         }
         grid::GroupMode::Day => group_day.set_active(true),
         grid::GroupMode::Month => group_month.set_active(true),
+        grid::GroupMode::Year => group_year.set_active(true),
     }
     // Grouping belongs to the Library section, not to a particular sort field.
     // Date grouping will use Date Taken (or Date Added when that sort is active).
@@ -101,9 +104,11 @@
     group_none.set_sensitive(group_available);
     group_day.set_sensitive(group_available);
     group_month.set_sensitive(group_available);
+    group_year.set_sensitive(group_available);
     sort_box.append(&group_none);
     sort_box.append(&group_day);
     sort_box.append(&group_month);
+    sort_box.append(&group_year);
 
     let connect_sort_field = |button: &gtk::CheckButton, field: SortField| {
         let exit_browser = discard_date_browser.clone();
@@ -260,6 +265,7 @@
     connect_group_mode(&group_none, grid::GroupMode::None);
     connect_group_mode(&group_day, grid::GroupMode::Day);
     connect_group_mode(&group_month, grid::GroupMode::Month);
+    connect_group_mode(&group_year, grid::GroupMode::Year);
 
     sort_popover.set_child(Some(&sort_box));
 
@@ -279,6 +285,7 @@
     let group_heading_for_visibility = group_heading.clone();
     let group_none_for_visibility = group_none.clone();
     let group_day_for_visibility = group_day.clone();
+    let group_year_for_visibility = group_year.clone();
     let group_month_for_visibility = group_month.clone();
     sort_popover.connect_visible_notify(move |popover| {
         if !popover.is_visible() {
@@ -288,6 +295,7 @@
         group_none_for_visibility.set_sensitive(available);
         group_day_for_visibility.set_sensitive(available);
         group_month_for_visibility.set_sensitive(available);
+        group_year_for_visibility.set_sensitive(available);
         let browsing = browser_active_for_visibility.get();
         let overview = browsing && browser_for_visibility.borrow().as_ref().is_some_and(|browser| browser.is_overview_visible());
         for widget in [
@@ -302,6 +310,7 @@
         group_none_for_visibility.set_visible(!browsing);
         group_day_for_visibility.set_visible(!browsing);
         group_month_for_visibility.set_visible(!browsing);
+        group_year_for_visibility.set_visible(!browsing);
     });
 
     sort_popover.set_parent(&sort_button);

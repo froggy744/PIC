@@ -412,7 +412,12 @@ impl Gallery {
                 continue;
             }
 
-            let inside = x >= left && x <= left + width && y >= top && y <= top + height;
+            let inside = x >= left
+                && x <= left + width
+                && y >= top
+                && y <= top + height
+                && (self.layout() != PhotoLayout::Honeycomb
+                    || tile.accepts_point(x - left, y - top));
             let center_x = left + width * 0.5;
             let center_y = top + height * 0.5;
             let distance_sq = (center_x - x).powi(2) + (center_y - y).powi(2);

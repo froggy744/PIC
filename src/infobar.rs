@@ -396,7 +396,8 @@ impl InfoBar {
             let layout = match current {
                 PhotoLayout::Grid => PhotoLayout::PhotoWall,
                 PhotoLayout::PhotoWall => PhotoLayout::Masonry,
-                PhotoLayout::Masonry => PhotoLayout::Grid,
+                PhotoLayout::Masonry => PhotoLayout::Honeycomb,
+                PhotoLayout::Honeycomb => PhotoLayout::Grid,
             };
             crate::nav_transition_trace!(
                 "stage=view_toggle_clicked current={current:?} requested={layout:?}"
@@ -1487,7 +1488,8 @@ fn update_photo_layout_button(button: &gtk::Button, layout: crate::grid::PhotoLa
     let (icon, tooltip) = match layout {
         PhotoLayout::Grid => ("collage-smart-mosaic-symbolic", "Switch to Photo Wall"),
         PhotoLayout::PhotoWall => ("view-masonry-symbolic", "Switch to Masonry"),
-        PhotoLayout::Masonry => ("view-app-grid-symbolic", "Switch to Grid"),
+        PhotoLayout::Masonry => ("view-grid-symbolic", "Switch to Honeycomb"),
+        PhotoLayout::Honeycomb => ("view-app-grid-symbolic", "Switch to Grid"),
     };
     button.set_icon_name(icon);
     button.set_tooltip_text(Some(tooltip));

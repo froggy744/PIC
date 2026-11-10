@@ -855,6 +855,8 @@ fn photo_wall_view_toggle_keeps_selection_and_grid_scroll_context() {
 
     view_toggle.emit_clicked();
     view_toggle.emit_clicked();
+    assert_eq!(gallery.layout(), PhotoLayout::Honeycomb);
+    view_toggle.emit_clicked();
     assert!(!view_toggle.state_flags().contains(gtk::StateFlags::CHECKED));
     assert_eq!(
         view_toggle.icon_name().as_deref(),
@@ -1004,6 +1006,12 @@ fn photo_wall_lightbox_return_waits_for_allocation_and_focuses_current_photo() {
 #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
 fn masonry_lightbox_return_preserves_position_and_focus() {
     check_lightbox_return(PhotoLayout::Masonry);
+}
+
+#[test]
+#[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+fn honeycomb_lightbox_return_preserves_position_and_focus() {
+    check_lightbox_return(PhotoLayout::Honeycomb);
 }
 
 fn check_lightbox_return(layout: PhotoLayout) {
@@ -1880,6 +1888,8 @@ fn masonry_virtualizes_twenty_thousand_photos_and_resizes() {
         assert!(gallery.selection.is_selected(42));
     }
     info.view_toggle.emit_clicked();
+    assert_eq!(gallery.layout(), PhotoLayout::Honeycomb);
+    info.view_toggle.emit_clicked();
     assert_eq!(gallery.layout(), PhotoLayout::Grid);
     assert!(gallery.selection.is_selected(42));
     window.close();
@@ -2695,4 +2705,449 @@ fn layout_changes_do_not_generate_higher_quality_thumbnails() {
         settle();
     }
     std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+#[ignore = "requires a GTK display; captures real renderer screenshots"]
+fn honeycomb_gui_interactions_virtualization_and_screenshots() {
+    libadwaita::init().unwrap();
+    libadwaita::StyleManager::default().set_color_scheme(libadwaita::ColorScheme::ForceLight);
+    let display = gtk::gdk::Display::default().unwrap();
+    crate::css::install_foundation(&display);
+    let css = gtk::CssProvider::new();
+    css.load_from_string(include_str!("../../themes/standard/theme.css"));
+    gtk::style_context_add_provider_for_display(
+        &display,
+        &css,
+        gtk::STYLE_PROVIDER_PRIORITY_APPLICATION + 1,
+    );
+    let activated = Rc::new(Cell::new(None));
+    let opened = activated.clone();
+    let gallery = Rc::new(Gallery::new(
+        &[],
+        100,
+        |_| {},
+        move |photos, index, _| opened.set(Some(photos[index].id())),
+        |_, _, _, _| {},
+        |_, _| {},
+        |_| {},
+    ));
+    let paths = std::env::var("PIC_HONEYCOMB_PHOTOS")
+        .ok()
+        .map(|dir| {
+            std::fs::read_dir(dir)
+                .unwrap()
+                .filter_map(Result::ok)
+                .map(|e| e.path())
+                .filter(|p| {
+                    p.extension()
+                        .is_some_and(|e| e == "jpg" || e == "jpeg" || e == "png")
+                })
+                .take(64)
+                .collect::<Vec<_>>()
+        })
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| {
+            vec![
+                "images/onboarding/wiz-edit.jpg".into(),
+                "images/onboarding/wiz-browse.jpg".into(),
+                "images/onboarding/wiz-albums.jpg".into(),
+            ]
+        });
+    let textures = paths
+        .iter()
+        .map(|p| {
+            gtk::gdk::Texture::from_filename(p)
+                .unwrap()
+                .upcast::<gtk::gdk::Paintable>()
+        })
+        .collect::<Vec<_>>();
+    let objects = (0..10_001)
+        .map(|i| {
+            let photo = glib::Object::builder::<PhotoObject>()
+                .property("id", i as i64 + 1)
+                .property(
+                    "taken-at",
+                    if i < 5000 {
+                        "2025-05-01 12:00:00"
+                    } else {
+                        "2026-05-01 12:00:00"
+                    },
+                )
+                .property("original-available", i != 5)
+                .property("favorite", i == 1)
+                .build();
+            photo.set_cached_thumbnail_path(format!(
+                "/virtual/honeycomb/{}.jpg",
+                i % textures.len()
+            ));
+            folder_thumbnail_cache_insert(
+                photo_presentation_key(&photo).unwrap(),
+                textures[i % textures.len()].clone(),
+            );
+            photo
+        })
+        .collect::<Vec<_>>();
+    gallery.store.splice(0, 0, &objects);
+    gallery.current_photos.replace(objects);
+    gallery.selection.select_item(2, false);
+    gallery.set_layout(PhotoLayout::Honeycomb);
+    let scroll = gtk::ScrolledWindow::builder()
+        .child(&gallery.folder_sectioned_root)
+        .build();
+    scroll.add_css_class("photo-grid");
+    gallery.attach_sectioned_folder_scroll(&scroll);
+    let window = gtk::Window::builder()
+        .title("PIC Honeycomb Smoke")
+        .default_width(1000)
+        .default_height(700)
+        .child(&scroll)
+        .build();
+    window.present();
+    settle();
+    eprintln!(
+        "Honeycomb renderer: {}",
+        window.renderer().unwrap().type_().name()
+    );
+    if std::env::var("GSK_RENDERER").as_deref() == Ok("vulkan") {
+        assert!(
+            window.renderer().unwrap().type_().name().contains("Vulkan"),
+            "Vulkan renderer unavailable"
+        );
+    }
+    let surface = &gallery.sectioned_folder;
+    assert!(surface.live_tiles.borrow().len() > 10);
+    assert!(surface.live_tiles.borrow().len() < 250);
+    let tile = surface.live_tiles.borrow()[&0].tile.clone();
+    assert!(!tile.accepts_point(1.0, 1.0));
+    assert!(tile.accepts_point(tile.width() as f64 / 2.0, tile.height() as f64 / 2.0));
+    let state = surface.wall_state.borrow();
+    let item = state.layout.item(0).unwrap();
+    let point = gtk::graphene::Point::new(
+        (item.x + item.width * 0.5) as f32,
+        (item.y + item.height * 0.9) as f32,
+    );
+    let picked = surface
+        .root
+        .pick(point.x() as f64, point.y() as f64, gtk::PickFlags::DEFAULT)
+        .unwrap();
+    assert!(
+        picked == tile || picked.is_ancestor(&tile),
+        "overlapping empty corner intercepted picking"
+    );
+    drop(state);
+    let controllers = tile.observe_controllers();
+    let click = (0..controllers.n_items())
+        .filter_map(|i| controllers.item(i).and_downcast::<gtk::GestureClick>())
+        .find(|g| g.button() == 1)
+        .unwrap();
+    click.emit_by_name::<()>("pressed", &[&1_i32, &1.0_f64, &1.0_f64]);
+    assert!(gallery.selection.is_selected(2));
+    let x = tile.width() as f64 / 2.0;
+    let y = tile.height() as f64 / 2.0;
+    click.emit_by_name::<()>("pressed", &[&2_i32, &x, &y]);
+    assert_eq!(activated.get(), Some(1));
+    assert!(gallery.selection.is_selected(0));
+    settle();
+    assert!(
+        tile.imp().visual_loaded.get(),
+        "cached photo must be visible"
+    );
+    let hex_snapshot = gtk::Snapshot::new();
+    gtk::WidgetPaintable::new(Some(&tile)).snapshot(
+        &hex_snapshot,
+        tile.width() as f64,
+        tile.height() as f64,
+    );
+    let rendered = window.renderer().unwrap().render_texture(
+        &hex_snapshot.to_node().unwrap(),
+        Some(&gtk::graphene::Rect::new(
+            0.0,
+            0.0,
+            tile.width() as f32,
+            tile.height() as f32,
+        )),
+    );
+    let stride = rendered.width() as usize * 4;
+    let mut pixels = vec![0; stride * rendered.height() as usize];
+    rendered.download(&mut pixels, stride);
+    assert!(pixels[3] < 8, "hex corner must remain transparent");
+    assert!(
+        pixels[(rendered.height() as usize / 2) * stride + (rendered.width() as usize / 2) * 4 + 3]
+            > 240,
+        "photo center must be opaque"
+    );
+    let offline = surface.live_tiles.borrow()[&5].tile.clone();
+    let frame = offline
+        .first_child()
+        .and_downcast::<gtk::Overlay>()
+        .unwrap();
+    let badge = find_overlay_child(&frame, "offline-badge").unwrap();
+    let bounds = badge.compute_bounds(&offline).unwrap();
+    assert!(
+        offline.accepts_point(bounds.x() as f64, bounds.y() as f64),
+        "offline badge must be inside polygon"
+    );
+    // Capture the real X11 window, including the renderer's composited output.
+    let xid = if std::env::var_os("PIC_HONEYCOMB_SCREENSHOTS").is_some() {
+        let result = std::process::Command::new("xdotool")
+            .args(["search", "--name", "^PIC Honeycomb Smoke$"])
+            .output()
+            .unwrap();
+        assert!(result.status.success());
+        Some(
+            String::from_utf8(result.stdout)
+                .unwrap()
+                .lines()
+                .last()
+                .unwrap()
+                .to_owned(),
+        )
+    } else {
+        None
+    };
+    let resize_to = |width: i32, height: i32| {
+        window.set_default_size(width, height);
+        if let Some(id) = xid.as_ref() {
+            assert!(std::process::Command::new("xdotool")
+                .args(["windowmove", id, "0", "0"])
+                .status()
+                .unwrap()
+                .success());
+            assert!(std::process::Command::new("xdotool")
+                .args(["windowsize", id, &width.to_string(), &height.to_string()])
+                .status()
+                .unwrap()
+                .success());
+        }
+        settle();
+    };
+    let resize = |width| resize_to(width, 700);
+    let save = |name: &str| {
+        if let (Ok(dir), Some(id)) = (std::env::var("PIC_HONEYCOMB_SCREENSHOTS"), xid.as_ref()) {
+            std::fs::create_dir_all(&dir).unwrap();
+            assert!(std::process::Command::new("import")
+                .args(["-window", id, &format!("{dir}/{name}.png")])
+                .status()
+                .unwrap()
+                .success());
+        }
+    };
+    let verify_edges = || {
+        let state = surface.wall_state.borrow();
+        let items = &state.layout.items[state.layout.rows[0].item_range.clone()];
+        assert!(items.first().unwrap().x < 0.0);
+        assert!(items.last().unwrap().x + items.last().unwrap().width > scroll.width() as f64);
+        for item in [items.first().unwrap(), items.last().unwrap()] {
+            let live = surface.live_tiles.borrow()[&(item.photo_index as u32)]
+                .tile
+                .clone();
+            assert_eq!(
+                live.photo().unwrap().id(),
+                gallery.current_photos.borrow()[item.photo_index].id()
+            );
+            assert!(
+                live.imp().visual_loaded.get(),
+                "clipped edge must show a real photo"
+            );
+        }
+        assert!(
+            scroll.hadjustment().upper() <= scroll.hadjustment().page_size() + 1.0,
+            "overhang expanded horizontal extent"
+        );
+    };
+    verify_edges();
+    let geometry_before = surface
+        .wall_state
+        .borrow()
+        .layout
+        .items
+        .iter()
+        .map(|item| {
+            (
+                item.photo_index,
+                item.x.to_bits(),
+                item.y.to_bits(),
+                item.width.to_bits(),
+                item.height.to_bits(),
+            )
+        })
+        .collect::<Vec<_>>();
+    gallery.set_honeycomb_border_width(16);
+    settle();
+    let geometry_after = surface
+        .wall_state
+        .borrow()
+        .layout
+        .items
+        .iter()
+        .map(|item| {
+            (
+                item.photo_index,
+                item.x.to_bits(),
+                item.y.to_bits(),
+                item.width.to_bits(),
+                item.height.to_bits(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        geometry_before, geometry_after,
+        "border setting changed geometry or photo order"
+    );
+    save("border-16px");
+    let adj = scroll.vadjustment();
+    adj.set_value(adj.page_size() * 0.7);
+    settle();
+    save("border-16px-scrolled");
+    adj.set_value(0.0);
+    settle();
+    gallery.set_honeycomb_border_width(5);
+    settle();
+    assert_eq!(scroll.hscrollbar_policy(), gtk::PolicyType::Never);
+    scroll.hadjustment().set_value(200.0);
+    assert_eq!(scroll.hadjustment().value(), scroll.hadjustment().lower());
+    save("light");
+    libadwaita::StyleManager::default().set_color_scheme(libadwaita::ColorScheme::ForceDark);
+    settle();
+    save("dark");
+    for width in [560, 220, 1200] {
+        resize(width);
+        assert!(
+            (window.width() - width).abs() < 64,
+            "window did not resize: requested {width}, actual {}",
+            window.width()
+        );
+        assert!(scroll.hadjustment().upper() <= scroll.hadjustment().page_size() + 1.0);
+        scroll.vadjustment().set_value(0.0);
+        settle();
+        verify_edges();
+        save(&format!("width-{width}"));
+        gallery.set_honeycomb_borderless(true);
+        settle();
+        scroll.vadjustment().set_value(0.0);
+        settle();
+        verify_edges();
+        save(&format!("borderless-width-{width}"));
+        gallery.set_honeycomb_borderless(false);
+        settle();
+    }
+    let pointer_tile = surface
+        .live_tiles
+        .borrow()
+        .values()
+        .filter_map(|entry| {
+            entry
+                .tile
+                .compute_bounds(&scroll)
+                .map(|bounds| (entry.tile.clone(), bounds))
+        })
+        .find(|(_, b)| b.y() > 100.0 && b.y() < 400.0)
+        .unwrap();
+    let pointer_id = pointer_tile.0.photo().unwrap().id();
+    let pointer_y = pointer_tile.1.y() as f64;
+    gallery.wheel_zoom_in_at(
+        scroll.upcast_ref(),
+        (pointer_tile.1.x() + pointer_tile.1.width() / 2.0) as f64,
+        (pointer_tile.1.y() + pointer_tile.1.height() / 2.0) as f64,
+    );
+    settle();
+    let pointer_index = gallery
+        .current_photos
+        .borrow()
+        .iter()
+        .position(|p| p.id() == pointer_id)
+        .unwrap();
+    assert!(
+        (surface.y_for_index(pointer_index as u32).unwrap()
+            - scroll.vadjustment().value()
+            - pointer_y)
+            .abs()
+            < 2.0,
+        "pointer anchor moved"
+    );
+    assert!(
+        gallery.stable_zoom_anchor.get().is_none(),
+        "wheel anchor must not leak into later slider zoom"
+    );
+    gallery.apply_wall_zoom(250);
+    settle();
+    save("zoom");
+    let index = surface.wall_state.borrow().layout.rows[4].item_range.start;
+    let id = gallery.current_photos.borrow()[index].id();
+    assert!(surface.restore_anchor(id, 100.0));
+    settle();
+    let before = surface.y_for_index(index as u32).unwrap() - scroll.vadjustment().value();
+    resize(900);
+    let after = surface.y_for_index(index as u32).unwrap() - scroll.vadjustment().value();
+    assert!(
+        (before - after).abs() < 2.0,
+        "resize anchor jumped: {before} -> {after}"
+    );
+    for fraction in [0.2, 0.7, 0.98] {
+        let adj = scroll.vadjustment();
+        adj.set_value((adj.upper() - adj.page_size()) * fraction);
+        settle();
+        assert!(surface.live_tiles.borrow().len() < 250);
+    }
+    assert!(surface.live_tiles.borrow().keys().any(|i| *i > 9000));
+    scroll.vadjustment().set_value(0.0);
+    settle();
+    for mode in [
+        PhotoLayout::Grid,
+        PhotoLayout::Honeycomb,
+        PhotoLayout::Masonry,
+        PhotoLayout::Honeycomb,
+    ] {
+        gallery.set_layout(mode);
+        settle();
+        assert!(gallery.selection.is_selected(0));
+    }
+    gallery.set_grouping(GroupMode::Year, GroupDate::Taken);
+    settle();
+    assert_eq!(surface.wall_state.borrow().layout.sections.len(), 2);
+    assert!(!surface.live_headers.borrow().is_empty());
+    save("year");
+    gallery.set_grouping(GroupMode::None, GroupDate::Taken);
+    settle();
+    assert_eq!(surface.wall_state.borrow().layout.sections.len(), 1);
+    // Non-overlay scrollbars reduce the actual viewport width; geometry must
+    // follow that allocation rather than the outer ScrolledWindow width.
+    scroll.set_overlay_scrolling(false);
+    for (width, height) in [(1366, 768), (1920, 1080), (2560, 1440)] {
+        resize_to(width, height);
+        for zoom in [100, 300] {
+            gallery.apply_wall_zoom(zoom);
+            settle();
+            for borderless in [false, true] {
+                gallery.set_honeycomb_borderless(borderless);
+                settle();
+                let adj = scroll.vadjustment();
+                adj.set_value(0.0);
+                settle();
+                verify_edges();
+                assert_eq!(
+                    surface.geometry_width.get(),
+                    surface.honeycomb_clip.borrow().as_ref().unwrap().width()
+                );
+                assert_eq!(scroll.hscrollbar_policy(), gtk::PolicyType::Never);
+                let hadj = scroll.hadjustment();
+                hadj.set_value(500.0);
+                assert_eq!(hadj.value(), hadj.lower());
+                save(&format!(
+                    "edge-{width}x{height}-zoom-{zoom}-{}",
+                    if borderless { "borderless" } else { "standard" }
+                ));
+                adj.set_value(adj.page_size() * 0.7);
+                settle();
+                hadj.set_value(500.0);
+                assert_eq!(hadj.value(), hadj.lower());
+                save(&format!(
+                    "scrolled-{width}x{height}-zoom-{zoom}-{}",
+                    if borderless { "borderless" } else { "standard" }
+                ));
+            }
+        }
+    }
+    window.close();
 }

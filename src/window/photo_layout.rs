@@ -26,6 +26,7 @@ pub(super) fn saved_section_layout(connection: &Connection, filter: SidebarFilte
     match saved.as_deref() {
         Some("photo_wall") => PhotoLayout::PhotoWall,
         Some("masonry") => PhotoLayout::Masonry,
+        Some("honeycomb") => PhotoLayout::Honeycomb,
         _ => PhotoLayout::Grid,
     }
 }
@@ -39,6 +40,7 @@ pub(super) fn save_section_layout(
         PhotoLayout::Grid => "grid",
         PhotoLayout::PhotoWall => "photo_wall",
         PhotoLayout::Masonry => "masonry",
+        PhotoLayout::Honeycomb => "honeycomb",
     };
     db::set_setting(connection, section_key(filter), value)
 }
@@ -72,6 +74,36 @@ mod tests {
             .execute_batch("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
             .unwrap();
         connection
+    }
+
+    #[test]
+    fn honeycomb_sections_remember_independent_preferences() {
+        let db = connection();
+        for section in [
+            SidebarFilter::All,
+            SidebarFilter::Favorites,
+            SidebarFilter::RecentlyAdded,
+            SidebarFilter::History,
+            SidebarFilter::Rating(3),
+            SidebarFilter::Folder(1),
+            SidebarFilter::Album(1),
+        ] {
+            save_section_layout(&db, section, PhotoLayout::Honeycomb).unwrap();
+            assert_eq!(saved_section_layout(&db, section), PhotoLayout::Honeycomb);
+        }
+        save_section_layout(&db, SidebarFilter::All, PhotoLayout::Grid).unwrap();
+        assert_eq!(
+            saved_section_layout(&db, SidebarFilter::Favorites),
+            PhotoLayout::Honeycomb
+        );
+        assert_eq!(
+            saved_section_layout(&db, SidebarFilter::Folder(42)),
+            PhotoLayout::Honeycomb
+        );
+        assert_eq!(
+            saved_section_layout(&db, SidebarFilter::Album(42)),
+            PhotoLayout::Honeycomb
+        );
     }
 
     #[test]
@@ -228,11 +260,22 @@ mod tests {
             PhotoLayout::Grid,
         )
         .unwrap();
+        save_section_layout(
+            &connection.borrow(),
+            SidebarFilter::Favorites,
+            PhotoLayout::Honeycomb,
+        )
+        .unwrap();
         for (section, layout, tooltip) in [
             (
                 SidebarFilter::All,
                 PhotoLayout::PhotoWall,
                 "Switch to Masonry",
+            ),
+            (
+                SidebarFilter::Favorites,
+                PhotoLayout::Honeycomb,
+                "Switch to Grid",
             ),
             (
                 SidebarFilter::Folder(2),

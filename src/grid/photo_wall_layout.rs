@@ -326,6 +326,72 @@ impl PhotoWallLayout {
 
     // Column entries have monotonically increasing tops and bottoms. Binary
     // search each column so scrolling only visits the viewport plus overscan.
+    pub fn calculate_honeycomb(
+        count: usize,
+        sections: &[PhotoWallSection],
+        viewport: i32,
+        target: i32,
+        gap: f64,
+    ) -> Self {
+        let mut layout = Self {
+            lookup: vec![None; count],
+            viewport_width: viewport as f64,
+            ..Self::default()
+        };
+        let (columns, w, h, dx, dy) =
+            super::honeycomb::metrics(viewport as f64, target as f64, gap);
+        let mut y = 0.0;
+        for (section, spec) in sections.iter().enumerate() {
+            let header_y = y;
+            y += spec.header_height;
+            let first_photo_y = y;
+            let mut start = spec.photo_range.start;
+            let mut local_row = 0;
+            while start < spec.photo_range.end {
+                let edge_row = local_row % 2 == 0;
+                let row_columns = columns + usize::from(edge_row);
+                let end = (start + row_columns).min(spec.photo_range.end);
+                let row = layout.rows.len();
+                let first = layout.items.len();
+                let shift = if edge_row { -w / 2.0 } else { (dx - w) / 2.0 };
+                for (column, photo_index) in (start..end).enumerate() {
+                    layout.lookup[photo_index] = Some(layout.items.len());
+                    layout.items.push(PhotoWallItem {
+                        photo_index,
+                        section,
+                        row,
+                        x: shift + column as f64 * dx,
+                        y,
+                        width: w,
+                        height: h,
+                    });
+                }
+                layout.rows.push(PhotoWallRow {
+                    item_range: first..layout.items.len(),
+                    y,
+                    image_height: h,
+                    block_height: h,
+                    ideal_height: h,
+                    ideal_block_height: h,
+                    justified: false,
+                });
+                y += dy;
+                local_row += 1;
+                start = end;
+            }
+            if local_row > 0 {
+                y += h - dy + gap;
+            }
+            layout.sections.push(PhotoWallSectionBounds {
+                header_y,
+                first_photo_y,
+                end_y: y,
+            });
+        }
+        layout.total_height = y;
+        layout
+    }
+
     pub fn visible_row_indices(&self, top: f64, bottom: f64) -> Vec<usize> {
         if self.masonry_columns.is_empty() {
             return self.visible_rows(top, bottom).collect();
@@ -1259,5 +1325,95 @@ mod masonry_resize_tests {
         assert_eq!(layout.resize_masonry(20, 0.0), None);
         assert_eq!(layout.total_height, height);
         assert_eq!(layout.viewport_width, 997.0);
+    }
+}
+
+#[cfg(test)]
+mod honeycomb_tests {
+    use super::*;
+    #[test]
+    fn honeycomb_edge_rows_use_unique_collection_photos() {
+        for gap in [0.0, 2.0] {
+            for width in [60, 220, 560, 1000, 1600] {
+                for zoom in [100, 180, 300] {
+                    let l = PhotoWallLayout::calculate_honeycomb(
+                        1000,
+                        &[PhotoWallSection {
+                            photo_range: 0..1000,
+                            header_height: 0.0,
+                        }],
+                        width,
+                        zoom,
+                        gap,
+                    );
+                    let first = &l.items[l.rows[0].item_range.clone()];
+                    assert!(first[0].x < 0.0, "preceding clipped photo is missing");
+                    assert!(
+                        first.last().unwrap().x + first.last().unwrap().width > width as f64,
+                        "following clipped photo is missing"
+                    );
+                    assert_eq!(l.rows[0].item_range.len(), l.rows[1].item_range.len() + 1);
+                    assert_eq!(
+                        l.items
+                            .iter()
+                            .map(|item| item.photo_index)
+                            .collect::<Vec<_>>(),
+                        (0..1000).collect::<Vec<_>>()
+                    );
+                    if gap == 0.0 {
+                        for row in &l.rows[1..5] {
+                            let y = row.y + row.image_height * 0.5;
+                            for x in [0.01, width as f64 - 0.01] {
+                                assert!(
+                                    l.items.iter().any(|item| super::super::honeycomb::contains(
+                                        item.width,
+                                        item.height,
+                                        x - item.x,
+                                        y - item.y
+                                    )),
+                                    "borderless edge hole"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    #[test]
+    fn honeycomb_sections_order_bounds_and_visibility() {
+        for count in [0, 1, 2, 17, 10_001] {
+            let sections = vec![
+                PhotoWallSection {
+                    photo_range: 0..count / 2,
+                    header_height: 70.0,
+                },
+                PhotoWallSection {
+                    photo_range: count / 2..count,
+                    header_height: 70.0,
+                },
+            ];
+            for width in [1, 60, 250, 800, 1600] {
+                let l = PhotoWallLayout::calculate_honeycomb(count, &sections, width, 180, 2.0);
+                assert_eq!(l.items.len(), count);
+                assert_eq!(l.sections.len(), 2);
+                for (i, item) in l.items.iter().enumerate() {
+                    assert_eq!(item.photo_index, i);
+                    assert!(item.x + item.width > 0.0 && item.x < width as f64);
+                    assert!(item.y >= l.sections[item.section].first_photo_y);
+                    assert!(item.y + item.height <= l.sections[item.section].end_y);
+                }
+                let top = l.total_height * 0.5;
+                let bottom = top + 700.0;
+                let expected = l
+                    .rows
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, row)| row.y < bottom && row.y + row.block_height > top)
+                    .map(|(i, _)| i)
+                    .collect::<Vec<_>>();
+                assert_eq!(l.visible_row_indices(top, bottom), expected);
+            }
+        }
     }
 }

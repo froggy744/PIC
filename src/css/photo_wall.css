@@ -38,3 +38,15 @@
 .square-corners .masonry-tile .thumbnail {
   border-radius: 0;
 }
+
+/* Honeycomb owns its polygon outline; rectangular frame styles stay disabled. */
+.honeycomb-tile .photo-frame.photo-tile,
+.honeycomb-tile:hover .photo-frame.photo-tile,
+.honeycomb-tile .photo-frame.photo-tile.folder-photo-selected,
+.honeycomb-tile:hover .photo-frame.photo-tile.folder-photo-selected {
+  outline: none;
+  border: none;
+  box-shadow: none;
+  border-radius: 0;
+}
+.honeycomb-tile .selection-badge { opacity: 0; }

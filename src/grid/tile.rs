@@ -263,6 +263,12 @@ mod square_tile {
 
     #[derive(Default)]
     pub struct SquareTile {
+        pub honeycomb: Cell<bool>,
+        pub hex_separator: Cell<f64>,
+        pub hex_width: Cell<f64>,
+        pub hex_height: Cell<f64>,
+        pub hex_selected: Cell<bool>,
+        pub hex_mask: RefCell<Option<(i32, i32, gtk::gsk::RenderNode)>>,
         pub width: Cell<i32>,
         pub height: Cell<i32>,
         // Presentation-only FLIP offset. GTK allocation remains at the real
@@ -306,6 +312,121 @@ mod square_tile {
     }
 
     impl SquareTile {
+        fn snapshot_hexagon(&self, snapshot: &gtk::Snapshot) {
+            let obj = self.obj();
+            let w = obj.width();
+            let h = obj.height();
+            if w <= 0 || h <= 0 {
+                return;
+            }
+            let bounds = gtk::graphene::Rect::new(0.0, 0.0, w as f32, h as f32);
+            let stale = self
+                .hex_mask
+                .borrow()
+                .as_ref()
+                .is_none_or(|(mw, mh, _)| *mw != w || *mh != h);
+            if stale {
+                let mask = gtk::Snapshot::new();
+                let cr = mask.append_cairo(&bounds);
+                let points = super::honeycomb::vertices(
+                    self.hex_width.get().max(1.0),
+                    self.hex_height.get().max(1.0),
+                );
+                cr.move_to(points[0].0, points[0].1);
+                for &(x, y) in &points[1..] {
+                    cr.line_to(x, y);
+                }
+                cr.close_path();
+                cr.set_source_rgba(1.0, 1.0, 1.0, 1.0);
+                let _ = cr.fill();
+                drop(cr);
+                self.hex_mask
+                    .replace(mask.to_node().map(|node| (w, h, node)));
+            }
+            snapshot.push_mask(gtk::gsk::MaskMode::Alpha);
+            if let Some((_, _, node)) = self.hex_mask.borrow().as_ref() {
+                snapshot.append_node(node);
+            }
+            snapshot.pop();
+            if let Some(child) = obj.first_child() {
+                obj.snapshot_child(&child, snapshot);
+            }
+            // The lattice retains its 2px geometric gap. A 3px stroke clipped
+            // inside each hex contributes 1.5px per side: 5px visible separation.
+            // Borderless keeps the same photos, masks and hit-test geometry.
+            if self.hex_separator.get() > 0.0 {
+                snapshot.push_mask(gtk::gsk::MaskMode::Alpha);
+                let cr = snapshot.append_cairo(&bounds);
+                let points =
+                    super::honeycomb::vertices(self.hex_width.get(), self.hex_height.get());
+                cr.move_to(points[0].0, points[0].1);
+                for &(x, y) in &points[1..] {
+                    cr.line_to(x, y);
+                }
+                cr.close_path();
+                cr.set_source_rgba(1.0, 1.0, 1.0, 1.0);
+                cr.set_line_width(self.hex_separator.get());
+                let _ = cr.stroke();
+                drop(cr);
+                snapshot.pop();
+                let mut ancestor = obj.parent();
+                while let Some(widget) = ancestor {
+                    if widget.has_css_class("photo-grid") {
+                        // A tile can be snapshotted in the overscan band and
+                        // moved on screen without being snapshotted again. Paint
+                        // the theme background over the whole tile so the cached
+                        // separator is never clipped to an earlier viewport.
+                        #[allow(deprecated)] // GTK 4.12 theme background painting.
+                        snapshot.render_background(
+                            &widget.style_context(),
+                            0.0,
+                            0.0,
+                            w as f64,
+                            h as f64,
+                        );
+                        break;
+                    }
+                    ancestor = widget.parent();
+                }
+                snapshot.pop();
+            }
+            let selected = self.hex_selected.get();
+            let hover = obj.state_flags().contains(gtk::StateFlags::PRELIGHT);
+            if selected || hover {
+                #[allow(deprecated)] // Theme accent lookup has no GTK 4.12 replacement.
+                let color = obj
+                    .style_context()
+                    .lookup_color("accent_bg_color")
+                    .unwrap_or_else(|| obj.color());
+                let cr = snapshot.append_cairo(&bounds);
+                let inset = if selected { 2.0 } else { 1.0 };
+                let factor = ((w as f64 - 2.0 * inset) / w as f64).max(0.0);
+                let points = super::honeycomb::vertices(
+                    self.hex_width.get().max(1.0),
+                    self.hex_height.get().max(1.0),
+                );
+                for (i, &(x, y)) in points.iter().enumerate() {
+                    let x = w as f64 / 2.0 + (x - w as f64 / 2.0) * factor;
+                    let y = h as f64 / 2.0 + (y - h as f64 / 2.0) * factor;
+                    if i == 0 {
+                        cr.move_to(x, y);
+                    } else {
+                        cr.line_to(x, y);
+                    }
+                }
+                cr.close_path();
+                cr.set_source_rgba(
+                    color.red() as f64,
+                    color.green() as f64,
+                    color.blue() as f64,
+                    if selected { 1.0 } else { 0.55 },
+                );
+                cr.set_line_width(if selected { 3.0 } else { 1.5 });
+                let _ = cr.stroke();
+            }
+            snapshot.pop();
+        }
+
         fn caption_visible(&self) -> bool {
             self.filename_visible.get()
                 && self
@@ -317,6 +438,14 @@ mod square_tile {
     }
 
     impl WidgetImpl for SquareTile {
+        fn contains(&self, x: f64, y: f64) -> bool {
+            if self.honeycomb.get() {
+                super::honeycomb::contains(self.hex_width.get(), self.hex_height.get(), x, y)
+            } else {
+                self.parent_contains(x, y)
+            }
+        }
+
         fn measure(&self, orientation: gtk::Orientation, _for_size: i32) -> (i32, i32, i32, i32) {
             let requested = match orientation {
                 gtk::Orientation::Horizontal => self.width.get().max(1),
@@ -350,6 +479,30 @@ mod square_tile {
             );
 
             if let Some(child) = self.obj().first_child() {
+                // Keep status/action badges in the central band of the polygon.
+                // Reset the original offsets when this pooled tile changes layout.
+                if let Some(frame) = child.downcast_ref::<gtk::Overlay>() {
+                    let inset = if self.honeycomb.get() {
+                        height / 4 + 4
+                    } else {
+                        8
+                    };
+                    for class in [
+                        "offline-badge",
+                        "corrupt-badge",
+                        "favorite-badge",
+                        "rating-badge",
+                        "edited-badge",
+                    ] {
+                        if let Some(badge) = super::find_overlay_child(frame, class) {
+                            if badge.valign() == gtk::Align::Start {
+                                badge.set_margin_top(inset);
+                            } else {
+                                badge.set_margin_bottom(inset);
+                            }
+                        }
+                    }
+                }
                 let transform = gtk::gsk::Transform::new().translate(&gtk::graphene::Point::new(
                     layout.frame_x as f32,
                     layout.frame_y as f32,
@@ -380,6 +533,11 @@ mod square_tile {
         }
 
         fn snapshot(&self, snapshot: &gtk::Snapshot) {
+            if self.honeycomb.get() {
+                self.snapshot_hexagon(snapshot);
+                return;
+            }
+
             let dx = self.presentation_offset_x.get();
             let dy = self.presentation_offset_y.get();
             let stored_scale = self.presentation_scale.get();
@@ -1290,7 +1448,42 @@ impl SquareTile {
         }
     }
 
+    fn set_hex_dimensions(&self, width: f64, height: f64, border_width: f64) {
+        let stroke = (border_width - 2.0).max(0.0);
+        if self.imp().hex_separator.replace(stroke) != stroke {
+            self.queue_draw();
+        }
+        if self.imp().hex_width.replace(width) != width || self.imp().hex_height.get() != height {
+            self.imp().hex_height.set(height);
+            self.imp().hex_mask.take();
+            self.queue_draw();
+        }
+    }
+    fn set_honeycomb(&self, enabled: bool) {
+        if self.imp().honeycomb.replace(enabled) != enabled {
+            if enabled {
+                self.add_css_class("honeycomb-tile");
+            } else {
+                self.remove_css_class("honeycomb-tile");
+                self.imp().hex_mask.take();
+            }
+            self.queue_draw();
+        }
+    }
+    fn accepts_point(&self, x: f64, y: f64) -> bool {
+        !self.imp().honeycomb.get()
+            || honeycomb::contains(
+                self.imp().hex_width.get(),
+                self.imp().hex_height.get(),
+                x,
+                y,
+            )
+    }
+
     fn set_manual_selected(&self, selected: bool) {
+        if self.imp().hex_selected.replace(selected) != selected {
+            self.queue_draw();
+        }
         let Some(frame) = self.first_child().and_downcast::<gtk::Overlay>() else {
             return;
         };

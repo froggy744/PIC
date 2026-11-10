@@ -223,6 +223,7 @@ fn group_mode_key(mode: grid::GroupMode) -> &'static str {
         grid::GroupMode::None => "none",
         grid::GroupMode::Day => "day",
         grid::GroupMode::Month => "month",
+        grid::GroupMode::Year => "year",
         // Folder and History are internal presentation modes and are never
         // persisted as the user's Library grouping preference.
         grid::GroupMode::Folder | grid::GroupMode::History => "none",
@@ -233,6 +234,7 @@ fn group_mode_from_key(key: &str) -> grid::GroupMode {
     match key {
         "day" => grid::GroupMode::Day,
         "month" => grid::GroupMode::Month,
+        "year" => grid::GroupMode::Year,
         _ => grid::GroupMode::None,
     }
 }

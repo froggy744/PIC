@@ -270,7 +270,8 @@ impl DateBrowser {
         let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         spacer.set_hexpand(true);
         self.0.breadcrumbs.append(&spacer);
-        let exit = gtk::Button::with_label("Exit browsing");
+        let exit = gtk::Button::from_icon_name("window-close-symbolic");
+        exit.set_tooltip_text(Some("Exit browsing"));
         exit.add_css_class("flat");
         let callback = self.0.on_exit.clone();
         exit.connect_clicked(move |_| callback());

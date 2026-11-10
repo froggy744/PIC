@@ -30,6 +30,58 @@ fn wait_for_restore(predicate: impl Fn() -> bool) -> bool {
 
 #[test]
 #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+fn honeycomb_geometry_updates_preserve_normal_gsk_paintable() {
+    gtk::init().unwrap();
+    let pixels = glib::Bytes::from_owned(vec![255_u8; 32 * 32 * 4]);
+    let paintable: gtk::gdk::Paintable = gtk::gdk::MemoryTexture::new(
+        32,
+        32,
+        gtk::gdk::MemoryFormat::R8g8b8a8,
+        &pixels,
+        32 * 4,
+    )
+    .upcast();
+    let photo = glib::Object::builder::<PhotoObject>()
+        .property("id", 90420_i64)
+        .property("path", "/virtual/honeycomb-gsk-regression.jpg")
+        .property("filename", "honeycomb-gsk-regression.jpg")
+        .property("original-available", false)
+        .build();
+    photo.set_cached_thumbnail_path("/virtual/honeycomb-gsk-regression-thumb.jpg");
+    let key = photo_presentation_key(&photo).unwrap();
+    folder_thumbnail_cache_insert(key.clone(), paintable.clone());
+    let picture = gtk::Picture::new();
+    let overlay = gtk::Overlay::new();
+    overlay.set_child(Some(&picture));
+    let tile = SquareTile::new(180, 208, &overlay);
+    // Production order: memory-cache bind first, then set_honeycomb().
+    tile.bind_photo_folder_fast(&photo, 0);
+    assert!(tile.imp().visual_loaded.get());
+    let window = gtk::Window::builder().child(&tile).build();
+    window.present();
+    settle();
+
+    let assert_preserved = || {
+        assert_eq!(
+            picture.paintable().as_ref(),
+            Some(&paintable),
+            "normal GSK thumbnail must survive Honeycomb geometry updates",
+        );
+    };
+    tile.set_honeycomb(true);
+    assert_preserved();
+    tile.set_hex_dimensions(180.0, 208.0, 5.0);
+    assert_preserved();
+    tile.set_tile_size(181, 209);
+    assert_preserved();
+    tile.set_honeycomb(false);
+    assert_preserved();
+    folder_thumbnail_cache_remove(&key);
+    window.close();
+}
+
+#[test]
+#[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
 fn grid_scrub_settle_preserves_loaded_thumbnail_after_ram_eviction() {
     gtk::init().unwrap();
     set_grid_scrub_active(false);
@@ -643,8 +695,13 @@ fn honeycomb_bench_visible_tiles(
         .into_iter()
         .filter(|tile| {
             tile.is_mapped()
-                && tile.compute_bounds(&gallery.root).is_some_and(|bounds| {
-                    f64::from(bounds.y()) < bottom && f64::from(bounds.y() + bounds.height()) > top
+                // GridView tiles are positioned in the scrolled viewport.
+                // Comparing these bounds to vadjustment.value() counts no
+                // tiles after scrolling down, despite visible thumbnails.
+                && tile.compute_bounds(scroll).is_some_and(|bounds| {
+                    let viewport_bottom = f64::from(scroll.height());
+                    f64::from(bounds.y()) < viewport_bottom
+                        && f64::from(bounds.y() + bounds.height()) > 0.0
                 })
         })
         .collect()
@@ -683,8 +740,66 @@ fn honeycomb_bench_visible_ready(
             {
                 return false;
             }
-            !cached || tile.imp().honeycomb_mask_cached.get()
+            // Cache misses use the normal GSK fallback by design. Validate the
+            // actual photo, not whether every visible tile has been premasked.
+            let _ = cached;
+            true
         })
+}
+
+// Diagnostic-only: never change the readiness predicate to make an invalid
+// measurement pass. Capture the state *after* a failed settle deadline.
+fn honeycomb_bench_dump_unready(
+    gallery: &Gallery,
+    layout: PhotoLayout,
+    scroll: &gtk::ScrolledWindow,
+    cached: bool,
+    phase: &str,
+) {
+    let tiles = honeycomb_bench_visible_tiles(gallery, layout, scroll);
+    let mut unready = 0_usize;
+    let mut no_photo = 0_usize;
+    let mut unloaded = 0_usize;
+    let mut unavailable = 0_usize;
+    let mut corrupt = 0_usize;
+    let mut key_mismatch = 0_usize;
+    let mut no_paintable = 0_usize;
+    let mut uncached = 0_usize;
+    for tile in &tiles {
+        let photo = tile.imp().photo.borrow();
+        let Some(photo) = photo.as_ref() else {
+            unready += 1;
+            no_photo += 1;
+            continue;
+        };
+        let loaded = tile.imp().visual_loaded.get();
+        let available = photo.thumbnail_available();
+        let bad_photo = photo.corrupt();
+        let key_ok = tile.imp().applied_visual_key.borrow().as_deref()
+            == photo_presentation_key(photo).as_deref();
+        let paintable = tile.transition_paintable().is_some();
+        let mask_ok = !cached || tile.imp().honeycomb_mask_cached.get();
+        if loaded && available && !bad_photo && key_ok && paintable && mask_ok {
+            continue;
+        }
+        unready += 1;
+        unloaded += usize::from(!loaded);
+        unavailable += usize::from(!available);
+        corrupt += usize::from(bad_photo);
+        key_mismatch += usize::from(!key_ok);
+        no_paintable += usize::from(!paintable);
+        uncached += usize::from(!mask_ok);
+        if unready <= 12 {
+            eprintln!(
+                "BENCH_UNREADY_TILE phase={phase} photo_id={} path={:?} loaded={loaded} thumbnail_available={available} corrupt={bad_photo} key_ok={key_ok} paintable={paintable} mask_ok={mask_ok} thumb_path={:?}",
+                photo.id(), photo.path(), photo.cached_thumbnail_path(),
+            );
+        }
+    }
+    eprintln!(
+        "BENCH_UNREADY_SUMMARY phase={phase} visible={} unready={unready} no_photo={no_photo} unloaded={unloaded} unavailable={unavailable} corrupt={corrupt} key_mismatch={key_mismatch} no_paintable={no_paintable} uncached={uncached}",
+        tiles.len(),
+    );
 }
 
 fn honeycomb_bench_capture_tile(
@@ -804,6 +919,9 @@ fn honeycomb_bench_scroll_leg(
     }
     let visible_settle_us = settle_start.elapsed().as_micros() as u64;
     let visible_ready = honeycomb_bench_visible_ready(gallery, layout, scroll, cached);
+    if !visible_ready {
+        honeycomb_bench_dump_unready(gallery, layout, scroll, cached, phase);
+    }
     let cpu_us = honeycomb_bench_cpu_us().saturating_sub(cpu_start);
     let rss_kib = {
         let mut usage = std::mem::MaybeUninit::<libc::rusage>::uninit();
@@ -858,6 +976,7 @@ fn honeycomb_bench_scroll_leg(
             .join(","),
     );
     assert!(intervals.len() > 20, "too few native frame samples");
+    assert!(visible_ready, "invalid benchmark: visible thumbnails did not become ready in phase {phase}; inspect BENCH_UNREADY_* above");
 }
 
 #[test]
@@ -987,7 +1106,7 @@ fn actual_library_honeycomb_cached_scroll_benchmark() {
     // The prewarm run creates any missing disk thumbnails before measured
     // interleaved runs. Cold/warm below therefore isolates the masked-texture
     // cache while keeping thumbnail decode state equal between layouts.
-    let prewarm = std::env::var_os("PIC_BENCH_PREWARM").is_some();
+    let prewarm = std::env::var("PIC_BENCH_PREWARM").as_deref() == Ok("1");
     let adjustment = scroll.vadjustment();
     let distance = 2400.0_f64.min((adjustment.upper() - adjustment.page_size()).max(0.0));
     let context = glib::MainContext::default();
@@ -999,6 +1118,10 @@ fn actual_library_honeycomb_cached_scroll_benchmark() {
             context.iteration(false);
         }
         std::thread::sleep(Duration::from_millis(2));
+    }
+    if !honeycomb_bench_visible_ready(&gallery, layout, &scroll, false) {
+        honeycomb_bench_dump_unready(&gallery, layout, &scroll, false, "initial");
+        panic!("invalid benchmark: initial visible thumbnails did not become ready");
     }
     if prewarm {
         honeycomb_bench_scroll_leg(

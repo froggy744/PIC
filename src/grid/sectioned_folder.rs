@@ -639,6 +639,27 @@ impl SectionedFolderView {
             if this.is_wall() && this.geometry_width.get() == 0 {
                 this.refresh();
             }
+            if honeycomb_raster::cached_render_enabled()
+                && this.layout_mode.get() == PhotoLayout::Honeycomb
+            {
+                let top = scrolled_for_tick.vadjustment().value();
+                let bottom = top + scrolled_for_tick.vadjustment().page_size();
+                let wall = this.wall_state.borrow();
+                let mut submitted = 0;
+                for tile in this.live_tiles.borrow().values() {
+                    let visible = tile
+                        .index
+                        .get()
+                        .and_then(|index| wall.layout.item(index as usize))
+                        .is_some_and(|item| item.y < bottom && item.y + item.height > top);
+                    if visible && tile.tile.queue_cached_honeycomb_mask_source() {
+                        submitted += 1;
+                        if submitted >= 3 {
+                            break;
+                        }
+                    }
+                }
+            }
             glib::ControlFlow::Continue
         });
 

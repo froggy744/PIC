@@ -1322,7 +1322,8 @@ impl SquareTile {
         // but reuse a paintable that the settled-viewport loader has already
         // decoded. This keeps nearby thumbnails visible during wheel scrolling
         // without restoring the old per-bind I/O/RAW/edit work.
-        let memory_hit = photo_presentation_key(&bound)
+        let presentation_key = photo_presentation_key(&bound);
+        let memory_hit = presentation_key
             .as_deref()
             .and_then(folder_thumbnail_cache_get);
         if let Some(paintable) = memory_hit.as_ref() {
@@ -1332,10 +1333,17 @@ impl SquareTile {
                 "folder_ram_paintable_applied",
             );
             picture.set_paintable(Some(paintable));
+            // A RAM fast-path thumbnail is already the correct visual for this
+            // photo. Keep its key in sync with the paintable, exactly as the
+            // async completion path does, especially for recycled tiles.
+            self.imp().applied_visual_key.replace(presentation_key.clone());
             if picture.has_css_class("missing-thumbnail") {
                 picture.remove_css_class("missing-thumbnail");
             }
         } else {
+            // A retained image from a recycled tile belongs to the *previous*
+            // photo. It is a temporary visual backstop, not a loaded image.
+            self.imp().applied_visual_key.borrow_mut().take();
             // Do not blank a recycled Folder tile just because the destination
             // thumbnail is not in RAM yet. Keep the previous paintable as a
             // temporary visual backstop and immediately submit the *current*
@@ -1597,7 +1605,9 @@ impl SquareTile {
             return;
         }
         honeycomb_raster::note_fallback();
-        honeycomb_raster::submit(key, source, honeycomb_raster::current_generation());
+        if !honeycomb_raster::submit(key, source, honeycomb_raster::current_generation()) {
+            self.imp().honeycomb_mask_lookup_key.borrow_mut().take();
+        }
     }
 
     fn apply_honeycomb_mask_cached(
@@ -1658,11 +1668,15 @@ impl SquareTile {
     }
 
     fn clear_honeycomb_mask_cached(&self) {
-        self.imp().honeycomb_mask_cached.set(false);
+        let was_cached = self.imp().honeycomb_mask_cached.replace(false);
         self.imp().honeycomb_mask_lookup_key.borrow_mut().take();
         let original = self.imp().honeycomb_mask_original.take();
         self.imp().honeycomb_mask_size.set((0, 0));
         self.imp().honeycomb_mask_scale_factor.set(0);
+        // No cached texture was installed: keep the normal GSK paintable intact.
+        if !was_cached {
+            return;
+        }
         if let Some(picture) = self
             .first_child()
             .and_downcast::<gtk::Overlay>()
@@ -1670,6 +1684,48 @@ impl SquareTile {
         {
             picture.set_paintable(original.as_ref());
         }
+    }
+
+    // A RAM thumbnail is already visible, but the mask worker requires decoded
+    // RGBA bytes. Ask the existing display worker for them instead of reading
+    // textures back from Vulkan on the GTK thread. The lookup key ensures a
+    // single in-flight request per tile/geometry; failed submissions retry.
+    fn queue_cached_honeycomb_mask_source(&self) -> bool {
+        if !honeycomb_raster::cached_render_enabled()
+            || !self.imp().honeycomb.get()
+            || !self.is_mapped()
+            || !self.imp().visual_loaded.get()
+            || self.imp().honeycomb_mask_cached.get()
+        {
+            return false;
+        }
+        let Some(photo) = self.imp().photo.borrow().as_ref().cloned() else {
+            return false;
+        };
+        let Some(key) = photo_presentation_key(&photo) else {
+            return false;
+        };
+        if self.imp().applied_visual_key.borrow().as_deref() != Some(key.as_str()) {
+            return false;
+        }
+        let Some(mask_key) = self.current_honeycomb_mask_key() else {
+            return false;
+        };
+        if self.imp().honeycomb_mask_lookup_key.borrow().as_ref() == Some(&mask_key) {
+            return false;
+        }
+        // A completed mask might already be available in the cache.
+        if self.try_apply_cached_honeycomb_mask() {
+            return true;
+        }
+        let Some(request) = photo_presentation_request(&photo, true) else {
+            return false;
+        };
+        if crate::thumbnail_display::submit(request) {
+            self.imp().honeycomb_mask_lookup_key.replace(Some(mask_key));
+            return true;
+        }
+        false
     }
 
     fn try_apply_cached_honeycomb_mask(&self) -> bool {
@@ -1693,13 +1749,13 @@ impl SquareTile {
         if self.imp().honeycomb_mask_lookup_key.borrow().as_ref() == Some(&key) {
             return false;
         }
-        self.imp()
-            .honeycomb_mask_lookup_key
-            .replace(Some(key.clone()));
         let Some(bytes) = honeycomb_raster::cache_get(&key) else {
             honeycomb_raster::note_fallback();
             return false;
         };
+        self.imp()
+            .honeycomb_mask_lookup_key
+            .replace(Some(key.clone()));
         let Some((width, height)) = key.output_size() else {
             return false;
         };

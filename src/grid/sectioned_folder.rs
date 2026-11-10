@@ -25,6 +25,16 @@ struct SectionedReflowSnapshot {
 struct SectionedFolderTile {
     tile: SquareTile,
     index: Rc<Cell<Option<u32>>>,
+    position: Rc<Cell<Option<(f64, f64)>>>,
+}
+
+impl SectionedFolderTile {
+    fn move_to(&self, root: &gtk::Fixed, x: f64, y: f64) {
+        if self.position.get() != Some((x, y)) {
+            root.move_(&self.tile, x, y);
+            self.position.set(Some((x, y)));
+        }
+    }
 }
 
 fn sectioned_scroll_extent_is_ready(content_height: f64, page_height: f64, upper: f64) -> bool {
@@ -845,7 +855,11 @@ impl SectionedFolderView {
         });
         tile.add_controller(right_click);
 
-        SectionedFolderTile { tile, index }
+        SectionedFolderTile {
+            tile,
+            index,
+            position: Rc::new(Cell::new(None)),
+        }
     }
 
     fn viewport_width(&self, scroll: &gtk::ScrolledWindow) -> i32 {
@@ -1034,6 +1048,7 @@ impl SectionedFolderView {
                 tile.tile
                     .set_manual_selected(self.selection.is_selected(index));
                 self.root.put(&tile.tile, 0.0, 0.0);
+                tile.position.set(None);
                 self.live_tiles.borrow_mut().insert(index, tile.clone());
                 tile
             };
@@ -1103,7 +1118,7 @@ impl SectionedFolderView {
                             tile.tile.set_presentation_scale(1.0);
                         }
                         tile.tile.set_presentation_offset(0.0, 0.0);
-                        self.root.move_(&tile.tile, item.x, item.y);
+                        tile.move_to(&self.root, item.x, item.y);
                     }
                     continue;
                 }
@@ -1116,7 +1131,7 @@ impl SectionedFolderView {
                 let (start_x, gap) = self.horizontal_grid_metrics(self.geometry_width.get());
                 let x = start_x + f64::from(col) * (f64::from(self.tile_width.get()) + gap);
                 let y = geometry[section_index].first_photo_y + f64::from(row) * row_height;
-                self.root.move_(&tile.tile, x, y);
+                tile.move_to(&self.root, x, y);
             }
         }
         drop(photos);

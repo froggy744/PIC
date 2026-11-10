@@ -530,6 +530,11 @@ impl Gallery {
         {
             let tiles = surface.live_tiles.borrow();
             for (&index, tile) in tiles.iter() {
+                // Recycled virtual tiles can exist before GTK has allocated
+                // their internal GtkOverlay. Do not animate those widgets.
+                if !tile.tile.is_mapped() || tile.tile.width() <= 0 || tile.tile.height() <= 0 {
+                    continue;
+                }
                 let (Some(&(old_x, old_y)), Some((end_x, end_y))) =
                     (before.get(&index), tile.position.get())
                 else { continue; };
@@ -568,9 +573,17 @@ impl Gallery {
                     .clamp(0.0, 1.0)
             };
             let ease = if t < 0.5 { 4.0*t*t*t } else { 1.0 - (-2.0*t + 2.0).powi(3) / 2.0 };
+            // No GtkFixed move while its subtree is unallocated. GTK may
+            // recycle a tile between the reflow snapshot and this frame.
+            if !surface.root.is_mapped() || surface.root.width() <= 0 || surface.root.height() <= 0 {
+                return glib::ControlFlow::Break;
+            }
             let tiles = surface.live_tiles.borrow();
             for &(index, start_x, start_y, end_x, end_y) in &moves {
                 if let Some(tile) = tiles.get(&index) {
+                    if !tile.tile.is_mapped() || tile.tile.width() <= 0 || tile.tile.height() <= 0 {
+                        continue;
+                    }
                     tile.move_to(&surface.root,
                         start_x + (end_x - start_x) * ease,
                         start_y + (end_y - start_y) * ease);

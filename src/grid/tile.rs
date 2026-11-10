@@ -370,7 +370,12 @@ mod square_tile {
                 snapshot.pop();
             }
             if let Some(child) = obj.first_child() {
-                obj.snapshot_child(&child, snapshot);
+                // Layout/recycling can briefly leave the GtkOverlay child
+                // without an allocation while the parent tile is visible.
+                // GTK warns if snapshot_child is invoked in that state.
+                if child.is_mapped() && child.width() > 0 && child.height() > 0 {
+                    obj.snapshot_child(&child, snapshot);
+                }
             }
             // The lattice retains its 2px geometric gap. A 3px stroke clipped
             // inside each hex contributes 1.5px per side: 5px visible separation.

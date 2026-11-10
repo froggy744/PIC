@@ -40,10 +40,10 @@ fn folder_thumbnail_cache_insert(path: String, paintable: gtk::gdk::Paintable) {
             let bytes = cache.iter().fold(0usize, |bytes, (_, image)| {
                 bytes.saturating_add(
                     image.intrinsic_width().max(0) as usize
-                                * image.intrinsic_height().max(0) as usize
-                                * 4,
-                    )
-                });
+                        * image.intrinsic_height().max(0) as usize
+                        * 4,
+                )
+            });
             let over_quality_budget =
                 crate::thumbnail::high_quality_thumbnails_enabled() && bytes > 64 * 1024 * 1024;
             if cache.len() <= FOLDER_THUMBNAIL_CACHE_CAPACITY && !over_quality_budget {
@@ -114,18 +114,25 @@ fn queue_prefetch_photos<'a>(
     budget: usize,
 ) -> usize {
     let photos = photos.collect::<Vec<_>>();
-    let wanted = photos.iter().map(|photo| photo.path())
+    let wanted = photos
+        .iter()
+        .map(|photo| photo.path())
         .filter(|path| crate::thumbnail::private_network_preview(path))
-        .take(8).collect::<HashSet<_>>();
+        .take(8)
+        .collect::<HashSet<_>>();
     crate::thumbnail::retain_network_prefetch_paths(&wanted);
     let mut queued = 0;
     for photo in photos {
-        if queued >= budget { break; }
+        if queued >= budget {
+            break;
+        }
         let path = photo.path();
         if crate::thumbnail::private_network_preview(&path) && !wanted.contains(&path) {
             continue;
         }
-        if queue_photo_presentation_async(photo, false) { queued += 1; }
+        if queue_photo_presentation_async(photo, false) {
+            queued += 1;
+        }
     }
     queued
 }
@@ -269,6 +276,12 @@ mod square_tile {
         pub hex_height: Cell<f64>,
         pub hex_selected: Cell<bool>,
         pub hex_mask: RefCell<Option<(i32, i32, gtk::gsk::RenderNode)>>,
+        pub honeycomb_mask_cached: Cell<bool>,
+        pub honeycomb_mask_original: RefCell<Option<gtk::gdk::Paintable>>,
+        pub honeycomb_mask_size: Cell<(i32, i32)>,
+        pub honeycomb_mask_scale_factor: Cell<i32>,
+        pub(super) honeycomb_mask_lookup_key:
+            RefCell<Option<super::honeycomb_raster::MaskCacheKey>>,
         pub width: Cell<i32>,
         pub height: Cell<i32>,
         // Presentation-only FLIP offset. GTK allocation remains at the real
@@ -319,35 +332,43 @@ mod square_tile {
             if w <= 0 || h <= 0 {
                 return;
             }
+            if self.honeycomb_mask_cached.get()
+                && (self.honeycomb_mask_size.get() != (w, h)
+                    || self.honeycomb_mask_scale_factor.get() != obj.scale_factor())
+            {
+                obj.clear_honeycomb_mask_cached();
+            }
             let bounds = gtk::graphene::Rect::new(0.0, 0.0, w as f32, h as f32);
-            let stale = self
-                .hex_mask
-                .borrow()
-                .as_ref()
-                .is_none_or(|(mw, mh, _)| *mw != w || *mh != h);
-            if stale {
-                let mask = gtk::Snapshot::new();
-                let cr = mask.append_cairo(&bounds);
-                let points = super::honeycomb::vertices(
-                    self.hex_width.get().max(1.0),
-                    self.hex_height.get().max(1.0),
-                );
-                cr.move_to(points[0].0, points[0].1);
-                for &(x, y) in &points[1..] {
-                    cr.line_to(x, y);
+            if !self.honeycomb_mask_cached.get() {
+                let stale = self
+                    .hex_mask
+                    .borrow()
+                    .as_ref()
+                    .is_none_or(|(mw, mh, _)| *mw != w || *mh != h);
+                if stale {
+                    let mask = gtk::Snapshot::new();
+                    let cr = mask.append_cairo(&bounds);
+                    let points = super::honeycomb::vertices(
+                        self.hex_width.get().max(1.0),
+                        self.hex_height.get().max(1.0),
+                    );
+                    cr.move_to(points[0].0, points[0].1);
+                    for &(x, y) in &points[1..] {
+                        cr.line_to(x, y);
+                    }
+                    cr.close_path();
+                    cr.set_source_rgba(1.0, 1.0, 1.0, 1.0);
+                    let _ = cr.fill();
+                    drop(cr);
+                    self.hex_mask
+                        .replace(mask.to_node().map(|node| (w, h, node)));
                 }
-                cr.close_path();
-                cr.set_source_rgba(1.0, 1.0, 1.0, 1.0);
-                let _ = cr.fill();
-                drop(cr);
-                self.hex_mask
-                    .replace(mask.to_node().map(|node| (w, h, node)));
+                snapshot.push_mask(gtk::gsk::MaskMode::Alpha);
+                if let Some((_, _, node)) = self.hex_mask.borrow().as_ref() {
+                    snapshot.append_node(node);
+                }
+                snapshot.pop();
             }
-            snapshot.push_mask(gtk::gsk::MaskMode::Alpha);
-            if let Some((_, _, node)) = self.hex_mask.borrow().as_ref() {
-                snapshot.append_node(node);
-            }
-            snapshot.pop();
             if let Some(child) = obj.first_child() {
                 obj.snapshot_child(&child, snapshot);
             }
@@ -424,7 +445,14 @@ mod square_tile {
                 cr.set_line_width(if selected { 3.0 } else { 1.5 });
                 let _ = cr.stroke();
             }
-            snapshot.pop();
+            if !self.honeycomb_mask_cached.get() {
+                snapshot.pop();
+            }
+        }
+
+        #[cfg(test)]
+        pub(super) fn snapshot_honeycomb_for_bench(&self, snapshot: &gtk::Snapshot) {
+            self.snapshot_hexagon(snapshot);
         }
 
         fn caption_visible(&self) -> bool {
@@ -453,7 +481,8 @@ mod square_tile {
                 // filename row underneath it, so a caption can never squeeze
                 // the image out of its TILE_SIZE x TILE_SIZE allocation.
                 gtk::Orientation::Vertical => {
-                    self.height.get().max(1) + super::filename_caption_height(self.caption_visible())
+                    self.height.get().max(1)
+                        + super::filename_caption_height(self.caption_visible())
                 }
                 _ => self.width.get().max(1),
             };
@@ -516,8 +545,8 @@ mod square_tile {
                 );
                 if layout.caption_height > 0 {
                     if let Some(label) = self.filename_label.borrow().as_ref() {
-                        let label_transform = gtk::gsk::Transform::new().translate(
-                            &gtk::graphene::Point::new(
+                        let label_transform =
+                            gtk::gsk::Transform::new().translate(&gtk::graphene::Point::new(
                                 layout.frame_x as f32,
                                 layout.caption_y as f32,
                             ));
@@ -541,7 +570,11 @@ mod square_tile {
             let dx = self.presentation_offset_x.get();
             let dy = self.presentation_offset_y.get();
             let stored_scale = self.presentation_scale.get();
-            let scale = if stored_scale > 0.001 { stored_scale } else { 1.0 };
+            let scale = if stored_scale > 0.001 {
+                stored_scale
+            } else {
+                1.0
+            };
             let scaled = (scale - 1.0).abs() > 0.001;
             let translated = dx.abs() > 0.01 || dy.abs() > 0.01;
             let width = self.obj().width() as f32;
@@ -636,7 +669,10 @@ mod filename_caption_tests {
             for caption_visible in [false, true] {
                 let caption = filename_caption_height(caption_visible);
                 assert_eq!(caption, if caption_visible { 24 } else { 0 });
-                assert_eq!(tile_block_height(tile_size, caption_visible), tile_size + caption);
+                assert_eq!(
+                    tile_block_height(tile_size, caption_visible),
+                    tile_size + caption
+                );
 
                 // A parent that allocates exactly the measured block height
                 // must still hand the image its whole square.
@@ -666,7 +702,10 @@ mod filename_caption_tests {
             assert_eq!(with.frame_width, without.frame_width);
             assert_eq!(with.frame_height, without.frame_height);
             assert_eq!(with.frame_height, tile_size);
-            assert_eq!(with.frame_width, with.frame_height, "frame must stay square");
+            assert_eq!(
+                with.frame_width, with.frame_height,
+                "frame must stay square"
+            );
         }
     }
 
@@ -735,6 +774,11 @@ glib::wrapper! {
 }
 
 impl SquareTile {
+    #[cfg(test)]
+    pub(super) fn snapshot_honeycomb_for_bench(&self, snapshot: &gtk::Snapshot) {
+        self.imp().snapshot_honeycomb_for_bench(snapshot);
+    }
+
     pub(crate) fn new(width: i32, height: i32, child: &impl IsA<gtk::Widget>) -> Self {
         let tile: Self = glib::Object::new();
         tile.imp().width.set(width.max(1));
@@ -775,7 +819,11 @@ impl SquareTile {
 
     pub(crate) fn presentation_scale(&self) -> f32 {
         let scale = self.imp().presentation_scale.get();
-        if scale > 0.001 { scale } else { 1.0 }
+        if scale > 0.001 {
+            scale
+        } else {
+            1.0
+        }
     }
 
     pub(crate) fn set_presentation_scale(&self, scale: f32) {
@@ -800,6 +848,7 @@ impl SquareTile {
         if self.imp().width.get() == width && self.imp().height.get() == height {
             return;
         }
+        self.clear_honeycomb_mask_cached();
         self.imp().width.set(width);
         self.imp().height.set(height);
         self.queue_resize();
@@ -927,8 +976,7 @@ impl SquareTile {
             return;
         }
 
-        let favorite_visible =
-            self.imp().favorite_indicators_visible.get() && photo.favorite();
+        let favorite_visible = self.imp().favorite_indicators_visible.get() && photo.favorite();
         let badge = ensure_rating_badge(&frame);
         badge.set_text(&format!("★ {rating}"));
         badge.set_tooltip_text(Some(&format!("Rating: {rating} of 5")));
@@ -960,6 +1008,7 @@ impl SquareTile {
     fn clear_corrupt_visual(&self) {
         self.imp().visual_loaded.set(true);
         self.imp().applied_visual_key.borrow_mut().take();
+        self.clear_honeycomb_mask_cached();
         if let Some(photo) = self.imp().photo.borrow().as_ref() {
             photo.set_thumbnail_available(false);
         }
@@ -994,6 +1043,7 @@ impl SquareTile {
         {
             return true;
         }
+        self.clear_honeycomb_mask_cached();
         let Some(frame) = self.first_child().and_downcast::<gtk::Overlay>() else {
             return false;
         };
@@ -1036,6 +1086,7 @@ impl SquareTile {
         let Some(picture) = frame.child().and_downcast::<gtk::Picture>() else {
             return false;
         };
+        self.clear_honeycomb_mask_cached();
         picture.set_paintable(gtk::gdk::Paintable::NONE);
         if !picture.has_css_class("missing-thumbnail") {
             picture.add_css_class("missing-thumbnail");
@@ -1194,6 +1245,7 @@ impl SquareTile {
     fn unload_visual(&self) {
         self.imp().visual_loaded.set(false);
         self.imp().applied_visual_key.borrow_mut().take();
+        self.clear_honeycomb_mask_cached();
         if !preserve_grid_paintable_during_motion() {
             if let Some(frame) = self.first_child().and_downcast::<gtk::Overlay>() {
                 if let Some(picture) = frame.child().and_downcast::<gtk::Picture>() {
@@ -1204,11 +1256,18 @@ impl SquareTile {
     }
 
     fn bind_photo(&self, photo: &PhotoObject) {
+        self.clear_honeycomb_mask_cached();
         let started = std::time::Instant::now();
         crate::thumbnail_trace::event(&photo.path(), "tile_bind", "grid_photo");
         self.set_photo_deferred(photo);
         self.load_visual();
-        if std::env::var_os("PICASA_TRACE").is_some() { eprintln!("PIC_THUMBNAIL gtk_bind elapsed_us={} id={}", started.elapsed().as_micros(), photo.id()); }
+        if std::env::var_os("PICASA_TRACE").is_some() {
+            eprintln!(
+                "PIC_THUMBNAIL gtk_bind elapsed_us={} id={}",
+                started.elapsed().as_micros(),
+                photo.id()
+            );
+        }
     }
 
     /// Folder ListView bind must stay strictly presentation-only.
@@ -1219,6 +1278,7 @@ impl SquareTile {
     /// harmless widget recycling into synchronous main-thread work.
     fn bind_photo_folder_fast(&self, photo: &PhotoObject, photo_index: usize) {
         crate::thumbnail_trace::event(&photo.path(), "tile_bind", "folder_fast_photo");
+        self.clear_honeycomb_mask_cached();
         // Folder bind immediately paints the correct paintable, so replace the
         // photo in place instead of running the full unload path. The old path
         // cleared the paintable and toggled CSS on every recycled tile, which
@@ -1262,8 +1322,9 @@ impl SquareTile {
         // but reuse a paintable that the settled-viewport loader has already
         // decoded. This keeps nearby thumbnails visible during wheel scrolling
         // without restoring the old per-bind I/O/RAW/edit work.
-        let memory_hit = photo_presentation_key(&bound)
-                .as_deref()
+        let presentation_key = photo_presentation_key(&bound);
+        let memory_hit = presentation_key
+            .as_deref()
             .and_then(folder_thumbnail_cache_get);
         if let Some(paintable) = memory_hit.as_ref() {
             crate::thumbnail_trace::event(
@@ -1272,10 +1333,17 @@ impl SquareTile {
                 "folder_ram_paintable_applied",
             );
             picture.set_paintable(Some(paintable));
+            // A RAM fast-path thumbnail is already the correct visual for this
+            // photo. Keep its key in sync with the paintable, exactly as the
+            // async completion path does, especially for recycled tiles.
+            self.imp().applied_visual_key.replace(presentation_key.clone());
             if picture.has_css_class("missing-thumbnail") {
                 picture.remove_css_class("missing-thumbnail");
             }
         } else {
+            // A retained image from a recycled tile belongs to the *previous*
+            // photo. It is a temporary visual backstop, not a loaded image.
+            self.imp().applied_visual_key.borrow_mut().take();
             // Do not blank a recycled Folder tile just because the destination
             // thumbnail is not in RAM yet. Keep the previous paintable as a
             // temporary visual backstop and immediately submit the *current*
@@ -1454,13 +1522,255 @@ impl SquareTile {
             self.queue_draw();
         }
         if self.imp().hex_width.replace(width) != width || self.imp().hex_height.get() != height {
+            self.clear_honeycomb_mask_cached();
             self.imp().hex_height.set(height);
             self.imp().hex_mask.take();
             self.queue_draw();
         }
     }
+
+    fn honeycomb_mask_cache_key(
+        &self,
+        presentation_key: &str,
+        source_width: u32,
+        source_height: u32,
+    ) -> Option<honeycomb_raster::MaskCacheKey> {
+        if !self.imp().honeycomb.get() || !self.is_mapped() || grid_zoom_animation_active() {
+            return None;
+        }
+        let photo = self.imp().photo.borrow();
+        let photo = photo.as_ref()?;
+        if photo_presentation_key(photo).as_deref() != Some(presentation_key) {
+            return None;
+        }
+        let revision = format!(
+            "{presentation_key}:{}:{}",
+            photo.mtime(),
+            photo.size_bytes()
+        );
+        honeycomb_raster::MaskCacheKey::new(
+            revision,
+            source_width,
+            source_height,
+            self.width().try_into().ok()?,
+            self.height().try_into().ok()?,
+            self.scale_factor().try_into().ok()?,
+        )
+    }
+
+    fn honeycomb_source_dimensions(&self) -> Option<(u32, u32)> {
+        let frame = self.first_child().and_downcast::<gtk::Overlay>()?;
+        let picture = frame.child().and_downcast::<gtk::Picture>()?;
+        let paintable = if self.imp().honeycomb_mask_cached.get() {
+            self.imp().honeycomb_mask_original.borrow().clone()?
+        } else {
+            picture.paintable()?
+        };
+        Some((
+            paintable.intrinsic_width().try_into().ok()?,
+            paintable.intrinsic_height().try_into().ok()?,
+        ))
+    }
+
+    fn current_honeycomb_mask_key(&self) -> Option<honeycomb_raster::MaskCacheKey> {
+        let (source_width, source_height) = self.honeycomb_source_dimensions()?;
+        let photo = self.imp().photo.borrow();
+        let photo = photo.as_ref()?;
+        let presentation_key = photo_presentation_key(photo)?;
+        self.honeycomb_mask_cache_key(&presentation_key, source_width, source_height)
+    }
+
+    fn prepare_honeycomb_mask(&self, source: glib::Bytes) {
+        if !honeycomb_raster::cached_render_enabled() || !self.is_mapped() {
+            return;
+        }
+        let Some(key) = self.current_honeycomb_mask_key() else {
+            return;
+        };
+        if self.imp().honeycomb_mask_cached.get() {
+            return;
+        }
+        self.imp()
+            .honeycomb_mask_lookup_key
+            .replace(Some(key.clone()));
+        if let Some(pixels) = honeycomb_raster::cache_get(&key) {
+            if let Some((width, height)) = key.output_size() {
+                let started = Instant::now();
+                self.apply_honeycomb_mask_cached(&key, pixels, width, height);
+                honeycomb_raster::record_main_texture_creation(
+                    started.elapsed().as_micros() as u64,
+                    width as usize * height as usize * 4,
+                );
+            }
+            return;
+        }
+        honeycomb_raster::note_fallback();
+        if !honeycomb_raster::submit(key, source, honeycomb_raster::current_generation()) {
+            self.imp().honeycomb_mask_lookup_key.borrow_mut().take();
+        }
+    }
+
+    fn apply_honeycomb_mask_cached(
+        &self,
+        key: &honeycomb_raster::MaskCacheKey,
+        bytes: glib::Bytes,
+        width: u32,
+        height: u32,
+    ) -> bool {
+        let Some((source_width, source_height)) = self.honeycomb_source_dimensions() else {
+            return false;
+        };
+        let Some(photo) = self.imp().photo.borrow().as_ref().cloned() else {
+            return false;
+        };
+        let Some(presentation_key) = photo_presentation_key(&photo) else {
+            return false;
+        };
+        if self
+            .honeycomb_mask_cache_key(&presentation_key, source_width, source_height)
+            .as_ref()
+            != Some(key)
+            || key.output_size() != Some((width, height))
+        {
+            return false;
+        }
+        let Some(frame) = self.first_child().and_downcast::<gtk::Overlay>() else {
+            return false;
+        };
+        let Some(picture) = frame.child().and_downcast::<gtk::Picture>() else {
+            return false;
+        };
+        if !self.imp().honeycomb_mask_cached.get() {
+            self.imp()
+                .honeycomb_mask_original
+                .replace(picture.paintable());
+        }
+        let texture = gtk::gdk::MemoryTexture::new(
+            width as i32,
+            height as i32,
+            gtk::gdk::MemoryFormat::R8g8b8a8,
+            &bytes,
+            width as usize * 4,
+        );
+        picture.set_paintable(Some(&texture));
+        self.imp().honeycomb_mask_cached.set(true);
+        self.imp()
+            .honeycomb_mask_lookup_key
+            .replace(Some(key.clone()));
+        self.imp()
+            .honeycomb_mask_size
+            .set((self.width(), self.height()));
+        self.imp()
+            .honeycomb_mask_scale_factor
+            .set(self.scale_factor());
+        self.queue_draw();
+        true
+    }
+
+    fn clear_honeycomb_mask_cached(&self) {
+        let was_cached = self.imp().honeycomb_mask_cached.replace(false);
+        self.imp().honeycomb_mask_lookup_key.borrow_mut().take();
+        let original = self.imp().honeycomb_mask_original.take();
+        self.imp().honeycomb_mask_size.set((0, 0));
+        self.imp().honeycomb_mask_scale_factor.set(0);
+        // No cached texture was installed: keep the normal GSK paintable intact.
+        if !was_cached {
+            return;
+        }
+        if let Some(picture) = self
+            .first_child()
+            .and_downcast::<gtk::Overlay>()
+            .and_then(|frame| frame.child().and_downcast::<gtk::Picture>())
+        {
+            picture.set_paintable(original.as_ref());
+        }
+    }
+
+    // A RAM thumbnail is already visible, but the mask worker requires decoded
+    // RGBA bytes. Ask the existing display worker for them instead of reading
+    // textures back from Vulkan on the GTK thread. The lookup key ensures a
+    // single in-flight request per tile/geometry; failed submissions retry.
+    fn queue_cached_honeycomb_mask_source(&self) -> bool {
+        if !honeycomb_raster::cached_render_enabled()
+            || !self.imp().honeycomb.get()
+            || !self.is_mapped()
+            || !self.imp().visual_loaded.get()
+            || self.imp().honeycomb_mask_cached.get()
+        {
+            return false;
+        }
+        let Some(photo) = self.imp().photo.borrow().as_ref().cloned() else {
+            return false;
+        };
+        let Some(key) = photo_presentation_key(&photo) else {
+            return false;
+        };
+        if self.imp().applied_visual_key.borrow().as_deref() != Some(key.as_str()) {
+            return false;
+        }
+        let Some(mask_key) = self.current_honeycomb_mask_key() else {
+            return false;
+        };
+        if self.imp().honeycomb_mask_lookup_key.borrow().as_ref() == Some(&mask_key) {
+            return false;
+        }
+        // A completed mask might already be available in the cache.
+        if self.try_apply_cached_honeycomb_mask() {
+            return true;
+        }
+        let Some(request) = photo_presentation_request(&photo, true) else {
+            return false;
+        };
+        if crate::thumbnail_display::submit(request) {
+            self.imp().honeycomb_mask_lookup_key.replace(Some(mask_key));
+            return true;
+        }
+        false
+    }
+
+    fn try_apply_cached_honeycomb_mask(&self) -> bool {
+        if !honeycomb_raster::cached_render_enabled() || self.imp().honeycomb_mask_cached.get() {
+            return self.imp().honeycomb_mask_cached.get();
+        }
+        let Some((source_width, source_height)) = self.honeycomb_source_dimensions() else {
+            return false;
+        };
+        let Some(photo) = self.imp().photo.borrow().as_ref().cloned() else {
+            return false;
+        };
+        let Some(presentation_key) = photo_presentation_key(&photo) else {
+            return false;
+        };
+        let Some(key) =
+            self.honeycomb_mask_cache_key(&presentation_key, source_width, source_height)
+        else {
+            return false;
+        };
+        if self.imp().honeycomb_mask_lookup_key.borrow().as_ref() == Some(&key) {
+            return false;
+        }
+        let Some(bytes) = honeycomb_raster::cache_get(&key) else {
+            honeycomb_raster::note_fallback();
+            return false;
+        };
+        self.imp()
+            .honeycomb_mask_lookup_key
+            .replace(Some(key.clone()));
+        let Some((width, height)) = key.output_size() else {
+            return false;
+        };
+        let started = Instant::now();
+        let applied = self.apply_honeycomb_mask_cached(&key, bytes, width, height);
+        honeycomb_raster::record_main_texture_creation(
+            started.elapsed().as_micros() as u64,
+            (width as usize) * (height as usize) * 4,
+        );
+        applied
+    }
+
     fn set_honeycomb(&self, enabled: bool) {
         if self.imp().honeycomb.replace(enabled) != enabled {
+            self.clear_honeycomb_mask_cached();
             if enabled {
                 self.add_css_class("honeycomb-tile");
             } else {
@@ -1658,10 +1968,22 @@ fn ensure_selection_badge(frame: &gtk::Overlay) -> gtk::Image {
 mod raw_thumbnail_orientation_tests {
     #[test]
     fn cached_preview_axes_determine_portrait_and_rotated_landscape() {
-        assert_eq!(super::raw_display_dimensions(4032, 6040, 427, 640), (4032, 6040));
-        assert_eq!(super::raw_display_dimensions(4032, 6040, 640, 427), (6040, 4032));
-        assert_eq!(super::raw_display_dimensions(6040, 4032, 640, 427), (6040, 4032));
-        assert_eq!(super::raw_display_dimensions(6040, 4032, 427, 640), (4032, 6040));
+        assert_eq!(
+            super::raw_display_dimensions(4032, 6040, 427, 640),
+            (4032, 6040)
+        );
+        assert_eq!(
+            super::raw_display_dimensions(4032, 6040, 640, 427),
+            (6040, 4032)
+        );
+        assert_eq!(
+            super::raw_display_dimensions(6040, 4032, 640, 427),
+            (6040, 4032)
+        );
+        assert_eq!(
+            super::raw_display_dimensions(6040, 4032, 427, 640),
+            (4032, 6040)
+        );
     }
 }
 
@@ -1817,9 +2139,12 @@ mod folder_thumbnail_cache_tests {
         }
         FOLDER_THUMBNAIL_CACHE.with(|cache| {
             let cache = cache.borrow();
-            let bytes = cache.iter().map(|(_, image)| {
-                image.intrinsic_width() as usize * image.intrinsic_height() as usize * 4
-            }).sum::<usize>();
+            let bytes = cache
+                .iter()
+                .map(|(_, image)| {
+                    image.intrinsic_width() as usize * image.intrinsic_height() as usize * 4
+                })
+                .sum::<usize>();
             assert!(bytes <= 64 * 1024 * 1024);
         });
 

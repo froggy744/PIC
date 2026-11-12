@@ -217,6 +217,8 @@ fn immersive_install_chrome_edge(
     let right_was_open = Rc::new(Cell::new(false));
     let viewer_right_was_open = Rc::new(Cell::new(false));
     let metadata_was_visible = Rc::new(Cell::new(false));
+    let left_was_collapsed = Rc::new(Cell::new(false));
+    let right_was_collapsed = Rc::new(Cell::new(false));
     let toggle: Rc<dyn Fn()> = {
         let (active, split, properties, viewer_panel) = (
             immersive_active.clone(), main_split.clone(), properties_split.clone(),
@@ -238,6 +240,9 @@ fn immersive_install_chrome_edge(
             left_was_open.clone(), right_was_open.clone(),
             viewer_right_was_open.clone(), metadata_was_visible.clone()
         );
+        let (left_was_collapsed, right_was_collapsed) = (
+            left_was_collapsed.clone(), right_was_collapsed.clone()
+        );
         Rc::new(move || {
             let entering = !active.get();
             active.set(entering);
@@ -246,14 +251,18 @@ fn immersive_install_chrome_edge(
                 right_was_open.set(properties.shows_sidebar());
                 viewer_right_was_open.set(viewer_panel.is_visible());
                 metadata_was_visible.set(metadata_root.is_visible());
+                left_was_collapsed.set(split.is_collapsed());
+                right_was_collapsed.set(properties.is_collapsed());
 
                 dock.set_visible(false);
                 left_column.set_visible(true);
                 sidebar.set_visible(true);
-                split.set_pin_sidebar(false);
                 split.set_show_sidebar(false);
-                properties.set_pin_sidebar(false);
+                split.set_pin_sidebar(false);
+                split.set_collapsed(true);
                 properties.set_show_sidebar(false);
+                properties.set_pin_sidebar(false);
+                properties.set_collapsed(true);
                 viewer_panel.set_visible(false);
                 metadata_root.set_visible(false);
                 left_edge.set_visible(true);
@@ -282,6 +291,8 @@ fn immersive_install_chrome_edge(
                 properties.set_show_sidebar(false);
                 viewer_panel.set_visible(false);
                 sidebar::clear_hover_open(&sidebar);
+                split.set_collapsed(left_was_collapsed.get());
+                properties.set_collapsed(right_was_collapsed.get());
                 split.set_pin_sidebar(true);
                 properties.set_pin_sidebar(true);
 
@@ -309,9 +320,24 @@ fn immersive_install_chrome_edge(
     };
     {
         let toggle = toggle.clone();
-        immersive_button.connect_clicked(move |_| toggle());
+        immersive_button.connect_clicked(move |_| {
+            // Reparenting the clicked header during signal dispatch can cause
+            // GTK allocation warnings. Perform the transition after dispatch.
+            let toggle = toggle.clone();
+            glib::idle_add_local_once(move || toggle());
+        });
     }
     immersive_toggle_slot.replace(Some(toggle.clone()));
+    // The filter toolbar manages its own visibility when changing views.
+    // Keep it suppressed for the whole immersive session, not just entry.
+    {
+        let active = immersive_active.clone();
+        metadata_panel.root.connect_visible_notify(move |root| {
+            if active.get() && root.is_visible() {
+                root.set_visible(false);
+            }
+        });
+    }
     {
         let active = immersive_active.clone();
         main_stack.connect_visible_child_notify(move |stack| {

@@ -18,40 +18,94 @@ fn preserve_grid_paintable_during_motion() -> bool {
     grid_scrub_active() || grid_zoom_animation_active()
 }
 
-fn folder_thumbnail_cache_get(path: &str) -> Option<gtk::gdk::Paintable> {
-    FOLDER_THUMBNAIL_CACHE.with(|cache| {
-        let mut cache = cache.borrow_mut();
-        let index = cache
-            .iter()
-            .position(|(cached_path, _)| cached_path == path)?;
-        let entry = cache.remove(index)?;
-        let paintable = entry.1.clone();
-        cache.push_back(entry);
+/// RAM cache of decoded thumbnails for the visible viewport.
+///
+/// The scroll pump asks for every visible tile on every frame, so the lookup
+/// has to be cheap. The cache used to be a `VecDeque` that was scanned
+/// linearly, which turned a frame of lookups into thousands of string
+/// comparisons.
+struct ThumbnailPaintableCache {
+    /// Least recently used first.
+    order: VecDeque<String>,
+    entries: HashMap<String, (gtk::gdk::Paintable, usize)>,
+    bytes: usize,
+}
+
+impl ThumbnailPaintableCache {
+    fn new() -> Self {
+        Self {
+            order: VecDeque::new(),
+            entries: HashMap::new(),
+            bytes: 0,
+        }
+    }
+
+    fn get(&mut self, path: &str) -> Option<gtk::gdk::Paintable> {
+        let (paintable, _) = self.entries.get(path)?.clone();
+        if let Some(index) = self.order.iter().position(|entry| entry == path) {
+            let entry = self.order.remove(index)?;
+            self.order.push_back(entry);
+        }
         Some(paintable)
-    })
+    }
+
+    fn insert(&mut self, path: String, paintable: gtk::gdk::Paintable) {
+        let bytes = paintable.intrinsic_width().max(0) as usize
+            * paintable.intrinsic_height().max(0) as usize
+            * 4;
+        if let Some((_, previous)) = self.entries.insert(path.clone(), (paintable, bytes)) {
+            self.bytes = self.bytes.saturating_sub(previous);
+            if let Some(index) = self.order.iter().position(|entry| *entry == path) {
+                self.order.remove(index);
+            }
+        }
+        self.order.push_back(path);
+        self.bytes = self.bytes.saturating_add(bytes);
+        self.evict_to_budget();
+    }
+
+    fn remove(&mut self, path: &str) {
+        if let Some((_, bytes)) = self.entries.remove(path) {
+            self.bytes = self.bytes.saturating_sub(bytes);
+        }
+        if let Some(index) = self.order.iter().position(|entry| entry == path) {
+            self.order.remove(index);
+        }
+    }
+
+    fn clear(&mut self) {
+        self.order.clear();
+        self.entries.clear();
+        self.bytes = 0;
+    }
+
+    fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    fn evict_to_budget(&mut self) {
+        loop {
+            let over_quality_budget =
+                crate::thumbnail::high_quality_thumbnails_enabled() && self.bytes > 64 * 1024 * 1024;
+            if self.len() <= FOLDER_THUMBNAIL_CACHE_CAPACITY && !over_quality_budget {
+                break;
+            }
+            let Some(oldest) = self.order.pop_front() else {
+                break;
+            };
+            if let Some((_, bytes)) = self.entries.remove(&oldest) {
+                self.bytes = self.bytes.saturating_sub(bytes);
+            }
+        }
+    }
+}
+
+fn folder_thumbnail_cache_get(path: &str) -> Option<gtk::gdk::Paintable> {
+    FOLDER_THUMBNAIL_CACHE.with(|cache| cache.borrow_mut().get(path))
 }
 
 fn folder_thumbnail_cache_insert(path: String, paintable: gtk::gdk::Paintable) {
-    FOLDER_THUMBNAIL_CACHE.with(|cache| {
-        let mut cache = cache.borrow_mut();
-        cache.retain(|(cached_path, _)| cached_path != &path);
-        cache.push_back((path, paintable));
-        loop {
-            let bytes = cache.iter().fold(0usize, |bytes, (_, image)| {
-                bytes.saturating_add(
-                    image.intrinsic_width().max(0) as usize
-                        * image.intrinsic_height().max(0) as usize
-                        * 4,
-                )
-            });
-            let over_quality_budget =
-                crate::thumbnail::high_quality_thumbnails_enabled() && bytes > 64 * 1024 * 1024;
-            if cache.len() <= FOLDER_THUMBNAIL_CACHE_CAPACITY && !over_quality_budget {
-                break;
-            }
-            cache.pop_front();
-        }
-    });
+    FOLDER_THUMBNAIL_CACHE.with(|cache| cache.borrow_mut().insert(path, paintable));
 }
 
 pub(super) fn clear_folder_thumbnail_cache() {
@@ -59,23 +113,11 @@ pub(super) fn clear_folder_thumbnail_cache() {
 }
 
 fn folder_thumbnail_cache_remove(key: &str) {
-    FOLDER_THUMBNAIL_CACHE.with(|cache| {
-        cache
-            .borrow_mut()
-            .retain(|(cached_key, _)| cached_key != key);
-    });
+    FOLDER_THUMBNAIL_CACHE.with(|cache| cache.borrow_mut().remove(key));
 }
 
 fn photo_presentation_key(photo: &PhotoObject) -> Option<String> {
-    let cached = photo.cached_thumbnail_path()?;
-    Some(crate::thumbnail_display::presentation_key(
-        &cached,
-        &photo.path(),
-        photo.rotation(),
-        &photo.edit_recipe(),
-        photo.width(),
-        photo.height(),
-    ))
+    photo.presentation_key()
 }
 
 fn photo_presentation_request(
@@ -2284,8 +2326,9 @@ mod folder_thumbnail_cache_tests {
         FOLDER_THUMBNAIL_CACHE.with(|cache| {
             let cache = cache.borrow();
             let bytes = cache
-                .iter()
-                .map(|(_, image)| {
+                .entries
+                .values()
+                .map(|(image, _)| {
                     image.intrinsic_width() as usize * image.intrinsic_height() as usize * 4
                 })
                 .sum::<usize>();

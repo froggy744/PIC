@@ -68,6 +68,24 @@ mod imp {
         pub cached_thumbnail_path: RefCell<Option<String>>,
         #[property(get, set)]
         pub thumbnail_available: Cell<bool>,
+        /// Memoised presentation key.
+        ///
+        /// The key combines the thumbnail path, the rotation, the edit recipe
+        /// and the source dimensions. The gallery asks for it for every
+        /// visible tile on every frame, so it is built once and reused until
+        /// one of its inputs changes.
+        pub presentation_key_cache: RefCell<Option<CachedPresentationKey>>,
+    }
+
+    /// A presentation key together with the inputs it was built from.
+    #[derive(Clone)]
+    pub struct CachedPresentationKey {
+        pub cached_thumbnail_path: Option<String>,
+        pub rotation: i32,
+        pub edit_recipe: String,
+        pub width: i64,
+        pub height: i64,
+        pub key: String,
     }
 
     #[glib::object_subclass]
@@ -96,6 +114,46 @@ glib::wrapper! {
 }
 
 impl PhotoObject {
+    /// Presentation key of this photo, built once and reused.
+    ///
+    /// Returns `None` when the photo has no thumbnail at all.
+    pub(crate) fn presentation_key(&self) -> Option<String> {
+        let imp = self.imp();
+        let cached_thumbnail_path = imp.cached_thumbnail_path.borrow().clone();
+        let rotation = imp.rotation.get();
+        let edit_recipe = imp.edit_recipe.borrow().clone();
+        let width = imp.width.get();
+        let height = imp.height.get();
+        if let Some(cached) = imp.presentation_key_cache.borrow().as_ref() {
+            if cached.cached_thumbnail_path == cached_thumbnail_path
+                && cached.rotation == rotation
+                && cached.edit_recipe == edit_recipe
+                && cached.width == width
+                && cached.height == height
+            {
+                return Some(cached.key.clone());
+            }
+        }
+        let cached_path = cached_thumbnail_path.clone()?;
+        let key = crate::thumbnail_display::presentation_key(
+            &cached_path,
+            &imp.path.borrow(),
+            rotation,
+            &edit_recipe,
+            width,
+            height,
+        );
+        *imp.presentation_key_cache.borrow_mut() = Some(imp::CachedPresentationKey {
+            cached_thumbnail_path,
+            rotation,
+            edit_recipe,
+            width,
+            height,
+            key: key.clone(),
+        });
+        Some(key)
+    }
+
     /// Compare catalog state through backing fields during cooperative refresh.
     /// Availability and decoded-preview state are maintained independently.
     pub(crate) fn matches_catalog(&self, photo: &Photo) -> bool {

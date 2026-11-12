@@ -2,8 +2,12 @@
 set -Eeuo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 repo="$PWD"
-if [[ "$(git branch --show-current)" != 'feature/honeycomb' ]]; then
-    echo 'ERROR: run on feature/honeycomb; refusing to run on another branch' >&2
+# The production gate compares the renderer modes on a real library, so it
+# only runs on a branch that carries the Honeycomb rendering work.
+allowed_branches=(feature/honeycomb feature/honeycomb-render-perf)
+branch="$(git branch --show-current)"
+if [[ ! " ${allowed_branches[*]} " == *" $branch "* ]]; then
+    echo "ERROR: run on one of: ${allowed_branches[*]}; refusing to run on '$branch'" >&2
     exit 2
 fi
 if [[ -z "${WAYLAND_DISPLAY:-}" ]]; then

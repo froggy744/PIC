@@ -2040,6 +2040,26 @@ impl Gallery {
         collect_tiles(self.root.upcast_ref(), &mut tiles);
         collect_tiles(self.folder_root.upcast_ref(), &mut tiles);
         collect_tiles(self.folder_sectioned_root.upcast_ref(), &mut tiles);
+
+        // Resolve the presentation key of every tile once. The key combines
+        // the thumbnail path, the rotation and the edit recipe, so building it
+        // per completion and per tile made this drain quadratic in the number
+        // of visible tiles and delivered thumbnails.
+        let mut tile_keys: Vec<Option<String>> = Vec::with_capacity(tiles.len());
+        let mut tiles_by_key: HashMap<String, Vec<usize>> = HashMap::new();
+        for (index, tile) in tiles.iter().enumerate() {
+            let Some(photo) = tile.imp().photo.borrow().as_ref().cloned() else {
+                tile_keys.push(None);
+                continue;
+            };
+            let Some(key) = photo_presentation_key(&photo) else {
+                tile_keys.push(None);
+                continue;
+            };
+            tiles_by_key.entry(key.clone()).or_default().push(index);
+            tile_keys.push(Some(key));
+        }
+
         for completion in completions {
             let completion_outcome = match &completion.outcome {
                 crate::thumbnail_display::DisplayOutcome::Loaded { .. } => "loaded",
@@ -2067,16 +2087,13 @@ impl Gallery {
                     );
                     let paintable: gtk::gdk::Paintable = texture.upcast();
                     if cached_mode && width > 0 && height > 0 {
-                        for tile in &tiles {
-                            let Some(photo) = tile.imp().photo.borrow().as_ref().cloned() else {
-                                continue;
-                            };
-                            if tile.is_mapped()
-                                && photo_presentation_key(&photo).as_deref()
-                                    == Some(completion.key.as_str())
-                            {
-                                tile.apply_presentation_paintable(&completion.key, &paintable);
-                                tile.prepare_honeycomb_mask(bytes.clone());
+                        if let Some(indices) = tiles_by_key.get(&completion.key) {
+                            for index in indices {
+                                let tile = &tiles[*index];
+                                if tile.is_mapped() {
+                                    tile.apply_presentation_paintable(&completion.key, &paintable);
+                                    tile.prepare_honeycomb_mask(bytes.clone());
+                                }
                             }
                         }
                     }
@@ -2090,22 +2107,22 @@ impl Gallery {
             }
         }
 
-        for tile in &tiles {
+        for (index, tile) in tiles.iter().enumerate() {
             let Some(photo) = tile.imp().photo.borrow().as_ref().cloned() else {
                 continue;
             };
-            let Some(key) = photo_presentation_key(&photo) else {
+            let Some(key) = tile_keys[index].as_ref() else {
                 continue;
             };
-            if due_retries.contains(&key) && tile.is_mapped() {
+            if due_retries.contains(key) && tile.is_mapped() {
                 crate::thumbnail_trace::event(&photo.path(), "display_retry", "due_visible_tile");
                 if let Some(mut request) = photo_presentation_request(&photo, true) {
                     request.display_width = self.tile_width.get();
                     crate::thumbnail_display::submit_latest_visible(request);
                 }
             }
-            if let Some(paintable) = loaded.get(&key) {
-                tile.apply_presentation_paintable(&key, paintable);
+            if let Some(paintable) = loaded.get(key) {
+                tile.apply_presentation_paintable(key, paintable);
                 if let Some(frame) = tile.first_child().and_downcast::<gtk::Overlay>() {
                     if let Some(picture) = frame.child().and_downcast::<gtk::Picture>() {
                         if picture.tooltip_text().is_none() && tile.is_mapped() {
@@ -2113,7 +2130,7 @@ impl Gallery {
                         }
                     }
                 }
-            } else if missing.contains(&key) {
+            } else if missing.contains(key) {
                 // A missing outcome can arrive after the thumbnail was already
                 // delivered and applied. Marking the tile missing then would
                 // clear the available flag of a tile that shows a picture, and
@@ -2121,7 +2138,7 @@ impl Gallery {
                 let already_applied = tile.imp().applied_visual_key.borrow().as_deref()
                     == Some(key.as_str());
                 if !already_applied {
-                    tile.mark_presentation_missing(&key);
+                    tile.mark_presentation_missing(key);
                 }
             }
         }

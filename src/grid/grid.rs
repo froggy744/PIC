@@ -38,8 +38,8 @@ const FOLDER_THUMBNAIL_CACHE_CAPACITY: usize = 512;
 thread_local! {
     static RAW_THUMBNAIL_CACHE: RefCell<VecDeque<(String, i32, String, gtk::gdk::Paintable)>> =
         const { RefCell::new(VecDeque::new()) };
-    static FOLDER_THUMBNAIL_CACHE: RefCell<VecDeque<(String, gtk::gdk::Paintable)>> =
-        const { RefCell::new(VecDeque::new()) };
+    static FOLDER_THUMBNAIL_CACHE: RefCell<ThumbnailPaintableCache> =
+        RefCell::new(ThumbnailPaintableCache::new());
     static SELECTION_POSITION_CALLS: Cell<u64> = const { Cell::new(0) };
     static SCROLL_PROBE_PICK_CALLS: Cell<u64> = const { Cell::new(0) };
     static SCROLL_PROBE_PICK_NS: Cell<u128> = const { Cell::new(0) };

@@ -163,8 +163,8 @@ const FOLDER_THUMBNAIL_CACHE_CAPACITY: usize = 512;
 thread_local! {
     static RAW_THUMBNAIL_CACHE: RefCell<VecDeque<(String, i32, String, gtk::gdk::Paintable)>> =
         const { RefCell::new(VecDeque::new()) };
-    static FOLDER_THUMBNAIL_CACHE: RefCell<VecDeque<(String, gtk::gdk::Paintable)>> =
-        const { RefCell::new(VecDeque::new()) };
+    static FOLDER_THUMBNAIL_CACHE: RefCell<ThumbnailPaintableCache> =
+        RefCell::new(ThumbnailPaintableCache::new());
     static GRID_SCRUB_ACTIVE: Cell<bool> = const { Cell::new(false) };
     static GRID_ZOOM_ANIMATION_ACTIVE: Cell<bool> = const { Cell::new(false) };
 }

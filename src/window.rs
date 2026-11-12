@@ -892,3 +892,7 @@ include!("window/print.rs");
 #[cfg(test)]
 #[path = "window/responsive_tests.rs"]
 mod responsive_window_tests;
+
+#[cfg(test)]
+#[path = "window/immersive_tests.rs"]
+mod immersive_window_tests;

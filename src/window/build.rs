@@ -259,6 +259,12 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let space_toggle_in_progress = Rc::new(Cell::new(false));
     // Initialized before window shortcuts; wired after the layout is assembled.
     let immersive_active = Rc::new(Cell::new(false));
+    // `immersive_sidebar_shown` is the single authority for the temporary
+    // navigation overlay of an immersive session. The responsive breakpoint,
+    // the compact rail and the persistent pin flag all defer to it while an
+    // immersive session is active: the sidebar is either hidden or a
+    // temporary overlay that hides again when the pointer leaves it.
+    let immersive_sidebar_shown = Rc::new(Cell::new(false));
     let immersive_toggle_slot: Rc<RefCell<Option<Rc<dyn Fn()>>>> =
         Rc::new(RefCell::new(None));
 
@@ -5692,8 +5698,17 @@ fn start_photo_export_single(
         let sidebar_for_breakpoint = sidebar.clone();
         let transition = sidebar_breakpoint_transition.clone();
         let generation = sidebar_breakpoint_generation.clone();
+        let immersive_for_breakpoint = immersive_active.clone();
 
         window.add_tick_callback(move |window, _| {
+            // An immersive session owns the split's presentation state. The
+            // sidebar must stay a collapsed overlay that the left-edge
+            // reveal can show over the photos. Expanding it here would
+            // re-allocate the gallery and re-show a pinned sidebar that the
+            // immersive session deliberately hides.
+            if immersive_for_breakpoint.get() {
+                return glib::ControlFlow::Continue;
+            }
             let width = window.width();
 
             if !main_split_for_breakpoint.is_collapsed()

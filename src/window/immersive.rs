@@ -84,6 +84,182 @@ fn immersive_install_chrome_edge(
     strip
 }
 {
+    // Left-edge reveal geometry for the immersive navigation overlay.
+    // The strip is 12px wide and reveals after a short rest, so a pointer
+    // that merely crosses the window edge does not flash the sidebar.
+    const IMMERSIVE_EDGE_WIDTH: f64 = 12.0;
+    const IMMERSIVE_EDGE_REVEAL_DELAY_MS: u64 = 180;
+    const IMMERSIVE_SIDEBAR_HIDE_DELAY_MS: u64 = 700;
+
+    // Immersive Mode owns the left navigation for the whole session.
+    //
+    // `immersive_sidebar_shown` is the single authority for the temporary
+    // overlay: the responsive breakpoint, the compact rail and the persistent
+    // pin flag all defer to it. The saved Compact UI preference is never
+    // written while an immersive session is active.
+    //
+    // The edge detection lives on the window, not on the overlay strip.
+    // GTK picks overlay children for rendering, but pointer events are
+    // delivered to the widget under the pointer, and an overlay child never
+    // becomes that target. A window-level controller sees every motion
+    // event of the window, so the edge area is detected reliably in the
+    // windowed and in the F11 fullscreen presentation alike. The same
+    // controller owns the auto-hide: the sidebar overlay can appear under a
+    // stationary pointer, and GTK then never emits the enter/leave pair the
+    // sidebar shell would need to notice that the pointer went away.
+    let immersive_edge_motion = gtk::EventControllerMotion::new();
+    let immersive_edge_serial = Rc::new(Cell::new(0_u64));
+    let immersive_edge_armed = Rc::new(Cell::new(false));
+    let immersive_edge_pointer_x = Rc::new(Cell::new(f64::MAX));
+    {
+        // Width of the overlay sidebar in window coordinates. The split is
+        // collapsed while immersive, so the sidebar sits at the very left
+        // edge of the window and covers this many pixels.
+        fn overlay_width(split: &adw::OverlaySplitView) -> f64 {
+            let allocated = split.sidebar().map(|sidebar| sidebar.width()).unwrap_or(0);
+            if allocated > 0 {
+                f64::from(allocated)
+            } else {
+                split.max_sidebar_width()
+            }
+        }
+        let (split, active, shown, column) = (
+            main_split.clone(),
+            immersive_active.clone(),
+            immersive_sidebar_shown.clone(),
+            left_column.clone(),
+        );
+        let (serial, armed, pointer_x) = (
+            immersive_edge_serial.clone(),
+            immersive_edge_armed.clone(),
+            immersive_edge_pointer_x.clone(),
+        );
+        // Hide the temporary overlay once the pointer left it. The pointer
+        // position is re-checked when the timer fires, so a pointer that
+        // returned to the sidebar keeps it open.
+        let schedule_hide: Rc<dyn Fn()> = {
+            let (split, active, shown) = (split.clone(), active.clone(), shown.clone());
+            let (serial, armed, pointer_x) = (
+                serial.clone(),
+                armed.clone(),
+                pointer_x.clone(),
+            );
+            Rc::new(move || {
+                if !active.get() || !shown.get() || armed.get() {
+                    return;
+                }
+                armed.set(true);
+                let token = serial.get().wrapping_add(1);
+                serial.set(token);
+                let (split, active, shown) = (split.clone(), active.clone(), shown.clone());
+                let (serial, armed, pointer_x) = (
+                    serial.clone(),
+                    armed.clone(),
+                    pointer_x.clone(),
+                );
+                glib::timeout_add_local_once(
+                    Duration::from_millis(IMMERSIVE_SIDEBAR_HIDE_DELAY_MS),
+                    move || {
+                        if !active.get() || !shown.get() || serial.get() != token {
+                            return;
+                        }
+                        armed.set(false);
+                        // The pointer must still be outside the sidebar.
+                        if pointer_x.get() < overlay_width(&split) {
+                            return;
+                        }
+                        shown.set(false);
+                        split.set_show_sidebar(false);
+                    },
+                );
+            })
+        };
+        let schedule_hide_for_motion = schedule_hide.clone();
+        // The pointer can leave the whole window, for example towards a
+        // popover of the sidebar. A visible popup keeps the overlay open.
+        {
+            let (active, shown, column, schedule_hide) = (
+                active.clone(),
+                shown.clone(),
+                column.clone(),
+                schedule_hide.clone(),
+            );
+            immersive_edge_motion.connect_leave(move |_| {
+                if !active.get() || !shown.get() {
+                    return;
+                }
+                if immersive_has_popup(column.upcast_ref()) {
+                    // The pointer moved into a popup of the sidebar.
+                    return;
+                }
+                schedule_hide();
+            });
+        }
+        immersive_edge_motion.connect_motion(move |_, x, _| {
+            if !active.get() {
+                return;
+            }
+            pointer_x.set(x);
+            if shown.get() {
+                // The overlay is open. A pointer inside it keeps it open; a
+                // pointer outside it starts the auto-hide timer.
+                if x < overlay_width(&split) {
+                    serial.set(serial.get().wrapping_add(1));
+                    armed.set(false);
+                    return;
+                }
+                if immersive_has_popup(column.upcast_ref()) {
+                    // A context menu or popover owns the pointer: keep the
+                    // sidebar open until the popup closes.
+                    serial.set(serial.get().wrapping_add(1));
+                    armed.set(false);
+                    return;
+                }
+                schedule_hide_for_motion();
+                return;
+            }
+            if x > IMMERSIVE_EDGE_WIDTH {
+                // The pointer left the edge area again: cancel a pending
+                // reveal and disarm until the pointer comes back.
+                serial.set(serial.get().wrapping_add(1));
+                armed.set(false);
+                return;
+            }
+            if armed.get() {
+                return;
+            }
+            armed.set(true);
+            let token = serial.get().wrapping_add(1);
+            serial.set(token);
+            let (split, active, shown) = (split.clone(), active.clone(), shown.clone());
+            let (serial, armed, pointer_x) = (
+                serial.clone(),
+                armed.clone(),
+                pointer_x.clone(),
+            );
+            glib::timeout_add_local_once(
+                Duration::from_millis(IMMERSIVE_EDGE_REVEAL_DELAY_MS),
+                move || {
+                    if !active.get() || shown.get() || serial.get() != token {
+                        return;
+                    }
+                    armed.set(false);
+                    // The pointer must still rest inside the edge area.
+                    if pointer_x.get() > IMMERSIVE_EDGE_WIDTH {
+                        return;
+                    }
+                    // Reveal the existing full sidebar as a temporary overlay.
+                    // The split stays collapsed, so the gallery keeps its
+                    // width and the photos are not re-laid out.
+                    shown.set(true);
+                    split.set_collapsed(true);
+                    split.set_show_sidebar(true);
+                },
+            );
+        });
+    }
+    window.add_controller(immersive_edge_motion);
+
     let immersive_button = gtk::Button::from_icon_name("view-fullscreen-symbolic");
     immersive_button.add_css_class("flat");
     immersive_button.add_css_class("pic-header-action");
@@ -121,6 +297,13 @@ fn immersive_install_chrome_edge(
     let metadata_was_visible = Rc::new(Cell::new(false));
     let left_was_collapsed = Rc::new(Cell::new(false));
     let right_was_collapsed = Rc::new(Cell::new(false));
+    // The persistent sidebar pin and the split's own gestures describe the
+    // windowed layout. They are captured on entry and restored on exit so an
+    // immersive session never leaks its presentation into the saved state.
+    let left_was_pinned = Rc::new(Cell::new(true));
+    let left_was_split_pinned = Rc::new(Cell::new(true));
+    let left_was_show_gesture = Rc::new(Cell::new(false));
+    let left_was_hide_gesture = Rc::new(Cell::new(false));
     let toggle: Rc<dyn Fn()> = {
         let (active, split, properties, viewer_panel) = (
             immersive_active.clone(), main_split.clone(), properties_split.clone(),
@@ -145,6 +328,13 @@ fn immersive_install_chrome_edge(
         let (left_was_collapsed, right_was_collapsed) = (
             left_was_collapsed.clone(), right_was_collapsed.clone()
         );
+        let (left_was_pinned, left_was_split_pinned) = (
+            left_was_pinned.clone(), left_was_split_pinned.clone()
+        );
+        let (left_was_show_gesture, left_was_hide_gesture) = (
+            left_was_show_gesture.clone(), left_was_hide_gesture.clone()
+        );
+        let immersive_shown = immersive_sidebar_shown.clone();
         Rc::new(move || {
             let entering = !active.get();
             active.set(entering);
@@ -155,7 +345,17 @@ fn immersive_install_chrome_edge(
                 metadata_was_visible.set(metadata_root.is_visible());
                 left_was_collapsed.set(split.is_collapsed());
                 right_was_collapsed.set(properties.is_collapsed());
+                left_was_pinned.set(sidebar::is_pinned(&sidebar));
+                left_was_split_pinned.set(split.is_pin_sidebar());
+                left_was_show_gesture.set(split.enables_show_gesture());
+                left_was_hide_gesture.set(split.enables_hide_gesture());
 
+                // An immersive session owns the left navigation completely.
+                // The compact rail and the full sidebar are both hidden, the
+                // split stays collapsed so the sidebar can only appear as an
+                // overlay over the photos, and the saved Compact UI setting is
+                // left untouched.
+                immersive_shown.set(false);
                 dock.set_visible(false);
                 left_column.set_visible(true);
                 sidebar.set_visible(true);
@@ -193,15 +393,18 @@ fn immersive_install_chrome_edge(
             } else {
                 top_strip.set_visible(false);
                 bottom_strip.set_visible(false);
+                // Leave the immersive overlay before restoring the layout.
+                immersive_shown.set(false);
                 split.set_show_sidebar(false);
                 properties.set_show_sidebar(false);
                 viewer_panel.set_visible(false);
                 sidebar::clear_hover_open(&sidebar);
+                sidebar::set_pinned(&sidebar, left_was_pinned.get());
                 split.set_collapsed(left_was_collapsed.get());
                 properties.set_collapsed(right_was_collapsed.get());
-                split.set_pin_sidebar(true);
-                split.set_enable_show_gesture(expanded.get());
-                split.set_enable_hide_gesture(expanded.get());
+                split.set_pin_sidebar(left_was_split_pinned.get());
+                split.set_enable_show_gesture(left_was_show_gesture.get());
+                split.set_enable_hide_gesture(left_was_hide_gesture.get());
                 properties.set_pin_sidebar(true);
                 info_for_mode.set_properties_enabled(true);
 
@@ -213,6 +416,9 @@ fn immersive_install_chrome_edge(
                 info_root.set_visible(true);
                 metadata_root.set_visible(metadata_was_visible.get());
 
+                // Restore the exact sidebar configuration that was active
+                // before the session: the compact rail in compact mode, the
+                // full sidebar in normal mode.
                 left_column.set_visible(expanded.get());
                 sidebar.set_visible(expanded.get());
                 dock.set_visible(!expanded.get());
@@ -235,6 +441,18 @@ fn immersive_install_chrome_edge(
             let toggle = toggle.clone();
             glib::idle_add_local_once(move || toggle());
         });
+    }
+    // A window action exposes the same transition to the automated GUI
+    // harness, which drives PIC through its accessibility interface.
+    {
+        let toggle = toggle.clone();
+        let action = gio::ActionEntry::builder("immersive")
+            .activate(move |_, _, _| {
+                let toggle = toggle.clone();
+                glib::idle_add_local_once(move || toggle());
+            })
+            .build();
+        window.add_action_entries([action]);
     }
     immersive_toggle_slot.replace(Some(toggle.clone()));
     // The filter toolbar manages its own visibility when changing views.

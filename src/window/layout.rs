@@ -1259,6 +1259,7 @@
         let controls_sync = compact_controls_sync_slot.clone();
         let collapsed_width = collapsed_sidebar_width.clone();
         let immersive = immersive_active.clone();
+        let immersive_shown = immersive_sidebar_shown.clone();
         Rc::new(move |show_normal| {
             expanded.set(show_normal);
             dock.set_visible(!show_normal);
@@ -1286,11 +1287,12 @@
             if immersive.get() {
                 // A theme or compact-mode sync may run while immersive is
                 // active. Store the mode, but never leave the 44px rail or
-                // any pinned sidebar allocated beside the gallery.
+                // any pinned sidebar allocated beside the gallery, and never
+                // close the temporary overlay the immersive edge reveal owns.
                 dock.set_visible(false);
                 left_column.set_visible(true);
                 sidebar.set_visible(true);
-                split.set_show_sidebar(false);
+                split.set_show_sidebar(immersive_shown.get());
             }
             if let Some(sync) = controls_sync.borrow().as_ref() { sync(); }
         })
@@ -1703,8 +1705,13 @@
         let expanded = sidebar_expanded.clone();
         let collapsed_sidebar_width_for_notify = collapsed_sidebar_width.clone();
         let sidebar_for_collapse_notify = sidebar.clone();
+        let immersive_for_collapse_notify = immersive_active.clone();
         main_split.connect_collapsed_notify(move |split| {
-            if !expanded.get() {
+            // In compact mode the wide sidebar is not part of the layout: the
+            // 44px rail replaces it. An immersive session is the one
+            // exception, because it shows that very sidebar as a temporary
+            // overlay and therefore needs the collapsed drawer width.
+            if !expanded.get() && !immersive_for_collapse_notify.get() {
                 split.set_show_sidebar(false);
                 return;
             }
@@ -1751,8 +1758,10 @@
 
     // When the sidebar is hidden, expose a very small hover target at the
     // far-left edge. Hover-opening does not change the pinned state.
+    // The strip is 12px wide: it must be reachable without crossing into
+    // the photo grid, and it must stay clear of the sidebar's own controls.
     let sidebar_hover_reveal = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    sidebar_hover_reveal.set_width_request(10);
+    sidebar_hover_reveal.set_width_request(12);
     sidebar_hover_reveal.set_hexpand(false);
     sidebar_hover_reveal.set_vexpand(true);
     sidebar_hover_reveal.set_halign(gtk::Align::Start);
@@ -1770,14 +1779,19 @@
     let sidebar_hover_layout_freeze_for_reveal = sidebar_hover_layout_freeze.clone();
     let sidebar_hover_freeze_generation_for_reveal = sidebar_hover_freeze_generation.clone();
     sidebar_hover_motion.connect_enter(move |_, _, _| {
+        // Immersive mode owns its own edge reveal. It arms on real pointer
+        // motion only, so a re-pick caused by the overlay appearing can
+        // never re-open the sidebar in a loop.
+        if immersive_for_hover_reveal.get() {
+            return;
+        }
         // The breakpoint auto-hides even a pinned sidebar on narrow windows,
         // so edge-hover must still peek it open while collapsed. In the
         // expanded layout the pin gate still applies: a pinned sidebar the
         // user explicitly hid stays hidden until they show it again.
-        if (expanded_for_hover_reveal.get() || immersive_for_hover_reveal.get())
+        if expanded_for_hover_reveal.get()
             && !main_split_for_hover_reveal.shows_sidebar()
-            && (immersive_for_hover_reveal.get()
-                || !sidebar::is_pinned(&sidebar_for_hover_reveal)
+            && (!sidebar::is_pinned(&sidebar_for_hover_reveal)
                 || main_split_for_hover_reveal.is_collapsed())
         {
             // Hover reveal is intentionally presentation-only. Freeze the
@@ -1837,11 +1851,19 @@
         let sidebar = sidebar_for_hover_hide.clone();
         let column = left_column_for_hover_hide.clone();
         let resizing = resize_active_for_leave.clone();
+        let immersive = immersive_for_sidebar_leave.clone();
+        if immersive.get() {
+            // An immersive session owns the overlay: its window-level
+            // controller watches the pointer position and hides the sidebar
+            // when it leaves the overlay. The shell only sees enter/leave
+            // pairs when the pointer happens to move across the sidebar, so
+            // it cannot be the authority here.
+            return;
+        }
         // Let the right-click handler create its popover before checking.
         // Continue checking while the context menu is open; when it closes,
         // auto-hide normally unless the pointer returned to the sidebar.
-        let hide_delay = if immersive_for_sidebar_leave.get() { 700 } else { 140 };
-        glib::timeout_add_local(Duration::from_millis(hide_delay), move || {
+        glib::timeout_add_local(Duration::from_millis(140), move || {
             if generation.get() != next || !sidebar::is_hover_open(&sidebar) {
                 return glib::ControlFlow::Break;
             }
@@ -1863,6 +1885,7 @@
     let sidebar_hover_freeze_generation_for_state = sidebar_hover_freeze_generation.clone();
     let pin_button_for_state = update_pin_button.clone();
     let gallery_for_sidebar_visibility = gallery.clone();
+    let immersive_shown_for_state = immersive_sidebar_shown.clone();
     main_split.connect_show_sidebar_notify(move |split| {
         // Sidebar reveal/hide is a structural OverlaySplitView transition, not
         // a user window resize. Abort any live-resize FLIP and clear all tile
@@ -1870,6 +1893,12 @@
         gallery_for_sidebar_visibility.cancel_resize_flip();
 
         let sidebar_visible = split.shows_sidebar();
+        // An immersive session owns the sidebar: whatever shows it (edge
+        // reveal, header button, breakpoint restore) it stays a temporary
+        // overlay that hides again when the pointer leaves it.
+        if immersive_for_hover_state.get() {
+            immersive_shown_for_state.set(sidebar_visible);
+        }
         sidebar_hover_reveal_for_state.set_visible(
             (expanded_for_hover_state.get() || immersive_for_hover_state.get()) && !sidebar_visible
         );

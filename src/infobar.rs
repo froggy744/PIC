@@ -67,9 +67,12 @@ impl InfoBar {
         self.properties_button.connect_clicked(move |_| toggle_for_button());
         let gesture = gtk::GestureClick::new();
         gesture.set_button(3);
+        let properties_button = self.properties_button.clone();
         gesture.connect_pressed(move |gesture, _, _, _| {
-            gesture.set_state(gtk::EventSequenceState::Claimed);
-            toggle();
+            if properties_button.is_sensitive() {
+                gesture.set_state(gtk::EventSequenceState::Claimed);
+                toggle();
+            }
         });
         // Bind to the actual metadata content, not the expandable blank
         // viewport space between metadata and photo action buttons.

@@ -257,6 +257,10 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let date_browser_resume_slot: Rc<RefCell<Option<Rc<dyn Fn(Option<(i32, u32)>, Option<i64>)>>>> = Rc::new(RefCell::new(None));
     let search_popup_slot: Rc<RefCell<Option<gtk::Popover>>> = Rc::new(RefCell::new(None));
     let space_toggle_in_progress = Rc::new(Cell::new(false));
+    // Initialized before window shortcuts; wired after the layout is assembled.
+    let immersive_active = Rc::new(Cell::new(false));
+    let immersive_toggle_slot: Rc<RefCell<Option<Rc<dyn Fn()>>>> =
+        Rc::new(RefCell::new(None));
 
     include!("shortcuts.rs");
 
@@ -5333,6 +5337,10 @@ fn start_photo_export_single(
         right_column,
         right_header,
         _search,
+        compact_dock,
+        left_column,
+        sidebar_expanded,
+        sidebar_hover_reveal,
     ) = include!("layout.rs");
     crate::startup_trace::mark("layout_widgets_done", Some(layout_started));
 
@@ -5614,6 +5622,8 @@ fn start_photo_export_single(
     info.root.set_hexpand(true);
     info.root.set_valign(gtk::Align::End);
     right_column.append(&info.root);
+    // Build the immersive overlays once from PIC's existing controls.
+    include!("immersive.rs");
     {
         let panel=metadata_panel.clone();
         window.connect_close_request(move |_| {panel.cancel_index();glib::Propagation::Proceed});

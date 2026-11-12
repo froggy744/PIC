@@ -1744,6 +1744,7 @@
     let sidebar_hover_motion = gtk::EventControllerMotion::new();
     let main_split_for_hover_reveal = main_split.clone();
     let expanded_for_hover_reveal = sidebar_expanded.clone();
+    let immersive_for_hover_reveal = immersive_active.clone();
     let sidebar_for_hover_reveal = sidebar.clone();
     let gallery_for_hover_reveal = gallery.clone();
     let sidebar_hover_layout_freeze_for_reveal = sidebar_hover_layout_freeze.clone();
@@ -1753,9 +1754,10 @@
         // so edge-hover must still peek it open while collapsed. In the
         // expanded layout the pin gate still applies: a pinned sidebar the
         // user explicitly hid stays hidden until they show it again.
-        if expanded_for_hover_reveal.get()
+        if (expanded_for_hover_reveal.get() || immersive_for_hover_reveal.get())
             && !main_split_for_hover_reveal.shows_sidebar()
-            && (!sidebar::is_pinned(&sidebar_for_hover_reveal)
+            && (immersive_for_hover_reveal.get()
+                || !sidebar::is_pinned(&sidebar_for_hover_reveal)
                 || main_split_for_hover_reveal.is_collapsed())
         {
             // Hover reveal is intentionally presentation-only. Freeze the
@@ -1806,6 +1808,7 @@
     let left_column_for_hover_hide = left_column.clone();
     let leave_generation = sidebar_leave_generation.clone();
     let resize_active_for_leave = sidebar_resize_active.clone();
+    let immersive_for_sidebar_leave = immersive_active.clone();
     sidebar_leave_motion.connect_leave(move |_| {
         let next = leave_generation.get().wrapping_add(1);
         leave_generation.set(next);
@@ -1817,7 +1820,8 @@
         // Let the right-click handler create its popover before checking.
         // Continue checking while the context menu is open; when it closes,
         // auto-hide normally unless the pointer returned to the sidebar.
-        glib::timeout_add_local(Duration::from_millis(140), move || {
+        let hide_delay = if immersive_for_sidebar_leave.get() { 700 } else { 140 };
+        glib::timeout_add_local(Duration::from_millis(hide_delay), move || {
             if generation.get() != next || !sidebar::is_hover_open(&sidebar) {
                 return glib::ControlFlow::Break;
             }
@@ -1833,6 +1837,7 @@
 
     let sidebar_hover_reveal_for_state = sidebar_hover_reveal.clone();
     let expanded_for_hover_state = sidebar_expanded.clone();
+    let immersive_for_hover_state = immersive_active.clone();
     let sidebar_for_show_state = sidebar.clone();
     let sidebar_hover_layout_freeze_for_state = sidebar_hover_layout_freeze.clone();
     let sidebar_hover_freeze_generation_for_state = sidebar_hover_freeze_generation.clone();
@@ -1845,7 +1850,9 @@
         gallery_for_sidebar_visibility.cancel_resize_flip();
 
         let sidebar_visible = split.shows_sidebar();
-        sidebar_hover_reveal_for_state.set_visible(expanded_for_hover_state.get() && !sidebar_visible);
+        sidebar_hover_reveal_for_state.set_visible(
+            (expanded_for_hover_state.get() || immersive_for_hover_state.get()) && !sidebar_visible
+        );
         // Every reveal path (hover, pin button, breakpoint restore) funnels
         // through this notify, so this is the one place that keeps the pin
         // button's tooltip/icon in sync with how the sidebar was opened.
@@ -2863,5 +2870,9 @@
         right_column,
         right_header,
         search,
+        compact_dock,
+        left_column,
+        sidebar_expanded,
+        sidebar_hover_reveal,
     )
 }

@@ -161,6 +161,8 @@ fn immersive_install_chrome_edge(
                 sidebar.set_visible(true);
                 split.set_show_sidebar(false);
                 split.set_pin_sidebar(false);
+                split.set_enable_show_gesture(false);
+                split.set_enable_hide_gesture(false);
                 split.set_collapsed(true);
                 // A collapsed-notify handler may change the sidebar state.
                 split.set_show_sidebar(false);
@@ -198,6 +200,8 @@ fn immersive_install_chrome_edge(
                 split.set_collapsed(left_was_collapsed.get());
                 properties.set_collapsed(right_was_collapsed.get());
                 split.set_pin_sidebar(true);
+                split.set_enable_show_gesture(expanded.get());
+                split.set_enable_hide_gesture(expanded.get());
                 properties.set_pin_sidebar(true);
                 info_for_mode.set_properties_enabled(true);
 
@@ -250,8 +254,12 @@ fn immersive_install_chrome_edge(
                 stack.visible_child_name().as_deref(),
                 Some("photos" | "library" | "albums")
             ) {
-                if let Some(toggle) = immersive_toggle_slot.borrow().as_ref() {
-                    toggle();
+                if let Some(toggle) = immersive_toggle_slot.borrow().as_ref().cloned() {
+                    let active = active.clone();
+                    // Avoid reparenting chrome during Stack::notify::visible-child.
+                    glib::idle_add_local_once(move || {
+                        if active.get() { toggle(); }
+                    });
                 }
             }
         });

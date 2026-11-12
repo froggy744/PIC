@@ -73,8 +73,10 @@
             lightbox_for_window_escape.request_close();
             glib::Propagation::Stop
         } else if key == gtk::gdk::Key::Escape && immersive_active_for_key.get() {
-            if let Some(toggle) = immersive_toggle_for_key.borrow().as_ref() {
-                toggle();
+            if let Some(toggle) = immersive_toggle_for_key.borrow().as_ref().cloned() {
+                // Switch widget parenting after key dispatch; GTK may still be
+                // snapshotting the gallery during a capture-phase key handler.
+                glib::idle_add_local_once(move || toggle());
             }
             glib::Propagation::Stop
         } else if (key == gtk::gdk::Key::Escape || key == gtk::gdk::Key::BackSpace)
@@ -88,8 +90,8 @@
                     | gtk::gdk::ModifierType::META_MASK,
             )
         {
-            if let Some(toggle) = immersive_toggle_for_key.borrow().as_ref() {
-                toggle();
+            if let Some(toggle) = immersive_toggle_for_key.borrow().as_ref().cloned() {
+                glib::idle_add_local_once(move || toggle());
                 glib::Propagation::Stop
             } else {
                 glib::Propagation::Proceed

@@ -161,7 +161,10 @@ pub fn create(path: &str, mtime: Option<i64>, size_bytes: Option<i64>) -> Result
     crate::thumbnail_trace::event(path, "cache_generation", "start");
     let destination = cache_path(path, mtime, size_bytes)?;
     let failure_marker = destination.with_extension("failed");
-    if destination.is_file() {
+    // A High quality session may have inherited a 320 px entry from a library
+    // whose High quality setting was off. A marked upgrade regenerates in place.
+    let upgrading = priority_upgrade_marked(&destination);
+    if destination.is_file() && !upgrading {
         crate::thumbnail_trace::event(path, "cache_generation", "already_ready");
         if std::env::var_os("PICASA_TRACE").is_some() {
             eprintln!(
@@ -172,7 +175,7 @@ pub fn create(path: &str, mtime: Option<i64>, size_bytes: Option<i64>) -> Result
         return Ok(destination);
     }
     let legacy = flat_cache_path(path, mtime, size_bytes)?;
-    if legacy.is_file() {
+    if legacy.is_file() && !upgrading {
         crate::thumbnail_trace::event(path, "cache_generation", "legacy_cache_ready");
         // Do not move an entry from a GTK-visible lookup path. Keeping it is
         // safe, avoids a blocking migration, and preserves offline access.
@@ -204,6 +207,9 @@ pub fn create(path: &str, mtime: Option<i64>, size_bytes: Option<i64>) -> Result
     }
 
     let result = create_uncached(path, &destination);
+    if result.is_ok() {
+        clear_priority_upgrade(&destination);
+    }
     if let Ok(mut entries) = in_flight.lock() {
         entries.remove(&destination);
     }
@@ -373,7 +379,17 @@ fn create_uncached_with_max(path: &str, destination: &PathBuf, max_edge: u32) ->
         output_height,
         ColorType::Rgb8.into(),
     )?;
-    fs::write(destination, encoded)?;
+    // Write beside the destination and rename so a concurrent reader (or the
+    // in-place High quality upgrade) never observes a half-written JPEG.
+    let temporary = destination.with_extension("thumb-tmp");
+    if let Err(error) = fs::write(&temporary, encoded) {
+        let _ = fs::remove_file(&temporary);
+        return Err(error.into());
+    }
+    if let Err(error) = fs::rename(&temporary, destination) {
+        let _ = fs::remove_file(&temporary);
+        return Err(error.into());
+    }
     Ok(destination.clone())
 }
 

@@ -44,6 +44,14 @@ type PriorityQueue = (Mutex<VecDeque<PriorityRequest>>, Condvar);
 static PRIORITY_QUEUE: OnceLock<Arc<PriorityQueue>> = OnceLock::new();
 static PRIORITY_PENDING: OnceLock<Mutex<HashMap<PathBuf, ThumbnailWorkState>>> = OnceLock::new();
 static PRIORITY_COMPLETIONS: OnceLock<Mutex<Vec<PathBuf>>> = OnceLock::new();
+// The canonical cache path does not encode thumbnail quality, and the cache is
+// shared by every library. A library with High quality off can therefore leave
+// a 320 px file that a High quality library would otherwise reuse forever.
+// These markers let a display worker ask the priority pool to replace such an
+// entry in place, while attempts stay session-scoped so a source that cannot
+// produce 640 px is not decoded again on every bind.
+static PRIORITY_UPGRADES: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
+static QUALITY_UPGRADE_ATTEMPTS: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
 static RAW_ACTIVE: AtomicUsize = AtomicUsize::new(0);
 static NEF_ACTIVE: AtomicUsize = AtomicUsize::new(0);
 static VISIBLE_GENERATION_WANTED: OnceLock<Mutex<Option<HashMap<String, usize>>>> = OnceLock::new();
@@ -66,6 +74,35 @@ fn thumbnail_size() -> u32 {
         HIGH_QUALITY_THUMBNAIL_SIZE
     } else {
         NORMAL_THUMBNAIL_SIZE
+    }
+}
+
+/// Whether a decoded cache entry is smaller than the current quality setting.
+pub(crate) fn thumbnail_needs_quality_upgrade(width: u32, height: u32) -> bool {
+    high_quality_thumbnails_enabled() && width.max(height) < HIGH_QUALITY_THUMBNAIL_SIZE
+}
+
+fn priority_upgrade_marked(destination: &Path) -> bool {
+    PRIORITY_UPGRADES
+        .get()
+        .and_then(|marked| marked.lock().ok())
+        .is_some_and(|marked| marked.contains(destination))
+}
+
+fn mark_priority_upgrade(destination: &Path) {
+    if let Ok(mut marked) = PRIORITY_UPGRADES
+        .get_or_init(|| Mutex::new(HashSet::new()))
+        .lock()
+    {
+        marked.insert(destination.to_path_buf());
+    }
+}
+
+fn clear_priority_upgrade(destination: &Path) {
+    if let Some(marked) = PRIORITY_UPGRADES.get() {
+        if let Ok(mut marked) = marked.lock() {
+            marked.remove(destination);
+        }
     }
 }
 
@@ -208,14 +245,64 @@ impl Drop for PendingGuard {
 /// tile that is being bound or prefetched. Visible requests are promoted
 /// ahead of prefetch work and ownership lasts through generation.
 pub fn request_priority(path: String, mtime: Option<i64>, size_bytes: Option<i64>, visible: bool) {
+    request_priority_impl(path, mtime, size_bytes, visible, false);
+}
+
+/// Replace a cache entry that is smaller than the High quality setting.
+///
+/// The canonical cache path is shared by every library, so a 320 px file
+/// created while another library had High quality off would otherwise be shown
+/// forever. Unlike a normal request this must run even though the file exists,
+/// but only when the original is reachable: an offline 320 px preview is still
+/// better than no preview at all.
+pub(crate) fn request_quality_upgrade(
+    path: String,
+    mtime: Option<i64>,
+    size_bytes: Option<i64>,
+    visible: bool,
+) {
     let Ok(destination) = cache_path(&path, mtime, size_bytes) else {
         crate::thumbnail_trace::event(&path, "generation_request", "cache_path_error");
         return;
     };
-    if existing_cache_path(&path, mtime, size_bytes)
-        .ok()
-        .flatten()
-        .is_some()
+    if !crate::source::cached_file_available(&path) {
+        crate::thumbnail_trace::event(
+            &path,
+            "generation_request",
+            "quality_upgrade_source_unavailable",
+        );
+        return;
+    }
+    let Ok(mut attempts) = QUALITY_UPGRADE_ATTEMPTS
+        .get_or_init(|| Mutex::new(HashSet::new()))
+        .lock()
+    else {
+        return;
+    };
+    if !attempts.insert(destination.clone()) {
+        return;
+    }
+    drop(attempts);
+    mark_priority_upgrade(&destination);
+    request_priority_impl(path, mtime, size_bytes, visible, true);
+}
+
+fn request_priority_impl(
+    path: String,
+    mtime: Option<i64>,
+    size_bytes: Option<i64>,
+    visible: bool,
+    upgrade: bool,
+) {
+    let Ok(destination) = cache_path(&path, mtime, size_bytes) else {
+        crate::thumbnail_trace::event(&path, "generation_request", "cache_path_error");
+        return;
+    };
+    if !upgrade
+        && existing_cache_path(&path, mtime, size_bytes)
+            .ok()
+            .flatten()
+            .is_some()
     {
         crate::thumbnail_trace::event(&path, "generation_request", "already_cached");
         return;
@@ -283,7 +370,8 @@ pub fn request_priority(path: String, mtime: Option<i64>, size_bytes: Option<i64
             .rposition(|job| !job.5)
             .or_else(|| visible.then(|| jobs.len() - 1));
         let Some(eviction) = eviction else {
-            drop(PendingGuard(destination));
+            drop(PendingGuard(destination.clone()));
+            clear_priority_upgrade(&destination);
             crate::thumbnail_trace::event(&path, "generation_request", "queue_capacity_rejected");
             return;
         };
@@ -629,7 +717,9 @@ fn priority_queue() -> &'static Arc<PriorityQueue> {
                 let _pending_guard = PendingGuard(destination.clone());
                 let deadline = started + PRIORITY_HANDOFF_TIMEOUT;
                 crate::thumbnail_trace::event(&path, "generation_worker", "start");
-                while !destination.is_file() && !known_decode_failure(&path, &destination) {
+                while (!destination.is_file() || priority_upgrade_marked(&destination))
+                    && !known_decode_failure(&path, &destination)
+                {
                     if cache_entry_in_flight(&destination) {
                         if std::time::Instant::now() >= deadline {
                             break;
@@ -648,6 +738,7 @@ fn priority_queue() -> &'static Arc<PriorityQueue> {
                     }
                     std::thread::sleep(std::time::Duration::from_millis(100));
                 }
+                clear_priority_upgrade(&destination);
                 if destination.is_file() {
                     crate::thumbnail_trace::event(&path, "generation_complete", "cache_ready");
                     if let Ok(mut completions) = PRIORITY_COMPLETIONS

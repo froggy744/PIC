@@ -579,6 +579,21 @@ fn load_thumbnail_with_policy(request: &DisplayRequest, regenerate: bool) -> Dis
         }
     };
 
+    // The cache key does not encode quality and the cache is shared by every
+    // library, so a 320 px entry left by a High quality-off library can still
+    // be presented here. Keep showing it for now, but rebuild it in place when
+    // the original is reachable.
+    if regenerate
+        && crate::thumbnail::thumbnail_needs_quality_upgrade(image.width(), image.height())
+    {
+        crate::thumbnail::request_quality_upgrade(
+            request.source_path.clone(),
+            Some(request.mtime),
+            Some(request.size_bytes),
+            request.visible_priority,
+        );
+    }
+
     if crate::image_format::uses(&request.source_path, crate::image_format::DecoderKind::Raw) {
         image = crop_raw_cached_preview(image, request.source_width, request.source_height);
     }
@@ -710,6 +725,17 @@ mod tests {
         assert_eq!(replace_visible_requests(vec![request.clone()]), 0);
         invalidate_retry(&request.key);
         assert!(display_retry_allowed(&request.key));
+    }
+
+    #[test]
+    fn high_quality_upgrade_only_applies_below_640() {
+        let previous = crate::thumbnail::high_quality_thumbnails_enabled();
+        crate::thumbnail::set_high_quality_thumbnails_enabled(true);
+        assert!(crate::thumbnail::thumbnail_needs_quality_upgrade(320, 180));
+        assert!(!crate::thumbnail::thumbnail_needs_quality_upgrade(640, 360));
+        crate::thumbnail::set_high_quality_thumbnails_enabled(false);
+        assert!(!crate::thumbnail::thumbnail_needs_quality_upgrade(320, 180));
+        crate::thumbnail::set_high_quality_thumbnails_enabled(previous);
     }
 
     #[test]

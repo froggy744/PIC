@@ -1044,6 +1044,7 @@ impl SectionedFolderView {
                     self.root.remove(&tile.tile);
                     tile.tile.set_opacity(1.0);
                     tile.tile.set_presentation_scale(1.0);
+                    tile.tile.release_presentation_resources();
                     tile.index.set(None);
                     let mut pool = self.tile_pool.borrow_mut();
                     if pool.len() < SECTIONED_TILE_POOL_CAP {
@@ -1397,6 +1398,7 @@ impl SectionedFolderView {
             self.root.remove(&tile.tile);
             tile.tile.set_opacity(1.0);
             tile.tile.set_presentation_scale(1.0);
+            tile.tile.release_presentation_resources();
             tile.index.set(None);
             let mut pool = self.tile_pool.borrow_mut();
             if pool.len() < SECTIONED_TILE_POOL_CAP {

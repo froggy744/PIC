@@ -167,6 +167,21 @@ thread_local! {
         RefCell::new(ThumbnailPaintableCache::new());
     static GRID_SCRUB_ACTIVE: Cell<bool> = const { Cell::new(false) };
     static GRID_ZOOM_ANIMATION_ACTIVE: Cell<bool> = const { Cell::new(false) };
+    static GALLERY_SCROLLING: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Whether the gallery is currently moving.
+///
+/// Background work that only improves what is already on screen, such as
+/// rebuilding a thumbnail in the higher resolution, waits until the gallery
+/// settles. Doing it while the user scrolls spends the decode budget on
+/// photos that are about to leave the viewport.
+pub(crate) fn set_gallery_scrolling(active: bool) {
+    GALLERY_SCROLLING.with(|flag| flag.set(active));
+}
+
+pub(crate) fn gallery_scrolling() -> bool {
+    GALLERY_SCROLLING.with(Cell::get)
 }
 
 // The grid stays one Rust module for private-state compatibility, while its

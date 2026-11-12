@@ -4,8 +4,10 @@ Goal: Honeycomb (and the photo wall) scrolling at 60/120 fps on a
 2560×1440 @ 120 Hz display, native Wayland, GNOME, display scale 1.0,
 window ≈ 1908×1000, Honeycomb tiles 300 px (≈305×353 px hexes).
 
-Branch: `feature/honeycomb-render-perf` (commit `c94c0c8c`)
+Branch: `feature/honeycomb-render-perf`
 Base: `main` @ `f4fa88bc` ("Upgrade undersized thumbnail caches in High quality sessions")
+Commits: `c94c0c8c` (rendering), `81f31e3d` (per-frame hot spots), `7cc9d53a` (this
+document), plus the follow-up commits for the thumbnail pipeline.
 
 ---
 
@@ -18,7 +20,7 @@ Base: `main` @ `f4fa88bc` ("Upgrade undersized thumbnail caches in High quality 
 | Mask rasterisation cost | 26 ms per mask | **3.2 ms per mask** |
 | Mask worker CPU for one benchmark run | 2.95 s | 0.36 s |
 | App idle CPU (Honeycomb visible, nothing scrolling) | **354 %** | ~0 % |
-| Real app scroll, minimal tracing, 300 px tiles | 18.9 ms median | 15.4–17.8 ms median |
+| Real app scroll, minimal tracing, 300 px tiles | 18.9 ms median | **9.3–9.9 ms median** (~100–120 fps) |
 | Real app scroll, zoomed out (100–137 px) | ~70–76 ms median | ~50 ms median (still open, see §6) |
 
 Benchmark command (native Wayland + Vulkan, real library):
@@ -112,13 +114,51 @@ A zoomed-out Honeycomb view shows hundreds of tiles; rebuilding every one of
 them at 640 px decodes and re-encodes the original for each of them and stalls
 the view.
 
+## 4b. The per-frame hot spots (commit `81f31e3d`)
+
+With the renderer fixed, the app still ran at ~16 ms per frame while the
+benchmark ran at 8.33 ms. The difference was work the benchmark does not
+exercise, all of it per frame and per visible tile:
+
+* The RAM thumbnail cache was a `VecDeque` that was **scanned linearly** on
+  every lookup, and every insert walked the whole cache again to recompute its
+  byte total. It is a hash map with an LRU order and a running byte count now.
+* The completion drain built the **presentation key of every tile once per
+  delivered thumbnail**, so a frame with many completions was quadratic in the
+  number of visible tiles. The keys are resolved once per drain now and the
+  completions are looked up by key.
+* The presentation key is a formatted string that combines the thumbnail
+  path, the rotation, the edit recipe and the source dimensions. It was
+  rebuilt for every tile on every frame, so the photo object memoises it until
+  one of its inputs changes.
+
+After these three changes the app measured **9.3–9.9 ms per frame** in the
+same real scroll session (before: 15.4–17.8 ms), with 90 % of the frames
+inside the 16.7 ms budget (before: 48 %).
+
+## 4c. The thumbnail pipeline (follow-up commits)
+
+* A tile that left the viewport kept its decoded thumbnail and its masked
+  texture alive while it waited in the tile pool. It releases them now, which
+  took the idle RSS from 1.3 GB down to ~570 MB.
+* A quality upgrade competed with the visible thumbnail decodes, because it
+  was queued as visible work. It is queued as **background work** now, and it
+  is not even requested while the gallery is moving: the upgrade is asked for
+  again when the gallery settles, which is when the sharp thumbnail is
+  actually useful.
+* An upgrade that never ran - evicted, discarded with the viewport or failed -
+  used to stay marked as attempted, so the photo kept the low resolution
+  thumbnail forever. The attempt marker is cleared on every path that drops
+  the job now, so the photo can ask again.
+
 ## 5. Tests run
 
 | Test | Result |
 |---|---|
 | `cargo check --locked` | clean (only the repo's pre-existing dead-code warnings) |
 | `cargo test --locked grid::honeycomb_raster::tests -- --test-threads=1` | 7 passed, 1 ignored |
-| `cargo test --locked thumbnail -- --test-threads=1` | 115 passed, 24 ignored |
+| `cargo test --locked thumbnail -- --test-threads=1` | 118 passed, 24 ignored (3 new: an upgrade never precedes a visible thumbnail, an upgrade runs when no visible work is queued, an evicted upgrade can be requested again) |
+| `cargo test --locked grid:: -- --test-threads=1` | 82 passed, 50 ignored |
 | `cargo test --locked grid::photo_wall_tests -- --test-threads=1` | 31 ignored (all need a display) |
 | `cargo test --locked grid::honeycomb_raster::tests::gtk_cover_and_honeycomb_mask_visual_comparison -- --ignored` (native Wayland/Vulkan) | **passed** — GSK vs CPU raster, 18 geometry/source cases up to 300×346 tiles: premultiplied MAE 0.06–0.09, max channel delta 15–16 (antialiased hex border only) |
 | `xvfb-run -a env GSK_RENDERER=cairo cargo test --locked grid::photo_wall_tests::honeycomb_geometry_updates_preserve_normal_gsk_paintable -- --ignored --test-threads=1` | passed |
@@ -185,9 +225,9 @@ which inflates every number.
    `PIC_HONEYCOMB_RENDER_MODE=live` restores the old GSK mask path without a
    rebuild.
 
-6. **`scripts/validate-honeycomb-production.sh` refuses to run outside
-   `feature/honeycomb`** — the branch gate still has to be updated to the new
-   branch name before that script is used for a release check.
+6. **`scripts/validate-honeycomb-production.sh`** now accepts both
+   `feature/honeycomb` and `feature/honeycomb-render-perf`. It still builds a
+   release test binary and runs nine trials, which was not done here.
 
 ## 7. How to continue
 

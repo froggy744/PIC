@@ -2114,6 +2114,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             let delta = value - previous;
             grid_scroll_direction_for_event.set(delta.signum());
             grid_thumbnail_motion_frames_for_event.set(GRID_THUMBNAIL_MOTION_PUMP_FRAMES);
+            crate::grid::set_gallery_scrolling(true);
 
             // A scrollbar scrub can teleport farther than GTK can realize
             // GridView children in the same frame. Queue the destination from
@@ -2171,6 +2172,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                     if generation_cell.get() != generation {
                         return;
                     }
+                    crate::grid::set_gallery_scrolling(false);
 
                     // Force the final destination once more. The user may have
                     // released the thumb less than 40 ms after our last sample.
@@ -2355,6 +2357,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             if direction != 0.0 {
                 folder_scroll_direction_for_event.set(direction);
             }
+            crate::grid::set_gallery_scrolling(true);
 
             // Folder bind now submits its own visible-priority async request on
             // every RAM miss. That is sufficient for wheel motion and Page
@@ -2414,6 +2417,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             let folder_scrub_sampler_for_settle = folder_scrub_sampler_for_event.clone();
             let source = glib::timeout_add_local(Duration::from_millis(110), move || {
                 debounce_slot.borrow_mut().take();
+                crate::grid::set_gallery_scrolling(false);
                 direct_scrub_active_for_settle.set(false);
                 folder_scrub_sampler_for_settle.borrow_mut().end();
                 // End the shared scrub window before the visible refresh so

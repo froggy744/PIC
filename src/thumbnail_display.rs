@@ -596,13 +596,13 @@ fn load_thumbnail_with_policy(request: &DisplayRequest, regenerate: bool) -> Dis
     // the original is reachable.
     if regenerate
         && request.display_width >= crate::grid::tile_needs_high_quality_width()
+        && !crate::grid::gallery_scrolling()
         && crate::thumbnail::thumbnail_needs_quality_upgrade(image.width(), image.height())
     {
         crate::thumbnail::request_quality_upgrade(
             request.source_path.clone(),
             Some(request.mtime),
             Some(request.size_bytes),
-            request.visible_priority,
         );
     }
 

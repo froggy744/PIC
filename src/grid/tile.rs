@@ -1844,6 +1844,22 @@ impl SquareTile {
         self.imp().honeycomb_mask_lookup_key.borrow_mut().take();
     }
 
+    /// Release the textures this tile holds.
+    ///
+    /// A tile that leaves the viewport keeps its decoded thumbnail and its
+    /// masked texture alive while it waits in the pool. With a large viewport
+    /// that is hundreds of megabytes of thumbnails nobody is looking at.
+    pub(super) fn release_presentation_resources(&self) {
+        self.clear_honeycomb_mask_cached();
+        if let Some(frame) = self
+            .first_child()
+            .and_downcast::<gtk::Overlay>()
+            .and_then(|frame| frame.child().and_downcast::<gtk::Picture>())
+        {
+            frame.set_paintable(gtk::gdk::Paintable::NONE);
+        }
+    }
+
     fn clear_honeycomb_mask_cached(&self) {
         let was_cached = self.imp().honeycomb_mask_cached.replace(false);
         self.imp().honeycomb_mask_lookup_key.borrow_mut().take();

@@ -106,6 +106,19 @@ fn clear_priority_upgrade(destination: &Path) {
     }
 }
 
+/// Forget that an upgrade was already requested.
+///
+/// An upgrade that never ran - because it was evicted, discarded with the
+/// viewport or failed - has to be requestable again, otherwise the photo
+/// stays at the lower resolution forever.
+fn forget_quality_upgrade_attempt(destination: &Path) {
+    if let Some(attempts) = QUALITY_UPGRADE_ATTEMPTS.get() {
+        if let Ok(mut attempts) = attempts.lock() {
+            attempts.remove(destination);
+        }
+    }
+}
+
 const PRIORITY_QUEUE_CAPACITY: usize = 512;
 // Network prefetch is speculative; a scrollbar jump must not leave a library
 // of old reads competing with the destination's visible previews.
@@ -161,6 +174,9 @@ fn release_discarded_generation_from(
         if pending.get(&job.3) == Some(&ThumbnailWorkState::Queued) {
             pending.remove(&job.3);
         }
+        // The upgrade never ran, so the photo may ask for it again.
+        clear_priority_upgrade(&job.3);
+        forget_quality_upgrade_attempt(&job.3);
     }
 }
 
@@ -257,18 +273,11 @@ pub fn request_priority(path: String, mtime: Option<i64>, size_bytes: Option<i64
 /// better than no preview at all.
 /// Quality upgrades rebuild a thumbnail at the higher resolution.
 ///
-/// A zoomed-out Honeycomb view can show well over a hundred tiles at once, and
-/// every undersized thumbnail it displays would otherwise ask for its own
-/// upgrade. Each upgrade decodes and re-encodes the original, so the whole
-/// viewport would be re-encoded at once and the gallery would stall. Upgrades
-/// only sharpen what is on screen, so they are rate limited and simply
-/// continue a little later.
-pub(crate) fn request_quality_upgrade(
-    path: String,
-    mtime: Option<i64>,
-    size_bytes: Option<i64>,
-    visible: bool,
-) {
+/// An upgrade only sharpens what is already on screen, so it is queued as
+/// background work and never competes with the thumbnail the user is
+/// scrolling towards. It is also skipped while the gallery is moving, and
+/// requested again once the gallery settles.
+pub(crate) fn request_quality_upgrade(path: String, mtime: Option<i64>, size_bytes: Option<i64>) {
     let Ok(destination) = cache_path(&path, mtime, size_bytes) else {
         crate::thumbnail_trace::event(&path, "generation_request", "cache_path_error");
         return;
@@ -292,7 +301,12 @@ pub(crate) fn request_quality_upgrade(
     }
     drop(attempts);
     mark_priority_upgrade(&destination);
-    request_priority_impl(path, mtime, size_bytes, visible, true);
+    // An upgrade only sharpens what is already on screen, so it always runs
+    // as background work. Marked visible it would compete with the
+    // thumbnails the user is scrolling towards, and the gallery would spend
+    // its whole decode budget on re-encoding photos that are about to leave
+    // the viewport.
+    request_priority_impl(path, mtime, size_bytes, false, true);
 }
 
 fn request_priority_impl(
@@ -336,7 +350,14 @@ fn request_priority_impl(
     let (jobs, wake) = &**queue;
     let mut jobs = jobs.lock().expect("priority queue lock");
     let requested_visible = visible;
-    let visible = current_generation_priority(&path, visible);
+    // A quality upgrade is background work even when its photo is in the
+    // viewport: the sharp thumbnail can wait, the thumbnail the user is
+    // scrolling towards cannot.
+    let visible = if upgrade {
+        false
+    } else {
+        current_generation_priority(&path, visible)
+    };
     if private_network_preview(&path) && !visible {
         let wanted = NETWORK_PREFETCH_WANTED
             .get_or_init(|| Mutex::new(HashSet::new()))
@@ -366,7 +387,10 @@ fn request_priority_impl(
         }
         // The queued job owns the upgrade now; a stale mark would make the
         // display worker wait for a file that the queued job never writes.
+        // The queued job is not necessarily the upgrade itself, so the photo
+        // stays allowed to ask for it again.
         clear_priority_upgrade(&destination);
+        forget_quality_upgrade_attempt(&destination);
         return;
     }
     pending.insert(destination.clone(), ThumbnailWorkState::Queued);
@@ -403,6 +427,9 @@ fn request_priority_impl(
             {
                 pending.remove(&evicted);
             }
+            // The evicted upgrade never ran, so the photo may ask again.
+            clear_priority_upgrade(&evicted);
+            forget_quality_upgrade_attempt(&evicted);
         }
     }
     jobs.push_front((
@@ -469,6 +496,51 @@ mod priority_queue_tests {
             visible,
         )
     }
+    /// A quality upgrade is background work: it must never be dispatched
+    /// ahead of a visible thumbnail, no matter how long the upgrade has been
+    /// waiting.
+    #[test]
+    fn quality_upgrade_never_precedes_a_visible_thumbnail() {
+        let mut upgrade = job(false);
+        upgrade.0 = "/photo/upgrade.jpg".into();
+        let mut visible = job(true);
+        visible.0 = "/photo/visible.jpg".into();
+        let jobs = VecDeque::from([upgrade, visible]);
+        assert_eq!(priority_dispatch_index(&jobs, 0, 0, 0), Some(1));
+    }
+
+    /// Once the visible work is done the upgrade has to run, otherwise the
+    /// photo would stay at the lower resolution forever.
+    #[test]
+    fn quality_upgrade_runs_when_no_visible_work_is_queued() {
+        let mut upgrade = job(false);
+        upgrade.0 = "/photo/upgrade.jpg".into();
+        let jobs = VecDeque::from([upgrade]);
+        assert_eq!(priority_dispatch_index(&jobs, 0, 0, 0), Some(0));
+    }
+
+    /// An upgrade that was evicted before it ran must be requestable again,
+    /// otherwise the photo keeps the low resolution thumbnail forever.
+    #[test]
+    fn an_evicted_upgrade_can_be_requested_again() {
+        let destination = PathBuf::from("/tmp/pic-upgrade-test-thumb.jpg");
+        mark_priority_upgrade(&destination);
+        QUALITY_UPGRADE_ATTEMPTS
+            .get_or_init(|| Mutex::new(HashSet::new()))
+            .lock()
+            .expect("upgrade attempt lock")
+            .insert(destination.clone());
+        // This is what the eviction path does.
+        clear_priority_upgrade(&destination);
+        forget_quality_upgrade_attempt(&destination);
+        assert!(!priority_upgrade_marked(&destination));
+        let attempts = QUALITY_UPGRADE_ATTEMPTS
+            .get_or_init(|| Mutex::new(HashSet::new()))
+            .lock()
+            .expect("upgrade attempt lock");
+        assert!(!attempts.contains(&destination));
+    }
+
     #[test]
     fn visible_jpeg_precedes_newer_raw_requests() {
         let mut raw = job(false);
@@ -628,6 +700,13 @@ fn update_generation_visibility(
         keep
     });
     for job in jobs.iter_mut() {
+        // A quality upgrade stays background work even when its photo is in
+        // the viewport: the sharp thumbnail can wait, the thumbnail that the
+        // user is scrolling towards cannot.
+        if priority_upgrade_marked(&job.3) {
+            job.5 = false;
+            continue;
+        }
         job.5 = wanted.contains_key(&job.0);
     }
     jobs.make_contiguous()
@@ -774,6 +853,9 @@ fn priority_queue() -> &'static Arc<PriorityQueue> {
                             "no_cache_before_timeout_or_error"
                         },
                     );
+                    // The upgrade did not produce a file, so the photo may
+                    // ask for it again later.
+                    forget_quality_upgrade_attempt(&destination);
                 }
             });
         }

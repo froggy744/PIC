@@ -39,17 +39,12 @@ run_mode() {
     echo "RUN mode=$mode phase=${extra:-measured} log=$log"
     local is_prewarm=0
     [[ "$extra" == "prewarm" ]] && is_prewarm=1
-    if [[ "$mode" == "cached" ]]; then
-        env PIC_BENCH_PREWARM="$is_prewarm" PIC_BENCH_LAYOUT="$mode" PIC_HONEYCOMB_RENDER_MODE=cached \
-            PIC_BENCH_CAPTURE_DIR="$capture_dir" \
-            cargo test --locked grid::photo_wall_tests::actual_library_honeycomb_cached_scroll_benchmark \
-                -- --ignored --test-threads=1 --nocapture 2>&1 | tee "$log"
-    else
-        env -u PIC_HONEYCOMB_RENDER_MODE PIC_BENCH_PREWARM="$is_prewarm" PIC_BENCH_LAYOUT="$mode" \
-            PIC_BENCH_CAPTURE_DIR="$capture_dir" \
-            cargo test --locked grid::photo_wall_tests::actual_library_honeycomb_cached_scroll_benchmark \
-                -- --ignored --test-threads=1 --nocapture 2>&1 | tee "$log"
-    fi
+    local render_mode="cached"
+    [[ "$mode" == "gsk" ]] && render_mode="live"
+    env PIC_BENCH_PREWARM="$is_prewarm" PIC_BENCH_LAYOUT="$mode" PIC_HONEYCOMB_RENDER_MODE="$render_mode" \
+        PIC_BENCH_CAPTURE_DIR="$capture_dir" \
+        cargo test --locked grid::photo_wall_tests::actual_library_honeycomb_cached_scroll_benchmark \
+            -- --ignored --test-threads=1 --nocapture 2>&1 | tee "$log"
 }
 
 # Warm disk thumbnails once, then interleave renderer modes twice. Each test

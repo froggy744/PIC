@@ -35,13 +35,10 @@ run() {
     local logfile="$out/${mode}-${idx}.log"
     echo "Running $mode trial $idx"
     local code=0
-    if [[ "$mode" == cached ]]; then
-        PIC_HONEYCOMB_RENDER_MODE=cached PIC_BENCH_LAYOUT="$mode" \
-          cargo test --release --locked "$TEST" -- --ignored --test-threads=1 --nocapture > "$logfile" 2>&1 || code=$?
-    else
-        env -u PIC_HONEYCOMB_RENDER_MODE PIC_BENCH_LAYOUT="$mode" \
-          cargo test --release --locked "$TEST" -- --ignored --test-threads=1 --nocapture > "$logfile" 2>&1 || code=$?
-    fi
+    local render_mode="cached"
+    [[ "$mode" == "gsk" ]] && render_mode="live"
+    PIC_HONEYCOMB_RENDER_MODE="$render_mode" PIC_BENCH_LAYOUT="$mode" \
+      cargo test --release --locked "$TEST" -- --ignored --test-threads=1 --nocapture > "$logfile" 2>&1 || code=$?
     echo "$code" > "$out/${mode}-${idx}.exit"
     grep -E 'BENCH_SETUP|BENCH_UNREADY_SUMMARY|invalid benchmark|test result:|FAILED' "$logfile" || true
     return "$code"

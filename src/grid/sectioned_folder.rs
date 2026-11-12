@@ -210,6 +210,8 @@ struct SectionedFolderView {
     wall_zoom_scale: Cell<f32>,
     reflow_active: Cell<bool>,
     preserve_headers_during_reflow: Cell<bool>,
+    /// Last Honeycomb mask generation this view published.
+    mask_generation: Cell<u64>,
 }
 
 impl SectionedFolderView {
@@ -316,6 +318,7 @@ impl SectionedFolderView {
             wall_zoom_scale: Cell::new(1.0),
             reflow_active: Cell::new(false),
             preserve_headers_during_reflow: Cell::new(false),
+            mask_generation: Cell::new(0),
         });
 
         let keyboard = gtk::EventControllerKey::new();
@@ -641,7 +644,7 @@ impl SectionedFolderView {
             if this.is_wall() && this.geometry_width.get() == 0 {
                 this.refresh();
             }
-            if honeycomb_raster::cached_render_enabled()
+            if honeycomb_raster::cached_mask_applies(this.tile_width.get())
                 && this.layout_mode.get() == PhotoLayout::Honeycomb
             {
                 let top = scrolled_for_tick.vadjustment().value();
@@ -933,13 +936,21 @@ impl SectionedFolderView {
         self.sync_honeycomb_viewport(&scrolled);
         let width = self.viewport_width(&scrolled);
         if honeycomb_raster::cached_render_enabled() {
-            honeycomb_raster::update_view_geometry(
+            let generation = honeycomb_raster::update_view_geometry(
                 self.layout_mode.get() == PhotoLayout::Honeycomb,
                 self.tile_width.get(),
                 self.tile_height.get(),
                 self.root.scale_factor(),
-                width,
             );
+            if generation != self.mask_generation.get() {
+                self.mask_generation.set(generation);
+                // Queued rasterisations from the previous generation are
+                // discarded, so let every tile ask for its mask again instead
+                // of waiting forever for a result that will never arrive.
+                for entry in self.live_tiles.borrow().values() {
+                    entry.tile.release_honeycomb_mask_lookup();
+                }
+            }
         }
         self.geometry_for_current_layout(width);
         self.spacer
@@ -1145,7 +1156,7 @@ impl SectionedFolderView {
                             tile.tile.set_presentation_scale(1.0);
                         }
                         tile.tile.set_presentation_offset(0.0, 0.0);
-                        if honeycomb_raster::cached_render_enabled() {
+                        if honeycomb_raster::cached_mask_applies(self.tile_width.get()) {
                             tile.tile.try_apply_cached_honeycomb_mask();
                         }
                         tile.move_to(&self.root, item.x, item.y);
@@ -1716,6 +1727,7 @@ impl SectionedFolderView {
         if !enabled {
             self.wall_zoom_active.set(false);
             self.wall_zoom_scale.set(1.0);
+            set_grid_zoom_animation_active(false);
             for entry in self.live_tiles.borrow().values() {
                 entry.tile.set_presentation_scale(1.0);
                 entry.tile.set_opacity(1.0);
@@ -1754,6 +1766,10 @@ impl SectionedFolderView {
         let from_scale = self.wall_zoom_scale.get();
         let weak = Rc::downgrade(self);
         let started = Cell::new(None::<i64>);
+        // The zoom changes the tile geometry, so every queued Honeycomb mask
+        // rasterisation would be discarded. Mark the motion so the mask
+        // pipeline stops asking for new rasterisations until it settles.
+        set_grid_zoom_animation_active(true);
         if std::env::var_os("PICASA_TRACE").is_some() {
             eprintln!(
                 "PIC_ZOOM_ANIM status=started mode={} tiles={} duration_ms=180 scale_from={:.3} opacity=1.0",
@@ -1769,6 +1785,7 @@ impl SectionedFolderView {
                 || !view.wall_zoom_active.get()
                 || !view.is_wall()
             {
+                set_grid_zoom_animation_active(false);
                 return glib::ControlFlow::Break;
             }
             let start = started.get().unwrap_or_else(|| {
@@ -1787,6 +1804,7 @@ impl SectionedFolderView {
             if t >= 1.0 {
                 view.wall_zoom_active.set(false);
                 view.wall_zoom_scale.set(1.0);
+                set_grid_zoom_animation_active(false);
                 glib::ControlFlow::Break
             } else {
                 glib::ControlFlow::Continue

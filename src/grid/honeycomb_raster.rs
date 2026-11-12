@@ -1,24 +1,27 @@
 use image::RgbaImage;
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-const CACHE_BUDGET_BYTES: usize = 128 * 1024 * 1024;
-const PENDING_BUDGET_BYTES: usize = 64 * 1024 * 1024;
-const PENDING_JOB_LIMIT: usize = 18;
-const QUEUED_JOB_LIMIT: usize = 16;
-const WORKER_COUNT: usize = 2;
+const CACHE_BUDGET_BYTES: usize = 64 * 1024 * 1024;
+// Every queued job keeps the decoded thumbnail alive until a worker picks it
+// up, so the budget has to cover a full viewport of tiles. Otherwise the
+// tiles that do not fit stay on the live fallback forever.
+const PENDING_BUDGET_BYTES: usize = 96 * 1024 * 1024;
+const PENDING_JOB_LIMIT: usize = 64;
+const QUEUED_JOB_LIMIT: usize = 64;
+const WORKER_COUNT: usize = 4;
 const CACHE_ALGORITHM_VERSION: u8 = 1;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(super) struct MaskCacheKey {
     presentation_revision: String,
-    source_width: u32,
-    source_height: u32,
-    tile_width: u32,
-    tile_height: u32,
-    scale_factor: u32,
+    pub(super) source_width: u32,
+    pub(super) source_height: u32,
+    pub(super) tile_width: u32,
+    pub(super) tile_height: u32,
+    pub(super) scale_factor: u32,
     render_width: u32,
     render_height: u32,
     crop_x: i32,
@@ -75,7 +78,9 @@ impl MaskCacheKey {
 
 #[derive(Default)]
 struct MaskCache {
-    entries: VecDeque<(MaskCacheKey, glib::Bytes)>,
+    /// LRU order, oldest first.
+    order: VecDeque<MaskCacheKey>,
+    entries: HashMap<MaskCacheKey, glib::Bytes>,
     bytes: usize,
     budget: usize,
     evictions: u64,
@@ -84,7 +89,8 @@ struct MaskCache {
 impl MaskCache {
     fn new(budget: usize) -> Self {
         Self {
-            entries: VecDeque::new(),
+            order: VecDeque::new(),
+            entries: HashMap::new(),
             bytes: 0,
             budget,
             evictions: 0,
@@ -92,13 +98,12 @@ impl MaskCache {
     }
 
     fn get(&mut self, key: &MaskCacheKey) -> Option<glib::Bytes> {
-        let index = self
-            .entries
-            .iter()
-            .position(|(entry_key, _)| entry_key == key)?;
-        let entry = self.entries.remove(index)?;
-        let bytes = entry.1.clone();
-        self.entries.push_back(entry);
+        let bytes = self.entries.get(key)?.clone();
+        // Refresh the LRU position of the entry.
+        if let Some(index) = self.order.iter().position(|entry| entry == key) {
+            let entry = self.order.remove(index)?;
+            self.order.push_back(entry);
+        }
         Some(bytes)
     }
 
@@ -107,24 +112,24 @@ impl MaskCache {
         if size > self.budget {
             return false;
         }
-        if let Some(index) = self
-            .entries
-            .iter()
-            .position(|(entry_key, _)| entry_key == &key)
-        {
-            if let Some((_, old)) = self.entries.remove(index) {
-                self.bytes = self.bytes.saturating_sub(old.len());
+        if let Some(old) = self.entries.insert(key.clone(), data.clone()) {
+            self.bytes = self.bytes.saturating_sub(old.len());
+            if let Some(index) = self.order.iter().position(|entry| *entry == key) {
+                self.order.remove(index);
             }
         }
         while self.bytes.saturating_add(size) > self.budget {
-            let Some((_, oldest)) = self.entries.pop_front() else {
+            let Some(oldest) = self.order.pop_front() else {
                 break;
             };
-            self.bytes = self.bytes.saturating_sub(oldest.len());
+            if let Some(removed) = self.entries.remove(&oldest) {
+                self.bytes = self.bytes.saturating_sub(removed.len());
+            }
             self.evictions = self.evictions.saturating_add(1);
         }
         self.bytes = self.bytes.saturating_add(size);
-        self.entries.push_back((key, data));
+        self.entries.insert(key.clone(), data);
+        self.order.push_back(key);
         true
     }
 
@@ -167,7 +172,7 @@ type Queue = Arc<(Mutex<QueueState>, Condvar)>;
 static MASK_CACHE: OnceLock<Mutex<MaskCache>> = OnceLock::new();
 static MASK_QUEUE: OnceLock<Queue> = OnceLock::new();
 static MASK_CURRENT_GENERATION: AtomicU64 = AtomicU64::new(0);
-static MASK_VIEW_GEOMETRY: OnceLock<Mutex<Option<(bool, i32, i32, i32, i32)>>> = OnceLock::new();
+static MASK_VIEW_GEOMETRY: OnceLock<Mutex<Option<(bool, i32, i32, i32)>>> = OnceLock::new();
 static MASK_WORKERS_STARTED: AtomicBool = AtomicBool::new(false);
 static MASK_HITS: AtomicU64 = AtomicU64::new(0);
 static MASK_MISSES: AtomicU64 = AtomicU64::new(0);
@@ -193,8 +198,26 @@ fn global_queue() -> Queue {
         .clone()
 }
 
+/// Cached CPU-rasterised Honeycomb rendering is the default: a plain texture
+/// draw keeps the real 300 px Honeycomb grid at the display refresh rate,
+/// while the live GSK mask path saturates at ~60 fps on a full-size window.
+/// `PIC_HONEYCOMB_RENDER_MODE=live` (or `gsk`) forces the old live path for
+/// comparison and troubleshooting.
 pub(super) fn cached_render_enabled() -> bool {
-    std::env::var_os("PIC_HONEYCOMB_RENDER_MODE").is_some_and(|value| value == "cached")
+    !std::env::var_os("PIC_HONEYCOMB_RENDER_MODE")
+        .is_some_and(|value| value == "live" || value == "gsk")
+}
+
+/// Smallest tile width that is rendered from a pre-masked texture.
+///
+/// A zoomed-out Honeycomb view shows hundreds of tiles at once. Pre-masking
+/// all of them needs one rasterisation and one texture upload per tile, which
+/// costs more than the live mask saves, so the small zoom levels keep the
+/// live path.
+const CACHED_MASK_MIN_TILE_WIDTH: i32 = 150;
+
+pub(super) fn cached_mask_applies(tile_width: i32) -> bool {
+    cached_render_enabled() && tile_width >= CACHED_MASK_MIN_TILE_WIDTH
 }
 
 pub(super) fn set_generation(generation: u64) {
@@ -228,18 +251,20 @@ pub(super) fn set_generation(generation: u64) {
     state.ready = ready;
 }
 
-pub(super) fn update_view_geometry(
-    enabled: bool,
-    width: i32,
-    height: i32,
-    scale: i32,
-    viewport_width: i32,
-) -> u64 {
+/// Publish the geometry the mask rasteriser renders for.
+///
+/// The generation only changes when the rendered mask geometry really
+/// changes (layout mode, tile size, device scale). Viewport width is
+/// deliberately excluded: it does not affect the rasterised mask, and a
+/// scrollbar appearing or a sidebar animating would otherwise invalidate
+/// every queued and freshly rasterised mask, leaving tiles stuck on the slow
+/// live GSK fallback.
+pub(super) fn update_view_geometry(enabled: bool, width: i32, height: i32, scale: i32) -> u64 {
     let geometry = MASK_VIEW_GEOMETRY.get_or_init(|| Mutex::new(None));
     let Ok(mut previous) = geometry.lock() else {
         return current_generation();
     };
-    let current = (enabled, width, height, scale, viewport_width);
+    let current = (enabled, width, height, scale);
     if previous.as_ref() != Some(&current) {
         *previous = Some(current);
         let generation = MASK_CURRENT_GENERATION.fetch_add(1, Ordering::AcqRel) + 1;
@@ -464,6 +489,17 @@ fn mask_worker(queue: Queue) {
         let worker_us = started.elapsed().as_micros() as u64;
         MASK_WORKER_US.fetch_add(worker_us, Ordering::Relaxed);
         let Some(image) = image else {
+            if std::env::var_os("PIC_HONEYCOMB_MASK_TRACE").is_some() {
+                eprintln!(
+                    "PIC_HONEYCOMB_MASK_RASTER_FAILED source_len={} expected={}x{} tile={}x{} scale={}",
+                    job.source.len(),
+                    job.key.source_width,
+                    job.key.source_height,
+                    job.key.tile_width,
+                    job.key.tile_height,
+                    job.key.scale_factor,
+                );
+            }
             finish_stale(&queue, &job);
             continue;
         };
@@ -670,19 +706,196 @@ pub(super) fn rasterize_hex_cover(
     let out_w = tile_w.checked_mul(scale_factor)?;
     let out_h = tile_h.checked_mul(scale_factor)?;
     let mut output = RgbaImage::new(out_w, out_h);
-    let sample_grid = 8u32;
-    let sample_count = (sample_grid * sample_grid) as f64;
-    let vertices = super::honeycomb::vertices(tile_w as f64, tile_h as f64);
+    let sample_count = (COVERAGE_SAMPLE_GRID * COVERAGE_SAMPLE_GRID) as f64;
+    // The hexagon coverage only depends on the tile geometry, never on the
+    // photo. Computing it once per geometry instead of once per photo removes
+    // 64 point-in-hex tests from every output pixel of every rasterisation.
+    let coverage = hex_coverage_map(tile_w, tile_h, scale_factor)?;
 
+    // Resampling the photo into the tile geometry is the expensive part of a
+    // rasterisation. A direct area-average sampler over the source footprint
+    // of every output pixel keeps that cost at a few milliseconds, which is
+    // what lets the mask workers keep up with a fast scroll.
+    let resampled = resample_cover(
+        source,
+        src_w,
+        src_h,
+        render_w,
+        render_h,
+        offset_x,
+        offset_y,
+        out_w,
+        out_h,
+        scale_factor,
+    );
+    let cover_buffer = &resampled;
+
+    let out_width = out_w as usize;
+    let out_height = out_h as usize;
+
+    {
+        let buffer = output.as_mut();
+        for py in 0..out_height {
+            let row_start = py * out_width;
+            let coverage_row = &coverage.coverage[row_start..row_start + out_width];
+            let source_row_start = row_start * 4;
+
+            // The columns whose pixels are completely inside the hexagon are
+            // copied in one run; only the antialiased border needs its alpha
+            // scaled.
+            let mut px = 0usize;
+            while px < out_width {
+                let covered = coverage_row[px];
+                if covered as u32 == COVERAGE_FULL {
+                    let mut run_end = px + 1;
+                    while run_end < out_width && coverage_row[run_end] as u32 == COVERAGE_FULL {
+                        run_end += 1;
+                    }
+                    let destination = row_start + px;
+                    buffer[destination * 4..(destination + (run_end - px)) * 4].copy_from_slice(
+                        &cover_buffer[source_row_start + px * 4..source_row_start + run_end * 4],
+                    );
+                    px = run_end;
+                    continue;
+                }
+                let destination = row_start + px;
+                let pixel = &mut buffer[destination * 4..destination * 4 + 4];
+                pixel.copy_from_slice(
+                    &cover_buffer[source_row_start + px * 4..source_row_start + px * 4 + 4],
+                );
+                let alpha = ((pixel[3] as f64 * covered as f64 / sample_count).round()) as u8;
+                pixel[3] = alpha;
+                px += 1;
+            }
+        }
+    }
+    Some(output)
+}
+
+/// Sample the source photo into the tile grid with bilinear filtering.
+///
+/// The mapping is the one the live GSK path uses: the cover geometry is
+/// expressed in normalized texture coordinates and the destination pixel
+/// centre is mapped into source texel space, where the two neighbouring
+/// texels are blended. The loop reads through raw pointers because it runs
+/// for every pixel of every Honeycomb tile.
+fn resample_cover(
+    source: &[u8],
+    src_w: u32,
+    src_h: u32,
+    render_w: u32,
+    render_h: u32,
+    offset_x: i32,
+    offset_y: i32,
+    out_w: u32,
+    out_h: u32,
+    scale_factor: u32,
+) -> Vec<u8> {
+    let out_width = out_w as usize;
+    let out_height = out_h as usize;
+    let src_width = src_w as usize;
+
+    // Bilinear texel indices and weights for every output column and row.
+    let mut columns = Vec::with_capacity(out_width);
+    for px in 0..out_width {
+        let logical_x = (px as f32 + 0.5) / scale_factor as f32;
+        let u = (logical_x - offset_x as f32) / render_w as f32;
+        let x = (u * src_w as f32 - 0.5).clamp(0.0, src_w.saturating_sub(1) as f32);
+        let x0 = x.floor() as u32;
+        columns.push((x0, (x0 + 1).min(src_w - 1), x - x0 as f32));
+    }
+    let mut rows = Vec::with_capacity(out_height);
+    for py in 0..out_height {
+        let logical_y = (py as f32 + 0.5) / scale_factor as f32;
+        let v = (logical_y - offset_y as f32) / render_h as f32;
+        let y = (v * src_h as f32 - 0.5).clamp(0.0, src_h.saturating_sub(1) as f32);
+        let y0 = y.floor() as u32;
+        rows.push((y0, (y0 + 1).min(src_h - 1), y - y0 as f32));
+    }
+
+    let mut output = vec![0u8; out_width * out_height * 4];
+    let source_ptr = source.as_ptr();
+    let output_ptr = output.as_mut_ptr();
+    // SAFETY: every index below is derived from a clamped texel coordinate in
+    // [0, src_w - 1] resp. [0, src_h - 1], so the byte offsets stay inside
+    // the source and output buffers.
+    unsafe {
+        for (py, &(y0, y1, fy)) in rows.iter().enumerate() {
+            let row0 = y0 as usize * src_width;
+            let row1 = y1 as usize * src_width;
+            for (px, &(x0, x1, fx)) in columns.iter().enumerate() {
+                let top_left = source_ptr.add((row0 + x0 as usize) * 4);
+                let top_right = source_ptr.add((row0 + x1 as usize) * 4);
+                let bottom_left = source_ptr.add((row1 + x0 as usize) * 4);
+                let bottom_right = source_ptr.add((row1 + x1 as usize) * 4);
+                let destination = output_ptr.add((py * out_width + px) * 4);
+                for channel in 0..4 {
+                    let top = *top_left.add(channel) as f32 * (1.0 - fx)
+                        + *top_right.add(channel) as f32 * fx;
+                    let bottom = *bottom_left.add(channel) as f32 * (1.0 - fx)
+                        + *bottom_right.add(channel) as f32 * fx;
+                    *destination.add(channel) = (top * (1.0 - fy) + bottom * fy).round() as u8;
+                }
+            }
+        }
+    }
+    output
+}
+
+const COVERAGE_SAMPLE_GRID: u32 = 8;
+const COVERAGE_FULL: u32 = COVERAGE_SAMPLE_GRID * COVERAGE_SAMPLE_GRID;
+const COVERAGE_CACHE_ENTRIES: usize = 8;
+
+type CoverageKey = (u32, u32, u32);
+
+/// Per-pixel hexagon coverage for one tile geometry.
+///
+/// `coverage` holds the 8x8 supersampled sample count per output pixel and
+/// `full_spans` the horizontal run of pixels that are completely inside the
+/// hexagon. The run lets a rasterisation copy whole rows instead of
+/// recomputing every pixel.
+#[derive(Clone)]
+struct HexCoverage {
+    coverage: Vec<u8>,
+}
+
+struct CoverageCache {
+    entries: VecDeque<(CoverageKey, Arc<HexCoverage>)>,
+}
+
+fn coverage_cache() -> &'static Mutex<CoverageCache> {
+    static CACHE: OnceLock<Mutex<CoverageCache>> = OnceLock::new();
+    CACHE.get_or_init(|| {
+        Mutex::new(CoverageCache {
+            entries: VecDeque::new(),
+        })
+    })
+}
+
+/// Antialiased hexagon coverage per output pixel for one tile geometry.
+///
+/// The map is shared by every photo rendered at that geometry, so a Honeycomb
+/// grid only pays the 8x8 supersampling cost once per zoom level instead of
+/// once per tile.
+fn hex_coverage_map(tile_w: u32, tile_h: u32, scale_factor: u32) -> Option<Arc<HexCoverage>> {
+    let out_w = tile_w.checked_mul(scale_factor)?;
+    let out_h = tile_h.checked_mul(scale_factor)?;
+    let key = (tile_w, tile_h, scale_factor);
+    if let Ok(mut cache) = coverage_cache().lock() {
+        if let Some(index) = cache.entries.iter().position(|(entry, _)| *entry == key) {
+            let entry = cache.entries.remove(index)?;
+            let map = entry.1.clone();
+            cache.entries.push_back(entry);
+            return Some(map);
+        }
+    }
+
+    let sample_grid = COVERAGE_SAMPLE_GRID;
+    let vertices = super::honeycomb::vertices(tile_w as f64, tile_h as f64);
+    let mut map = vec![0u8; (out_w as usize) * (out_h as usize)];
     for py in 0..out_h {
         for px in 0..out_w {
-            let logical_x = (px as f64 + 0.5) / scale_factor as f64;
-            let logical_y = (py as f64 + 0.5) / scale_factor as f64;
-            let u = (logical_x - offset_x as f64) / render_w as f64;
-            let v = (logical_y - offset_y as f64) / render_h as f64;
-            let color = sample_bilinear(source, src_w, src_h, u, v);
-
-            let mut covered = 0u32;
+            let mut covered = 0u8;
             for sy in 0..sample_grid {
                 for sx in 0..sample_grid {
                     let x =
@@ -690,38 +903,21 @@ pub(super) fn rasterize_hex_cover(
                     let y =
                         (py as f64 + (sy as f64 + 0.5) / sample_grid as f64) / scale_factor as f64;
                     if point_in_hex(&vertices, x, y) {
-                        covered += 1;
+                        covered = covered.saturating_add(1);
                     }
                 }
             }
-            let alpha = ((color[3] as f64 * covered as f64 / sample_count).round()) as u8;
-            output.put_pixel(px, py, image::Rgba([color[0], color[1], color[2], alpha]));
+            map[(py * out_w + px) as usize] = covered;
         }
     }
-    Some(output)
-}
-
-fn sample_bilinear(source: &[u8], width: u32, height: u32, u: f64, v: f64) -> [u8; 4] {
-    // GSK texture nodes use normalized texture coordinates. Mapping the
-    // destination pixel center to texel space therefore subtracts 0.5.
-    let x = (u * width as f64 - 0.5).clamp(0.0, width.saturating_sub(1) as f64);
-    let y = (v * height as f64 - 0.5).clamp(0.0, height.saturating_sub(1) as f64);
-    let x0 = x.floor() as u32;
-    let y0 = y.floor() as u32;
-    let x1 = (x0 + 1).min(width - 1);
-    let y1 = (y0 + 1).min(height - 1);
-    let fx = x - x0 as f64;
-    let fy = y - y0 as f64;
-    let at = |px: u32, py: u32, channel: usize| {
-        source[((py * width + px) * 4) as usize + channel] as f64
-    };
-    let mut result = [0; 4];
-    for (channel, value) in result.iter_mut().enumerate() {
-        let top = at(x0, y0, channel) * (1.0 - fx) + at(x1, y0, channel) * fx;
-        let bottom = at(x0, y1, channel) * (1.0 - fx) + at(x1, y1, channel) * fx;
-        *value = (top * (1.0 - fy) + bottom * fy).round() as u8;
+    let map = Arc::new(HexCoverage { coverage: map });
+    if let Ok(mut cache) = coverage_cache().lock() {
+        cache.entries.push_back((key, map.clone()));
+        while cache.entries.len() > COVERAGE_CACHE_ENTRIES {
+            cache.entries.pop_front();
+        }
     }
-    result
+    Some(map)
 }
 
 fn point_in_hex(vertices: &[(f64, f64); 6], x: f64, y: f64) -> bool {

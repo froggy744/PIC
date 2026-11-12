@@ -255,6 +255,14 @@ pub fn request_priority(path: String, mtime: Option<i64>, size_bytes: Option<i64
 /// forever. Unlike a normal request this must run even though the file exists,
 /// but only when the original is reachable: an offline 320 px preview is still
 /// better than no preview at all.
+/// Quality upgrades rebuild a thumbnail at the higher resolution.
+///
+/// A zoomed-out Honeycomb view can show well over a hundred tiles at once, and
+/// every undersized thumbnail it displays would otherwise ask for its own
+/// upgrade. Each upgrade decodes and re-encodes the original, so the whole
+/// viewport would be re-encoded at once and the gallery would stall. Upgrades
+/// only sharpen what is on screen, so they are rate limited and simply
+/// continue a little later.
 pub(crate) fn request_quality_upgrade(
     path: String,
     mtime: Option<i64>,
@@ -309,6 +317,10 @@ fn request_priority_impl(
     }
     if known_decode_failure(&path, &destination) {
         crate::thumbnail_trace::event(&path, "generation_request", "decode_failure_suppressed");
+        // The upgrade never runs, so the pending mark has to go. Otherwise the
+        // display worker waits for a file that is never rewritten and the tile
+        // stays empty for the whole handoff timeout.
+        clear_priority_upgrade(&destination);
         return;
     }
     if !crate::source::cached_file_available(&path) {
@@ -316,6 +328,7 @@ fn request_priority_impl(
         if std::env::var_os("PICASA_TRACE").is_some() {
             eprintln!("PIC_THUMBNAIL skip reason=unavailable uri={path}");
         }
+        clear_priority_upgrade(&destination);
         return;
     }
 
@@ -351,6 +364,9 @@ fn request_priority_impl(
                 wake.notify_all();
             }
         }
+        // The queued job owns the upgrade now; a stale mark would make the
+        // display worker wait for a file that the queued job never writes.
+        clear_priority_upgrade(&destination);
         return;
     }
     pending.insert(destination.clone(), ThumbnailWorkState::Queued);
@@ -793,7 +809,7 @@ fn priority_dispatch_index(
             .or_else(|| {
                 select(&|job| {
                     job.5 == visible && (!is_raw(&job.0) || is_nikon_raw(&job.0)) && eligible(job)
-            })
+                })
             })
             .or_else(|| select(&|job| job.5 == visible && eligible(job)))
     };

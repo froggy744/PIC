@@ -1363,7 +1363,13 @@ impl Gallery {
             let Some(photo) = tile.imp().photo.borrow().as_ref().cloned() else {
                 continue;
             };
-            let Some(request) = photo_presentation_request(&photo, true) else {
+            let Some(request) = ({
+                    let mut request = photo_presentation_request(&photo, true);
+                    request.as_mut().map(|request| {
+                        request.display_width = self.tile_width.get();
+                    });
+                    request
+                }) else {
                 continue;
             };
             if let Some(paintable) = folder_thumbnail_cache_get(&request.key) {
@@ -1492,7 +1498,13 @@ impl Gallery {
             let Some(photo) = photos.get(index) else {
                 continue;
             };
-            let Some(request) = photo_presentation_request(photo, true) else {
+            let Some(request) = ({
+                    let mut request = photo_presentation_request(photo, true);
+                    request.as_mut().map(|request| {
+                        request.display_width = self.tile_width.get();
+                    });
+                    request
+                }) else {
                 continue;
             };
             if folder_thumbnail_cache_get(&request.key).is_none() {
@@ -1701,7 +1713,13 @@ impl Gallery {
             let Some(photo) = tile.imp().photo.borrow().as_ref().cloned() else {
                 continue;
             };
-            let Some(request) = photo_presentation_request(&photo, true) else {
+            let Some(request) = ({
+                    let mut request = photo_presentation_request(&photo, true);
+                    request.as_mut().map(|request| {
+                        request.display_width = self.tile_width.get();
+                    });
+                    request
+                }) else {
                 continue;
             };
             if let Some(paintable) = folder_thumbnail_cache_get(&request.key) {
@@ -1874,7 +1892,13 @@ impl Gallery {
             let Some(photo) = photos.get(index) else {
                 continue;
             };
-            let Some(request) = photo_presentation_request(photo, true) else {
+            let Some(request) = ({
+                    let mut request = photo_presentation_request(photo, true);
+                    request.as_mut().map(|request| {
+                        request.display_width = self.tile_width.get();
+                    });
+                    request
+                }) else {
                 continue;
             };
             if folder_thumbnail_cache_get(&request.key).is_some() {
@@ -1994,7 +2018,7 @@ impl Gallery {
     pub fn drain_thumbnail_display_completions(&self) -> usize {
         let completions = crate::thumbnail_display::take_completions();
         let due_retries = crate::thumbnail_display::take_due_retry_keys();
-        let mask_enabled = honeycomb_raster::cached_render_enabled();
+        let mask_enabled = honeycomb_raster::cached_mask_applies(self.tile_width.get());
         let mask_results = if mask_enabled {
             honeycomb_raster::take_ready(honeycomb_raster::current_generation())
         } else {
@@ -2009,7 +2033,7 @@ impl Gallery {
 
         let mut loaded = HashMap::<String, gtk::gdk::Paintable>::new();
         let mut missing = HashSet::<String>::new();
-        let cached_mode = honeycomb_raster::cached_render_enabled()
+        let cached_mode = honeycomb_raster::cached_mask_applies(self.tile_width.get())
             && self.layout() == PhotoLayout::Honeycomb
             && !grid_zoom_animation_active();
         let mut tiles = Vec::new();
@@ -2075,7 +2099,8 @@ impl Gallery {
             };
             if due_retries.contains(&key) && tile.is_mapped() {
                 crate::thumbnail_trace::event(&photo.path(), "display_retry", "due_visible_tile");
-                if let Some(request) = photo_presentation_request(&photo, true) {
+                if let Some(mut request) = photo_presentation_request(&photo, true) {
+                    request.display_width = self.tile_width.get();
                     crate::thumbnail_display::submit_latest_visible(request);
                 }
             }
@@ -2089,7 +2114,15 @@ impl Gallery {
                     }
                 }
             } else if missing.contains(&key) {
-                tile.mark_presentation_missing(&key);
+                // A missing outcome can arrive after the thumbnail was already
+                // delivered and applied. Marking the tile missing then would
+                // clear the available flag of a tile that shows a picture, and
+                // the tile would keep asking for the same thumbnail again.
+                let already_applied = tile.imp().applied_visual_key.borrow().as_deref()
+                    == Some(key.as_str());
+                if !already_applied {
+                    tile.mark_presentation_missing(&key);
+                }
             }
         }
 

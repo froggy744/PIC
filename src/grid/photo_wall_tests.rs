@@ -1017,11 +1017,15 @@ fn actual_library_honeycomb_cached_scroll_benchmark() {
         "grid" => (PhotoLayout::Grid, "grid"),
         other => panic!("unknown PIC_BENCH_LAYOUT={other}"),
     };
-    assert_eq!(
-        honeycomb_raster::cached_render_enabled(),
-        mode == "cached",
-        "renderer env flag must match the benchmark mode"
-    );
+    if mode != "grid" {
+        let expected_cached = mode == "cached";
+        assert_eq!(
+            honeycomb_raster::cached_render_enabled(),
+            expected_cached,
+            "PIC_BENCH_LAYOUT={mode} requires PIC_HONEYCOMB_RENDER_MODE={}",
+            if expected_cached { "cached" } else { "live" }
+        );
+    }
     let gallery = Rc::new(Gallery::new(
         &[],
         100,
@@ -1049,10 +1053,16 @@ fn actual_library_honeycomb_cached_scroll_benchmark() {
     } else {
         gallery.attach_sectioned_folder_scroll(&scroll);
     }
+    let bench_dimension = |name: &str, fallback: i32| {
+        std::env::var_os(name)
+            .and_then(|value| value.to_str().and_then(|value| value.parse::<i32>().ok()))
+            .filter(|value| *value > 0)
+            .unwrap_or(fallback)
+    };
     let window = gtk::Window::builder()
         .title("PIC real-library Honeycomb cache benchmark")
-        .default_width(1280)
-        .default_height(800)
+        .default_width(bench_dimension("PIC_BENCH_WINDOW_WIDTH", 1280))
+        .default_height(bench_dimension("PIC_BENCH_WINDOW_HEIGHT", 800))
         .child(&scroll)
         .build();
     let gallery_for_tick = gallery.clone();
@@ -1062,6 +1072,15 @@ fn actual_library_honeycomb_cached_scroll_benchmark() {
     });
     window.present();
     settle();
+    // The real gallery zooms to 300 px tiles by default on a large display;
+    // the 100 px constructor default understates Honeycomb mask cost.
+    if let Some(width) = std::env::var_os("PIC_BENCH_ZOOM_WIDTH")
+        .and_then(|value| value.to_str().and_then(|value| value.parse::<i32>().ok()))
+        .filter(|width| *width > 0)
+    {
+        gallery.request_slider_zoom(width);
+        settle();
+    }
     if std::env::var_os("PIC_BENCH_ONE_PHOTO").is_none() {
         gallery.refresh_thumbnails();
     }

@@ -952,7 +952,8 @@ impl Gallery {
                     break;
                 }
                 if let Some(photo) = photos.get(item.photo_index) {
-                    if let Some(request) = photo_presentation_request(photo, true) {
+                    if let Some(mut request) = photo_presentation_request(photo, true) {
+                        request.display_width = self.tile_width.get();
                         if folder_thumbnail_cache_get(&request.key).is_none() {
                             requests.push(request);
                         }

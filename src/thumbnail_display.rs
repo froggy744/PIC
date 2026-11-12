@@ -86,6 +86,9 @@ pub fn invalidate_retry(key: &str) {
     }
 }
 
+/// Display width assumed when the caller does not know the tile size.
+const DEFAULT_DISPLAY_WIDTH: i32 = 1024;
+
 #[derive(Debug, Clone)]
 pub struct DisplayRequest {
     pub key: String,
@@ -98,6 +101,13 @@ pub struct DisplayRequest {
     pub source_width: i64,
     pub source_height: i64,
     pub visible_priority: bool,
+    /// Width in pixels the thumbnail is shown at.
+    ///
+    /// A zoomed-out gallery shows hundreds of tiles at once, and rebuilding
+    /// every one of them at the high resolution would stall the view for
+    /// seconds. Small tiles are perfectly served by the regular thumbnail,
+    /// so the requested width decides whether an upgrade is worth it.
+    pub display_width: i32,
 }
 
 #[derive(Debug)]
@@ -168,6 +178,7 @@ pub fn request_for(
         source_width,
         source_height,
         visible_priority,
+        display_width: DEFAULT_DISPLAY_WIDTH,
     }
 }
 
@@ -584,6 +595,7 @@ fn load_thumbnail_with_policy(request: &DisplayRequest, regenerate: bool) -> Dis
     // be presented here. Keep showing it for now, but rebuild it in place when
     // the original is reachable.
     if regenerate
+        && request.display_width >= crate::grid::tile_needs_high_quality_width()
         && crate::thumbnail::thumbnail_needs_quality_upgrade(image.width(), image.height())
     {
         crate::thumbnail::request_quality_upgrade(

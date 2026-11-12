@@ -96,6 +96,19 @@ fn photo_presentation_request(
     ))
 }
 
+/// Tiles at least this wide are shown from the high resolution thumbnail.
+///
+/// A zoomed-out gallery shows hundreds of tiles at once, and rebuilding every
+/// one of them at the high resolution decodes and re-encodes the original for
+/// each of them. Below this width the regular thumbnail is still sharp, so
+/// the gallery keeps using it.
+const HIGH_QUALITY_TILE_WIDTH: i32 = 150;
+
+/// Smallest tile width that is shown from the high resolution thumbnail.
+pub(crate) fn tile_needs_high_quality_width() -> i32 {
+    HIGH_QUALITY_TILE_WIDTH
+}
+
 fn queue_photo_presentation_async(photo: &PhotoObject, visible_priority: bool) -> bool {
     let Some(request) = photo_presentation_request(photo, visible_priority) else {
         return false;
@@ -170,6 +183,22 @@ fn filename_caption_height(visible: bool) -> i32 {
 /// rows can never overlap a caption.
 fn tile_block_height(tile_height: i32, filename_visible: bool) -> i32 {
     tile_height.max(1) + filename_caption_height(filename_visible)
+}
+
+/// Memoised Honeycomb mask key for one tile.
+///
+/// The key is only valid while the presentation revision, the source size and
+/// the tile geometry stay the same.
+struct HoneycombMaskKeyCache {
+    presentation_key: String,
+    source_width: u32,
+    source_height: u32,
+    tile_width: u32,
+    tile_height: u32,
+    scale_factor: u32,
+    mtime: i64,
+    size_bytes: i64,
+    key: crate::grid::honeycomb_raster::MaskCacheKey,
 }
 
 /// Pure geometry for one tile, split out of `size_allocate` so the square-image
@@ -282,6 +311,14 @@ mod square_tile {
         pub honeycomb_mask_scale_factor: Cell<i32>,
         pub(super) honeycomb_mask_lookup_key:
             RefCell<Option<super::honeycomb_raster::MaskCacheKey>>,
+        /// Memoised Honeycomb mask key for this tile.
+        ///
+        /// The key embeds the presentation revision, the source size and the
+        /// tile geometry. Rebuilding it for every visible tile on every
+        /// layout refresh allocated a string and rehashed it thousands of
+        /// times per second, which kept the GTK thread busy even while the
+        /// library was idle.
+        pub(super) honeycomb_mask_key_cache: RefCell<Option<super::HoneycombMaskKeyCache>>,
         pub width: Cell<i32>,
         pub height: Cell<i32>,
         // Presentation-only FLIP offset. GTK allocation remains at the real
@@ -1197,11 +1234,26 @@ impl SquareTile {
         }
     }
 
+    /// Build the display request for this tile.
+    ///
+    /// The requested quality follows the size the tile is actually shown at,
+    /// so a zoomed-out view does not rebuild hundreds of high resolution
+    /// thumbnails.
+    fn presentation_request(
+        &self,
+        photo: &PhotoObject,
+        visible_priority: bool,
+    ) -> Option<crate::thumbnail_display::DisplayRequest> {
+        let mut request = photo_presentation_request(photo, visible_priority)?;
+        request.display_width = self.width();
+        Some(request)
+    }
+
     fn queue_presentation_visual_async(&self, visible_priority: bool) -> bool {
         let Some(photo) = self.imp().photo.borrow().as_ref().cloned() else {
             return false;
         };
-        let Some(request) = photo_presentation_request(&photo, visible_priority) else {
+        let Some(request) = self.presentation_request(&photo, visible_priority) else {
             return false;
         };
 
@@ -1381,7 +1433,7 @@ impl SquareTile {
                     picture.add_css_class("missing-thumbnail");
                 }
             }
-            if let Some(request) = photo_presentation_request(&bound, true) {
+            if let Some(request) = self.presentation_request(&bound, true) {
                 crate::thumbnail_display::submit_latest_visible(request);
             }
         }
@@ -1442,7 +1494,7 @@ impl SquareTile {
         if photo.corrupt() {
             return false;
         }
-        let Some(request) = photo_presentation_request(&photo, visible_priority) else {
+        let Some(request) = self.presentation_request(&photo, visible_priority) else {
             return false;
         };
 
@@ -1559,24 +1611,55 @@ impl SquareTile {
         if !self.imp().honeycomb.get() || !self.is_mapped() || grid_zoom_animation_active() {
             return None;
         }
+        let tile_width: u32 = self.width().try_into().ok()?;
+        let tile_height: u32 = self.height().try_into().ok()?;
+        let scale_factor: u32 = self.scale_factor().try_into().ok()?;
         let photo = self.imp().photo.borrow();
         let photo = photo.as_ref()?;
+        let mtime = photo.mtime();
+        let size_bytes = photo.size_bytes();
+
+        // Reuse the memoised key while nothing that identifies the mask has
+        // changed. Rebuilding it allocated and hashed a string for every
+        // visible tile on every layout refresh.
+        if let Some(cached) = self.imp().honeycomb_mask_key_cache.borrow().as_ref() {
+            if cached.presentation_key == presentation_key
+                && cached.source_width == source_width
+                && cached.source_height == source_height
+                && cached.tile_width == tile_width
+                && cached.tile_height == tile_height
+                && cached.scale_factor == scale_factor
+                && cached.mtime == mtime
+                && cached.size_bytes == size_bytes
+            {
+                return Some(cached.key.clone());
+            }
+        }
+
         if photo_presentation_key(photo).as_deref() != Some(presentation_key) {
             return None;
         }
-        let revision = format!(
-            "{presentation_key}:{}:{}",
-            photo.mtime(),
-            photo.size_bytes()
-        );
-        honeycomb_raster::MaskCacheKey::new(
+        let revision = format!("{presentation_key}:{mtime}:{size_bytes}");
+        let key = honeycomb_raster::MaskCacheKey::new(
             revision,
             source_width,
             source_height,
-            self.width().try_into().ok()?,
-            self.height().try_into().ok()?,
-            self.scale_factor().try_into().ok()?,
-        )
+            tile_width,
+            tile_height,
+            scale_factor,
+        )?;
+        self.imp().honeycomb_mask_key_cache.replace(Some(HoneycombMaskKeyCache {
+            presentation_key: presentation_key.to_owned(),
+            source_width,
+            source_height,
+            tile_width,
+            tile_height,
+            scale_factor,
+            mtime,
+            size_bytes,
+            key: key.clone(),
+        }));
+        Some(key)
     }
 
     fn honeycomb_source_dimensions(&self) -> Option<(u32, u32)> {
@@ -1602,7 +1685,7 @@ impl SquareTile {
     }
 
     fn prepare_honeycomb_mask(&self, source: glib::Bytes) {
-        if !honeycomb_raster::cached_render_enabled() || !self.is_mapped() {
+        if !honeycomb_raster::cached_mask_applies(self.width()) || !self.is_mapped() {
             return;
         }
         let Some(key) = self.current_honeycomb_mask_key() else {
@@ -1653,6 +1736,23 @@ impl SquareTile {
             != Some(key)
             || key.output_size() != Some((width, height))
         {
+            if std::env::var_os("PIC_HONEYCOMB_MASK_TRACE").is_some() {
+                eprintln!(
+                    "PIC_HONEYCOMB_MASK_APPLY_REJECTED source={}x{} tile={}x{} scale={} key_source={}x{} key_tile={}x{} key_scale={} output={}x{}",
+                    source_width,
+                    source_height,
+                    self.width(),
+                    self.height(),
+                    self.scale_factor(),
+                    key.source_width,
+                    key.source_height,
+                    key.tile_width,
+                    key.tile_height,
+                    key.scale_factor,
+                    width,
+                    height,
+                );
+            }
             return false;
         }
         let Some(frame) = self.first_child().and_downcast::<gtk::Overlay>() else {
@@ -1675,6 +1775,11 @@ impl SquareTile {
         );
         picture.set_paintable(Some(&texture));
         self.imp().honeycomb_mask_cached.set(true);
+        // The masked texture was rasterised from this photo's thumbnail, so
+        // the thumbnail is available even though the plain paintable was
+        // never applied. Without this the tile keeps asking for a thumbnail
+        // it already has.
+        photo.set_thumbnail_available(true);
         self.imp()
             .honeycomb_mask_lookup_key
             .replace(Some(key.clone()));
@@ -1688,9 +1793,19 @@ impl SquareTile {
         true
     }
 
+    /// Release the in-flight mask lookup without touching the painted tile.
+    ///
+    /// A queued rasterisation can be discarded when the mask generation
+    /// changes (zoom, layout switch). Without releasing the lookup key the
+    /// tile would never ask again and would stay on the live GSK fallback.
+    pub(super) fn release_honeycomb_mask_lookup(&self) {
+        self.imp().honeycomb_mask_lookup_key.borrow_mut().take();
+    }
+
     fn clear_honeycomb_mask_cached(&self) {
         let was_cached = self.imp().honeycomb_mask_cached.replace(false);
         self.imp().honeycomb_mask_lookup_key.borrow_mut().take();
+        self.imp().honeycomb_mask_key_cache.borrow_mut().take();
         let original = self.imp().honeycomb_mask_original.take();
         self.imp().honeycomb_mask_size.set((0, 0));
         self.imp().honeycomb_mask_scale_factor.set(0);
@@ -1712,12 +1827,18 @@ impl SquareTile {
     // textures back from Vulkan on the GTK thread. The lookup key ensures a
     // single in-flight request per tile/geometry; failed submissions retry.
     fn queue_cached_honeycomb_mask_source(&self) -> bool {
-        if !honeycomb_raster::cached_render_enabled()
+        if !honeycomb_raster::cached_mask_applies(self.width())
             || !self.imp().honeycomb.get()
             || !self.is_mapped()
             || !self.imp().visual_loaded.get()
             || self.imp().honeycomb_mask_cached.get()
         {
+            return false;
+        }
+        // A zoom changes the tile geometry, so the mask rasterisation in flight
+        // would be discarded. Wait for the zoom to settle instead of burning
+        // CPU on masks for a geometry that is about to change again.
+        if grid_zoom_animation_active() {
             return false;
         }
         let Some(photo) = self.imp().photo.borrow().as_ref().cloned() else {
@@ -1739,7 +1860,7 @@ impl SquareTile {
         if self.try_apply_cached_honeycomb_mask() {
             return true;
         }
-        let Some(request) = photo_presentation_request(&photo, true) else {
+        let Some(request) = self.presentation_request(&photo, true) else {
             return false;
         };
         if crate::thumbnail_display::submit(request) {
@@ -1750,7 +1871,9 @@ impl SquareTile {
     }
 
     fn try_apply_cached_honeycomb_mask(&self) -> bool {
-        if !honeycomb_raster::cached_render_enabled() || self.imp().honeycomb_mask_cached.get() {
+        if !honeycomb_raster::cached_mask_applies(self.width())
+            || self.imp().honeycomb_mask_cached.get()
+        {
             return self.imp().honeycomb_mask_cached.get();
         }
         let Some((source_width, source_height)) = self.honeycomb_source_dimensions() else {

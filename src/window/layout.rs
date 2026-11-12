@@ -440,6 +440,16 @@
     compact_dock.set_visible(false);
     compact_dock.add_css_class("compact-sidebar-dock");
     compact_dock.add_css_class("navigation-sidebar");
+    // Compact navigation is a separate widget from AdwOverlaySplitView.
+    // Guard it independently against layout/theme refreshes in immersive mode.
+    {
+        let immersive = immersive_active.clone();
+        compact_dock.connect_visible_notify(move |dock| {
+            if immersive.get() && dock.is_visible() {
+                dock.set_visible(false);
+            }
+        });
+    }
     layout_row.append(&compact_dock);
     main_split.set_hexpand(true);
     layout_row.append(&main_split);
@@ -1248,6 +1258,7 @@
         let right_toggle = compact_right_toggle_slot.clone();
         let controls_sync = compact_controls_sync_slot.clone();
         let collapsed_width = collapsed_sidebar_width.clone();
+        let immersive = immersive_active.clone();
         Rc::new(move |show_normal| {
             expanded.set(show_normal);
             dock.set_visible(!show_normal);
@@ -1271,6 +1282,15 @@
             }
             if let Some(button) = right_toggle.borrow().as_ref() {
                 button.set_visible(!show_normal);
+            }
+            if immersive.get() {
+                // A theme or compact-mode sync may run while immersive is
+                // active. Store the mode, but never leave the 44px rail or
+                // any pinned sidebar allocated beside the gallery.
+                dock.set_visible(false);
+                left_column.set_visible(true);
+                sidebar.set_visible(true);
+                split.set_show_sidebar(false);
             }
             if let Some(sync) = controls_sync.borrow().as_ref() { sync(); }
         })

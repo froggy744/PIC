@@ -84,6 +84,13 @@ impl InfoBar {
         }
     }
 
+    /// Hide the inspector action while no-panel presentation is active.
+    /// The underlying panel also has a visibility guard for context-menu
+    /// and keyboard actions that do not originate from this button.
+    pub fn set_properties_enabled(&self, enabled: bool) {
+        self.properties_button.set_sensitive(enabled);
+    }
+
     pub fn append_utility(&self, button: &gtk::Button) {
         configure_action_button(button);
         self.utilities.append(button);

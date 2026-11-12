@@ -150,12 +150,13 @@ fn immersive_install_chrome_edge(
                 properties_split.clone(), lightbox.root.clone(),
                 lightbox_properties_panel.clone()
             );
+            let panel_for_leave = panel.clone();
             motion.connect_leave(move |_| {
                 let token = serial.get().wrapping_add(1);
                 serial.set(token);
                 let (active, serial, strip, split, viewer, viewer_panel, panel) = (
                     active.clone(), serial.clone(), strip.clone(), split.clone(),
-                    viewer.clone(), viewer_panel.clone(), panel.clone()
+                    viewer.clone(), viewer_panel.clone(), panel_for_leave.clone()
                 );
                 glib::timeout_add_local(Duration::from_millis(700), move || {
                     if !active.get() || serial.get() != token {

@@ -1,3 +1,4 @@
+{
 // Included by build.rs after the live window widgets are assembled. This is
 // deliberately presentation-only: the existing gallery, lightbox and caches
 // stay in place when immersive mode is toggled.
@@ -351,4 +352,5 @@ fn immersive_install_chrome_edge(
             }
         });
     }
+}
 }

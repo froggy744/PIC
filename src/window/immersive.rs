@@ -97,119 +97,20 @@ fn immersive_install_chrome_edge(
         &gallery_surface, info.root.upcast_ref(), true, immersive_active.clone()
     );
 
-    let right_strip = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    right_strip.set_width_request(12);
-    right_strip.set_vexpand(true);
-    right_strip.set_halign(gtk::Align::End);
-    right_strip.set_valign(gtk::Align::Fill);
-    right_strip.set_visible(false);
-    gallery_surface.add_overlay(&right_strip);
-    let right_serial = Rc::new(Cell::new(0_u64));
-    let motion = gtk::EventControllerMotion::new();
+    // Immersive has no right-edge inspector. Guard every existing toggle path.
     {
-        let (active, serial, strip, split, viewer, viewer_panel) = (
-            immersive_active.clone(), right_serial.clone(), right_strip.clone(),
-            properties_split.clone(), lightbox.root.clone(),
-            lightbox_properties_panel.clone()
-        );
-        motion.connect_enter(move |_, _, _| {
-            let token = serial.get().wrapping_add(1);
-            serial.set(token);
-            let (active, serial, strip, split, viewer, viewer_panel) = (
-                active.clone(), serial.clone(), strip.clone(), split.clone(),
-                viewer.clone(), viewer_panel.clone()
-            );
-            glib::timeout_add_local_once(Duration::from_millis(180), move || {
-                if !active.get() || serial.get() != token { return; }
-                if viewer.is_visible() {
-                    viewer_panel.set_visible(true);
-                } else {
-                    split.set_show_sidebar(true);
-                }
-                strip.set_visible(false);
-            });
-        });
-    }
-    {
-        let serial = right_serial.clone();
-        motion.connect_leave(move |_| serial.set(serial.get().wrapping_add(1)));
-    }
-    right_strip.add_controller(motion);
-
-    for panel in [
-        properties_shell.clone().upcast::<gtk::Widget>(),
-        lightbox_properties_panel.clone().upcast::<gtk::Widget>(),
-    ] {
-        let motion = gtk::EventControllerMotion::new();
-        {
-            let serial = right_serial.clone();
-            motion.connect_enter(move |_, _, _| serial.set(serial.get().wrapping_add(1)));
-        }
-        {
-            let (active, serial, strip, split, viewer, viewer_panel) = (
-                immersive_active.clone(), right_serial.clone(), right_strip.clone(),
-                properties_split.clone(), lightbox.root.clone(),
-                lightbox_properties_panel.clone()
-            );
-            let panel_for_leave = panel.clone();
-            motion.connect_leave(move |_| {
-                let token = serial.get().wrapping_add(1);
-                serial.set(token);
-                let (active, serial, strip, split, viewer, viewer_panel, panel) = (
-                    active.clone(), serial.clone(), strip.clone(), split.clone(),
-                    viewer.clone(), viewer_panel.clone(), panel_for_leave.clone()
-                );
-                glib::timeout_add_local(Duration::from_millis(700), move || {
-                    if !active.get() || serial.get() != token {
-                        return glib::ControlFlow::Break;
-                    }
-                    if immersive_has_popup(&panel) {
-                        return glib::ControlFlow::Continue;
-                    }
-                    if viewer.is_visible() {
-                        viewer_panel.set_visible(false);
-                    } else {
-                        split.set_show_sidebar(false);
-                    }
-                    strip.set_visible(true);
-                    glib::ControlFlow::Break
-                });
-            });
-        }
-        panel.add_controller(motion);
-    }
-    // The existing Properties button may also toggle the panel while
-    // immersive. Keep the edge target synchronized in that case.
-    {
-        let (active, strip, viewer) =
-            (immersive_active.clone(), right_strip.clone(), lightbox.root.clone());
+        let active = immersive_active.clone();
         properties_split.connect_show_sidebar_notify(move |split| {
-            if active.get() && !viewer.is_visible() {
-                strip.set_visible(!split.shows_sidebar());
+            if active.get() && split.shows_sidebar() {
+                split.set_show_sidebar(false);
             }
         });
     }
     {
-        let (active, strip, viewer) =
-            (immersive_active.clone(), right_strip.clone(), lightbox.root.clone());
+        let active = immersive_active.clone();
         lightbox_properties_panel.connect_visible_notify(move |panel| {
-            if active.get() && viewer.is_visible() {
-                strip.set_visible(!panel.is_visible());
-            }
-        });
-    }
-    {
-        let (active, strip, split, panel) = (
-            immersive_active.clone(), right_strip.clone(), properties_split.clone(),
-            lightbox_properties_panel.clone()
-        );
-        lightbox.root.connect_visible_notify(move |viewer| {
-            if active.get() {
-                strip.set_visible(if viewer.is_visible() {
-                    !panel.is_visible()
-                } else {
-                    !split.shows_sidebar()
-                });
+            if active.get() && panel.is_visible() {
+                panel.set_visible(false);
             }
         });
     }
@@ -233,9 +134,9 @@ fn immersive_install_chrome_edge(
             right_header.clone(), right_column.clone(), gallery_surface.clone(),
             info.root.clone(), metadata_panel.root.clone()
         );
-        let (top_strip, bottom_strip, right_strip, button, lightbox) = (
-            top_strip.clone(), bottom_strip.clone(), right_strip.clone(),
-            immersive_button.clone(), lightbox.clone()
+        let (top_strip, bottom_strip, button, lightbox, info_for_mode) = (
+            top_strip.clone(), bottom_strip.clone(),
+            immersive_button.clone(), lightbox.clone(), info.clone()
         );
         let (left_was_open, right_was_open, viewer_right_was_open, metadata_was_visible) = (
             left_was_open.clone(), right_was_open.clone(),
@@ -261,10 +162,14 @@ fn immersive_install_chrome_edge(
                 split.set_show_sidebar(false);
                 split.set_pin_sidebar(false);
                 split.set_collapsed(true);
+                // A collapsed-notify handler may change the sidebar state.
+                split.set_show_sidebar(false);
                 properties.set_show_sidebar(false);
                 properties.set_pin_sidebar(false);
                 properties.set_collapsed(true);
+                properties.set_show_sidebar(false);
                 viewer_panel.set_visible(false);
+                info_for_mode.set_properties_enabled(false);
                 metadata_root.set_visible(false);
                 left_edge.set_visible(true);
 
@@ -281,13 +186,11 @@ fn immersive_install_chrome_edge(
 
                 top_strip.set_visible(true);
                 bottom_strip.set_visible(true);
-                right_strip.set_visible(true);
                 button.set_icon_name("view-restore-symbolic");
                 button.set_tooltip_text(Some("Exit Immersive Mode (I / Esc)"));
             } else {
                 top_strip.set_visible(false);
                 bottom_strip.set_visible(false);
-                right_strip.set_visible(false);
                 split.set_show_sidebar(false);
                 properties.set_show_sidebar(false);
                 viewer_panel.set_visible(false);
@@ -296,6 +199,7 @@ fn immersive_install_chrome_edge(
                 properties.set_collapsed(right_was_collapsed.get());
                 split.set_pin_sidebar(true);
                 properties.set_pin_sidebar(true);
+                info_for_mode.set_properties_enabled(true);
 
                 surface.remove_overlay(&header);
                 column.prepend(&header);

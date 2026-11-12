@@ -13,7 +13,9 @@
     let space_toggle_in_progress_for_key = space_toggle_in_progress.clone();
     let search_popup_for_key = search_popup_slot.clone();
     let window_for_fullscreen_key = window.clone();
-    window_escape.connect_key_pressed(move |_, key, _, _| {
+    let immersive_active_for_key = immersive_active.clone();
+    let immersive_toggle_for_key = immersive_toggle_slot.clone();
+    window_escape.connect_key_pressed(move |_, key, _, modifiers| {
         if key == gtk::gdk::Key::Escape {
             // The editor may leave focus in the infobar, outside its own key
             // controller. Clone before invoking: closing clears this slot.
@@ -70,9 +72,28 @@
             
             lightbox_for_window_escape.request_close();
             glib::Propagation::Stop
+        } else if key == gtk::gdk::Key::Escape && immersive_active_for_key.get() {
+            if let Some(toggle) = immersive_toggle_for_key.borrow().as_ref() {
+                toggle();
+            }
+            glib::Propagation::Stop
         } else if (key == gtk::gdk::Key::Escape || key == gtk::gdk::Key::BackSpace)
             && date_browser_back_for_key.borrow().as_ref().is_some_and(|back| back()) {
             glib::Propagation::Stop
+        } else if (key == gtk::gdk::Key::i || key == gtk::gdk::Key::I)
+            && !modifiers.intersects(
+                gtk::gdk::ModifierType::CONTROL_MASK
+                    | gtk::gdk::ModifierType::ALT_MASK
+                    | gtk::gdk::ModifierType::SUPER_MASK
+                    | gtk::gdk::ModifierType::META_MASK,
+            )
+        {
+            if let Some(toggle) = immersive_toggle_for_key.borrow().as_ref() {
+                toggle();
+                glib::Propagation::Stop
+            } else {
+                glib::Propagation::Proceed
+            }
         } else if key == gtk::gdk::Key::F11 {
             if window_for_fullscreen_key.is_fullscreen() {
                 window_for_fullscreen_key.unfullscreen();

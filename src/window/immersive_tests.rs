@@ -115,6 +115,10 @@ fn immersive_mode_hides_the_compact_rail_and_restores_it() {
     assert!(!split.shows_sidebar());
 
     enter_immersive(&window);
+    let handle = descendants(root).into_iter()
+        .find(|widget| widget.has_css_class("sidebar-resize-handle"))
+        .expect("shared resize handle");
+    assert!(handle.is_visible(), "compact immersive sidebar needs its divider");
 
     // Immersive Mode hides every piece of left navigation.
     assert!(!dock.is_visible(), "the compact rail must be hidden");
@@ -134,6 +138,7 @@ fn immersive_mode_hides_the_compact_rail_and_restores_it() {
     // Leaving the session restores the exact previous configuration.
     enter_immersive(&window);
     assert!(dock.is_visible(), "the compact rail must come back");
+    assert!(!handle.is_visible(), "windowed compact rail hides the divider");
     assert!(!split.shows_sidebar());
     assert_eq!(saved_sidebar_mode(&database).as_deref(), Some("true"));
 

@@ -2106,6 +2106,9 @@
     let shell_for_compact_drag = sidebar_shell.clone();
     let compact_labels_for_drag = compact_labels.clone();
     let sidebar_resize_active_for_update = sidebar_resize_active.clone();
+    let immersive_for_drag_update = immersive_active.clone();
+    let slide_width_for_drag = immersive_slide_width.clone();
+    let normal_width_for_drag = immersive_normal_width.clone();
     sidebar_drag.connect_drag_update(move |gesture, offset_x, offset_y| {
         if !sidebar_resize_active_for_update.get() {
             return;
@@ -2128,6 +2131,11 @@
             for label in compact_labels_for_drag.borrow().iter() {
                 label.set_visible(width >= 90.0);
             }
+            if immersive_for_drag_update.get() {
+                slide_width_for_drag.set(width.round() as i32);
+                if let Some(parent) = shell_for_compact_drag.parent() { parent.queue_allocate(); }
+                return;
+            }
             main_split_for_drag_update.set_max_sidebar_width(width);
             let split_width = f64::from(main_split_for_drag_update.width().max(1));
             main_split_for_drag_update
@@ -2149,7 +2157,13 @@
         let target_width = (sidebar_drag_start_width_update.get() + delta)
             .clamp(SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH)
             .min(split_width * 0.70);
-        if main_split_for_drag_update.is_collapsed() {
+        if immersive_for_drag_update.get() {
+            collapsed_sidebar_width_update.set(target_width);
+            normal_width_for_drag.set(target_width.round() as i32);
+            slide_width_for_drag.set(target_width.round() as i32);
+            shell_for_compact_drag.set_width_request(target_width.round() as i32);
+            if let Some(parent) = shell_for_compact_drag.parent() { parent.queue_allocate(); }
+        } else if main_split_for_drag_update.is_collapsed() {
             collapsed_sidebar_width_update.set(target_width);
             main_split_for_drag_update.set_max_sidebar_width(target_width);
         } else {

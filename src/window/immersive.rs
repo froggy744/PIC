@@ -88,8 +88,8 @@ fn immersive_install_chrome_edge(
     // The strip is 12px wide and reveals after a short rest, so a pointer
     // that merely crosses the window edge does not flash the sidebar.
     const IMMERSIVE_EDGE_WIDTH: f64 = 12.0;
-    const IMMERSIVE_EDGE_REVEAL_DELAY_MS: u64 = 180;
-    const IMMERSIVE_SIDEBAR_HIDE_DELAY_MS: u64 = 700;
+    const IMMERSIVE_EDGE_REVEAL_DELAY_MS: u64 = 135;
+    const IMMERSIVE_SIDEBAR_HIDE_DELAY_MS: u64 = 400;
 
     // Immersive sidebar slide.
     //
@@ -366,6 +366,7 @@ fn immersive_install_chrome_edge(
             });
         }
         let reveal_sidebar_for_motion = show_immersive_sidebar.clone();
+        let slide_for_motion = immersive_slide.clone();
         immersive_edge_motion.connect_motion(move |_, x, _| {
             if !active.get() {
                 return;
@@ -387,6 +388,15 @@ fn immersive_install_chrome_edge(
                     return;
                 }
                 schedule_hide_for_motion();
+                return;
+            }
+            if slide_for_motion.get() > 0.0
+                && x < overlay_width(&shell, &split) * slide_for_motion.get().clamp(0.0, 1.0)
+            {
+                serial.set(serial.get().wrapping_add(1));
+                armed.set(false);
+                shown.set(true);
+                reveal_sidebar_for_motion();
                 return;
             }
             if x > IMMERSIVE_EDGE_WIDTH {
@@ -513,6 +523,7 @@ fn immersive_install_chrome_edge(
             left_was_show_gesture.clone(), left_was_hide_gesture.clone()
         );
         let immersive_shown = immersive_sidebar_shown.clone();
+        let resize_handle = sidebar_shell.last_child().expect("sidebar resize handle");
         Rc::new(move || {
             let entering = !active.get();
             active.set(entering);
@@ -535,6 +546,7 @@ fn immersive_install_chrome_edge(
                 // left untouched.
                 immersive_shown.set(false);
                 dock.set_visible(false);
+                resize_handle.set_visible(true);
                 left_column.set_visible(true);
                 sidebar.set_visible(true);
                 split.set_show_sidebar(false);
@@ -618,6 +630,7 @@ fn immersive_install_chrome_edge(
                 // Move the compact page back to its original windowed dock.
                 compact_immersive_toggle.set_visible(false);
                 immersive_sidebar_page(true);
+                resize_handle.set_visible(expanded.get());
                 surface.remove_overlay(&shell);
                 shell.set_width_request(-1);
                 shell.set_visible(true);

@@ -411,12 +411,6 @@ mod square_tile {
             if w <= 0 || h <= 0 {
                 return;
             }
-            if self.honeycomb_mask_cached.get()
-                && (self.honeycomb_mask_size.get() != (w, h)
-                    || self.honeycomb_mask_scale_factor.get() != obj.scale_factor())
-            {
-                obj.clear_honeycomb_mask_cached();
-            }
             let bounds = gtk::graphene::Rect::new(0.0, 0.0, w as f32, h as f32);
             if !self.honeycomb_mask_cached.get() {
                 let stale = self
@@ -583,6 +577,14 @@ mod square_tile {
         }
 
         fn size_allocate(&self, width: i32, height: i32, baseline: i32) {
+            if self.honeycomb_mask_cached.get()
+                && (self.honeycomb_mask_size.get() != (width, height)
+                    || self.honeycomb_mask_scale_factor.get() != self.obj().scale_factor())
+            {
+                // Restoring the picture invalidates its allocation, so do it
+                // before allocating the frame rather than during snapshot.
+                self.obj().clear_honeycomb_mask_cached();
+            }
             let layout = super::tile_layout(
                 self.width.get(),
                 self.height.get(),

@@ -1262,7 +1262,6 @@
         let width = compact_width.clone();
         let slide_width = immersive_slide_width.clone();
         let normal_width = immersive_normal_width.clone();
-        let surface = gallery_surface.clone();
         Rc::new(move |normal| {
             if normal {
                 if page.parent().is_some_and(|parent| parent == shell.clone().upcast::<gtk::Widget>()) {
@@ -1286,7 +1285,11 @@
                 slide_width.set(width.get().round() as i32);
             }
             shell.set_width_request(slide_width.get());
-            surface.queue_allocate();
+            // In immersive mode the shell's parent is the gallery overlay.
+            // Reallocate only that presentation parent after changing width.
+            if let Some(parent) = shell.parent() {
+                parent.queue_allocate();
+            }
         })
     };
     let compact_right_toggle_slot: Rc<RefCell<Option<gtk::Button>>> = Rc::new(RefCell::new(None));

@@ -5348,6 +5348,10 @@ fn start_photo_export_single(
         sidebar_expanded,
         sidebar_hover_reveal,
         sidebar_shell,
+        immersive_slide_width,
+        immersive_normal_width,
+        immersive_sidebar_page,
+        compact_immersive_toggle,
     ) = include!("layout.rs");
     crate::startup_trace::mark("layout_widgets_done", Some(layout_started));
 

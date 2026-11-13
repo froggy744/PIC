@@ -5347,6 +5347,7 @@ fn start_photo_export_single(
         left_column,
         sidebar_expanded,
         sidebar_hover_reveal,
+        sidebar_shell,
     ) = include!("layout.rs");
     crate::startup_trace::mark("layout_widgets_done", Some(layout_started));
 

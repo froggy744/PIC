@@ -2923,5 +2923,6 @@
         left_column,
         sidebar_expanded,
         sidebar_hover_reveal,
+        sidebar_shell,
     )
 }

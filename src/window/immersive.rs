@@ -112,19 +112,20 @@ fn immersive_install_chrome_edge(
     let immersive_edge_armed = Rc::new(Cell::new(false));
     let immersive_edge_pointer_x = Rc::new(Cell::new(f64::MAX));
     {
-        // Width of the overlay sidebar in window coordinates. The split is
-        // collapsed while immersive, so the sidebar sits at the very left
-        // edge of the window and covers this many pixels.
-        fn overlay_width(split: &adw::OverlaySplitView) -> f64 {
-            let allocated = split.sidebar().map(|sidebar| sidebar.width()).unwrap_or(0);
+        // Width of the overlay sidebar in window coordinates. Immersive
+        // reveals the existing sidebar shell as a static presentation
+        // overlay, so its own allocation is the authoritative width.
+        fn overlay_width(shell: &gtk::Overlay, split: &adw::OverlaySplitView) -> f64 {
+            let allocated = shell.width();
             if allocated > 0 {
                 f64::from(allocated)
             } else {
                 split.max_sidebar_width()
             }
         }
-        let (split, active, shown, column) = (
+        let (split, shell, active, shown, column) = (
             main_split.clone(),
+            sidebar_shell.clone(),
             immersive_active.clone(),
             immersive_sidebar_shown.clone(),
             left_column.clone(),
@@ -138,7 +139,12 @@ fn immersive_install_chrome_edge(
         // position is re-checked when the timer fires, so a pointer that
         // returned to the sidebar keeps it open.
         let schedule_hide: Rc<dyn Fn()> = {
-            let (split, active, shown) = (split.clone(), active.clone(), shown.clone());
+            let (split, shell, active, shown) = (
+                split.clone(),
+                shell.clone(),
+                active.clone(),
+                shown.clone(),
+            );
             let (serial, armed, pointer_x) = (
                 serial.clone(),
                 armed.clone(),
@@ -151,7 +157,12 @@ fn immersive_install_chrome_edge(
                 armed.set(true);
                 let token = serial.get().wrapping_add(1);
                 serial.set(token);
-                let (split, active, shown) = (split.clone(), active.clone(), shown.clone());
+                let (split, shell, active, shown) = (
+                    split.clone(),
+                    shell.clone(),
+                    active.clone(),
+                    shown.clone(),
+                );
                 let (serial, armed, pointer_x) = (
                     serial.clone(),
                     armed.clone(),
@@ -165,11 +176,14 @@ fn immersive_install_chrome_edge(
                         }
                         armed.set(false);
                         // The pointer must still be outside the sidebar.
-                        if pointer_x.get() < overlay_width(&split) {
+                        if pointer_x.get() < overlay_width(&shell, &split) {
                             return;
                         }
+                        // Presentation-only overlay: hiding is a visibility
+                        // toggle, so no animated drawer transition can move
+                        // the gallery's scroll adjustment.
                         shown.set(false);
-                        split.set_show_sidebar(false);
+                        shell.set_visible(false);
                     },
                 );
             })
@@ -203,7 +217,7 @@ fn immersive_install_chrome_edge(
             if shown.get() {
                 // The overlay is open. A pointer inside it keeps it open; a
                 // pointer outside it starts the auto-hide timer.
-                if x < overlay_width(&split) {
+                if x < overlay_width(&shell, &split) {
                     serial.set(serial.get().wrapping_add(1));
                     armed.set(false);
                     return;
@@ -231,7 +245,12 @@ fn immersive_install_chrome_edge(
             armed.set(true);
             let token = serial.get().wrapping_add(1);
             serial.set(token);
-            let (split, active, shown) = (split.clone(), active.clone(), shown.clone());
+            let (split, shell, active, shown) = (
+                split.clone(),
+                shell.clone(),
+                active.clone(),
+                shown.clone(),
+            );
             let (serial, armed, pointer_x) = (
                 serial.clone(),
                 armed.clone(),
@@ -249,11 +268,12 @@ fn immersive_install_chrome_edge(
                         return;
                     }
                     // Reveal the existing full sidebar as a temporary overlay.
-                    // The split stays collapsed, so the gallery keeps its
-                    // width and the photos are not re-laid out.
+                    // It is a presentation-only GtkOverlay child, so showing it
+                    // is instantaneous and cannot re-allocate the gallery or
+                    // move its scroll adjustment.
                     shown.set(true);
                     split.set_collapsed(true);
-                    split.set_show_sidebar(true);
+                    shell.set_visible(true);
                 },
             );
         });
@@ -313,6 +333,7 @@ fn immersive_install_chrome_edge(
             left_column.clone(), sidebar.clone(), sidebar_expanded.clone(),
             compact_dock.clone(), sidebar_hover_reveal.clone()
         );
+        let shell = sidebar_shell.clone();
         let (header, column, surface, info_root, metadata_root) = (
             right_header.clone(), right_column.clone(), gallery_surface.clone(),
             info.root.clone(), metadata_panel.root.clone()
@@ -366,6 +387,27 @@ fn immersive_install_chrome_edge(
                 split.set_collapsed(true);
                 // A collapsed-notify handler may change the sidebar state.
                 split.set_show_sidebar(false);
+                // The immersive reveal is a presentation-only overlay: the
+                // existing sidebar shell leaves the split and becomes a plain
+                // GtkOverlay child over the photos. AdwOverlaySplitView has no
+                // per-widget animation switch, and its animated drawer
+                // transition re-anchors the gallery's scroll adjustment when
+                // it settles. A visibility toggle cannot move the viewport.
+                // The sidebar model, its widget tree and the gallery are
+                // untouched; only the presentation parent changes.
+                let overlay_width = split
+                    .sidebar()
+                    .map(|shell| shell.width())
+                    .filter(|width| *width > 0)
+                    .map(f64::from)
+                    .unwrap_or_else(|| split.max_sidebar_width());
+                split.set_sidebar(None::<&gtk::Widget>);
+                shell.set_width_request(overlay_width.round().max(1.0) as i32);
+                shell.set_hexpand(false);
+                shell.set_halign(gtk::Align::Start);
+                shell.set_valign(gtk::Align::Fill);
+                shell.set_vexpand(true);
+                shell.set_visible(false);
                 properties.set_show_sidebar(false);
                 properties.set_pin_sidebar(false);
                 properties.set_collapsed(true);
@@ -385,6 +427,9 @@ fn immersive_install_chrome_edge(
                 info_root.set_halign(gtk::Align::Fill);
                 info_root.set_valign(gtk::Align::End);
                 surface.add_overlay(&info_root);
+                // Added last so the overlay paints above the gallery chrome,
+                // exactly like the split's own collapsed drawer did.
+                surface.add_overlay(&shell);
 
                 top_strip.set_visible(true);
                 bottom_strip.set_visible(true);
@@ -396,6 +441,15 @@ fn immersive_install_chrome_edge(
                 // Leave the immersive overlay before restoring the layout.
                 immersive_shown.set(false);
                 split.set_show_sidebar(false);
+                // Return the presentation overlay to the split before the
+                // windowed layout is restored, and drop every presentation
+                // override so the drawer allocates exactly as before.
+                surface.remove_overlay(&shell);
+                shell.set_width_request(-1);
+                shell.set_hexpand(true);
+                shell.set_halign(gtk::Align::Fill);
+                shell.set_valign(gtk::Align::Fill);
+                split.set_sidebar(Some(&shell));
                 properties.set_show_sidebar(false);
                 viewer_panel.set_visible(false);
                 sidebar::clear_hover_open(&sidebar);

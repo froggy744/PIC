@@ -109,7 +109,6 @@ fn immersive_install_chrome_edge(
     // connected through the C API.
     let immersive_slide = Rc::new(Cell::new(0.0_f64));
     let immersive_slide_target = Rc::new(Cell::new(0.0_f64));
-    let immersive_slide_width = Rc::new(Cell::new(0_i32));
     let immersive_slide_animation: Rc<RefCell<Option<adw::SpringAnimation>>> =
         Rc::new(RefCell::new(None));
 
@@ -560,7 +559,8 @@ fn immersive_install_chrome_edge(
                     .map(f64::from)
                     .unwrap_or_else(|| split.max_sidebar_width());
                 split.set_sidebar(None::<&gtk::Widget>);
-                immersive_slide_width.set(overlay_width.round().max(1.0) as i32);
+                immersive_normal_width.set(overlay_width.round().max(1.0) as i32);
+                immersive_slide_width.set(immersive_normal_width.get());
                 shell.set_width_request(immersive_slide_width.get());
                 shell.set_hexpand(false);
                 shell.set_halign(gtk::Align::Start);
@@ -595,6 +595,7 @@ fn immersive_install_chrome_edge(
                 // Added last so the overlay paints above the gallery chrome,
                 // exactly like the split's own collapsed drawer did.
                 surface.add_overlay(&shell);
+                compact_immersive_toggle.set_visible(true);
 
                 top_strip.set_visible(true);
                 bottom_strip.set_visible(true);
@@ -614,6 +615,9 @@ fn immersive_install_chrome_edge(
                 }
                 immersive_slide.set(0.0);
                 immersive_slide_target.set(0.0);
+                // Move the compact page back to its original windowed dock.
+                compact_immersive_toggle.set_visible(false);
+                immersive_sidebar_page(true);
                 surface.remove_overlay(&shell);
                 shell.set_width_request(-1);
                 shell.set_visible(true);

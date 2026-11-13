@@ -906,6 +906,12 @@
     compact_heading.set_hexpand(true);
     compact_heading.set_halign(gtk::Align::Center);
     compact_header.set_title_widget(Some(&compact_heading));
+    // This existing compact page also serves as immersive overlay content.
+    let compact_immersive_toggle = gtk::Button::from_icon_name("pan-end-symbolic");
+    compact_immersive_toggle.add_css_class("flat");
+    compact_immersive_toggle.set_tooltip_text(Some("Switch to normal sidebar"));
+    compact_immersive_toggle.set_visible(false);
+    compact_header.pack_start(&compact_immersive_toggle);
     compact_sidebar_page.append(&compact_header);
     compact_dock.set_child(Some(&compact_sidebar_page));
 
@@ -1244,6 +1250,45 @@
         .clamp(SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH),
     ));
     let sidebar_expanded = Rc::new(Cell::new(!compact_enabled));
+    let immersive_slide_width = Rc::new(Cell::new(0_i32));
+    let immersive_normal_width = Rc::new(Cell::new(0_i32));
+    // Never instantiate a second immersive sidebar. The two existing
+    // navigation pages move between their normal parents and one overlay.
+    let immersive_sidebar_page: Rc<dyn Fn(bool)> = {
+        let shell = sidebar_shell.clone();
+        let dock = compact_dock.clone();
+        let column = left_column.clone();
+        let page = compact_sidebar_page.clone();
+        let width = compact_width.clone();
+        let slide_width = immersive_slide_width.clone();
+        let normal_width = immersive_normal_width.clone();
+        let surface = gallery_surface.clone();
+        Rc::new(move |normal| {
+            if normal {
+                if page.parent().is_some_and(|parent| parent == shell.clone().upcast::<gtk::Widget>()) {
+                    shell.set_child(None::<&gtk::Widget>);
+                }
+                if page.parent().is_none() {
+                    dock.set_child(Some(&page));
+                }
+                if column.parent().is_none() {
+                    shell.set_child(Some(&column));
+                }
+                slide_width.set(normal_width.get().max(1));
+            } else {
+                if column.parent().is_some_and(|parent| parent == shell.clone().upcast::<gtk::Widget>()) {
+                    shell.set_child(None::<&gtk::Widget>);
+                }
+                if page.parent().is_some() {
+                    dock.set_child(None::<&gtk::Widget>);
+                }
+                shell.set_child(Some(&page));
+                slide_width.set(width.get().round() as i32);
+            }
+            shell.set_width_request(slide_width.get());
+            surface.queue_allocate();
+        })
+    };
     let compact_right_toggle_slot: Rc<RefCell<Option<gtk::Button>>> = Rc::new(RefCell::new(None));
     let compact_controls_sync_slot: Rc<RefCell<Option<Rc<dyn Fn()>>>> =
         Rc::new(RefCell::new(None));
@@ -1259,9 +1304,19 @@
         let controls_sync = compact_controls_sync_slot.clone();
         let collapsed_width = collapsed_sidebar_width.clone();
         let immersive = immersive_active.clone();
-        let immersive_shown = immersive_sidebar_shown.clone();
+        let immersive_page = immersive_sidebar_page.clone();
         Rc::new(move |show_normal| {
             expanded.set(show_normal);
+            if immersive.get() {
+                // Switch the content of the already-visible presentation
+                // overlay. The split and the compact dock must not reflow.
+                immersive_page(show_normal);
+                if let Some(button) = right_toggle.borrow().as_ref() {
+                    button.set_visible(!show_normal);
+                }
+                if let Some(sync) = controls_sync.borrow().as_ref() { sync(); }
+                return;
+            }
             dock.set_visible(!show_normal);
             handle.set_visible(show_normal);
             left_column.set_visible(show_normal);
@@ -1284,20 +1339,28 @@
             if let Some(button) = right_toggle.borrow().as_ref() {
                 button.set_visible(!show_normal);
             }
-            if immersive.get() {
-                // A theme or compact-mode sync may run while immersive is
-                // active. Store the mode, but never leave the 44px rail or
-                // any pinned sidebar allocated beside the gallery, and never
-                // close the temporary overlay the immersive edge reveal owns.
-                dock.set_visible(false);
-                left_column.set_visible(true);
-                sidebar.set_visible(true);
-                split.set_show_sidebar(immersive_shown.get());
-            }
             if let Some(sync) = controls_sync.borrow().as_ref() { sync(); }
         })
     };
     set_sidebar_expanded(!compact_enabled);
+    {
+        let expand = set_sidebar_expanded.clone();
+        let connection = connection.clone();
+        let active = immersive_active.clone();
+        compact_immersive_toggle.connect_clicked(move |_| {
+            if active.get() {
+                // The clicked widget is about to be reparented.
+                let expand = expand.clone();
+                let connection = connection.clone();
+                glib::idle_add_local_once(move || {
+                    expand(true);
+                    if let Err(error) = db::set_setting(
+                        &connection.borrow(), COMPACT_SIDEBAR_MODE_KEY, "false"
+                    ) { eprintln!("Could not save normal sidebar mode: {error}"); }
+                });
+            }
+        });
+    }
     sidebar_mode_changed_slot.replace(Some({
         let connection = connection.clone();
         let set_mode = set_sidebar_expanded.clone();
@@ -1693,12 +1756,25 @@
         let expand = set_sidebar_expanded.clone();
         let expanded = sidebar_expanded.clone();
         let connection = connection.clone();
+        let active = immersive_active.clone();
         compact_button.connect_clicked(move |_| {
             let show_normal = !expanded.get();
-            expand(show_normal);
-            if let Err(error) = db::set_setting(
-                &connection.borrow(), COMPACT_SIDEBAR_MODE_KEY, &(!show_normal).to_string()
-            ) { eprintln!("Could not save sidebar mode: {error}"); }
+            if active.get() {
+                // Unparent the clicked sidebar only after GTK dispatch ends.
+                let expand = expand.clone();
+                let connection = connection.clone();
+                glib::idle_add_local_once(move || {
+                    expand(show_normal);
+                    if let Err(error) = db::set_setting(
+                        &connection.borrow(), COMPACT_SIDEBAR_MODE_KEY, &(!show_normal).to_string()
+                    ) { eprintln!("Could not save sidebar mode: {error}"); }
+                });
+            } else {
+                expand(show_normal);
+                if let Err(error) = db::set_setting(
+                    &connection.borrow(), COMPACT_SIDEBAR_MODE_KEY, &(!show_normal).to_string()
+                ) { eprintln!("Could not save sidebar mode: {error}"); }
+            }
         });
     }
     {
@@ -2956,5 +3032,9 @@
         sidebar_expanded,
         sidebar_hover_reveal,
         sidebar_shell,
+        immersive_slide_width,
+        immersive_normal_width,
+        immersive_sidebar_page,
+        compact_immersive_toggle,
     )
 }

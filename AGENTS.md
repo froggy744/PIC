@@ -23,6 +23,21 @@ All facts below were verified from `Cargo.toml`, `build.rs`, `.cargo/config.toml
 - Format check: `cargo fmt --all -- --check`.
 - Manual GUI run: `cargo run` from the repo root.
 
+## Fast development and GUI verification
+
+PIC's existing dev profile already uses incremental builds, reduced debug information, optimized cached dependencies, and clang + mold. **Do not change Cargo profiles, linker flags, `RUSTFLAGS`, or dependencies just to speed up iterative UI work.**
+
+- Start with `git status --short --branch` and inspect only the relevant files. Preserve existing local changes.
+- For quick compile-only verification, use `cargo check --locked`. This does not produce a runnable executable.
+- For an interactive GTK/UI change that needs a real visual check, use `cargo run --locked` **from the repository root**. It compiles, links, and launches the current code; a preceding `cargo check` is optional if the next step is immediately running the app.
+- Run `cargo run --locked` only when a graphical session is available and doing so will not create a second PIC instance. Never assume a running PIC instance is the newly built binary: stop the old instance safely before relaunching.
+- For changes to immersive mode, sidebar width/dividers, hover delays, slide animations, compact switching, gallery scrolling, or GTK layout, verify the affected interactions in the running app as well as using relevant focused regression tests. Check that Grid, Honeycomb, Photo Wall, and Masonry keep their viewport and scroll position where applicable.
+- Run the smallest targeted test that demonstrates the behaviour. GTK display-dependent ignored tests should use the documented Xvfb invocation and `--test-threads=1`. Avoid full-suite runs unless warranted.
+- Preserve the existing `target/` incremental cache. Do not run `cargo clean`, delete `target/`, or start a release build for routine UI development.
+- Do not repeat successful checks without code changes. Investigate only warnings or errors introduced by the task; report unrelated existing warnings without expanding scope.
+- Running `cargo check` or `cargo run` does **not** prove visual correctness. If you cannot exercise the UI, explicitly report GUI verification as not performed.
+- For agent/token efficiency: narrow the investigation to the affected code paths; implement the smallest fix; compile/verify once per meaningful change; then summarize changed files, actual checks, and remaining limitations. Do not stop at a design proposal when implementation was requested.
+
 ## Testing quirks
 
 - All tests are inline `#[cfg(test)]` modules in `src/`; there is no `tests/` directory.

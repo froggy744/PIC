@@ -399,6 +399,58 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
+    #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+    fn scrapbook_honeycomb_has_no_rectangular_frame() {
+        use gtk4::prelude::*;
+
+        gtk4::init().unwrap();
+        let display = gtk4::gdk::Display::default().unwrap();
+        let provider = gtk4::CssProvider::new();
+        provider.load_from_path(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("themes/scrapbook/theme.css"),
+        );
+        gtk4::style_context_add_provider_for_display(
+            &display,
+            &provider,
+            gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION + 7,
+        );
+        let tile = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
+        tile.add_css_class("honeycomb-tile");
+        let frame = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
+        frame.add_css_class("photo-frame");
+        frame.add_css_class("photo-tile");
+        tile.append(&frame);
+        let window = gtk4::Window::new();
+        window.set_child(Some(&tile));
+        window.present();
+        let context = gtk4::glib::MainContext::default();
+        while context.pending() {
+            context.iteration(false);
+        }
+        for selected in [false, true] {
+            if selected {
+                frame.add_css_class("folder-photo-selected");
+            }
+            for hovered in [false, true] {
+                if hovered {
+                    tile.set_state_flags(gtk4::StateFlags::PRELIGHT, false);
+                } else {
+                    tile.unset_state_flags(gtk4::StateFlags::PRELIGHT);
+                }
+                let border = frame.style_context().border();
+                assert_eq!(
+                    (border.left(), border.right(), border.top(), border.bottom()),
+                    (0, 0, 0, 0),
+                    "selected={selected}, hovered={hovered}"
+                );
+            }
+        }
+        window.close();
+        gtk4::style_context_remove_provider_for_display(&display, &provider);
+    }
+
+    #[test]
     #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
     fn standard_theme_corner_radius_parses() {
         gtk4::init().unwrap();

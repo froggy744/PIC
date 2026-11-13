@@ -837,6 +837,17 @@ button, entry, label { letter-spacing: .15px; }
     border-radius: 5px;
     box-shadow: 1px 3px 5px rgba(75,55,41,.17);
 }
+/* Honeycomb draws its own hexagonal selection and separator outlines. */
+.honeycomb-tile .photo-frame.photo-tile,
+.honeycomb-tile:hover .photo-frame.photo-tile,
+.honeycomb-tile .photo-frame.photo-tile.folder-photo-selected,
+.honeycomb-tile:hover .photo-frame.photo-tile.folder-photo-selected {
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+    outline: none;
+}
 .photo-info-bar {
     background-image: url("assets/paper.svg");
     background-color: #fff7e9;

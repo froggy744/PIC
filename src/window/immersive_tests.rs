@@ -48,7 +48,7 @@ fn compact_dock(widget: &gtk::Widget) -> Option<gtk::Widget> {
         .find(|widget| widget.has_css_class("compact-sidebar-dock"))
 }
 
-fn immersive_window(compact: bool) -> (adw::ApplicationWindow, std::path::PathBuf) {
+fn immersive_window(compact: bool, layout: &str) -> (adw::ApplicationWindow, std::path::PathBuf) {
     // GTK can only be initialized once per process, and the test harness
     // runs every test on its own thread.
     static INIT: std::sync::Once = std::sync::Once::new();
@@ -64,7 +64,7 @@ fn immersive_window(compact: bool) -> (adw::ApplicationWindow, std::path::PathBu
         .build();
     app.register(None::<&gio::Cancellable>).unwrap();
     let directory = std::env::temp_dir().join(format!(
-        "pic-immersive-test-{}-{compact}",
+        "pic-immersive-test-{}-{compact}-{sequence}",
         std::process::id()
     ));
     std::fs::create_dir_all(&directory).unwrap();
@@ -77,6 +77,7 @@ fn immersive_window(compact: bool) -> (adw::ApplicationWindow, std::path::PathBu
             COMPACT_SIDEBAR_MODE_SETTING,
             if compact { "true" } else { "false" },
         ),
+        ("photo_layout.all", layout),
         (WINDOW_WIDTH_SETTING_KEY, "1400"),
         (WINDOW_HEIGHT_SETTING_KEY, "900"),
     ] {
@@ -103,7 +104,7 @@ fn enter_immersive(window: &adw::ApplicationWindow) {
 #[test]
 #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
 fn immersive_mode_hides_the_compact_rail_and_restores_it() {
-    let (window, database) = immersive_window(true);
+    let (window, database) = immersive_window(true, "grid");
     let root = window.upcast_ref::<gtk::Widget>();
     let split = main_split(root).unwrap();
     let dock = compact_dock(root).unwrap();
@@ -146,7 +147,7 @@ fn immersive_mode_hides_the_compact_rail_and_restores_it() {
 #[test]
 #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
 fn immersive_mode_hides_the_normal_sidebar_without_resizing_the_gallery() {
-    let (window, database) = immersive_window(false);
+    let (window, database) = immersive_window(false, "grid");
     let root = window.upcast_ref::<gtk::Widget>();
     let split = main_split(root).unwrap();
 
@@ -179,4 +180,219 @@ fn immersive_mode_hides_the_normal_sidebar_without_resizing_the_gallery() {
         "the gallery width must be restored: before={gallery_width} after={restored_width}"
     );
     window.close();
+}
+
+fn left_column(widget: &gtk::Widget) -> Option<gtk::Widget> {
+    descendants(widget)
+        .into_iter()
+        .find(|widget| widget.has_css_class("layout-left-column"))
+}
+
+fn pin_button(widget: &gtk::Widget) -> Option<gtk::Button> {
+    descendants(widget)
+        .into_iter()
+        .find(|widget| widget.has_css_class("sidebar-toggle-button"))
+        .and_then(|widget| widget.downcast::<gtk::Button>().ok())
+}
+
+fn grid_scroll(widget: &gtk::Widget) -> Option<gtk::ScrolledWindow> {
+    descendants(widget)
+        .into_iter()
+        .filter_map(|widget| widget.downcast::<gtk::ScrolledWindow>().ok())
+        .find(|scroll| {
+            scroll
+                .child()
+                .is_some_and(|child| child.has_css_class("photo-grid"))
+        })
+}
+
+fn pump_for(duration: Duration) {
+    let context = glib::MainContext::default();
+    let until = Instant::now() + duration;
+    while Instant::now() < until {
+        while context.pending() {
+            context.iteration(false);
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct ViewportSample {
+    width: i32,
+    value: f64,
+    upper: f64,
+    page: f64,
+}
+
+fn viewport_sample(content: &gtk::Widget, scroll: &gtk::ScrolledWindow) -> ViewportSample {
+    let adjustment = scroll.vadjustment();
+    ViewportSample {
+        width: content.width(),
+        value: adjustment.value(),
+        upper: adjustment.upper(),
+        page: adjustment.page_size(),
+    }
+}
+
+fn reveal_sidebar(window: &adw::ApplicationWindow) {
+    gio::prelude::ActionGroupExt::activate_action(window, "immersive-show-sidebar", None);
+}
+
+fn hide_sidebar(window: &adw::ApplicationWindow) {
+    gio::prelude::ActionGroupExt::activate_action(window, "immersive-hide-sidebar", None);
+}
+
+#[test]
+#[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+fn pin_button_exits_immersive_and_restores_the_saved_pin_state() {
+    let (window, _database) = immersive_window(false, "grid");
+    let root = window.clone().upcast::<gtk::Widget>();
+    let split = main_split(&root).unwrap();
+
+    assert!(
+        split.shows_sidebar(),
+        "the normal layout starts pinned open"
+    );
+    enter_immersive(&window);
+    assert!(!split.shows_sidebar(), "immersive hides the split sidebar");
+    assert!(split.is_collapsed());
+
+    let pin = pin_button(&root).expect("the sidebar pin button");
+    assert!(
+        pin.is_visible(),
+        "the pin button must be reachable in immersive"
+    );
+    pin.emit_clicked();
+    settle();
+
+    assert!(!split.is_collapsed(), "the pin must leave immersive mode");
+    assert!(
+        split.shows_sidebar(),
+        "exiting must restore the saved open/pinned sidebar, not toggle it"
+    );
+    assert!(left_column(&root).unwrap().is_visible());
+
+    // Outside immersive mode the button keeps its normal pin/unpin behaviour.
+    pin.emit_clicked();
+    settle();
+    assert!(
+        !split.shows_sidebar(),
+        "the pin must still hide a pinned sidebar in the windowed layout"
+    );
+    window.close();
+}
+
+#[test]
+#[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+fn pin_button_exits_immersive_from_the_compact_layout() {
+    let (window, database) = immersive_window(true, "grid");
+    let root = window.clone().upcast::<gtk::Widget>();
+    let split = main_split(&root).unwrap();
+    let dock = compact_dock(&root).unwrap();
+
+    assert!(dock.is_visible(), "the compact rail starts visible");
+    enter_immersive(&window);
+    assert!(!dock.is_visible(), "immersive hides the compact rail");
+
+    pin_button(&root)
+        .expect("the sidebar pin button")
+        .emit_clicked();
+    settle();
+
+    assert!(
+        dock.is_visible(),
+        "the compact rail must return after the pin exits immersive"
+    );
+    assert!(!split.is_collapsed());
+    assert!(!split.shows_sidebar());
+    assert_eq!(saved_sidebar_mode(&database).as_deref(), Some("true"));
+    window.close();
+}
+
+#[test]
+#[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+fn immersive_sidebar_slides_without_moving_the_gallery() {
+    for layout in ["grid", "photo_wall", "masonry", "honeycomb"] {
+        let (window, _database) = immersive_window(false, layout);
+        // Exercise the real slide; a disabled animation setting would make
+        // AdwAnimation jump straight to the final value.
+        gtk::Settings::default()
+            .expect("a display is required")
+            .set_gtk_enable_animations(true);
+        let root = window.clone().upcast::<gtk::Widget>();
+        let split = main_split(&root).unwrap();
+        let column = left_column(&root).expect("the immersive sidebar column");
+        let shell = column.parent().expect("the sidebar presentation shell");
+        let content = split.content().unwrap();
+        let scroll = grid_scroll(&content).expect("the gallery scroll");
+        let frame = shell.parent().expect("the gallery overlay");
+
+        enter_immersive(&window);
+        assert!(
+            !split.shows_sidebar(),
+            "{layout}: the sidebar must start hidden"
+        );
+        let baseline = viewport_sample(&content, &scroll);
+
+        let mut slides = Vec::new();
+        for cycle in 0..2 {
+            reveal_sidebar(&window);
+            let started = Instant::now();
+            let mut min_x = f64::MAX;
+            let mut positions = std::collections::BTreeSet::new();
+            let mut drifted = Vec::new();
+            while started.elapsed() < Duration::from_millis(750) {
+                pump_for(Duration::from_millis(10));
+                if let Some(bounds) = shell.compute_bounds(&frame) {
+                    let x = f64::from(bounds.x());
+                    min_x = min_x.min(x);
+                    positions.insert(x.round() as i32);
+                }
+                let sample = viewport_sample(&content, &scroll);
+                if sample != baseline {
+                    drifted.push(sample);
+                }
+            }
+            assert!(
+                drifted.is_empty(),
+                "{layout} cycle {cycle}: the reveal moved the gallery viewport: {drifted:?}"
+            );
+            assert!(
+                shell.is_visible(),
+                "{layout} cycle {cycle}: the revealed sidebar must stay visible"
+            );
+            let final_x = shell
+                .compute_bounds(&frame)
+                .map(|bounds| f64::from(bounds.x()))
+                .unwrap_or(f64::NEG_INFINITY);
+            assert!(
+                final_x.abs() < 2.0,
+                "{layout} cycle {cycle}: the sidebar must settle flush left, x={final_x}"
+            );
+            assert!(
+                positions.len() > 1,
+                "{layout} cycle {cycle}: the sidebar must animate, positions={positions:?}"
+            );
+            assert!(
+                min_x < -2.0,
+                "{layout} cycle {cycle}: the sidebar must start off-screen, min_x={min_x}"
+            );
+            slides.push((min_x, final_x, positions.len()));
+
+            hide_sidebar(&window);
+            pump_for(Duration::from_millis(750));
+            assert!(
+                !shell.is_visible(),
+                "{layout} cycle {cycle}: the hidden sidebar must stop being allocated"
+            );
+            let after = viewport_sample(&content, &scroll);
+            assert_eq!(
+                after, baseline,
+                "{layout} cycle {cycle}: hiding the sidebar moved the gallery viewport"
+            );
+        }
+        println!("{layout}: slides={slides:?}");
+        window.close();
+    }
 }

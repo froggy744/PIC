@@ -91,6 +91,161 @@ fn immersive_install_chrome_edge(
     const IMMERSIVE_EDGE_REVEAL_DELAY_MS: u64 = 180;
     const IMMERSIVE_SIDEBAR_HIDE_DELAY_MS: u64 = 700;
 
+    // Immersive sidebar slide.
+    //
+    // The windowed sidebar already animates with libadwaita's spring (damping
+    // ratio 1, mass 0.5, stiffness 500) inside AdwOverlaySplitView. The
+    // immersive overlay reuses the same spring, so revealing and hiding the
+    // navigation feels identical in both layouts.
+    //
+    // The drawer keeps its existing overlay child, width and full height;
+    // only its horizontal position changes. GtkOverlay emits
+    // "get-child-position" for overlay children, so the slide writes that
+    // allocation. Nothing outside the sidebar is re-measured or re-allocated:
+    // the gallery width, its scroll adjustment and every tile position stay
+    // untouched. (A GtkRevealer animates the child's width, and an animated
+    // AdwOverlaySplitView drawer re-anchors the gallery scroll; neither is
+    // usable here.) gtk4-rs 0.10 does not bind this signal, so it is
+    // connected through the C API.
+    let immersive_slide = Rc::new(Cell::new(0.0_f64));
+    let immersive_slide_target = Rc::new(Cell::new(0.0_f64));
+    let immersive_slide_width = Rc::new(Cell::new(0_i32));
+    let immersive_slide_animation: Rc<RefCell<Option<adw::SpringAnimation>>> =
+        Rc::new(RefCell::new(None));
+
+    struct ImmersiveSlidePosition {
+        shell: *mut gtk::ffi::GtkWidget,
+        slide: Rc<Cell<f64>>,
+        width: Rc<Cell<i32>>,
+    }
+
+    #[repr(C)]
+    struct ImmersiveAllocation {
+        x: i32,
+        y: i32,
+        width: i32,
+        height: i32,
+    }
+
+    unsafe extern "C" fn immersive_slide_position(
+        overlay: *mut gtk::ffi::GtkOverlay,
+        child: *mut gtk::ffi::GtkWidget,
+        allocation: *mut ImmersiveAllocation,
+        user_data: glib::ffi::gpointer,
+    ) -> glib::ffi::gboolean {
+        let state = &*(user_data as *const ImmersiveSlidePosition);
+        if child != state.shell {
+            // Let GtkOverlay's default handler position every other child.
+            return 0;
+        }
+        let width = state.width.get().max(1);
+        let height = gtk::ffi::gtk_widget_get_height(overlay.cast()).max(1);
+        let progress = state.slide.get().clamp(0.0, 1.0);
+        (*allocation).x = -((f64::from(width) * (1.0 - progress)).round() as i32);
+        (*allocation).y = 0;
+        (*allocation).width = width;
+        (*allocation).height = height;
+        1
+    }
+
+    unsafe extern "C" fn immersive_slide_destroy(
+        data: glib::ffi::gpointer,
+        _closure: *mut glib::gobject_ffi::GClosure,
+    ) {
+        drop(Box::from_raw(data as *mut ImmersiveSlidePosition));
+    }
+
+    unsafe {
+        let state = Box::new(ImmersiveSlidePosition {
+            shell: sidebar_shell.as_ptr().cast(),
+            slide: immersive_slide.clone(),
+            width: immersive_slide_width.clone(),
+        });
+        glib::gobject_ffi::g_signal_connect_data(
+            gallery_surface.as_ptr().cast(),
+            c"get-child-position".as_ptr(),
+            Some(std::mem::transmute::<
+                unsafe extern "C" fn(
+                    *mut gtk::ffi::GtkOverlay,
+                    *mut gtk::ffi::GtkWidget,
+                    *mut ImmersiveAllocation,
+                    glib::ffi::gpointer,
+                ) -> glib::ffi::gboolean,
+                unsafe extern "C" fn(),
+            >(immersive_slide_position)),
+            Box::into_raw(state).cast(),
+            Some(immersive_slide_destroy),
+            glib::gobject_ffi::G_CONNECT_DEFAULT,
+        );
+    }
+
+    let set_immersive_sidebar_shown: Rc<dyn Fn(bool)> = {
+        let shell = sidebar_shell.clone();
+        let surface = gallery_surface.clone();
+        let slide = immersive_slide.clone();
+        let target_value = immersive_slide_target.clone();
+        let animation_slot = immersive_slide_animation.clone();
+        Rc::new(move |show: bool| {
+            let target = if show { 1.0 } else { 0.0 };
+            target_value.set(target);
+            if show {
+                // Entry left the drawer hidden and its slide at 0, so it
+                // becomes visible fully off-screen and then slides in.
+                shell.set_visible(true);
+            }
+            if (slide.get() - target).abs() < 1e-6 {
+                if !show {
+                    shell.set_visible(false);
+                }
+                return;
+            }
+            let animation = {
+                let mut slot = animation_slot.borrow_mut();
+                if slot.is_none() {
+                    let surface_for_target = surface.clone();
+                    let slide_for_target = slide.clone();
+                    let shell_for_target = shell.clone();
+                    let target_for_target = target_value.clone();
+                    let callback = adw::CallbackAnimationTarget::new(move |value| {
+                        slide_for_target.set(value);
+                        // Re-run the overlay allocation so
+                        // "get-child-position" writes the new x. Only the
+                        // overlay and the sidebar are re-allocated; the
+                        // gallery keeps its allocation and scroll position.
+                        surface_for_target.queue_allocate();
+                        // Drop the off-screen drawer once the slide-out has
+                        // settled so it cannot pick or paint anymore.
+                        if target_for_target.get() <= 0.0 && value <= 1e-4 {
+                            shell_for_target.set_visible(false);
+                        }
+                    });
+                    *slot = Some(adw::SpringAnimation::new(
+                        &surface,
+                        slide.get(),
+                        target,
+                        adw::SpringParams::new(1.0, 0.5, 500.0),
+                        callback,
+                    ));
+                }
+                slot.as_ref().expect("animation was just created").clone()
+            };
+            animation.set_value_from(slide.get());
+            animation.set_value_to(target);
+            // Match the windowed drawer: clamp while closing, allow the
+            // spring's natural settle while opening.
+            animation.set_clamp(!show);
+            animation.play();
+        })
+    };
+    let show_immersive_sidebar = {
+        let setter = set_immersive_sidebar_shown.clone();
+        Rc::new(move || setter(true))
+    };
+    let hide_immersive_sidebar = {
+        let setter = set_immersive_sidebar_shown.clone();
+        Rc::new(move || setter(false))
+    };
+
     // Immersive Mode owns the left navigation for the whole session.
     //
     // `immersive_sidebar_shown` is the single authority for the temporary
@@ -139,11 +294,12 @@ fn immersive_install_chrome_edge(
         // position is re-checked when the timer fires, so a pointer that
         // returned to the sidebar keeps it open.
         let schedule_hide: Rc<dyn Fn()> = {
-            let (split, shell, active, shown) = (
+            let (split, shell, active, shown, hide_sidebar) = (
                 split.clone(),
                 shell.clone(),
                 active.clone(),
                 shown.clone(),
+                hide_immersive_sidebar.clone(),
             );
             let (serial, armed, pointer_x) = (
                 serial.clone(),
@@ -157,11 +313,12 @@ fn immersive_install_chrome_edge(
                 armed.set(true);
                 let token = serial.get().wrapping_add(1);
                 serial.set(token);
-                let (split, shell, active, shown) = (
+                let (split, shell, active, shown, hide_sidebar) = (
                     split.clone(),
                     shell.clone(),
                     active.clone(),
                     shown.clone(),
+                    hide_sidebar.clone(),
                 );
                 let (serial, armed, pointer_x) = (
                     serial.clone(),
@@ -179,11 +336,11 @@ fn immersive_install_chrome_edge(
                         if pointer_x.get() < overlay_width(&shell, &split) {
                             return;
                         }
-                        // Presentation-only overlay: hiding is a visibility
-                        // toggle, so no animated drawer transition can move
-                        // the gallery's scroll adjustment.
+                        // Slide the presentation overlay out. Moving a fixed
+                        // child cannot re-allocate the gallery or move its
+                        // scroll adjustment.
                         shown.set(false);
-                        shell.set_visible(false);
+                        hide_sidebar();
                     },
                 );
             })
@@ -209,6 +366,7 @@ fn immersive_install_chrome_edge(
                 schedule_hide();
             });
         }
+        let reveal_sidebar_for_motion = show_immersive_sidebar.clone();
         immersive_edge_motion.connect_motion(move |_, x, _| {
             if !active.get() {
                 return;
@@ -245,11 +403,11 @@ fn immersive_install_chrome_edge(
             armed.set(true);
             let token = serial.get().wrapping_add(1);
             serial.set(token);
-            let (split, shell, active, shown) = (
+            let (split, active, shown, reveal_sidebar) = (
                 split.clone(),
-                shell.clone(),
                 active.clone(),
                 shown.clone(),
+                reveal_sidebar_for_motion.clone(),
             );
             let (serial, armed, pointer_x) = (
                 serial.clone(),
@@ -267,13 +425,13 @@ fn immersive_install_chrome_edge(
                     if pointer_x.get() > IMMERSIVE_EDGE_WIDTH {
                         return;
                     }
-                    // Reveal the existing full sidebar as a temporary overlay.
-                    // It is a presentation-only GtkOverlay child, so showing it
-                    // is instantaneous and cannot re-allocate the gallery or
-                    // move its scroll adjustment.
+                    // Slide the existing full sidebar in as a temporary
+                    // overlay. It lives in a fixed presentation host, so
+                    // moving it cannot re-allocate the gallery or move its
+                    // scroll adjustment.
                     shown.set(true);
                     split.set_collapsed(true);
-                    shell.set_visible(true);
+                    reveal_sidebar();
                 },
             );
         });
@@ -388,13 +546,13 @@ fn immersive_install_chrome_edge(
                 // A collapsed-notify handler may change the sidebar state.
                 split.set_show_sidebar(false);
                 // The immersive reveal is a presentation-only overlay: the
-                // existing sidebar shell leaves the split and becomes a plain
-                // GtkOverlay child over the photos. AdwOverlaySplitView has no
-                // per-widget animation switch, and its animated drawer
-                // transition re-anchors the gallery's scroll adjustment when
-                // it settles. A visibility toggle cannot move the viewport.
-                // The sidebar model, its widget tree and the gallery are
-                // untouched; only the presentation parent changes.
+                // existing sidebar shell leaves the split and becomes an
+                // overlay child of the gallery surface. Its position is
+                // animated by the "get-child-position" handler, which only
+                // re-allocates the sidebar, so the gallery allocation, its
+                // scroll adjustment and every tile stay put. The sidebar
+                // model, its widget tree and the gallery are untouched;
+                // only the presentation parent changes.
                 let overlay_width = split
                     .sidebar()
                     .map(|shell| shell.width())
@@ -402,11 +560,18 @@ fn immersive_install_chrome_edge(
                     .map(f64::from)
                     .unwrap_or_else(|| split.max_sidebar_width());
                 split.set_sidebar(None::<&gtk::Widget>);
-                shell.set_width_request(overlay_width.round().max(1.0) as i32);
+                immersive_slide_width.set(overlay_width.round().max(1.0) as i32);
+                shell.set_width_request(immersive_slide_width.get());
                 shell.set_hexpand(false);
                 shell.set_halign(gtk::Align::Start);
                 shell.set_valign(gtk::Align::Fill);
                 shell.set_vexpand(true);
+                // Every session starts fully hidden and off-screen.
+                if let Some(animation) = immersive_slide_animation.borrow().as_ref() {
+                    animation.pause();
+                }
+                immersive_slide.set(0.0);
+                immersive_slide_target.set(0.0);
                 shell.set_visible(false);
                 properties.set_show_sidebar(false);
                 properties.set_pin_sidebar(false);
@@ -444,8 +609,14 @@ fn immersive_install_chrome_edge(
                 // Return the presentation overlay to the split before the
                 // windowed layout is restored, and drop every presentation
                 // override so the drawer allocates exactly as before.
+                if let Some(animation) = immersive_slide_animation.borrow().as_ref() {
+                    animation.pause();
+                }
+                immersive_slide.set(0.0);
+                immersive_slide_target.set(0.0);
                 surface.remove_overlay(&shell);
                 shell.set_width_request(-1);
+                shell.set_visible(true);
                 shell.set_hexpand(true);
                 shell.set_halign(gtk::Align::Fill);
                 shell.set_valign(gtk::Align::Fill);
@@ -504,6 +675,35 @@ fn immersive_install_chrome_edge(
             .activate(move |_, _, _| {
                 let toggle = toggle.clone();
                 glib::idle_add_local_once(move || toggle());
+            })
+            .build();
+        window.add_action_entries([action]);
+    }
+    // Actions for the automated GUI harness: reveal/hide the immersive
+    // sidebar without synthesising pointer motion. They drive the exact same
+    // slide as the left-edge hover.
+    for (name, show) in [
+        ("immersive-show-sidebar", true),
+        ("immersive-hide-sidebar", false),
+    ] {
+        let active = immersive_active.clone();
+        let shown = immersive_sidebar_shown.clone();
+        let split = main_split.clone();
+        let slide: Rc<dyn Fn()> = if show {
+            show_immersive_sidebar.clone()
+        } else {
+            hide_immersive_sidebar.clone()
+        };
+        let action = gio::ActionEntry::builder(name)
+            .activate(move |_, _, _| {
+                if !active.get() {
+                    return;
+                }
+                shown.set(show);
+                if show {
+                    split.set_collapsed(true);
+                }
+                slide();
             })
             .build();
         window.add_action_entries([action]);

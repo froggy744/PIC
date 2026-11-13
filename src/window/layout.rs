@@ -2135,7 +2135,23 @@
     let sidebar_hover_freeze_generation_for_unpin = sidebar_hover_freeze_generation.clone();
     let gallery_for_unpin = gallery.clone();
     let pin_button_for_menu = update_pin_button.clone();
+    let immersive_active_for_menu = immersive_active.clone();
+    let immersive_toggle_for_menu = immersive_toggle_slot.clone();
     menu.connect_clicked(move |_| {
+        // In Immersive Mode the sidebar is a presentation overlay detached
+        // from the split, so the normal pin toggle below would be inert.
+        // The pin button is the sidebar's own exit affordance there: leave
+        // the session and let its restore path put back the saved pin state
+        // instead of toggling it as a side effect.
+        if immersive_active_for_menu.get() {
+            if let Some(toggle) = immersive_toggle_for_menu.borrow().as_ref().cloned() {
+                // Reparenting the clicked sidebar during signal dispatch can
+                // cause GTK allocation warnings, exactly like the header
+                // immersive button.
+                glib::idle_add_local_once(move || toggle());
+            }
+            return;
+        }
         // A hover-revealed sidebar is temporary. This button must pin it so
         // it stays open (mouse-leave stops auto-hiding once pinned), not
         // close it again.
@@ -2223,7 +2239,23 @@
     let sidebar_layout_settle_for_show = sidebar_layout_settle.clone();
     let sidebar_hover_layout_freeze_for_pin = sidebar_hover_layout_freeze.clone();
     let sidebar_hover_freeze_generation_for_pin = sidebar_hover_freeze_generation.clone();
+    let immersive_active_for_show = immersive_active.clone();
+    let immersive_shown_for_show = immersive_sidebar_shown.clone();
+    let window_for_show = window.clone();
     show_sidebar.connect_clicked(move |_| {
+        // In Immersive Mode the sidebar shell is detached from the split, so
+        // pinning it (the windowed behaviour below) cannot show it. The arrow
+        // toggles the presentation overlay instead, exactly like the left-edge
+        // reveal, so the gallery keeps its width and scroll position.
+        if immersive_active_for_show.get() {
+            let action = if immersive_shown_for_show.get() {
+                "immersive-hide-sidebar"
+            } else {
+                "immersive-show-sidebar"
+            };
+            gio::prelude::ActionGroupExt::activate_action(&window_for_show, action, None);
+            return;
+        }
         // Pinning is the point where the sidebar becomes part of the persistent
         // layout. Recalculate only once after the slide has settled.
         sidebar_hover_freeze_generation_for_pin.set(

@@ -1264,6 +1264,9 @@
         let normal_width = immersive_normal_width.clone();
         Rc::new(move |normal| {
             if normal {
+                // The normal sidebar already paints its own theme background.
+                shell.remove_css_class("navigation-sidebar");
+                shell.remove_css_class("compact-sidebar-dock");
                 if page.parent().is_some_and(|parent| parent == shell.clone().upcast::<gtk::Widget>()) {
                     shell.set_child(None::<&gtk::Widget>);
                 }
@@ -1275,6 +1278,11 @@
                 }
                 slide_width.set(normal_width.get().max(1));
             } else {
+                // In normal compact mode these classes belong to compact_dock.
+                // When the page moves into the immersive shell, the shell
+                // must supply the same opaque, theme-aware background.
+                shell.add_css_class("navigation-sidebar");
+                shell.add_css_class("compact-sidebar-dock");
                 if column.parent().is_some_and(|parent| parent == shell.clone().upcast::<gtk::Widget>()) {
                     shell.set_child(None::<&gtk::Widget>);
                 }

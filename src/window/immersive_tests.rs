@@ -146,6 +146,58 @@ fn immersive_mode_hides_the_compact_rail_and_restores_it() {
 
 #[test]
 #[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+fn immersive_compact_switch_reuses_overlay_and_restores_compact_page() {
+    let (window, database) = immersive_window(false, "grid");
+    let root = window.clone().upcast::<gtk::Widget>();
+    let split = main_split(&root).unwrap();
+    let dock = compact_dock(&root).unwrap();
+    let column = descendants(&root)
+        .into_iter().find(|w| w.has_css_class("layout-left-column")).unwrap();
+    let shell = column.parent().unwrap().downcast::<gtk::Overlay>().unwrap();
+
+    enter_immersive(&window);
+    let gallery_width = split.content().unwrap().width();
+    gio::prelude::ActionGroupExt::activate_action(&window, "immersive-show-sidebar", None);
+    settle();
+    let full_toggle = descendants(&root).into_iter()
+        .filter_map(|w| w.downcast::<gtk::Button>().ok())
+        .find(|b| b.tooltip_text().as_deref() == Some("Toggle compact sidebar"))
+        .expect("normal sidebar compact button");
+    full_toggle.emit_clicked();
+    settle();
+
+    assert!(!dock.is_visible(), "the separate windowed compact dock stays hidden");
+    assert!(shell.is_visible(), "the immersive sidebar remains open");
+    assert!(descendants(&shell.clone().upcast::<gtk::Widget>())
+        .iter().any(|w| w.has_css_class("compact-sidebar")),
+        "the original compact page must be inside the immersive overlay");
+    assert_eq!(split.content().unwrap().width(), gallery_width);
+    assert_eq!(saved_sidebar_mode(&database).as_deref(), Some("true"));
+
+    let expand = descendants(&shell.clone().upcast::<gtk::Widget>())
+        .into_iter().filter_map(|w| w.downcast::<gtk::Button>().ok())
+        .find(|b| b.tooltip_text().as_deref() == Some("Switch to normal sidebar"))
+        .expect("immersive compact expand button");
+    expand.emit_clicked();
+    settle();
+    assert!(descendants(&shell.clone().upcast::<gtk::Widget>())
+        .iter().any(|w| w.has_css_class("layout-left-column")));
+    assert!(!dock.is_visible());
+    assert_eq!(split.content().unwrap().width(), gallery_width);
+    assert_eq!(saved_sidebar_mode(&database).as_deref(), Some("false"));
+
+    full_toggle.emit_clicked();
+    settle();
+    enter_immersive(&window);
+    assert!(dock.is_visible(), "compact dock returns when immersive exits");
+    assert!(descendants(&dock).iter().any(|w| w.has_css_class("compact-sidebar")),
+        "the same compact page must be restored to its original dock");
+    assert_eq!(saved_sidebar_mode(&database).as_deref(), Some("true"));
+    window.close();
+}
+
+#[test]
+#[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
 fn immersive_mode_hides_the_normal_sidebar_without_resizing_the_gallery() {
     let (window, database) = immersive_window(false, "grid");
     let root = window.upcast_ref::<gtk::Widget>();

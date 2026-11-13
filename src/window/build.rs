@@ -267,6 +267,10 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let immersive_sidebar_shown = Rc::new(Cell::new(false));
     let immersive_toggle_slot: Rc<RefCell<Option<Rc<dyn Fn()>>>> =
         Rc::new(RefCell::new(None));
+    let immersive_reveal_search_slot: Rc<RefCell<Option<Rc<dyn Fn()>>>> =
+        Rc::new(RefCell::new(None));
+    let immersive_hide_search_slot: Rc<RefCell<Option<Rc<dyn Fn()>>>> =
+        Rc::new(RefCell::new(None));
 
     include!("shortcuts.rs");
 
@@ -579,6 +583,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         let gallery = gallery_for_actions.clone();
         let folder_on_close = search_result_folder_on_close.clone();
         let cleared_query = cleared_search_query.clone();
+        let hide_search = immersive_hide_search_slot.clone();
         Rc::new(move || {
             if let Some(source) = debounce.borrow_mut().take() {
                 let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| source.remove()));
@@ -588,6 +593,9 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             }
             if let Some(entry) = search_entry.borrow().as_ref() {
                 if !entry.text().is_empty() {
+                    if let Some(hide) = hide_search.borrow().as_ref() {
+                        hide();
+                    }
                     folder_on_close.set(true);
                     cleared_query.replace(None);
                     suppressed.set(true);

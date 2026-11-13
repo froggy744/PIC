@@ -301,8 +301,12 @@
 
     let search_destination_click: Rc<dyn Fn(sidebar::SidebarFilter)> = {
         let destination_click_with_target = destination_click_with_target.clone();
+        let hide_search = immersive_hide_search_slot.clone();
         Rc::new(move |new_filter| {
             destination_click_with_target(new_filter, false, true);
+            if let Some(hide) = hide_search.borrow().as_ref() {
+                hide();
+            }
         })
     };
 
@@ -1262,7 +1266,17 @@
         let width = compact_width.clone();
         let slide_width = immersive_slide_width.clone();
         let normal_width = immersive_normal_width.clone();
+        let active = immersive_active.clone();
         Rc::new(move |normal| {
+            if active.get() {
+                if let Some(root) = shell.root() {
+                    if root.focus().is_some_and(|focus| focus.is_ancestor(&shell)) {
+                        // The focused button is about to be removed. Prevent
+                        // GTK from focusing and scrolling an old gallery tile.
+                        gtk::prelude::RootExt::set_focus(&root, None::<&gtk::Widget>);
+                    }
+                }
+            }
             if normal {
                 // The normal sidebar already paints its own theme background.
                 shell.remove_css_class("navigation-sidebar");
@@ -2704,10 +2718,14 @@
     let search_keyboard = gtk::EventControllerKey::new();
     search_keyboard.set_propagation_phase(gtk::PropagationPhase::Capture);
     let search_for_keyboard = search.clone();
+    let reveal_search_for_keyboard = immersive_reveal_search_slot.clone();
     search_keyboard.connect_key_pressed(move |_, key, _, modifiers| {
         if key == gtk::gdk::Key::f
             && modifiers.contains(gtk::gdk::ModifierType::CONTROL_MASK)
         {
+            if let Some(reveal) = reveal_search_for_keyboard.borrow().as_ref() {
+                reveal();
+            }
             search_for_keyboard.grab_focus();
             glib::Propagation::Stop
         } else {
@@ -2719,6 +2737,7 @@
     let begin_typed_search: Rc<dyn Fn() -> bool> = {
         let stack = main_stack.downgrade();
         let split = main_split.downgrade();
+        let reveal_search = immersive_reveal_search_slot.clone();
         Rc::new(move || {
             let (Some(stack), Some(split)) = (stack.upgrade(), split.upgrade()) else {
                 return false;
@@ -2730,6 +2749,9 @@
             }
             if split.is_collapsed() && split.shows_sidebar() {
                 split.set_show_sidebar(false);
+            }
+            if let Some(reveal) = reveal_search.borrow().as_ref() {
+                reveal();
             }
             true
         })

@@ -453,3 +453,100 @@ fn immersive_sidebar_slides_without_moving_the_gallery() {
         window.close();
     }
 }
+
+#[test]
+#[ignore = "requires GTK display; run with --ignored --test-threads=1"]
+fn immersive_search_centers_selected_folder() {
+    let (window, database) = immersive_window(false, "grid");
+    let directory = database.parent().unwrap();
+    let image_path = directory.join("sample.png");
+    image::RgbImage::from_pixel(32, 24, image::Rgb([80, 140, 210]))
+        .save(&image_path)
+        .unwrap();
+    let connection = db::open_existing(&database).unwrap();
+    for id in 1..=80 {
+        let name = if id == 75 {
+            "Unique Search Destination".to_string()
+        } else {
+            format!("Folder {id:03}")
+        };
+        let folder = directory.join(&name);
+        std::fs::create_dir_all(&folder).unwrap();
+        let photo = folder.join("photo.png");
+        std::fs::hard_link(&image_path, &photo).unwrap();
+        connection
+            .execute(
+                "INSERT INTO folders(id,path,name) VALUES (?1,?2,?3)",
+                rusqlite::params![id, folder.to_str().unwrap(), name],
+            )
+            .unwrap();
+        connection.execute("INSERT INTO photos(id,path,folder_id,width,height,added_at) VALUES (?1,?2,?1,32,24,?1)", rusqlite::params![id, photo.to_str().unwrap()]).unwrap();
+    }
+    drop(connection);
+    enter_immersive(&window);
+    let root = window.clone().upcast::<gtk::Widget>();
+    let search = descendants(&root)
+        .into_iter()
+        .find(|w| w.has_css_class("unified-search-entry"))
+        .unwrap()
+        .downcast::<gtk::SearchEntry>()
+        .unwrap();
+    let revealer = std::iter::successors(search.parent(), |w| w.parent())
+        .find_map(|w| w.downcast::<gtk::Revealer>().ok())
+        .unwrap();
+    revealer.set_reveal_child(true);
+    settle();
+    assert!(search.grab_focus());
+    search.set_text("Unique Search Destination");
+    settle();
+    search.emit_by_name::<()>("activate", &[]);
+    pump_for(Duration::from_secs(3));
+    let headings = descendants(&root)
+        .into_iter()
+        .filter_map(|w| w.downcast::<gtk::Label>().ok())
+        .filter(|label| label.text().contains("Unique Search Destination") && label.is_mapped())
+        .collect::<Vec<_>>();
+    let heading_visible = headings.iter().any(|label| {
+        label
+            .compute_bounds(&root)
+            .is_some_and(|b| b.y() >= 0.0 && b.y() < root.height() as f32)
+    });
+    assert!(
+        heading_visible,
+        "selected folder heading should be in the viewport"
+    );
+    gio::prelude::ActionGroupExt::activate_action(&window, "immersive-show-sidebar", None);
+    settle();
+    let surface = descendants(&root).into_iter().find(|widget| widget.has_css_class("sectioned-folder-view") && widget.is_mapped()).unwrap();
+    let scroll = std::iter::successors(surface.parent(), |widget| widget.parent()).find_map(|widget| widget.downcast::<gtk::ScrolledWindow>().ok()).expect("gallery scroll");
+    let destination = scroll.vadjustment().value();
+    assert!(destination > 0.0, "the destination must be away from the top");
+    scroll.vadjustment().set_value(destination / 2.0);
+    settle();
+    let baseline = scroll.vadjustment().value();
+    let compact = descendants(&root)
+        .into_iter()
+        .filter_map(|widget| widget.downcast::<gtk::Button>().ok())
+        .find(|button| button.tooltip_text().as_deref() == Some("Toggle compact sidebar"))
+        .unwrap();
+    assert!(compact.grab_focus());
+    gio::prelude::ActionGroupExt::activate_action(&window, "immersive-hide-sidebar", None);
+    settle();
+    assert_eq!(scroll.vadjustment().value(), baseline, "hiding the sidebar moved the gallery");
+    gio::prelude::ActionGroupExt::activate_action(&window, "immersive-show-sidebar", None);
+    settle();
+    assert!(compact.grab_focus());
+    compact.emit_clicked();
+    settle();
+    assert_eq!(scroll.vadjustment().value(), baseline, "compacting moved the gallery");
+    let expand = descendants(&root)
+        .into_iter()
+        .filter_map(|widget| widget.downcast::<gtk::Button>().ok())
+        .find(|button| button.tooltip_text().as_deref() == Some("Switch to normal sidebar"))
+        .unwrap();
+    assert!(expand.grab_focus());
+    expand.emit_clicked();
+    settle();
+    assert_eq!(scroll.vadjustment().value(), baseline, "expanding moved the gallery");
+    window.close();
+}

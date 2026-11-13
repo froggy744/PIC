@@ -16,6 +16,14 @@ fn immersive_has_popup(widget: &gtk::Widget) -> bool {
     false
 }
 
+fn immersive_clear_panel_focus(panel: &impl IsA<gtk::Widget>) {
+    if let Some(root) = panel.root() {
+        if root.focus().is_some_and(|focus| focus.is_ancestor(panel)) {
+            gtk::prelude::RootExt::set_focus(&root, None::<&gtk::Widget>);
+        }
+    }
+}
+
 // Top/bottom targets are put OVER the gallery, so revealing them cannot
 // recalculate Honeycomb cells or justified Photo Wall rows.
 fn immersive_install_chrome_edge(
@@ -23,7 +31,18 @@ fn immersive_install_chrome_edge(
     panel: &gtk::Widget,
     bottom: bool,
     active: Rc<Cell<bool>>,
-) -> gtk::Box {
+) -> (gtk::Box, gtk::Revealer) {
+    let revealer = gtk::Revealer::new();
+    revealer.set_transition_type(if bottom {
+        gtk::RevealerTransitionType::SlideUp
+    } else {
+        gtk::RevealerTransitionType::SlideDown
+    });
+    revealer.set_transition_duration(250);
+    revealer.set_hexpand(true);
+    revealer.set_halign(gtk::Align::Fill);
+    revealer.set_valign(if bottom { gtk::Align::End } else { gtk::Align::Start });
+    surface.add_overlay(&revealer);
     let strip = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     strip.set_height_request(12);
     strip.set_hexpand(true);
@@ -34,16 +53,16 @@ fn immersive_install_chrome_edge(
     let serial = Rc::new(Cell::new(0_u64));
     let motion = gtk::EventControllerMotion::new();
     {
-        let (panel, strip, serial, active) =
-            (panel.clone(), strip.clone(), serial.clone(), active.clone());
+        let (revealer, strip, serial, active) =
+            (revealer.clone(), strip.clone(), serial.clone(), active.clone());
         motion.connect_enter(move |_, _, _| {
             let token = serial.get().wrapping_add(1);
             serial.set(token);
-            let (panel, strip, serial, active) =
-                (panel.clone(), strip.clone(), serial.clone(), active.clone());
+            let (revealer, strip, serial, active) =
+                (revealer.clone(), strip.clone(), serial.clone(), active.clone());
             glib::timeout_add_local_once(Duration::from_millis(180), move || {
                 if active.get() && serial.get() == token {
-                    panel.set_visible(true);
+                    revealer.set_reveal_child(true);
                     strip.set_visible(false);
                 }
             });
@@ -60,28 +79,33 @@ fn immersive_install_chrome_edge(
         motion.connect_enter(move |_, _, _| serial.set(serial.get().wrapping_add(1)));
     }
     {
-        let (panel, strip, serial, active) =
-            (panel.clone(), strip.clone(), serial.clone(), active.clone());
+        let (panel, revealer, strip, serial, active) =
+            (panel.clone(), revealer.clone(), strip.clone(), serial.clone(), active.clone());
         motion.connect_leave(move |_| {
             let token = serial.get().wrapping_add(1);
             serial.set(token);
-            let (panel, strip, serial, active) =
-                (panel.clone(), strip.clone(), serial.clone(), active.clone());
+            let (panel, revealer, strip, serial, active) =
+                (panel.clone(), revealer.clone(), strip.clone(), serial.clone(), active.clone());
             glib::timeout_add_local(Duration::from_millis(700), move || {
                 if !active.get() || serial.get() != token {
                     return glib::ControlFlow::Break;
                 }
-                if immersive_has_popup(&panel) {
+                let search_has_focus = std::iter::successors(
+                    panel.root().and_then(|root| root.focus()),
+                    |widget| widget.parent(),
+                )
+                .any(|widget| widget.is::<gtk::SearchEntry>() && widget.is_ancestor(&panel));
+                if immersive_has_popup(&panel) || search_has_focus {
                     return glib::ControlFlow::Continue;
                 }
-                panel.set_visible(false);
+                revealer.set_reveal_child(false);
                 strip.set_visible(true);
                 glib::ControlFlow::Break
             });
         });
     }
     panel.add_controller(motion);
-    strip
+    (strip, revealer)
 }
 {
     // Left-edge reveal geometry for the immersive navigation overlay.
@@ -194,6 +218,7 @@ fn immersive_install_chrome_edge(
             }
             if (slide.get() - target).abs() < 1e-6 {
                 if !show {
+                    immersive_clear_panel_focus(&shell);
                     shell.set_visible(false);
                 }
                 return;
@@ -215,6 +240,7 @@ fn immersive_install_chrome_edge(
                         // Drop the off-screen drawer once the slide-out has
                         // settled so it cannot pick or paint anymore.
                         if target_for_target.get() <= 0.0 && value <= 1e-4 {
+                            immersive_clear_panel_focus(&shell_for_target);
                             shell_for_target.set_visible(false);
                         }
                     });
@@ -453,12 +479,41 @@ fn immersive_install_chrome_edge(
     immersive_button.set_tooltip_text(Some("Immersive Mode (I)"));
     right_header.pack_end(&immersive_button);
 
-    let top_strip = immersive_install_chrome_edge(
+    let (top_strip, top_revealer) = immersive_install_chrome_edge(
         &gallery_surface, right_header.upcast_ref(), false, immersive_active.clone()
     );
-    let bottom_strip = immersive_install_chrome_edge(
+    let (bottom_strip, bottom_revealer) = immersive_install_chrome_edge(
         &gallery_surface, info.root.upcast_ref(), true, immersive_active.clone()
     );
+    {
+        let (active, revealer, strip) = (
+            immersive_active.clone(), top_revealer.clone(), top_strip.clone()
+        );
+        immersive_reveal_search_slot.replace(Some(Rc::new(move || {
+            if active.get() {
+                revealer.set_reveal_child(true);
+                strip.set_visible(false);
+            }
+        })));
+    }
+    {
+        let (active, revealer, strip) = (
+            immersive_active.clone(), top_revealer.clone(), top_strip.clone()
+        );
+        immersive_hide_search_slot.replace(Some(Rc::new(move || {
+            if active.get() {
+                if let Some(root) = revealer.root() {
+                    if root.focus().is_some_and(|focus| focus.is_ancestor(&revealer)) {
+                        // Hiding the focused search entry lets GTK focus an old
+                        // gallery tile and scroll away from the destination.
+                        gtk::prelude::RootExt::set_focus(&root, None::<&gtk::Widget>);
+                    }
+                }
+                revealer.set_reveal_child(false);
+                strip.set_visible(true);
+            }
+        })));
+    }
 
     // Immersive has no right-edge inspector. Guard every existing toggle path.
     {
@@ -509,6 +564,7 @@ fn immersive_install_chrome_edge(
             top_strip.clone(), bottom_strip.clone(),
             immersive_button.clone(), lightbox.clone(), info.clone()
         );
+        let (top_revealer, bottom_revealer) = (top_revealer.clone(), bottom_revealer.clone());
         let (left_was_open, right_was_open, viewer_right_was_open, metadata_was_visible) = (
             left_was_open.clone(), right_was_open.clone(),
             viewer_right_was_open.clone(), metadata_was_visible.clone()
@@ -595,15 +651,15 @@ fn immersive_install_chrome_edge(
                 left_edge.set_visible(true);
 
                 column.remove(&header);
-                header.set_visible(false);
+                header.set_visible(true);
                 header.set_halign(gtk::Align::Fill);
                 header.set_valign(gtk::Align::Start);
-                surface.add_overlay(&header);
+                top_revealer.set_child(Some(&header));
                 column.remove(&info_root);
-                info_root.set_visible(false);
+                info_root.set_visible(true);
                 info_root.set_halign(gtk::Align::Fill);
                 info_root.set_valign(gtk::Align::End);
-                surface.add_overlay(&info_root);
+                bottom_revealer.set_child(Some(&info_root));
                 // Added last so the overlay paints above the gallery chrome,
                 // exactly like the split's own collapsed drawer did.
                 surface.add_overlay(&shell);
@@ -650,10 +706,12 @@ fn immersive_install_chrome_edge(
                 properties.set_pin_sidebar(true);
                 info_for_mode.set_properties_enabled(true);
 
-                surface.remove_overlay(&header);
+                top_revealer.set_reveal_child(false);
+                bottom_revealer.set_reveal_child(false);
+                top_revealer.set_child(None::<&gtk::Widget>);
                 column.prepend(&header);
                 header.set_visible(true);
-                surface.remove_overlay(&info_root);
+                bottom_revealer.set_child(None::<&gtk::Widget>);
                 column.append(&info_root);
                 info_root.set_visible(true);
                 metadata_root.set_visible(metadata_was_visible.get());

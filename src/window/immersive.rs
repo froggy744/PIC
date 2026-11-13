@@ -663,6 +663,7 @@ fn immersive_install_chrome_edge(
                 // Added last so the overlay paints above the gallery chrome,
                 // exactly like the split's own collapsed drawer did.
                 surface.add_overlay(&shell);
+                immersive_sidebar_page(expanded.get());
                 compact_immersive_toggle.set_visible(true);
 
                 top_strip.set_visible(true);

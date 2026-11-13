@@ -114,7 +114,12 @@ fn immersive_mode_hides_the_compact_rail_and_restores_it() {
     assert!(dock.is_visible(), "the compact rail must start visible");
     assert!(!split.shows_sidebar());
 
+    let shell = descendants(root).into_iter()
+        .find(|widget| widget.has_css_class("layout-left-column"))
+        .unwrap().parent().unwrap();
     enter_immersive(&window);
+    assert!(descendants(&shell).iter().any(|widget| widget.has_css_class("compact-sidebar")),
+        "immersive sidebar must use the compact page on entry");
     let handle = descendants(root).into_iter()
         .find(|widget| widget.has_css_class("sidebar-resize-handle"))
         .expect("shared resize handle");

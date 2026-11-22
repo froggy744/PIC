@@ -1,0 +1,300 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>PIC Architecture Review</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({ startOnLoad: true, theme: "neutral", securityLevel: "loose", flowchart: { useMaxWidth: true } });
+</script>
+<style>
+  .seam { stroke-dasharray: 4 4; }
+  .deep { background: linear-gradient(135deg, #0f172a, #1e293b); color: #f8fafc; }
+  .lbl { font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
+  pre.mermaid { background: transparent; }
+</style>
+</head>
+<body class="bg-stone-50 text-slate-900 font-sans">
+<main class="max-w-5xl mx-auto px-4 sm:px-6 py-12 space-y-12">
+
+<header class="space-y-3">
+  <h1 class="font-serif text-4xl">PIC: architecture review</h1>
+  <p class="text-sm text-slate-500">2026-11-22 · <span class="font-mono">main @ 5356ef20</span> · scope: hot spots since 2026-10 (<span class="font-mono">window/build.rs</span> 130 commits, <span class="font-mono">window/layout.rs</span> 84, gallery thumbnail pipeline, editor, InfoBar)</p>
+  <div class="flex flex-wrap gap-4 text-xs text-slate-600 pt-2">
+    <span class="flex items-center gap-1"><span class="inline-block w-4 h-3 border border-slate-500 bg-white"></span> module</span>
+    <span class="flex items-center gap-1"><svg width="24" height="8"><line x1="0" y1="4" x2="24" y2="4" stroke="#64748b" class="seam"/></svg> seam</span>
+    <span class="flex items-center gap-1"><svg width="24" height="8"><line x1="0" y1="4" x2="24" y2="4" stroke="#dc2626" stroke-width="2"/></svg> leakage</span>
+    <span class="flex items-center gap-1"><span class="inline-block w-4 h-3 deep"></span> deep module</span>
+  </div>
+</header>
+
+<section id="candidates" class="space-y-10">
+
+<!-- 1 -->
+<article id="c1" class="rounded-xl border border-slate-200 bg-white p-6 space-y-4 shadow-sm">
+  <h2 class="font-serif text-2xl">1 · Deepen gallery thumbnail presentation</h2>
+  <div class="flex gap-2 text-xs"><span class="px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 font-semibold">Strong</span><span class="px-2 py-0.5 rounded bg-slate-100 text-slate-700">in-process · 3 surface adapters</span></div>
+  <p class="font-mono text-sm text-slate-600">grid/tile.rs · grid/virtualization.rs · grid/photo_wall.rs · thumbnail_display.rs · window/build.rs (pump + drain ticks)</p>
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="rounded-lg border border-slate-200 p-3"><div class="lbl text-slate-500 mb-1">Before</div>
+<pre class="mermaid">
+flowchart LR
+  B[build.rs ticks + timers] --> Q1[queue_visible_grid]
+  B --> Q2[queue_visible_folder]
+  B --> Q3[wall_target_requests]
+  B --> P[prefetch x3]
+  B --> D[drain completions]
+  Q1 & Q2 & Q3 --> R[replace_visible_requests]
+  T[tile bind paths] --> C[(RAM cache)]
+  Q1 & Q2 & Q3 & D --> C
+  D --> A[apply_presentation_paintable]
+  T --> A
+  Q2 -. allocation lag .-> X[visibility]
+  classDef leak stroke:#dc2626,stroke-width:2px,color:#991b1b;
+  class R,X leak
+</pre></div>
+    <div class="rounded-lg border border-slate-200 p-3"><div class="lbl text-slate-500 mb-1">After</div>
+      <div class="flex flex-col gap-3 h-full justify-center">
+        <div class="flex gap-2 justify-center text-[11px]">
+          <span class="border border-slate-400 px-2 py-1 rounded">GridView adapter</span>
+          <span class="border border-slate-400 px-2 py-1 rounded">Sectioned adapter</span>
+          <span class="border border-slate-400 px-2 py-1 rounded">Wall adapter</span>
+        </div>
+        <svg viewBox="0 0 300 20" class="w-full h-5"><line x1="10" y1="10" x2="290" y2="10" stroke="#64748b" class="seam"/></svg>
+        <div class="deep rounded-lg p-4 text-center">
+          <div class="lbl opacity-70">Thumbnail presentation module</div>
+          <div class="text-sm font-mono mt-1">visible tiles in · frame() · paintables out</div>
+          <div class="text-[11px] opacity-50 mt-3">RAM cache · targets · request queue policy · prefetch budget · delivery · upgrade rules</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <p><b>Problem.</b> One concept is spread over ~15 per-surface functions, 16 cache read sites and 11 apply sites. Today's four bugs were all leaks across these seams.</p>
+  <p><b>Solution.</b> One module owns queueing, caching, sizing and delivery. Each gallery surface becomes an adapter that only reports which tiles are placed where.</p>
+  <ul class="text-sm list-disc pl-5 text-slate-700">
+    <li>Locality: queue rules live in one module</li>
+    <li>Three adapters make the seam real</li>
+    <li>Tests use a fake surface adapter, no GTK display</li>
+    <li>Delete ~10 per-surface twins</li>
+  </ul>
+</article>
+
+<!-- 2 -->
+<article id="c2" class="rounded-xl border border-slate-200 bg-white p-6 space-y-4 shadow-sm">
+  <h2 class="font-serif text-2xl">2 · Sidebar presentation state machine</h2>
+  <div class="flex gap-2 text-xs"><span class="px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 font-semibold">Strong</span><span class="px-2 py-0.5 rounded bg-slate-100 text-slate-700">in-process</span></div>
+  <p class="font-mono text-sm text-slate-600">window/layout.rs · window/immersive.rs · window/build.rs</p>
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="rounded-lg border border-slate-200 p-3"><div class="lbl text-slate-500 mb-1">Before</div>
+<pre class="mermaid">
+flowchart LR
+  L[layout.rs: 10 writers] --> W[split · dock · handle · rail]
+  I[immersive.rs: 5 writers] --> W
+  B[build.rs: 3+ writers] --> W
+  L -. 18-tuple of flags .-> B
+  I -. saved widths .-> L
+  classDef leak stroke:#dc2626,stroke-width:2px,color:#991b1b;
+  class W leak
+</pre></div>
+    <div class="rounded-lg border border-slate-200 p-3"><div class="lbl text-slate-500 mb-1">After</div>
+<pre class="mermaid">
+flowchart LR
+  E[events: pin · hover · width · immersive] --> P[Sidebar presentation module]
+  P --> S[target state]
+  S --> W[widgets: one writer]
+  classDef deep fill:#0f172a,color:#f8fafc,stroke:#0f172a;
+  class P deep
+</pre></div>
+  </div>
+  <p><b>Problem.</b> Six sidebar modes are written by 24 widget-visibility calls in three files. There have been 65 sidebar, compact or immersive commits since October, and <span class="font-mono">layout.rs</span> has 0 tests.</p>
+  <p><b>Solution.</b> One module owns the mode flags and computes one target state. It is the only thing that writes those widgets.</p>
+  <ul class="text-sm list-disc pl-5 text-slate-700">
+    <li>Locality: mode bugs live in one module</li>
+    <li>Transition tables as plain tests</li>
+    <li>Interface shrinks from an 18-tuple to events</li>
+  </ul>
+  <div class="rounded bg-amber-50 border border-amber-200 text-amber-900 text-sm px-3 py-2">Large move (~1-1.5k lines), and animation timing sits nearby. Stage it so the state is extracted before any writer changes.</div>
+</article>
+
+<!-- 3 -->
+<article id="c3" class="rounded-xl border border-slate-200 bg-white p-6 space-y-4 shadow-sm">
+  <h2 class="font-serif text-2xl">3 · Properties inspector as one owner</h2>
+  <div class="flex gap-2 text-xs"><span class="px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 font-semibold">Strong</span><span class="px-2 py-0.5 rounded bg-slate-100 text-slate-700">in-process</span></div>
+  <p class="font-mono text-sm text-slate-600">window/photo_actions.rs · window/build.rs · window/immersive.rs · infobar.rs</p>
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="rounded-lg border border-slate-200 p-3 h-64 flex flex-col"><div class="lbl text-slate-500 mb-2">Before: interface ≈ implementation</div>
+      <div class="flex gap-3 items-end flex-1">
+        <div class="flex-1 flex flex-col items-center"><div class="w-full bg-red-100 border border-red-300" style="height:150px"></div><div class="text-[11px] mt-1">interface: 16 globals + "open = ctx &amp;&amp; visible"</div></div>
+        <div class="flex-1 flex flex-col items-center"><div class="w-full bg-slate-200 border border-slate-400" style="height:170px"></div><div class="text-[11px] mt-1">implementation</div></div>
+      </div></div>
+    <div class="rounded-lg border border-slate-200 p-3 h-64 flex flex-col"><div class="lbl text-slate-500 mb-2">After: deep</div>
+      <div class="flex gap-3 items-end flex-1">
+        <div class="flex-1 flex flex-col items-center"><div class="w-full bg-emerald-100 border border-emerald-300" style="height:36px"></div><div class="text-[11px] mt-1">interface: surface + open/suspend</div></div>
+        <div class="flex-1 flex flex-col items-center"><div class="w-full deep" style="height:170px"></div><div class="text-[11px] mt-1">implementation</div></div>
+      </div></div>
+  </div>
+  <p><b>Problem.</b> "Is it open?" depends on a global context <em>and</em> widget visibility. Immersive mode bypasses <span class="font-mono">close_properties</span> and only works because a global happens to stay set.</p>
+  <p><b>Solution.</b> One module instance owns allowed, open, suspended and scroll position per surface, and pushes the result to the split, the panel and the InfoBar button.</p>
+  <ul class="text-sm list-disc pl-5 text-slate-700">
+    <li>Hidden invariant becomes interface</li>
+    <li>Suspend/resume testable without GTK</li>
+    <li>Delete 16 thread-local globals</li>
+  </ul>
+</article>
+
+<!-- 4 -->
+<article id="c4" class="rounded-xl border border-slate-200 bg-white p-6 space-y-4 shadow-sm">
+  <h2 class="font-serif text-2xl">4 · InfoBar decides what it shows</h2>
+  <div class="flex gap-2 text-xs"><span class="px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 font-semibold">Strong</span><span class="px-2 py-0.5 rounded bg-slate-100 text-slate-700">in-process · small</span></div>
+  <p class="font-mono text-sm text-slate-600">infobar.rs · window/build.rs (23 call sites)</p>
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="rounded-lg border border-slate-200 p-3"><div class="lbl text-slate-500 mb-1">Before: callers know the order</div>
+<pre class="mermaid">
+sequenceDiagram
+  participant C as caller (build.rs)
+  participant I as InfoBar
+  C->>C: lightbox visible? date browser?
+  C->>I: set_selected_photos(1)
+  C->>I: set_photo(first)
+  C->>I: set_photo(again after rating)
+</pre></div>
+    <div class="rounded-lg border border-slate-200 p-3"><div class="lbl text-slate-500 mb-1">After</div>
+<pre class="mermaid">
+sequenceDiagram
+  participant C as caller
+  participant I as InfoBar module
+  C->>I: show(surface, selection, photo)
+  I->>I: choose selection / metadata mode
+</pre></div>
+  </div>
+  <p><b>Problem.</b> Callers must know the call order, copy the zero-selection branch, and re-check surface visibility before each update.</p>
+  <p><b>Solution.</b> The InfoBar takes three inputs and owns the mode choice. A photo-changed signal replaces the manual refresh calls.</p>
+  <ul class="text-sm list-disc pl-5 text-slate-700">
+    <li>Leverage: one interface, 23 call sites</li>
+    <li>Pure "what to show" test</li>
+    <li>Lowest risk on this list</li>
+  </ul>
+</article>
+
+<!-- 5 -->
+<article id="c5" class="rounded-xl border border-slate-200 bg-white p-6 space-y-4 shadow-sm">
+  <h2 class="font-serif text-2xl">5 · One gallery scroll-motion module</h2>
+  <div class="flex gap-2 text-xs"><span class="px-2 py-0.5 rounded bg-amber-100 text-amber-800 font-semibold">Worth exploring</span><span class="px-2 py-0.5 rounded bg-slate-100 text-slate-700">in-process</span></div>
+  <p class="font-mono text-sm text-slate-600">window/navigation.rs · window/build.rs (scrub, settle, pump) · smooth_scroll.rs (dead)</p>
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="rounded-lg border border-slate-200 p-3"><div class="lbl text-slate-500 mb-2">Before: cross-section</div>
+      <div class="space-y-1 text-[11px]">
+        <div class="border-l-4 border-slate-400 bg-slate-50 px-2 py-1.5">install_smooth_gallery_scroll · spring</div>
+        <div class="border-l-4 border-slate-400 bg-slate-50 px-2 py-1.5">install_folder_smooth_gallery_scroll · same spring again</div>
+        <div class="border-l-4 border-red-400 bg-red-50 px-2 py-1.5">build.rs grid scrub/settle closures</div>
+        <div class="border-l-4 border-red-400 bg-red-50 px-2 py-1.5">build.rs folder scrub/settle closures (20 Rc&lt;Cell&gt;, 7 timers)</div>
+        <div class="border-l-4 border-slate-300 bg-slate-50 px-2 py-1.5 line-through text-slate-400">smooth_scroll.rs · no callers</div>
+      </div></div>
+    <div class="rounded-lg border border-slate-200 p-3"><div class="lbl text-slate-500 mb-2">After</div>
+      <div class="deep rounded-lg p-5 text-center h-40 flex flex-col justify-center">
+        <div class="lbl opacity-70">Scroll motion module</div>
+        <div class="text-sm font-mono mt-1">wheel · drag · settle → motion phase</div>
+        <div class="text-[11px] opacity-50 mt-2">one spring · scrub detection · settle timing</div>
+      </div></div>
+  </div>
+  <p><b>Problem.</b> The same spring exists twice, and the scrub/settle logic is wired separately for each scroller inside window construction. That's how the Folder ease-out drifted from All Photos.</p>
+  <p><b>Solution.</b> One module turns input into a motion phase (idle, wheel, scrub, settling) for any scroller. It feeds candidate 1.</p>
+  <ul class="text-sm list-disc pl-5 text-slate-700">
+    <li>Deletion test: smooth_scroll.rs just goes</li>
+    <li>Curves cannot drift apart again</li>
+    <li>Pairs with candidate 1</li>
+  </ul>
+</article>
+
+<!-- 6 -->
+<article id="c6" class="rounded-xl border border-slate-200 bg-white p-6 space-y-4 shadow-sm">
+  <h2 class="font-serif text-2xl">6 · Zoom slider router</h2>
+  <div class="flex gap-2 text-xs"><span class="px-2 py-0.5 rounded bg-amber-100 text-amber-800 font-semibold">Worth exploring</span><span class="px-2 py-0.5 rounded bg-slate-100 text-slate-700">in-process · small</span></div>
+  <p class="font-mono text-sm text-slate-600">window/build.rs:4469-4680 · lightbox/impl.rs</p>
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="rounded-lg border border-slate-200 p-3"><div class="lbl text-slate-500 mb-1">Before</div>
+<pre class="mermaid">
+flowchart LR
+  S[zoom slider] --> H1[handler: which surface?]
+  S --> H2[handler: which surface?]
+  H1 & H2 --> G[gallery] & L[lightbox] & E[editor] & D[date browser]
+  M[slider maths nested in build fn] -.-> H1
+  classDef leak stroke:#dc2626,stroke-width:2px,color:#991b1b;
+  class M leak
+</pre></div>
+    <div class="rounded-lg border border-slate-200 p-3"><div class="lbl text-slate-500 mb-1">After</div>
+<pre class="mermaid">
+flowchart LR
+  S[zoom slider] --> R[Zoom router module]
+  R --> G[gallery] & L[lightbox] & E[editor] & D[date browser]
+  classDef deep fill:#0f172a,color:#f8fafc,stroke:#0f172a;
+  class R deep
+</pre></div>
+  </div>
+  <p><b>Problem.</b> Each handler re-derives the active surface (40 <span class="font-mono">is_visible</span> checks), and the slider↔scale maths are nested inside <span class="font-mono">build()</span>, so tests can't call them.</p>
+  <p><b>Solution.</b> One module owns the active target, the mapping maths and feedback suppression.</p>
+  <ul class="text-sm list-disc pl-5 text-slate-700"><li>Round-trip maths testable</li><li>No feedback-loop cells in build.rs</li></ul>
+</article>
+
+<!-- 7 -->
+<article id="c7" class="rounded-xl border border-slate-200 bg-white p-6 space-y-4 shadow-sm">
+  <h2 class="font-serif text-2xl">7 · Editor preview plan</h2>
+  <div class="flex gap-2 text-xs"><span class="px-2 py-0.5 rounded bg-amber-100 text-amber-800 font-semibold">Worth exploring</span><span class="px-2 py-0.5 rounded bg-slate-100 text-slate-700">in-process · small</span></div>
+  <p class="font-mono text-sm text-slate-600">edit/live_gpu.rs:1600-1663 · edit/editor.rs:166, 1268-1281, 1529</p>
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="rounded-lg border border-slate-200 p-3"><div class="lbl text-slate-500 mb-1">Before</div>
+<pre class="mermaid">
+flowchart LR
+  ED[editor.rs] --> A[gpu_tone_supported_for_view]
+  ED --> B[gpu_base_recipe]
+  ED --> C[decode rotation 0]
+  ED --> F[cpu_fallback_reason: 2nd copy of rules]
+  classDef leak stroke:#dc2626,stroke-width:2px,color:#991b1b;
+  class F leak
+</pre></div>
+    <div class="rounded-lg border border-slate-200 p-3"><div class="lbl text-slate-500 mb-1">After</div>
+<pre class="mermaid">
+flowchart LR
+  ED[editor.rs] --> P[Preview plan module]
+  P --> O[renderer · base recipe · rotation · reason]
+  classDef deep fill:#0f172a,color:#f8fafc,stroke:#0f172a;
+  class P deep
+</pre></div>
+  </div>
+  <p><b>Problem.</b> The editor must call three GPU checks in the right order, and keeps a second copy of the capability rules that already disagrees (clarity, grain, filter and B&amp;W).</p>
+  <p><b>Solution.</b> One planning module returns the renderer choice, base recipe, rotation and reason together.</p>
+  <ul class="text-sm list-disc pl-5 text-slate-700"><li>One source of capability truth</li><li>Pure tests over recipe combinations</li></ul>
+</article>
+
+<!-- 8 -->
+<article id="c8" class="rounded-xl border border-slate-200 bg-white p-6 space-y-4 shadow-sm">
+  <h2 class="font-serif text-2xl">8 · Screensaver style descriptor</h2>
+  <div class="flex gap-2 text-xs"><span class="px-2 py-0.5 rounded bg-slate-200 text-slate-700 font-semibold">Speculative</span><span class="px-2 py-0.5 rounded bg-slate-100 text-slate-700">in-process</span></div>
+  <p class="font-mono text-sm text-slate-600">screensaver.rs · screensaver/gpu.rs</p>
+  <div class="grid md:grid-cols-2 gap-4 text-[11px]">
+    <div class="rounded-lg border border-slate-200 p-3"><div class="lbl text-slate-500 mb-2">Before</div><div class="flex flex-wrap gap-1">
+      <span class="border border-slate-300 px-1">match Style (decode)</span><span class="border border-slate-300 px-1">match Style (tiles)</span><span class="border border-slate-300 px-1">match Style (budget)</span><span class="border border-slate-300 px-1">25× Style:: in gpu.rs</span></div></div>
+    <div class="rounded-lg border border-slate-200 p-3"><div class="lbl text-slate-500 mb-2">After</div><div class="deep rounded p-3 text-center">per-style descriptor</div></div>
+  </div>
+  <p><b>Problem.</b> Adding "Photo Drift" touched 27 hunks, because each style's facts are spread across many <span class="font-mono">match</span> arms.</p>
+  <p><b>Solution.</b> Gather each style's decode size, tile limits and frame budget in one descriptor. The module already has 43 tests; low priority.</p>
+</article>
+
+</section>
+
+<section class="rounded-xl border border-emerald-200 bg-emerald-50 p-6 text-sm text-emerald-900 space-y-1">
+  <div class="font-semibold">Status (2026-11-22)</div>
+  <p>Candidate 1 is done and merged into <span class="font-mono">main</span>: <span class="font-mono">grid/presentation.rs</span> (commits 0df3b918, afa6d54a, a3a71299, 62dff881). Candidates 2-8 are open; next up is 2, the sidebar presentation module.</p>
+</section>
+
+<section id="top-recommendation" class="rounded-xl deep p-8 space-y-3">
+  <div class="lbl opacity-70">Top recommendation</div>
+  <h2 class="font-serif text-3xl"><a href="#c1" class="underline decoration-emerald-400">Deepen gallery thumbnail presentation</a></h2>
+  <p class="opacity-80">This is where the most recent bugs came from, and every one of them was a leak between modules. Three gallery surfaces make the seam real, the existing display tests guard the behaviour, and <span class="font-mono">AUDIT-INDEX.md</span> already maps it. Runner-up: <a href="#c2" class="underline">Sidebar presentation</a>, which has the most churn but carries more risk; start it once candidate 1 has proved the pattern.</p>
+</section>
+
+</main>
+</body>
+</html>

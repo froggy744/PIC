@@ -108,6 +108,14 @@ pub struct DisplayRequest {
     /// seconds. Small tiles are perfectly served by the regular thumbnail,
     /// so the requested width decides whether an upgrade is worth it.
     pub display_width: i32,
+    /// Shrink the decoded thumbnail so its short edge is this many device
+    /// pixels, before rotation and edits are applied.
+    ///
+    /// Only the photo gallery sets this. A zoomed-out gallery shows hundreds
+    /// of ~100 px tiles; uploading a 640 px texture for each one made frames
+    /// that received a burst of thumbnails miss their deadline. `None` keeps
+    /// the cached thumbnail at full size.
+    pub target_short_edge: Option<u32>,
 }
 
 #[derive(Debug)]
@@ -126,6 +134,9 @@ pub struct DisplayCompletion {
     pub key: String,
     pub source_path: String,
     pub outcome: DisplayOutcome,
+    /// The request's `target_short_edge`, so the gallery can tell whether a
+    /// result was shrunk for a smaller zoom level than the current one.
+    pub target_short_edge: Option<u32>,
 }
 
 pub fn presentation_key(
@@ -179,6 +190,7 @@ pub fn request_for(
         source_height,
         visible_priority,
         display_width: DEFAULT_DISPLAY_WIDTH,
+        target_short_edge: None,
     }
 }
 
@@ -500,6 +512,7 @@ fn worker_loop(queue: Arc<Queue>) {
             key: request.key.clone(),
             source_path: request.source_path.clone(),
             outcome,
+            target_short_edge: request.target_short_edge,
         };
         if let Ok(mut completions) = DISPLAY_COMPLETIONS
             .get_or_init(|| Mutex::new(Vec::new()))
@@ -569,8 +582,13 @@ fn load_thumbnail_with_policy(request: &DisplayRequest, regenerate: bool) -> Dis
 
     crate::thumbnail_trace::event(&request.source_path, "thumbnail_cache", "hit");
 
-    let mut image = match image::open(&path) {
-        Ok(image) => image.to_rgba8(),
+    let DisplayImage {
+        image: mut image,
+        decoded_at_target,
+        cached_width,
+        cached_height,
+    } = match open_display_image(&path, request.target_short_edge) {
+        Ok(decoded) => decoded,
         Err(_error) => {
             if !regenerate {
                 return DisplayOutcome::Failed;
@@ -597,7 +615,10 @@ fn load_thumbnail_with_policy(request: &DisplayRequest, regenerate: bool) -> Dis
     if regenerate
         && request.display_width >= crate::grid::tile_needs_high_quality_width()
         && !crate::grid::gallery_scrolling()
-        && crate::thumbnail::thumbnail_needs_quality_upgrade(image.width(), image.height())
+        // Judge the cache file's own size, never the reduced-scale decode:
+        // a shrunk decode always looks low resolution and would rebuild the
+        // thumbnail from the original again and again.
+        && crate::thumbnail::thumbnail_needs_quality_upgrade(cached_width, cached_height)
     {
         crate::thumbnail::request_quality_upgrade(
             request.source_path.clone(),
@@ -608,6 +629,11 @@ fn load_thumbnail_with_policy(request: &DisplayRequest, regenerate: bool) -> Dis
 
     if crate::image_format::uses(&request.source_path, crate::image_format::DecoderKind::Raw) {
         image = crop_raw_cached_preview(image, request.source_width, request.source_height);
+    }
+
+    // Shrink before rotation and edits so both run on the smaller image.
+    if let Some(target) = request.target_short_edge.filter(|_| !decoded_at_target) {
+        image = shrink_to_short_edge(image, target);
     }
 
     image = crate::edit::render::apply_library_rotation(image, request.rotation);
@@ -621,6 +647,71 @@ fn load_thumbnail_with_policy(request: &DisplayRequest, regenerate: bool) -> Dis
         height: image.height() as i32,
         pixels: image.into_raw(),
     }
+}
+
+/// Decode a cached thumbnail for display.
+///
+/// With a presentation target, PIC's JPEG cache files are decoded directly at
+/// the smallest libjpeg-turbo DCT scale (1/8 .. 7/8) whose short edge still
+/// covers the target. That is cheaper than a full decode, so zoomed-out tiles
+/// arrive sooner instead of later, and the result is not resized again.
+/// Anything else (no target, non-JPEG cache file, turbo failure) takes the
+/// regular full decode and is shrunk afterwards.
+struct DisplayImage {
+    image: image::RgbaImage,
+    /// Already decoded at the presentation target; no further shrink needed.
+    decoded_at_target: bool,
+    /// Dimensions of the cache file itself, before any reduced-scale decode.
+    cached_width: u32,
+    cached_height: u32,
+}
+
+fn open_display_image(path: &Path, target: Option<u32>) -> image::ImageResult<DisplayImage> {
+    if let Some(target) = target {
+        if let Ok(bytes) = std::fs::read(path) {
+            if let (Ok((cached_width, cached_height)), Ok(image)) = (
+                crate::thumbnail::jpeg_dimensions(&bytes),
+                crate::thumbnail::decode_jpeg_turbo_rgba_with_target(&bytes, target, target),
+            ) {
+                return Ok(DisplayImage {
+                    image,
+                    decoded_at_target: true,
+                    cached_width,
+                    cached_height,
+                });
+            }
+        }
+    }
+    image::open(path).map(|image| {
+        let image = image.to_rgba8();
+        let (cached_width, cached_height) = image.dimensions();
+        DisplayImage {
+            image,
+            decoded_at_target: false,
+            cached_width,
+            cached_height,
+        }
+    })
+}
+
+/// Downscale `image` so its short edge is `target` pixels, keeping the aspect
+/// ratio. Images whose short edge is already at or below `target` are
+/// returned unchanged; this never upscales.
+fn shrink_to_short_edge(image: image::RgbaImage, target: u32) -> image::RgbaImage {
+    let (width, height) = image.dimensions();
+    let short = width.min(height);
+    if target == 0 || short <= target {
+        return image;
+    }
+    let scale = f64::from(target) / f64::from(short);
+    let new_width = ((f64::from(width) * scale).round() as u32).max(1);
+    let new_height = ((f64::from(height) * scale).round() as u32).max(1);
+    image::imageops::resize(
+        &image,
+        new_width,
+        new_height,
+        image::imageops::FilterType::CatmullRom,
+    )
 }
 
 fn crop_raw_cached_preview(
@@ -772,5 +863,63 @@ mod tests {
         let image = image::RgbaImage::new(200, 300);
         let cropped = crop_raw_cached_preview(image, 6000, 4000);
         assert_eq!(cropped.dimensions(), (200, 300));
+    }
+
+    #[test]
+    fn display_decode_uses_scaled_jpeg_decode_for_a_target() {
+        let dir =
+            std::env::temp_dir().join(format!("pic-display-decode-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("thumb.jpg");
+        image::RgbImage::from_pixel(640, 427, image::Rgb([90, 120, 150]))
+            .save(&path)
+            .unwrap();
+
+        let full = open_display_image(&path, None).unwrap();
+        assert_eq!(full.image.dimensions(), (640, 427));
+        assert!(!full.decoded_at_target);
+        assert_eq!((full.cached_width, full.cached_height), (640, 427));
+
+        let decoded = open_display_image(&path, Some(192)).unwrap();
+        assert!(decoded.decoded_at_target);
+        // The quality-upgrade check must see the cache file's size, not the
+        // reduced decode, or every zoomed-out tile triggers a rebuild.
+        assert_eq!((decoded.cached_width, decoded.cached_height), (640, 427));
+        let small = decoded.image;
+        let short = small.width().min(small.height());
+        assert!((192..384).contains(&short), "short edge {short}");
+        assert!(small.width() < 640, "decoded at a reduced DCT scale");
+        // Colour survives the scaled decode.
+        let pixel = small.get_pixel(small.width() / 2, small.height() / 2);
+        assert!((i16::from(pixel[2]) - 150).abs() <= 4, "{pixel:?}");
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn shrink_to_short_edge_keeps_aspect_and_never_upscales() {
+        let landscape = shrink_to_short_edge(image::RgbaImage::new(640, 427), 192);
+        assert_eq!(landscape.dimensions(), (288, 192));
+        let portrait = shrink_to_short_edge(image::RgbaImage::new(427, 640), 128);
+        assert_eq!(portrait.dimensions(), (128, 192));
+        let small = shrink_to_short_edge(image::RgbaImage::new(320, 213), 256);
+        assert_eq!(small.dimensions(), (320, 213));
+        let panorama = shrink_to_short_edge(image::RgbaImage::new(640, 100), 128);
+        assert_eq!(panorama.dimensions(), (640, 100));
+    }
+
+    #[test]
+    fn shrink_to_short_edge_averages_instead_of_sampling() {
+        // A one-pixel checkerboard must average to mid grey, not alias to a
+        // solid colour, or zoomed-out tiles would shimmer.
+        let mut image = image::RgbaImage::new(640, 640);
+        for (x, y, pixel) in image.enumerate_pixels_mut() {
+            let value = if (x + y) % 2 == 0 { 255 } else { 0 };
+            *pixel = image::Rgba([value, value, value, 255]);
+        }
+        let shrunk = shrink_to_short_edge(image, 128);
+        assert_eq!(shrunk.dimensions(), (128, 128));
+        let centre = shrunk.get_pixel(64, 64)[0];
+        assert!((100..=155).contains(&centre), "centre value {centre}");
     }
 }

@@ -2467,6 +2467,8 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 let prefetch_slot_for_tick = prefetch_slot.clone();
                 let catchup_frames = Rc::new(Cell::new(6u8));
                 let catchup_frames_for_tick = catchup_frames.clone();
+                let prefetch_allowance = gallery_for_prefetch.thumbnail_prefetch_allowance();
+                let prefetched_total = Cell::new(0usize);
                 let prefetch_source = glib::timeout_add_local(
                     Duration::from_millis(16),
                     move || {
@@ -2477,9 +2479,17 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                             return glib::ControlFlow::Continue;
                         }
 
-                        let loaded =
-                            gallery_for_prefetch.prefetch_folder_cached_tiles(24, direction_for_settle);
-                        if loaded == 0 && !gallery_for_prefetch.thumbnail_display_work_pending() {
+                        let remaining =
+                            prefetch_allowance.saturating_sub(prefetched_total.get());
+                        let loaded = gallery_for_prefetch
+                            .prefetch_folder_cached_tiles(remaining.min(24), direction_for_settle);
+                        prefetched_total.set(prefetched_total.get() + loaded);
+                        // Stop once everything is loaded, or once this settle
+                        // has prefetched what the RAM cache can hold; more
+                        // would only evict its own earlier work, forever.
+                        if (loaded == 0 || prefetched_total.get() >= prefetch_allowance)
+                            && !gallery_for_prefetch.thumbnail_display_work_pending()
+                        {
                             prefetch_slot_for_tick.borrow_mut().take();
                             glib::ControlFlow::Break
                         } else {
@@ -2528,6 +2538,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let sidebar_layout_settle_for_tick = sidebar_layout_settle.clone();
     let inspector_trace_enabled = std::env::var_os("PIC_INSPECTOR_TRACE").is_some();
     gallery_scroll_stack.add_tick_callback(move |surface, _clock| {
+        gallery_for_resize.sync_presentation_target();
         gallery_for_resize.drain_thumbnail_display_completions();
         let live_resize =
             (sidebar_resize_active_for_tick.get() || inspector_resize_active_for_tick.get())

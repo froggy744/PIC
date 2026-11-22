@@ -68,7 +68,7 @@ fn decode_with_image(bytes: &[u8]) -> Result<DecodedThumbnailSource> {
     })
 }
 
-fn jpeg_dimensions(bytes: &[u8]) -> Result<(u32, u32)> {
+pub(crate) fn jpeg_dimensions(bytes: &[u8]) -> Result<(u32, u32)> {
     let mut decompressor = Decompressor::new()
         .map_err(|error| anyhow::anyhow!("TurboJPEG initialization failed: {error}"))?;
     let header = decompressor
@@ -87,7 +87,7 @@ fn decode_jpeg_turbo_with_target(
     })
 }
 
-fn decode_jpeg_turbo_rgba_with_target(
+pub(crate) fn decode_jpeg_turbo_rgba_with_target(
     bytes: &[u8],
     target_width: u32,
     target_height: u32,

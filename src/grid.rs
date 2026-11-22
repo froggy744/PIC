@@ -168,6 +168,9 @@ thread_local! {
     static GRID_SCRUB_ACTIVE: Cell<bool> = const { Cell::new(false) };
     static GRID_ZOOM_ANIMATION_ACTIVE: Cell<bool> = const { Cell::new(false) };
     static GALLERY_SCROLLING: Cell<bool> = const { Cell::new(false) };
+    /// Short-edge size gallery thumbnails are currently decoded at; see
+    /// `presentation_target_for_tile`. `None` means full cached size.
+    static PRESENTATION_TARGET: Cell<Option<u32>> = const { Cell::new(None) };
 }
 
 /// Whether the gallery is currently moving.

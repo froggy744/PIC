@@ -1341,7 +1341,7 @@ impl Gallery {
                 continue;
             };
             if !visible_thumbnail_candidate(
-                tile.imp().visual_loaded.get(),
+                tile.presentation_settled(),
                 photo.thumbnail_available(),
                 photo.corrupt(),
             ) {
@@ -1409,7 +1409,7 @@ impl Gallery {
         collect_tiles(self.root.upcast_ref(), &mut tiles);
         let mut applied = 0usize;
         for tile in tiles {
-            if !tile.is_mapped() || tile.height() <= 0 || tile.imp().visual_loaded.get() {
+            if !tile.is_mapped() || tile.height() <= 0 || tile.presentation_settled() {
                 continue;
             }
             let Some(bounds) = tile.compute_bounds(&self.root) else {
@@ -1713,7 +1713,7 @@ impl Gallery {
                 continue;
             };
             if !visible_thumbnail_candidate(
-                tile.imp().visual_loaded.get(),
+                tile.presentation_settled(),
                 photo.thumbnail_available(),
                 photo.corrupt(),
             ) {
@@ -1776,7 +1776,7 @@ impl Gallery {
         collect_tiles(&root, &mut tiles);
         let mut applied = 0usize;
         for tile in tiles {
-            if tile.height() <= 0 || tile.imp().visual_loaded.get() {
+            if tile.height() <= 0 || tile.presentation_settled() {
                 continue;
             }
             let Some(bounds) = tile.compute_bounds(&root) else {
@@ -2029,6 +2029,66 @@ impl Gallery {
         crate::thumbnail_display::pending_count() > 0
     }
 
+    /// How many thumbnails one settle's background prefetch may add.
+    ///
+    /// Prefetch keeps going until a pass finds nothing left to load. When its
+    /// band is larger than the decoded-thumbnail RAM cache (at High quality
+    /// the 64 MB budget holds only ~58 full 640 px thumbnails, while Photo
+    /// Wall prefetches three screens ahead), each pass evicts the previous
+    /// one and the loop never ends, keeping every display worker busy and
+    /// delaying the tiles actually on screen. Cap the total at half of what
+    /// the cache can hold, leaving the rest for visible tiles.
+    pub fn thumbnail_prefetch_allowance(&self) -> usize {
+        folder_thumbnail_cache_entry_capacity() / 2
+    }
+
+    /// Keep the gallery's thumbnail decode size in step with the zoom level.
+    ///
+    /// Called once per frame before draining completions. Zooming out only
+    /// makes new decodes smaller. Zooming in (or moving to a higher scale
+    /// factor) re-requests sharper thumbnails for the tiles on screen, while
+    /// they keep showing the current image until the sharper one arrives.
+    pub fn sync_presentation_target(&self) {
+        let root = self.visible_root();
+        let target = presentation_target_for_tile(self.tile_width.get(), root.scale_factor());
+        if !set_presentation_target(target) {
+            return;
+        }
+        let mut tiles = Vec::new();
+        collect_tiles(&root, &mut tiles);
+        let mut requested = 0usize;
+        for tile in tiles {
+            if !tile.is_mapped() || !tile.imp().visual_loaded.get() || tile.presentation_settled()
+            {
+                continue;
+            }
+            let Some(photo) = tile.imp().photo.borrow().as_ref().cloned() else {
+                continue;
+            };
+            let Some(mut request) = photo_presentation_request(&photo, true) else {
+                continue;
+            };
+            request.display_width = self.tile_width.get();
+            // A sharp enough cached version lands on the next pump; only
+            // decode what is missing.
+            if let Some(paintable) = folder_thumbnail_cache_get(&request.key) {
+                tile.apply_presentation_paintable(&request.key, &paintable);
+                continue;
+            }
+            if crate::thumbnail_display::submit(request) {
+                requested += 1;
+            }
+        }
+        if std::env::var_os("PICASA_TRACE").is_some() {
+            eprintln!(
+                "PIC_THUMBNAIL presentation_target_grew target={:?} tile_width={} requested={}",
+                target,
+                self.tile_width.get(),
+                requested
+            );
+        }
+    }
+
     /// Drain worker completions once per frame. Disk I/O and image transforms
     /// have already happened on background workers; GTK only creates textures,
     /// updates the RAM LRU, and repaints currently realized matching tiles.
@@ -2088,6 +2148,31 @@ impl Gallery {
                 "completion_delivery",
                 completion_outcome,
             );
+            let decoded_for = completion.target_short_edge;
+            if matches!(
+                completion.outcome,
+                crate::thumbnail_display::DisplayOutcome::Loaded { .. }
+            ) && !presentation_target_satisfies(decoded_for, current_presentation_target())
+            {
+                // Decoded for a smaller zoom level than the current one. It is
+                // still delivered below as a stand-in (a blank tile is worse
+                // than a soft one), and requested again at the current size.
+                if let Some(indices) = tiles_by_key.get(&completion.key) {
+                        if let Some(tile) = indices
+                            .iter()
+                            .map(|index| &tiles[*index])
+                            .find(|tile| tile.is_mapped())
+                        {
+                            let photo = tile.imp().photo.borrow().as_ref().cloned();
+                            if let Some(mut request) =
+                                photo.and_then(|photo| photo_presentation_request(&photo, true))
+                            {
+                                request.display_width = self.tile_width.get();
+                                crate::thumbnail_display::submit(request);
+                            }
+                        }
+                    }
+            }
             match completion.outcome {
                 crate::thumbnail_display::DisplayOutcome::Loaded {
                     width,
@@ -2103,6 +2188,13 @@ impl Gallery {
                         width as usize * 4,
                     );
                     let paintable: gtk::gdk::Paintable = texture.upcast();
+                    // Cache first so tiles applying it can record which
+                    // presentation target it was decoded for.
+                    folder_thumbnail_cache_insert_for_target(
+                        completion.key.clone(),
+                        paintable.clone(),
+                        decoded_for,
+                    );
                     if cached_mode && width > 0 && height > 0 {
                         if let Some(indices) = tiles_by_key.get(&completion.key) {
                             for index in indices {
@@ -2114,7 +2206,6 @@ impl Gallery {
                             }
                         }
                     }
-                    folder_thumbnail_cache_insert(completion.key.clone(), paintable.clone());
                     loaded.insert(completion.key, paintable);
                 }
                 crate::thumbnail_display::DisplayOutcome::Missing

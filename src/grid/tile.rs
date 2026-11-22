@@ -21,14 +21,20 @@ fn preserve_grid_paintable_during_motion() -> bool {
 /// RAM cache of decoded thumbnails for the visible viewport.
 ///
 /// The scroll pump asks for every visible tile on every frame, so the lookup
-/// has to be cheap. The cache used to be a `VecDeque` that was scanned
-/// linearly, which turned a frame of lookups into thousands of string
-/// comparisons.
+/// has to be cheap. Recency is tracked with a stamp per entry instead of
+/// moving keys inside `order`: a hit pushes a new `(stamp, key)` record and
+/// leaves the old one behind as stale. Eviction skips stale records, and the
+/// queue is compacted once stale records dominate, so every operation stays
+/// O(1) amortised instead of scanning up to `FOLDER_THUMBNAIL_CACHE_CAPACITY`
+/// keys per lookup.
 struct ThumbnailPaintableCache {
-    /// Least recently used first.
-    order: VecDeque<String>,
-    entries: HashMap<String, (gtk::gdk::Paintable, usize)>,
+    /// Recency records, least recently used first. A record is live only
+    /// while its stamp matches the entry's current stamp.
+    order: VecDeque<(u64, String)>,
+    /// Paintable, byte size, and the stamp of its most recent use.
+    entries: HashMap<String, (gtk::gdk::Paintable, usize, u64)>,
     bytes: usize,
+    next_stamp: u64,
 }
 
 impl ThumbnailPaintableCache {
@@ -37,39 +43,51 @@ impl ThumbnailPaintableCache {
             order: VecDeque::new(),
             entries: HashMap::new(),
             bytes: 0,
+            next_stamp: 0,
         }
     }
 
+    fn take_stamp(&mut self) -> u64 {
+        let stamp = self.next_stamp;
+        self.next_stamp = self.next_stamp.wrapping_add(1);
+        stamp
+    }
+
     fn get(&mut self, path: &str) -> Option<gtk::gdk::Paintable> {
-        let (paintable, _) = self.entries.get(path)?.clone();
-        if let Some(index) = self.order.iter().position(|entry| entry == path) {
-            let entry = self.order.remove(index)?;
-            self.order.push_back(entry);
+        let newest = self.next_stamp.wrapping_sub(1);
+        let current = self.entries.get(path)?.2;
+        if current != newest {
+            let stamp = self.take_stamp();
+            if let Some(entry) = self.entries.get_mut(path) {
+                entry.2 = stamp;
+            }
+            self.order.push_back((stamp, path.to_owned()));
+            self.compact_order();
         }
-        Some(paintable)
+        self.entries.get(path).map(|(paintable, _, _)| paintable.clone())
     }
 
     fn insert(&mut self, path: String, paintable: gtk::gdk::Paintable) {
         let bytes = paintable.intrinsic_width().max(0) as usize
             * paintable.intrinsic_height().max(0) as usize
             * 4;
-        if let Some((_, previous)) = self.entries.insert(path.clone(), (paintable, bytes)) {
+        let stamp = self.take_stamp();
+        if let Some((_, previous, _)) = self
+            .entries
+            .insert(path.clone(), (paintable, bytes, stamp))
+        {
             self.bytes = self.bytes.saturating_sub(previous);
-            if let Some(index) = self.order.iter().position(|entry| *entry == path) {
-                self.order.remove(index);
-            }
         }
-        self.order.push_back(path);
+        self.order.push_back((stamp, path));
         self.bytes = self.bytes.saturating_add(bytes);
         self.evict_to_budget();
+        self.compact_order();
     }
 
     fn remove(&mut self, path: &str) {
-        if let Some((_, bytes)) = self.entries.remove(path) {
+        // The recency record becomes stale and is skipped or compacted later.
+        if let Some((_, bytes, _)) = self.entries.remove(path) {
             self.bytes = self.bytes.saturating_sub(bytes);
-        }
-        if let Some(index) = self.order.iter().position(|entry| entry == path) {
-            self.order.remove(index);
         }
     }
 
@@ -83,6 +101,25 @@ impl ThumbnailPaintableCache {
         self.entries.len()
     }
 
+    fn is_live(&self, stamp: u64, path: &str) -> bool {
+        self.entries
+            .get(path)
+            .is_some_and(|(_, _, current)| *current == stamp)
+    }
+
+    /// Drop stale recency records once they outnumber live ones, keeping the
+    /// queue bounded at roughly twice the entry count.
+    fn compact_order(&mut self) {
+        if self.order.len() <= self.entries.len() * 2 + 64 {
+            return;
+        }
+        let order = std::mem::take(&mut self.order);
+        self.order = order
+            .into_iter()
+            .filter(|(stamp, path)| self.is_live(*stamp, path))
+            .collect();
+    }
+
     fn evict_to_budget(&mut self) {
         loop {
             let over_quality_budget =
@@ -90,10 +127,13 @@ impl ThumbnailPaintableCache {
             if self.len() <= FOLDER_THUMBNAIL_CACHE_CAPACITY && !over_quality_budget {
                 break;
             }
-            let Some(oldest) = self.order.pop_front() else {
+            let Some((stamp, oldest)) = self.order.pop_front() else {
                 break;
             };
-            if let Some((_, bytes)) = self.entries.remove(&oldest) {
+            if !self.is_live(stamp, &oldest) {
+                continue;
+            }
+            if let Some((_, bytes, _)) = self.entries.remove(&oldest) {
                 self.bytes = self.bytes.saturating_sub(bytes);
             }
         }
@@ -2346,7 +2386,7 @@ mod folder_thumbnail_cache_tests {
             let bytes = cache
                 .entries
                 .values()
-                .map(|(image, _)| {
+                .map(|(image, _, _)| {
                     image.intrinsic_width() as usize * image.intrinsic_height() as usize * 4
                 })
                 .sum::<usize>();
@@ -2370,5 +2410,44 @@ mod folder_thumbnail_cache_tests {
         FOLDER_THUMBNAIL_CACHE.with(|cache| {
             assert_eq!(cache.borrow().len(), FOLDER_THUMBNAIL_CACHE_CAPACITY);
         });
+    }
+
+    #[test]
+    fn decoded_thumbnail_cache_evicts_least_recently_used() {
+        // `MemoryTexture` is a plain GObject; no display or `gtk::init` needed.
+        let previous_quality = crate::thumbnail::high_quality_thumbnails_enabled();
+        crate::thumbnail::set_high_quality_thumbnails_enabled(false);
+        let bytes = glib::Bytes::from_owned(vec![0u8; 4 * 4 * 4]);
+        let texture: gtk::gdk::Paintable =
+            gtk::gdk::MemoryTexture::new(4, 4, gtk::gdk::MemoryFormat::R8g8b8a8, &bytes, 4 * 4)
+                .upcast();
+
+        let mut cache = ThumbnailPaintableCache::new();
+        for index in 0..FOLDER_THUMBNAIL_CACHE_CAPACITY {
+            cache.insert(format!("photo-{index}"), texture.clone());
+        }
+        // Touch the oldest entry many times: it must become most recent, and
+        // the repeated hits must not grow the recency queue without bound.
+        for _ in 0..10_000 {
+            assert!(cache.get("photo-0").is_some());
+            assert!(cache.get("photo-5").is_some());
+        }
+        assert!(cache.order.len() <= cache.entries.len() * 2 + 64);
+
+        // A removed entry leaves a stale record that eviction must skip.
+        cache.remove("photo-2");
+        cache.insert("photo-2".to_string(), texture.clone());
+
+        cache.insert("new-a".to_string(), texture.clone());
+        cache.insert("new-b".to_string(), texture.clone());
+        assert_eq!(cache.len(), FOLDER_THUMBNAIL_CACHE_CAPACITY);
+        assert!(cache.get("photo-0").is_some(), "recently used entry evicted");
+        assert!(cache.get("photo-5").is_some(), "recently used entry evicted");
+        assert!(cache.get("photo-2").is_some(), "re-inserted entry evicted");
+        assert!(cache.get("photo-1").is_none(), "least recently used survived");
+        assert!(cache.get("photo-3").is_none(), "least recently used survived");
+        assert!(cache.get("photo-4").is_some());
+
+        crate::thumbnail::set_high_quality_thumbnails_enabled(previous_quality);
     }
 }

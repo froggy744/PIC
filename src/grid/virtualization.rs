@@ -1657,6 +1657,29 @@ impl Gallery {
     /// visible-thumbnail worker capacity even when background prefetch already
     /// occupies its smaller quota, so a scrollbar jump cannot be blocked by
     /// thumbnails for rows the user has already passed.
+    /// Visible vertical band of a folder root, in that root's coordinates.
+    ///
+    /// The sectioned folder root is a `gtk::Fixed` as tall as the whole
+    /// folder, so its own height is the content height, not the viewport.
+    /// Its coordinates match the scroll adjustment, so the band is the
+    /// adjustment's current page. The legacy `ListView` root is the viewport.
+    fn folder_viewport_band(&self, root: &gtk::Widget) -> Option<(f32, f32)> {
+        if root.height() <= 0 {
+            return None;
+        }
+        if root == self.folder_sectioned_root.upcast_ref::<gtk::Widget>() {
+            let scroll = self.sectioned_folder.scroll.borrow();
+            let adjustment = scroll.as_ref()?.vadjustment();
+            let top = adjustment.value() as f32;
+            let page = adjustment.page_size() as f32;
+            if page <= 0.0 {
+                return None;
+            }
+            return Some((top, top + page));
+        }
+        Some((0.0, root.height() as f32))
+    }
+
     pub fn queue_visible_folder_cached_tiles_async(&self, budget: usize) -> usize {
         if self.layout() != PhotoLayout::Grid {
             if let Some(scroll) = self.sectioned_folder.scroll.borrow().as_ref() {
@@ -1674,11 +1697,10 @@ impl Gallery {
         } else {
             self.folder_root.clone().upcast()
         };
-        if root.height() <= 0 {
+        let Some((viewport_top, viewport_bottom)) = self.folder_viewport_band(&root) else {
             return 0;
-        }
-
-        let viewport = root.height() as f32;
+        };
+        let viewport_center = (viewport_top + viewport_bottom) * 0.5;
         let mut tiles = Vec::new();
         collect_tiles(&root, &mut tiles);
         let mut candidates: Vec<(f32, SquareTile)> = Vec::new();
@@ -1701,10 +1723,10 @@ impl Gallery {
                 continue;
             };
             let center = bounds.y() + bounds.height() * 0.5;
-            if bounds.y() + bounds.height() < 0.0 || bounds.y() > viewport {
+            if bounds.y() + bounds.height() < viewport_top || bounds.y() > viewport_bottom {
                 continue;
             }
-            candidates.push(((center - viewport * 0.5).abs(), tile));
+            candidates.push(((center - viewport_center).abs(), tile));
         }
 
         candidates.sort_by(|left, right| left.0.total_cmp(&right.0));
@@ -1747,11 +1769,9 @@ impl Gallery {
         } else {
             self.folder_root.clone().upcast()
         };
-        if root.height() <= 0 {
+        let Some((viewport_top, viewport_bottom)) = self.folder_viewport_band(&root) else {
             return 0;
-        }
-
-        let viewport = root.height() as f32;
+        };
         let mut tiles = Vec::new();
         collect_tiles(&root, &mut tiles);
         let mut applied = 0usize;
@@ -1762,7 +1782,7 @@ impl Gallery {
             let Some(bounds) = tile.compute_bounds(&root) else {
                 continue;
             };
-            if bounds.y() + bounds.height() < 0.0 || bounds.y() > viewport {
+            if bounds.y() + bounds.height() < viewport_top || bounds.y() > viewport_bottom {
                 continue;
             }
             let Some(photo) = tile.imp().photo.borrow().as_ref().cloned() else {
@@ -1933,10 +1953,7 @@ impl Gallery {
         } else {
             self.folder_root.clone().upcast()
         };
-        if root.height() <= 0 {
-            return None;
-        }
-        let viewport = root.height() as f32;
+        let (viewport_top, viewport_bottom) = self.folder_viewport_band(&root)?;
         let mut tiles = Vec::new();
         collect_tiles(&root, &mut tiles);
         let mut first = usize::MAX;
@@ -1952,7 +1969,7 @@ impl Gallery {
             let Some(bounds) = tile.compute_bounds(&root) else {
                 continue;
             };
-            if bounds.y() + bounds.height() < 0.0 || bounds.y() > viewport {
+            if bounds.y() + bounds.height() < viewport_top || bounds.y() > viewport_bottom {
                 continue;
             }
             first = first.min(index);

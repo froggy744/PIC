@@ -3951,3 +3951,85 @@ fn honeycomb_gui_interactions_virtualization_and_screenshots() {
     }
     window.close();
 }
+
+#[test]
+#[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+fn sectioned_folder_visibility_uses_scroll_viewport_not_content_height() {
+    gtk::init().unwrap();
+    let gallery = std::rc::Rc::new(Gallery::new(
+        &[],
+        148,
+        |_| {},
+        |_, _, _| {},
+        |_, _, _, _| {},
+        |_, _| {},
+        |_| {},
+    ));
+    gallery.group_mode.set(GroupMode::Folder);
+    gallery.current_photos.replace(
+        (1..=1200_i64)
+            .map(|id| {
+                glib::Object::builder::<PhotoObject>()
+                    .property("id", id)
+                    .property("folder-id", 1_i64)
+                    .property("original-available", true)
+                    .build()
+            })
+            .collect(),
+    );
+    gallery.rebuild_group_ranges();
+    let scroll = gtk::ScrolledWindow::builder()
+        .child(&gallery.folder_sectioned_root)
+        .build();
+    gallery.attach_sectioned_folder_scroll(&scroll);
+    let window = gtk::Window::builder()
+        .default_width(1224)
+        .default_height(650)
+        .child(&scroll)
+        .build();
+    window.present();
+    settle();
+    gallery.update_width(1224);
+    settle();
+    scroll.vadjustment().set_value(12000.0);
+    settle();
+
+    let adjustment = scroll.vadjustment();
+    let top = adjustment.value() as f32;
+    let bottom = top + adjustment.page_size() as f32;
+    let root: gtk::Widget = gallery.folder_sectioned_root.clone().upcast();
+    assert!(
+        root.height() as f32 > bottom + 1000.0,
+        "the Fixed must be content-tall for this test to discriminate"
+    );
+    assert_eq!(gallery.folder_viewport_band(&root), Some((top, bottom)));
+
+    let mut tiles = Vec::new();
+    collect_tiles(&root, &mut tiles);
+    let mut on_screen = Vec::new();
+    let mut overscan = 0usize;
+    for tile in &tiles {
+        let (Some(index), Some(bounds)) =
+            (tile.imp().photo_index.get(), tile.compute_bounds(&root))
+        else {
+            continue;
+        };
+        if bounds.y() + bounds.height() < top || bounds.y() > bottom {
+            overscan += 1;
+        } else {
+            on_screen.push(index);
+        }
+    }
+    assert!(overscan > 0, "the overscan band must contain live tiles");
+    let span = gallery
+        .visible_folder_photo_index_span()
+        .expect("visible folder span");
+    assert_eq!(
+        span,
+        (
+            *on_screen.iter().min().unwrap(),
+            *on_screen.iter().max().unwrap()
+        ),
+        "overscan tiles must not count as visible"
+    );
+}

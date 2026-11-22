@@ -194,6 +194,7 @@ include!("grid/grouping.rs");
 include!("grid/sectioned_folder.rs");
 include!("grid/photo_wall.rs");
 include!("grid/virtualization.rs");
+include!("grid/presentation.rs");
 include!("grid/view.rs");
 include!("grid/navigation.rs");
 include!("grid/selection.rs");

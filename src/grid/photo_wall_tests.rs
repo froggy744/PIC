@@ -3269,7 +3269,7 @@ fn live_network_wall_browsing_keeps_prefetch_bounded() {
     // completion drain, rather than relying on tile binds alone.
     let gallery_for_scroll = gallery.clone();
     scroll.vadjustment().connect_value_changed(move |_| {
-        gallery_for_scroll.queue_visible_folder_cached_tiles_async(96);
+        gallery_for_scroll.queue_visible_cached_tiles_async(GalleryScroller::Folder, 96);
     });
     let gallery_for_tick = gallery.clone();
     scroll.add_tick_callback(move |_, _| {
@@ -3282,7 +3282,7 @@ fn live_network_wall_browsing_keeps_prefetch_bounded() {
     for fraction in [0.0, 0.25, 0.75, 0.0] {
         adjustment.set_value((adjustment.upper() - adjustment.page_size()).max(0.0) * fraction);
         settle();
-        gallery.queue_visible_folder_cached_tiles_async(96);
+        gallery.queue_visible_cached_tiles_async(GalleryScroller::Folder, 96);
         gallery.prefetch_folder_cached_tiles(24, if fraction == 0.0 { -1.0 } else { 1.0 });
         let jobs = crate::thumbnail::network_prefetch_queued_count();
         assert!(

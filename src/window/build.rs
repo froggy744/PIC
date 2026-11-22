@@ -2238,9 +2238,11 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         // again before the decode arrived. Re-checking visible tiles against
         // the RAM cache every frame heals exactly those tiles.
         if grid_scrub_active_for_tick.get() {
-            gallery_for_grid_motion_tick.apply_visible_grid_cached_paintables();
+            gallery_for_grid_motion_tick
+                .apply_visible_cached_paintables(crate::grid::GalleryScroller::Photos);
         } else {
-            gallery_for_grid_motion_tick.queue_visible_grid_cached_tiles_async(128);
+            gallery_for_grid_motion_tick
+                .queue_visible_cached_tiles_async(crate::grid::GalleryScroller::Photos, 128);
         }
 
         let scrub_left = grid_scrub_frames_for_tick.get();
@@ -2323,9 +2325,11 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             // before their decode completes, and the completion drain misses
             // rows recycled again mid-scrub. Applying RAM hits every frame
             // heals those rows without touching the decode queue.
-            gallery_for_thumbnail_motion_tick.apply_visible_folder_cached_paintables();
+            gallery_for_thumbnail_motion_tick
+                .apply_visible_cached_paintables(crate::grid::GalleryScroller::Folder);
         } else {
-            gallery_for_thumbnail_motion_tick.queue_visible_folder_cached_tiles_async(96);
+            gallery_for_thumbnail_motion_tick
+                .queue_visible_cached_tiles_async(crate::grid::GalleryScroller::Folder, 96);
         }
 
         // Scrub decode targets are frame-driven: the first sample fires in the

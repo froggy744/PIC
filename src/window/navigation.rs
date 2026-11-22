@@ -570,11 +570,53 @@ pub(crate) fn install_folder_smooth_gallery_scroll(
     let controller = gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::VERTICAL);
     controller.set_propagation_phase(gtk::PropagationPhase::Capture);
 
-    let adjustment_for_scroll = adjustment.clone();
+    // One wheel notch (dy = +1 down, -1 up) through the Folder spring. Shared
+    // by the real wheel handler and the opt-in scripted scroll benchmark, so
+    // the benchmark measures exactly the code path a mouse wheel drives.
+    let wheel_notch: Rc<dyn Fn(f64)> = {
+        let gallery = gallery.clone();
+        let adjustment = adjustment.clone();
+        let remaining = remaining.clone();
+        let velocity = velocity.clone();
+        let carry = carry.clone();
+        let active = active.clone();
+        Rc::new(move |dy: f64| {
+            gallery.cancel_folder_keyboard_scroll_animation();
+            let lower = adjustment.lower();
+            let upper = (adjustment.upper() - adjustment.page_size()).max(lower);
+            let current = adjustment.value().clamp(lower, upper);
+            if (dy < 0.0 && current <= lower) || (dy > 0.0 && current >= upper) {
+                remaining.set(0.0);
+                velocity.set(0.0);
+                carry.set(0.0);
+                active.set(false);
+                return;
+            }
+
+            let impulse = dy * WHEEL_STEP_PX;
+            let old = remaining.get();
+            // Direction reversal should react immediately rather than first
+            // consuming momentum queued in the opposite direction.
+            let next_remaining = folder_wheel_remaining(current, lower, upper, old, impulse);
+            // A reversal starts from rest instead of first braking the
+            // speed built up in the other direction.
+            if velocity.get() * next_remaining < 0.0 {
+                velocity.set(0.0);
+                carry.set(0.0);
+            }
+            remaining.set(next_remaining);
+            active.set(true);
+        })
+    };
+    if std::env::var("PIC_SCROLL_BENCH").as_deref() == Ok("folder") {
+        start_folder_scroll_bench(scrolled, wheel_notch.clone());
+    }
+
     let remaining_for_scroll = remaining.clone();
     let velocity_for_scroll = velocity.clone();
     let carry_for_scroll = carry.clone();
     let active_for_scroll = active.clone();
+    let wheel_notch_for_scroll = wheel_notch.clone();
     controller.connect_scroll(move |controller, dx, dy| {
         crate::scroll_trace::log_scroll_input("folder_gallery", controller, dx, dy);
         if controller
@@ -603,32 +645,7 @@ pub(crate) fn install_folder_smooth_gallery_scroll(
 
         match controller.unit() {
             gtk::gdk::ScrollUnit::Wheel => {
-                gallery.cancel_folder_keyboard_scroll_animation();
-                let lower = adjustment_for_scroll.lower();
-                let upper = (adjustment_for_scroll.upper() - adjustment_for_scroll.page_size())
-                    .max(lower);
-                let current = adjustment_for_scroll.value().clamp(lower, upper);
-                if (dy < 0.0 && current <= lower) || (dy > 0.0 && current >= upper) {
-                    remaining_for_scroll.set(0.0);
-                    velocity_for_scroll.set(0.0);
-                    carry_for_scroll.set(0.0);
-                    active_for_scroll.set(false);
-                    return glib::Propagation::Stop;
-                }
-
-                let impulse = dy * WHEEL_STEP_PX;
-                let old = remaining_for_scroll.get();
-                // Direction reversal should react immediately rather than first
-                // consuming momentum queued in the opposite direction.
-                let next_remaining = folder_wheel_remaining(current, lower, upper, old, impulse);
-                // A reversal starts from rest instead of first braking the
-                // speed built up in the other direction.
-                if velocity_for_scroll.get() * next_remaining < 0.0 {
-                    velocity_for_scroll.set(0.0);
-                    carry_for_scroll.set(0.0);
-                }
-                remaining_for_scroll.set(next_remaining);
-                active_for_scroll.set(true);
+                wheel_notch_for_scroll(dy);
                 glib::Propagation::Stop
             }
             gtk::gdk::ScrollUnit::Surface => {
@@ -645,6 +662,90 @@ pub(crate) fn install_folder_smooth_gallery_scroll(
     });
 
     scrolled.add_controller(controller);
+}
+
+/// Opt-in scripted Folder scroll (`PIC_SCROLL_BENCH=folder`), for measuring
+/// scroll smoothness on the real app, compositor and GPU without a hand on
+/// the wheel. Combine with `PIC_SCROLL_FRAME_TRACE=1`; phases are marked with
+/// `PIC_SCROLL_BENCH phase=<name>` lines so the frame trace can be split.
+///
+/// Script, at `PIC_SCROLL_BENCH_RATE` wheel notches per second (default 12;
+/// fast hand scrolling is roughly 30-45):
+/// - `cold`: 60 notches down into photos not yet decoded;
+/// - `warm`: 4 x (8 up, 8 down) over the screens just visited, whose
+///   thumbnails are already in RAM;
+/// - `cold2`: 60 more notches down.
+///
+/// It starts once the Folder view is on screen with content, and closes the
+/// window when done. Without the variable, nothing here runs.
+fn start_folder_scroll_bench(scrolled: &gtk::ScrolledWindow, wheel_notch: Rc<dyn Fn(f64)>) {
+    #[derive(Clone, Copy)]
+    enum Step {
+        Mark(&'static str),
+        Notch(f64),
+        Wait,
+    }
+    let mut script = vec![Step::Mark("cold")];
+    script.extend(std::iter::repeat(Step::Notch(1.0)).take(60));
+    script.extend(std::iter::repeat(Step::Wait).take(14));
+    script.push(Step::Mark("warm"));
+    for _ in 0..4 {
+        script.extend(std::iter::repeat(Step::Notch(-1.0)).take(8));
+        script.extend(std::iter::repeat(Step::Notch(1.0)).take(8));
+    }
+    script.extend(std::iter::repeat(Step::Wait).take(14));
+    script.push(Step::Mark("cold2"));
+    script.extend(std::iter::repeat(Step::Notch(1.0)).take(60));
+    script.extend(std::iter::repeat(Step::Wait).take(14));
+    script.push(Step::Mark("done"));
+
+    let rate = std::env::var("PIC_SCROLL_BENCH_RATE")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|rate| (1..=120).contains(rate))
+        .unwrap_or(12);
+    let scrolled = scrolled.clone();
+    let started = Instant::now();
+    let ready_since = Rc::new(Cell::new(None::<Instant>));
+    let position = Rc::new(Cell::new(0usize));
+    eprintln!("PIC_SCROLL_BENCH rate={rate}");
+    glib::timeout_add_local(Duration::from_millis(1000 / rate), move || {
+        let adjustment = scrolled.vadjustment();
+        let has_content = scrolled.is_mapped()
+            && adjustment.upper() > adjustment.page_size() * 12.0;
+        if ready_since.get().is_none() {
+            if has_content {
+                ready_since.set(Some(Instant::now()));
+                eprintln!("PIC_SCROLL_BENCH phase=waiting_for_settle");
+            } else if started.elapsed() > Duration::from_secs(30) {
+                eprintln!("PIC_SCROLL_BENCH phase=skipped reason=folder_view_not_visible_or_too_short");
+                return glib::ControlFlow::Break;
+            }
+            return glib::ControlFlow::Continue;
+        }
+        // Let startup thumbnail work finish before measuring.
+        if ready_since.get().is_some_and(|since| since.elapsed() < Duration::from_secs(4)) {
+            return glib::ControlFlow::Continue;
+        }
+        let index = position.get();
+        let Some(step) = script.get(index).copied() else {
+            if let Some(window) = scrolled.root().and_downcast::<gtk::Window>() {
+                window.close();
+            }
+            return glib::ControlFlow::Break;
+        };
+        position.set(index + 1);
+        match step {
+            Step::Mark(name) => eprintln!(
+                "PIC_SCROLL_BENCH phase={name} value={:.1} upper={:.1}",
+                adjustment.value(),
+                adjustment.upper()
+            ),
+            Step::Notch(dy) => wheel_notch(dy),
+            Step::Wait => {}
+        }
+        glib::ControlFlow::Continue
+    });
 }
 
 #[cfg(test)]

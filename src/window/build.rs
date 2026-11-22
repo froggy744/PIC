@@ -2394,6 +2394,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 folder_scroll_direction_for_event.set(direction);
             }
             crate::grid::set_gallery_scrolling(true);
+            gallery_for_folder_scroll.set_tiles_follow_pointer(false);
 
             // Folder bind now submits its own visible-priority async request on
             // every RAM miss. That is sufficient for wheel motion and Page
@@ -2454,6 +2455,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             let source = glib::timeout_add_local(Duration::from_millis(110), move || {
                 debounce_slot.borrow_mut().take();
                 crate::grid::set_gallery_scrolling(false);
+                gallery_for_visible.set_tiles_follow_pointer(true);
                 direct_scrub_active_for_settle.set(false);
                 folder_scrub_sampler_for_settle.borrow_mut().end();
                 // End the shared scrub window before the visible refresh so

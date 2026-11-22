@@ -351,6 +351,59 @@ pub(crate) fn install_smooth_gallery_scroll(
     scrolled.add_controller(motion);
     let zoom_viewport: gtk::Widget = scrolled.clone().upcast();
 
+    // One wheel notch (dy = +1 down, -1 up) through the spring. Shared by
+    // the real wheel handler and the opt-in scripted scroll benchmark.
+    let wheel_notch: Rc<dyn Fn(f64)> = {
+        let adjustment = adjustment.clone();
+        let target = target.clone();
+        let velocity = velocity.clone();
+        let active = active.clone();
+        let last_animation_value = last_animation_value.clone();
+        let last_error_abs = last_error_abs.clone();
+        Rc::new(move |dy: f64| {
+            let lower = adjustment.lower();
+            let upper = (adjustment.upper() - adjustment.page_size()).max(lower);
+
+            let current = adjustment.value().clamp(lower, upper);
+            if preserve_fractional_progress && !active.get() {
+                last_animation_value.set(current);
+            }
+            let delta = dy * WHEEL_STEP_PX;
+            let pending = target.get() - current;
+            let reversing =
+                active.get() && pending.abs() > STOP_DISTANCE_PX && pending.signum() != delta.signum();
+
+            // Rapid clicks in the same direction accumulate naturally. If
+            // the wheel reverses direction, however, do not make the user
+            // first consume the old queued destination: reverse NOW from
+            // the current viewport and discard the old spring velocity.
+            let base = if reversing {
+                velocity.set(0.0);
+                current
+            } else if active.get() {
+                target.get()
+            } else {
+                current
+            };
+            let destination = (base + delta).clamp(lower, upper);
+            target.set(if quantize_to_pixels {
+                destination.round().clamp(lower, upper)
+            } else {
+                destination
+            });
+            // New input is a fresh convergence attempt; clear the stall
+            // history so the first frame cannot be mistaken for a stall.
+            last_error_abs.set(f64::INFINITY);
+            active.set(true);
+        })
+    };
+    // Only the All Photos grid installs this with Ctrl+wheel zoom; Albums
+    // home does not.
+    if ctrl_zoom && std::env::var("PIC_SCROLL_BENCH").as_deref() == Ok("photos") {
+        start_scroll_bench(scrolled, wheel_notch.clone());
+    }
+    let wheel_notch_for_scroll = wheel_notch.clone();
+
     let controller = gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::VERTICAL);
     controller.set_propagation_phase(gtk::PropagationPhase::Capture);
 
@@ -358,8 +411,6 @@ pub(crate) fn install_smooth_gallery_scroll(
     let target_for_scroll = target.clone();
     let velocity_for_scroll = velocity.clone();
     let active_for_scroll = active.clone();
-    let last_animation_value_for_scroll = last_animation_value.clone();
-    let last_error_abs_for_scroll = last_error_abs.clone();
     let last_pointer_for_scroll = last_pointer.clone();
     let zoom_viewport_for_scroll = zoom_viewport.clone();
     controller.connect_scroll(move |controller, dx, dy| {
@@ -422,43 +473,7 @@ pub(crate) fn install_smooth_gallery_scroll(
 
         match controller.unit() {
             gtk::gdk::ScrollUnit::Wheel => {
-                let lower = adjustment_for_scroll.lower();
-                let upper = (adjustment_for_scroll.upper()
-                    - adjustment_for_scroll.page_size())
-                    .max(lower);
-
-                let current = adjustment_for_scroll.value().clamp(lower, upper);
-                if preserve_fractional_progress && !active_for_scroll.get() {
-                    last_animation_value_for_scroll.set(current);
-                }
-                let delta = dy * WHEEL_STEP_PX;
-                let pending = target_for_scroll.get() - current;
-                let reversing = active_for_scroll.get()
-                    && pending.abs() > STOP_DISTANCE_PX
-                    && pending.signum() != delta.signum();
-
-                // Rapid clicks in the same direction accumulate naturally. If
-                // the wheel reverses direction, however, do not make the user
-                // first consume the old queued destination: reverse NOW from
-                // the current viewport and discard the old spring velocity.
-                let base = if reversing {
-                    velocity_for_scroll.set(0.0);
-                    current
-                } else if active_for_scroll.get() {
-                    target_for_scroll.get()
-                } else {
-                    current
-                };
-                let destination = (base + delta).clamp(lower, upper);
-                target_for_scroll.set(if quantize_to_pixels {
-                    destination.round().clamp(lower, upper)
-                } else {
-                    destination
-                });
-                // New input is a fresh convergence attempt; clear the stall
-                // history so the first frame cannot be mistaken for a stall.
-                last_error_abs_for_scroll.set(f64::INFINITY);
-                active_for_scroll.set(true);
+                wheel_notch_for_scroll(dy);
                 glib::Propagation::Stop
             }
             gtk::gdk::ScrollUnit::Surface => {
@@ -609,7 +624,7 @@ pub(crate) fn install_folder_smooth_gallery_scroll(
         })
     };
     if std::env::var("PIC_SCROLL_BENCH").as_deref() == Ok("folder") {
-        start_folder_scroll_bench(scrolled, wheel_notch.clone());
+        start_scroll_bench(scrolled, wheel_notch.clone());
     }
 
     let remaining_for_scroll = remaining.clone();
@@ -664,7 +679,8 @@ pub(crate) fn install_folder_smooth_gallery_scroll(
     scrolled.add_controller(controller);
 }
 
-/// Opt-in scripted Folder scroll (`PIC_SCROLL_BENCH=folder`), for measuring
+/// Opt-in scripted gallery scroll (`PIC_SCROLL_BENCH=folder` for the Folder
+/// view, `PIC_SCROLL_BENCH=photos` for All Photos), for measuring
 /// scroll smoothness on the real app, compositor and GPU without a hand on
 /// the wheel. Combine with `PIC_SCROLL_FRAME_TRACE=1`; phases are marked with
 /// `PIC_SCROLL_BENCH phase=<name>` lines so the frame trace can be split.
@@ -676,9 +692,9 @@ pub(crate) fn install_folder_smooth_gallery_scroll(
 ///   thumbnails are already in RAM;
 /// - `cold2`: 60 more notches down.
 ///
-/// It starts once the Folder view is on screen with content, and closes the
+/// It starts once that view is on screen with content, and closes the
 /// window when done. Without the variable, nothing here runs.
-fn start_folder_scroll_bench(scrolled: &gtk::ScrolledWindow, wheel_notch: Rc<dyn Fn(f64)>) {
+fn start_scroll_bench(scrolled: &gtk::ScrolledWindow, wheel_notch: Rc<dyn Fn(f64)>) {
     #[derive(Clone, Copy)]
     enum Step {
         Mark(&'static str),
@@ -717,8 +733,8 @@ fn start_folder_scroll_bench(scrolled: &gtk::ScrolledWindow, wheel_notch: Rc<dyn
             if has_content {
                 ready_since.set(Some(Instant::now()));
                 eprintln!("PIC_SCROLL_BENCH phase=waiting_for_settle");
-            } else if started.elapsed() > Duration::from_secs(30) {
-                eprintln!("PIC_SCROLL_BENCH phase=skipped reason=folder_view_not_visible_or_too_short");
+            } else if started.elapsed() > Duration::from_secs(120) {
+                eprintln!("PIC_SCROLL_BENCH phase=skipped reason=view_not_visible_or_too_short");
                 return glib::ControlFlow::Break;
             }
             return glib::ControlFlow::Continue;

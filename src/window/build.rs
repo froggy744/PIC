@@ -2142,6 +2142,8 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             grid_scroll_direction_for_event.set(delta.signum());
             grid_thumbnail_motion_frames_for_event.set(GRID_THUMBNAIL_MOTION_PUMP_FRAMES);
             crate::grid::set_gallery_scrolling(true);
+            gallery_for_group_scroll
+                .set_tiles_follow_pointer(crate::grid::GalleryScroller::Photos, false);
 
             // A scrollbar scrub can teleport farther than GTK can realize
             // GridView children in the same frame. Queue the destination from
@@ -2224,6 +2226,12 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     grid_scroll.add_tick_callback(move |_, _| {
         let frames_left = grid_thumbnail_motion_frames_for_tick.get();
         if frames_left == 0 {
+            // Not scrolling (about 100 ms after the last change): tiles follow
+            // the pointer. Checked every idle frame rather than once, because
+            // this tick only runs while the grid is on screen; a view switch
+            // mid-scroll must not leave All Photos tiles ignoring clicks.
+            gallery_for_grid_motion_tick
+                .set_tiles_follow_pointer(crate::grid::GalleryScroller::Photos, true);
             return glib::ControlFlow::Continue;
         }
         grid_thumbnail_motion_frames_for_tick.set(frames_left.saturating_sub(1));
@@ -2394,7 +2402,8 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 folder_scroll_direction_for_event.set(direction);
             }
             crate::grid::set_gallery_scrolling(true);
-            gallery_for_folder_scroll.set_tiles_follow_pointer(false);
+            gallery_for_folder_scroll
+                .set_tiles_follow_pointer(crate::grid::GalleryScroller::Folder, false);
 
             // Folder bind now submits its own visible-priority async request on
             // every RAM miss. That is sufficient for wheel motion and Page
@@ -2455,7 +2464,8 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             let source = glib::timeout_add_local(Duration::from_millis(110), move || {
                 debounce_slot.borrow_mut().take();
                 crate::grid::set_gallery_scrolling(false);
-                gallery_for_visible.set_tiles_follow_pointer(true);
+                gallery_for_visible
+                    .set_tiles_follow_pointer(crate::grid::GalleryScroller::Folder, true);
                 direct_scrub_active_for_settle.set(false);
                 folder_scrub_sampler_for_settle.borrow_mut().end();
                 // End the shared scrub window before the visible refresh so

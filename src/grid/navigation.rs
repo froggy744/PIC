@@ -1,7 +1,7 @@
 impl Gallery {
-    /// Whether Folder tiles react to the pointer (hover styling, tooltips).
+    /// Whether a surface's tiles react to the pointer (hover styling, tooltips).
     ///
-    /// While the folder view scrolls, the tile under a resting or moving
+    /// While a gallery scrolls, the tile under a resting or moving
     /// pointer changes many times a second. Each change restyles the hovered
     /// tile and restarts its tooltip, and those redraws run out of step with
     /// the display: frames arrive early, the next one a full refresh late,
@@ -9,9 +9,13 @@ impl Gallery {
     /// therefore ignore the pointer while scrolling and follow it again once
     /// the scroll settles. Clicks still reach the scrolled window, which stops
     /// the motion.
-    pub fn set_tiles_follow_pointer(&self, follow: bool) {
-        if self.folder_sectioned_root.can_target() != follow {
-            self.folder_sectioned_root.set_can_target(follow);
+    pub fn set_tiles_follow_pointer(&self, scroller: GalleryScroller, follow: bool) {
+        let root: &gtk::Widget = match scroller {
+            GalleryScroller::Photos => self.root.upcast_ref(),
+            GalleryScroller::Folder => self.folder_sectioned_root.upcast_ref(),
+        };
+        if root.can_target() != follow {
+            root.set_can_target(follow);
         }
     }
 

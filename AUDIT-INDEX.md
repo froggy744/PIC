@@ -113,15 +113,16 @@
 
 ### `src/grid/` - gallery (root `grid.rs` + `include!` composition)
 
-`src/grid.rs` (1050) is the module root: tile size defaults, `ZOOM_LEVELS` ladder (perceptual zoom steps), `PICASA_LEGACY_FOLDER_LIST` switches, first-visible-thumb trace. It **`include!`s** `grid/tile.rs`, `grid/grouping.rs`, `grid/sectioned_folder.rs`, `grid/photo_wall.rs`, `grid/virtualization.rs`, `grid/view.rs`, `grid/navigation.rs`, `grid/selection.rs` (all become items of the flat `grid` module) and `mod`-declares `honeycomb`, `honeycomb_raster`, `honeycomb_surface`, `masonry_layout`, `metadata_index`, `photo_wall_layout`, plus test modules.
+`src/grid.rs` (1050) is the module root: tile size defaults, `ZOOM_LEVELS` ladder (perceptual zoom steps), `PICASA_LEGACY_FOLDER_LIST` switches, first-visible-thumb trace. It **`include!`s** `grid/tile.rs`, `grid/grouping.rs`, `grid/sectioned_folder.rs`, `grid/photo_wall.rs`, `grid/virtualization.rs`, `grid/presentation.rs`, `grid/view.rs`, `grid/navigation.rs`, `grid/selection.rs` (all become items of the flat `grid` module) and `mod`-declares `honeycomb`, `honeycomb_raster`, `honeycomb_surface`, `masonry_layout`, `metadata_index`, `photo_wall_layout`, plus test modules.
 
 | File | Lines | What it does |
 |---|---|---|
 | `view.rs` | 1532 | `Gallery` struct - the main gallery widget (zoom anchors, layout transitions). |
-| `virtualization.rs` | 3483 | Folder stream virtualization plus the gallery thumbnail plumbing: visible-tile request pumps, prefetch, `drain_thumbnail_display_completions` (per-frame delivery), `sync_presentation_target`, folder visibility helpers (`folder_viewport_band`, `folder_tile_span`). |
+| `virtualization.rs` | 2735 | Folder stream virtualization: chunked loading, row model, scroll extent, model-derived scrub targets (`queue_*_scroll_target_cached_tiles_async`). |
+| `presentation.rs` | 1071 | **Gallery thumbnail presentation module.** Interface: `present_frame()` (per frame), `queue_visible_cached_tiles_async` / `apply_visible_cached_paintables` / `prefetch_cached_tiles` keyed by `GalleryScroller`, `thumbnail_prefetch_allowance`. Behind it: the visible-tiles seam (`visible_presentation_tiles`, one adapter per surface), folder placement helpers, decoded-thumbnail RAM cache `ThumbnailPaintableCache`, presentation targets, completion delivery. Pure, unit-tested: `prefetch_order`, `presentation_target_for_tile`, cache LRU. |
 | `sectioned_folder.rs` | 3170 | `SectionedFolderView`: PIC's own virtualizer on a `gtk::Fixed` (not a GTK list widget). Used for Folder grouping in Grid layout and for every wall layout (Photo Wall, Masonry, Honeycomb). Re-places tiles on every scroll change (`refresh`), keeps a tile pool, records each tile's placed position (`SectionedFolderTile.position`), owns zoom reflow snapshots. |
 | `selection.rs` | 2561 | Multi-selection, keyboard navigation across folders, selection positions, `visible_root()`. |
-| `tile.rs` | 2699 | `SquareTile` photo tile widget; decoded-thumbnail RAM cache `ThumbnailPaintableCache` (stamp LRU, entry + 64 MB High-quality byte cap, per-entry presentation target); presentation-target buckets (`presentation_target_for_tile`); scrub/zoom behaviors; Honeycomb mask application. |
+| `tile.rs` | 2283 | `SquareTile` photo tile widget (bind paths, `apply_presentation_paintable`, `presentation_settled`), scrub/zoom behaviors, Honeycomb mask application. |
 | `photo_wall.rs` | 1020 | `PhotoLayout` enum (**Wall/Masonry/Honeycomb**) state, anchor restore, sidebar-transition freeze. |
 | `photo_wall_tests.rs` | 3953 | `PhotoLayout` tests (incl. Honeycomb). |
 | `photo_wall_layout.rs` | 1419 | Masonry/photo-wall/Honeycomb geometry (integer column widths, anchors). |
@@ -275,7 +276,7 @@ Verified 2026-11-22. This area has been tuned against live-app measurements; rea
 **Thumbnail flow** (cached thumbnails are PIC's own JPEG files, 320 px or 640 px with High quality):
 1. A tile binds, or a per-frame pump finds a visible tile without a sharp enough thumbnail, and builds a `DisplayRequest` via `photo_presentation_request` (`grid/tile.rs`).
 2. `thumbnail_display.rs` workers (4-8 threads) decode it. With a `target_short_edge`, JPEGs are decoded directly at a reduced libjpeg-turbo DCT scale (`open_display_image` -> `thumbnail::decode_jpeg_turbo_rgba_with_target`). Rotation and `edit::render::apply_recipe` run on that smaller image. A cache miss triggers generation in `thumbnail.rs` (`request_priority`).
-3. Completions go into a mutex-protected `Vec`. The `gallery_scroll_stack` tick in `window/build.rs` calls `Gallery::sync_presentation_target()`, then `drain_thumbnail_display_completions()`, every frame. The drain creates `gdk::MemoryTexture`s on the GTK thread, inserts them into the RAM cache and applies them to tiles by presentation key.
+3. Completions go into a mutex-protected `Vec`. The `gallery_scroll_stack` tick in `window/build.rs` calls `Gallery::present_frame()` every frame, which runs `sync_presentation_target` and then `drain_thumbnail_display_completions`. The drain creates `gdk::MemoryTexture`s on the GTK thread, inserts them into the RAM cache and applies them to tiles by presentation key.
 
 **Presentation targets (zoom-dependent decode size):** `presentation_target_for_tile(tile_width, scale)` = tile width x scale x 1.5, rounded up to the 128/192/256/384 px short-edge buckets; `None` (full size) above that. It is a thread-local updated per frame by `sync_presentation_target`. Cache entries remember the target they were decoded for:
 - `folder_thumbnail_cache_get` treats a smaller-than-current entry as a miss;
@@ -284,9 +285,11 @@ Verified 2026-11-22. This area has been tuned against live-app measurements; rea
 - `SquareTile::presentation_settled()` (loaded *and* sharp enough) is what the pumps filter on.
 
 **Per-frame pumps** (`window/build.rs`, tick callbacks armed for about 12 frames after each scroll):
-- `queue_visible_grid_cached_tiles_async` / `queue_visible_folder_cached_tiles_async`;
-- during a direct scrollbar scrub: `apply_visible_*_cached_paintables` plus model-derived targets (`queue_*_scroll_target_cached_tiles_async`);
-- prefetch every third frame.
+- `queue_visible_cached_tiles_async(GalleryScroller::Photos | Folder, budget)`;
+- during a direct scrollbar scrub: `apply_visible_cached_paintables(scroller)` plus model-derived targets (`queue_*_scroll_target_cached_tiles_async`);
+- `prefetch_cached_tiles(scroller, …)` every third frame.
+
+All of these sit in `grid/presentation.rs`. Each gallery surface answers one question through `visible_presentation_tiles` (the seam): its visible band, and where each tile is placed.
 
 After a scroll settles, a 16 ms timer prefetches ahead, capped by `Gallery::thumbnail_prefetch_allowance()` (half of what the RAM cache can hold).
 

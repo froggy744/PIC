@@ -3283,7 +3283,11 @@ fn live_network_wall_browsing_keeps_prefetch_bounded() {
         adjustment.set_value((adjustment.upper() - adjustment.page_size()).max(0.0) * fraction);
         settle();
         gallery.queue_visible_cached_tiles_async(GalleryScroller::Folder, 96);
-        gallery.prefetch_folder_cached_tiles(24, if fraction == 0.0 { -1.0 } else { 1.0 });
+        gallery.prefetch_cached_tiles(
+            GalleryScroller::Folder,
+            24,
+            if fraction == 0.0 { -1.0 } else { 1.0 },
+        );
         let jobs = crate::thumbnail::network_prefetch_queued_count();
         assert!(
             jobs <= 8,
@@ -4022,7 +4026,7 @@ fn sectioned_folder_visibility_uses_scroll_viewport_not_content_height() {
     }
     assert!(overscan > 0, "the overscan band must contain live tiles");
     let span = gallery
-        .visible_folder_photo_index_span()
+        .visible_photo_index_span(GalleryScroller::Folder)
         .expect("visible folder span");
     assert_eq!(
         span,
@@ -4042,7 +4046,7 @@ fn sectioned_folder_visibility_uses_scroll_viewport_not_content_height() {
     let jumped_top = adjustment.value() as f32;
     let jumped_bottom = jumped_top + adjustment.page_size() as f32;
     let jumped = gallery
-        .visible_folder_photo_index_span()
+        .visible_photo_index_span(GalleryScroller::Folder)
         .expect("tiles placed for the new viewport must count as visible");
     assert!(
         jumped.0 > before_jump.1,

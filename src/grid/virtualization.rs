@@ -1394,43 +1394,6 @@ impl Gallery {
         crate::thumbnail_display::replace_visible_requests(requests)
     }
 
-    fn visible_grid_photo_index_span(&self) -> Option<(usize, usize)> {
-        if self.layout() != PhotoLayout::Grid {
-            return None;
-        }
-        if (self.group_mode.get() == GroupMode::Folder
-            && (crate::grid::sectioned_folder_view_enabled()
-                || !crate::grid::folder_gridview_experiment_enabled()))
-            || self.root.height() <= 0
-        {
-            return None;
-        }
-        let viewport = self.root.height() as f32;
-        let mut tiles = Vec::new();
-        collect_tiles(self.root.upcast_ref(), &mut tiles);
-        let mut first = usize::MAX;
-        let mut last = 0usize;
-        let mut found = false;
-        for tile in tiles {
-            if !tile.is_mapped() || tile.height() <= 0 {
-                continue;
-            }
-            let Some(index) = tile.imp().photo_index.get() else {
-                continue;
-            };
-            let Some(bounds) = tile.compute_bounds(&self.root) else {
-                continue;
-            };
-            if bounds.y() + bounds.height() < 0.0 || bounds.y() > viewport {
-                continue;
-            }
-            first = first.min(index);
-            last = last.max(index);
-            found = true;
-        }
-        found.then_some((first, last))
-    }
-
     /// Reconcile the actually visible GridView cells after direct scrollbar
     /// scrubbing stops. During the scrub cells intentionally retain their last
     /// paintable to avoid a wall of empty templates; this pass either applies
@@ -1478,55 +1441,6 @@ impl Gallery {
             refreshed += 1;
         }
         refreshed
-    }
-
-    /// Warm several screens of GridView thumbnails from the photo model so
-    /// Library/Favourites/Albums/Search can scroll into already-decoded RAM
-    /// paintables just like Folder mode.
-    pub fn prefetch_grid_cached_tiles(&self, budget: usize, direction: f64) -> usize {
-        if self.layout() != PhotoLayout::Grid {
-            return 0;
-        }
-        if budget == 0
-            || (self.group_mode.get() == GroupMode::Folder
-                && (crate::grid::sectioned_folder_view_enabled()
-                    || !crate::grid::folder_gridview_experiment_enabled()))
-        {
-            return 0;
-        }
-        let Some((first_visible, last_visible)) = self.visible_grid_photo_index_span() else {
-            return 0;
-        };
-        let photos = self.current_photos.borrow();
-        if photos.is_empty() {
-            return 0;
-        }
-
-        let visible_count = last_visible
-            .saturating_sub(first_visible)
-            .saturating_add(1)
-            .max(self.current_columns.get() as usize);
-        let ahead = visible_count.saturating_mul(5);
-        let behind = visible_count;
-        let mut indexes = Vec::with_capacity((ahead + behind).min(photos.len()));
-
-        if direction < 0.0 {
-            let ahead_start = first_visible.saturating_sub(ahead);
-            indexes.extend((ahead_start..first_visible).rev());
-            let behind_end = (last_visible + 1 + behind).min(photos.len());
-            indexes.extend((last_visible + 1)..behind_end);
-        } else {
-            let ahead_end = (last_visible + 1 + ahead).min(photos.len());
-            indexes.extend((last_visible + 1)..ahead_end);
-            let behind_start = first_visible.saturating_sub(behind);
-            indexes.extend((behind_start..first_visible).rev());
-        }
-
-        let queued = queue_prefetch_photos(
-            indexes.into_iter().filter_map(|index| photos.get(index)),
-            budget,
-        );
-        queued
     }
 
     /// Queue the Folder destination directly from virtual-row geometry.
@@ -1660,52 +1574,6 @@ impl Gallery {
 
         let queued = requests.len();
         crate::thumbnail_display::replace_visible_requests(requests);
-        queued
-    }
-
-    /// Warm decoded presentation thumbnails from the photo model, not just from
-    /// GTK's realized row pool. That gives a scrollbar jump several screens of
-    /// cache runway even before GtkListView has created/rebound those widgets.
-    pub fn prefetch_folder_cached_tiles(&self, budget: usize, direction: f64) -> usize {
-        if self.layout() != PhotoLayout::Grid {
-            return self.wall_prefetch(budget, direction);
-        }
-        if budget == 0 || self.group_mode.get() != GroupMode::Folder {
-            return 0;
-        }
-        let Some((first_visible, last_visible)) = self.visible_folder_photo_index_span() else {
-            return 0;
-        };
-        let photos = self.current_photos.borrow();
-        if photos.is_empty() {
-            return 0;
-        }
-
-        let visible_count = last_visible
-            .saturating_sub(first_visible)
-            .saturating_add(1)
-            .max(self.current_columns.get() as usize);
-        let ahead = visible_count.saturating_mul(6);
-        let behind = visible_count.saturating_mul(2);
-        let mut indexes = Vec::with_capacity((ahead + behind).min(photos.len()));
-
-        if direction < 0.0 {
-            let ahead_start = first_visible.saturating_sub(ahead);
-            indexes.extend((ahead_start..first_visible).rev());
-            let behind_end = (last_visible + 1 + behind).min(photos.len());
-            indexes.extend((last_visible + 1)..behind_end);
-        } else {
-            let ahead_end = (last_visible + 1 + ahead).min(photos.len());
-            indexes.extend((last_visible + 1)..ahead_end);
-            let behind_start = first_visible.saturating_sub(behind);
-            indexes.extend((behind_start..first_visible).rev());
-        }
-
-        let queued = queue_prefetch_photos(
-            indexes.into_iter().filter_map(|index| photos.get(index)),
-            budget,
-        );
-
         queued
     }
 

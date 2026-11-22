@@ -2257,7 +2257,11 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         // several frames to rebind the destination cells.
         if scrub_left == 0 && phase % 3 == 0 {
             gallery_for_grid_motion_tick
-                .prefetch_grid_cached_tiles(32, grid_scroll_direction_for_tick.get());
+                .prefetch_cached_tiles(
+                    crate::grid::GalleryScroller::Photos,
+                    32,
+                    grid_scroll_direction_for_tick.get(),
+                );
         }
 
         glib::ControlFlow::Continue
@@ -2360,7 +2364,8 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             .wrapping_add(1);
         folder_thumbnail_motion_phase_for_tick.set(phase);
         if !folder_direct_scrub_active_for_tick.get() && phase % 3 == 0 {
-            gallery_for_thumbnail_motion_tick.prefetch_folder_cached_tiles(
+            gallery_for_thumbnail_motion_tick.prefetch_cached_tiles(
+                crate::grid::GalleryScroller::Folder,
                 24,
                 folder_scroll_direction_for_tick.get(),
             );
@@ -2495,7 +2500,11 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                         let remaining =
                             prefetch_allowance.saturating_sub(prefetched_total.get());
                         let loaded = gallery_for_prefetch
-                            .prefetch_folder_cached_tiles(remaining.min(24), direction_for_settle);
+                            .prefetch_cached_tiles(
+                                crate::grid::GalleryScroller::Folder,
+                                remaining.min(24),
+                                direction_for_settle,
+                            );
                         prefetched_total.set(prefetched_total.get() + loaded);
                         // Stop once everything is loaded, or once this settle
                         // has prefetched what the RAM cache can hold; more

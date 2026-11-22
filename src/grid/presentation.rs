@@ -19,6 +19,45 @@ pub enum GalleryScroller {
     Folder,
 }
 
+impl GalleryScroller {
+    /// How many visible-screens of photos prefetch reaches (ahead, behind).
+    /// Folder reaches further: its sections make jumps between screens larger.
+    fn prefetch_reach(self) -> (usize, usize) {
+        match self {
+            GalleryScroller::Photos => (5, 1),
+            GalleryScroller::Folder => (6, 2),
+        }
+    }
+}
+
+/// Photo indexes to prefetch around the visible span `(first, last)`, in
+/// priority order: `reach.0` screens ahead in the scroll `direction` (nearest
+/// first), then `reach.1` screens behind. A "screen" is the visible count, at
+/// least one row of `columns`. Indexes stay within `photo_count`.
+fn prefetch_order(
+    (first, last): (usize, usize),
+    photo_count: usize,
+    columns: usize,
+    (ahead_screens, behind_screens): (usize, usize),
+    direction: f64,
+) -> Vec<usize> {
+    if photo_count == 0 {
+        return Vec::new();
+    }
+    let visible = last.saturating_sub(first).saturating_add(1).max(columns);
+    let ahead = visible.saturating_mul(ahead_screens);
+    let behind = visible.saturating_mul(behind_screens);
+    let mut order = Vec::with_capacity((ahead + behind).min(photo_count));
+    if direction < 0.0 {
+        order.extend((first.saturating_sub(ahead)..first).rev());
+        order.extend((last + 1)..(last + 1 + behind).min(photo_count));
+    } else {
+        order.extend((last + 1)..(last + 1 + ahead).min(photo_count));
+        order.extend((first.saturating_sub(behind)..first).rev());
+    }
+    order
+}
+
 /// A tile on the active surface with its vertical span in surface coordinates.
 struct VisibleTile {
     tile: SquareTile,
@@ -207,9 +246,9 @@ impl Gallery {
         applied
     }
 
-    /// First and last photo index among the Folder tiles on screen.
-    fn visible_folder_photo_index_span(&self) -> Option<(usize, usize)> {
-        let visible = self.visible_presentation_tiles(GalleryScroller::Folder)?;
+    /// First and last photo index among the tiles on screen.
+    fn visible_photo_index_span(&self, scroller: GalleryScroller) -> Option<(usize, usize)> {
+        let visible = self.visible_presentation_tiles(scroller)?;
         let mut span: Option<(usize, usize)> = None;
         for entry in visible.on_screen() {
             let Some(index) = entry.tile.imp().photo_index.get() else {
@@ -220,6 +259,36 @@ impl Gallery {
             }));
         }
         span
+    }
+
+    /// Warm decoded thumbnails around the viewport from the photo model, not
+    /// just from realized tiles, so a fast scroll finds them already in RAM.
+    /// Tiles ahead in the scroll `direction` come first. Wall layouts use
+    /// their layout model.
+    pub fn prefetch_cached_tiles(
+        &self,
+        scroller: GalleryScroller,
+        budget: usize,
+        direction: f64,
+    ) -> usize {
+        if scroller == GalleryScroller::Folder && self.layout() != PhotoLayout::Grid {
+            return self.wall_prefetch(budget, direction);
+        }
+        if budget == 0 {
+            return 0;
+        }
+        let Some(visible_span) = self.visible_photo_index_span(scroller) else {
+            return 0;
+        };
+        let photos = self.current_photos.borrow();
+        let order = prefetch_order(
+            visible_span,
+            photos.len(),
+            self.current_columns.get() as usize,
+            scroller.prefetch_reach(),
+            direction,
+        );
+        queue_prefetch_photos(order.into_iter().filter_map(|index| photos.get(index)), budget)
     }
 
     /// Vertical span of a folder tile in `root` coordinates.
@@ -276,5 +345,37 @@ impl Gallery {
             return Some((top, top + page));
         }
         Some((0.0, root.height() as f32))
+    }
+}
+
+#[cfg(test)]
+mod presentation_tests {
+    use super::*;
+
+    #[test]
+    fn prefetch_reaches_ahead_in_the_scroll_direction_first() {
+        // Visible photos 20..=29 (one 10-column screen), 1 ahead + 1 behind.
+        let down = prefetch_order((20, 29), 100, 10, (1, 1), 1.0);
+        assert_eq!(&down[..10], &(30..40).collect::<Vec<_>>()[..]);
+        assert_eq!(&down[10..], &(10..20).rev().collect::<Vec<_>>()[..]);
+
+        let up = prefetch_order((20, 29), 100, 10, (1, 1), -1.0);
+        assert_eq!(&up[..10], &(10..20).rev().collect::<Vec<_>>()[..]);
+        assert_eq!(&up[10..], &(30..40).collect::<Vec<_>>()[..]);
+    }
+
+    #[test]
+    fn prefetch_stays_inside_the_library_and_covers_at_least_a_row() {
+        assert!(prefetch_order((0, 0), 0, 8, (5, 1), 1.0).is_empty());
+        // Near the end: ahead is clipped, behind still filled.
+        let end = prefetch_order((95, 99), 100, 5, (2, 1), 1.0);
+        assert!(end.iter().all(|index| *index < 95));
+        assert_eq!(end.len(), 5);
+        // A single visible tile still reaches a full row per screen.
+        let single = prefetch_order((50, 50), 1000, 8, (2, 0), 1.0);
+        assert_eq!(single, (51..67).collect::<Vec<_>>());
+        // Reach multipliers per scroller are kept.
+        assert_eq!(GalleryScroller::Photos.prefetch_reach(), (5, 1));
+        assert_eq!(GalleryScroller::Folder.prefetch_reach(), (6, 2));
     }
 }

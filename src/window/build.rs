@@ -2081,6 +2081,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             let last_frame = Rc::new(Cell::new(None::<Instant>));
             let window_for_scroll_trace = window.clone();
             let gallery_for_scroll_trace = gallery.clone();
+            let adjustment_for_scroll_trace = scroller.vadjustment();
             scroller
                 .vadjustment()
                 .connect_value_changed(move |_| {
@@ -2098,6 +2099,8 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                     let trace_until = trace_until_for_event.clone();
                     let last_frame = last_frame.clone();
                     let gallery_for_paint = gallery_for_scroll_trace.clone();
+                    let window_for_paint = window_for_scroll_trace.clone();
+                    let adjustment_for_paint = adjustment_for_scroll_trace.clone();
                     clock.connect_after_paint(move |_| {
                         let now = Instant::now();
                         let Some(until) = trace_until.get() else {
@@ -2108,9 +2111,15 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                             return;
                         }
                         if let Some(previous) = last_frame.replace(Some(now)) {
+                            // Window size and scroll position let frame pacing be
+                            // compared per simulated screen size, and motion
+                            // smoothness measured as pixels moved per frame.
                             eprintln!(
-                                "PIC_SCROLL_FRAME source={source} layout={:?} elapsed_ms={:.3} interval_ms={:.3}",
+                                "PIC_SCROLL_FRAME source={source} layout={:?} window={}x{} value={:.1} elapsed_ms={:.3} interval_ms={:.3}",
                                 gallery_for_paint.layout(),
+                                window_for_paint.width(),
+                                window_for_paint.height(),
+                                adjustment_for_paint.value(),
                                 now.duration_since(until - Duration::from_millis(250)).as_secs_f64()
                                     * 1000.0,
                                 now.duration_since(previous).as_secs_f64() * 1000.0,

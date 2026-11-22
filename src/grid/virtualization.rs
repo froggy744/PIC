@@ -1663,6 +1663,45 @@ impl Gallery {
     /// folder, so its own height is the content height, not the viewport.
     /// Its coordinates match the scroll adjustment, so the band is the
     /// adjustment's current page. The legacy `ListView` root is the viewport.
+    /// Vertical span of a folder tile in `root` coordinates.
+    ///
+    /// For the sectioned folder view this is where the view *placed* the
+    /// tile, as recorded when it moved it. That is current as soon as the
+    /// scroll handler runs. GTK only updates allocations (and with them
+    /// `compute_bounds` and even `gtk::Fixed::child_position`) in the next
+    /// layout phase, after the thumbnail pumps ran, so during a fast
+    /// scrollbar drag those describe the previous frame's viewport.
+    fn folder_tile_span(&self, root: &gtk::Widget, tile: &SquareTile) -> Option<(f32, f32)> {
+        if root == self.folder_sectioned_root.upcast_ref::<gtk::Widget>() {
+            let index = tile.imp().photo_index.get()?;
+            let placed = self
+                .sectioned_folder
+                .live_tiles
+                .borrow()
+                .get(&(index as u32))
+                .filter(|entry| &entry.tile == tile)
+                .and_then(|entry| entry.position.get());
+            if let Some((_, y)) = placed {
+                let top = y + f64::from(FOLDER_ITEM_MARGIN);
+                let bottom = top + f64::from(self.tile_height.get().max(1));
+                return Some((top as f32, bottom as f32));
+            }
+        }
+        if tile.height() <= 0 {
+            return None;
+        }
+        let bounds = tile.compute_bounds(root)?;
+        Some((bounds.y(), bounds.y() + bounds.height()))
+    }
+
+    /// Whether a folder tile has a usable vertical extent. A tile the
+    /// sectioned view just placed has no allocation until GTK's next layout
+    /// phase, but its placed position and the tile height are already known.
+    /// Skipping it would drop exactly the tiles a fast drag reveals.
+    fn folder_tile_has_extent(&self, root: &gtk::Widget, tile: &SquareTile) -> bool {
+        tile.height() > 0 || root == self.folder_sectioned_root.upcast_ref::<gtk::Widget>()
+    }
+
     fn folder_viewport_band(&self, root: &gtk::Widget) -> Option<(f32, f32)> {
         if root.height() <= 0 {
             return None;
@@ -1706,7 +1745,7 @@ impl Gallery {
         let mut candidates: Vec<(f32, SquareTile)> = Vec::new();
 
         for tile in tiles {
-            if tile.height() <= 0 {
+            if !self.folder_tile_has_extent(&root, &tile) {
                 continue;
             }
             let Some(photo) = tile.imp().photo.borrow().as_ref().cloned() else {
@@ -1719,11 +1758,11 @@ impl Gallery {
             ) {
                 continue;
             }
-            let Some(bounds) = tile.compute_bounds(&root) else {
+            let Some((top, bottom)) = self.folder_tile_span(&root, &tile) else {
                 continue;
             };
-            let center = bounds.y() + bounds.height() * 0.5;
-            if bounds.y() + bounds.height() < viewport_top || bounds.y() > viewport_bottom {
+            let center = (top + bottom) * 0.5;
+            if bottom < viewport_top || top > viewport_bottom {
                 continue;
             }
             candidates.push(((center - viewport_center).abs(), tile));
@@ -1776,13 +1815,13 @@ impl Gallery {
         collect_tiles(&root, &mut tiles);
         let mut applied = 0usize;
         for tile in tiles {
-            if tile.height() <= 0 || tile.presentation_settled() {
+            if !self.folder_tile_has_extent(&root, &tile) || tile.presentation_settled() {
                 continue;
             }
-            let Some(bounds) = tile.compute_bounds(&root) else {
+            let Some((top, bottom)) = self.folder_tile_span(&root, &tile) else {
                 continue;
             };
-            if bounds.y() + bounds.height() < viewport_top || bounds.y() > viewport_bottom {
+            if bottom < viewport_top || top > viewport_bottom {
                 continue;
             }
             let Some(photo) = tile.imp().photo.borrow().as_ref().cloned() else {
@@ -1960,16 +1999,16 @@ impl Gallery {
         let mut last = 0usize;
         let mut found = false;
         for tile in tiles {
-            if tile.height() <= 0 {
+            if !self.folder_tile_has_extent(&root, &tile) {
                 continue;
             }
             let Some(index) = tile.imp().photo_index.get() else {
                 continue;
             };
-            let Some(bounds) = tile.compute_bounds(&root) else {
+            let Some((top, bottom)) = self.folder_tile_span(&root, &tile) else {
                 continue;
             };
-            if bounds.y() + bounds.height() < viewport_top || bounds.y() > viewport_bottom {
+            if bottom < viewport_top || top > viewport_bottom {
                 continue;
             }
             first = first.min(index);

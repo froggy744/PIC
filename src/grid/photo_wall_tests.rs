@@ -4032,4 +4032,29 @@ fn sectioned_folder_visibility_uses_scroll_viewport_not_content_height() {
         ),
         "overscan tiles must not count as visible"
     );
+
+    // A fast scrollbar drag: the scroll handler re-places tiles at once, but
+    // their allocations only update in GTK's next layout phase, after the
+    // thumbnail pumps ran. Visibility must follow the placed positions, or a
+    // fast drag finds no visible tile and requests no thumbnail at all.
+    let before_jump = span;
+    adjustment.set_value(20000.0);
+    let jumped_top = adjustment.value() as f32;
+    let jumped_bottom = jumped_top + adjustment.page_size() as f32;
+    let jumped = gallery
+        .visible_folder_photo_index_span()
+        .expect("tiles placed for the new viewport must count as visible");
+    assert!(
+        jumped.0 > before_jump.1,
+        "span still describes the old viewport"
+    );
+    let live = gallery.sectioned_folder.live_tiles.borrow();
+    for index in [jumped.0, jumped.1] {
+        let (_, y) = live[&(index as u32)].position.get().expect("placed tile");
+        let y = y as f32;
+        assert!(
+            y + gallery.tile_height.get() as f32 >= jumped_top && y <= jumped_bottom,
+            "span edge {index} at y={y} is outside {jumped_top}..{jumped_bottom}"
+        );
+    }
 }

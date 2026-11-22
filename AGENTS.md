@@ -67,7 +67,7 @@ All facts below were verified from `Cargo.toml`, `build.rs`, `.cargo/config.toml
 ## Codebase Index
 
 Before investigating or changing a feature, consult
-`audit-index.md` to identify its implementation,
+`AUDIT-INDEX.md` to identify its implementation,
 dependencies and relevant tests.
 
 Treat the index as a navigation guide, not as the

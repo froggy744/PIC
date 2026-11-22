@@ -7,6 +7,7 @@
 | Verified commit | `3f57bf31adad7c2f4587b28c87fe9dbb949f63c1` (branch `main`) |
 | Verification date | 2026-11-14 |
 | Working tree at verification | Not clean: 26 modified + 6 new untracked source files (Honeycomb: `grid/honeycomb*.rs`, `settings/honeycomb.rs`; Immersive: `window/immersive*.rs`). This index was verified against the working tree, which includes that in-progress work. |
+| Partial update | 2026-11-22 at commit `f1b4f479`: gallery thumbnail loading, scrolling and their diagnostics were re-verified and rewritten ([Gallery thumbnail & scroll pipeline](#gallery-thumbnail--scroll-pipeline), Quick-Edit rows, Sections 7-8). The rest still reflects 2026-11-14. |
 | Authority | Source code and `AGENTS.md` override this index |
 
 **Start here:** use the [Quick-Edit Guide](#6-quick-edit-guide-task---files) for entry points, the [Feature impact and validation matrix](#9-feature-impact-and-validation-matrix) for regression risks, and the [Agent navigation protocol](#10-agent-navigation-protocol) before modifications. Search for symbols in the actual checkout; line counts are exact at the verification date but drift.
@@ -117,10 +118,10 @@
 | File | Lines | What it does |
 |---|---|---|
 | `view.rs` | 1532 | `Gallery` struct - the main gallery widget (zoom anchors, layout transitions). |
-| `virtualization.rs` | 3336 | Folder stream virtualization: chunked loading, row model, scroll extent. |
-| `sectioned_folder.rs` | 3170 | Sectioned (date-grouped) folder rendering (default `GtkGridView` path) + reflow snapshots. |
-| `selection.rs` | 2561 | Multi-selection, keyboard navigation across folders, selection positions. |
-| `tile.rs` | 2374 | `SquareTile` photo tile widget, paintable cache, scrub/zoom behaviors, Honeycomb mask application. |
+| `virtualization.rs` | 3483 | Folder stream virtualization plus the gallery thumbnail plumbing: visible-tile request pumps, prefetch, `drain_thumbnail_display_completions` (per-frame delivery), `sync_presentation_target`, folder visibility helpers (`folder_viewport_band`, `folder_tile_span`). |
+| `sectioned_folder.rs` | 3170 | `SectionedFolderView`: PIC's own virtualizer on a `gtk::Fixed` (not a GTK list widget). Used for Folder grouping in Grid layout and for every wall layout (Photo Wall, Masonry, Honeycomb). Re-places tiles on every scroll change (`refresh`), keeps a tile pool, records each tile's placed position (`SectionedFolderTile.position`), owns zoom reflow snapshots. |
+| `selection.rs` | 2561 | Multi-selection, keyboard navigation across folders, selection positions, `visible_root()`. |
+| `tile.rs` | 2699 | `SquareTile` photo tile widget; decoded-thumbnail RAM cache `ThumbnailPaintableCache` (stamp LRU, entry + 64 MB High-quality byte cap, per-entry presentation target); presentation-target buckets (`presentation_target_for_tile`); scrub/zoom behaviors; Honeycomb mask application. |
 | `photo_wall.rs` | 1020 | `PhotoLayout` enum (**Wall/Masonry/Honeycomb**) state, anchor restore, sidebar-transition freeze. |
 | `photo_wall_tests.rs` | 3953 | `PhotoLayout` tests (incl. Honeycomb). |
 | `photo_wall_layout.rs` | 1419 | Masonry/photo-wall/Honeycomb geometry (integer column widths, anchors). |
@@ -247,6 +248,7 @@
    (layout persistence), `library_home.rs` (cards), `grid/selection.rs` (nav scope).
 5. **Thumbnail spine:** `scanner` -> `thumbnail` (decode workers) -> `thumbnail_display`
    (display workers) -> grid tiles (paintables). `source.rs` gates reads for the lightbox.
+   Detail in [Gallery thumbnail & scroll pipeline](#gallery-thumbnail--scroll-pipeline).
 6. **Theme spine:** `css/theme_discovery.rs` discovers `themes/<id>/`; `window/theme.rs` applies
    the selected theme CSS; `settings` stores the choice; `sidebar.rs` has its own
    `sidebar-*-visible` setting keys (persisted via `db/settings.rs`).
@@ -258,6 +260,50 @@
    -> new file + rebuilt EXIF/sRGB. Runs on plain `std::thread`s (plain Rust values only;
    `PhotoObject` is not Send/Sync).
 
+### Gallery thumbnail & scroll pipeline
+
+Verified 2026-11-22. This area has been tuned against live-app measurements; read it before changing gallery scrolling or thumbnail loading.
+
+**Three gallery surfaces**, chosen by `Gallery::using_virtual_photo_surface()` / `visible_root()`:
+
+| Surface | Widget | Used for |
+|---|---|---|
+| `gallery.root` | `gtk::GridView` + `SignalListItemFactory` (`grid/view.rs`) | Grid layout when grouping is not Folder (All Photos, Favourites, Albums, Search) |
+| `gallery.folder_sectioned_root` | `SectionedFolderView` on a `gtk::Fixed` (`grid/sectioned_folder.rs`) | Folder grouping in Grid layout, and all wall layouts (Photo Wall, Masonry, Honeycomb) |
+| `gallery.folder_root` | legacy folder `gtk::ListView` | only with `PICASA_LEGACY_FOLDER_LIST=1` |
+
+**Thumbnail flow** (cached thumbnails are PIC's own JPEG files, 320 px or 640 px with High quality):
+1. A tile binds, or a per-frame pump finds a visible tile without a sharp enough thumbnail, and builds a `DisplayRequest` via `photo_presentation_request` (`grid/tile.rs`).
+2. `thumbnail_display.rs` workers (4-8 threads) decode it. With a `target_short_edge`, JPEGs are decoded directly at a reduced libjpeg-turbo DCT scale (`open_display_image` -> `thumbnail::decode_jpeg_turbo_rgba_with_target`). Rotation and `edit::render::apply_recipe` run on that smaller image. A cache miss triggers generation in `thumbnail.rs` (`request_priority`).
+3. Completions go into a mutex-protected `Vec`. The `gallery_scroll_stack` tick in `window/build.rs` calls `Gallery::sync_presentation_target()`, then `drain_thumbnail_display_completions()`, every frame. The drain creates `gdk::MemoryTexture`s on the GTK thread, inserts them into the RAM cache and applies them to tiles by presentation key.
+
+**Presentation targets (zoom-dependent decode size):** `presentation_target_for_tile(tile_width, scale)` = tile width x scale x 1.5, rounded up to the 128/192/256/384 px short-edge buckets; `None` (full size) above that. It is a thread-local updated per frame by `sync_presentation_target`. Cache entries remember the target they were decoded for:
+- `folder_thumbnail_cache_get` treats a smaller-than-current entry as a miss;
+- `folder_thumbnail_cache_get_with_backstop` returns it as a stand-in, used by the bind paths so a zoom-in never blanks a tile;
+- `apply_presentation_paintable` only replaces a shown thumbnail with a *larger* one;
+- `SquareTile::presentation_settled()` (loaded *and* sharp enough) is what the pumps filter on.
+
+**Per-frame pumps** (`window/build.rs`, tick callbacks armed for about 12 frames after each scroll):
+- `queue_visible_grid_cached_tiles_async` / `queue_visible_folder_cached_tiles_async`;
+- during a direct scrollbar scrub: `apply_visible_*_cached_paintables` plus model-derived targets (`queue_*_scroll_target_cached_tiles_async`);
+- prefetch every third frame.
+
+After a scroll settles, a 16 ms timer prefetches ahead, capped by `Gallery::thumbnail_prefetch_allowance()` (half of what the RAM cache can hold).
+
+**Wheel scrolling** (`window/navigation.rs`):
+- `install_smooth_gallery_scroll`: All Photos GridView and Albums home, a critically damped spring (k 240, c 31) on an absolute target.
+- `install_folder_smooth_gallery_scroll`: Folder surface, the same spring applied to the *remaining* distance (`folder_wheel_spring_step`), with whole-pixel writes and sub-pixel carry.
+- Touchpad (`ScrollUnit::Surface`) stays native GTK kinetic scrolling in both.
+- `src/smooth_scroll.rs` is **dead code** (`#[allow(dead_code)]`, no callers), and so are its `PIC_SMOOTH_SCROLL*` env vars.
+
+**Invariants learned the hard way:**
+- **Allocation lags placement by a frame.** `SectionedFolderView::refresh` re-places tiles in the scroll handler, but `compute_bounds` *and* `gtk::Fixed::child_position` only update in GTK's next layout phase, after the pumps ran. For the sectioned surface, judge visibility with the recorded placement (`folder_tile_span`), never allocation, and do not skip just-placed tiles that still report height 0. Breaking this blanks tiles during fast scrollbar drags.
+- **`thumbnail_display::replace_visible_requests` discards every queued visible job** and keeps only the list it is given. Passing a too-small "visible" list cancels the requests bind paths just made.
+- **Prefetch must fit the RAM cache.** If the prefetch band exceeds the cache (at High quality the 64 MB cap holds only ~58 full 640 px thumbnails), each pass evicts the previous one and the loop never ends, starving visible tiles.
+- **The High-quality upgrade check must use the cache file's own dimensions** (`DisplayImage::cached_width/height`), never the reduced decode. Otherwise every zoomed-out tile rebuilds its thumbnail from the original, in a loop.
+- **Wheel easing must ease in.** An ease-out that restarts at full speed on each notch moves in a sawtooth that reads as stutter with zero dropped frames; frame traces cannot show it, so check the curve itself (`folder_wheel_spring_tests`).
+- Visibility tests: `sectioned_folder_visibility_uses_scroll_viewport_not_content_height` (ignored; run under xvfb) covers both the viewport band and the fast-drag case.
+
 ## 6. Quick-Edit Guide (task -> files)
 
 | I want to change... | Read these first | Then edit |
@@ -265,7 +311,9 @@
 | **Sidebar** (rows, folders, counts, visibility, pin/hover) | `src/sidebar.rs` (`build`, `SidebarFilter`, `SidebarVisibility`) | `src/sidebar.rs`; persistence keys there; counts from `db/settings.rs::sidebar_counts`; wiring in `src/window/build.rs`; divider drag test `tests/compact_sidebar_x11_drag.py`; CSS `navigation-sidebar` + `components/sidebar_resize.css`; CI `compact-sidebar-check.yml` (paths: `window/layout.rs`, `window/build.rs`, `settings.rs`, `css/base.css`, `css/components/sidebar_resize.css`, the drag test) |
 | **Immersive Mode** (sidebar edge reveal, pin exit, overlay animation, viewport stability) | `src/window/immersive.rs` (included by `build.rs`; state cells in `build.rs`), `src/window/layout.rs`, `src/window/layout_settle.rs` | Verify `src/window/build.rs` integration and `src/window/immersive_tests.rs`; reuse the existing sidebar; do not animate the gallery/split or alter normal-mode pin behavior unless requested |
 | **Honeycomb** (hex layout, border/gap, performance, scrolling) | `src/grid/honeycomb.rs` (hex math), `src/grid/honeycomb_surface.rs` (clip widget), `src/grid/honeycomb_raster.rs` (mask workers), `src/grid/photo_wall.rs` (`PhotoLayout::Honeycomb`), `src/grid/tile.rs` | `src/grid/photo_wall_layout.rs` (geometry), `src/settings/honeycomb.rs` (border-width pref), `src/grid/view.rs` / `src/window/layout.rs` as applicable; test Grid/Wall/Masonry regression alongside Honeycomb (`grid/photo_wall_tests.rs`) |
-| **Gallery scroll anchoring / restoration** | `src/grid/view.rs`, `src/grid/navigation.rs`, `src/grid/virtualization.rs` | `src/window/library.rs`, `src/window/layout.rs`, `src/smooth_scroll.rs`; validate scroll position after sidebar toggles and layout changes |
+| **Gallery scroll anchoring / restoration** | `src/grid/view.rs`, `src/grid/navigation.rs`, `src/grid/virtualization.rs` | `src/window/library.rs`, `src/window/layout.rs`; validate scroll position after sidebar toggles and layout changes (`src/smooth_scroll.rs` is dead code) |
+| **Gallery thumbnail loading, pop-in, blank tiles, scroll performance** | [Gallery thumbnail & scroll pipeline](#gallery-thumbnail--scroll-pipeline) first; then `src/grid/virtualization.rs`, `src/grid/tile.rs`, `src/thumbnail_display.rs` | pumps and settle prefetch in `src/window/build.rs` (search `motion_frames`, `thumbnail_prefetch_allowance`); measure on the live app with `PIC_SCROLL_FRAME_TRACE` (Section 7) |
+| **Wheel scroll feel / easing** | `src/window/navigation.rs` (`install_smooth_gallery_scroll`, `install_folder_smooth_gallery_scroll`, `folder_wheel_spring_step`) | keep Folder and All Photos curves identical; run `folder_wheel_spring_tests` |
 | Header toolbar | `src/window/toolbar.rs` | same; assembled in `window/build.rs` |
 | Bottom InfoBar | `src/infobar.rs` (`InfoBar`) | `infobar.rs`; photo rows via `window/photo_actions.rs`, album menu via `window/albums.rs` |
 | Gallery grid / tiles / zoom | `src/grid.rs` (size defaults, `ZOOM_LEVELS` at top), `src/grid/view.rs` (`Gallery`), `src/grid/tile.rs` | grid files; virtualization in `grid/virtualization.rs`; layouts in `window/layout.rs` |
@@ -298,6 +346,13 @@
   `PIC_LIBRARY_MAINTENANCE_TRACE`, `PIC_GALLERY_RESTORE_TRACE`, `PIC_METADATA_TRACE`,
   `PIC_EXPORT_BENCH_ALBUM` (debug only). Trace helpers: `nav_transition_trace.rs`,
   `scroll_trace.rs`, `thumbnail_trace.rs`.
+- Gallery scroll and thumbnail diagnostics:
+  - `PIC_SCROLL_FRAME_TRACE`: per-frame `interval_ms`, layout, `window=WxH` and scroll `value` after each paint. Cheap; use it for honest frame-rate numbers.
+  - `PIC_SCROLL_TRACE`: wheel/touchpad input routing.
+  - `PIC_THUMBNAIL_TRACE_URI=<substring>`: per-thumbnail pipeline stages; `/` matches everything and is useful to count decodes.
+  - `PIC_HONEYCOMB_MASK_TRACE`, `PICASA_TRACE_SCROLL_STACKS`.
+  - `PIC_HONEYCOMB_RENDER_MODE=live|gsk` (Honeycomb render path).
+- **Measuring scroll performance:** `PICASA_TRACE` prints per tile bind/assign and itself inflates frame times; it once made zoom steps look like 70-120 ms that were 21-32 ms without it. Use `PIC_SCROLL_FRAME_TRACE` alone, or Sysprof: `sysprof-cli --gtk --use-trace-fd --no-perf <file>.syscap -- ./target/debug/pic-rs` records GTK's per-frame phase marks (update, layout, Validate CSS, snapshot, render, presentation). Stop the capture with SIGINT to `sysprof-cli`. The `.syscap` MARK frames can be read with a small script: 256-byte header, 24-byte frame headers, type 10 = mark.
 - Other behavioral env vars: `PIC_EDIT_RENDERER` (auto/gpu/cpu editor renderer),
   `PICASA_LEGACY_FOLDER_LIST` (force legacy folder ListView path),
   `PIC_TEST_EDIT_REFERENCE` (real-photo tests).
@@ -332,6 +387,9 @@
 - Tests needing display/OpenGL/hardware are `#[ignore]`d; run under
   `xvfb-run -a env GSK_RENDERER=cairo cargo test --locked <name> -- --ignored --test-threads=1`.
 - All 1,136 tests share GTK/GLib globals: always `--test-threads=1`.
+- `gtk::init()` can run on only one thread per process, so two ignored display tests in one `cargo test` run can fail with "Attempted to initialize GTK from two different threads". Run such tests individually. Tests that only create `gdk::MemoryTexture`s need no `gtk::init()` at all.
+- **An installed Flatpak PIC shares the application ID.** While it runs, `cargo run` hands off to it and exits immediately with no output. Run `pgrep -af pic-rs` before launching a dev build, and make sure live testing happens in the dev build, not the Flatpak.
+- `src/smooth_scroll.rs` is dead code; wheel smoothing lives in `window/navigation.rs` (see [Gallery thumbnail & scroll pipeline](#gallery-thumbnail--scroll-pipeline)).
 
 ## 9. Feature impact and validation matrix
 

@@ -583,7 +583,7 @@ fn load_thumbnail_with_policy(request: &DisplayRequest, regenerate: bool) -> Dis
     crate::thumbnail_trace::event(&request.source_path, "thumbnail_cache", "hit");
 
     let DisplayImage {
-        image: mut image,
+        mut image,
         decoded_at_target,
         cached_width,
         cached_height,

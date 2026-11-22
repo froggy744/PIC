@@ -1,3 +1,35 @@
+/// Spring constants shared with the All Photos wheel animation
+/// (`install_smooth_gallery_scroll`): critically damped, so each notch eases
+/// in and out without overshoot.
+const FOLDER_WHEEL_SPRING: f64 = 240.0;
+const FOLDER_WHEEL_DAMPING: f64 = 31.0;
+const FOLDER_WHEEL_STOP_DISTANCE_PX: f64 = 0.35;
+const FOLDER_WHEEL_STOP_SPEED_PX_S: f64 = 4.0;
+
+/// One frame of the Folder wheel spring.
+///
+/// `remaining` is the distance still to travel from the current (fractional)
+/// position and `velocity` the current speed in px/s. Returns the distance to
+/// move this frame, the new velocity, and whether the motion is finished (in
+/// which case the returned distance is exactly `remaining`).
+///
+/// The spring acts on the remaining distance rather than an absolute target,
+/// so the animation always continues from wherever the view currently is.
+fn folder_wheel_spring_step(remaining: f64, velocity: f64, dt: f64) -> (f64, f64, bool) {
+    if remaining.abs() <= FOLDER_WHEEL_STOP_DISTANCE_PX
+        && velocity.abs() <= FOLDER_WHEEL_STOP_SPEED_PX_S
+    {
+        return (remaining, 0.0, true);
+    }
+    let acceleration = FOLDER_WHEEL_SPRING * remaining - FOLDER_WHEEL_DAMPING * velocity;
+    let velocity = velocity + acceleration * dt;
+    let step = velocity * dt;
+    if step.signum() == remaining.signum() && step.abs() >= remaining.abs() {
+        return (remaining, 0.0, true);
+    }
+    (step, velocity, false)
+}
+
 fn folder_wheel_remaining(current: f64, lower: f64, upper: f64, old: f64, impulse: f64) -> f64 {
     let remaining = if old != 0.0 && old.signum() != impulse.signum() {
         impulse
@@ -450,30 +482,39 @@ pub(crate) fn install_folder_smooth_gallery_scroll(
     scrolled: &gtk::ScrolledWindow,
     gallery: Rc<grid::Gallery>,
 ) {
-    // Folder mode is a variable-height GtkListView. An absolute spring target
-    // can fight ListView's own anchor corrections, producing the visible
-    // rebase/debounce seen while scrolling. Smooth only the *remaining wheel
-    // distance* instead: every frame advances from GTK's current authoritative
-    // adjustment value, so an anchor correction never leaves a stale target to
-    // pull the viewport backwards.
+    // Animate only the *remaining wheel distance*: every frame advances from
+    // GTK's current authoritative adjustment value, so an external correction
+    // never leaves a stale target to pull the viewport backwards.
+    //
+    // The distance follows the same critically damped spring as All Photos.
+    // The former exponential ease-out started every notch at full speed and
+    // then decayed, so continuous wheel scrolling moved in a sawtooth (speed
+    // jumping ~11 px/frame at each notch at 120 Hz) that read as stutter even
+    // with no dropped frames.
     const WHEEL_STEP_PX: f64 = 120.0;
-    const TIME_CONSTANT_S: f64 = 0.085;
-    const STOP_REMAINING_PX: f64 = 0.35;
 
     let adjustment = scrolled.vadjustment();
     let remaining = Rc::new(Cell::new(0.0_f64));
+    let velocity = Rc::new(Cell::new(0.0_f64));
+    // Sub-pixel progress not yet written. Folder scrolling stays on whole
+    // pixels, but the spring's slow first and last frames move less than one.
+    let carry = Rc::new(Cell::new(0.0_f64));
     let active = Rc::new(Cell::new(false));
     let last_frame_us = Rc::new(Cell::new(0_i64));
 
     // A scrollbar drag or pointer press owns the viewport immediately.
     {
         let remaining = remaining.clone();
+        let velocity = velocity.clone();
+        let carry = carry.clone();
         let active = active.clone();
         let click = gtk::GestureClick::new();
         click.set_button(0);
         click.set_propagation_phase(gtk::PropagationPhase::Capture);
         click.connect_pressed(move |_, _, _, _| {
             remaining.set(0.0);
+            velocity.set(0.0);
+            carry.set(0.0);
             active.set(false);
         });
         scrolled.add_controller(click);
@@ -482,6 +523,8 @@ pub(crate) fn install_folder_smooth_gallery_scroll(
     {
         let adjustment = adjustment.clone();
         let remaining = remaining.clone();
+        let velocity = velocity.clone();
+        let carry = carry.clone();
         let active = active.clone();
         let last_frame_us = last_frame_us.clone();
         scrolled.add_tick_callback(move |_, clock| {
@@ -501,34 +544,25 @@ pub(crate) fn install_folder_smooth_gallery_scroll(
             let current = adjustment.value().clamp(lower, upper);
             let left = remaining.get();
 
-            if left.abs() <= STOP_REMAINING_PX {
+            let (step, next_velocity, done) =
+                folder_wheel_spring_step(left, velocity.get(), dt);
+            // Relative to GTK's current value, never an absolute destination.
+            let desired = current + carry.get() + step;
+            let next = desired.round();
+            let clamped = next.clamp(lower, upper);
+            if done || clamped != next {
                 remaining.set(0.0);
+                velocity.set(0.0);
+                carry.set(0.0);
                 active.set(false);
-                return glib::ControlFlow::Continue;
+            } else {
+                remaining.set(left - step);
+                velocity.set(next_velocity);
+                carry.set(desired - next);
             }
-
-            // Exponential ease-out. Crucially this is relative to GTK's current
-            // value, not an absolute destination. If ListView re-anchors after
-            // this write, the next frame simply continues from that new value.
-            let fraction = 1.0 - (-dt / TIME_CONSTANT_S).exp();
-            let mut step = left * fraction;
-            if step.abs() < 0.75 {
-                step = 0.75 * step.signum();
-                if step.abs() > left.abs() {
-                    step = left;
-                }
+            if (clamped - current).abs() > f64::EPSILON {
+                adjustment.set_value(clamped);
             }
-
-            let next = (current + step).round().clamp(lower, upper);
-            let applied = next - current;
-            if applied.abs() <= f64::EPSILON {
-                remaining.set(0.0);
-                active.set(false);
-                return glib::ControlFlow::Continue;
-            }
-
-            adjustment.set_value(next);
-            remaining.set(left - applied);
             glib::ControlFlow::Continue
         });
     }
@@ -538,6 +572,8 @@ pub(crate) fn install_folder_smooth_gallery_scroll(
 
     let adjustment_for_scroll = adjustment.clone();
     let remaining_for_scroll = remaining.clone();
+    let velocity_for_scroll = velocity.clone();
+    let carry_for_scroll = carry.clone();
     let active_for_scroll = active.clone();
     controller.connect_scroll(move |controller, dx, dy| {
         crate::scroll_trace::log_scroll_input("folder_gallery", controller, dx, dy);
@@ -546,6 +582,8 @@ pub(crate) fn install_folder_smooth_gallery_scroll(
             .contains(gtk::gdk::ModifierType::CONTROL_MASK)
         {
             remaining_for_scroll.set(0.0);
+            velocity_for_scroll.set(0.0);
+            carry_for_scroll.set(0.0);
             active_for_scroll.set(false);
             // Match All Photos: commit each wheel step immediately and let
             // the gallery's frame-clock animation retarget on the next step.
@@ -572,6 +610,8 @@ pub(crate) fn install_folder_smooth_gallery_scroll(
                 let current = adjustment_for_scroll.value().clamp(lower, upper);
                 if (dy < 0.0 && current <= lower) || (dy > 0.0 && current >= upper) {
                     remaining_for_scroll.set(0.0);
+                    velocity_for_scroll.set(0.0);
+                    carry_for_scroll.set(0.0);
                     active_for_scroll.set(false);
                     return glib::Propagation::Stop;
                 }
@@ -581,6 +621,12 @@ pub(crate) fn install_folder_smooth_gallery_scroll(
                 // Direction reversal should react immediately rather than first
                 // consuming momentum queued in the opposite direction.
                 let next_remaining = folder_wheel_remaining(current, lower, upper, old, impulse);
+                // A reversal starts from rest instead of first braking the
+                // speed built up in the other direction.
+                if velocity_for_scroll.get() * next_remaining < 0.0 {
+                    velocity_for_scroll.set(0.0);
+                    carry_for_scroll.set(0.0);
+                }
                 remaining_for_scroll.set(next_remaining);
                 active_for_scroll.set(true);
                 glib::Propagation::Stop
@@ -589,6 +635,8 @@ pub(crate) fn install_folder_smooth_gallery_scroll(
                 // Precision touchpads already deliver smooth pixel deltas.
                 // Leave those native and cancel any stale wheel easing.
                 remaining_for_scroll.set(0.0);
+                velocity_for_scroll.set(0.0);
+                carry_for_scroll.set(0.0);
                 active_for_scroll.set(false);
                 glib::Propagation::Proceed
             }
@@ -597,6 +645,81 @@ pub(crate) fn install_folder_smooth_gallery_scroll(
     });
 
     scrolled.add_controller(controller);
+}
+
+#[cfg(test)]
+mod folder_wheel_spring_tests {
+    use super::folder_wheel_spring_step;
+
+    /// Run the Folder wheel animation the way its tick callback does (whole
+    /// pixels plus sub-pixel carry), adding 120 px at each notch time.
+    /// Returns the pixels moved in every frame.
+    fn simulate(notches: &[f64], hz: f64, seconds: f64) -> Vec<f64> {
+        let dt = 1.0 / hz;
+        let (mut position, mut remaining, mut velocity, mut carry) = (0.0, 0.0, 0.0, 0.0);
+        let mut active = false;
+        let mut next_notch = 0;
+        let mut moves = Vec::new();
+        let mut t = 0.0;
+        while t < seconds {
+            while next_notch < notches.len() && notches[next_notch] <= t {
+                remaining += 120.0;
+                active = true;
+                next_notch += 1;
+            }
+            let before = position;
+            if active {
+                let (step, next_velocity, done) = folder_wheel_spring_step(remaining, velocity, dt);
+                let desired = position + carry + step;
+                let next = f64::round(desired);
+                position = next;
+                if done {
+                    remaining = 0.0;
+                    velocity = 0.0;
+                    carry = 0.0;
+                    active = false;
+                } else {
+                    remaining -= step;
+                    velocity = next_velocity;
+                    carry = desired - next;
+                }
+            }
+            moves.push(position - before);
+            t += dt;
+        }
+        moves
+    }
+
+    #[test]
+    fn one_notch_eases_in_and_out_and_lands_exactly() {
+        for hz in [60.0, 120.0, 144.0] {
+            let moves = simulate(&[0.0], hz, 1.0);
+            let total: f64 = moves.iter().sum();
+            assert_eq!(total, 120.0, "{hz} Hz must travel exactly one notch");
+            assert!(moves.iter().all(|step| *step >= 0.0), "{hz} Hz overshot: {moves:?}");
+            let peak = moves.iter().cloned().fold(0.0, f64::max);
+            assert!(moves[0] < peak, "{hz} Hz must ease in: {moves:?}");
+            assert!(moves.iter().rev().take(5).all(|step| *step <= 2.0), "{hz} Hz must ease out");
+        }
+    }
+
+    #[test]
+    fn continuous_wheel_has_no_speed_spike_at_each_notch() {
+        for rate in [8.0, 15.0] {
+            let notches: Vec<f64> = (0..(rate * 0.8) as usize).map(|i| i as f64 / rate).collect();
+            // Long enough for the last notch to finish easing out.
+            let moves = simulate(&notches, 120.0, 2.0);
+            // The former ease-out jumped ~11 px/frame at every notch.
+            let steady = &moves[18..90];
+            let worst_jump = steady
+                .windows(2)
+                .map(|pair| (pair[1] - pair[0]).abs())
+                .fold(0.0, f64::max);
+            assert!(worst_jump <= 3.0, "{rate} notches/s: speed jumped {worst_jump} px/frame");
+            let total: f64 = moves.iter().sum();
+            assert_eq!(total, 120.0 * notches.len() as f64, "distance must be kept");
+        }
+    }
 }
 
 #[cfg(test)]

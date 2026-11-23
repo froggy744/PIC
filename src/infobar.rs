@@ -66,8 +66,8 @@ pub struct InfoBar {
     presentation: RefCell<InfoBarPresentation>,
     /// The target last written to the widgets (`None` before the first).
     applied: RefCell<Option<InfoBarTarget>>,
-    /// The photo whose metadata the widgets show.
-    shown_photo: RefCell<Option<PhotoObject>>,
+    /// The photo whose metadata the widgets show, and what was written.
+    written: RefCell<Option<WrittenPhoto>>,
     /// The last reported gallery selection sample, for the strip.
     selection_photos: RefCell<Vec<PhotoObject>>,
 }
@@ -958,7 +958,7 @@ impl InfoBar {
             has_photo,
             presentation: RefCell::new(InfoBarPresentation::new()),
             applied: RefCell::new(None),
-            shown_photo: RefCell::new(None),
+            written: RefCell::new(None),
             selection_photos: RefCell::new(Vec::new()),
         }
     }
@@ -1058,10 +1058,10 @@ impl InfoBar {
             return;
         }
         let photo = photo.flatten();
-        let changed = *self.shown_photo.borrow() != photo;
+        let changed =
+            self.written.borrow().as_ref().map(|written| &written.photo) != photo.as_ref();
         if last.is_none() || rewrite_photo || changed {
-            self.write_photo(photo.as_ref(), &target);
-            self.shown_photo.replace(photo);
+            self.write_photo(photo.as_ref(), &target, last.is_none());
         }
         self.applied.replace(Some(target));
     }
@@ -1073,9 +1073,10 @@ impl InfoBar {
             .filter(|photo| photo.id() == id)
             .cloned()
             .or_else(|| {
-                self.shown_photo
+                self.written
                     .borrow()
-                    .clone()
+                    .as_ref()
+                    .map(|written| written.photo.clone())
                     .filter(|photo| photo.id() == id)
             })
             .or_else(|| {
@@ -1304,8 +1305,14 @@ impl InfoBar {
         }
     }
 
-    fn write_photo(&self, photo: Option<&PhotoObject>, target: &InfoBarTarget) {
+    /// Write the metadata page for `photo`, touching only the parts whose
+    /// inputs changed since the last write. `first` writes everything.
+    fn write_photo(&self, photo: Option<&PhotoObject>, target: &InfoBarTarget, first: bool) {
+        let previous = self.written.borrow_mut().take();
         let Some(photo) = photo else {
+            if previous.is_none() && !first {
+                return;
+            }
             self.disconnect_preview_thumbnail_notify();
             self.preview_photo_id.set(0);
             self.has_photo.set(false);
@@ -1331,13 +1338,65 @@ impl InfoBar {
         };
 
         let summary = PhotoSummary::of(&photo_facts(photo));
+        let preview = PreviewInputs::of(photo);
+        let same_photo = previous
+            .as_ref()
+            .is_some_and(|written| &written.photo == photo);
+        let previous = previous.filter(|_| !first);
+        let old = previous.as_ref();
+
+        if !same_photo || old.map(|written| &written.preview) != Some(&preview) {
+            self.write_preview(photo, &preview);
+        }
+        if old.map(|written| &written.summary.filename) != Some(&summary.filename) {
+            self.filename.set_text(&summary.filename);
+        }
+        // The camera stays a metric beside Taken; the filename subtitle slot
+        // that previously duplicated it now holds the actual file name.
+        if old.map(|written| &written.summary.metrics) != Some(&summary.metrics) {
+            set_metric_values(&self.details, summary.metrics.clone());
+        }
+        if old.map(|written| written.summary.rating) != Some(summary.rating) {
+            self.set_rating_presentation(summary.rating);
+        }
+        if old.map(|written| written.summary.favorite) != Some(summary.favorite) {
+            self.favorite.set_icon_name("emote-love-symbolic");
+            if summary.favorite {
+                self.favorite.add_css_class("active");
+                self.favorite
+                    .set_tooltip_text(Some("Remove from Favourites"));
+            } else {
+                self.favorite.remove_css_class("active");
+                self.favorite.set_tooltip_text(Some("Add to Favourites"));
+            }
+        }
+        if old.is_none() {
+            // Coming from no photo: show the name and enable the actions.
+            self.has_photo.set(true);
+            self.filename.set_visible(true);
+            let actions = target.photo_actions_enabled();
+            self.favorite.set_sensitive(actions);
+            self.rating.set_sensitive(actions);
+            self.edit.set_sensitive(target.edit_enabled());
+            self.add_to_album.set_sensitive(actions);
+            self.rotate.set_sensitive(actions);
+            self.export.set_sensitive(actions);
+            self.more.set_sensitive(true);
+            self.print.set_sensitive(actions);
+        }
+        self.written.replace(Some(WrittenPhoto {
+            photo: photo.clone(),
+            summary,
+            preview,
+        }));
+    }
+
+    /// Show the photo's cached thumbnail, or a placeholder icon until the
+    /// thumbnail becomes available.
+    fn write_preview(&self, photo: &PhotoObject, preview: &PreviewInputs) {
         self.disconnect_preview_thumbnail_notify();
         self.preview_photo_id.set(photo.id());
-        self.has_photo.set(true);
-        self.filename.set_text(&summary.filename);
-        self.filename.set_visible(true);
-
-        if let Some(thumb_path) = existing_info_thumbnail(photo) {
+        if let Some(thumb_path) = &preview.thumbnail {
             set_info_preview(&self.preview, &thumb_path.to_string_lossy(), photo);
         } else {
             self.preview.set_icon_name(Some("image-x-generic-symbolic"));
@@ -1356,31 +1415,31 @@ impl InfoBar {
             self.preview_thumbnail_notify
                 .replace(Some((photo.clone(), handler)));
         }
+    }
+}
 
-        // The camera stays a metric beside Taken; the filename subtitle slot
-        // that previously duplicated it now holds the actual file name.
-        set_metric_values(&self.details, summary.metrics);
+/// What the metadata page last wrote, so later writes skip unchanged parts.
+struct WrittenPhoto {
+    photo: PhotoObject,
+    summary: PhotoSummary,
+    preview: PreviewInputs,
+}
 
-        let actions = target.photo_actions_enabled();
-        self.favorite.set_sensitive(actions);
-        self.rating.set_sensitive(actions);
-        self.set_rating_presentation(summary.rating);
-        self.edit.set_sensitive(target.edit_enabled());
-        self.add_to_album.set_sensitive(actions);
-        self.rotate.set_sensitive(actions);
-        self.export.set_sensitive(actions);
-        self.more.set_sensitive(true);
-        self.print.set_sensitive(actions);
+/// Everything the preview image is drawn from.
+#[derive(PartialEq)]
+struct PreviewInputs {
+    /// The cached thumbnail, if it exists on disk yet.
+    thumbnail: Option<PathBuf>,
+    rotation: i32,
+    edit_recipe: String,
+}
 
-        if summary.favorite {
-            self.favorite.set_icon_name("emote-love-symbolic");
-            self.favorite.add_css_class("active");
-            self.favorite
-                .set_tooltip_text(Some("Remove from Favourites"));
-        } else {
-            self.favorite.set_icon_name("emote-love-symbolic");
-            self.favorite.remove_css_class("active");
-            self.favorite.set_tooltip_text(Some("Add to Favourites"));
+impl PreviewInputs {
+    fn of(photo: &PhotoObject) -> Self {
+        Self {
+            thumbnail: existing_info_thumbnail(photo),
+            rotation: photo.rotation(),
+            edit_recipe: photo.edit_recipe(),
         }
     }
 }
@@ -1684,11 +1743,31 @@ mod layout_tests {
         info.filename.set_text("sentinel");
         info.show_gallery_focus(Some(&first));
         assert_eq!(info.filename.text().as_str(), "sentinel");
-        // An update rewrites it, with its new facts.
+        // An update rewrites only what changed: here the rating, not the
+        // name or the preview.
+        info.preview.set_icon_name(Some("sentinel-symbolic"));
         first.set_rating(5);
         info.photo_updated(&first);
-        assert_eq!(info.filename.text().as_str(), "first.jpg");
         assert_eq!(info.rating_value.text().as_str(), "5/5");
+        assert_eq!(info.filename.text().as_str(), "sentinel");
+        assert_eq!(
+            info.preview.icon_name().as_deref(),
+            Some("sentinel-symbolic")
+        );
+        // A rename rewrites the name; a rotation redraws the preview.
+        first.set_filename("renamed.jpg");
+        info.photo_updated(&first);
+        assert_eq!(info.filename.text().as_str(), "renamed.jpg");
+        assert_eq!(
+            info.preview.icon_name().as_deref(),
+            Some("sentinel-symbolic")
+        );
+        first.set_rotation(90);
+        info.photo_updated(&first);
+        assert_eq!(
+            info.preview.icon_name().as_deref(),
+            Some("image-x-generic-symbolic")
+        );
 
         info.show_gallery_selection(2, &[first.clone(), second.clone()]);
         assert_eq!(page(&info), "selection");

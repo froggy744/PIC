@@ -576,9 +576,12 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     properties.set_context(action_context.clone());
     let saved_grid_thumbnail_size = grid_thumbnail_size_from_setting(&connection.borrow());
     let grid_zoom_syncing = Rc::new(Cell::new(false));
-    info.grid_zoom.set_value(grid_zoom_slider_value(
+    // The one writer of what the shared zoom slider shows (zoom_slider.rs).
+    let zoom_slider = ZoomSliderWidgets::new(
+        &info.grid_zoom,
+        grid_zoom_syncing.clone(),
         saved_grid_thumbnail_size.unwrap_or(DEFAULT_GRID_THUMBNAIL_SIZE),
-    ));
+    );
 
     // Clear the entry without rebuilding the previous sidebar view behind
     // the viewer. Its close preparation will load the result's folder there.
@@ -682,9 +685,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         },
         {
             let connection = connection.clone();
-            let grid_zoom = info.grid_zoom.clone();
-            let grid_zoom_syncing = grid_zoom_syncing.clone();
-            let front = front.clone();
+            let zoom_slider = zoom_slider.clone();
             move |width| {
                 if let Err(error) = db::set_setting(
                     &connection.borrow(),
@@ -694,14 +695,9 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                     eprintln!("Could not save grid thumbnail size: {error}");
                 }
 
-                // A gallery zoom may finish just after the viewer opens.
-                // Never let that stale completion overwrite the lightbox's
-                // 0..100 zoom slider.
-                if front.current() != Front::Lightbox {
-                    grid_zoom_syncing.set(true);
-                    grid_zoom.set_value(grid_zoom_slider_value(width));
-                    grid_zoom_syncing.set(false);
-                }
+                // A gallery zoom may finish just after the viewer or the
+                // editor opens; the slider then shows their zoom, not this.
+                zoom_slider.show_thumbnail_width(width);
             }
         },
     ));
@@ -3926,6 +3922,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         let connection = connection.clone();
         let main_stack = main_stack.clone();
         let front = front.clone();
+        let zoom_slider = zoom_slider.clone();
         let edit_page = edit_page.clone();
         let edit_editor = edit_editor.clone();
         let gallery = gallery.clone();
@@ -3937,7 +3934,6 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         let collage_editor = collage_editor.clone();
         // Keep the shared slider synchronization handle available to the rest
         // of build.rs. The editor-open move closure owns only this cheap clone.
-        let grid_zoom_syncing_for_editor = grid_zoom_syncing.clone();
         // Edit-mode Export uses the exact same dialog → destination → progress
         // pipeline as the info-bar Export button (size + file type + Stop bar).
         let export_for_editor: Rc<dyn Fn(Vec<crate::edit::export_batch::ExportJob>)> = {
@@ -3975,8 +3971,6 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             let close = {
                 let main_stack = main_stack.clone();
                 let one_to_one = info.one_to_one.clone();
-                let info = info.clone();
-                let grid_zoom_syncing = grid_zoom_syncing_for_editor.clone();
                 let gallery = gallery.clone();
                 let edit_space_slot = edit_space_slot.clone();
                 let edit_escape_slot = edit_escape_slot.clone();
@@ -4011,17 +4005,6 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                         main_stack.set_visible_child_name("library");
                     } else {
                         main_stack.set_visible_child_name("photos");
-                        grid_zoom_syncing.set(true);
-                        info.grid_zoom.set_range(0.0, 7.0);
-                        info.grid_zoom.set_increments(1.0, 1.0);
-                        info.grid_zoom.set_round_digits(0);
-                        info.grid_zoom.clear_marks();
-                        info.grid_zoom.set_value(grid_zoom_slider_value(
-                            gallery.current_zoom_width(),
-                        ));
-                        info.grid_zoom
-                            .set_tooltip_text(Some("Thumbnail size (Ctrl + wheel)"));
-                        grid_zoom_syncing.set(false);
                         gallery.restore_view(id, library_scroll_y);
                     }
                     // Detach the editor so it stops contributing to the
@@ -4058,33 +4041,11 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 });
             }
             {
-                let zoom_scale = info.grid_zoom.clone();
-                let syncing = grid_zoom_syncing_for_editor.clone();
-                let front = front.clone();
+                // The slider switches to Edit zoom when the edit page shows.
+                let zoom_slider = zoom_slider.clone();
                 editor.set_zoom_sync_handler(move |native_scale, fit_scale| {
-                    if front.current() != Front::Editor {
-                        return;
-                    }
-                    let value = lightbox_slider_from_scale(native_scale, fit_scale);
-                    syncing.set(true);
-                    zoom_scale.set_value(value);
-                    syncing.set(false);
+                    zoom_slider.show_edit_zoom(native_scale, fit_scale);
                 });
-            }
-            {
-                let fit_scale = editor.current_fit_scale();
-                let native_scale = editor.current_manual_zoom_scale();
-                grid_zoom_syncing_for_editor.set(true);
-                info.grid_zoom.set_range(0.0, 100.0);
-                info.grid_zoom.set_increments(0.25, 5.0);
-                info.grid_zoom.set_round_digits(-1);
-                info.grid_zoom.clear_marks();
-                info.grid_zoom
-                    .set_value(lightbox_slider_from_scale(native_scale, fit_scale));
-                info.grid_zoom.set_tooltip_text(Some(
-                    "Edit zoom — left: Fit, middle: 100%, right: 200%",
-                ));
-                grid_zoom_syncing_for_editor.set(false);
             }
             // Make the way back explicit when the editor was opened from a
             // collage tile; Done saves and follows the same return path.
@@ -4328,52 +4289,6 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         });
     });
 
-    fn lightbox_scale_from_slider(value: f64, fit_scale: f64) -> f64 {
-        let value = value.clamp(0.0, 100.0);
-        if value <= 0.0 {
-            return 0.0;
-        }
-
-        let fit_scale = fit_scale.clamp(f64::EPSILON, 1.0);
-        if fit_scale >= 0.999 {
-            // Fit and 1:1 are the same visual state. Do not waste half the
-            // physical slider on a dead Fit->100% range.
-            return 1.0
-                + (crate::lightbox::LIGHTBOX_MAX_ZOOM_FACTOR - 1.0) * (value / 100.0);
-        }
-
-        if value <= 50.0 {
-            fit_scale + (1.0 - fit_scale) * (value / 50.0)
-        } else {
-            1.0
-                + (crate::lightbox::LIGHTBOX_MAX_ZOOM_FACTOR - 1.0)
-                    * ((value - 50.0) / 50.0)
-        }
-    }
-
-    fn lightbox_slider_from_scale(scale: f64, fit_scale: f64) -> f64 {
-        if scale <= 0.0 {
-            return 0.0;
-        }
-
-        let fit_scale = fit_scale.clamp(f64::EPSILON, 1.0);
-        if fit_scale >= 0.999 {
-            return 100.0
-                * ((scale - 1.0)
-                    / (crate::lightbox::LIGHTBOX_MAX_ZOOM_FACTOR - 1.0))
-                    .clamp(0.0, 1.0);
-        }
-
-        if scale <= 1.0 {
-            50.0 * ((scale - fit_scale) / (1.0 - fit_scale)).clamp(0.0, 1.0)
-        } else {
-            50.0
-                + 50.0
-                    * ((scale - 1.0)
-                        / (crate::lightbox::LIGHTBOX_MAX_ZOOM_FACTOR - 1.0))
-                        .clamp(0.0, 1.0)
-        }
-    }
 
     let gallery_for_zoom_slider = gallery.clone();
     let date_browser_for_zoom_slider = date_browser_slot.clone();
@@ -4425,7 +4340,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 let fit = lightbox_for_zoom_slider.current_fit_scale();
                 eprintln!(
                     "PIC_ZOOM_UI lightbox_input slider={value:.3} fit={fit:.6} native_req={:.6} current_native={:.6}",
-                    lightbox_scale_from_slider(value, fit),
+                    zoom_slider::photo_scale(value, fit),
                     lightbox_for_zoom_slider.current_manual_zoom_scale(),
                 );
             }
@@ -4456,7 +4371,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                     }
 
                     let fit_scale = lightbox.current_fit_scale();
-                    let requested = lightbox_scale_from_slider(value, fit_scale);
+                    let requested = zoom_slider::photo_scale(value, fit_scale);
                     if std::env::var_os("PICASA_TRACE").is_some() {
                         eprintln!(
                             "PIC_ZOOM_UI frame_apply slider={value:.3} fit={fit_scale:.6} native_req={requested:.6} previous_slider={:.3}",
@@ -4471,80 +4386,63 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         } else if front == Front::Editor {
             if let Some(editor) = edit_editor_for_zoom_slider.borrow().as_ref() {
                 let fit_scale = editor.current_fit_scale();
-                editor.set_manual_zoom_scale(lightbox_scale_from_slider(
+                editor.set_manual_zoom_scale(zoom_slider::photo_scale(
                     scale.value(),
                     fit_scale,
                 ));
             }
         } else if front == Front::DateOverview {
             if let Some(browser) = date_browser_for_zoom_slider.borrow().as_ref() {
-                let width = grid_zoom_width_from_slider(scale.value());
+                let width = zoom_slider::thumbnail_width(scale.value());
                 browser.set_tile_width(width);
                 gallery_for_zoom_slider.request_slider_zoom(width);
             }
         } else {
             gallery_for_zoom_slider
-                .request_slider_zoom(grid_zoom_width_from_slider(scale.value()));
+                .request_slider_zoom(zoom_slider::thumbnail_width(scale.value()));
         }
         slider_last_value_for_change.set(scale.value());
     });
 
     // Lightbox drives the same slider when Ctrl+wheel or the 1:1 action changes
     // the viewer zoom. The midpoint is always true native 100%.
-    let grid_zoom_for_lightbox_sync = info.grid_zoom.clone();
-    let grid_zoom_syncing_for_lightbox = grid_zoom_syncing.clone();
-    let slider_last_value_for_sync = slider_last_value.clone();
-    let lightbox_for_zoom_sync = lightbox.clone();
-    let front_for_zoom_sync = front.clone();
-    lightbox.set_zoom_sync_handler(move |native_scale| {
-        if front_for_zoom_sync.current() != Front::Lightbox {
-            return;
-        }
-        // Fit is always the left endpoint and native 100% is always the
-        // midpoint, independent of photo dimensions or window size.
-        let fit_scale = lightbox_for_zoom_sync.current_fit_scale();
-        let value = lightbox_slider_from_scale(native_scale, fit_scale);
-        grid_zoom_syncing_for_lightbox.set(true);
-        grid_zoom_for_lightbox_sync.set_value(value);
-        grid_zoom_syncing_for_lightbox.set(false);
-        slider_last_value_for_sync.set(value);
-    });
+    {
+        let zoom_slider = zoom_slider.clone();
+        let lightbox_for_zoom_sync = lightbox.clone();
+        lightbox.set_zoom_sync_handler(move |native_scale| {
+            // Fit is always the left endpoint and native 100% is always the
+            // midpoint, independent of photo dimensions or window size.
+            zoom_slider.show_photo_zoom(native_scale, lightbox_for_zoom_sync.current_fit_scale());
+        });
+    }
 
-    // Swap the physical slider between Gallery indices and Lightbox percentages.
-    let grid_zoom_for_visibility = info.grid_zoom.clone();
-    let grid_zoom_syncing_for_visibility = grid_zoom_syncing.clone();
-    let gallery_for_zoom_visibility = gallery.clone();
-    let lightbox_for_zoom_visibility = lightbox.clone();
-    let slider_last_value_for_visibility = slider_last_value.clone();
-    lightbox.root.connect_visible_notify(move |root| {
-        grid_zoom_syncing_for_visibility.set(true);
-        if root.is_visible() {
-            grid_zoom_for_visibility.set_range(0.0, 100.0);
-            grid_zoom_for_visibility.set_increments(0.25, 5.0);
-            grid_zoom_for_visibility.set_round_digits(-1);
-            grid_zoom_for_visibility.clear_marks();
-            let native_scale = lightbox_for_zoom_visibility.current_manual_zoom_scale();
-            let value = lightbox_slider_from_scale(
-                native_scale,
-                lightbox_for_zoom_visibility.current_fit_scale(),
-            );
-            grid_zoom_for_visibility.set_value(value);
-            slider_last_value_for_visibility.set(value);
-            grid_zoom_for_visibility.set_tooltip_text(Some(
-                "Photo zoom — left: Fit, middle: 100%, right: 200%",
-            ));
-        } else {
-            grid_zoom_for_visibility.set_range(0.0, 7.0);
-            grid_zoom_for_visibility.set_increments(1.0, 1.0);
-            grid_zoom_for_visibility.set_round_digits(0);
-            grid_zoom_for_visibility.clear_marks();
-            let value = grid_zoom_slider_value(gallery_for_zoom_visibility.current_zoom_width());
-            grid_zoom_for_visibility.set_value(value);
-            slider_last_value_for_visibility.set(value);
-            grid_zoom_for_visibility.set_tooltip_text(Some("Thumbnail size (Ctrl + wheel)"));
-        }
-        grid_zoom_syncing_for_visibility.set(false);
-    });
+    // The slider follows the front surface: thumbnail sizes over the
+    // gallery, photo zoom over the viewer, edit zoom in the editor.
+    {
+        let gallery = Rc::downgrade(&gallery);
+        let lightbox = Rc::downgrade(&lightbox);
+        let edit_editor = edit_editor.clone();
+        zoom_slider.connect(
+            &front,
+            ZoomSources {
+                thumbnail_width: Box::new(move || {
+                    gallery.upgrade().map_or(DEFAULT_GRID_THUMBNAIL_SIZE, |gallery| gallery.current_zoom_width())
+                }),
+                photo_zoom: Box::new(move || {
+                    lightbox.upgrade().map_or((0.0, 1.0), |lightbox| {
+                        (lightbox.current_manual_zoom_scale(), lightbox.current_fit_scale())
+                    })
+                }),
+                edit_zoom: Box::new(move || {
+                    edit_editor.try_borrow().ok().and_then(|editor| {
+                        editor
+                            .as_ref()
+                            .map(|editor| (editor.current_manual_zoom_scale(), editor.current_fit_scale()))
+                    })
+                }),
+            },
+        );
+    }
 
     let zoom_scale_scroll =
         gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::VERTICAL);
@@ -4563,11 +4461,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             return glib::Propagation::Stop;
         }
 
-        let step = match front_for_scale_scroll.current() {
-            Front::Lightbox => 20.0,
-            Front::Editor => 10.0,
-            _ => 1.0,
-        };
+        let step = zoom_slider::wheel_step(zoom_slider::mode_for(front_for_scale_scroll.current()));
         let direction = if dy > 0.0 { -1.0 } else { 1.0 };
         let adjustment = zoom_scale_for_scroll.adjustment();
         let next = (zoom_scale_for_scroll.value() + direction * step)
@@ -7038,7 +6932,7 @@ fn start_photo_export_single(
             ));
             if let Some(width) = grid_thumbnail_size_from_setting(&connection.borrow()) {
                 gallery.request_slider_zoom(width);
-                info.grid_zoom.set_value(grid_zoom_slider_value(width));
+                zoom_slider.show_thumbnail_width(width);
             }
             apply_gallery_grouping(&gallery, new_filter, new_sort, new_group, true);
             gallery.replace(&photos);

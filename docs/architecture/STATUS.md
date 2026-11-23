@@ -33,7 +33,7 @@ For a new review round, run `mattpocock-skills:improve-codebase-architecture` an
 | 3 | Properties inspector as one owner | Strong | merged | merge `2da69bae` (`refactor/properties-presentation`) | `src/window/properties_presentation.rs` (pure), `src/window/properties_widgets.rs` (GTK adapter) |
 | 4 | InfoBar decides what it shows | Strong | merged | merge `9756c44f` (`refactor/infobar-presentation`) | `src/infobar_presentation.rs` (pure), `src/infobar.rs` (GTK adapter) |
 | 5 | One gallery scroll-motion module | Worth exploring | open | none | `src/window/navigation.rs`, `src/window/build.rs` (scrub, settle, pump), `src/smooth_scroll.rs` |
-| 6 | Zoom slider router | Worth exploring | open | none | `src/window/build.rs` (zoom slider handlers), `src/lightbox/impl.rs` |
+| 6 | Zoom slider router | Worth exploring | in progress (`refactor/zoom-slider-router`) | none | `src/window/zoom_slider.rs` (pure), `src/window/zoom_slider_widgets.rs` (GTK adapter, a front-change listener) |
 | 7 | Editor preview plan | Worth exploring | open, lower priority (diagnostic only) | none | `src/edit/live_gpu.rs`, `src/edit/editor.rs` |
 | 8 | Screensaver style descriptor | Speculative | open | none | `src/screensaver.rs`, `src/screensaver/gpu.rs` |
 | 9 | Photo mark commands (favourite, rating) | Strong | merged | merge `9f056fe3` (`refactor/photo-mark-commands`) | `src/window/photo_marks.rs` (pure), `src/window/photo_mark_commands.rs` (GTK adapter) |
@@ -287,6 +287,42 @@ Settled by the agent, accepted with the plan: one file `src/window/front_surface
 - Events stage (decision 1): a `FrontSurface::connect_changed` to replace the ~17 viewer, page and date-overview change handlers and the private copies in the InfoBar (`covered`, `InfoBarPage`), Properties (`set_lightbox_shown`) and the metadata panel (`set_lightbox_open`). Candidate 6 (zoom slider router) is its first consumer: the zoom range still has 3 writers.
 - The owner rule does not catch `matches!` over page names (see above).
 - `scripts/gui_test.py` still clicks fixed points in the `browse-navigation` suite (`click_at(118, 524)` for the folder row) and elsewhere outside the library, viewer and editing paths.
+
+### 6 · Zoom slider router (started 2026-11-23)
+Branch `refactor/zoom-slider-router`. Started on the owner's standing instruction to continue autonomously; decisions by the agent, closest to today's behaviour.
+
+#### Investigation (at `20c05eba`, no code changed)
+The InfoBar's shared zoom slider (`info.grid_zoom`) has three modes, written by hand:
+- **Thumbnails**: 0..7, steps 1/1, no decimals, tooltip "Thumbnail size (Ctrl + wheel)".
+- **Photo** (viewer): 0..100, steps 0.25/5, tooltip "Photo zoom — left: Fit, middle: 100%, right: 200%".
+- **Edit** (editor): 0..100, same steps, tooltip "Edit zoom — …".
+
+Range writers (4): the viewer visible-notify (`build.rs:4542`, both directions), `open_edit` (`:4101`, before it switches to the edit page), the editor's return to Photos (`:4038`), and the `layout.rs:2466` page handler (Photos/Library, the Collage → Edit → Photos workaround).
+Value writers besides those: startup (`:585`), the gallery zoom completion (`:708`, guarded only against the viewer, so it can write a thumbnail value into the editor's slider), the viewer zoom sync (`:4531`), the editor zoom sync (`:4093`), and the library switch (`:7069`, unguarded).
+The conversions `lightbox_slider_from_scale` / `lightbox_scale_from_slider` are nested in `build()`; `grid_zoom_slider_value` / `grid_zoom_width_from_slider` are in `window.rs`. None has a test. The wheel step (20 / 10 / 1) is written inline. `slider_last_value` only feeds the `PIC_ZOOM_UI` trace.
+
+#### Decisions (2026-11-23, by the agent)
+1. **One owner of what the slider shows** (mode, range, steps, rounding, tooltip, displayed value): pure `zoom_slider.rs` (modes, specs, conversions, wheel step) and a GTK adapter `zoom_slider_widgets.rs` that is a `FrontSurface::connect_changed` listener (candidate 13). Input routing (value changed, centre reset) stays in `build.rs` and uses the pure conversions.
+2. **Mode from the front:** `Lightbox` → Photo, `Editor` → Edit, anything else → Thumbnails. The 4 range writers go. Collage now gets the thumbnail range at once instead of keeping the editor's until Photos (the slider is disabled there, so nothing visible changes).
+3. **Value writes go through the adapter and apply only in their mode:** a thumbnail width only in Thumbnails, viewer and editor zoom only in Photo/Edit. This fixes the late gallery-zoom completion writing into the editor's slider, and guards the library switch.
+4. **Conversions move unchanged** into the pure module, with worked-example table tests (literal values).
+5. **Owner rule `zoom-slider`:** range, steps, rounding, tooltip and value writes of `grid_zoom` only in the adapter; the startup default (`:585`) and the InfoBar's construction stay allowed.
+6. **Verification:** table tests written red first; a display test of the adapter with a real stack, viewer and slider; the InfoBar and display tests; GUI `viewer` and `editing`; the scripted interaction checks on this branch and on `main`. Merge and push on success.
+
+**Stages:**
+1. Pure `zoom_slider.rs` (modes, specs, wheel step, conversions moved unchanged) with worked-example table tests, written red first. Done: `2a387641`.
+2. `ZoomSliderWidgets` as a front-change listener; the 4 range writers removed; value writers routed through it; nested and `window.rs` conversions removed. Display test `the_slider_follows_the_front_and_ignores_other_surfaces_zoom` (written after the adapter, not red first). Done: `9caabee6`.
+3. Owner rule `zoom-slider`. Done: `1fe543f4`.
+4. Docs: GLOSSARY **Zoom slider**, AUDIT-INDEX rows, this file. Done: `93d63303`.
+
+**Changes a user could notice (all latent cases):** a gallery zoom that finishes after the editor opens no longer moves the editor's slider; a library switch no longer re-requests the same thumbnail size through the slider; in Collage the (disabled) slider holds the thumbnail range instead of the editor's.
+
+**Verification (2026-11-23):**
+- Unit: 68 pass (`zoom_slider` 5 table tests, `front_surface`, InfoBar, Properties, metadata panel, sidebar).
+- Display (Xvfb, one process each): the adapter test, `front_surface_reports_viewer_page_and_date_browser_changes`, the 7 `infobar::layout_tests`, 2 metadata panel tests and the 4 photo-action/marks tests: all pass. (The 2 metadata panel tests that fail on `main` too are unchanged, see 13.)
+- `cargo check` / `--tests`: no new warnings. Owner script and `--self-test` ok (3 new cases).
+- GUI harness: `viewer` COMPLETE 19/19 (`20261123T172013Z-410514`), `editing` COMPLETE 39/39 (`20261123T172317Z-415265`).
+- Scripted interaction checks with `cargo run` (slider range, tooltip and value per mode; viewer and editor zoom, Space, 1:1, Escape; date overview slider and sort): 16/16 on this branch and on `main`.
 
 ### 13 · Front-surface change event (merged 2026-11-23)
 Branch `refactor/front-surface-events`. Follow-up to 12 (its decision 1); candidate 6 (zoom slider router) is to be the event's first behaviour consumer.

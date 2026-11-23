@@ -555,6 +555,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         rating_filter: rating_filter.clone(),
         info: info.clone(),
         lightbox: Rc::downgrade(&lightbox),
+        front: Rc::downgrade(&front),
         sidebar: sidebar_for_unavailable.clone(),
         create_album: create_album.clone(),
         import_folder: import_folder.clone(),

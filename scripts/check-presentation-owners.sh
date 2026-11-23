@@ -13,6 +13,13 @@
 # The current photo (candidate 10) has one owner, the InfoBar
 # (`InfoBar::current_photo`); no window code may keep a hand-synced copy in a
 # `selected_photo` cell again.
+# The front surface (candidate 12) is the one place that decides which
+# surface is in front (viewer, editor, collage, date overview, gallery):
+#   - src/window/front_surface.rs (FrontSurface::current, gallery_covered,
+#     date_browser). The viewer's own tests are viewer internals.
+# The page change handlers keep reading their own `stack` / `root` argument
+# until the events stage; `matches!` over page names is not matched (the
+# ALLOW table cannot hold a "|"), so review those by hand.
 # The InfoBar's metadata and selection widgets are private, so only its
 # public buttons' enabled state needs a rule here.
 # This script fails when any other file writes those widgets directly.
@@ -31,6 +38,7 @@ SIDEBAR_OWNER='src/window/sidebar_widgets.rs'
 PROPERTIES_OWNER='src/window/properties_widgets.rs'
 INFOBAR_OWNER='src/infobar.rs'
 MARKS_OWNER='src/window/photo_mark_commands.rs'
+FRONT_OWNER='src/window/front_surface.rs'
 ID='[[:alnum:]_]'
 
 # id ~ owner files (space separated) ~ extended regex ~ what it guards
@@ -44,6 +52,7 @@ RULES=(
   "infobar-actions~$INFOBAR_OWNER~\.(favorite|rating|edit|add_to_album|rotate|export|print|more|view_toggle|grid_zoom)\.set_sensitive\(~InfoBar photo-action and gallery-control enabled state"
   "photo-marks~$MARKS_OWNER src/library_home_tests.rs~(db::set_(favorite|favorite_for_photos|rating_for_photos)|\.update_(favorites|ratings))\(~favourite and rating writes (library and gallery objects)"
   "current-photo~$INFOBAR_OWNER~(^|[^[:alnum:]_])selected_(photo|for)$ID*(\.replace\(|\.borrow_mut\(|:[[:space:]]*Rc<)~a hand-kept copy of the current photo (read InfoBar::current_photo)"
+  "front-surface~$FRONT_OWNER src/lightbox/tests.rs~((lightbox$ID*|viewer)\.root\.is_visible\(\)|visible_child_name\(\)\.as_deref\(\)[[:space:]]*[!=]=[[:space:]]*Some\(\"(edit|photos|collage)\"\)|\.is_overview_visible\(\)|date_browser_overview)~which surface is in front (ask FrontSurface)"
   "sidebar-parts~$SIDEBAR_OWNER~(^|[^[:alnum:]_])(compact_dock|dock|left_column|sidebar|sidebar_shell|sidebar_resize_handle|compact_sidebar_page|compact_immersive_toggle)\.(set_visible|set_child)\(~sidebar shell, column, dock, rail and handle visibility/placement"
 )
 
@@ -64,6 +73,8 @@ ALLOW=(
   "src/window/library.rs|db::set_rating_for_photos(&connection, &[1], 0).unwrap();|test fixture (rating filter refresh tests)"
   "src/window/library.rs|db::set_rating_for_photos(&connection, &[2], 0).unwrap();|test fixture (rating filter refresh tests)"
   "src/window/library.rs|db::set_rating_for_photos(&connection, &[1], 3).unwrap();|test fixture (rating filter refresh tests)"
+  "src/window/build.rs|&& stack.visible_child_name().as_deref() == Some(\"photos\")|page change handler (candidate 12 decision 1: until the events stage)"
+  "src/window/build.rs|metadata_panel.set_lightbox_open(lightbox.root.is_visible());|initial state of the viewer change handler (candidate 12 decision 1)"
   "src/window/layout.rs|dock.set_visible(false);|KNOWN EXCEPTION: compact_dock visible-notify immersive guard predates SidebarWidgets"
 )
 
@@ -130,7 +141,7 @@ check() {
   done
   if ((failures > 0)); then
     echo "check-presentation-owners: $failures direct write(s) outside the presentation owners." >&2
-    echo "Route them through SidebarWidgets / PropertiesWidgets / InfoBar / photo_mark_commands / InfoBar::current_photo (AUDIT-INDEX.md, Quick-Edit Guide)." >&2
+    echo "Route them through SidebarWidgets / PropertiesWidgets / InfoBar / photo_mark_commands / InfoBar::current_photo / FrontSurface (AUDIT-INDEX.md, Quick-Edit Guide)." >&2
     return 1
   fi
   echo "check-presentation-owners: ok"
@@ -175,6 +186,14 @@ RS
         MarkChange::Rating(rating) => db::set_rating_for_photos(connection, &plan.ids, rating),
             MarkChange::Favorite(favorite) => gallery.update_favorites(&plan.ids, favorite),
 RS
+  cat >"$root/$FRONT_OWNER" <<'RS'
+            .is_some_and(|browser| browser.is_overview_visible())
+        front(page, self.lightbox_root.is_visible(), self.date_browser())
+RS
+  mkdir -p "$root/src/lightbox"
+  cat >"$root/src/lightbox/tests.rs" <<'RS'
+        assert!(lightbox.root.is_visible());
+RS
   cat >"$root/src/grid.rs" <<'RS'
     pub fn update_favorites(&self, ids: &[i64], favorite: bool) {
 RS
@@ -187,6 +206,9 @@ RS
     properties_split.set_show_sidebar(false);
     lightbox_properties_panel.set_visible(false);
     main_split_for_drag_update.set_max_sidebar_width(width);
+    if front.current() == Front::Lightbox {
+                && stack.visible_child_name().as_deref() == Some("photos")
+        metadata_panel.set_lightbox_open(lightbox.root.is_visible());
 RS
   local entry apath atext
   for entry in "${ALLOW[@]}"; do
@@ -232,6 +254,13 @@ self_test() {
     "dock shown in build.rs|src/window/build.rs|compact_dock.set_visible(true);|sidebar-parts"
     "column hidden in immersive.rs|src/window/immersive.rs|left_column.set_visible(false);|sidebar-parts"
     "shell child in build.rs|src/window/build.rs|sidebar_shell.set_child(Some(&compact_sidebar_page));|sidebar-parts"
+    "viewer check in build.rs|src/window/build.rs|if lightbox_for_keys.root.is_visible() {|front-surface"
+    "viewer check in shortcuts.rs|src/window/shortcuts.rs|} else if viewer.root.is_visible() {|front-surface"
+    "edit page check in layout.rs|src/window/layout.rs|if main_stack.visible_child_name().as_deref() == Some(\"edit\") {|front-surface"
+    "photos page check in build.rs|src/window/build.rs|let photos_page = stack.visible_child_name().as_deref() != Some(\"photos\");|front-surface"
+    "overview read in toolbar.rs|src/window/toolbar.rs|if browser.is_overview_visible() {|front-surface"
+    "overview cell back in build.rs|src/window/build.rs|let date_browser_overview_visible = Rc::new(Cell::new(false));|front-surface"
+    "second allowed handler line|src/window/build.rs|metadata_panel.set_lightbox_open(lightbox.root.is_visible());|front-surface"
   )
   local entry name file line rule
   for entry in "${cases[@]}"; do

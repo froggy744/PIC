@@ -27,7 +27,7 @@ use layout_settle::{
 mod photo_mark_commands;
 mod photo_marks;
 mod front_surface;
-use front_surface::{Front, FrontSurface};
+use front_surface::{DateBrowser as DateBrowserLevel, Front, FrontSurface};
 use photo_marks::{MarkChange, MarkIntent};
 mod properties_presentation;
 mod properties_widgets;
@@ -667,6 +667,8 @@ struct PhotoActionContext {
     /// Owns the current photo (`InfoBar::current_photo`).
     info: Rc<InfoBar>,
     lightbox: Weak<Lightbox>,
+    /// Which surface is in front (`FrontSurface::current`).
+    front: Weak<FrontSurface>,
     sidebar: Rc<RefCell<Option<gtk::ScrolledWindow>>>,
     create_album: Rc<dyn Fn()>,
     import_folder: Rc<dyn Fn()>,

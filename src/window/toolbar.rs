@@ -183,7 +183,7 @@
         let filter = filter.clone();
         let search = search_text.clone();
         let gallery = gallery.clone();
-        let browser_active = date_browser_active.clone();
+        let front = front.clone();
         let browser = date_browser_slot.clone();
         button.connect_toggled(move |button| {
             if !button.is_active() {
@@ -205,9 +205,10 @@
             ) {
                 eprintln!("Could not save photo sort direction: {error}");
             }
-            if browser_active.get() && filter.get() == sidebar::SidebarFilter::All {
+            let level = front.date_browser();
+            if level != DateBrowserLevel::Off && filter.get() == sidebar::SidebarFilter::All {
                 if let Some(browser) = browser.borrow().as_ref() {
-                    if browser.is_overview_visible() {
+                    if level == DateBrowserLevel::Overview {
                         browser.set_descending(direction == SortDirection::Descending);
                     } else {
                         browser.set_photo_sort(value.field, direction == SortDirection::Descending);
@@ -273,8 +274,7 @@
     // Re-evaluate Group by every time it is opened so all Library destinations
     // stay enabled and Albums/Folders are visibly disabled.
     let filter_for_group_controls = filter.clone();
-    let browser_active_for_visibility = date_browser_active.clone();
-    let browser_for_visibility = date_browser_slot.clone();
+    let front_for_visibility = front.clone();
     let sort_heading_for_visibility = sort_heading.clone();
     let date_taken_for_visibility = date_taken_sort.clone();
     let date_added_for_visibility = date_added_sort.clone();
@@ -296,8 +296,9 @@
         group_day_for_visibility.set_sensitive(available);
         group_month_for_visibility.set_sensitive(available);
         group_year_for_visibility.set_sensitive(available);
-        let browsing = browser_active_for_visibility.get();
-        let overview = browsing && browser_for_visibility.borrow().as_ref().is_some_and(|browser| browser.is_overview_visible());
+        let level = front_for_visibility.date_browser();
+        let browsing = level != DateBrowserLevel::Off;
+        let overview = level == DateBrowserLevel::Overview;
         for widget in [
             sort_heading_for_visibility.upcast_ref::<gtk::Widget>(),
             date_taken_for_visibility.upcast_ref(), date_added_for_visibility.upcast_ref(),
@@ -315,15 +316,14 @@
 
     sort_popover.set_parent(&sort_button);
     {
-        let browser_active = date_browser_active.clone();
+        let front = front.clone();
         let filter = filter.clone();
         let descending = descending_sort.clone();
         let ascending = ascending_sort.clone();
-        let browser = date_browser_slot.clone();
         let popover = sort_popover.clone();
         sort_button.connect_clicked(move |_| {
-            if browser_active.get() && filter.get() == sidebar::SidebarFilter::All
-                && browser.borrow().as_ref().is_some_and(|browser| browser.is_overview_visible()) {
+            if front.date_browser() == DateBrowserLevel::Overview
+                && filter.get() == sidebar::SidebarFilter::All {
                 if descending.is_active() { ascending.set_active(true); }
                 else { descending.set_active(true); }
             } else if popover.is_visible() {

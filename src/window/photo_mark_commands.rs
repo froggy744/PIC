@@ -13,11 +13,10 @@ use super::photo_marks::{
     self, MarkChange, MarkFront, MarkIntent, MarkPlan, MarkRequest, MarkView, Membership,
     PhotoMarks,
 };
-use super::{refresh_grid, PhotoActionContext, PropertiesSurface};
+use super::{refresh_grid, Front, PhotoActionContext, PropertiesSurface};
 use crate::db;
 use crate::photo_object::PhotoObject;
 use crate::sidebar;
-use gtk4::prelude::*;
 
 fn marks_of(photo: &PhotoObject) -> PhotoMarks {
     PhotoMarks {
@@ -55,9 +54,9 @@ pub(super) fn preview(
 
 fn lightbox_shown(context: &PhotoActionContext) -> bool {
     context
-        .lightbox
+        .front
         .upgrade()
-        .is_some_and(|lightbox| lightbox.root.is_visible())
+        .is_some_and(|front| front.current() == Front::Lightbox)
 }
 
 /// Read the live front, selection and view, and ask the plan.
@@ -290,6 +289,7 @@ mod tests {
                 info
             },
             lightbox: std::rc::Weak::new(),
+            front: std::rc::Weak::new(),
             sidebar: Rc::new(RefCell::new(None)),
             create_album: Rc::new(|| {}),
             import_folder: Rc::new(|| {}),

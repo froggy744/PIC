@@ -135,7 +135,9 @@ impl FrontSurface {
         gallery_covered(self.lightbox_root.is_visible(), self.date_browser())
     }
 
-    fn date_browser(&self) -> DateBrowser {
+    /// The date browser's level, whatever is in front (the sort controls
+    /// follow it even while the viewer covers the overview).
+    pub(super) fn date_browser(&self) -> DateBrowser {
         if !self.date_browser_active.get() {
             DateBrowser::Off
         } else if self

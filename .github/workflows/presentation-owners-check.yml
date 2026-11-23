@@ -1,0 +1,32 @@
+name: Presentation owner guard
+
+# Runs on any Rust source change: a direct write to a presentation owner's
+# widgets can be added in any file. No build, no display, no dependencies.
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/**/*.rs'
+      - 'scripts/check-presentation-owners.sh'
+      - '.github/workflows/presentation-owners-check.yml'
+  pull_request:
+    paths:
+      - 'src/**/*.rs'
+      - 'scripts/check-presentation-owners.sh'
+      - '.github/workflows/presentation-owners-check.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  guard:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Self-test the guard rules
+        run: scripts/check-presentation-owners.sh --self-test
+      - name: Check presentation owners
+        run: scripts/check-presentation-owners.sh

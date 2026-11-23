@@ -7,10 +7,6 @@ on:
       - 'src/grid/selection.rs'
       - 'src/window/build.rs'
       - 'src/css/base.css'
-      - 'src/window/properties_widgets.rs'
-      - 'src/window/properties_presentation.rs'
-      - 'src/window/immersive.rs'
-      - 'scripts/check-presentation-owners.sh'
       - '.github/workflows/selection-infobar-check.yml'
 
 permissions:
@@ -21,10 +17,6 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - name: Presentation owner guard
-        run: |
-          scripts/check-presentation-owners.sh --self-test
-          scripts/check-presentation-owners.sh
       - name: Install GTK and build dependencies
         run: |
           sudo apt-get update

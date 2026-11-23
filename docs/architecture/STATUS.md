@@ -311,6 +311,24 @@ Hazards: re-entrancy (a page change closes the viewer and may switch the page ag
 7. **Ownership:** the listeners live in `src/window/front_mirrors.rs`; owner rule `front-mirrors` keeps those setters there (the metadata panel's `close_started` call stays allowed: it is a closing moment, not a front change).
 8. **Verification:** table tests for the diff and dispatcher (written red first); a display test of `FrontSurface` with a real stack, viewer and date browser, including a nested change; the existing InfoBar and display tests; GUI `viewer` and `editing`; the scripted interaction checks on this branch and on `main`.
 
+**Stages:**
+1. `FrontState`, `change`, `FrontEvents` with table tests (diff, order, nested delivery). Done: `2163334b`.
+2. `FrontSurface` emits changes; date browser hook; `FrontMirrors` replaces the 8 feeds; display test. Done: `2cb02e47`.
+3. Owner rule `front-mirrors` (it also caught candidate 12's allowance for the removed initial metadata call, now dropped). Done: `9f7144c6`.
+4. Docs: GLOSSARY **Front change**, AUDIT-INDEX rows, this file. Done: `06aa0aaf`.
+
+**Found while implementing:**
+- GTK queues a page change made inside a page notification (the Library redirect) until the notification ends, so listeners see Photos, then Library, as two changes; only a change of another widget (the viewer closed during a page change) arrives nested. Both are covered by the display test; no listener is left on an older state either way.
+- The InfoBar now hears the date overview only when it turns on or off. Before, each year/month step inside the overview re-sent "overview shown", which also cleared a photo the scanner had put on the InfoBar meanwhile. The overview already clears it on entry.
+- `Page::stack_name` (the reverse of `from_stack_name`) has a round-trip test written after the function.
+
+**Verification (2026-11-23):**
+- Unit: `front_surface` (6 table tests), InfoBar, Properties, metadata panel and sidebar unit tests: 63 pass.
+- Display (Xvfb 1920×1080, one process each): `front_surface_reports_viewer_page_and_date_browser_changes`, the 7 `infobar::layout_tests`, `opening_flash_choices_loads_indexed_values`, `metadata_panel_navigation_auto_closes_and_allows_manual_reopen`, and the 5 photo-action/marks tests: all pass. `metadata_filters_actual_window_folder_album_and_layouts` (times out at `metadata_panel.rs:1873`) and `metadata_panel_theme_layout_and_close_reopen` (`panel.button.parent()` at `:1800`) fail identically on `main` at `38e89e45`: pre-existing, not investigated.
+- `cargo check` / `--tests`: no new warnings. Owner script and `--self-test` ok.
+- GUI harness: `viewer` COMPLETE 19/19 (`20261123T170514Z-385101`), `editing` COMPLETE 39/39 (`20261123T170817Z-389860`).
+- Scripted interaction checks (gallery/viewer/editor zoom, Space, 1:1, Escape, date overview, sort) with `cargo run`: 16/16 on this branch and on `main`.
+
 ### Next (chosen by the owner 2026-11-23)
 1. **Front-surface change event**, as its own refactor: design `FrontSurface::connect_changed` (candidate 12, decision 1) so the zoom slider can be its first consumer. Design and the owner's decisions first, then a branch.
 2. **Candidate 6 · zoom slider router**, built on that event.

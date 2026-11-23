@@ -378,7 +378,7 @@ Merged 2026-11-23 (`888408e0`) on the owner's standing instruction to merge on s
 - The remaining behaviour handlers (close-return, close-on-page-change, teardown, fade cancel, Immersive, trace) still connect to GTK directly; move them only with a reason.
 - The mirrors still keep their own copies of the inputs (decision 6).
 
-### 11 · Window session state (in progress)
+### 11 · Window session state (verified, awaiting merge)
 Branch `refactor/window-session-state`.
 
 #### Investigation (at `0006dbb4`, no code changed)
@@ -401,6 +401,28 @@ Session keys (`src/window.rs:60-70`, plus `compact-sidebar-width-v2` local to `l
 6. **Restoring the incoming library's viewport after a switch is not in scope.** Today the switched-to gallery starts at the top; restoring needs to wait for the stream build as startup does. Recorded as follow-up.
 7. **Clamps stay where they are applied today:** on load, not on save.
 8. **Owner rule `session-state`:** the session keys may be named only in `session_state.rs` and the window test fixtures that seed a library.
+
+**Stages:**
+1. `session_state.rs` with 14 table tests, written red first. Done: `c6644b04`.
+2. Startup, library switch, close, sidebar/drawer/compact widths and the Properties fraction routed through it; one `leave_snapshot` closure in `build.rs` serves close and switch. Done: `629c34c5`.
+3. Owner rule `session-state` (its self-test proves a key read, a key literal and a re-declared key outside the module are caught). Done: `9289e1de`.
+4. Docs: GLOSSARY **Window session**, AUDIT-INDEX rows, this file. Done: `703322bd`.
+
+**Found while implementing:**
+- A non-finite stored length or fraction ("NaN", "inf") now counts as not saved instead of reaching GTK; before, `clamp` passed NaN through.
+- Close now prints a write failure (it used to ignore it), like the drag-end sites.
+- `numeric_setting` and the view-encoding functions in `window.rs` had no other callers and went with the move.
+
+**Verification (2026-11-23):**
+- Unit: `window::session_state` 14 pass; all `window::` unit tests 148 pass.
+- Display (Xvfb 1920×1080, one process each): the 30 window tests that build a window from a seeded session (`responsive_window_tests`, `immersive_window_tests`, `photo_action_tests`, `startup_gallery_tests`, `photo_layout`, onboarding reopen): all pass.
+- `cargo check` / `--tests`: no new warnings (only the 3 known dead-code ones). Owner script and `--self-test` ok.
+- GUI harness: `viewer` 19/19, `editing` 39/39.
+- Scripted interaction checks: 16/16 on this branch and on `main`. They stop the app by killing it, so they never reach Exit; **nothing automated covers the close or library-switch save end to end** (the snapshot itself is table-tested).
+
+**Follow-up:**
+- Restore the incoming library's viewport after a switch (decision 6): wait for the stream build as `populate_startup_gallery` does, then apply the activated-photo / anchor rule.
+- A scripted check that exits through the Exit confirmation and switches library would cover the wiring.
 
 ### Next (updated 2026-11-23, after 6 and 13 merged)
 Done today: 12 (front surface), 13 (front-surface change event), 6 (zoom slider router); the GUI harness was fixed separately (`467b3ee1`).

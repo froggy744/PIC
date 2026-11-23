@@ -26,6 +26,7 @@ use layout_settle::{
 
 mod photo_mark_commands;
 mod photo_marks;
+mod front_surface;
 use photo_marks::{MarkChange, MarkIntent};
 mod properties_presentation;
 mod properties_widgets;

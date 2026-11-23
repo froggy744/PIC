@@ -10,10 +10,6 @@
 //! example a one-photo selection keeps whichever photo was last shown, and
 //! closing the lightbox re-applies the gallery selection.
 
-// The InfoBar adapter uses it; its callers move onto that adapter in
-// stage 3 of candidate 4 (docs/architecture/STATUS.md).
-#![cfg_attr(not(test), allow(dead_code))]
-
 pub(crate) type PhotoId = i64;
 
 /// The gallery's multi-selection: its size and a bounded sample of ids for

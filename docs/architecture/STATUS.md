@@ -17,7 +17,7 @@ Terms (Thumbnail presentation, Sidebar presentation, Properties presentation, ..
 | 1 | Deepen gallery thumbnail presentation | Strong | merged | commits `0df3b918`..`62dff881` on `main` (no merge commit; branch `refactor/thumbnail-presentation`) | `src/grid/presentation.rs` |
 | 2 | Sidebar presentation state machine | Strong | merged | merge `03a2fcb3` (`refactor/sidebar-presentation`) | `src/window/sidebar_presentation.rs` (pure), `src/window/sidebar_widgets.rs` (GTK adapter) |
 | 3 | Properties inspector as one owner | Strong | merged | merge `2da69bae` (`refactor/properties-presentation`) | `src/window/properties_presentation.rs` (pure), `src/window/properties_widgets.rs` (GTK adapter) |
-| 4 | InfoBar decides what it shows | Strong | in progress on `refactor/infobar-presentation`: stages 1-2 (pure model, InfoBar adapter) done | none | `src/infobar.rs`; callers in `src/window/build.rs`, `src/window/layout.rs`, `src/window/photo_actions.rs` |
+| 4 | InfoBar decides what it shows | Strong | in progress on `refactor/infobar-presentation`: stages 1-3 (pure model, InfoBar adapter, callers moved) done | none | `src/infobar.rs`; callers in `src/window/build.rs`, `src/window/layout.rs`, `src/window/photo_actions.rs` |
 | 5 | One gallery scroll-motion module | Worth exploring | open | none | `src/window/navigation.rs`, `src/window/build.rs` (scrub, settle, pump), `src/smooth_scroll.rs` |
 | 6 | Zoom slider router | Worth exploring | open | none | `src/window/build.rs` (zoom slider handlers), `src/lightbox/impl.rs` |
 | 7 | Editor preview plan | Worth exploring | open | none | `src/edit/live_gpu.rs`, `src/edit/editor.rs` |

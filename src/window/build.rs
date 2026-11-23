@@ -203,7 +203,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     }
 
     let info = Rc::new(InfoBar::new_with_settings(Some(connection.clone())));
-    info.set_photo(None);
+    info.clear_photo();
     // The one owner of the Properties inspector's presentation.
     let properties = PropertiesWidgets::new(info.clone());
 
@@ -241,8 +241,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         ) {
             eprintln!("Could not save last activated photo: {error}");
         }
-        info_for_lightbox.set_photo(Some(&photo));
-        info_for_lightbox.show_photo_metadata();
+        info_for_lightbox.show_lightbox_photo(&photo);
         properties_for_lightbox.show_photo(PropertiesSurface::Lightbox, Some(&photo));
         // Navigating to another photo restores the viewer's normal fit state.
         info_for_lightbox.one_to_one.set_active(false);
@@ -628,14 +627,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             {
                 return;
             }
-            if photo.is_none() {
-                // Model replacement clears focus before selecting the new
-                // destination's first photo. Selection-model notifications
-                // can be elided when the selected index stays the same, so
-                // explicitly leave multiselect presentation on that clear.
-                info_for_grid.show_photo_metadata();
-            }
-            info_for_grid.set_photo(photo.as_ref());
+            info_for_grid.show_gallery_focus(photo.as_ref());
             properties_for_grid_selection.show_photo(PropertiesSurface::Gallery, photo.as_ref());
             selected_photo_for_grid.replace(photo);
         },
@@ -724,13 +716,9 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     const SELECTION_INFOBAR_PREVIEW_LIMIT: usize = 48;
     gallery.connect_selection_preview_changed(SELECTION_INFOBAR_PREVIEW_LIMIT, {
         let info = Rc::downgrade(&info);
-        let lightbox = Rc::downgrade(&lightbox);
-        let overview_visible = date_browser_overview_visible.clone();
         move |count, photos| {
-            if let (Some(info), Some(lightbox)) = (info.upgrade(), lightbox.upgrade()) {
-                if !lightbox.root.is_visible() && !overview_visible.get() {
-                    info.set_selected_photos(count, &photos);
-                }
+            if let Some(info) = info.upgrade() {
+                info.show_gallery_selection(count, &photos);
             }
         }
     });
@@ -757,12 +745,12 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             let (Some(gallery), Some(info)) = (gallery.upgrade(), info.upgrade()) else {
                 return;
             };
-            if root.is_visible() {
-                info.show_photo_metadata();
-            } else {
+            if !root.is_visible() {
+                // The selection may have changed while the lightbox was open.
                 let (count, photos) = gallery.selected_photo_preview(SELECTION_INFOBAR_PREVIEW_LIMIT);
-                info.set_selected_photos(count, &photos);
+                info.show_gallery_selection(count, &photos);
             }
+            info.set_lightbox_shown(root.is_visible());
         });
     }
     // No stored size (or only the untouched legacy default): adopt the
@@ -2681,17 +2669,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             };
             let (count, photos) = gallery.selected_photo_preview(SELECTION_INFOBAR_PREVIEW_LIMIT);
             selected_photo.replace(photos.first().cloned());
-            match count {
-                0 => {
-                    info.show_photo_metadata();
-                    info.set_photo(None);
-                }
-                1 => {
-                    info.set_selected_photos(1, &photos);
-                    info.set_photo(photos.first());
-                }
-                _ => info.set_selected_photos(count, &photos),
-            }
+            info.show_date_browser_selection(count, &photos);
         })
     };
     let exit_date_browser: Rc<dyn Fn()> = {
@@ -2706,10 +2684,12 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         let group_mode = group_mode.clone();
         let search = search_text.clone();
         let overview_visible = date_browser_overview_visible.clone();
+        let info = info.clone();
         let sync_info = sync_date_browser_photo_info.clone();
         Rc::new(move || {
             if !active.replace(false) { return; }
             overview_visible.set(false);
+            info.set_date_overview_shown(false);
             let active_photo_id = gallery.selected_photo_ids(None).first().copied();
             if let Some(snapshot) = snapshot.borrow_mut().take() {
                 if gallery.restore_date_browser_snapshot(snapshot) {
@@ -2738,11 +2718,13 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         let browser_slot = Rc::downgrade(&date_browser_slot);
         let active = date_browser_active.clone();
         let overview_visible = date_browser_overview_visible.clone();
+        let info = info.clone();
         let button = date_browser_button.downgrade();
         let scroll = gallery_scroll_stack.clone();
         Rc::new(move || {
             if !active.replace(false) { return; }
             overview_visible.set(false);
+            info.set_date_overview_shown(false);
             snapshot.borrow_mut().take();
             if let Some(slot) = browser_slot.upgrade() {
                 if let Some(browser) = slot.borrow().as_ref() { browser.root().set_visible(false); }
@@ -2765,10 +2747,12 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             let gallery = gallery.clone();
             let scroll = gallery_scroll_stack.clone();
             let overview_visible = date_browser_overview_visible.clone();
+            let info = info.clone();
             let sync_info = sync_date_browser_photo_info.clone();
             let exit = exit_date_browser.clone();
             Rc::new(move |month| {
                 overview_visible.set(false);
+                info.set_date_overview_shown(false);
                 let indices = slot.upgrade().and_then(|slot| slot.borrow().as_ref().map(|browser| browser.indices(month)));
                 let mut snapshot = snapshot.borrow_mut();
                 if let (Some(indices), Some(snapshot)) = (indices, snapshot.as_mut()) {
@@ -2791,8 +2775,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             Rc::new(move || {
                 overview_visible.set(true);
                 selected_photo.replace(None);
-                info.show_photo_metadata();
-                info.set_photo(None);
+                info.set_date_overview_shown(true);
                 scroll.set_visible(false);
                 heading.set_visible(false);
             })
@@ -4089,7 +4072,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                     crate::thumbnail_trace::event(&trace_uri, "editor", "saved");
                     gallery.update_edit_recipe(photo.id(), &photo.edit_recipe());
                     selected_photo.replace(Some(photo.clone()));
-                    info.set_photo(Some(&photo));
+                    info.photo_updated(&photo);
                 }) as Rc<dyn Fn(crate::photo_object::PhotoObject)>
             };
             let editor = crate::edit::build_editor(
@@ -4204,7 +4187,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             }
         } else {
             gallery_for_favorite.update_favorites(&ids, favorite);
-            info_favorite.set_photo(Some(&photo));
+            info_favorite.photo_updated(&photo);
         }
         if !db::filters::Filters::load(&db_for_favorite.borrow()).is_empty() {
             refresh_grid(&db_for_favorite,filter_for_favorite.get(),&search_for_favorite.borrow(),sort_for_favorite.get(),&gallery_for_favorite);
@@ -4252,7 +4235,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             }
             gallery_for_rating.update_ratings(&ids, target);
             photo.set_rating(target);
-            info_for_rating.set_photo(Some(&photo));
+            info_for_rating.photo_updated(&photo);
             properties_for_rating.show_photo(PropertiesSurface::Lightbox, Some(&photo));
             if let (Some(sidebar), Ok(counts)) = (
                 sidebar_for_rating.borrow().as_ref(),
@@ -4803,7 +4786,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             return;
         }
         photo.set_rotation(rotation);
-        info_rotate.set_photo(Some(&photo));
+        info_rotate.photo_updated(&photo);
         // The inspector is a snapshot of the selected photo's metadata;
         // refresh it after the database and PhotoObject rotation are updated.
         properties_for_rotate.show_photo(PropertiesSurface::Gallery, Some(&photo));
@@ -5533,7 +5516,7 @@ fn start_photo_export_single(
                             } else {
                                 gallery_for_keys.update_ratings(&ids, rating);
                                 photo.set_rating(rating);
-                                info_for_keys.set_photo(Some(&photo));
+                                info_for_keys.photo_updated(&photo);
                                 properties_for_keys.show_photo(
                                     PropertiesSurface::Lightbox,
                                     Some(&photo),
@@ -6647,7 +6630,7 @@ fn start_photo_export_single(
                         gallery_for_events.update_photo(photo);
                         if let Some(selected)=selected_photo_for_events.borrow().as_ref().filter(|selected|selected.id()==photo.id) {
                             selected.set_from_photo(photo);
-                            info_for_events.set_photo(Some(selected));
+                            info_for_events.photo_updated(selected);
                         }
                     }
                 }
@@ -6683,8 +6666,8 @@ fn start_photo_export_single(
                                     // selected object current as well.
                                     if let Some(selected) = selected.as_ref() {
                                         selected.set_from_photo(photo);
+                                        info_for_events.photo_updated(selected);
                                     }
-                                    info_for_events.set_photo(selected.as_ref());
                                 }
                             }
                         }
@@ -7204,7 +7187,7 @@ fn start_photo_export_single(
             settings_window.menu_controls.reload(&connection.borrow());
             folder_cache.replace(folders.clone());
             selected_photo.replace(None);
-            info.set_photo(None);
+            info.clear_photo();
             filter.set(new_filter);
             date_browser_button.set_visible(new_filter == sidebar::SidebarFilter::All);
             date_browser_button.set_sensitive(true);

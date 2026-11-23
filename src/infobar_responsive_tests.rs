@@ -50,7 +50,7 @@ fn compact_toolbar_keeps_actions_usable_and_restores_wide_layout() {
     libadwaita::init().unwrap();
     crate::css::install_foundation(&gtk::gdk::Display::default().unwrap());
     let bar = InfoBar::new();
-    bar.set_photo(None);
+    bar.clear_photo();
     let utilities: Vec<_> = ["Screensaver"]
         .into_iter()
         .map(|title| {
@@ -96,7 +96,7 @@ fn compact_toolbar_keeps_actions_usable_and_restores_wide_layout() {
             photo.set_width(6000);
             photo.set_height(4000);
             photo.set_aperture(5.6);
-            bar.set_photo(Some(&photo));
+            bar.show_gallery_focus(Some(&photo));
         }
         for width in [960, 700, 600, 1400, 960, 700, 600] {
             // Continue native resize requests while responsive fields release
@@ -273,7 +273,7 @@ fn show_in_infobar_menu_can_open_and_dismiss_without_changing_options() {
     libadwaita::init().unwrap();
     crate::css::install_foundation(&gtk::gdk::Display::default().unwrap());
     let bar = InfoBar::new();
-    bar.set_photo(None);
+    bar.clear_photo();
     let window = gtk::Window::builder()
         .title("PIC InfoBar menu regression")
         .default_width(900)
@@ -375,7 +375,7 @@ fn adaptive_metadata_fills_space_without_constraining_resize() {
     photo.set_iso(800);
     photo.set_shutter_speed(0.004);
     photo.set_focal_length(85.0);
-    bar.set_photo(Some(&photo));
+    bar.show_gallery_focus(Some(&photo));
     let window = gtk::Window::builder()
         .default_width(1920)
         .default_height(100)
@@ -485,7 +485,7 @@ fn adaptive_metadata_fills_space_without_constraining_resize() {
     photo.set_shutter_speed(0.0);
     photo.set_focal_length(0.0);
     photo.set_aperture(0.0);
-    bar.set_photo(Some(&photo));
+    bar.photo_updated(&photo);
     window.set_default_size(1920, 100);
     settle();
     let mut child = bar.details.first_child();

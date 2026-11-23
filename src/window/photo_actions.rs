@@ -286,7 +286,7 @@ fn finish_bulk_recipe(work: BulkRecipeState, name: &'static str, total: usize) {
     if work.touched_selected {
         let selected = work.context.selected_photo.borrow().as_ref().cloned();
         if let Some(selected) = selected {
-            work.context.info.set_photo(Some(&selected));
+            work.context.info.photo_updated(&selected);
         }
     }
     if work.refresh_grid_when_done || work.context.filter.get() == sidebar::SidebarFilter::History
@@ -600,7 +600,7 @@ fn show_photo_context_menu(
             favorite_context
                 .selected_photo
                 .replace(Some(favorite_photo.clone()));
-            favorite_context.info.set_photo(Some(&favorite_photo));
+            favorite_context.info.photo_updated(&favorite_photo);
         }
         if let Some(gallery) = favorite_context.gallery.borrow().upgrade() {
             if favorite_context.filter.get() == sidebar::SidebarFilter::Favorites && !target {
@@ -1365,7 +1365,7 @@ fn show_rename_dialog(
                 }
             }
         }
-        context.info.set_photo(Some(&photo));
+        context.info.photo_updated(&photo);
         context.selected_photo.replace(Some(photo.clone()));
     });
     dialog.present(Some(parent));
@@ -1451,7 +1451,7 @@ fn show_delete_confirmation(
             lightbox.close();
         }
         context.selected_photo.replace(None);
-        context.info.set_photo(None);
+        context.info.clear_photo();
         refresh_photo_actions_grid(&context);
     });
     dialog.present(Some(parent));

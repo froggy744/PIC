@@ -28,6 +28,7 @@ mod photo_mark_commands;
 mod photo_marks;
 mod front_surface;
 mod front_mirrors;
+mod zoom_slider;
 use front_surface::{DateBrowser as DateBrowserLevel, Front, FrontSurface};
 use photo_marks::{MarkChange, MarkIntent};
 mod properties_presentation;

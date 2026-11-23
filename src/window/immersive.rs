@@ -182,7 +182,7 @@ fn immersive_install_chrome_edge(
         let state = Box::new(ImmersiveSlidePosition {
             shell: sidebar_shell.as_ptr().cast(),
             slide: immersive_slide.clone(),
-            width: immersive_slide_width.clone(),
+            width: sidebar_widgets.slide_width_cell(),
         });
         glib::gobject_ffi::g_signal_connect_data(
             gallery_surface.as_ptr().cast(),
@@ -262,14 +262,34 @@ fn immersive_install_chrome_edge(
             animation.play();
         })
     };
-    let show_immersive_sidebar = {
-        let setter = set_immersive_sidebar_shown.clone();
-        Rc::new(move || setter(true))
+    // Reveal and hide go through the sidebar presentation module, which
+    // slides the overlay through the host installed below.
+    let show_immersive_sidebar: Rc<dyn Fn()> = {
+        let widgets = sidebar_widgets.clone();
+        Rc::new(move || widgets.dispatch(SidebarEvent::ImmersiveRevealRequested))
     };
-    let hide_immersive_sidebar = {
-        let setter = set_immersive_sidebar_shown.clone();
-        Rc::new(move || setter(false))
+    let hide_immersive_sidebar: Rc<dyn Fn()> = {
+        let widgets = sidebar_widgets.clone();
+        Rc::new(move || widgets.dispatch(SidebarEvent::ImmersiveHideRequested))
     };
+    sidebar_widgets.attach_immersive_host(ImmersiveHost {
+        surface: gallery_surface.clone(),
+        set_shown: set_immersive_sidebar_shown.clone(),
+        reset_slide: {
+            let (slide, target, animation) = (
+                immersive_slide.clone(),
+                immersive_slide_target.clone(),
+                immersive_slide_animation.clone(),
+            );
+            Rc::new(move || {
+                if let Some(animation) = animation.borrow().as_ref() {
+                    animation.pause();
+                }
+                slide.set(0.0);
+                target.set(0.0);
+            })
+        },
+    });
 
     // Immersive Mode owns the left navigation for the whole session.
     //
@@ -533,31 +553,18 @@ fn immersive_install_chrome_edge(
         });
     }
 
-    let left_was_open = Rc::new(Cell::new(false));
     let right_was_open = Rc::new(Cell::new(false));
     let viewer_right_was_open = Rc::new(Cell::new(false));
     let metadata_was_visible = Rc::new(Cell::new(false));
-    let left_was_collapsed = Rc::new(Cell::new(false));
     let right_was_collapsed = Rc::new(Cell::new(false));
-    // The persistent sidebar pin and the split's own gestures describe the
-    // windowed layout. They are captured on entry and restored on exit so an
-    // immersive session never leaks its presentation into the saved state.
-    let left_was_pinned = Rc::new(Cell::new(true));
-    let left_was_split_pinned = Rc::new(Cell::new(true));
-    let left_was_show_gesture = Rc::new(Cell::new(false));
-    let left_was_hide_gesture = Rc::new(Cell::new(false));
     let toggle: Rc<dyn Fn()> = {
-        let (active, split, properties, viewer_panel) = (
-            immersive_active.clone(), main_split.clone(), properties_split.clone(),
+        let (active, properties, viewer_panel) = (
+            immersive_active.clone(), properties_split.clone(),
             lightbox_properties_panel.clone()
         );
-        let (left_column, sidebar, expanded, dock, left_edge) = (
-            left_column.clone(), sidebar.clone(), sidebar_expanded.clone(),
-            compact_dock.clone(), sidebar_hover_reveal.clone()
-        );
-        let shell = sidebar_shell.clone();
-        let (header, column, surface, info_root, metadata_root) = (
-            right_header.clone(), right_column.clone(), gallery_surface.clone(),
+        let (sidebar, sidebar_widgets) = (sidebar.clone(), sidebar_widgets.clone());
+        let (header, column, info_root, metadata_root) = (
+            right_header.clone(), right_column.clone(),
             info.root.clone(), metadata_panel.root.clone()
         );
         let (top_strip, bottom_strip, button, lightbox, info_for_mode) = (
@@ -565,82 +572,27 @@ fn immersive_install_chrome_edge(
             immersive_button.clone(), lightbox.clone(), info.clone()
         );
         let (top_revealer, bottom_revealer) = (top_revealer.clone(), bottom_revealer.clone());
-        let (left_was_open, right_was_open, viewer_right_was_open, metadata_was_visible) = (
-            left_was_open.clone(), right_was_open.clone(),
-            viewer_right_was_open.clone(), metadata_was_visible.clone()
+        let (right_was_open, viewer_right_was_open, metadata_was_visible) = (
+            right_was_open.clone(), viewer_right_was_open.clone(), metadata_was_visible.clone()
         );
-        let (left_was_collapsed, right_was_collapsed) = (
-            left_was_collapsed.clone(), right_was_collapsed.clone()
-        );
-        let (left_was_pinned, left_was_split_pinned) = (
-            left_was_pinned.clone(), left_was_split_pinned.clone()
-        );
-        let (left_was_show_gesture, left_was_hide_gesture) = (
-            left_was_show_gesture.clone(), left_was_hide_gesture.clone()
-        );
-        let immersive_shown = immersive_sidebar_shown.clone();
-        let resize_handle = sidebar_shell.last_child().expect("sidebar resize handle");
+        let right_was_collapsed = right_was_collapsed.clone();
         Rc::new(move || {
             let entering = !active.get();
             active.set(entering);
             if entering {
-                left_was_open.set(split.shows_sidebar());
                 right_was_open.set(properties.shows_sidebar());
                 viewer_right_was_open.set(viewer_panel.is_visible());
                 metadata_was_visible.set(metadata_root.is_visible());
-                left_was_collapsed.set(split.is_collapsed());
                 right_was_collapsed.set(properties.is_collapsed());
-                left_was_pinned.set(sidebar::is_pinned(&sidebar));
-                left_was_split_pinned.set(split.is_pin_sidebar());
-                left_was_show_gesture.set(split.enables_show_gesture());
-                left_was_hide_gesture.set(split.enables_hide_gesture());
 
-                // An immersive session owns the left navigation completely.
-                // The compact rail and the full sidebar are both hidden, the
-                // split stays collapsed so the sidebar can only appear as an
-                // overlay over the photos, and the saved Compact UI setting is
-                // left untouched.
-                immersive_shown.set(false);
-                dock.set_visible(false);
-                resize_handle.set_visible(true);
-                left_column.set_visible(true);
-                sidebar.set_visible(true);
-                split.set_show_sidebar(false);
-                split.set_pin_sidebar(false);
-                split.set_enable_show_gesture(false);
-                split.set_enable_hide_gesture(false);
-                split.set_collapsed(true);
-                // A collapsed-notify handler may change the sidebar state.
-                split.set_show_sidebar(false);
-                // The immersive reveal is a presentation-only overlay: the
-                // existing sidebar shell leaves the split and becomes an
-                // overlay child of the gallery surface. Its position is
-                // animated by the "get-child-position" handler, which only
-                // re-allocates the sidebar, so the gallery allocation, its
-                // scroll adjustment and every tile stay put. The sidebar
-                // model, its widget tree and the gallery are untouched;
-                // only the presentation parent changes.
-                let overlay_width = split
-                    .sidebar()
-                    .map(|shell| shell.width())
-                    .filter(|width| *width > 0)
-                    .map(f64::from)
-                    .unwrap_or_else(|| split.max_sidebar_width());
-                split.set_sidebar(None::<&gtk::Widget>);
-                immersive_normal_width.set(overlay_width.round().max(1.0) as i32);
-                immersive_slide_width.set(immersive_normal_width.get());
-                shell.set_width_request(immersive_slide_width.get());
-                shell.set_hexpand(false);
-                shell.set_halign(gtk::Align::Start);
-                shell.set_valign(gtk::Align::Fill);
-                shell.set_vexpand(true);
-                // Every session starts fully hidden and off-screen.
-                if let Some(animation) = immersive_slide_animation.borrow().as_ref() {
-                    animation.pause();
-                }
-                immersive_slide.set(0.0);
-                immersive_slide_target.set(0.0);
-                shell.set_visible(false);
+                // An immersive session owns the left navigation completely:
+                // the sidebar presentation module hides the compact rail and
+                // the full sidebar, keeps the split collapsed, moves the
+                // existing shell onto the gallery as a presentation-only
+                // overlay, and leaves the saved sidebar mode untouched.
+                sidebar_widgets.dispatch(SidebarEvent::ImmersiveEntered {
+                    pinned: sidebar::is_pinned(&sidebar),
+                });
                 properties.set_show_sidebar(false);
                 properties.set_pin_sidebar(false);
                 properties.set_collapsed(true);
@@ -648,7 +600,6 @@ fn immersive_install_chrome_edge(
                 viewer_panel.set_visible(false);
                 info_for_mode.set_properties_enabled(false);
                 metadata_root.set_visible(false);
-                left_edge.set_visible(true);
 
                 column.remove(&header);
                 header.set_visible(true);
@@ -660,11 +611,6 @@ fn immersive_install_chrome_edge(
                 info_root.set_halign(gtk::Align::Fill);
                 info_root.set_valign(gtk::Align::End);
                 bottom_revealer.set_child(Some(&info_root));
-                // Added last so the overlay paints above the gallery chrome,
-                // exactly like the split's own collapsed drawer did.
-                surface.add_overlay(&shell);
-                immersive_sidebar_page(expanded.get());
-                compact_immersive_toggle.set_visible(true);
 
                 top_strip.set_visible(true);
                 bottom_strip.set_visible(true);
@@ -673,37 +619,13 @@ fn immersive_install_chrome_edge(
             } else {
                 top_strip.set_visible(false);
                 bottom_strip.set_visible(false);
-                // Leave the immersive overlay before restoring the layout.
-                immersive_shown.set(false);
-                split.set_show_sidebar(false);
-                // Return the presentation overlay to the split before the
-                // windowed layout is restored, and drop every presentation
-                // override so the drawer allocates exactly as before.
-                if let Some(animation) = immersive_slide_animation.borrow().as_ref() {
-                    animation.pause();
-                }
-                immersive_slide.set(0.0);
-                immersive_slide_target.set(0.0);
-                // Move the compact page back to its original windowed dock.
-                compact_immersive_toggle.set_visible(false);
-                immersive_sidebar_page(true);
-                resize_handle.set_visible(expanded.get());
-                surface.remove_overlay(&shell);
-                shell.set_width_request(-1);
-                shell.set_visible(true);
-                shell.set_hexpand(true);
-                shell.set_halign(gtk::Align::Fill);
-                shell.set_valign(gtk::Align::Fill);
-                split.set_sidebar(Some(&shell));
+                // Restore the exact windowed sidebar configuration from
+                // before the session: the compact rail in compact mode, the
+                // full sidebar in normal mode, the saved pin.
+                sidebar_widgets.dispatch(SidebarEvent::ImmersiveLeft);
                 properties.set_show_sidebar(false);
                 viewer_panel.set_visible(false);
-                sidebar::clear_hover_open(&sidebar);
-                sidebar::set_pinned(&sidebar, left_was_pinned.get());
-                split.set_collapsed(left_was_collapsed.get());
                 properties.set_collapsed(right_was_collapsed.get());
-                split.set_pin_sidebar(left_was_split_pinned.get());
-                split.set_enable_show_gesture(left_was_show_gesture.get());
-                split.set_enable_hide_gesture(left_was_hide_gesture.get());
                 properties.set_pin_sidebar(true);
                 info_for_mode.set_properties_enabled(true);
 
@@ -717,18 +639,10 @@ fn immersive_install_chrome_edge(
                 info_root.set_visible(true);
                 metadata_root.set_visible(metadata_was_visible.get());
 
-                // Restore the exact sidebar configuration that was active
-                // before the session: the compact rail in compact mode, the
-                // full sidebar in normal mode.
-                left_column.set_visible(expanded.get());
-                sidebar.set_visible(expanded.get());
-                dock.set_visible(!expanded.get());
-                split.set_show_sidebar(left_was_open.get() && expanded.get());
                 properties.set_show_sidebar(right_was_open.get());
                 if lightbox.root.is_visible() {
                     viewer_panel.set_visible(viewer_right_was_open.get());
                 }
-                left_edge.set_visible(expanded.get() && !split.shows_sidebar());
                 button.set_icon_name("view-fullscreen-symbolic");
                 button.set_tooltip_text(Some("Immersive Mode (I)"));
             }

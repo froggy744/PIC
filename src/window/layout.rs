@@ -1144,12 +1144,13 @@
     // compact width persists independently from the normal sidebar.
     const COMPACT_SIDEBAR_WIDTH_KEY: &str = "compact-sidebar-width-v2";
     const COMPACT_ICON_RAIL_WIDTH: f64 = 44.0;
-    const COMPACT_SIDEBAR_MODE_KEY: &str = "compact-sidebar-enabled";
+    const _: () = assert!(COMPACT_ICON_RAIL_WIDTH == COMPACT_RAIL_MIN_WIDTH);
+    const COMPACT_SIDEBAR_MODE_KEY: &str = SIDEBAR_MODE_SETTING_KEY;
     let compact_width = Rc::new(Cell::new(
         numeric_setting::<f64>(&connection.borrow(), COMPACT_SIDEBAR_WIDTH_KEY)
-            .unwrap_or(COMPACT_ICON_RAIL_WIDTH).clamp(COMPACT_ICON_RAIL_WIDTH, 300.0),
+            .map(clamp_compact_rail_width).unwrap_or(COMPACT_ICON_RAIL_WIDTH),
     ));
-    for label in compact_labels.borrow().iter() { label.set_visible(compact_width.get() >= 90.0); }
+    for label in compact_labels.borrow().iter() { label.set_visible(compact_rail_shows_labels(compact_width.get())); }
     // Align option text with the start of the centered Favorites title.
     let option_inset: Rc<dyn Fn(f64)> = {
         let labels = compact_labels.clone();
@@ -1202,13 +1203,14 @@
                     &gtk::graphene::Point::new((start_x + dx) as f32, (start_y + dy) as f32),
                 )
             }) else { return; };
-            let width_px = (initial_width + f64::from(point.x()) - initial_global_x)
-                .clamp(COMPACT_ICON_RAIL_WIDTH, 300.0);
+            let width_px =
+                clamp_compact_rail_width(initial_width + f64::from(point.x()) - initial_global_x);
             width.set(width_px);
             dock.set_width_request(width_px.round() as i32);
             update_inset(width_px);
-            for label in labels.borrow().iter() { label.set_visible(width_px >= 90.0); }
-            if width_px < 90.0 { for detail in details.borrow().iter() { detail.set_reveal_child(false); } }
+            let labelled = compact_rail_shows_labels(width_px);
+            for label in labels.borrow().iter() { label.set_visible(labelled); }
+            if !labelled { for detail in details.borrow().iter() { detail.set_reveal_child(false); } }
         });
     }
     {
@@ -1229,8 +1231,9 @@
     dock_resize_handle.add_css_class("compact-resize-handle");
     dock_resize_handle.add_controller(dock_drag);
     compact_dock.add_overlay(&dock_resize_handle);
-    let compact_enabled = db::setting(&connection.borrow(), COMPACT_SIDEBAR_MODE_KEY)
-        .ok().flatten().is_some_and(|setting| setting == "true");
+    let compact_enabled = SidebarMode::from_setting(
+        db::setting(&connection.borrow(), COMPACT_SIDEBAR_MODE_KEY).ok().flatten().as_deref(),
+    ) == SidebarMode::Compact;
     main_split.set_content(Some(&right_column));
     main_split.set_min_sidebar_width(SIDEBAR_MIN_WIDTH);
     main_split.set_max_sidebar_width(SIDEBAR_MAX_WIDTH);
@@ -1256,133 +1259,46 @@
     let sidebar_expanded = Rc::new(Cell::new(!compact_enabled));
     let immersive_slide_width = Rc::new(Cell::new(0_i32));
     let immersive_normal_width = Rc::new(Cell::new(0_i32));
-    // Never instantiate a second immersive sidebar. The two existing
-    // navigation pages move between their normal parents and one overlay.
-    let immersive_sidebar_page: Rc<dyn Fn(bool)> = {
-        let shell = sidebar_shell.clone();
-        let dock = compact_dock.clone();
-        let column = left_column.clone();
-        let page = compact_sidebar_page.clone();
-        let width = compact_width.clone();
-        let slide_width = immersive_slide_width.clone();
-        let normal_width = immersive_normal_width.clone();
-        let active = immersive_active.clone();
-        Rc::new(move |normal| {
-            if active.get() {
-                if let Some(root) = shell.root() {
-                    if root.focus().is_some_and(|focus| focus.is_ancestor(&shell)) {
-                        // The focused button is about to be removed. Prevent
-                        // GTK from focusing and scrolling an old gallery tile.
-                        gtk::prelude::RootExt::set_focus(&root, None::<&gtk::Widget>);
-                    }
-                }
-            }
-            if normal {
-                // The normal sidebar already paints its own theme background.
-                shell.remove_css_class("navigation-sidebar");
-                shell.remove_css_class("compact-sidebar-dock");
-                if page.parent().is_some_and(|parent| parent == shell.clone().upcast::<gtk::Widget>()) {
-                    shell.set_child(None::<&gtk::Widget>);
-                }
-                if page.parent().is_none() {
-                    dock.set_child(Some(&page));
-                }
-                if column.parent().is_none() {
-                    shell.set_child(Some(&column));
-                }
-                slide_width.set(normal_width.get().max(1));
-            } else {
-                // In normal compact mode these classes belong to compact_dock.
-                // When the page moves into the immersive shell, the shell
-                // must supply the same opaque, theme-aware background.
-                shell.add_css_class("navigation-sidebar");
-                shell.add_css_class("compact-sidebar-dock");
-                if column.parent().is_some_and(|parent| parent == shell.clone().upcast::<gtk::Widget>()) {
-                    shell.set_child(None::<&gtk::Widget>);
-                }
-                if page.parent().is_some() {
-                    dock.set_child(None::<&gtk::Widget>);
-                }
-                shell.set_child(Some(&page));
-                slide_width.set(width.get().round() as i32);
-            }
-            shell.set_width_request(slide_width.get());
-            // In immersive mode the shell's parent is the gallery overlay.
-            // Reallocate only that presentation parent after changing width.
-            if let Some(parent) = shell.parent() {
-                parent.queue_allocate();
-            }
-        })
-    };
-    let compact_right_toggle_slot: Rc<RefCell<Option<gtk::Button>>> = Rc::new(RefCell::new(None));
-    let compact_controls_sync_slot: Rc<RefCell<Option<Rc<dyn Fn()>>>> =
-        Rc::new(RefCell::new(None));
+    // The sidebar presentation module's adapter: the one writer of the
+    // sidebar layout, and the only code that moves the existing pages
+    // between their normal parents and the immersive overlay.
+    let sidebar_widgets = SidebarWidgets::new(
+        SidebarWidgetParts {
+            split: main_split.clone(),
+            shell: sidebar_shell.clone(),
+            column: left_column.clone(),
+            sidebar: sidebar.clone(),
+            handle: sidebar_resize_handle.clone(),
+            dock: compact_dock.clone(),
+            compact_page: compact_sidebar_page.clone(),
+            compact_immersive_toggle: compact_immersive_toggle.clone(),
+        },
+        SidebarCells {
+            expanded: sidebar_expanded.clone(),
+            immersive_shown: immersive_sidebar_shown.clone(),
+            collapsed_width: collapsed_sidebar_width.clone(),
+            compact_width: compact_width.clone(),
+            slide_width: immersive_slide_width.clone(),
+            normal_width: immersive_normal_width.clone(),
+        },
+        if compact_enabled { SidebarMode::Compact } else { SidebarMode::Normal },
+        connection.clone(),
+    );
     let set_sidebar_expanded: Rc<dyn Fn(bool)> = {
-        let split = main_split.clone();
-        let dock = compact_dock.clone();
-        let sidebar = sidebar.clone();
-        let left_column = left_column.clone();
-        let handle = sidebar_resize_handle.clone();
-        let expanded = sidebar_expanded.clone();
-        let connection_for_mode = connection.clone();
-        let right_toggle = compact_right_toggle_slot.clone();
-        let controls_sync = compact_controls_sync_slot.clone();
-        let collapsed_width = collapsed_sidebar_width.clone();
-        let immersive = immersive_active.clone();
-        let immersive_page = immersive_sidebar_page.clone();
+        let widgets = sidebar_widgets.clone();
         Rc::new(move |show_normal| {
-            expanded.set(show_normal);
-            if immersive.get() {
-                // Switch the content of the already-visible presentation
-                // overlay. The split and the compact dock must not reflow.
-                immersive_page(show_normal);
-                if let Some(button) = right_toggle.borrow().as_ref() {
-                    button.set_visible(!show_normal);
-                }
-                if let Some(sync) = controls_sync.borrow().as_ref() { sync(); }
-                return;
-            }
-            dock.set_visible(!show_normal);
-            handle.set_visible(show_normal);
-            left_column.set_visible(show_normal);
-            sidebar.set_visible(show_normal);
-            // The Adw sidebar is completely absent in compact mode. Neither
-            // its natural minimum nor its animation can enlarge the icon rail.
-            split.set_show_sidebar(show_normal && !split.is_collapsed());
-            split.set_enable_show_gesture(show_normal);
-            split.set_enable_hide_gesture(show_normal);
-            if show_normal {
-                split.set_min_sidebar_width(SIDEBAR_MIN_WIDTH);
-                split.set_max_sidebar_width(if split.is_collapsed() {
-                    collapsed_width.get().min((f64::from(split.width()) * 0.70).max(SIDEBAR_MIN_WIDTH))
-                } else { SIDEBAR_MAX_WIDTH });
-                let normal_fraction = numeric_setting::<f64>(
-                    &connection_for_mode.borrow(), SIDEBAR_WIDTH_FRACTION_SETTING_KEY,
-                ).unwrap_or(0.22).clamp(0.10, 0.70);
-                split.set_sidebar_width_fraction(normal_fraction);
-            }
-            if let Some(button) = right_toggle.borrow().as_ref() {
-                button.set_visible(!show_normal);
-            }
-            if let Some(sync) = controls_sync.borrow().as_ref() { sync(); }
+            widgets.dispatch(SidebarEvent::ModeChosen(SidebarMode::from_normal(show_normal)));
         })
     };
     set_sidebar_expanded(!compact_enabled);
     {
         let expand = set_sidebar_expanded.clone();
-        let connection = connection.clone();
         let active = immersive_active.clone();
         compact_immersive_toggle.connect_clicked(move |_| {
             if active.get() {
                 // The clicked widget is about to be reparented.
                 let expand = expand.clone();
-                let connection = connection.clone();
-                glib::idle_add_local_once(move || {
-                    expand(true);
-                    if let Err(error) = db::set_setting(
-                        &connection.borrow(), COMPACT_SIDEBAR_MODE_KEY, "false"
-                    ) { eprintln!("Could not save normal sidebar mode: {error}"); }
-                });
+                glib::idle_add_local_once(move || expand(true));
             }
         });
     }
@@ -1390,9 +1306,10 @@
         let connection = connection.clone();
         let set_mode = set_sidebar_expanded.clone();
         Rc::new(move || {
-            let compact = db::setting(&connection.borrow(), COMPACT_SIDEBAR_MODE_KEY)
-                .ok().flatten().is_some_and(|value| value == "true");
-            set_mode(!compact);
+            let mode = SidebarMode::from_setting(
+                db::setting(&connection.borrow(), COMPACT_SIDEBAR_MODE_KEY).ok().flatten().as_deref(),
+            );
+            set_mode(mode.is_normal());
         })
     }));
     let folders_reveal = Rc::new(Cell::new(false));
@@ -1548,7 +1465,7 @@
         let update_inset = option_inset.clone();
         primary.connect_pressed(move |gesture, count, _, _| {
             if count != 2 { return; }
-            if width.get() < 90.0 {
+            if !compact_rail_shows_labels(width.get()) {
                 reveal.set(true);
                 target.emit_clicked();
                 reveal.set(false);
@@ -1616,7 +1533,7 @@
         let update_inset = option_inset.clone();
         primary.connect_pressed(move |gesture, count, _, _| {
             if count == 2 {
-                if width.get() < 90.0 {
+                if !compact_rail_shows_labels(width.get()) {
                     reveal.set(true);
                     double_target.emit_clicked();
                     reveal.set(false);
@@ -1780,25 +1697,15 @@
     {
         let expand = set_sidebar_expanded.clone();
         let expanded = sidebar_expanded.clone();
-        let connection = connection.clone();
         let active = immersive_active.clone();
         compact_button.connect_clicked(move |_| {
             let show_normal = !expanded.get();
             if active.get() {
                 // Unparent the clicked sidebar only after GTK dispatch ends.
                 let expand = expand.clone();
-                let connection = connection.clone();
-                glib::idle_add_local_once(move || {
-                    expand(show_normal);
-                    if let Err(error) = db::set_setting(
-                        &connection.borrow(), COMPACT_SIDEBAR_MODE_KEY, &(!show_normal).to_string()
-                    ) { eprintln!("Could not save sidebar mode: {error}"); }
-                });
+                glib::idle_add_local_once(move || expand(show_normal));
             } else {
                 expand(show_normal);
-                if let Err(error) = db::set_setting(
-                    &connection.borrow(), COMPACT_SIDEBAR_MODE_KEY, &(!show_normal).to_string()
-                ) { eprintln!("Could not save sidebar mode: {error}"); }
             }
         });
     }
@@ -1816,12 +1723,12 @@
                 split.set_show_sidebar(false);
                 return;
             }
-            if split.is_collapsed() {
-                split.set_max_sidebar_width(collapsed_sidebar_width_for_notify.get().min(
-                    (f64::from(split.width()) * 0.70).max(SIDEBAR_MIN_WIDTH),
-                ));
-            } else {
-                split.set_max_sidebar_width(SIDEBAR_MAX_WIDTH);
+            split.set_max_sidebar_width(max_sidebar_width(
+                split.is_collapsed(),
+                collapsed_sidebar_width_for_notify.get(),
+                split.width(),
+            ));
+            if !split.is_collapsed() {
                 // A collapsed hover peek that was still open when the window
                 // widened must not leave stale auto-hide state behind.
                 sidebar::clear_hover_open(&sidebar_for_collapse_notify);
@@ -1833,9 +1740,7 @@
         let expanded = sidebar_expanded.clone();
         main_split.add_tick_callback(move |split, _| {
             if split.is_collapsed() && expanded.get() {
-                let cap = collapsed_width.get().min(
-                    (f64::from(split.width()) * 0.70).max(SIDEBAR_MIN_WIDTH),
-                );
+                let cap = max_sidebar_width(true, collapsed_width.get(), split.width());
                 if (split.max_sidebar_width() - cap).abs() > 0.1 {
                     split.set_max_sidebar_width(cap);
                 }
@@ -1848,8 +1753,9 @@
     // so the responsive breakpoint can use the same animated drawer path as
     // the manual sidebar toggle.
     main_split.set_pin_sidebar(true);
-    main_split.set_enable_show_gesture(sidebar_expanded.get());
-    main_split.set_enable_hide_gesture(sidebar_expanded.get());
+    let initial_target = sidebar_target(SidebarMode::from_normal(sidebar_expanded.get()), false);
+    main_split.set_enable_show_gesture(initial_target.split_gestures);
+    main_split.set_enable_hide_gesture(initial_target.split_gestures);
 
     // Sidebar pin/hover state lives in sidebar.rs. Keep one authoritative
     // state store so manual pinning and temporary hover-open behavior cannot
@@ -1867,9 +1773,13 @@
     sidebar_hover_reveal.set_vexpand(true);
     sidebar_hover_reveal.set_halign(gtk::Align::Start);
     sidebar_hover_reveal.set_valign(gtk::Align::Fill);
-    sidebar_hover_reveal.set_visible(sidebar_expanded.get() && !main_split.shows_sidebar());
+    sidebar_hover_reveal.set_visible(
+        sidebar_chrome(SidebarMode::from_normal(sidebar_expanded.get()), false, main_split.shows_sidebar())
+            .hover_strip,
+    );
     sidebar_hover_reveal.set_cursor_from_name(Some("default"));
     main_surface.add_overlay(&sidebar_hover_reveal);
+    sidebar_widgets.set_hover_strip(sidebar_hover_reveal.clone());
 
     let sidebar_hover_motion = gtk::EventControllerMotion::new();
     let main_split_for_hover_reveal = main_split.clone();
@@ -1890,11 +1800,13 @@
         // so edge-hover must still peek it open while collapsed. In the
         // expanded layout the pin gate still applies: a pinned sidebar the
         // user explicitly hid stays hidden until they show it again.
-        if expanded_for_hover_reveal.get()
-            && !main_split_for_hover_reveal.shows_sidebar()
-            && (!sidebar::is_pinned(&sidebar_for_hover_reveal)
-                || main_split_for_hover_reveal.is_collapsed())
-        {
+        if hover_peek_allowed(
+            SidebarMode::from_normal(expanded_for_hover_reveal.get()),
+            false,
+            main_split_for_hover_reveal.shows_sidebar(),
+            sidebar::is_pinned(&sidebar_for_hover_reveal),
+            main_split_for_hover_reveal.is_collapsed(),
+        ) {
             // Hover reveal is intentionally presentation-only. Freeze the
             // gallery model before OverlaySplitView starts changing width.
             sidebar_hover_freeze_generation_for_reveal.set(
@@ -2001,7 +1913,12 @@
             immersive_shown_for_state.set(sidebar_visible);
         }
         sidebar_hover_reveal_for_state.set_visible(
-            (expanded_for_hover_state.get() || immersive_for_hover_state.get()) && !sidebar_visible
+            sidebar_chrome(
+                SidebarMode::from_normal(expanded_for_hover_state.get()),
+                immersive_for_hover_state.get(),
+                sidebar_visible,
+            )
+            .hover_strip,
         );
         // Every reveal path (hover, pin button, breakpoint restore) funnels
         // through this notify, so this is the one place that keeps the pin
@@ -2136,14 +2053,13 @@
                 )
             }) else { return; };
             let delta = f64::from(point.x()) - sidebar_drag_start_x_update.get();
-            let width = (sidebar_drag_start_width_update.get() + delta)
-                .clamp(COMPACT_ICON_RAIL_WIDTH, 300.0);
+            let width = clamp_compact_rail_width(sidebar_drag_start_width_update.get() + delta);
             compact_width_for_drag_update.set(width);
             option_inset_for_drag_update(width);
-            if width < 90.0 { for detail in compact_details_for_drag_update.borrow().iter() { detail.set_reveal_child(false); } }
+            if !compact_rail_shows_labels(width) { for detail in compact_details_for_drag_update.borrow().iter() { detail.set_reveal_child(false); } }
             shell_for_compact_drag.set_width_request(width.round() as i32);
             for label in compact_labels_for_drag.borrow().iter() {
-                label.set_visible(width >= 90.0);
+                label.set_visible(compact_rail_shows_labels(width));
             }
             if immersive_for_drag_update.get() {
                 slide_width_for_drag.set(width.round() as i32);
@@ -2331,19 +2247,15 @@
     let compact_right_toggle = gtk::Button::from_icon_name("pan-end-symbolic");
     compact_right_toggle.add_css_class("flat");
     compact_right_toggle.set_tooltip_text(Some("Switch to normal sidebar"));
-    compact_right_toggle.set_visible(!sidebar_expanded.get());
+    compact_right_toggle.set_visible(
+        sidebar_target(SidebarMode::from_normal(sidebar_expanded.get()), false).switch_to_normal_button,
+    );
     {
         let expand = set_sidebar_expanded.clone();
-        let connection = connection.clone();
-        compact_right_toggle.connect_clicked(move |_| {
-            expand(true);
-            if let Err(error) = db::set_setting(
-                &connection.borrow(), COMPACT_SIDEBAR_MODE_KEY, "false"
-            ) { eprintln!("Could not save normal sidebar mode: {error}"); }
-        });
+        compact_right_toggle.connect_clicked(move |_| expand(true));
     }
     right_header.pack_start(&compact_right_toggle);
-    compact_right_toggle_slot.replace(Some(compact_right_toggle));
+    sidebar_widgets.set_switch_to_normal_button(compact_right_toggle);
 
     let show_sidebar = gtk::Button::from_icon_name("sidebar-show-symbolic");
     show_sidebar.set_tooltip_text(Some("Show sidebar"));
@@ -2408,8 +2320,11 @@
         Rc::new(move || {
             let traffic = mode.get()
                 == crate::css::theme_discovery::WindowControls::TrafficLight;
-            let sidebar_visible = main_split.shows_sidebar() && expanded.get();
-            show_sidebar.set_visible(expanded.get() && !main_split.shows_sidebar());
+            let chrome = sidebar_chrome(
+                SidebarMode::from_normal(expanded.get()), false, main_split.shows_sidebar(),
+            );
+            let sidebar_visible = chrome.sidebar_hosts_title_buttons;
+            show_sidebar.set_visible(chrome.show_button);
             // Native start title buttons only exist while traffic lights are
             // off; the traffic-light box replaces them wherever they live.
             left_header.set_show_start_title_buttons(!traffic && sidebar_visible);
@@ -2439,7 +2354,7 @@
             }
         })
     };
-    compact_controls_sync_slot.replace(Some(place_window_controls.clone()));
+    sidebar_widgets.set_controls_sync(place_window_controls.clone());
     let place_for_notify = place_window_controls.clone();
     main_split.connect_show_sidebar_notify(move |_| {
         // Keep window controls (native title buttons or theme traffic lights)
@@ -3074,14 +2989,8 @@
         right_column,
         right_header,
         search,
-        compact_dock,
         left_column,
-        sidebar_expanded,
-        sidebar_hover_reveal,
         sidebar_shell,
-        immersive_slide_width,
-        immersive_normal_width,
-        immersive_sidebar_page,
-        compact_immersive_toggle,
+        sidebar_widgets,
     )
 }

@@ -24,6 +24,15 @@ use layout_settle::{
     should_defer_inspector_folder_grid_reflow, should_observe_width, WidthSettleGate,
 };
 
+mod sidebar_presentation;
+mod sidebar_widgets;
+use sidebar_widgets::{ImmersiveHost, SidebarCells, SidebarWidgetParts, SidebarWidgets};
+use sidebar_presentation::{
+    breakpoint_step, clamp_compact_rail_width, compact_rail_shows_labels, hover_peek_allowed,
+    max_sidebar_width, sidebar_chrome, sidebar_target,
+    BreakpointStep, SidebarEvent, SidebarMode, COMPACT_RAIL_MIN_WIDTH, SIDEBAR_MODE_SETTING_KEY,
+};
+
 pub(crate) mod theme;
 
 const THEME_SETTING_KEY: &str = "appearance-theme";

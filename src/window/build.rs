@@ -5395,15 +5395,9 @@ fn start_photo_export_single(
         right_column,
         right_header,
         _search,
-        compact_dock,
         left_column,
-        sidebar_expanded,
-        sidebar_hover_reveal,
         sidebar_shell,
-        immersive_slide_width,
-        immersive_normal_width,
-        immersive_sidebar_page,
-        compact_immersive_toggle,
+        sidebar_widgets,
     ) = include!("layout.rs");
     crate::startup_trace::mark("layout_widgets_done", Some(layout_started));
 
@@ -5745,8 +5739,7 @@ fn start_photo_export_single(
     //   wide:   expand while hidden -> then slide sidebar in
     //
     // Small hysteresis avoids chattering when the user drags around 1050 px.
-    const SIDEBAR_COMPACT_ENTER_WIDTH: i32 = 1050;
-    const SIDEBAR_COMPACT_EXIT_WIDTH: i32 = 1080;
+    // The widths and hysteresis live in `sidebar_presentation::breakpoint_step`.
 
     let sidebar_breakpoint_transition = Rc::new(Cell::new(false));
     let sidebar_breakpoint_generation = Rc::new(Cell::new(0u64));
@@ -5763,15 +5756,14 @@ fn start_photo_export_single(
             // reveal can show over the photos. Expanding it here would
             // re-allocate the gallery and re-show a pinned sidebar that the
             // immersive session deliberately hides.
-            if immersive_for_breakpoint.get() {
-                return glib::ControlFlow::Continue;
-            }
-            let width = window.width();
+            let step = breakpoint_step(
+                immersive_for_breakpoint.get(),
+                main_split_for_breakpoint.is_collapsed(),
+                transition.get(),
+                window.width(),
+            );
 
-            if !main_split_for_breakpoint.is_collapsed()
-                && width <= SIDEBAR_COMPACT_ENTER_WIDTH
-                && !transition.get()
-            {
+            if step == Some(BreakpointStep::Collapse) {
                 generation.set(generation.get().wrapping_add(1));
                 transition.set(true);
 
@@ -5799,10 +5791,7 @@ fn start_photo_export_single(
                     main_split_for_breakpoint.set_collapsed(true);
                     transition.set(false);
                 }
-            } else if main_split_for_breakpoint.is_collapsed()
-                && width >= SIDEBAR_COMPACT_EXIT_WIDTH
-                && !transition.get()
-            {
+            } else if step == Some(BreakpointStep::Expand) {
                 generation.set(generation.get().wrapping_add(1));
                 transition.set(true);
 
@@ -7447,9 +7436,10 @@ fn start_photo_export_single(
             }
             // A compact rail uses a different width. Closing in compact mode
             // must not overwrite the normal sidebar's saved fraction.
-            let compact = db::setting(&guard, "compact-sidebar-enabled")
-                .ok().flatten().is_some_and(|value| value == "true");
-            if !compact {
+            let mode = SidebarMode::from_setting(
+                db::setting(&guard, SIDEBAR_MODE_SETTING_KEY).ok().flatten().as_deref(),
+            );
+            if mode.is_normal() {
                 let _ = db::set_setting(
                     &guard,
                     SIDEBAR_WIDTH_FRACTION_SETTING_KEY,

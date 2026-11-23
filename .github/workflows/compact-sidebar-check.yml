@@ -6,6 +6,7 @@ on:
   pull_request:
     paths:
       - 'src/window/layout.rs'
+      - 'src/window/sidebar_presentation.rs'
       - 'src/window/build.rs'
       - 'src/settings.rs'
       - 'src/css/base.css'
@@ -52,7 +53,9 @@ jobs:
           assert 'compact_dock.set_child(Some(&compact_sidebar_page))' in src
           assert 'dock.set_width_request(width_px.round() as i32)' in src
           assert 'dock_resize_handle.add_controller(dock_drag)' in src
-          assert 'split.set_show_sidebar(show_normal && !split.is_collapsed())' in src
+          presentation = Path("src/window/sidebar_presentation.rs").read_text()
+          assert 'split.set_show_sidebar(split_shows_sidebar_after_mode_switch(mode, split.is_collapsed()))' in src
+          assert 'mode.is_normal() && !collapsed' in presentation
           assert 'COMPACT_ICON_RAIL_WIDTH: f64 = 44.0' in src
           assert 'compact-sidebar-width-v2' in src
           assert 'Some("folders-overview")' in src

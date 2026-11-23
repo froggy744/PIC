@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
 # Presentation-owner guard.
 #
-# Sidebar and Properties presentation each have one GTK adapter that is the
-# only writer of their widgets (docs/architecture/STATUS.md, candidates 2-3):
+# Sidebar, Properties and InfoBar presentation each have one GTK adapter that
+# is the only writer of their widgets (docs/architecture/STATUS.md,
+# candidates 2-4):
 #   - src/window/sidebar_widgets.rs    (SidebarWidgets)
 #   - src/window/properties_widgets.rs (PropertiesWidgets)
+#   - src/infobar.rs                   (InfoBar; the decision is infobar::presentation)
+# The InfoBar's metadata and selection widgets are private, so only its
+# public buttons' enabled state needs a rule here.
 # This script fails when any other file writes those widgets directly.
 #
 # Usage:
@@ -19,6 +23,7 @@ set -euo pipefail
 
 SIDEBAR_OWNER='src/window/sidebar_widgets.rs'
 PROPERTIES_OWNER='src/window/properties_widgets.rs'
+INFOBAR_OWNER='src/infobar.rs'
 ID='[[:alnum:]_]'
 
 # id ~ owner files (space separated) ~ extended regex ~ what it guards
@@ -29,6 +34,7 @@ RULES=(
   "properties-visibility~$PROPERTIES_OWNER~(properties_split$ID*\.set_show_sidebar|lightbox_properties_panel$ID*\.set_visible)\(~gallery split / viewer panel visibility"
   "sidebar-mirror~$SIDEBAR_OWNER src/sidebar.rs~(^|[^[:alnum:]_])(set_pinned|set_hover_open|clear_hover_open)\(~sidebar.rs pin and hover-peek mirror"
   "sidebar-split~$SIDEBAR_OWNER~main_split$ID*\.(set_show_sidebar|set_collapsed|set_pin_sidebar|set_enable_show_gesture|set_enable_hide_gesture|set_sidebar)\(~main split visibility, pin, gestures and sidebar child"
+  "infobar-actions~$INFOBAR_OWNER~\.(favorite|rating|edit|add_to_album|rotate|export|print|more|view_toggle|grid_zoom)\.set_sensitive\(~InfoBar photo-action and gallery-control enabled state"
   "sidebar-parts~$SIDEBAR_OWNER~(^|[^[:alnum:]_])(compact_dock|dock|left_column|sidebar|sidebar_shell|sidebar_resize_handle|compact_sidebar_page|compact_immersive_toggle)\.(set_visible|set_child)\(~sidebar shell, column, dock, rail and handle visibility/placement"
 )
 
@@ -148,6 +154,8 @@ RS
   cat >"$root/src/infobar.rs" <<'RS'
     pub fn set_properties_active(&self, active: bool) {}
     pub fn set_properties_enabled(&self, enabled: bool) {}
+    self.favorite.set_sensitive(actions);
+    self.grid_zoom.set_sensitive(target.gallery_controls_enabled());
 RS
   cat >"$root/src/window/photo_actions.rs" <<'RS'
 fn properties_placeholder(on_close: Rc<dyn Fn()>) -> gtk::Box {}
@@ -192,6 +200,8 @@ self_test() {
     "split shown in immersive.rs|src/window/immersive.rs|main_split.set_show_sidebar(true);|sidebar-split"
     "split alias collapsed|src/window/layout.rs|main_split_for_breakpoint.set_collapsed(true);|sidebar-split"
     "allowed line in another file|src/window/build.rs|main_split.set_pin_sidebar(true);|sidebar-split"
+    "photo action enabled in build.rs|src/window/build.rs|info.rotate.set_sensitive(true);|infobar-actions"
+    "zoom disabled in layout.rs|src/window/layout.rs|info_for_zoom.grid_zoom.set_sensitive(false);|infobar-actions"
     "dock shown in build.rs|src/window/build.rs|compact_dock.set_visible(true);|sidebar-parts"
     "column hidden in immersive.rs|src/window/immersive.rs|left_column.set_visible(false);|sidebar-parts"
     "shell child in build.rs|src/window/build.rs|sidebar_shell.set_child(Some(&compact_sidebar_page));|sidebar-parts"

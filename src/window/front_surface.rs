@@ -100,6 +100,96 @@ pub(super) fn gallery_covered(lightbox_shown: bool, date_browser: DateBrowser) -
     lightbox_shown || date_browser == DateBrowser::Overview
 }
 
+/// The three inputs of the front, as last seen. Listeners of
+/// [`FrontSurface::connect_changed`] receive a before/after pair of these.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct FrontState {
+    pub(super) page: Page,
+    pub(super) lightbox_shown: bool,
+    pub(super) date_browser: DateBrowser,
+}
+
+impl FrontState {
+    pub(super) fn front(&self) -> Front {
+        front(self.page, self.lightbox_shown, self.date_browser)
+    }
+
+    pub(super) fn gallery_covered(&self) -> bool {
+        gallery_covered(self.lightbox_shown, self.date_browser)
+    }
+}
+
+/// One change of the front's inputs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct FrontChange {
+    pub(super) before: FrontState,
+    pub(super) after: FrontState,
+}
+
+impl FrontChange {
+    pub(super) fn viewer_changed(&self) -> bool {
+        self.before.lightbox_shown != self.after.lightbox_shown
+    }
+
+    pub(super) fn page_changed(&self) -> bool {
+        self.before.page != self.after.page
+    }
+
+    pub(super) fn date_overview_changed(&self) -> bool {
+        (self.before.date_browser == DateBrowser::Overview)
+            != (self.after.date_browser == DateBrowser::Overview)
+    }
+}
+
+/// The change from `before` to `after`, or `None` when nothing changed.
+pub(super) fn change(before: FrontState, after: FrontState) -> Option<FrontChange> {
+    (before != after).then_some(FrontChange { before, after })
+}
+
+/// Delivers front changes to listeners, synchronously and in registration
+/// order. A change made while delivering (a listener, or a GTK handler it
+/// triggers, changes the page or the viewer) is delivered at once, nested;
+/// the outer delivery then stops, because the listeners it had not reached
+/// yet already received the newer state. No GTK: tested directly.
+pub(super) struct FrontEvents {
+    last: Cell<FrontState>,
+    generation: Cell<u64>,
+    listeners: RefCell<Vec<Rc<dyn Fn(&FrontChange)>>>,
+}
+
+impl FrontEvents {
+    pub(super) fn new(initial: FrontState) -> Self {
+        Self {
+            last: Cell::new(initial),
+            generation: Cell::new(0),
+            listeners: RefCell::new(Vec::new()),
+        }
+    }
+
+    pub(super) fn connect(&self, listener: impl Fn(&FrontChange) + 'static) {
+        self.listeners.borrow_mut().push(Rc::new(listener));
+    }
+
+    /// Report the inputs as they are now.
+    pub(super) fn dispatch(&self, now: FrontState) {
+        let Some(change) = change(self.last.get(), now) else {
+            return;
+        };
+        self.last.set(now);
+        let generation = self.generation.get().wrapping_add(1);
+        self.generation.set(generation);
+        // Clone the list: a listener may connect another, or dispatch.
+        let listeners = self.listeners.borrow().clone();
+        for listener in listeners {
+            listener(&change);
+            if self.generation.get() != generation {
+                // A nested change was delivered to every listener already.
+                return;
+            }
+        }
+    }
+}
+
 /// Reads the live widgets and answers which surface is in front. It keeps no
 /// state of its own: every call reads the stack page, the viewer's
 /// visibility and the date browser as they are now.
@@ -241,6 +331,101 @@ mod tests {
                 "page={page:?} lightbox_shown={shown} date_browser={browser:?}",
             );
         }
+    }
+
+    fn state(page: Page, lightbox_shown: bool, date_browser: DateBrowser) -> FrontState {
+        FrontState { page, lightbox_shown, date_browser }
+    }
+
+    #[test]
+    fn a_change_is_reported_only_when_an_input_changes() {
+        use DateBrowser::{Days, Off, Overview};
+        let gallery = state(Page::Photos, false, Off);
+        // (before, after, changed?, viewer, page, date overview)
+        let rows = [
+            (gallery, gallery, false, false, false, false),
+            (gallery, state(Page::Photos, true, Off), true, true, false, false),
+            (gallery, state(Page::Edit, false, Off), true, false, true, false),
+            (gallery, state(Page::Photos, false, Days), true, false, false, false),
+            (gallery, state(Page::Photos, false, Overview), true, false, false, true),
+            (state(Page::Photos, false, Overview), state(Page::Photos, false, Off), true, false, false, true),
+            (state(Page::Photos, false, Overview), state(Page::Collage, false, Overview), true, false, true, false),
+            (state(Page::Photos, true, Days), state(Page::Library, false, Off), true, true, true, false),
+        ];
+        for (before, after, changed, viewer, page, overview) in rows {
+            let result = change(before, after);
+            assert_eq!(result.is_some(), changed, "{before:?} -> {after:?}");
+            if let Some(result) = result {
+                assert_eq!(result, FrontChange { before, after });
+                assert_eq!(
+                    (result.viewer_changed(), result.page_changed(), result.date_overview_changed()),
+                    (viewer, page, overview),
+                    "{before:?} -> {after:?}",
+                );
+            }
+        }
+    }
+
+    type Log = Rc<RefCell<Vec<(&'static str, Page, Page)>>>;
+
+    fn logging(events: &FrontEvents, log: &Log, name: &'static str) {
+        let log = log.clone();
+        events.connect(move |change| log.borrow_mut().push((name, change.before.page, change.after.page)));
+    }
+
+    #[test]
+    fn listeners_hear_each_change_once_in_registration_order() {
+        let events = FrontEvents::new(state(Page::Photos, false, DateBrowser::Off));
+        let log: Log = Rc::default();
+        logging(&events, &log, "a");
+        logging(&events, &log, "b");
+        events.dispatch(state(Page::Photos, false, DateBrowser::Off)); // no change
+        events.dispatch(state(Page::Edit, false, DateBrowser::Off));
+        events.dispatch(state(Page::Edit, false, DateBrowser::Off)); // repeated, no change
+        events.dispatch(state(Page::Photos, false, DateBrowser::Off));
+        assert_eq!(
+            *log.borrow(),
+            vec![
+                ("a", Page::Photos, Page::Edit),
+                ("b", Page::Photos, Page::Edit),
+                ("a", Page::Edit, Page::Photos),
+                ("b", Page::Edit, Page::Photos),
+            ],
+        );
+    }
+
+    /// The Library redirect: a page change to Photos makes a listener switch
+    /// to Library inside the same delivery. Every listener ends on Library;
+    /// none is left with the older Photos state after it.
+    #[test]
+    fn a_nested_change_is_delivered_at_once_and_supersedes_the_outer_one() {
+        let events = Rc::new(FrontEvents::new(state(Page::Albums, false, DateBrowser::Off)));
+        let log: Log = Rc::default();
+        logging(&events, &log, "first");
+        {
+            let weak = Rc::downgrade(&events);
+            let log = log.clone();
+            events.connect(move |change| {
+                log.borrow_mut().push(("redirect", change.before.page, change.after.page));
+                if change.after.page == Page::Photos {
+                    if let Some(events) = weak.upgrade() {
+                        events.dispatch(state(Page::Library, false, DateBrowser::Off));
+                    }
+                }
+            });
+        }
+        logging(&events, &log, "last");
+        events.dispatch(state(Page::Photos, false, DateBrowser::Off));
+        assert_eq!(
+            *log.borrow(),
+            vec![
+                ("first", Page::Albums, Page::Photos),
+                ("redirect", Page::Albums, Page::Photos),
+                ("first", Page::Photos, Page::Library),
+                ("redirect", Page::Photos, Page::Library),
+                ("last", Page::Photos, Page::Library),
+            ],
+        );
     }
 
     #[test]

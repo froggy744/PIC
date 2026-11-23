@@ -172,8 +172,8 @@ One GTK adapter, `PhotoMarkCommands` (window-level `Rc`, cloned into the five ha
 All seven decisions are settled. Started 2026-11-23 on branch `refactor/photo-mark-commands`.
 
 **Stages:**
-1. Pure `plan` in `src/window/photo_marks.rs` with table tests (targets per front, favourite rule, star/digit rule, membership). Done, uncommitted. Membership is precise: the Online/Offline/Corrupt toolbar filters and unrelated metadata filters no longer force a rebuild (today any non-All rating filter, and any metadata filter on the heart path, does).
-2. `db::set_favorite_for_photos`: one transaction, skips trashed photos.
+1. Pure `plan` in `src/window/photo_marks.rs` with table tests (targets per front, favourite rule, star/digit rule, membership). Done: `d7e3d0ae`. Membership is precise: the Online/Offline/Corrupt toolbar filters and unrelated metadata filters no longer force a rebuild (today any non-All rating filter, and any metadata filter on the heart path, does).
+2. `db::set_favorite_for_photos`: one transaction, skips trashed photos. Done, uncommitted; test `favourites_for_photos_skip_trashed_and_write_all_or_nothing` forces a failure on the last photo with a trigger.
 3. GTK adapter `PhotoMarkCommands`; move the four photo controls onto it, the folder favourite onto its refresh; remove the `dead_code` allowance.
 4. Docs: GLOSSARY term, AUDIT-INDEX entry, this file, and an owner rule in `scripts/check-presentation-owners.sh` if the adapter becomes the only mark writer.
 

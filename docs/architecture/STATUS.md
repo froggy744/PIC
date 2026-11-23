@@ -287,6 +287,10 @@ Settled by the agent, accepted with the plan: one file `src/window/front_surface
 - The owner rule does not catch `matches!` over page names (see above).
 - `scripts/gui_test.py` still clicks fixed points in the `browse-navigation` suite (`click_at(118, 524)` for the folder row) and elsewhere outside the library, viewer and editing paths.
 
+### Next (chosen by the owner 2026-11-23)
+1. **Front-surface change event**, as its own refactor: design `FrontSurface::connect_changed` (candidate 12, decision 1) so the zoom slider can be its first consumer. Design and the owner's decisions first, then a branch.
+2. **Candidate 6 · zoom slider router**, built on that event.
+
 ### 7 · Editor preview plan
 **Lower priority (2026-11-23):** its disagreement is diagnostic only (a mislabelled trace); 9 goes first.
 

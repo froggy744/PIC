@@ -96,6 +96,10 @@ impl DateBrowser {
 
     pub(super) fn root(&self) -> &gtk::Box { &self.0.root }
     pub(super) fn is_overview_visible(&self) -> bool { self.0.scroll.is_visible() }
+    /// Called whenever the overview is shown or hidden.
+    pub(super) fn connect_overview_visible(&self, f: impl Fn() + 'static) {
+        self.0.scroll.connect_visible_notify(move |_| f());
+    }
 
     pub(super) fn set_photos(&self, photos: &[PhotoObject]) {
         let dates = photos.iter().map(PhotoObject::taken_at).collect::<Vec<_>>();

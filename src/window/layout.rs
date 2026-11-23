@@ -1754,7 +1754,6 @@
     let sidebar_hover_motion = gtk::EventControllerMotion::new();
     let widgets_for_hover_reveal = sidebar_widgets.clone();
     let immersive_for_hover_reveal = immersive_active.clone();
-    let sidebar_for_hover_reveal = sidebar.clone();
     let gallery_for_hover_reveal = gallery.clone();
     let sidebar_hover_layout_freeze_for_reveal = sidebar_hover_layout_freeze.clone();
     let sidebar_hover_freeze_generation_for_reveal = sidebar_hover_freeze_generation.clone();
@@ -1769,9 +1768,7 @@
         // so edge-hover must still peek it open while collapsed. In the
         // expanded layout the pin gate still applies: a pinned sidebar the
         // user explicitly hid stays hidden until they show it again.
-        widgets_for_hover_reveal.dispatch(SidebarEvent::EdgeHovered {
-            pinned: sidebar::is_pinned(&sidebar_for_hover_reveal),
-        });
+        widgets_for_hover_reveal.dispatch(SidebarEvent::EdgeHovered);
     });
     // Hover reveal is intentionally presentation-only. Freeze the gallery
     // model before OverlaySplitView starts changing width.
@@ -2133,7 +2130,7 @@
             gallery_for_unpin.set_photo_wall_width_frozen(false);
             // Pinning also ends the hover peek, so mouse-leave no longer
             // auto-hides the sidebar.
-            widgets_for_pin.dispatch(SidebarEvent::PinPressed { pinned: false });
+            widgets_for_pin.dispatch(SidebarEvent::PinPressed);
             pin_button_for_menu(true);
             return;
         }
@@ -2147,7 +2144,7 @@
         sidebar_hover_layout_freeze_for_unpin.set(false);
         gallery_for_unpin.set_photo_wall_width_frozen(true);
         sidebar_layout_settle_for_hide.borrow_mut().begin();
-        widgets_for_pin.dispatch(SidebarEvent::PinPressed { pinned: true });
+        widgets_for_pin.dispatch(SidebarEvent::PinPressed);
         let gallery = gallery_for_unpin.clone();
         let active_generation = sidebar_hover_freeze_generation_for_unpin.clone();
         glib::timeout_add_local_once(Duration::from_millis(400), move || {

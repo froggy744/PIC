@@ -252,24 +252,18 @@ pub(super) enum SidebarTimer {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) enum SidebarEvent {
     ModeChosen(SidebarMode),
-    /// `pinned` is the persistent pin at entry, restored on exit.
-    ImmersiveEntered {
-        pinned: bool,
-    },
+    /// The pin at entry is kept and restored on exit.
+    ImmersiveEntered,
     ImmersiveLeft,
     BreakpointCrossed {
         window_width: i32,
     },
     /// Pointer rested on the windowed left-edge strip.
-    EdgeHovered {
-        pinned: bool,
-    },
+    EdgeHovered,
     ImmersiveRevealRequested,
     ImmersiveHideRequested,
-    /// The sidebar's own pin button.
-    PinPressed {
-        pinned: bool,
-    },
+    /// The sidebar's own pin button: pins a peek, unpins a pinned sidebar.
+    PinPressed,
     /// The header arrow that shows a hidden sidebar.
     ShowPressed,
     PointerLeftSidebar,
@@ -283,10 +277,9 @@ pub(super) enum SidebarEvent {
     BreakpointFrameElapsed {
         generation: u64,
     },
-    /// `pinned` is read when the idle runs.
+    /// Reveals the expanded split if the sidebar is pinned.
     BreakpointIdleElapsed {
         generation: u64,
-        pinned: bool,
     },
     /// The split changed show-sidebar on its own (swipe gesture).
     SplitShowChanged(bool),
@@ -299,6 +292,9 @@ pub(super) enum SidebarEvent {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct WindowedSnapshot {
+    /// The mode at entry; a mode chosen during the session opens like a
+    /// windowed mode switch on exit.
+    mode: SidebarMode,
     open: bool,
     collapsed: bool,
     pinned: bool,
@@ -394,12 +390,13 @@ impl SidebarPresentation {
                 }
                 None
             }
-            ImmersiveEntered { pinned } => {
+            ImmersiveEntered => {
                 if self.immersive.is_none() {
                     self.immersive = Some(WindowedSnapshot {
+                        mode: self.mode,
                         open: self.open,
                         collapsed: self.collapsed,
-                        pinned,
+                        pinned: self.pinned,
                     });
                     self.revealed = false;
                     self.hover_open = false;
@@ -414,7 +411,11 @@ impl SidebarPresentation {
                     self.revealed = false;
                     self.collapsed = snapshot.collapsed;
                     self.pinned = snapshot.pinned;
-                    self.open = snapshot.open && self.mode.is_normal();
+                    self.open = if self.mode == snapshot.mode {
+                        snapshot.open && self.mode.is_normal()
+                    } else {
+                        split_shows_sidebar_after_mode_switch(self.mode, self.collapsed)
+                    };
                     self.hover_open = false;
                     self.next_generation();
                 }
@@ -466,23 +467,21 @@ impl SidebarPresentation {
                 }
                 None
             }
-            BreakpointIdleElapsed { generation, pinned } => {
+            BreakpointIdleElapsed { generation } => {
                 if generation == self.breakpoint_generation {
-                    self.pinned = pinned;
-                    if self.mode.is_normal() && pinned {
+                    if self.mode.is_normal() && self.pinned {
                         self.open = true;
                     }
                     self.breakpoint_in_transition = false;
                 }
                 None
             }
-            EdgeHovered { pinned } => {
-                self.pinned = pinned;
+            EdgeHovered => {
                 if hover_peek_allowed(
                     self.mode,
                     self.immersive.is_some(),
                     self.open,
-                    pinned,
+                    self.pinned,
                     self.collapsed,
                 ) {
                     self.open = true;
@@ -516,13 +515,13 @@ impl SidebarPresentation {
                 self.hover_open = false;
                 None
             }
-            PinPressed { pinned } => {
+            PinPressed => {
                 if self.immersive.is_some() {
                     // The pin is the overlay's exit: restore the saved layout.
                     return self.handle(ImmersiveLeft);
                 }
                 self.next_generation();
-                if pinned {
+                if self.pinned {
                     // Unpin: auto-hide starts with a real slide-out.
                     self.pinned = false;
                     self.open = false;
@@ -759,7 +758,7 @@ mod tests {
     fn windowed_immersive_windowed_restores_the_exact_scene() {
         for mut sidebar in [normal(), compact()] {
             let before = sidebar.scene();
-            sidebar.handle(ImmersiveEntered { pinned: true });
+            sidebar.handle(ImmersiveEntered);
             let scene = sidebar.scene();
             assert_eq!(scene.placement, SidebarPlacement::ImmersiveOverlay);
             assert!(
@@ -775,7 +774,7 @@ mod tests {
     #[test]
     fn immersive_reveal_hide_cycles_return_to_fully_hidden() {
         let mut sidebar = compact();
-        sidebar.handle(ImmersiveEntered { pinned: true });
+        sidebar.handle(ImmersiveEntered);
         let hidden = sidebar.scene();
         for _ in 0..20 {
             sidebar.handle(ImmersiveRevealRequested);
@@ -791,7 +790,7 @@ mod tests {
     #[test]
     fn mode_change_while_immersive_switches_the_page_only() {
         let mut sidebar = normal();
-        sidebar.handle(ImmersiveEntered { pinned: true });
+        sidebar.handle(ImmersiveEntered);
         sidebar.handle(ImmersiveRevealRequested);
         sidebar.handle(ModeChosen(SidebarMode::Compact));
         let scene = sidebar.scene();
@@ -805,16 +804,16 @@ mod tests {
     #[test]
     fn pin_in_immersive_leaves_and_restores_the_saved_layout() {
         let mut sidebar = normal();
-        sidebar.handle(ImmersiveEntered { pinned: true });
+        sidebar.handle(ImmersiveEntered);
         sidebar.handle(ImmersiveRevealRequested);
-        sidebar.handle(PinPressed { pinned: true });
+        sidebar.handle(PinPressed);
         let scene = sidebar.scene();
         assert!(!sidebar.is_immersive());
         assert!(scene.split_shows_sidebar && scene.pinned && !scene.split_collapsed);
 
         let mut sidebar = compact();
-        sidebar.handle(ImmersiveEntered { pinned: true });
-        sidebar.handle(PinPressed { pinned: true });
+        sidebar.handle(ImmersiveEntered);
+        sidebar.handle(PinPressed);
         let scene = sidebar.scene();
         assert!(scene.layout.compact_dock && !scene.split_shows_sidebar && !scene.split_collapsed);
     }
@@ -822,13 +821,13 @@ mod tests {
     #[test]
     fn pin_outside_immersive_toggles_the_pin() {
         let mut sidebar = normal();
-        sidebar.handle(PinPressed { pinned: true });
+        sidebar.handle(PinPressed);
         let scene = sidebar.scene();
         assert!(!scene.pinned && !scene.split_shows_sidebar);
         // Hover peek, then pin it so it stays.
-        sidebar.handle(EdgeHovered { pinned: false });
+        sidebar.handle(EdgeHovered);
         assert!(sidebar.scene().hover_open);
-        sidebar.handle(PinPressed { pinned: false });
+        sidebar.handle(PinPressed);
         let scene = sidebar.scene();
         assert!(scene.pinned && scene.split_shows_sidebar && !scene.hover_open);
         assert_eq!(
@@ -841,15 +840,15 @@ mod tests {
     #[test]
     fn rapid_hover_and_leave_only_the_latest_leave_hides() {
         let mut sidebar = normal();
-        sidebar.handle(PinPressed { pinned: true });
-        sidebar.handle(EdgeHovered { pinned: false });
+        sidebar.handle(PinPressed);
+        sidebar.handle(EdgeHovered);
         let Some(SidebarTimer::LeaveCheck { generation: first }) =
             sidebar.handle(PointerLeftSidebar)
         else {
             panic!("leaving a peek schedules a check");
         };
         // Back in and out again before the first check fires.
-        sidebar.handle(EdgeHovered { pinned: false });
+        sidebar.handle(EdgeHovered);
         let Some(SidebarTimer::LeaveCheck { generation: second }) =
             sidebar.handle(PointerLeftSidebar)
         else {
@@ -882,8 +881,8 @@ mod tests {
     #[test]
     fn returning_to_the_sidebar_cancels_the_leave_check() {
         let mut sidebar = normal();
-        sidebar.handle(PinPressed { pinned: true });
-        sidebar.handle(EdgeHovered { pinned: false });
+        sidebar.handle(PinPressed);
+        sidebar.handle(EdgeHovered);
         let Some(SidebarTimer::LeaveCheck { generation }) = sidebar.handle(PointerLeftSidebar)
         else {
             panic!("leave check");
@@ -926,17 +925,14 @@ mod tests {
         };
         let scene = sidebar.scene();
         assert!(!scene.split_collapsed && !scene.split_shows_sidebar);
-        sidebar.handle(BreakpointIdleElapsed {
-            generation,
-            pinned: true,
-        });
+        sidebar.handle(BreakpointIdleElapsed { generation });
         assert!(sidebar.scene().split_shows_sidebar);
     }
 
     #[test]
     fn breakpoint_is_ignored_while_immersive_and_compact_never_opens_the_split() {
         let mut sidebar = normal();
-        sidebar.handle(ImmersiveEntered { pinned: true });
+        sidebar.handle(ImmersiveEntered);
         assert_eq!(
             sidebar.handle(BreakpointCrossed { window_width: 600 }),
             None
@@ -951,10 +947,7 @@ mod tests {
         else {
             panic!("expand");
         };
-        sidebar.handle(BreakpointIdleElapsed {
-            generation,
-            pinned: true,
-        });
+        sidebar.handle(BreakpointIdleElapsed { generation });
         assert!(!sidebar.scene().split_shows_sidebar && sidebar.scene().layout.compact_dock);
     }
 
@@ -976,10 +969,7 @@ mod tests {
             panic!("the breakpoint must not stay stuck mid-transition");
         };
         sidebar.handle(SplitShowChanged(false));
-        sidebar.handle(BreakpointIdleElapsed {
-            generation,
-            pinned: true,
-        });
+        sidebar.handle(BreakpointIdleElapsed { generation });
         assert!(sidebar.scene().split_shows_sidebar);
         assert!(sidebar
             .handle(BreakpointCrossed { window_width: 1000 })
@@ -994,23 +984,20 @@ mod tests {
         else {
             panic!("collapse");
         };
-        sidebar.handle(ImmersiveEntered { pinned: true });
+        sidebar.handle(ImmersiveEntered);
         let before = sidebar.scene();
         sidebar.handle(BreakpointFrameElapsed { generation });
-        sidebar.handle(BreakpointIdleElapsed {
-            generation,
-            pinned: true,
-        });
+        sidebar.handle(BreakpointIdleElapsed { generation });
         assert_eq!(sidebar.scene(), before);
     }
 
     #[test]
     fn repeated_events_give_identical_scenes() {
         let mut sidebar = compact();
-        sidebar.handle(ImmersiveEntered { pinned: true });
+        sidebar.handle(ImmersiveEntered);
         sidebar.handle(ImmersiveRevealRequested);
         let once = sidebar.scene();
-        sidebar.handle(ImmersiveEntered { pinned: false });
+        sidebar.handle(ImmersiveEntered);
         sidebar.handle(ImmersiveRevealRequested);
         assert_eq!(sidebar.scene(), once);
         sidebar.handle(ImmersiveLeft);
@@ -1025,7 +1012,7 @@ mod tests {
         assert_eq!(sidebar.scene().compact_width, COMPACT_RAIL_MIN_WIDTH);
         assert_eq!(sidebar.scene().drawer_width, SIDEBAR_MAX_WIDTH);
         sidebar.handle(CompactWidthChanged(150.0));
-        sidebar.handle(ImmersiveEntered { pinned: true });
+        sidebar.handle(ImmersiveEntered);
         sidebar.handle(ImmersiveLeft);
         assert_eq!(sidebar.scene().compact_width, 150.0);
     }
@@ -1037,7 +1024,7 @@ mod tests {
         assert!(sidebar.scene().split_shows_sidebar, "side-by-side stays");
         sidebar.handle(SplitShowChanged(false));
         sidebar.handle(BreakpointCrossed { window_width: 900 });
-        sidebar.handle(EdgeHovered { pinned: true });
+        sidebar.handle(EdgeHovered);
         assert!(
             sidebar.scene().split_shows_sidebar,
             "collapsed drawer peeks even when pinned"
@@ -1049,7 +1036,7 @@ mod tests {
     #[test]
     fn revealing_the_immersive_overlay_keeps_the_windowed_chrome() {
         let mut sidebar = normal();
-        sidebar.handle(ImmersiveEntered { pinned: true });
+        sidebar.handle(ImmersiveEntered);
         let hidden = sidebar.scene().chrome;
         sidebar.handle(ImmersiveRevealRequested);
         assert_eq!(sidebar.scene().chrome, hidden);
@@ -1059,10 +1046,97 @@ mod tests {
     #[test]
     fn show_button_toggles_the_overlay_while_immersive() {
         let mut sidebar = normal();
-        sidebar.handle(ImmersiveEntered { pinned: true });
+        sidebar.handle(ImmersiveEntered);
         sidebar.handle(ShowPressed);
         assert!(sidebar.scene().overlay_revealed);
         sidebar.handle(ShowPressed);
         assert!(!sidebar.scene().overlay_revealed);
+    }
+
+    /// Cross the breakpoint narrow and wide again, running both follow-ups.
+    fn narrow_and_widen(sidebar: &mut SidebarPresentation) {
+        if let Some(SidebarTimer::BreakpointFrame { generation }) =
+            sidebar.handle(BreakpointCrossed { window_width: 900 })
+        {
+            sidebar.handle(BreakpointFrameElapsed { generation });
+        }
+        let Some(SidebarTimer::BreakpointIdle { generation }) =
+            sidebar.handle(BreakpointCrossed { window_width: 1600 })
+        else {
+            panic!("widening expands the split");
+        };
+        sidebar.handle(BreakpointIdleElapsed { generation });
+    }
+
+    fn assert_pinned_open(sidebar: &SidebarPresentation, path: &str) {
+        let scene = sidebar.scene();
+        assert!(scene.pinned, "{path}: the pin must survive");
+        assert!(
+            scene.split_shows_sidebar && !scene.hover_open,
+            "{path}: the pinned sidebar must be open, not peeked"
+        );
+    }
+
+    #[test]
+    fn pin_survives_a_compact_start_across_the_breakpoint() {
+        // The window reports width 0 before it is realized, then its real
+        // width: the split collapses and expands while the rail is shown.
+        let mut sidebar = compact();
+        sidebar.handle(BreakpointCrossed { window_width: 0 });
+        let Some(SidebarTimer::BreakpointIdle { generation }) =
+            sidebar.handle(BreakpointCrossed { window_width: 1625 })
+        else {
+            panic!("expand");
+        };
+        sidebar.handle(BreakpointIdleElapsed { generation });
+        assert!(sidebar.scene().pinned);
+        sidebar.handle(ModeChosen(SidebarMode::Normal));
+        assert_pinned_open(&sidebar, "compact start -> normal");
+    }
+
+    #[test]
+    fn pin_survives_every_mode_and_immersive_round_trip() {
+        let mut sidebar = normal();
+        sidebar.handle(ModeChosen(SidebarMode::Compact));
+        sidebar.handle(ModeChosen(SidebarMode::Normal));
+        assert_pinned_open(&sidebar, "normal -> compact -> normal");
+
+        let mut sidebar = normal();
+        sidebar.handle(ImmersiveEntered);
+        sidebar.handle(ImmersiveLeft);
+        assert_pinned_open(&sidebar, "normal -> immersive -> normal");
+
+        let mut sidebar = compact();
+        sidebar.handle(ImmersiveEntered);
+        sidebar.handle(ModeChosen(SidebarMode::Normal));
+        sidebar.handle(ImmersiveLeft);
+        assert_pinned_open(&sidebar, "compact -> immersive -> normal");
+
+        let mut sidebar = compact();
+        sidebar.handle(ImmersiveEntered);
+        sidebar.handle(ImmersiveLeft);
+        sidebar.handle(ModeChosen(SidebarMode::Normal));
+        assert_pinned_open(&sidebar, "compact -> immersive -> compact -> normal");
+
+        let mut sidebar = normal();
+        narrow_and_widen(&mut sidebar);
+        assert_pinned_open(&sidebar, "normal across the breakpoint");
+
+        let mut sidebar = compact();
+        narrow_and_widen(&mut sidebar);
+        sidebar.handle(ModeChosen(SidebarMode::Normal));
+        assert_pinned_open(&sidebar, "compact across the breakpoint -> normal");
+    }
+
+    #[test]
+    fn an_unpinned_sidebar_stays_unpinned_across_the_breakpoint() {
+        let mut sidebar = normal();
+        sidebar.handle(PinPressed);
+        narrow_and_widen(&mut sidebar);
+        let scene = sidebar.scene();
+        assert!(!scene.pinned && !scene.split_shows_sidebar);
+        sidebar.handle(ModeChosen(SidebarMode::Compact));
+        sidebar.handle(ModeChosen(SidebarMode::Normal));
+        assert!(!sidebar.scene().pinned, "a mode switch does not re-pin");
     }
 }

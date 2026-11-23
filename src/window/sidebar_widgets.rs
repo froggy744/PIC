@@ -272,10 +272,7 @@ impl SidebarWidgets {
             SidebarTimer::BreakpointIdle { generation } => {
                 glib::idle_add_local_once(move || {
                     if let Some(widgets) = weak.upgrade() {
-                        let sidebar = &widgets.parts.sidebar;
-                        let pinned = sidebar.is_visible() && crate::sidebar::is_pinned(sidebar);
-                        widgets
-                            .dispatch(SidebarEvent::BreakpointIdleElapsed { generation, pinned });
+                        widgets.dispatch(SidebarEvent::BreakpointIdleElapsed { generation });
                     }
                 });
             }

@@ -560,7 +560,7 @@ fn immersive_install_chrome_edge(
             immersive_active.clone(), properties_split.clone(),
             lightbox_properties_panel.clone()
         );
-        let (sidebar, sidebar_widgets) = (sidebar.clone(), sidebar_widgets.clone());
+        let sidebar_widgets = sidebar_widgets.clone();
         let (header, column, info_root, metadata_root) = (
             right_header.clone(), right_column.clone(),
             info.root.clone(), metadata_panel.root.clone()
@@ -588,9 +588,7 @@ fn immersive_install_chrome_edge(
                 // the full sidebar, keeps the split collapsed, moves the
                 // existing shell onto the gallery as a presentation-only
                 // overlay, and leaves the saved sidebar mode untouched.
-                sidebar_widgets.dispatch(SidebarEvent::ImmersiveEntered {
-                    pinned: sidebar::is_pinned(&sidebar),
-                });
+                sidebar_widgets.dispatch(SidebarEvent::ImmersiveEntered);
                 properties.set_show_sidebar(false);
                 properties.set_pin_sidebar(false);
                 properties.set_collapsed(true);

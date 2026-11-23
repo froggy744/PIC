@@ -739,3 +739,277 @@ fn compact_start_keeps_the_pin_when_switching_to_normal() {
     assert!(split.shows_sidebar(), "a pinned sidebar never auto-hides");
     window.close();
 }
+
+// The Properties inspector against Immersive Mode, the viewer and page
+// navigation, driven through the real window. Immersive Mode suspends the
+// inspector: it must stay hidden for the whole session without any
+// transient show/hide, and come back afterwards on the current selection.
+fn properties_window(photo_count: i64) -> adw::ApplicationWindow {
+    let (window, path) = {
+        static INIT: std::sync::Once = std::sync::Once::new();
+        INIT.call_once(|| {
+            adw::init().unwrap();
+        });
+        let app = adw::Application::builder()
+            .application_id("io.pic.ImmersivePropertiesTest")
+            .build();
+        app.register(None::<&gio::Cancellable>).unwrap();
+        let directory = std::env::temp_dir()
+            .join(format!("pic-immersive-properties-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("library.db");
+        let mut connection = db::open(&path).unwrap();
+        for (key, value) in [
+            (LAST_VIEW_SETTING_KEY, "all"),
+            ("onboarding-never-show", "true"),
+            (COMPACT_SIDEBAR_MODE_SETTING, "false"),
+            ("photo_layout.all", "grid"),
+            (WINDOW_WIDTH_SETTING_KEY, "1400"),
+            (WINDOW_HEIGHT_SETTING_KEY, "900"),
+        ] {
+            db::set_setting(&connection, key, value).unwrap();
+        }
+        connection
+            .execute(
+                "INSERT INTO folders(id,path,name) VALUES (1,?1,'Properties test')",
+                [directory.to_str().unwrap()],
+            )
+            .unwrap();
+        let image_path = directory.join("sample.jpg");
+        image::RgbImage::from_pixel(32, 24, image::Rgb([80, 140, 210]))
+            .save(&image_path)
+            .unwrap();
+        let transaction = connection.transaction().unwrap();
+        for id in 1..=photo_count {
+            let photo_path = directory.join(format!("photo-{id}.jpg"));
+            let _ = std::fs::remove_file(&photo_path);
+            std::fs::hard_link(&image_path, &photo_path).unwrap();
+            transaction
+                .execute(
+                    "INSERT INTO photos(id,path,folder_id,width,height,added_at) VALUES (?1,?2,1,32,24,?1)",
+                    rusqlite::params![id, photo_path.to_string_lossy()],
+                )
+                .unwrap();
+        }
+        transaction.commit().unwrap();
+        let window = build(&app, connection);
+        window.present();
+        settle();
+        (window, path)
+    };
+    let _ = path;
+    window
+}
+
+fn properties_split(root: &gtk::Widget) -> adw::OverlaySplitView {
+    descendants(root)
+        .into_iter()
+        .filter_map(|widget| widget.downcast::<adw::OverlaySplitView>().ok())
+        .find(|split| split.sidebar_position() == gtk::PackType::End)
+        .expect("Properties split missing")
+}
+
+fn properties_button(root: &gtk::Widget) -> gtk::Button {
+    descendants(root)
+        .into_iter()
+        .filter(|widget| widget.has_css_class("properties-toggle"))
+        .find_map(|widget| widget.downcast::<gtk::Button>().ok())
+        .expect("InfoBar Properties button missing")
+}
+
+fn photo_grid(root: &gtk::Widget) -> gtk::GridView {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let grid = descendants(root)
+            .into_iter()
+            .filter_map(|widget| widget.downcast::<gtk::GridView>().ok())
+            .find(|grid| grid.is_mapped() && grid.model().is_some_and(|model| model.n_items() > 0));
+        if let Some(grid) = grid {
+            return grid;
+        }
+        assert!(Instant::now() < deadline, "All Photos grid did not load");
+        settle();
+    }
+}
+
+/// Selects a grid position like a click and returns its file name.
+fn select_grid_photo(grid: &gtk::GridView, position: u32) -> String {
+    let model = grid.model().unwrap();
+    model.select_item(position, true);
+    settle();
+    model
+        .item(position)
+        .and_downcast::<crate::photo_object::PhotoObject>()
+        .expect("grid item is a photo")
+        .filename()
+}
+
+/// The viewer's inspector panel: the right-aligned 300 px overlay that
+/// shares the "scrapbook-inspector" class with the docked panel.
+fn lightbox_properties_panel(root: &gtk::Widget, split: &adw::OverlaySplitView) -> gtk::Widget {
+    let docked = split.sidebar().unwrap();
+    descendants(root)
+        .into_iter()
+        .filter(|widget| widget.has_css_class("scrapbook-inspector"))
+        .find(|widget| {
+            widget.width_request() == 300
+                && widget.halign() == gtk::Align::End
+                && !widget.is_ancestor(&docked)
+                && widget != &docked
+        })
+        .expect("viewer Properties panel missing")
+}
+
+fn shows_file_name(panel: &gtk::Widget, name: &str) -> bool {
+    descendants(panel)
+        .into_iter()
+        .filter_map(|widget| widget.downcast::<gtk::Label>().ok())
+        .any(|label| label.label() == name)
+}
+
+fn lightbox_root(root: &gtk::Widget) -> gtk::Widget {
+    let backdrop = descendants(root)
+        .into_iter()
+        .find(|widget| widget.has_css_class("lightbox-backdrop"))
+        .expect("lightbox missing");
+    let mut ancestor = backdrop.parent();
+    while let Some(widget) = ancestor {
+        let controllers = widget.observe_controllers();
+        if (0..controllers.n_items()).any(|index| {
+            controllers.item(index).and_downcast::<gtk::EventControllerKey>().is_some()
+        }) && widget.is::<gtk::Overlay>()
+        {
+            return widget;
+        }
+        ancestor = widget.parent();
+    }
+    panic!("lightbox root missing")
+}
+
+fn close_lightbox(lightbox: &gtk::Widget) {
+    let controllers = lightbox.observe_controllers();
+    let key = (0..controllers.n_items())
+        .find_map(|index| controllers.item(index).and_downcast::<gtk::EventControllerKey>())
+        .unwrap();
+    let _: bool = key.emit_by_name(
+        "key-pressed",
+        &[&gtk::glib::translate::IntoGlib::into_glib(gtk::gdk::Key::Escape), &0_u32, &gtk::gdk::ModifierType::empty()],
+    );
+    settle();
+    settle();
+}
+
+#[test]
+#[ignore = "requires a GTK display; run with --ignored --test-threads=1"]
+fn immersive_suspends_properties_without_transient_visibility() {
+    let window = properties_window(24);
+    let root = window.clone().upcast::<gtk::Widget>();
+    let split = properties_split(&root);
+    let button = properties_button(&root);
+    let grid = photo_grid(&root);
+    let viewer_panel = lightbox_properties_panel(&root, &split);
+    let docked = split.sidebar().unwrap();
+
+    // Every show/hide of either panel, as (panel, shown).
+    let transitions: Rc<RefCell<Vec<(&'static str, bool)>>> = Rc::default();
+    {
+        let gallery = transitions.clone();
+        split.connect_show_sidebar_notify(move |split| {
+            gallery.borrow_mut().push(("gallery", split.shows_sidebar()));
+        });
+        let transitions = transitions.clone();
+        viewer_panel.connect_visible_notify(move |panel| {
+            transitions.borrow_mut().push(("viewer", panel.is_visible()));
+        });
+    }
+
+    let first = select_grid_photo(&grid, 0);
+    button.emit_clicked();
+    settle();
+    assert!(split.shows_sidebar(), "the InfoBar button opens the gallery inspector");
+    assert!(button.has_css_class("properties-active"));
+    assert!(shows_file_name(&docked, &first));
+
+    for session in 0..3 {
+        transitions.borrow_mut().clear();
+        enter_immersive(&window);
+        assert_eq!(transitions.borrow().as_slice(), &[("gallery", false)], "one hide on entry");
+        assert!(!split.shows_sidebar(), "Immersive Mode hides the gallery inspector");
+        assert!(!button.is_sensitive(), "the InfoBar button is disabled in Immersive Mode");
+        transitions.borrow_mut().clear();
+        let mut selected = String::new();
+        for position in 1..=3 {
+            selected = select_grid_photo(&grid, position + session * 3);
+        }
+        assert_eq!(
+            transitions.borrow().as_slice(),
+            &[],
+            "selection changes in Immersive Mode must not show or hide an inspector (session {session})"
+        );
+        enter_immersive(&window);
+        assert_eq!(transitions.borrow().as_slice(), &[("gallery", true)], "one show on exit");
+        assert!(split.shows_sidebar(), "leaving Immersive Mode resumes the inspector (session {session})");
+        assert!(button.is_sensitive() && button.has_css_class("properties-active"));
+        assert!(
+            shows_file_name(&docked, &selected),
+            "the resumed inspector shows the current selection {selected} (session {session})"
+        );
+    }
+
+    // The viewer has its own inspector; closing the viewer forgets only it.
+    for cycle in 0..2 {
+        grid.emit_by_name::<()>("activate", &[&2_u32]);
+        settle();
+        settle();
+        let lightbox = lightbox_root(&root);
+        assert!(lightbox.is_visible(), "the viewer opened (cycle {cycle})");
+        assert!(!viewer_panel.is_visible(), "the viewer inspector starts closed (cycle {cycle})");
+        assert!(!button.has_css_class("properties-active"), "the button follows the viewer inspector");
+        button.emit_clicked();
+        settle();
+        assert!(viewer_panel.is_visible(), "the button opens the viewer inspector (cycle {cycle})");
+        assert!(button.has_css_class("properties-active"));
+        assert!(split.shows_sidebar(), "the gallery inspector keeps its own state");
+
+        enter_immersive(&window);
+        assert!(!viewer_panel.is_visible() && !split.shows_sidebar());
+        transitions.borrow_mut().clear();
+        enter_immersive(&window);
+        assert!(viewer_panel.is_visible(), "leaving Immersive Mode resumes the viewer inspector");
+        assert!(split.shows_sidebar());
+
+        close_lightbox(&lightbox);
+        assert!(!lightbox.is_visible(), "the viewer closed (cycle {cycle})");
+        assert!(!viewer_panel.is_visible(), "closing the viewer hides its inspector");
+        assert!(split.shows_sidebar(), "closing the viewer keeps the gallery inspector");
+        assert!(button.has_css_class("properties-active"), "the button follows the gallery inspector");
+    }
+
+    // Leaving the Photos page closes the gallery inspector for good.
+    let stack = descendants(&root)
+        .into_iter()
+        .filter_map(|widget| widget.downcast::<gtk::Stack>().ok())
+        .find(|stack| stack.child_by_name("photos").is_some() && stack.child_by_name("albums").is_some())
+        .expect("main stack missing");
+    stack.set_visible_child_name("albums");
+    settle();
+    assert!(!split.shows_sidebar(), "an index page closes the inspector");
+    stack.set_visible_child_name("photos");
+    settle();
+    assert!(!split.shows_sidebar(), "returning to Photos keeps the inspector closed");
+    assert!(!button.has_css_class("properties-active"));
+    transitions.borrow_mut().clear();
+    enter_immersive(&window);
+    enter_immersive(&window);
+    assert_eq!(
+        transitions.borrow().as_slice(),
+        &[],
+        "Immersive Mode never flashes a closed inspector"
+    );
+    assert!(!split.shows_sidebar(), "Immersive Mode does not reopen a closed inspector");
+    button.emit_clicked();
+    settle();
+    assert!(split.shows_sidebar(), "the inspector reopens on request");
+    window.close();
+    settle();
+}

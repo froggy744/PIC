@@ -27,7 +27,6 @@ use layout_settle::{
 mod properties_presentation;
 mod properties_widgets;
 use properties_presentation::PropertiesSurface;
-#[allow(unused_imports)]
 use properties_widgets::PropertiesWidgets;
 mod sidebar_presentation;
 mod sidebar_widgets;
@@ -676,6 +675,8 @@ struct PhotoActionContext {
     window: glib::WeakRef<gtk::Window>,
     context_menu_host: Rc<RefCell<Option<glib::WeakRef<gtk::Overlay>>>>,
     operation_progress: Rc<OperationProgressUi>,
+    /// The window's Properties inspector, for the photo menu's Properties item.
+    properties: Weak<PropertiesWidgets>,
 }
 
 include!("window/operation_progress.rs");

@@ -533,53 +533,29 @@ fn immersive_install_chrome_edge(
         })));
     }
 
-    // Immersive has no right-edge inspector. Guard every existing toggle path.
-    {
-        let active = immersive_active.clone();
-        properties_split.connect_show_sidebar_notify(move |split| {
-            if active.get() && split.shows_sidebar() {
-                split.set_show_sidebar(false);
-            }
-        });
-    }
-    {
-        let active = immersive_active.clone();
-        lightbox_properties_panel.connect_visible_notify(move |panel| {
-            if active.get() && panel.is_visible() {
-                panel.set_visible(false);
-            }
-        });
-    }
-
-    let right_was_open = Rc::new(Cell::new(false));
-    let viewer_right_was_open = Rc::new(Cell::new(false));
+    // Immersive has no right-edge inspector: the Properties presentation
+    // suspends both panels for the session and resumes them afterwards.
     let metadata_was_visible = Rc::new(Cell::new(false));
     let right_was_collapsed = Rc::new(Cell::new(false));
     let toggle: Rc<dyn Fn()> = {
-        let (active, properties, viewer_panel) = (
-            immersive_active.clone(), properties_split.clone(),
-            lightbox_properties_panel.clone()
+        let (active, properties, properties_widgets) = (
+            immersive_active.clone(), properties_split.clone(), properties.clone()
         );
         let sidebar_widgets = sidebar_widgets.clone();
         let (header, column, info_root, metadata_root) = (
             right_header.clone(), right_column.clone(),
             info.root.clone(), metadata_panel.root.clone()
         );
-        let (top_strip, bottom_strip, button, lightbox, info_for_mode) = (
-            top_strip.clone(), bottom_strip.clone(),
-            immersive_button.clone(), lightbox.clone(), info.clone()
+        let (top_strip, bottom_strip, button) = (
+            top_strip.clone(), bottom_strip.clone(), immersive_button.clone()
         );
         let (top_revealer, bottom_revealer) = (top_revealer.clone(), bottom_revealer.clone());
-        let (right_was_open, viewer_right_was_open, metadata_was_visible) = (
-            right_was_open.clone(), viewer_right_was_open.clone(), metadata_was_visible.clone()
-        );
+        let metadata_was_visible = metadata_was_visible.clone();
         let right_was_collapsed = right_was_collapsed.clone();
         Rc::new(move || {
             let entering = !active.get();
             active.set(entering);
             if entering {
-                right_was_open.set(properties.shows_sidebar());
-                viewer_right_was_open.set(viewer_panel.is_visible());
                 metadata_was_visible.set(metadata_root.is_visible());
                 right_was_collapsed.set(properties.is_collapsed());
 
@@ -589,12 +565,9 @@ fn immersive_install_chrome_edge(
                 // existing shell onto the gallery as a presentation-only
                 // overlay, and leaves the saved sidebar mode untouched.
                 sidebar_widgets.dispatch(SidebarEvent::ImmersiveEntered);
-                properties.set_show_sidebar(false);
+                properties_widgets.set_immersive(true);
                 properties.set_pin_sidebar(false);
                 properties.set_collapsed(true);
-                properties.set_show_sidebar(false);
-                viewer_panel.set_visible(false);
-                info_for_mode.set_properties_enabled(false);
                 metadata_root.set_visible(false);
 
                 column.remove(&header);
@@ -619,11 +592,10 @@ fn immersive_install_chrome_edge(
                 // before the session: the compact rail in compact mode, the
                 // full sidebar in normal mode, the saved pin.
                 sidebar_widgets.dispatch(SidebarEvent::ImmersiveLeft);
-                properties.set_show_sidebar(false);
-                viewer_panel.set_visible(false);
-                properties.set_collapsed(right_was_collapsed.get());
+                // Pin before uncollapsing: uncollapsing an unpinned split
+                // shows its sidebar, which would flash a closed inspector.
                 properties.set_pin_sidebar(true);
-                info_for_mode.set_properties_enabled(true);
+                properties.set_collapsed(right_was_collapsed.get());
 
                 top_revealer.set_reveal_child(false);
                 bottom_revealer.set_reveal_child(false);
@@ -635,10 +607,9 @@ fn immersive_install_chrome_edge(
                 info_root.set_visible(true);
                 metadata_root.set_visible(metadata_was_visible.get());
 
-                properties.set_show_sidebar(right_was_open.get());
-                if lightbox.root.is_visible() {
-                    viewer_panel.set_visible(viewer_right_was_open.get());
-                }
+                // Last, once the chrome is back in the window: resume the
+                // inspector panels that were open, on the current photos.
+                properties_widgets.set_immersive(false);
                 button.set_icon_name("view-fullscreen-symbolic");
                 button.set_tooltip_text(Some("Immersive Mode (I)"));
             }

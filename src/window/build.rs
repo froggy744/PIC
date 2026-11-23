@@ -204,14 +204,20 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
 
     let info = Rc::new(InfoBar::new_with_settings(Some(connection.clone())));
     info.set_photo(None);
+    // The one owner of the Properties inspector's presentation.
+    let properties = PropertiesWidgets::new(info.clone());
 
     let selected_photo = Rc::new(RefCell::new(None));
     let date_browser_overview_visible = Rc::new(Cell::new(false));
 
     let lightbox = Rc::new(Lightbox::new());
-    lightbox.root.connect_visible_notify(|root| {
-        set_lightbox_properties_active(root.is_visible());
-    });
+    {
+        let properties = properties.clone();
+        lightbox.root.connect_visible_notify(move |root| {
+            properties.set_lightbox_shown(root.is_visible());
+        });
+    }
+    let properties_for_lightbox = properties.clone();
     let info_for_lightbox = info.clone();
     let selected_photo_for_lightbox = selected_photo.clone();
     let last_activated_for_lightbox = last_activated_photo_id.clone();
@@ -237,7 +243,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         }
         info_for_lightbox.set_photo(Some(&photo));
         info_for_lightbox.show_photo_metadata();
-        refresh_lightbox_properties(&photo);
+        properties_for_lightbox.show_photo(PropertiesSurface::Lightbox, Some(&photo));
         // Navigating to another photo restores the viewer's normal fit state.
         info_for_lightbox.one_to_one.set_active(false);
         selected_photo_for_lightbox.replace(Some(photo));
@@ -278,6 +284,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let selected_photo_for_grid = selected_photo.clone();
     let lightbox_for_grid = lightbox.clone();
     let lightbox_for_grid_selection = lightbox.clone();
+    let properties_for_grid_selection = properties.clone();
     let date_browser_overview_for_grid_selection = date_browser_overview_visible.clone();
     let filter = Rc::new(Cell::new(initial_filter));
     let search_text = Rc::new(RefCell::new(String::new()));
@@ -566,7 +573,9 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         window: window.clone().upcast::<gtk::Window>().downgrade(),
         context_menu_host: context_menu_host.clone(),
         operation_progress: operation_progress.clone(),
+        properties: Rc::downgrade(&properties),
     };
+    properties.set_context(action_context.clone());
     let saved_grid_thumbnail_size = grid_thumbnail_size_from_setting(&connection.borrow());
     let grid_zoom_syncing = Rc::new(Cell::new(false));
     info.grid_zoom.set_value(grid_zoom_slider_value(
@@ -627,7 +636,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
                 info_for_grid.show_photo_metadata();
             }
             info_for_grid.set_photo(photo.as_ref());
-            refresh_docked_properties(photo.as_ref());
+            properties_for_grid_selection.show_photo(PropertiesSurface::Gallery, photo.as_ref());
             selected_photo_for_grid.replace(photo);
         },
         {
@@ -889,10 +898,10 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     // closes it, without opening the photo context menu.
     {
         let selection = selected_photo.clone();
-        let context = action_context.clone();
+        let properties = properties.clone();
         info.connect_metadata_right_click(move || {
             if let Some(photo) = selection.borrow().as_ref() {
-                toggle_docked_properties(photo, &context);
+                properties.toggle(photo);
             }
         });
     }
@@ -3383,7 +3392,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     properties_shell.add_overlay(&properties_resize_handle);
     properties_split.set_sidebar(Some(&properties_shell));
     properties_split.set_show_sidebar(false);
-    register_docked_properties_panel(&properties_panel, &properties_split);
+    properties.attach_gallery(&properties_panel, &properties_split);
 
     let resize_origin = Rc::new(Cell::new(0.0_f64));
     let resize_width = Rc::new(Cell::new(0.0_f64));
@@ -3700,38 +3709,20 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     lightbox_properties_panel.add_css_class("background");
     lightbox_properties_panel.add_css_class("scrapbook-inspector");
     lightbox_properties_panel.set_visible(false);
-    register_lightbox_properties_panel(&lightbox_properties_panel);
-    let update_properties_indicator = {
-        let info = info.clone();
-        let split = properties_split.downgrade();
-        let panel = lightbox_properties_panel.downgrade();
-        let viewer = lightbox.root.downgrade();
-        Rc::new(move || {
-            if let (Some(split), Some(panel), Some(viewer)) = (split.upgrade(), panel.upgrade(), viewer.upgrade()) {
-                info.set_properties_active(if viewer.is_visible() { panel.is_visible() } else { split.shows_sidebar() });
-            }
-        })
-    };
-    {
-        let update = update_properties_indicator.clone();
-        properties_split.connect_show_sidebar_notify(move |_| update());
-        let update = update_properties_indicator.clone();
-        lightbox_properties_panel.connect_visible_notify(move |_| update());
-        let update = update_properties_indicator.clone();
-        lightbox.root.connect_visible_notify(move |_| update());
-    }
+    properties.attach_lightbox(&lightbox_properties_panel);
 
     // Index pages and full-surface workspaces are not photo grids: close
     // the inspector on Library Home, Albums Home, Edit and Collage.
     // Folder-to-folder navigation intentionally keeps it open.
     // Only photo-gallery pages can own a Properties pane. Library/Albums
     // index, Edit and Collage cannot reopen it through stale InfoBar selection.
-    set_gallery_properties_allowed(
-        page_allows_gallery_properties(main_stack.visible_child_name().as_deref()),
-    );
-    main_stack.connect_visible_child_notify(|stack| {
+    properties.set_page_allowed(page_allows_gallery_properties(
+        main_stack.visible_child_name().as_deref(),
+    ));
+    let properties_for_page = properties.clone();
+    main_stack.connect_visible_child_notify(move |stack| {
         let page = stack.visible_child_name();
-        set_gallery_properties_allowed(page_allows_gallery_properties(page.as_deref()));
+        properties_for_page.set_page_allowed(page_allows_gallery_properties(page.as_deref()));
         if std::env::var_os("PIC_INSPECTOR_TRACE").is_some() {
             eprintln!("PIC_INSPECTOR_TRACE stage=page_switch page={:?}", page.as_deref());
         }
@@ -4183,6 +4174,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let gallery_for_favorite = gallery.clone();
     let filter_for_favorite = filter.clone();
     let lightbox_for_favorite = lightbox.clone();
+    let properties_for_favorite = properties.clone();
     let sidebar_refresh_for_favorite = availability_refresh.clone();
     let sidebar_for_favorite = sidebar_for_unavailable.clone();
 
@@ -4204,7 +4196,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             }
         }
         photo.set_favorite(favorite);
-        refresh_lightbox_properties(&photo);
+        properties_for_favorite.show_photo(PropertiesSurface::Lightbox, Some(&photo));
         if filter_for_favorite.get() == sidebar::SidebarFilter::Favorites && !favorite {
             gallery_for_favorite.remove_photos(&ids);
             if lightbox_for_favorite.root.is_visible() {
@@ -4240,6 +4232,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         let search_for_rating = search_text.clone();
         let sidebar_for_rating = sidebar_for_unavailable.clone();
         let lightbox_for_rating = lightbox.clone();
+        let properties_for_rating = properties.clone();
         let rating = (index + 1) as i32;
         button.connect_clicked(move |_| {
             let Some(photo) = selected_for_rating.borrow().clone() else {
@@ -4260,7 +4253,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
             gallery_for_rating.update_ratings(&ids, target);
             photo.set_rating(target);
             info_for_rating.set_photo(Some(&photo));
-            refresh_lightbox_properties(&photo);
+            properties_for_rating.show_photo(PropertiesSurface::Lightbox, Some(&photo));
             if let (Some(sidebar), Ok(counts)) = (
                 sidebar_for_rating.borrow().as_ref(),
                 db::sidebar_counts(&db_for_rating.borrow()),
@@ -4408,6 +4401,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let one_to_one_for_visibility = info.one_to_one.clone();
     let gallery_for_lightbox_close = gallery.clone();
     let lightbox_for_lightbox_close = lightbox.clone();
+    let properties_for_lightbox_close = properties.clone();
     let search_entry_for_lightbox_close = search_entry_slot.clone();
     let search_close_waiting_for_lightbox_close = search_close_waiting.clone();
     let filter_for_lightbox_close = filter.clone();
@@ -4431,7 +4425,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         // the grid. Keep an already-open gallery inspector on the returned
         // photo rather than leaving the metadata from the pre-view selection.
         if let Some(photo) = lightbox_for_lightbox_close.current_photo() {
-            refresh_docked_properties(Some(&photo));
+            properties_for_lightbox_close.show_photo(PropertiesSurface::Gallery, Some(&photo));
         }
         if lightbox_close_prepared.replace(false) {
             // Selection, viewport and tile focus were already staged during
@@ -4794,6 +4788,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
     let info_rotate = info.clone();
     let gallery_for_rotate = gallery.clone();
     let lightbox_for_rotate = lightbox.clone();
+    let properties_for_rotate = properties.clone();
     let edit_editor_for_rotate = edit_editor.clone();
     let main_stack_for_rotate = main_stack.clone();
 
@@ -4811,7 +4806,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         info_rotate.set_photo(Some(&photo));
         // The inspector is a snapshot of the selected photo's metadata;
         // refresh it after the database and PhotoObject rotation are updated.
-        refresh_docked_properties(Some(&photo));
+        properties_for_rotate.show_photo(PropertiesSurface::Gallery, Some(&photo));
         gallery_for_rotate.refresh_thumbnails();
         lightbox_for_rotate.refresh_current();
         if main_stack_for_rotate.visible_child_name().as_deref() == Some("edit") {
@@ -5398,6 +5393,7 @@ fn start_photo_export_single(
         let filter_for_keys = filter.clone();
         let stack_for_keys = main_stack.clone();
         let lightbox_for_keys = lightbox.clone();
+        let properties_for_keys = properties.clone();
         let selected_for_keys = selected_photo.clone();
         let db_for_keys = connection.clone();
         let info_for_keys = info.clone();
@@ -5538,7 +5534,10 @@ fn start_photo_export_single(
                                 gallery_for_keys.update_ratings(&ids, rating);
                                 photo.set_rating(rating);
                                 info_for_keys.set_photo(Some(&photo));
-                                refresh_lightbox_properties(&photo);
+                                properties_for_keys.show_photo(
+                                    PropertiesSurface::Lightbox,
+                                    Some(&photo),
+                                );
                                 if let (Some(sidebar), Ok(counts)) = (
                                     sidebar_for_keys.borrow().as_ref(),
                                     db::sidebar_counts(&db_for_keys.borrow()),

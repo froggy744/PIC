@@ -454,9 +454,13 @@ impl SidebarWidgets {
                     dock.set_child(None::<&gtk::Widget>);
                 }
                 shell.set_child(Some(compact_page));
-                self.cells
-                    .slide_width
-                    .set(self.cells.compact_width.get().round() as i32);
+                // The immersive header adds the switch-to-normal arrow beside
+                // the title; never slide narrower than the page needs, or the
+                // title is painted outside the overlay.
+                let (minimum, _, _, _) = compact_page.measure(gtk::Orientation::Horizontal, -1);
+                self.cells.slide_width.set(
+                    (self.cells.compact_width.get().round() as i32).max(minimum),
+                );
             }
         }
         shell.set_width_request(self.cells.slide_width.get());
@@ -517,8 +521,9 @@ impl SidebarWidgets {
             host.surface.add_overlay(shell);
         }
         drop(host);
-        self.present_page(scene.page);
+        // Visible before the page is measured for the slide width.
         parts.compact_immersive_toggle.set_visible(true);
+        self.present_page(scene.page);
         if scene.overlay_revealed {
             if let Some(host) = self.immersive_host.borrow().as_ref() {
                 (host.set_shown)(true);

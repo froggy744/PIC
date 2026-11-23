@@ -185,6 +185,25 @@ fn immersive_compact_switch_reuses_overlay_and_restores_compact_page() {
         "the original compact page must be inside the immersive overlay");
     assert_eq!(split.content().unwrap().width(), gallery_width);
     assert_eq!(saved_sidebar_mode(&database).as_deref(), Some("true"));
+    // The compact header holds the arrow and the title; both stay inside
+    // the overlay instead of painting past its right edge.
+    let shell_widget = shell.clone().upcast::<gtk::Widget>();
+    for widget in descendants(&shell_widget).into_iter().filter(|widget| {
+        widget.is_mapped()
+            && (widget.downcast_ref::<gtk::Label>().is_some_and(|label| label.text() == "PIC")
+                || widget.downcast_ref::<gtk::Button>().is_some_and(|button| {
+                    button.tooltip_text().as_deref() == Some("Switch to normal sidebar")
+                }))
+    }) {
+        let bounds = widget.compute_bounds(&shell_widget).expect("header bounds");
+        assert!(
+            bounds.x() >= -0.5 && bounds.x() + bounds.width() <= shell.width() as f32 + 0.5,
+            "compact header item outside the overlay: x={} w={} shell={}",
+            bounds.x(),
+            bounds.width(),
+            shell.width()
+        );
+    }
 
     let expand = descendants(&shell.clone().upcast::<gtk::Widget>())
         .into_iter().filter_map(|w| w.downcast::<gtk::Button>().ok())

@@ -40,6 +40,7 @@ For a new review round, run `mattpocock-skills:improve-codebase-architecture` an
 | 10 | Current photo (`selected_photo`) | Strong | merged | merge `49a93dd4` (`refactor/current-photo`) | `src/infobar_presentation.rs` (precedence, pure), `src/infobar.rs` (`InfoBar::current_photo`) |
 | 11 | Window session state | Worth exploring | open | none | `src/window/build.rs` (restore, library switch, close), `src/window/layout.rs`, `src/window/sidebar_widgets.rs` |
 | 12 | Front surface (widens 6) | Worth exploring | merged | merge `16e816e3` (`refactor/front-surface`) | `src/window/front_surface.rs` (pure precedence + `FrontSurface` reader) |
+| 13 | Front-surface change event (follow-up to 12, before 6) | Worth exploring | in progress (`refactor/front-surface-events`) | none | `src/window/front_surface.rs` (state, diff, dispatcher), `src/window/front_mirrors.rs` (listeners) |
 
 ## Outstanding work
 
@@ -286,6 +287,29 @@ Settled by the agent, accepted with the plan: one file `src/window/front_surface
 - Events stage (decision 1): a `FrontSurface::connect_changed` to replace the ~17 viewer, page and date-overview change handlers and the private copies in the InfoBar (`covered`, `InfoBarPage`), Properties (`set_lightbox_shown`) and the metadata panel (`set_lightbox_open`). Candidate 6 (zoom slider router) is its first consumer: the zoom range still has 3 writers.
 - The owner rule does not catch `matches!` over page names (see above).
 - `scripts/gui_test.py` still clicks fixed points in the `browse-navigation` suite (`click_at(118, 524)` for the folder row) and elsewhere outside the library, viewer and editing paths.
+
+### 13 · Front-surface change event (started 2026-11-23)
+Branch `refactor/front-surface-events`. Follow-up to 12 (its decision 1); candidate 6 (zoom slider router) is to be the event's first behaviour consumer.
+
+#### Investigation (at `38e89e45`, no code changed)
+17 handlers react to the front changing, in connection order:
+- **Viewer shown/hidden** (`lightbox.root.connect_visible_notify`): `build.rs:223` Properties `set_lightbox_shown`; `:746` on hide refresh the InfoBar selection, then `info.set_lightbox_shown`; `:3744` `PIC_LIGHTBOX_LAYOUT` trace; `:4289` close-return (on show freeze the folder scroll animation; on hide 1:1 off, Properties shows the returned photo, restore the selection on a timer; order-sensitive); `:4542` zoom range swap; `:5429` `metadata_panel.set_lightbox_open` (plus `close_started` at `:5439`, before the fade).
+- **Page changed** (`main_stack.connect_visible_child_notify`): `:3308` Edit/Collage cancel a sidebar fade; `:3699` Properties `set_page_allowed`; `:3781` leaving Photos/Library closes the viewer, and the Library redirect switches the page again inside the notify (re-entrant); `:3895` collage/editor teardown and History/filter refresh; `layout.rs:2447` `info.set_page` + selection refresh + zoom range to 0..7; `:5448` metadata panel `set_navigation_view` (plus a tick callback for filter changes); `immersive.rs:675` ends Immersive off gallery pages.
+- **Date overview on/off**: 4 hand calls of `info.set_date_overview_shown` (`build.rs:2689, 2722, 2748, 2767`), its only listener.
+
+Private copies: InfoBar (`InfoBarPresentation` lightbox/overview/collage), Properties (lightbox shown, page allowed), metadata panel (lightbox open, navigation view). The zoom range has 4 writers (`:4542`, `open_edit` `:4101`, the editor's return `:4038`, `layout.rs:2466`).
+
+Hazards: re-entrancy (a page change closes the viewer and may switch the page again, nested); order dependence (`:4289` turns 1:1 off after the viewer is hidden; the InfoBar refresh precedes `set_lightbox_shown`); two closing moments (`close_started` vs hidden); the date overview has no notification of its own (the overview widget becomes visible only after `on_overview` returns).
+
+#### Decisions (2026-11-23; 1-2 by the owner, 3-8 by the agent at the owner's request, closest to today's behaviour)
+1. **Scope: the event plus the state mirrors.** Move only the handlers that mirror state: InfoBar (viewer, overview, page with its selection refresh), Properties (viewer, page allowed), metadata panel (viewer open, navigation view). Behaviour handlers (close-return, close-on-page-change, teardown, fade cancel, Immersive, trace) and the zoom range stay; the zoom range moves in candidate 6.
+2. **Delivery: synchronous, nested, first.** `FrontSurface` connects to the viewer and stack notifies before any other handler and calls listeners at once, in registration order.
+3. **Payload:** `FrontChange { before, after }` of `FrontState { page, lightbox_shown, date_browser }`; emitted when any of the three changes (not only `Front`), decided by a pure diff. Listeners derive `front()` / `gallery_covered()` from it.
+4. **Re-entrancy:** a change made during a dispatch is delivered at once (nested); the outer dispatch then stops, because the remaining listeners already received the newer state. No listener is left on a stale state. The dispatcher is plain Rust and table-tested. The last delivered state is kept only to compute `before`; `current()` still reads the widgets.
+5. **Date overview:** `FrontSurface` watches the overview widget's visibility and is told where `date_browser_active` changes; the 4 hand calls go.
+6. **The mirrors keep their own inputs** (they are the inputs of their table-tested models); this refactor replaces their 8 hand-wired feeds with one. Removing the copies is later work.
+7. **Ownership:** the listeners live in `src/window/front_mirrors.rs`; owner rule `front-mirrors` keeps those setters there (the metadata panel's `close_started` call stays allowed: it is a closing moment, not a front change).
+8. **Verification:** table tests for the diff and dispatcher (written red first); a display test of `FrontSurface` with a real stack, viewer and date browser, including a nested change; the existing InfoBar and display tests; GUI `viewer` and `editing`; the scripted interaction checks on this branch and on `main`.
 
 ### Next (chosen by the owner 2026-11-23)
 1. **Front-surface change event**, as its own refactor: design `FrontSurface::connect_changed` (candidate 12, decision 1) so the zoom slider can be its first consumer. Design and the owner's decisions first, then a branch.

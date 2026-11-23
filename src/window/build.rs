@@ -4790,7 +4790,7 @@ pub fn build(app: &adw::Application, connection: Connection) -> adw::Application
         // The inspector is a snapshot of the selected photo's metadata;
         // refresh it after the database and PhotoObject rotation are updated.
         properties_for_rotate.show_photo(PropertiesSurface::Gallery, Some(&photo));
-        gallery_for_rotate.refresh_thumbnails();
+        gallery_for_rotate.refresh_rotated_photo(&photo.path());
         lightbox_for_rotate.refresh_current();
         if main_stack_for_rotate.visible_child_name().as_deref() == Some("edit") {
             if let Some(editor) = edit_editor_for_rotate.borrow().as_ref() {

@@ -602,6 +602,151 @@
         }
     });
     right_header.pack_end(&header_tools);
+    // Narrow windows: once the header bar reaches its minimum width, move
+    // the header tools into a menu one at a time (least important first),
+    // then let Search shrink, so the header never stops the window shrinking.
+    // Each tool keeps its own handlers, popovers and Top-bar visibility.
+    {
+        let header_overflow = gtk::MenuButton::new();
+        header_overflow.set_icon_name("view-more-symbolic");
+        header_overflow.set_tooltip_text(Some("More tools"));
+        header_overflow.add_css_class("flat");
+        header_overflow.add_css_class("pic-header-action");
+        header_overflow.set_valign(gtk::Align::Center);
+        header_overflow.set_visible(false);
+        let overflow_popover = gtk::Popover::new();
+        overflow_popover.set_cascade_popdown(true);
+        let overflow_box = gtk::Box::new(gtk::Orientation::Vertical, 2);
+        overflow_box.set_margin_top(6);
+        overflow_box.set_margin_bottom(6);
+        overflow_box.set_margin_start(8);
+        overflow_box.set_margin_end(8);
+        overflow_popover.set_child(Some(&overflow_box));
+        header_overflow.set_popover(Some(&overflow_popover));
+        right_header.pack_end(&header_overflow);
+        // Header order, left to right.
+        let tools: Vec<(gtk::Widget, gtk::Box)> = [
+            (date_browser_button.clone().upcast::<gtk::Widget>(), "Date browser"),
+            (sort_button.clone().upcast(), "Sort photos"),
+            (metadata_panel.button.clone().upcast(), "Photo filters"),
+            (rating_filter_button.clone().upcast(), "Filter by rating"),
+            (info.view_toggle.clone().upcast(), "Photo view"),
+        ]
+        .into_iter()
+        .map(|(tool, title)| {
+            let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+            row.set_height_request(34);
+            let label = gtk::Label::new(Some(title));
+            label.set_xalign(0.0);
+            label.set_hexpand(true);
+            row.append(&label);
+            row.set_visible(false);
+            overflow_box.append(&row);
+            (tool, row)
+        })
+        .collect();
+        // Least important first; Photo filters stays longest.
+        const SQUEEZE_ORDER: [usize; 5] = [0, 4, 1, 3, 2];
+        const SPARE: i32 = 24;
+        const SEARCH_WIDE: i32 = 180;
+        const SEARCH_NARROW: i32 = 96;
+        let squeezed = Cell::new(0usize);
+        let search_narrow = Cell::new(false);
+        let search_slot = search_entry_slot.clone();
+        right_header.add_tick_callback(move |header, _| {
+            // Rows follow their tool's own visibility (Top-bar choices, the
+            // date browser's filter gate) while the tool sits in the menu.
+            for (tool, row) in &tools {
+                let in_menu = tool.parent().as_ref() == Some(row.upcast_ref());
+                row.set_visible(in_menu && tool.get_visible());
+            }
+            let width = header.width();
+            if width <= 0 || header_overflow.is_active() {
+                return glib::ControlFlow::Continue;
+            }
+            let order = SQUEEZE_ORDER
+                .iter()
+                .copied()
+                .filter(|&index| tools[index].0.get_visible())
+                .collect::<Vec<_>>();
+            let tool_width = |index: usize| tools[index].0.measure(gtk::Orientation::Horizontal, -1).0 + 2;
+            let mut count = squeezed.get().min(order.len());
+            let mut narrow = search_narrow.get();
+            let mut spare = width - header.measure(gtk::Orientation::Horizontal, -1).0;
+            // The menu button itself costs about one tool once it appears.
+            let menu_cost = if count == 0 { header_overflow.measure(gtk::Orientation::Horizontal, -1).0.max(34) } else { 0 };
+            while spare < SPARE {
+                if count < order.len() {
+                    spare += tool_width(order[count]) - if count == 0 { menu_cost } else { 0 };
+                    count += 1;
+                } else if !narrow {
+                    spare += SEARCH_WIDE - SEARCH_NARROW;
+                    narrow = true;
+                } else {
+                    break;
+                }
+            }
+            // Give space back in reverse: Search first, then the tools.
+            loop {
+                if narrow {
+                    if spare < SEARCH_WIDE - SEARCH_NARROW + 2 * SPARE {
+                        break;
+                    }
+                    spare -= SEARCH_WIDE - SEARCH_NARROW;
+                    narrow = false;
+                } else if count > 0 {
+                    let refund = if count == 1 { menu_cost.max(34) } else { 0 };
+                    let needed = tool_width(order[count - 1]) - refund;
+                    if spare < needed + 2 * SPARE {
+                        break;
+                    }
+                    spare -= needed;
+                    count -= 1;
+                } else {
+                    break;
+                }
+            }
+            if narrow != search_narrow.replace(narrow) {
+                let request = if narrow { SEARCH_NARROW } else { SEARCH_WIDE };
+                if let Some(search) = search_slot.borrow().as_ref() {
+                    search.set_size_request(request, -1);
+                    // width-chars, not the size request, sets the text's
+                    // minimum; 18 chars alone hold Search at ~208 px.
+                    search.set_width_chars(if narrow { 4 } else { 18 });
+                    if let Some(area) = search.parent() {
+                        area.set_size_request(request, -1);
+                        if narrow {
+                            area.add_css_class("search-narrow");
+                        } else {
+                            area.remove_css_class("search-narrow");
+                        }
+                    }
+                }
+            }
+            if count != squeezed.replace(count) {
+                let out = &order[..count];
+                let mut previous: Option<gtk::Widget> = None;
+                for (index, (tool, row)) in tools.iter().enumerate() {
+                    let in_bar = tool.parent().as_ref() == Some(header_tools.upcast_ref());
+                    if out.contains(&index) {
+                        if in_bar {
+                            header_tools.remove(tool);
+                            row.append(tool);
+                        }
+                    } else {
+                        if !in_bar {
+                            row.remove(tool);
+                            header_tools.insert_child_after(tool, previous.as_ref());
+                        }
+                        header_tools.reorder_child_after(tool, previous.as_ref());
+                        previous = Some(tool.clone());
+                    }
+                }
+                header_overflow.set_visible(count > 0);
+            }
+            glib::ControlFlow::Continue
+        });
+    }
     info.append_menu_action(&refresh, "Refresh library");
     let help = gtk::Button::builder()
         .icon_name("help-about-symbolic")

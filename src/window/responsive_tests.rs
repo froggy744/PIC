@@ -816,3 +816,79 @@ fn rotating_a_photo_redraws_only_its_tile() {
     window.close();
     let _ = std::fs::remove_dir_all(&directory);
 }
+
+#[test]
+#[ignore = "requires a GTK display; run individually"]
+fn normal_window_shrinks_like_immersive_by_folding_header_tools() {
+    adw::init().unwrap();
+    let app = adw::Application::builder()
+        .application_id("io.pic.HeaderFoldTest")
+        .build();
+    app.register(None::<&gio::Cancellable>).unwrap();
+    let path = std::env::temp_dir().join(format!("pic-header-fold-{}.db", std::process::id()));
+    let connection = db::open(&path).unwrap();
+    for (key, value) in [
+        (LAST_VIEW_SETTING_KEY, "all"),
+        ("onboarding-never-show", "true"),
+        // Every InfoBar button pinned, as a user can choose.
+        (
+            "infobar_visible_actions",
+            "[true,true,true,true,true,true,true,true,true,false,true,true]",
+        ),
+    ] {
+        db::set_setting(&connection, key, value).unwrap();
+    }
+    let window = build(&app, connection);
+    window.present();
+    settle();
+    let header = descendants(window.upcast_ref())
+        .into_iter()
+        .find(|widget| widget.has_css_class("layout-right-header"))
+        .unwrap();
+    let tools = descendants(&header)
+        .into_iter()
+        .find(|widget| widget.has_css_class("pic-header-tools"))
+        .unwrap();
+    let tool_count = |tools: &gtk::Widget| {
+        let mut count = 0;
+        let mut child = tools.first_child();
+        while let Some(widget) = child {
+            count += 1;
+            child = widget.next_sibling();
+        }
+        count
+    };
+    let wide_tools = tool_count(&tools);
+    // The window's own floor is 360 px: the same as Immersive Mode.
+    for width in [1400, 900, 600, 420, 370] {
+        for attempt in 0..16 {
+            window.set_default_size(width - attempt % 2, 700);
+            settle();
+            if window.width() <= width + 2 {
+                break;
+            }
+        }
+        eprintln!(
+            "header-fold requested={width} actual={} min={} tools={}",
+            window.width(),
+            window.measure(gtk::Orientation::Horizontal, -1).0,
+            tool_count(&tools)
+        );
+        assert!(
+            window.width() <= width + 2,
+            "normal mode trapped at {} for {width}",
+            window.width()
+        );
+    }
+    assert!(tool_count(&tools) < wide_tools, "header tools move into the menu");
+    for attempt in 0..16 {
+        window.set_default_size(1400 - attempt % 2, 700);
+        settle();
+        if tool_count(&tools) == wide_tools {
+            break;
+        }
+    }
+    assert_eq!(tool_count(&tools), wide_tools, "header tools return when there is room");
+    window.close();
+    let _ = std::fs::remove_file(path);
+}

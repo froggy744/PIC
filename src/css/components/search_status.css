@@ -42,3 +42,8 @@
   padding: 0;
   border-radius: 6px;
 }
+/* Narrow windows: the header folds its tools and narrows Search; a theme's
+   min-width on .search-field must not hold the window wider. */
+.search-status-area.search-field.search-narrow {
+  min-width: 0;
+}

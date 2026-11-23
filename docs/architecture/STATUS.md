@@ -79,7 +79,7 @@ About 12 refresh calls of `set_photo(Some(&photo))` follow a change to the photo
 **Follow-up after merge:**
 - `selected_photo` in `window/build.rs` is still kept in step by hand beside the InfoBar events (decision 2).
 - The gallery focus callback in `window/build.rs` keeps its own lightbox/overview guard, because it also guards the Properties panel and `selected_photo`. The InfoBar no longer needs it.
-- `infobar::responsive_tests::compact_toolbar_keeps_actions_usable_and_restores_wide_layout` fails at "Rotate should leave the action menu open" on `main` too (found 2026-11-23, before candidate 4); not investigated.
+- `infobar::responsive_tests::compact_toolbar_keeps_actions_usable_and_restores_wide_layout` failed at "Rotate should leave the action menu open" (found 2026-11-23, before candidate 4). Fixed 2026-11-23: Rotate never closed the menu; under Xvfb GTK's autohide closed a menu opened right after a resize, with or without the click. The test now makes sure the menu is open before checking Rotate.
 
 **Tests to keep green** (Xvfb 1920×1080, Wayland unset):
 - `multiselection_centers_existing_actions_and_restores_toolbar`

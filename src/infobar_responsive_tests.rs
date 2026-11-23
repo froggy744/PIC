@@ -183,6 +183,17 @@ fn compact_toolbar_keeps_actions_usable_and_restores_wide_layout() {
                     );
                 }
                 if selected && width == 600 {
+                    // Under Xvfb GTK's autohide can close a menu opened right
+                    // after a resize on its own; that is not Rotate's doing.
+                    // Make sure the menu is open, then check that Rotate
+                    // itself leaves it open.
+                    settle();
+                    if !overflow.popover().unwrap().is_visible() {
+                        overflow.popup();
+                        wait_for_mapped(&moved);
+                        settle();
+                    }
+                    assert!(overflow.popover().unwrap().is_visible(), "menu open before Rotate");
                     bar.rotate.emit_clicked();
                     settle();
                     assert!(

@@ -7,6 +7,17 @@ The single source of truth for the deepening candidates from the architecture re
 
 Terms (Thumbnail presentation, Sidebar presentation, Properties presentation, ...) are defined in [`GLOSSARY.md`](../../GLOSSARY.md). Code paths are in [`AUDIT-INDEX.md`](../../AUDIT-INDEX.md).
 
+## Starting a candidate
+
+Load these skills (plugin `mattpocock-skills`) with the Skill tool before designing or changing code:
+
+1. `mattpocock-skills:codebase-design`: the vocabulary (module, interface, depth, seam, adapter, leverage, locality) and the deletion test. Use its terms in code comments, commits and this file.
+2. `mattpocock-skills:grilling`: walk the candidate's decision tree with the owner (constraints, the shape of the deepened module, what sits behind the seam, which tests survive) before writing code. Record the decisions under the candidate's section here, as candidate 4 did.
+3. `mattpocock-skills:domain-modeling`: keep [`GLOSSARY.md`](../../GLOSSARY.md) current. Add a term for the deepened module when it names a new concept. If the owner rejects a candidate for a lasting reason, offer an ADR.
+4. `mattpocock-skills:tdd`: build the pure module test-first (table tests), then the GTK adapter.
+
+For a new review round, run `mattpocock-skills:improve-codebase-architecture` and record its candidates here.
+
 ## When a candidate moves
 
 - **Started:** set the state to `in progress` and give the branch name.

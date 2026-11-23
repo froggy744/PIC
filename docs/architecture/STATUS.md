@@ -34,9 +34,9 @@ For a new review round, run `mattpocock-skills:improve-codebase-architecture` an
 | 4 | InfoBar decides what it shows | Strong | merged | merge `9756c44f` (`refactor/infobar-presentation`) | `src/infobar_presentation.rs` (pure), `src/infobar.rs` (GTK adapter) |
 | 5 | One gallery scroll-motion module | Worth exploring | open | none | `src/window/navigation.rs`, `src/window/build.rs` (scrub, settle, pump), `src/smooth_scroll.rs` |
 | 6 | Zoom slider router | Worth exploring | open | none | `src/window/build.rs` (zoom slider handlers), `src/lightbox/impl.rs` |
-| 7 | Editor preview plan | Worth exploring | open | none | `src/edit/live_gpu.rs`, `src/edit/editor.rs` |
+| 7 | Editor preview plan | Worth exploring | open, lower priority (diagnostic only) | none | `src/edit/live_gpu.rs`, `src/edit/editor.rs` |
 | 8 | Screensaver style descriptor | Speculative | open | none | `src/screensaver.rs`, `src/screensaver/gpu.rs` |
-| 9 | Photo mark commands (favourite, rating) | Strong | open | none | `src/window/build.rs` (InfoBar favourite, rating buttons, digit keys), `src/window/photo_actions.rs` (context-menu favourite) |
+| 9 | Photo mark commands (favourite, rating) | Strong | investigating (next; no branch yet) | none | `src/window/build.rs` (InfoBar favourite, rating buttons, digit keys), `src/window/photo_actions.rs` (context-menu favourite) |
 | 10 | Current photo (`selected_photo`) | Strong | open | none | `src/window/build.rs`, `src/window/photo_actions.rs`, `src/window/layout.rs` |
 | 11 | Window session state | Worth exploring | open | none | `src/window/build.rs` (restore, library switch, close), `src/window/layout.rs`, `src/window/sidebar_widgets.rs` |
 | 12 | Front surface (widens 6) | Worth exploring | open | none | `src/window/build.rs`, `src/window/layout.rs`, `src/window/photo_actions.rs` |
@@ -117,7 +117,67 @@ Recommended over 7 because it is the only open candidate with behaviour users ca
 
 **First step:** decide with the owner which toggle and refresh rules are correct, then a pure module that returns the target set, the new values and a refresh plan, with table tests; one GTK adapter applies the plan.
 
+#### Investigation (2026-11-23, at `ef47462a`, no code changed)
+Five entry points write marks. There is no favourite keyboard shortcut, no rating item in the photo menu, no mark control inside the lightbox itself (it uses the InfoBar and photo menu), and no undo for marks (only edit recipes have history).
+
+| | InfoBar heart (`build.rs:4164`) | Photo menu favourite (`photo_actions.rs:572`) | InfoBar stars 1-5 (`build.rs:4219`) | Digit keys 0-5 (`build.rs:5500`) | Sidebar folder favourite (`layout.rs:568`) |
+|---|---|---|---|---|---|
+| Anchor | `selected_photo` | the right-clicked object | `selected_photo` | `selected_photo` | the folder |
+| Targets | lightbox shown ? `[anchor]` : `gallery.selected_photo_ids(Some(anchor))` | `gallery.selected_photo_ids(Some(clicked))`, **no lightbox guard** | as heart | as heart | folder subtree, non-trashed |
+| New value | `ids.len() > 1 \|\| !anchor.favorite()` (multi always adds) | `!clicked.favorite()` (multi follows the clicked photo) | single and same rating → 0, else N | always N (0 clears; 6-9 swallowed) | explicit add/remove |
+| Write | per-id `db::set_favorite`, no transaction, ignores `trashed` | same | `set_rating_for_photos`, one transaction, `trashed = 0` | same | one statement |
+| On failure | `eprintln`, return; earlier ids already written, UI not updated | error dialog, return; same partial write | `eprintln`, nothing written | `eprintln` | error dialog |
+| Objects | anchor + `gallery.update_favorites` | clicked + `update_favorites`; swaps `selected_photo` to the clicked object when ids match | anchor + `update_ratings` | same | none |
+| InfoBar | `photo_updated` (not on the removal branch) | `photo_updated` only if clicked = `selected_photo` | `photo_updated` | `photo_updated` | none |
+| Properties | `show_photo(Lightbox, …)` even from the gallery | none | `show_photo(Lightbox, …)` | `show_photo(Lightbox, …)` | none |
+| Leaves view | Favourites + unfavourite → `remove_photos` + `lightbox.remove_photo(anchor)`; any metadata filter → `refresh_grid` | Favourites → `remove_photos` + `lightbox.remove_photo` per id; metadata filters ignored | rating filter, Ratings/Rating(n) sidebar or rating sort → `refresh_grid`; metadata `Rating` filter ignored; lightbox untouched | same | always `refresh_grid` |
+| Sidebar counts | `refresh_library_counts` (rebuilds rows) | same | `update_library_counts` (labels only) | same | `availability_refresh` |
+
+**Inconsistencies and what they cost:**
+1. Multi-selection favourite: the heart can only add (no way to unfavourite a selection from the InfoBar); the menu follows the clicked photo, so the same selection gives opposite results from the two controls.
+2. Photo menu in the lightbox targets the gallery selection, so it can change photos that are not on screen while the heart in the same view changes one (to confirm with a display test: depends on whether the gallery selection still contains the shown photo).
+3. Stars toggle back to 0 on the same rating, digits don't; stars toggle only for a single photo. Reasonable as two intents, but undocumented.
+4. Favourite failures half-apply: earlier ids are in the database, UI shows the old state, and the InfoBar path tells nobody. Favourite can also mark trashed photos; rating can't.
+5. Membership: metadata filters (`db::filters::Filters`, which include `Favorite` and `Rating` fields) trigger a rebuild only on the heart path; a metadata `Rating` filter never does, so a re-rated photo stays visible. Ratings never update the lightbox collection; Favourites removal does.
+6. Properties: the docked gallery panel is never refreshed after a mark (all paths pass `PropertiesSurface::Lightbox`); the menu path refreshes neither panel.
+7. Collage selection mode: `Gallery::selected_photo_ids` returns the collage ids with no fallback, so an empty collage selection writes nothing while the anchor object (and InfoBar) shows the new value. The InfoBar keeps photo actions enabled in Collage (`photo_actions_enabled`). Not reproduced yet.
+8. Two sidebar refreshers for the same count change; `refresh_library_counts` rebuilds rows for no structural reason (row visibility does not depend on the counts).
+9. The target rule is written 3 times in `build.rs` and a 4th, different way in the menu.
+
+**Proposed module boundary (Photo mark commands).** Pure module `src/window/photo_marks.rs` (`include!`d like its neighbours, or a `mod` if the owner prefers), no GTK, no state of its own:
+```rust
+pub(super) enum MarkIntent { ToggleFavorite, ToggleRating(u8 /*1..=5*/), SetRating(u8 /*0..=5*/) }
+pub(super) enum Front { Gallery, Lightbox }
+pub(super) struct MarkRequest<'a> {
+    intent: MarkIntent,
+    front: Front,
+    anchor: PhotoMarks,                 // id, favorite, rating as read from the anchor object
+    selection: &'a [PhotoMarks],        // gallery selection with fallback, read by the adapter
+    view: ViewMembership,               // favourites view, rating filter/sidebar/sort, metadata Favorite/Rating fields
+}
+pub(super) struct MarkPlan { ids: Vec<i64>, change: MarkChange /* Favorite(bool) | Rating(i32) */, membership: Membership /* Keep | Remove(ids) | Rebuild */ }
+pub(super) fn plan(request: MarkRequest) -> Option<MarkPlan>;   // None: nothing to do (empty target)
+```
+One GTK adapter, `PhotoMarkCommands` (window-level `Rc`, cloned into the five handlers): `run(&self, intent, anchor: &PhotoObject) -> Result<()>` reads the live front/selection/view, calls `plan`, writes once (new `db::set_favorite_for_photos`, one transaction, `trashed = 0`), then on success only: updates gallery objects and the anchor, `InfoBar::photo_updated`, the Properties panel on screen, `sidebar::update_library_counts`, and applies `membership` (gallery and lightbox together). On error nothing in the UI changes and one error path reports it. Entry points shrink to `commands.run(MarkIntent::…, &photo)`. The folder favourite keeps its own target (a folder) but can reuse the adapter's post-change step. No cached marks: values are always read from the `PhotoObject`s and the database.
+
+**Decisions needed before implementation:**
+1. ~~Multi-selection favourite rule.~~ **Decided 2026-11-23 by the owner:** if every target is already a favourite, remove them all; otherwise add them all. The heart and the photo menu both use this rule. A single photo simply toggles.
+2. ~~Stars vs digits.~~ **Decided 2026-11-23 by the owner:** keep two intents. Stars toggle (same rating → 0); digit keys always set (0 clears). For a multi-selection, the stars clear to 0 when every target already has that rating, otherwise set it (same rule as decision 1).
+3. ~~Photo menu in the lightbox.~~ **Decided 2026-11-23 by the owner:** in the lightbox every mark control, the photo menu included, changes only the photo on screen.
+4. ~~Leaving the view.~~ **Decided 2026-11-23 by the owner:** one membership rule for Favourites, rating filters/sidebar/sort and metadata `Favorite`/`Rating` filters. A photo that no longer matches leaves the gallery, and the lightbox drops it and moves to the next photo (today's Favourites behaviour, now for every view rule).
+5. ~~Failure.~~ **Decided 2026-11-23 by the owner:** one transaction for favourites too, so nothing half-applies, and a self-dismissing message on every entry point, no dialog. Reuse `OperationProgress::finish` (`window/operation_progress.rs:408`, hides after `FINISH_HIDE_AFTER`), which bulk edit failures already use; no new widget.
+6. ~~Collage selection mode.~~ **Decided 2026-11-23 by the owner:** marks apply to the photos ticked for the collage; with none ticked, `plan` returns nothing and no object or InfoBar changes (fixes the UI-only change).
+7. ~~Scope.~~ **Decided 2026-11-23 by the owner:** the sidebar folder favourite stays out except for reusing the adapter's post-change refresh; undo for marks stays out.
+
+All seven decisions are settled. Next: branch `refactor/photo-mark-commands` from `main` (on the owner's word), then stage 1, the pure `plan` with table tests.
+
+Changes users would notice: the heart can unfavourite a selection; the lightbox photo menu changes one photo; a re-rated photo disappears under a metadata `Rating` filter; a photo menu favourite under a metadata filter rebuilds the grid; the gallery Properties panel updates; failed writes show an error and leave nothing half-written; clicking a selection's shared star rating clears it; the lightbox moves on when a rating change takes the shown photo out of a rating view; in Collage, marks follow the ticked photos.
+
+**Test strategy and scope:** table tests for `plan` (intent × single/multi × mixed values × front × each view rule, roughly 25 rows); a `db` test for `set_favorite_for_photos` (transaction, trashed skipped). Display tests (Xvfb): keep `album_cover_action_is_only_offered_inside_an_album` (it covers the menu favourite toggle) and `rating_indicator_updates_when_lightbox_photo_changes`; add one adapter test that rates and favourites a two-photo selection and checks objects, InfoBar and the Favourites removal. Scope estimate: pure module ~250 lines with tests, adapter ~200, net removal of ~180 lines from `build.rs` and ~50 from `photo_actions.rs`; 4 stages (pure plan, db batch write, adapter and move the 5 entry points, docs and owner rule). Pairs with 10 (`selected_photo`) and 12 (front surface) but does not need them: the adapter reads the front with the existing `lightbox.root.is_visible()` check in one place.
+
 ### 7 · Editor preview plan
+**Lower priority (2026-11-23):** its disagreement is diagnostic only (a mislabelled trace); 9 goes first.
+
 Re-checked 2026-11-23 (round two): the wrong reason only mislabels the trace; it never changes the renderer.
 - `cpu_fallback_reason` (`src/edit/editor.rs:166`) is used only in the `PIC_EDIT_RENDERER renderer=cpu_fallback` trace (`:1415`, gated on `PICASA_TRACE`), plus a test at `:3018` that locks in the wrong `"clarity"` reason.
 - It names clarity, grain, filter and B&W/sepia, which the GPU allows, and never names the real reasons: partial `filter_amount`, crop or straighten with auto, a view that is not 1:1, rotation, or `gpu_failed`. The trace fires inside `if let Some(gpu_canvas)`, so a `gpu_failed` fallback is reported as a recipe reason.

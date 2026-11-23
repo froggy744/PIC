@@ -178,7 +178,7 @@ All seven decisions are settled. Started 2026-11-23 on branch `refactor/photo-ma
 4. Docs: GLOSSARY term **Photo marks**, AUDIT-INDEX rows and a Quick-Edit row, this file, and owner rule `photo-marks` in `scripts/check-presentation-owners.sh` (library and gallery mark writes only in `photo_mark_commands.rs`; the four `library.rs` rating-filter test fixtures are allowed). Done: `2a07053c`.
 
 **Follow-up after merge:**
-- Not covered by a test: the lightbox moving on when a rating change takes the shown photo out of a rating or metadata view, and the gallery Properties panel refreshing. Check by hand.
+- Not covered by a test, checked by hand by the owner on 2026-11-23 and working: the lightbox moving on when a rating change takes the shown photo out of a rating or metadata view, and the gallery Properties panel refreshing.
 - A failed write while an export or scan owns the progress bar is only logged (`eprintln`), so the running job's bar is not ended.
 - Other photo-menu actions (album, remove, export) still target the gallery selection inside the lightbox; decision 3 covered marks only.
 - `selected_photo` (candidate 10) is still kept in step by hand; the adapter reads it as the shown photo.
